@@ -159,6 +159,13 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
         def __init__(self):
             self.messages = []
 
+        @property
+        def chat_messages(self):
+            return self
+
+        def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+            return self.append_chat_message(minister_name, turn, role, content)
+
         def append_chat_message(self, minister_name, turn, role, content):
             self.messages.append((minister_name, turn, role, content))
             return len(self.messages)
@@ -206,6 +213,13 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
             self.messages = [
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
             ]
+
+        @property
+        def chat_messages(self):
+            return self
+
+        def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+            return self.append_chat_message(minister_name, turn, role, content)
 
         def append_chat_message(self, minister_name, turn, role, content):
             self.messages.append((minister_name, turn, role, content))
@@ -256,6 +270,13 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
             ]
 
+        @property
+        def chat_messages(self):
+            return self
+
+        def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+            return self.append_chat_message(minister_name, turn, role, content)
+
         def append_chat_message(self, minister_name, turn, role, content):
             self.messages.append((minister_name, turn, role, content))
             return len(self.messages)
@@ -300,6 +321,13 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
     """回滚删除失败不能盖掉原始 scene_chat/chat 异常。"""
 
     class Db:
+        @property
+        def chat_messages(self):
+            return self
+
+        def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+            return self.append_chat_message(minister_name, turn, role, content)
+
         def append_chat_message(self, minister_name, turn, role, content):
             return 1
 
@@ -333,6 +361,13 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
         def __init__(self):
             self.messages = []
             self.deleted = False
+
+        @property
+        def chat_messages(self):
+            return self
+
+        def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+            return self.append_chat_message(minister_name, turn, role, content)
 
         def append_chat_message(self, minister_name, turn, role, content):
             if role == "minister":
@@ -582,7 +617,8 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
         state, character.name, f"cli:{character.name}", 0,
         night_id=night_id, status="generating",
     )
-    mid = db.append_chat_message(character.name, state.turn, "user", question)
+    mid = db.chat_messages.insert(minister_name=character.name, turn=state.turn, role="user", content=question)
+    db.conn.commit()
     db.reign.update_chat_turn_messages(ct, user_message_id=mid)
     db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ct,))
     db.conn.commit()

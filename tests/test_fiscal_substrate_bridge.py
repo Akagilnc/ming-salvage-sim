@@ -1071,7 +1071,8 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
     state.next_period()
     state.turn_phase = TurnPhase.SUMMONING.value
     db.save_state(state)
-    db.clear_month_open_snapshot(settled_turn)
+    db.month_open_snapshots.delete(int(settled_turn))
+    db.conn.commit()
     assert runtime.budget_payload()["settled_army_pay"] == {
         "settled_turn": settled_turn,
         "treasury_disbursed": 10,

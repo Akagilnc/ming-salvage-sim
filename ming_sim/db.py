@@ -851,9 +851,7 @@ def clamp_grant_arrival_amount(
     proposed = int(proposed_arrived)
     return max(lo, min(hi, proposed))
 
-
 _SECRET_ORDER_BODY_COLUMNS = ("result", "sim_note")
-
 
 def _secret_order_record_body(record: Mapping[str, object]) -> str:
     """Stored prose must already be a string. A missing or non-string body is not rewritten as empty text."""
@@ -861,7 +859,6 @@ def _secret_order_record_body(record: Mapping[str, object]) -> str:
     if not isinstance(body, str):
         raise TypeError("密令正文记录缺少正文")
     return body
-
 
 def _secret_order_period_recorded(
     records: Sequence[Mapping[str, object]], year: int, period: int,
@@ -871,7 +868,6 @@ def _secret_order_period_recorded(
         and int(record.get("period") or 0) == int(period)
         for record in records
     )
-
 
 def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str:
     """Project records by year, month, then write order. Body text is copied whole."""
@@ -892,12 +888,10 @@ def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str
         )
     return "\n".join(parts)
 
-
 def _secret_order_kept_body(text: object) -> str:
     """空白正文记空串；已有字句原样保留，含内部空行。"""
     raw = str(text or "")
     return raw if raw.strip() else ""
-
 
 def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
     """Read structured body records.
@@ -919,7 +913,6 @@ def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]
             _secret_order_record_body(item)
         log[column] = entries
     return log
-
 
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
@@ -1482,7 +1475,6 @@ class GameDB:
         if commit:
             self.conn.commit()
         return base_key
-
 
     # 城市等级 0-5（静态，史实分级；未列出的地区默认 0=游牧/孤岛/边荒）。
     # 用途：城防大炮上限(city_level×8) + 将来经济/内政。1627 实况，非现代省份概念。
@@ -2787,34 +2779,6 @@ class GameDB:
         row = ReignStateStore(self.conn).read_has_meta_flag((key,))
         return row is not None and int(row["value"]) == 1
 
-
-    def record_person_log(
-        self,
-        state: GameState,
-        person_name: str,
-        action: str,
-        payload_summary: str = "",
-        derived_from: str = "",
-        normalized: str | Dict[str, object] = "",
-        source: str = "",
-        commit: bool = True,
-        origin_ref: str = "",
-    ) -> None:
-        """Append one person event. 持久写口归 person_log store（#1889）。"""
-        self.person_logs.append(
-            turn=state.turn,
-            year=state.year,
-            period=state.period,
-            person_name=person_name,
-            action=action,
-            payload_summary=payload_summary,
-            derived_from=derived_from,
-            normalized=normalized,
-            source=source,
-            origin_ref=origin_ref,
-            commit=commit,
-        )
-
     def get_character_status(self, name: str) -> Tuple[str, str]:
         row = CharacterStore(self.conn).read_get_character_status((name,))
         if row is None:
@@ -2957,10 +2921,15 @@ class GameDB:
                 state, name, "dead", f"历史卒于 {year}年{month or '?'}月",
                 reason_code="历史卒", content=self.content,
             )
-            self.record_person_log(
-                state, name, "处置",
+            self.person_logs.append(
+                turn=state.turn,
+                year=state.year,
+                period=state.period,
+                person_name=name,
+                action="处置",
                 payload_summary=f"历史卒于 {year}年{month or '?'}月",
-                derived_from="历史卒", source="system_simulation",
+                derived_from="历史卒",
+                source="system_simulation",
             )
             died.append({
                 "name": name,
@@ -2989,10 +2958,15 @@ class GameDB:
                 state, name, "active", f"历史登场 {year}年{month or '?'}月",
                 reason_code="登场", content=self.content,
             )
-            self.record_person_log(
-                state, name, "处置",
+            self.person_logs.append(
+                turn=state.turn,
+                year=state.year,
+                period=state.period,
+                person_name=name,
+                action="处置",
                 payload_summary=f"历史登场 {year}年{month or '?'}月",
-                derived_from="登场", source="system_simulation",
+                derived_from="登场",
+                source="system_simulation",
             )
             debuted.append({
                 "name": name,
@@ -3071,7 +3045,6 @@ class GameDB:
         while n in used or n in missing:
             n += 1
         return f"{prefix}{n}"
-
 
     def add_character(
         self,
@@ -5247,23 +5220,6 @@ class GameDB:
         # #1843 reopen：无有效邸报则真空；旧 turn_logs 回落已删。
         return ""
 
-    def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
-        """召对聊天单条消息落库（chat_messages）。
-
-        #976 不变式：分类落定前，**任何**召对行（不分 role）不得进入共享
-        ``character_knowledge_sources``。此处只 insert + hold；投轨唯一出口是
-        ``release_held_audience_knowledge``（分类后 / 月末）。续聊读
-        ``chat_messages`` 本表，不依赖共享投影即时可见。
-
-        Empty ``minister_name`` is allowed for non-audience bookkeeping rows but
-        cannot be projected (release parks them as withheld — see N2).
-        """
-        message_id = self.chat_messages.insert(
-            minister_name=minister_name, turn=turn, role=role, content=content,
-        )
-        self.conn.commit()
-        return message_id
-
     def set_message_highlights(
         self, message_id: int, phrases: Sequence[Any],
     ) -> None:
@@ -5314,7 +5270,6 @@ class GameDB:
         "public_sayings": "id",
         "relation_edge_events": "id",
     }
-
 
     def _row_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
         return {key: row[key] for key in row.keys()}
@@ -5391,7 +5346,6 @@ class GameDB:
             })
         return out
 
-
     def discard_pending_directives(self, turn: int) -> int:
         """退朝无诏时丢弃本回合尚未落库的对话式拟旨暂存（kind=directive, status=pending）。
         须在 commit_pending_actions 之前调用，防止 commit 把草案插成孤儿 turn_directives
@@ -5400,7 +5354,6 @@ class GameDB:
         for action_id in self.dossiers.pending_directive_ids_for_turn(int(turn)):
             self._discard_deleted_directive_forecast(int(action_id))
         return self.dossiers.delete_pending_directives_for_turn(int(turn))
-
 
     def _pending_action_owned_by_turn_in_tx(
         self, action_id: object, chat_turn_id: int,
@@ -5654,7 +5607,6 @@ class GameDB:
             })
         return out
 
-
     def _write_secret_order_body(
         self,
         order_id: int,
@@ -5687,7 +5639,6 @@ class GameDB:
         row = self.character_knowledge.secret_order_row(int(order_id), active_only=True)
         if row is not None:
             _secret_order_body_log(row)
-
 
     def record_investigation_spoiled_fact(
         self,
@@ -6173,7 +6124,6 @@ class GameDB:
                 commit=commit,
             )
 
-
     def knowledge_items_for_turn(self, turn: int) -> List[Dict[str, object]]:
         """Return source-scoped public material for archive projection.
 
@@ -6319,7 +6269,6 @@ class GameDB:
             "has_attendant": bool(slot["has_attendant"]),
             "has_directive": bool(slot["has_directive"]),
         } for turn, slot in sorted(by_turn.items())]
-
 
     def list_closed_night_archives(self) -> List[Dict[str, object]]:
         """逐场列出 closed audience night，并保留玩家可见命名所需的容器属性。"""
@@ -8310,10 +8259,16 @@ class GameDB:
         if not target or action not in {"加衔", "荫叙"}:
             raise ValueError("恩赏案卷缺少加衔/荫叙目标")
         origin_ref = f"dossier:{int(dossier_id)}"
-        self.record_person_log(
-            state, target, action,
+        self.person_logs.append(
+            turn=state.turn,
+            year=state.year,
+            period=state.period,
+            person_name=target,
+            action=action,
             payload_summary="加衔示恩" if action == "加衔" else "荫叙示恩",
-            source="grant_allocation", origin_ref=origin_ref, commit=False,
+            source="grant_allocation",
+            commit=False,
+            origin_ref=origin_ref,
         )
 
     def create_decree_dossier(
@@ -10820,9 +10775,16 @@ class GameDB:
             self.set_character_status(
                 state, target, "active", reason, reason_code="", content=content, commit=False,
             )
-            self.record_person_log(
-                state, target, "处置", payload_summary=punish_action,
-                source="punishment", origin_ref=origin_ref, commit=False,
+            self.person_logs.append(
+                turn=state.turn,
+                year=state.year,
+                period=state.period,
+                person_name=target,
+                action="处置",
+                payload_summary=punish_action,
+                source="punishment",
+                commit=False,
+                origin_ref=origin_ref,
             )
             # #658：放归/昭雪为非惩罚动作，成功亦不写 backing 辜负。
             return
@@ -10848,18 +10810,32 @@ class GameDB:
                 raise ValueError(
                     f"罚俸不足额：应减{amount}两，实减{abs(int(actual))}两"
                 )
-            self.record_person_log(
-                state, target, "罚俸", payload_summary="罚俸示惩",
-                source="punishment", origin_ref=origin_ref, commit=False,
+            self.person_logs.append(
+                turn=state.turn,
+                year=state.year,
+                period=state.period,
+                person_name=target,
+                action="罚俸",
+                payload_summary="罚俸示惩",
+                source="punishment",
+                commit=False,
+                origin_ref=origin_ref,
             )
             self._maybe_write_backing_betray_credit(
                 state, target=target, backing_id=backing_id, reason=reason,
             )
             return
         if punish_action == "廷杖":
-            self.record_person_log(
-                state, target, "廷杖", payload_summary="廷杖示惩",
-                source="punishment", origin_ref=origin_ref, commit=False,
+            self.person_logs.append(
+                turn=state.turn,
+                year=state.year,
+                period=state.period,
+                person_name=target,
+                action="廷杖",
+                payload_summary="廷杖示惩",
+                source="punishment",
+                commit=False,
+                origin_ref=origin_ref,
             )
             self._maybe_write_backing_betray_credit(
                 state, target=target, backing_id=backing_id, reason=reason,
@@ -10952,9 +10928,6 @@ class GameDB:
             )
         self._commit_dossier_write(commit, owns)
         return len(rows)
-
-
-
 
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
@@ -11129,7 +11102,6 @@ class GameDB:
         ):
             self.conn.commit()
         return new_ids
-
 
     def upsert_pending_directive(
         self, turn: int, minister_name: str, payload: Dict[str, object],
@@ -11341,8 +11313,6 @@ class GameDB:
         )
         self.conn.commit()
         return int(candidate_id)
-
-
 
     def _prepare_pending_directive(
         self, state: GameState, pa: Dict[str, object], *, content=None,
@@ -12184,7 +12154,6 @@ class GameDB:
             self.conn.commit()
         return deleted
 
-
     def save_resolve_context(
         self, turn: int, decree_text: str,
         simulator_payload: Dict[str, object],
@@ -12233,11 +12202,6 @@ class GameDB:
         )
         self.conn.commit()
         return created
-
-    def clear_month_open_snapshot(self, turn: int) -> None:
-        """过期/清除本回合快照。atomic 内 commit 为 no-op，与 clear_resolve_context 同窗。"""
-        self.month_open_snapshots.delete(int(turn))
-        self.conn.commit()
 
     def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
         row = CharacterStore(self.conn).read_get_authority((int(authority_id),))
@@ -12631,7 +12595,6 @@ class GameDB:
             return "终前"
         return "终"
 
-
     def list_closed_issues_at(self, closed_turn: int) -> List[sqlite3.Row]:
         """指定 turn 关闭（resolved / failed / dropped）的 issue。"""
         return IssueStore(self.conn).read_list_closed_issues_at((int(closed_turn),))
@@ -12658,7 +12621,6 @@ class GameDB:
     def has_event_terminal_state(self, event_id: str, terminal_state: str) -> bool:
         row = IssueStore(self.conn).read_has_event_terminal_state((event_id, terminal_state))
         return row is not None
-
 
     def mark_event_triggered(
         self,
@@ -13681,7 +13643,6 @@ class GameDB:
         if not name:
             return False
         return self.character_knowledge.has_active_secret_brief(name)
-
 
     def _coerce_positive_message_ids(
         self, message_ids: Optional[Iterable[Any]] = None,
@@ -15345,7 +15306,7 @@ class GameDB:
         """**一个事务**内插入大臣回话、链接到 turn 并升为 active，返回 message_id。
 
         消息插入、turn 链接和状态升级同成同败，避免留下未关联的持久回话。
-        知识轨纪律同 append_chat_message：insert 即 'held'，投轨唯一出口是 release（#976）。
+        知识轨纪律：insert 即 'held'，投轨唯一出口是 release（#976）。
         status 升级同 update_chat_turn_messages（#498 挂夜轮以 generating 起笔，回话落库后升 active）——
         本函数是 update_chat_turn_messages(minister_message_id=...) 的原子替代，须同做该升级。
         """

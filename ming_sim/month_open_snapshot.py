@@ -47,7 +47,11 @@ def _clear_settlement_display_if_orphan(
         return False
     if db.month_open_snapshots.get(turn) is None:
         return False
-    db.clear_month_open_snapshot(turn)
+    db.month_open_snapshots.delete(int(turn))
+    _conn = getattr(db, "conn", None)
+    _commit = getattr(_conn, "commit", None) if _conn is not None else None
+    if callable(_commit) and not callable(_conn):
+        _commit()
     tlog(f"[month_open_snapshot] {reason} turn={turn} phase={phase}")
     return True
 

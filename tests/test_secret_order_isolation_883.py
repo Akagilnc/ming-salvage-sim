@@ -121,7 +121,8 @@ def test_883_audience_chat_path_does_not_leave_secret_in_shared_sources(game):
     assignee, other = _active_ministers(db, content)[:2]
     marker = "密令：真实召对密令旁路883，不可外泄"
 
-    mid = db.append_chat_message(assignee.name, state.turn, "user", marker)
+    mid = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=marker)
+    db.conn.commit()
     # Classification 前不得进共享库。
     held = db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
@@ -171,13 +172,14 @@ def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(ga
     assert chat_origin not in extracted_body
     assert extracted_title not in chat_origin
 
-    mid_origin = db.append_chat_message(assignee.name, state.turn, "user", chat_origin)
-    db.append_chat_message(
-        assignee.name, state.turn, "minister", "臣领密旨，即暗中查办，不敢外泄。"
-    )
+    mid_origin = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=chat_origin)
+    db.conn.commit()
+    db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="minister", content="臣领密旨，即暗中查办，不敢外泄。")
+    db.conn.commit()
     # 同回合无关召对（另一大臣）应进共享轨。
     other_public = "臣报：山东漕粮本月起运如常，无阻。"
-    mid_other = db.append_chat_message(other.name, state.turn, "user", other_public)
+    mid_other = db.chat_messages.insert(minister_name=other.name, turn=state.turn, role="user", content=other_public)
+    db.conn.commit()
 
     oid = create_test_secret_order(db,
         state, assignee.name, extracted_title, extracted_body, [],
@@ -247,10 +249,14 @@ def test_883_public_audience_same_turn_survives_secret_classification(game):
     ack = "臣领密旨，即暗中查办。"
     extracted = "暗访国丈田宅典当及内库往来，事密勿使司礼监知。"
 
-    db.append_chat_message(assignee.name, state.turn, "user", "近来京营操练如何？")
-    mid_public = db.append_chat_message(assignee.name, state.turn, "minister", public_line)
-    mid_secret = db.append_chat_message(assignee.name, state.turn, "user", secret_chat)
-    mid_ack = db.append_chat_message(assignee.name, state.turn, "minister", ack)
+    db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content="近来京营操练如何？")
+    db.conn.commit()
+    mid_public = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="minister", content=public_line)
+    db.conn.commit()
+    mid_secret = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=secret_chat)
+    db.conn.commit()
+    mid_ack = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="minister", content=ack)
+    db.conn.commit()
     # 分类前：大臣回话也 hold，不可见于共享投影。
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_public,)
@@ -292,7 +298,8 @@ def test_883_post_brief_public_audience_enters_shared_sources(game):
     assert marker_body not in paraphrase
     assert "密查阉党" not in paraphrase
 
-    mid = db.append_chat_message(assignee.name, state.turn, "minister", paraphrase)
+    mid = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="minister", content=paraphrase)
+    db.conn.commit()
     # 分类后仍 hold，直至 release 单点投轨。
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
@@ -322,7 +329,8 @@ def test_883_cross_turn_chat_origin_withheld_on_late_secret_create(game):
     )
     extracted = "暗访国丈田宅典当及内库往来，事密勿使司礼监知。"
 
-    mid = db.append_chat_message(assignee.name, state.turn, "user", chat_origin)
+    mid = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=chat_origin)
+    db.conn.commit()
     # Still held across turn boundary — never entered shared.
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
@@ -353,7 +361,8 @@ def test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_origin(game)
     e_grams = {compact_e[i : i + 4] for i in range(max(0, len(compact_e) - 3))}
     assert o_grams.isdisjoint(e_grams), "fixture must be zero 4-gram overlap"
 
-    mid = db.append_chat_message(assignee.name, state.turn, "user", chat_origin)
+    mid = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=chat_origin)
+    db.conn.commit()
     state.turn = int(state.turn) + 1
     db.save_state(state)
     oid = create_test_secret_order(db,
@@ -385,7 +394,8 @@ def test_883_thematic_public_audience_survives_secret_create(game):
     sec_title = "密查京营操练"
     sec_body = "密查京营兵士点卯虚实，勿使外廷知"
 
-    mid = db.append_chat_message(assignee.name, state.turn, "minister", public_line)
+    mid = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="minister", content=public_line)
+    db.conn.commit()
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"] == "held"
@@ -417,7 +427,8 @@ def test_976_minister_reply_not_shared_before_classification(game):
     minister = _active_ministers(db, content)[0]
     reply = "臣报：山东漕运本月起运如常。"
 
-    mid = db.append_chat_message(minister.name, state.turn, "minister", reply)
+    mid = db.chat_messages.insert(minister_name=minister.name, turn=state.turn, role="minister", content=reply)
+    db.conn.commit()
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"] == "held"
@@ -433,7 +444,8 @@ def test_976_pure_public_minister_reply_released_after_settle(game, monkeypatch)
     minister = _active_ministers(db, content)[0]
     reply = "臣报：京营点卯无缺，操练如常。"
 
-    mid = db.append_chat_message(minister.name, state.turn, "minister", reply)
+    mid = db.chat_messages.insert(minister_name=minister.name, turn=state.turn, role="minister", content=reply)
+    db.conn.commit()
     _settle_empty_month(db, state, content, monkeypatch)
     status = db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
@@ -457,20 +469,22 @@ def test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives(game
     public_reply = "回陛下，京营操练如常。"
 
     secret_turn = db.create_chat_turn(state, assignee.name, "secret-turn-976", 0)
-    mid_origin = db.append_chat_message(assignee.name, state.turn, "user", origin)
+    mid_origin = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=origin)
+    db.conn.commit()
     db.reign.update_chat_turn_messages(
         secret_turn, user_message_id=mid_origin,
     )
     oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
-    mid_ack = db.append_chat_message(assignee.name, state.turn, "minister", ack)
+    mid_ack = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="minister", content=ack)
+    db.conn.commit()
     db.reign.update_chat_turn_messages(secret_turn, minister_message_id=mid_ack)
 
     public_turn = db.create_chat_turn(state, assignee.name, "public-turn-976", 0)
-    mid_public_q = db.append_chat_message(assignee.name, state.turn, "user", public_q)
-    mid_public_reply = db.append_chat_message(
-        assignee.name, state.turn, "minister", public_reply,
-    )
+    mid_public_q = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=public_q)
+    db.conn.commit()
+    mid_public_reply = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="minister", content=public_reply)
+    db.conn.commit()
     db.reign.update_chat_turn_messages(
         public_turn,
         user_message_id=mid_public_q,
@@ -508,7 +522,8 @@ def test_976_withhold_does_not_yank_old_released_public_user(game):
     old_public = "问卿：山东漕粮起运是否如期？"
     secret_origin = "着尔密访国丈家产虚实，勿使外廷知。"
 
-    mid_old = db.append_chat_message(assignee.name, state.turn, "user", old_public)
+    mid_old = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=old_public)
+    db.conn.commit()
     db.release_held_audience_knowledge()
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_old,)
@@ -521,7 +536,8 @@ def test_976_withhold_does_not_yank_old_released_public_user(game):
     # 远离开 settle 窗口（>1 回合）。
     state.turn = int(state.turn) + 5
     db.save_state(state)
-    mid_secret = db.append_chat_message(assignee.name, state.turn, "user", secret_origin)
+    mid_secret = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=secret_origin)
+    db.conn.commit()
     oid = create_test_secret_order(db,
         state, assignee.name, "密查国丈", "暗访国丈家产", [],
     )
@@ -549,7 +565,8 @@ def test_976_release_stamps_original_message_date(game):
     origin_turn = int(state.turn)
     origin_year = int(state.year)
     origin_period = int(state.period)
-    mid = db.append_chat_message(minister.name, origin_turn, "minister", reply)
+    mid = db.chat_messages.insert(minister_name=minister.name, turn=origin_turn, role="minister", content=reply)
+    db.conn.commit()
 
     for _ in range(13):
         state.next_period()
@@ -601,7 +618,8 @@ def test_976_held_user_chat_released_when_never_classified_as_secret(game):
     minister = _active_ministers(db, content)[0]
     public_user = "问卿：山东漕粮起运是否如期？"
 
-    mid = db.append_chat_message(minister.name, state.turn, "user", public_user)
+    mid = db.chat_messages.insert(minister_name=minister.name, turn=state.turn, role="user", content=public_user)
+    db.conn.commit()
     assert db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"] == "held"
@@ -709,7 +727,8 @@ def test_976_cross_person_speaker_user_origin_withheld_not_shared(game):
     secret_text = "密令：着尔密查国丈家产虚实，勿使外廷知。"
     extracted = "暗访国丈家产虚实"
 
-    mid = db.append_chat_message(speaker.name, state.turn, "user", secret_text)
+    mid = db.chat_messages.insert(minister_name=speaker.name, turn=state.turn, role="user", content=secret_text)
+    db.conn.commit()
     oid = create_test_secret_order(db,
         state, assignee.name, "密查国丈", extracted, [],
         origin_minister_name=speaker.name,
@@ -748,9 +767,12 @@ def test_976_same_window_pure_public_user_survives_secret_classification(game):
     )
     extracted = "暗访国丈田宅典当及内库往来，事密勿使司礼监知。"
 
-    mid_pub = db.append_chat_message(assignee.name, state.turn, "user", public_q)
-    mid_ans = db.append_chat_message(assignee.name, state.turn, "minister", public_a)
-    mid_sec = db.append_chat_message(assignee.name, state.turn, "user", secret_q)
+    mid_pub = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=public_q)
+    db.conn.commit()
+    mid_ans = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="minister", content=public_a)
+    db.conn.commit()
+    mid_sec = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=secret_q)
+    db.conn.commit()
     oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
 
@@ -796,7 +818,8 @@ def test_976_stage_confirm_pin_provenance_not_max_held_user(game):
     extracted = "暗访国丈田宅典当及内库往来，事密勿使司礼监知。"
     confirm_q = "准。就按此办。"
 
-    mid_sec = db.append_chat_message(speaker.name, state.turn, "user", secret_q)
+    mid_sec = db.chat_messages.insert(minister_name=speaker.name, turn=state.turn, role="user", content=secret_q)
+    db.conn.commit()
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建",
         minister_name=speaker.name, target_id=None,
@@ -820,7 +843,8 @@ def test_976_stage_confirm_pin_provenance_not_max_held_user(game):
     assert int(staged_payload.get("origin_chat_message_id") or 0) == mid_sec
 
     # Confirmation utterance lands *after* stage — larger id than oral decree.
-    mid_confirm = db.append_chat_message(speaker.name, state.turn, "user", confirm_q)
+    mid_confirm = db.chat_messages.insert(minister_name=speaker.name, turn=state.turn, role="user", content=confirm_q)
+    db.conn.commit()
     assert mid_confirm > mid_sec
 
     applied = db.commit_pending_actions(
@@ -892,7 +916,8 @@ def test_976_non_create_stage_commit_update_withholds_oral_pin(game):
     new_content = "扩查国丈典当及内库往来，事密勿使司礼监知。"
     confirm_q = "准。就按此改。"
 
-    mid_sec = db.append_chat_message(speaker.name, state.turn, "user", secret_q)
+    mid_sec = db.chat_messages.insert(minister_name=speaker.name, turn=state.turn, role="user", content=secret_q)
+    db.conn.commit()
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="更新",
         minister_name=speaker.name, target_id=oid,
@@ -909,7 +934,8 @@ def test_976_non_create_stage_commit_update_withholds_oral_pin(game):
     staged_payload = _json.loads(staged["payload_json"] or "{}")
     assert int(staged_payload.get("origin_chat_message_id") or 0) == mid_sec
 
-    mid_confirm = db.append_chat_message(speaker.name, state.turn, "user", confirm_q)
+    mid_confirm = db.chat_messages.insert(minister_name=speaker.name, turn=state.turn, role="user", content=confirm_q)
+    db.conn.commit()
     assert mid_confirm > mid_sec
 
     applied = db.commit_pending_actions(
@@ -948,7 +974,8 @@ def test_976_non_create_stage_commit_rush_withholds_oral_pin(game):
     )
     confirm_q = "准。加紧催办。"
 
-    mid_sec = db.append_chat_message(speaker.name, state.turn, "user", secret_q)
+    mid_sec = db.chat_messages.insert(minister_name=speaker.name, turn=state.turn, role="user", content=secret_q)
+    db.conn.commit()
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="催办",
         minister_name=speaker.name, target_id=oid,
@@ -964,7 +991,8 @@ def test_976_non_create_stage_commit_rush_withholds_oral_pin(game):
     staged_payload = _json.loads(staged["payload_json"] or "{}")
     assert int(staged_payload.get("origin_chat_message_id") or 0) == mid_sec
 
-    mid_confirm = db.append_chat_message(speaker.name, state.turn, "user", confirm_q)
+    mid_confirm = db.chat_messages.insert(minister_name=speaker.name, turn=state.turn, role="user", content=confirm_q)
+    db.conn.commit()
     assert mid_confirm > mid_sec
 
     applied = db.commit_pending_actions(
@@ -1010,7 +1038,8 @@ def test_976_non_create_stage_commit_progress_and_review_withhold_oral_pin(game)
             f"关于{action}：着尔按朕口谕办理，凡内库往来皆须暗中簿记，"
             "不得走漏半句，亦不可经司礼监转呈。"
         )
-        mid_sec = db.append_chat_message(speaker.name, state.turn, "user", secret_q)
+        mid_sec = db.chat_messages.insert(minister_name=speaker.name, turn=state.turn, role="user", content=secret_q)
+        db.conn.commit()
         payload = {**payload_extra, "origin_chat_message_id": mid_sec}
         pid = db.stage_pending_action(
             state.turn, kind="secret_order", action=action,
@@ -1023,7 +1052,8 @@ def test_976_non_create_stage_commit_progress_and_review_withhold_oral_pin(game)
         staged_payload = _json.loads(staged["payload_json"] or "{}")
         assert int(staged_payload.get("origin_chat_message_id") or 0) == mid_sec, action
 
-        db.append_chat_message(speaker.name, state.turn, "user", f"准。{action}。")
+        db.chat_messages.insert(minister_name=speaker.name, turn=state.turn, role="user", content=f"准。{action}。")
+        db.conn.commit()
         applied = db.commit_pending_actions(
             state, minister_name=speaker.name, action_ids={pid}, content=content,
         )
@@ -1065,7 +1095,8 @@ def test_976_non_create_pure_public_not_auto_pinned_as_secret_origin(game):
             deadline_months=6,
         )
         assert oid > 0
-        mid_pub = db.append_chat_message(minister, state.turn, "user", public_q)
+        mid_pub = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="user", content=public_q)
+        db.conn.commit()
         pid = db.stage_pending_action(
             state.turn, kind="secret_order", action=action,
             minister_name=minister, target_id=oid,
@@ -1122,7 +1153,8 @@ def _shared_source_count(db, mid: int) -> int:
 
 
 def _stage_new_secret(db, state, minister_name: str, marker: str) -> tuple[int, int]:
-    mid = db.append_chat_message(minister_name, state.turn, "user", marker)
+    mid = db.chat_messages.insert(minister_name=minister_name, turn=state.turn, role="user", content=marker)
+    db.conn.commit()
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建",
         minister_name=minister_name, target_id=None,
@@ -1146,9 +1178,8 @@ def test_976_pending_secret_pin_survives_partial_commit_same_minister(game):
 
     mid_a, pending_a = _stage_new_secret(db, state, assignee.name, marker_a)
     reply_a = "臣已领会甲密，容臣拟妥章程再请圣裁。"
-    mid_a_reply = db.append_chat_message(
-        assignee.name, state.turn, "minister", reply_a,
-    )
+    mid_a_reply = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="minister", content=reply_a)
+    db.conn.commit()
     chat_turn_a = db.create_chat_turn(state, assignee.name, "pending-secret-a", 0)
     db.reign.update_chat_turn_messages(
         chat_turn_a, user_message_id=mid_a, minister_message_id=mid_a_reply,
@@ -1184,9 +1215,8 @@ def test_976_retryable_failed_secret_pin_stays_withheld_during_other_commit(game
     failed_marker = "失败可重试甲密：暗查不存在案卷-A976"
     committed_marker = "已确认乙密：密访仓场亏空-B976"
 
-    mid_failed = db.append_chat_message(
-        assignee.name, state.turn, "user", failed_marker,
-    )
+    mid_failed = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=failed_marker)
+    db.conn.commit()
     failed_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="更新",
         minister_name=assignee.name, target_id=999999,
@@ -1225,10 +1255,14 @@ def test_976_rt01_two_secret_orders_different_assignees_no_cross_track(game):
     ack_a = "臣领甲密旨，暗中查办，不敢外泄。"
     ack_b = "臣领乙密旨，即日密访，绝不声张。"
 
-    mid_a_user = db.append_chat_message(a.name, state.turn, "user", marker_a)
-    mid_a_min = db.append_chat_message(a.name, state.turn, "minister", ack_a)
-    mid_b_user = db.append_chat_message(b.name, state.turn, "user", marker_b)
-    mid_b_min = db.append_chat_message(b.name, state.turn, "minister", ack_b)
+    mid_a_user = db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="user", content=marker_a)
+    db.conn.commit()
+    mid_a_min = db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="minister", content=ack_a)
+    db.conn.commit()
+    mid_b_user = db.chat_messages.insert(minister_name=b.name, turn=state.turn, role="user", content=marker_b)
+    db.conn.commit()
+    mid_b_min = db.chat_messages.insert(minister_name=b.name, turn=state.turn, role="minister", content=ack_b)
+    db.conn.commit()
 
     for mid in (mid_a_user, mid_a_min, mid_b_user, mid_b_min):
         assert _ks(db, mid) == "held"
@@ -1284,12 +1318,14 @@ def test_976_rt02_misassigned_provenance_follows_origin_message(game):
     extracted_for_b = "密查内库亏空根由，避开司礼监户部-指派B976"
     public_on_b = "臣报：山东漕粮起运如常。"
 
-    mid_a_user = db.append_chat_message(a.name, state.turn, "user", origin_on_a)
-    db.append_chat_message(
-        a.name, state.turn, "minister", "臣领旨，密查内库，不敢外泄。",
-    )
-    mid_b_user = db.append_chat_message(b.name, state.turn, "user", "问卿漕运？")
-    mid_b_min = db.append_chat_message(b.name, state.turn, "minister", public_on_b)
+    mid_a_user = db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="user", content=origin_on_a)
+    db.conn.commit()
+    db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="minister", content="臣领旨，密查内库，不敢外泄。")
+    db.conn.commit()
+    mid_b_user = db.chat_messages.insert(minister_name=b.name, turn=state.turn, role="user", content="问卿漕运？")
+    db.conn.commit()
+    mid_b_min = db.chat_messages.insert(minister_name=b.name, turn=state.turn, role="minister", content=public_on_b)
+    db.conn.commit()
 
     # 错位：无 origin_minister_name / pin — 仅 assignee=B
     oid = create_test_secret_order(db, state, b.name, "密查内库", extracted_for_b, [])
@@ -1300,10 +1336,8 @@ def test_976_rt02_misassigned_provenance_follows_origin_message(game):
     assert _shared_source_count(db, mid_a_user) == 0
 
     # 显式 pin 路径：origin 血缘跟 message id，不跟 assignee
-    mid_a2 = db.append_chat_message(
-        a.name, state.turn, "user",
-        "续密：再查内库出纳簿-显式pin976",
-    )
+    mid_a2 = db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="user", content="续密：再查内库出纳簿-显式pin976")
+    db.conn.commit()
     oid2 = create_test_secret_order(db,
         state, b.name, "续密内库", "续查内库出纳簿", [],
         origin_minister_name=a.name,
@@ -1340,9 +1374,12 @@ def test_976_rt03_late_chat_after_create_same_turn(game):
     late_ack = "臣谨遵续旨，绝不走漏-晚到ack"
     other_public = "臣报：京营点卯无缺-晚到公开"
 
-    mid_late_user = db.append_chat_message(a.name, state.turn, "user", late_user)
-    mid_late_ack = db.append_chat_message(a.name, state.turn, "minister", late_ack)
-    mid_other = db.append_chat_message(b.name, state.turn, "minister", other_public)
+    mid_late_user = db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="user", content=late_user)
+    db.conn.commit()
+    mid_late_ack = db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="minister", content=late_ack)
+    db.conn.commit()
+    mid_other = db.chat_messages.insert(minister_name=b.name, turn=state.turn, role="minister", content=other_public)
+    db.conn.commit()
 
     assert _ks(db, mid_late_user) == "held"
     assert _ks(db, mid_late_ack) == "held"
@@ -1357,7 +1394,8 @@ def test_976_rt03_late_chat_after_create_same_turn(game):
     assert _shared_source_body(db, f"chat_message:{mid_other}") == other_public
 
     later_line = "第三次密嘱：焚稿-更晚976"
-    mid_even_later = db.append_chat_message(a.name, state.turn, "user", later_line)
+    mid_even_later = db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="user", content=later_line)
+    db.conn.commit()
     db.update_secret_order_by_id(state, oid, "密查边饷", secret + "；补焚稿", [])
     st_upd = _ks(db, mid_even_later)
     assert st_upd == "released"
@@ -1376,7 +1414,8 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
 
     ctid_early = db.create_chat_turn(state, b.name, "sess-early-976", 0)
     snap0 = db.capture_chat_rollback_snapshot()
-    mid_b_pub = db.append_chat_message(b.name, state.turn, "minister", public_early)
+    mid_b_pub = db.chat_messages.insert(minister_name=b.name, turn=state.turn, role="minister", content=public_early)
+    db.conn.commit()
     db.reign.update_chat_turn_messages(ctid_early, minister_message_id=mid_b_pub)
     db.record_chat_turn_rollback_diffs(
         ctid_early, snap0, db.capture_chat_rollback_snapshot(),
@@ -1387,10 +1426,10 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
 
     ctid = db.create_chat_turn(state, a.name, "sess-secret-undo-976", 0)
     before = db.capture_chat_rollback_snapshot()
-    mid_u = db.append_chat_message(a.name, state.turn, "user", marker)
-    mid_m = db.append_chat_message(
-        a.name, state.turn, "minister", "臣领密旨，即查火器局。",
-    )
+    mid_u = db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="user", content=marker)
+    db.conn.commit()
+    mid_m = db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="minister", content="臣领密旨，即查火器局。")
+    db.conn.commit()
     db.reign.update_chat_turn_messages(ctid, user_message_id=mid_u, minister_message_id=mid_m)
     oid = create_test_secret_order(db, state, a.name, "密查火器局", marker, [])
     after = db.capture_chat_rollback_snapshot()
@@ -1439,9 +1478,8 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
 def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollback_entry):
     db, state, content = game
     minister = _active_ministers(db, content)[0]
-    old_message_id = db.append_chat_message(
-        minister.name, state.turn, "user", "旧令：密查旧案",
-    )
+    old_message_id = db.chat_messages.insert(minister_name=minister.name, turn=state.turn, role="user", content="旧令：密查旧案")
+    db.conn.commit()
     order_id = create_test_secret_order(db,
         state, minister.name, "旧密令", "旧密文", [],
         origin_chat_message_ids=[old_message_id],
@@ -1453,12 +1491,10 @@ def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollbac
 
     chat_turn_id = db.create_chat_turn(state, minister.name, f"{rollback_entry}-1026", 0)
     before = db.capture_chat_rollback_snapshot()
-    user_message_id = db.append_chat_message(
-        minister.name, state.turn, "user", "改令：转查新案",
-    )
-    minister_message_id = db.append_chat_message(
-        minister.name, state.turn, "minister", "臣领修改后的密旨。",
-    )
+    user_message_id = db.chat_messages.insert(minister_name=minister.name, turn=state.turn, role="user", content="改令：转查新案")
+    db.conn.commit()
+    minister_message_id = db.chat_messages.insert(minister_name=minister.name, turn=state.turn, role="minister", content="臣领修改后的密旨。")
+    db.conn.commit()
     db.reign.update_chat_turn_messages(
         chat_turn_id,
         user_message_id=user_message_id,
@@ -1495,11 +1531,12 @@ def test_976_rt05_save_restore_between_hold_and_release(game, tmp_path):
     marker = "存档夹心密令：密查驿递虚冒-SAVE976"
     pending_public = "臣报：延绥军情平稳-夹心held公开"
 
-    mid_u = db.append_chat_message(a.name, state.turn, "user", marker)
-    mid_ack = db.append_chat_message(
-        a.name, state.turn, "minister", "臣领密旨查驿递。",
-    )
-    mid_pub = db.append_chat_message(b.name, state.turn, "minister", pending_public)
+    mid_u = db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="user", content=marker)
+    db.conn.commit()
+    mid_ack = db.chat_messages.insert(minister_name=a.name, turn=state.turn, role="minister", content="臣领密旨查驿递。")
+    db.conn.commit()
+    mid_pub = db.chat_messages.insert(minister_name=b.name, turn=state.turn, role="minister", content=pending_public)
+    db.conn.commit()
 
     oid = create_test_secret_order(db, state, a.name, "密查驿递", marker, [])
     st_pre = {
@@ -1512,7 +1549,8 @@ def test_976_rt05_save_restore_between_hold_and_release(game, tmp_path):
     assert st_pre["pub"] == "held"
 
     late = "续谈：边墙修补进度-夹心后held"
-    mid_late = db.append_chat_message(b.name, state.turn, "minister", late)
+    mid_late = db.chat_messages.insert(minister_name=b.name, turn=state.turn, role="minister", content=late)
+    db.conn.commit()
     assert _ks(db, mid_late) == "held"
 
     # 备份落本用例私有目录：db.path 在系统共享 temp，同级写文件不留用例隔离（#1901 J6）。
@@ -1570,7 +1608,8 @@ def test_976_message_level_origin_persisted_on_brief(game):
     db, state, content = game
     assignee = _active_ministers(db, content)[0]
     secret_q = "着尔密访国丈家产虚实，勿使外廷知-provenance976"
-    mid = db.append_chat_message(assignee.name, state.turn, "user", secret_q)
+    mid = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=secret_q)
+    db.conn.commit()
     oid = create_test_secret_order(db,
         state, assignee.name, "密查国丈", "暗访国丈家产", [],
         origin_chat_message_id=mid,

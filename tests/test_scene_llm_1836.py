@@ -211,8 +211,10 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
 
     result = sess.scene_chat("边饷如何？")
     assert result.answer
-    user_mid = db.append_chat_message("殿上", state.turn, "user", "边饷如何？")
-    minister_mid = db.append_chat_message("殿上", state.turn, "assistant", result.answer)
+    user_mid = db.chat_messages.insert(minister_name="殿上", turn=state.turn, role="user", content="边饷如何？")
+    db.conn.commit()
+    minister_mid = db.chat_messages.insert(minister_name="殿上", turn=state.turn, role="assistant", content=result.answer)
+    db.conn.commit()
     ctid = db.create_chat_turn(
         state, "殿上", "scene-sess", 0, night_id=night_id, status="generating",
     )

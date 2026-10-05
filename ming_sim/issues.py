@@ -6030,10 +6030,12 @@ def _apply_person_changes(
             for key, value in result.items()
             if key not in {"rejected", "category", "item"}
         }
-        db.record_person_log(
-            state,
-            name,
-            action,
+        db.person_logs.append(
+            turn=state.turn,
+            year=state.year,
+            period=state.period,
+            person_name=name,
+            action=action,
             payload_summary=summary,
             derived_from=str(result.get("derived_from") or derived_from or ""),
             normalized=normalized,

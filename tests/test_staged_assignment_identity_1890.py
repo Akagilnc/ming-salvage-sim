@@ -59,8 +59,10 @@ def _finish_turn(db, state, minister: str, ctid: int, question: str) -> None:
     撤回闸只认 active 轮，所以端到端用例必须经这条真实升级路径，不能
     直接改 status 假装轮已完成。
     """
-    user_id = db.append_chat_message(minister, int(state.turn), "user", question)
-    reply_id = db.append_chat_message(minister, int(state.turn), "minister", "遵旨。")
+    user_id = db.chat_messages.insert(minister_name=minister, turn=int(state.turn), role="user", content=question)
+    db.conn.commit()
+    reply_id = db.chat_messages.insert(minister_name=minister, turn=int(state.turn), role="minister", content="遵旨。")
+    db.conn.commit()
     db.reign.update_chat_turn_messages(
         int(ctid), user_message_id=user_id, minister_message_id=reply_id,
     )

@@ -1843,7 +1843,11 @@ def _advance_after_gazette(
         _carry_pending_clarification_actions(db, state, turn, content=content)
         state.turn_phase = "issued"
         db.save_state(state)
-        db.clear_month_open_snapshot(turn)
+        db.month_open_snapshots.delete(int(turn))
+        _conn = getattr(db, "conn", None)
+        _commit = getattr(_conn, "commit", None) if _conn is not None else None
+        if callable(_commit) and not callable(_conn):
+            _commit()
         chain["advanced"] = True
         chain["stage"] = "advanced"
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)

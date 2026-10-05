@@ -2004,7 +2004,15 @@ def test_person_log_normalized_not_truncated(game):
     person_name = active_ming_character(db, content)
     big = {"name": "甲" * 300, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed",
            "reason": "乙" * 300, "extra": list(range(40))}
-    db.record_person_log(state, person_name, "处置", payload_summary="s", normalized=big)
+    db.person_logs.append(
+        turn=state.turn,
+        year=state.year,
+        period=state.period,
+        person_name=person_name,
+        action="处置",
+        payload_summary="s",
+        normalized=big,
+    )
     row = db.conn.execute(
         "SELECT normalized FROM person_logs WHERE person_name=? ORDER BY id DESC LIMIT 1",
         (person_name,),

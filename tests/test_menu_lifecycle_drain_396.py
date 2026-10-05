@@ -485,6 +485,11 @@ class _GapBDB:
     def agno_runs_length(self, _session_id):
         return 0
 
+    @property
+    def reign(self):
+        # Store 迁位后生产读 db.reign.agno_runs_length；轻壳自指。
+        return self
+
     def capture_chat_rollback_snapshot(self):
         return {}
 
@@ -493,6 +498,13 @@ class _GapBDB:
         self._next_id += 1
         self._inflight.append({"id": tid, "status": "generating", "minister_message_id": None})
         return tid
+
+    @property
+    def chat_messages(self):
+        return self
+
+    def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+        return self.append_chat_message(minister_name, turn, role, content)
 
     def append_chat_message(self, minister_name, turn, role, content):
         self.messages.append(
@@ -528,10 +540,6 @@ class _GapBDB:
             if row.get("status") == "generating"
             or not row.get("minister_message_id")
         ]
-
-    @property
-    def chat_messages(self):
-        return self
 
     def history_by_minister(self):
         out = {}

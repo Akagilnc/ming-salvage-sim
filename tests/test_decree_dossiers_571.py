@@ -1293,11 +1293,14 @@ def test_secret_order_progress_undo_restores_order_and_dossier_axes(game):
         state, actor, "密查仓储", "核清仓储", [],
     )
     chat_turn_id = db.create_chat_turn(state, actor, "dossier-undo", 0)
-    db.reign.update_chat_turn_messages(
-        chat_turn_id,
-        db.append_chat_message(actor, state.turn, "user", "继续查办"),
-        db.append_chat_message(actor, state.turn, "minister", "臣遵旨"),
+    user_mid = db.chat_messages.insert(
+        minister_name=actor, turn=state.turn, role="user", content="继续查办",
     )
+    minister_mid = db.chat_messages.insert(
+        minister_name=actor, turn=state.turn, role="minister", content="臣遵旨",
+    )
+    db.conn.commit()
+    db.reign.update_chat_turn_messages(chat_turn_id, user_mid, minister_mid)
     before = db.capture_chat_rollback_snapshot()
     db.update_secret_order_progress(
         order_id, "已开始核账", state.year, state.period,

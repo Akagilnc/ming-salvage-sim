@@ -327,7 +327,10 @@ def resolve_standing_roster(db: Any) -> List[str]:
 
 
 def get_open_night(db: Any) -> Optional[Dict[str, Any]]:
-    row = db.reign.open_or_closing_night()
+    reign = getattr(db, "reign", None)
+    if reign is None:
+        return None
+    row = reign.open_or_closing_night()
     return _hydrate_night(_row_dict(row)) if row is not None else None
 
 

@@ -2147,7 +2147,7 @@ class WebGame:
         # Durable chat_turn message ids first, then memory history.  Publishing
         # history before append/update opens a race: observers see the minister
         # reply while can_undo_last_chat_turn is still false (#976 hold path
-        # lengthens append_chat_message; background stream + early assert flaked
+        # lengthens chat_messages.insert; background stream + early assert flaked
         # and tore down the shared DB under the worker → SIGSEGV).
         minister_message_id = 0
         turn = int(self.state.turn if accepted_turn is None else accepted_turn)
@@ -2165,8 +2165,14 @@ class WebGame:
         else:
             # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
             minister_message_id = int(
-                self.db.append_chat_message(minister_name, turn, "minister", answer)
+                self.db.chat_messages.insert(
+                    minister_name=minister_name, turn=turn, role="minister", content=answer,
+                )
             )
+            _conn = getattr(self.db, "conn", None)
+            _commit = getattr(_conn, "commit", None) if _conn is not None else None
+            if callable(_commit) and not callable(_conn):
+                _commit()
         self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
         open_night = None
         if hasattr(self.db, "conn"):
@@ -2831,7 +2837,11 @@ class WebGame:
                 attach_to_hall=True,
             )
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+            message_id = self.db.chat_messages.insert(minister_name=minister_name, turn=accepted_turn, role="user", content=text)
+            _conn = getattr(self.db, "conn", None)
+            _commit = getattr(_conn, "commit", None) if _conn is not None else None
+            if callable(_commit) and not callable(_conn):
+                _commit()
             if chat_turn_id:
                 self.db.reign.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception as error:
@@ -3200,7 +3210,7 @@ def _exit_settlement_display_on_failure(game, *, blocking: bool = False) -> None
     清快照期间持 entry_lock，使并发 begin 不得插在「见 in-flight==1」与 clear 之间。"""
     db = getattr(game, "db", None)
     state = getattr(game, "state", None)
-    if db is None or state is None or not hasattr(db, "clear_month_open_snapshot"):
+    if db is None or state is None or not hasattr(db, "month_open_snapshots"):
         return
     from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
     gate = _game_write_gate(game)
@@ -3460,7 +3470,7 @@ def _settlement_period_entry(
             # 持 write_cm 同门（与失败支 _game_write_gate 同形）——禁无门直写共享连接。
             db = getattr(game, "db", None)
             state = getattr(game, "state", None)
-            if db is not None and state is not None and hasattr(db, "clear_month_open_snapshot"):
+            if db is not None and state is not None and hasattr(db, "month_open_snapshots"):
                 from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
                 clear_orphan_month_open_snapshot(db, state)
 

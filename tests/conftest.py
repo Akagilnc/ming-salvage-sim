@@ -314,8 +314,10 @@ def append_night_chat(
     db, state, night_id: int, minister: str, user_text: str, answer: str, seq: int,
 ) -> tuple[int, int]:
     """写入一对 user/minister 消息 + chat_turns 行；返回 (turn_id, minister_message_id)。"""
-    uid = db.append_chat_message(minister, state.turn, "user", user_text)
-    mid = db.append_chat_message(minister, state.turn, "minister", answer)
+    uid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="user", content=user_text)
+    db.conn.commit()
+    mid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="minister", content=answer)
+    db.conn.commit()
     cur = db.conn.execute(
         "INSERT INTO chat_turns "
         "(minister_name,turn,year,period,user_message_id,minister_message_id,night_id,night_seq) "

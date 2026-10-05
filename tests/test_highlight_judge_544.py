@@ -88,8 +88,10 @@ def test_run_highlight_judge_success_returns_phrases():
 
 
 def _minister_turn(db, state, minister: str, reply: str, night_id: int = 0):
-    uid = db.append_chat_message(minister, int(state.turn), "user", "问。")
-    mid = db.append_chat_message(minister, int(state.turn), "minister", reply)
+    uid = db.chat_messages.insert(minister_name=minister, turn=int(state.turn), role="user", content="问。")
+    db.conn.commit()
+    mid = db.chat_messages.insert(minister_name=minister, turn=int(state.turn), role="minister", content=reply)
+    db.conn.commit()
     cid = db.create_chat_turn(state, minister, "hl-test", 0, night_id=night_id)
     db.reign.update_chat_turn_messages(cid, user_message_id=uid, minister_message_id=mid)
     return cid, mid

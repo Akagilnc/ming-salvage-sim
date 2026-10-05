@@ -201,11 +201,14 @@ def test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn(game):
     minister_name = "毕自严"
     web_game = _web_game(db, state, content, _FakeAgent())
     completed = db.create_chat_turn(state, minister_name, "completed", 0)
-    db.reign.update_chat_turn_messages(
-        completed,
-        db.append_chat_message(minister_name, state.turn, "user", "前问"),
-        db.append_chat_message(minister_name, state.turn, "minister", "前答"),
+    user_mid = db.chat_messages.insert(
+        minister_name=minister_name, turn=state.turn, role="user", content="前问",
     )
+    minister_mid = db.chat_messages.insert(
+        minister_name=minister_name, turn=state.turn, role="minister", content="前答",
+    )
+    db.conn.commit()
+    db.reign.update_chat_turn_messages(completed, user_mid, minister_mid)
     interrupted = db.create_chat_turn(state, minister_name, "interrupted", 0)
     db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (interrupted,))
     db.conn.commit()
@@ -222,7 +225,8 @@ def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
     minister_name = "毕自严"
     web_game = _web_game(db, state, content, _FakeAgent())
     turn = db.create_chat_turn(state, minister_name, "sess", 0)
-    user_id = db.append_chat_message(minister_name, state.turn, "user", "前问")
+    user_id = db.chat_messages.insert(minister_name=minister_name, turn=state.turn, role="user", content="前问")
+    db.conn.commit()
     db.reign.update_chat_turn_messages(turn, user_message_id=user_id)
     db.persist_minister_reply(minister_name, state.turn, "前答", turn)
 

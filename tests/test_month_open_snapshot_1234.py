@@ -153,7 +153,8 @@ def test_clear_on_month_complete_returns_live_values(game):
     state.metrics["国库"] = before["国库"] + 40
     db.save_state(state)
 
-    db.clear_month_open_snapshot(turn)
+    db.month_open_snapshots.delete(int(turn))
+    db.conn.commit()
     state.turn = turn + 1
     db.save_state(state)
 
@@ -374,7 +375,8 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
         state.metrics["国库"] = before["国库"] + 9
         db.save_state(state)
         # 模拟结算完成：相位回 summoning、清快照（生产 settle 尾同款）
-        db.clear_month_open_snapshot(int(state.turn))
+        db.month_open_snapshots.delete(int(int(state.turn)))
+        db.conn.commit()
         state.turn_phase = TurnPhase.SUMMONING.value
         db.save_state(state)
         return ResolveResult(awaiting=False, report="ok", advanced=True)

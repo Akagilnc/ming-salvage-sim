@@ -199,7 +199,8 @@ def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
 
     chat_turn_id = db.create_chat_turn(state, minister.name, "undo-knowledge", 0)
     before = db.capture_chat_rollback_snapshot()
-    message_id = db.append_chat_message(minister.name, state.turn, "user", marker)
+    message_id = db.chat_messages.insert(minister_name=minister.name, turn=state.turn, role="user", content=marker)
+    db.conn.commit()
     # Pure-public emperor speech is held until release (no secret classification).
     db.release_held_audience_knowledge()
     after = db.capture_chat_rollback_snapshot()
@@ -226,7 +227,8 @@ def test_delete_chat_messages_removes_chat_derived_knowledge_from_context(game):
     minister = next(c for c in content.characters.values() if c.office_type == "内阁")
     marker = "删除消息应一并抹去的召对事项"
 
-    message_id = db.append_chat_message(minister.name, state.turn, "assistant", marker)
+    message_id = db.chat_messages.insert(minister_name=minister.name, turn=state.turn, role="assistant", content=marker)
+    db.conn.commit()
     db.delete_chat_messages([message_id])
 
     source_id = f"chat_message:{message_id}"

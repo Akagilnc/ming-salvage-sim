@@ -72,6 +72,13 @@ class _FailingPrologueDB:
     def record_chat_turn_rollback_diffs(self, *a, **k):
         return None
 
+    @property
+    def chat_messages(self):
+        return self
+
+    def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+        return self.append_chat_message(minister_name, turn, role, content)
+
     def append_chat_message(self, *a, **k):
         raise RuntimeError("DB 写盘失败（模拟 prologue 崩溃）")
 
@@ -230,6 +237,13 @@ class _DoubleFailDB:
     def record_chat_turn_rollback_diffs(self, *a, **k):
         return None
 
+    @property
+    def chat_messages(self):
+        return self
+
+    def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+        return self.append_chat_message(minister_name, turn, role, content)
+
     def append_chat_message(self, *a, **k):
         raise RuntimeError("DB 写盘失败（模拟 prologue 崩溃）")
 
@@ -282,6 +296,13 @@ class _WorkerPathDB:
 
     def record_chat_turn_rollback_diffs(self, *a, **k):
         return None
+
+    @property
+    def chat_messages(self):
+        return self
+
+    def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+        return self.append_chat_message(minister_name, turn, role, content)
 
     def append_chat_message(self, *a, **k):
         return 1

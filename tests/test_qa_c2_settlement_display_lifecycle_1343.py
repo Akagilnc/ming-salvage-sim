@@ -84,13 +84,13 @@ def test_success_clear_holds_write_gate_not_peer_txn(game, monkeypatch):
 
     gate = web_app._game_write_gate(runtime)
     clear_saw_gate = {"locked": None}
-    orig_clear = db.clear_month_open_snapshot
+    orig_delete = db.month_open_snapshots.delete
 
     def _wrapped_clear(t):
         clear_saw_gate["locked"] = gate.locked()
-        return orig_clear(t)
+        return orig_delete(t)
 
-    db.clear_month_open_snapshot = _wrapped_clear  # type: ignore[method-assign]
+    db.month_open_snapshots.delete = _wrapped_clear  # type: ignore[method-assign]
 
     # B 先持 gate（模拟进 atomic）——A 成功支 clear 须堵在 write_cm，不得无门完成 DELETE
     assert gate.acquire(blocking=False)
@@ -116,7 +116,7 @@ def test_success_clear_holds_write_gate_not_peer_txn(game, monkeypatch):
         a_done.wait()
         t.join()
     finally:
-        db.clear_month_open_snapshot = orig_clear  # type: ignore[method-assign]
+        db.month_open_snapshots.delete = orig_delete  # type: ignore[method-assign]
         if gate.locked():
             gate.release()
 
@@ -154,7 +154,7 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
     def _boom_clear(_t):
         raise RuntimeError("clear boom")
 
-    db.clear_month_open_snapshot = _boom_clear  # type: ignore[method-assign]
+    db.month_open_snapshots.delete = _boom_clear  # type: ignore[method-assign]
 
     raised = None
     try:

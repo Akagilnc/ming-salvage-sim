@@ -88,7 +88,8 @@ def parse(rel: str) -> ast.AST | None:
 def snip(rel: str, lineno: int, n: int = 1) -> str:
     lines = (ROOT / rel).read_text(encoding="utf-8", errors="replace").splitlines()
     chunk = lines[lineno - 1:lineno - 1 + n]
-    return " | ".join(s.strip() for s in chunk)[:220]
+    # rstrip after truncate: mid-line cut can leave trailing spaces that break git diff --check
+    return " | ".join(s.strip() for s in chunk)[:220].rstrip()
 
 
 def is_store_path(rel: str) -> bool:
@@ -307,37 +308,47 @@ C1_PAT = re.compile(
     r"留作测试参照|cutover.?marker|read_use_fiscal",
     re.I,
 )
+# Class3: broad orphan / retired-helper signals (defs AND refs); not a delete whitelist
 C3_PAT = re.compile(
     r"_fail_cli_chat_turn_scene|substantiate_covert|_covert_substantiat|"
     r"neutralize_covert_fiscal_effects|_COVERT_NEUTRALIZATION|"
     r"def upsert\b|debug_upsert|admin_debug|"
     r"progress\s*=\s*1|reason_code\s*=\s*['\"]依律|used\s*=\s*True|"
-    r"满阈自动|旧清算轨|已退役.*辅助|孤立机制",
+    r"满阈自动|旧清算轨|已退役.*辅助|孤立机制|"
+    r"legacy_.?path|orphan.?mech|retired.?helper|compat.?shim|"
+    r"旧坐实|满阈.*依律|test.?double.?补偿",
 )
+# Class4: all population accounting symbols / rates / dual-entry signals
 C4_PAT = re.compile(
     r"apply_issue_inertia_and_ongoing|"
-    r"def apply_levy_driven_transfers|def apply_recovery_driven_transfers|"
-    r"def _apply_levy_driven_transfers|def _apply_recovery_driven_transfers|"
+    r"apply_levy_driven_transfers|apply_recovery_driven_transfers|"
+    r"_apply_levy_driven_transfers|_apply_recovery_driven_transfers|"
     r"inertia_and_ongoing|旧名兼容|population.?dual|双份.*人口|"
-    r"LEVY_DISPLACEMENT_RATE|RECOVERY_DISPLACEMENT",
+    r"LEVY_DISPLACEMENT_RATE|RECOVERY_DISPLACEMENT|"
+    r"displaced_population|流民|加派.*人口|赈济.*人口|"
+    r"read_apply_levy|read_apply_recovery|population_transfers|"
+    r"apply_population|displace.*delta|displaced_delta",
+    re.I,
 )
 C5_PAT = re.compile(
     r"close_from_declaration|declare_closed|ATTACH_RESULT_CLOSE|_ATTACH_CLOSE|"
     r"本阶段不能了结|顶层事务声明只接受了结|"
     r"attach\s*=\s*[\"']close[\"']|declare.?close|"
-    r"AffairStore\.close|affairs.*status=.?closed.*declaration",
-)
-C6_PROSE_PY = re.compile(
-    r"AGENDA_FROZEN|"
-    r"(?:content|agenda|body|narrative|summary|report_text)\s*\]?\s*==\s*[\"'][\u4e00-\u9fff].{12,}|"
-    r"assertEqual\([^)]*(?:content|agenda|body|narrative)[^)]*[\"'][\u4e00-\u9fff].{12,}",
-)
-C6_PROSE_TS = re.compile(
-    r"AGENDA_FROZEN|"
-    r"(?:textContent|innerText|content|agenda)\b[^;\n]{0,40}(?:toBe|toEqual|toContain|toMatch)\(\s*[\"'][\u4e00-\u9fff].{12,}",
+    r"AffairStore\.close|affairs.*status=.?closed.*declaration|"
+    r"birth.?close|了结动作|显式了结",
 )
 C6_STRUCT = re.compile(
     r"scrollTop|aria-label=[\"']撤回召对确认[\"']|撤回召对确认",
+)
+HAN = re.compile(r"[\u4e00-\u9fff]")
+MACHINEISH = re.compile(
+    r"^[A-Za-z0-9_./:-]+$|^status$|^id$|^kind$|^role$|^open$|^closed$|^held$|"
+    r"^pending$|^active$|^off$|^on$|^true$|^false$",
+    re.I,
+)
+UI_CHROME = re.compile(
+    r"继续|取消|确认|关闭|撤回|过月|载入|新档|返回|设置|关（|开（|"
+    r"检查模型后端|重整朝堂名册|等待|锁定|菜单",
 )
 
 
@@ -350,7 +361,7 @@ def text_scan(rel: str, pat: re.Pattern[str], lane: str, cls: str) -> list[dict]
         if pat.search(line):
             out.append({
                 "lane": lane,
-                "member": line.strip()[:80],
+                "member": line.strip()[:80].rstrip(),
                 "location": f"{rel}:{i}",
                 "class": cls,
                 "detail": "text_hit",
@@ -358,37 +369,261 @@ def text_scan(rel: str, pat: re.Pattern[str], lane: str, cls: str) -> list[dict]
                 "tables": "",
                 "owner": "",
                 "in_owner_store": "0",
-                "snippet": line.strip()[:220],
+                "snippet": line.strip()[:220].rstrip(),
             })
     return out
+
+
+def _row(lane: str, member: str, loc: str, cls: str, detail: str, snippet: str) -> dict:
+    return {
+        "lane": lane,
+        "member": member[:80].rstrip(),
+        "location": loc,
+        "class": cls,
+        "detail": detail,
+        "framework": "0",
+        "tables": "",
+        "owner": "",
+        "in_owner_store": "0",
+        "snippet": snippet[:220].rstrip(),
+    }
+
+
+def enum_c3_defs_and_refs() -> list[dict]:
+    """Full-repo: definitions (FunctionDef/Assign/Class) + Name/Attribute refs for C3 symbols."""
+    import subprocess
+    files = subprocess.check_output(
+        ["git", "ls-files", "ming_sim", "tests", "web_app.py"],
+        cwd=ROOT, text=True,
+    ).splitlines()
+    files = [p for p in files if p.endswith(".py")]
+    # seed symbols from text hits + known retired names
+    symbols = {
+        "_fail_cli_chat_turn_scene", "substantiate_covert", "neutralize_covert_fiscal_effects",
+        "_COVERT_NEUTRALIZATION_REASON", "debug_upsert", "admin_debug",
+        "apply_issue_inertia_and_ongoing",
+    }
+    rows: list[dict] = []
+    # collect defs
+    for rel in files:
+        tree = parse(rel)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if C3_PAT.search(node.name) or node.name in symbols:
+                    symbols.add(node.name)
+                    rows.append(_row(
+                        "c3_orphan_mech", f"def:{node.name}", f"{rel}:{node.lineno}", "3",
+                        "definition", snip(rel, node.lineno, 2),
+                    ))
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, ast.Name) and (C3_PAT.search(t.id) or t.id in symbols):
+                        symbols.add(t.id)
+                        rows.append(_row(
+                            "c3_orphan_mech", f"const:{t.id}", f"{rel}:{node.lineno}", "3",
+                            "definition", snip(rel, node.lineno, 1),
+                        ))
+    # refs
+    for rel in files:
+        tree = parse(rel)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id in symbols:
+                rows.append(_row(
+                    "c3_orphan_mech", f"ref:{node.id}", f"{rel}:{getattr(node, 'lineno', 0)}", "3",
+                    "reference", snip(rel, getattr(node, "lineno", 1), 1),
+                ))
+            elif isinstance(node, ast.Attribute) and node.attr in symbols:
+                rows.append(_row(
+                    "c3_orphan_mech", f"ref:{node.attr}", f"{rel}:{getattr(node, 'lineno', 0)}", "3",
+                    "reference", snip(rel, getattr(node, "lineno", 1), 1),
+                ))
+    # also keep broad text hits for comments / prose about retirement
+    for rel in files:
+        if rel.startswith(("ming_sim/", "tests/")) or rel == "web_app.py":
+            rows += text_scan(rel, C3_PAT, "c3_orphan_mech", "3")
+    return rows
+
+
+def enum_c4_population() -> list[dict]:
+    """Enumerate population-related defs/consts/calls; flag duplicate names."""
+    import subprocess
+    from collections import defaultdict
+    files = subprocess.check_output(
+        ["git", "ls-files", "ming_sim", "tests", "web_app.py"],
+        cwd=ROOT, text=True,
+    ).splitlines()
+    files = [p for p in files if p.endswith(".py")]
+    defs: dict[str, list[str]] = defaultdict(list)
+    rows: list[dict] = []
+    for rel in files:
+        tree = parse(rel)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if C4_PAT.search(node.name) or "population" in node.name.lower() or "displac" in node.name.lower() or "levy" in node.name.lower() and "transfer" in node.name.lower():
+                    loc = f"{rel}:{node.lineno}"
+                    defs[node.name].append(loc)
+                    rows.append(_row(
+                        "c4_pop_parallel", f"def:{node.name}", loc, "4",
+                        "definition", snip(rel, node.lineno, 2),
+                    ))
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, ast.Name) and C4_PAT.search(t.id):
+                        loc = f"{rel}:{node.lineno}"
+                        defs[t.id].append(loc)
+                        rows.append(_row(
+                            "c4_pop_parallel", f"const:{t.id}", loc, "4",
+                            "definition", snip(rel, node.lineno, 1),
+                        ))
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if C4_PAT.search(node.func.attr):
+                    rows.append(_row(
+                        "c4_pop_parallel", f"call:{node.func.attr}", f"{rel}:{node.lineno}", "4",
+                        "call", snip(rel, node.lineno, 1),
+                    ))
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if C4_PAT.search(node.func.id):
+                    rows.append(_row(
+                        "c4_pop_parallel", f"call:{node.func.id}", f"{rel}:{node.lineno}", "4",
+                        "call", snip(rel, node.lineno, 1),
+                    ))
+        rows += text_scan(rel, C4_PAT, "c4_pop_parallel", "4")
+    for name, locs in defs.items():
+        if len(locs) > 1:
+            for loc in locs:
+                rows.append(_row(
+                    "c4_pop_parallel", f"dup:{name}", loc, "4",
+                    f"duplicate_defs:{len(locs)}", ";".join(locs)[:220],
+                ))
+    return rows
+
+
+def _const_strs(node: ast.AST) -> list[str]:
+    out = []
+    for n in ast.walk(node):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            out.append(n.value)
+    return out
+
+
+def enum_c6_ast() -> list[dict]:
+    """AST: ALL Python test assert / raises(match=) / string Compare;
+    ALL Web expect toBe/toEqual/toContain/toMatch/getBy* with string args.
+    Inclusion is not narrowed by Han length or field names — every string
+    lock candidate is emitted; detail tags only aid disposition.
+    """
+    import subprocess
+    rows: list[dict] = []
+
+    def _tag(s: str) -> str:
+        if MACHINEISH.match(s) or s in {"", "off", "on", "true", "false"}:
+            return "machine"
+        if UI_CHROME.search(s):
+            return "ui_chrome"
+        if HAN.search(s):
+            return "han"
+        return "other"
+
+    py_files = subprocess.check_output(
+        ["git", "ls-files", "tests"], cwd=ROOT, text=True,
+    ).splitlines()
+    py_files = [p_ for p_ in py_files if p_.endswith(".py")]
+    for rel in py_files:
+        tree = parse(rel)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assert):
+                strs = _const_strs(node.test)
+                if not strs:
+                    continue
+                tags = sorted({_tag(s) for s in strs})
+                detail = "assert|" + "+".join(tags)
+                rows.append(_row(
+                    "c6_string_lock", detail, f"{rel}:{node.lineno}", "6", detail,
+                    snip(rel, node.lineno, 1) + " :: " + "|".join(strs)[:120],
+                ))
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "raises"
+            ):
+                for kw in node.keywords:
+                    if kw.arg == "match":
+                        strs = _const_strs(kw.value)
+                        if not strs:
+                            continue
+                        s = strs[0]
+                        detail = "raises_match|" + _tag(s)
+                        rows.append(_row(
+                            "c6_string_lock", detail, f"{rel}:{node.lineno}", "6",
+                            detail, snip(rel, node.lineno, 1) + " :: " + s[:120],
+                        ))
+            elif isinstance(node, ast.Compare):
+                strs = _const_strs(node)
+                if not strs:
+                    continue
+                ops_ok = any(
+                    isinstance(op, (ast.Eq, ast.NotEq, ast.In, ast.NotIn))
+                    for op in node.ops
+                )
+                if not ops_ok:
+                    continue
+                tags = sorted({_tag(s) for s in strs})
+                detail = "compare|" + "+".join(tags)
+                rows.append(_row(
+                    "c6_string_lock", detail, f"{rel}:{getattr(node, 'lineno', 0)}", "6",
+                    detail,
+                    snip(rel, getattr(node, "lineno", 1), 1) + " :: " + "|".join(strs)[:120],
+                ))
+    web = subprocess.check_output(
+        ["git", "ls-files", "web/src"], cwd=ROOT, text=True,
+    ).splitlines()
+    web = [
+        p_
+        for p_ in web
+        if p_.endswith((".ts", ".tsx"))
+        and ("test" in p_ or p_.endswith(".test.ts") or p_.endswith(".test.tsx"))
+    ]
+    web_pat = re.compile(
+        r"(?:expect\([^\n]*\)\.(?:toBe|toEqual|toContain|toMatch|not\.toContain|not\.toBe)|"
+        r"getByText|getByRole|getByLabelText|findByText)"
+        r"\(\s*(['\"`])((?:\\.|(?!\1).)*)\1"
+    )
+    for rel in web:
+        text = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
+        for i, line in enumerate(text.splitlines(), 1):
+            if C6_STRUCT.search(line):
+                rows.append(_row(
+                    "c6_string_lock", "struct_scroll_or_aria", f"{rel}:{i}", "6",
+                    "struct_scroll_or_aria", line.strip()[:220],
+                ))
+            for m in web_pat.finditer(line):
+                s = m.group(2)
+                detail = "web_expect|" + _tag(s)
+                rows.append(_row(
+                    "c6_string_lock", detail, f"{rel}:{i}", "6",
+                    detail, line.strip()[:220] + " :: " + s[:80],
+                ))
+    return rows
 
 
 def enum_text_classes() -> list[dict]:
     rows: list[dict] = []
     files = git_py_files()
-    # also web ts/tsx under git
-    import subprocess
-    web = subprocess.check_output(
-        ["git", "ls-files", "web/src", "tests"],
-        cwd=ROOT, text=True,
-    ).splitlines()
-    web = [p for p in web if p.endswith((".ts", ".tsx", ".py"))]
     for rel in files:
         if rel.startswith("ming_sim/") or rel.startswith("tests/") or rel == "web_app.py":
             rows += text_scan(rel, C1_PAT, "c1_fiscal_retired", "1")
-            rows += text_scan(rel, C3_PAT, "c3_orphan_mech", "3")
-            rows += text_scan(rel, C4_PAT, "c4_pop_parallel", "4")
             rows += text_scan(rel, C5_PAT, "c5_affair_close", "5")
-            if rel.startswith("tests/"):
-                rows += text_scan(rel, C6_PROSE_PY, "c6_prose_lock", "6")
-                rows += text_scan(rel, C6_STRUCT, "c6_struct_contract", "6")
-    for rel in web:
-        if rel.endswith((".ts", ".tsx")):
-            rows += text_scan(rel, C6_PROSE_TS, "c6_prose_lock", "6")
-            rows += text_scan(rel, C6_STRUCT, "c6_struct_contract", "6")
-        if rel.startswith("tests/"):
-            rows += text_scan(rel, C6_PROSE_PY, "c6_prose_lock", "6")
-            rows += text_scan(rel, C6_STRUCT, "c6_struct_contract", "6")
+    rows += enum_c3_defs_and_refs()
+    rows += enum_c4_population()
+    rows += enum_c6_ast()
     return rows
 
 
@@ -413,15 +648,19 @@ def main() -> int:
         rows = [r for r in rows if r["lane"] in {
             "c2_sql_leak_candidate", "c2_forward",
             "c1_fiscal_retired", "c3_orphan_mech", "c4_pop_parallel",
-            "c5_affair_close", "c6_prose_lock",
+            "c5_affair_close", "c6_string_lock",
         }]
 
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=FIELDS, delimiter="\t", lineterminator="\n", extrasaction="ignore")
     w.writeheader()
     for r in rows:
+        for k, v in list(r.items()):
+            if isinstance(v, str):
+                r[k] = v.rstrip()
         w.writerow(r)
-    text = buf.getvalue()
+    lines = [line.rstrip() for line in buf.getvalue().splitlines()]
+    text = "\n".join(lines) + "\n"
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
         # summary to stderr

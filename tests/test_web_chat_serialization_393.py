@@ -102,11 +102,23 @@ class _RecordingDB:
     def agno_runs_length(self, session_id: str) -> int:
         return 0
 
+    @property
+    def reign(self):
+        # Store 迁位后生产读 db.reign.agno_runs_length；轻壳自指。
+        return self
+
     def capture_chat_rollback_snapshot(self):
         return {}
 
     def create_chat_turn(self, state, minister_name, agno_session_id, agno_runs_before):
         return 7
+
+    @property
+    def chat_messages(self):
+        return self
+
+    def insert(self, *, minister_name, turn, role, content, knowledge_status="held", **_k):
+        return self.append_chat_message(minister_name, turn, role, content)
 
     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
         if role == "minister" and self.settlement_holding.is_set():
@@ -161,10 +173,6 @@ class _RecordingDB:
     def list_pending_actions(self, turn, *a, **k):
         # #1716：_chat_payload 经 pending_directive_count 读此口；轻壳无拟旨暂存
         return []
-
-    @property
-    def chat_messages(self):
-        return self
 
     def history_by_minister(self):
         out: dict[str, list] = {}

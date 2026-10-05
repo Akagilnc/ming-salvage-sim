@@ -69,7 +69,8 @@ def _start_generating_turn(db, state, minister, question):
     _night_id, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=0,
     )
-    mid = db.append_chat_message(minister, state.turn, "user", question)
+    mid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="user", content=question)
+    db.conn.commit()
     db.reign.update_chat_turn_messages(ct, user_message_id=mid)
     return ct
 
@@ -79,9 +80,11 @@ def _land_full_turn(db, state, minister, question, answer):
     _night_id, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=0,
     )
-    uid = db.append_chat_message(minister, state.turn, "user", question)
+    uid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="user", content=question)
+    db.conn.commit()
     db.reign.update_chat_turn_messages(ct, user_message_id=uid)
-    mid = db.append_chat_message(minister, state.turn, "minister", answer)
+    mid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="minister", content=answer)
+    db.conn.commit()
     db.reign.update_chat_turn_messages(ct, minister_message_id=mid)
     db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (ct,))
     db.conn.commit()
@@ -577,7 +580,8 @@ def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     _nid, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=1,
     )
-    mid = db.append_chat_message(minister, state.turn, "user", "剿抚孰先？")
+    mid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="user", content="剿抚孰先？")
+    db.conn.commit()
     db.reign.update_chat_turn_messages(ct, user_message_id=mid)
     assert db.reign.agno_runs_length("sess") == 2
 
@@ -694,7 +698,8 @@ def test_reconcile_blob_baseline_drops_table_only_new_run(restore_env):
     _nid, ct = open_hall_turn(
         db, state, minister, agno_session_id="sess", agno_runs_before=2,
     )
-    mid = db.append_chat_message(minister, state.turn, "user", "剿抚孰先？")
+    mid = db.chat_messages.insert(minister_name=minister, turn=state.turn, role="user", content="剿抚孰先？")
+    db.conn.commit()
     db.reign.update_chat_turn_messages(ct, user_message_id=mid)
 
     db.reconcile_interrupted_chat_turns()

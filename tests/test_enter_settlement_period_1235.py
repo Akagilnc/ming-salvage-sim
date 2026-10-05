@@ -523,13 +523,13 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
     done = threading.Event()
     err: list = []
 
-    orig_clear = game.db.clear_month_open_snapshot
+    orig_delete = game.db.month_open_snapshots.delete
 
     def _wrapped_clear(t):
         held["cleared_under_gate"] = gate.locked()
-        return orig_clear(t)
+        return orig_delete(t)
 
-    game.db.clear_month_open_snapshot = _wrapped_clear  # type: ignore[method-assign]
+    game.db.month_open_snapshots.delete = _wrapped_clear  # type: ignore[method-assign]
 
     def _peer_exit():
         try:
@@ -550,7 +550,7 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
         done.wait()
         t.join()
     finally:
-        game.db.clear_month_open_snapshot = orig_clear  # type: ignore[method-assign]
+        game.db.month_open_snapshots.delete = orig_delete  # type: ignore[method-assign]
         if gate.locked():
             gate.release()
 
