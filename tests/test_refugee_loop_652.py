@@ -18,7 +18,7 @@ from ming_sim.constants import (
     RECOVERY_OUTCOME_FACTORS,
     RECOVERY_PERSONS_PER_WAN,
 )
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
 

@@ -72,11 +72,6 @@ from ming_sim.token_stats import tlog
 
 logger = logging.getLogger(__name__)
 
-# ADR 0088 / #648：人口存储单位口径。content 与存档统一「人」（与 armies.manpower
-# 同刻度）。#1847/#1812：无标→万人旧档兼容退役；新档仍落「人」标供接续。
-POPULATION_UNIT_PERSONS = "人"
-_POPULATION_UNIT_KEY = "population_unit"
-
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
 # create_armies_from_extraction 的内循环每项重算同一常量集合，cmr PR2 R1 gemini perf）。
 _REGION_DIRECT_TUPLE = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
@@ -2337,15 +2332,6 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # #648：存档级持久元数据；新档人口单位标「人」落此。
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS save_meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-            """
-        )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "
             "ON decree_dossiers(executor_kind, executor_id, status)"
@@ -3118,18 +3104,6 @@ class GameDB:
             ),
         )
 
-    @property
-    def population_unit(self) -> str:
-        """本档人口存储单位口径：统一「人」（#1847 退役无标万人 legacy）。"""
-        return POPULATION_UNIT_PERSONS
-
-    def _mark_population_unit_persons(self) -> None:
-        """新档 classes 首次 seed 时落持久人口单位标「人」（commit 由 seed_static_data 末尾统一提交）。"""
-        self.conn.execute(
-            "INSERT OR REPLACE INTO save_meta (key, value) VALUES (?, ?)",
-            (_POPULATION_UNIT_KEY, POPULATION_UNIT_PERSONS),
-        )
-
     def seed_static_data(self) -> None:
         self._ensure_office_type_parents()
 
@@ -3215,8 +3189,6 @@ class GameDB:
                     (faction.name, faction.satisfaction, faction.leverage, faction.agenda),
                 )
         if not self.table_has_rows("classes"):
-            # ADR 0088/#648：classes 首次 seed = 新档 cutover 点，落持久人口单位标「人」。
-            self._mark_population_unit_persons()
             for cls in self.content.classes.values():
                 self.conn.execute(
                     """

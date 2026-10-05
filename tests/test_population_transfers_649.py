@@ -16,7 +16,7 @@ import os
 
 import pytest
 
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.db import GameDB
 from ming_sim.issues import apply_score_extraction
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
@@ -278,21 +278,6 @@ def test_unknown_top_level_key_now_per_section_rejection_not_abort(game):
     assert shape_rej, "未知顶层 key 必须按段拒收留痕"
     assert shape_rej[0]["rejected"] is True
     assert applied["metric_delta"].get("民心") == 1  # 其余 section 照落，不整份退
-
-
-
-
-def test_new_save_unit_is_persons(game):
-    db, state, content = game
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=1, reason="灾害"),
-        ],
-    }, content, None)
-    assert applied["population_transfers"][0]["population_unit"] == POPULATION_UNIT_PERSONS
-
-
-
 
 
 

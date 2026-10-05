@@ -1530,7 +1530,6 @@ def _apply_population_transfers(
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
     items = transfers if isinstance(transfers, list) else []
-    population_unit = db.population_unit
     for item in items:
         if not isinstance(item, dict):
             rejected.append({
@@ -1678,8 +1677,6 @@ def _apply_population_transfers(
             # #649 F2（判词）：省名随 applied 记录入摘要——applied 记录省名
             # 而非裸 region_id；真源＝既有 regions 表，不另建映射。
             "region_name": region_name,
-            # 落档口径随存档持久标（F3）：下游对账以此为唯一单位解释。
-            "population_unit": population_unit,
         })
     if commit:
         db.conn.commit()

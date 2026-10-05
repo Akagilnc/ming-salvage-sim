@@ -6844,7 +6844,6 @@ def _apply_bandit_absorptions(
             "actual_count": actual,
             "strength_delta": strength_delta,
             "origin_ref": origin_ref,
-            "population_unit": db.population_unit,
         }
         if strength_delta > 0:
             power_changes.extend(db.apply_power_deltas(
