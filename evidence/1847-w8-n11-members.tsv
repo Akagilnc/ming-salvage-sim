@@ -1,0 +1,20 @@
+symbol	disposition	reason	hits
+_migrate_legacy_reaction_severity	DELETE	旧 severity 形状兼容；仅开库自调用+专属测试	0 after fix
+_migrate_reaction_value	DELETE	仅被 legacy severity 迁移调用	0 after fix
+_backfill_proposed_appointment_break_ranks	DELETE	pre-#562 旧案回填；新写入已产 break_rank	0 after fix
+compose_decree_validation_recovery	DELETE	定义无生产调用方	0 after fix
+decree_validation_failure	DELETE	ChatTurnResult/web 空投影；无赋值无前端消费者	0 after fix
+test_existing_proposed_appointment_dossier_gets_one_time_break_rank_backfill	DELETE	专属维护回填残余	deleted
+test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently	DELETE	专属维护旧 severity 迁移	deleted
+_migrate_building_logs_to_durable_audit	KEEP	现役开库 schema 审计升级；非本轮点名旧兼容闭包且仍服务新开库路径	open-hook+def
+_backfill_salary_rate	KEEP	募兵/军饷基线仍依赖；army_pay 文档引用	open-hook+shared
+_migrate_arrears_unit_to_silver	KEEP	财政单位真源升级；新档开库仍走	open-hook+def
+_migrate_character_location_aliases	KEEP	人物地点别名现役	open-hook
+_migrate_next_audience_todos_drop_issue_fk	KEEP	案头 schema 现役	open-hook
+_backfill_person_core_character_static_fields	KEEP	person_write_inventory 现役真源引用	open-hook+inventory
+_migrate_character_identity_seed	KEEP	person_write_inventory 现役	open-hook+inventory
+_backfill_bandit_power_split	KEEP	person_write_inventory 现役	open-hook+inventory
+_backfill_event_triggers_from_event_pool_issues	KEEP	事件池触发现役	open-hook
+_migrate_offsets_to_float_precision	KEEP	偏移精度现役	open-hook
+_migrate_missing_fiscal_engine_from_pay_source_cutover	KEEP	财政引擎 cutover 现役	open-hook
+_backfill_healed_participant_refs	KEEP	cli_backend 现役调用 :2564	live caller

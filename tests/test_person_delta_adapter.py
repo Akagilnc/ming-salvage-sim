@@ -925,6 +925,10 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
         content.characters[old_holder].office = target_office
         content.characters[old_holder].office_type = "地方"
         content.characters[old_holder].office_region = "shaanxi"
+        before_reason = db.conn.execute(
+            "SELECT reason_code FROM characters WHERE name=?",
+            (old_holder,),
+        ).fetchone()["reason_code"]
 
         applied = issues.apply_score_extraction(
             db,
@@ -953,7 +957,7 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
             "status": "active",
             "office": target_office,
             "office_type": "地方",
-            "reason_code": old_row["reason_code"],
+            "reason_code": before_reason,
         }
         assert content.characters[old_holder].office == target_office
         assert applied["applied_person_changes"] == [

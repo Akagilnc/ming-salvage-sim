@@ -364,9 +364,9 @@ _AGY_AUTH_MARKERS = ("Authentication required", "authentication timed out")
 class _CliProcessOutcome:
     """子进程收尾事实（退出码 / stderr 诊断 / stdin 写错），由增量读循环回填。
 
-    Soft-terminate failure propagates via raise / body_err.add_note and is
-    appended to stderr as ``[soft terminate failed: ...]`` — no parallel
-    unused ``cleanup_error`` field (#1847 T2).
+    Soft-terminate failure is raised to the caller (cause-chained with any
+    in-flight body error) and mirrored on stderr as
+    ``[soft terminate failed: ...]`` — no parallel unused field (#1847 N13).
     """
 
     returncode: Optional[int] = None
@@ -558,10 +558,12 @@ def _iter_cli_process_lines(
             ).lstrip("\n")
         result.returncode = proc.poll()
         if cleanup_err is not None:
+            # Composite cleanup must reach transport consumers as the raised
+            # error (PEP 3134 cause chain). Notes on the idle alone are not
+            # str(error) and get washed by a later successful retry (#1847 N13).
             if body_err is not None:
-                body_err.add_note(f"soft terminate also failed: {cleanup_err!r}")
-            else:
-                raise cleanup_err
+                raise cleanup_err from body_err
+            raise cleanup_err
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
     if reasoning_strength is None:
@@ -1889,54 +1891,6 @@ def compose_unknown_participant_inworld_report(
         prompt,
         llm_config=llm_config,
         tag="participant_escalate_report",
-    )
-
-
-def compose_decree_validation_recovery(
-    failed_fields: Optional[List[str]] = None,
-    *,
-    speaker_name: str = "",
-    speaker_role: str = "",
-    emperor_words: str = "",
-    prior_output: str = "",
-    llm_config: Any = None,
-) -> str:
-    """Turn typed decree rejection facts into a player-facing retry cue via the LLM.
-
-    #1765：接皇帝原话与原产出；零形式约束（禁句数/句式硬限，ADR 0033）。
-    speaker_role：接 minister_speaker_role 客观档料；不在此复制人物/党派材料。
-    """
-    field_groups = {
-        "银两数目": {"amount"},
-        "款项来源": {"account"},
-        "用途": {"purpose"},
-        "旨意正文": {"text", "body", "decree_text"},
-        "所指对象": {"target_kind", "target_id"},
-        "所指地域": {"region_id", "locality_scope"},
-        "承办人": {"assignee", "assignee_id", "assignee_name"},
-        "拨付节奏": {"cadence"},
-        "办理方式": {"action_type", "dossier_action_type", "transaction_category"},
-    }
-    failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
-    features = [label for label, keys in field_groups.items() if failed & keys]
-    feature = "、".join(features) if features else "旨意所指对象或必需内容"
-    role = str(speaker_role or "").strip()
-    if not role:
-        name = str(speaker_name or "").strip()
-        role = name or "大臣"
-    prompt = (
-        f"你是{role}。一份拟旨在记录前校验未通过，"
-        f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
-        "补充或改说所需信息后重拟。"
-    )
-    emperor = str(emperor_words or "")
-    if emperor:
-        prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "")
-    if prior:
-        prompt += f"\n【原产出】{prior}"
-    return _compose_inworld_fact_report(
-        prompt, llm_config=llm_config, tag="decree_validation_recovery",
     )
 
 

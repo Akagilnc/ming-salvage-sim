@@ -165,8 +165,6 @@ class ChatTurnResult:
     pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
     # #502 AC5：多道并存时口头准驳含糊 → 结构化含糊态（含候选集），驱动大臣当场追问哪一道。
     directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
-    # Typed decree validation recovery (failed_fields + LLM report); sync/retry must project it.
-    decree_validation_failure: Optional[Dict[str, Any]] = None
     # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
     # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
     pending_audience_translation: Optional[Dict[str, Any]] = None
@@ -1002,19 +1000,13 @@ class GameSession:
 
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
-        """#526：同步识别收夜/留侍/含糊口令。纯封闭集匹配，无 Future/宽降级。"""
+        """#526：同步识别高置信收夜口令。纯封闭集匹配，无 Future/宽降级。"""
         from ming_sim.audience_night import (
             normalize_audience_command_verdict,
             recognize_audience_command,
         )
 
         return normalize_audience_command_verdict(recognize_audience_command(message))
-
-
-    @staticmethod
-    def _ambiguous_close_confirm_cue() -> str:
-        """含糊收夜：界面固定确认话语（P7 UI 固定话语，不改写 LLM 答文）。"""
-        return "陛下是要退朝么？"
 
     def close_night_after_chat_if_needed(
         self,
@@ -1140,10 +1132,8 @@ class GameSession:
         - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
         """
         from ming_sim.audience_night import (
-            CMD_AMBIGUOUS_CLOSE,
             CMD_CLOSE_NIGHT,
             CMD_NONE,
-            CMD_STAY_ATTEND,
             SCENE_CHAT_SPEAKER,
             close_night,
             ensure_open_night_for_audience,
@@ -1168,42 +1158,13 @@ class GameSession:
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
 
-        # 收夜 / 留侍口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
+        # 高置信收夜口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
         # - 退朝：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收
-        # - 留侍：复用 stay_attend_in_audience 权威写缝（锚=minister_name 或夜主角）
-        # - 含糊收夜：回确认 cue，不收夜
+        # （#1812：留下听着／今日就到这里吧 交普通场景与转译，不再代码旁路）
         audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
         if audience_command_verdict and audience_command_verdict != CMD_NONE:
             ctid = int(chat_turn_id or 0)
-            if audience_command_verdict == CMD_AMBIGUOUS_CLOSE:
-                if ctid > 0:
-                    self._mark_control_turn_translation_done(ctid)
-                result.answer = GameSession._ambiguous_close_confirm_cue()
-                return result
-            if audience_command_verdict == CMD_STAY_ATTEND:
-                from ming_sim.audience_night import (
-                    get_night_protagonist,
-                    stay_attend_in_audience,
-                )
-                named = str(minister_name or "").strip()
-                anchor = (
-                    named if named and named != SCENE_CHAT_SPEAKER
-                    else get_night_protagonist(self.db, night_id)
-                )
-                if anchor:
-                    stay_id = stay_attend_in_audience(
-                        self.db, anchor,
-                        night_id=night_id,
-                        origin_chat_turn_id=ctid,
-                    )
-                else:
-                    stay_id = None
-                if ctid > 0:
-                    self._mark_control_turn_translation_done(ctid)
-                if stay_id is not None:
-                    result.court_action = "stay_attend"
-                return result
             if audience_command_verdict == CMD_CLOSE_NIGHT:
                 # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
                 # ctid==0 的当场收夜分支随同步转译一并删除。

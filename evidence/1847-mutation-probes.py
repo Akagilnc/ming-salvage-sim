@@ -253,9 +253,11 @@ ok(
     "",
 )
 ok(
-    "N6_NO_AMBIGUOUS_CLOSE_ANSWER_REWRITE",
+    "N15_NO_REVOKED_AMBIGUOUS_CLOSE_BYPASS",
     "_ensure_close_night_confirm_cue" not in (ROOT / "ming_sim/session.py").read_text(encoding="utf-8")
-    and "_ambiguous_close_confirm_cue" in (ROOT / "ming_sim/session.py").read_text(encoding="utf-8"),
+    and "_ambiguous_close_confirm_cue" not in (ROOT / "ming_sim/session.py").read_text(encoding="utf-8")
+    and "AMBIGUOUS_CLOSE_COMMANDS" not in (ROOT / "ming_sim/constants.py").read_text(encoding="utf-8")
+    and "STAY_ATTEND_COMMANDS" not in (ROOT / "ming_sim/constants.py").read_text(encoding="utf-8"),
     "",
 )
 src_mf = (ROOT / "web/src/components/ministerFilters.ts").read_text(encoding="utf-8")
