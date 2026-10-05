@@ -75,59 +75,6 @@ def minister_speaker_role(
 
 
 
-def _persist_appointment_summon(
-    session: Any,
-    pending_id: int,
-    person_name: str,
-    *,
-    promote_payload: bool,
-    origin_chat_turn_id: int = 0,
-    night_id: int = 0,
-    source_chat_turn_id: int = 0,
-) -> None:
-    """Persist the dossier flag and its inactive origin as one staging unit.
-
-    Shared success tail for new stage, same-person dedupe, and mode/tenure merge.
-    Ledger person_names use the same roster/alias canonical key as 0009 applier.
-
-    传召账只沿持久源夜、源轮承接；缺源夜不猜当前开夜。
-    """
-    from ming_sim.applier import atomic
-    from ming_sim.audience_night import ensure_inactive_office_summon
-    from ming_sim.session import _canonical_minister_key
-
-    # Exact-name summon projections (commit/启程/origin) require the roster key;
-    # raw extractor aliases must not land in inactive office:<pending_id> ledger.
-    person_name = _canonical_minister_key(
-        getattr(session, "content", None), str(person_name or "").strip(), session.db,
-    )
-    pinned_night = int(night_id or 0)
-    source = int(source_chat_turn_id or 0)
-    origin = source if source > 0 else int(origin_chat_turn_id or 0)
-    with atomic(session.db):
-        if promote_payload:
-            row = session.db.conn.execute(
-                "SELECT payload_json FROM pending_actions WHERE id=?",
-                (int(pending_id),),
-            ).fetchone()
-            if row is None:
-                raise ValueError("任命后传召所关联的暂存任命不存在")
-            stored = json.loads(row["payload_json"] or "{}")
-            stored["summon_after"] = "是"
-            session.db.conn.execute(
-                "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                (json.dumps(stored, ensure_ascii=False), int(pending_id)),
-            )
-        ensure_inactive_office_summon(
-            session.db, pending_id, person_name,
-            night_id=pinned_night,
-            origin_chat_turn_id=origin,
-            source_chat_turn_id=source,
-            order_key=_chat_turn_night_seq(session.db, source),
-        )
-
-
-
 def _same_direction_office_hits(
     db: Any,
     turn: int,
@@ -168,9 +115,6 @@ def _apply_existing_appointment_hit(
     region_id: str = "",
     minister_name: str = "",
     turn: int = 0,
-    person_name: str = "",
-    summon_after: bool = False,
-    origin_chat_turn_id: int = 0,
     annotate: bool = False,
     recommendation_fields: Optional[Dict[str, Any]] = None,
     night_id: int = 0,
@@ -180,7 +124,7 @@ def _apply_existing_appointment_hit(
 
     mode 唯一规则 resolve_directive_mode(extracted→existing→ordinary)；
     调用方只传原始 extracted_mode，禁止各出口自行预过滤/只升不降。
-    tenure / region_id 等字段标记原样补写。summon_after 与 annotate 同原子。
+    tenure / region_id 等字段标记原样补写。
 
     ``night_id`` / ``source_chat_turn_id``：ADR 0038 迟到转译的源夜与源轮，一路
     传到既有候选更新写口。既有候选的归属同样按源夜承接，不退回「当前开着的夜」。
@@ -225,16 +169,6 @@ def _apply_existing_appointment_hit(
             session.db.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
                 (json.dumps(stored, ensure_ascii=False), resolved),
-            )
-        if summon_after and person_name:
-            _persist_appointment_summon(
-                session,
-                resolved,
-                person_name,
-                promote_payload=True,
-                origin_chat_turn_id=int(origin_chat_turn_id or 0),
-                night_id=int(night_id or 0),
-                source_chat_turn_id=int(source_chat_turn_id or 0),
             )
         return resolved
 
@@ -2306,10 +2240,6 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("office", "官职", None, "", max_len=40),
                 # Local/督抚/边镇 seat jurisdiction (typed region_id); not 行止.
                 FieldSpec("region_id", "任所", None, "", max_len=40),
-                FieldSpec(
-                    "summon_after", "任命后传召",
-                    frozenset({"是", "否"}), "否",
-                ),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",

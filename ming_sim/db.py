@@ -15502,28 +15502,6 @@ class GameDB:
                     )
                     if not office_changes:
                         raise ValueError("任免案卷载荷物化失败")
-                    if (
-                        pa["action"] == "任命"
-                        and str(payload.get("summon_after") or "否") == "是"
-                    ):
-                        from ming_sim.audience_night import activate_office_summon
-                        entry = activate_office_summon(self, int(pa["id"]))
-                        if entry is None:
-                            raise ValueError("任命后传召缺原始故事账")
-                        # Activate only here; #670 consumes once per night/person
-                        # after the batch (apply_dossier_verdicts) or at the end of
-                        # this single promulgation when not deferred.
-                        nights = getattr(self.conn, "_deferred_office_summon_nights", None)
-                        if nights is not None:
-                            nights.add(int(entry["night_id"]))
-                        else:
-                            from ming_sim.audience_night import (
-                                commit_fresh_summons_for_night,
-                            )
-                            commit_fresh_summons_for_night(
-                                self, state, int(entry["night_id"]),
-                                content=content,
-                            )
                 finally:
                     self.conn._materializing_dossier_id = previous_materializing
             elif row["action_type"] == "grant_allocation":
@@ -17076,13 +17054,9 @@ class GameDB:
         # both SQLite and the caller's in-memory GameState.
         from ming_sim.decree import atomic_and_reload
 
-        # Defer #670 fresh-summon consumption until every office origin in this
-        # batch has been activated — one departure write per person/night.
-        previous_summon_nights = getattr(self.conn, "_deferred_office_summon_nights", None)
         previous_reco_prevalidated = getattr(
             self.conn, "_recommendation_snapshots_prevalidated", False,
         )
-        self.conn._deferred_office_summon_nights = set()
         self.conn._recommendation_snapshots_prevalidated = True
         try:
             with atomic_and_reload(self, state, content=content):
@@ -17104,14 +17078,6 @@ class GameDB:
                     self._record_dossier_verdict_metadata(
                         state, strict_int(verdict.get("dossier_id")), verdict,
                     )
-                summon_nights = set(getattr(self.conn, "_deferred_office_summon_nights", set()) or set())
-                if summon_nights:
-                    from ming_sim.audience_night import commit_fresh_summons_for_night
-                    for night_id in sorted(summon_nights):
-                        commit_fresh_summons_for_night(
-                            self, state, int(night_id),
-                            content=content,
-                        )
                 # Consumption belongs to the same atomic unit as effect application;
                 # an outer settlement rollback restores both effects and this batch.
                 self.conn.execute(
@@ -17119,11 +17085,6 @@ class GameDB:
                 )
         finally:
             self.conn._recommendation_snapshots_prevalidated = previous_reco_prevalidated
-            if previous_summon_nights is None:
-                if hasattr(self.conn, "_deferred_office_summon_nights"):
-                    delattr(self.conn, "_deferred_office_summon_nights")
-            else:
-                self.conn._deferred_office_summon_nights = previous_summon_nights
 
     def interrupt_dossiers_for_character(
         self, state: GameState, character_name: str, reason: str, *,
@@ -18482,7 +18443,7 @@ class GameDB:
             "name": name, "office": office, "appoint_action": action,
         }
         for key in (
-            "appointment_tenure", "任别", "faction", "summon_after",
+            "appointment_tenure", "任别", "faction",
             "text", "affair_id", "region_id", "endorsements", "reason", "recommendation",
         ):
             value = payload.get(key)
@@ -18795,9 +18756,6 @@ class GameDB:
                 self._discard_pending_decree_forecast(
                     action_id, int(row["version"] or 1),
                 )
-            if str(row["kind"] or "") == "office":
-                from ming_sim.audience_night import discard_inactive_office_summon
-                discard_inactive_office_summon(self, action_id)
             self.conn.execute(
                 "UPDATE pending_actions SET status='voided', night_approved=0 "
                 "WHERE id=? AND status='pending'",
@@ -18835,8 +18793,7 @@ class GameDB:
 
     def withdraw_pending_action(self, action_id: int, turn: int) -> bool:
         """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。
-        已 committed / 非本回合 / 不存在 → False。
-        仍 inactive 的 office:<id> 传召 origin 同步清掉（#672 颁前反悔）。"""
+        已 committed / 非本回合 / 不存在 → False。"""
         owns_transaction = not (
             bool(getattr(self.conn, "_commit_suspended", False))
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
@@ -18857,9 +18814,6 @@ class GameDB:
             "DELETE FROM pending_actions WHERE id=? AND turn=? AND status='pending'",
             (int(action_id), int(turn)),
         )
-        if cur.rowcount > 0 and str(row["kind"] or "") == "office":
-            from ming_sim.audience_night import discard_inactive_office_summon
-            discard_inactive_office_summon(self, int(action_id))
         if owns_transaction:
             self.conn.commit()
         return cur.rowcount > 0
@@ -18902,8 +18856,7 @@ class GameDB:
         返回删除条数。只动该大臣、只动 pending(已 committed 不动)。
         action_ids 非空=进一步只删指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）。
         kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
-        是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。
-        仍 inactive 的 office:<id> 传召 origin 随 pending 同步清（#672 颁前拒绝）。"""
+        是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。"""
         owns_transaction = not (
             bool(getattr(self.conn, "_commit_suspended", False))
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
@@ -18921,13 +18874,6 @@ class GameDB:
         if kind_filter_exclude is not None:
             where += " AND kind<>?"
             params.append(str(kind_filter_exclude))
-        office_ids = [
-            int(row["id"])
-            for row in self.conn.execute(
-                f"SELECT id FROM pending_actions WHERE {where} AND kind='office'",
-                tuple(params),
-            ).fetchall()
-        ]
         directive_ids = [
             int(row["id"])
             for row in self.conn.execute(
@@ -18941,10 +18887,6 @@ class GameDB:
             f"DELETE FROM pending_actions WHERE {where}",
             tuple(params),
         )
-        if office_ids:
-            from ming_sim.audience_night import discard_inactive_office_summon
-            for pending_id in office_ids:
-                discard_inactive_office_summon(self, pending_id)
         if owns_transaction:
             self.conn.commit()
         return cur.rowcount
