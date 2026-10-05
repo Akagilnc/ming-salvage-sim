@@ -1,6 +1,6 @@
 F21/F22 enum commands (ACTUAL executable; one-shot AST; no permanent classifier)
 DATE=2026-10-05T02:49:33Z
-HEAD_PRE_COMMIT=PENDING_STAMP_AFTER_COMMIT
+HEAD_PRE_COMMIT=66b88fa77f5158c8f015d97480803e798283dd3e
 
 NOTE: Prior ChatTurnResult-matrix / natural-language CMD139/148/153 revoked.
 Authority = evidence/1834-f21-f22-fix/enum_cmds.sh + scripts below.

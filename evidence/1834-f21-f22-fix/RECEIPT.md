@@ -2,7 +2,7 @@
 
 HEAD_BASE: `3cb37697d87e5b8a2be2b83c8a3025232eb2ff5e`
 BRANCH: `ak-roles/1834-f21-f22-ebcd2d1a1`
-HEAD_AFTER: （commit 后回填）
+HEAD_AFTER: 
 
 ## 本轮纠正（对复核 / 必须修类）
 
