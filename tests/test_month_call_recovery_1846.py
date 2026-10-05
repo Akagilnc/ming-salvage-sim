@@ -677,11 +677,13 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     )
     real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
     calls = {"n": 0}
+    settle_error = RuntimeError("edict settle crashed")
+    pack_error = OSError("error pack unwritable")
 
     def settle_once(*args, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise RuntimeError("edict settle crashed")
+            raise settle_error
         return real_settle(*args, **kwargs)
 
     monkeypatch.setattr(
@@ -689,7 +691,7 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     )
 
     def unwritable(*_args, **_kwargs):
-        raise OSError("error pack unwritable")
+        raise pack_error
 
     monkeypatch.setattr(error_pack, "write_error_pack", unwritable)
     session = make_light_session(db, state, content)
@@ -699,15 +701,14 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
         session.resolve_turn(allow_empty_decree=True)
 
     assert caught.value.error_pack_path is None
-    # 原结算诊断保真：写包次生故障挂 cause，不得顶替 SettlementAbort / 持久 call_failure。
-    assert caught.value.args[:1] == ("edict settle crashed",)
-    assert isinstance(caught.value.__cause__, OSError)
-    assert caught.value.__cause__.args == ("error pack unwritable",)
+    # 原结算诊断保真：注入异常对象／str 作期望；写包次生挂 cause，不得顶替。
+    assert caught.value.args[:1] == settle_error.args[:1]
+    assert caught.value.__cause__ is pack_error
     assert not db.staged_declarations.is_settled(ref)
     assert _ningyuan_ledger_rows(db) == []
     failure = _month_chain_of(db, turn).get("call_failure") or {}
     assert failure.get("kind") == "code_exception"
-    assert failure.get("message") == "edict settle crashed"
+    assert failure.get("message") == str(settle_error)
     assert not failure.get("error_pack_path")
 
     session.resolve_turn(allow_empty_decree=True)

@@ -1,29 +1,39 @@
-# #1900 修内司回执 — J6 / J19（base c7d876145）
+# #1900 修内司回执 — J6 / J19（base c7d876145）复核修正
 
 ## 授权与跳过说明
-- 末份判词（`06-1900-judge-c7d876145.json` 末 payload）未结仅 J6、J19。
-- 根因判词已有取证与变异记录；本轮明确**无须猜诊断**（diagnosing-bugs Phase 3 猜因跳过，依据已有判词）。
-- 官方能力已查：pytest `ExceptionInfo` / `.args` / `__cause__`；Python exception chaining。
+- 末份判词未结仅 J6、J19；本轮复核修正 J6 变异证明与成员处置收窄。
+- 根因判词已有取证；无须猜诊断（diagnosing-bugs Phase 3 跳过）。
+- 官方能力：pytest `ExceptionInfo` / 对象身份 / `__cause__`；Python exception chaining。
 
 ## 分支 / 提交
-- 工作分支：`ak-roles/1900-j6-j19-fixer-c7d876145`（自 c7d876145 新开）
+- 工作分支：`ak-roles/1900-j6-j19-fixer-c7d876145`
 - commitSha：见本轮 git 查询（提交后填入报告）
 
-## J6
-- 枚举：`j6_enum_fault_fidelity.py` → `j6-raises-raw.jsonl` / `j6-fidelity-candidates.jsonl` / `j6-members.md`
-- 改动：三处最短负向案恢复原故障对象／诊断保真（非措辞锁）
-- 聚焦：`focused-tests-final.log` — 53 passed in ~2.8s
-- 变异：`run_mutations.py` → `mutations.log` / `mutations-summary.txt`
-  - strong+wrong-primary：3 red
-  - restore：3 green
-  - weak+wrong-primary：3 false-green（证明旧弱断言假绿）
-  - sources restored + final：3 green
+## J6 纠正（本轮）
+### 1. 变异证明（弃用旧整入口替换）
+- **弃用**：`mutations.log` / `mutations.txt` / `mutations-summary.txt`（整段替换 `minister_chat` / `atomic_and_reload`，未经过真实双故障）。
+- **有效**：`run_mutations.py` → `mutations-valid.log` / `mutations-valid-summary.txt`
+  - 方法：`inspect.getsource` + `compile`/`exec` 绑定**现役模块** `globals`；只改最终 rethrow／`original` 诊断赋值
+  - ACTUAL_DOUBLE_FAULT 已记录：
+    - CLI：`RuntimeError/LLM down` + `RuntimeError/rollback failed`
+    - 月链：`RuntimeError/edict settle crashed` + `OSError/error pack unwritable`
+    - reload：`RuntimeError/orig` + `ValueError/reload failed`
+  - strong+wrong-primary：3 red；restore：3 green；weak+wrong-primary：3 false-green；final：3 green
+
+### 2. 断言形态
+- 三案改用**注入异常对象／str** 作期望（`is` / `args` / `str(settle_error)`），不散落硬编码措辞。
+
+### 3. 成员表全类边界
+- `j6-members.md`：125 弱候选逐项语义处置（`j6-disposition.jsonl`）
+- 明确：**必要失败行为被吞**与原诊断保真同属 J6；禁止「无双故障默认 KEEP」
+- 枚举脚本改为只写 `j6-inventory.md`，不再覆盖处置表
 
 ## J19
-- 枚举：`j19-ast.jsonl` / `j19-members.md` / `j19-rescan.txt`
-- 改动：删除 `merge_participant_roster_entries` 的 `strict_incoming` 宽松开关及三处 kwargs；incoming 恒严格；保留 `_normalize_participant_roster` 通用能力与 equality 合并
-- 纠正：旧证据「供非交办旧读缝」消费者不存在；冻结 evidence 不改写
+- 前轮结清维持；本轮未重开
+
+## 聚焦测试
+见 `focused-tests-recheck.txt`（七变量前缀）
 
 ## 未结（如实）
-- J21 押解核账缺口登记：给事中／票庭，非本席补机制
+- J21 押解核账缺口：给事中／票庭
 - 不声称已 merge / 关票

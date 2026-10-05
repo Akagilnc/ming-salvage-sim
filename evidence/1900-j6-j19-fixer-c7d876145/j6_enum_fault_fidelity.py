@@ -267,40 +267,23 @@ def main() -> None:
     )
 
     lines = [
-        "# J6 原故障保真 — 全仓枚举成员表",
+        "# J6 inventory (auto) — NOT the disposition report",
         "",
-        "## 类定义（末份判词）",
-        "清理盯文、内部伪证及失效证明时，必要失败行为与原始故障保真被削弱或漏审。",
-        "按行为契约区分格式化措辞与原始异常／原始诊断的保真；不得仅凭类型、非空诊断或初始状态结清。",
-        "",
-        "## 枚举命令",
-        "```",
-        "PYTHONDONTWRITEBYTECODE=1 python3 evidence/1900-j6-j19-fixer-c7d876145/j6_enum_fault_fidelity.py",
-        "```",
+        "Human semantic disposition lives in `j6-members.md` / `j6-disposition.jsonl`.",
+        "This script only refreshes raise/fidelity inventory JSONL; it must not conclude KEEP.",
         "",
         f"- tracked test py files: {summary['test_py_files']}",
-        f"- pytest.raises sites: {summary['raises_total']}（其中 RAISES_NO_MATCH={summary['raises_no_match']}）",
+        f"- pytest.raises sites: {summary['raises_total']}（RAISES_NO_MATCH={summary['raises_no_match']}）",
         f"- secondary/async hint raises: {summary['raises_secondary_or_async_hint']}",
         f"- function-level fidelity hits: {summary['fidelity_function_hits']}",
-        f"- weak candidates for semantic review: {summary['weak_candidates']}",
+        f"- weak candidates recalled: {summary['weak_candidates']}",
         "",
-        "## 弱候选（须语义逐项；非机械全加身份断言）",
+        "Weak recall list (inventory only):",
         "",
-        "| file | line | test | tags |",
-        "|---|---|---|---|",
     ]
     for f in sorted(weak, key=lambda x: (x["file"], x["line"])):
-        lines.append(
-            f"| `{f['file']}` | {f['line']} | `{f['test']}` | {', '.join(f['tags'])} |"
-        )
-    lines += [
-        "",
-        "## 次生失败 / 持久诊断 / cause 契约抽样源",
-        "",
-        "完整 raises 清单见 `j6-raises-raw.jsonl`；函数级见 `j6-fidelity-candidates.jsonl`。",
-        "",
-    ]
-    (OUT / "j6-members.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        lines.append(f"- `{f['file']}::{f['test']}` @ {f['line']} ({', '.join(f['tags'])})")
+    (OUT / "j6-inventory.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
 
 

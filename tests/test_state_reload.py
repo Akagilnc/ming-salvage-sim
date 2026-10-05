@@ -337,18 +337,19 @@ def test_atomic_and_reload_chains_reload_failure(game, monkeypatch):
     import ming_sim.decree as decree_mod
     from ming_sim.decree import atomic_and_reload
     db, state, content = game
+    body_error = RuntimeError("orig")
+    reload_error = ValueError("reload failed")
 
     def _boom_reload(*a, **k):
-        raise ValueError("reload failed")
+        raise reload_error
     monkeypatch.setattr(decree_mod, "reload_state_from_db", _boom_reload)
 
     with pytest.raises(RuntimeError) as ei:
         with atomic_and_reload(db, state, content=content):
-            raise RuntimeError("orig")
-    # 原异常对象保真：主诊断仍是 body 故障；reload 次生故障只挂 cause。
-    assert ei.value.args == ("orig",)
-    assert isinstance(ei.value.__cause__, ValueError)
-    assert ei.value.__cause__.args == ("reload failed",)
+            raise body_error
+    # 原异常对象保真：注入异常对象作期望；reload 次生只挂 cause。
+    assert ei.value is body_error
+    assert ei.value.__cause__ is reload_error
 
 
 def test_atomic_and_reload_runs_on_error_before_reload(game, monkeypatch):

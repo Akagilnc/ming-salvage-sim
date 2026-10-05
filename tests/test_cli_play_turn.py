@@ -298,13 +298,15 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
 
 def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeypatch):
     """回滚删除失败不能盖掉原始 scene_chat/chat 异常。"""
+    chat_error = RuntimeError("LLM down")
+    rollback_error = RuntimeError("rollback failed")
 
     class Db:
         def append_chat_message(self, minister_name, turn, role, content):
             return 1
 
         def delete_chat_messages(self, message_ids):
-            raise RuntimeError("rollback failed")
+            raise rollback_error
 
     class Session:
         def __init__(self):
@@ -312,9 +314,8 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
             self.state = SimpleNamespace(turn=7)
             self.content = SimpleNamespace(characters={"魏忠贤": object(), "韩爌": object()})
 
-
         def scene_chat(self, question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
-            raise RuntimeError("LLM down")
+            raise chat_error
 
         def schedule_pending_scene_translation(self, result):
             return _cli_schedule_pending_noop(self, result)
@@ -322,14 +323,13 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    # 原故障对象保真（非措辞锁）：主异常须为 chat 故障，回滚故障只能挂 cause。
-    # 官方能力：pytest.raises + ExceptionInfo.value / __cause__ / .args
+    # 原故障对象保真：注入异常对象作期望（非散落硬编码措辞）。
+    # 官方能力：pytest.raises + ExceptionInfo.value / __cause__
     # https://docs.pytest.org/en/stable/how-to/assert.html#assertions-about-expected-exceptions
     with pytest.raises(RuntimeError) as ei:
         term.minister_chat(Session(), SimpleNamespace(name="魏忠贤"))
-    assert ei.value.args == ("LLM down",)
-    assert isinstance(ei.value.__cause__, RuntimeError)
-    assert ei.value.__cause__.args == ("rollback failed",)
+    assert ei.value is chat_error
+    assert ei.value.__cause__ is rollback_error
 
 
 def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeypatch):
