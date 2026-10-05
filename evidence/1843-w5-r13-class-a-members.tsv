@@ -1,0 +1,22 @@
+class	kind	member	disposition	reason
+F2-R13-1	prod	ming_sim/db.py fiscal dual-path gates/markers/else	DELETED	always-hub; markers unread/unwritten
+F2-R13-1	prod	ming_sim/flows.py legacy budget/shadow isolation	DELETED	hub-only budget+abort
+F2-R13-1	prod	ming_sim/displaced_population.py hub early-return	DELETED	always run levy path
+F2-R13-1	prod	ming_sim/issues.py surcharge legacy reject-all	DELETED	hub-only
+F2-R13-1	prod	ming_sim/pay_order.py legacy engine guard	DELETED	hub-only
+F2-R13-1	prod	ming_sim/person_delta_adapter old-key translators	DELETED	人物变更 only
+F2-R13-1	prod	ming_sim/issues.py legacy_person_changes/gates/report map	DELETED	exclusive old protocol
+F2-R13-1	prod	ming_sim/declaration_dispatch old-key translate	DELETED	reject non-empty retired keys
+F2-R13-1	prod	ming_sim/db.py save_meta table/mark	DELETED	orphan storage
+F2-R13-1	prod	ming_sim/flows.py+_substrate_hub_*/army_pay	RETAIN	唯一现役财政军饷核
+F2-R13-1	prod	ming_sim/db.py::population_unit	RETAIN	恒「人」现役读口
+F2-R13-1	prod	ming_sim/simulation EMPTY_EXTRACTION/ITEM_FIELD_ALIASES/_canonical/read_beyond_intent	RETAIN	C0/条目归一/beyond_intent
+F2-R13-1	prod	ming_sim/person_delta_adapter::normalize_person_changes(人物变更)	RETAIN	现役人物入口
+F2-R13-1	prod	ming_sim/db.py legacy_modifiers/insert_legacy/_income_amount_after_legacy_modifier	RETAIN	帝国修正物理核非 fiscal dual path
+F2-R13-1	prod	ming_sim/db.py::_agno_legacy_runs_blob	RETAIN	现役 Agno 合并
+F2-R13-1	prod	web_app.py::_legacy_gate_*/_humanize_legacy_gate	RETAIN	事件前提 humanize，非人事 legacy_gate
+F2-R13-1	prod	ming_sim/db.py::is_*_enabled/fiscal_engine always-True API	RETAIN	恒等现役读口，无切换
+F2-R13-1	test	legacy cutover-disable / shadow-isolation / legacy engine fixtures	DELETED	exclusive dual-path tests
+F2-R13-1	test	legacy person translate/gate/partial/power-key tests	DELETED	exclusive old protocol
+F2-R13-1	test	test_new_save_persistent_population_unit_marker	DELETED	save_meta exclusive
+F2-R13-1	test	hub/cutover behavior + new-key person + population scale	RETAIN	现役行为契约

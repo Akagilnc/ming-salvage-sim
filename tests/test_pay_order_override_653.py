@@ -642,26 +642,6 @@ def test_revoke_provincial_falls_back_to_nationwide(game):
     # 对照：河南无省域键，同读全国键
     assert resolve_pay_order_overrides(cfg, "henan", turn).due_order == after.due_order
 
-def test_legacy_engine_pay_order_materialize_fails_loud_not_fulfilled(game):
-    """Codex-10/legacy_no_consumer：legacy 引擎物化 fail-loud，案卷不得标 fulfilled。"""
-    db, state, _content = game
-    db.conn.execute(
-        "INSERT INTO fiscal_config (key, value, kind, note) "
-        "VALUES ('__fiscal_engine', 0, 'meta', 'test legacy engine') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, note=excluded.note"
-    )
-    db.conn.commit()
-    assert db.fiscal_engine() == "legacy"
-    did = _override_dossier(
-        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 40}],
-    )
-    with pytest.raises(ValueError):
-        db.apply_dossier_promulgation(state, did, "promulgated")
-    assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
-    dossier = db.get_decree_dossier(did)
-    assert dossier["status"] != "closed"
-    assert str(dossier.get("execution_outcome") or "") != "fulfilled"
-
 # ═══════════════ F3 LLM 综合归因边界 ═══════════════
 
 def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):

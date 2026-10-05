@@ -111,4 +111,3 @@ def test_qian_qianyi_seed_office_records_bajiu_dismissal():
     assert (ch.office or "") == ""
     assert ch.status == "dismissed"
     assert (ch.status_reason or "").strip()
-    assert "常熟" in (ch.status_reason or "")

@@ -101,15 +101,6 @@ def test_new_save_regions_seed_persons_scale(game):
     assert row["population"] == BEIZHILI_POP_PERSONS
 
 
-def test_new_save_persistent_population_unit_marker(game):
-    """F4：新档 DB 落持久单位标「人」；判别只读存档 DB，不读 content 元信息。"""
-    db, _, _ = game
-    assert db.population_unit == POPULATION_UNIT_PERSONS
-    row = db.conn.execute(
-        "SELECT value FROM save_meta WHERE key='population_unit'"
-    ).fetchone()
-    assert row is not None and row["value"] == POPULATION_UNIT_PERSONS
-
 
 
 # ── class_delta 写面（人口不经 class delta）──────────────────────────────────

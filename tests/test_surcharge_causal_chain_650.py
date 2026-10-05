@@ -393,38 +393,6 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
     assert _gazette_projection_body(db, state, "温体仁", second_turn) == free_body
 
 
-# ── legacy 万口径档：折算随存档单位换算，sub-万不可表达 ────────────────────────
-
-def _make_legacy_db(content, path: str) -> GameDB:
-    db = GameDB(path, content)
-    db.seed_static_data()
-    db.conn.execute("UPDATE classes SET population = population / 10000")
-    db.conn.execute("UPDATE regions SET population = population / 10000")
-    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
-    db.conn.execute("UPDATE fiscal_config SET value=0 WHERE key='__fiscal_engine'")
-    db.conn.commit()
-    return db
-
-
-@pytest.fixture
-def legacy_game(content, tmp_path):
-    db = _make_legacy_db(content, str(tmp_path / "legacy650.db"))
-    state = db.load_state()
-    yield db, state, content
-
-
-def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(legacy_game, monkeypatch):
-    db, state, content = legacy_game
-    before = _pop(db, "流民", "shaanxi")
-    applied = apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(db, state, monthly_amount=50.0)],
-    }, content, None)
-    assert not applied["surcharge_decrees"]
-    assert len(applied["surcharge_decrees_rejections"]) == 1
-    from tests.test_due_review_621 import _settle_empty_month
-    _settle_empty_month(db, state, content, monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == before
-
 
 # ── AC4/AC5：e2e 验收锚用例①前半——陕西加派→流民↑→回响；restore 接续；停加派止 ──
 

@@ -452,18 +452,10 @@ def compute_budget_lines(
     建筑＝按 condition 折产/维护；
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
     cfg = db.get_fiscal_config()
-    if db.is_substrate_hub_fiscal_engine_enabled():
-        hub_income_lines, hub_expense_lines = _substrate_hub_budget_income_lines(
-            db, state, project_missing=project_substrate_hub
-        )
-        nk_huang = 0
-    else:
-        gk_tax, nk_huang, _ = calc_province_fiscal(state, db)
-        hub_income_lines = [
-            {"name": "田赋辽饷盐商", "amount": int(gk_tax),
-             "note": "各省田赋+辽饷+盐税+商税（按腐败度/士绅阻力/民变动态折算）"}
-        ]
-        hub_expense_lines = []
+    hub_income_lines, hub_expense_lines = _substrate_hub_budget_income_lines(
+        db, state, project_missing=project_substrate_hub
+    )
+    nk_huang = 0
     # #1366 军饷预算只陈列结算前拟拨事实：京运补与中央份额分开，
     # 均不受当月国库能力或未来转运损耗影响。
     rows = db.conn.execute(
@@ -1064,122 +1056,119 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     # ── substrate hub 顶层拨付：京运补 + 中央军饷优先占用月初国库 ──
     # 军饷结算只走现役 hub；省份额由 province substrate，中央份额由 hub/outbound 承载。
-    if db.is_substrate_hub_fiscal_engine_enabled():
-        db._current_month_central_pay_shortfalls = {}
-        db._current_month_central_pay_dues = {}
-        db._current_month_pay_opening_arrears = {}
-        army_rows_raw = db.conn.execute(
-            """
-            SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,
-                   pay_source_region, province_pay_share, central_pay_share,
-                   province_pay_arrears, central_pay_arrears, is_tusi, self_funded_pay
-            FROM armies
-            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-              AND central_pay_share > 0
-            """
-        ).fetchall()
-        try:
-            for row in army_rows_raw:
-                db._validate_pay_source_values(
-                    str(row["id"]), str(row["owner_power"]), str(row["pay_source_region"]),
-                    float(row["province_pay_share"] or 0), float(row["central_pay_share"] or 0),
-                    bool(row["is_tusi"]), bool(row["self_funded_pay"]),
-                    float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
-                )
-        except ValueError as exc:
-            raise _SubstrateHubFixedFlowAbort(
-                f"substrate_hub 军饷饷源校验失败：{exc}"
-            ) from exc
-        army_map = {str(r["id"]): r for r in army_rows_raw}
-        ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
-        ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
-        central_due_by_army, central_haircut_exempt_by_army = _central_dues_with_haircut(
-            db, state, ordered,
-        )
-        try:
-            hub_outbound = _compute_substrate_hub_outbound(
-                db,
-                max(0.0, float(state.metrics.get("国库", 0) or 0)),
-                central_due_by_army,
+    db._current_month_central_pay_shortfalls = {}
+    db._current_month_central_pay_dues = {}
+    db._current_month_pay_opening_arrears = {}
+    army_rows_raw = db.conn.execute(
+        """
+        SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,
+               pay_source_region, province_pay_share, central_pay_share,
+               province_pay_arrears, central_pay_arrears, is_tusi, self_funded_pay
+        FROM armies
+        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+          AND central_pay_share > 0
+        """
+    ).fetchall()
+    try:
+        for row in army_rows_raw:
+            db._validate_pay_source_values(
+                str(row["id"]), str(row["owner_power"]), str(row["pay_source_region"]),
+                float(row["province_pay_share"] or 0), float(row["central_pay_share"] or 0),
+                bool(row["is_tusi"]), bool(row["self_funded_pay"]),
+                float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
             )
-        except ValueError as exc:
-            raise _SubstrateHubFixedFlowAbort(
-                f"substrate_hub 京运补/中央军饷 hub 分配失败：{exc}"
-            ) from exc
-        _add_fiscal_container(
-            db, "C_京运克扣", hub_outbound.central_transport_human_loss,
-            "京运转运人为克扣（可追赃）",
-        )
-        _add_fiscal_container(
-            db, "C_京运运损", hub_outbound.central_transport_sink_loss,
-            "京运转运自然运损（sink）",
-        )
-        _set_fiscal_container(
-            db, "hub_京运损耗", hub_outbound.central_transport_loss,
-            "本月京运转运损耗",
-        )
-        _set_fiscal_container(
-            db, "hub_京运实拨", hub_outbound.jingyun_paid_total,
-            "本月京运补实拨",
-        )
-        _set_fiscal_container(
-            db, "hub_中央军饷实拨", hub_outbound.central_paid_total,
-            "本月中央军饷实拨",
-        )
-        try:
-            hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
-        except RuntimeError as exc:
-            raise _SubstrateHubFixedFlowAbort(
-                f"substrate_hub 京运补/中央军饷 hub 扣账失败：{exc}"
-            ) from exc
-        if hub_debit > 0:
-            flows.append({
-                "dir": "expense",
-                "account": "国库",
-                "category": "边饷hub",
-                "needed": hub_outbound.jingyun_due_total + hub_outbound.central_due_total,
-                "paid": hub_debit,
-                "jingyun_paid": hub_outbound.jingyun_paid_total,
-                "central_paid": hub_outbound.central_paid_total,
-                "transport_loss": hub_outbound.central_transport_loss,
-                "k": hub_outbound.k,
-            })
-        if hub_outbound.central_due_total > 0:
-            flows.append({
-                "dir": "hub_outbound",
-                "account": "中央hub",
-                "category": "中央军饷",
-                "needed": hub_outbound.central_due_total,
-                "paid": hub_outbound.central_paid_total,
-                "shortfall": max(0.0, hub_outbound.central_due_total - hub_outbound.central_paid_total),
-                "jingyun_due": hub_outbound.jingyun_due_total,
-                "k": hub_outbound.k,
-                "transport_loss": hub_outbound.central_transport_loss,
-            })
-        settle_hub_central_army_pay(
+    except ValueError as exc:
+        raise _SubstrateHubFixedFlowAbort(
+            f"substrate_hub 军饷饷源校验失败：{exc}"
+        ) from exc
+    army_map = {str(r["id"]): r for r in army_rows_raw}
+    ordered = [army_map[k] for k in ARMY_SALARY_PRIORITY if k in army_map]
+    ordered += [r for r in army_rows_raw if str(r["id"]) not in ARMY_SALARY_PRIORITY]
+    central_due_by_army, central_haircut_exempt_by_army = _central_dues_with_haircut(
+        db, state, ordered,
+    )
+    try:
+        hub_outbound = _compute_substrate_hub_outbound(
             db,
-            state,
-            ordered=ordered,
-            central_due_by_army=central_due_by_army,
-            central_haircut_exempt_by_army=central_haircut_exempt_by_army,
-            hub_outbound=hub_outbound,
-            flows=flows,
+            max(0.0, float(state.metrics.get("国库", 0) or 0)),
+            central_due_by_army,
         )
+    except ValueError as exc:
+        raise _SubstrateHubFixedFlowAbort(
+            f"substrate_hub 京运补/中央军饷 hub 分配失败：{exc}"
+        ) from exc
+    _add_fiscal_container(
+        db, "C_京运克扣", hub_outbound.central_transport_human_loss,
+        "京运转运人为克扣（可追赃）",
+    )
+    _add_fiscal_container(
+        db, "C_京运运损", hub_outbound.central_transport_sink_loss,
+        "京运转运自然运损（sink）",
+    )
+    _set_fiscal_container(
+        db, "hub_京运损耗", hub_outbound.central_transport_loss,
+        "本月京运转运损耗",
+    )
+    _set_fiscal_container(
+        db, "hub_京运实拨", hub_outbound.jingyun_paid_total,
+        "本月京运补实拨",
+    )
+    _set_fiscal_container(
+        db, "hub_中央军饷实拨", hub_outbound.central_paid_total,
+        "本月中央军饷实拨",
+    )
+    try:
+        hub_debit = _debit_substrate_hub_outbound(db, state, hub_outbound)
+    except RuntimeError as exc:
+        raise _SubstrateHubFixedFlowAbort(
+            f"substrate_hub 京运补/中央军饷 hub 扣账失败：{exc}"
+        ) from exc
+    if hub_debit > 0:
+        flows.append({
+            "dir": "expense",
+            "account": "国库",
+            "category": "边饷hub",
+            "needed": hub_outbound.jingyun_due_total + hub_outbound.central_due_total,
+            "paid": hub_debit,
+            "jingyun_paid": hub_outbound.jingyun_paid_total,
+            "central_paid": hub_outbound.central_paid_total,
+            "transport_loss": hub_outbound.central_transport_loss,
+            "k": hub_outbound.k,
+        })
+    if hub_outbound.central_due_total > 0:
+        flows.append({
+            "dir": "hub_outbound",
+            "account": "中央hub",
+            "category": "中央军饷",
+            "needed": hub_outbound.central_due_total,
+            "paid": hub_outbound.central_paid_total,
+            "shortfall": max(0.0, hub_outbound.central_due_total - hub_outbound.central_paid_total),
+            "jingyun_due": hub_outbound.jingyun_due_total,
+            "k": hub_outbound.k,
+            "transport_loss": hub_outbound.central_transport_loss,
+        })
+    settle_hub_central_army_pay(
+        db,
+        state,
+        ordered=ordered,
+        central_due_by_army=central_due_by_army,
+        central_haircut_exempt_by_army=central_haircut_exempt_by_army,
+        hub_outbound=hub_outbound,
+        flows=flows,
+    )
 
     # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
     # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
-    def _apply_budget_lines(*, skip_substrate_hub_lines: bool = False) -> None:
-        budget = compute_budget_lines(
-            db, state, project_substrate_hub=not skip_substrate_hub_lines
-        )
-        # 军饷跳过认 budget_key，不咬显示名——改 name 不得导致定额路径双扣。
+    # hub 收入已由上方 outbound/province tick 落账，预算行带 internal=substrate_hub 的跳过。
+    def _apply_budget_lines() -> None:
+        budget = compute_budget_lines(db, state, project_substrate_hub=False)
         skip_names = {"建筑产出", "建筑维护"}
 
         def _skip_budget_item(it: dict) -> bool:
             return (
                 it.get("budget_key") == "army_pay"
                 or it["name"] in skip_names
-                or (skip_substrate_hub_lines and it.get("internal") == "substrate_hub")
+                or it.get("internal") == "substrate_hub"
             )
 
         for account in ("国库", "内库"):
@@ -1195,7 +1184,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                     origin_ref=str(it.get("origin_ref") or ""),
                 )
 
-    _apply_budget_lines(skip_substrate_hub_lines=db.is_substrate_hub_fiscal_engine_enabled())
+    _apply_budget_lines()
 
     # ── #318 分叉前全军归一（不挂资格子集）──
     # 1) 零兵先清闩（防误转流寇） 2) 旧存档第三振正兵力在 advance 可解闩前转出
@@ -1260,99 +1249,96 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # apply_region_deltas / apply_army_deltas 在每笔增量落账时按维度净 pct 放大/缩小。
     # 因此上面的固定收支（田赋/军饷/建筑产出）已自动被修正，无需独立 tick，否则会重复计。
 
-    # ── #66 省级财政基座（settle_tick）shadow 推进 ──
+    # ── #66 省级财政基座（settle_tick）推进 + hub 入国库 ──
     try:
         remittance_total = _advance_province_fiscal_substrate(
             db,
             state,
-            hub_outbound.jingyun_paid_by_region
-            if db.is_substrate_hub_fiscal_engine_enabled()
-            else None,
+            hub_outbound.jingyun_paid_by_region,
         )
-        if db.is_substrate_hub_fiscal_engine_enabled():
-            try:
-                salt_income, commerce_income = _substrate_hub_salt_commerce_income_split(db)
-                raw_remittance_amount = _round_nonnegative_amount(remittance_total)
-                raw_salt_amount = _round_nonnegative_amount(salt_income)
-                raw_commerce_amount = _round_nonnegative_amount(commerce_income)
-                remittance_amount = _income_amount_after_legacy_modifier(
-                    db, state, "国库", raw_remittance_amount
-                )
-                salt_amount = _income_amount_after_legacy_modifier(
-                    db, state, "国库", raw_salt_amount
-                )
-                commerce_amount = _income_amount_after_legacy_modifier(
-                    db, state, "国库", raw_commerce_amount
-                )
-                inbound_gross = remittance_amount + salt_amount + commerce_amount
-                taicang_human_loss, taicang_sink_loss = _central_loss_split(
-                    db,
-                    inbound_gross,
-                    _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
-                    _CENTRAL_TAICANG_SINK_LOSS_RATE,
-                )
-            except ValueError as exc:
-                raise _SubstrateHubFixedFlowAbort(
-                    f"substrate_hub 太仓入库 hub 分配失败：{exc}"
-                ) from exc
-            central_loss = taicang_human_loss + taicang_sink_loss
-            _add_fiscal_container(db, "C_太仓挪用", taicang_human_loss, "中央太仓人为亏空（可追赃）")
-            _add_fiscal_container(db, "C_太仓纯亏空", taicang_sink_loss, "中央太仓自然亏空（sink）")
-            _set_fiscal_container(db, "hub_省级起运到京", remittance_amount, "Σ本月明控省起运到京")
-            _set_fiscal_container(db, "hub_盐税解京", salt_amount, "明控省盐税中央旁路")
-            _set_fiscal_container(db, "hub_商税解京", commerce_amount, "明控省商税中央旁路")
-            _set_fiscal_container(db, "hub_太仓亏空", central_loss, "本月中央太仓亏空与挪用")
+        try:
+            salt_income, commerce_income = _substrate_hub_salt_commerce_income_split(db)
+            raw_remittance_amount = _round_nonnegative_amount(remittance_total)
+            raw_salt_amount = _round_nonnegative_amount(salt_income)
+            raw_commerce_amount = _round_nonnegative_amount(commerce_income)
+            remittance_amount = _income_amount_after_legacy_modifier(
+                db, state, "国库", raw_remittance_amount
+            )
+            salt_amount = _income_amount_after_legacy_modifier(
+                db, state, "国库", raw_salt_amount
+            )
+            commerce_amount = _income_amount_after_legacy_modifier(
+                db, state, "国库", raw_commerce_amount
+            )
+            inbound_gross = remittance_amount + salt_amount + commerce_amount
+            taicang_human_loss, taicang_sink_loss = _central_loss_split(
+                db,
+                inbound_gross,
+                _CENTRAL_TAICANG_HUMAN_LOSS_RATE,
+                _CENTRAL_TAICANG_SINK_LOSS_RATE,
+            )
+        except ValueError as exc:
+            raise _SubstrateHubFixedFlowAbort(
+                f"substrate_hub 太仓入库 hub 分配失败：{exc}"
+            ) from exc
+        central_loss = taicang_human_loss + taicang_sink_loss
+        _add_fiscal_container(db, "C_太仓挪用", taicang_human_loss, "中央太仓人为亏空（可追赃）")
+        _add_fiscal_container(db, "C_太仓纯亏空", taicang_sink_loss, "中央太仓自然亏空（sink）")
+        _set_fiscal_container(db, "hub_省级起运到京", remittance_amount, "Σ本月明控省起运到京")
+        _set_fiscal_container(db, "hub_盐税解京", salt_amount, "明控省盐税中央旁路")
+        _set_fiscal_container(db, "hub_商税解京", commerce_amount, "明控省商税中央旁路")
+        _set_fiscal_container(db, "hub_太仓亏空", central_loss, "本月中央太仓亏空与挪用")
 
-            for category, raw_amount, amount, reason in (
-                ("起运", raw_remittance_amount, remittance_amount, f"{TURN_UNIT}省级起运入京"),
-                ("盐税", raw_salt_amount, salt_amount, f"{TURN_UNIT}盐税中央旁路"),
-                ("商税", raw_commerce_amount, commerce_amount, f"{TURN_UNIT}商税中央旁路"),
-            ):
-                if amount <= 0:
-                    continue
-                actual = db.record_issue_economy_move(
-                    state,
-                    "国库",
-                    raw_amount,
-                    category,
-                    reason,
-                )
-                if actual != amount:
-                    raise _SubstrateHubFixedFlowAbort(
-                        f"{category}入库实记不符：预计{amount}万两，实际{actual}万两"
-                    )
-                flows.append({
-                    "dir": "income",
-                    "account": "国库",
-                    "amount": actual,
-                    "category": category,
-                    "central_loss": central_loss,
-                })
-            if central_loss > 0:
-                actual_loss = db.record_issue_economy_move(
-                    state,
-                    "国库",
-                    -int(central_loss),
-                    "太仓亏空",
-                    f"{TURN_UNIT}中央太仓亏空与挪用",
-                )
-                flows.append({
-                    "dir": "expense",
-                    "account": "国库",
-                    "amount": abs(actual_loss),
-                    "category": "太仓亏空",
-                    "human_loss": taicang_human_loss,
-                    "sink_loss": taicang_sink_loss,
-                })
-            # ── #314 军心月度 tick（substrate_hub 统一，省级+中央结算后）──────────
-            settle_hub_army_loyalty_tick(db, state)
-            db._reconcile_central_army_pay_arrears_container()
-            try:
-                db.assert_army_pay_source_container_conservation()
-            except ValueError as exc:
+        for category, raw_amount, amount, reason in (
+            ("起运", raw_remittance_amount, remittance_amount, f"{TURN_UNIT}省级起运入京"),
+            ("盐税", raw_salt_amount, salt_amount, f"{TURN_UNIT}盐税中央旁路"),
+            ("商税", raw_commerce_amount, commerce_amount, f"{TURN_UNIT}商税中央旁路"),
+        ):
+            if amount <= 0:
+                continue
+            actual = db.record_issue_economy_move(
+                state,
+                "国库",
+                raw_amount,
+                category,
+                reason,
+            )
+            if actual != amount:
                 raise _SubstrateHubFixedFlowAbort(
-                    f"substrate_hub 军饷饷源守恒失败：{exc}"
-                ) from exc
+                    f"{category}入库实记不符：预计{amount}万两，实际{actual}万两"
+                )
+            flows.append({
+                "dir": "income",
+                "account": "国库",
+                "amount": actual,
+                "category": category,
+                "central_loss": central_loss,
+            })
+        if central_loss > 0:
+            actual_loss = db.record_issue_economy_move(
+                state,
+                "国库",
+                -int(central_loss),
+                "太仓亏空",
+                f"{TURN_UNIT}中央太仓亏空与挪用",
+            )
+            flows.append({
+                "dir": "expense",
+                "account": "国库",
+                "amount": abs(actual_loss),
+                "category": "太仓亏空",
+                "human_loss": taicang_human_loss,
+                "sink_loss": taicang_sink_loss,
+            })
+        # ── #314 军心月度 tick（substrate_hub 统一，省级+中央结算后）──────────
+        settle_hub_army_loyalty_tick(db, state)
+        db._reconcile_central_army_pay_arrears_container()
+        try:
+            db.assert_army_pay_source_container_conservation()
+        except ValueError as exc:
+            raise _SubstrateHubFixedFlowAbort(
+                f"substrate_hub 军饷饷源守恒失败：{exc}"
+            ) from exc
     finally:
         for attr in (
             "_current_month_central_pay_shortfalls",
@@ -1368,19 +1354,11 @@ def _advance_province_fiscal_substrate(
     state: GameState,
     jingyun_paid_gross_by_region: Optional[Dict[str, float]] = None,
 ) -> float:
-    """#66/#266：月末固定财政相位推进省级 settle_tick 基座（动态 shadow spine）。
+    """#66/#266：月末固定财政相位推进省级 settle_tick 基座。
 
-    **shadow / hub 模式**：推进基座末态（军饷欠/民欠/火耗的死亡螺旋逐月累积）并落库。
-    非 cutover shadow 只打印/持久化末态，不驱动国库；substrate_hub cutover 则返回
-    本 tick 起运到京合计，供调用方统一入 hub/国库。
-
-    **fail-loud 但隔离**：基座缺失（旧档无种子）或 settle_tick 抛 ValueError/守恒破时，tlog
-    响亮告警并跳过该省该月推进（港口锁：FAIL tick 不落库），但**绝不让 shadow 基座 bug 掀翻
-    pre_settle 的固定财政**（那会丢整月财政，cmr S4 r1 F4）。settle_tick 自身契约外的代码异常
-    （TypeError/KeyError 等桥接 bug）仍上抛 fail-loud（ADR 0005），不在此吞。cutover 后本相位
-    转为 fail-loud 中止。
-
-    action 翻译（玩家旨意/事件 → settle_tick actions）属 slice4；本 slice 以空 action 跑基线螺旋。
+    推进基座末态并返回本 tick 起运到京合计，供调用方统一入 hub/国库。
+    基座缺失或 settle_tick 契约失败 → fail-loud 中止固定财政（#1843 唯一 hub 路径）。
+    settle_tick 自身契约外的代码异常仍上抛（ADR 0005）。
     """
     owns_transaction = db.owns_transaction()
     advanced = False
@@ -1397,21 +1375,14 @@ def _advance_province_fiscal_substrate(
     )
     for outcome in outcomes:
         if outcome.error is not None:
-            # settle_tick 的契约失败（坏态/守恒破）+ 基座缺失 → shadow 隔离，不炸 pre_settle
             exc = outcome.error
-            if db.is_army_pay_source_cutover_enabled():
-                tlog(
-                    f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}结算中止："
-                    f"{type(exc).__name__}: {exc}"
-                )
-                raise _SubstrateHubFixedFlowAbort(
-                    f"{outcome.region_id} 省级财政基座结算失败：{type(exc).__name__}: {exc}"
-                ) from exc
             tlog(
-                f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}未推进（隔离）："
+                f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}结算中止："
                 f"{type(exc).__name__}: {exc}"
             )
-            continue
+            raise _SubstrateHubFixedFlowAbort(
+                f"{outcome.region_id} 省级财政基座结算失败：{type(exc).__name__}: {exc}"
+            ) from exc
         res = outcome.result
         advanced = True
         b = res.breakdown
@@ -1420,7 +1391,7 @@ def _advance_province_fiscal_substrate(
             f"火耗入截留{b.get('火耗实收', 0):.1f}；末态欠账 "
             f"军饷欠{res.new_st.get('军饷欠', 0):.0f}/官俸欠{res.new_st.get('官俸欠', 0):.0f}/"
             f"宗禄欠{res.new_st.get('宗禄欠', 0):.0f}/民欠{res.new_st.get('民欠旧赋', 0):.0f}"
-            f"（{'hub，待入国库' if db.is_substrate_hub_fiscal_engine_enabled() else 'shadow，未入国库'}）"
+            f"（hub，待入国库）"
         )
     if advanced and owns_transaction:
         db.conn.commit()

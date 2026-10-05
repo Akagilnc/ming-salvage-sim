@@ -3137,51 +3137,9 @@ def test_event_pool_pending_invalid_location_does_not_clear_transit_gate(game):
         content.event_by_id.pop(ev.id, None)
 
 
-def test_event_pool_pending_rejected_legacy_gate_change_does_not_block(game):
-    """post-merge CMR R6：会被 legacy_gate 拒收的人物变更，不应提前阻断事件门。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("dismissed", "袁崇焕"))
-    if "袁崇焕" in content.characters:
-        content.characters["袁崇焕"].status = "dismissed"
-    ev = Event(
-        id="__test_rejected_legacy_gate_pending__",
-        title="测试·legacy gate 拒收不阻断",
-        kind="朝议",
-        summary="袁崇焕已罢黜时可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.status": "== dismissed"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_issue_tracker_output(
-            db,
-            state,
-            {"new_issues": [{"origin_kind": "event_pool", "id": ev.id}]},
-            content=content,
-            pending_person_changes_for_gates=[
-                {"name": "袁崇焕", "动作": "处置", "status": "dead", "reason": "测试 legacy gate", "legacy_gate": True}
-            ],
-        )
 
-        assert out["new_issues"][0]["rejected"] is False
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is not None
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
-
-
-def test_event_pool_pending_legacy_power_change_blocks_gate(game):
-    """post-merge CMR R8：旧 flat 易主会真实落库，pending 闸门也必须按同一语义预检。"""
+def test_event_pool_pending_person_power_change_blocks_gate(game):
+    """同批人物易主会真实落库，pending 闸门也必须按同一语义预检。"""
     db, state, content = game
     issues.bind_content(content)
     db.conn.execute(
@@ -3193,8 +3151,8 @@ def test_event_pool_pending_legacy_power_change_blocks_gate(game):
         ch.status = "active"
         ch.power_id = "ming"
     ev = Event(
-        id="__test_legacy_power_pending__",
-        title="测试·旧易主门",
+        id="__test_person_power_pending__",
+        title="测试·易主门",
         kind="朝议",
         summary="袁崇焕仍属明时才可触发。",
         urgency=10,
@@ -3215,8 +3173,16 @@ def test_event_pool_pending_legacy_power_change_blocks_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "character_power_changes": [
-                    {"origin_ref": "盘面自发", "name": "袁崇焕", "new_power": "houjin", "reason": "测试旧易主"}
+                "人物变更": [
+                    {
+                        "origin_ref": "盘面自发",
+                        "name": "袁崇焕",
+                        "动作": "易主",
+                        "new_power": "houjin",
+                        "方式": "主动投敌",
+                        "反噬": {"houjin": {"leverage": 1}},
+                        "reason": "测试易主",
+                    }
                 ],
             },
             content=content,

@@ -1,0 +1,34 @@
+#1843 F2-R13 修内司整类枚举命令（工作树 Ming_LLM-1843-w5）
+
+## 施工前粗扫
+```bash
+python3 /tmp/1843-r13-enum/enum_r13.py
+# CLASS_A_HITS 1037；CLASS_B_HITS 4149（字面过宽，仅作候选池，不作定类）
+```
+
+## 消费链核销（历史消费者 + 现役入口）
+```bash
+rg -n "is_army_pay_source_cutover_enabled|is_substrate_hub_fiscal_engine_enabled|fiscal_engine\(" ming_sim --type py
+rg -n "normalize_person_changes|legacy_gate|legacy_partial|legacy_spillover|_legacy_person_report" ming_sim --type py
+rg -n "save_meta|_mark_population_unit|population_unit" ming_sim --type py
+rg -n "_disable_army_pay_source_cutover|_make_legacy_db|fiscal_engine\(\) == .legacy" tests --type py
+```
+
+## 官方做法（施工前）
+WebSearch: Martin Fowler Strangler Fig + Vercel/LaunchDarkly flag cleanup after full rollout
+→ 全量切到胜出路径后删除旗标与旧枝，不留双路径。
+
+## 施工后复扫
+```bash
+python3 - <<'PY'
+# evidence/1843-w5-r13-class-rescan.tsv 生成脚本（见同目录）
+PY
+# RESCAN_TOTAL 13：余项均为 always-True 闸 API / 事件门 humanize 同名 / 注释 / 负向旧键空结果
+```
+
+## 双路径不可达探针
+```bash
+# 删除 __army_pay_source_cutover / __fiscal_engine 后
+# fiscal_engine=substrate_hub；国库收入合计仍 267（施工前删标会变 155）
+# save_meta 表不存在
+```

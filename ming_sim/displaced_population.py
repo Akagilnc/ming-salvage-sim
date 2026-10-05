@@ -51,13 +51,10 @@ def apply_levy_driven_transfers(
 
     口径（AC2 确定性可断言）：每明省读 settle._meta「加派基线」(万两/月)，
     入池(人) = 基线 × LEVY_DISPLACEMENT_RATE(人/万两·月) × (100−民心)/100。
-    本机制只在 substrate_hub 新财政档启用；legacy 档不接受也不消费加派账。
     结果钳到农民@省余额后再交 _apply_population_transfers 守恒原语落账
     （reason=加派；累积账月效统一使用 `盘面自发`，不伪归最后一道改账旨）。基线 ≤0 或折算后
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
     """
-    if not db.is_substrate_hub_fiscal_engine_enabled():
-        return [], []
     records: List[Dict[str, object]] = []
     rows = db.conn.execute(
         "SELECT id, fiscal, public_support FROM regions WHERE controlled_by='ming' ORDER BY id"

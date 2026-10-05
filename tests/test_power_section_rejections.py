@@ -87,33 +87,6 @@ def test_power_deltas_code_exception_aborts_settlement(game, monkeypatch):
 
 # ---- section 9b: character_power_changes(人物易主) ----
 
-def test_unknown_person_power_change_rejected_good_lands(saved_game):
-    """character_power_changes 引用查无此人 → 逐项拒收留痕(不再 print 静默跳);
-    同信封里合法人物易主照落——坏一项不带走整批(ADR 决定 1)。
-    用 saved_game：依赖玩过存档的特定人物易主基线，fresh seed 不复现（#5）。"""
-    db, state, content = saved_game
-    turn = state.turn
-    good_power = _valid_power_id(db)
-    # 取一个开局在册的大明大臣作「好项」(易主到 good_power)
-    real = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' LIMIT 1").fetchone()[0]
-
-    run_settle(db, state, content, {
-        "character_power_changes": [
-            {"name": "查无此人辛", "new_power": good_power, "reason": "降"},
-            {"name": real, "new_power": good_power, "reason": "叛"},
-        ],
-    }, narrative="x", decree_text="y")
-
-    rows = [r for r in _rejection_rows(db, turn) if r[0] == "character_power_changes"]
-    assert len(rows) == 1
-    assert rows[0][1]  # reason 非空
-    assert rows[0][2] == "missing_ref"
-    # 好项照落
-    after = db.conn.execute(
-        "SELECT power_id FROM characters WHERE name=?", (real,)).fetchone()[0]
-    assert after == good_power
-
 def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeypatch):
     """Canonical 人物变更 writer 的代码异常必须上抛；legacy aliases 不再有第二写路。"""
     db, state, content = game

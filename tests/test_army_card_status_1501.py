@@ -20,8 +20,6 @@ from ming_sim.knowledge import build_character_knowledge
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
 
 
-# 关宁 seed 静态 status 句（content/armies.json）；永不随 arrears 更新，是本票病灶样本。
-_GUANNING_STATUS = "宁锦守线尚可，欠饷严重，主动大举出击风险极高。"
 _GUANNING_ID = "guanning"
 
 # army_payload 投影完整键集（#1501 删 status；#321 军心/士气/欠饷改三字符串键）。
@@ -55,8 +53,9 @@ def _guanning_db_status(db) -> str:
         "SELECT status, arrears FROM armies WHERE id=?", (_GUANNING_ID,)
     ).fetchone()
     assert row is not None, "seed 须有关宁军"
-    assert str(row["status"]) == _GUANNING_STATUS
-    return str(row["status"])
+    status = str(row["status"] or "")
+    assert status.strip()
+    return status
 
 
 def _danger_top_statuses(db, limit: int) -> list[str]:
@@ -258,4 +257,4 @@ def test_db_status_field_untouched_after_payload_read(read_game):
     }
     assert before == after
     seed = content.armies[_GUANNING_ID]
-    assert after[_GUANNING_ID] == seed.status == _GUANNING_STATUS
+    assert after[_GUANNING_ID] == seed.status

@@ -1,0 +1,14 @@
+class	path	line	tag	snippet
+F2-R13-1	web_app.py	279	person_legacy_gate	def _legacy_gate_subject(raw_key: str, content: Any) -> str:
+F2-R13-1	web_app.py	300	person_legacy_gate	def _humanize_legacy_gate(gate: Dict[str, str], content: Any) -> str:
+F2-R13-1	web_app.py	304	person_legacy_gate	subject = _legacy_gate_subject(str(raw_key), content)
+F2-R13-1	web_app.py	1605	person_legacy_gate	clear_condition = _humanize_legacy_gate(clear_gate, self.content)
+F2-R13-1	web_app.py	1607	person_legacy_gate	"clear_condition = f""{clear_condition}（{_humanize_legacy_gate(clear_gate, self.content)}）"""
+F2-R13-1	ming_sim/db.py	80	save_meta	# 同刻度）。#1843：双单位/save_meta 标已退役，读口恒为「人」。
+F2-R13-1	ming_sim/db.py	3376	fiscal_gate	def is_army_pay_source_cutover_enabled(self) -> bool:
+F2-R13-1	ming_sim/db.py	3380	fiscal_gate	def fiscal_engine(self) -> str:
+F2-R13-1	ming_sim/db.py	3384	fiscal_gate	def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
+F2-R13-1	tests/test_qa_e1_numeric_presentation.py	48	fiscal_gate	"assert db.fiscal_engine() == ""substrate_hub"""
+F2-R13-1	tests/test_pay_order_override_653.py	816	fiscal_gate	assert db.is_substrate_hub_fiscal_engine_enabled()
+F2-R13-1	tests/test_fiscal_substrate_bridge.py	396	fiscal_gate	assert fresh_db.is_army_pay_source_cutover_enabled()
+F2-R13-1	tests/test_person_delta_adapter.py	58	person_old_key_normalize	"assert normalize_person_changes({""appointments"": {""name"": ""某氏""}}) == []"

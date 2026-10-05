@@ -1,0 +1,6 @@
+class	kind	member	disposition	reason
+F2-R13-2	test	qa_a3 常熟 wording	DELETED	non-contract
+F2-R13-2	test	army_card fixed status sentence	DELETED	non-contract
+F2-R13-2	test	rescript idx name existence	DELETED	internal shape
+F2-R13-2	test	fiscal duplicate rejected bool	DELETED	duplicate assert
+F2-R13-2	test	structured office/status/keyset/reject/persist/input fidelity	RETAIN	legal contracts
