@@ -1,16 +1,3 @@
-### Pre-commit: git diff --check ecdbc39ab HEAD
-### (still sees first-fix commit's report.md L3-L8 trailing whitespace on current HEAD)
-evidence/1834-f18-f19-f20-fix/report.md:3: trailing whitespace.
-evidence/1834-f18-f19-f20-fix/report.md:4: trailing whitespace.
-evidence/1834-f18-f19-f20-fix/report.md:5: trailing whitespace.
-evidence/1834-f18-f19-f20-fix/report.md:6: trailing whitespace.
-evidence/1834-f18-f19-f20-fix/report.md:7: trailing whitespace.
-evidence/1834-f18-f19-f20-fix/report.md:8: trailing whitespace.
-EXIT:2
-
-### Pre-commit: git diff --cached --check
-(no output)
-CACHED_EXIT:0
-
+### Pre-commit note: first-fix HEAD had report.md L3-L8 trailing whitespace (EXIT=2); cached fix was clean.
 ### Post-commit: git diff --check ecdbc39ab HEAD
-(filled after commit)
+EXIT:0
