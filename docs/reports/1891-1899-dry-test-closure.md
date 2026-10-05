@@ -4,7 +4,7 @@
 开工 BASE：`7ba04d2263793153383e5e2b95d9d58d54ac5456`。
 代码交卷：`a64094fd5336344d1932cf283fea4c2a9f430b65`（DRY + 庭列24 + 初轮11 + 三案/stub）；
 全仓 orphan 清退：`81560cb1b396b35339ca36693e7742bcb188e83b`（再删 23）。
-**本轮：仅修本报告**——不改生产／测试代码；补真正可复跑全仓枚举、完整消费者依据、DRY 归一证明、测试命令史；收回夸大表述。
+**本轮：仅修本报告小修 forward**——不改生产／测试代码；删 `parse_ref` 吞缺失、DELETED 改 BASE∖HEAD 顶层 defs 差集自动推导（不以庭列种子为发现条件）、嵌套段去永假代码并诚实声明「额外候选／非全协议完备」；本轮枚举写作 **worker 实测**（不得冒称主助手执行；主助手独立复跑另证）。
 
 法源：末份 `1891m-judge-7ba04d226.json` payload[4]、`1899c-judge-7ba04d226.json` payload[3]、`1891-1899-countersign-7ba04d226.json`（原卷直读，本回执不自撰顾问／判词摘要冒称原话）。
 Python：`/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python`。
@@ -29,21 +29,23 @@ BASE=7ba04d226
    `from tests.test_audience_background import _wait_for_pending_writes_to_drain` 并调用——这是 `_wait_for_pending_writes_to_drain` 的**真实修前消费者**；该消费者自身（`_drain`）同批删除，故 HEAD **无存活外泄消费**。不得再说「修前完全零引用」。
 4. **慢扫中止**（transcript `66d9afd1-…`）：曾 kill 过慢 O(名×全仓节点) 扫描；改索引式。本轮命令自包含 inline，读 `git show $BASE:path` + HEAD 工作树，不依赖 `/tmp` 种子脚本。
 
-## 独立核对（主助手 + 只读 advisor）
+## 独立核对记录（保留旧记；非正式／非法庭审）
 
 | 角色 | 结论 | 性质 |
 | --- | --- | --- |
-| 主助手 | 62/62 BASE 顶层存在、HEAD 顶层消失；HEAD 对 62 个 `(file,name)` 存活消费者命中 **0**；无真实存活消费者误删 | 施工自核 |
-| 只读 advisor（explore） | **PASS**（同口径） | **施工顾问非正式意见，非法庭审** |
+| 前轮施工自核（历史记录） | 曾写「62/62 BASE 顶层存在、HEAD 顶层消失；HEAD 对 62 个 `(file,name)` 存活消费者命中 0」 | **历史施工记**；本小修轮不以该行冒称主助手本轮复跑 |
+| 只读 advisor（explore） | **PASS**（同口径） | **自主顾问非正式意见，非法庭审／非法源**——保留旧记，不作正式庭审结论 |
 
-advisor 原话完整文本若需核对，请读宿主原卷／该席位 transcript；**本回执不自撰摘要冒称原话**。仅记录其 VERDICT=PASS 与「非正式／非法庭审」边界。
+advisor 原话完整文本若需核对，请读宿主原卷／该席位 transcript；**本回执不自撰摘要冒称原话**。仅保留其 VERDICT=PASS 与「非正式／非法庭审」边界。
 
-**删除算术（顶层定义）**：62 = 59 私有（庭列 24 + 初轮 11 + orphan 23 + stub `_stub_game`）+ 3 退役公有案。
-**判据范围**：模块 `tree.body` 顶层 `FunctionDef|AsyncFunctionDef|ClassDef`。**不主张**递归砍光嵌套私有函数／方法；嵌套仅额外扫描并语义区分。
+**本轮枚举执行者**：**worker 实测**（本小修 forward 内 inline 复跑）。主助手独立复跑稍后另有证据，**不得**把本轮 stdout／摘要写成主助手执行。
 
-## 可复跑：BASE×HEAD 全层消费者枚举（自包含）
+**删除成员发现**：`DELETED = BASE 顶层 defs ∖ HEAD 顶层 defs`（全仓 `*.py` 差集自动推导）。人读类别拆分（庭列 24／初轮 11／orphan 23／公有三案／stub）**仅附表元数据**，不是候选发现条件。实测差集基数 **62**＝附表 A 精确人读类别表成员数。
+**判据范围**：模块 `tree.body` 顶层 `FunctionDef|AsyncFunctionDef|ClassDef`。**不主张**递归砍光嵌套私有函数／方法；嵌套段＝**额外候选**，**非**全协议完备枚举。
 
-下列命令一次输出：双 AST 解析、62 成员存活命中、同名他文件顶层定义区分、嵌套私有候选语义标签、顶层测试私有 orphan 复扫、DRY 归一 + 协议面 Compare／结算调用。
+## 可复跑：BASE×HEAD 全层消费者枚举（自包含；worker 实测命令）
+
+下列命令一次输出：双 AST 解析（缺失／语法错误响亮抛出）、BASE∖HEAD 顶层 defs 差集成员存活命中、同名他文件顶层定义区分、嵌套私有**额外候选**（非完备）、顶层测试私有 orphan 复扫、DRY 归一 + 协议面 Compare／结算调用。
 
 ```bash
 $PY - <<'PY'
@@ -60,10 +62,8 @@ def mq(rel):
     return rel[:-3].replace('/', '.')
 
 def parse_ref(ref, rel):
-    try:
-        src = subprocess.check_output(['git', 'show', f'{ref}:{rel}'], text=True)
-    except subprocess.CalledProcessError:
-        return None, None
+    # base_py 来自 git ls-tree；文件必存在。缺失／语法错误一律响亮抛出，不吞。
+    src = subprocess.check_output(['git', 'show', f'{ref}:{rel}'], text=True)
     return src, ast.parse(src, filename=rel)
 
 def is_fixture(d):
@@ -130,8 +130,7 @@ for rel in files:
     head_ast[rel] = ast.parse(Path(rel).read_text(encoding='utf-8'), filename=rel)
 for rel in base_py:
     _, t = parse_ref(BASE, rel)
-    if t is not None:
-        base_ast[rel] = t
+    base_ast[rel] = t
 print(f'HEAD_PY {len(files)} HEAD_AST {len(head_ast)} BASE_PY {len(base_py)} BASE_AST {len(base_ast)}')
 
 mm_h = {mq(r): r for r in head_ast}
@@ -185,75 +184,18 @@ def same_name_other(idx_map, def_rel, def_name):
     return [(r, ix['top'][def_name]['lineno']) for r, ix in idx_map.items()
             if def_name in ix['top'] and r != def_rel]
 
-DELETED = [
-    ('tests/test_web_court_visibility.py', 'test_vassal_prince_chat_rejected', 'public_retired'),
-    ('tests/test_web_court_visibility.py', 'test_active_consort_chat_not_rejected', 'public_retired'),
-    ('tests/test_qa_s2_copy_prompts_1356_1402.py', 'test_require_active_minister_uses_can_summon_reason', 'public_retired'),
-    ('tests/test_web_court_visibility.py', '_stub_game', 'stub'),
-    ('tests/test_audience_background.py', '_assert_next_accepted', 'court24'),
-    ('tests/test_decree_dossiers_571.py', '_complete_session', 'court24'),
-    ('tests/test_faction_brew_637.py', '_dual_brew_fn_factory', 'court24'),
-    ('tests/test_faction_brew_637.py', '_relation_script', 'court24'),
-    ('tests/test_fiscal_levy_effect.py', '_settled_land_by_region', 'court24'),
-    ('tests/test_highlight_judge_544.py', '_restore_highlight_seams', 'court24'),
-    ('tests/test_highlight_judge_544.py', '_drain', 'court24'),
-    ('tests/test_month_loop_tracer_1468.py', '_install_canned_minister', 'court24'),
-    ('tests/test_month_loop_tracer_1468.py', '_month_ord_of', 'court24'),
-    ('tests/test_month_loop_tracer_1468.py', '_play_one_month', 'court24'),
-    ('tests/test_month_loop_tracer_1468.py', '_setup_open_night_participant', 'court24'),
-    ('tests/test_mutiny_actual_residence_659.py', '_pin_split_arrears', 'court24'),
-    ('tests/test_mutiny_actual_residence_659.py', '_simulator_army_dicts', 'court24'),
-    ('tests/test_pihong_dossier_1490.py', '_658_session', 'court24'),
-    ('tests/test_pre_settle_transaction.py', '_drive_resolve_directives', 'court24'),
-    ('tests/test_promulgation_seam_560.py', '_stage_policy_dossier', 'court24'),
-    ('tests/test_rescript_draft_656.py', '_retire_existing_actors', 'court24'),
-    ('tests/test_rescript_draft_656.py', '_valid_item', 'court24'),
-    ('tests/test_rescript_draft_656.py', '_legal_item', 'court24'),
-    ('tests/test_secret_order_monthly_progress_566.py', '_canned_monthly_settlement', 'court24'),
-    ('tests/test_structured_decree_contract_1624.py', '_month_end_ctx', 'court24'),
-    ('tests/test_structured_decree_contract_1624.py', '_army_none_legal_item', 'court24'),
-    ('tests/test_structured_decree_contract_1624.py', '_executing_counts', 'court24'),
-    ('tests/test_supervision_625.py', '_insert_staged', 'court24'),
-    ('tests/test_audience_background.py', '_EmptyAgent', 'round11'),
-    ('tests/test_chat_stream_failpaths_393.py', '_FailLeavingAgnoRunAgent', 'round11'),
-    ('tests/test_cli_play_turn.py', '_noop_atomic', 'round11'),
-    ('tests/test_web_chat_serialization_393.py', '_SecretOrderAgent', 'round11'),
-    ('tests/test_audience_background.py', '_wait_for_pending_writes_to_drain', 'round11'),
-    ('tests/test_month_loop_tracer_1468.py', '_CannedExtractor', 'round11'),
-    ('tests/test_month_loop_tracer_1468.py', '_BoomExtractor', 'round11'),
-    ('tests/test_month_loop_tracer_1468.py', '_CannedMinisterAgent', 'round11'),
-    ('tests/test_month_loop_tracer_1468.py', '_resolve_decisions_via_stream', 'round11'),
-    ('tests/test_month_loop_tracer_1468.py', '_choices_from_decisions', 'round11'),
-    ('tests/test_structured_decree_contract_1624.py', '_army_single_bad_item', 'round11'),
-    ('tests/test_adr0015_per_item_rejection.py', '_reports', 'orphan23'),
-    ('tests/test_advance_paths_atomic.py', '_ledger_count', 'orphan23'),
-    ('tests/test_audience_presence_500.py', '_session_double', 'orphan23'),
-    ('tests/test_audience_presence_500.py', '_tool_registry', 'orphan23'),
-    ('tests/test_court_break_player_lock_1727.py', '_CannedExtractor', 'orphan23'),
-    ('tests/test_dossier_endorsements_612.py', '_Agent', 'orphan23'),
-    ('tests/test_enter_settlement_period_1235.py', '_CannedExtractor', 'orphan23'),
-    ('tests/test_enter_settlement_period_1235.py', '_BoomExtractor', 'orphan23'),
-    ('tests/test_enter_settlement_period_1235.py', '_fake_settlement_llm', 'orphan23'),
-    ('tests/test_enter_settlement_period_1235.py', '_terminal_sse', 'orphan23'),
-    ('tests/test_faction_brew_637.py', '_faction_rows', 'orphan23'),
-    ('tests/test_faction_brew_637.py', '_eligible_dossier', 'orphan23'),
-    ('tests/test_mutiny_actual_residence_659.py', '_global_population', 'orphan23'),
-    ('tests/test_mutiny_actual_residence_659.py', '_executing_dossier', 'orphan23'),
-    ('tests/test_mutiny_third_strike_318.py', '_simulator_army_dicts', 'orphan23'),
-    ('tests/test_mutiny_third_strike_318.py', '_find_simulator_army', 'orphan23'),
-    ('tests/test_opening_gazette_delete_1356.py', '_session', 'orphan23'),
-    ('tests/test_qa_b3_409_ux.py', '_ClosingNightDB', 'orphan23'),
-    ('tests/test_qa_c2_phase_settlement_mask_1374.py', '_null_cm', 'orphan23'),
-    ('tests/test_qa_h1_seed_data.py', '_bajiu_names', 'orphan23'),
-    ('tests/test_refugee_loop_652.py', '_reflux', 'orphan23'),
-    ('tests/test_relation_capture_633.py', '_module_of', 'orphan23'),
-    ('tests/test_transit_countdown_668.py', '_assert_ledger_match', 'orphan23'),
-]
-print('DELETED_COUNT', len(DELETED), 'BY', dict(Counter(b for *_, b in DELETED)))
+# DELETED = BASE∖HEAD 顶层 defs 差集（发现条件；不依赖庭列／种子名单）
+DELETED = []
+for rel in sorted(base_ast):
+    b_top = set(ix_b[rel]['top'])
+    h_top = set(ix_h[rel]['top']) if rel in ix_h else set()
+    for name in sorted(b_top - h_top):
+        DELETED.append((rel, name))
+print('DELETED_COUNT', len(DELETED))
 
 missing_base = still_head = alive = 0
-print('=== 62_MEMBER_SURVIVING_CONSUMER_AUDIT ===')
-for rel, name, bucket in DELETED:
+print('=== MEMBER_SURVIVING_CONSUMER_AUDIT ===')
+for rel, name in DELETED:
     bdef = ix_b.get(rel, {}).get('top', {}).get(name)
     hdef = ix_h.get(rel, {}).get('top', {}).get(name)
     if not bdef:
@@ -268,7 +210,7 @@ for rel, name, bucket in DELETED:
     status = 'SURVIVING' if h_hits else 'NONE'
     if h_hits:
         alive += 1
-    print(f'{status}\t{bucket}\t{mq(rel)}.{name}\tHEAD_HITS={len(h_hits)}\tSAME_NAME_OTHER={sn}\tBASE_NOTABLE={notable_b}')
+    print(f'{status}\t{mq(rel)}.{name}\tHEAD_HITS={len(h_hits)}\tSAME_NAME_OTHER={sn}\tBASE_NOTABLE={notable_b}')
 print(f'SUMMARY BASE_MISSING_TOP={missing_base} HEAD_STILL={still_head} HEAD_SURVIVING_NONEMPTY={alive}')
 
 print('=== FOCUS_DRAIN_WAIT ===')
@@ -280,19 +222,17 @@ for rel, name in [
     print(name, 'BASE', consumers(ix_b, mm_b, base_ast, rel, name, bln))
     print(name, 'HEAD', consumers(ix_h, mm_h, head_ast, rel, name, None))
 
-print('=== NESTED_PRIVATE_EXTRA (tests/; 语义区分, 非递归全砍) ===')
+print('=== NESTED_PRIVATE_EXTRA (tests/; 额外候选, 非全协议完备) ===')
 nested = []
 for rel, ix in ix_h.items():
     if not rel.startswith('tests/'):
         continue
     for owner, name, ln, kind in ix['nested']:
-        # 语义粗标：owner 为 test_* → 案内闭包; 否则协议/夹具替身候选
+        # 粗标仅供人读；不构成完备 fixture／协议分类
         tag = 'test_local_closure' if owner.startswith('test_') else 'helper_nested'
-        if any(is_fixture(d) for d in []):
-            tag = 'fixture'
         nested.append((rel, owner, name, ln, kind, tag))
 print('NESTED_PRIV_COUNT', len(nested))
-deleted_names = {n for _, n, _ in DELETED}
+deleted_names = {n for _, n in DELETED}
 shared = [n for n in nested if n[2] in deleted_names]
 print('NESTED_SHARE_DELETED_NAME', len(shared))
 for n in shared:
@@ -404,28 +344,28 @@ print('DONE')
 PY
 ```
 
-### 本轮主助手实测摘要（命令完整输出见交卷时复跑粘贴）
+### 本轮 worker 实测摘要（不得冒称主助手；主助手独立复跑另证）
 
 | 指标 | 值 |
 | --- | --- |
-| HEAD／BASE AST | 351／351，错误 0 |
-| DELETED_COUNT | 62（public_retired 3 + stub 1 + court24 24 + round11 11 + orphan23 23） |
+| HEAD／BASE AST | 351／351；`parse_ref`／`ast.parse` 直抛，错误 0 |
+| DELETED_COUNT（差集自动推导） | **62**（发现＝BASE∖HEAD 顶层 defs；类别拆分仅见附表 A，非发现条件） |
 | BASE 缺顶层／HEAD 仍定义 | 0／0 |
 | HEAD 存活消费者非空 | **0** |
 | `_wait_for_pending_writes_to_drain` BASE 显著命中 | `import_from_nested` @ `test_highlight_judge_544.py:199` + `imported_name_use:201`（消费者=`_drain`，已同删） |
 | `_drain` BASE Name 调用 | 无（自身无外调用；嵌套 import 是它对 wait 的消费） |
 | HEAD 顶层测试私有 orphan | 0；KEEP_FIXTURE 9；KEEP_CONSUMED 679；DYNAMIC 0 |
-| 嵌套私有（tests/） | 344；与已删同名共享 1：`test_mechanical_tail_1845` 案内 `_reports`（**嵌套专属闭包**，≠ 已删顶层 `test_adr0015…._reports` 的存活消费） |
+| 嵌套私有额外候选（tests/） | 344；与已删同名共享 1：`test_mechanical_tail_1845` 案内 `_reports`（**嵌套专属闭包**，≠ 已删顶层 `test_adr0015…._reports` 的存活消费）。**非全协议完备** |
 | DRY BASE | skip@649／issue@680；RAW_EQUAL False；**NORMALIZED_SESSION_AST_EQUAL True** |
 | DRY HEAD | combined `action in (skip,issue)` @651 |
 
-## 附表 A：62 删除成员 × HEAD 存活消费者（完整）
+## 附表 A：62 删除成员 × 人读类别（精确类别表；非发现种子）
 
-凡行 `HEAD_SURVIVING=0`。`SAME_NAME_OTHER`＝其它文件仍存活的**同名顶层定义**（≠ 对本删除成员的消费）。
+发现条件＝上文 inline 的 BASE∖HEAD 顶层 defs 差集（worker 实测 `DELETED_COUNT=62`）。本表仅把该 62 成员按施工史拆成**人读类别**（bucket 为元数据展示，**不是**候选发现条件）。凡行 `HEAD_SURVIVING=0`。`SAME_NAME_OTHER`＝其它文件仍存活的**同名顶层定义**（≠ 对本删除成员的消费）。
 
 ### A1 退役公有三案 + stub（4）
 
-| # | qualified | bucket | HEAD 存活 | SAME_NAME_OTHER | 备注 |
+| # | qualified | 人读类别 | HEAD 存活 | SAME_NAME_OTHER | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `tests.test_web_court_visibility.test_vassal_prince_chat_rejected` | public_retired | 0 | — | 修前红：`AttributeError: web_app._require_active_minister` |
 | 2 | `tests.test_web_court_visibility.test_active_consort_chat_not_rejected` | public_retired | 0 | — | 同上 |
@@ -484,13 +424,14 @@ PY
 
 非 Python docs／审计 md 出现旧名 → **不是代码消费者**。
 
-## 嵌套私有额外扫描（非递归全砍）
+## 嵌套私有额外扫描（额外候选；非全协议完备）
 
-- **顶层支持物清退范围**：仅 `tree.body` 顶层；62 只计顶层。
-- **额外扫描**：HEAD `tests/` 内嵌套 `_` 函数／方法共 **344**；与已删顶层同名共享 **1** 条：
-  - `tests/test_mechanical_tail_1845.py` / `test_ending_summary_runs_in_mechanical_tail_after_advance` 内 `_reports` @395 → 标签 **test_local_closure**（案内专属），**不是**对已删 `test_adr0015…._reports` 的 ImportFrom／跨文件消费。
+- **顶层支持物清退范围**：仅 `tree.body` 顶层；差集 62 只计顶层。
+- **额外候选（非完备）**：HEAD `tests/` 内嵌套 `_` 函数／方法共 **344**——这是**额外候选面**，**不是** fixture／协议／递归全成员完备枚举（已删永假 `is_fixture([])` 死代码，不再假装分类完备）。
+- 与已删顶层同名共享 **1** 条：
+  - `tests/test_mechanical_tail_1845.py` / `test_ending_summary_runs_in_mechanical_tail_after_advance` 内 `_reports` @395 → 粗标 **test_local_closure**（案内专属），**不是**对已删 `test_adr0015…._reports` 的 ImportFrom／跨文件消费。
 - BASE 随父删除的嵌套（举例，**不计入 62**）：`_dual_brew_fn_factory._brew`、`_EmptyAgent.run`、各类 `_CannedExtractor.run` 等。
-- **禁止解读**：不得把「嵌套候选 344」写成「还应再删 344」；fixture／协议替身／实际调用／嵌套专属闭包须人工语义区分。
+- **禁止解读**：不得把「嵌套额外候选 344」写成「还应再删 344」或「已完备分类」；fixture／协议替身／实际调用／嵌套专属闭包须另证。
 
 ## 附表 B：本闭包相关 KEEP（候选，非全部 679 活 helpers）
 
@@ -708,14 +649,14 @@ Ruff 史（orphan 轮）：先 18 F401 → `--fix`；随后 `game` fixture impor
 | orphan 聚焦 | §6 | `112 passed` | `…/logs/focus-main.log` |
 | orphan Ruff | §6 | 18 F401 → fix；game F401 → noqa → passed | `…/logs/ruff*.log` |
 | diff --check | §7 | 先红后绿 @81560cb1b | transcript `fd3354ef-…` |
-| 本轮枚举 | 上文 inline | HEAD 存活 0；DRY norm equal | 交卷时 stdout |
+| 本轮枚举（worker 实测） | 上文 inline | 差集 62；HEAD 存活 0；DRY norm equal | worker stdout（主助手独立复跑另证） |
 
 **不以符号缺席永久测试自证**——闭包依据为全层 AST 消费者表 + 旧三案红取证 + 现役 KEEP 案绿 + BASE 死链说明。
 
-## Advisor 边界
+## Advisor 边界（保留旧记；非正式）
 
-advisor PASS＝施工顾问非正式意见，**非法庭审**／非法源。diff 名单／advisor 意见均不得替代类别授权与枚举证据。原话以宿主原卷为准。
+advisor PASS＝**自主顾问非正式意见**，**非法庭审**／非法源——旧记录保留，不得升格为正式庭审结论。diff 名单／advisor 意见均不得替代类别授权与枚举证据。原话以宿主原卷为准。
 
 ## 提交约束声明
 
-本轮仅 forward `ak-roles:` **docs** 提交；不 amend／stash／reset／checkout 覆盖／rebase／squash／push／PR；不改生产／测试代码；不改宪法／Soul／宿主配置／席位表；不造通用机制或永久自证测试。
+本轮仅 forward `ak-roles:` **docs** 小修提交；不 amend／stash／reset／checkout 覆盖／rebase／squash／push／PR；不改生产／测试代码；不改宪法／Soul／宿主配置／席位表；不造通用机制或永久自证测试；`git diff --check` 绿。
