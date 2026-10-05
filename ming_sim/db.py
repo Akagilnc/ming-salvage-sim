@@ -9149,24 +9149,6 @@ class GameDB:
                 out.append(item.strip())
         return out
 
-    def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
-        ids = [int(mid) for mid in message_ids if mid is not None]
-        if not ids:
-            return
-        with self.conn:
-            self.conn.executemany(
-                "DELETE FROM chat_messages WHERE id = ?",
-                [(mid,) for mid in ids],
-            )
-            self.conn.executemany(
-                "DELETE FROM character_knowledge_events WHERE source_id = ?",
-                [(f"chat_message:{mid}",) for mid in ids],
-            )
-            self.conn.executemany(
-                "DELETE FROM character_knowledge_sources WHERE source_id = ?",
-                [(f"chat_message:{mid}",) for mid in ids],
-            )
-
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
         """读出全部召对记录，按大臣分组，供进程启动时恢复内存缓存。"""
         rows = self.conn.execute(

@@ -299,7 +299,6 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(game, m
     session = _hall_session(game)
     minister_name = next(iter(content.characters))
     question = "命洪承畴督办陕西赈灾，东厂暗助护赈银。"
-    deleted: list = []
 
     def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         return SimpleNamespace(
@@ -318,16 +317,12 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(game, m
     session.scene_chat = _scene_chat  # type: ignore[method-assign]
     session.schedule_pending_scene_translation = lambda result: None  # type: ignore[method-assign]
     monkeypatch.setattr(session.db, "persist_minister_reply", _boom_persist)
-    monkeypatch.setattr(
-        session.db, "delete_chat_messages", lambda ids: deleted.append(list(ids)),
-    )
     answers = iter([question])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     with pytest.raises(RuntimeError, match="reply persist failed"):
         term.minister_chat(session, SimpleNamespace(name=minister_name))
 
-    assert deleted == []
     assert _chat_rows(db) == [(minister_name, int(state.turn), "user", question)]
 
 

@@ -2148,17 +2148,6 @@ def set_night_protagonist(
     return name
 
 
-def get_night_protagonist(db: Any, night_id: int) -> str:
-    """读本夜当前御前主角；未声明则空串。"""
-    row = db.conn.execute(
-        "SELECT protagonist_name FROM audience_nights WHERE id=?",
-        (int(night_id),),
-    ).fetchone()
-    if row is None:
-        return ""
-    return str(row["protagonist_name"] or "")
-
-
 def reproject_night_protagonist(db: Any, night_id: int) -> str:
     """按存活源轮时序重投影夜当前主角；调用方负责事务提交。"""
     row = db.conn.execute(

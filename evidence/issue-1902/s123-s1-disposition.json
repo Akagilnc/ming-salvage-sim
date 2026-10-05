@@ -1,0 +1,3966 @@
+{
+  "summary": {
+    "predicate": "S1 ZERO_PROD_REF_CANDIDATE real disposition vs base 10e64fbef; DELETE only when branch removed prod consumers",
+    "base": "10e64fbef",
+    "head_at_audit": "6b91e05b90f2624de6c8f006d878def241437921",
+    "zero_candidates_audited": 187,
+    "DELETE": 4,
+    "KEEP": 184,
+    "note": "credit_event_to_edge counted as exclusive-dep DELETE outside the 187"
+  },
+  "members": [
+    {
+      "name": "credit_event_to_edge",
+      "disposition": "DELETE",
+      "rationale": "独占依赖：仅被 credit_events_as_edges 调用；随根清退（删前同文件 Load 故不在 187）",
+      "defs": [
+        {
+          "file": "ming_sim/relations.py",
+          "kind": "func"
+        }
+      ],
+      "base_prod": [
+        "via credit_events_as_edges → db.read_credit_events_as_edges"
+      ],
+      "head_prod_at_audit": [
+        "ming_sim/relations.py"
+      ],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "credit_events_as_edges",
+      "disposition": "DELETE",
+      "rationale": "底座 ming_sim/db.py:read_credit_events_as_edges 生产包装已删（import+方法）；现仅 tests/test_relation_store_632.py 专属测；删根 + credit_event_to_edge 独占依赖 + test_credit_contract_fixture_*",
+      "defs": [
+        {
+          "file": "ming_sim/relations.py",
+          "line": 197,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [
+        "ming_sim/db.py:64",
+        "ming_sim/db.py:22624"
+      ],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_relation_store_632.py:8",
+        "tests/test_relation_store_632.py:116"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "delete_chat_messages",
+      "disposition": "DELETE",
+      "rationale": "底座 ming_sim/cli/terminal.py 调用已删；现仅 test_character_knowledge_489 直调 + test_cli_play_turn 对已不存在路径的 monkeypatch；删方法 + 专属测 + 清 monkeypatch",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 9152,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [
+        "ming_sim/cli/terminal.py:486"
+      ],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_character_knowledge_489.py:284",
+        "tests/test_cli_play_turn.py:322"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "get_night_protagonist",
+      "disposition": "DELETE",
+      "rationale": "底座 ming_sim/session.py 留侍分支消费者已删；现仅 test_audience_translation_1838 观测引用；删生产包装；AC3 真入口测改读 audience_nights.protagonist_name 账本列（set/reproject 仍写）",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 2151,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [
+        "ming_sim/session.py:1191",
+        "ming_sim/session.py:1197"
+      ],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_audience_translation_1838.py:21",
+        "tests/test_audience_translation_1838.py:223",
+        "tests/test_audience_translation_1838.py:231",
+        "tests/test_audience_translation_1838.py:235",
+        "tests/test_audience_translation_1838.py:249",
+        "tests/test_audience_translation_1838.py:267",
+        "tests/test_audience_translation_1838.py:278",
+        "tests/test_audience_translation_1838.py:282",
+        "tests/test_audience_translation_1838.py:286",
+        "tests/test_audience_translation_1838.py:303"
+      ],
+      "head_test_count_at_audit": 10
+    },
+    {
+      "name": "ACCEPTANCE_SCENARIOS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/person_archive_contract.py",
+          "line": 203,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "ALLOWED_PORTRAIT_TYPES",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 130,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "ApplyContext",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/applier.py",
+          "line": 273,
+          "kind": "class",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_applier_contract.py:13",
+        "tests/test_applier_contract.py:100"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "CLOSE_STEPS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_LIVE — 当前仍有生产引用 ['ming_sim/db.py:1488']",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 172,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [
+        "ming_sim/db.py:1489"
+      ],
+      "head_prod_at_audit": [
+        "ming_sim/db.py:1488"
+      ],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "ChatResult",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/models.py",
+          "line": 339,
+          "kind": "class",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "CourtContext",
+      "disposition": "KEEP",
+      "rationale": "KEEP_LIVE — 当前仍有生产引用 ['ming_sim/session.py:61']",
+      "defs": [
+        {
+          "file": "ming_sim/models.py",
+          "line": 684,
+          "kind": "class",
+          "decorators": []
+        }
+      ],
+      "base_prod": [
+        "ming_sim/session.py:62"
+      ],
+      "head_prod_at_audit": [
+        "ming_sim/session.py:61"
+      ],
+      "head_test_at_audit": [
+        "tests/test_recommendation_edges_635.py:228"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "DENUNCIATION_ALLOWED_COLS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/supervision.py",
+          "line": 72,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_faction_denunciation_627.py:19"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "DENUNCIATION_TABLE",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/supervision.py",
+          "line": 71,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_faction_denunciation_627.py:21",
+        "tests/test_faction_denunciation_627.py:487"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "DGOLD",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "scripts/make_steam_assets.py",
+          "line": 21,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "DUE_REVIEW_ENTRY_KIND_WHITELIST",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/due_review.py",
+          "line": 45,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "EXPOSURE_ALLOWED_COLS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/supervision.py",
+          "line": 85,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_supervision_625.py:33"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "EXPOSURE_TABLE",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/supervision.py",
+          "line": 80,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_supervision_625.py:34",
+        "tests/test_supervision_625.py:164"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "FACT_METRICS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/fiscal_fact_brief.py",
+          "line": 49,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_pay_order_override_653.py:17"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "FORBIDDEN_DULLING_COL_FRAGMENTS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/supervision.py",
+          "line": 89,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_supervision_625.py:35"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "MINISTER_DISMISS_COMMANDS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/constants.py",
+          "line": 255,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "MINISTRY_OFFICE_TYPES",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 712,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_faction_leverage_9.py:603"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "MONTH_OPEN_KEYS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/month_open_snapshot.py",
+          "line": 20,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_enter_settlement_period_1235.py:31",
+        "tests/test_month_open_snapshot_1234.py:28",
+        "tests/test_qa_c2_phase_settlement_mask_1374.py:23",
+        "tests/test_qa_c2_settlement_display_lifecycle_1343.py:21"
+      ],
+      "head_test_count_at_audit": 4
+    },
+    {
+      "name": "MaterialsRoot",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 159,
+          "kind": "class",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/person_archive_contract.py",
+          "line": 59,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "PERSON_LEGAL_REASON_CODES",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/person_archive_contract.py",
+          "line": 51,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "PRESENCE_ALLOWED_COLS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/supervision.py",
+          "line": 81,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_supervision_625.py:36"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "PRESENCE_TABLE",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/supervision.py",
+          "line": 79,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_supervision_625.py:37",
+        "tests/test_supervision_625.py:163"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "STRUCT",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "docs/raw/06_harness_scripts/agg.py",
+          "line": 8,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "SUPERVISION_SURFACE_KEYS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/supervision.py",
+          "line": 29,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_",
+      "disposition": "KEEP",
+      "rationale": "KEEP_LIVE — 当前仍有生产引用 ['docs/raw/06_harness_scripts/bench.py:32', 'docs/raw/06_harness_scripts/bench2.py:39', 'ming_sim/action_materialize.py:453']",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 12134,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [
+        "docs/raw/06_harness_scripts/bench.py:32",
+        "docs/raw/06_harness_scripts/bench2.py:39",
+        "ming_sim/action_materialize.py:453",
+        "ming_sim/action_materialize.py:1303",
+        "ming_sim/action_materialize.py:1311",
+        "ming_sim/audience_night.py:582",
+        "ming_sim/audience_translate.py:437",
+        "ming_sim/cli/terminal.py:106",
+        "ming_sim/cli_backend.py:1860",
+        "ming_sim/cli_backend.py:1865",
+        "ming_sim/cli_backend.py:2807",
+        "ming_sim/cli_backend.py:3062",
+        "ming_sim/cli_backend.py:3670",
+        "ming_sim/cli_backend.py:4031",
+        "ming_sim/cli_backend.py:4154",
+        "ming_sim/db.py:767",
+        "ming_sim/db.py:933",
+        "ming_sim/db.py:13038",
+        "ming_sim/db.py:13249",
+        "ming_sim/db.py:13407",
+        "ming_sim/db.py:14008",
+        "ming_sim/db.py:16952",
+        "ming_sim/db.py:17634",
+        "ming_sim/declaration_dispatch.py:484",
+        "ming_sim/entities/affair/store.py:538",
+        "ming_sim/fiscal_fact_brief.py:517",
+        "ming_sim/fiscal_fact_brief.py:567",
+        "ming_sim/fiscal_fact_brief.py:568",
+        "ming_sim/flows.py:461",
+        "ming_sim/flows.py:481",
+        "ming_sim/flows.py:658",
+        "ming_sim/flows.py:661",
+        "ming_sim/issues.py:770",
+        "ming_sim/issues.py:2806",
+        "ming_sim/issues.py:4116",
+        "ming_sim/issues.py:4119",
+        "ming_sim/issues.py:4122",
+        "ming_sim/issues.py:6016",
+        "ming_sim/issues.py:6313",
+        "ming_sim/issues.py:7401",
+        "ming_sim/issues.py:9182",
+        "ming_sim/llm_model.py:359",
+        "ming_sim/materials.py:101",
+        "ming_sim/materials.py:2115",
+        "ming_sim/pay_order.py:78",
+        "ming_sim/pay_order.py:83",
+        "ming_sim/rescript_actions.py:1092",
+        "ming_sim/session.py:852",
+        "ming_sim/session.py:1773",
+        "scripts/jisi_army_dispatch_probe.py:53",
+        "scripts/make_steam_assets.py:57",
+        "scripts/make_steam_library_assets.py:36",
+        "scripts/military_flow_probe.py:62",
+        "scripts/promulgation_gate_561.py:556",
+        "scripts/secret_order_probe2.py:21",
+        "web_app.py:888",
+        "web_app.py:890",
+        "web_app.py:4271",
+        "web_app.py:4814",
+        "web_app.py:4816"
+      ],
+      "head_prod_at_audit": [
+        "docs/raw/06_harness_scripts/bench.py:32",
+        "docs/raw/06_harness_scripts/bench2.py:39",
+        "ming_sim/action_materialize.py:453",
+        "ming_sim/action_materialize.py:1303",
+        "ming_sim/action_materialize.py:1311",
+        "ming_sim/audience_night.py:578",
+        "ming_sim/audience_translate.py:437",
+        "ming_sim/cli/terminal.py:105",
+        "ming_sim/cli_backend.py:2274",
+        "ming_sim/cli_backend.py:2735",
+        "ming_sim/db.py:766",
+        "ming_sim/db.py:932",
+        "ming_sim/db.py:12987",
+        "ming_sim/db.py:13198",
+        "ming_sim/db.py:13356",
+        "ming_sim/db.py:13957",
+        "ming_sim/db.py:16901",
+        "ming_sim/db.py:17583",
+        "ming_sim/declaration_dispatch.py:484",
+        "ming_sim/entities/affair/store.py:538",
+        "ming_sim/fiscal_fact_brief.py:517",
+        "ming_sim/fiscal_fact_brief.py:567",
+        "ming_sim/fiscal_fact_brief.py:568",
+        "ming_sim/flows.py:461",
+        "ming_sim/flows.py:481",
+        "ming_sim/flows.py:658",
+        "ming_sim/flows.py:661",
+        "ming_sim/issues.py:770",
+        "ming_sim/issues.py:2806",
+        "ming_sim/issues.py:4116",
+        "ming_sim/issues.py:4119",
+        "ming_sim/issues.py:4122",
+        "ming_sim/issues.py:6011",
+        "ming_sim/issues.py:6308",
+        "ming_sim/issues.py:7396",
+        "ming_sim/issues.py:9177",
+        "ming_sim/llm_model.py:358",
+        "ming_sim/materials.py:101",
+        "ming_sim/materials.py:2115",
+        "ming_sim/paths.py:69",
+        "ming_sim/paths.py:72",
+        "ming_sim/paths.py:74",
+        "ming_sim/pay_order.py:78",
+        "ming_sim/pay_order.py:83",
+        "ming_sim/rescript_actions.py:1108",
+        "ming_sim/session.py:831",
+        "ming_sim/session.py:1935",
+        "scripts/jisi_army_dispatch_probe.py:53",
+        "scripts/make_steam_assets.py:57",
+        "scripts/make_steam_library_assets.py:36",
+        "scripts/military_flow_probe.py:62",
+        "scripts/promulgation_gate_561.py:556",
+        "scripts/secret_order_probe2.py:21",
+        "web_app.py:4075"
+      ],
+      "head_test_at_audit": [
+        "spike_settle_tick.py:253",
+        "spike_settle_tick.py:375",
+        "spike_settle_tick.py:378",
+        "tests/test_adr0015_per_item_rejection.py:18",
+        "tests/test_adr0015_per_item_rejection.py:37",
+        "tests/test_advances_section_rejections.py:33",
+        "tests/test_advances_section_rejections.py:43",
+        "tests/test_advances_section_rejections.py:60",
+        "tests/test_advances_section_rejections.py:71",
+        "tests/test_advances_section_rejections.py:80",
+        "tests/test_advances_section_rejections.py:91",
+        "tests/test_advances_section_rejections.py:102",
+        "tests/test_advances_section_rejections.py:119",
+        "tests/test_advances_section_rejections.py:130",
+        "tests/test_advances_section_rejections.py:144",
+        "tests/test_affairs_1831.py:42",
+        "tests/test_affairs_1831.py:91",
+        "tests/test_affairs_1831.py:245",
+        "tests/test_army_card_status_1501.py:140",
+        "tests/test_army_card_status_1501.py:187"
+      ],
+      "head_test_count_at_audit": 653
+    },
+    {
+      "name": "_HUANG_TIAN_RENT_PER_WAN_MU",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/flows.py",
+          "line": 35,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_STATUS_DISCARDED",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/entities/staged_declaration/store.py",
+          "line": 20,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_STATUS_SETTLED",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/entities/staged_declaration/store.py",
+          "line": 21,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_STATUS_STAGED",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/entities/staged_declaration/store.py",
+          "line": 19,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_TERMINAL_ACTIONS",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/rescript_actions.py",
+          "line": 51,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_collect_compliant_promulgation_items",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 163,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_dossier_ids_from_simulator_payload",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 704,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_fiscal_container_value",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/flows.py",
+          "line": 296,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_haircut_bp",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/fiscal_tick.py",
+          "line": 217,
+          "kind": "const"
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_merge_compliant_promulgation_items",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 195,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_open_affair_ids_from_payload",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 717,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_promulgable_proposed_dossiers",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 230,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_province_collection_rate",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/flows.py",
+          "line": 70,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_province_transport_ratio",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/flows.py",
+          "line": 65,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "_require_active_minister",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5120,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_chat_stream_failpaths_393.py:589",
+        "tests/test_qa_s2_copy_prompts_1356_1402.py:149",
+        "tests/test_web_chat_serialization_393.py:298",
+        "tests/test_web_court_visibility.py:230",
+        "tests/test_web_court_visibility.py:252"
+      ],
+      "head_test_count_at_audit": 5
+    },
+    {
+      "name": "accrue_blood_debt",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/centrifuge_ledger.py",
+          "line": 115,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_centrifuge_ledger_690.py:99",
+        "tests/test_centrifuge_ledger_690.py:109",
+        "tests/test_centrifuge_ledger_690.py:131",
+        "tests/test_centrifuge_ledger_690.py:141",
+        "tests/test_centrifuge_ledger_690.py:162",
+        "tests/test_centrifuge_ledger_690.py:166",
+        "tests/test_centrifuge_ledger_690.py:187",
+        "tests/test_centrifuge_ledger_690.py:211",
+        "tests/test_centrifuge_ledger_690.py:215",
+        "tests/test_centrifuge_ledger_690.py:233",
+        "tests/test_centrifuge_ledger_690.py:237",
+        "tests/test_centrifuge_ledger_690.py:270",
+        "tests/test_centrifuge_ledger_690.py:290",
+        "tests/test_centrifuge_ledger_690.py:296",
+        "tests/test_centrifuge_ledger_690.py:313",
+        "tests/test_centrifuge_ledger_690.py:336",
+        "tests/test_centrifuge_ledger_690.py:341",
+        "tests/test_centrifuge_ledger_690.py:368",
+        "tests/test_centrifuge_ledger_690.py:385",
+        "tests/test_centrifuge_ledger_690.py:403"
+      ],
+      "head_test_count_at_audit": 39
+    },
+    {
+      "name": "accrue_detection_wariness",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/centrifuge_ledger.py",
+          "line": 161,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_centrifuge_ledger_690.py:439",
+        "tests/test_centrifuge_ledger_690.py:443",
+        "tests/test_centrifuge_ledger_690.py:469"
+      ],
+      "head_test_count_at_audit": 3
+    },
+    {
+      "name": "admin_page",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI_OR_FRAMEWORK — web 框架/页面入口",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5989,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/admin')])"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "ainvoke",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/cli_backend.py",
+          "line": 2867,
+          "kind": "async",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "ainvoke_stream",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/cli_backend.py",
+          "line": 2929,
+          "kind": "async",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_add_favorite",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5094,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/favorites/{mi"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_settlement_write_guard_393.py:141"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_admin_delete",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5976,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/admin/table/{"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_settlement_write_guard_393.py:145"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_admin_table",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5944,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/admin/table/{t"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_admin_tables",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5939,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/admin/tables')"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_admin_upsert",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5958,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/admin/table/{"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_settlement_write_guard_393.py:144"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_advance_without_edict",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5312,
+          "kind": "func",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/decree/advanc"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_month_open_snapshot_1234.py:399",
+        "tests/test_month_open_snapshot_1234.py:455",
+        "tests/test_no_edict_full_settlement_1274.py:183",
+        "tests/test_secret_order_monthly_progress_566.py:350",
+        "tests/test_settlement_write_guard_393.py:240",
+        "tests/test_settlement_write_guard_393.py:262",
+        "tests/test_settlement_write_guard_393.py:313"
+      ],
+      "head_test_count_at_audit": 7
+    },
+    {
+      "name": "api_audience_chat_history",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5170,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/audience/chat'"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_audience_chat_stream",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5284,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/audience/chat"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_web_chat_serialization_393.py:302"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_audience_scroll",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5133,
+          "kind": "func",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/audience/scrol"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_p4_guard_new_surfaces_547.py:135"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_create_save",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5694,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/saves')])"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_settlement_write_guard_393.py:158"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_delete_directive",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5296,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='delete', ctx=Load()), args=[Constant(value='/api/directives/"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_settlement_write_guard_393.py:150"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_delete_save",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5707,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='delete', ctx=Load()), args=[Constant(value='/api/saves/{name"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_get_court_layout",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5916,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/court_layout')"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_court_layout_1290.py:51",
+        "tests/test_court_layout_1290.py:65"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "api_get_llm_config",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5724,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/llm/config')])"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_cli_model_choices.py:157",
+        "tests/test_web_llm_runtime_config.py:750",
+        "tests/test_web_llm_runtime_config.py:860",
+        "tests/test_web_llm_runtime_config.py:901",
+        "tests/test_web_llm_runtime_config.py:922",
+        "tests/test_web_llm_runtime_config.py:996"
+      ],
+      "head_test_count_at_audit": 6
+    },
+    {
+      "name": "api_get_portrait",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5930,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/portraits/custom/{"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_history_turn",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5048,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/history/turn/{"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_player_payload_1022.py:38"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_history_turns",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5041,
+          "kind": "func",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/history/turns'"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_p4_guard_new_surfaces_547.py:248"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_issue_decree_stream",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5443,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/decree/issue/"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_error_pack.py:146",
+        "tests/test_issue_decree_token_1277.py:79",
+        "tests/test_month_open_snapshot_1234.py:348",
+        "tests/test_player_payload_1022.py:107"
+      ],
+      "head_test_count_at_audit": 4
+    },
+    {
+      "name": "api_list_saves",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5689,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/saves')])"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_load_save",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5713,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/saves/{name}/"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_qa_b3_409_ux.py:277",
+        "tests/test_settlement_write_guard_393.py:159"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "api_memorials_read",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4932,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/memorials/rea"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_settlement_write_guard_393.py:161"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_menu_continue",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4374,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/menu/continue"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_menu_delete_save",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4615,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='delete', ctx=Load()), args=[Constant(value='/api/menu/saves/"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_web_entry_1902.py:26"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_menu_exit",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4627,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/menu/exit_to_"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_menu_continue_stream_1195.py:132",
+        "tests/test_menu_lifecycle_drain_396.py:79"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "api_menu_load_save",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4493,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/menu/load_sav"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_menu_new_game",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4270,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/menu/new_game"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_menu_continue_stream_1195.py:196",
+        "tests/test_menu_lifecycle_drain_396.py:117",
+        "tests/test_menu_lifecycle_drain_396.py:179",
+        "tests/test_menu_lifecycle_drain_396.py:362",
+        "tests/test_menu_lifecycle_drain_396.py:732",
+        "tests/test_menu_lifecycle_drain_396.py:767"
+      ],
+      "head_test_count_at_audit": 6
+    },
+    {
+      "name": "api_menu_save_llm",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4798,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/menu/llm')])"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_web_llm_runtime_config.py:541",
+        "tests/test_web_llm_runtime_config.py:584",
+        "tests/test_web_llm_runtime_config.py:621",
+        "tests/test_web_llm_runtime_config.py:642",
+        "tests/test_web_llm_runtime_config.py:673",
+        "tests/test_web_llm_runtime_config.py:701",
+        "tests/test_web_llm_runtime_config.py:939",
+        "tests/test_web_llm_runtime_config.py:1263"
+      ],
+      "head_test_count_at_audit": 8
+    },
+    {
+      "name": "api_menu_shutdown",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4656,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/menu/shutdown"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_menu_lifecycle_drain_396.py:391",
+        "tests/test_menu_lifecycle_drain_396.py:416"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "api_menu_status",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4185,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/menu/status')]"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_cli_model_choices.py:117",
+        "tests/test_cli_model_choices.py:130",
+        "tests/test_cli_model_choices.py:141",
+        "tests/test_web_llm_runtime_config.py:429",
+        "tests/test_web_llm_runtime_config.py:452",
+        "tests/test_web_llm_runtime_config.py:474",
+        "tests/test_web_llm_runtime_config.py:504",
+        "tests/test_web_llm_runtime_config.py:527",
+        "tests/test_web_llm_runtime_config.py:606",
+        "tests/test_web_llm_runtime_config.py:747",
+        "tests/test_web_llm_runtime_config.py:810",
+        "tests/test_web_llm_runtime_config.py:976"
+      ],
+      "head_test_count_at_audit": 12
+    },
+    {
+      "name": "api_remove_favorite",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5105,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='delete', ctx=Load()), args=[Constant(value='/api/favorites/{"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_settlement_write_guard_393.py:142"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_resolve_decisions_stream",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5566,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/decree/resolv"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_player_payload_1022.py:109",
+        "tests/test_qa_b3_409_ux.py:155",
+        "tests/test_qa_c2_phase_settlement_mask_1374.py:68"
+      ],
+      "head_test_count_at_audit": 3
+    },
+    {
+      "name": "api_retry_audience_reply",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5199,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/audience/repl"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_retry_mechanical_tail",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4921,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/game/mechanic"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_retry_pending_translation",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5221,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/audience/tran"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_secret_orders",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4969,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/secret_orders'"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_set_court_layout",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5922,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/court_layout'"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_court_layout_1290.py:61",
+        "tests/test_settlement_write_guard_393.py:143",
+        "tests/test_settlement_write_guard_393.py:347"
+      ],
+      "head_test_count_at_audit": 3
+    },
+    {
+      "name": "api_set_llm_config",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5790,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/llm/config')]"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_web_llm_runtime_config.py:213",
+        "tests/test_web_llm_runtime_config.py:237",
+        "tests/test_web_llm_runtime_config.py:262",
+        "tests/test_web_llm_runtime_config.py:290",
+        "tests/test_web_llm_runtime_config.py:356",
+        "tests/test_web_llm_runtime_config.py:377",
+        "tests/test_web_llm_runtime_config.py:404",
+        "tests/test_web_llm_runtime_config.py:777",
+        "tests/test_web_llm_runtime_config.py:1009"
+      ],
+      "head_test_count_at_audit": 9
+    },
+    {
+      "name": "api_state",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4916,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='/api/game/state')])"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "api_undo_audience_chat",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5208,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/audience/chat"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_settlement_write_guard_393.py:154"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "api_upload_portrait",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI — FastAPI 框架入口（装饰器注册；AST Load=0 假死）",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5886,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/api/consorts/{nam"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "army_detail",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 7817,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_army_card_status_1501.py:221",
+        "tests/test_player_army_projection_321.py:298",
+        "tests/test_player_army_projection_321.py:299"
+      ],
+      "head_test_count_at_audit": 3
+    },
+    {
+      "name": "audit_night_direct_writes",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 669,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_audience_undo_506.py:180",
+        "tests/test_audience_undo_506.py:196",
+        "tests/test_on_scene_immediate_write_1839.py:197"
+      ],
+      "head_test_count_at_audit": 3
+    },
+    {
+      "name": "axis_collision_stances",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/value_matrix.py",
+          "line": 100,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_value_matrix_691.py:25"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "build_fiscal_fact_brief",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/fiscal_fact_brief.py",
+          "line": 334,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_mutiny_actual_residence_659.py:16",
+        "tests/test_mutiny_actual_residence_659.py:111",
+        "tests/test_pay_order_override_653.py:18",
+        "tests/test_pay_order_override_653.py:681",
+        "tests/test_pay_order_override_653.py:692",
+        "tests/test_pay_order_override_653.py:693",
+        "tests/test_pay_order_override_653.py:721",
+        "tests/test_pay_order_override_653.py:743",
+        "tests/test_pay_order_override_653.py:762",
+        "tests/test_pay_order_override_653.py:772",
+        "tests/test_pay_order_override_653.py:887",
+        "tests/test_pay_order_override_653.py:895",
+        "tests/test_pay_order_override_653.py:945",
+        "tests/test_pay_order_override_653.py:969",
+        "tests/test_pay_order_override_653.py:1016",
+        "tests/test_pay_order_override_653.py:1040",
+        "tests/test_pay_order_override_653.py:1051",
+        "tests/test_pay_order_override_653.py:1070",
+        "tests/test_pay_order_override_653.py:1078",
+        "tests/test_pay_order_override_653.py:1090"
+      ],
+      "head_test_count_at_audit": 31
+    },
+    {
+      "name": "build_period_report",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/report.py",
+          "line": 104,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "build_secret_covert_effect_briefs",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/covert_progress.py",
+          "line": 653,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_secret_order_payoff_1504.py:24",
+        "tests/test_secret_order_payoff_1504.py:494"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "building_detail",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 8916,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "clear_directive_needs_clarification",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 17645,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "clear_pending_decisions",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 11009,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_advance_paths_atomic.py:79",
+        "tests/test_advance_paths_atomic.py:148",
+        "tests/test_pihong_dossier_1490.py:309",
+        "tests/test_pihong_dossier_1490.py:371",
+        "tests/test_pihong_dossier_1490.py:396",
+        "tests/test_pihong_dossier_1490.py:446",
+        "tests/test_pihong_dossier_1490.py:496",
+        "tests/test_rescript_draft_656.py:190",
+        "tests/test_rescript_draft_656.py:1329"
+      ],
+      "head_test_count_at_audit": 9
+    },
+    {
+      "name": "clear_resolve_context",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 18974,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_advance_paths_atomic.py:443",
+        "tests/test_pre_settle_transaction.py:367"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "cluster_effect",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/action_clusters.py",
+          "line": 256,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "contract_axes_direction",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/covert_progress.py",
+          "line": 579,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "count_active_initiatives",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 19557,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_structured_decree_contract_1624.py:411",
+        "tests/test_structured_decree_contract_1624.py:437"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "create_rescript_draft_agent",
+      "disposition": "KEEP",
+      "rationale": "#1847 配套 agent 工厂保留",
+      "defs": [
+        {
+          "file": "ming_sim/agents.py",
+          "line": 796,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_llm_channel_config.py:275",
+        "tests/test_llm_channel_config.py:312"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "dependency_mismatch_handler",
+      "disposition": "KEEP",
+      "rationale": "KEEP_FASTAPI_OR_FRAMEWORK — web 框架/页面入口",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4054,
+          "kind": "async",
+          "decorators": [
+            "Call(func=Attribute(value=Name(id='app', ctx=Load()), attr='exception_handler', ctx=Load()), args=[Name(id='DependencyMi"
+          ]
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "dict_of_string_lists",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/content.py",
+          "line": 600,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "dict_of_strings",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/content.py",
+          "line": 605,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "disaster_severity_band",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/qualitative.py",
+          "line": 200,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "discard_pending_directives",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 18890,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "discover_character_write_sql_locations",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/person_write_inventory.py",
+          "line": 112,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "drop_pending_actions_for_minister",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 18835,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_audience_undo_506.py:629",
+        "tests/test_secret_order_isolation_883.py:1174"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "event_context",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/context.py",
+          "line": 352,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "execution_side_read_fields",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 258,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_execution_tenure_613.py:63",
+        "tests/test_secret_dossier_participants_1252.py:56",
+        "tests/test_secret_dossier_participants_1252.py:98"
+      ],
+      "head_test_count_at_audit": 3
+    },
+    {
+      "name": "experiences",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/entities/affair/store.py",
+          "line": 429,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "faction_report",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 6746,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_character_knowledge_489.py:66",
+        "tests/test_character_knowledge_489.py:96"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "first_character_name",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/context.py",
+          "line": 367,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "flag_directive_needs_clarification",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 17804,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "format_fiscal_fact_brief_tsv",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/fiscal_fact_brief.py",
+          "line": 583,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_pay_order_override_653.py:19",
+        "tests/test_pay_order_override_653.py:705",
+        "tests/test_pay_order_override_653.py:709",
+        "tests/test_pay_order_override_653.py:1692",
+        "tests/test_pay_order_override_653.py:1701"
+      ],
+      "head_test_count_at_audit": 5
+    },
+    {
+      "name": "format_power_changes",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/report.py",
+          "line": 72,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_power_section_rejections.py:147",
+        "tests/test_power_section_rejections.py:149",
+        "tests/test_power_section_rejections.py:151",
+        "tests/test_power_section_rejections.py:157",
+        "tests/test_power_section_rejections.py:159"
+      ],
+      "head_test_count_at_audit": 5
+    },
+    {
+      "name": "generate_rescript_draft",
+      "disposition": "KEEP",
+      "rationale": "#1847 待接线能力合法保留",
+      "defs": [
+        {
+          "file": "ming_sim/rescript_draft.py",
+          "line": 2149,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_pihong_dossier_1490.py:1288",
+        "tests/test_pihong_dossier_1490.py:1297",
+        "tests/test_pihong_dossier_1490.py:2924",
+        "tests/test_pihong_dossier_1490.py:2930",
+        "tests/test_pihong_dossier_1490.py:3047",
+        "tests/test_pihong_dossier_1490.py:3069",
+        "tests/test_pihong_dossier_1490.py:3107",
+        "tests/test_pihong_dossier_1490.py:3130",
+        "tests/test_rescript_draft_656.py:20",
+        "tests/test_rescript_draft_656.py:325",
+        "tests/test_rescript_draft_656.py:351",
+        "tests/test_rescript_draft_656.py:404",
+        "tests/test_rescript_draft_656.py:469",
+        "tests/test_rescript_draft_656.py:527",
+        "tests/test_rescript_draft_656.py:568",
+        "tests/test_rescript_draft_656.py:595",
+        "tests/test_rescript_draft_656.py:626",
+        "tests/test_rescript_draft_656.py:657",
+        "tests/test_rescript_draft_656.py:815",
+        "tests/test_rescript_draft_656.py:838"
+      ],
+      "head_test_count_at_audit": 46
+    },
+    {
+      "name": "get_faction_stance_summary",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22714,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_faction_brew_637.py:139",
+        "tests/test_faction_brew_637.py:140",
+        "tests/test_faction_brew_637.py:173",
+        "tests/test_faction_brew_637.py:188",
+        "tests/test_faction_brew_637.py:210",
+        "tests/test_faction_brew_637.py:232",
+        "tests/test_faction_brew_637.py:256",
+        "tests/test_faction_brew_637.py:267",
+        "tests/test_faction_brew_637.py:277",
+        "tests/test_faction_brew_637.py:608"
+      ],
+      "head_test_count_at_audit": 10
+    },
+    {
+      "name": "get_message_highlights",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 9129,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_highlight_judge_544.py:230",
+        "tests/test_highlight_judge_544.py:275",
+        "tests/test_highlight_judge_544.py:315",
+        "tests/test_highlight_judge_544.py:363"
+      ],
+      "head_test_count_at_audit": 4
+    },
+    {
+      "name": "has_player_visible_rejection",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/applier.py",
+          "line": 387,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "historical_anchor_for_month",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/context.py",
+          "line": 75,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "hline",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "scripts/make_steam_assets.py",
+          "line": 46,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "holder_kind",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 110,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "is_sealed",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 262,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_menu_lifecycle_drain_396.py:666",
+        "tests/test_new_game_write_path_1749.py:544"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "isatty",
+      "disposition": "KEEP",
+      "rationale": "KEEP_LIVE — 当前仍有生产引用 ['launcher.py:23', 'launcher.py:24']",
+      "defs": [
+        {
+          "file": "launcher.py",
+          "line": 29,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [
+        "launcher.py:23",
+        "launcher.py:24"
+      ],
+      "head_prod_at_audit": [
+        "launcher.py:23",
+        "launcher.py:24"
+      ],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "list_arrived_unsettled_summons",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 1489,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_audience_travel_gating_670.py:293",
+        "tests/test_audience_travel_gating_670.py:307",
+        "tests/test_audience_travel_gating_670.py:330",
+        "tests/test_audience_travel_gating_670.py:874",
+        "tests/test_audience_travel_gating_670.py:894",
+        "tests/test_audience_travel_gating_670.py:925",
+        "tests/test_audience_travel_gating_670.py:974",
+        "tests/test_audience_travel_gating_670.py:1269"
+      ],
+      "head_test_count_at_audit": 8
+    },
+    {
+      "name": "list_dossier_actual_rail",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 20785,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_secret_order_payoff_1504.py:356"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "list_dossier_link_rejections",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 14919,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_dossier_links_559.py:138",
+        "tests/test_dossier_links_559.py:153",
+        "tests/test_dossier_links_559.py:191",
+        "tests/test_dossier_links_559.py:192"
+      ],
+      "head_test_count_at_audit": 4
+    },
+    {
+      "name": "list_dossiers_for_directive",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 14599,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_execution_pressure_654.py:267",
+        "tests/test_execution_pressure_654.py:291",
+        "tests/test_execution_pressure_654.py:334",
+        "tests/test_execution_pressure_654.py:394",
+        "tests/test_execution_pressure_654.py:494",
+        "tests/test_execution_pressure_654.py:519",
+        "tests/test_execution_pressure_654.py:527",
+        "tests/test_execution_pressure_654.py:561",
+        "tests/test_execution_pressure_654.py:564"
+      ],
+      "head_test_count_at_audit": 9
+    },
+    {
+      "name": "list_endorsed_dossier_candidates",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 14617,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_pihong_dossier_1490.py:2749"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "list_execution_liability_parties",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 16002,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_execution_joint_liability_565.py:270",
+        "tests/test_execution_joint_liability_565.py:313",
+        "tests/test_execution_joint_liability_565.py:362"
+      ],
+      "head_test_count_at_audit": 3
+    },
+    {
+      "name": "list_ministers",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/session.py",
+          "line": 822,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_person_delta_adapter.py:1944",
+        "tests/test_person_delta_adapter.py:1951",
+        "tests/test_web_court_visibility.py:360",
+        "tests/test_web_court_visibility.py:364",
+        "tests/test_web_court_visibility.py:447",
+        "tests/test_web_court_visibility.py:471"
+      ],
+      "head_test_count_at_audit": 6
+    },
+    {
+      "name": "list_night_promulgated_directives",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 17673,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "list_night_timeline",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 454,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_audience_night_498.py:177"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "list_office_effects_for_dossier",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 19141,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_decree_dossiers_571.py:941"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "list_office_vacancies",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 4045,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "list_open_grant_reconciliations",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 12310,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "list_promulgated_directives",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 17709,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "mark_chat_turn_failed",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 9655,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "matrix_snapshot",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/value_matrix.py",
+          "line": 153,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_value_matrix_691.py:21",
+        "tests/test_value_matrix_691.py:74"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "mean_aligned_stance",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/value_matrix.py",
+          "line": 136,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "minister_speaker_role",
+      "disposition": "KEEP",
+      "rationale": "底座原本无生产调用，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/action_materialize.py",
+          "line": 29,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "night_dossiers_ready",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 341,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "parse_covert_exec_selections",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/covert_progress.py",
+          "line": 2096,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "parse_json_dict",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/context.py",
+          "line": 169,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "person_write_locations_by_disposition",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/person_write_inventory.py",
+          "line": 157,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "persons_entered_tonight",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 2222,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_cli_play_turn.py:589"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "persons_present_tonight",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 2230,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_audience_continuous_507.py:146",
+        "tests/test_audience_continuous_507.py:149",
+        "tests/test_audience_undo_506.py:113",
+        "tests/test_audience_undo_506.py:127",
+        "tests/test_audience_undo_506.py:223",
+        "tests/test_audience_undo_506.py:235",
+        "tests/test_audience_undo_506.py:261",
+        "tests/test_audience_undo_506.py:509",
+        "tests/test_audience_undo_506.py:526",
+        "tests/test_cli_play_turn.py:588"
+      ],
+      "head_test_count_at_audit": 10
+    },
+    {
+      "name": "point_dossier",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/entities/affair/store.py",
+          "line": 284,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "point_issue",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/entities/affair/store.py",
+          "line": 316,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "pointing_at",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/entities/textual_fact/store.py",
+          "line": 113,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "prepare_character_materials",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 1119,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_army_card_status_1501.py:20",
+        "tests/test_army_card_status_1501.py:233",
+        "tests/test_audience_background.py:13",
+        "tests/test_character_knowledge_489.py:10",
+        "tests/test_character_knowledge_489.py:74",
+        "tests/test_character_knowledge_489.py:1404",
+        "tests/test_character_knowledge_489.py:1482",
+        "tests/test_gazette_author_1862.py:18",
+        "tests/test_gazette_author_1862.py:435",
+        "tests/test_material_directory_1830.py:18",
+        "tests/test_material_directory_1830.py:44",
+        "tests/test_material_directory_1830.py:67",
+        "tests/test_material_directory_1830.py:68",
+        "tests/test_material_directory_1830.py:102",
+        "tests/test_material_directory_1830.py:145",
+        "tests/test_material_directory_1830.py:166",
+        "tests/test_material_directory_1830.py:175",
+        "tests/test_material_directory_1830.py:244",
+        "tests/test_material_directory_1830.py:271",
+        "tests/test_material_directory_1830.py:284"
+      ],
+      "head_test_count_at_audit": 41
+    },
+    {
+      "name": "rebuild_centrifuge_cache",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/centrifuge_ledger.py",
+          "line": 193,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_centrifuge_ledger_690.py:656",
+        "tests/test_centrifuge_ledger_690.py:688",
+        "tests/test_centrifuge_ledger_690.py:740",
+        "tests/test_centrifuge_ledger_690.py:753",
+        "tests/test_centrifuge_ledger_690.py:789"
+      ],
+      "head_test_count_at_audit": 5
+    },
+    {
+      "name": "record_economy_moves",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 6512,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "record_monthly_supervision_facts",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 12610,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_supervision_625.py:192",
+        "tests/test_supervision_625.py:193",
+        "tests/test_supervision_625.py:235",
+        "tests/test_supervision_625.py:294",
+        "tests/test_supervision_625.py:440"
+      ],
+      "head_test_count_at_audit": 5
+    },
+    {
+      "name": "reject_directive",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 19433,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_decree_dossiers_571.py:311"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "release_previous_material_tree",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 227,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "require_bool",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/llm_contract.py",
+          "line": 41,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "require_int_range",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/llm_contract.py",
+          "line": 24,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "require_non_empty_text",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/llm_contract.py",
+          "line": 18,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "revoke_pay_order_decree",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/pay_order.py",
+          "line": 472,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_pay_order_override_653.py:30",
+        "tests/test_pay_order_override_653.py:352"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "run_agent_stream_text",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/agents.py",
+          "line": 367,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_cli_backend.py:18",
+        "tests/test_cli_backend.py:320",
+        "tests/test_cli_backend.py:367",
+        "tests/test_cli_backend.py:377",
+        "tests/test_cli_backend.py:402"
+      ],
+      "head_test_count_at_audit": 5
+    },
+    {
+      "name": "run_audience_turn_translation",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/audience_translate.py",
+          "line": 551,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "run_exclusive",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 520,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_audience_travel_gating_670.py:373",
+        "tests/test_audience_travel_gating_670.py:908",
+        "tests/test_pihong_dossier_1490.py:1356",
+        "tests/test_pihong_dossier_1490.py:2949",
+        "tests/test_pihong_dossier_1490.py:2963",
+        "tests/test_session_write_queue_1353.py:361",
+        "tests/test_session_write_queue_1353.py:367"
+      ],
+      "head_test_count_at_audit": 7
+    },
+    {
+      "name": "run_month_end_relation_brew",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/relation_brew.py",
+          "line": 438,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_faction_brew_637.py:32",
+        "tests/test_faction_brew_637.py:115",
+        "tests/test_faction_brew_637.py:132",
+        "tests/test_faction_brew_637.py:156",
+        "tests/test_faction_brew_637.py:171",
+        "tests/test_faction_brew_637.py:185",
+        "tests/test_faction_brew_637.py:206",
+        "tests/test_faction_brew_637.py:224",
+        "tests/test_faction_brew_637.py:242",
+        "tests/test_faction_brew_637.py:255",
+        "tests/test_faction_brew_637.py:265",
+        "tests/test_faction_brew_637.py:276",
+        "tests/test_faction_brew_637.py:293",
+        "tests/test_faction_brew_637.py:306",
+        "tests/test_faction_brew_637.py:327",
+        "tests/test_faction_brew_637.py:346",
+        "tests/test_faction_brew_637.py:363",
+        "tests/test_faction_brew_637.py:369",
+        "tests/test_faction_brew_637.py:471",
+        "tests/test_faction_brew_637.py:606"
+      ],
+      "head_test_count_at_audit": 45
+    },
+    {
+      "name": "save_pending_promulgation_verdicts",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 16167,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_pihong_dossier_1490.py:1210",
+        "tests/test_pihong_dossier_1490.py:1231",
+        "tests/test_promulgation_judge_561.py:481",
+        "tests/test_promulgation_seam_560.py:41",
+        "tests/test_promulgation_seam_560.py:44"
+      ],
+      "head_test_count_at_audit": 5
+    },
+    {
+      "name": "save_rescript_drafts",
+      "disposition": "KEEP",
+      "rationale": "共享 DB API；测试 fixture / 月链他路",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 11018,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_cli_entry_1902.py:241",
+        "tests/test_execution_pressure_654.py:60",
+        "tests/test_pihong_dossier_1490.py:525",
+        "tests/test_pihong_dossier_1490.py:761",
+        "tests/test_pihong_dossier_1490.py:800",
+        "tests/test_pihong_dossier_1490.py:1013",
+        "tests/test_pihong_dossier_1490.py:1185",
+        "tests/test_pihong_dossier_1490.py:1343",
+        "tests/test_pihong_dossier_1490.py:2117",
+        "tests/test_pihong_dossier_1490.py:2958",
+        "tests/test_pihong_dossier_1490.py:3144",
+        "tests/test_rescript_choices_563.py:409",
+        "tests/test_rescript_draft_656.py:132",
+        "tests/test_rescript_draft_656.py:167",
+        "tests/test_rescript_draft_656.py:186",
+        "tests/test_rescript_draft_656.py:210",
+        "tests/test_rescript_draft_656.py:235",
+        "tests/test_rescript_draft_656.py:261",
+        "tests/test_rescript_draft_656.py:265",
+        "tests/test_rescript_draft_656.py:303"
+      ],
+      "head_test_count_at_audit": 24
+    },
+    {
+      "name": "season_option_contract_prompt",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/action_clusters.py",
+          "line": 185,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "select_triage_actor",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/rescript_draft.py",
+          "line": 1107,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_rescript_draft_656.py:21",
+        "tests/test_rescript_draft_656.py:81",
+        "tests/test_rescript_draft_656.py:88",
+        "tests/test_rescript_draft_656.py:96",
+        "tests/test_rescript_draft_656.py:103",
+        "tests/test_rescript_draft_656.py:110",
+        "tests/test_rescript_draft_656.py:117",
+        "tests/test_rescript_draft_656.py:122"
+      ],
+      "head_test_count_at_audit": 8
+    },
+    {
+      "name": "settle_province_tick",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 3141,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_fiscal_substrate_bridge.py:6",
+        "tests/test_fiscal_substrate_bridge.py:623",
+        "tests/test_fiscal_substrate_bridge.py:2184",
+        "tests/test_fiscal_substrate_bridge.py:2293",
+        "tests/test_fiscal_substrate_bridge.py:2351",
+        "tests/test_fiscal_substrate_bridge.py:3697",
+        "tests/test_fiscal_substrate_bridge.py:3833",
+        "tests/test_fiscal_substrate_bridge.py:3890",
+        "tests/test_fiscal_substrate_bridge.py:4097",
+        "tests/test_fiscal_substrate_bridge.py:4117",
+        "tests/test_fiscal_substrate_bridge.py:4148",
+        "tests/test_fiscal_substrate_bridge.py:4176",
+        "tests/test_fiscal_substrate_bridge.py:4195",
+        "tests/test_fiscal_substrate_bridge.py:4202",
+        "tests/test_fiscal_substrate_bridge.py:4211",
+        "tests/test_pay_order_override_653.py:324",
+        "tests/test_pay_order_override_653.py:333",
+        "tests/test_pay_order_override_653.py:501",
+        "tests/test_pay_order_override_653.py:595",
+        "tests/test_pay_order_override_653.py:655"
+      ],
+      "head_test_count_at_audit": 30
+    },
+    {
+      "name": "stage_authorization_candidate",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/action_materialize.py",
+          "line": 1616,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_execution_pressure_654.py:924",
+        "tests/test_execution_pressure_654.py:928",
+        "tests/test_execution_pressure_654.py:945",
+        "tests/test_execution_pressure_654.py:1030",
+        "tests/test_execution_pressure_654.py:1035",
+        "tests/test_execution_pressure_654.py:1051"
+      ],
+      "head_test_count_at_audit": 6
+    },
+    {
+      "name": "stage_grant_allocation_candidate",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/action_materialize.py",
+          "line": 771,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_execution_pressure_654.py:965",
+        "tests/test_execution_pressure_654.py:973",
+        "tests/test_execution_pressure_654.py:991"
+      ],
+      "head_test_count_at_audit": 3
+    },
+    {
+      "name": "stage_month_segment",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/month_translate.py",
+          "line": 240,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_breach_plea_623.py:742",
+        "tests/test_breach_plea_623.py:776",
+        "tests/test_month_translate_1840.py:116",
+        "tests/test_month_translate_1840.py:141",
+        "tests/test_month_translate_1840.py:337",
+        "tests/test_month_translate_1840.py:367",
+        "tests/test_month_translate_1840.py:480",
+        "tests/test_month_translate_1840.py:486",
+        "tests/test_month_translate_1840.py:500",
+        "tests/test_month_translate_1840.py:507"
+      ],
+      "head_test_count_at_audit": 10
+    },
+    {
+      "name": "stage_referral_candidate",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/action_materialize.py",
+          "line": 1703,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "stage_revoke_authority_candidate",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/action_materialize.py",
+          "line": 1815,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "state_context",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/context.py",
+          "line": 159,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "status_delta",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/report.py",
+          "line": 96,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "treasury_ledger",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 9028,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "turn_army_summary",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 7904,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_fiscal_substrate_bridge.py:1438"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "turn_economy_summary",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 9002,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "turn_power_summary",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 7179,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [],
+      "head_test_count_at_audit": 0
+    },
+    {
+      "name": "turn_region_summary",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 7315,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_pay_order_override_653.py:515"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "upsert_pending_directive",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 17415,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_audience_night_498.py:278",
+        "tests/test_audience_night_498.py:298",
+        "tests/test_audience_night_498.py:305",
+        "tests/test_audience_night_498.py:345",
+        "tests/test_web_audience_night_498.py:591",
+        "tests/test_web_audience_night_498.py:750"
+      ],
+      "head_test_count_at_audit": 6
+    },
+    {
+      "name": "vacate",
+      "disposition": "KEEP",
+      "rationale": "KEEP_LIVE — 当前仍有生产引用 ['ming_sim/session_write_queue.py:163', 'ming_sim/session_write_queue.py:396']",
+      "defs": [
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 336,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [
+        "ming_sim/session_write_queue.py:163",
+        "ming_sim/session_write_queue.py:396"
+      ],
+      "head_prod_at_audit": [
+        "ming_sim/session_write_queue.py:163",
+        "ming_sim/session_write_queue.py:396"
+      ],
+      "head_test_at_audit": [
+        "tests/test_session_write_queue_1353.py:140",
+        "tests/test_session_write_queue_1353.py:329"
+      ],
+      "head_test_count_at_audit": 2
+    },
+    {
+      "name": "value_axes",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/value_matrix.py",
+          "line": 46,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_value_matrix_691.py:54"
+      ],
+      "head_test_count_at_audit": 1
+    },
+    {
+      "name": "write_decree",
+      "disposition": "KEEP",
+      "rationale": "KEEP_NEVER_WIRED_OR_SCAN_FALSEDEAD — 底座与当前均无外生产调用方（或仅注释提及）；非本分支删消费者所致，不强求删",
+      "defs": [
+        {
+          "file": "ming_sim/session.py",
+          "line": 1724,
+          "kind": "func",
+          "decorators": []
+        }
+      ],
+      "base_prod": [],
+      "head_prod_at_audit": [],
+      "head_test_at_audit": [
+        "tests/test_advance_paths_atomic.py:459",
+        "tests/test_audience_night_498.py:282",
+        "tests/test_draft_admission_resubmit_1769.py:4",
+        "tests/test_draft_admission_resubmit_1769.py:274",
+        "tests/test_pre_settle_transaction.py:397",
+        "tests/test_pre_settle_transaction.py:411"
+      ],
+      "head_test_count_at_audit": 6
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "predicate": "S1 FULL: git ls-files *.py; all prod FunctionDef/ClassDef/Assign(const); zero non-test Load/Attribute refs → ZERO_PROD_REF_CANDIDATE; FastAPI/router decorators → FRAMEWORK_ROUTE; string literal mentions → DYNAMIC_STRING_REF; dunder skip-delete; KEEP_SHARED named. NO sample-name gate for emission of zero-ref set.",
   "tracked_py": 362,
-  "zero_candidates": 187,
+  "zero_candidates": 184,
   "framework": 3,
   "dynamic": 1,
   "dunder": 6,
@@ -433,7 +433,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 12134,
+          "line": 12116,
           "kind": "const"
         }
       ],
@@ -793,7 +793,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 21188,
+          "line": 21170,
           "kind": "func",
           "decorators": [
             "Name(id='staticmethod', ctx=Load())"
@@ -807,7 +807,7 @@
       "framework_routes": [
         {
           "file": "ming_sim/db.py",
-          "line": 21188,
+          "line": 21170,
           "dec": "Name(id='staticmethod', ctx=Load())"
         }
       ],
@@ -2081,7 +2081,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 17645,
+          "line": 17627,
           "kind": "func",
           "decorators": []
         }
@@ -2098,7 +2098,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 11009,
+          "line": 10991,
           "kind": "func",
           "decorators": []
         }
@@ -2125,7 +2125,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 18974,
+          "line": 18956,
           "kind": "func",
           "decorators": []
         }
@@ -2179,7 +2179,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 19557,
+          "line": 19539,
           "kind": "func",
           "decorators": []
         }
@@ -2208,44 +2208,6 @@
       "test_count": 1,
       "test_refs": [
         "tests/test_llm_channel_config.py:312"
-      ],
-      "string_prod_refs": [],
-      "framework_routes": [],
-      "disposition_hint": "ZERO_PROD_REF_CANDIDATE"
-    },
-    {
-      "name": "credit_events_as_edges",
-      "defs": [
-        {
-          "file": "ming_sim/relations.py",
-          "line": 197,
-          "kind": "func",
-          "decorators": []
-        }
-      ],
-      "prod_count": 0,
-      "test_count": 1,
-      "test_refs": [
-        "tests/test_relation_store_632.py:116"
-      ],
-      "string_prod_refs": [],
-      "framework_routes": [],
-      "disposition_hint": "ZERO_PROD_REF_CANDIDATE"
-    },
-    {
-      "name": "delete_chat_messages",
-      "defs": [
-        {
-          "file": "ming_sim/db.py",
-          "line": 9152,
-          "kind": "func",
-          "decorators": []
-        }
-      ],
-      "prod_count": 0,
-      "test_count": 1,
-      "test_refs": [
-        "tests/test_character_knowledge_489.py:284"
       ],
       "string_prod_refs": [],
       "framework_routes": [],
@@ -2326,7 +2288,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 18890,
+          "line": 18872,
           "kind": "func",
           "decorators": []
         }
@@ -2360,7 +2322,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 18835,
+          "line": 18817,
           "kind": "func",
           "decorators": []
         }
@@ -2397,7 +2359,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 15103,
+          "line": 15085,
           "kind": "func",
           "decorators": [
             "Name(id='staticmethod', ctx=Load())"
@@ -2411,7 +2373,7 @@
       "framework_routes": [
         {
           "file": "ming_sim/db.py",
-          "line": 15103,
+          "line": 15085,
           "dec": "Name(id='staticmethod', ctx=Load())"
         }
       ],
@@ -2493,7 +2455,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 17804,
+          "line": 17786,
           "kind": "func",
           "decorators": []
         }
@@ -2591,7 +2553,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 22714,
+          "line": 22696,
           "kind": "func",
           "decorators": []
         }
@@ -2631,33 +2593,6 @@
         "tests/test_highlight_judge_544.py:275",
         "tests/test_highlight_judge_544.py:315",
         "tests/test_highlight_judge_544.py:363"
-      ],
-      "string_prod_refs": [],
-      "framework_routes": [],
-      "disposition_hint": "ZERO_PROD_REF_CANDIDATE"
-    },
-    {
-      "name": "get_night_protagonist",
-      "defs": [
-        {
-          "file": "ming_sim/audience_night.py",
-          "line": 2151,
-          "kind": "func",
-          "decorators": []
-        }
-      ],
-      "prod_count": 0,
-      "test_count": 9,
-      "test_refs": [
-        "tests/test_audience_translation_1838.py:223",
-        "tests/test_audience_translation_1838.py:235",
-        "tests/test_audience_translation_1838.py:249",
-        "tests/test_audience_translation_1838.py:267",
-        "tests/test_audience_translation_1838.py:278",
-        "tests/test_audience_translation_1838.py:282",
-        "tests/test_audience_translation_1838.py:286",
-        "tests/test_audience_translation_1838.py:303",
-        "tests/test_audience_translation_1838.py:231"
       ],
       "string_prod_refs": [],
       "framework_routes": [],
@@ -2799,7 +2734,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 20785,
+          "line": 20767,
           "kind": "func",
           "decorators": []
         }
@@ -2818,7 +2753,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 14919,
+          "line": 14901,
           "kind": "func",
           "decorators": []
         }
@@ -2840,7 +2775,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 14599,
+          "line": 14581,
           "kind": "func",
           "decorators": []
         }
@@ -2867,7 +2802,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 14617,
+          "line": 14599,
           "kind": "func",
           "decorators": []
         }
@@ -2886,7 +2821,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 16002,
+          "line": 15984,
           "kind": "func",
           "decorators": []
         }
@@ -2930,7 +2865,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 17673,
+          "line": 17655,
           "kind": "func",
           "decorators": []
         }
@@ -2966,7 +2901,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 19141,
+          "line": 19123,
           "kind": "func",
           "decorators": []
         }
@@ -3002,7 +2937,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 12310,
+          "line": 12292,
           "kind": "func",
           "decorators": []
         }
@@ -3019,7 +2954,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 17709,
+          "line": 17691,
           "kind": "func",
           "decorators": []
         }
@@ -3036,7 +2971,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 9655,
+          "line": 9637,
           "kind": "func",
           "decorators": []
         }
@@ -3175,7 +3110,7 @@
       "defs": [
         {
           "file": "ming_sim/audience_night.py",
-          "line": 2222,
+          "line": 2211,
           "kind": "func",
           "decorators": []
         }
@@ -3183,7 +3118,7 @@
       "prod_count": 0,
       "test_count": 1,
       "test_refs": [
-        "tests/test_cli_play_turn.py:589"
+        "tests/test_cli_play_turn.py:584"
       ],
       "string_prod_refs": [],
       "framework_routes": [],
@@ -3194,7 +3129,7 @@
       "defs": [
         {
           "file": "ming_sim/audience_night.py",
-          "line": 2230,
+          "line": 2219,
           "kind": "func",
           "decorators": []
         }
@@ -3211,7 +3146,7 @@
         "tests/test_audience_undo_506.py:509",
         "tests/test_audience_undo_506.py:526",
         "tests/test_audience_undo_506.py:261",
-        "tests/test_cli_play_turn.py:588"
+        "tests/test_cli_play_turn.py:583"
       ],
       "string_prod_refs": [],
       "framework_routes": [],
@@ -3282,8 +3217,8 @@
       "test_count": 31,
       "test_refs": [
         "tests/test_army_card_status_1501.py:233",
-        "tests/test_character_knowledge_489.py:1404",
-        "tests/test_character_knowledge_489.py:1482",
+        "tests/test_character_knowledge_489.py:1383",
+        "tests/test_character_knowledge_489.py:1461",
         "tests/test_character_knowledge_489.py:74",
         "tests/test_gazette_author_1862.py:435",
         "tests/test_material_directory_1830.py:44",
@@ -3349,7 +3284,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 12610,
+          "line": 12592,
           "kind": "func",
           "decorators": []
         }
@@ -3372,7 +3307,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 19433,
+          "line": 19415,
           "kind": "func",
           "decorators": []
         }
@@ -3578,7 +3513,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 16167,
+          "line": 16149,
           "kind": "func",
           "decorators": []
         }
@@ -3601,7 +3536,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 11018,
+          "line": 11000,
           "kind": "func",
           "decorators": []
         }
@@ -3941,7 +3876,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 12945,
+          "line": 12927,
           "kind": "func",
           "decorators": []
         }
@@ -3971,7 +3906,7 @@
       "defs": [
         {
           "file": "ming_sim/db.py",
-          "line": 17415,
+          "line": 17397,
           "kind": "func",
           "decorators": []
         }
