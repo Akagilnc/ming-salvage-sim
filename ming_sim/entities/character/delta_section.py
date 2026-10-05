@@ -12,11 +12,7 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import RejectedItem, Provenance
-
-from typing import Dict, List, Set
-
-from ming_sim.applier import SectionResult
+from ming_sim.applier import RejectedItem, SectionResult
 
 
 def apply_declared_person_changes(run, changes):
@@ -58,54 +54,3 @@ def apply_pre_issue(run):
 def apply_post_issue(run):
     """局势段之后落的其余人物变更。"""
     return apply_declared_person_changes(run, run.post_issue_person_changes)
-
-
-def amnesty_conflict_power_ids(
-    person_changes: List[Dict[str, object]],
-    db,
-    content,
-    state,
-) -> Set[str]:
-    """同批已有招安易主时，须随易主反噬落账的旧势力 id 集合。
-
-    同一股同一时段已有招安易主，顶层 ``power_updates`` 再剿一次就是两处写同一次
-    削弱；此时顶层申报被拒，削弱只认反噬那一处。合法易主识别复用
-    ``allegiance_change_rejection`` 唯一准入，不在本段另立政策。
-    """
-    from ming_sim.entities.character.apply import allegiance_change_rejection
-
-    power_ids: Set[str] = set()
-    for item in person_changes:
-        if str(item.get("动作") or "").strip() != "易主":
-            continue
-        if str(item.get("方式") or item.get("way") or "").strip() != "主动归附":
-            continue
-        if str(item.get("new_power") or "").strip() != "ming":
-            continue
-        name = str(item.get("name") or "").strip()
-        if content is not None:
-            from ming_sim.session import _find_existing_minister
-
-            name = _find_existing_minister(content, name, db) or name
-        row = db.conn.execute(
-            "SELECT status, power_id, reason_code FROM characters WHERE name=?",
-            (name,),
-        ).fetchone()
-        origin_ref = str(item.get("origin_ref") or "").strip()
-        # 与写核同口径：有 origin 则按授权门拒；无 origin 仍按人物态准入。
-        reject = allegiance_change_rejection(
-            {**item, "name": name},
-            row,
-            db=db,
-            origin_ref=origin_ref,
-            require_origin=bool(origin_ref),
-        )
-        if reject is not None:
-            continue
-        old_power = str(row["power_id"] or "").strip()
-        if old_power in {"", "ming"}:
-            continue
-        # 同期的合法招安本就主张旧存量——哪怕 LLM 忘了把削弱写进反噬，
-        # 顶层再申报也是压制性记账。故此处记下旧股 id。
-        power_ids.add(old_power)
-    return power_ids

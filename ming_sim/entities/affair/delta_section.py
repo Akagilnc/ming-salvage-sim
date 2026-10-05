@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from ming_sim.applier import RejectedItem, SectionResult
 from ming_sim.entities.affair import parse_affair_declaration
+from ming_sim.exceptions import DeclarationDataError
 
 
 def apply(run):
@@ -19,10 +20,10 @@ def apply(run):
     for raw in run.current_extracted.get("affair_declarations") or []:
         try:
             if not isinstance(raw, dict):
-                raise ValueError("事务声明须为对象")
+                raise DeclarationDataError("事务声明须为对象")
             # 空允许集：close/birth 均不在本段执行；通用「不在本阶段」而非未了局势守门。
             parse_affair_declaration(raw, allowed=frozenset())
-        except (TypeError, ValueError) as exc:
+        except DeclarationDataError as exc:
             rejected.append(RejectedItem(
                 item={"raw_value": raw},
                 reason=str(exc),

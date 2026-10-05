@@ -2359,7 +2359,7 @@ def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, st
     """
     try:
         raw_affair = declaration_from_payload(item, allowed=ATTACH_EXPERIENCE)
-    except (TypeError, ValueError):
+    except DeclarationDataError:
         return None, "invalid_shape"
     if raw_affair is None:
         return None, None

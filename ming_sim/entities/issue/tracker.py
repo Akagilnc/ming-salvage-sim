@@ -26,7 +26,6 @@ def apply_issue_tracker_output(
     tracker_output: Dict[str, object],
     llm_config: Any = None,
     content=None,
-    pending_person_changes_for_gates: Optional[List[Dict[str, object]]] = None,
     candidate_event_ids_at_input: Optional[set[str]] = None,
     candidate_event_ids_authoritative: bool = False,
     impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
@@ -62,18 +61,6 @@ def apply_issue_tracker_output(
     consumed_event_ids: set[str] = set()
     current_candidate_event_ids: set[str] = set()
     candidates_dirty = True
-    shared_shadow_rows: Optional[Dict[str, Dict[str, str]]] = None
-    shared_power_shadow_rows: Optional[Dict[str, Dict[str, int]]] = None
-    shared_valid_regions: Optional[set[str]] = None
-    has_event_pool_new_issue = any(
-        isinstance(item, dict) and str(item.get("origin_kind") or "").lower() == "event_pool"
-        for item in (tracker_output.get("new_issues", []) or [])
-    )
-    if pending_person_changes_for_gates and has_event_pool_new_issue:
-        shared_shadow_rows = settlement_preflight._load_pending_gate_shadow_rows(db)
-        shared_power_shadow_rows = settlement_preflight._load_pending_gate_power_shadow_rows(db)
-        shared_valid_regions = settlement_preflight._load_pending_gate_valid_regions(db)
-
     # 1) advances（ADR 0008 决定1：LLM 脏数据逐项拒收留痕，不裸 continue 静默丢；db.advance_issue
     #    的代码/DB 异常上抛 SettlementAbort，同 close_issues / new_issues 段，#63）
     for adv in tracker_output.get("advances", []) or []:
@@ -308,18 +295,6 @@ def apply_issue_tracker_output(
             if not candidate_snapshot_authoritative and ev.id not in current_candidate_event_ids:
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 entity_rejections.append(RejectedItem(item={"id": ev.id, "title": ev.title}, reason="事件当前未进候选池（窗口/前提门/已触发不满足）", category="issue", source=source))
-                continue
-            if settlement_preflight._pending_person_changes_block_event_gate(
-                ev,
-                pending_person_changes_for_gates or [],
-                db,
-                content=runtime_content,
-                shadow_rows=shared_shadow_rows,
-                power_shadow_rows=shared_power_shadow_rows,
-                valid_regions=shared_valid_regions,
-            ):
-                print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
-                entity_rejections.append(RejectedItem(item={"id": ev.id, "title": ev.title}, reason="事件当前未进候选池（同回合人物变更后前提门不满足）", category="issue", source=source))
                 continue
             if (
                 settlement_preflight._is_strategic_foreign_node_event(ev)

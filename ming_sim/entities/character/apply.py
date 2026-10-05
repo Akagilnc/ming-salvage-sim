@@ -14,6 +14,19 @@ if TYPE_CHECKING:
     from ming_sim.models import GameState
 
 
+def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
+    """易主落库身名分唯一真源：显式白名单标题，或归附/降臣缺省。"""
+    from ming_sim.person_archive_contract import PERSON_IDENTITY_TITLES
+
+    title = str(item.get("new_title") or item.get("title") or "").strip()
+    if title:
+        return title if title in PERSON_IDENTITY_TITLES else ""
+    way = str(item.get("方式") or item.get("way") or "").strip()
+    if new_power == "ming" or way == "主动归附":
+        return "归附"
+    return "降臣"
+
+
 def allegiance_change_rejection(
     item: Dict[str, object],
     row: Any,
@@ -24,11 +37,10 @@ def allegiance_change_rejection(
 ) -> Optional[Tuple[str, str]]:
     """易主准入唯一权威：返回 (reason, category) 拒收，或 None 表示可落。
 
-    preflight 影子、amnesty 冲突预判与 apply 写核共用本函数，禁止各处重写政策。
+    只供人物写核调用；禁止对待落项另立平行预判副本。
     """
     from ming_sim.person_archive_contract import (
         PERSON_ALLEGIANCE_CHANGE_WAYS,
-        PERSON_IDENTITY_TITLES,
         resolve_person_transition,
     )
     from ming_sim.strict_types import _parse_sqlite_id
@@ -71,14 +83,7 @@ def allegiance_change_rejection(
                 f"主动归附反噬只能指向原势力股 {old_power}",
                 "invalid_transition",
             )
-    title = str(item.get("new_title") or item.get("title") or "").strip()
-    if title:
-        new_title = title if title in PERSON_IDENTITY_TITLES else ""
-    elif requested_new_power == "ming" or way == "主动归附":
-        new_title = "归附"
-    else:
-        new_title = "降臣"
-    if not new_title:
+    if not identity_title_for_allegiance(item, requested_new_power):
         return ("易主 new_title 非身名分白名单", "invalid_enum")
     if require_origin and db is not None:
         error = db.effect_origin_rejection(origin_ref)
@@ -191,15 +196,6 @@ def apply_person_changes(
             commit=False,
             origin_ref=origin_ref,
         )
-
-    def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
-        title = str(item.get("new_title") or item.get("title") or "").strip()
-        if title:
-            return title if title in PERSON_IDENTITY_TITLES else ""
-        way = str(item.get("方式") or item.get("way") or "").strip()
-        if new_power == "ming" or way == "主动归附":
-            return "归附"
-        return "降臣"
 
     def displaced_talent_pool_results(displaced_parts: object) -> List[Dict[str, object]]:
         if not isinstance(displaced_parts, list):

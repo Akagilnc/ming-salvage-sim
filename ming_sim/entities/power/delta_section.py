@@ -2,8 +2,8 @@
 
 两条同登记条目，因为「流寇实力正增只走吸收请求吃池顶」这条闸跨两者：自由
 ``power_updates`` 申报流寇正实力一律拒收（否则实力可绕过池顶凭空增长）。
-另有招安易主同回合闸：同批已有招安易主时，顶层 ``power_updates`` 剿股被拒
-（削股须随易主反噬一处落账，防两处写同一次削弱）。
+招安易主削股只认人物写核反噬落账；段序上 power 先于 person_post，不再对待落
+易主做平行预判互斥（#1835 G3）。
 """
 
 from __future__ import annotations
@@ -41,9 +41,6 @@ def apply(run) -> SectionResult:
         )
     )
     for power_id, raw_changes in power_items:
-        if power_id in run.amnesty_conflict_power_ids:
-            rejections.append(RejectedItem(item={"power_id": power_id, "changes": raw_changes}, reason="同一股同一时段已有招安易主，拒绝顶层 power_updates 剿股；削股须随易主反噬一处落账", category="invalid_transition", source=run.ctx.source))
-            continue
         if not isinstance(raw_changes, dict):
             continue
         if _is_bandit_power_id(str(power_id)):

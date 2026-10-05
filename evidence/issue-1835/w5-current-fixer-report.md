@@ -46,7 +46,7 @@ export MING_SIM_USER_DATA_DIR=/tmp/1835-w5-current/user-data
 
 ## 全仓机械枚举
 
-**命令**：`/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1835-w5-current/enum/full_enum.py`  
+**命令**：`/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1835-w5-current/enum/full_enum.py`
 **产出**：`evidence/issue-1835/w5-current/enum-post.txt` + `enum-post.json` + `full_enum.py`（副本）
 
 谓词覆盖判词类定义全文（非点名样本）：AST 函数体哈希、rg 形状、消费者闭包。
@@ -87,7 +87,7 @@ export MING_SIM_USER_DATA_DIR=/tmp/1835-w5-current/user-data
 
 已删：`_extract_secret_order` + 三专属旧测；decree 五旧私有根；`_apply_authority_change_item`；flows 三省函数；`_capture_one_interaction`；`_target_active_officeholder`；`target_progress_units`；`current_audience_scene`；`issue_applied_person_changes`；`victory_status_of`；`SettlementRun.person_changes` 字段 / `stamped_by_origin` / `rejected_origin_ids` 字段；character `phase` 死参。
 
-**保留**：`secret_order_can_land`（`declaration_dispatch` 现役消费者）；公开领域能力未接线者未机械删除。  
+**保留**：`secret_order_can_land`（`declaration_dispatch` 现役消费者）；公开领域能力未接线者未机械删除。
 注：枚举里 `person_changes`/`stamped_by_origin` 的 Name 命中是局部变量/其它 API 键名，非 `SettlementRun` 死字段。
 
 ### G5 成员表
@@ -132,7 +132,7 @@ env MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false \
   tests/test_population_transfers_649.py tests/test_relation_capture_633.py
 ```
 
-日志：`evidence/issue-1835/w5-current/focused.txt`  
+日志：`evidence/issue-1835/w5-current/focused.txt`
 结果（实查）：**451 passed, 1 skipped in 10.51s**（wall ~11.0s）。未跑全量。
 
 过程如实：曾 collection ERROR（残留 `@parametrize context_mode`）→ 删除；曾 1 failed（AC2 仍期望全国余波 count=1）→ 按批准边界改断言为 0，**未恢复旧行为**。
@@ -145,10 +145,9 @@ env MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false \
 
 ## 未结 / 缺口 / 红灯（如实）
 
-- 本回执只覆盖判词末份 **G1–G5**。同票其它未结类（F1 固定点、F5 原文链、F6 写口 catch、F10 测迁约等，见前份/同附件其它 findings）**不在本派单施工面**，不假装完成。
-- G2 仓内大量非声明口 `json.loads` 未整仓替换——类定义边界内新声明洗持久已结；扩扫属后续若判词扩界。
+- 本回执覆盖判词末份 **G1–G5**。前份 findings（F1/F5/…）**仅历史参考**，末份未列为未结，此处不宣称其仍未结。
+- 首轮提交 `096e09951` 经主座核查后需整类复检；见 `evidence/issue-1835/w5-recheck-fixer-report.md`。
 - 家族复杂度/全量 CI/真宿主验收留家族收尾（#1812）。
-- 无 owner 设计前置阻断本五类施工。
 
 ## Advisor 自查
 

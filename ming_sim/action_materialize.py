@@ -381,7 +381,13 @@ def stage_punishment_candidate(
             return 0
         if disposition not in issue_dispositions_allowed():
             return 0
-        roster = json.loads(str(issue["target_roster"] or "[]"))
+        try:
+            roster = json.loads(str(issue["target_roster"] or "[]"))
+        except (TypeError, ValueError) as exc:
+            # 持久名册腐坏：响亮上抛，不洗成交办声明拒收。
+            raise ValueError(
+                f"issues.target_roster 腐坏 JSON：{issue['target_roster']!r}"
+            ) from exc
         if not isinstance(roster, list):
             raise ValueError("持久弹劾名册须为数组")
         if not roster:
@@ -1590,7 +1596,14 @@ def stage_assignment_candidate(
     # stages_to_json 的严格串行面：非 JSON 字符串响亮 ValueError（由交办分派
     # 的既有 except 收成 durable 拒收）。全仓已无任何接缝从散文正则反推年诺。
     from ming_sim.staged_commitment import stages_to_json
-    stages_norm = json.loads(stages_to_json(stages))
+    try:
+        stages_norm = json.loads(stages_to_json(stages))
+    except (TypeError, ValueError) as exc:
+        # 声明侧 stages 脏值 → 类型化数据错误，供分派口拒收；非持久真源故障。
+        raise DecreeMaterializationValidationError(
+            f"交办 stages 非法：{stages!r}",
+            failed_fields=("stages",),
+        ) from exc
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
             staged["stop_condition"] = parsed_stop

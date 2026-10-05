@@ -44,7 +44,6 @@ def apply(run) -> SectionResult:
         },
         llm_config=run.ctx.llm_config,
         content=run.ctx.content,
-        pending_person_changes_for_gates=run.post_issue_person_changes,
         candidate_event_ids_at_input=run.candidate_event_ids_at_input,
         candidate_event_ids_authoritative=run.candidate_event_ids_authoritative,
         impeachment_surge_candidates_at_input=run.ctx.impeachment_surge_candidates_at_input,

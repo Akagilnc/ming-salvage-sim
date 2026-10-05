@@ -1,0 +1,33 @@
+[
+  {
+    "name": "G3_symbols_gone",
+    "ok": true
+  },
+  {
+    "name": "G3_rejected_allegiance_power",
+    "ok": true,
+    "before": 75,
+    "after": 74,
+    "delta": -1
+  },
+  {
+    "name": "G2_pending_payload_loud",
+    "ok": true,
+    "raised": "pending_actions.payload_json 腐坏 JSON：'['"
+  },
+  {
+    "name": "G2_decl_shape_reject_or_return",
+    "ok": true,
+    "type": "DeclarationDispatchResult"
+  },
+  {
+    "name": "G5_pre_settle_clean",
+    "ok": true,
+    "bad": []
+  },
+  {
+    "name": "G1_finalize_clean",
+    "ok": true,
+    "bad": []
+  }
+]

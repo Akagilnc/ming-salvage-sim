@@ -80,7 +80,6 @@ class SettlementRun:
     strategic_event_result_delta_event_ids: Set[str] = field(default_factory=set)
     strategic_new_armies_raw: List[object] = field(default_factory=list)
     declared_new_army_event_by_item: Dict[int, str] = field(default_factory=dict)
-    amnesty_conflict_power_ids: Set[str] = field(default_factory=set)
     pre_issue_person_changes: List[Dict[str, object]] = field(default_factory=list)
     post_issue_person_changes: List[Dict[str, object]] = field(default_factory=list)
     strategic_person_result_changes: List[Dict[str, object]] = field(default_factory=list)
@@ -320,12 +319,6 @@ def _preflight(
         if run.declared_new_army_event_by_item.get(id(item), "")
         in run.strategic_event_referenced_ids
     ]
-
-    from ming_sim.entities.character.delta_section import amnesty_conflict_power_ids
-
-    run.amnesty_conflict_power_ids = amnesty_conflict_power_ids(
-        person_changes, db, run.runtime_content, state,
-    )
 
     run.current_extracted = clean
     run.current_ordered = ordered_deltas

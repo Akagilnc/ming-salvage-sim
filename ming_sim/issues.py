@@ -1765,7 +1765,7 @@ def auto_trigger_seed_issues(state: GameState, db: GameDB) -> List[Dict[str, obj
 def _auto_trigger_seed_issues_in_atomic(
     state: GameState, db: GameDB, collector: RejectionCollector,
 ) -> List[Dict[str, object]]:
-    """auto_trigger_seed_issues 的事务体；由外层函数或 pre_settle 嵌套事务统一提交/回滚。"""
+    """auto_trigger_seed_issues 的事务体；由外层函数或月链逐旨后消费点统一提交/回滚。"""
     c = _ctx()
     terminal_states = _event_terminal_states(db)
     triggered: List[Dict[str, object]] = []
