@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from tests.test_due_review_621 import _settle_empty_month
 from ming_sim.supervision import (
-    EMPTY_TRANSFORMATION_TENDENCY_FACTS,
     SUPERVISION_RELATION,
 )
 
