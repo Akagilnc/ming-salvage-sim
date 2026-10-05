@@ -106,7 +106,10 @@ def _persist_appointment_summon(
             ).fetchone()
             if row is None:
                 raise ValueError("任命后传召所关联的暂存任命不存在")
-            stored = json.loads(row["payload_json"] or "{}")
+            from ming_sim.db import GameDB
+            stored = GameDB.parse_engine_payload_json(
+                row["payload_json"], surface="pending_actions.payload_json",
+            )
             stored["summon_after"] = "是"
             session.db.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -196,7 +199,10 @@ def _apply_existing_appointment_hit(
             current = session.db.conn.execute(
                 "SELECT payload_json FROM pending_actions WHERE id=?", (resolved,),
             ).fetchone()
-            stored = json.loads(current["payload_json"] or "{}")
+            from ming_sim.db import GameDB
+            stored = GameDB.parse_engine_payload_json(
+                current["payload_json"], surface="pending_actions.payload_json",
+            )
             stored.update(recommendation_fields)
             session.db.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -1095,10 +1101,10 @@ def _list_pending_office_rows(
 
 
 def _pending_action_payload(row: Dict[str, Any]) -> Dict[str, Any]:
-    payload = json.loads(str(row.get("payload_json") or "{}"))
-    if not isinstance(payload, dict):
-        raise ValueError("持久行动候选载荷须为对象")
-    return payload
+    from ming_sim.db import GameDB
+    return GameDB.parse_engine_payload_json(
+        row.get("payload_json"), surface="pending_actions.payload_json",
+    )
 
 
 def _match_office_row_by_name_office(

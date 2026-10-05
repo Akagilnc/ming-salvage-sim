@@ -19,7 +19,7 @@ from typing import Dict, List, Set
 from ming_sim.applier import SectionResult
 
 
-def apply_declared_person_changes(run, changes, *, phase: str):
+def apply_declared_person_changes(run, changes):
     """人物项逐条落账。归属非法只在写前解析处拒收。
 
     代码异常由外层事务回滚，不记成拒收（ADR 0005）。落库核在本实体。
@@ -27,7 +27,6 @@ def apply_declared_person_changes(run, changes, *, phase: str):
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
     from ming_sim.entities.character.apply import apply_person_changes
 
-    del phase
     rows = []
     rejections = []
     for person_change in changes:
@@ -53,16 +52,12 @@ def apply_declared_person_changes(run, changes, *, phase: str):
 
 def apply_pre_issue(run):
     """局势段之前落的「评定」等前置人物变更。"""
-    return apply_declared_person_changes(
-        run, run.pre_issue_person_changes, phase="pre",
-    )
+    return apply_declared_person_changes(run, run.pre_issue_person_changes)
 
 
 def apply_post_issue(run):
     """局势段之后落的其余人物变更。"""
-    return apply_declared_person_changes(
-        run, run.post_issue_person_changes, phase="post",
-    )
+    return apply_declared_person_changes(run, run.post_issue_person_changes)
 
 
 def amnesty_conflict_power_ids(
@@ -74,10 +69,10 @@ def amnesty_conflict_power_ids(
     """同批已有招安易主时，须随易主反噬落账的旧势力 id 集合。
 
     同一股同一时段已有招安易主，顶层 ``power_updates`` 再剿一次就是两处写同一次
-    削弱；此时顶层申报被拒，削弱只认反噬那一处。合法易主的识别复用既有
-    ``resolve_person_transition`` 守门，不在本段另立政策。
+    削弱；此时顶层申报被拒，削弱只认反噬那一处。合法易主识别复用
+    ``allegiance_change_rejection`` 唯一准入，不在本段另立政策。
     """
-    from ming_sim.person_archive_contract import PERSON_IDENTITY_TITLES, resolve_person_transition
+    from ming_sim.entities.character.apply import allegiance_change_rejection
 
     power_ids: Set[str] = set()
     for item in person_changes:
@@ -86,11 +81,6 @@ def amnesty_conflict_power_ids(
         if str(item.get("方式") or item.get("way") or "").strip() != "主动归附":
             continue
         if str(item.get("new_power") or "").strip() != "ming":
-            continue
-        backlash = item.get("反噬", item.get("backlash"))
-        if not isinstance(backlash, dict):
-            continue
-        if any(not isinstance(raw_changes, dict) for raw_changes in backlash.values()):
             continue
         name = str(item.get("name") or "").strip()
         if content is not None:
@@ -101,26 +91,19 @@ def amnesty_conflict_power_ids(
             "SELECT status, power_id, reason_code FROM characters WHERE name=?",
             (name,),
         ).fetchone()
-        if row is None:
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        # 与写核同口径：有 origin 则按授权门拒；无 origin 仍按人物态准入。
+        reject = allegiance_change_rejection(
+            {**item, "name": name},
+            row,
+            db=db,
+            origin_ref=origin_ref,
+            require_origin=bool(origin_ref),
+        )
+        if reject is not None:
             continue
         old_power = str(row["power_id"] or "").strip()
         if old_power in {"", "ming"}:
-            continue
-        transition = resolve_person_transition(
-            str(row["status"] or "active"), "易主",
-            reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
-        )
-        if transition.startswith("reject:"):
-            continue
-        backlash_power_ids = {
-            str(power_id).strip()
-            for power_id in backlash.keys()
-            if str(power_id).strip()
-        }
-        if any(power_id != old_power for power_id in backlash_power_ids):
-            continue
-        explicit_title = str(item.get("new_title") or item.get("title") or "").strip()
-        if explicit_title and explicit_title not in PERSON_IDENTITY_TITLES:
             continue
         # 同期的合法招安本就主张旧存量——哪怕 LLM 忘了把削弱写进反噬，
         # 顶层再申报也是压制性记账。故此处记下旧股 id。

@@ -1,0 +1,134 @@
+G1 members 5
+  {'file': 'ming_sim/breach_plea.py', 'symbol': 'assess_foundation_tier', 'lineno': 469, 'shapes': ['tier_assess']}
+  {'file': 'ming_sim/breach_plea.py', 'symbol': 'stop_origin_commitment_ticks', 'lineno': 547, 'shapes': ['indiscriminate_cancel']}
+  {'file': 'ming_sim/breach_plea.py', 'symbol': 'apply_persist_revoke_tail', 'lineno': 597, 'shapes': ['indiscriminate_cancel']}
+  {'file': 'ming_sim/entities/issue/tracker.py', 'symbol': 'call:finalize_persist@870', 'lineno': 870, 'shapes': ['call_site']}
+  {'file': 'ming_sim/entities/issue/tracker.py', 'symbol': 'call:finalize_persist@881', 'lineno': 881, 'shapes': ['call_site']}
+G2 wash handlers 3
+G2 raw json.loads 23
+  {'file': 'ming_sim/declaration_dispatch.py', 'lineno': 2362, 'except_types': ['TypeError', 'ValueError'], 'snippet': 'except (TypeError, ValueError):', 'washes': True}
+  {'file': 'ming_sim/declaration_dispatch.py', 'lineno': 2030, 'except_types': ['TypeError', 'ValueError'], 'snippet': 'except (TypeError, ValueError):', 'washes': True}
+  {'file': 'ming_sim/declaration_dispatch.py', 'lineno': 2056, 'except_types': ['KeyError', 'TypeError', 'ValueError'], 'snippet': 'except (KeyError, TypeError, ValueError):', 'washes': True}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB._dossier_row', 'lineno': 11658, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.record_dossier_progress', 'lineno': 11840, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB._backfill_proposed_appointment_break_ranks', 'lineno': 13305, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.find_deliberation_dossier_by_decision_key', 'lineno': 14261, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.list_decree_dossiers_for_simulation', 'lineno': 14863, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.transition_decree_dossier', 'lineno': 14945, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.close_decree_dossier', 'lineno': 15066, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.record_dossier_execution', 'lineno': 15110, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.apply_dossier_promulgation', 'lineno': 15163, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.get_resolve_context', 'lineno': 18739, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB._decode_directive_dossier_payload', 'lineno': 19086, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB._coerce_todo_payload_json', 'lineno': 19660, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/audience_translate.py', 'symbol': 'build_pending_summaries', 'lineno': 57, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/decree_forecast.py', 'symbol': '_payload_dict', 'lineno': 70, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/pay_order.py', 'symbol': 'restore_pay_order_override', 'lineno': 391, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/rescript_actions.py', 'symbol': 'apply_imperial_deliberation_push', 'lineno': 1205, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/decree.py', 'symbol': '_dossier_payload_dict', 'lineno': 162, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/decree.py', 'symbol': 'build_promulgation_judge_context', 'lineno': 219, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/decree.py', 'symbol': 'validate_promulgation_verdicts', 'lineno': 532, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/decree.py', 'symbol': '_requires_full_settlement', 'lineno': 686, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/mechanical_tail.py', 'symbol': '_brew_fn_for_session', 'lineno': 159, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/covert_progress.py', 'symbol': 'read_covert_task_contract', 'lineno': 542, 'kind': 'raw_json_loads_payload'}
+  {'file': 'ming_sim/covert_progress.py', 'symbol': '_dossier_payload_map', 'lineno': 749, 'kind': 'raw_json_loads_payload'}
+G3 person_admission 37
+  {'file': 'ming_sim/declaration_dispatch.py', 'symbol': '_assert_commission_grant_target_exists', 'lineno': 934}
+  {'file': 'ming_sim/declaration_dispatch.py', 'symbol': '_commission_fallback_actor', 'lineno': 1714}
+  {'file': 'ming_sim/db.py', 'symbol': 'infer_office_type_from_office', 'lineno': 765}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB._backfill_bandit_power_split', 'lineno': 5363}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB._faction_office_weight_sum', 'lineno': 5805}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.recompute_all_faction_leverage', 'lineno': 5836}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.current_court_roster_rows', 'lineno': 6087}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.resolve_power_id', 'lineno': 6107}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.apply_character_power_changes', 'lineno': 6118}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.apply_power_deltas', 'lineno': 6948}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.apply_power_rename', 'lineno': 7051}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.turn_power_summary', 'lineno': 7113}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.power_display_name', 'lineno': 7180}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB._find_pacification_target', 'lineno': 11614}
+  {'file': 'ming_sim/db.py', 'symbol': 'GameDB.build_faction_denunciation_facts', 'lineno': 12782}
+  {'file': 'ming_sim/rescript_actions.py', 'symbol': 'list_deliberation_candidate_ids', 'lineno': 1066}
+  {'file': 'ming_sim/models.py', 'symbol': '_power_renames_effect_has_work', 'lineno': 217}
+  {'file': 'ming_sim/materials.py', 'symbol': '_resolve_present_character', 'lineno': 1922}
+  {'file': 'ming_sim/session.py', 'symbol': '_is_ming_court_minister_character', 'lineno': 188}
+  {'file': 'ming_sim/session.py', 'symbol': '_is_summonable_court_minister', 'lineno': 214}
+  {'file': 'ming_sim/session.py', 'symbol': '_find_existing_minister', 'lineno': 233}
+  {'file': 'ming_sim/session.py', 'symbol': 'register_unlisted_person_record', 'lineno': 257}
+  {'file': 'ming_sim/session.py', 'symbol': 'GameSession.list_ministers', 'lineno': 810}
+  {'file': 'ming_sim/session.py', 'symbol': 'GameSession.can_summon', 'lineno': 845}
+  {'file': 'ming_sim/rescript_draft.py', 'symbol': 'select_triage_actor', 'lineno': 1119}
+  {'file': 'ming_sim/content.py', 'symbol': 'load_character_content', 'lineno': 59}
+  {'file': 'ming_sim/cli_backend.py', 'symbol': '_draft_intent_character_roster_facts', 'lineno': 1268}
+  {'file': 'ming_sim/credit_events.py', 'symbol': '_resolve_one_urge_todo', 'lineno': 559}
+  {'file': 'ming_sim/settlement/outcome.py', 'symbol': 'IssueSectionResult.merge', 'lineno': 61}
+  {'file': 'ming_sim/settlement/preflight.py', 'symbol': '_load_pending_gate_shadow_rows', 'lineno': 89}
+  {'file': 'ming_sim/settlement/preflight.py', 'symbol': '_pending_person_changes_block_event_gate', 'lineno': 182}
+  {'file': 'ming_sim/cli/terminal.py', 'symbol': 'choose_minister', 'lineno': 90}
+  {'file': 'ming_sim/entities/power/delta_section.py', 'symbol': 'apply', 'lineno': 21}
+  {'file': 'ming_sim/entities/power/apply.py', 'symbol': '_is_bandit_power_id', 'lineno': 11}
+  {'file': 'ming_sim/entities/character/delta_section.py', 'symbol': 'amnesty_conflict_power_ids', 'lineno': 63}
+  {'file': 'ming_sim/entities/character/apply.py', 'symbol': 'allegiance_change_rejection', 'lineno': 17}
+  {'file': 'ming_sim/entities/issue/effects.py', 'symbol': '_apply_issue_entities', 'lineno': 152}
+G3 duplicate_body groups 5
+  06b73699b6f0 [('ming_sim/materials.py', 'MaterialsRoot.root'), ('ming_sim/materials.py', 'MaterialsRoot.__call__')]
+  279f23fa8632 [('ming_sim/agents.py', 'bind_content'), ('ming_sim/context.py', 'bind_content')]
+  94080a5e5f32 [('ming_sim/session_write_queue.py', 'ClassifiedWriteGate.__enter__'), ('ming_sim/session_write_queue.py', 'TicketedWriteGate.__enter__')]
+  5f3d94514ba8 [('ming_sim/entities/staged_declaration/store.py', 'StagedDeclarationStore.__init__'), ('ming_sim/entities/textual_fact/store.py', 'TextualFactStore.__init__'), ('ming_sim/entities/affair/store.py', 'AffairStore.__init__')]
+  9dec3e042fdf [('ming_sim/entities/textual_fact/store.py', 'TextualFactStore.ensure_schema'), ('ming_sim/entities/affair/store.py', 'AffairStore.ensure_schema')]
+G3 dossier_parse [{'file': 'ming_sim/db.py', 'symbol': 'parse_backing_dossier_id', 'lineno': 515}, {'file': 'ming_sim/breach_plea.py', 'symbol': 'parse_dossier_id', 'lineno': 82}, {'file': 'ming_sim/credit_events.py', 'symbol': '_item_dossier_id', 'lineno': 308}]
+G3 outcome_merge [{'file': 'ming_sim/declaration_dispatch.py', 'symbol': '_dispatch_effects', 'lineno': 439}, {'file': 'ming_sim/settlement/run.py', 'symbol': '_store', 'lineno': 358}, {'file': 'ming_sim/settlement/run.py', 'symbol': '_stored', 'lineno': 382}, {'file': 'ming_sim/settlement/run.py', 'symbol': '_build_outcome', 'lineno': 466}]
+G4 symbols
+  _extract_secret_order: defs=0 prod_refs=0 test_refs=0
+  _collect_compliant_promulgation_items: defs=0 prod_refs=0 test_refs=0
+  _merge_compliant_promulgation_items: defs=0 prod_refs=0 test_refs=0
+  _promulgable_proposed_dossiers: defs=0 prod_refs=0 test_refs=0
+  _dossier_ids_from_simulator_payload: defs=0 prod_refs=0 test_refs=0
+  _open_affair_ids_from_payload: defs=0 prod_refs=0 test_refs=0
+  _apply_authority_change_item: defs=0 prod_refs=0 test_refs=0
+  _province_transport_ratio: defs=0 prod_refs=0 test_refs=0
+  _province_collection_rate: defs=0 prod_refs=0 test_refs=0
+  _fiscal_container_value: defs=0 prod_refs=0 test_refs=0
+  _capture_one_interaction: defs=0 prod_refs=0 test_refs=0
+  _target_active_officeholder: defs=0 prod_refs=0 test_refs=0
+  target_progress_units: defs=0 prod_refs=0 test_refs=0
+  current_audience_scene: defs=0 prod_refs=0 test_refs=0
+  issue_applied_person_changes: defs=0 prod_refs=0 test_refs=0
+  victory_status_of: defs=0 prod_refs=0 test_refs=0
+  person_changes: defs=0 prod_refs=23 test_refs=0
+  stamped_by_origin: defs=0 prod_refs=3 test_refs=0
+  rejected_origin_ids: defs=0 prod_refs=3 test_refs=0
+G4 phase_del []
+G5 [
+  {
+    "file": "ming_sim/month_chain.py",
+    "function": "_run_loaded_month_chain",
+    "lineno": 545,
+    "calls": [
+      {
+        "name": "_consume_event_gates_after_edicts",
+        "lineno": 572
+      }
+    ]
+  },
+  {
+    "file": "ming_sim/month_chain.py",
+    "function": "_consume_event_gates_after_edicts",
+    "lineno": 927,
+    "calls": [
+      {
+        "name": "apply_event_terminal_states",
+        "lineno": 944
+      },
+      {
+        "name": "auto_trigger_seed_issues",
+        "lineno": 945
+      }
+    ]
+  },
+  {
+    "file": "docs/SETTLEMENT_FLOW.md",
+    "mentions_pre_settle_events": true,
+    "line5": "1. 收夜、单写者屏障后，`prepare_resolve_front_half` 提交 `pre_settle` 与本月诏书的 resolve context。`pre_settle` 包含固定财政流水、在途抵达、承诺反噬扫描与密令到期戳；世界事件终态与 seed 硬触发不在此步，改由月链逐旨落账之后、世界段之前的 `_consume_event_gates_after_edicts` 唯一消费（读当月实账）。恢复时不重复执行已提交的前半段。"
+  }
+]

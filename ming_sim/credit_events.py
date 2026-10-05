@@ -18,10 +18,9 @@ from __future__ import annotations
 
 from ming_sim.applier import Provenance
 
-import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from ming_sim.breach_plea import _extract_ref_ids
+from ming_sim.breach_plea import _extract_ref_ids, parse_dossier_id as _parse_dossier_ref
 from ming_sim.participant_roster import project_execution_liability_parties
 from ming_sim.relations import CREDIT_DIRECTION, CREDIT_EDGE_KINDS, EMPEROR_NODE
 from ming_sim.staged_commitment import (
@@ -55,7 +54,6 @@ _ORIGIN_CREDIT = "credit"
 _PUNISH_STATUSES = frozenset({
     "dismissed", "imprisoned", "exiled", "dead", "retired", "offstage",
 })
-_DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
 
 def scapegoat_actor_kind_from_origin(origin: object) -> Optional[str]:
     """方案 b 消费侧契约：由 origin 类型机械派生施弃方∈{皇帝,党魁}。
@@ -73,11 +71,6 @@ def scapegoat_actor_kind_from_origin(origin: object) -> Optional[str]:
     if base.startswith("faction:") or base.startswith("party:"):
         return "党魁"
     return None
-
-
-def _parse_dossier_ref(ref: object) -> Optional[int]:
-    m = _DOSSIER_REF_RE.match(str(ref or "").strip())
-    return int(m.group(1)) if m else None
 
 
 def _credit_origin(scope: str, scope_id: int, *parts: str) -> str:

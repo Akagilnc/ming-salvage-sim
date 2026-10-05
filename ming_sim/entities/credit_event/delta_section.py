@@ -10,15 +10,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from ming_sim.applier import SectionResult
-
-
-def _placed(run, *names: str) -> SectionResult:
-    acc = SectionResult(applied=[], rejected=[])
-    for name in names:
-        found = run.outcomes.get(name)
-        if found is not None:
-            acc = acc.merge(found)
-    return acc
+from ming_sim.settlement.run import _stored as _placed
 
 
 def _landed_sources(section: SectionResult) -> List[Dict[str, object]]:

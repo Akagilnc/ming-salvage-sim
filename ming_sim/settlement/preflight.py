@@ -346,29 +346,15 @@ def _pending_person_changes_block_event_gate(
             overlay(name, "location", departure["location"])
             overlay(name, "transit_to", departure["transit_to"])
         elif action == "易主":
-            way = str(item.get("方式") or item.get("way") or "").strip()
-            backlash = item.get("反噬", item.get("backlash"))
-            if not way:
-                continue
-            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS:
-                continue
-            if not isinstance(backlash, dict):
-                continue
-            if any(not isinstance(raw_changes, dict) for raw_changes in backlash.values()):
+            from ming_sim.entities.character.apply import allegiance_change_rejection
+
+            reject = allegiance_change_rejection(item, row)
+            if reject is not None:
                 continue
             new_power = str(item.get("new_power") or "").strip()
-            if not new_power:
-                continue
             if new_power not in power_shadow_rows:
                 continue
             if row_value(row, "power_id", "ming").strip() == new_power:
-                continue
-            transition = resolve_person_transition(
-                cur_status,
-                action,
-                reason_code=str(row_value(row, "reason_code") or item.get("reason_code") or ""),
-            )
-            if transition.startswith("reject:"):
                 continue
             new_title = identity_title_for_allegiance(item, new_power)
             if not new_title:
@@ -380,6 +366,7 @@ def _pending_person_changes_block_event_gate(
             overlay(name, "office", new_title)
             overlay(name, "office_type", "身名分")
             overlay(name, "transit_to", "")
+            backlash = item.get("反噬", item.get("backlash"))
             for power_id, raw_changes in backlash.items():
                 overlay_power_delta(power_id, raw_changes)
         elif action in {"任命", "调任"}:

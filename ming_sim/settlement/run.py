@@ -72,8 +72,7 @@ class SettlementRun:
     commit_now: bool = True
     # 前置闸产物：sanitize / 同批事务声明 identity 冲突。
     shape_rejections: List[Tuple[str, dict, str]] = field(default_factory=list)
-    # 人物规范化后的唯一流（人物段 pre/post 共用；issue 路读人物态依赖它）。
-    person_changes: List[Dict[str, object]] = field(default_factory=list)
+    # 人物规范化后的唯一流切成 pre/post（人物段共用；issue 路读人物态依赖它）。
     declared_person_event_by_item: Dict[int, str] = field(default_factory=dict)
     strategic_event_pool_ids: Set[str] = field(default_factory=set)
     strategic_event_delta_ids: Set[str] = field(default_factory=set)
@@ -94,9 +93,6 @@ class SettlementRun:
     surcharge_claims: Set[Tuple[str, str]] = field(default_factory=set)
     runtime_content: Any = None
     pseudo_event: Any = None
-    # 同批事务声明盖章的投影表（供逐笔 effects 复用同一 birth_key）。
-    stamped_by_origin: Dict[int, object] = field(default_factory=dict)
-    rejected_origin_ids: Set[int] = field(default_factory=set)
     # 当前正在落的这一笔（整批时＝合并后的 extracted / ordered_deltas；
     # C0 effects 数组逐笔交错时＝该笔的 payload）。段一律经这两个属性取输入，
     # 不直接摸 extracted/ordered_deltas——否则「逐笔交错」与「整批段序」两套
@@ -288,7 +284,6 @@ def _preflight(
     }
     for item in person_changes:
         item.pop("_effect_event_id", None)
-    run.person_changes = person_changes
 
     run.strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(
         clean, run.runtime_content,
@@ -339,8 +334,6 @@ def _preflight(
         id="season", title="月末整体推演", kind="月末", summary="",
         urgency=0, severity=0, credibility=100, interests=[], audiences=[],
     )
-    run.stamped_by_origin = stamped_by_origin
-    run.rejected_origin_ids = rejected_origin_ids
     return run
 
 

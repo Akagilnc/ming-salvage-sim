@@ -51,12 +51,6 @@ def issue_rows(outcome: Any, subkey: str) -> List[Any]:
     return list(getattr(issue, subkey, []) or []) if issue is not None else []
 
 
-def issue_applied_person_changes(outcome: Any) -> List[Any]:
-    """局势路自带的人物变更（与人物段 applied 分列，不合并）。"""
-    issue = getattr(outcome, "issue", None)
-    return list(getattr(issue, "applied_person_changes", []) or []) if issue is not None else []
-
-
 def metric_deltas(outcome: Any) -> dict:
     """国库指标净增减（旧 ``report["metric_delta"]``）。"""
     return dict(getattr(getattr(outcome, "metric", None), "applied", []) or [])
@@ -70,8 +64,3 @@ def faction_deltas(outcome: Any) -> dict:
 def class_deltas(outcome: Any) -> dict:
     """阶级满意度净增减（旧 ``report["class_delta"]``）。"""
     return {k: v for k, v in (getattr(getattr(outcome, "social_class", None), "applied", []) or [])}
-
-
-def victory_status_of(outcome: Any) -> dict:
-    """结局判定附加结果（叙事型优先；ongoing 不入）。"""
-    return dict(getattr(outcome, "victory_status", None) or {})

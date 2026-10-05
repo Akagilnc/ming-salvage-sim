@@ -308,19 +308,6 @@ def _write_one_interaction(
     return out
 
 
-def _capture_one_interaction(
-    db: Any, state: Any, item: Mapping[str, Any], turn: int,
-    allowed_endpoint_names: Any,
-    allowed_dossier_ids: Any = None,
-) -> list[dict[str, Any]]:
-    prepared = _prepare_one_interaction(
-        db, state, item, turn,
-        allowed_endpoint_names=allowed_endpoint_names,
-        allowed_dossier_ids=allowed_dossier_ids,
-    )
-    return _write_one_interaction(db, state, prepared, turn)
-
-
 def resolve_relation_edge_events_from_extraction(
     db: Any, state: Any, extracted: Any,
     allowed_endpoint_names: Any,

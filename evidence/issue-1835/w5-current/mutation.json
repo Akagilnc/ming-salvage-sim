@@ -1,0 +1,32 @@
+[
+  {
+    "name": "G1_mutation_force_close_RED",
+    "ok": true,
+    "detail": "status=closed"
+  },
+  {
+    "name": "G1_current_no_close_GREEN",
+    "ok": true,
+    "detail": "status=executing"
+  },
+  {
+    "name": "G2_current_raise_GREEN",
+    "ok": true,
+    "detail": "pending_actions.payload_json 腐坏 JSON：'['"
+  },
+  {
+    "name": "G2_mutation_wash_empty_RED",
+    "ok": true,
+    "detail": "payload={}"
+  },
+  {
+    "name": "G5_current_no_pre_settle_event_GREEN",
+    "ok": true,
+    "detail": "hit=[]"
+  },
+  {
+    "name": "G5_mutation_dual_path_RED",
+    "ok": true,
+    "detail": "fnames=['apply_event_terminal_states', 'auto_trigger_seed_issues']"
+  }
+]

@@ -1,0 +1,38 @@
+{
+  "G1": {
+    "effects_rejected": 0,
+    "dossier_status": "closed",
+    "execution_outcome": "failed",
+    "minxin_delta": -3,
+    "huangwei_delta": -7,
+    "situation_status": "dropped",
+    "RED_code_wrote_exec": true,
+    "RED_code_closed_dossier": true,
+    "RED_national_setback": true,
+    "RED_dropped_never": true
+  },
+  "G2": {
+    "raised": null,
+    "returned_normally": true,
+    "washed_invalid_shape": true,
+    "RED_washed_persist_as_declaration": true,
+    "RED_no_raise_on_persist_fault": true
+  },
+  "G5_static": {
+    "pre_settle_event_calls": [
+      [
+        "apply_event_terminal_states",
+        1194
+      ],
+      [
+        "auto_trigger_seed_issues",
+        1198
+      ]
+    ],
+    "month_chain_after_edicts_present": true,
+    "docs_line5": "1. 收夜、单写者屏障后，`prepare_resolve_front_half` 提交 `pre_settle` 与本月诏书的 resolve context。`pre_settle` 包含固定财政流水、事件终态、硬立局势与密令到期戳；恢复时不重复执行已提交的前半段。",
+    "RED_dual_path": true,
+    "RED_docs_pre_settle_event": true
+  },
+  "elapsed_s": 0.787
+}

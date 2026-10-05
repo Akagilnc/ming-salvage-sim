@@ -11,12 +11,12 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional
 
 from ming_sim.db import GameDB
 from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
+    parse_dossier_id as parse_dossier_id_from_origin,
     project_breach_plea_scene,
 )
 from ming_sim.decree_vocabulary import terminal_report_facade
@@ -68,17 +68,8 @@ def is_due_review_entry_kind(entry_kind: object) -> bool:
     """#624 四缝：仅 staged 可投影/apply/占接管窗为到期复核。"""
     return audience_todo_lane(entry_kind) == _AUDIENCE_LANE_STAGED
 
-_DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
 
 _TERMINAL_OUTCOMES = frozenset({"fulfilled", "degraded", "failed", "transformed"})
-
-
-def parse_dossier_id_from_origin(origin_ref: object) -> Optional[int]:
-    text = str(origin_ref or "").strip()
-    match = _DOSSIER_REF_RE.match(text)
-    if not match:
-        return None
-    return int(match.group(1))
 
 
 def _issue_meta(db: Any, commitment_ref: int) -> Dict[str, object]:
@@ -308,16 +299,6 @@ def list_due_review_scenes(
             scenes.append(project_breach_plea_scene(db, todo))
         # urge / unknown：不投影为 due-review 场面
     return scenes
-
-
-
-def current_audience_scene(db: Any, state: Any = None) -> Dict[str, object] | None:
-    """Return the one due-review scene currently presented to the sovereign."""
-    return next((
-        scene for scene in list_due_review_scenes(db, state)
-        if scene.get("kind") == "covert_levy_exposure"
-        or scene.get("shortfall_reopened") is True
-    ), None)
 
 
 def _add_owned_dossier(

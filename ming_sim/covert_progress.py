@@ -172,17 +172,6 @@ def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
     return severity in _DEBT_SEVERITIES
 
 
-def target_progress_units(*, deadline_span: int, due_turn: int, per_month: float = 1.0) -> float:
-    if int(due_turn or 0) <= 0:
-        return 0.0
-    span = int(deadline_span or 0)
-    months = float(max(span, 1))
-    rate = float(per_month)
-    if rate <= 0.0:
-        rate = 1.0
-    return months * rate
-
-
 def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
     """#1376 候选 payload → typed contract 字段；不读 tags / title / content。"""
     if not isinstance(payload, Mapping):

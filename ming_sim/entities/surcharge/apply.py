@@ -8,21 +8,11 @@ from typing import TYPE_CHECKING, Dict, List, Tuple
 if TYPE_CHECKING:
     from ming_sim.db import GameDB
 
+from ming_sim.displaced_population import surcharge_population_pool_members as _surcharge_population_pool_members
 from ming_sim.applier import Provenance, RejectedItem
 from ming_sim.db import POPULATION_UNIT_PERSONS
 
 SURCHARGE_DECREE_FIELDS = frozenset({"region_id", "monthly_amount", "reason", "origin_ref"})
-
-
-def _surcharge_population_pool_members(db: GameDB, region_id: str) -> set[str]:
-    """Return the materialized provincial rows that make up a surcharge pool."""
-    return {
-        str(row["name"])
-        for row in db.conn.execute(
-            "SELECT name FROM classes WHERE region_id=? AND name IN ('农民', '流民')",
-            (region_id,),
-        ).fetchall()
-    }
 
 
 def _apply_surcharge_decrees(

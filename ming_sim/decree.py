@@ -44,7 +44,7 @@ from ming_sim.exceptions import (
 )
 from ming_sim.faction_brew import VIEW_FACTION_STANCE
 from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abort_if_needed
-from ming_sim.issues import apply_event_terminal_states, apply_historical_fiscal_rates, auto_trigger_seed_issues, clear_gated_legacies, gather_impeachment_surge_candidates
+from ming_sim.issues import apply_historical_fiscal_rates, clear_gated_legacies, gather_impeachment_surge_candidates
 from ming_sim.settlement.preflight import sanitize_delta_shape, validate_delta_shape
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
@@ -159,57 +159,6 @@ def stub_promulgation_verdicts(
     ]
 
 
-def _collect_compliant_promulgation_items(
-    batch: object,
-    db: GameDB,
-    *,
-    proposed_modes: Dict[int, str],
-    prepared_context: Optional[Dict[str, object]],
-    reviewed_dossier_ids: Optional[set[int]],
-) -> List[Dict[str, object]]:
-    """从不合规整批中收集单项已过闸的判决（证据保留，不落判、不伪造缺案）。"""
-    if not isinstance(batch, list):
-        return []
-    good: List[Dict[str, object]] = []
-    seen: set[int] = set()
-    for candidate in batch:
-        try:
-            valid = _validate_promulgation_verdict_item(
-                candidate, db,
-                proposed_modes=proposed_modes,
-                prepared_context=prepared_context,
-            )
-        except LLMContractError:
-            continue
-        dossier_id = int(valid["dossier_id"])
-        if reviewed_dossier_ids is not None and dossier_id not in reviewed_dossier_ids:
-            continue
-        if dossier_id in seen:
-            continue
-        seen.add(dossier_id)
-        good.append(valid)
-    return good
-
-
-def _merge_compliant_promulgation_items(
-    accumulated: List[Dict[str, object]],
-    fresh: Sequence[Dict[str, object]],
-) -> List[Dict[str, object]]:
-    """跨补交轮次并集保留已合规判决：先到先留，后轮不得冲掉前轮好判（#1753）。
-
-    输入仅来自 _collect_compliant_promulgation_items 已过闸项，不再二次类型过滤。
-    """
-    by_id: Dict[int, Dict[str, object]] = {}
-    order: List[int] = []
-    for row in list(accumulated) + list(fresh):
-        dossier_id = int(row["dossier_id"])
-        if dossier_id in by_id:
-            continue
-        by_id[dossier_id] = row
-        order.append(dossier_id)
-    return [by_id[item] for item in order]
-
-
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
     payload = row.get("payload")
     if isinstance(payload, dict):
@@ -223,13 +172,6 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
 def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
     """#658：stalled 廷议不进颁布集合（判官/stub/校验/消费共用）。"""
     return str(_dossier_payload_dict(dossier).get("deliberation_state") or "") == "stalled"
-
-
-def _promulgable_proposed_dossiers(
-    proposed_dossiers: Sequence[Dict[str, object]],
-) -> List[Dict[str, object]]:
-    """本轮可颁布 proposed = 非 stalled 廷议的 proposed 案卷。"""
-    return [row for row in proposed_dossiers if not _is_stalled_deliberation(row)]
 
 
 def resolve_executor_appointment_tenure(
@@ -692,38 +634,6 @@ def _rescript_decisions(
     return decisions
 
 
-def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
-    if not isinstance(simulator_payload, dict):
-        return set()
-    raw = simulator_payload.get("decree_dossiers")
-    if not isinstance(raw, list):
-        return set()
-    return {
-        int(item["id"])
-        for item in raw
-        if isinstance(item, dict) and str(item.get("id") or "").isdigit()
-    }
-
-
-def _open_affair_ids_from_payload(payload: object) -> set[int]:
-    from ming_sim.entities.affair import parse_positive_affair_id
-
-    if not isinstance(payload, dict):
-        return set()
-    raw = payload.get("open_affairs")
-    if not isinstance(raw, list):
-        return set()
-    ids: set[int] = set()
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        try:
-            ids.add(parse_positive_affair_id(item.get("id")))
-        except (TypeError, ValueError):
-            continue
-    return ids
-
-
 
 def write_decree_with_agno(
     llm_config: LLMConfig,
@@ -1115,11 +1025,13 @@ def pre_settle(
     state: GameState, db: GameDB, *, content=None,
     transit_arrivals_out: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
-    """确定性结算「前括号」：固定月度财政 tick + auto_trigger 硬立 seed 情势，均在 LLM 推演前。
+    """确定性结算「前括号」：固定月度财政 tick、在途抵达、承诺反噬扫描、密令到期戳。
 
-    返回本回合程序硬触发的清单；content 供 office(任免)暂存动作落库。
+    返回本回合程序硬触发清单（现仅 commitment_backlash 项；世界事件终态与 seed
+    硬触发不在此步，见 month_chain._consume_event_gates_after_edicts）。
+    content 供 office(任免)暂存动作落库。
 
-    ADR 0008 S4：整段（暂存动作 commit + 固定财政 + auto_trigger + 到期密令呈递）包成
+    ADR 0008 S4：整段（暂存动作 commit + 固定财政 + 反噬扫描 + 到期密令呈递）包成
     **自己的单事务**——崩在内部=全回滚=相位未变=重进时干净重跑前半段。完成时**同事务内**
     落中间相位 settling（写 state.turn_phase + save_state）：只意味着「前半段已完成，不再
     重跑 pre_settle」，不意味着后半段就绪（恢复入口的消费分流是 S7 的活，本切片只立相位机械）。
@@ -1183,28 +1095,25 @@ def pre_settle(
             apply_fixed_period_flows(db, state)
             in_fixed_fiscal = False
             # 0095/#668 在途倒数 tick：remaining -= 1.0*factor，≤0 引擎抵达。
-            # 必须先于 apply_event_terminal_states / auto_trigger_seed_issues：门控读 location 前
-            # 在途者须先完成本月抵达（decree 既有顺序约束）。
+            # 须在月链逐旨后的事件判门之前完成（门控读 location）；消费点见
+            # month_chain._consume_event_gates_after_edicts，不在 pre_settle 双跑。
             arrivals = tick_transit_arrivals(db, state, content, commit=False)
             if transit_arrivals_out is not None:
                 transit_arrivals_out.clear()
                 transit_arrivals_out.extend(arrivals)
             if arrivals:
                 tlog(f"[transit-tick] 本月抵达 {len(arrivals)} 人：{[a['name'] for a in arrivals]}")
-            terminalized = apply_event_terminal_states(state, db, commit=False)
-            if terminalized:
-                tlog(f"[event_terminal] 本回合事件终态落账 {len(terminalized)} 条：{[(t['id'], t['terminal_state']) for t in terminalized]}")
-            # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
-            auto_triggered = auto_trigger_seed_issues(state, db)
             # #1895：原 #625 孤直稽核反制硬门退役——代码不再按 integrity 档
             # 判定「这位大臣会不会反制」并 hash 指定反制形态。监督在场／连续月数／
             # 稽核人派系操守等事实仍留在 dossier_supervision_presence 与
             # build_supervision_judge_surface 供料面；是否反制、采取何种行动由
             # #1861 逐旨推演／#1843 世界段 run 依人物可及事实自选。
             # #626：承诺所系反噬——事废/烂尾/变形暴露状态驱动，#625 同格挂点。
+            # 事件终态／seed 硬触发已归逐旨后世界段接缝；此处只跑承诺反噬。
+            auto_triggered: list = []
             backlash_hits = db.trigger_commitment_backlashes(state, commit=False)
             if backlash_hits:
-                auto_triggered = list(auto_triggered) + [
+                auto_triggered = [
                     {
                         "id": item.get("origin_ref"),
                         "title": f"commitment_backlash:{item.get('source_kind')}",

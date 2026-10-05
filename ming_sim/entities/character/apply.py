@@ -8,10 +8,108 @@ from __future__ import annotations
 
 from ming_sim.applier import RejectedItem
 
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 if TYPE_CHECKING:
     from ming_sim.db import GameDB
     from ming_sim.models import GameState
+
+
+def allegiance_change_rejection(
+    item: Dict[str, object],
+    row: Any,
+    *,
+    db: Any = None,
+    origin_ref: str = "",
+    require_origin: bool = False,
+) -> Optional[Tuple[str, str]]:
+    """易主准入唯一权威：返回 (reason, category) 拒收，或 None 表示可落。
+
+    preflight 影子、amnesty 冲突预判与 apply 写核共用本函数，禁止各处重写政策。
+    """
+    from ming_sim.person_archive_contract import (
+        PERSON_ALLEGIANCE_CHANGE_WAYS,
+        PERSON_IDENTITY_TITLES,
+        resolve_person_transition,
+    )
+    from ming_sim.strict_types import _parse_sqlite_id
+
+    way = str(item.get("方式") or item.get("way") or "").strip()
+    backlash = item.get("反噬", item.get("backlash"))
+    if not way:
+        return ("易主 缺 方式", "missing_field")
+    if way not in PERSON_ALLEGIANCE_CHANGE_WAYS:
+        return ("易主 方式非白名单", "invalid_enum")
+    if not isinstance(backlash, dict):
+        return ("易主 缺 反噬", "missing_field")
+    if any(not isinstance(raw_changes, dict) for raw_changes in backlash.values()):
+        return ("易主 反噬 项必须是 object(dict)", "invalid_enum")
+    if row is None:
+        return ("非既有人物", "hallucinated_id")
+    cur_status = str(row["status"] or "active")
+    transition = resolve_person_transition(
+        cur_status,
+        "易主",
+        reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
+    )
+    if transition.startswith("reject:"):
+        return (
+            f"{cur_status} 无 易主 出边",
+            transition.removeprefix("reject:") or "invalid_transition",
+        )
+    requested_new_power = str(item.get("new_power") or "").strip()
+    if not requested_new_power:
+        return ("易主 缺 new_power", "missing_field")
+    old_power = str(row["power_id"] or "").strip()
+    if way == "主动归附" and requested_new_power == "ming":
+        backlash_power_ids = {
+            str(power_id).strip()
+            for power_id in backlash.keys()
+            if str(power_id).strip()
+        }
+        if any(power_id != old_power for power_id in backlash_power_ids):
+            return (
+                f"主动归附反噬只能指向原势力股 {old_power}",
+                "invalid_transition",
+            )
+    title = str(item.get("new_title") or item.get("title") or "").strip()
+    if title:
+        new_title = title if title in PERSON_IDENTITY_TITLES else ""
+    elif requested_new_power == "ming" or way == "主动归附":
+        new_title = "归附"
+    else:
+        new_title = "降臣"
+    if not new_title:
+        return ("易主 new_title 非身名分白名单", "invalid_enum")
+    if require_origin and db is not None:
+        error = db.effect_origin_rejection(origin_ref)
+        if error:
+            return (str(error["reason"]), str(error["category"]))
+        if str(origin_ref or "").startswith("dossier:"):
+            try:
+                dossier_id = _parse_sqlite_id(str(origin_ref).split(":", 1)[1])
+            except ValueError:
+                dossier_id = 0
+            dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
+            if dossier is not None:
+                action_type = str(dossier.get("action_type") or "").strip()
+                if (
+                    action_type == "special_decree"
+                    and way == "主动归附"
+                    and requested_new_power == "ming"
+                ):
+                    return ("special_decree 不得授权招抚易主", "invalid_origin_ref")
+                if action_type == "pacification":
+                    payload = dossier["payload"]
+                    bound_target = str(
+                        payload.get("target_id") or dossier.get("target_id") or ""
+                    ).strip()
+                    name = str(item.get("name") or "").strip()
+                    if not bound_target or name != bound_target:
+                        return (
+                            f"招抚案卷仅可易主 {bound_target or '案卷目标'}，不得易主 {name}",
+                            "invalid_origin_ref",
+                        )
+    return None
 
 
 def apply_person_changes(
@@ -506,106 +604,17 @@ def apply_person_changes(
             continue
 
         if action == "易主":
+            row = character_row(name)
+            reject = allegiance_change_rejection(
+                item, row, db=db, origin_ref=origin_ref, require_origin=require_origin,
+            )
+            if reject is not None:
+                rejections.append(rejected(item, reject[0], reject[1]))
+                continue
             way = str(item.get("方式") or item.get("way") or "").strip()
             backlash = item.get("反噬", item.get("backlash"))
-            if not way:
-                rejections.append(rejected(item, "易主 缺 方式", "missing_field"))
-                continue
-            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS:
-                rejections.append(rejected(item, "易主 方式非白名单", "invalid_enum"))
-                continue
-            if not isinstance(backlash, dict):
-                rejections.append(rejected(item, "易主 缺 反噬", "missing_field"))
-                continue
-            if any(not isinstance(raw_changes, dict) for raw_changes in backlash.values()):
-                rejections.append(rejected(item, "易主 反噬 项必须是 object(dict)", "invalid_enum"))
-                continue
-            row = character_row(name)
-            if row is None:
-                rejections.append(rejected(item, "非既有人物", "hallucinated_id"))
-                continue
-            transition = resolve_person_transition(
-                str(row["status"] or "active"),
-                action,
-                reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
-            )
-            if transition.startswith("reject:"):
-                rejections.append(
-                    rejected(
-                        item,
-                        f"{row['status']} 无 {action} 出边",
-                        transition.removeprefix("reject:") or "invalid_transition",
-                    )
-                )
-                continue
             requested_new_power = str(item.get("new_power") or "")
-            old_power = str(row["power_id"] or "").strip()
-            if way == "主动归附" and requested_new_power == "ming":
-                backlash_power_ids = {
-                    str(power_id).strip()
-                    for power_id in backlash.keys()
-                    if str(power_id).strip()
-                }
-                if any(power_id != old_power for power_id in backlash_power_ids):
-                    rejections.append(
-                        rejected(
-                            item,
-                            f"主动归附反噬只能指向原势力股 {old_power}",
-                            "invalid_transition",
-                        )
-                    )
-                    continue
             new_title = identity_title_for_allegiance(item, requested_new_power)
-            if not new_title:
-                rejections.append(
-                    rejected(
-                        item,
-                        "易主 new_title 非身名分白名单",
-                        "invalid_enum",
-                    )
-                )
-                continue
-            origin_error = origin_rejected(item)
-            if origin_error:
-                rejections.append(origin_error)
-                continue
-            # #522：招抚案卷效果绑定 canonical target；generic special_decree
-            # 不得授权招抚式易主。其它 dossier/盘面自发路径保持既有授权。
-            if require_origin and str(origin_ref or "").startswith("dossier:"):
-                try:
-                    dossier_id = _parse_sqlite_id(str(origin_ref).split(":", 1)[1])
-                except ValueError:
-                    dossier_id = 0
-                dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
-                if dossier is not None:
-                    action_type = str(dossier.get("action_type") or "").strip()
-                    if (
-                        action_type == "special_decree"
-                        and way == "主动归附"
-                        and requested_new_power == "ming"
-                    ):
-                        rejections.append(
-                            rejected(
-                                item,
-                                "special_decree 不得授权招抚易主",
-                                "invalid_origin_ref",
-                            )
-                        )
-                        continue
-                    if action_type == "pacification":
-                        payload = dossier["payload"]  # 使用已校验的持久读取，不洗成空底。
-                        bound_target = str(
-                            payload.get("target_id") or dossier.get("target_id") or ""
-                        ).strip()
-                        if not bound_target or name != bound_target:
-                            rejections.append(
-                                rejected(
-                                    item,
-                                    f"招抚案卷仅可易主 {bound_target or '案卷目标'}，不得易主 {name}",
-                                    "invalid_origin_ref",
-                                )
-                            )
-                            continue
             power_results, power_rejections = db.apply_character_power_changes(
                 [
                     {

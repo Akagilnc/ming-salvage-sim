@@ -312,20 +312,32 @@ def test_regret_via_extraction_true_entry_zero_damage(game):
 
 
 def test_persist_foundation_tiers(game):
-    """坚持分支：三档根基各一用例；办到一半国势倒退写侧可查；无双扣。"""
+    """坚持撤：代码只落 0056 名声账与停承诺；不代写执行格／半途国势（ADR 0075 #1894）。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
 
     cases = [
-        (FOUNDATION_JUST_STARTED, 10, "刚起头", "failed", False),
-        (FOUNDATION_HALFWAY, 45, "办到一半", "failed", True),
-        (FOUNDATION_ROOTED, 80, "根基已成", "degraded", False),
+        (FOUNDATION_JUST_STARTED, 10, "刚起头"),
+        (FOUNDATION_HALFWAY, 45, "办到一半"),
+        (FOUNDATION_ROOTED, 80, "根基已成"),
     ]
-    for tier_name, bar, label, expect_outcome, expect_setback in cases:
+    for tier_name, bar, label in cases:
         token = f"tier-{tier_name}"
         did, holder = _executing_policy_dossier(db, state, token=token)
         origin = f"dossier:{did}"
+        # 同源不可撤局势：撤诺不得无差别取消
+        sit = db.insert_issue(
+            state,
+            kind="situation",
+            title=f"{label}同源局势",
+            origin_kind="decree",
+            origin_ref=origin,
+            cancellable="never",
+            bar_value=5,
+            stage_text="在",
+            commit=True,
+        )
         if tier_name != FOUNDATION_JUST_STARTED:
             db.record_issue_economy_move(
                 state, "国库", -10, "投入", f"{label}投入",
@@ -354,35 +366,23 @@ def test_persist_foundation_tiers(game):
         todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
         minxin_before = int(state.metrics.get("民心", 0) or 0)
         result = finalize_persist(db, state, todo, commit=True)
-        assert result["foundation_tier"] == tier_name
-        assert result["outcome"] == expect_outcome
+        assert "foundation_tier" not in result
+        assert "outcome" not in result
+        assert "setback" not in result
         assert result["breach_0056"] is True
+        dossier = db.get_decree_dossier(did)
+        assert str(dossier.get("status") or "") == "executing"
+        assert not str(dossier.get("execution_outcome") or "")
+        # 半途国势不由代码代写
+        assert int(state.metrics.get("民心", 0) or 0) == minxin_before
+        assert db.conn.execute(
+            "SELECT status FROM issues WHERE id=?", (sit,),
+        ).fetchone()["status"] != "dropped"
         # 0056 恰一次
         breach_costs = _cost_events(db, did, identity="breach")
         assert breach_costs, f"{label} 应落 0056"
-        # 幂等：不再双开
         assert db.breach_decree_dossier(state, did, reason="重复", commit=True) is False
         assert _cost_events(db, did, identity="breach") == breach_costs
-
-        if expect_setback:
-            assert result.get("setback")
-            assert int(result["setback"].get("setback_issue_id") or 0) > 0
-            assert int(state.metrics.get("民心", 0) or 0) < minxin_before
-            # 0014 涌现缝：seed event_to_issue + event_triggers 终态账
-            assert str(result["setback"].get("event_id") or "") == "breach_halfway_setback"
-            setback_row = db.conn.execute(
-                "SELECT title, status, origin_kind, origin_ref FROM issues WHERE id=?",
-                (int(result["setback"]["setback_issue_id"]),),
-            ).fetchone()
-            assert setback_row is not None
-            assert str(setback_row["origin_kind"]) == "event_pool"
-            assert str(setback_row["origin_ref"]) == "breach_halfway_setback"
-            assert db.conn.execute(
-                "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
-                ("breach_halfway_setback",),
-            ).fetchone() is not None
-        else:
-            assert not result.get("setback")
 
         # 承诺已停
         assert db.conn.execute(
@@ -411,7 +411,7 @@ def test_persist_remove_sponsor_no_0056(game):
     result = finalize_persist(db, state, todo, commit=True)
     assert result["breach_0056"] is False
     assert _cost_events(db, did, identity="breach") == []
-    assert result["outcome"] in {"failed", "degraded"}
+    assert "outcome" not in result
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "dropped"

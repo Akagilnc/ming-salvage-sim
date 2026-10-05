@@ -179,17 +179,6 @@ def _write_authority_change_item(
     }
 
 
-def _apply_authority_change_item(
-    db: GameDB, state: GameState, item: Dict[str, object],
-) -> Dict[str, object]:
-    """Apply one production-slot authority grant/revoke under the #611 contract."""
-    prepared = _prepare_authority_change_item(db, state, item)
-    applied = prepared.get("applied")
-    if applied is not None:
-        return applied
-    return _write_authority_change_item(db, state, prepared)
-
-
 def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optional[Dict[str, object]]:
     """Resolve an authorized dossier through the canonical ownership policy."""
     text = str(origin_ref or "").strip()

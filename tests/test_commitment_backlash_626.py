@@ -6,7 +6,7 @@ Seams:
 - assess_foundation_tier 触发侧重算（零新列）
 - find_any_issue_by_origin 幂等
 - issue_advances.trigger_ref 溯源源承诺
-- 与 #623 _apply_halfway_national_setback 去重（无双份 metrics 直击）
+- 撤诺代码不写全国余波；与 #626 承诺反噬 metrics 不双扣
 - extractor commitment_backlash_facts 仅 module==issues 门控
 """
 
@@ -169,8 +169,9 @@ def test_ac1_breach_verdict_triggers_commitment_backlash(game):
     )
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
     result = finalize_persist(db, state, todo, commit=True)
-    assert result["outcome"] == "failed"
-    assert "事废" in str(result.get("note") or "")
+    assert result["breach_0056"] is True
+    assert "outcome" not in result
+    assert "setback" not in result
     # 当回合硬门不扫（一拍差）
     assert db.trigger_commitment_backlashes(state, commit=True) == []
     assert _backlash_issues(db) == []
@@ -319,7 +320,7 @@ def test_ac1_transformed_without_beyond_intent_does_not_trigger(game):
 
 
 def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(game):
-    """坚持撤 halfway：一次全国余波（#623）+ 一次承诺所系一锤子（#626）；穿 settle 无续扣。"""
+    """坚持撤 halfway：代码不写全国余波；次回合一次承诺所系一锤子（#626）；穿 settle 无续扣。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -343,22 +344,15 @@ def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(
     huangwei_0 = int(state.metrics.get("皇威", 0) or 0)
 
     result = finalize_persist(db, state, todo, commit=True)
-    assert result.get("setback")
-    assert str(result["setback"].get("event_id") or "") == HALFWAY_SETBACK_EVENT_ID
-    # #623 全国余波 metrics 账恰一套（与 0056 皇威成本分立，不把 -5 算进本断言）
-    assert dict(result["setback"].get("metrics_delta") or {}) == {"民心": -3, "皇威": -2}
+    assert "setback" not in result
+    # 撤诺代码不再代写全国余波；民心保持，0056 可另扣皇威
     minxin_1 = int(state.metrics.get("民心", 0) or 0)
     huangwei_1 = int(state.metrics.get("皇威", 0) or 0)
-    assert minxin_1 == max(0, minxin_0 - 3)
-    # 皇威至少含 setback -2；0056 可另扣，但不得出现双份 setback（-4）
-    assert huangwei_1 <= max(0, huangwei_0 - 2)
-    assert huangwei_1 != max(0, huangwei_0 - 4)
-    # 全国余波 issue 恰一条
-    setback_count = db.conn.execute(
+    assert minxin_1 == minxin_0
+    assert db.conn.execute(
         "SELECT COUNT(*) AS c FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
         (HALFWAY_SETBACK_EVENT_ID,),
-    ).fetchone()["c"]
-    assert int(setback_count) == 1
+    ).fetchone()["c"] == 0
 
     # 次回合承诺所系一锤子
     state.turn = int(state.turn) + 1
@@ -368,14 +362,14 @@ def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(
     assert hits[0]["trigger_ref"] == f"issue:{cid}"
     assert dict(hits[0].get("metrics_delta") or {}) == dict(BACKLASH_NAMED_METRICS)
 
-    # #626 具名 metrics 恰一次（与 #623 -3/-2 套件分立，禁同套双扣）
+    # #626 具名 metrics 恰一次
     minxin_2 = int(state.metrics.get("民心", 0) or 0)
     huangwei_2 = int(state.metrics.get("皇威", 0) or 0)
     assert minxin_2 == minxin_1 + int(BACKLASH_NAMED_METRICS["民心"])
     assert huangwei_2 == huangwei_1 + int(BACKLASH_NAMED_METRICS["皇威"])
-    # 无双份 #623 直击（不会再叠 -3/-2）
-    assert minxin_2 == minxin_0 - 3 + int(BACKLASH_NAMED_METRICS["民心"])
-    assert minxin_2 != minxin_0 - 6
+    # 无已删的 #623 全国余波叠扣
+    assert minxin_2 == minxin_0 + int(BACKLASH_NAMED_METRICS["民心"])
+    assert minxin_2 != minxin_0 - 3 + int(BACKLASH_NAMED_METRICS["民心"])
 
     bl_issue = db.conn.execute(
         "SELECT id, ongoing_effects FROM issues WHERE id=?",
@@ -385,14 +379,14 @@ def test_ac2_halfway_persist_one_national_plus_one_commitment_no_double_metrics(
     ongoing = loads_effect_dict(bl_issue["ongoing_effects"])
     assert not (ongoing.get("metrics") or {}), ongoing  # 无镜像月扣
 
-    # 全国余波仍一条；承诺所系一条（settle 隔离前先锁计数）
+    # 全国余波仍为零；承诺所系一条（settle 隔离前先锁计数）
     assert int(db.conn.execute(
         "SELECT COUNT(*) AS c FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
         (HALFWAY_SETBACK_EVENT_ID,),
-    ).fetchone()["c"]) == 1
+    ).fetchone()["c"]) == 0
     assert len(_backlash_issues(db)) == 1
 
-    # 穿完整 settle：隔离他源 ongoing（#623 setback 自带月扣民心-1），只留本片
+    # 穿完整 settle：隔离他源 ongoing，只留本片
     # 断言本 issue 触发回合净变恰一次 BACKLASH_NAMED_METRICS，次月无续扣（I1）。
     db.conn.execute(
         "UPDATE issues SET status='dropped' WHERE status='active' AND origin_kind!=?",
