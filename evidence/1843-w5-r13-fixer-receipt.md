@@ -2,6 +2,7 @@
 
 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5`  
 分支：`ak-roles/issue-1843-w5-r13-f2-compat`  
+commitSha：`b3fb8c09a05478e961c126deb43decb8feb1d2fa`  
 冻结判词：`05-1843-judge-7402d3b80.json` 末份（两类未结）  
 派单：`fix-packet.md`  
 未 amend / stash / push / PR；七 `MING_SIM_*_BIN=/usr/bin/false`。不跑全量。
