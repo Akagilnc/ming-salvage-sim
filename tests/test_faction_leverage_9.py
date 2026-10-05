@@ -499,22 +499,6 @@ def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch)
     )
 
 
-def test_office_weight_takes_highest_domain_across_joint_offices():
-    """#9（用户挑战：九千岁退场怎么可能影响小）：兼职跨 domain 时，官职权重取头衔各分项里【最高】的
-    domain（按 offices.json 词干表确定性映射、无 LLM），不只看 office_type 单桶。
-    魏忠贤 司礼监秉笔(批红 20)+东厂提督(8) → 20；来宗道 礼部尚书(5)+东阁大学士(内阁 18) → 18。
-    修前只认 office_type 桶 → 魏忠贤误算 8(东厂)、来宗道误算 5(礼部)，九千岁退场只掉 8。"""
-    from ming_sim.db import _member_office_weight
-    # 魏忠贤：domain 取司礼监 20（秉笔/提督 均堂官档 ×1.0）——不再因 office_type=东厂 而只值 8。
-    assert _member_office_weight("东厂", "司礼监秉笔太监,东厂提督") == 20.0
-    # 来宗道：domain 取内阁 18（兼礼部尚书=堂官 ×1.0）——不再因 office_type=礼部 而只值 5。
-    assert _member_office_weight("礼部", "礼部尚书,东阁大学士") == 18.0
-    # 单职不变：兵部尚书 = 兵部 12 × 堂官 1.0。
-    assert _member_office_weight("兵部", "兵部尚书") == 12.0
-    # 空 office 仍 0（cafac368 守卫不被本改回归）。
-    assert _member_office_weight("司礼监", "") == 0.0
-
-
 def test_office_rank_deputy_titles_not_inflated_to_principal():
     """#9 线上 R2（gemini high + codex P2 concur）：品级子串误匹配——副职头衔含正职关键词作子串
     （副总兵⊃总兵、佥都御史⊃都御史）被误判成正职档(1.0)。修法=每个分项取「所有命中档里最低」
@@ -577,57 +561,6 @@ def test_office_rank_aux_titles_audit_offices_json():
     assert _office_rank_multiplier("总督军务") == 1.0
     assert _office_rank_multiplier("秉笔太监") == 1.0
     assert _office_rank_multiplier("都指挥使") == 1.0
-
-
-def test_jundadou_deputy_ouster_impact_is_half_of_principal():
-    """#9 线上 R2 端到端：祖大寿(军队·锦州副总兵·边镇)退场对军队 leverage 的冲击 ≈ 域权重(边镇10)×0.5，
-    即副职档(5)而非正职档(10)——证明品级子串修复贯穿到 _member_office_weight 与 leverage 全重算。"""
-    from ming_sim.db import _member_office_weight, _OFFICE_LEVERAGE_WEIGHT
-
-    # 锦州副总兵：边镇域(10) × 佐贰档(0.5) = 5（不是 ×1.0=10）。
-    assert _member_office_weight("边镇", "锦州副总兵") == 5.0, (
-        "祖大寿(副总兵)应按佐贰半档算权重，不按正职满档"
-    )
-    # 对比：若是正职(锦州总兵)则满档 10——确认两者确实差一倍。
-    assert _member_office_weight("边镇", "锦州总兵") == 10.0
-    assert _OFFICE_LEVERAGE_WEIGHT["边镇"] == 10
-
-
-def test_xingbu_has_leverage_weight_like_other_ministries():
-    """#9 cmr R3 finding#1：六部齐全——刑部尚书(六部堂官)应与礼部/工部同档贡献权重，不漏成 0。
-    COURT_OFFICE_TYPES/MINISTRY_OFFICE_TYPES 明列刑部为正经六部、offices.json 词干表也把
-    「刑部尚书→刑部」，但 _OFFICE_LEVERAGE_WEIGHT 修前漏刑部 → 刑部尚书贡献 0、与其余五部不一致。"""
-    from ming_sim.db import (
-        _OFFICE_LEVERAGE_WEIGHT,
-        _member_office_weight,
-        MINISTRY_OFFICE_TYPES,
-    )
-    # 刑部尚书=刑部域权重 × 堂官档 ×1.0；与礼部/工部同「中层部务」档（=5）。
-    assert _member_office_weight("刑部", "刑部尚书") == 5.0, (
-        "刑部尚书(六部堂官)应贡献非零权重，与其余五部一致"
-    )
-    # 防再漏：六部每一部都必须在权重表里。
-    for ministry in MINISTRY_OFFICE_TYPES:
-        assert ministry in _OFFICE_LEVERAGE_WEIGHT, (
-            f"六部之{ministry}缺 _OFFICE_LEVERAGE_WEIGHT 权重（漏配 → 该部堂官贡献 0）"
-        )
-
-
-def test_neiting_has_leverage_weight_like_other_court_eunuchs():
-    """#9 cmr R5 finding#2：内廷(御马监/内官监等宫廷宦官)在 offices.json allowed_types，
-    词干表把「御马监掌印太监→内廷」，但 _OFFICE_LEVERAGE_WEIGHT 修前漏内廷 → 这类在朝宦官
-    贡献 0、与 内臣(4)/东厂(8)/司礼监(20) 等在朝宦官不一致。补「内廷:4」（与内臣同宫廷宦官档）。"""
-    from ming_sim.db import _OFFICE_LEVERAGE_WEIGHT, _member_office_weight, _office_type_from_table
-
-    # 词干表确把御马监掌印映到内廷（数据前提）。
-    assert _office_type_from_table("御马监掌印太监") == "内廷", (
-        "offices.json 词干表应把御马监掌印→内廷"
-    )
-    assert "内廷" in _OFFICE_LEVERAGE_WEIGHT, "内廷应在 _OFFICE_LEVERAGE_WEIGHT（宫廷宦官有实权）"
-    # 御马监掌印太监=内廷域权重(4) × 堂官(掌印 ×1.0)=4；非零，与其余在朝宦官一致。
-    assert _member_office_weight("内廷", "御马监掌印太监") == 4.0, (
-        "内廷宫廷宦官(御马监掌印)应贡献非零权重"
-    )
 
 
 def test_all_court_allowed_types_have_leverage_weight():

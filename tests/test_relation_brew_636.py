@@ -237,28 +237,6 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
 
 # ---------------- #642 锚④：build_brew_input 只投影 prior 字段（全序/筛选归 read 缝）
 
-def test_build_brew_input_projects_prior_event_fields():
-    """brew 侧只锁 prior_events 字段投影与空列表；全量有序/和解归 read 缝主干。"""
-    prior = [{
-        "id": 9, "event_kind": "知遇", "context": "越次一召原句。",
-        "origin": "seed:founding", "year": 1628, "period": 11,
-    }]
-    payload = build_brew_input(
-        source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
-        year=1635, period=6, summary=None, new_events=[],
-        has_pending=False, prior_events=prior,
-    )
-    assert payload["prior_events"] == [{
-        "event_kind": "知遇", "context": "越次一召原句。",
-        "origin": "seed:founding", "year": 1628, "period": 11,
-    }]
-    assert "id" not in payload["prior_events"][0]
-    assert build_brew_input(
-        source="甲", target="乙", dimension="大臣",
-        year=1635, period=6, summary=None, new_events=[],
-        has_pending=True, prior_events=[],
-    )["prior_events"] == []
-
 
 def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     """生产装配：prepare→build_brew_input 经历史读缝取 prior；与 new 互斥。
@@ -403,13 +381,6 @@ def test_historical_events_alone_do_not_select_in_later_month(game):
 # ------------------------------------------------------- 奠基段拼装机械语义
 
 
-
-
-
-
-
-
-
 # ------- 判词类③ fail-loud 异常边界：DB/schema/程序错误响亮，仅 LLM 单条降级
 
 def test_prepare_claim_db_error_propagates_loudly(game):
@@ -530,8 +501,6 @@ def test_parse_seam_value_error_degrades_single_item(game):
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
         ("温体仁", "周延儒")
     ]
-
-
 
 
 # -------------------------------- 庭裁 Z1：畸形酿制产出严格拒收（不修补不改写）

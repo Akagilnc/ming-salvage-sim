@@ -47,10 +47,15 @@ def read(p: Path) -> str:
         return ""
 
 # ── T1 ──────────────────────────────────────────────────────────────────────
+# Full hard-kill class definition (not name whitelist): explicit SIGKILL, implicit
+# deadline kills, and API variants that can deliver them (pexpect force terminate,
+# close(force=True), killpg, psutil, send_signal, os.kill*).
 T1_RE = re.compile(
-    r"\.kill\s*\(|\.send_signal\s*\([^)]*SIGKILL|\bSIGKILL\b|signal\.SIGKILL|"
-    r"subprocess\.(?:run|call|Popen)\s*\([^;]*timeout\s*=|"
-    r"Popen\.[A-Za-z_]*kill|os\.kill\s*\(|\.communicate\s*\([^)]*timeout\s*=",
+    r"\.kill\s*\(|\.send_signal\s*\(|\bSIGKILL\b|signal\.SIGKILL|"
+    r"\bkillpg\b|os\.kill(?:pg)?\s*\(|\bpsutil\b|"
+    r"terminate\s*\(\s*force\s*=\s*True|\.close\s*\(\s*force\s*=\s*True|"
+    r"subprocess\.(?:run|call|check_call|check_output|Popen)\s*\([^;]*timeout\s*=|"
+    r"Popen\.[A-Za-z_]*kill|\.communicate\s*\([^)]*timeout\s*=",
     re.S,
 )
 

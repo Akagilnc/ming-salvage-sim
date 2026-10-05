@@ -206,6 +206,38 @@ except RuntimeError as e:
 sim._canonical_item_fields = real_canon
 record('M5_canonicalize_loud_via_enrich', loud, f'loud={loud}')
 
+
+# M4b pexpect terminate(force=False) — no SIGKILL (官方 terminate force 语义)
+import signal as _signal
+class _PexpectChild:
+    def __init__(self):
+        self.alive = True
+        self.calls = []
+    def isalive(self):
+        return self.alive
+    def kill(self, sig):
+        self.calls.append(("kill", int(sig)))
+        if sig == _signal.SIGKILL:
+            self.alive = False
+    def terminate(self, force=False):
+        for sig in (_signal.SIGHUP, _signal.SIGCONT, _signal.SIGINT):
+            self.kill(sig)
+            if not self.isalive():
+                return True
+        if force:
+            self.kill(_signal.SIGKILL)
+            return not self.isalive()
+        return False
+
+_pc = _PexpectChild()
+_exited = bool(_pc.terminate(force=False))
+_sigkill = any(c[0] == "kill" and c[1] == _signal.SIGKILL for c in _pc.calls)
+record(
+    "M4b_pexpect_terminate_no_force_no_sigkill",
+    (not _exited) and (not _sigkill) and _pc.isalive(),
+    f"exited={_exited}; alive={_pc.alive}; calls={_pc.calls}; sigkill={_sigkill}",
+)
+
 print('SUMMARY', sum(1 for r in results if r['ok']), '/', len(results))
 outp = Path('/tmp/ming1902-t1t6-final/mutations.out.json')
 outp.write_text(__import__('json').dumps(results, ensure_ascii=False, indent=2))

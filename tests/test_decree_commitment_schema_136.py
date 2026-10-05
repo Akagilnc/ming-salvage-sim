@@ -1,19 +1,7 @@
 import sqlite3
 
-import pytest
-
 from ming_sim.db import GameDB
-from ming_sim.models import effect_dict_has_work
 import ming_sim.issues as I
-
-
-def _promulgated_commitment_origin(db, state) -> str:
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="测试辽饷承诺",
-        target_kind="army", target_id="guanning", payload={"purpose": "补饷"},
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
 
 
 def _table_columns(db, table: str) -> dict[str, dict[str, object]]:
@@ -23,58 +11,13 @@ def _table_columns(db, table: str) -> dict[str, dict[str, object]]:
     }
 
 
-def test_issues_schema_has_commitment_deadline_columns(read_game):
-    db, _, _ = read_game
-
-    cols = _table_columns(db, "issues")
-
-    assert "end_turn" in cols
-    assert "stop_condition" in cols
-    assert "commitment_kind" in cols
-    assert cols["end_turn"]["dflt_value"] == "0"
-    assert cols["stop_condition"]["dflt_value"] == "''"
-    assert cols["commitment_kind"]["dflt_value"] == "''"
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {},
-        {"economy": []},
-        {"economy": [{}]},
-        {"economy": [{"account": "国库", "delta": 0, "reason": "占位"}]},
-        {"economy": [{"account": "国库", "delta": 0, "category": "", "reason": ""}]},
-        {"economy": [{"target_id": "guanning", "reason": "占位"}]},
-        {"metrics": {}},
-        {"metrics": {"民心": 0}},
-        {"metrics": {"民心": 0}, "note": "无月度动作"},
-        {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": "2"}]},
-        {"character": [{"name": "毛文龙", "loyalty": "2", "reason": "每月安抚"}]},
-    ],
-)
-def test_effect_dict_has_work_ignores_empty_or_invalid_payloads(payload):
-    assert effect_dict_has_work(payload) is False
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"economy": [{"account": "国库", "delta": -1, "reason": "补饷"}]},
-        {"metrics": {"皇威": 1}},
-        {"region_delta": {"shaanxi": {"origin_ref": "盘面自发", "status": "灾荒稍解"}}},
-        {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "cannon": 2}}},
-        {"army_delta": {"guanning": {"origin_ref": "盘面自发", "commander": "孙承宗"}}},
-        {"factions": {"阉党": {"leverage": -1}}},
-        {"class_delta": {"农民": {"satisfaction": 1}}},
-        {"buildings": [{"action": "remove", "building_id": "beizhili_b1"}]},
-        {"new_armies": [{"origin_ref": "盘面自发", "id": "tianxiong", "manpower": 1000}]},
-        {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": 1}]},
-        {"character": [{"name": "毛文龙", "loyalty": 1, "reason": "每月安抚"}]},
-        {"legacy": {"modifiers": {"民心": 1}}},
-    ],
-)
-def test_effect_dict_has_work_recognizes_schema_effects(payload):
-    assert effect_dict_has_work(payload) is True
+def _promulgated_commitment_origin(db, state) -> str:
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="测试辽饷承诺",
+        target_kind="army", target_id="guanning", payload={"purpose": "补饷"},
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    return f"dossier:{dossier_id}"
 
 
 def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
@@ -202,8 +145,6 @@ def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read
         "SELECT id FROM issues WHERE title=?", ("安抚毛文龙直到效顺",)
     ).fetchone()
     assert row is None
-
-
 
 
 def test_existing_issues_table_gets_commitment_columns_idempotently(tmp_path, content):

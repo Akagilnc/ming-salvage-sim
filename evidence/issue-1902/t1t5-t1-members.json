@@ -1,0 +1,57 @@
+[
+  {
+    "file": "ming_sim/cli_backend.py",
+    "line": 229,
+    "text": "# 硬规9：禁 subprocess.run(timeout=…)——超时路径会 SIGKILL。登录 PATH 探测无期限杀。"
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "line": 352,
+    "text": "# 硬规9：禁 timeout=（subprocess.run 超时会 SIGKILL）。keychain 暖探无期限杀。"
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "line": 392,
+    "text": "\"\"\"收尾子进程：已退时 terminate 是 no-op；否则只 SIGTERM，不 SIGKILL（硬规9）。"
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "line": 405,
+    "text": "\"CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）：%s\", exc,"
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "line": 422,
+    "text": "不 SIGKILL，硬规9）。"
+  },
+  {
+    "file": "ming_sim/cli_backend.py",
+    "line": 2789,
+    "text": "出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。\"\"\""
+  },
+  {
+    "file": "scripts/play_as_emperor.py",
+    "line": 509,
+    "text": "# 硬规9：禁 SIGKILL。pexpect.terminate(force=True) 在 SIGHUP/SIGCONT/SIGINT"
+  },
+  {
+    "file": "scripts/play_as_emperor.py",
+    "line": 510,
+    "text": "# 仍未退时会发 SIGKILL（官方文档）。只走非 force terminate；未退如实记缺口。"
+  },
+  {
+    "file": "scripts/play_as_emperor.py",
+    "line": 515,
+    "text": "log(f\"[CLI 子进程 terminate 失败（终止缺口，不 SIGKILL）: {exc}]\")"
+  },
+  {
+    "file": "scripts/play_as_emperor.py",
+    "line": 519,
+    "text": "\"[CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）]\""
+  },
+  {
+    "file": "web_app.py",
+    "line": 4700,
+    "text": "_os.kill(_os.getpid(), _signal.SIGTERM)"
+  }
+]

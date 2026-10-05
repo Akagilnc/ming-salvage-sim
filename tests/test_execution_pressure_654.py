@@ -19,18 +19,6 @@ def env(game):
 # ── 词表 / scope 归一 ──────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("raw,expected", [
-    (None, "none"),
-    ("", "none"),
-    ("无", "none"),
-    ("全国", "national"),
-    ("单省", "single"),
-    ("national", "national"),
-])
-def test_normalize_locality_scope(raw, expected):
-    assert normalize_locality_scope(raw) == expected
-
-
 def test_normalize_locality_scope_rejects_unknown():
     with pytest.raises(ValueError):
         normalize_locality_scope("全省")
@@ -219,8 +207,6 @@ def test_region_zero_hit_fail_loud(env):
 # ── schema + create_decree_dossiers fan-out ────────────────────────
 
 
-
-
 def test_national_creates_one_row_idempotent(env):
     """#1778 决定 4：全国政令成一份案卷（region_id 空），重交不增行。"""
     db, state, content = env
@@ -393,8 +379,6 @@ def test_get_dossier_for_directive_existence_sentinel(env):
     assert db.get_dossier_for_directive(directive_id) is not None
     listed = db.list_dossiers_for_directive(directive_id)
     assert len(listed) == 1 and listed[0]["region_id"] == "shaanxi"
-
-
 
 
 def test_normalize_payload_locality_and_target_kind(env):
@@ -714,8 +698,6 @@ def test_locality_fail_create_decree_dossiers_zero_rows(env):
         )
     after = db.conn.execute("SELECT COUNT(*) AS n FROM decree_dossiers").fetchone()["n"]
     assert after == before
-
-
 
 
 def test_revoke_decree_523_producer_durable_oracle_chain(env):

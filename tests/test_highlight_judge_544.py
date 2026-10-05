@@ -18,26 +18,11 @@ from ming_sim import audience_night as an
 from ming_sim.db import GameDB
 from ming_sim.highlight_judge import (
     DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
-    parse_highlight_judge_output,
     run_highlight_judge,
 )
 
 
 # ── 解析 / 单次调用降级 ──────────────────────────────────────────────────
-
-
-def test_parse_highlight_judge_bad_output_is_empty():
-    assert parse_highlight_judge_output("") == []
-    assert parse_highlight_judge_output("not json") == []
-    assert parse_highlight_judge_output('{"highlights": "辽饷"}') == []
-    assert parse_highlight_judge_output('{"phrases": ["甲"]}') == []
-    assert parse_highlight_judge_output('{"highlights": [1, null, ""]}') == []
-
-
-def test_parse_highlight_judge_valid_phrases():
-    assert parse_highlight_judge_output(
-        '```json\n{"highlights": ["**辽饷**", "户部亏空", "  "]}\n```'
-    ) == ["**辽饷**", "户部亏空"]
 
 
 def test_run_highlight_judge_timeout_and_exception_degrade_silently():

@@ -506,8 +506,18 @@ def run(
             pass
 
     finally:
+        # 硬规9：禁 SIGKILL。pexpect.terminate(force=True) 在 SIGHUP/SIGCONT/SIGINT
+        # 仍未退时会发 SIGKILL（官方文档）。只走非 force terminate；未退如实记缺口。
         if child.isalive():
-            child.terminate(force=True)
+            try:
+                exited = bool(child.terminate(force=False))
+            except Exception as exc:
+                log(f"[CLI 子进程 terminate 失败（终止缺口，不 SIGKILL）: {exc}]")
+            else:
+                if child.isalive() or not exited:
+                    log(
+                        "[CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）]"
+                    )
         log_file.close()
 
     print(f"\n=== 结束。完成 {completed_periods}/{turns} 月。Log: {log_path} ===")

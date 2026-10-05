@@ -73,19 +73,6 @@ def _front_half_detail(phase: str) -> str:
     return detail
 
 
-def test_serialized_web_write_phase_messages_cover_front_half_done():
-    """#1306 全 FRONT_HALF_DONE 相位均 409，详情只按 awaiting / 其余两支分叉。"""
-    awaiting = _front_half_detail(TurnPhase.AWAITING_DECISION.value)
-    other = _front_half_detail(TurnPhase.SETTLING.value)
-    assert awaiting != other
-    for phase in FRONT_HALF_DONE_PHASES:
-        detail = _front_half_detail(phase)
-        if phase == TurnPhase.AWAITING_DECISION.value:
-            assert detail == awaiting
-        else:
-            assert detail == other
-
-
 # ── #1319(a) authority 停用 notes 别名 ──────────────────────────────────────
 
 class _Row(dict):

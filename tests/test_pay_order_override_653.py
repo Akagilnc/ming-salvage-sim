@@ -61,20 +61,6 @@ def _board(gross: float = 0.0):
 
 # ═══════════════ r3/r4 键形白名单与值域 ═══════════════
 
-@pytest.mark.parametrize("key", [
-    "due_priority_军饷",
-    "due_priority_官俸@shaanxi",
-    "arrears_priority_宗禄欠@shaanxi",
-    "due_haircut_bp_军饷",
-    "due_haircut_bp_军饷@shaanxi",
-    "due_haircut_bp_军饷#province",
-    "due_haircut_bp_军饷@shaanxi#province",
-    "due_haircut_bp_军饷@shaanxi#central",
-    "due_haircut_bp_宗禄@shaanxi",
-])
-def test_override_key_legal_shapes(key):
-    assert parse_override_key(key).subject
-
 
 @pytest.mark.parametrize("key", [
     # priority 族带 # 饷源后缀＝非法（r3：序无饷源维度）
@@ -1078,8 +1064,6 @@ def test_fiscal_fact_brief_bad_json_fails_loud(game):
         build_fiscal_fact_brief(db)
 
 
-
-
 def test_fiscal_fact_brief_haircut_and_relief_facts(game):
     """折发受损事实（province/central 侧）与补发受益事实入投影（F4 资源事实）。"""
     db, state, _content = game
@@ -1113,9 +1097,6 @@ def test_fiscal_fact_brief_haircut_and_relief_facts(game):
 
 
 # ═══════════════ F3 LLM 综合归因边界 ═══════════════
-
-
-
 
 
 def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):

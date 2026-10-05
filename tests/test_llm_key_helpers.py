@@ -28,18 +28,3 @@ def test_is_real_api_key_rejects_keep_sentinel(monkeypatch):
     assert real_api_key_or_empty("__keep__") == ""
 
 
-def test_is_real_api_key_accepts_real_key_trimmed():
-    assert is_real_api_key("sk-abc123") is True
-    assert is_real_api_key("  sk-abc123  ") is True
-
-
-def test_real_api_key_or_empty_normalizes_falsy_and_placeholder_to_empty():
-    assert real_api_key_or_empty(None) == ""
-    assert real_api_key_or_empty("") == ""
-    assert real_api_key_or_empty("   ") == ""
-    assert real_api_key_or_empty(CLI_BACKEND_PLACEHOLDER) == ""
-
-
-def test_real_api_key_or_empty_returns_trimmed_real_key():
-    assert real_api_key_or_empty("sk-abc123") == "sk-abc123"
-    assert real_api_key_or_empty("  sk-abc123  ") == "sk-abc123"

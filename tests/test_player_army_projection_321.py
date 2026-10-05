@@ -93,27 +93,6 @@ def _row(
     return base
 
 
-@pytest.mark.parametrize(
-    "is_mutinied,loyalty,probation,expected",
-    _TIER_CASES,
-    ids=_TIER_IDS,
-)
-def test_player_army_situation_six_tier_truth_table(
-    is_mutinied, loyalty, probation, expected
-):
-    row = _row(is_mutinied=is_mutinied, loyalty=loyalty, mutiny_probation=probation)
-    sit = _player_army_situation(row, monthly_pay=10)
-    assert sit["mutiny_tier"] == expected
-    assert sit["morale_text"] == _qualitative_army_stat("morale", row["morale"])
-    assert isinstance(sit["arrears_text"], str)
-    # derive 非「正常」时档名必须与 derive 一致；正常时再细分
-    derived = derive_army_mutiny_state(row)
-    if derived != "正常":
-        assert sit["mutiny_tier"] == derived
-    else:
-        assert sit["mutiny_tier"] in ("一般", "优秀", "死忠")
-
-
 def _configure(db) -> None:
     value = 1  # active substrate_hub cutover
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):

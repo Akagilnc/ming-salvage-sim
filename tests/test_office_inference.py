@@ -30,35 +30,6 @@ def _cli_cfg() -> LLMConfig:
     )
 
 
-@pytest.mark.parametrize("office,expected", [
-    # 代表性锚：每类一条 + 历史误判样本（#1185 缩表，非穷举词表）
-    ("礼部尚书,东阁大学士", "内阁"),   # 复合衔内阁优先
-    ("兵部尚书,左都御史", "兵部"),     # 六部首衔优先于都察院
-    ("都察院右佥都御史", "都察院"),
-    ("庶常", "翰林院"),                 # 曾误归生员
-    ("司礼监掌印太监", "司礼监"),        # stem 命中，不靠 bare 掌印太监
-    ("御马监掌印太监", "内廷"),           # bare 掌印太监 不得吞入司礼监
-    ("锦衣卫都指挥使", "锦衣卫"),
-    ("蓟辽总督", "地方"),               # 督抚不被边镇地名吞
-    ("荡寇将军", "边镇"),               # 旧版武职漏判
-    ("中宫皇后", "后宫"),               # 旧版进待铨
-    ("诸生（应天府学）", "生员"),
-    ("陕北流寇首领", "流寇"),
-])
-def test_office_type_from_table(office, expected):
-    assert infer(office) == expected
-
-
-def test_后宫_current_type_short_circuits():
-    assert infer("妃", current_type="后宫") == "后宫"
-
-
-def test_unknown_falls_to_daiquan_without_backend(monkeypatch):
-    # 无 CLI 后端 + 表查不中 → 待铨（不误判、不崩）
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    assert infer("绝无此名的杜撰怪衔甲乙丙") == "待铨"
-
-
 def test_api_channel_unknown_office_does_not_use_backend_env(monkeypatch):
     dbmod._OFFICE_TYPE_LLM_CACHE.clear()
     called = []

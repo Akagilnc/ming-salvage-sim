@@ -86,6 +86,10 @@ class _FakeSession(HallAdmissionSessionMixin):
             "_recognize_audience_command_verdict",
             "summon_character",
             "schedule_pending_scene_translation",
+            # 流式收尾 / 失败收口共核（#1902 T4）：假壳缺绑会在 worker cleanup 误报 error
+            "close_night_after_chat_if_needed",
+            "fail_audience_chat_turn",
+            "_record_persisted_audience_reply_failure",
         ):
             if hasattr(GameSession, _name):
                 setattr(self, _name, _types.MethodType(getattr(GameSession, _name), self))

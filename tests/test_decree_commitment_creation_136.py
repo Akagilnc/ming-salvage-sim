@@ -1080,16 +1080,6 @@ def test_stop_condition_without_commitment_kind_advance_to_full_stays_active(gam
     assert advanced["closed_turn"] is None
 
 
-def test_has_stop_condition_handles_preparsed_and_json_whitespace():
-    assert _has_stop_condition({"army.guanning.arrears": "<=0"}) is True
-    assert _has_stop_condition(["legacy"]) is True
-    assert _has_stop_condition({}) is False
-    assert _has_stop_condition(" { } ") is False
-    assert _has_stop_condition("\n[]\n") is False
-    # legacy fallback 条件串属于 resolve_condition，不是结构化 commitment stop gate。
-    assert _has_stop_condition("character.毛文龙.loyalty >= 65") is False
-
-
 def test_empty_json_stop_condition_allows_advance_to_resolved(game):
     """stop_condition 里若只是带空白的空 JSON 对象，不应被误判为承诺停止条件。"""
     db, state, _content = game

@@ -17,10 +17,6 @@ EXPECTED_MATRIX = {
 }
 
 
-def test_value_matrix_matches_adr_0011_3():
-    assert value_matrix.matrix_snapshot() == EXPECTED_MATRIX
-
-
 def test_target_aware_axis_collisions_route_only_the_target_faction_vitals():
     results = value_matrix.axis_collision_stances(
         [

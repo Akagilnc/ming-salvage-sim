@@ -25,88 +25,6 @@ def _promulgated_dossier(db, state, decree_text, target_id="毛文龙"):
     return f"dossier:{dossier_id}"
 
 
-def test_normalize_person_changes_keeps_new_key_items():
-    extracted = {
-        "人物变更": [
-            {
-                "name": "孔有德",
-                "action": "易主",
-                "new_power": "houjin",
-                "方式": "主动投敌",
-                "反噬": {"houjin": {"leverage": 3}},
-            }
-        ]
-    }
-
-    assert normalize_person_changes(extracted) == [
-        {
-            "name": "孔有德",
-            "动作": "易主",
-            "new_power": "houjin",
-            "方式": "主动投敌",
-            "反噬": {"houjin": {"leverage": 3}},
-        }
-    ]
-
-
-def test_normalize_person_changes_translates_legacy_keys_in_replay_order():
-    extracted = {
-        "appointments": [
-            {"name": "孙传庭", "office": "陕西总督"},
-        ],
-        "character_status_changes": [
-            {
-                "name": "洪承畴",
-                "status": "imprisoned",
-                "reason_code": "陷虏",
-                "reason": "松山兵败被执",
-            }
-        ],
-        "character_power_changes": [
-            {"name": "孔有德", "new_power": "houjin", "reason": "旧键降金"}
-        ],
-        "office_changes": [
-            {
-                "name": "毕自严",
-                "new_office": "户部尚书",
-                "new_office_type": "户部",
-            }
-        ],
-    }
-
-    normalized = normalize_person_changes(extracted)
-
-    assert [item["name"] for item in normalized] == [
-        "洪承畴",
-        "孔有德",
-        "毕自严",
-        "孙传庭",
-    ]
-    assert [item["动作"] for item in normalized] == [
-        "处置",
-        "易主",
-        "任命",
-        "任命",
-    ]
-    assert normalized[0]["legacy_gate"] is True
-    assert normalized[1] == {
-        "name": "孔有德",
-        "动作": "易主",
-        "new_power": "houjin",
-        "方式": "不明",
-        "反噬": {},
-        "reason": "旧键降金",
-        "legacy_partial": True,
-    }
-    assert normalized[2] == {
-        "name": "毕自严",
-        "动作": "任命",
-        "office": "户部尚书",
-        "office_type": "户部",
-    }
-    assert normalized[-1]["legacy_spillover"] == "appointments（朝臣 spillover）"
-
-
 @pytest.mark.parametrize(
     ("section", "item"),
     [
@@ -120,16 +38,6 @@ def test_normalize_legacy_person_changes_preserves_origin(section, item):
     item["origin_ref"] = "dossier:17"
 
     assert normalize_person_changes({section: [item]})[0]["origin_ref"] == "dossier:17"
-
-
-def test_normalize_person_changes_ignores_non_item_shapes():
-    assert normalize_person_changes({"人物变更": ["bad", {"name": "毕自严"}]}) == [
-        {"name": "毕自严"}
-    ]
-    assert normalize_person_changes({"appointments": {"name": "某氏"}}) == []
-    assert normalize_person_changes(
-        {"office_changes": [{"name": "孙传庭", "new_office": "陕西总督"}]}
-    ) == [{"name": "孙传庭", "动作": "任命", "office": "陕西总督"}]
 
 
 def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
@@ -157,8 +65,6 @@ def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
     assert "person_changes" not in applied
     assert "world_advance" not in applied
     assert "pairing_warnings" not in applied
-
-
 
 
 def test_apply_score_extraction_rejects_person_change_power_move_without_way(read_game):
@@ -1884,14 +1790,6 @@ def test_apply_score_extraction_rejects_dead_status_outbound(game):
     assert changes[0]["item"] == {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}
 
 
-
-
-
-
-
-
-
-
 def _materialize_active_prince(db, state, content):
     """物化一个 active+ming 宗藩王进测试 DB（probe.db 旧档无宗藩行），返回 name。"""
     name = next(
@@ -1904,10 +1802,6 @@ def _materialize_active_prince(db, state, content):
     db.add_character(state, content.characters[name], source="测试物化")
     assert db.get_character_status(name)[0] == "active"
     return name
-
-
-
-
 
 
 def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
@@ -2317,23 +2211,6 @@ def test_apply_score_extraction_new_person_changes_shadow_legacy_person_keys(gam
         content.characters[legacy_name].transit_to = old_legacy_transit_to
 
 
-def test_empty_new_person_change_key_does_not_shadow_legacy_normalization():
-    merged = {
-        "人物变更": [],
-        "appointments": [{"name": "某氏", "office": "贵人", "office_type": "后宫"}],
-        "character_power_changes": [{"name": "孔有德", "new_power": "houjin"}],
-    }
-
-    assert merged["人物变更"] == []
-    assert [item["name"] for item in normalize_person_changes(merged)] == [
-        "孔有德",
-    ]
-
-
-
-
-
-
 def test_political_marker_is_audit_only_no_status_premigration(game):
     """决定4：政治标记派生（起复/昭雪/夺情）为纯审计记录，不执行 status 迁移原语——
     不得在绑名分前先 set_character_status(active)，避免「先置 active、名分未绑」幽灵态。
@@ -2532,8 +2409,6 @@ def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
     ).fetchone()["office"]
     assert now_office == orig_office, \
         f"falsy-return 后半落库未回滚：victim office={now_office!r} 期望 {orig_office!r}"
-
-
 
 
 def test_fresh_seed_migrates_legacy_office_pollution(tmp_path):

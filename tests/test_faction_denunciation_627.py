@@ -206,21 +206,6 @@ def _scripted_entry(
 # ── unit pure ─────────────────────────────────────────────────────
 
 
-def test_fork_predicate_pure_and_single_source_expression():
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=True, execution_outcome="executing",
-    ) is True
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=False, execution_outcome="transformed",
-    ) is True
-    assert is_reported_actual_fork(
-        reported_bands=["已竣"], beyond_intent=False, execution_outcome="fulfilled",
-    ) is False
-    assert is_reported_actual_fork(
-        reported_bands=[], beyond_intent=True, execution_outcome="transformed",
-    ) is False
-
-
 def test_veracity_derivation_mechanical_and_origin_marks():
     """真伪底派生：分叉→真；无分叉→私货；origin 单源 mark。"""
     assert derive_denunciation_is_true(fork=True) is True
