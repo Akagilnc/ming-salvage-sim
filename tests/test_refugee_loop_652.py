@@ -612,9 +612,3 @@ def test_month_settle_with_disaster_and_executing_relief(game, monkeypatch):
     assert result is not None and result.awaiting is False
     assert result.advanced is False
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-
-
-
-
-
-

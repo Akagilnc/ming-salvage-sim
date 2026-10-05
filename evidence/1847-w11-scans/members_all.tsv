@@ -1,209 +1,107 @@
-class	path	line	symbol	note	disposition
-N10	ming_sim/agents.py	25	from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error	body_keyword_auth_guess	MEMBER
-N10	ming_sim/agents.py	469	"fail_if_llm_error(text, ""LLM 调用"")"	body_keyword_auth_guess	MEMBER
-N10	ming_sim/cli_backend.py	14	- agy：Agy 1.2.0 用 `--print=<prompt>`；auth race 靠 transport 可重试 typed（见 `_AGY_AUTH_MARKERS`），不另起 keychain 预热硬时限。	body_keyword_auth_guess	MEMBER
-N10	ming_sim/cli_backend.py	360	"_AGY_AUTH_MARKERS = (""Authentication required"", ""authentication timed out"")"	body_keyword_auth_guess	MEMBER
-N10	ming_sim/cli_backend.py	845	"if runner == ""agy"" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):"	body_keyword_auth_guess	MEMBER
-N10	ming_sim/llm_contract.py	21	def fail_if_llm_error(text: str, stage: str) -> None:	body_keyword_auth_guess	MEMBER
-N10	ming_sim/llm_contract.py	23	error_markers = (	body_keyword_auth_guess	MEMBER
-N10	ming_sim/llm_contract.py	24	"""incorrect api key"","	body_keyword_auth_guess	MEMBER
-N10	ming_sim/llm_contract.py	28	"""authentication"","	body_keyword_auth_guess	MEMBER
-N10	ming_sim/llm_contract.py	29	"""api key"","	body_keyword_auth_guess	MEMBER
-N10	ming_sim/llm_contract.py	31	if any(marker in lowered for marker in error_markers):	body_keyword_auth_guess	MEMBER
-N10	ming_sim/llm_model.py	22	from ming_sim.llm_contract import fail_if_llm_error	body_keyword_auth_guess	MEMBER
-N10	ming_sim/llm_model.py	303	# fail_if_llm_error 标记集只覆盖 API 认证错，不再是唯一护栏。	body_keyword_auth_guess	MEMBER
-N10	ming_sim/llm_model.py	330	"fail_if_llm_error(text, ""LLM 调用"")"	body_keyword_auth_guess	MEMBER
-N10	ming_sim/llm_model.py	360	"fail_if_llm_error(str(raw), ""LLM 连通性检查"")"	body_keyword_auth_guess	MEMBER
-N10	ming_sim/session.py	1284	from ming_sim.llm_model import extract_agent_text, fail_if_llm_error	body_keyword_auth_guess	MEMBER
-N10	ming_sim/session.py	1325	"fail_if_llm_error(answer, ""LLM 调用"")"	body_keyword_auth_guess	MEMBER
-N10	web_app.py	80	from ming_sim.llm_contract import fail_if_llm_error	body_keyword_auth_guess	MEMBER
-N11	ming_sim/action_clusters.py	31	season_option: bool = False	season_option_def	MEMBER
-N11	ming_sim/action_clusters.py	132	def season_option_fields(kind: str) -> Tuple[str, ...]:	season_option_def	MEMBER
-N11	ming_sim/action_clusters.py	137	"return (""action_type"", *(f.name for f in cluster.fields if f.season_option))"	season_option_def	MEMBER
-N11	ming_sim/action_clusters.py	140	def _season_specs(kind: str) -> Tuple[FieldSpec, ...]:	season_option_def	MEMBER
-N11	ming_sim/action_clusters.py	142	return tuple(f for f in cluster.fields if f.season_option) if cluster else ()	season_option_def	MEMBER
-N11	ming_sim/action_clusters.py	145	def validate_season_option(option: Mapping[str, object]) -> str:	season_option_def	MEMBER
-N11	ming_sim/action_clusters.py	153	spec.season_option and spec.name in option	season_option_def	MEMBER
-N11	ming_sim/action_clusters.py	161	if action_type and not _season_specs(action_type):	season_option_def	MEMBER
-N11	ming_sim/action_clusters.py	163	for spec in _season_specs(action_type):	season_option_def	MEMBER
-N11	ming_sim/action_materialize.py	1644	"GRANT_ACTIONS, ""无"", season_option=True,"	season_option_field	MEMBER
-N11	ming_sim/action_materialize.py	1650	season_option=True,	season_option_field	MEMBER
-N11	ming_sim/action_materialize.py	1654	season_option=True,	season_option_field	MEMBER
-N11	ming_sim/action_materialize.py	1659	"quantity_unit=""万两"", season_option=True,"	season_option_field	MEMBER
-N11	ming_sim/action_materialize.py	1663	"frozenset({""国库"", ""内库"", ""太仓""}), """", season_option=True,"	season_option_field	MEMBER
-N11	ming_sim/action_materialize.py	1667	season_option=True,	season_option_field	MEMBER
-N11	ming_sim/action_materialize.py	1672	"frozenset({""一次性"", ""每月""}), """", season_option=True,"	season_option_field	MEMBER
-N11	ming_sim/db.py	77	# 无标旧档一律判「万人」legacy——不得读 content 元信息判别（其不随档持久化）。	population_legacy_marker	MEMBER
-N11	ming_sim/db.py	79	"POPULATION_UNIT_WAN = ""万人"""	population_legacy_marker	MEMBER
-N11	ming_sim/db.py	2322	"self.conn.execute(""DROP TABLE IF EXISTS dossier_progress_reports"")"	dup_index_or_drop	MEMBER
-N11	ming_sim/db.py	2331	self._ensure_decree_dossier_locality_indexes()	dup_index_or_drop	MEMBER
-N11	ming_sim/db.py	2902	def _ensure_decree_dossier_locality_indexes(self) -> None:	dup_index_or_drop	MEMBER
-N11	ming_sim/db.py	3143	"""""""本档人口存储单位口径（ADR 0088/#648）：新档「人」，无标旧档一律「万人」。"	population_legacy_marker	MEMBER
-N11	ming_sim/db.py	3150	return str(row[0]) if row else POPULATION_UNIT_WAN	population_legacy_marker	MEMBER
-N11	ming_sim/db.py	3159	def scale_content_population_to_save_unit(self, value: int) -> int:	population_legacy_marker	MEMBER
-N11	ming_sim/db.py	3162	新档（人）原样；无标旧档（万人）÷10⁴——迁移后 content 人口值均为 10⁴ 整倍数，	population_legacy_marker	MEMBER
-N11	ming_sim/db.py	3166	if self.population_unit == POPULATION_UNIT_PERSONS:	population_legacy_marker	MEMBER
-N11	ming_sim/db.py	3256	# 旧档表已有行（万人口径）不重 seed、不落标 → population_unit 恒判「万人」legacy。	population_legacy_marker	MEMBER
-N11	ming_sim/db.py	6187	# 机面裸人数；无标旧档沿万人 legacy 原样，不加换算层。	population_legacy_marker	MEMBER
-N11	ming_sim/db.py	6188	persons_unit = self.population_unit == POPULATION_UNIT_PERSONS	population_legacy_marker	MEMBER
-N11	ming_sim/db.py	6572	self.scale_content_population_to_save_unit(value)	population_legacy_marker	MEMBER
-N11	ming_sim/displaced_population.py	60	or db.population_unit != POPULATION_UNIT_PERSONS):	population_legacy_marker	MEMBER
-N11	ming_sim/displaced_population.py	159	if db.population_unit != POPULATION_UNIT_PERSONS:	population_legacy_marker	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	60	forecast_text: str | None = None	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	75	"""ALTER TABLE staged_declarations ADD COLUMN visible_refs_json TEXT NOT NULL DEFAULT '{}'"""	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	77	"if ""verdict_json"" not in cols:"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	78	"conn.execute(""ALTER TABLE staged_declarations ADD COLUMN verdict_json TEXT"")"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	79	"if ""questions_json"" not in cols:"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	80	"conn.execute(""ALTER TABLE staged_declarations ADD COLUMN questions_json TEXT"")"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	81	"if ""forecast_text"" not in cols:"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	82	"conn.execute(""ALTER TABLE staged_declarations ADD COLUMN forecast_text TEXT"")"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	89	forecast_text: str | None = None,	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	104	"""verdict_json, questions_json, forecast_text) """	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	117	None if forecast_text is None else sanitize_sqlite_text(forecast_text),	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	165	"""verdict_json, questions_json, forecast_text """	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	195	"""SELECT questions_json FROM staged_declarations """	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	201	"raw = row[""questions_json""]"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	209	def forecast_text_for(self, decree_ref: str) -> str:	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	215	"""SELECT forecast_text FROM staged_declarations """	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	217	"""AND forecast_text IS NOT NULL ORDER BY id"","	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	221	"str(row[""forecast_text""])"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	226	def replace_questions(self, decree_ref: str, questions: list, *, forecast_text: str) -> int:	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	233	"""UPDATE staged_declarations SET questions_json=NULL """	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	234	"""WHERE decree_ref=? AND status!='discarded' AND questions_json IS NOT NULL"","	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	238	"""UPDATE staged_declarations SET questions_json=?, forecast_text=COALESCE(forecast_text,'') || ? """	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	242	"""\n"" + forecast_text, ref),"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	268	"verdict = _load_optional_json(row, ""verdict_json"")"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	269	"questions = _load_optional_json(row, ""questions_json"")"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	270	"forecast_text = row[""forecast_text""] if ""forecast_text"" in row.keys() else None"	staged_schema	MEMBER
-N11	ming_sim/entities/staged_declaration/store.py	278	forecast_text=None if forecast_text is None else str(forecast_text),	staged_schema	MEMBER
-N11	ming_sim/issues.py	3122	新档（人）原样；无标旧档（万人）region_delta.population ÷10⁴（迁移后 content	population_legacy_marker	MEMBER
-N11	ming_sim/issues.py	3129	if db.population_unit == POPULATION_UNIT_PERSONS:	population_legacy_marker	MEMBER
-N11	ming_sim/issues.py	3137	"scaled_fields[""population""] = db.scale_content_population_to_save_unit("	population_legacy_marker	MEMBER
-N11	ming_sim/issues.py	6688	if db.population_unit != POPULATION_UNIT_PERSONS:	population_legacy_marker	MEMBER
-N11	ming_sim/issues.py	6772	if db.population_unit != POPULATION_UNIT_PERSONS:	population_legacy_marker	MEMBER
-N11	ming_sim/settlement_payload.py	9	from ming_sim.action_clusters import season_option_fields, validate_season_option	season_option_parse	MEMBER
-N11	ming_sim/settlement_payload.py	78	action_type = validate_season_option(o)	season_option_parse	MEMBER
-N11	ming_sim/settlement_payload.py	88	for key in season_option_fields(action_type):	season_option_parse	MEMBER
-N11	tests/test_population_transfers_649.py	19	from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN	population_legacy_marker	MEMBER
-N11	tests/test_population_transfers_649.py	60	def legacy_game(content, tmp_path):	population_legacy_marker	MEMBER
-N11	tests/test_population_transfers_649.py	303	def test_legacy_wan_unit_transfer_caps_to_stock_without_unit_conversion(legacy_game):	population_legacy_marker	MEMBER
-N11	tests/test_population_transfers_649.py	305	db, state, content, _path = legacy_game	population_legacy_marker	MEMBER
-N11	tests/test_population_transfers_649.py	306	assert db.population_unit == POPULATION_UNIT_WAN	population_legacy_marker	MEMBER
-N11	tests/test_population_transfers_649.py	314	"assert rec[""population_unit""] == POPULATION_UNIT_WAN"	population_legacy_marker	MEMBER
-N11	tests/test_population_transfers_649.py	328	"assert capped[""population_unit""] == POPULATION_UNIT_WAN"	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	8	- F4：旧档双口径——新档 DB 持久标「人」，无标旧档判「万人」，不读 content 元信息；	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	17	from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	50	"""""""构造无标旧档：fresh seed 后把人口回缩到万人口径并剥掉单位标。"	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	66	def legacy_game(content, tmp_path):	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	67	"""""""返回 (db, state)：无标万人口径旧档（含 load_state 同核）。"""""""	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	134	assert db.population_unit == POPULATION_UNIT_PERSONS	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	143	def test_legacy_save_defaults_to_wan_unit_and_keeps_snapshot(legacy_game):	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	144	"""""""无标旧档一律判「万人」，seed 不重跑、快照读数不变（不混刻度、无流民行）。"""""""	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	145	db, _ = legacy_game	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	146	assert db.population_unit == POPULATION_UNIT_WAN	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	161	def test_population_unit_mutation_matrix(game, legacy_game):	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	167	old_db, _old_state = legacy_game	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	264	JIANZHOU_RESTORE_POP_WAN = 90           # 无标旧档接缝无损 ÷10⁴ 回万人	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	296	def test_legacy_save_restore_jianzhou_converts_to_wan(game, legacy_game):	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	297	"""""""无标旧档收复建州：content→档唯一接缝无损换回万人口径，不混刻度。"""""""	population_legacy_marker	MEMBER
-N11	tests/test_population_unit_648.py	298	old_db, old_state = legacy_game	population_legacy_marker	MEMBER
-N11	tests/test_refugee_loop_652.py	620	def test_legacy_population_unit_skips_absorption_and_recovery(game, monkeypatch):	population_legacy_marker	MEMBER
-N11	tests/test_refugee_loop_652.py	624	assert db.population_unit != POPULATION_UNIT_PERSONS	population_legacy_marker	MEMBER
-N11	tests/test_surcharge_causal_chain_650.py	412	def legacy_game(content, tmp_path):	population_legacy_marker	MEMBER
-N11	tests/test_surcharge_causal_chain_650.py	420	def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(legacy_game, monkeypatch):	population_legacy_marker	MEMBER
-N11	tests/test_surcharge_causal_chain_650.py	421	db, state, content = legacy_game	population_legacy_marker	MEMBER
-N13	ming_sim/db.py	9808	except sqlite3.OperationalError:	OperationalError_to_empty_secret	MEMBER
-N13	ming_sim/db.py	9877	except sqlite3.OperationalError:	OperationalError_to_empty_secret	MEMBER
-N13	ming_sim/db.py	19290	except sqlite3.OperationalError:	OperationalError_to_empty_secret	MEMBER
-N13	ming_sim/db.py	19370	except sqlite3.OperationalError:	OperationalError_to_empty_secret	MEMBER
-N13	ming_sim/db.py	19462	except sqlite3.OperationalError:	OperationalError_to_empty_secret	MEMBER
-N14	tests/test_advance_paths_atomic.py	173	test_recovery_replay_blocked_by_pending_directives	exc_match_wording	MEMBER
-N14	tests/test_advance_paths_atomic.py	192	test_draft_mutators_frozen_at_front_half_done	exc_match_wording	MEMBER
-N14	tests/test_advances_section_rejections.py	101	test_advance_code_exception_propagates	exc_match_wording	MEMBER
-N14	tests/test_affairs_1831.py	244	test_new_issue_affair_attach_failure_leaves_no_partial_product	exc_match_wording	MEMBER
-N14	tests/test_audience_night_498.py	454	test_open_night_atomic_on_dead_roster_injection	exc_match_wording	MEMBER
-N14	tests/test_audience_translate_1837.py	133	test_pending_round_approval_endorsed_before_close_or_after_month_join	exc_match_wording	MEMBER
-N14	tests/test_audience_travel_gating_670.py	457	test_multi_origin_fresh_closes_once_per_person_and_retries	exc_match_wording	MEMBER
-N14	tests/test_audience_travel_gating_670.py	673	test_consume_open_night_and_recorder_share_one_transaction	exc_match_wording	MEMBER
-N14	tests/test_audience_travel_gating_670.py	723	test_waiting_active_departure_settle_failure_rolls_back_all_four_sides	exc_match_wording	MEMBER
-N14	tests/test_cli_play_turn.py	201	test_terminal_minister_chat_removes_user_message_when_session_chat_fails	exc_match_wording	MEMBER
-N14	tests/test_cli_play_turn.py	299	test_terminal_minister_chat_preserves_chat_error_when_rollback_fails	exc_match_wording	MEMBER
-N14	tests/test_cli_play_turn.py	329	test_terminal_minister_chat_reply_persist_failure_keeps_user_message	exc_match_wording	MEMBER
-N14	tests/test_close_issues_section_rejections.py	159	test_close_issue_code_exception_propagates	exc_match_wording	MEMBER
-N14	tests/test_declaration_dispatch_1835.py	173	test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item	exc_match_wording	MEMBER
-N14	tests/test_decree_dossiers_571.py	1218	test_secret_order_close_failure_rolls_back_only_its_two_axes	exc_match_wording	MEMBER
-N14	tests/test_due_review_621.py	733	test_takeover_guard_fail_closed_on_ownership_error	exc_match_wording	MEMBER
-N14	tests/test_event_chain_cascade.py	222	test_cascade_rolls_back_owned_transaction_on_later_write_failure	exc_match_wording	MEMBER
-N14	tests/test_event_trigger_gate.py	2012	test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effect_fails	exc_match_wording	MEMBER
-N14	tests/test_executor_routing_721.py	351	test_rolled_back_collector_reuse_does_not_mirror_orphan	exc_match_wording	MEMBER
-N14	tests/test_executor_routing_721.py	379	test_directive_routing_rejection_rolls_back_with_outer_owner	exc_match_wording	MEMBER
-N14	tests/test_faction_brew_637.py	44	run_month_end_relation_brew	duplicate_prepare_brew_persist_helper	MEMBER
-N14	tests/test_faction_brew_637.py	300	test_faction_claim_db_error_propagates_loudly	exc_match_wording	MEMBER
-N14	tests/test_faction_brew_637.py	313	test_faction_apply_db_error_propagates_loudly_not_disguised	exc_match_wording	MEMBER
-N14	tests/test_fiscal_levy_effect.py	267	test_fiscal_levy_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass	log_substring	MEMBER
-N14	tests/test_fiscal_levy_effect.py	294	test_fiscal_levy_skips_bad_settle_shape_without_blocking_other_regions	log_substring	MEMBER
-N14	tests/test_fiscal_levy_effect.py	357	test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets	log_substring	MEMBER
-N14	tests/test_fiscal_levy_effect.py	469	test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass	log_substring	MEMBER
-N14	tests/test_fiscal_levy_effect.py	665	test_fiscal_levy_existing_terminal_reason_is_whitelist_validated	exc_match_wording	MEMBER
-N14	tests/test_fiscal_levy_effect.py	732	test_fiscal_levy_outcome_label_outside_closed_set_aborts	exc_match_wording	MEMBER
-N14	tests/test_fiscal_levy_effect.py	783	test_fiscal_levy_pending_choice_waits_for_event_window	exc_match_wording	MEMBER
-N14	tests/test_fiscal_levy_effect.py	1034	test_jiao_stop_definition_missing_fails_loud	exc_match_wording	MEMBER
-N14	tests/test_fiscal_substrate_bridge.py	1948	test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes	exc_match_wording	MEMBER
-N14	tests/test_fiscal_substrate_bridge.py	4482	test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic	exc_match_wording	MEMBER
-N14	tests/test_material_directory_1830.py	258	test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error	exc_match_wording	MEMBER
-N14	tests/test_menu_lifecycle_drain_396.py	292	test_drain_archive_skips_move_when_session_close_fails	exc_match_wording	MEMBER
-N14	tests/test_menu_lifecycle_drain_396.py	324	test_restore_main_db_path_config_remove_failure_is_loud	exc_match_wording	MEMBER
-N14	tests/test_month_chain_1843.py	435	test_failed_declaration_commit_reloads_memory_from_db	exc_match_wording	MEMBER
-N14	tests/test_month_chain_1843.py	481	test_held_dossier_settlement_failure_retry_and_reentry_isolation	exc_match_wording	MEMBER
-N14	tests/test_month_chain_1843.py	587	test_advance_reloads_memory_after_transaction_rollback	exc_match_wording	MEMBER
-N14	tests/test_month_chain_1847.py	1855	test_settle_edicts_persists_pending_disclosures_in_same_transaction	exc_match_wording	MEMBER
-N14	tests/test_month_chain_1847.py	2364	test_pending_disclosures_share_commit_boundary_with_effects	exc_match_wording	MEMBER
-N14	tests/test_month_open_snapshot_1234.py	223	test_capture_before_mutation_on_resolve_turn_entry	exc_match_wording	MEMBER
-N14	tests/test_month_open_snapshot_1234.py	264	test_capture_before_mutation_on_advance_without_edict	exc_match_wording	MEMBER
-N14	tests/test_new_game_write_path_1749.py	439	test_new_game_construct_failure_keeps_old_writable	exc_match_wording	MEMBER
-N14	tests/test_new_game_write_path_1749.py	481	test_gamesession_load_state_failure_closes_partial_resources	exc_match_wording	MEMBER
-N14	tests/test_new_issues_section_rejections.py	305	test_new_issue_insert_code_exception_propagates	exc_match_wording	MEMBER
-N14	tests/test_new_issues_section_rejections.py	344	test_event_to_issue_insert_exception_propagates	exc_match_wording	MEMBER
-N14	tests/test_new_issues_section_rejections.py	358	test_new_issue_event_pool_insert_exception_propagates	exc_match_wording	MEMBER
-N14	tests/test_office_rank_562.py	37	test_rank_table_covers_every_office_type_and_pins_ming_direction	helper_only_rank	MEMBER
-N14	tests/test_office_rank_562.py	178	test_title_stems_keep_distinct_ming_bands_inside_same_office_type	helper_only_rank	MEMBER
-N14	tests/test_office_rank_562.py	202	test_cabinet_titles_keep_nominal_ming_rank_instead_of_political_importance	helper_only_rank	MEMBER
-N14	tests/test_office_rank_562.py	212	test_concurrent_cabinet_office_uses_the_genuinely_higher_title	helper_only_rank	MEMBER
-N14	tests/test_office_rank_562.py	219	test_qualified_titles_match_the_requested_axis_not_an_institutional_stem	helper_only_rank	MEMBER
-N14	tests/test_office_rank_562.py	242	test_historical_military_commands_and_cabinet_fallback_use_nominal_bands	helper_only_rank	MEMBER
-N14	tests/test_office_rank_562.py	247	test_leverage_uses_min_modifiers_within_title_and_max_across_offices	helper_only_rank	MEMBER
-N14	tests/test_override_breach_costs_564.py	315	test_commit_true_breach_reloads_state_when_failure_follows_authority_mutation	exc_match_wording	MEMBER
-N14	tests/test_override_breach_costs_564.py	388	test_commit_false_breach_rolls_back_with_later_cancellation_failure	exc_match_wording	MEMBER
-N14	tests/test_pihong_dossier_1490.py	97	test_658_endorsement_provenance_xor	exc_match_wording	MEMBER
-N14	tests/test_pihong_dossier_1490.py	379	test_658_mixed_ordinary_triad_and_target_rejected	exc_match_wording	MEMBER
-N14	tests/test_power_section_rejections.py	124	test_canonical_person_power_writer_code_exception_is_fail_loud	exc_match_wording	MEMBER
-N14	tests/test_pre_settle_transaction.py	61	test_due_secret_order_submission_rolls_back_on_pre_settle_crash	exc_match_wording	MEMBER
-N14	tests/test_pre_settle_transaction.py	91	test_pre_settle_rolls_back_on_seed_issue_failure	exc_match_wording	MEMBER
-N14	tests/test_pre_settle_transaction.py	116	test_crash_inside_pre_settle_no_missing_fiscal	exc_match_wording	MEMBER
-N14	tests/test_pre_settle_transaction.py	391	test_placeholder_save_crash_rolls_back_settling	exc_match_wording	MEMBER
-N14	tests/test_qa_1281_issue_audience_case_facts.py	185	test_event_audience_read_failure_escapes_material_preparation	exc_match_wording	MEMBER
-N14	tests/test_rejection_wiring.py	57	test_rollback_leaves_no_rows_and_no_jsonl	exc_match_wording	MEMBER
-N14	tests/test_relation_brew_636.py	37	run_month_end_relation_brew	duplicate_prepare_brew_persist_helper	MEMBER
-N14	tests/test_relation_brew_636.py	463	test_prepare_claim_db_error_propagates_loudly	exc_match_wording	MEMBER
-N14	tests/test_relation_brew_636.py	478	test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure	exc_match_wording	MEMBER
-N14	tests/test_relation_brew_636.py	502	test_mark_failure_after_llm_failure_propagates_loudly	exc_match_wording	MEMBER
-N14	tests/test_relation_brew_636.py	520	test_brew_program_error_propagates_loudly_not_degraded	exc_match_wording	MEMBER
-N14	tests/test_relation_brew_636.py	539	test_brew_fn_value_error_is_program_error_propagates_loudly	exc_match_wording	MEMBER
-N14	tests/test_relation_seed_638.py	260	test_seed_founding_write_does_not_swallow_execute_error_with_bad_rollback	exc_match_wording	MEMBER
-N14	tests/test_relation_seed_638.py	284	test_seed_failure_rolls_back_new_save_and_retry_imports	exc_match_wording	MEMBER
-N14	tests/test_rescript_choices_563.py	163	test_rejected_midzhi_and_force_promulgation_are_idempotent	exc_match_wording	MEMBER
-N14	tests/test_secret_order_monthly_progress_566.py	295	test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write	exc_match_wording	MEMBER
-N14	tests/test_session_write_queue_1353.py	529	test_wait_pending_writes_fail_loud_on_false_and_exception	exc_match_wording	MEMBER
-N14	tests/test_state_reload.py	116	test_rollback_purges_content_character_ghost	exc_match_wording	MEMBER
-N14	tests/test_state_reload.py	203	test_rollback_restores_existing_character_attributes	exc_match_wording	MEMBER
-N14	tests/test_state_reload.py	264	test_atomic_and_reload_reloads_and_reraises_at_depth0	exc_match_wording	MEMBER
-N14	tests/test_state_reload.py	303	test_atomic_and_reload_chains_reload_failure	exc_match_wording	MEMBER
-N14	tests/test_transaction_boundary.py	414	test_ddl_first_inside_atomic_rolls_back	exc_match_wording	MEMBER
-N14	tests/test_transaction_boundary.py	536	test_ddl_after_explicit_midatomic_rollback_does_not_escape	exc_match_wording	MEMBER
-N14	tests/test_transaction_boundary.py	558	test_begin_failure_at_entry_restores_flags	exc_match_wording	MEMBER
-N16	ming_sim/session.py	82	"legacy_auto = _re.compile(rf""^{_re.escape(AUTO_SAVE_PREFIX)}\d{{4}}_\d{{2}}_t\d{{4}}_.+\.db$"")"	cross_campaign_old_name_purge	MEMBER
-N16	ming_sim/session.py	82	"legacy_auto = _re.compile(rf""^{_re.escape(AUTO_SAVE_PREFIX)}\d{{4}}_\d{{2}}_t\d{{4}}_.+\.db$"")"	prune_auto_saves_legacy_block	MEMBER
-N16	ming_sim/session.py	83	for f in _os.listdir(saves_dir):	prune_auto_saves_legacy_block	MEMBER
-N16	ming_sim/session.py	84	if legacy_auto.match(f):	cross_campaign_old_name_purge	MEMBER
-N16	ming_sim/session.py	84	if legacy_auto.match(f):	prune_auto_saves_legacy_block	MEMBER
-N16	ming_sim/session.py	86	_os.remove(_os.path.join(saves_dir, f))	prune_auto_saves_legacy_block	MEMBER
+class	path	line	symbol	note	disposition	legal_basis
+N11	ming_sim/flows.py	1533	population_unit = db.population_unit	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	ming_sim/flows.py	1682	"population_unit": population_unit,	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	tests/test_population_unit_648.py	8	- F4：新档 DB 持久标「人」；无标万人 legacy 已退役（#1847）。	comment_retired_wan	DOC_COMMENT_ONLY	N11 old-archive compat retired; persons mark kept
+N11	tests/test_population_unit_648.py	109	def test_new_save_persistent_population_unit_marker(game):	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	tests/test_population_unit_648.py	112	assert db.population_unit == POPULATION_UNIT_PERSONS	persons_unit_api	KEEP_ACTIVE_PERSONS	N11 old-archive compat retired; persons mark kept
+N11	tests/test_population_unit_648.py	114	"SELECT value FROM save_meta WHERE key='population_unit'"	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	ming_sim/constants.py	284	# 实际入池 = 加派基线(万两) × 本率 × (100 − 该省民心)/100，随存档 population_unit 换算、	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	ming_sim/materials.py	1174	"""一行 = 路径、年月、已入档标题。无标题时只留路径，不另造标题。"""	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	tests/test_population_transfers_649.py	292	assert applied["population_transfers"][0]["population_unit"] == POPULATION_UNIT_PERSONS	persons_unit_api	KEEP_ACTIVE_PERSONS	N11 old-archive compat retired; persons mark kept
+N11	ming_sim/db.py	76	# 同刻度）。#1847/#1812：无标→万人旧档兼容退役；新档仍落「人」标供接续。	comment_retired_wan	DOC_COMMENT_ONLY	N11 old-archive compat retired; persons mark kept
+N11	ming_sim/db.py	78	_POPULATION_UNIT_KEY = "population_unit"	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	ming_sim/db.py	3122	def population_unit(self) -> str:	persons_unit_api	KEEP_ACTIVE_PERSONS	N11 old-archive compat retired; persons mark kept
+N11	ming_sim/db.py	3123	"""本档人口存储单位口径：统一「人」（#1847 退役无标万人 legacy）。"""	comment_retired_wan	DOC_COMMENT_ONLY	N11 old-archive compat retired; persons mark kept
+N11	ming_sim/db.py	3126	def _mark_population_unit_persons(self) -> None:	persons_unit_api	KEEP_ACTIVE_PERSONS	N11 old-archive compat retired; persons mark kept
+N11	ming_sim/db.py	3219	self._mark_population_unit_persons()	persons_unit_api	KEEP_ACTIVE_PERSONS	N11 old-archive compat retired; persons mark kept
+N11	tests/test_deformation_dual_rail_622.py	260	"""定向补饷：beyond_intent 经 coerce 落 ledger 且 applied 回执回响；无标记仍为 0。"""	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	tests/test_deformation_dual_rail_622.py	337	"reason": "定向补饷无标记",	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	tests/test_deformation_dual_rail_622.py	346	("定向补饷无标记",),	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	tests/test_candidate_supply_1893.py	338	整项被拒。此处钉「供到的标签 = 写口接受的标签」，且写口无标签集者供空集。	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	tests/test_candidate_supply_1893.py	361	# 写口无标签集者一律供空集，不逼模型自造标签。	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	ming_sim/issues.py	6847	"population_unit": db.population_unit,	population_mention	KEEP_ACTIVE_OR_TEST	N11 old-archive compat retired; persons mark kept
+N11	ming_sim/entities/affair/store.py	55	CREATE INDEX IF NOT EXISTS idx_affairs_open	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/entities/textual_fact/store.py	25	CREATE INDEX IF NOT EXISTS idx_textual_facts_subject	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/entities/textual_fact/store.py	27	CREATE INDEX IF NOT EXISTS idx_textual_facts_origin	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/entities/staged_declaration/store.py	37	CREATE INDEX IF NOT EXISTS idx_staged_declarations_decree	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/entities/staged_declaration/store.py	39	CREATE INDEX IF NOT EXISTS idx_staged_declarations_status	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/month_chain.py	1330	reports = product.get("dossier_progress_reports") or []	schema_ddl	KEEP_OR_FIXED	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/agents.py	882	"1. `dossier_progress_reports`: 列表，每个合资格长差案卷一条。每项包含：",	schema_ddl	KEEP_OR_FIXED	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/declaration_dispatch.py	387	reports = extraction.get("dossier_progress_reports") or []	schema_ddl	KEEP_OR_FIXED	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/simulation.py	180	"dossier_progress_reports": [],	schema_ddl	KEEP_OR_FIXED	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1059	CREATE INDEX IF NOT EXISTS idx_office_change_records_dossier	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1425	CREATE INDEX IF NOT EXISTS idx_pending_actions_source_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1442	CREATE INDEX IF NOT EXISTS idx_recommendation_events_recommender	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1458	CREATE INDEX IF NOT EXISTS idx_chat_messages_minister	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1460	CREATE INDEX IF NOT EXISTS idx_chat_messages_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1489	CREATE INDEX IF NOT EXISTS idx_chat_turns_minister_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1491	CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1493	CREATE INDEX IF NOT EXISTS idx_chat_turns_night	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1515	CREATE INDEX IF NOT EXISTS idx_audience_nights_turn_status	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1541	CREATE INDEX IF NOT EXISTS idx_story_ledger_night_seq	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1558	CREATE INDEX IF NOT EXISTS idx_chat_turn_rollback_items_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1584	CREATE INDEX IF NOT EXISTS idx_secret_orders_minister	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1586	CREATE INDEX IF NOT EXISTS idx_secret_orders_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1588	CREATE INDEX IF NOT EXISTS idx_secret_orders_status	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1644	CREATE INDEX IF NOT EXISTS idx_decree_dossiers_status	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1646	CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1661	CREATE INDEX IF NOT EXISTS idx_decree_dossier_links_target	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1679	CREATE INDEX IF NOT EXISTS idx_dossier_reconciliations_dossier	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1700	CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1712	CREATE INDEX IF NOT EXISTS idx_dossier_link_rejections_source	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1731	CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1747	CREATE INDEX IF NOT EXISTS idx_dossier_reported_progress_dossier	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1764	CREATE INDEX IF NOT EXISTS idx_supervision_presence_dossier	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1776	CREATE INDEX IF NOT EXISTS idx_loophole_exposures_dossier	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1792	CREATE INDEX IF NOT EXISTS idx_dossier_actual_progress_dossier	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1827	CREATE INDEX IF NOT EXISTS idx_faction_denunciations_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1829	CREATE INDEX IF NOT EXISTS idx_faction_denunciations_target	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1847	CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1874	CREATE INDEX IF NOT EXISTS idx_authority_records_holder	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1896	CREATE INDEX IF NOT EXISTS idx_economy_ledger_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1911	CREATE INDEX IF NOT EXISTS idx_fiscal_config_tombstones_origin	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1926	CREATE INDEX IF NOT EXISTS idx_fiscal_config_creations_origin	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1942	CREATE INDEX IF NOT EXISTS idx_fiscal_config_changes_origin	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1965	CREATE INDEX IF NOT EXISTS idx_turn_directives_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1968	CREATE INDEX IF NOT EXISTS idx_region_logs_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1971	CREATE INDEX IF NOT EXISTS idx_army_logs_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1974	CREATE INDEX IF NOT EXISTS idx_building_logs_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1977	CREATE INDEX IF NOT EXISTS idx_power_logs_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	1980	CREATE INDEX IF NOT EXISTS idx_person_logs_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2041	CREATE INDEX IF NOT EXISTS idx_next_audience_todos_status	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2075	CREATE INDEX IF NOT EXISTS idx_legacies_active	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2078	CREATE INDEX IF NOT EXISTS idx_issues_active	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2081	CREATE INDEX IF NOT EXISTS idx_issue_advances_issue	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2095	CREATE INDEX IF NOT EXISTS idx_classes_region	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2107	CREATE INDEX IF NOT EXISTS idx_population_transfer_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2124	CREATE INDEX IF NOT EXISTS idx_character_knowledge_events_character	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2142	CREATE INDEX IF NOT EXISTS idx_public_sayings_affair	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2159	CREATE INDEX IF NOT EXISTS idx_character_knowledge_sources_turn	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2212	CREATE INDEX IF NOT EXISTS idx_relation_edges_pair	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2215	CREATE INDEX IF NOT EXISTS idx_relation_edges_person	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2218	CREATE INDEX IF NOT EXISTS idx_relation_edge_events_affair	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2221	CREATE INDEX IF NOT EXISTS idx_characters_affair	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2313	# #1847/#1812：旧档 ensure_column／退役表 DROP／索引重建支链已清；	alter_or_rebuild_index_compat	FIXED_REMOVED	single CREATE authority; no CREATE+ALTER dual maintain
+N11	ming_sim/db.py	2350	"CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "	index_in_create	KEEP_CREATE_SIDE	single CREATE authority; no CREATE+ALTER dual maintain
+N13	ming_sim/issues.py	2020	except sqlite3.OperationalError as exc:	operationalerror_handler	KEEP_HANDLER	non-secret handler
+N13	ming_sim/issues.py	2042	except sqlite3.OperationalError as exc:	operationalerror_handler	KEEP_RERAISE_OR_TYPED	fail-loud / typed remap, not empty fact
+N13	ming_sim/db.py	19209	_secret_origin_message_protection	secret_read_path	FIXED_REMOVED_SWALLOW	N13 secret-path OperationalError must propagate
+N13	ming_sim/db.py	19280	_withhold_origin_chat_messages	secret_read_path	FIXED_REMOVED_SWALLOW	N13 secret-path OperationalError must propagate
+N13	ming_sim/db.py	19356	release_held_audience_knowledge	secret_read_path	FIXED_REMOVED_SWALLOW	N13 secret-path OperationalError must propagate
+N13	ming_sim/db.py	9819	_brief_origin_chat_message_ids	secret_read_path	FIXED_REMOVED_SWALLOW	N13 secret-path OperationalError must propagate
+N13	ming_sim/db.py	9731	_latest_held_user_chat_message_id	secret_read_path	FIXED_REMOVED_SWALLOW	N13 secret-path OperationalError must propagate
+N10	ming_sim/cli_backend.py	771	`Authentication required` 一类机器文本当大臣正文送进 delta，而失败分类要等	doc_mention	DOC_COMMENT_ONLY	no body-keyword auth guess; host status/exit only
+N14	tests/test_relation_brew_636.py	37	run_month_end_relation_brew	dup_flow_adapter	FIXED_WIRED_TO_MECHANICAL_TAIL	reuse mechanical_tail._run_relation_brew; no new prod consumer
+N14	tests/test_faction_brew_637.py	1	import run_month_end_relation_brew	faction_uses_same_adapter	FIXED_SHARED_ADAPTER_VIA_MECHANICAL_TAIL	same production entry; not a second test-only prepare/brew/persist
+N14	ming_sim/mechanical_tail.py	196	_run_relation_brew	production_entry	KEEP_PROD_ENTRY	judge-cited live entry
+N16	ming_sim/session.py	68	AUTO_SAVE_PREFIX = "auto_"	auto_save	KEEP_ACTIVE	delete old-name purge; keep current campaign retention
+N16	ming_sim/session.py	75	def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SAVE_KEEP_TURNS) -> None:	prune_entry	KEEP_CURRENT_CAMPAIGN_POLICY	delete old-name purge; keep current campaign retention
+N16	ming_sim/session.py	88	if not (f.startswith(f"{AUTO_SAVE_PREFIX}{campaign_id}_") and f.endswith(".db")):	auto_save	KEEP_ACTIVE	delete old-name purge; keep current campaign retention
+N16	ming_sim/session.py	2031	f"{AUTO_SAVE_PREFIX}{campaign_id}_{self.state.year:04d}_"	auto_save	KEEP_ACTIVE	delete old-name purge; keep current campaign retention
+N16	ming_sim/session.py	2036	prune_auto_saves(saves_dir, campaign_id)	auto_save	KEEP_ACTIVE	delete old-name purge; keep current campaign retention
+N14	tests/test_fiscal_levy_effect.py	282	expected_log/log substring asserts	fiscal_log_wording	FIXED_REMOVED_LOG_LOCK	type/phase/ledger asserts remain; no log substring
+N14	tests/test_advance_paths_atomic.py	187	pytest.raises match=	exc_match_wording	FIXED_REMOVED_MATCH	exception type negative gate kept
+N14	tests/test_rescript_choices_563.py	171	pytest.raises match=	exc_match_wording	FIXED_REMOVED_MATCH	exception type negative gate kept
+N14	tests/test_pihong_dossier_1490.py	0	pytest.raises match=	exc_match_wording	FIXED_REMOVED_MATCH	exception type negative gate kept
+N14	tests/test_office_rank_562.py	37	office_rank_band helper-only cases	helper_only	FIXED_REMOVED_HELPER_ONLY	appointment entry cases retained
+N14	tests/test_cli_backend.py	741	test_run_agy_success_body_with_auth_words_is_not_rejected	new_proof_test	FIXED_REMOVED_PROOF_TEST	reuse transport contract; no new auth-word proof case

@@ -35,12 +35,60 @@ from ming_sim.relations import EMPEROR_NODE
 
 
 def run_month_end_relation_brew(db, state, brew_fn, **kwargs):
-    """Test-local retarget to live MonthEndRelationBrewLeg (#1847 N11)."""
-    leg = MonthEndRelationBrewLeg(db, state, brew_fn, **kwargs)
-    if not leg.prepare():
-        return leg.report
-    leg.brew()
-    return leg.persist()
+    """Drive via live mechanical_tail._run_relation_brew (#1847 N14).
+
+    No parallel prepare→brew→persist test flow. Injects brew_fn at the same
+    seam production uses (_brew_fn_for_session); does not add a production consumer.
+    """
+    from ming_sim import mechanical_tail as mt
+    from ming_sim.exceptions import LLMContractError, LLMUnavailable
+    from ming_sim.session_write_queue import SessionWriteQueue
+
+    captured: dict = {}
+
+    class _CapturingLeg(MonthEndRelationBrewLeg):
+        def __init__(self, db_, state_, _ignored_brew, **kw):
+            merged = dict(kw)
+            for key, value in kwargs.items():
+                merged.setdefault(key, value)
+            super().__init__(db_, state_, brew_fn, **merged)
+            captured["leg"] = self
+
+    session = SimpleNamespace(db=db, state=state, llm_config=None, agno_db=None)
+    queue = SessionWriteQueue()
+    ticket = queue.claim(("test-relation-brew", int(state.turn), id(brew_fn)))
+    assert ticket is not None
+
+    orig_brew = mt._brew_fn_for_session
+    orig_leg = mt.MonthEndRelationBrewLeg
+    mt._brew_fn_for_session = lambda _s: brew_fn
+    mt.MonthEndRelationBrewLeg = _CapturingLeg
+    try:
+        try:
+            mt._run_relation_brew(
+                session,
+                closed_turn=int(kwargs.get("settled_turn", state.turn)),
+                settled_year=int(kwargs.get("settled_year", state.year)),
+                settled_period=int(kwargs.get("settled_period", state.period)),
+                queue=queue,
+                ticket=ticket,
+            )
+        except (LLMUnavailable, LLMContractError, ValueError):
+            # Production raises after persist when per-item brew degraded.
+            leg = captured.get("leg")
+            if leg is not None and leg.report.get("degraded"):
+                return leg.report
+            raise
+        finally:
+            queue.complete(ticket)
+    finally:
+        mt._brew_fn_for_session = orig_brew
+        mt.MonthEndRelationBrewLeg = orig_leg
+
+    leg = captured.get("leg")
+    if leg is None:
+        return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
+    return leg.report
 
 
 @pytest.mark.parametrize("error_type", [APITimeoutError, APIConnectionError])

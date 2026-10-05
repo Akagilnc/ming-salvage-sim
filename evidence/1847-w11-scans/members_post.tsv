@@ -1,3 +1,2 @@
-class	path	line	symbol	note	disposition
-N11	ming_sim/db.py	76	# 同刻度）。#1847/#1812：无标→万人旧档兼容退役；新档仍落「人」标供接续。	population_legacy	RESIDUAL
-N11	ming_sim/db.py	3123	"""""""本档人口存储单位口径：统一「人」（#1847 退役无标万人 legacy）。"""""""	population_legacy	RESIDUAL
+class	path	line	symbol	note	disposition	legal_basis
+NONE	-	-	-	no_functional_MEMBER_residuals	CLEAR	post-rescan after correction

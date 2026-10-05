@@ -1,0 +1,249 @@
+=== N11 old-archive compat / CREATE+ALTER / index rebuild ===
+ming_sim/constants.py:284:# 实际入池 = 加派基线(万两) × 本率 × (100 − 该省民心)/100，随存档 population_unit 换算、
+ming_sim/materials.py:1174:    """一行 = 路径、年月、已入档标题。无标题时只留路径，不另造标题。"""
+ming_sim/flows.py:1533:    population_unit = db.population_unit
+ming_sim/flows.py:1682:            "population_unit": population_unit,
+ming_sim/db.py:76:# 同刻度）。#1847/#1812：无标→万人旧档兼容退役；新档仍落「人」标供接续。
+ming_sim/db.py:78:_POPULATION_UNIT_KEY = "population_unit"
+ming_sim/db.py:3122:    def population_unit(self) -> str:
+ming_sim/db.py:3123:        """本档人口存储单位口径：统一「人」（#1847 退役无标万人 legacy）。"""
+ming_sim/db.py:3126:    def _mark_population_unit_persons(self) -> None:
+ming_sim/db.py:3219:            self._mark_population_unit_persons()
+ming_sim/issues.py:3119:    """#648：content 静态人口量已全线「人」；#1847 退役万人换算，原样落档。
+ming_sim/issues.py:6847:            "population_unit": db.population_unit,
+tests/test_deformation_dual_rail_622.py:260:    """定向补饷：beyond_intent 经 coerce 落 ledger 且 applied 回执回响；无标记仍为 0。"""
+tests/test_deformation_dual_rail_622.py:337:            "reason": "定向补饷无标记",
+tests/test_deformation_dual_rail_622.py:346:        ("定向补饷无标记",),
+tests/test_population_unit_648.py:8:- F4：新档 DB 持久标「人」；无标万人 legacy 已退役（#1847）。
+tests/test_population_unit_648.py:37:# regions/classes ×10⁴ 抽样钉（旧 content 万人口径字面 × 10000，独立算术）
+tests/test_population_unit_648.py:109:def test_new_save_persistent_population_unit_marker(game):
+tests/test_population_unit_648.py:112:    assert db.population_unit == POPULATION_UNIT_PERSONS
+tests/test_population_unit_648.py:114:        "SELECT value FROM save_meta WHERE key='population_unit'"
+tests/test_candidate_supply_1893.py:338:    整项被拒。此处钉「供到的标签 = 写口接受的标签」，且写口无标签集者供空集。
+tests/test_candidate_supply_1893.py:361:    # 写口无标签集者一律供空集，不逼模型自造标签。
+tests/test_population_transfers_649.py:292:    assert applied["population_transfers"][0]["population_unit"] == POPULATION_UNIT_PERSONS
+ming_sim/entities/affair/store.py:42:CREATE TABLE IF NOT EXISTS affairs (
+ming_sim/entities/affair/store.py:55:CREATE INDEX IF NOT EXISTS idx_affairs_open
+ming_sim/entities/textual_fact/store.py:14:CREATE TABLE IF NOT EXISTS textual_facts (
+ming_sim/entities/textual_fact/store.py:25:CREATE INDEX IF NOT EXISTS idx_textual_facts_subject
+ming_sim/entities/textual_fact/store.py:27:CREATE INDEX IF NOT EXISTS idx_textual_facts_origin
+ming_sim/entities/staged_declaration/store.py:24:CREATE TABLE IF NOT EXISTS staged_declarations (
+ming_sim/entities/staged_declaration/store.py:37:CREATE INDEX IF NOT EXISTS idx_staged_declarations_decree
+ming_sim/entities/staged_declaration/store.py:39:CREATE INDEX IF NOT EXISTS idx_staged_declarations_status
+ming_sim/month_chain.py:1330:    reports = product.get("dossier_progress_reports") or []
+ming_sim/agents.py:882:        "1. `dossier_progress_reports`: 列表，每个合资格长差案卷一条。每项包含：",
+ming_sim/applier.py:296:CREATE TABLE IF NOT EXISTS rejection_reports (
+ming_sim/applier.py:347:        首次调用时建表（CREATE TABLE IF NOT EXISTS）——确保老存档不需要迁移脚本。
+ming_sim/simulation.py:180:    "dossier_progress_reports": [],
+ming_sim/declaration_dispatch.py:387:        reports = extraction.get("dossier_progress_reports") or []
+ming_sim/db.py:977:            CREATE TABLE IF NOT EXISTS game_state (
+ming_sim/db.py:987:            CREATE TABLE IF NOT EXISTS metrics (
+ming_sim/db.py:992:            CREATE TABLE IF NOT EXISTS offices (
+ming_sim/db.py:999:            CREATE TABLE IF NOT EXISTS characters (
+ming_sim/db.py:1035:            CREATE TABLE IF NOT EXISTS character_offices (
+ming_sim/db.py:1048:            CREATE TABLE IF NOT EXISTS office_change_records (
+ming_sim/db.py:1059:            CREATE INDEX IF NOT EXISTS idx_office_change_records_dossier
+ming_sim/db.py:1062:            CREATE TABLE IF NOT EXISTS office_slots (
+ming_sim/db.py:1090:            CREATE TABLE IF NOT EXISTS person_logs (
+ming_sim/db.py:1106:            CREATE TABLE IF NOT EXISTS factions (
+ming_sim/db.py:1115:            CREATE TABLE IF NOT EXISTS powers (
+ming_sim/db.py:1133:            CREATE TABLE IF NOT EXISTS power_logs (
+ming_sim/db.py:1149:            CREATE TABLE IF NOT EXISTS power_name_logs (
+ming_sim/db.py:1164:            CREATE TABLE IF NOT EXISTS regions (
+ming_sim/db.py:1188:            CREATE TABLE IF NOT EXISTS region_logs (
+ming_sim/db.py:1207:            CREATE TABLE IF NOT EXISTS armies (
+ming_sim/db.py:1247:            CREATE TABLE IF NOT EXISTS army_logs (
+ming_sim/db.py:1266:            CREATE TABLE IF NOT EXISTS buildings (
+ming_sim/db.py:1284:            CREATE TABLE IF NOT EXISTS building_logs (
+ming_sim/db.py:1302:            CREATE TABLE IF NOT EXISTS economy_accounts (
+ming_sim/db.py:1310:            CREATE TABLE IF NOT EXISTS economy_ledger (
+ming_sim/db.py:1333:            CREATE TABLE IF NOT EXISTS events (
+ming_sim/db.py:1345:            CREATE TABLE IF NOT EXISTS event_triggers (
+ming_sim/db.py:1358:            CREATE TABLE IF NOT EXISTS turn_reports (
+ming_sim/db.py:1369:            CREATE TABLE IF NOT EXISTS pending_decisions (
+ming_sim/db.py:1395:            CREATE TABLE IF NOT EXISTS pending_resolve_context (
+ming_sim/db.py:1407:            CREATE TABLE IF NOT EXISTS pending_actions (
+ming_sim/db.py:1425:            CREATE INDEX IF NOT EXISTS idx_pending_actions_source_turn
+ming_sim/db.py:1428:            CREATE TABLE IF NOT EXISTS recommendation_events (
+ming_sim/db.py:1442:            CREATE INDEX IF NOT EXISTS idx_recommendation_events_recommender
+ming_sim/db.py:1446:            CREATE TABLE IF NOT EXISTS chat_messages (
+ming_sim/db.py:1458:            CREATE INDEX IF NOT EXISTS idx_chat_messages_minister
+ming_sim/db.py:1460:            CREATE INDEX IF NOT EXISTS idx_chat_messages_turn
+ming_sim/db.py:1463:            CREATE TABLE IF NOT EXISTS chat_turns (
+ming_sim/db.py:1489:            CREATE INDEX IF NOT EXISTS idx_chat_turns_minister_turn
+ming_sim/db.py:1491:            CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id
+ming_sim/db.py:1493:            CREATE INDEX IF NOT EXISTS idx_chat_turns_night
+ming_sim/db.py:1497:            CREATE TABLE IF NOT EXISTS audience_nights (
+ming_sim/db.py:1515:            CREATE INDEX IF NOT EXISTS idx_audience_nights_turn_status
+ming_sim/db.py:1518:            CREATE TABLE IF NOT EXISTS story_ledger_entries (
+ming_sim/db.py:1541:            CREATE INDEX IF NOT EXISTS idx_story_ledger_night_seq
+ming_sim/db.py:1546:            CREATE TABLE IF NOT EXISTS chat_turn_rollback_items (
+ming_sim/db.py:1558:            CREATE INDEX IF NOT EXISTS idx_chat_turn_rollback_items_turn
+ming_sim/db.py:1561:            CREATE TABLE IF NOT EXISTS secret_orders (
+ming_sim/db.py:1584:            CREATE INDEX IF NOT EXISTS idx_secret_orders_minister
+ming_sim/db.py:1586:            CREATE INDEX IF NOT EXISTS idx_secret_orders_turn
+ming_sim/db.py:1588:            CREATE INDEX IF NOT EXISTS idx_secret_orders_status
+ming_sim/db.py:1593:            CREATE TABLE IF NOT EXISTS decree_dossiers (
+ming_sim/db.py:1644:            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_status
+ming_sim/db.py:1646:            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
+ming_sim/db.py:1649:            CREATE TABLE IF NOT EXISTS decree_dossier_links (
+ming_sim/db.py:1661:            CREATE INDEX IF NOT EXISTS idx_decree_dossier_links_target
+ming_sim/db.py:1664:            CREATE TABLE IF NOT EXISTS decree_dossier_reconciliations (
+ming_sim/db.py:1679:            CREATE INDEX IF NOT EXISTS idx_dossier_reconciliations_dossier
+ming_sim/db.py:1684:            CREATE TABLE IF NOT EXISTS decree_dossier_endorsements (
+ming_sim/db.py:1700:            CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
+ming_sim/db.py:1702:            CREATE TABLE IF NOT EXISTS decree_dossier_link_rejections (
+ming_sim/db.py:1712:            CREATE INDEX IF NOT EXISTS idx_dossier_link_rejections_source
+ming_sim/db.py:1714:            CREATE TABLE IF NOT EXISTS decree_dossier_decisions (
+ming_sim/db.py:1731:            CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier
+ming_sim/db.py:1736:            CREATE TABLE IF NOT EXISTS dossier_reported_progress (
+ming_sim/db.py:1747:            CREATE INDEX IF NOT EXISTS idx_dossier_reported_progress_dossier
+ming_sim/db.py:1751:            CREATE TABLE IF NOT EXISTS dossier_supervision_presence (
+ming_sim/db.py:1764:            CREATE INDEX IF NOT EXISTS idx_supervision_presence_dossier
+ming_sim/db.py:1767:            CREATE TABLE IF NOT EXISTS dossier_loophole_exposures (
+ming_sim/db.py:1776:            CREATE INDEX IF NOT EXISTS idx_loophole_exposures_dossier
+ming_sim/db.py:1779:            CREATE TABLE IF NOT EXISTS dossier_actual_progress (
+ming_sim/db.py:1792:            CREATE INDEX IF NOT EXISTS idx_dossier_actual_progress_dossier
+ming_sim/db.py:1797:            CREATE TABLE IF NOT EXISTS investigation_spoiled_facts (
+ming_sim/db.py:1812:            CREATE TABLE IF NOT EXISTS faction_denunciations (
+ming_sim/db.py:1827:            CREATE INDEX IF NOT EXISTS idx_faction_denunciations_turn
+ming_sim/db.py:1829:            CREATE INDEX IF NOT EXISTS idx_faction_denunciations_target
+ming_sim/db.py:1833:            CREATE TABLE IF NOT EXISTS decree_cost_events (
+ming_sim/db.py:1847:            CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
+ming_sim/db.py:1849:            CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
+ming_sim/db.py:1858:            CREATE TABLE IF NOT EXISTS authority_records (
+ming_sim/db.py:1874:            CREATE INDEX IF NOT EXISTS idx_authority_records_holder
+ming_sim/db.py:1877:            CREATE TABLE IF NOT EXISTS turn_directives (
+ming_sim/db.py:1896:            CREATE INDEX IF NOT EXISTS idx_economy_ledger_turn
+ming_sim/db.py:1899:            CREATE TABLE IF NOT EXISTS fiscal_config_tombstones (
+ming_sim/db.py:1911:            CREATE INDEX IF NOT EXISTS idx_fiscal_config_tombstones_origin
+ming_sim/db.py:1914:            CREATE TABLE IF NOT EXISTS fiscal_config_creations (
+ming_sim/db.py:1926:            CREATE INDEX IF NOT EXISTS idx_fiscal_config_creations_origin
+ming_sim/db.py:1929:            CREATE TABLE IF NOT EXISTS fiscal_config_changes (
+ming_sim/db.py:1942:            CREATE INDEX IF NOT EXISTS idx_fiscal_config_changes_origin
+ming_sim/db.py:1945:            CREATE TABLE IF NOT EXISTS fiscal_config (
+ming_sim/db.py:1958:            CREATE TABLE IF NOT EXISTS fiscal_containers (
+ming_sim/db.py:1965:            CREATE INDEX IF NOT EXISTS idx_turn_directives_turn
+ming_sim/db.py:1968:            CREATE INDEX IF NOT EXISTS idx_region_logs_turn
+ming_sim/db.py:1971:            CREATE INDEX IF NOT EXISTS idx_army_logs_turn
+ming_sim/db.py:1974:            CREATE INDEX IF NOT EXISTS idx_building_logs_turn
+ming_sim/db.py:1977:            CREATE INDEX IF NOT EXISTS idx_power_logs_turn
+ming_sim/db.py:1980:            CREATE INDEX IF NOT EXISTS idx_person_logs_turn
+ming_sim/db.py:1983:            CREATE TABLE IF NOT EXISTS issues (
+ming_sim/db.py:2027:            CREATE TABLE IF NOT EXISTS next_audience_todos (
+ming_sim/db.py:2041:            CREATE INDEX IF NOT EXISTS idx_next_audience_todos_status
+ming_sim/db.py:2044:            CREATE TABLE IF NOT EXISTS issue_advances (
+ming_sim/db.py:2061:            CREATE TABLE IF NOT EXISTS legacies (
+ming_sim/db.py:2075:            CREATE INDEX IF NOT EXISTS idx_legacies_active
+ming_sim/db.py:2078:            CREATE INDEX IF NOT EXISTS idx_issues_active
+ming_sim/db.py:2081:            CREATE INDEX IF NOT EXISTS idx_issue_advances_issue
+ming_sim/db.py:2084:            CREATE TABLE IF NOT EXISTS classes (
+ming_sim/db.py:2095:            CREATE INDEX IF NOT EXISTS idx_classes_region
+ming_sim/db.py:2098:            CREATE TABLE IF NOT EXISTS population_transfer_ledger (
+ming_sim/db.py:2107:            CREATE INDEX IF NOT EXISTS idx_population_transfer_turn
+ming_sim/db.py:2110:            CREATE TABLE IF NOT EXISTS character_knowledge_events (
+ming_sim/db.py:2124:            CREATE INDEX IF NOT EXISTS idx_character_knowledge_events_character
+ming_sim/db.py:2129:            CREATE TABLE IF NOT EXISTS public_sayings (
+ming_sim/db.py:2142:            CREATE INDEX IF NOT EXISTS idx_public_sayings_affair
+ming_sim/db.py:2145:            CREATE TABLE IF NOT EXISTS character_knowledge_sources (
+ming_sim/db.py:2159:            CREATE INDEX IF NOT EXISTS idx_character_knowledge_sources_turn
+ming_sim/db.py:2164:            CREATE TABLE IF NOT EXISTS secret_order_briefs (
+ming_sim/db.py:2177:            CREATE TABLE IF NOT EXISTS kv_store (
+ming_sim/db.py:2185:            CREATE TABLE IF NOT EXISTS month_open_snapshot (
+ming_sim/db.py:2195:            CREATE TABLE IF NOT EXISTS relation_edge_events (
+ming_sim/db.py:2212:            CREATE INDEX IF NOT EXISTS idx_relation_edges_pair
+ming_sim/db.py:2215:            CREATE INDEX IF NOT EXISTS idx_relation_edges_person
+ming_sim/db.py:2218:            CREATE INDEX IF NOT EXISTS idx_relation_edge_events_affair
+ming_sim/db.py:2221:            CREATE INDEX IF NOT EXISTS idx_characters_affair
+ming_sim/db.py:2227:            CREATE TABLE IF NOT EXISTS relation_summaries (
+ming_sim/db.py:2249:            CREATE TABLE IF NOT EXISTS relation_brew_pending (
+ming_sim/db.py:2265:            CREATE TABLE IF NOT EXISTS faction_stance_summaries (
+ming_sim/db.py:2276:            CREATE TABLE IF NOT EXISTS faction_axis_debt (
+ming_sim/db.py:2286:            CREATE TABLE IF NOT EXISTS centrifuge_log (
+ming_sim/db.py:2313:        # #1847/#1812：旧档 ensure_column／退役表 DROP／索引重建支链已清；
+ming_sim/db.py:2330:            CREATE TABLE IF NOT EXISTS ending_summary (
+ming_sim/db.py:2343:            CREATE TABLE IF NOT EXISTS save_meta (
+ming_sim/db.py:2350:            "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "
+=== N13 DB exception swallow-to-empty ===
+ming_sim/issues.py:2020:            except sqlite3.OperationalError as exc:
+ming_sim/issues.py:2042:        except sqlite3.OperationalError as exc:
+7783:        ``release_held_audience_knowledge``（分类后 / 月末）。续聊读
+7987:                row["_rollback_brief_origin_chat_message_ids"] = brief_pins.get(order_id, "[]")
+8880:                    raw_pins = before_row.get("_rollback_brief_origin_chat_message_ids")
+9731:    def _latest_held_user_chat_message_id(
+9812:                mid = self._latest_held_user_chat_message_id(name, int(state.turn))
+9814:                    mid = self._latest_held_user_chat_message_id(name)
+9819:    def _brief_origin_chat_message_ids(self, order_id: int) -> List[int]:
+19209:    def _secret_origin_message_protection(self) -> Dict[int, bool]:
+19280:    def _withhold_origin_chat_messages(
+19356:    def release_held_audience_knowledge(
+19381:        protection = self._secret_origin_message_protection()
+19499:        pins = list(dict.fromkeys([*self._brief_origin_chat_message_ids(int(order_id)), *pins]))
+19515:        self._withhold_origin_chat_messages(pins, commit=False)
+19520:        self.release_held_audience_knowledge(
+19877:            classify_ids = self._brief_origin_chat_message_ids(int(order_id))
+=== N10 body-keyword auth guess ===
+ming_sim/cli_backend.py:771:    `Authentication required` 一类机器文本当大臣正文送进 delta，而失败分类要等
+=== N14 illegal wording / helper-only / duplicate flow ===
+tests/test_faction_brew_637.py:33:from tests.test_relation_brew_636 import run_month_end_relation_brew
+tests/test_faction_brew_637.py:123:    report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+tests/test_faction_brew_637.py:140:    report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+tests/test_faction_brew_637.py:164:    report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+tests/test_faction_brew_637.py:179:    report = run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:193:    report = run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:214:    report = run_month_end_relation_brew(db, state, failing_brew)
+tests/test_faction_brew_637.py:232:    report = run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:250:    report = run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:263:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:273:    report = run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:284:    report = run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:301:        run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
+tests/test_faction_brew_637.py:314:        run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
+tests/test_faction_brew_637.py:335:    report = run_month_end_relation_brew(db, state, parallel_brew)
+tests/test_faction_brew_637.py:354:    run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+tests/test_faction_brew_637.py:371:    run_month_end_relation_brew(db, state, failing_then_ok)
+tests/test_faction_brew_637.py:377:    run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
+tests/test_faction_brew_637.py:479:    run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+tests/test_faction_brew_637.py:614:    report = run_month_end_relation_brew(db, state, failing_brew)
+tests/test_mechanical_tail_1845.py:78:    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", recording_brew)
+tests/test_mechanical_tail_1845.py:121:        "ming_sim.mechanical_tail._run_relation_brew", recording_brew,
+tests/test_mechanical_tail_1845.py:165:        "ming_sim.mechanical_tail._run_relation_brew", boom,
+tests/test_mechanical_tail_1845.py:260:        "ming_sim.mechanical_tail._run_relation_brew",
+tests/test_mechanical_tail_1845.py:313:    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", fail)
+tests/test_mechanical_tail_1845.py:347:    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", lambda *_a, **_k: None)
+tests/test_mechanical_tail_1845.py:369:        "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
+tests/test_mechanical_tail_1845.py:553:        "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
+tests/test_relation_brew_636.py:37:def run_month_end_relation_brew(db, state, brew_fn, **kwargs):
+tests/test_relation_brew_636.py:38:    """Drive via live mechanical_tail._run_relation_brew (#1847 N14).
+tests/test_relation_brew_636.py:68:            mt._run_relation_brew(
+tests/test_relation_brew_636.py:158:    report = run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:173:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:186:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:200:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:207:    report = run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:225:    run_month_end_month = run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:234:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:261:    report = run_month_end_relation_brew(db, state, failing_brew)
+tests/test_relation_brew_636.py:278:    report = run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:341:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:370:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:402:    # 经真实酿制持久化链路（run_month_end_relation_brew → apply_relation_brew_result）
+tests/test_relation_brew_636.py:404:    report = run_month_end_relation_brew(db, state, fixture_brew)
+tests/test_relation_brew_636.py:432:    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
+tests/test_relation_brew_636.py:453:    report = run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:523:        run_month_end_relation_brew(db, state, _brew_fn_factory([]))
+tests/test_relation_brew_636.py:546:        run_month_end_relation_brew(db, state, _brew_fn_factory([]))
+tests/test_relation_brew_636.py:565:        run_month_end_relation_brew(db, state, failing_brew)
+tests/test_relation_brew_636.py:580:        run_month_end_relation_brew(db, state, buggy_brew)
+tests/test_relation_brew_636.py:600:        run_month_end_relation_brew(db, state, buggy_brew)
+tests/test_relation_brew_636.py:619:    report = run_month_end_relation_brew(db, state, malformed_brew)
+tests/test_relation_brew_636.py:649:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:664:    report = run_month_end_relation_brew(db, state, duplicated_brew)
+tests/test_relation_brew_636.py:687:    report = run_month_end_relation_brew(db, state, control_byte_brew)
+tests/test_relation_brew_636.py:720:    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
+=== N16 cross-campaign old-name purge ===
+ming_sim/session.py:68:AUTO_SAVE_PREFIX = "auto_"
+ming_sim/session.py:75:def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SAVE_KEEP_TURNS) -> None:
+ming_sim/session.py:88:        if not (f.startswith(f"{AUTO_SAVE_PREFIX}{campaign_id}_") and f.endswith(".db")):
+ming_sim/session.py:2031:                f"{AUTO_SAVE_PREFIX}{campaign_id}_{self.state.year:04d}_"
+ming_sim/session.py:2036:            prune_auto_saves(saves_dir, campaign_id)

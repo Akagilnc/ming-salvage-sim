@@ -41,9 +41,6 @@ def _faction_stance(db, faction: str):
             return row
     return None
 
-
-
-
 def _add_edge(db, state, *, source, target, kind, context, origin):
     return db.record_relation_edge_event(
         source=source, target=target, event_kind=kind, context=context,

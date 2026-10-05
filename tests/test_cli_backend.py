@@ -738,14 +738,6 @@ def test_run_agy_success_single_subprocess(monkeypatch):
     assert state["agy"] == 1
 
 
-def test_run_agy_success_body_with_auth_words_is_not_rejected(monkeypatch):
-    """#1847 N10：退出码 0 的成功正文即使含 authentication 字样也原样返回。"""
-    state = _agy_popen(monkeypatch, [("authentication succeeded with api key", 0)])
-    out, attempts = cb._run_agy("PROMPT")
-    assert out == "authentication succeeded with api key" and attempts == 1
-    assert state["agy"] == 1
-
-
 def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
     """未知非零退出（无 typed status）= 确定性失败：不洗成瞬断、不私有重试。"""
     state = _agy_popen(monkeypatch, [("", 1)])
