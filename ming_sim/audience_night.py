@@ -267,21 +267,16 @@ def _row_dict(row: Any) -> Dict[str, Any]:
 
 
 def _should_commit(db: Any) -> bool:
-    """本域多语句写各自开隐式事务，故用 owns_transaction() 会因自身 in_transaction 恒 False
-    而永不 durable commit（跨进程恢复丢失）。改与 db.py 同 idiom：仅当外层无显式 atomic/
-    suspend 持有事务时才提交（用 _commit_suspended / _atomic_depth 判据，不看 in_transaction）。
+    """写前归属：是否由本调用方提交。须在任何 DML 之前调用并缓存结果。
 
-    #1853 J8-R：必备 GameDB.conn 直调，禁 getattr(conn, None) 替身。
+    写后再问 owns_transaction() 会因自身隐式事务而恒 False；与 entity store /
+    GameDB 写口同一契约——入口捕获，出口按缓存提交。
     """
-    conn = db.conn
-    return (
-        not bool(getattr(conn, "_commit_suspended", False))
-        and int(getattr(conn, "_atomic_depth", 0) or 0) == 0
-    )
+    return connection_owns_transaction(db.conn)
 
 
-def _commit_if_owns(db: Any) -> None:
-    if _should_commit(db):
+def _commit_if_owns(db: Any, *, owns: bool) -> None:
+    if owns:
         db.conn.commit()
 
 
@@ -801,6 +796,7 @@ def append_ledger_entry(
     CLOSING 拒绝玩家侧新账（默认 allow_closing=False）；收夜框架写显式
     allow_closing=True。唯有仍待转译的本月原对话轮可在封夜后补记抽取账。
     """
+    owns = _should_commit(db) if commit else False
     night = get_night(db, night_id)
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
@@ -867,7 +863,7 @@ def append_ledger_entry(
             origin,
         ),
     )
-    if commit and _should_commit(db):
+    if owns:
         db.conn.commit()
     return int(cur.lastrowid)
 
@@ -902,6 +898,7 @@ def open_night(
     location = str(location or "").strip() or DEFAULT_LOCATION
 
     roster = resolve_standing_roster(db)
+    owns = _should_commit(db)
 
     # 原子：实体 + 员额入殿账，SAVEPOINT 全有或全无。
     sp = f"open_night_{int(state.turn)}_{id(state)}"
@@ -936,7 +933,7 @@ def open_night(
                 commit=False,
             )
         db.conn.execute(f"RELEASE SAVEPOINT {sp}")
-        if _should_commit(db):
+        if owns:
             db.conn.commit()
     except Exception:
         try:
@@ -1022,13 +1019,14 @@ def wait_in_flight_clear(
 def _set_night_fields(db: Any, night_id: int, **fields: Any) -> None:
     if not fields:
         return
+    owns = _should_commit(db)
     assignments = ", ".join(f"{k} = ?" for k in fields)
     params = list(fields.values()) + [int(night_id)]
     db.conn.execute(
         f"UPDATE audience_nights SET {assignments} WHERE id = ?",
         params,
     )
-    _commit_if_owns(db)
+    _commit_if_owns(db, owns=owns)
 
 
 def _commit_night_approved(
@@ -1535,6 +1533,7 @@ def settle_applied_arrived_summons(
 
 def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) -> None:
     """启程成功后把未结 fresh 账标为在途；保留 TAG_SUMMON_UNSETTLED 与 origin。"""
+    owns = _should_commit(db)
     for item in items:
         entry_id = int(item["entry_id"])
         row = db.conn.execute(
@@ -1550,7 +1549,7 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
             "UPDATE story_ledger_entries SET tags=? WHERE id=?",
             (json.dumps(tags, ensure_ascii=False), entry_id),
         )
-    if _should_commit(db):
+    if owns:
         db.conn.commit()
 
 
@@ -1565,6 +1564,7 @@ def settle_summon_origin(
     commit 由调用方事务所有权决定（与 append_story_ledger 同形）；
     行止接缝须传 commit=commit_person_change，避免 SAVEPOINT/外层事务中擅自提交。
     """
+    owns = _should_commit(db) if commit else False
     origin = str(origin_id or "").strip()
     matches = [item for item in list_unsettled_summons(db) if item["origin_id"] == origin]
     if not matches:
@@ -1580,7 +1580,7 @@ def settle_summon_origin(
             "UPDATE story_ledger_entries SET tags=? WHERE id=?",
             (json.dumps(tags, ensure_ascii=False), item["entry_id"]),
         )
-    if commit and _should_commit(db):
+    if owns:
         db.conn.commit()
     return True
 
@@ -1673,6 +1673,7 @@ def update_summon_travel_tone(
 
     只改 tags 上的语气前缀，不另起行；无未结传召 → KeyError。
     """
+    owns = _should_commit(db)
     name = str(person_name or "").strip()
     if not name:
         raise ValueError("传召人名不能为空")
@@ -1708,10 +1709,7 @@ def update_summon_travel_tone(
         "UPDATE story_ledger_entries SET tags=? WHERE id=?",
         (json.dumps(tags, ensure_ascii=False), entry_id),
     )
-    if (
-        not bool(getattr(db.conn, "_commit_suspended", False))
-        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
-    ):
+    if owns:
         db.conn.commit()
     return entry_id
 
@@ -2149,6 +2147,7 @@ def set_night_protagonist(
     ``translation`` = 转译声明），不进库、不驱动规则。代码只存声明/口令给出
     的人名，不从戏文散文解析（ADR 0142）。
     """
+    owns = _should_commit(db) if commit else False
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("御前主角人名不能为空", code="empty_protagonist")
@@ -2160,7 +2159,7 @@ def set_night_protagonist(
         "UPDATE audience_nights SET protagonist_name=? WHERE id=?",
         (name, nid),
     )
-    if commit and _should_commit(db):
+    if owns:
         db.conn.commit()
     return name
 

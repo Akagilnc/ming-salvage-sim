@@ -3091,7 +3091,7 @@ def _accept_settlement_period(game) -> bool:
     （创建者 blocking 必清；非创建者 non-blocking + in-flight 归零才可清）。"""
     db = getattr(game, "db", None)
     state = getattr(game, "state", None)
-    if db is None or state is None or not hasattr(db, "capture_month_open_snapshot"):
+    if db is None or state is None:
         return False
     from ming_sim.month_open_snapshot import accept_settlement_period
     return bool(accept_settlement_period(db, state))
@@ -3143,7 +3143,7 @@ def _exit_settlement_display_on_failure(game, *, blocking: bool = False) -> None
     清快照期间持 entry_lock，使并发 begin 不得插在「见 in-flight==1」与 clear 之间。"""
     db = getattr(game, "db", None)
     state = getattr(game, "state", None)
-    if db is None or state is None or not hasattr(db, "clear_month_open_snapshot"):
+    if db is None or state is None:
         return
     from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
     gate = _game_write_gate(game)
@@ -3177,7 +3177,7 @@ def _auto_close_open_night_gate_free(
     #1353 r12：write_gate 可由调用方注入（advance 注入非阻塞短持适配；默认 runtime 闸）。
     """
     db = getattr(game, "db", None)
-    if db is None or not hasattr(db, "conn"):
+    if db is None:
         return
     from ming_sim.audience_night import auto_close_open_night
 
@@ -3403,7 +3403,7 @@ def _settlement_period_entry(
             # 持 write_cm 同门（与失败支 _game_write_gate 同形）——禁无门直写共享连接。
             db = getattr(game, "db", None)
             state = getattr(game, "state", None)
-            if db is not None and state is not None and hasattr(db, "clear_month_open_snapshot"):
+            if db is not None and state is not None:
                 from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
                 clear_orphan_month_open_snapshot(db, state)
 
@@ -3993,11 +3993,10 @@ def _runtime_restorable(game: Any) -> bool:
     if int(getattr(session, "_close_epoch", 0) or 0) > 0:
         return False
     db = getattr(session, "db", None)
-    conn = getattr(db, "conn", None) if db is not None else None
-    if conn is None:
+    if db is None:
         return False
     try:
-        conn.execute("SELECT 1")
+        db.conn.execute("SELECT 1")
     except Exception:
         logger.exception("runtime restorable probe: db.conn failed")
         return False

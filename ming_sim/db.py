@@ -525,8 +525,7 @@ def require_backing_dossier_id(db: object, raw: object) -> Optional[int]:
     backing = parse_backing_dossier_id(raw)
     if backing is None:
         return None
-    getter = getattr(db, "get_decree_dossier", None)
-    if getter is None or getter(backing) is None:
+    if db.get_decree_dossier(backing) is None:
         raise ValueError(f"backing_dossier_id 所指案卷不存在：{backing}")
     return backing
 
@@ -9348,15 +9347,13 @@ class GameDB:
         ctid = int(chat_turn_id or 0)
         if ctid <= 0:
             return
+        owns = self.owns_transaction()
         self.conn.execute(
             "UPDATE chat_turns SET status='consumed' "
             "WHERE id=? AND status='generating' AND user_message_id IS NULL",
             (ctid,),
         )
-        if (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns:
             self.conn.commit()
 
     def list_in_flight_chat_turns(
@@ -9619,6 +9616,7 @@ class GameDB:
         seq = int(night_seq) if night_seq is not None else (
             self.allocate_night_seq(nid) if nid > 0 else 0
         )
+        owns = self.owns_transaction()
         cur = self.conn.execute(
             """
             INSERT INTO chat_turns
@@ -9638,10 +9636,7 @@ class GameDB:
                 initial_status,
             ),
         )
-        if (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns:
             self.conn.commit()
         return int(cur.lastrowid)
 
@@ -11846,10 +11841,8 @@ class GameDB:
             return None
         return matched
 
-    def _commit_dossier_write(self, commit: bool) -> None:
-        if commit and not bool(getattr(self.conn, "_commit_suspended", False)) and int(
-            getattr(self.conn, "_atomic_depth", 0) or 0
-        ) == 0:
+    def _commit_dossier_write(self, commit: bool, *, owns_transaction: bool) -> None:
+        if commit and owns_transaction:
             self.conn.commit()
 
     DOSSIER_MODES = frozenset({"ordinary", "midzhi"})
@@ -11963,6 +11956,7 @@ class GameDB:
         origin: str,
         commit: bool,
     ) -> int:
+        owns_transaction = self.owns_transaction() if commit else False
         row = self.conn.execute(
             "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
         ).fetchone()
@@ -11990,7 +11984,7 @@ class GameDB:
             (json.dumps(reports, ensure_ascii=False), order_id),
         )
         if commit:
-            self._commit_dossier_write(True)
+            self._commit_dossier_write(True, owns_transaction=owns_transaction)
         return report_id
 
     def _record_general_dossier_progress(
@@ -12004,6 +11998,7 @@ class GameDB:
         origin: str,
         commit: bool,
     ) -> int:
+        owns_transaction = self.owns_transaction() if commit else False
         existing = None
         if not is_terminal:
             existing = self.conn.execute(
@@ -12038,7 +12033,7 @@ class GameDB:
             )
             report_id = int(cur.lastrowid)
         if commit:
-            self._commit_dossier_write(True)
+            self._commit_dossier_write(True, owns_transaction=owns_transaction)
         return report_id
 
     def record_dossier_progress(
@@ -13770,6 +13765,7 @@ class GameDB:
         给出属地行，其余（含 national）单行 region_id=''；与 create_decree_dossier
         共享单行内核。契约错抛 ValueError；复合键按 (source, region_id) 查补。
         """
+        owns_transaction = self.owns_transaction() if commit else False
         from ming_sim.execution_pressure import resolve_dossier_region_ids
         from ming_sim.executor_routing import (
             require_execution_lead_or_raise,
@@ -13984,7 +13980,7 @@ class GameDB:
             )
             new_ids_by_region[rid] = int(did)
 
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns_transaction=owns_transaction)
 
         merged: Dict[str, int] = dict(existing_by_region)
         merged.update(new_ids_by_region)
@@ -14087,6 +14083,7 @@ class GameDB:
         _skip_lead_route: bool = False,
     ) -> int:
         """单行案卷内核（#654 region_id）；create_decree_dossier(s) 共用。"""
+        owns_transaction = self.owns_transaction() if commit else False
         action = str(action_type or "").strip()
         text = str(decree_text or "")
         normalized_payload = dict(payload or {})
@@ -14366,7 +14363,7 @@ class GameDB:
                 state, roster, "assignment", "旨意案卷", text,
                 source_id=f"decree_dossier:{dossier_id}", commit=False,
             )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns_transaction=owns_transaction)
         # 拒收镜像归外层 RejectionCollector owner（0150-D2；本核不自建不自镜像）。
         return dossier_id
 
@@ -14431,6 +14428,7 @@ class GameDB:
         endorser_id: str = "", imperial: bool = False, commit: bool = True,
     ) -> int:
         """Persist one already-spoken ADR 0070 endorsement; never re-judge willingness."""
+        owns_transaction = self.owns_transaction() if commit else False
         did, cid, dkey, kind, person, is_imperial = self._validate_dossier_endorsement(
             dossier_id, form=form, source_chat_turn_id=source_chat_turn_id,
             decision_key=decision_key, endorser_id=endorser_id, imperial=imperial,
@@ -14447,7 +14445,7 @@ class GameDB:
             (did, kind, person, int(is_imperial), cid, dkey),
         ).fetchone()
         if commit:
-            self._commit_dossier_write(True)
+            self._commit_dossier_write(True, owns_transaction=owns_transaction)
         return int(row["id"])
 
     def list_dossier_endorsements(self, dossier_id: int) -> List[Dict[str, object]]:
@@ -14468,6 +14466,7 @@ class GameDB:
         self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = True,
     ) -> None:
         """Replace payload_json for an existing dossier (deliberation_state 等 typed 字段)."""
+        owns_transaction = self.owns_transaction() if commit else False
         did = int(dossier_id)
         if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
             raise KeyError(f"案卷不存在：{did}")
@@ -14478,7 +14477,7 @@ class GameDB:
             (json.dumps(dict(payload), ensure_ascii=False), did),
         )
         if commit:
-            self._commit_dossier_write(True)
+            self._commit_dossier_write(True, owns_transaction=owns_transaction)
 
     def find_deliberation_dossier_by_decision_key(
         self, decision_key: str,
@@ -14513,6 +14512,7 @@ class GameDB:
         state: Optional[GameState] = None, commit: bool = True,
     ) -> List[Dict[str, object]]:
         """Append ADR 0053 roster entries without replacing durable members."""
+        owns_transaction = self.owns_transaction() if commit else False
         row = self.conn.execute(
             "SELECT participant_roster,action_type,decree_text FROM decree_dossiers WHERE id=?",
             (int(dossier_id),),
@@ -14595,7 +14595,7 @@ class GameDB:
                         source_id=f"dossier:{int(dossier_id)}:participant:{identity}",
                         commit=False,
                     )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns_transaction=owns_transaction)
         return added
 
     def get_decree_dossier(self, dossier_id: int) -> Optional[Dict[str, object]]:
@@ -14608,6 +14608,7 @@ class GameDB:
         self, dossier_id: int, *, decision: str, turn: int, commit: bool = True,
     ) -> None:
         """Append one marker per dossier semantic midzhi event, regardless of replay turn."""
+        owns_transaction = self.owns_transaction() if commit else False
         marker_fields = {
             "rejected": ("predeclared", "rejected"),
             "promulgated": ("predeclared", "promulgated"),
@@ -14634,7 +14635,7 @@ class GameDB:
                 "UPDATE decree_dossiers SET stigma_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (json.dumps(stigma, ensure_ascii=False), int(dossier_id)),
             )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns_transaction=owns_transaction)
 
     def get_dossier_for_directive(
         self, directive_id: int,
@@ -14754,7 +14755,7 @@ class GameDB:
     def character_office_region(self, character_name: object) -> str:
         """Jurisdiction of the character's current appointment (一次任职)."""
         name = str(character_name or "").strip()
-        if not name or not hasattr(self, "conn") or not self._table_exists("character_offices"):
+        if not name or not self._table_exists("character_offices"):
             return ""
         row = self.conn.execute(
             "SELECT region_id FROM character_offices WHERE character_name=?",
@@ -14906,6 +14907,7 @@ class GameDB:
         commit: bool = True,
     ) -> None:
         """把确认后的新→旧案卷关联整批落账；任一坏引用则整批拒收并留痕。"""
+        owns_transaction = self.owns_transaction() if commit else False
         source_id = strict_int(source_dossier_id, accept_numeric_strings=False)
         source = self.get_decree_dossier(source_id)
         if source is None:
@@ -14937,7 +14939,7 @@ class GameDB:
             self._record_dossier_link_rejection(
                 source_id, target_id, relation, note, reason,
             )
-            self._commit_dossier_write(commit)
+            self._commit_dossier_write(commit, owns_transaction=owns_transaction)
             exc = ValueError(reason)
             # commit_pending_actions rolls its business savepoint back.  Carry the
             # rejected item across that boundary so its outer failure path can
@@ -14952,7 +14954,7 @@ class GameDB:
             [(source_id, target_id, relation, note)
              for target_id, relation, note in normalized],
         )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns_transaction=owns_transaction)
 
     def list_dossier_links(
         self, dossier_id: int, *, direction: str = "outgoing",
@@ -15163,6 +15165,7 @@ class GameDB:
     def transition_decree_dossier(
         self, dossier_id: int, new_status: str, *, commit: bool = True,
     ) -> None:
+        owns_transaction = self.owns_transaction() if commit else False
         row = self.conn.execute(
             "SELECT status,action_type,payload_json,execution_outcome FROM decree_dossiers WHERE id=?",
             (int(dossier_id),),
@@ -15186,7 +15189,7 @@ class GameDB:
             "WHERE id=?",
             (new_status, int(dossier_id)),
         )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns_transaction=owns_transaction)
 
     def record_dossier_decision(
         self, dossier_id: int, decision: str, *, reason: str = "",
@@ -15197,6 +15200,7 @@ class GameDB:
         commit: bool = True,
     ) -> None:
         """颁布/批红组合态。rejected 与 hold 永不成为主链 status。"""
+        owns_transaction = self.owns_transaction() if commit else False
         if str(legal_reason_code or "").strip():
             raise ValueError("legal_reason_code 仅供尚未落地的依律集写入路径")
         decision = str(decision or "").strip()
@@ -15279,11 +15283,12 @@ class GameDB:
                 safe_json_dumps(criteria_snapshot or {}),
             ),
         )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns_transaction=owns_transaction)
 
     def close_decree_dossier(
         self, dossier_id: int, reason: str = "", *, commit: bool = True,
     ) -> None:
+        owns_transaction = self.owns_transaction() if commit else False
         row = self.get_decree_dossier(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
@@ -15301,7 +15306,7 @@ class GameDB:
             "UPDATE decree_dossiers SET interruption_reason=? WHERE id=?",
             (str(reason or ""), int(dossier_id)),
         )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns_transaction=owns_transaction)
 
     def dossier_authorizes_effects(self, dossier_id: int) -> bool:
         """Return whether a dossier crossed either lawful promulgation path."""
@@ -15329,6 +15334,7 @@ class GameDB:
         self, dossier_id: int, outcome: str, note: str, turn: int, *,
         close: bool = True, commit: bool = True,
     ) -> None:
+        owns_transaction = self.owns_transaction() if commit else False
         row = self.get_decree_dossier(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
@@ -15376,7 +15382,7 @@ class GameDB:
                     int(dossier_id), int(turn), action_type, outcome,
                     commit=False,
                 )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns_transaction=owns_transaction)
 
     def apply_dossier_promulgation(
         self, state: GameState, dossier_id: int, decision: str, *,
@@ -16066,6 +16072,7 @@ class GameDB:
 
         初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
         """
+        owns_transaction = self.owns_transaction() if commit else False
         text = str(fragment or "").strip()
         if not text:
             raise ValueError("说明片段不能为空")
@@ -16088,7 +16095,7 @@ class GameDB:
                 """,
                 (merged, int(dossier_id)),
             )
-            self._commit_dossier_write(commit)
+            self._commit_dossier_write(commit, owns_transaction=owns_transaction)
         return merged
 
     def validate_joint_liability_affected_parties(
@@ -17183,6 +17190,7 @@ class GameDB:
         self, state: GameState, character_name: str, reason: str, *,
         commit: bool = True,
     ) -> int:
+        owns_transaction = self.owns_transaction() if commit else False
         rows = self.conn.execute(
             """
             SELECT id,secret_order_id,status FROM decree_dossiers
@@ -17215,7 +17223,7 @@ class GameDB:
                 dossier_id, "failed", reason, state.turn,
                 close=True, commit=False,
             )
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns_transaction=owns_transaction)
         return len(rows)
 
     def stage_pending_action(
@@ -17240,6 +17248,8 @@ class GameDB:
         from ming_sim.audience_night import assert_night_accepts_player_input
         open_n = assert_night_accepts_player_input(self, what="暂存")
         night_id = int(open_n["id"]) if open_n is not None else 0
+        # 写前捕获归属：INSERT 后 in_transaction 会使 owns_transaction() 恒 False。
+        owns = self.owns_transaction()
         cur = self.conn.execute(
             """INSERT INTO pending_actions
                (turn, kind, action, target_id, minister_name, payload_json, status,
@@ -17254,12 +17264,7 @@ class GameDB:
                 int(source_chat_turn_id or 0),
             ),
         )
-        # 与历史 stage 路径一致：非 suspended/atomic 嵌套时提交。
-        # 不可用 owns_transaction()——INSERT 已打开隐式事务时它恒 False。
-        if (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns:
             self.conn.commit()
         return int(cur.lastrowid)
 
@@ -17301,15 +17306,13 @@ class GameDB:
             extra = " AND night_id = ?"
             params.append(int(night_id))
         # #1842：背书随转译挂载荷，不再置 late_endorsement_pending。
+        owns = self.owns_transaction()
         cur = self.conn.execute(
             f"UPDATE pending_actions SET night_approved = 1 "
             f"WHERE id IN ({placeholders}) AND status = 'pending'{extra}",
             params,
         )
-        if (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns:
             self.conn.commit()
         return int(cur.rowcount or 0)
 
@@ -17317,6 +17320,7 @@ class GameDB:
         self, action_id: int, entry: Mapping[str, object], *, commit: bool = True,
     ) -> None:
         """#1842：把本轮背书挂进暂存载荷 endorsements 列表（不造待背书表）。"""
+        owns = self.owns_transaction() if commit else False
         aid = int(action_id)
         row = self.conn.execute(
             "SELECT payload_json, status FROM pending_actions WHERE id=?",
@@ -17384,16 +17388,14 @@ class GameDB:
             "UPDATE pending_actions SET payload_json=? WHERE id=?",
             (json.dumps(payload, ensure_ascii=False), aid),
         )
-        if commit and (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns:
             self.conn.commit()
 
     def inherit_payload_endorsements(
         self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = False,
     ) -> List[int]:
         """#1842：成案时把载荷 endorsements 继承到案卷（来源仍为声明轮）。"""
+        owns = self.owns_transaction() if commit else False
         raw_items = payload.get("endorsements") if isinstance(payload, Mapping) else None
         if not isinstance(raw_items, list) or not raw_items:
             return []
@@ -17418,10 +17420,7 @@ class GameDB:
                 commit=False,
             )
             new_ids.append(int(eid))
-        if commit and new_ids and (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns and new_ids:
             self.conn.commit()
         return new_ids
 
@@ -17533,6 +17532,7 @@ class GameDB:
         """
         from ming_sim.audience_night import assert_night_accepts_player_input
         assert_night_accepts_player_input(self, what="任免路径应答")
+        owns = self.owns_transaction()
         row = self.conn.execute(
             "SELECT id,payload_json,status FROM pending_actions "
             "WHERE id=? AND kind='office'",
@@ -17548,10 +17548,7 @@ class GameDB:
             (json.dumps(merged, ensure_ascii=False),
              self._current_open_night_id(), int(candidate_id)),
         )
-        if (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns:
             self.conn.commit()
         return int(candidate_id)
 
@@ -19259,6 +19256,7 @@ class GameDB:
         #658：payload.target_dossier_id 指向 stalled 廷议时，复用该案卷并落御笔手敕，
         不新建第二案卷。directive identity = directive:<id>。
         """
+        owns_transaction = self.owns_transaction() if commit else False
         structured = dict(payload or {})
         if not structured:
             structured = {
@@ -19282,7 +19280,7 @@ class GameDB:
             if bound is not None:
                 self._attach_affair_from_payload(state, structured, int(target_did))
                 if commit:
-                    self._commit_dossier_write(True)
+                    self._commit_dossier_write(True, owns_transaction=owns_transaction)
                 return [int(target_did)]
             from ming_sim.rescript_actions import apply_imperial_deliberation_push
             push_mode = self._normalize_dossier_mode(
@@ -19304,7 +19302,7 @@ class GameDB:
             )
             self._attach_affair_from_payload(state, structured, int(pushed))
             if commit:
-                self._commit_dossier_write(True)
+                self._commit_dossier_write(True, owns_transaction=owns_transaction)
             return [int(pushed)]
         structured = self._normalize_directive_dossier_payload(
             structured, content=self.content, current_turn=int(state.turn),
@@ -20741,6 +20739,7 @@ class GameDB:
         commit: bool = True,
     ) -> Dict[str, object]:
         """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json/sim_note 混写。"""
+        owns = self.owns_transaction() if commit else False
         did = int(dossier_id)
         origin = f"dossier:{did}"
         self.conn.execute(
@@ -20765,7 +20764,7 @@ class GameDB:
                 origin,
             ),
         )
-        if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+        if owns:
             self.conn.commit()
         row = self.conn.execute(
             "SELECT * FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
@@ -20812,6 +20811,7 @@ class GameDB:
         真相底不动（seed_guilt/把柄边照旧），这里只记该事实可查性被毁/被抬难。
         重复毁同一事实同一效力返回原行，不叠第二次——毁证不因重开案而可重放。
         """
+        owns = self.owns_transaction() if commit else False
         target = str(target_name or "").strip()
         key = str(fact_key or "").strip()
         if not target or not key:
@@ -20839,7 +20839,7 @@ class GameDB:
                 eff, str(origin_ref or "")[:120],
             ),
         )
-        if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+        if owns:
             self.conn.commit()
         row = self.conn.execute(
             "SELECT * FROM investigation_spoiled_facts "
@@ -21704,10 +21704,9 @@ class GameDB:
         target_office: str, reason: str = "",
     ) -> int:
         from ming_sim.recommendations import record_recommendation
+        owns = self.owns_transaction()
         event_id = record_recommendation(self, state, recommender, candidate, target_office, reason)
-        if not bool(getattr(self.conn, "_commit_suspended", False)) and int(
-            getattr(self.conn, "_atomic_depth", 0) or 0
-        ) <= 0:
+        if owns:
             self.conn.commit()
         return event_id
 
@@ -22110,6 +22109,8 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> None:
+        owns = self.owns_transaction() if commit else False
+
         def close_in_current_transaction() -> None:
             dossier = self.get_dossier_for_secret_order(int(order_id))
             reports = (
@@ -22162,7 +22163,7 @@ class GameDB:
                 raise
             else:
                 self.conn.execute(f"RELEASE {savepoint}")
-                if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+                if owns:
                     self.conn.commit()
         elif commit:
             with atomic(self):
@@ -22348,6 +22349,7 @@ class GameDB:
         self, order_id: int, *, commit: bool = True,
     ) -> None:
         """任何首次实际办理入口共用：密令轴在办时，案卷轴幂等进入 executing。"""
+        owns_transaction = self.owns_transaction() if commit else False
         dossier = self.get_dossier_for_secret_order(order_id)
         if dossier is None:
             raise ValueError("密令进展缺少对应案卷")
@@ -22357,7 +22359,7 @@ class GameDB:
             )
         elif dossier["status"] != "executing":
             raise ValueError("在办密令的案卷不处于可执行状态")
-        self._commit_dossier_write(commit)
+        self._commit_dossier_write(commit, owns_transaction=owns_transaction)
 
     def rush_secret_order(
         self,
@@ -23004,13 +23006,14 @@ class GameDB:
     def backup_to(self, target_path: str) -> None:
         """SQLite backup API 热备到 target_path。不需关闭主连接。
 
-        atomic() 内禁止调用：backup 走同连接 pager，会把未提交（可能随后回滚）
-        的脏页备进文件（cmr S1 F3）。错误包备份必须在 rollback 之后、atomic 外做。
+        外层事务（atomic / BEGIN）内禁止调用：backup 走同连接 pager，会把未提交
+        （可能随后回滚）的脏页备进文件（cmr S1 F3）。错误包备份必须在 rollback
+        之后、atomic 外做。调用前须无未提交写入（本调用方已拥有提交权）。
         """
-        if getattr(self.conn, "_commit_suspended", False):
+        if not self.owns_transaction():
             raise RuntimeError(
-                "backup_to 在 atomic 事务内禁止：备份会带上未提交脏页。"
-                "请先 rollback/commit（退出 atomic）再备份。"
+                "backup_to 在外层事务内禁止：备份会带上未提交脏页。"
+                "请先 rollback/commit（退出 atomic/外层事务）再备份。"
             )
         import os as _os
         _os.makedirs(_os.path.dirname(target_path) or ".", exist_ok=True)

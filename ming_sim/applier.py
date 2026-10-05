@@ -416,7 +416,7 @@ def register_runtime_outcome_callbacks(
     runtime-memory updates) only fire after the outermost commit, and are discarded on
     rollback. Depth 0 runs on_commit immediately.
     """
-    if getattr(db.conn, "_atomic_depth", 0) == 0:
+    if connection_owns_transaction(db.conn):
         if on_commit is not None:
             on_commit()
         return

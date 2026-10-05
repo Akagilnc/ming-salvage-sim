@@ -382,11 +382,8 @@ def _spoken_this_scene(db: Any, character: Any) -> str:
 
 def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
     """ADR 0154：issue 若已指向某 affair，返回该 affair id；未挂靠返 0。"""
-    store = getattr(db, "affairs", None)
-    if store is None or not hasattr(store, "affair_id_for_issue"):
-        return 0
     try:
-        return int(store.affair_id_for_issue(int(issue_id)))
+        return int(db.affairs.affair_id_for_issue(int(issue_id)))
     except (KeyError, TypeError, ValueError):
         return 0
 
@@ -420,9 +417,7 @@ def _own_affair_lines(
     from ming_sim.knowledge import _issue_audience_case_events, _reader_in_issue_audience
     from ming_sim.participant_roster import participant_roster_names
 
-    store = getattr(db, "affairs", None)
-    if store is None or not hasattr(store, "get"):
-        return []
+    store = db.affairs
 
     dossier_participant_ids: set[int] = set()
     for row in db.conn.execute(
@@ -489,17 +484,14 @@ def _own_affair_lines(
             handling_ids.add(linked_affair_id)
 
     candidate_ids = dossier_participant_ids | set(linked_material) | handling_ids
-    textual_facts = getattr(db, "textual_facts", None)
+    textual_facts = db.textual_facts
     lines: list[tuple[str, str, str, str, bool]] = []
     for affair_id in candidate_ids:
         try:
             affair = store.get(affair_id)
         except KeyError:
             continue
-        facts = (
-            store.current_situation(textual_facts, affair_id)
-            if textual_facts is not None else ()
-        )
+        facts = store.current_situation(textual_facts, affair_id)
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         extra_lines = linked_material.get(affair_id) or []
         directory_lines = [*fact_lines, *extra_lines]
@@ -786,10 +778,7 @@ def _write_textual_fact_files(
     tmp: Path, db: Any, character: Any, knowledge: dict,
     issue_materials: Sequence[dict[str, object]],
 ) -> list[str]:
-    store = getattr(db, "textual_facts", None)
-    readable = getattr(store, "readable_materials", None)
-    if not callable(readable):
-        return []
+    store = db.textual_facts
     subjects: list[tuple[str, str, str]] = []
     name = str(getattr(character, "name", "") or "")
     if name:
@@ -823,7 +812,7 @@ def _write_textual_fact_files(
         if key in seen:
             continue
         seen.add(key)
-        facts = readable(subject_kind=kind, subject_id=subject_id)
+        facts = store.readable_materials(subject_kind=kind, subject_id=subject_id)
         if not facts:
             continue
         body = "\n".join(
@@ -1228,9 +1217,7 @@ def _write_world_textual_fact_files(
 
     affair facts already ride 事务/*/当前情况.txt — do not mint a second carrier.
     """
-    store = getattr(db, "textual_facts", None)
-    if store is None:
-        return []
+    store = db.textual_facts
     rows = db.conn.execute(
         "SELECT DISTINCT subject_kind, subject_id FROM textual_facts "
         "WHERE subject_kind IN ('character', 'army', 'region') "
@@ -1434,16 +1421,11 @@ def _world_affair_lines(db: Any, include_fact: Any = None) -> list[tuple[str, st
     Each line is (dir_key, title, directory_text, opening_text): directory_text
     carries every dated textual fact (ADR 0156 全部提供), opening_text is only
     the latest one-liner (0155 开场最小集只放一句)."""
-    store = getattr(db, "affairs", None)
-    if store is None or not hasattr(store, "list_open"):
-        return []
-    textual_facts = getattr(db, "textual_facts", None)
+    store = db.affairs
+    textual_facts = db.textual_facts
     lines: list[tuple[str, str, str, str]] = []
     for affair in store.list_open():
-        facts = (
-            store.current_situation(textual_facts, affair.id)
-            if textual_facts is not None else ()
-        )
+        facts = store.current_situation(textual_facts, affair.id)
         facts = tuple(fact for fact in facts if _keep_fact(fact, include_fact))
         fact_lines = [f"{fact.occurred_month}：{fact.body}" for fact in facts]
         directory_text = "\n".join(fact_lines) if fact_lines else "见目录。"
@@ -1648,7 +1630,7 @@ def _write_world_tree(
     secret_turn_ids: set[int] | None = None,
 ) -> list[str]:
     index: list[str] = []
-    textual_facts = getattr(db, "textual_facts", None)
+    textual_facts = db.textual_facts
 
     board_rel = f"{_BOARD_DIR}/全局.txt"
     _write_text(tmp / board_rel, board_text)
@@ -2127,7 +2109,7 @@ def _write_one_present_person(
     _write_text(
         tmp / facts_rel,
         _textual_facts_text(
-            getattr(db, "textual_facts", None),
+            db.textual_facts,
             subject_kind="character", subject_id=name,
         ),
     )

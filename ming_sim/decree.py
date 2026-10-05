@@ -924,9 +924,9 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameS
     嵌套 atomic 内禁止 reload：depth>0 时 rollback 尚未发生（flat 语义，最外层才回滚），
     load_state 同连接会读到未提交脏写——把脏数据当真相刷进 state（cmr S5 r1 claude）。
     """
-    if getattr(db.conn, "_atomic_depth", 0) > 0:
+    if not db.owns_transaction():
         raise RuntimeError(
-            "reload_state_from_db 在 atomic 事务内禁止：回滚尚未发生，会把未提交脏写"
+            "reload_state_from_db 在外层事务内禁止：回滚尚未发生，会把未提交脏写"
             "当 DB 真相刷进内存。最外层 atomic 拥有者负责真回滚后再 reload。"
         )
     fresh = db.load_state()
@@ -970,10 +970,11 @@ def atomic_and_reload(
 
     语义（逐处保真）：
     - body 包进 `with atomic(db)`，正常退出由 atomic 统一提交（嵌套时由最外层落定）。
-    - body 抛 BaseException 时：先（若有）调 on_error(exc)，再仅当 `_atomic_depth==0`（本层
-      即最外层、atomic 已真回滚）调 reload_state_from_db 把脏内存按 DB 刷净；嵌套（depth>0）
-      跳过 reload（回滚尚未发生，load_state 会读未提交脏写）。reload 自身再炸不顶替原异常，
-      链上抛 `raise exc from reload_exc`。最后原样 re-raise 原异常（fail-loud，ADR 0005）。
+    - body 抛 BaseException 时：先（若有）调 on_error(exc)，再仅当本层即最外层、
+      atomic 已真回滚（owns_transaction）时调 reload_state_from_db 把脏内存按 DB 刷净；
+      仍在外层事务内则跳过 reload（回滚尚未发生，load_state 会读未提交脏写）。
+      reload 自身再炸不顶替原异常，链上抛 `raise exc from reload_exc`。最后原样
+      re-raise 原异常（fail-loud，ADR 0005）。
 
     on_error 在 reload 之前触发（DB 行随回滚消失，
     内存缓冲须同步清场）。settle 的中断透传 / 错误包 / SettlementAbort 包装等**特殊** except
@@ -986,7 +987,7 @@ def atomic_and_reload(
     except BaseException as exc:
         if on_error is not None:
             on_error(exc)
-        if getattr(db.conn, "_atomic_depth", 0) == 0:
+        if db.owns_transaction():
             try:
                 reload_state_from_db(db, state, content=content)
             except BaseException as reload_exc:
@@ -1097,7 +1098,7 @@ def prepare_resolve_front_half(
             # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
             placeholder_payload = {
                 "transit_arrivals": list(transit_arrivals_box),
-                "open_affairs": db.affairs.input_brief(getattr(db, "textual_facts", None)),
+                "open_affairs": db.affairs.input_brief(db.textual_facts),
             }
             # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
             #（同 turn 占位重入时尤甚）。

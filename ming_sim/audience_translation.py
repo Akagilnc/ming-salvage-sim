@@ -146,20 +146,18 @@ def mark_turn_translation_done(
     db: Any, chat_turn_id: int, *, commit: bool = True,
 ) -> None:
     """水位单真源：源轮 extract_status → done（控制口令早退与转译落账共用）。"""
+    from ming_sim.applier import connection_owns_transaction
+
     ctid = int(chat_turn_id or 0)
     if ctid <= 0:
         return
+    owns = connection_owns_transaction(db.conn) if commit else False
     db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' "
         "WHERE id=? AND status NOT IN ('failed','undone')",
         (ctid,),
     )
-    if not commit:
-        return
-    if (
-        not bool(getattr(db.conn, "_commit_suspended", False))
-        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
-    ):
+    if owns:
         db.conn.commit()
 
 
