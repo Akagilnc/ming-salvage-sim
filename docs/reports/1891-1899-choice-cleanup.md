@@ -701,4 +701,4 @@ forward `ak-roles:` 提交（不 amend／stash／reset／push）。
 
 **再撤回**：曾入库的 835 行解析器 + AUDIT 壳 + 全员 JSON/TSV/卡片——属超授权「新框架／报告生成物」，已 **forward 删除**；证据仅在 `/tmp/cleanup-c1-forward-delete.hIkScB`。
 
-本类短回执：**`docs/reports/1891-1899-deleted-symbol-tests.md`**（缺符删项 + 9 nonprod + 6 dynamic + 深解析合并表 + 自包含 AST 命令）。**CHOICE 结论与处置不变**。
+本类短回执：**`docs/reports/1891-1899-deleted-symbol-tests.md`**（缺符删项闭合 PASS；9 nonprod + 6 dynamic；冻结 32→0；修正辅助扫描——string setattr 分径／SyntaxError 响亮失败；簿记 3450／3445／3447 撤回唯一总数）。**CHOICE 结论与处置不变**。

@@ -1,218 +1,162 @@
-# #1891/#1899 CLEANUP-C1 已删符号 — 短回执（forward 删简）
+# #1891/#1899 CLEANUP-C1 已删符号 — 短回执
 
-现场：`ak-roles/1891-class-sweep`。范围：**仅** CLEANUP-C1；**CHOICE 不送修**。
+现场：`ak-roles/1891-class-sweep`。仅 CLEANUP-C1；CHOICE 不送修。主助手 readonly：冻结卷缺符闭包 **PASS**（代码合法不动；不新框架；不复跑测试）。
 
-## 撤回（框架超授权）
+## 撤回
 
-**明确撤回**：曾把仓内 `ENUMERATE_AND_RESOLVE.py`（835 行）+ `AUDIT_COMMANDS.sh` + 全员 JSON/TSV/卡片包装成「一次性／不新框架」——那是**新增永久扫描壳与报告生成物**，超出「inline 一次性审计」授权。
+1. 超授权：`ENUMERATE_AND_RESOLVE.py`+AUDIT+全员 JSON/TSV/卡片已 forward 删（`a0ae52798`）。证据只在 `/tmp/cleanup-c1-forward-delete.hIkScB`。
+2. 簿记：`members=3450`／`unique(file,line,kind,target,attr)=3445`／`sites_total=3447` 有重复差异——**撤回唯一精准总数**；独立去重≈3447 候选、**dedup=3445**。**member 不证明 1 missing**。
+3. 旧 inline 摘要 **破损史**（`exists=2521 dynamic=124 missing=2`）：(a) `except SyntaxError: continue` 吞错；(b) `setattr("a.b.attr", value)` 118 条两参 string 误当 `attr=None`→dynamic124=118+6。勿用于全扫。
 
-**本提交 forward 删除**（史保留，不 amend／reset）：上述脚本、66524 行 `sites.json`、3451 行 CRLF `sites.tsv`、runtime／missing／nonprod／dynamic 及 cards 八份重叠摘要。**不**再声称仓内永久脚本「不是新框架」。分类语义由人复核；复跑只用下方自包含 AST 枚举，**不以**旧 3k／判词名单 seed。
-
-证据卷（仅取证，非 runtime／测试依赖）：
-`/tmp/cleanup-c1-forward-delete.hIkScB`（`POINTER.md` + `repo-committed/` + `closure-logs/` + `prior-audit/`）。原 3k 全员冻结只在该卷，**不灌入本回执**。
-
-## 本类真残留（已删）
+## 真残留（已删）／nonprod／dynamic
 
 | nodeid | 取证 | 处置 |
 | --- | --- | --- |
-| `tests/test_rejection_wiring.py::test_attempt_derivation_failure_does_not_abort_settlement` | `AttributeError: ming_sim.decree has no attribute '_next_attempt'` | **删该 test 整段**（史：`4f277c384`）；不恢复符号；不改挂 `error_pack` |
+| `tests/test_rejection_wiring.py::test_attempt_derivation_failure_does_not_abort_settlement` | `AttributeError: ming_sim.decree has no attribute '_next_attempt'` | 删 test（`4f277c384`） |
 
-KEEP：`ming_sim.error_pack._next_attempt` 与 `tests/test_error_pack.py` 现役案。
+KEEP `error_pack._next_attempt`。barrier pytest PASSED。第二缺符：无。聚焦史 19 passed。
 
-聚焦（七 BIN + 新 user／basetemp + no cache）删后：**19 passed**（史留 `4f277c384`；代码删不动）。
+**9 nonprod**（原记录 `…/nonprod.json`）：`cb.os.path.isdir`；`os.kill`/`os._exit`/`time.sleep`×2；`sys.frozen`/`sys._MEIPASS`（raising=False）。
 
-## 9 nonprod（确切 nodeid／理由；非本类删案）
+**6 dynamic**（真非 const）：`conftest#332` field；`audience_background#71` `_name`；`cli_backend#161/#895` attr 循环；`#909/#932` `f"_run_{runner}"`。
 
-| nodeid | target.attr | 理由 |
-| --- | --- | --- |
-| `tests/test_cli_backend.py::test_resolve_cli_bin_found_via_extra_dirs_when_gui_path_bare` | `cb.os.path.isdir` | 经生产模块挂到 **stdlib** `os.path` |
-| `tests/test_menu_lifecycle_drain_396.py::test_shutdown_waits_for_drain_before_returning_or_killing` | `os.kill` / `os._exit` / `time.sleep` | **stdlib** |
-| `tests/test_menu_lifecycle_drain_396.py::test_shutdown_without_web_game_skips_drain_and_kills` | `os.kill` / `os._exit` / `time.sleep` | **stdlib** |
-| `tests/test_person_transit_write_667.py::test_departure_reads_matrix_from_frozen_bundle_outside_cwd` | `sys.frozen` / `sys._MEIPASS` | **stdlib** |
+## 192／32（不冒称）
 
-## 6 dynamic（协议 + 真实位置；不解 class 映射猜 OK）
+原 audit 只报 **192** 摘要、**无成员**——不冒称逐项全解析。冻结 `prior_pass_note`：**32 unresolved→0**；dynamic **6**。fixture／candidate **无法机械判定**；深解析证据在卷，不称纯静态全闭合。
 
-| 位置 | 协议／取证 |
-| --- | --- |
-| `tests/conftest.py::plant_character_axis_sentinels#332` | `setattr(character, field, value)` 非 const 字段循环 |
-| `tests/test_audience_background.py` helper `__init__#71` | `setattr(self, _name, MethodType(...))` 测试双绑定 |
-| `tests/test_cli_backend.py::test_run_backend_dispatch#161` | `monkeypatch.setattr(cb, attr, …)` 循环；现役 `_run_claude/_agy/_codex/_backend` 有，字面 `_run_backend_dispatch` 无＝循环名非符号 |
-| `tests/test_cli_backend.py::test_run_backend_dispatch_new_runners#895` | 同上；现役 `_run_cursor/_kimi/_grok/_pi/_backend` |
-| `tests/test_cli_backend.py::test_run_backend_for_config_dispatches_new_runners#909` | `setattr(cb, f"_run_{runner}", …)` |
-| `tests/test_cli_backend.py::test_clichat_call_cli_dispatches_new_runners#932` | 同上 |
-
-## 深解析候选（按真实目标合并；原「192 unresolved」无成员冻结）
-
-原 `/tmp/cleanup-c1-audit/runtime_verified.json` 只报 **192 skip_unresolved_target** 摘要、无逐项表。闭包后按**可核目标**合并同 target（sites 重复折叠；全文员只在证据卷）：
-
-| 真实目标 | 来源协议 | sites（合并后） | 语义 |
-| --- | ---: | ---: | --- |
-| `ming_sim.db.GameDB` | game unpack / `type(db)` / named fixture / `game.db` / `runtime.db` | 63 | fixture／解包→GameDB；hasattr 核 |
-| `ming_sim.db.GameDB.affairs` / `.textual_facts` / `.conn` | 实例链 | 6 | 非顶层删符；协议核 |
-| `ming_sim.session.GameSession` | `game.session` / `web_game.session` | 3 | 会话实例 |
-| `ming_sim.cli_backend.CliChat` | 局部 `CliChat(...)` 构造赋值 | 5 | 非按名猜 |
-| `ming_sim.models.GameState` | fixture `state` / `load_state` 返回注 | 2 | |
-| `ming_sim.content.GameContent` | fixture `content` | 1 | dataclass 字段如 `event_by_id` |
-| `*.subprocess` / `*.shutil` / `*.agents` 等 | 模块属性链到挂载对象 | ~24 | import 别名上的 attr |
-| `session_write_queue…barrier` | **pytest PASSED** 取证回 OK | 1 | 静态曾误绑函数→假 MISSING |
-
-不把「解不了的 class」映射猜成 OK；dynamic／fixture 见上表。
-
-## 自包含复跑（~100 行；不 seed／tmp 旧表；不落仓脚本）
+## 自包含辅助扫描（七 BIN + 新 user；不 seed／不落仓）
 
 ```bash
+TMPROOT=$(mktemp -d /tmp/cleanup-c1-aux-scan.XXXXXX)
 export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
   MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
   MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
-  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  MING_SIM_USER_DATA_DIR="$TMPROOT/user"; mkdir -p "$MING_SIM_USER_DATA_DIR"
 PY=${PY:-/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python}
 $PY - <<'PY'
-import ast, importlib, json, sys
+import ast, importlib, json
+from collections import Counter
 from pathlib import Path
-ROOT = Path(".").resolve()
-PROD = ("ming_sim", "web_app")
-
-def walk_py(base):
+ROOT, PROD = Path(".").resolve(), ("ming_sim", "web_app")
+def walk(base):
     for p in sorted(base.rglob("*.py")):
-        if any(x in p.parts for x in (".venv", "node_modules", "__pycache__")):
-            continue
+        if any(x in p.parts for x in (".venv", "node_modules", "__pycache__")): continue
         yield p
-
-def import_map(tree):
+def imap(tree):
     m = {}
     for n in tree.body:
         if isinstance(n, ast.Import):
-            for a in n.names:
-                m[a.asname or a.name.split(".")[0]] = a.name
+            for a in n.names: m[a.asname or a.name.split(".")[0]] = a.name
         elif isinstance(n, ast.ImportFrom) and n.module:
             for a in n.names:
-                if a.name == "*":
-                    continue
-                m[a.asname or a.name] = f"{n.module}.{a.name}"
+                if a.name != "*": m[a.asname or a.name] = f"{n.module}.{a.name}"
     return m
-
-def resolve_mod(name, imap):
-    if not name:
-        return None
-    if name in imap:
-        return imap[name]
-    top = name.split(".")[0]
-    return imap.get(top)
-
-def const_str(n):
-    return n.value if isinstance(n, ast.Constant) and isinstance(n.value, str) else None
-
-cands = []
-for path in walk_py(ROOT / "tests"):
-    src = path.read_text(encoding="utf-8")
-    try:
-        tree = ast.parse(src)
-    except SyntaxError:
-        continue
-    imap = import_map(tree)
-    rel = str(path.relative_to(ROOT))
+def rmod(name, m): return m.get(name) or m.get(name.split(".")[0]) if name else None
+def cstr(n): return n.value if isinstance(n, ast.Constant) and isinstance(n.value, str) else None
+def kwb(node, k, d):
+    for kw in node.keywords:
+        if kw.arg == k and isinstance(kw.value, ast.Constant): return bool(kw.value.value)
+    return d
+def exists(parts, attr):
+    last = None
+    for cut in range(len(parts), 0, -1):
+        mod = ".".join(parts[:cut])
+        try: obj = importlib.import_module(mod)
+        except ModuleNotFoundError as e:
+            last = {"class": type(e).__name__, "message": str(e),
+                    "cause": type(e.__cause__).__name__ if e.__cause__ else None, "mod": mod}; continue
+        except Exception as e:
+            return "import_error", {"class": type(e).__name__, "message": str(e),
+                "cause": type(e.__cause__).__name__ if e.__cause__ else None, "mod": mod}
+        try:
+            for p in parts[cut:]: obj = getattr(obj, p)
+            return (("exists" if hasattr(obj, attr) else "missing") if attr is not None else "target_ok"), mod
+        except AttributeError as e:
+            last = {"class": type(e).__name__, "message": str(e),
+                    "cause": type(e.__cause__).__name__ if e.__cause__ else None, "mod": mod}; continue
+        except Exception as e:
+            return "import_error", {"class": type(e).__name__, "message": str(e),
+                "cause": type(e.__cause__).__name__ if e.__cause__ else None, "mod": mod}
+    return "unresolved_import", last
+errs, cands = [], []
+for path in walk(ROOT / "tests"):
+    src, rel = path.read_text(encoding="utf-8"), str(path.relative_to(ROOT))
+    try: tree = ast.parse(src, filename=rel)
+    except SyntaxError as e:
+        errs.append({"file": rel, "lineno": e.lineno, "msg": e.msg}); continue
+    m = imap(tree)
     for node in ast.walk(tree):
-        func = None
-        # setattr / monkeypatch.setattr
-        if isinstance(node, ast.Call):
-            f = node.func
-            name = None
-            if isinstance(f, ast.Attribute) and f.attr == "setattr":
-                name = "setattr"
-            elif isinstance(f, ast.Name) and f.id == "setattr":
-                name = "setattr"
-            if name and len(node.args) >= 2:
-                tgt, attr_n = node.args[0], node.args[1]
-                attr = const_str(attr_n)
-                te = ast.unparse(tgt) if hasattr(ast, "unparse") else None
-                hint = None
-                if isinstance(tgt, ast.Name):
-                    hint = resolve_mod(tgt.id, imap)
-                elif isinstance(tgt, ast.Attribute) and isinstance(tgt.value, ast.Name):
-                    base = resolve_mod(tgt.value.id, imap)
-                    hint = f"{base}.{tgt.attr}" if base else None
-                elif const_str(tgt):
-                    hint = const_str(tgt)
-                    te = hint
-                cands.append({"kind": "setattr", "file": rel, "line": node.lineno,
-                              "target": te, "hint": hint, "attr": attr,
-                              "raw": ast.get_source_segment(src, node) or ""})
-            # patch("mod.path") / patch.object
-            if isinstance(f, ast.Attribute) and f.attr in ("patch", "object"):
-                pass
-            if isinstance(f, ast.Name) and f.id == "patch" and node.args:
-                s = const_str(node.args[0])
-                if s and s.split(".")[0] in PROD:
-                    cands.append({"kind": "patch_str", "file": rel, "line": node.lineno,
-                                  "target": s, "hint": s, "attr": s.rsplit(".", 1)[-1], "raw": s})
-            if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "patch" and f.attr == "object":
-                if len(node.args) >= 2:
-                    te = ast.unparse(node.args[0]) if hasattr(ast, "unparse") else None
-                    attr = const_str(node.args[1])
-                    hint = resolve_mod(te, imap) if isinstance(node.args[0], ast.Name) else None
-                    cands.append({"kind": "patch.object", "file": rel, "line": node.lineno,
-                                  "target": te, "hint": hint, "attr": attr, "raw": ""})
-        # direct module.attr / Class.attr from import map
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-            mod = resolve_mod(node.value.id, imap)
+            mod = rmod(node.value.id, m)
             if mod and mod.split(".")[0] in PROD:
-                cands.append({"kind": "direct_ref", "file": rel, "line": node.lineno,
-                              "target": node.value.id, "hint": mod, "attr": node.attr, "raw": ""})
-
-# runtime hasattr for resolvable module/Class hints only (no fixture guess)
+                cands.append({"kind":"direct_ref","file":rel,"line":node.lineno,"target":node.value.id,"hint":mod,"attr":node.attr,"raising":None,"create":None})
+        if not isinstance(node, ast.Call): continue
+        f = node.func
+        sattr = (isinstance(f, ast.Attribute) and f.attr == "setattr") or (isinstance(f, ast.Name) and f.id == "setattr")
+        if sattr and len(node.args) >= 2:
+            t0, t1, raising = node.args[0], node.args[1], kwb(node, "raising", True)
+            if isinstance(t0, ast.Constant) and isinstance(t0.value, str):
+                s0 = t0.value; parent, attr = (s0.rsplit(".", 1) if "." in s0 else (s0, None))
+                cands.append({"kind":"setattr_string","file":rel,"line":node.lineno,"target":s0,"hint":parent,"attr":attr,"raising":raising,"create":None}); continue
+            attr = cstr(t1) or next((cstr(kw.value) for kw in node.keywords if kw.arg == "name"), None)
+            te = ast.unparse(t0) if hasattr(ast, "unparse") else None; hint = None
+            if isinstance(t0, ast.Name): hint = rmod(t0.id, m)
+            elif isinstance(t0, ast.Attribute) and isinstance(t0.value, ast.Name):
+                b = rmod(t0.value.id, m); hint = f"{b}.{t0.attr}" if b else None
+            cands.append({"kind":"setattr","file":rel,"line":node.lineno,"target":te,"hint":hint,"attr":attr,"raising":raising,"create":None})
+        if isinstance(f, ast.Name) and f.id == "patch" and node.args:
+            s = cstr(node.args[0])
+            if s and s.split(".")[0] in PROD:
+                parent, attr = (s.rsplit(".", 1) if "." in s else (s, None))
+                cands.append({"kind":"patch_str","file":rel,"line":node.lineno,"target":s,"hint":parent,"attr":attr,"raising":True,"create":kwb(node,"create",False)})
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "patch" and f.attr == "object" and len(node.args) >= 2:
+            hint = rmod(node.args[0].id, m) if isinstance(node.args[0], ast.Name) else None
+            cands.append({"kind":"patch.object","file":rel,"line":node.lineno,"target":ast.unparse(node.args[0]) if hasattr(ast,"unparse") else None,
+                "hint":hint,"attr":cstr(node.args[1]),"raising":kwb(node,"raising",True),"create":kwb(node,"create",False)})
+if errs: raise SystemExit("PARSE_ERRORS " + json.dumps(errs, ensure_ascii=False))
 out = []
 for c in cands:
-    hint, attr = c.get("hint"), c.get("attr")
-    verdict, detail = "candidate", "unresolved_or_nonconst"
-    if hint and attr and all(x.isidentifier() for x in hint.split(".")):
-        parts = hint.split(".")
-        # try module path; if last is Class, import parent
-        for cut in range(len(parts), 0, -1):
-            modname = ".".join(parts[:cut])
-            try:
-                obj = importlib.import_module(modname)
-                for p in parts[cut:]:
-                    obj = getattr(obj, p)
-                if cut == len(parts):
-                    ok = hasattr(obj, attr)
-                else:
-                    ok = hasattr(obj, attr)
-                verdict = "exists" if ok else "missing"
-                detail = f"importlib:{modname}"
-                break
-            except Exception as e:
-                detail = f"import_fail:{type(e).__name__}"
-                continue
-        else:
-            verdict = "unresolved"
-    elif not attr:
-        verdict = "dynamic_attr"
-        detail = "non-const attr"
-    out.append({**c, "verdict": verdict, "detail": detail})
-
-from collections import Counter
-print(json.dumps({"candidates": len(out), "verdict_counts": Counter(x["verdict"] for x in out),
-                  "missing_sample": [x for x in out if x["verdict"] == "missing"][:20]},
-                 ensure_ascii=False, indent=2))
-# semantic class (OK/nonprod/dynamic/deep) = human review against member tables above / evidence volume
+    hint, attr, raising, create, kind = c.get("hint"), c.get("attr"), c.get("raising"), c.get("create"), c["kind"]
+    if hint == "sys" and attr in ("frozen", "_MEIPASS"):
+        out.append({**c, "verdict": "nonprod_stdlib"}); continue
+    if attr is None and kind in ("setattr", "patch.object"):
+        out.append({**c, "verdict": "dynamic_attr"}); continue
+    if (not hint or not all(x.isidentifier() for x in str(hint).split("."))
+            or (hint.split(".")[0] not in PROD and kind not in ("setattr_string", "patch_str"))):
+        out.append({**c, "verdict": "candidate"}); continue  # fixture 不猜 db/cc
+    v, d = exists(hint.split("."), attr)
+    if v == "missing":
+        if raising is False: v = "missing_raising_false"
+        elif create is True: v = "missing_create_true"
+    out.append({**c, "verdict": v, "detail": d})
+key = lambda x: (x.get("file"), x.get("line"), x.get("kind"), x.get("target"), x.get("attr"))
+dedup = list({key(x): x for x in out}.values())
+print(json.dumps({"candidates_raw": len(out), "candidates_dedup": len(dedup),
+    "setattr_string": sum(1 for x in dedup if x["kind"] == "setattr_string"),
+    "verdict_counts_dedup": dict(Counter(x["verdict"] for x in dedup)),
+    "dynamic": [{"file": x["file"], "line": x["line"]} for x in dedup if x["verdict"] == "dynamic_attr"],
+    "nonprod_stdlib": [{"file": x["file"], "line": x["line"], "attr": x.get("attr"), "raising": x.get("raising")}
+                       for x in dedup if x["verdict"] == "nonprod_stdlib"],
+    "missing": [x for x in dedup if str(x["verdict"]).startswith("missing")],
+    "import_error": [x for x in dedup if x["verdict"] == "import_error"][:10],
+    "parse_errors": errs}, ensure_ascii=False, indent=2))
 PY
 ```
 
-说明：命令只吐 **candidate 列表 + importlib/hasattr 可核存在性**；不把 fixture／实例链猜 OK；不写仓内 scanner；分类引用本回执成员表与证据卷冻结全员。
+inline＝枚举+存在性；string／`raising=False`／`patch.create` 缺失单独记非自动 OK；真 import 异常保留 type/message/cause；缩短路径只吞预期 ModuleNotFound／AttributeError；未 resolve→`candidate`。
 
-### 本轮实测复跑（自包含；不 seed）
+### 实测（`$TMPROOT=/tmp/cleanup-c1-aux-scan.UNanwE`）
 
 ```
-candidates=2968
-verdict_counts: exists=2521  candidate/unresolved=321  dynamic_attr=124  missing=2
-missing 仅：tests/test_person_transit_write_667.py:64–65  sys.frozen / sys._MEIPASS
-  → 属上表 9 nonprod（stdlib 可选属性；raising=False），非已删生产符号
-decree._next_attempt：rejection_wiring 已无引用（删项闭合）
+candidates_raw=2968  dedup=2967  setattr_string=118
+verdicts: exists=2632  candidate=327  dynamic_attr=6  nonprod_stdlib=2
+missing=[]  import_error=[]  parse_errors=[]
 ```
 
-完整 JSON：`/tmp/cleanup-c1-forward-delete.hIkScB/rerun-enum.json`。
+副本：`/tmp/cleanup-c1-forward-delete.hIkScB/aux-scan-corrected-summary.json`。旧 `rerun-enum.json` 破损勿用。
 
 ## 自查二连
 
-1. **同类**：超授权框架／全员灌仓已 forward 删；真 MISSING 仅 `_next_attempt` 专属案已删；9／6 表有确切 nodeid；192 无成员冻结→合并目标表 +／tmp 全员指针；复跑命令自包含不 seed。
-2. **引入 bug**：只删文档／报告生成物与脚本；不动已合入的合法测试删与 19 绿史；不为证删造测。
+1. 同类：框架已删；`_next_attempt` 唯一真红已删；barrier 绿；32→0／6 dynamic；192 不冒称；簿记已撤回。
+2. 引入：本 forward **只 docs**；不动码；不新工具；不复跑测试。
