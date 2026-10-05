@@ -4,12 +4,12 @@
 开工 BASE：`7ba04d2263793153383e5e2b95d9d58d54ac5456`。
 代码交卷：`a64094fd5336344d1932cf283fea4c2a9f430b65`（DRY + 庭列24 + 初轮11 + 三案/stub）；
 全仓 orphan 清退：`81560cb1b396b35339ca36693e7742bcb188e83b`（再删 23）。
-**本轮：TEST-C1 残余（ObservingLock／ToolExec）**——仅清退役测试支持物；DRY-C1／D1 **不送修**。前置 docs 复核停在 `79325958864db0d34771457cbe431e273c34d15f`。
-历史：主助手独立复核证据曾相对 `23d3c36881570a4538fc537921144ad0184bcc8a`（见文末「主助手独立复核」节；**该节 ORPHAN=0 结论范围仅覆盖 `name.startswith('_')` 私有顶层**，已撤回冒称「全类支持物 0」——见「TEST-C1 残余」节）。
+**本轮：仅追加主助手独立复核事实（TEST-C1 残余；docs-only forward）**——不改生产／测试代码；不重复施工／测试。代码交卷停在 `6589363617b5b68732d184b6d7339181f5301ec2`（删 ObservingLock／ToolExec）；DRY-C1／D1 **不送修**。残余施工开工曾停在 `79325958864db0d34771457cbe431e273c34d15f`。
+历史：旧私有口径独立复核曾相对 `23d3c36881570a4538fc537921144ad0184bcc8a`（见「主助手独立复核」节；**该节 ORPHAN=0 结论范围仅覆盖 `name.startswith('_')` 私有顶层**，已撤回冒称「全类支持物 0」——见「TEST-C1 残余」失败史，**不抹**）。本轮独立节＝对 **public+private** 修正口径的残余复跑取证。
 
-法源：末份 `1891m-judge-7ba04d226.json` payload[4]、`1899c-judge-7ba04d226.json` payload[3]、`1891-1899-countersign-7ba04d226.json`（原卷直读，本回执不自撰顾问／判词摘要冒称原话）；本轮退修 payload：TEST-C1 残余（DRY 不送修）。
+法源：末份 `1891m-judge-7ba04d226.json` payload[4]、`1899c-judge-7ba04d226.json` payload[3]、`1891-1899-countersign-7ba04d226.json`（原卷直读，本回执不自撰顾问／判词摘要冒称原话）；退修 payload：TEST-C1 残余（DRY 不送修）。
 Python：`/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python`。
-历史临时根（仅日志指针，**复跑命令不依赖**）：初轮 `/tmp/1891-dry-test.e72Ys3`；orphan 轮 `/tmp/1891-dry-fix2.SD3paj`；独立复核 `/tmp/1891-dry-test-independent.ip7JIM`；**本残余轮** `/tmp/1891-test-c1-residual.KvXgjJ`。
+历史临时根（仅日志指针，**复跑命令不依赖**）：初轮 `/tmp/1891-dry-test.e72Ys3`；orphan 轮 `/tmp/1891-dry-fix2.SD3paj`；旧独立复核 `/tmp/1891-dry-test-independent.ip7JIM`；残余施工 `/tmp/1891-test-c1-residual.KvXgjJ`；**本残余独立复核** `/tmp/1891-test-c1-independent.iZBtm9`。
 
 ## 七变量前缀
 
@@ -1057,10 +1057,76 @@ UV_CACHE_DIR=/tmp/1891-test-c1-residual.KvXgjJ/ruff/uv-cache \
 
 结果：`All checks passed!`（`$TMPROOT/logs/ruff-after.log`）。`git diff --check` 空。
 
-### 本轮提交约束
+### 本轮提交约束（历史：残余施工 forward；保留）
 
-forward `ak-roles:` 仅 TEST-C1 残余（删两支持类 + 撤回单源陈述 + 回执失败史／public 枚举）；不改 DRY；不 amend／stash／reset／rebase／checkout 覆盖／push／PR；不新增证明测试／兼容机制。
+forward `ak-roles:` 仅 TEST-C1 残余（删两支持类 + 撤回单源陈述 + 回执失败史／public 枚举）；不改 DRY；不 amend／stash／reset／rebase／checkout 覆盖／push／PR；不新增证明测试／兼容机制。代码交卷 SHA＝`6589363617b5b68732d184b6d7339181f5301ec2`。
 
-## 提交约束声明（历史：docs-only 复核轮；保留原文意图）
+## 主助手独立复核（TEST-C1 残余；事实证据；非施工／非庭审）
 
-~~本轮仅 forward `ak-roles:` **docs**（追加主助手独立复核事实证据）；不改生产／测试代码~~ → **已被「TEST-C1 残余」轮接续**；独立复核节正文仍保留为当时事实证据。
+**执行者**：主助手（非 worker）。**性质**：对「TEST-C1 残余」节既有 public+private inline 枚举与 8 选择器聚焦的**独立复跑取证**；**不重复施工／不另写测试／不改生产代码**。
+**代码结果交付边界**：目标＝事实证据回执 forward；**非**目标 merge，**非**庭审收敛。
+**复核 HEAD**：`6589363617b5b68732d184b6d7339181f5301ec2`（相对残余开工 `79325958864db0d34771457cbe431e273c34d15f`）。
+**临时根**：`/tmp/1891-test-c1-independent.iZBtm9/`（`enum.py`／`enum.log`／`command.txt`／`focus.log`／`user`／`pytest`）。
+**失败史**：上文「失败史：旧 ORPHAN=0 范围错误」**原样保留、不改写**；本节只证修后修正口径。
+**Advisor 边界**：只读 advisor **PASS**＝自主顾问非正式意见，**非法庭审／非法源**——不得升格为正式庭审结论。
+
+### A) 独立 AST 枚举（public+private 修正口径）
+
+做法：从残余回执既有 bash fence 抽取 public+private inline enum，写入 `$TMPROOT/enum.py` 后直接运行（与残余施工命令体同口径；响亮解析）。
+
+```bash
+TMPROOT=/tmp/1891-test-c1-independent.iZBtm9
+$PY "$TMPROOT/enum.py" | tee "$TMPROOT/enum.log"
+```
+
+主助手实测摘要（数字以 `enum.log` 为准，不改写）：
+
+| 指标 | 值 |
+| --- | --- |
+| ORPHAN | **0** |
+| KEEP_PYTEST／KEEP_FIXTURE／KEEP_CONSUMED／DYNAMIC | **2744／38／740／0** |
+| PUBLIC_SUPPORT_CANDIDATES | **61**（全 KEEP；与残余附表 C 同口径） |
+
+### B) 独立聚焦 pytest（残余 8 selectors）
+
+真实命令全文存在 `$TMPROOT/command.txt`（下引为该文件原文，不改写）：
+
+```bash
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest -p no:cacheprovider --basetemp=/tmp/1891-test-c1-independent.iZBtm9/pytest -q --tb=short tests/test_cli_play_turn.py tests/test_web_court_visibility.py tests/test_qa_s2_copy_prompts_1356_1402.py tests/test_chat_stream_failpaths_393.py tests/test_web_chat_serialization_393.py tests/test_settlement_write_guard_393.py tests/test_audience_background.py tests/test_web_audience_night_498.py
+```
+
+安全 env（七项 BIN=`/usr/bin/false` + 字节码关 + 新 user／basetemp；`-p no:cacheprovider`；与 command 同轮）：
+
+```bash
+export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  MING_SIM_USER_DATA_DIR=/tmp/1891-test-c1-independent.iZBtm9/user
+```
+
+结果：`focus.log` → **`122 passed, 1 warning in 5.37s`**；主助手墙钟 **6.397s**。未跑全量／真实宿主／网络模型。不冒称 typecheck。
+
+### C) 独立 Ruff F401／F821
+
+主助手独立执行（相对残余开工 `793259588` → 复核 HEAD）：
+
+```bash
+UV_TOOL_DIR=/tmp/1891-uv-tools UV_CACHE_DIR=/tmp/1891-uv-cache \
+  uv tool run --from ruff==0.11.2 ruff check --target-version py313 --select F401,F821 \
+  $(git diff --name-only --diff-filter=ACMR 793259588..HEAD -- '*.py')
+```
+
+结果：**All checks passed!**
+
+### D) 工作树洁净
+
+相对复核 HEAD `6589363617b5b68732d184b6d7339181f5301ec2`：`git diff --check 793259588..HEAD` 与 `git status` **均无输出**（本 forward 提交前工作树仅追加本节后的 docs diff）。
+
+## 提交约束声明（本轮：docs-only 残余独立复核 forward）
+
+本轮仅 forward `ak-roles:` **docs**（在残余回执追加主助手独立复核事实证据）；不 amend／stash／reset／checkout 覆盖／rebase／squash／push／PR；不改生产／测试代码；不改宪法／Soul／宿主配置／席位表；不造通用机制或永久自证测试；不重复施工／测试；不抹失败史；不冒称正式庭审；`git diff --check` 绿。
+
+## 提交约束声明（历史：旧 docs-only 复核轮；保留原文意图）
+
+~~本轮仅 forward `ak-roles:` **docs**（追加主助手独立复核事实证据）；不改生产／测试代码~~ → **已被「TEST-C1 残余」施工轮接续**；旧独立复核节正文仍保留为当时（私有口径）事实证据。
