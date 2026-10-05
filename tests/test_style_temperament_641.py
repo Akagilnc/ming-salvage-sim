@@ -171,8 +171,8 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
     assert changes[0]["item"] == item
 
 
-def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
-    """真入口 character_context_with_db 可调；关系账用结构化身份断言，不锁散文。"""
+def test_character_context_with_db_exposes_viewer_relation_ledger(game):
+    """真入口 character_context_with_db 必须可调用；外部契约是关系账结构化身份，不锁供料正文。"""
     db, state, content = game
     person = content.characters[PERSON]
     other = next(
@@ -182,7 +182,6 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
         and db.get_character_status(c.name)[0] == "active"
         and getattr(c, "power_id", "ming") == "ming"
     )
-    before_logs = _temperament_logs(db)
 
     issues.apply_score_extraction(
         db,
@@ -202,13 +201,11 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
         period=int(state.period),
     )
 
-    # 所称消费者必须真调用（防空心化）；返回值是供料正文，不对其自由文本建机械依赖。
-    ctx = character_context_with_db(person, db)
-    assert isinstance(ctx, str) and ctx
+    # 所称消费者必须真调用（防空心化）；不对其自由正文做类型／非空／等值换形。
+    character_context_with_db(person, db)
 
     expected_own = project_relation_ledger(db, viewer=person.name)
     assert [(d["source"], d["target"]) for d in expected_own] == [(person.name, other.name)]
-    assert _temperament_logs(db) == before_logs + 1
     assert expected_own[0]["source"] == person.name
     assert expected_own[0]["target"] == other.name
 

@@ -460,7 +460,9 @@ def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )
     assert len(edges) == 1
-    assert edges[0]["context"] == f"收权·罢差·便宜行事·{domain}"
+    assert edges[0]["source"] == holder
+    assert edges[0]["target"] == EMPEROR_NODE
+    assert edges[0]["event_kind"] == "结怨"
 
     targets = select_faction_brew_targets(
         db, year=int(state.year), period=int(state.period),

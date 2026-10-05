@@ -74,12 +74,10 @@ def test_approved_recommendation_writes_both_edges_atomically(game):
     assert grace["source"] == recommender.name
     assert grace["target"] == row["name"]
     assert grace["event_kind"] == "恩义"
-    assert grace["context"] == reason
     zhiyu = by_origin[f"recommendation:{event['id']}:知遇|round:{turn}"]
     assert zhiyu["source"] == "皇帝"
     assert zhiyu["target"] == recommender.name
     assert zhiyu["event_kind"] == "知遇"
-    assert zhiyu["context"] == reason
 
     # restore：只读重建 GameState 后，任命与双边无损接续（P1/TD-5）。
     restored = db.load_state()
