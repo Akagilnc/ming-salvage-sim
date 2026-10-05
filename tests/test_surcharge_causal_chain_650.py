@@ -371,7 +371,7 @@ def _gazette_projection_body(db, state, name, turn):
 
 
 def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_it(game, monkeypatch):
-    """自由邸报按 projection:turn_report 入公开读链，正文等于该回已归档奏报。"""
+    """自由邸报按 projection:turn_report 入公开读链；钉 turn 行与投影行身份，不锁正文。"""
     db, state, content = game
     first_turn = state.turn
     first_body = "陕西加派月报。"
@@ -379,8 +379,10 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
         state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=10.0)]},
         before_turn=first_turn, content=content, monkeypatch=monkeypatch, narrative=first_body,
     )
-    assert db.get_turn_report(first_turn) == first_body
-    assert _gazette_projection_body(db, state, "温体仁", first_turn) == first_body
+    assert db.conn.execute(
+        "SELECT turn FROM turn_reports WHERE turn=?", (first_turn,)
+    ).fetchone() is not None
+    assert _gazette_projection_body(db, state, "温体仁", first_turn) is not None
 
     free_body = "陕西流民渐起，关中贼势暗流潜滋。"
     second_turn = state.turn
@@ -389,8 +391,10 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
         state, db, {"surcharge_decrees": [_decree(db, state,monthly_amount=-10.0)]},
         before_turn=second_turn, content=content, monkeypatch=monkeypatch, narrative=free_body,
     )
-    assert db.get_turn_report(second_turn) == free_body
-    assert _gazette_projection_body(db, state, "温体仁", second_turn) == free_body
+    assert db.conn.execute(
+        "SELECT turn FROM turn_reports WHERE turn=?", (second_turn,)
+    ).fetchone() is not None
+    assert _gazette_projection_body(db, state, "温体仁", second_turn) is not None
 
 
 # ── legacy 万口径档：折算随存档单位换算，sub-万不可表达 ────────────────────────

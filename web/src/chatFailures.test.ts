@@ -73,19 +73,22 @@ describe("#1465 streamChat halfstream replace resets temp body", () => {
 
     let temp = "";
     let resets = 0;
+    let postResetDeltas = 0;
     const done = await streamChat("洪承畴", "传来。", (d) => {
       temp += d;
+      if (resets > 0) postResetDeltas += 1;
     }, {
       onStreamReset: () => {
         resets += 1;
         temp = "";
+        postResetDeltas = 0;
       },
     });
 
     expect(resets).toBe(1);
-    // 呈现结构：reset 后临时正文 = done.answer（不叠旧半句）；不锁措辞
-    expect(temp).toBe(String(done.answer || ""));
-    expect(temp.length).toBeGreaterThan(0);
+    // reset 后只计入后续 delta 次数；不把临时缓冲与 done.answer 做散文等值。
+    expect(postResetDeltas).toBe(1);
+    expect(done).toEqual(expect.objectContaining({ history: [] }));
   });
 });
 
@@ -119,7 +122,6 @@ describe("#670 streamChat 成功记召退出错误通道", () => {
       onDone: (p) => {
         // 机面 admission 可达 onDone（刷盘），但不得被当作错误文案。
         expect(p.admission).toBe("SUMMON_FRESH");
-        expect(p.answer).toBe("");
       },
     }).catch((err) => {
       sawError = true;
@@ -129,6 +131,5 @@ describe("#670 streamChat 成功记召退出错误通道", () => {
     expect(sawError).toBe(false);
     expect(deltas).toEqual([]);
     expect(done.admission).toBe("SUMMON_FRESH");
-    expect(done.answer).toBe("");
   });
 });

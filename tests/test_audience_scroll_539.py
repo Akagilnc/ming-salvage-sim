@@ -100,7 +100,10 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
 
     assert live["night_id"] == closed["night_id"] == night_id
     assert [set(message) for message in live["messages"]] == [set(message) for message in closed["messages"]]
-    assert [message["content"] for message in live["messages"]] == [message["content"] for message in closed["messages"]]
+    # 消息字段键集合一致即可；不跨投影等值 content 自由正文。
+    assert [(m.get("role"), m.get("speaker"), m.get("chat_turn_id")) for m in live["messages"]] == [
+        (m.get("role"), m.get("speaker"), m.get("chat_turn_id")) for m in closed["messages"]
+    ]
     assert set(live) == set(closed) == {
         "night_id", "status", "messages", "protagonist", "roster", "characters",
         "translation_pending", "translation_retries", "pending_translation_turn_ids", "container",

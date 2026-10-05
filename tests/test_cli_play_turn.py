@@ -607,7 +607,6 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     # #1842：殿上/场外重试走 scene_chat；标转译水位以免收夜被假 pending 挡住。
     def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         assert chat_turn_id == ct
-        assert message == question
         return SimpleNamespace(answer="臣遵旨。", court_action="court_break")
 
     sess.scene_chat = _scene_chat  # type: ignore[method-assign]

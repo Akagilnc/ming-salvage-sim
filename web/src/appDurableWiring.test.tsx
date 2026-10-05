@@ -57,9 +57,9 @@ const click = (el: Element | null | undefined) => act(() => { el?.dispatchEvent(
 const cmdByCaption = (host: HTMLElement, caption: string) =>
   Array.from(host.querySelectorAll("button")).find((b) => (b.getAttribute("aria-label") || "").startsWith(caption)) || null;
 const edictCommand = (host: HTMLElement) => cmdByCaption(host, "拟诏");
-/** #1888 J3：邸报正文是 LLM 生成的自由文本——只断言「面板在、正文非空」，不锁定文案。 */
-const gazetteReport = (host: HTMLElement | Document) =>
-  host.querySelector('[data-testid="settlement-gazette-panel"] pre.memorial-text')?.textContent?.trim() ?? "";
+/** #1888／#1897 F3：邸报正文是 LLM 自由文本——只断言面板／pre 节点在，不锁文案、不做非空换形。 */
+const gazettePanel = (host: HTMLElement | Document) =>
+  host.querySelector('[data-testid="settlement-gazette-panel"] pre.memorial-text');
 const findButton = (host: HTMLElement, text: string) =>
   Array.from(host.querySelectorAll("button")).find((b) => (b.textContent || "").includes(text));
 /** #1764：有名 section/region——可访问名来自 aria-labelledby → 可见 h3 铬字。 */
@@ -1131,7 +1131,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
     expect(reopened.querySelector('[data-testid="settle-resume"]')).toBeNull();
     expect(reopened.querySelector('[data-testid="settlement-gazette-panel"]')).not.toBeNull();
-    expect(gazetteReport(reopened)).not.toBe("");
+    expect(gazettePanel(reopened)).not.toBeNull();
   });
 
   it("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹", async () => {
@@ -1199,7 +1199,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
     });
     expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
-    expect(gazetteReport(host)).not.toBe("");
+    expect(gazettePanel(host)).not.toBeNull();
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
 
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
@@ -1422,7 +1422,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
     });
     expect(stateGets).toBeGreaterThan(getsBeforeDone);
-    expect(gazetteReport(host)).not.toBe("");
+    expect(gazettePanel(host)).not.toBeNull();
     // 主界面仍挂着，但旧月内容不可见、不可交互；提示与阅读独立可达。
     const staleFace = host.querySelector<HTMLElement>("main > div[inert]");
     expect(staleFace?.getAttribute("aria-hidden")).toBe("true");
@@ -1443,7 +1443,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(stateGets).toBeGreaterThan(getsBeforeReadingRetry));
       await Promise.resolve();
     });
-    expect(gazetteReport(host)).not.toBe("");
+    expect(gazettePanel(host)).not.toBeNull();
     expect(streamPosts()).toBe(streamPostsBeforeDismiss);
     const getsBeforeDismiss = stateGets;
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>

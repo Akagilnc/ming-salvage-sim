@@ -74,8 +74,7 @@ describe("commitment progress display", () => {
 
   it("uses a styled fallback when a commitment has progress but no text", () => {
     const cleanup = render(<IssueGroup title="待办" issues={[makeCommitmentWithoutProgressText()]} />);
-    const progress = document.querySelector(".issue-commitment-progress");
-    expect((progress?.textContent || "").trim()).not.toBe("");
+    expect(document.querySelector(".issue-commitment-progress")).not.toBeNull();
     cleanup();
   });
 

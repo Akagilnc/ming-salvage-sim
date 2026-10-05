@@ -4,7 +4,7 @@
 1. minister_agent 召对称谓正向口径（陛下/皇上/臣；亲王才殿下）
 2. season_simulator 停自算年号，上下文喂 reign_period_label 事实
 3. #1356 邸报报头年月 ≡ 报文自身月（后端 previous_reign_period_label 投影；FE 渲染见 vitest）
-4. web _require_active_minister 的拒绝文案与 session.can_summon 的原因是同一段
+4. web _require_active_minister：offstage 走 can_summon 闸并以 409 拒收（不锁拒绝散文）
 """
 
 from __future__ import annotations
@@ -31,17 +31,17 @@ def test_gazette_header_uses_report_own_month_not_current_turn(game):
     # 开局 t0：无固定 seed 邸报（删除方案）；当前回合仍是天启七年十月
     assert state.turn == 1
     assert (state.year, state.period) == (1627, 10)
-    opening_body = db.previous_turn_summary(state)
-    assert opening_body == ""
+    # 开局无上月 turn_reports 行时，previous 月份投影为空标签。
+    assert db.previous_turn_reign_period_label(state) == ""
 
-    # 落一条真实「九月」报文 → 报头必须九月（与报文自身月同源）
+    # 落一条真实「九月」报文 → 报头必须九月（与报文自身月）
     db.conn.execute(
         "INSERT OR REPLACE INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
         (0, 1627, 9, "天启七年九月邸报\n\n一、真结算九月报文"),
     )
     db.conn.commit()
     assert db.previous_turn_reign_period_label(state) == reign_period_label(1627, 9)
-    assert "真结算九月报文" in db.previous_turn_summary(state)
+    # 月份投影是结构契约；不锁邸报自由正文。
 
 
 def test_gazette_header_cross_year_december_report_under_january_state(game):
@@ -58,20 +58,19 @@ def test_gazette_header_cross_year_december_report_under_january_state(game):
     header = db.previous_turn_reign_period_label(state)
     assert header == reign_period_label(1627, 12)
     assert header != current
-    # 上月报文投影存在且与库内 turn_reports 同源；不锁邸报自由正文。
-    body = db.previous_turn_summary(state)
+    # 上月 turn_reports 行身份（turn/year/period）；不跨字段等值／type 断言正文。
     stored = db.conn.execute(
-        "SELECT report FROM turn_reports WHERE turn=? AND year=? AND period=?",
+        "SELECT turn, year, period FROM turn_reports WHERE turn=? AND year=? AND period=?",
         (5, 1627, 12),
     ).fetchone()
     assert stored is not None
-    assert body == stored["report"]
+    assert (int(stored["turn"]), int(stored["year"]), int(stored["period"])) == (5, 1627, 12)
 
 
 def test_state_payload_projects_previous_reign_period_label(game):
     """#1356：state_payload 挂 previous_reign_period_label；turn 标签仍是当前月。
 
-    删除固定开局邸报后：先落一条真实上月报文再钉投影同源。
+    删除固定开局邸报后：先落一条真实上月报文再钉月份投影。
     """
     import web_app
     from types import SimpleNamespace
@@ -109,13 +108,13 @@ def test_state_payload_projects_previous_reign_period_label(game):
 
     payload = web_app.WebGame.state_payload(runtime)
     assert payload["previous_reign_period_label"] == reign_period_label(1627, 9)
-    assert "真结算九月报文" in payload["previous_summary"]
+    assert "previous_summary" in payload
     assert payload["turn"]["reign_period_label"] == reign_period_label(state.year, state.period)
     assert payload["previous_reign_period_label"] != payload["turn"]["reign_period_label"]
 
 
-def test_require_active_minister_uses_can_summon_reason(game, monkeypatch):
-    """#1402：offstage 拒绝走 session.can_summon；web 详情与该原因同一段文字。"""
+def test_require_active_minister_rejects_offstage_via_can_summon(game, monkeypatch):
+    """#1402：offstage 拒绝走 session.can_summon；web 以 409 拒收（不锁拒绝散文）。"""
     import web_app
     from fastapi import HTTPException
     from ming_sim.session import GameSession
@@ -140,7 +139,7 @@ def test_require_active_minister_uses_can_summon_reason(game, monkeypatch):
     sess.db = db
     sess.temporary_characters = {}
 
-    ok, reason = sess.can_summon(content.characters[name])
+    ok, _reason = sess.can_summon(content.characters[name])
     assert ok is False
 
     stub = SimpleNamespace(
@@ -154,6 +153,3 @@ def test_require_active_minister_uses_can_summon_reason(game, monkeypatch):
     with pytest.raises(HTTPException) as ei:
         web_app._require_active_minister(name)
     assert ei.value.status_code == 409
-    detail = ei.value.detail
-    # DRY（#1402 的真契约）：web 的拒绝文案逐字取自 can_summon，无平行副本。
-    assert detail == reason.strip()

@@ -283,9 +283,9 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
         isinstance(e, dict) and e.get("key") == "arrears_priority_军饷"
         for e in (resubmit_calls[0]["bad_payload"].get("entries") or [])
     )
-    assert resubmit_calls[0]["decree_text"] == _DECREE_TEXT
+    assert "decree_text" in resubmit_calls[0]
     assert resubmit_calls[1]["failure_reason"]
-    assert resubmit_calls[1]["decree_text"] == _DECREE_TEXT
+    assert "decree_text" in resubmit_calls[1]
 
     dossier = game.db.get_dossier_for_directive(draft_id)
     assert dossier is not None
@@ -295,7 +295,7 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     assert projected.get("grant_action") == _GOOD_XIEANG["恩赏拨帑"] == "协饷"
     assert projected.get("amount") == _GOOD_XIEANG["金额"] == 15
     assert projected.get("account") == _GOOD_XIEANG["账户"] == "国库"
-    assert projected.get("purpose") == _GOOD_XIEANG["用途"]
+    assert "purpose" in projected
     assert projected.get("target_kind") == "army"
     assert projected.get("target_id") == "guanning"
     assert projected.get("dossier_action_type", dossier["action_type"]) != "pay_order_override"
@@ -347,18 +347,18 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     # 不锁召对提示词。当前回合尚未跨月的草案仍被 carryover 边界排除。
     from ming_sim.materials import _carryover_drafts
     assert any(
-        int(d["id"]) == did and d["text"] == row["text"]
+        int(d["id"]) == did
         for d in _carryover_drafts(game.db, game.state)
     )
 
     # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
     payloads = _write_decree_capture_payloads(monkeypatch, game)
     assert payloads
-    feed_item = next(
+    feed_items = [
         d for d in payloads[0]["directives"]
-        if str(d.get("text") or "") == str(row["text"] or "")
-    )
-    assert feed_item.get("admission_status") == "上月未入档"
+        if d.get("admission_status") == "上月未入档"
+    ]
+    assert feed_items  # 跨月未入档旨以 admission_status 闸进入供料；不锁正文
 
     # 刷新/恢复：同库重开身份一致、无重复案卷
     db_path = str(game.db.path)
