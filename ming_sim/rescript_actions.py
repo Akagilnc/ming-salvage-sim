@@ -249,9 +249,6 @@ class ValidatedBatch:
     # 新鲜批 P 内急务缺 action → 落印时机械 hold 的 keys
     default_hold_keys: List[str] = field(default_factory=list)
 
-    def by_key(self) -> Dict[str, ValidatedItem]:
-        return {it.decision_key: it for it in self.items}
-
 
 @dataclass
 class PrewriteResults:

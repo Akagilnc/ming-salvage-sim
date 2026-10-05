@@ -347,12 +347,6 @@ class AffairStore:
     def origin_ref(affair_id: int) -> str:
         return f"{_ORIGIN_AFFAIR}:{int(affair_id)}"
 
-    def origin_refs(self, affair_id: int) -> tuple[str, ...]:
-        self.get(affair_id)
-        refs = [self.origin_ref(affair_id)]
-        refs.extend(f"{_ORIGIN_DOSSIER}:{int(row['id'])}" for row in self.dossiers(affair_id))
-        return tuple(refs)
-
     def affair_id_for_issue(self, issue_id: int) -> int:
         row = self._conn.execute(
             "SELECT affair_id FROM issues WHERE id=?", (int(issue_id),)
