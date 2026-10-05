@@ -1,0 +1,130 @@
+=== class mechanical enum (enum_members.py) ===
+A_hits 36 Counter({'army_pay_cutover_selector_or_gate': 33, 'identity_wrapper': 2, 'dedicated_legacy_or_cutover_off': 1})
+B_hits 48 Counter({'idle_unused_helper': 47, 'idle_duplicate_of_used': 1})
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	304	_ARMY_PAY_SOURCE_CUTOVER_KEY = "__army_pay_source_cutover"
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	2702	if self.is_army_pay_source_cutover_enabled():
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	2741	if self.is_army_pay_source_cutover_enabled():
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	3330	def is_army_pay_source_cutover_enabled(self) -> bool:
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	3333	(_ARMY_PAY_SOURCE_CUTOVER_KEY,),
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	3337	def _mark_army_pay_source_cutover_enabled(self) -> None:
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	3344	(_ARMY_PAY_SOURCE_CUTOVER_KEY,),
+旧兼容及退役残余闭包	dedicated_legacy_or_cutover_off	ming_sim/db.py	3348	"""Fresh-save cutover for #287 S1; existing saves stay on legacy army-pay flow."""
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	3427	self._mark_army_pay_source_cutover_enabled()
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	3647	if not self.is_army_pay_source_cutover_enabled():
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	3902	if self.is_army_pay_source_cutover_enabled():
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	3958	if self.is_army_pay_source_cutover_enabled() or exempt
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	4037	if self.is_army_pay_source_cutover_enabled():
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	4330	if not region_id or not self.is_army_pay_source_cutover_enabled():
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	6675	if self.is_army_pay_source_cutover_enabled():
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	6722	if self.is_army_pay_source_cutover_enabled() and field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	6792	if self.is_army_pay_source_cutover_enabled():
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	6949	self.is_army_pay_source_cutover_enabled()
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	7043	if field == "manpower" and self.is_army_pay_source_cutover_enabled():
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	7237	if self.is_army_pay_source_cutover_enabled() and initial_arrears > 0:
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/db.py	7268	if self.is_army_pay_source_cutover_enabled():
+旧兼容及退役残余闭包	identity_wrapper	ming_sim/applier.py	108	def __enter__(...) -> return self
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	ming_sim/flows.py	1226	if db.is_army_pay_source_cutover_enabled():
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_fiscal_substrate_bridge.py	418	assert fresh_db.is_army_pay_source_cutover_enabled()
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_mutiny_latch_315.py	19	for key in ("__army_pay_source_cutover",):
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_player_army_projection_321.py	105	for key in ("__army_pay_source_cutover",):
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_mutiny_redemption_317.py	16	for key in ("__army_pay_source_cutover",):
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_mutiny_third_strike_318.py	38	for key in ("__army_pay_source_cutover",):
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_mutiny_third_strike_318.py	234	"('__army_pay_source_cutover',?,'meta','adapter-fact') "
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_mutiny_third_strike_318.py	281	"('__army_pay_source_cutover',1,'meta','test') "
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_mutiny_third_strike_318.py	330	"('__army_pay_source_cutover',?,'meta','adapter-fact') "
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_mutiny_third_strike_318.py	374	"('__army_pay_source_cutover',?,'meta','adapter-fact') "
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_mutiny_progression_316.py	17	for key in ("__army_pay_source_cutover",):
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_mutiny_noop_whitelist_319.py	66	for key in ("__army_pay_source_cutover",):
+旧兼容及退役残余闭包	army_pay_cutover_selector_or_gate	tests/test_effect_origin_558.py	322	"('__army_pay_source_cutover',1,'meta','active hub cutover')"
+旧兼容及退役残余闭包	identity_wrapper	tests/test_settlement_write_guard_393.py	105	def directive_payload(...) -> return row
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_presence_500.py	178	_session_double
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_presence_500.py	193	_tool_registry
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_restore_505.py	861	_657_active_minister
+重复或闲置测试流程	idle_unused_helper	tests/test_adr0015_per_item_rejection.py	7	_reports
+重复或闲置测试流程	idle_unused_helper	tests/test_pay_order_override_653.py	908	_pin_shortfall_board
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_translation_1838.py	203	_drain_scene_owner
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	171	_install_canned_minister
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	181	_month_ord_of
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	305	_play_one_month
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	465	_setup_open_night_participant
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	499	_assert_court_break_closed
+重复或闲置测试流程	idle_unused_helper	tests/test_decree_dossiers_571.py	1891	_complete_session
+重复或闲置测试流程	idle_unused_helper	tests/test_fiscal_levy_effect.py	65	_settled_land_by_region
+重复或闲置测试流程	idle_duplicate_of_used	tests/test_qa_c2_phase_settlement_mask_1374.py	27	_null_cm IDENTICAL_TO tests/test_month_open_snapshot_1234.py:_null_cm
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_background.py	162	_assert_next_accepted
+重复或闲置测试流程	idle_unused_helper	tests/test_economy_section_rejections.py	26	_guoku
+重复或闲置测试流程	idle_unused_helper	tests/test_secret_order_monthly_progress_566.py	45	_canned_monthly_settlement
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	76	_row
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	161	_web_runtime
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	191	_find_army_in_map_nodes
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	199	_assert_structured_situation
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	212	_assert_chain_embeds_situation
+重复或闲置测试流程	idle_unused_helper	tests/test_issue_entities.py	22	_army_count
+重复或闲置测试流程	idle_unused_helper	tests/test_promulgation_seam_560.py	30	_stage_policy_dossier
+重复或闲置测试流程	idle_unused_helper	tests/test_execution_tenure_613.py	92	_clear_character_offices
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_actual_residence_659.py	26	_pin_split_arrears
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_actual_residence_659.py	41	_executing_dossier
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_actual_residence_659.py	70	_simulator_army_dicts
+重复或闲置测试流程	idle_unused_helper	tests/test_structured_decree_contract_1624.py	78	_month_end_ctx
+重复或闲置测试流程	idle_unused_helper	tests/test_structured_decree_contract_1624.py	120	_army_none_legal_item
+重复或闲置测试流程	idle_unused_helper	tests/test_structured_decree_contract_1624.py	241	_executing_counts
+重复或闲置测试流程	idle_unused_helper	tests/test_qa_h1_seed_data.py	32	_bajiu_names
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_third_strike_318.py	20	_simulator_army_dicts
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_third_strike_318.py	28	_find_simulator_army
+重复或闲置测试流程	idle_unused_helper	tests/test_transit_countdown_668.py	246	_assert_ledger_match
+重复或闲置测试流程	idle_unused_helper	tests/test_refugee_loop_652.py	63	_reflux
+重复或闲置测试流程	idle_unused_helper	tests/test_junxin_monthly_tick_314.py	32	_setup_army
+重复或闲置测试流程	idle_unused_helper	tests/test_army_card_status_1501.py	113	_web_runtime
+重复或闲置测试流程	idle_unused_helper	tests/test_cli_play_turn.py	29	_noop_atomic
+重复或闲置测试流程	idle_unused_helper	tests/test_centrifuge_ledger_690.py	75	_set_identity
+重复或闲置测试流程	idle_unused_helper	tests/test_enter_settlement_period_1235.py	52	_fake_settlement_llm
+重复或闲置测试流程	idle_unused_helper	tests/test_enter_settlement_period_1235.py	120	_terminal_sse
+重复或闲置测试流程	idle_unused_helper	tests/test_highlight_judge_544.py	187	_restore_highlight_seams
+重复或闲置测试流程	idle_unused_helper	tests/test_highlight_judge_544.py	200	_drain
+重复或闲置测试流程	idle_unused_helper	tests/test_supervision_625.py	111	_insert_staged
+重复或闲置测试流程	idle_unused_helper	tests/test_relation_capture_633.py	496	_module_of
+重复或闲置测试流程	idle_unused_helper	tests/test_pre_settle_transaction.py	215	_drive_resolve_directives
+重复或闲置测试流程	idle_unused_helper	tests/test_pihong_dossier_1490.py	76	_658_session
+=== class A supplemental rg (cutover / fiscal / wrapper) ===
+rg: cli: No such file or directory (os error 2)
+tests/test_effect_origin_558.py:322:        "('__army_pay_source_cutover',1,'meta','active hub cutover')"
+tests/test_fiscal_substrate_bridge.py:418:    assert fresh_db.is_army_pay_source_cutover_enabled()
+ming_sim/flows.py:1226:            if db.is_army_pay_source_cutover_enabled():
+tests/test_mutiny_latch_315.py:19:    for key in ("__army_pay_source_cutover",):
+tests/test_player_army_projection_321.py:105:    for key in ("__army_pay_source_cutover",):
+tests/test_mutiny_third_strike_318.py:38:    for key in ("__army_pay_source_cutover",):
+tests/test_mutiny_third_strike_318.py:234:        "('__army_pay_source_cutover',?,'meta','adapter-fact') "
+tests/test_mutiny_third_strike_318.py:281:        "('__army_pay_source_cutover',1,'meta','test') "
+tests/test_mutiny_third_strike_318.py:330:        "('__army_pay_source_cutover',?,'meta','adapter-fact') "
+tests/test_mutiny_third_strike_318.py:374:        "('__army_pay_source_cutover',?,'meta','adapter-fact') "
+tests/test_mutiny_noop_whitelist_319.py:66:    for key in ("__army_pay_source_cutover",):
+tests/test_mutiny_redemption_317.py:16:    for key in ("__army_pay_source_cutover",):
+tests/test_mutiny_progression_316.py:17:    for key in ("__army_pay_source_cutover",):
+ming_sim/db.py:304:_ARMY_PAY_SOURCE_CUTOVER_KEY = "__army_pay_source_cutover"
+ming_sim/db.py:2702:        if self.is_army_pay_source_cutover_enabled():
+ming_sim/db.py:2741:        if self.is_army_pay_source_cutover_enabled():
+ming_sim/db.py:3330:    def is_army_pay_source_cutover_enabled(self) -> bool:
+ming_sim/db.py:3333:            (_ARMY_PAY_SOURCE_CUTOVER_KEY,),
+ming_sim/db.py:3337:    def _mark_army_pay_source_cutover_enabled(self) -> None:
+ming_sim/db.py:3344:            (_ARMY_PAY_SOURCE_CUTOVER_KEY,),
+ming_sim/db.py:3348:        """Fresh-save cutover for #287 S1; existing saves stay on legacy army-pay flow."""
+ming_sim/db.py:3427:        self._mark_army_pay_source_cutover_enabled()
+ming_sim/db.py:3647:        if not self.is_army_pay_source_cutover_enabled():
+ming_sim/db.py:3902:            if self.is_army_pay_source_cutover_enabled():
+ming_sim/db.py:3958:                if self.is_army_pay_source_cutover_enabled() or exempt
+ming_sim/db.py:4037:        if self.is_army_pay_source_cutover_enabled():
+ming_sim/db.py:4330:        if not region_id or not self.is_army_pay_source_cutover_enabled():
+ming_sim/db.py:6675:            if self.is_army_pay_source_cutover_enabled():
+ming_sim/db.py:6722:                if self.is_army_pay_source_cutover_enabled() and field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
+ming_sim/db.py:6792:                    if self.is_army_pay_source_cutover_enabled():
+ming_sim/db.py:6949:                        self.is_army_pay_source_cutover_enabled()
+ming_sim/db.py:7043:                if field == "manpower" and self.is_army_pay_source_cutover_enabled():
+ming_sim/db.py:7237:            if self.is_army_pay_source_cutover_enabled() and initial_arrears > 0:
+ming_sim/db.py:7268:            if self.is_army_pay_source_cutover_enabled():
+=== class B supplemental: identical unused _run_exclusive / _ledger_count shapes ===
+tests/test_pre_settle_transaction.py:25:def _ledger_count(db, turn: int) -> int:
+tests/test_refugee_loop_652.py:32:def _pop(db: GameDB, name: str, region_id: str) -> int:
+tests/test_population_transfers_649.py:27:def _pop(db: GameDB, name: str, region_id: str) -> int:
+tests/test_population_transfers_649.py:35:def _global_population(db: GameDB) -> int:
+tests/test_session_write_queue_1353.py:25:def _run_exclusive(q, fn):
+tests/test_surcharge_causal_chain_650.py:36:def _pop(db: GameDB, name: str, region_id: str) -> int:

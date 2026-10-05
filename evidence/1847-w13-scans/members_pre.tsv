@@ -1,23 +1,23 @@
 klass	kind	file	line	symbol	disposition	keep_basis	note
 旧兼容及退役残余闭包	identity_wrapper	ming_sim/issues.py	3116	_content_population_effect_for_save	DELETE_INLINE		return effect; unused=['db']
-旧兼容及退役残余闭包	parallel_gate	ming_sim/issues.py	6615	if not db.is_substrate_hub_fiscal_engine_enabled():	REVIEW		
-旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	305	_FISCAL_ENGINE_KEY = "__fiscal_engine"	REVIEW		
-旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	306	_FISCAL_ENGINE_LEGACY = 0	REVIEW		
-旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	3345	value = int(row["value"] or 0) if row is not None else _FISCAL_ENGINE_LEGACY	REVIEW		
-旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	3348	def is_substrate_hub_fiscal_engine_enabled(self) -> bool:	REVIEW		
-旧兼容及退役残余闭包	parallel_gate	ming_sim/db.py	3349	return self.fiscal_engine() == "substrate_hub"	REVIEW		
-旧兼容及退役残余闭包	parallel_gate	ming_sim/db.py	3697	if self.is_substrate_hub_fiscal_engine_enabled():	REVIEW		
-旧兼容及退役残余闭包	parallel_gate	ming_sim/db.py	5451	if self.is_substrate_hub_fiscal_engine_enabled()	REVIEW		
-旧兼容及退役残余闭包	parallel_gate	ming_sim/db.py	5475	if not self.is_substrate_hub_fiscal_engine_enabled():	REVIEW		
-旧兼容及退役残余闭包	parallel_gate	ming_sim/displaced_population.py	59	if not db.is_substrate_hub_fiscal_engine_enabled():	REVIEW		
-旧兼容及退役残余闭包	legacy_exec_branch	ming_sim/flows.py	127	def calc_province_fiscal(	REVIEW		
-旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	440	if db.is_substrate_hub_fiscal_engine_enabled():	REVIEW		
-旧兼容及退役残余闭包	legacy_exec_branch	ming_sim/flows.py	446	gk_tax, nk_huang, _ = calc_province_fiscal(state, db)	REVIEW		
-旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	1058	if db.is_substrate_hub_fiscal_engine_enabled():	REVIEW		
-旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	1189	_apply_budget_lines(skip_substrate_hub_lines=db.is_substrate_hub_fiscal_engine_enabled())	REVIEW		
-旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	1260	if db.is_substrate_hub_fiscal_engine_enabled()	REVIEW		
-旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	1263	if db.is_substrate_hub_fiscal_engine_enabled():	REVIEW		
-旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	1414	f"（{'hub，待入国库' if db.is_substrate_hub_fiscal_engine_enabled() else 'shadow，未入国库'}）"	REVIEW		
+旧兼容及退役残余闭包	parallel_gate	ming_sim/issues.py	6615	if not db.is_substrate_hub_fiscal_engine_enabled():	REVIEW
+旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	305	_FISCAL_ENGINE_KEY = "__fiscal_engine"	REVIEW
+旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	306	_FISCAL_ENGINE_LEGACY = 0	REVIEW
+旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	3345	value = int(row["value"] or 0) if row is not None else _FISCAL_ENGINE_LEGACY	REVIEW
+旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	3348	def is_substrate_hub_fiscal_engine_enabled(self) -> bool:	REVIEW
+旧兼容及退役残余闭包	parallel_gate	ming_sim/db.py	3349	return self.fiscal_engine() == "substrate_hub"	REVIEW
+旧兼容及退役残余闭包	parallel_gate	ming_sim/db.py	3697	if self.is_substrate_hub_fiscal_engine_enabled():	REVIEW
+旧兼容及退役残余闭包	parallel_gate	ming_sim/db.py	5451	if self.is_substrate_hub_fiscal_engine_enabled()	REVIEW
+旧兼容及退役残余闭包	parallel_gate	ming_sim/db.py	5475	if not self.is_substrate_hub_fiscal_engine_enabled():	REVIEW
+旧兼容及退役残余闭包	parallel_gate	ming_sim/displaced_population.py	59	if not db.is_substrate_hub_fiscal_engine_enabled():	REVIEW
+旧兼容及退役残余闭包	legacy_exec_branch	ming_sim/flows.py	127	def calc_province_fiscal(	REVIEW
+旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	440	if db.is_substrate_hub_fiscal_engine_enabled():	REVIEW
+旧兼容及退役残余闭包	legacy_exec_branch	ming_sim/flows.py	446	gk_tax, nk_huang, _ = calc_province_fiscal(state, db)	REVIEW
+旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	1058	if db.is_substrate_hub_fiscal_engine_enabled():	REVIEW
+旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	1189	_apply_budget_lines(skip_substrate_hub_lines=db.is_substrate_hub_fiscal_engine_enabled())	REVIEW
+旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	1260	if db.is_substrate_hub_fiscal_engine_enabled()	REVIEW
+旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	1263	if db.is_substrate_hub_fiscal_engine_enabled():	REVIEW
+旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	1414	f"（{'hub，待入国库' if db.is_substrate_hub_fiscal_engine_enabled() else 'shadow，未入国库'}）"	REVIEW
 旧兼容及退役残余闭包	dedicated_legacy_test	tests/test_pay_order_override_653.py	641	def test_legacy_engine_pay_order_materialize_fails_loud_not_fulfilled(game):	DELETE_OR_REWIRE		专属旧引擎分支/夹具
 旧兼容及退役残余闭包	dedicated_legacy_test	tests/test_pay_order_override_653.py	646	"VALUES ('__fiscal_engine', 0, 'meta', 'test legacy engine') "	DELETE_OR_REWIRE		专属旧引擎分支/夹具
 旧兼容及退役残余闭包	dedicated_legacy_test	tests/test_pay_order_override_653.py	650	assert db.fiscal_engine() == "legacy"	DELETE_OR_REWIRE		专属旧引擎分支/夹具

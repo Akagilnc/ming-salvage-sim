@@ -1201,7 +1201,7 @@ def _advance_province_fiscal_substrate(
     """#66/#266：月末固定财政相位推进省级 settle_tick 基座。
 
     推进基座末态并返回本 tick 起运到京合计，供调用方统一入 hub/国库。
-    基座缺失或 settle_tick 抛 ValueError/守恒破时，在 army pay cutover 下 fail-loud 中止；
+    基座缺失或 settle_tick 抛 ValueError/守恒破时 fail-loud 中止；
     settle_tick 自身契约外的代码异常仍上抛（ADR 0005）。
 
     action 翻译（玩家旨意/事件 → settle_tick actions）属 slice4；本 slice 以空 action 跑基线螺旋。
@@ -1221,21 +1221,15 @@ def _advance_province_fiscal_substrate(
     )
     for outcome in outcomes:
         if outcome.error is not None:
-            # settle_tick 的契约失败（坏态/守恒破）+ 基座缺失 → shadow 隔离，不炸 pre_settle
+            # settle_tick 契约失败（坏态/守恒破）+ 基座缺失 → fail-loud（现役 hub 账本）
             exc = outcome.error
-            if db.is_army_pay_source_cutover_enabled():
-                tlog(
-                    f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}结算中止："
-                    f"{type(exc).__name__}: {exc}"
-                )
-                raise _SubstrateHubFixedFlowAbort(
-                    f"{outcome.region_id} 省级财政基座结算失败：{type(exc).__name__}: {exc}"
-                ) from exc
             tlog(
-                f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}未推进（隔离）："
+                f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}结算中止："
                 f"{type(exc).__name__}: {exc}"
             )
-            continue
+            raise _SubstrateHubFixedFlowAbort(
+                f"{outcome.region_id} 省级财政基座结算失败：{type(exc).__name__}: {exc}"
+            ) from exc
         res = outcome.result
         advanced = True
         b = res.breakdown

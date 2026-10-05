@@ -1,26 +1,21 @@
 klass	kind	file	loc	symbol	disposition	keep_or_fix_basis
-旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	305-307,_3340-3370	fiscal_engine/_FISCAL_ENGINE_*/_mark_substrate_hub	FIX_REMOVE	旧档选择器；无标默认 legacy
-旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	compute_budget_lines else	calc_province_fiscal 预算分支	FIX_REMOVE	平行执行：旧公式预算
-旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py	apply_fixed_period_flows hub if	is_substrate_hub 门控拨付/入库	FIX_UNWRAP	卸门，恒走 hub
-旧兼容及退役残余闭包	legacy_exec_branch	ming_sim/flows.py	calc_province_fiscal+_helpers	旧省级税收计算闭包	FIX_REMOVE	仅服务旧预算分支
-旧兼容及退役残余闭包	parallel_gate	ming_sim/issues.py	surcharge early reject	legacy 拒收加派	FIX_REMOVE	仅服务旧引擎门
-旧兼容及退役残余闭包	parallel_gate	ming_sim/displaced_population.py	59	legacy 早退	FIX_REMOVE	仅服务旧引擎门
-旧兼容及退役残余闭包	parallel_gate	ming_sim/pay_order.py	325-332	legacy 禁物化	FIX_REMOVE	仅服务旧引擎门
-旧兼容及退役残余闭包	parallel_gate	ming_sim/db.py	treasury/budget/validate	hub 条件分支	FIX_UNWRAP	卸门，恒走现役
-旧兼容及退役残余闭包	identity_wrapper	ming_sim/issues.py	3116	 _content_population_effect_for_save	FIX_INLINE_DELETE	退役后恒等包装+7调用
-旧兼容及退役残余闭包	dedicated_legacy_test	tests/test_fiscal_substrate_bridge.py	_disable+dual_track+corrupt/malformed isolation	旧引擎/shadow 专属案	FIX_REMOVE_TEST	专属旧路径
-旧兼容及退役残余闭包	dedicated_legacy_test	tests/test_surcharge_causal_chain_650.py	test_legacy_fiscal_engine_rejects_*	旧引擎拒收案	FIX_REMOVE_TEST	专属旧路径
-旧兼容及退役残余闭包	dedicated_legacy_test	tests/test_pay_order_override_653.py	test_legacy_engine_pay_order_*	旧引擎 fail-loud 案	FIX_REMOVE_TEST	专属旧路径
-旧兼容及退役残余闭包	marker_write_in_tests	tests/test_mutiny_*/test_player_army_*	__fiscal_engine 标记写入	测试夹具双标	FIX_DROP_FISCAL_KEY	只留军饷 cutover 标
-旧兼容及退役残余闭包	active_ledger	ming_sim/flows.py / db.py	substrate hub 预算/入库/军饷	现役账本	KEEP_ACTIVE_LEDGER	现役 hub 账本与新档接续
-旧兼容及退役残余闭包	empire_modifiers	ming_sim/*/legacy_modifiers	帝国修正	现役内容修正	KEEP_EMPIRE_MODIFIERS	判词：非仅凭名字可删的旧档兼容
+旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	(pre)	fiscal_engine/_FISCAL_ENGINE_*/_mark_substrate_hub/__fiscal_engine	FIX_REMOVE	无标默认 legacy 的旧档财政选择器（w13 已删；本轮复扫 0）
+旧兼容及退役残余闭包	legacy_exec_branch	ming_sim/flows.py	(pre)	calc_province_fiscal+_helpers	FIX_REMOVE	仅服务旧预算分支（w13 已删；复扫 0）
+旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py,db.py,issues.py,displaced_population.py,pay_order.py	(pre)	is_substrate_hub_fiscal_engine_enabled 门	FIX_UNWRAP	卸门恒走 hub（w13；复扫 0）
+旧兼容及退役残余闭包	identity_wrapper	ming_sim/issues.py	(pre)	_content_population_effect_for_save	FIX_INLINE_DELETE	退役后恒等包装（w13；复扫 0）
+旧兼容及退役残余闭包	dedicated_legacy_test	tests/test_fiscal_substrate_bridge.py等	(pre)	dual-track/_disable_*/legacy reject	FIX_REMOVE_TEST	专属旧引擎案（w13；复扫 0）
+旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	_ARMY_PAY_SOURCE_CUTOVER_KEY/is_/mark_	军饷分源 cutover 选择器	FIX_REMOVE	无标→False=旧档军饷流；与财政选择器同形旧档分流，不得以「本轮只修财政」收窄
+旧兼容及退役残余闭包	parallel_gate	ming_sim/db.py,flows.py	多处 is_army_pay_source_cutover_enabled	cutover-off 执行分支/shadow 隔离	FIX_UNWRAP	恒走现役分源脊；删 cutover-off owner 旁路与 shadow continue
+旧兼容及退役残余闭包	marker_rw	tests/test_mutiny_*/test_player_army_*/test_effect_origin_558.py	__army_pay_source_cutover 写入/parametrize(0,1)	夹具双态与写标	FIX_DROP_MARKER	删选择器后夹具不再写标；矩阵塌成单路径
+旧兼容及退役残余闭包	active_ledger_seed	ming_sim/db.py	_initialize_army_pay_source_spine	新档军饷脊 seed	KEEP_ACTIVE_LEDGER	现役新档 spine 初始化（非无标选择器）；保留接续
+旧兼容及退役残余闭包	active_ledger	ming_sim/flows.py,db.py	substrate hub 预算/入库/分源军饷	现役账本	KEEP_ACTIVE_LEDGER	现役 hub/分源账本与新档接续
+旧兼容及退役残余闭包	empire_modifiers	ming_sim/*/legacy_modifiers	帝国修正	现役内容修正	KEEP_EMPIRE_MODIFIERS	判词 conflicts：非仅凭名字可删的旧档兼容
 旧兼容及退役残余闭包	governance	docs/adr/0021-*.md	旧档例外条文	ADR	KEEP_ADR_UNTOUCHED	不改治理文件
-旧兼容及退役残余闭包	army_pay_cutover	ming_sim/db.py is_army_pay_source_cutover_*	军饷分源 cutover	现役军饷脊	KEEP_ARMY_PAY_CUTOVER	本轮闭包对象是财政引擎分流，非整段军饷脊；未另加识别拒收
-重复或闲置测试流程	idle_duplicate_of_used	tests/test_audience_travel_gating_670.py	13	_run_exclusive	FIX_DELETE	无调用且与 write_queue 同形
-重复或闲置测试流程	idle_flow_helper	tests/test_junxin_monthly_tick_314.py	51	_run_months	FIX_DELETE	同文件无调用、全仓无引用
-重复或闲置测试流程	idle_duplicate_of_used	tests/test_advance_paths_atomic.py	16	_ledger_count	FIX_DELETE	闲置副本；真源在 pre_settle 案
-重复或闲置测试流程	idle_duplicate_of_used	tests/test_state_reload.py	87	_ledger_count	FIX_DELETE	闲置副本；真源在 pre_settle 案
-重复或闲置测试流程	idle_duplicate_of_used	tests/test_mutiny_actual_residence_659.py	26/34	_pop/_global_population	FIX_DELETE	闲置本地副本
-重复或闲置测试流程	used_real_entry	tests/test_session_write_queue_1353.py	25/352	_run_exclusive + 序列化案	KEEP_USED	真实队列入口行为案
-重复或闲置测试流程	import_false_positive	tests/conftest.py	497	persist_and_schedule_scene	KEEP_IMPORTED	被他文件 import；非闲置
-重复或闲置测试流程	import_false_positive	tests/section_rejection_helpers.py	14	run_declaration	KEEP_IMPORTED	被他文件 import；非闲置
+旧兼容及退役残余闭包	dedicated_legacy_test	tests/test_effect_origin_558.py	test_legacy_economy_ledger_origin_backfill_*	旧档 DROP 列+重开回填	FIX_REMOVE_TEST	ensure_column 旧档升版已退役；专属旧档迁移案随删
+旧兼容及退役残余闭包	identity_wrapper_candidate	tests/test_settlement_write_guard_393.py	105	directive_payload return row	KEEP_TEST_DOUBLE	测试替身 API 透传，非退役换算空壳；有调用职责
+重复或闲置测试流程	idle_duplicate_of_used	tests/test_audience_travel_gating_670.py	(pre)	_run_exclusive	FIX_DELETE	与 write_queue 同形闲置（w13；复扫 0）
+重复或闲置测试流程	idle_flow_helper	tests/test_junxin_monthly_tick_314.py等	(pre)	_run_months/_ledger_count/_pop	FIX_DELETE	闲置副本（w13；复扫 0）
+重复或闲置测试流程	idle_duplicate_of_used	tests/test_qa_c2_phase_settlement_mask_1374.py	27	_null_cm	FIX_DELETE	AST 同形于 month_open_snapshot 已用实现且本文件无调用
+重复或闲置测试流程	used_real_entry	tests/test_session_write_queue_1353.py	25/352	_run_exclusive	KEEP_USED	真实队列入口行为案
+重复或闲置测试流程	used_real_entry	tests/test_month_open_snapshot_1234.py	62	_null_cm	KEEP_USED	被本文件 monkeypatch 真实入口使用
+重复或闲置测试流程	idle_unused_helper	tests/*	enum_post 47 条机械命中	无引用 helper	KEEP_NOT_DUPLICATE_FLOW	语义审查：非「与已用流程 AST 同形的闲置副本」；本轮只删同形闲置，不按无引用数清扫 fixture/替身

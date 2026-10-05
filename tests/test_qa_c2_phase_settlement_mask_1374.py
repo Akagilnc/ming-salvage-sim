@@ -23,11 +23,6 @@ from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
 
 
-@contextmanager
-def _null_cm(*_a, **_k):
-    yield None
-
-
 def _click_before(state) -> dict[str, int]:
     return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
 

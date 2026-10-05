@@ -1,8 +1,60 @@
-POST_TOTAL 2
-by_klass Counter({'重复或闲置测试流程': 2})
-by_kind Counter({'idle_flow_helper': 2})
-重复或闲置测试流程	idle_flow_helper	tests/conftest.py	497	persist_and_schedule_scene
-重复或闲置测试流程	idle_flow_helper	tests/section_rejection_helpers.py	14	run_declaration
-WROTE /Users/akagilnc/WorkSpace/Ming_LLM-1847-w5/evidence/1847-w13-scans/members_post.tsv
-CLEAR_A_functional True
-CLEAR_B_delete_candidates False
+=== class mechanical enum (enum_members.py) ===
+A_hits 1 Counter({'identity_wrapper': 1})
+B_hits 47 Counter({'idle_unused_helper': 47})
+旧兼容及退役残余闭包	identity_wrapper	tests/test_settlement_write_guard_393.py	105	def directive_payload(...) -> return row
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_presence_500.py	178	_session_double
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_presence_500.py	193	_tool_registry
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_restore_505.py	861	_657_active_minister
+重复或闲置测试流程	idle_unused_helper	tests/test_adr0015_per_item_rejection.py	7	_reports
+重复或闲置测试流程	idle_unused_helper	tests/test_pay_order_override_653.py	908	_pin_shortfall_board
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_translation_1838.py	203	_drain_scene_owner
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	171	_install_canned_minister
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	181	_month_ord_of
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	305	_play_one_month
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	465	_setup_open_night_participant
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	499	_assert_court_break_closed
+重复或闲置测试流程	idle_unused_helper	tests/test_decree_dossiers_571.py	1891	_complete_session
+重复或闲置测试流程	idle_unused_helper	tests/test_fiscal_levy_effect.py	65	_settled_land_by_region
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_background.py	162	_assert_next_accepted
+重复或闲置测试流程	idle_unused_helper	tests/test_economy_section_rejections.py	26	_guoku
+重复或闲置测试流程	idle_unused_helper	tests/test_secret_order_monthly_progress_566.py	45	_canned_monthly_settlement
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	76	_row
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	154	_web_runtime
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	184	_find_army_in_map_nodes
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	192	_assert_structured_situation
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	205	_assert_chain_embeds_situation
+重复或闲置测试流程	idle_unused_helper	tests/test_issue_entities.py	22	_army_count
+重复或闲置测试流程	idle_unused_helper	tests/test_promulgation_seam_560.py	30	_stage_policy_dossier
+重复或闲置测试流程	idle_unused_helper	tests/test_execution_tenure_613.py	92	_clear_character_offices
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_actual_residence_659.py	26	_pin_split_arrears
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_actual_residence_659.py	41	_executing_dossier
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_actual_residence_659.py	70	_simulator_army_dicts
+重复或闲置测试流程	idle_unused_helper	tests/test_structured_decree_contract_1624.py	78	_month_end_ctx
+重复或闲置测试流程	idle_unused_helper	tests/test_structured_decree_contract_1624.py	120	_army_none_legal_item
+重复或闲置测试流程	idle_unused_helper	tests/test_structured_decree_contract_1624.py	241	_executing_counts
+重复或闲置测试流程	idle_unused_helper	tests/test_qa_h1_seed_data.py	32	_bajiu_names
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_third_strike_318.py	20	_simulator_army_dicts
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_third_strike_318.py	28	_find_simulator_army
+重复或闲置测试流程	idle_unused_helper	tests/test_transit_countdown_668.py	246	_assert_ledger_match
+重复或闲置测试流程	idle_unused_helper	tests/test_refugee_loop_652.py	63	_reflux
+重复或闲置测试流程	idle_unused_helper	tests/test_junxin_monthly_tick_314.py	32	_setup_army
+重复或闲置测试流程	idle_unused_helper	tests/test_army_card_status_1501.py	113	_web_runtime
+重复或闲置测试流程	idle_unused_helper	tests/test_cli_play_turn.py	29	_noop_atomic
+重复或闲置测试流程	idle_unused_helper	tests/test_centrifuge_ledger_690.py	75	_set_identity
+重复或闲置测试流程	idle_unused_helper	tests/test_enter_settlement_period_1235.py	52	_fake_settlement_llm
+重复或闲置测试流程	idle_unused_helper	tests/test_enter_settlement_period_1235.py	120	_terminal_sse
+重复或闲置测试流程	idle_unused_helper	tests/test_highlight_judge_544.py	187	_restore_highlight_seams
+重复或闲置测试流程	idle_unused_helper	tests/test_highlight_judge_544.py	200	_drain
+重复或闲置测试流程	idle_unused_helper	tests/test_supervision_625.py	111	_insert_staged
+重复或闲置测试流程	idle_unused_helper	tests/test_relation_capture_633.py	496	_module_of
+重复或闲置测试流程	idle_unused_helper	tests/test_pre_settle_transaction.py	215	_drive_resolve_directives
+重复或闲置测试流程	idle_unused_helper	tests/test_pihong_dossier_1490.py	76	_658_session
+=== class A supplemental rg (cutover / fiscal / wrapper) ===
+rg: cli: No such file or directory (os error 2)
+=== class B supplemental: identical unused _run_exclusive / _ledger_count shapes ===
+tests/test_pre_settle_transaction.py:25:def _ledger_count(db, turn: int) -> int:
+tests/test_refugee_loop_652.py:32:def _pop(db: GameDB, name: str, region_id: str) -> int:
+tests/test_session_write_queue_1353.py:25:def _run_exclusive(q, fn):
+tests/test_population_transfers_649.py:27:def _pop(db: GameDB, name: str, region_id: str) -> int:
+tests/test_population_transfers_649.py:35:def _global_population(db: GameDB) -> int:
+tests/test_surcharge_causal_chain_650.py:36:def _pop(db: GameDB, name: str, region_id: str) -> int:

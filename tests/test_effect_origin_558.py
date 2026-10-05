@@ -1,8 +1,4 @@
-import shutil
-import sqlite3
-
 from ming_sim import issues as issue_engine
-from ming_sim.db import GameDB
 
 
 SPONTANEOUS = "盘面自发"
@@ -159,39 +155,6 @@ def test_fiscal_remove_keeps_durable_origin_tombstone(game):
     ]
 
 
-def test_legacy_economy_ledger_origin_backfill_uses_real_dossier_only(game, tmp_path):
-    db, state, content = game
-    valid_id = _promulgated_policy(db, state)
-    legacy_path = tmp_path / "legacy-origin.db"
-    db.conn.commit()
-    shutil.copy2(db.path, legacy_path)
-    conn = sqlite3.connect(legacy_path)
-    conn.execute("ALTER TABLE economy_ledger DROP COLUMN origin_ref")
-    conn.execute(
-        "INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,dossier_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (state.turn, state.year, state.period, "国库", -1, 0, "旧账", "有效案卷", valid_id),
-    )
-    conn.execute(
-        "INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,dossier_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (state.turn, state.year, state.period, "国库", -1, 0, "旧账", "悬空案卷", valid_id + 9999),
-    )
-    conn.commit()
-    conn.close()
-
-    migrated = GameDB(str(legacy_path), content)
-    try:
-        rows = migrated.conn.execute(
-            "SELECT reason, origin_ref FROM economy_ledger WHERE reason IN ('有效案卷','悬空案卷') ORDER BY reason"
-        ).fetchall()
-        assert {r["reason"]: r["origin_ref"] for r in rows} == {
-            "有效案卷": f"dossier:{valid_id}", "悬空案卷": "",
-        }
-    finally:
-        migrated.close()
-
-
 def test_fabricated_origin_is_rejected_even_without_a_dossier(game):
     db, state, content = game
     before = state.metrics["国库"]
@@ -317,11 +280,6 @@ def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
         "UPDATE armies SET manpower=0, arrears=5, province_pay_arrears=3, central_pay_arrears=2 WHERE id=?",
         (army_id,),
     )
-    db.conn.execute(
-        "INSERT OR REPLACE INTO fiscal_config (key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',1,'meta','active hub cutover')"
-    )
-
     db.conn.execute("UPDATE armies SET owner_power='houjin' WHERE id=?", (army_id,))
     non_ming_noop = issue_engine.apply_score_extraction(
         db, state, {"army_delta": {army_id: {"manpower": 0}}}, content=content

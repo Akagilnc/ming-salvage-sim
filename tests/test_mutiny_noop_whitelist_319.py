@@ -62,13 +62,6 @@ PAY_SOURCE_LEGAL_DELTAS = (
 
 
 def _configure(db) -> None:
-    value = 1  # active army pay source cutover
-    for key in ("__army_pay_source_cutover",):
-        db.conn.execute(
-            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,

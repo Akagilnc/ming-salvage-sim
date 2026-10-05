@@ -93,7 +93,7 @@ def _army_owner_transition_pay_kwargs(normalized: Mapping[str, object]) -> Dict[
     """从规范化 delta 组装 transition_army_owner_power 饷源/自养 kwargs。
 
     键出现 → 实值；未出现 → _SENTINEL（adapter 回落行内 / 缺饷源 fail-loud）。
-    cutover-on `_apply_army_pay_source_delta` 与 cutover-off owner 分支共用，防再分叉。
+    `_apply_army_pay_source_delta` / transition_army_owner_power 共用，防再分叉。
     """
     return {
         key: (normalized[key] if key in normalized else _SENTINEL)
@@ -301,7 +301,6 @@ class ProvinceFiscalTickOutcome(NamedTuple):
     error: Optional[BaseException]
 
 
-_ARMY_PAY_SOURCE_CUTOVER_KEY = "__army_pay_source_cutover"
 _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY = "central_army_pay_arrears"
 _STANDALONE_MILITARY_PAY_FUNNEL_ID = "__standalone_military_pay_funnel__"
 _STRUCTURAL_FISCAL_MINIMUMS = {
@@ -2699,25 +2698,24 @@ class GameDB:
             raise ValueError(f"region {region_id!r} 无 settle 财政基座（缺 st/p）")
         pay_rows: List[Dict[str, float | str]] = []
         standalone_pay_component: Optional[Dict[str, float]] = None
-        if self.is_army_pay_source_cutover_enabled():
-            pay_rows = self._derive_region_army_pay_due(region_id, settle)
-            if pay_rows:
-                primary_source_due = self._primary_source_army_pay_due(settle)
-                if self._has_standalone_army_pay_funnel(settle, primary_source_due):
-                    row_due_total = sum(float(row["due"]) for row in pay_rows)
-                    row_arrears_total = sum(float(row["province_pay_arrears"]) for row in pay_rows)
-                    standalone_pay_component = {
-                        "due": self._standalone_army_pay_due_component(
-                            settle,
-                            row_due_total,
-                            primary_source_due,
-                        ),
-                        "province_pay_arrears": self._standalone_army_pay_arrears_component(
-                            settle,
-                            row_arrears_total,
-                            primary_source_due,
-                        ),
-                    }
+        pay_rows = self._derive_region_army_pay_due(region_id, settle)
+        if pay_rows:
+            primary_source_due = self._primary_source_army_pay_due(settle)
+            if self._has_standalone_army_pay_funnel(settle, primary_source_due):
+                row_due_total = sum(float(row["due"]) for row in pay_rows)
+                row_arrears_total = sum(float(row["province_pay_arrears"]) for row in pay_rows)
+                standalone_pay_component = {
+                    "due": self._standalone_army_pay_due_component(
+                        settle,
+                        row_due_total,
+                        primary_source_due,
+                    ),
+                    "province_pay_arrears": self._standalone_army_pay_arrears_component(
+                        settle,
+                        row_arrears_total,
+                        primary_source_due,
+                    ),
+                }
         tick_p = settle["p"]
         if p_overrides:
             tick_p = dict(tick_p)
@@ -2738,10 +2736,9 @@ class GameDB:
         if pay_rows:
             self._apply_region_army_pay_tick(pay_rows, result, standalone_pay_component)
         settle["st"] = result.new_st
-        if self.is_army_pay_source_cutover_enabled():
-            self._refresh_standalone_army_pay_arrears_component(region_id, settle)
-            if pay_rows:
-                self._reconcile_region_army_pay_container(region_id, settle)
+        self._refresh_standalone_army_pay_arrears_component(region_id, settle)
+        if pay_rows:
+            self._reconcile_region_army_pay_container(region_id, settle)
         self.conn.execute(
             "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (json.dumps(fiscal, ensure_ascii=False), region_id),
@@ -3327,25 +3324,8 @@ class GameDB:
         self._calibrate_faction_offsets(is_fresh_factions_seed)
         self.conn.commit()
 
-    def is_army_pay_source_cutover_enabled(self) -> bool:
-        row = self.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = ?",
-            (_ARMY_PAY_SOURCE_CUTOVER_KEY,),
-        ).fetchone()
-        return bool(row and int(row["value"] or 0) == 1)
-
-    def _mark_army_pay_source_cutover_enabled(self) -> None:
-        self.conn.execute(
-            """
-            INSERT INTO fiscal_config (key, value, kind, note)
-            VALUES (?, 1, 'meta', 'army pay source per-source accumulator cutover')
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value, kind=excluded.kind, note=excluded.note
-            """,
-            (_ARMY_PAY_SOURCE_CUTOVER_KEY,),
-        )
-
     def _initialize_army_pay_source_spine(self, is_fresh_armies_seed: bool) -> None:
-        """Fresh-save cutover for #287 S1; existing saves stay on legacy army-pay flow."""
+        """Fresh-save army pay-source spine seed for #287 S1 (active ledger; no old-save selector)."""
         if not is_fresh_armies_seed:
             return
         rows = self.conn.execute(
@@ -3424,7 +3404,6 @@ class GameDB:
                     1 if is_tusi else 0, 1 if self_funded else 0, army_id,
                 ),
             )
-        self._mark_army_pay_source_cutover_enabled()
         self._reconcile_all_army_pay_source_regions()
         self._reconcile_central_army_pay_arrears_container()
         self.assert_army_pay_source_container_conservation()
@@ -3644,8 +3623,6 @@ class GameDB:
         return True
 
     def assert_army_pay_source_container_conservation(self) -> None:
-        if not self.is_army_pay_source_cutover_enabled():
-            return
         exempt_bad = self.conn.execute(
             """
             SELECT id, province_pay_share, central_pay_share,
@@ -3899,8 +3876,7 @@ class GameDB:
             province_arrears = float(row["province_pay_arrears"] or 0)
             central_arrears = float(row["central_pay_arrears"] or 0)
             total_arrears = float(row["arrears"] or 0)
-            if self.is_army_pay_source_cutover_enabled():
-                total_arrears = max(total_arrears, province_arrears + central_arrears)
+            total_arrears = max(total_arrears, province_arrears + central_arrears)
 
             exempt = owner_power != "ming" or is_tusi_val or self_funded_val
             if exempt:
@@ -3953,11 +3929,7 @@ class GameDB:
             "self_funded_pay": 1 if self_funded_val else 0,
             "province_pay_arrears": province_arrears,
             "central_pay_arrears": central_arrears,
-            "arrears": (
-                province_arrears + central_arrears
-                if self.is_army_pay_source_cutover_enabled() or exempt
-                else total_arrears
-            ),
+            "arrears": province_arrears + central_arrears,
             "is_mutinied": 0,
             "mutiny_probation": 0,
         }
@@ -4034,12 +4006,11 @@ class GameDB:
                 "delta": None, "reason": reason,
             })
 
-        if self.is_army_pay_source_cutover_enabled():
-            if old_source != pay_source_region_val:
-                self._reconcile_army_pay_source_region_container(old_source)
-            self._reconcile_army_pay_source_region_container(pay_source_region_val)
-            self._reconcile_central_army_pay_arrears_container()
-            self.assert_army_pay_source_container_conservation()
+        if old_source != pay_source_region_val:
+            self._reconcile_army_pay_source_region_container(old_source)
+        self._reconcile_army_pay_source_region_container(pay_source_region_val)
+        self._reconcile_central_army_pay_arrears_container()
+        self.assert_army_pay_source_container_conservation()
         return changes
 
     def _apply_army_pay_source_delta(
@@ -4327,7 +4298,7 @@ class GameDB:
             )
 
     def _reconcile_army_pay_source_region_container(self, region_id: str) -> None:
-        if not region_id or not self.is_army_pay_source_cutover_enabled():
+        if not region_id:
             return
         row = self.conn.execute(
             "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
@@ -6670,47 +6641,11 @@ class GameDB:
                 })
                 continue
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title)
-            # cutover-off 已消费的 owner/D6 兄弟键：禁止通用环再打非法字段
-            consumed_pay_source_fields: frozenset[str] = frozenset()
-            if self.is_army_pay_source_cutover_enabled():
-                self._apply_army_pay_source_delta(
-                    state, event, edict_id, actor, row, raw_changes, reason, changes,
-                    origin_ref=origin_ref, require_origin=require_origin,
-                )
-                row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
-            else:
-                # #318：cutover-off owner 变更与 cutover-on 对齐——同条 D6 兄弟字段
-                # 一并交给唯一 adapter；不重入 _apply_army_pay_source_delta（其后半是
-                # 饷源-only/容器对账，属 cutover 专属）。
-                normalized = {
-                    ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
-                    for k, v in raw_changes.items()
-                }
-                if "owner_power" in normalized:
-                    proposed_owner = str(normalized.get("owner_power") or "").strip()
-                    if proposed_owner != str(row["owner_power"] or "").strip():
-                        changes.extend(self.transition_army_owner_power(
-                            state,
-                            row,
-                            proposed_owner,
-                            reason=reason,
-                            actor=actor,
-                            event_id=event.id,
-                            edict_id=edict_id,
-                            origin_ref=origin_ref,
-                            require_origin=require_origin,
-                            **_army_owner_transition_pay_kwargs(normalized),
-                            raw_item={"army_id": army_id, "changes": raw_changes},
-                        ))
-                        consumed_pay_source_fields = frozenset(
-                            {"owner_power"}
-                            | _ARMY_PAY_SOURCE_DELTA_FIELDS.intersection(normalized)
-                        )
-                        current_row = self.conn.execute(
-                            "SELECT * FROM armies WHERE id = ?", (army_id,)
-                        ).fetchone()
-                        if current_row is not None:
-                            row = current_row
+            self._apply_army_pay_source_delta(
+                state, event, edict_id, actor, row, raw_changes, reason, changes,
+                origin_ref=origin_ref, require_origin=require_origin,
+            )
+            row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
             # #320：同军同事件内 loyalty 规范键与别名只消费一次——先合计合法整数增量，
             # 通用环内落地一次 ±15 软钳，避免 {loyalty:50, 军心:50} 双键绕过单事件预算。
             loyalty_canonical_delta = fold_loyalty_alias_delta(raw_changes)
@@ -6719,30 +6654,7 @@ class GameDB:
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "origin_ref"):
                     continue
-                if self.is_army_pay_source_cutover_enabled() and field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
-                    continue
-                if field in consumed_pay_source_fields:
-                    continue
-                # #318：cutover 关闭时 owner_power 仍须经唯一 adapter，禁止 text 直写旁路
-                # （同 owner no-op / 未在上方预消费的残余路径）
-                if field == "owner_power":
-                    current_row = self.conn.execute(
-                        "SELECT * FROM armies WHERE id = ?", (army_id,)
-                    ).fetchone()
-                    if current_row is None:
-                        continue
-                    changes.extend(self.transition_army_owner_power(
-                        state,
-                        current_row,
-                        str(value or "").strip(),
-                        reason=reason,
-                        actor=actor,
-                        event_id=event.id,
-                        edict_id=edict_id,
-                        origin_ref=origin_ref,
-                        require_origin=require_origin,
-                        raw_item={"army_id": army_id, "changes": raw_changes},
-                    ))
+                if field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
                     continue
                 if field not in _ARMY_VALID_SET:
                     # ADR 0008 决定 1:LLM 引用非法军队字段 = 逐项拒收留痕(invalid_enum),
@@ -6789,98 +6701,87 @@ class GameDB:
                     continue
                 old_value = row[field]
                 if field == "arrears":
-                    if self.is_army_pay_source_cutover_enabled():
-                        delta = int(value)
-                        if delta < 0:
-                            changes.append({
-                                "army": row["name"], "field": field,
-                                "rejected": True, "category": "invalid_enum",
-                                "reason": "army_delta.arrears 不接受负值核销；真补饷须走 economy_moves",
-                                "item": {"army_id": army_id, "field": field, "value": value},
-                                "issue_strict": False,
-                            })
-                            continue
-                        if delta == 0:
-                            continue
-                        if (
-                            str(row["owner_power"]) != "ming"
-                            or bool(row["is_tusi"])
-                            or bool(row["self_funded_pay"])
-                        ):
-                            changes.append({
-                                "army": row["name"], "field": field,
-                                "rejected": True, "category": "invalid_enum",
-                                "reason": "army_delta.arrears 不接受自养/非明军加欠；双累加器恒为 0",
-                                "item": {"army_id": army_id, "field": field, "value": value},
-                                "issue_strict": False,
-                            })
-                            continue
-                        if int(row["manpower"] or 0) <= 0:
-                            changes.append({
-                                "army": row["name"], "field": field,
-                                "rejected": True, "category": "invalid_enum",
-                                "reason": "army_delta.arrears 不接受零兵军队加欠；兵力归零欠饷已核销",
-                                "item": {"army_id": army_id, "field": field, "value": value},
-                                "issue_strict": False,
-                            })
-                            continue
-                        self._validate_pay_source_values(
-                            army_id, str(row["owner_power"]), str(row["pay_source_region"]),
-                            float(row["province_pay_share"] or 0), float(row["central_pay_share"] or 0),
-                            bool(row["is_tusi"]), bool(row["self_funded_pay"]),
-                            float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
-                        )
-                        province_delta = delta * float(row["province_pay_share"] or 0)
-                        central_delta = delta * float(row["central_pay_share"] or 0)
-                        new_province = float(row["province_pay_arrears"] or 0) + province_delta
-                        new_central = float(row["central_pay_arrears"] or 0) + central_delta
-                        new_value = new_province + new_central
-                        origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
-                        if origin_error:
-                            changes.append({"army": row["name"], "field": field, **origin_error,
-                                            "item": {"army_id": army_id, "field": field, "value": value}})
-                            continue
-                        self.conn.execute(
-                            """
-                            UPDATE armies
-                            SET province_pay_arrears = ?, central_pay_arrears = ?,
-                                arrears = ?, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                            """,
-                            (new_province, new_central, new_value, army_id),
-                        )
-                        self.conn.execute(
-                            """
-                            INSERT INTO army_logs
-                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
-                            VALUES (?, ?, ?, ?, 'arrears', ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                state.turn, state.year, state.period, army_id,
-                                str(old_value), str(new_value), delta,
-                                reason, event.id, edict_id, actor, origin_ref,
-                            ),
-                        )
-                        self._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
-                        self._reconcile_central_army_pay_arrears_container()
-                        self.assert_army_pay_source_container_conservation()
+                    delta = int(value)
+                    if delta < 0:
                         changes.append({
                             "army": row["name"], "field": field,
-                            "label": ARMY_FIELD_LABELS.get(field, field),
-                            "old": old_value, "new": new_value,
-                            "delta": delta, "reason": reason,
+                            "rejected": True, "category": "invalid_enum",
+                            "reason": "army_delta.arrears 不接受负值核销；真补饷须走 economy_moves",
+                            "item": {"army_id": army_id, "field": field, "value": value},
+                            "issue_strict": False,
                         })
                         continue
-                    # arrears 单位=累计欠饷万两，无上限，按需累加。
-                    # 正常情况由 flows 唯一变更；此处兜底允许 extractor 在战损/裁军等
-                    # 非现金原因下写入（提示词已禁，但保留兜底以防 LLM 越界不至于截断）。
-                    delta = int(value)
-                    new_value = max(0, int(old_value) + delta)
-                    actual_delta = new_value - int(old_value)
-                    if actual_delta == 0:
+                    if delta == 0:
                         continue
-                    stored_new: object = new_value
-                    log_delta: int | None = actual_delta
+                    if (
+                        str(row["owner_power"]) != "ming"
+                        or bool(row["is_tusi"])
+                        or bool(row["self_funded_pay"])
+                    ):
+                        changes.append({
+                            "army": row["name"], "field": field,
+                            "rejected": True, "category": "invalid_enum",
+                            "reason": "army_delta.arrears 不接受自养/非明军加欠；双累加器恒为 0",
+                            "item": {"army_id": army_id, "field": field, "value": value},
+                            "issue_strict": False,
+                        })
+                        continue
+                    if int(row["manpower"] or 0) <= 0:
+                        changes.append({
+                            "army": row["name"], "field": field,
+                            "rejected": True, "category": "invalid_enum",
+                            "reason": "army_delta.arrears 不接受零兵军队加欠；兵力归零欠饷已核销",
+                            "item": {"army_id": army_id, "field": field, "value": value},
+                            "issue_strict": False,
+                        })
+                        continue
+                    self._validate_pay_source_values(
+                        army_id, str(row["owner_power"]), str(row["pay_source_region"]),
+                        float(row["province_pay_share"] or 0), float(row["central_pay_share"] or 0),
+                        bool(row["is_tusi"]), bool(row["self_funded_pay"]),
+                        float(row["province_pay_arrears"] or 0), float(row["central_pay_arrears"] or 0),
+                    )
+                    province_delta = delta * float(row["province_pay_share"] or 0)
+                    central_delta = delta * float(row["central_pay_share"] or 0)
+                    new_province = float(row["province_pay_arrears"] or 0) + province_delta
+                    new_central = float(row["central_pay_arrears"] or 0) + central_delta
+                    new_value = new_province + new_central
+                    origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+                    if origin_error:
+                        changes.append({"army": row["name"], "field": field, **origin_error,
+                                        "item": {"army_id": army_id, "field": field, "value": value}})
+                        continue
+                    self.conn.execute(
+                        """
+                        UPDATE armies
+                        SET province_pay_arrears = ?, central_pay_arrears = ?,
+                            arrears = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (new_province, new_central, new_value, army_id),
+                    )
+                    self.conn.execute(
+                        """
+                        INSERT INTO army_logs
+                        (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                        VALUES (?, ?, ?, ?, 'arrears', ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            state.turn, state.year, state.period, army_id,
+                            str(old_value), str(new_value), delta,
+                            reason, event.id, edict_id, actor, origin_ref,
+                        ),
+                    )
+                    self._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
+                    self._reconcile_central_army_pay_arrears_container()
+                    self.assert_army_pay_source_container_conservation()
+                    changes.append({
+                        "army": row["name"], "field": field,
+                        "label": ARMY_FIELD_LABELS.get(field, field),
+                        "old": old_value, "new": new_value,
+                        "delta": delta, "reason": reason,
+                    })
+                    continue
                 elif field == "cannon_equipment":
                     # 随军大炮=红夷级重炮门数(非 0-100 饱和度)：野战带不动几门，clamp 0-12。
                     # 城防炮(城头红夷炮)另挂 region.cannon(上限 city_level×8)；佛郎机轻炮归 firearm_equipment。
@@ -6946,8 +6847,7 @@ class GameDB:
                     new_value = max(0, int(old_value) + delta)
                     actual_delta = new_value - int(old_value)
                     will_write_off_arrears = (
-                        self.is_army_pay_source_cutover_enabled()
-                        and new_value == 0
+                        new_value == 0
                         and str(row["owner_power"]) == "ming"
                         and float(row["arrears"] or 0) > 1e-9
                     )
@@ -7040,7 +6940,7 @@ class GameDB:
                     f"UPDATE armies SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (stored_new, army_id),
                 )
-                if field == "manpower" and self.is_army_pay_source_cutover_enabled():
+                if field == "manpower":
                     self._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
                 self.conn.execute(
                     """
@@ -7234,7 +7134,7 @@ class GameDB:
                 except (TypeError, ValueError):
                     return 0
             initial_arrears = _arrears_init()
-            if self.is_army_pay_source_cutover_enabled() and initial_arrears > 0:
+            if initial_arrears > 0:
                 created.append({
                     "id": aid, "rejected": True, "category": "invalid_enum",
                     "reason": (
@@ -7265,33 +7165,32 @@ class GameDB:
             province_pay_arrears = central_pay_arrears = 0.0
             is_tusi = self_funded_pay = False
             stored_arrears = float(initial_arrears)
-            if self.is_army_pay_source_cutover_enabled():
-                try:
-                    pay_source_region = str(item.get("pay_source_region") or "").strip()
-                    province_pay_share = _coerce_pay_source_float(item.get("province_pay_share"))
-                    central_pay_share = _coerce_pay_source_float(item.get("central_pay_share"))
-                    is_tusi = _coerce_bool_flag(item.get("is_tusi"))
-                    self_funded_pay = _coerce_bool_flag(item.get("self_funded_pay"))
-                    exempt = owner != "ming" or is_tusi or self_funded_pay
-                    if exempt:
-                        stored_arrears = province_pay_arrears = central_pay_arrears = 0.0
-                    else:
-                        province_pay_arrears = initial_arrears * province_pay_share
-                        central_pay_arrears = initial_arrears * central_pay_share
-                        stored_arrears = province_pay_arrears + central_pay_arrears
-                    self._validate_pay_source_values(
-                        aid, owner, pay_source_region, province_pay_share, central_pay_share,
-                        is_tusi, self_funded_pay, province_pay_arrears, central_pay_arrears,
-                    )
-                    if pay_source_region:
-                        self._require_valid_pay_source_region(aid, pay_source_region)
-                except (TypeError, ValueError) as exc:
-                    created.append({
-                        "id": aid, "rejected": True, "category": "invalid_enum",
-                        "reason": f"new_armies '{aid}' 饷源字段非法：{exc}",
-                        "item": raw,
-                    })
-                    continue
+            try:
+                pay_source_region = str(item.get("pay_source_region") or "").strip()
+                province_pay_share = _coerce_pay_source_float(item.get("province_pay_share"))
+                central_pay_share = _coerce_pay_source_float(item.get("central_pay_share"))
+                is_tusi = _coerce_bool_flag(item.get("is_tusi"))
+                self_funded_pay = _coerce_bool_flag(item.get("self_funded_pay"))
+                exempt = owner != "ming" or is_tusi or self_funded_pay
+                if exempt:
+                    stored_arrears = province_pay_arrears = central_pay_arrears = 0.0
+                else:
+                    province_pay_arrears = initial_arrears * province_pay_share
+                    central_pay_arrears = initial_arrears * central_pay_share
+                    stored_arrears = province_pay_arrears + central_pay_arrears
+                self._validate_pay_source_values(
+                    aid, owner, pay_source_region, province_pay_share, central_pay_share,
+                    is_tusi, self_funded_pay, province_pay_arrears, central_pay_arrears,
+                )
+                if pay_source_region:
+                    self._require_valid_pay_source_region(aid, pay_source_region)
+            except (TypeError, ValueError) as exc:
+                created.append({
+                    "id": aid, "rejected": True, "category": "invalid_enum",
+                    "reason": f"new_armies '{aid}' 饷源字段非法：{exc}",
+                    "item": raw,
+                })
+                continue
             origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
             if origin_error:
                 created.append({"id": aid, **origin_error, "item": raw})
