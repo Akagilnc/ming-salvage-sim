@@ -1,0 +1,511 @@
+{
+  "root": "/private/tmp/1835-w5-s1s3-base356",
+  "counts": {
+    "S1": 23,
+    "S2": 19,
+    "S3": 33
+  },
+  "members": {
+    "S1": [
+      {
+        "kind": "S1-cons-standalone-idx_rejected",
+        "file": "ming_sim/decree_vocabulary.py",
+        "lineno": 312,
+        "line": "return DOSSIER_DECISION_CN[\"rejected\"]",
+        "scope": "prod"
+      },
+      {
+        "kind": "S1-prod-standalone-dict_rejected_true",
+        "file": "ming_sim/covert_progress.py",
+        "lineno": 1913,
+        "line": "\"rejected\": True,",
+        "scope": "prod"
+      },
+      {
+        "kind": "S1-prod-standalone-dict_invalid_true",
+        "file": "ming_sim/covert_progress.py",
+        "lineno": 1914,
+        "line": "\"invalid\": True,",
+        "scope": "prod"
+      },
+      {
+        "kind": "S1-cons-standalone-get_rejected",
+        "file": "ming_sim/covert_progress.py",
+        "lineno": 1810,
+        "line": "if isinstance(result, dict) and result.get(\"rejected\"):",
+        "scope": "prod"
+      },
+      {
+        "kind": "S1-cons-standalone-get_invalid",
+        "file": "ming_sim/covert_progress.py",
+        "lineno": 1908,
+        "line": "invalid = str(declaration.get(\"invalid\") or \"\").strip()",
+        "scope": "prod"
+      },
+      {
+        "kind": "S1-dual-cons",
+        "file": "ming_sim/covert_progress.py",
+        "func": "apply_monthly_covert_actual_progress",
+        "lineno": 1756,
+        "end": 1874
+      },
+      {
+        "kind": "S1-prod-standalone-dict_rejected_true",
+        "file": "ming_sim/due_review.py",
+        "lineno": 438,
+        "line": "return {\"rejected\": True, \"reason\": \"案卷不存在\"}",
+        "scope": "prod"
+      },
+      {
+        "kind": "S1-prod-standalone-dict_rejected_true",
+        "file": "ming_sim/due_review.py",
+        "lineno": 453,
+        "line": "\"rejected\": True,",
+        "scope": "prod"
+      },
+      {
+        "kind": "S1-prod-standalone-dict_rejected_true",
+        "file": "ming_sim/due_review.py",
+        "lineno": 522,
+        "line": "\"rejected\": True,",
+        "scope": "prod"
+      },
+      {
+        "kind": "S1-cons-standalone-get_rejected",
+        "file": "ming_sim/month_chain.py",
+        "lineno": 1362,
+        "line": "if isinstance(r, dict) and r.get(\"rejected\")",
+        "scope": "prod"
+      },
+      {
+        "kind": "S1-cons-standalone-get_invalid",
+        "file": "ming_sim/month_chain.py",
+        "lineno": 1370,
+        "line": "bool(item.get(\"invalid\"))",
+        "scope": "prod"
+      },
+      {
+        "kind": "S1-prod-standalone-dict_rejected_true",
+        "file": "tests/test_covert_levy_651.py",
+        "lineno": 116,
+        "line": "\"dossier_executions\": [{\"rejected\": True, \"item\": {\"dossier_id\": did, \"outcome\": \"failed\"}}],",
+        "scope": "test"
+      },
+      {
+        "kind": "S1-prod-standalone-dict_rejected_true",
+        "file": "tests/test_covert_levy_651.py",
+        "lineno": 117,
+        "line": "\"population_transfers\": [{\"rejected\": True, \"origin_ref\": f\"dossier:{did}\", \"reason\": \"摊派\"}],",
+        "scope": "test"
+      },
+      {
+        "kind": "S1-prod-standalone-dict_rejected_true",
+        "file": "tests/test_person_delta_adapter.py",
+        "lineno": 1262,
+        "line": "\"rejected\": True,",
+        "scope": "test"
+      },
+      {
+        "kind": "S1-prod-standalone-dict_rejected_true",
+        "file": "tests/test_person_delta_adapter.py",
+        "lineno": 1274,
+        "line": "\"rejected\": True,",
+        "scope": "test"
+      },
+      {
+        "kind": "S1-prod-standalone-dict_rejected_true",
+        "file": "tests/test_person_delta_adapter.py",
+        "lineno": 1286,
+        "line": "\"rejected\": True,",
+        "scope": "test"
+      },
+      {
+        "kind": "S1-cons-standalone-get_rejected",
+        "file": "tests/test_due_review_621.py",
+        "lineno": 494,
+        "line": "assert (second[0].get(\"execution\") or {}).get(\"rejected\") is not True, second",
+        "scope": "test"
+      },
+      {
+        "kind": "S1-prod-standalone-dict_rejected_true",
+        "file": "tests/test_region_cannon_delta.py",
+        "lineno": 87,
+        "line": "改为逐项拒收留痕（region_changes 含 {\"rejected\": True, \"category\": \"invalid_enum\"}），",
+        "scope": "test"
+      },
+      {
+        "kind": "S1-cons-standalone-get_rejected",
+        "file": "tests/test_month_translate_1840.py",
+        "lineno": 282,
+        "line": "assert not person_change.get(\"rejected\", False)",
+        "scope": "test"
+      },
+      {
+        "kind": "S1-cons-standalone-get_rejected",
+        "file": "tests/test_month_translate_1840.py",
+        "lineno": 326,
+        "line": "assert not depleted_transfer.get(\"rejected\", False)",
+        "scope": "test"
+      },
+      {
+        "kind": "S1-cons-standalone-get_rejected",
+        "file": "tests/test_secret_order_payoff_1504.py",
+        "lineno": 492,
+        "line": "and not r.get(\"rejected\") for r in out0 if r.get(\"order_id\") == oid and \"units\" in r)",
+        "scope": "test"
+      },
+      {
+        "kind": "S1-cons-standalone-idx_rejected",
+        "file": "tests/test_secret_order_payoff_1504.py",
+        "lineno": 1969,
+        "line": "assert row[\"rejected\"] is True",
+        "scope": "test"
+      },
+      {
+        "kind": "S1-cons-standalone-get_rejected",
+        "file": "tests/test_urge_lever_624.py",
+        "lineno": 429,
+        "line": "assert one.get(\"rejected\") is True",
+        "scope": "test"
+      }
+    ],
+    "S2": [
+      {
+        "kind": "S2-admission-field_whitelist",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 494,
+        "line": "return f\"战略/外敌事件「{event_title or event_id}」战果引用非法地区字段：{raw_field}\""
+      },
+      {
+        "kind": "S2-admission-field_whitelist",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 572,
+        "line": "return f\"战略/外敌事件「{event_title or event_id}」战果引用非法军队字段：{raw_field}\""
+      },
+      {
+        "kind": "S2-admission-int_parallel",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 390,
+        "line": "def _int_delta_error(kind: str, target_id: str, raw_field: object, value: object) -> str:"
+      },
+      {
+        "kind": "S2-admission-int_parallel",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 496,
+        "line": "err = _int_delta_error(\"region\", region_id, raw_field, value)"
+      },
+      {
+        "kind": "S2-admission-int_parallel",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 550,
+        "line": "or _int_delta_error(\"army\", army_id, cannon_keys[0], raw_changes[cannon_keys[0]])"
+      },
+      {
+        "kind": "S2-admission-int_parallel",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 574,
+        "line": "err = _int_delta_error(\"army\", army_id, raw_field, value)"
+      },
+      {
+        "kind": "S2-admission-int_msg",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 392,
+        "line": "return f\"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}\""
+      },
+      {
+        "kind": "S2-admission-int_msg",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 396,
+        "line": "return f\"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}\""
+      },
+      {
+        "kind": "S2-admission-faction_admission",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 506,
+        "line": "\"SELECT 1 FROM powers WHERE id = ? LIMIT 1\","
+      },
+      {
+        "kind": "S2-admission-cannon_transfer_prejudge",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 552,
+        "line": "return f\"战略/外敌事件「{event_title or event_id}」随军炮转移目标或负数拟转量非法：{army_id}\""
+      },
+      {
+        "kind": "S2-admission-entity_missing_early",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 484,
+        "line": "return f\"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}\""
+      },
+      {
+        "kind": "S2-admission-entity_missing_early",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 540,
+        "line": "return f\"战略/外敌事件「{event_title or event_id}」战果引用未入库军队：{army_id}\""
+      },
+      {
+        "kind": "S2-admission-valid_fields_set",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 383,
+        "line": "region_valid_fields = set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS + FISCAL_SCORE_FIELDS)"
+      },
+      {
+        "kind": "S2-admission-valid_fields_set",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 384,
+        "line": "region_valid_fields.add(\"cannon\")"
+      },
+      {
+        "kind": "S2-admission-valid_fields_set",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 387,
+        "line": "army_valid_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)"
+      },
+      {
+        "kind": "S2-admission-valid_fields_set",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 493,
+        "line": "if field not in region_valid_fields:"
+      },
+      {
+        "kind": "S2-admission-valid_fields_set",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 571,
+        "line": "if field not in army_valid_fields:"
+      },
+      {
+        "kind": "S2-preflight-helper",
+        "file": "ming_sim/settlement/preflight.py",
+        "func": "_int_delta_error",
+        "lineno": 390,
+        "end": 397
+      },
+      {
+        "kind": "S2-envelope-owner-fn",
+        "file": "ming_sim/settlement/preflight.py",
+        "func": "_strategic_event_result_preflight_error",
+        "lineno": 361,
+        "end": 809,
+        "calls_write_kernel": true,
+        "has_field_whitelist_return": true,
+        "has_int_delta_helper": true,
+        "has_cannon_prejudge_msg": true
+      }
+    ],
+    "S3": [
+      {
+        "kind": "S3-retired-empty_extraction",
+        "file": "ming_sim/simulation.py",
+        "lineno": 148,
+        "line": "# 旧五模块 ``EMPTY_EXTRACTION`` 曾被声明接缝 deepcopy 成整份空提取再逐字段填"
+      },
+      {
+        "kind": "S3-retired-empty_extraction",
+        "file": "ming_sim/declaration_dispatch.py",
+        "lineno": 342,
+        "line": "旧五模块包装时代这里先 deepcopy 一整份 ``EMPTY_EXTRACTION`` 空壳再逐字段填，"
+      },
+      {
+        "kind": "S3-retired-apply_score_extraction_prod",
+        "file": "ming_sim/credit_events.py",
+        "lineno": 14,
+        "line": "识别只消费校验后未 rejected 的落格项（由 apply_score_extraction 后置传入）。"
+      },
+      {
+        "kind": "S3-retired-apply_score_extraction_prod",
+        "file": "ming_sim/credit_events.py",
+        "lineno": 301,
+        "line": "\"\"\"消费调用方已滤 rejected 的落格项；本轴不再二次闸（单一保护点在 apply_score_extraction）。\"\"\""
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_person_archive_contract_index.py",
+        "lineno": 4,
+        "line": "surface as apply_score_extraction outcomes (reason_code aliases, title-kind"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_person_archive_contract_index.py",
+        "lineno": 27,
+        "line": "\"\"\"reason_code aliases + missing≠unknown land through apply_score_extraction.\"\"\""
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_transit_aging_346.py",
+        "lineno": 51,
+        "line": "\"\"\"apply_score_extraction 处理 行止 时，写入 transit_to 同时记录 transit_start_turn=当前回合。\"\"\""
+      },
+      {
+        "kind": "S3-name-residue-empty_extraction",
+        "file": "tests/test_declaration_dispatch_1835.py",
+        "lineno": 1180,
+        "line": "**自己带的字段**送到既有核算口，不再预置一整份 ``EMPTY_EXTRACTION`` 空壳"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_style_temperament_641.py",
+        "lineno": 4,
+        "line": "1. apply_score_extraction 后 DB / content / person_logs 一致"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_faction_leverage_9.py",
+        "lineno": 696,
+        "line": "玩家月链（pre_settle → 世界段转译 → apply_score_extraction → adjust_factions 注 offset"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_faction_leverage_9.py",
+        "lineno": 708,
+        "line": "# 经玩家世界段转译 → apply_score_extraction(faction_delta) → _apply_faction_dict"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_population_transfers_649.py",
+        "lineno": 9,
+        "line": "主测缝：apply_score_extraction 落账及恢复后的 DB 状态。"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_population_transfers_649.py",
+        "lineno": 86,
+        "line": "\"\"\"入池五因（加派/摊派/灾害/兵灾/逃亡）各 ≥1 正例经 apply_score_extraction 落账。"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_surcharge_causal_chain_650.py",
+        "lineno": 8,
+        "line": "主测缝：apply_score_extraction / 玩家过月 /"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_section_fiscal_rejections.py",
+        "lineno": 1,
+        "line": "\"\"\"PR2-S3(ADR 0008 决定 1,#91)——apply_score_extraction 的 fiscal 三段迁拒收契约。"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_refugee_loop_652.py",
+        "lineno": 3,
+        "line": "主测缝：apply_score_extraction /"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_mutiny_noop_whitelist_319.py",
+        "lineno": 5,
+        "line": "+ apply_score_extraction 集成对照（证明无需第二门）。"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_relation_capture_633.py",
+        "lineno": 4,
+        "line": "- 邸报大臣互动经 extractor delta → apply_score_extraction → relation_edge_events 落库，"
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_relation_capture_633.py",
+        "lineno": 541,
+        "line": "（apply_score_extraction 批内 post=live，故该构造只能经直调缝验证。）\"\"\""
+      },
+      {
+        "kind": "S3-name-residue-apply_score_extraction_prod",
+        "file": "tests/test_population_transfers_662.py",
+        "lineno": 8,
+        "line": "主测缝＝apply_score_extraction 的人口守恒落账。"
+      },
+      {
+        "kind": "S3-retired-apply_score_extraction_prod",
+        "file": "ming_sim/settlement/run.py",
+        "lineno": 529,
+        "line": "这是内层落库子核的**唯一**入口，取代已退役的 ``apply_score_extraction``"
+      },
+      {
+        "kind": "S3-retired-apply_score_extraction_prod",
+        "file": "ming_sim/settlement/__init__.py",
+        "lineno": 4,
+        "line": ":class:`SettlementOutcome`。旧单体入口 ``apply_score_extraction`` 已整体退役，"
+      },
+      {
+        "kind": "S3-retired-module_rejections_exempt",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 977,
+        "line": "if key == \"_module_rejections\":"
+      },
+      {
+        "kind": "S3-retired-module_rejections_ref",
+        "file": "ming_sim/settlement/preflight.py",
+        "lineno": 977,
+        "line": "if key == \"_module_rejections\":"
+      },
+      {
+        "kind": "S3-doc-reason_campaign_anchor",
+        "file": "docs/DELTA_SCHEMA.md",
+        "lineno": 214,
+        "line": "- 若作为战略/外敌战事同信封主账战果，`reason` / `原因` 必须带事件名或战役名；缺锚点不能单独触发战略事件。",
+        "negative_guidance": false
+      },
+      {
+        "kind": "S3-doc-reason_campaign_anchor",
+        "file": "docs/DELTA_SCHEMA.md",
+        "lineno": 242,
+        "line": "**战略/外敌战事 node/ending**（如 `jisi_lubian` / `dalingghe` / `lindan_xiqian` / `wuyin_lubian` / `songshan_battle` / `luoyang_fallen` / `kaifeng_siege` / `beijing_fallen`）不能只写 `new_issues`。同一信封必须同时由军务/人事等字段写世界状态主账：`region_delta` / `army_delta` / ",
+        "negative_guidance": false
+      },
+      {
+        "kind": "S3-doc-missing_anchor_prose",
+        "file": "docs/DELTA_SCHEMA.md",
+        "lineno": 214,
+        "line": "- 若作为战略/外敌战事同信封主账战果，`reason` / `原因` 必须带事件名或战役名；缺锚点不能单独触发战略事件。",
+        "negative_guidance": false
+      },
+      {
+        "kind": "S3-doc-example-missing-event_id",
+        "file": "docs/DELTA_SCHEMA.md",
+        "lineno": 60,
+        "snippet": "\\nC0 效果字段须用 `DECLARATION_EFFECT_FIELDS` 中的键；条目字段别名由 `ITEM_FIELD_ALIASES` 规范化。未知字段按段拒收留痕，其余照落。\\n\\n---\\n\\n## 各字段约束详表（落库守门会拒的硬规则）\\n\\n### `metric_delta` — 国势变化\\n- 合法 key：`国库` `内库` `民心` `皇威`\\n- "
+      },
+      {
+        "kind": "S3-mig-helper_only_candidate",
+        "file": "tests/test_person_delta_adapter.py",
+        "func": "test_normalize_person_changes_keeps_new_key_items",
+        "lineno": 37,
+        "end": 58,
+        "size": 536,
+        "has_helper": true,
+        "has_entrance": false,
+        "name_mig": true
+      },
+      {
+        "kind": "S3-mig-helper_only_candidate",
+        "file": "tests/test_person_delta_adapter.py",
+        "func": "test_retired_legacy_person_keys_normalize_to_nothing_in_the_person_stream",
+        "lineno": 88,
+        "end": 95,
+        "size": 443,
+        "has_helper": true,
+        "has_entrance": false,
+        "name_mig": true
+      },
+      {
+        "kind": "S3-mig-helper_only_candidate",
+        "file": "tests/test_person_delta_adapter.py",
+        "func": "test_normalize_person_changes_ignores_non_item_shapes",
+        "lineno": 98,
+        "end": 102,
+        "size": 231,
+        "has_helper": true,
+        "has_entrance": false,
+        "name_mig": true
+      },
+      {
+        "kind": "S3-mig-missing-file",
+        "file": "tests/test_settlement_fixed_point_1835.py"
+      },
+      {
+        "kind": "S3-mig-asserts-old-dict-reject-shape",
+        "file": "tests/test_month_translate_1840.py",
+        "func": "test_world_segment_applies_domain_effects_and_reports_rejected_effects",
+        "lineno": 208
+      }
+    ]
+  }
+}

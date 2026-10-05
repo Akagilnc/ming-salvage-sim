@@ -11,7 +11,7 @@
 
 语境=extraction 真叙事字段（note/reason/purpose/criterion_text），禁 CTX_* 模板（P7）。
 去重=origin+端点写前判重，不动表 UNIQUE 结构。
-识别只消费校验后未 rejected 的落格项（由 apply_score_extraction 后置传入）。
+识别只消费校验后未 rejected 的落格项（由 settle_delta / 声明分派后置传入）。
 """
 
 from __future__ import annotations
@@ -298,7 +298,7 @@ def _is_exposed_transformed(dossier: Dict[str, object]) -> bool:
 
 
 def _person_change_items(extracted: Dict[str, object]) -> List[Dict[str, object]]:
-    """消费调用方已滤 rejected 的落格项；本轴不再二次闸（单一保护点在 apply_score_extraction）。"""
+    """消费调用方已滤 rejected 的落格项；本轴不再二次闸（单一保护点在 settle_delta）。"""
     raw = extracted.get("人物变更") or extracted.get("person_changes") or []
     if not isinstance(raw, list):
         return []

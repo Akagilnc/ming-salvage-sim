@@ -84,7 +84,7 @@ def test_zero_cannon_request_leaves_no_log(game):
 
 def test_illegal_region_field_rejected_not_raised(read_game):
     """非法 region 字段：ADR 0008 决定 1（PR2-S2）后不再 raise LLMContractError 崩整月，
-    改为逐项拒收留痕（region_changes 含 {"rejected": True, "category": "invalid_enum"}），
+    改为 canonical RejectedItem 逐项拒收留痕（category=invalid_enum），
     好项照落、坏一项不带走整批。"""
     db, state, content = read_game
     applied = settle_delta(state, db, {'region_delta': {'beizhili': {'origin_ref': '盘面自发', '不存在的字段': 5}}}, SettlementContext(content=content))

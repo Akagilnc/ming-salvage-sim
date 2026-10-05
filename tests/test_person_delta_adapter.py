@@ -15,7 +15,6 @@ import pytest
 from ming_sim.db import GameDB
 from ming_sim.models import Character
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
-from ming_sim.entities.character.normalize import normalize_person_changes
 from ming_sim.declaration_dispatch import dispatch_declaration
 from tests.conftest import active_ming_character
 from tests.dossier_test_helpers import create_test_secret_order
@@ -32,30 +31,6 @@ def _promulgated_dossier(db, state, decree_text, target_id="毛文龙"):
     db.record_dossier_decision(dossier_id, "promulgated")
     db.transition_decree_dossier(dossier_id, "executing")
     return f"dossier:{dossier_id}"
-
-
-def test_normalize_person_changes_keeps_new_key_items():
-    extracted = {
-        "人物变更": [
-            {
-                "name": "孔有德",
-                "action": "易主",
-                "new_power": "houjin",
-                "方式": "主动投敌",
-                "反噬": {"houjin": {"leverage": 3}},
-            }
-        ]
-    }
-
-    assert normalize_person_changes(extracted) == [
-        {
-            "name": "孔有德",
-            "动作": "易主",
-            "new_power": "houjin",
-            "方式": "主动投敌",
-            "反噬": {"houjin": {"leverage": 3}},
-        }
-    ]
 
 
 @pytest.mark.parametrize(
@@ -83,13 +58,6 @@ def test_retired_legacy_person_keys_are_rejected_per_section_not_silently_droppe
     assert db.conn.execute("SELECT section FROM rejection_reports").fetchone()[0] == legacy_key
     assert len(legacy_rejections) == 1
     assert legacy_rejections[0].category == "invalid_shape"
-
-
-def test_normalize_person_changes_ignores_non_item_shapes():
-    assert normalize_person_changes({"人物变更": ["bad", {"name": "毕自严"}]}) == [
-        {"name": "毕自严"}
-    ]
-    assert normalize_person_changes({"人物变更": {"name": "某氏"}}) == []
 
 
 def test_apply_score_extraction_rejects_person_change_power_move_without_way(read_game):
@@ -1089,7 +1057,8 @@ def test_apply_score_extraction_allegiance_change_rebinds_identity_title(game):
         content.characters[name].office = "兵部尚书"
         content.characters[name].office_type = "兵部"
         assert content.characters[name].office
-        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '易主', '方式': '主动投敌', 'new_power': 'houjin', 'new_title': '降臣', '反噬': {}, 'reason': '阵前倒戈'}]}, SettlementContext(content=content))
+        # #1835 S3：入口侧用 action 别名承接原 helper-only 归一覆盖（不另造证明测）。
+        applied = settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', 'action': '易主', '方式': '主动投敌', 'new_power': 'houjin', 'new_title': '降臣', '反噬': {}, 'reason': '阵前倒戈'}]}, SettlementContext(content=content))
 
         row = db.conn.execute(
             "SELECT power_id, office, office_type FROM characters WHERE name=?", (name,)
@@ -1099,6 +1068,7 @@ def test_apply_score_extraction_allegiance_change_rebinds_identity_title(game):
         assert content.characters[name].office == "降臣"
         assert content.characters[name].office_type == "身名分"
         assert view(applied, "applied_person_changes")[0]["new_title"] == "降臣"
+        assert view(applied, "applied_person_changes")[0]["动作"] == "易主"
     finally:
         content.characters[name].office = old_office
         content.characters[name].office_type = old_office_type
@@ -1247,10 +1217,6 @@ def test_set_character_office_person_title_survives_stem_collision(game):
         (
             {"name": "", "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"},
             {
-                "name": "",
-                "origin_ref": "盘面自发", "动作": "处置",
-                "rejected": True,
-                "reason": "name 或 动作 缺失",
                 "category": "missing_field",
                 "item": {"name": "", "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"},
             },
@@ -1258,11 +1224,6 @@ def test_set_character_office_person_title_survives_stem_collision(game):
         (
             {"name": "孔有德", "origin_ref": "盘面自发", "动作": "处置", "status": "unknown"},
             {
-                "name": "孔有德",
-                "origin_ref": "盘面自发", "动作": "处置",
-                "status": "unknown",
-                "rejected": True,
-                "reason": "status 非白名单",
                 "category": "invalid_enum",
                 "item": {"name": "孔有德", "origin_ref": "盘面自发", "动作": "处置", "status": "unknown"},
             },
@@ -1270,11 +1231,6 @@ def test_set_character_office_person_title_survives_stem_collision(game):
         (
             {"name": "孔有德", "origin_ref": "盘面自发", "动作": "处置", "status": "active"},
             {
-                "name": "孔有德",
-                "origin_ref": "盘面自发", "动作": "处置",
-                "status": "active",
-                "rejected": True,
-                "reason": "处置 不直接迁入 active，走任命级联",
                 "category": "invalid_transition",
                 "item": {"name": "孔有德", "origin_ref": "盘面自发", "动作": "处置", "status": "active"},
             },

@@ -279,7 +279,6 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
 
     assert result.effects.applied
     person_change = view(result.effects.applied[0], "applied_person_changes")[0]
-    assert not person_change.get("rejected", False)
     assert person_change["new_office"] == new_office
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (person,),
@@ -323,7 +322,6 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     transfer, depleted_transfer = view(effect_report, "population_transfers")
     assert transfer["amount"] == farmer_before
     assert depleted_transfer["amount"] == 0
-    assert not depleted_transfer.get("rejected", False)
     assert db.conn.execute(
         "SELECT population FROM classes WHERE name='农民' AND region_id='shaanxi'"
     ).fetchone()[0] == 0
