@@ -64,8 +64,8 @@ CREATE INDEX IF NOT EXISTS idx_character_knowledge_sources_turn
     ON character_knowledge_sources(turn, id);
 """
 
-# Source-id shapes that identify a private brief / legacy secret order.
-_SECRET_ORDER_SOURCE = re.compile(r"secret_order(?:_brief)?:(\d+)")
+# Source-id shapes that identify a private brief.
+_SECRET_ORDER_SOURCE = re.compile(r"secret_order_brief:(\d+)")
 _PUBLIC_SAYING_SOURCE = re.compile(r"public_saying:(\d+)")
 
 
@@ -579,7 +579,7 @@ class CharacterKnowledgeStore:
 
     @staticmethod
     def secret_order_id_in(source_id: str) -> Optional[int]:
-        """Order id when this source id names a brief / legacy secret order."""
+        """Order id when this source id names a private brief."""
         match = _SECRET_ORDER_SOURCE.fullmatch(str(source_id or ""))
         return None if match is None else int(match.group(1))
 
@@ -647,7 +647,7 @@ class CharacterKnowledgeStore:
         return self._conn.execute('\n                    UPDATE secret_orders\n                    SET due_turn = ?, deadline_span = ?, result = ?, updated_at = CURRENT_TIMESTAMP\n                    WHERE id = ?\n                    ', params)
 
     def read_get_secret_order(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM secret_orders WHERE id = ?', params).fetchone()
+        return self.secret_order_row(int(params[0]))
 
     def read_auto_submit_due_secret_orders(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            SELECT id, title, result FROM secret_orders\n            WHERE status = 'active' AND due_turn > 0 AND due_turn <= ?\n            ORDER BY id\n            ", params).fetchall()

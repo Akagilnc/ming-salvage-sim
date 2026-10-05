@@ -100,7 +100,7 @@ tests/test_character_knowledge_489.py|KEEP_SQL_SCHEMA	tests/test_character_knowl
 tests/test_chat_stream_failpaths_393.py|KEEP_INJECTED_FAILURE	tests/test_chat_stream_failpaths_393.py	KEEP_INJECTED_FAILURE	401-401	1	1	injected cleanup error message
 tests/test_chat_stream_failpaths_393.py|KEEP_INPUT_FIDELITY	tests/test_chat_stream_failpaths_393.py	KEEP_INPUT_FIDELITY	397-1159	44	75	KEEP_INPUT_FIDELITY lit='llm_idle_timeout' fn=test_chat_stream_idle_budget_independent_per_attempt
 tests/test_chat_stream_failpaths_393.py|KEEP_MACHINE_ID	tests/test_chat_stream_failpaths_393.py	KEEP_MACHINE_ID	148-1157	53	88	KEEP_MACHINE_ID lit='done' fn=test_chat_stream_idle_budget_independent_per_attempt
-tests/test_chat_stream_failpaths_393.py|KEEP_P4_ABSENCE	tests/test_chat_stream_failpaths_393.py	KEEP_P4_ABSENCE	492-493	2	4	HTTP detail must not leak Internal Server Error chrome
+tests/test_chat_stream_failpaths_393.py|DELETE_REVOKED_K3	tests/test_chat_stream_failpaths_393.py	DELETE_REVOKED_K3	492-493	2	4	1889 K3 revoked: diagnostic prose absence is not P4 contract
 tests/test_chat_stream_failpaths_393.py|KEEP_STRUCT	tests/test_chat_stream_failpaths_393.py	KEEP_STRUCT	1126-1126	1	2	no string literal / empty-struct
 tests/test_cli_backend.py|KEEP_INPUT_FIDELITY	tests/test_cli_backend.py	KEEP_INPUT_FIDELITY	65-1275	115	241	KEEP_INPUT_FIDELITY lit='ok' fn=test_material_runner_uses_cwd_and_read_only_tool_surface
 tests/test_cli_backend.py|KEEP_MACHINE_ID	tests/test_cli_backend.py	KEEP_MACHINE_ID	82-1263	60	126	KEEP_MACHINE_ID lit='codex' fn=test_public_cli_support_restores_existing_runners

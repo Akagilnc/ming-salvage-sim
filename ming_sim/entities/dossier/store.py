@@ -1866,9 +1866,7 @@ class DossierStore:
         self, turn: int, verdicts: Iterable[tuple[int, str]],
     ) -> None:
         """Replace one turn's whole batch (delete-then-insert, same transaction)."""
-        self._conn.execute(
-            "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(turn),)
-        )
+        self.clear_pending_promulgation_verdicts(turn)
         for dossier_id, verdict_json in verdicts:
             self._conn.execute(
                 "INSERT INTO pending_promulgation_verdicts"

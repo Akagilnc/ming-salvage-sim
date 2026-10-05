@@ -1216,8 +1216,8 @@ class GameDB:
     # dynamic 税科目 → regions.fiscal 子字段映射。
     # 读 region.fiscal（不读 fiscal_config 的 base），故对这些 key 做裁撤/调额必须同步改
     # 各省 fiscal 字段才真生效——否则只动目录不动钱（账目与叙事脱节）。
-    #   田赋无独立字段（=tax_per_turn 减其余三税的残差），裁撤走 tax_per_turn 压低；
     #   皇庄收入真读 fiscal_config.皇庄_base，裁撤/调额改 config 即生效，不在本表。
+    #   田赋走现役 substrate hub（正赋），不经 tax_per_turn 标量残差链。
     _DYNAMIC_REGION_FIELD = {
         "辽饷": "liao_xiang", "盐税": "salt_tax", "商税": "commerce_tax",
     }
@@ -1236,7 +1236,7 @@ class GameDB:
     def apply_dynamic_fiscal_scale(self, stem: str, ratio: float, commit: bool = True) -> int:
         """按 ratio 缩放所有省 regions.fiscal 中该 dynamic 税字段（辽饷/盐税/商税）。
 
-        ratio=0 即彻底罢废（字段归零）；0<ratio<1 即按比例削减。田赋走 _scale_tian_fu。
+        ratio=0 即彻底罢废（字段归零）；0<ratio<1 即按比例削减。
         返回被改动的省数。皇庄不在此（走 fiscal_config）。命中映射外的 stem 返回 0。
         """
         field = self._DYNAMIC_REGION_FIELD.get(stem)
@@ -1409,27 +1409,6 @@ class GameDB:
                     "origin_ref": origin_ref,
                 })
 
-    def scale_tian_fu(self, ratio: float, commit: bool = True) -> int:
-        """田赋无独立字段（=tax_per_turn 减辽饷/盐税/商税的残差）。按 ratio 缩放田赋部分：
-        新 tax_per_turn = 三税之和 + 田赋残差×ratio。ratio=0 即罢田赋（仅留三税基）。
-        返回被改动的省数。"""
-        touched = 0
-        for row in RegionStore(self.conn).read_scale_tian_fu():
-            fiscal: dict = load_stored_object(row["fiscal"], label='fiscal')
-            others = (int(fiscal.get("liao_xiang", 0) or 0)
-                      + int(fiscal.get("salt_tax", 0) or 0)
-                      + int(fiscal.get("commerce_tax", 0) or 0))
-            tax = int(row["tax_per_turn"])
-            tian_fu = max(0, tax - others)
-            new_tax = others + max(0, round(tian_fu * ratio))
-            if new_tax == tax:
-                continue
-            self.regions.update(str(row["id"]), {"tax_per_turn": new_tax})
-            touched += 1
-        if touched and commit:
-            self.conn.commit()
-        return touched
-
     def remove_fiscal_item(
         self, key: str, commit: bool = True, *, origin_ref: str = "",
         reason: str = "", turn: int = 0, beyond_intent: object = 0,
@@ -1439,8 +1418,9 @@ class GameDB:
         完全放开——含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。
         - fixed 项：删目录条目即停止逐月落账。
         - dynamic 税（辽饷/盐税/商税）：实收走 region.fiscal，故同步把各省该字段归零；
-          田赋走 tax_per_turn 压到仅留三税基；皇庄收入读 fiscal_config，删 config 即停。
+          皇庄收入读 fiscal_config，删 config 即停。
           这样「永久罢辽饷」当真停收，不再只动目录不动钱。
+          田赋目录裁撤不写 tax_per_turn 标量残差；正赋核算留现役 substrate hub。
         删不存在的项返回 None。返回被删的 base key（按 stem 归一）。
         """
         stem = self._stem_of(key)
@@ -1455,7 +1435,7 @@ class GameDB:
             return None
         if base_key in _STRUCTURAL_FISCAL_MINIMUMS or rate_key in _STRUCTURAL_FISCAL_MINIMUMS:
             return None
-        # 存在性查 base 或 rate 任一——田赋只有 田赋_rate（无 base），但仍是可裁撤的 dynamic 项。
+        # 存在性查 base 或 rate 任一——田赋只有 田赋_rate（无 base），但仍是可裁撤的目录项。
         if not self.fiscal_config.has_any((base_key, rate_key)):
             return None
         # The live catalogue cannot retain provenance after DELETE.  Preserve the
@@ -1467,11 +1447,9 @@ class GameDB:
             (base_key, rate_key), turn=int(turn), origin=origin_ref,
             reason=reason, beyond=beyond_flag,
         )
-        # dynamic 税：同步罢废各省实收字段（皇庄走 config 不在此）。
+        # dynamic 税：同步罢废各省实收字段（皇庄走 config 不在此；田赋不经标量残差）。
         if stem in self._DYNAMIC_REGION_FIELD:
             self.apply_dynamic_fiscal_scale(stem, 0.0, commit=commit)
-        elif stem == "田赋":
-            self.scale_tian_fu(0.0, commit=commit)
         if commit:
             self.conn.commit()
         return base_key
@@ -5220,6 +5198,23 @@ class GameDB:
         # #1843 reopen：无有效邸报则真空；旧 turn_logs 回落已删。
         return ""
 
+    def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
+        """召对聊天单条消息落库（chat_messages）。
+
+        #976 不变式：分类落定前，**任何**召对行（不分 role）不得进入共享
+        ``character_knowledge_sources``。此处只 insert + hold；投轨唯一出口是
+        ``release_held_audience_knowledge``（分类后 / 月末）。续聊读
+        ``chat_messages`` 本表，不依赖共享投影即时可见。
+
+        Empty ``minister_name`` is allowed for non-audience bookkeeping rows but
+        cannot be projected (release parks them as withheld — see N2).
+        """
+        message_id = self.chat_messages.insert(
+            minister_name=minister_name, turn=turn, role=role, content=content,
+        )
+        self.conn.commit()
+        return message_id
+
     def set_message_highlights(
         self, message_id: int, phrases: Sequence[Any],
     ) -> None:
@@ -6139,13 +6134,9 @@ class GameDB:
         # An explicit public row is the payload for that source. A later
         # source_projection of the same source_id must not replace it.
         public_kept: set[str] = set()
+        from ming_sim.entities.character_knowledge.store import _load_list, _load_targets
         for row in rows:
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
-            if not isinstance(excluded_names, list):
-                excluded_names = []
+            excluded_names = _load_list(row["excluded_names"])
             key = str(row["source_id"] or "")
             is_public = str(row["kind"] or "") == "public"
             if key and key in public_kept and not is_public:
@@ -6162,18 +6153,8 @@ class GameDB:
         character_names = {str(row["name"]) for row in characters}
         for row in source_rows:
             participants = participant_roster_names(row["participant_roster"])
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
-            if not isinstance(excluded_names, list):
-                excluded_names = []
-            try:
-                excluded_targets = json.loads(row["excluded_targets"] or "{}")
-            except (TypeError, ValueError):
-                excluded_targets = {}
-            if not isinstance(excluded_targets, dict):
-                excluded_targets = {}
+            excluded_names = _load_list(row["excluded_names"])
+            excluded_targets = _load_targets(row["excluded_targets"])
             target_people = {
                 str(name) for name in excluded_targets.get("people", [])
             }
@@ -12203,6 +12184,11 @@ class GameDB:
         self.conn.commit()
         return created
 
+    def clear_month_open_snapshot(self, turn: int) -> None:
+        """过期/清除本回合快照。atomic 内 commit 为 no-op，与 clear_resolve_context 同窗。"""
+        self.month_open_snapshots.delete(int(turn))
+        self.conn.commit()
+
     def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
         row = CharacterStore(self.conn).read_get_authority((int(authority_id),))
         if row is None:
@@ -13547,15 +13533,6 @@ class GameDB:
         source = str(source_id or "")
         if self.character_knowledge.has_event_for_source(source):
             return self.character_knowledge.exclusions_for_source(source)
-        # #883 CR R1 S2: bare ``secret_order:`` shared *sources* are no longer
-        # produced (create/update → private briefs; production disclosure →
-        # ``secret_order_disclosure:``; register gate rejects the prefix).
-        # Retained: ``record_public_knowledge_event`` still inherits exclusions
-        # by looking up secret_orders when source_id is ``secret_order:N`` —
-        # exercised by AC harness paths (test_character_knowledge_489 /
-        # test_minister_context / test_web_chat_serialization_393). Without
-        # this branch those writes lose the blacklist. session.py only DELETEs
-        # legacy sources with this prefix; no live production producer.
         order_id = self.character_knowledge.secret_order_id_in(source)
         if order_id is not None:
             order = CharacterKnowledgeStore(self.conn).read_knowledge_exclusions_for_source((order_id,))
@@ -13578,8 +13555,7 @@ class GameDB:
         from ming_sim.entities.character_knowledge.store import _load_targets
 
         source = str(source_id or "")
-        # Private briefs and retained bare secret-order sources share the
-        # canonical exclusions persisted on secret_orders.
+        # Private briefs inherit canonical exclusions persisted on secret_orders.
         order_id = self.character_knowledge.secret_order_id_in(source)
         if order_id is not None:
             row = CharacterKnowledgeStore(self.conn).read_knowledge_exclusion_targets_for_source((order_id,))

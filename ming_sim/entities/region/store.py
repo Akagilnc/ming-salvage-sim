@@ -137,9 +137,6 @@ class RegionStore:
     def read_settle_ming_province_substrate_ticks(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id", params).fetchall()
 
-    def read_scale_tian_fu(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, tax_per_turn, fiscal FROM regions', params).fetchall()
-
     def read_apply_region_cannon(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT city_level, cannon FROM regions WHERE id=?', params).fetchone()
 

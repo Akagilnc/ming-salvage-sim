@@ -1,0 +1,68 @@
+class	path	line	kind	disposition	basis	text
+K1	ming_sim/db.py	8258	source_regex	KEEP	kwarg name for issued-order flag; not source-id accept-both	_issued_secret_order: bool = False,
+K1	ming_sim/db.py	8308	source_regex	KEEP	kwarg name for issued-order flag; not source-id accept-both	_issued_secret_order: bool = False,
+K1	ming_sim/db.py	8614	source_regex	KEEP	kwarg name for issued-order flag; not source-id accept-both	_issued_secret_order: bool = False,
+K1	ming_sim/db.py	13466	source_regex	KEEP	live private brief source / table	source_id = f"secret_order_brief:{int(row['order_id'])}"
+K1	ming_sim/db.py	13801	source_regex	KEEP	comment on live disclosure prefix vs bare secret_order:	# ``secret_order_disclosure:`` (does not start with ``secret_order:``)
+K1	ming_sim/entities/character_knowledge/store.py	68	source_regex	KEEP	live private brief source / table	_SECRET_ORDER_SOURCE = re.compile(r"secret_order_brief:(\d+)")
+K1	ming_sim/materials.py	1292	source_regex	KEEP	dossier origin_ref prefix != knowledge source_id	SECRET_ORDER_ORIGIN_PREFIX = "secret_order:"
+K1	tests/test_character_knowledge_489.py	129	source_regex	KEEP	secrecy negative / input fidelity machine id	assert not any(item.get("source_id") == f"secret_order:{order}" for item in view["events"])
+K1	tests/test_character_knowledge_489.py	138	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	state, "密事记录", "SECRET_SOURCE_MARKER_490", source_id=f"secret_order:{order}"
+K1	tests/test_character_knowledge_489.py	152	source_regex	KEEP	secrecy negative / input fidelity machine id	assert f"secret_order:{order}" not in source_ids
+K1	tests/test_character_knowledge_489.py	282	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+K1	tests/test_character_knowledge_489.py	287	source_regex	KEEP	secrecy negative / input fidelity machine id	assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
+K1	tests/test_character_knowledge_489.py	355	source_regex	KEEP	secrecy negative / input fidelity machine id	assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
+K1	tests/test_character_knowledge_489.py	393	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+K1	tests/test_character_knowledge_489.py	399	source_regex	KEEP	secrecy negative / input fidelity machine id	assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
+K1	tests/test_character_knowledge_489.py	400	source_regex	KEEP	secrecy negative / input fidelity machine id	assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
+K1	tests/test_character_knowledge_489.py	412	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+K1	tests/test_character_knowledge_489.py	417	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	disclosed = next(item for item in items if item["source_id"] == f"secret_order:{order}")
+K1	tests/test_character_knowledge_489.py	461	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+K1	tests/test_character_knowledge_489.py	470	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	(f"secret_order:{order}",),
+K1	tests/test_decree_dossiers_571.py	1702	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	state, f"secret_order:{order_id}", origin_kind="decree",
+K1	tests/test_gazette_author_1862.py	103	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	"secret_order:9",
+K1	tests/test_gazette_author_1862.py	104	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	json.dumps({"kind": "secret_order", "origin_ref": "secret_order:9", "body": _SECRET_DECL}, ensure_ascii=False),
+K1	tests/test_gazette_author_1862.py	112	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	year=year, period=period, turn=turn, origin_ref="secret_order:9",
+K1	tests/test_gazette_author_1862.py	121	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	"VALUES (?, ?, ?, '国库', -3, 1, 'SECRET_LEDGER', '密令账', 'secret_order:9')",
+K1	tests/test_gazette_author_1862.py	127	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	{"kind": "secret_order", "origin_ref": "secret_order:9", "note": _SECRET_REJ},
+K1	tests/test_gazette_author_1862.py	242	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	("secret_order:9", "密令到期承诺1862"),
+K1	tests/test_gazette_author_1862.py	330	source_regex	KEEP	secrecy negative / input fidelity machine id	assert all(str(row.get("origin_ref") or "") != "secret_order:9" for row in payload["landed"])
+K1	tests/test_month_chain_1847.py	1901	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	f"secret_order:{order_id}",
+K1	tests/test_month_chain_1847.py	1903	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	{"kind": "secret_order", "origin_ref": f"secret_order:{order_id}",
+K1	tests/test_month_chain_1847.py	1945	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	{"kind": "secret_order", "origin_ref": f"secret_order:{order_id}",
+K1	tests/test_secret_dossier_participants_1252.py	74	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	f"secret_order:{order_id}", dossier_before,
+K1	tests/test_secret_order_isolation_883.py	77	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	"SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"
+K1	tests/test_secret_order_isolation_883.py	83	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	str(item.get("source_id") or "").startswith("secret_order:")
+K1	tests/test_secret_order_isolation_883.py	102	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	source_id="secret_order:force-shared",
+K1	tests/test_secret_order_isolation_883.py	108	source_regex	KEEP	secrecy/boundary test still asserts bare prefix absence or disclosure fixture; not app-side accept-both	"SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"
+K1	tests/test_secret_order_isolation_883.py	151	source_regex	KEEP	live private brief source / table	assert {f"chat_message:{mid}", f"secret_order_brief:{oid}"}.isdisjoint(
+K1	tests/test_secret_order_isolation_883.py	154	source_regex	KEEP	live private brief source / table	assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
+K1	tests/test_secret_order_isolation_883.py	198	source_regex	KEEP	live private brief source / table	assert {f"chat_message:{mid_origin}", f"secret_order_brief:{oid}"}.isdisjoint(
+K1	tests/test_secret_order_isolation_883.py	201	source_regex	KEEP	live private brief source / table	assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
+K1	tests/test_secret_order_isolation_883.py	379	source_regex	KEEP	live private brief source / table	assert {f"chat_message:{mid}", f"secret_order_brief:{oid}"}.isdisjoint(
+K1	tests/test_secret_order_isolation_883.py	382	source_regex	KEEP	live private brief source / table	assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
+K1	tests/test_secret_order_isolation_883.py	421	source_regex	KEEP	live private brief source / table	assert f"secret_order_brief:{oid}" not in _view_source_ids(db, state, other.name)
+K1	tests/test_secret_order_update.py	101	source_regex	KEEP	live private brief source / table	if item.get("source_id") == f"secret_order_brief:{oid}"
+K5	ming_sim/entities/character_knowledge/store.py	160	dup_sql	KEEP	different assignment writers	set_secret_period_line :: UPDATE secret_orders SET
+K5	ming_sim/entities/character_knowledge/store.py	224	dup_sql	KEEP	different lifecycle ledgers (judge C6 reject merge)	record_participation :: INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)
+K5	ming_sim/entities/character_knowledge/store.py	245	dup_sql	KEEP	different lifecycle ledgers (judge C6 reject merge)	record_public_event :: INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)
+K5	ming_sim/entities/character_knowledge/store.py	438	dup_sql	KEEP	different assignment writers	update_secret_order_assignments :: UPDATE secret_orders SET
+K5	ming_sim/entities/dossier/store.py	465	dup_sql	KEEP	list vs snapshot projection	list_dossiers :: SELECT * FROM decree_dossiers
+K5	ming_sim/entities/dossier/store.py	1799	dup_sql	KEEP	list vs snapshot projection	snapshot_rows :: SELECT * FROM decree_dossiers
+K5	ming_sim/entities/issue/store.py	281	dup_sql	KEEP	different terminal verbs share INSERT shape	write_mark_event_triggered_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'triggered', ?) ON CONFLICT(event_id)
+K5	ming_sim/entities/issue/store.py	284	dup_sql	KEEP	different terminal verbs share INSERT shape	write_mark_event_avoided_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'avoided', ?) ON CONFLICT(event_id) DO
+K5	ming_sim/entities/issue/store.py	287	dup_sql	KEEP	different terminal verbs share INSERT shape	write_mark_event_obsolete_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'obsolete', ?) ON CONFLICT(event_id) D
+K5	ming_sim/entities/issue/store.py	507	dup_sql	KEEP	single delete rule; batch save + clear entrypoints retained	_delete_pending_decision_rows :: DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'
+K5	ming_sim/entities/issue/store.py	581	dup_sql	KEEP	rescript_draft delete rule distinct from decision delete	save_rescript_drafts :: DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'
+K5	ming_sim/entities/person_log/store.py	56	dup_sql	KEEP	list vs snapshot projection	edge_snapshot_rows :: SELECT * FROM relation_edge_events
+K5	ming_sim/entities/person_log/store.py	218	dup_sql	KEEP	snapshot vs owned read; different call sites same table shape	read_get_relation_edge_events_owned :: SELECT * FROM relation_edge_events
+K5	ming_sim/entities/region/store.py	153	dup_sql	KEEP	different field sets	read_due_order_displacement_entries :: SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_NewDebt','settle_宗禄欠_NewDebt')
+K5	ming_sim/entities/region/store.py	156	dup_sql	KEEP	different field sets	read_arrears_order_displacement_entries :: SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_Repaid','settle_宗禄欠_Repaid')
+K5	ming_sim/entities/reign_state/store.py	184	dup_sql	KEEP	different status transitions	write_clear_gated_legacies :: UPDATE legacies SET status='cleared' WHERE id=?
+K5	ming_sim/entities/reign_state/store.py	266	dup_sql	KEEP	different status transitions	write_expire_legacies :: UPDATE legacies SET status='expired' WHERE id=?
+K5	ming_sim/entities/reign_state/store.py	801	dup_sql	KEEP	different selection semantics	chat_turn_ids_for_message_ids :: SELECT id FROM chat_turns WHERE user_message_id IN (
+K5	ming_sim/entities/reign_state/store.py	837	dup_sql	KEEP	different selection semantics	latest_chat_turn_id_for_message_ids :: SELECT id FROM chat_turns WHERE user_message_id IN (
+K5	ming_sim/entities/social_class/store.py	84	dup_sql	KEEP	different class names	read_apply_bandit_absorptions :: SELECT population FROM classes WHERE name='流民' AND region_id=?
+K5	ming_sim/entities/social_class/store.py	93	dup_sql	KEEP	different class names	read_apply_levy_driven_transfers :: SELECT population FROM classes WHERE name='农民' AND region_id=?
+K5	ming_sim/entities/staged_declaration/store.py	143	dup_sql	KEEP	different status transitions	write :: UPDATE staged_declarations SET status='discarded' WHERE decree_ref=? AND status='staged'
+K5	ming_sim/entities/staged_declaration/store.py	242	dup_sql	KEEP	different status transitions	mark_settled :: UPDATE staged_declarations SET status='settled' WHERE decree_ref=? AND status='staged'

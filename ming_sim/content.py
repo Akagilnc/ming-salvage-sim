@@ -291,12 +291,6 @@ def load_event_content(filename: str = "events.json") -> List[Event]:
             string_list(item["terminal_reason_labels"], f"{filename}[{idx}].terminal_reason_labels")
             if "terminal_reason_labels" in item else []
         )
-        default_terminal_reason = str(item.get("default_terminal_reason") or "")
-        if default_terminal_reason and default_terminal_reason not in terminal_reason_labels:
-            raise SystemExit(
-                f"{filename}[{idx}] default_terminal_reason={default_terminal_reason!r} "
-                "不在 terminal_reason_labels 白名单内。"
-            )
         gate_raw = item.get("trigger_gate") or {}
         if not isinstance(gate_raw, dict):
             raise SystemExit(f"{filename}[{idx}] trigger_gate 必须是对象（key→比较式）。")

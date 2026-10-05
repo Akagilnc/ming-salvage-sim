@@ -124,7 +124,7 @@ class IssueStore:
         return self._conn.execute('SELECT id, status, stages_json FROM issues WHERE id=?', params).fetchone()
 
     def read_ack_due_commitment_issue(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM issues WHERE id=?', params).fetchone()
+        return self.row(int(params[0]))
 
     def read_event_issue_refs(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT origin_ref FROM issues WHERE origin_kind='event_pool'", params).fetchall()
@@ -433,10 +433,7 @@ class IssueStore:
             "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
             (turn,),
         ).fetchall()
-        self._conn.execute(
-            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
-            (turn,),
-        )
+        self._delete_pending_decision_rows(turn)
         for idx, d in enumerate(decisions):
             self._conn.execute(
                 """INSERT INTO pending_decisions
@@ -504,13 +501,17 @@ class IssueStore:
             })
         return out
 
-    def clear_pending_decisions(self, turn: int) -> None:
-        """#656：按 kind 过滤——只清 'decision' 行（既有生命周期一字不变）；
-        'rescript_draft' 行跨月留存，终态清理归 #657 六动作裁决路径。"""
+    def _delete_pending_decision_rows(self, turn: int) -> None:
+        """Single delete rule for kind='decision' rows (no commit)."""
         self._conn.execute(
             "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
             (int(turn),),
         )
+
+    def clear_pending_decisions(self, turn: int) -> None:
+        """#656：按 kind 过滤——只清 'decision' 行（既有生命周期一字不变）；
+        'rescript_draft' 行跨月留存，终态清理归 #657 六动作裁决路径。"""
+        self._delete_pending_decision_rows(turn)
         self._conn.commit()
 
     def _insert_rescript_draft_rows(

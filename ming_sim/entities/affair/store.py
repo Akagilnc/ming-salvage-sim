@@ -78,7 +78,7 @@ class Affair:
 
 
 class AffairStore:
-    """World-record home for affairs. Close only by explicit declaration."""
+    """World-record home for affairs."""
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
