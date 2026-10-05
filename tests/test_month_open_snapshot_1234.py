@@ -359,7 +359,9 @@ def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
             data_raw = line.split(":", 1)[1].strip()
     assert event == "decisions", serialized
     result = json.loads(data_raw or "{}")
+    # stream 终态无 awaiting_decision 键；以 decisions 非空列表作外部结构等价钉。
     assert isinstance(result.get("decisions"), list), result
+    assert len(result["decisions"]) == 1, result
 
     payload = runtime.state_payload()
     assert payload["turn"]["settlement_display"] is True

@@ -1,0 +1,18 @@
+=== RETIRE_ROUTE_STRUCTURE parent→HEAD ===
+parent=3015b9ca5f29a796f0e968ef89e8374d42de4c94
+head=220aaf9de962a9ac571fdf248c949feb50914633
+--- git show parent: nonstream decorator present ---
+5663:@app.post("/api/decree/issue")
+5664:def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
+5755:async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest()) -> StreamingResponse:
+--- HEAD routes / symbols ---
+has_api_issue_decree False
+has_api_issue_decree_stream True
+route_/api/decree/issue False
+route_/api/decree/issue/stream True
+has__migrate_character_identity_seed False
+has__backfill_bandit_power_split False
+inventory_migrate False
+inventory_backfill False
+inventory_seed_static_data True
+RETIRE_STRUCTURE_DONE

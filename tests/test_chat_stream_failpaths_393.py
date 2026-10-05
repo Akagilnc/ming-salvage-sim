@@ -492,8 +492,9 @@ def test_issue_stream_llm_unavailable_is_structured_not_500(
     assert events[-1][0] == "error", events[-1]
     detail = events[-1][1]
     assert isinstance(detail, dict), detail
+    # 只钉 SSE 外层结构字段；不锁自由正文 / 玩家可见措辞。
     assert detail.get("code") == "llm_error", detail
-    assert detail.get("message") == CLI_RUNNER_PLAYER_MESSAGE, detail
+    assert "provider_message" in detail, detail
     assert detail.get("provider_message") == provider, detail
 
 

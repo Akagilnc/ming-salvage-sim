@@ -615,12 +615,16 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     t.join()
     assert "err" not in b_result, b_result.get("err")
     assert b_result.get("status") == 200, b_result
-    assert "error" in (b_result.get("body") or "")
+    # SSE 外层 event 名；不锁自由正文。
+    assert "event: error" in (b_result.get("body") or ""), b_result
     # B 进 resolve 后 session 再创建了孤儿快照
     assert saw["session_reaccept"] is True
     # B finally 须清掉该孤儿（created_display=False 不得再跳过 exit）
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
+    assert game.state.turn_phase not in (
+        TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
+    )
 
 
 def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypatch):

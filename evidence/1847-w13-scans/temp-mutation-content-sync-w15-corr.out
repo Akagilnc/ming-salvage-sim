@@ -1,0 +1,75 @@
+=== TEMP content_sync mutation (init_schema real entry; no permanent test) ===
+temp_test=tests/_tmp_1847_w15_content_sync_mutation.py (deleted after; not committed)
+parent_methods=3015b9ca5:ming_sim/db.py
+
+--- RED: current HEAD (methods deleted; init_schema no longer calls them) ---
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+____________ test_bandit_power_content_sync_serializes_list_aliases ____________
+
+game = (<ming_sim.db.GameDB object at 0x10bf647d0>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+
+    def test_bandit_power_content_sync_serializes_list_aliases(game):
+        """内容名册同步：power aliases 为 list 时 INSERT OR IGNORE 须写成 TEXT 不崩。"""
+        db, _state, content = game
+        content.powers["bandit_li_zicheng"].aliases = ["李自成部", "闯军"]
+        db.conn.execute("DELETE FROM powers WHERE id='bandit_li_zicheng'")
+        db.conn.commit()
+    
+        db.init_schema()
+    
+>       aliases = db.conn.execute(
+            "SELECT aliases FROM powers WHERE id='bandit_li_zicheng'"
+        ).fetchone()["aliases"]
+E       TypeError: 'NoneType' object is not subscriptable
+
+tests/_tmp_1847_w15_content_sync_mutation.py:13: TypeError
+_______ test_bandit_power_content_sync_does_not_rewrite_character_owner ________
+
+game = (<ming_sim.db.GameDB object at 0x108cea990>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+
+    def test_bandit_power_content_sync_does_not_rewrite_character_owner(game):
+        """内容名册同步只补缺势力行，不改写人物既有 power_id。"""
+        db, _state, _content = game
+        db.conn.execute("UPDATE characters SET power_id='ming' WHERE name='张献忠'")
+        db.conn.execute("DELETE FROM powers WHERE id='bandit_zhang_xianzhong'")
+        db.conn.commit()
+    
+        db.init_schema()
+    
+        assert db.conn.execute(
+            "SELECT power_id FROM characters WHERE name='张献忠'"
+        ).fetchone()["power_id"] == "ming"
+>       assert db.conn.execute(
+            "SELECT leader FROM powers WHERE id='bandit_zhang_xianzhong'"
+        ).fetchone()["leader"] == "张献忠"
+E       TypeError: 'NoneType' object is not subscriptable
+
+tests/_tmp_1847_w15_content_sync_mutation.py:31: TypeError
+=========================== short test summary info ============================
+FAILED tests/_tmp_1847_w15_content_sync_mutation.py::test_bandit_power_content_sync_serializes_list_aliases
+FAILED tests/_tmp_1847_w15_content_sync_mutation.py::test_bandit_power_content_sync_does_not_rewrite_character_owner
+2 failed in 0.63s
+real 1.02
+user 0.89
+sys 0.11
+RED_EXIT:1
+
+--- GREEN: process-local restore of parent methods + init_schema calls ---
+..                                                                       [100%]
+2 passed in 0.61s
+real 1.04
+user 0.90
+sys 0.11
+GREEN_EXIT:0
+
+--- KEEP seed entry still green on HEAD (existing real test) ---
+.                                                                        [100%]
+1 passed in 0.60s
+real 1.00
+user 0.89
+sys 0.10
+SEED_EXIT:0
+
+NOTE: nonstream API deletion = route/structure evidence only (see retire-structure-w15-corr.out);
+      stream tests already target /issue/stream; restoring old route would not red them.
