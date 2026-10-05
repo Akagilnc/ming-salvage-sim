@@ -285,20 +285,31 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
             events.append("stream")
             yield {"type": "done", "payload": {"ok": True}}
 
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda minister_name: None)
+    # #1849：流式召对固定 SCENE_CHAT_SPEAKER；旧 _require_active_minister 闸已退役，禁再 patch。
     monkeypatch.setattr(web_app, "get_game", lambda: _BlockingGame())
 
     async def drive_first_event():
-        response = await web_app.api_audience_chat_stream( web_app.ChatRequest(message="请奏"))
+        response = await web_app.api_audience_chat_stream(web_app.ChatRequest(message="请奏"))
         iterator = response.body_iterator
+        stream_task = asyncio.create_task(iterator.__anext__())
 
         async def tick():
-            await asyncio.to_thread(entered.wait)
+            # entered 或 stream 终态；请求先失败须传播，禁无限等 thread Event（无 deadline）。
+            while not entered.is_set() and not stream_task.done():
+                await asyncio.sleep(0)
+            if stream_task.done() and not entered.is_set():
+                exc = stream_task.exception()
+                if exc is not None:
+                    raise exc
+                raise AssertionError("stream finished without entering sync generator")
             events.append("tick")
             release.set()
 
-        first_event, _ = await asyncio.gather(iterator.__anext__(), tick())
-        return first_event
+        try:
+            first_event, _ = await asyncio.gather(stream_task, tick())
+            return first_event
+        finally:
+            release.set()  # 任务终态路径也须放行 generator 线程，避免 threadpool 挂死
 
     first = asyncio.run(drive_first_event())
 

@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -400,21 +401,23 @@ def _parse_sse(text: str) -> list[dict]:
     return events
 
 
-async def _await_event_or_task(ev: threading.Event, task: asyncio.Task) -> None:
-    """成功事件或 worker 终态均可唤醒；worker 异常原样传播，不把失败藏成挂起。
+async def _await_condition_or_task(
+    predicate: Callable[[], bool], task: asyncio.Task,
+) -> None:
+    """成功谓词或 worker 终态均可唤醒；worker 异常原样传播，不把失败藏成挂起。
 
-    事件与 task 同时终态时仍消费 task 异常——不得因 ev 先置位而吞掉 worker 失败。
+    谓词与 task 同时终态时仍消费 task 异常——不得因谓词先真而吞掉 worker 失败。
     """
-    while not ev.is_set() and not task.done():
+    while not predicate() and not task.done():
         await asyncio.sleep(0)
     if task.done():
         exc = task.exception()
         if exc is not None:
             raise exc
-        if not ev.is_set():
-            raise AssertionError("worker finished without expected success event")
+        if not predicate():
+            raise AssertionError("worker finished without expected condition")
         return
-    # ev 已置位且 task 仍在跑（如 started 后 hang on allow）——成功会合。
+    # 谓词已真且 task 仍在跑（如 started 后 hang on allow）——成功会合。
 
 
 async def _drain_tasks(*tasks: asyncio.Task) -> None:
@@ -434,19 +437,6 @@ async def _drain_tasks(*tasks: asyncio.Task) -> None:
         task.exception()
 
 
-async def _await_inflight_or_task(game, task: asyncio.Task) -> None:
-    """等真实在飞领票（inflight>0）或 worker 终态；失败原样传播，禁缺属性默认 0 空转。"""
-    q = game._runtime_write_queue()
-    while q.inflight_count() == 0 and not task.done():
-        await asyncio.sleep(0)
-    if task.done():
-        exc = task.exception()
-        if exc is not None:
-            raise exc
-        if q.inflight_count() == 0:
-            raise AssertionError("worker finished without claiming write ticket")
-
-
 async def _start_hanging_chat(game, client, minister, monkeypatch):
     """经真实 /chat/stream ASGI 请求起一轮回话并卡在生成中（在飞）。
     返回 (chat_task, allow)：chat_task 是仍在跑的 SSE 请求；置位 allow 后回话收尾。
@@ -463,7 +453,7 @@ async def _start_hanging_chat(game, client, minister, monkeypatch):
         client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
     try:
         # 生成已开始，或 chat worker 已终态（失败须传播，不得只等 started）。
-        await _await_event_or_task(started, task)
+        await _await_condition_or_task(started.is_set, task)
     except BaseException:
         # 移交前失败：释放 allow 并排空；已终态则 drain 只消费，不替换原错。
         allow.set()
@@ -501,7 +491,10 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
                 chat_task = asyncio.create_task(
                     client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
                 # 等真实在飞领票（锁前查之后、抢 gate 之前）或 worker 终态——读队列 inflight，不读已删兼容属性
-                await _await_inflight_or_task(game, chat_task)
+                await _await_condition_or_task(
+                    lambda: game._runtime_write_queue().inflight_count() > 0,
+                    chat_task,
+                )
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
             finally:
                 game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
