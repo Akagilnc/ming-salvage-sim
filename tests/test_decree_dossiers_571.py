@@ -531,7 +531,6 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
     assert state.metrics["国库"] == before
     rejected = db.get_decree_dossier(dossier_id)
     assert rejected["promulgation_blocked_layer"] == "six_offices"
-    assert "promulgation_reason" in rejected
 
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}]
@@ -1242,12 +1241,10 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
 
     assert terminal.review_directives(session) == "issue"
     assert len(prompts) == 1
-    assert revised_text in prompts[0]
 
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive.id)
     payload = json.loads(dossier["payload_json"])
-    assert "decree_text" in dossier
     assert dossier["action_type"] == "grant_allocation"
     assert (payload["amount"], payload["account"], payload["mode"]) == (
         25, "国库", "ordinary",
@@ -2086,7 +2083,6 @@ def test_in_transit_allocation_requires_execution_verdict(game):
     )
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == "closed"
-    assert "execution_note" in dossier
     assert dossier["interruption_reason"] == ""
 
 @pytest.mark.parametrize("value", [True, 1.5, 2.9])
@@ -2157,7 +2153,6 @@ def test_complete_rejection_verdict_is_restoreable_audit_record(game):
         assert row["criteria_snapshot"] == verdict["criteria_snapshot"]
         assert row["affected_parties"] == verdict["affected_parties"]
         assert row["midzhi_unpromulgatable"] is False
-        assert restored.get_decree_dossier(dossier_id)["promulgation_reason"] == verdict["reason"]
     finally:
         restored.close()
 

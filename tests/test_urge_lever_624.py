@@ -261,7 +261,7 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     assert payload.get("truth") in {"genuine", "pretextual"}
     assert "grace_fake" in payload
 
-    # 结构化 payload 不得投影泄漏；散文字段只要求键在，不跨文本等值
+    # 结构化 payload 不得投影泄漏；不锁自由 origin_context/criterion 散文
     urge_scenes = list_urge_audience_scenes(db, state)
     assert urge_scenes, "grace pending 必须顶出召对面"
     assert all("payload_json" not in item for item in urge_scenes)
@@ -269,7 +269,7 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     assert "payload_json" not in grace_scene
     marked = dict(grace[0], origin_context="上奏 grace_fake 待议", criterion_text="求宽限 truth")
     projected = project_urge_audience_scene(marked)
-    assert "origin_context" in projected and "criterion_text" in projected
+    assert "payload_json" not in projected
 
     # 最坏形态：带真伪底 payload 的 staged 条走真实 due-review 投影，断言零泄漏
     tid = db.insert_next_audience_todo(

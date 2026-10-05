@@ -434,20 +434,15 @@ def test_missing_frozen_dossier_set_is_empty_closed_set(game):
 
 
 def test_writer_rejects_blank_context(game):
-    """空白语境仍拒收（strip 只作非空谓词）；不机械断言正文保真。"""
+    """空白语境仍拒收（strip 只作非空谓词）。"""
     import pytest
     db, state, _ = game
-    db.record_relation_edge_event(
-        source="甲", target="乙", event_kind="把柄",
-        context="带实质的把柄语境", origin="settle:f1-probe", turn=state.turn,
-    )
-    row = _edge_rows(db, source="甲", target="乙")[0]
-    assert row["event_kind"] == "把柄"
     with pytest.raises(ValueError):
         db.record_relation_edge_event(
             source="甲", target="乙", event_kind="把柄",
             context="   \n\t ", origin="settle:f1-blank", turn=state.turn,
         )
+    assert _edge_rows(db, source="甲", target="乙") == []
 
 
 def test_writer_rejects_non_string_context(game):

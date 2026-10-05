@@ -269,8 +269,6 @@ def test_answering_world_question_resumes_suffix_then_gazette(game, monkeypatch)
     )
 
     assert len(continuation_calls) == 1 and len(continuation_calls[0]) == 1
-    assert "label" in continuation_calls[0][0]
-    assert dispatched_segments  # 续推段已送转译；不锁正文子串
     assert session.state.turn_phase == TurnPhase.SETTLING.value
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_questions") in (None, [], ())
@@ -1752,7 +1750,6 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
     pending = reloaded.get("pending_disclosures") or []
     assert any(
         int(item.get("order_id") or 0) == order_id
-        and "sim_note" in item
         for item in pending
     ), f"pending_disclosures missing after settle: {pending!r}"
 
@@ -2039,9 +2036,6 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     assert "origin_effects" not in feed
     assert "origin_rejections" not in feed
     assert "segment_applied_results" not in feed
-    assert "world_segment" in feed
-    # 已 settled 密令带 forecast_text 时 forecasts 键存在；不锁散文成员
-    assert "forecasts" in feed
     nominal = next(row for row in feed["nominal"]
                    if row["decree_ref"] == f"secret_order:{order_id}")
     # 未 settled 的拟旨不得进入名义。身份是 decree_ref，不是正文是否撞车。

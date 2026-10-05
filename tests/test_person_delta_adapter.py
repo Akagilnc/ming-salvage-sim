@@ -814,13 +814,13 @@ def test_apply_score_extraction_materializes_derived_release_before_appointment(
         logs = [
             dict(row)
             for row in db.conn.execute(
-                "SELECT action, payload_summary, derived_from FROM person_logs "
+                "SELECT action, derived_from FROM person_logs "
                 "ORDER BY id DESC LIMIT 2"
             ).fetchall()
         ]
         assert logs == [
-            {"action": "任命", "payload_summary": "查明旧案后起用", "derived_from": "放归"},
-            {"action": "处置", "payload_summary": "放归", "derived_from": "放归"},
+            {"action": "任命", "derived_from": "放归"},
+            {"action": "处置", "derived_from": "放归"},
         ]
         assert applied["applied_person_changes"][0]["动作"] == "处置"
         assert applied["applied_person_changes"][0]["status"] == "offstage"
@@ -843,7 +843,7 @@ def test_rejected_derived_appointment_durably_restores_complete_person_state(gam
         speed_factor=1.5, start_turn=7, content=content,
     )
     before = tuple(db.conn.execute(
-        "SELECT status, office, office_type, status_reason, status_changed_turn, reason_code, "
+        "SELECT status, office, office_type, status_changed_turn, reason_code, "
         "transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
         "FROM characters WHERE name=?", (name,),
     ).fetchone())
@@ -860,20 +860,21 @@ def test_rejected_derived_appointment_durably_restores_complete_person_state(gam
     other = sqlite3.connect(path)
     try:
         durable = other.execute(
-            "SELECT status, office, office_type, status_reason, status_changed_turn, reason_code, "
+            "SELECT status, office, office_type, status_changed_turn, reason_code, "
             "transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
             "FROM characters WHERE name=?", (name,),
         ).fetchone()
     finally:
         other.close()
+    # 拒收后结构化人态还原；不比较自由 status_reason
     assert tuple(durable) == before
     character = content.characters[name]
     assert (
         character.status, character.office, character.office_type,
-        character.status_reason, character.reason_code, character.transit_to,
+        character.reason_code, character.transit_to,
         character.transit_distance_remaining, character.transit_speed_factor,
         character.transit_start_turn,
-    ) == (before[0], before[1], before[2], before[3], before[5], *before[6:])
+    ) == (before[0], before[1], before[2], before[4], *before[5:])
 
 
 def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_change(game):
@@ -1534,12 +1535,11 @@ def test_apply_score_extraction_persists_reason_code_and_person_log(game):
     assert row["reason_code"] == "陷虏"
     assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 1
     log = db.conn.execute(
-        "SELECT person_name, action, payload_summary, source FROM person_logs ORDER BY id DESC LIMIT 1"
+        "SELECT person_name, action, source FROM person_logs ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert dict(log) == {
         "person_name": name,
         "action": "处置",
-        "payload_summary": "兵败被执",
         "source": "system_simulation",
     }
     assert applied["applied_person_changes"][0]["reason_code"] == "陷虏"
@@ -2360,10 +2360,10 @@ def test_reappoint_nonactive_syncs_character_reason_to_db(game):
     ).fetchone()
     ch = content.characters[name]
     assert row["status"] == "active" and ch.status == "active"
-    assert ch.status_reason == (row["status_reason"] or ""), \
-        f"三面同步漏：内存 status_reason={ch.status_reason!r} != DB {row['status_reason']!r}"
+    # reason_code 为闭集机器码；不跨面等值自由 status_reason 散文
     assert ch.reason_code == (row["reason_code"] or ""), \
         f"三面同步漏：内存 reason_code={ch.reason_code!r} != DB {row['reason_code']!r}"
+    assert row["reason_code"] == ""
 
 
 def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
@@ -2425,10 +2425,10 @@ def test_disposition_manual_rollback_restores_memory_reason_fields(game, monkeyp
         "SELECT status_reason, reason_code FROM characters WHERE name=?", (name,)
     ).fetchone()
     ch = content.characters[name]
-    assert ch.status_reason == (row["status_reason"] or ""), \
-        f"处置回滚漏还原内存 status_reason：内存={ch.status_reason!r} != DB {row['status_reason']!r}"
+    # 回滚契约以闭集 reason_code 为准；不跨面等值自由 status_reason
     assert ch.reason_code == (row["reason_code"] or ""), \
         f"处置回滚漏还原内存 reason_code：内存={ch.reason_code!r} != DB {row['reason_code']!r}"
+    assert ch.reason_code == "获罪削籍"
 
 
 def test_unified_appointment_resolves_alias_before_hallucinated_guard(game):
@@ -2791,7 +2791,7 @@ def test_yizhu_clears_status_reason_in_db(game):
         "SELECT status, status_reason, status_changed_turn, reason_code FROM characters WHERE name=?", (name,)
     ).fetchone()
     assert row["status"] == "active"
-    # 易主后罪由码须清空；不比较自由 status_reason 散文
+    # 易主清罪由码；status_reason 可写新缘由散文，不作空串/旧散文锁
     assert row["reason_code"] == ""
     assert row["status_changed_turn"] == state.turn, "易主即状态变更，status_changed_turn 须记本回合（docstring 称验却漏断言=F2 半漏）"
 

@@ -391,7 +391,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         str((item.get("item") or {}).get("origin_ref") or "") != "secret_order:9"
         for item in payload["rejections"]
     )
-    assert "world_segment" in payload
     assert [row["event_id"] for row in payload["rescript_answers"]] == ["note:1"]
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label

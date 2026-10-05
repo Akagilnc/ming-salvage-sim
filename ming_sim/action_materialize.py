@@ -202,7 +202,6 @@ def _apply_existing_appointment_hit(
                 tenure_mark=tenure_mark,
                 region_id=region_id,
                 minister_name=minister_name,
-                turn=turn,
                 night_id=int(night_id or 0),
                 source_chat_turn_id=int(source_chat_turn_id or 0),
             )
@@ -1217,7 +1216,6 @@ def _annotate_office_pending_path(
     tenure_mark: Optional[str] = None,
     region_id: str = "",
     minister_name: str = "",
-    turn: int = 0,
     night_id: int = 0,
     source_chat_turn_id: int = 0,
 ) -> int:
@@ -1269,7 +1267,6 @@ def _annotate_office_pending_path(
             mode_mark=mode_mark,
             tenure_mark=tenure_mark,
             minister_name=minister_name,
-            turn=turn,
             night_id=int(night_id or 0),
             source_chat_turn_id=int(source_chat_turn_id or 0),
         )
@@ -1285,12 +1282,10 @@ def _write_path_nature_ledger(
     mode_mark: Optional[str],
     tenure_mark: Optional[str],
     minister_name: str,
-    turn: int,
     night_id: int = 0,
     source_chat_turn_id: int = 0,
 ) -> None:
-    """0035 故事账开放标签。只沿持久源夜、源轮承接；缺源夜不猜当前夜或最后一轮。"""
-    _ = turn  # 保留形参兼容调用方；源轮只认持久 source_chat_turn_id
+    """0035 故事账开放标签。只沿持久源夜、源轮承接；缺源夜不写。"""
     from ming_sim.audience_night import append_ledger_entry
 
     pinned_night = int(night_id or 0)

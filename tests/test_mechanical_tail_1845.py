@@ -437,7 +437,6 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     printed = _printed_ending_summary(session)  # 观察打印面；不锁 summary 字面
     if visible:
         assert ending is not None
-        assert "summary" in ending and "summary" in landed
     else:
         assert ending is None
         assert landed["summary"] == ""

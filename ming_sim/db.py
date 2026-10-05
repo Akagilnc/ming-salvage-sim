@@ -21738,7 +21738,7 @@ class GameDB:
         covert_task: Optional[Mapping[str, object]] = None,
     ) -> int:
         # 宗藩/外藩 非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
-        # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
+        # API / 大臣工具 / CLI 自然语言全路（cmr R6 cross-section）。
         # 先经 _find_existing_minister 把别名（如「福王」）解到规范 key，再校资格、并以规范名落库——
         # 否则别名绕过资格闸（codex+CodeRabbit R2 concur），且按别名存会让后续按规范名查不到此令
         # （CodeRabbit R3 Major）。lazy import 避 db↔session 循环。
