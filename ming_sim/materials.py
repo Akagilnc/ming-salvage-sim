@@ -1733,9 +1733,11 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
     """
     if not isinstance(payload, Mapping) and not isinstance(row, Mapping):
         return {}
+    # #1853 J8-R2：resolve_revoke_decree_target_ids 为 GameDB 必备接口；
+    # 只捕获业务拒收（ValueError/TypeError→无原旨可读），禁 AttributeError 缺方法软空。
     try:
         target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload, row)
-    except (AttributeError, TypeError, ValueError):
+    except (TypeError, ValueError):
         return {}
     dossier = db.get_decree_dossier(int(target_dossier_id))
     if dossier is None:

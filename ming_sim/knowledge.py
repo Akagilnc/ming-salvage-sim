@@ -149,13 +149,10 @@ def knowledge_row_visible_to(
     Recommendation reads pass each roster candidate explicitly so an excluded
     office cannot be reintroduced by a name-only roster projection.
     """
-    reader = None
-    try:
-        reader = db.conn.execute(
-            "SELECT name, office, office_type FROM characters WHERE name=?", (character_name,)
-        ).fetchone()
-    except (AttributeError, TypeError):
-        reader = None
+    # #1853 J8-R2：成功持有 GameDB 后 conn 为必备能力；禁 AttributeError 洗成无读者。
+    reader = db.conn.execute(
+        "SELECT name, office, office_type FROM characters WHERE name=?", (character_name,)
+    ).fetchone()
     target = target or reader or row
     def target_value(key: str) -> object:
         try:
@@ -187,13 +184,11 @@ def knowledge_row_visible_to(
     # A private source's roster is a positive capability, not a deny-list
     # snapshot.  Enforce it at read time so characters created after archival
     # cannot inherit old participant-private material.
-    try:
-        source = db.conn.execute(
-            "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
-            (str(row["source_id"] or ""),),
-        ).fetchone()
-    except (AttributeError, KeyError, IndexError, TypeError):
-        source = None
+    # #1853 J8-R2：conn 直调；行字段缺失由上层 Mapping 契约承担，不在此吞 AttributeError。
+    source = db.conn.execute(
+        "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
+        (str(row["source_id"] or ""),),
+    ).fetchone()
     # A public event is a new disclosure capability even when it deliberately
     # retains the private source id for provenance.  It keeps its own explicit
     # people/office exclusions above, but must not inherit the source roster.
@@ -389,13 +384,11 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
            LEFT JOIN secret_orders s ON s.id=d.secret_order_id
            WHERE e.account='国库' ORDER BY e.id DESC"""
     ).fetchall()
-    try:
-        reader = db.conn.execute(
-            "SELECT name, office, office_type FROM characters WHERE name=?",
-            (character_name,),
-        ).fetchone()
-    except (AttributeError, TypeError):
-        reader = None
+    # #1853 J8-R2：与上方 balance/rows 同为必备 conn 直调，禁缺能力软兼容。
+    reader = db.conn.execute(
+        "SELECT name, office, office_type FROM characters WHERE name=?",
+        (character_name,),
+    ).fetchone()
     lines = [f"太仓实存：{int(balance['balance'] if balance else state.metrics['国库'])}"]
     for row in reversed(rows):
         hide = _household_secret_case_hidden(row, character_name, reader)
