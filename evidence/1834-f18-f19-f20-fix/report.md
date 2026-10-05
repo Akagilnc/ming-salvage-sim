@@ -3,6 +3,7 @@
 **工作树**：`/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5`  
 **分支**：`ak-roles/1834-f18-f19-f20-ecdbc39ab`  
 **基线 HEAD（开工）**：`ecdbc39abd7a4c93ef1383047832707c92ca75cd`  
+**本轮 commit**：`79f63e9360345e674135a68a5cc80b1307f3778f`  
 **派单**：`…/01a1097a-bf6b-726c-bacb-5208aa0e1d03@fixer/fix-packet.md`  
 **末份判词**：`…/attachments/03-1834-judge-ecdbc39ab.json` 末 payload（唯一未结）  
 **共同测试前缀**：`MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false`
