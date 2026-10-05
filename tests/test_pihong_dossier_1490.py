@@ -1365,10 +1365,6 @@ def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     web_game.session.join_rescript_summons = _join
     web_game.session.finish_rescript_phase2 = _finish
 
-    def _gen(inputs):
-        name = str(getattr(inputs, "person_name", "") or "") or "臣"
-        return f"{name}锁窗入殿。"
-
     opt = normalize_rescript_layer_a_option({
         "label": "备", "hint": "h", "action_type": "assignment",
         "assignee_name": "", "target_kind": "region", "target_id": "shaanxi",

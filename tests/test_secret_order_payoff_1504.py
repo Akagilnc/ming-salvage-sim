@@ -33,7 +33,6 @@ from ming_sim.applier import Provenance
 from ming_sim.month_chain import build_secret_orders_supply_feed
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_score_extraction
-from tests.conftest import offline_empty_audience_translate, stub_audience_translate, stub_scene_agent
 
 
 def _task(*, kind, axes, unit, target, direction=1, investigation_target="", effect_sign=None):

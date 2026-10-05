@@ -46,10 +46,6 @@ class _FakeSession(HallAdmissionSessionMixin):
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
 
-
-    def _merge_staged_new_secret_order_content(self, *args, **kwargs):
-        return None
-
     def pending_count(self):
         return 0
 

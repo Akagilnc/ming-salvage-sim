@@ -7,13 +7,11 @@
 from __future__ import annotations
 
 import json
-import math
 
 import pytest
 
 import ming_sim.issues as issues
 import ming_sim.month_chain as month_chain
-from ming_sim.agents import strip_json_fence  # noqa: F401  (保证 parse_agent_json 同源)
 from ming_sim.db import GameDB
 from ming_sim.issues import FISCAL_LEVY_RESCRIPT_SOURCE
 from ming_sim.models import LLMConfig

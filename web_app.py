@@ -85,7 +85,6 @@ from ming_sim.session_write_queue import (
 )
 from ming_sim.token_stats import tlog
 from ming_sim.flows import compute_budget_lines
-from ming_sim.exceptions import LLMContractError  # noqa: F401  (保留：供错误处理)
 from ming_sim.models import (
     API_DEFAULT_TIMEOUT_SECONDS,
     Character,

@@ -117,7 +117,6 @@ def victory_status(db: GameDB, state: GameState) -> Dict[str, object]:
 
 
 # 地区/军队名称匹配实现在 matching.py；此处提供绑定 GameContent 的便捷封装。
-from ming_sim.matching import army_aliases, compact_name, region_aliases  # noqa: E402,F401
 from ming_sim.matching import match_army_id_from_text as _match_army
 from ming_sim.matching import match_region_id_from_text as _match_region
 

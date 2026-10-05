@@ -1,5 +1,7 @@
 # #1891/#1899 DRY-C1／D1 + TEST-C1／T1 闭包回执（docs-only forward）
 
+> **范围错误撤回（保留本文件失败史，不增厚施工表）**：本文及其中「顶层 ORPHAN=0／支持物清净」口径**不能**冒称 CHOICE-C1／CLEANUP-C1 全类结清。后续大理寺末判（`34262577a`）另立两类：退役 `choice.terminal_reason` 接收残留；以及方法／嵌套／导入绑定／失效守面说明残留。正式处置见新回执 `docs/reports/1891-1899-choice-cleanup.md`。下文原失败史与 DRY／TEST 施工记录原样留存。
+
 现场：`/Users/akagilnc/WorkSpace/Ming_LLM-1899-w5`，分支 `ak-roles/1891-class-sweep`。
 开工 BASE：`7ba04d2263793153383e5e2b95d9d58d54ac5456`。
 代码交卷：`a64094fd5336344d1932cf283fea4c2a9f430b65`（DRY + 庭列24 + 初轮11 + 三案/stub）；

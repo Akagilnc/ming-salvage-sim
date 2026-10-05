@@ -816,7 +816,7 @@ class GameSession:
         raise ValueError(f"人物未建档：{clean_name}")
 
     def can_summon(self, character: Character) -> Tuple[bool, str]:
-        # 宗藩（就藩宗室）非朝堂命官，不可召见——与 web _require_active_minister / 各 roster 同口径
+        # 宗藩（就藩宗室）非朝堂命官，不可召见——与各 roster / is_vassal_prince 同口径
         # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
         # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。
         if is_vassal_prince(character):

@@ -129,7 +129,6 @@ def canonical_choice(raw: object) -> Dict[str, object]:
         "appoint_action", "appointment_tenure", "punish_action",
         "privilege", "summon_target",
         "holder_id", "assignee_id", "assignee",
-        "terminal_reason",
     ):
         if key in raw and raw[key] is not None:
             out[key] = str(raw[key]) if not isinstance(raw[key], (int, float, bool)) else raw[key]
