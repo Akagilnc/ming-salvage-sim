@@ -5,6 +5,7 @@ import { cliRunnerOptions } from "../cliRunners";
 import { resolveReasoningSupported } from "../reasoningSupport";
 import type { LLMConfigInfo, SaveEntry } from "../types";
 import { visibleReasoningStrengthChoices } from "../reasoningStrength";
+import { slotNumber } from "../slotNumber";
 import { CliModelField } from "./cliModelField";
 import {
   DefaultHeadersField,
@@ -468,7 +469,7 @@ export function LLMConfigTab() {
           base_url: baseUrl,
           model,
           api_key: apiKey,
-          timeout_seconds: parseFloat(timeoutSeconds) || 180,
+          timeout_seconds: slotNumber(timeoutSeconds, 180),
           // 统一「推理强度」选择器已在 load 时把旧 thinking_level 迁进 reasoningStrength；保存时清掉
           // 旧字段，否则它会作隐藏第二旋钮被后端 fallback 消费、用户选「默认」也清不掉（#358 cmr）。
           thinking_level: "",
@@ -480,7 +481,7 @@ export function LLMConfigTab() {
           channel,
           cli_runner: channel === "cli" ? cliRunner : "__keep__",
           cli_model: channel === "cli" ? cliModel : "__keep__",
-          cli_timeout_seconds: channel === "cli" ? parseFloat(cliTimeout) || CLI_DEFAULT_TIMEOUT : 0,
+          cli_timeout_seconds: channel === "cli" ? slotNumber(cliTimeout, CLI_DEFAULT_TIMEOUT) : 0,
           ...(channel === "api" ? { default_headers: rowsToHeaders(headerRows) } : {}),
         }),
       });

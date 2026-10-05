@@ -55,9 +55,6 @@ from ming_sim.structured_decree import (
     validate_structured_decree_combination,
 )
 from ming_sim.participant_roster import (
-    BARE_INSTITUTION_PARTICIPANT_NAMES as _BARE_INSTITUTION_PARTICIPANT_NAMES,
-    INSTITUTION_PARTICIPANT_TOKENS as _ASSIGNEE_HINT_INSTITUTION_TOKENS,
-    NON_PERSON_PARTICIPANT_NAMES as _NON_PERSON_PARTICIPANT_NAMES,
     is_non_person_participant_name as _is_non_person_participant_name,
 )
 
@@ -2773,46 +2770,8 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     }
 
 
-_CLAUSE_SPLIT = re.compile(r"[，,。.；;！!？?、：:\n\r]+")
-
-
-# ── 密令 content 结构化装配（#1274 K1 / ADR 0142）──
-# content = 御旨 + extractor schema「内容」。reply 永不入拼装输入；
-# 大臣实质补充必须由 extractor 显式契约字段承载，禁从回话自由散文抠语义。
-
-
-# 大臣回话里"建议某人承办"的线索：大臣常以"可授/可委/请授 X …"点名承办人。
-# 祈使式承办人尾部动作字（greedy 捕获后剥离）。
-_ASSIGNEE_VERB_TAIL_CHARS = frozenset("暗密调督拟领查办为任去往主核理统提巡镇守征讨驻屯管行前担监督协处负责")
-# 捕获到机关/地名（含 部/寺/院… 字）的不是人名，跳过。
-# 注意：曹是常见姓（曹化淳/曹文诏），不是机关字，故不入此集（#397 Step6 R3 Codex P2）。
-# 卫/司 同是常见姓（卫景瑗 / 司马…），单字出现不得误拒——只在构成可识别机关词（锦衣卫 /
-# 布政司…）时才拒（#401 R1 CodeRabbit major：旧 [..卫..司..] 把任何含 卫/司 的真名误判机关）。
-_ASSIGNEE_HINT_STOP_RE = re.compile(r"[部寺院局省州府县营阁监科室库厂仓]")
-# 卫/司 类机关整词：单源 INSTITUTION_PARTICIPANT_TOKENS（participant_roster）。
-_ASSIGNEE_HINT_INSTITUTION_RE = re.compile(
-    "|".join(re.escape(token) for token in _ASSIGNEE_HINT_INSTITUTION_TOKENS)
-)
-
-
-# 兼容旧测/调用：闭集与判定真源在 participant_roster（上表 import 别名）。
-# _NON_PERSON_PARTICIPANT_NAMES / _BARE_INSTITUTION_PARTICIPANT_NAMES /
-# _is_non_person_participant_name 由模块顶 import 绑定。
-
-
-# 皇帝祈使式指名（着/令/命/敕 X …）：只从皇帝输入侧抽承办人（ADR 0142）。
-# 祈使式常带机关名（着户部…）须过机关滤；后跟副词时（着即办/着速理）排除。
-_ASSIGNEE_IMPERATIVE_RE = re.compile(
-    r"(?<![\u4e00-\u9fa5·])(?:着|令|命|敕)\s*([\u4e00-\u9fa5·]{2,4})"
-    r"(?=[，,。.；;！!？?、\s]|暗|密|调|督|拟|领|查|办|为|任|去|往|主|核|理|统|提|巡|镇|守|征|讨|驻|屯|管|行|前|担|监|协|处|负|$)"
-)
-_ASSIGN_NAME_HEAD_ADVERB_RE = re.compile(r"^[即速快立妥当应须且便赶]")
-
-
-# 纯确认短句的原子片段：密令按钮当轮若【整句】只由这些片段拼成（如「可，照办」=可+照办、
-# 「就按你意思办」=就按+你意思+办），说明本轮没有任务正文，须从前文召对取。锚定全匹配而非子串，
-# 避免「可疑之处彻查」这类含确认字的实质命令被误判成纯确认（cmr #354 correctness：旧 exact-set
-# 漏「可，照办」——issue US3 点名的确认句——而子串匹配又会误吞实质命令）。
+# 旧密令理解链承办人/祈使式正则与纯确认片段已随 _extract_secret_order 清退（#1902 S1）。
+# 闭集与判定真源仍在 participant_roster（模块顶 import 别名）。
 
 
 def _fake_completion(

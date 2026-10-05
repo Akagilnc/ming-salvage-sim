@@ -40,10 +40,7 @@ _STATUS_LABEL = {
     "dead": "亡",
 }
 
-# 皇帝当场对拟旨草稿的回应
-_CONFIRM_WORDS = {"", "可", "准", "准奏", "yes", "y", "确认", "入档"}
-_REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
-
+# 旧手拟确认/驳回词表已随手拟入口清退（#1902 S1）。
 
 def _failed_secret_order_ids(session: GameSession, turn: int) -> set[int]:
     db = getattr(session, "db", None)

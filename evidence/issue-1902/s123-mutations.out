@@ -1,12 +1,10 @@
-
-===== S2_disable_submit_RED expect_fail=True =====
-CMD=env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ming1902-mut.sn7hmzyo:/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5 python3 -m pytest -q -p no:cacheprovider -p mutplug --basetemp=/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ming1902-mut.sn7hmzyo/bt tests/test_pihong_dossier_1490.py::test_657_default_hold_preserves_red_pen_note tests/test_pihong_dossier_1490.py::test_657_follow_draft_ignores_client_field_overlay tests/test_pihong_dossier_1490.py::test_657_midzhi_persists_decision_key_and_llm_label tests/test_cli_entry_1902.py::test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core
-FFFF                                                                     [100%]
+=== SUBMIT mutation (always accept) ===
+FFF                                                                      [100%]
 =================================== FAILURES ===================================
 _________________ test_657_default_hold_preserves_red_pen_note _________________
 
-game = (<ming_sim.db.GameDB object at 0x10be2a490>, GameState(year=1627, period=10, turn=1, turn_phase='awaiting_decision', e...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bb7ebe0>
+game = (<ming_sim.db.GameDB object at 0x10e01f390>, GameState(year=1627, period=10, turn=1, turn_phase='awaiting_decision', e...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e088160>
 
     def test_657_default_hold_preserves_red_pen_note(game, monkeypatch):
         """⑤ 默认 hold 保留朱笔 note。
@@ -31,11 +29,11 @@ E
 E         - decided
 E         + pending
 
-tests/test_pihong_dossier_1490.py:2060: AssertionError
+tests/test_pihong_dossier_1490.py:2031: AssertionError
 ______________ test_657_follow_draft_ignores_client_field_overlay ______________
 
-game = (<ming_sim.db.GameDB object at 0x10b965090>, GameState(year=1627, period=10, turn=1, turn_phase='awaiting_decision', e...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b939e10>
+game = (<ming_sim.db.GameDB object at 0x10f849f90>, GameState(year=1627, period=10, turn=1, turn_phase='awaiting_decision', e...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e00edd0>
 
     def test_657_follow_draft_ignores_client_field_overlay(game, monkeypatch):
         """Spec1/A12：同 capability 不得靠客户端字段 overlay 改机械载荷。真 submit。"""
@@ -58,34 +56,11 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b939e10>
 E       assert 0 == (0 + 1)
 E        +  where 0 = len([])
 
-tests/test_pihong_dossier_1490.py:1855: AssertionError
-_____________ test_657_midzhi_persists_decision_key_and_llm_label ______________
-
-game = (<ming_sim.db.GameDB object at 0x10be823f0>, GameState(year=1627, period=10, turn=1, turn_phase='awaiting_decision', e...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10be5bcd0>
-
-    def test_657_midzhi_persists_decision_key_and_llm_label(game, monkeypatch):
-        """Spec2 + P7：midzhi payload 带 decision_key；decree_text 用 LLM label。真 submit。"""
-        db, state, content = game
-        llm_label = '着户部立发秦地赈银'
-        urgent, _ = _plant_urgent_desk(db, state)
-        key = urgent['decision_key']
-        choice = {
-            'decision_key': key, 'action': 'midzhi', 'label': llm_label,
-            'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi',
-            'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈',
-            'deadline_months': 2, 'participant_roster': _roster(_ROSTER_LEAD),
-        }
-        _submit_hitl(monkeypatch, db, state, content, [choice])
-        mids = [d for d in db.list_decree_dossiers() if d.get('mode') == 'midzhi']
->       assert mids
-E       assert []
-
-tests/test_pihong_dossier_1490.py:1884: AssertionError
+tests/test_pihong_dossier_1490.py:1826: AssertionError
 _________ test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core _________
 
-game = (<ming_sim.db.GameDB object at 0x10be829e0>, GameState(year=1627, period=10, turn=1, turn_phase='awaiting_decision', e...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10be3c450>
+game = (<ming_sim.db.GameDB object at 0x10e05f490>, GameState(year=1627, period=10, turn=1, turn_phase='awaiting_decision', e...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10dfdf3e0>
 
     def test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core(game, monkeypatch):
         """回车语义只在急务成立：若入口交空 pick，真核整批拒（此钉核侧事实）。
@@ -107,30 +82,35 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10be3c450>
 E       Failed: DID NOT RAISE ValueError
 
 tests/test_cli_entry_1902.py:277: Failed
+=============================== warnings summary ===============================
+../../../../opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py:1345
+  /opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 =========================== short test summary info ============================
 FAILED tests/test_pihong_dossier_1490.py::test_657_default_hold_preserves_red_pen_note
 FAILED tests/test_pihong_dossier_1490.py::test_657_follow_draft_ignores_client_field_overlay
-FAILED tests/test_pihong_dossier_1490.py::test_657_midzhi_persists_decision_key_and_llm_label
 FAILED tests/test_cli_entry_1902.py::test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core
-4 failed in 0.55s
+3 failed, 1 warning in 0.54s
+exit 1
+=== SUBMIT restored ===
+...                                                                      [100%]
+=============================== warnings summary ===============================
+../../../../opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py:1345
+  /opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
 
-exit=1
-
-===== S2_restore_GREEN expect_fail=False =====
-CMD=env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ming1902-mut.v5h8tb_v:/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5 python3 -m pytest -q -p no:cacheprovider -p mutplug --basetemp=/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ming1902-mut.v5h8tb_v/bt tests/test_pihong_dossier_1490.py::test_657_default_hold_preserves_red_pen_note tests/test_pihong_dossier_1490.py::test_657_follow_draft_ignores_client_field_overlay tests/test_pihong_dossier_1490.py::test_657_midzhi_persists_decision_key_and_llm_label tests/test_cli_entry_1902.py::test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core
-....                                                                     [100%]
-4 passed in 0.92s
-
-exit=0
-
-===== S3_break_sse_RED expect_fail=True =====
-CMD=env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ming1902-mut.en2gnz9i:/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5 python3 -m pytest -q -p no:cacheprovider -p mutplug --basetemp=/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ming1902-mut.en2gnz9i/bt tests/test_audience_scroll_539.py::test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply tests/test_audience_scroll_539.py::test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist tests/test_player_payload_1022.py::test_settlement_sse_routes_serialize_only_player_narrative
-FFFF                                                                     [100%]
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3 passed, 1 warning in 0.19s
+exit 0
+=== SSE mutation (empty) ===
+FF....................                                                   [100%]
 =================================== FAILURES ===================================
 ___ test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply ___
 
-game = (<ming_sim.db.GameDB object at 0x10eed5e50>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10edeead0>
+game = (<ming_sim.db.GameDB object at 0x10e613d50>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e62df60>
 
     def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(game, monkeypatch):
         import web_app
@@ -174,8 +154,8 @@ E         Use -v to get more diff
 tests/test_audience_scroll_539.py:48: AssertionError
 ___ test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist ____
 
-game = (<ming_sim.db.GameDB object at 0x10ee38410>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ee2c210>
+game = (<ming_sim.db.GameDB object at 0x10f6e66c0>, GameState(year=1627, period=10, turn=1, turn_phase='summoning', ended=Fal...: '妃嫔供奉'}, {'key': '妃嫔_rate', 'value': 100, 'kind': 'rate', 'budget_role': 'fixed', 'note': '妃嫔供奉率%', 'order': 9999}]))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10f64a040>
 
     def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game, monkeypatch):
         import web_app
@@ -221,133 +201,42 @@ Traceback (most recent call last):
     return self._record_persisted_audience_reply_failure(
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 AttributeError: '_FakeSession' object has no attribute '_record_persisted_audience_reply_failure'
-_ test_settlement_sse_routes_serialize_only_player_narrative[issue-decisions] __
+=============================== warnings summary ===============================
+../../../../opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py:1345
+  /opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
 
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10f065de0>
-route_name = 'issue', expected_event = 'decisions'
-
-    @pytest.mark.parametrize(
-        ("route_name", "expected_event"),
-        [("issue", "decisions"), ("resolve", "done")],
-    )
-    def test_settlement_sse_routes_serialize_only_player_narrative(
-        monkeypatch, route_name, expected_event,
-    ):
-        game = _SettlementGame()
-        monkeypatch.setattr(web_app, "get_game", lambda: game)
-    
->       event, payload = asyncio.run(_serialized_terminal_event(route_name))
-                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-tests/test_player_payload_1022.py:131: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-/opt/homebrew/Cellar/python@3.13/3.13.14_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py:196: in run
-    return runner.run(main)
-           ^^^^^^^^^^^^^^^^
-/opt/homebrew/Cellar/python@3.13/3.13.14_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py:119: in run
-    return self._loop.run_until_complete(task)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-/opt/homebrew/Cellar/python@3.13/3.13.14_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
-    return future.result()
-           ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-route_name = 'issue'
-
-    async def _serialized_terminal_event(route_name: str) -> tuple[str, dict]:
-        from tests.sse_helpers import parse_sse_event_pairs
-    
-        if route_name == "issue":
-            response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
-        else:
-            response = await web_app.api_resolve_decisions_stream(
-                web_app.ResolveDecisionsRequest(choices=[{"label": "发帑"}])
-            )
-        chunks = [
-            chunk.decode() if isinstance(chunk, bytes) else chunk
-            async for chunk in response.body_iterator
-        ]
-        pairs = parse_sse_event_pairs("".join(chunks))
->       assert pairs, "expected at least one SSE terminal event"
-E       AssertionError: expected at least one SSE terminal event
-E       assert []
-
-tests/test_player_payload_1022.py:117: AssertionError
-___ test_settlement_sse_routes_serialize_only_player_narrative[resolve-done] ___
-
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10f05e9f0>
-route_name = 'resolve', expected_event = 'done'
-
-    @pytest.mark.parametrize(
-        ("route_name", "expected_event"),
-        [("issue", "decisions"), ("resolve", "done")],
-    )
-    def test_settlement_sse_routes_serialize_only_player_narrative(
-        monkeypatch, route_name, expected_event,
-    ):
-        game = _SettlementGame()
-        monkeypatch.setattr(web_app, "get_game", lambda: game)
-    
->       event, payload = asyncio.run(_serialized_terminal_event(route_name))
-                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-tests/test_player_payload_1022.py:131: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-/opt/homebrew/Cellar/python@3.13/3.13.14_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py:196: in run
-    return runner.run(main)
-           ^^^^^^^^^^^^^^^^
-/opt/homebrew/Cellar/python@3.13/3.13.14_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/runners.py:119: in run
-    return self._loop.run_until_complete(task)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-/opt/homebrew/Cellar/python@3.13/3.13.14_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
-    return future.result()
-           ^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-route_name = 'resolve'
-
-    async def _serialized_terminal_event(route_name: str) -> tuple[str, dict]:
-        from tests.sse_helpers import parse_sse_event_pairs
-    
-        if route_name == "issue":
-            response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
-        else:
-            response = await web_app.api_resolve_decisions_stream(
-                web_app.ResolveDecisionsRequest(choices=[{"label": "发帑"}])
-            )
-        chunks = [
-            chunk.decode() if isinstance(chunk, bytes) else chunk
-            async for chunk in response.body_iterator
-        ]
-        pairs = parse_sse_event_pairs("".join(chunks))
->       assert pairs, "expected at least one SSE terminal event"
-E       AssertionError: expected at least one SSE terminal event
-E       assert []
-
-tests/test_player_payload_1022.py:117: AssertionError
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 =========================== short test summary info ============================
 FAILED tests/test_audience_scroll_539.py::test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply
 FAILED tests/test_audience_scroll_539.py::test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist
-FAILED tests/test_player_payload_1022.py::test_settlement_sse_routes_serialize_only_player_narrative[issue-decisions]
-FAILED tests/test_player_payload_1022.py::test_settlement_sse_routes_serialize_only_player_narrative[resolve-done]
-4 failed in 0.90s
+2 failed, 20 passed, 1 warning in 0.45s
+exit 1
+=== SSE restored ===
+......................                                                   [100%]
+=============================== warnings summary ===============================
+../../../../opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py:1345
+  /opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
 
-exit=1
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+22 passed, 1 warning in 0.61s
+exit 0
+=== slot_number mutation ===
+mutated 1.0
+restored 99.0
+=== S1 deletion observation (not behavior proof) ===
+append_rescript_drafts False
+complete_rescript_summon_scaffold_turn False
+_CLAUSE_SPLIT False
+CliChat True
+=== abi matrix after stripping map positives ===
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../../../../opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py:1345
+  /opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
 
-===== S3_restore_sse_GREEN expect_fail=False =====
-CMD=env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ming1902-mut.7_izqaav:/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5 python3 -m pytest -q -p no:cacheprovider -p mutplug --basetemp=/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ming1902-mut.7_izqaav/bt tests/test_audience_scroll_539.py::test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply tests/test_audience_scroll_539.py::test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist tests/test_player_payload_1022.py::test_settlement_sse_routes_serialize_only_player_narrative
-....                                                                     [100%]
-4 passed in 0.76s
-
-exit=0
-slot_baseline_err=TypeError:llm_config_from_runtime() missing 9 required keyword-only arguments: 'base_url', 'model', 'api_key', 'timeout_seconds', 'thinking_level', 'advanced_model', 'advanced_base_url', 'advanced_api_key', and 'advanced_thinking_level'
-slot_mutated_err=TypeError:llm_config_from_runtime() missing 9 required keyword-only arguments: 'base_url', 'model', 'api_key', 'timeout_seconds', 'thinking_level', 'advanced_model', 'advanced_base_url', 'advanced_api_key', and 'advanced_thinking_level'
-slot_restored_err=TypeError:llm_config_from_runtime() missing 9 required keyword-only arguments: 'base_url', 'model', 'api_key', 'timeout_seconds', 'thinking_level', 'advanced_model', 'advanced_base_url', 'advanced_api_key', and 'advanced_thinking_level'
-S1_DELETE_OBS upsert=False
-S1_DELETE_OBS attach_pin=False
-S1_DELETE_OBS extract_so=False
-S1_KEEP_OBS can_land=True CliChat=True update_by_id=True
-NOTE: hasattr lines are DELETE OBSERVATION only, not behavior mutation red/green.
-ALL_MUTATIONS_OK
-S3_slot_number_mutation baseline_timeout=99.0 mutated=1.0 restored=99.0
-S3_slot_number_mutation_OK real_entry=cli_idle_timeout_seconds
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.48s
+exit 0

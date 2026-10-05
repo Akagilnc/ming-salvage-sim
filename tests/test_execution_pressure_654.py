@@ -466,8 +466,8 @@ def _insert_directive(db, state, *, text: str, payload: dict, status: str = "dra
     return int(cur.lastrowid)
 
 
-def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
-    """Validate-all：名单上的人不在名册 → 首个 INSERT 前整旨零行（#1778 决定 3）。"""
+def test_create_decree_dossiers_unknown_roster_name_zero_rows_before_insert(env):
+    """create_decree_dossiers：名单上的人不在名册 → 首个 INSERT 前整旨零行（#1778 决定 3）。"""
     db, state, _ = env
     payload = {
         "target_kind": "policy",

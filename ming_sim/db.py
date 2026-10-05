@@ -9335,25 +9335,6 @@ class GameDB:
         )
         return nxt
 
-    def complete_rescript_summon_scaffold_turn(self, chat_turn_id: int) -> None:
-        """#657：空问话召见 scaffold 消费成功 → status=consumed（非在飞终态唯一写点）。
-
-        list_in_flight 不含 consumed；与 failed（真失败）分立。body 已非空时
-        再入走 consumed 短路，不走 ensure CAS。
-        """
-        ctid = int(chat_turn_id or 0)
-        if ctid <= 0:
-            return
-        self.conn.execute(
-            "UPDATE chat_turns SET status='consumed' "
-            "WHERE id=? AND status='generating' AND user_message_id IS NULL",
-            (ctid,),
-        )
-        if (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
-            self.conn.commit()
 
     def list_in_flight_chat_turns(
         self,
@@ -11052,13 +11033,6 @@ class GameDB:
         )
         self._insert_rescript_draft_rows(int(turn), drafts)
 
-    def append_rescript_drafts(self, turn: int, drafts: List[Dict[str, object]]) -> None:
-        """#657：HITL phase2 续跑追加本回合新票拟，不 DELETE 既有急务行。
-
-        保留 return_revise/decided/跨月 backlog；只在 max(idx)+1 后续插。
-        只写 conn 不 commit——与 save_resolve_context 同事务。
-        """
-        self._insert_rescript_draft_rows(int(turn), drafts)
 
     def _insert_rescript_draft_rows(
         self, turn: int, drafts: List[Dict[str, object]],

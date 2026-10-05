@@ -6,6 +6,7 @@ import { resolveReasoningSupported } from "../reasoningSupport";
 import { consumeSettleStream } from "../settleStream";
 import type { CliModelChoices, CliRunnerChoice, MenuCampaign, MenuStatus, ReasoningStrengthChoice } from "../types";
 import { visibleReasoningStrengthChoices } from "../reasoningStrength";
+import { slotNumber } from "../slotNumber";
 import { CliModelField } from "./cliModelField";
 import {
   DefaultHeadersField,
@@ -286,11 +287,11 @@ export function ApiSettingsModal({
           channel,
           cli_runner: cliRunner.trim(),
           cli_model: cliModel.trim(),
-          cli_timeout_seconds: parseFloat(cliTimeout) || 60,
+          cli_timeout_seconds: slotNumber(cliTimeout, 60),
           base_url: baseUrl.trim(),
           model: model.trim(),
           api_key: apiKey.trim(),
-          timeout_seconds: parseFloat(timeoutSeconds) || 180,
+          timeout_seconds: slotNumber(timeoutSeconds, 180),
           // 统一选择器已在初始化时把旧 thinking_level 迁进 reasoningStrength；保存清掉旧字段，
           // 否则它仍作隐藏旋钮被后端 fallback 消费、用户选「默认」也清不掉（#358 cmr）。
           thinking_level: "",

@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
-"""S1 full-universe AST scan — temporary, not checked in."""
+"""S1 FULL: all tracked prod FunctionDef/AsyncFunctionDef/ClassDef/Assign(const)
+with zero non-test Load/Attribute consumers. No sample-name filter for emission.
+Framework registration / dynamic dispatch marked for human KEEP.
+Temporary; not permanent scanner.
+"""
 from __future__ import annotations
 import ast, json, os, re, subprocess, sys
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(os.environ.get("SCAN_ROOT", ".")).resolve()
 os.chdir(ROOT)
+OUTDIR = Path(os.environ.get("SCAN_OUT", "/tmp/ming1902-s123-full"))
+OUTDIR.mkdir(parents=True, exist_ok=True)
 
 tracked = subprocess.check_output(["git", "ls-files", "*.py"], text=True).splitlines()
 
 def is_test_path(p: str) -> bool:
-    return p.startswith("tests/") or p.endswith("_test.py") or "/tests/" in p
+    return p.startswith("tests/") or p.endswith("_test.py") or "/tests/" in p or p.startswith("spike")
 
-defs = {}
+# Collect string literals that look like dispatch targets
+string_mentions = defaultdict(list)
+decorator_routes = defaultdict(list)
+defs = defaultdict(list)
+const_assigns = defaultdict(list)
 refs = defaultdict(list)
 
 for path in tracked:
@@ -21,48 +31,48 @@ for path in tracked:
         src = Path(path).read_text(encoding="utf-8")
         tree = ast.parse(src, filename=path)
     except Exception as e:
-        print(f"WARN parse {path}: {e}", file=sys.stderr)
+        print(f"WARN {path}: {e}", file=sys.stderr)
         continue
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            defs.setdefault(node.name, []).append({
+            defs[node.name].append({
                 "file": path, "line": node.lineno,
                 "kind": "async" if isinstance(node, ast.AsyncFunctionDef) else "func",
+                "decorators": [ast.dump(d)[:120] for d in node.decorator_list],
             })
+            for d in node.decorator_list:
+                dump = ast.dump(d)
+                if any(x in dump for x in ("app.get", "app.post", "app.put", "app.patch", "app.delete",
+                                            "router.", "classmethod", "staticmethod", "property")):
+                    decorator_routes[node.name].append({"file": path, "line": node.lineno, "dec": dump[:160]})
         elif isinstance(node, ast.ClassDef):
-            defs.setdefault(node.name, []).append({
-                "file": path, "line": node.lineno, "kind": "class",
-            })
+            defs[node.name].append({"file": path, "line": node.lineno, "kind": "class", "decorators": []})
+        elif isinstance(node, ast.Assign):
+            # module-level ALL_CAPS / leading underscore const
+            if hasattr(node, "lineno"):
+                for t in node.targets:
+                    if isinstance(t, ast.Name) and (t.id.isupper() or t.id.startswith("_")):
+                        const_assigns[t.id].append({"file": path, "line": node.lineno, "kind": "const"})
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
             refs[node.id].append({"file": path, "line": node.lineno, "test": is_test_path(path)})
         elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
             refs[node.attr].append({"file": path, "line": node.lineno, "test": is_test_path(path)})
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            v = node.value
+            if len(v) >= 3 and (v.startswith("_") or v.isidentifier()):
+                string_mentions[v].append({"file": path, "line": getattr(node, "lineno", 0), "test": is_test_path(path)})
 
-SAMPLE_ROOTS = {
-    "_extract_secret_order", "compose_decree_validation_recovery",
-    "compose_secret_order_landing_recovery", "_compose_inworld_fact_report",
-    "_secret_landing_gap_feature", "_DRAFT_PREFIXES", "_SECRET_PREFIXES",
-    "_matched_prefix", "_secret_prefix_needs_recent_context", "_SECRET_CONFIRM_ATOM_RE",
-    "_cli_prompt", "_cli_stream_safe_prefix", "_cli_recommendation_call",
-    "_CLI_RECOMMENDATION_TOOLS", "_CLI_RECOMMENDATION_SYSTEM",
-    "_target_active_officeholder", "_open_night_court_break",
-    "_is_active_secret_order_assignee", "api_secret_orders",
-}
-NAME_RE = re.compile(
-    r"(secret_order|draft_prefix|recommendation_call|validation_recovery|"
-    r"landing_recovery|inworld_fact|matched_prefix|stream_safe_prefix|"
-    r"open_night_court_break|target_active_officeholder|cli_prompt\b|"
-    r"SECRET_PREFIX|DRAFT_PREFIX|CLI_RECOMMENDATION)",
-    re.I,
-)
-KEEP_SHARED = {
+KEEP_SHARED_SAMPLES = {
     "secret_order_can_land", "secret_order_landing_gaps", "CliChat",
     "_fake_completion", "extract_draft_intent", "extract_draft_intent_payload",
     "resubmit_draft_admission_payload", "heal_draft_admission",
+    "update_secret_order_by_id", "create_secret_order",
 }
 
 members = []
-for name, locs in sorted(defs.items()):
+all_names = set(defs) | set(const_assigns)
+for name in sorted(all_names):
+    locs = defs.get(name, []) + const_assigns.get(name, [])
     prod_defs = [d for d in locs if not is_test_path(d["file"])]
     if not prod_defs:
         continue
@@ -71,47 +81,67 @@ for name, locs in sorted(defs.items()):
     test_r = [r for r in all_r if r["test"]]
     def_keys = {(d["file"], d["line"]) for d in prod_defs}
     prod_use = [r for r in prod_r if (r["file"], r["line"]) not in def_keys]
-    is_sample = name in SAMPLE_ROOTS or bool(NAME_RE.search(name))
-    keep = name in KEEP_SHARED
-    if keep:
-        disposition = "KEEP_SHARED"
-    elif len(prod_use) == 0 and is_sample:
-        disposition = "CANDIDATE_DEAD_ROOT"
-    elif len(prod_use) == 0:
-        disposition = "ZERO_PROD_REF"
+    str_prod = [r for r in string_mentions.get(name, []) if not r["test"]]
+    routes = decorator_routes.get(name, [])
+    is_dunder = name.startswith("__") and name.endswith("__")
+    is_keep = name in KEEP_SHARED_SAMPLES
+
+    if prod_use:
+        disp = "HAS_PROD_CONSUMER"
+    elif routes:
+        disp = "FRAMEWORK_ROUTE"
+    elif str_prod:
+        disp = "DYNAMIC_STRING_REF"
+    elif is_dunder:
+        disp = "DUNDER"
+    elif is_keep:
+        disp = "KEEP_SHARED"
     else:
-        disposition = "HAS_PROD_CONSUMER"
-        if not is_sample and name not in KEEP_SHARED:
-            continue  # only emit interesting
+        disp = "ZERO_PROD_REF_CANDIDATE"
+
+    # emit ALL zero-ish + keep + framework for audit; skip boring HAS_PROD to shrink
+    if disp == "HAS_PROD_CONSUMER":
+        continue
     members.append({
         "name": name,
-        "defs": prod_defs,
-        "prod_refs": [f"{r['file']}:{r['line']}" for r in prod_use[:30]],
-        "test_refs": [f"{r['file']}:{r['line']}" for r in test_r[:30]],
+        "defs": prod_defs[:8],
         "prod_count": len(prod_use),
         "test_count": len(test_r),
-        "disposition_hint": disposition,
-        "sample_or_pattern": is_sample,
+        "test_refs": [f"{r['file']}:{r['line']}" for r in test_r[:20]],
+        "string_prod_refs": [f"{r['file']}:{r['line']}" for r in str_prod[:10]],
+        "framework_routes": routes[:5],
+        "disposition_hint": disp,
     })
 
 out = {
     "predicate": (
-        "S1: git ls-files *.py universe; prod FunctionDef/ClassDef; "
-        "dead root if non-test Load/Attribute refs==0 AND (judge sample OR name pattern); "
-        "KEEP_SHARED named; ZERO_PROD_REF also listed for audit"
+        "S1 FULL: git ls-files *.py; all prod FunctionDef/ClassDef/Assign(const); "
+        "zero non-test Load/Attribute refs → ZERO_PROD_REF_CANDIDATE; "
+        "FastAPI/router decorators → FRAMEWORK_ROUTE; string literal mentions → DYNAMIC_STRING_REF; "
+        "dunder skip-delete; KEEP_SHARED named. NO sample-name gate for emission of zero-ref set."
     ),
     "tracked_py": len(tracked),
-    "def_names": len(defs),
+    "zero_candidates": sum(1 for m in members if m["disposition_hint"] == "ZERO_PROD_REF_CANDIDATE"),
+    "framework": sum(1 for m in members if m["disposition_hint"] == "FRAMEWORK_ROUTE"),
+    "dynamic": sum(1 for m in members if m["disposition_hint"] == "DYNAMIC_STRING_REF"),
+    "dunder": sum(1 for m in members if m["disposition_hint"] == "DUNDER"),
     "members": members,
 }
-Path("/tmp/ming1902-s123-resc/s1-raw.json").write_text(
-    json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8"
-)
+(OUTDIR / "s1-full.json").write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
 c = Counter(m["disposition_hint"] for m in members)
-print("S1_SUMMARY", dict(c), "emitted", len(members))
+print("S1_FULL", dict(c), "emitted", len(members))
+print("--- ZERO_PROD_REF_CANDIDATE (first 200) ---")
+n = 0
 for m in members:
-    if m["disposition_hint"] in ("CANDIDATE_DEAD_ROOT", "KEEP_SHARED", "ZERO_PROD_REF") or (
-        m["sample_or_pattern"] and m["disposition_hint"] == "HAS_PROD_CONSUMER"
-    ):
+    if m["disposition_hint"] != "ZERO_PROD_REF_CANDIDATE":
+        continue
+    n += 1
+    if n <= 200:
         d0 = m["defs"][0]
-        print(f"{m['disposition_hint']}\t{m['name']}\t{d0['file']}:{d0['line']}\tprod={m['prod_count']}\ttest={m['test_count']}")
+        print(f"{m['name']}\t{d0['file']}:{d0['line']}\ttest={m['test_count']}")
+print(f"(total zero candidates printed above capped; total={out['zero_candidates']})")
+print("--- FRAMEWORK_ROUTE ---")
+for m in members:
+    if m["disposition_hint"] == "FRAMEWORK_ROUTE":
+        d0 = m["defs"][0]
+        print(f"{m['name']}\t{d0['file']}:{d0['line']}")

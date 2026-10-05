@@ -976,7 +976,7 @@ def test_657_prewrite_failure_zero_db_writes(game, monkeypatch):
 
 
 def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
-    """A1–A12：map 正/负 + 判后 follow/midzhi→apply 链（补 A5/A6/A11）。"""
+    """A1–A12：判后 follow/midzhi→submit 世界事实；map 仅负向类型输入拒收（#1902 S2）。"""
     from ming_sim import rescript_actions as ra
     from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
@@ -1036,12 +1036,7 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
             created = dict(created)
             created['_submit_turn'] = turn_before
         return created
-    p = ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': '责成督赈', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'assignee_name': '', 'participant_roster': _roster(_ROSTER_LEAD)}, db=db, content=content, state=state)
-    assert p['end_turn'] == int(state.turn) + 2
-    assert p['participant_roster'] == _roster(_ROSTER_LEAD)
     stop_a1 = '军饷清完乃止'
-    p_stop = ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': '责成督赈', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'assignee_name': '', 'participant_roster': _roster(_ROSTER_LEAD), 'commitment_kind': 'until_stop', 'stop_condition': stop_a1}, db=db, content=content, state=state)
-    assert p_stop.get('stop_condition') == stop_a1
     created = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'assignment', 'label': '责成督赈', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'assignee_name': '', 'participant_roster': _roster(_ROSTER_LEAD)}, title='A1急务')
     origin = f"dossier:{int(created['id'])}"
     init = db.conn.execute('SELECT kind, origin_ref, end_turn, status FROM issues WHERE origin_ref=?', (origin,)).fetchone()
@@ -1060,8 +1055,6 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
         aid = str(army['id'])
         old_station = str(army['station'] or '')
         new_station = '山海关' if old_station != '山海关' else '大同'
-        p = ra.map_rescript_option_or_choice({'action_type': 'military_order', 'label': '调驻', 'hint': 'h', 'assignee_name': mname, 'target_kind': 'army', 'target_id': aid, 'locality_scope': 'none', 'station': new_station}, db=db, content=content, state=state)
-        assert p['station'] == new_station
         created = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'military_order', 'label': '调驻', 'hint': 'h', 'assignee_name': mname, 'target_kind': 'army', 'target_id': aid, 'locality_scope': 'none', 'station': new_station}, title='A2急务')
         after_army = db.conn.execute('SELECT station FROM armies WHERE id=?', (aid,)).fetchone()
         assert after_army is not None
@@ -1076,8 +1069,6 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
             ra.map_rescript_option_or_choice({'action_type': 'military_order', 'label': 'x', 'hint': 'h', 'assignee_name': mname, 'target_kind': 'army', 'target_id': aid, 'locality_scope': 'none'}, db=db, content=content, state=state)
     office_before = db.conn.execute('SELECT office FROM characters WHERE name=?', (mname,)).fetchone()
     office_before_s = str(office_before['office'] or '') if office_before else ''
-    p = ra.map_rescript_option_or_choice({'action_type': 'grant_allocation', 'label': '加衔', 'hint': 'h', 'grant_action': '加衔', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
-    assert p.get('execution_surface') == 'terminal'
     created = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'grant_allocation', 'label': '加衔', 'hint': 'h', 'grant_action': '加衔', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, title='A3急务')
     logs = db.conn.execute("SELECT action FROM person_logs WHERE person_name=? AND action IN ('加衔','荫叙')", (mname,)).fetchall()
     assert logs, 'A3 判后须落 person_logs 加衔/荫叙'
@@ -1088,8 +1079,6 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
     state.metrics['国库'] = int(state.metrics.get('国库') or 0) + 5000
     db.save_state(state)
     amount_a4 = 1000
-    p = ra.map_rescript_option_or_choice({'action_type': 'grant_allocation', 'label': '赏', 'hint': 'h', 'grant_action': '赏赉', 'amount': amount_a4, 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
-    assert p['account'] == '国库'
     created = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'grant_allocation', 'label': '赏', 'hint': 'h', 'grant_action': '赏赉', 'amount': amount_a4, 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, title='A4急务')
     moves = db.list_economy_moves_for_dossier(int(created['id']))
     assert moves, 'A4 须落国库流水'
@@ -1100,13 +1089,9 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
         ra.map_rescript_option_or_choice({'action_type': 'grant_allocation', 'label': '赏', 'hint': 'h', 'grant_action': '赏赉', 'target_kind': 'character', 'target_id': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'grant_allocation', 'label': '赏', 'hint': 'h', 'grant_action': '赏赉', 'amount': 10, 'account': '私库', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
-    p = ra.map_rescript_option_or_choice({'action_type': 'grant_allocation', 'label': '项目', 'hint': 'h', 'grant_action': '项目经费', 'amount': 500, 'target_kind': 'issue', 'target_id': 'river-works', 'locality_scope': 'none'}, db=db, content=content, state=state)
-    assert p.get('grant_action') == '项目经费'
     created = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'grant_allocation', 'label': '项目', 'hint': 'h', 'grant_action': '项目经费', 'amount': 500, 'target_kind': 'issue', 'target_id': 'river-works', 'locality_scope': 'none'}, title='A5项目')
     assert str(created.get('target_kind') or '') == 'issue'
     assert str(created.get('target_id') or '') == 'river-works'
-    p = ra.map_rescript_option_or_choice({'action_type': 'grant_allocation', 'label': '赈', 'hint': 'h', 'grant_action': '赈灾', 'amount': 800, 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi'}, db=db, content=content, state=state)
-    assert p.get('grant_action') == '赈灾'
     created = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'grant_allocation', 'label': '赈', 'hint': 'h', 'grant_action': '赈灾', 'amount': 800, 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi'}, title='A5赈灾')
     assert str(created.get('target_kind') or '') == 'region'
     assert str(created.get('target_id') or '') == 'shaanxi'
@@ -1119,8 +1104,6 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
         db.conn.execute('UPDATE armies SET province_pay_arrears=500, central_pay_arrears=0, arrears=500 WHERE id=?', (aid,))
         db.conn.commit()
         before_arr = db.conn.execute('SELECT province_pay_arrears, central_pay_arrears FROM armies WHERE id=?', (aid,)).fetchone()
-        p = ra.map_rescript_option_or_choice({'action_type': 'grant_allocation', 'label': '协饷', 'hint': 'h', 'grant_action': '协饷', 'amount': 1200, 'account': '国库', 'purpose': '补饷', 'target_kind': 'army', 'target_id': aid, 'locality_scope': 'none'}, db=db, content=content, state=state)
-        assert p.get('grant_action') == '协饷'
         created = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'grant_allocation', 'label': '协饷', 'hint': 'h', 'grant_action': '协饷', 'amount': 1200, 'account': '国库', 'purpose': '补饷', 'target_kind': 'army', 'target_id': aid, 'locality_scope': 'none'}, title='A6协饷')
         after_arr = db.conn.execute('SELECT province_pay_arrears, central_pay_arrears FROM armies WHERE id=?', (aid,)).fetchone()
         before_total = float(before_arr['province_pay_arrears'] or 0) + float(before_arr['central_pay_arrears'] or 0)
@@ -1130,8 +1113,6 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
         assert str(created.get('target_id') or '') == aid
         with pytest.raises(ValueError):
             ra.map_rescript_option_or_choice({'action_type': 'grant_allocation', 'label': '协饷', 'hint': 'h', 'grant_action': '协饷', 'amount': 100, 'account': '国库', 'purpose': '补饷', 'target_kind': 'army', 'target_id': 'no-such-army-657', 'locality_scope': 'none'}, db=db, content=content, state=state)
-    p = ra.map_rescript_option_or_choice({'action_type': 'punishment', 'label': '下狱', 'hint': 'h', 'punish_action': '拿问下狱', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
-    assert p['punish_action'] == '拿问下狱'
     assert db.get_character_status(mname)[0] == 'active', 'A9 下狱前须 active'
     _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'punishment', 'label': '下狱', 'hint': 'h', 'punish_action': '拿问下狱', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none', 'assignee_name': other}, title='A9下狱')
     assert db.get_character_status(mname)[0] == 'imprisoned', 'A9 判后须 imprisoned'
@@ -1142,8 +1123,6 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
     state.metrics['国库'] = int(state.metrics.get('国库') or 0) + 500
     db.save_state(state)
     fine_amt = 50
-    p = ra.map_rescript_option_or_choice({'action_type': 'punishment', 'label': '罚俸', 'hint': 'h', 'punish_action': '罚俸', 'amount': fine_amt, 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
-    assert p['amount'] == fine_amt
     created_a9 = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'punishment', 'label': '罚俸', 'hint': 'h', 'punish_action': '罚俸', 'amount': fine_amt, 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none', 'assignee_name': other}, title='A9罚俸')
     plogs = db.conn.execute('SELECT action FROM person_logs WHERE person_name=? AND action=?', (mname, '罚俸')).fetchall()
     assert plogs, 'A9 罚俸须落 person_logs action=罚俸'
@@ -1157,8 +1136,6 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
         ra.map_rescript_option_or_choice({'action_type': 'punishment', 'label': '罚', 'hint': 'h', 'punish_action': '不是刑罚', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'punishment', 'label': '罚', 'hint': 'h', 'punish_action': '罚俸', 'amount': 0, 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
-    p = ra.map_rescript_option_or_choice({'action_type': 'appointment', 'label': '授官', 'hint': 'h', 'appoint_action': '任命', 'office': '兵部尚书', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
-    assert p['_office_action'] == '任命' and p['_emitted_action_type'] == 'appointment'
     office_before_a7 = '光禄寺署丞'
     db.conn.execute("UPDATE characters SET office=?, status='active', power_id='ming' WHERE name=?", (office_before_a7, mname))
     db.conn.commit()
@@ -1168,8 +1145,6 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
     office_now = db.conn.execute('SELECT office FROM characters WHERE name=?', (mname,)).fetchone()
     assert str(office_now['office'] or '') == '兵部尚书'
     assert str(office_now['office'] or '') != office_before_a7
-    p = ra.map_rescript_option_or_choice({'action_type': 'appointment', 'label': '罢', 'hint': 'h', 'appoint_action': '罢免', 'office': '', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
-    assert p['_emitted_action_type'] == 'dismiss_assignment'
     office_before_a8 = str(db.conn.execute('SELECT office FROM characters WHERE name=?', (mname,)).fetchone()['office'] or '')
     assert office_before_a8 == '兵部尚书', 'A8 前须有 A7 授官'
     assert db.get_character_status(mname)[0] == 'active'
@@ -1187,8 +1162,6 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
         db.set_character_status(state, mname, 'active', 'A8 cleanup')
     db.conn.execute("UPDATE characters SET office=COALESCE(NULLIF(office,''), '兵部尚书'), power_id='ming', status='active' WHERE name=?", (mname,))
     db.conn.commit()
-    p = ra.map_rescript_option_or_choice({'action_type': 'authorization', 'label': '委任', 'hint': 'h', 'name': mname, 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi'}, db=db, content=content, state=state)
-    assert p['privilege'] == '便宜行事'
     auth_before = len(db.list_active_authorities(int(state.turn), holder_id=mname))
     created = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'authorization', 'label': '委任', 'hint': 'h', 'name': mname, 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi'}, title='A10授权')
     auth_after = db.list_active_authorities(int(state.turn), holder_id=mname)
@@ -1203,8 +1176,6 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
         rname = '测试流寇头'
     else:
         rname = str(rebel['name'])
-    p = ra.map_rescript_option_or_choice({'action_type': 'pacification', 'label': '招抚', 'hint': 'h', 'target_kind': 'character', 'target_id': rname, 'name': rname, 'locality_scope': 'none'}, db=db, content=content, state=state)
-    assert p['target_id'] == rname
     created = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'pacification', 'label': '招抚', 'hint': 'h', 'target_kind': 'character', 'target_id': rname, 'name': rname, 'locality_scope': 'none'}, title='A11招抚')
     prow = db.conn.execute('SELECT power_id FROM characters WHERE name=?', (rname,)).fetchone()
     assert prow is not None and str(prow['power_id'] or '') == 'ming'

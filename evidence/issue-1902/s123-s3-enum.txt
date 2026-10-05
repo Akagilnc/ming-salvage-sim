@@ -1,20 +1,34 @@
-=== SSE inline (non-authority) ===
-=== SSE local defs ===
+=== S3 SSE line hits (non-authority file, non-authority-call only) ===
+=== S3 SSE funcs ===
+tests/sse_helpers.py:19	parse_sse_events	auth_file=True	uses_auth=True	len=640
 === num helpers ===
+ming_sim/covert_progress.py:488	coerce_covert_task_contract	auth=False	calls_slot=False	def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]: """Validate a frozen contract without rebuilding or supplying read-time defaults.""" if not isinstance(
+ming_sim/db.py:593	_coerce_new_salary_rate	auth=False	calls_slot=False	def _coerce_new_salary_rate(raw, default: float = SALARY_RATE_ANCHOR) -> float: """#44 新军名义月饷率健壮解析：缺省/None/bool/0/负/非数 一律落边军史实锚点 1.5。 salary_rate<=0 = 有兵无饷率 = 免费军 = 正是 #44 要堵的白嫖（游戏
+ming_sim/db.py:620	_coerce_pay_source_float	auth=False	calls_slot=False	def _coerce_pay_source_float(raw: object, *, default: float = 0.0) -> float: if raw in (None, ""): return default if isinstance(raw, bool): raise ValueError("布尔值不是合法比例") value = fl
+ming_sim/db.py:5987	_migrate_offsets_to_float_precision	auth=False	calls_slot=False	def _migrate_offsets_to_float_precision(self) -> None: """#177 R1 finding#1（codex P2）：一次性 v2 迁移——旧版 #9 校准 round 了 offset（存整数）， R4 修了新校准、但已 marked 老档 early-return 照漂。本方法把 offset 重算成
+ming_sim/distance.py:11	_number	auth=False	calls_slot=False	def _number(value: object, path: str) -> float: if isinstance(value, bool) or not isinstance(value, (int, float)): raise ValueError(f"{path} must be a non-negative number") result 
+ming_sim/flows.py:219	_as_finite_nonnegative_float	auth=False	calls_slot=False	def _as_finite_nonnegative_float(label: str, value: object) -> float: if isinstance(value, bool): raise ValueError(f"{label} 非数值：{value!r}") if value in (None, ""): return 0.0 try:
+ming_sim/flows.py:233	_as_settle_param_nonnegative_float	auth=False	calls_slot=False	def _as_settle_param_nonnegative_float(label: str, value: object) -> float: if isinstance(value, bool) or not isinstance(value, (int, float)): raise ValueError(f"{label} 非数值：{value
+ming_sim/issues.py:1120	_as_float	auth=False	calls_slot=False	def _as_float(raw: object, *, ctx: str) -> float: if isinstance(raw, bool): raise ValueError(f"{ctx} 非数值：{raw!r}") try: value = float(raw) except (TypeError, ValueError) as exc: ra
+ming_sim/llm_config.py:87	_slot_number	auth=True	calls_slot=False	def _slot_number(value: object, caster, default): if value is None or (isinstance(value, str) and not value.strip()): return default try: return caster(value) except (TypeError, Va
+=== small float+except ===
+ming_sim/assets.py:63	format_wanliang_amount	auth=False	calls_slot=False
+ming_sim/covert_progress.py:288	canonicalize_delivery_unit	auth=False	calls_slot=False
+ming_sim/covert_progress.py:566	contract_target_units	auth=False	calls_slot=False
+ming_sim/covert_progress.py:736	_delivery_matches_region	auth=False	calls_slot=False
+ming_sim/covert_progress.py:1657	monthly_actual_units	auth=False	calls_slot=False
+ming_sim/db.py:360	_approx_wanliang	auth=False	calls_slot=False
+ming_sim/db.py:581	_new_army_historically_applied	auth=False	calls_slot=False
 ming_sim/db.py:620	_coerce_pay_source_float	auth=False	calls_slot=False
-ming_sim/db.py:5987	_migrate_offsets_to_float_precision	auth=False	calls_slot=False
 ming_sim/distance.py:11	_number	auth=False	calls_slot=False
-ming_sim/fiscal_fact_brief.py:602	_fmt_num	auth=False	calls_slot=False
-ming_sim/flows.py:89	_fixed_flow_scalars_are_numeric	auth=False	calls_slot=False
+ming_sim/fiscal_tick.py:80	_raw_due	auth=False	calls_slot=False
 ming_sim/flows.py:219	_as_finite_nonnegative_float	auth=False	calls_slot=False
 ming_sim/flows.py:233	_as_settle_param_nonnegative_float	auth=False	calls_slot=False
 ming_sim/issues.py:1120	_as_float	auth=False	calls_slot=False
 ming_sim/llm_config.py:87	_slot_number	auth=True	calls_slot=False
-=== float+TypeError small funcs ===
-ming_sim/covert_progress.py:1657	monthly_actual_units	len=361	slot=False
-ming_sim/db.py:620	_coerce_pay_source_float	len=299	slot=False
-ming_sim/distance.py:11	_number	len=313	slot=False
-ming_sim/fiscal_tick.py:80	_raw_due	len=227	slot=False
-ming_sim/flows.py:233	_as_settle_param_nonnegative_float	len=339	slot=False
-ming_sim/issues.py:1120	_as_float	len=360	slot=False
-ming_sim/llm_config.py:87	_slot_number	len=362	slot=True
+=== web num ===
+web/src/components/gameMenu.tsx:472	timeout_seconds: slotNumber(timeoutSeconds, 180),
+web/src/components/gameMenu.tsx:484	cli_timeout_seconds: channel === "cli" ? slotNumber(cliTimeout, CLI_DEFAULT_TIMEOUT) : 0,
+web/src/components/menuPage.tsx:290	cli_timeout_seconds: slotNumber(cliTimeout, 60),
+web/src/components/menuPage.tsx:294	timeout_seconds: slotNumber(timeoutSeconds, 180),
+COUNTS sse_lines=33 sse_funcs=1 num_helpers=9 float_try=14 web_num=4

@@ -1,96 +1,229 @@
 #!/usr/bin/env python3
-"""S2 focused universe for #1902 S2 class: HITL/rescript/validate/mapper/prewrite/apply_dossier
-internal proofs — still full git-tracked tests, but symbols from class evidence + full direction text.
-Then human/semantic fields filled as stubs for fixer classification."""
+"""S2 FULL universe — every tracked Python test_* and Web it/test case.
+NO FOCUS symbol filter. Temporary; not a permanent scanner.
+"""
 from __future__ import annotations
 import ast, json, os, re, subprocess
+from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(os.environ.get("SCAN_ROOT", ".")).resolve()
 os.chdir(ROOT)
-tracked = subprocess.check_output(["git", "ls-files", "tests/*.py"], text=True).splitlines()
+OUTDIR = Path(os.environ.get("SCAN_OUT", "/tmp/ming1902-s123-full"))
+OUTDIR.mkdir(parents=True, exist_ok=True)
 
-# Symbols that indicate the "internal proof" family named by S2 / prior R3
-FOCUS = {
+# Real production / orchestration entry tracers (positive signals for EXTERNAL)
+ORCH = [
+    "submit_hitl_choices",
+    "_post_resolve",
+    "_get_state",
+    "ASGITransport",
+    "AsyncClient",
+    "TestClient",
+    "_adjudicate_cli_decisions",
+    "_real_submit_session",
+    "resolve_and_submit",
+    "_submit_hitl",
+    "_657_subprocess_resolve",
+    "prepare_rescript_prewrite",
+    "client.post",
+    "client.get",
+    "client.patch",
+    "client.put",
+    "client.delete",
+    "httpx.",
+    "requests.",
+    "app.router",
+    "GameSession(",
+    "session.chat",
+    "session.settle",
+    "session.advance",
+    "session.end_court",
+    "session.resubmit",
+    "CliChat(",
+    "terminal.",
+    "run_player_month_chain",
+    "prepare_scene_materials",
+    "audience_translate",
+    "declaration_dispatch",
+    "parse_sse_events",
+    "parse_sse_event_pairs",
+]
+
+# Internal helpers often asserted as SUT (shape / parallel proofs)
+HELPERS = [
     "validate_all",
     "map_rescript_option_or_choice",
     "map_rescript_option",
+    "normalize_rescript_layer_a_option",
+    "apply_dossier_verdicts",
+    "apply_mapped_choice",
+    "_apply_mapped_choice",
+    "run_prewrite_llms",
     "RescriptAdjudication",
     "StructuredDecreeCombinationError",
-}
-ORCH = {
-    "submit_hitl_choices",
-    "_post_resolve",
-    "ASGITransport",
-    "_adjudicate_cli_decisions",
-    "AsyncClient",
-    "TestClient",
-    "_real_submit_session",
-    "resolve_and_submit",
-}
+    "assemble_structured_decree",
+    "create_decree_dossiers",
+    "stage_punishment_candidate",
+    "parse_decision_blocks",
+    "canonical_",
+    "EMPTY_EXTRACTION",
+]
 
-rows = []
-for path in tracked:
-    src = Path(path).read_text(encoding="utf-8")
-    try:
-        tree = ast.parse(src, filename=path)
-    except Exception:
-        continue
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if not node.name.startswith("test_"):
-            continue
-        seg = ast.get_source_segment(src, node) or ""
-        hits = sorted(s for s in FOCUS if s in seg)
-        if not hits:
-            continue
-        orch = sorted(s for s in ORCH if s in seg)
-        # detect if asserts only on mapper return / validate batch shape
-        shape_only_hints = []
-        if re.search(r"validate_all\s*\(", seg) and "submit_hitl_choices" not in seg and "_post_resolve" not in seg:
-            shape_only_hints.append("calls_validate_all_without_submit")
-        if "map_rescript_option_or_choice" in seg and "submit_hitl_choices" not in seg:
-            shape_only_hints.append("calls_mapper_without_submit")
-        if re.search(r"\bbatch\b", seg) and "validate_all" in seg:
-            shape_only_hints.append("mentions_batch")
-        if "StructuredDecreeCombinationError" in seg and "submit_hitl_choices" not in seg:
-            shape_only_hints.append("raises_combo_error_without_submit")
-        rows.append({
-            "file": path,
-            "test": node.name,
-            "line": node.lineno,
-            "focus_hits": hits,
-            "orch": orch,
-            "orch_bool": bool(orch),
-            "shape_hints": shape_only_hints,
-            "raises": "pytest.raises" in seg or "raises(" in seg,
-            # semantic slots — filled by fixer after reading
-            "contract": None,
-            "real_prod_entry": None,
-            "external_result": None,
-            "existing_tracer": None,
-            "duplicate": None,
-            "disposition": None,
-            "rationale": None,
-        })
+SHAPE_ASSERT_RE = re.compile(
+    r"assert\s+(?:batch|mapped|result|out|payload|option|adjudication|rej)\b"
+    r"|assert\s+\w+\s*==\s*\{"
+    r"|assert\s+isinstance\s*\("
+    r"|assert\s+\w+\.(?:keys|values|items)\s*\("
+    r"|\.get\(\s*[\"'](?:batch|mapped|options|choices)",
+    re.I,
+)
 
-out = {
-    "predicate": (
-        "S2: git ls-files tests/*.py; test_* whose body references "
-        "validate_all|map_rescript_option_or_choice|map_rescript_option|"
-        "RescriptAdjudication|StructuredDecreeCombinationError. "
-        "orch = submit_hitl_choices|_post_resolve|ASGITransport|_adjudicate_cli_decisions|"
-        "AsyncClient|TestClient|_real_submit_session|resolve_and_submit. "
-        "EVERY row requires semantic classification; mapper/apply/prewrite NOT blanket-exempt."
-    ),
-    "count": len(rows),
-    "no_orch": sum(1 for r in rows if not r["orch_bool"]),
-    "with_orch": sum(1 for r in rows if r["orch_bool"]),
-    "rows": rows,
-}
-Path("/tmp/ming1902-s123-resc/s2-focus.json").write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-print(f"S2_FOCUS total={len(rows)} no_orch={out['no_orch']} orch={out['with_orch']}")
-for r in rows:
-    tag = "NO_ORCH" if not r["orch_bool"] else "ORCH"
-    print(f"{tag}\t{r['file']}:{r['line']}\t{r['test']}\thits={r['focus_hits']}\thints={r['shape_hints']}")
+def py_tests():
+    tracked = subprocess.check_output(["git", "ls-files", "tests/*.py"], text=True).splitlines()
+    rows = []
+    for path in tracked:
+        src = Path(path).read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(src, filename=path)
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not node.name.startswith("test_"):
+                continue
+            seg = ast.get_source_segment(src, node) or ""
+            orch = sorted({s for s in ORCH if s in seg})
+            helpers = sorted({s for s in HELPERS if s in seg})
+            raises = "pytest.raises" in seg or "raises(" in seg
+            shape = bool(SHAPE_ASSERT_RE.search(seg))
+            # mechanical provisional class — fixer overwrites after reading
+            if helpers and not orch and (raises or shape or "validate_all" in helpers or any(
+                h.startswith("map_rescript") or h.startswith("apply_") or "prewrite" in h
+                for h in helpers
+            )):
+                prov = "INTERNAL_SHAPE_CANDIDATE"
+            elif helpers and orch:
+                prov = "EXTERNAL_OR_MIXED"
+            elif orch:
+                prov = "EXTERNAL_REAL_ENTRY"
+            elif helpers:
+                prov = "HELPER_TOUCH_REVIEW"
+            else:
+                prov = "EXTERNAL_REAL_ENTRY"  # default: module/unit external to its SUT
+            rows.append({
+                "kind": "py",
+                "file": path,
+                "case": node.name,
+                "line": node.lineno,
+                "orch": orch,
+                "helpers": helpers,
+                "raises": raises,
+                "shape_assert": shape,
+                "provisional": prov,
+                "contract": None,
+                "real_prod_entry": None,
+                "external_result": None,
+                "existing_tracer": None,
+                "duplicate_of": None,
+                "disposition": None,
+            })
+    return rows
+
+
+IT_RE = re.compile(
+    r"""(?:^|\n)([ \t]*)(?:it|test)(?:\.(?:only|skip|todo))?\s*(?:\.each\s*\([^)]*\)\s*)?\(\s*(['"`])((?:\\.|(?!\2).)*)\2""",
+    re.M,
+)
+
+
+def web_tests():
+    files = subprocess.check_output(["git", "ls-files", "web/"], text=True).splitlines()
+    files = [f for f in files if re.search(r"\.(test|spec)\.(ts|tsx|js|jsx)$", f)]
+    rows = []
+    for path in files:
+        src = Path(path).read_text(encoding="utf-8")
+        for m in IT_RE.finditer(src):
+            title = m.group(3)
+            line = src.count("\n", 0, m.start()) + 1
+            # grab a window for signals
+            win = src[m.start(): m.start() + 2500]
+            orch = []
+            for s in ("fetch(", "render(", "userEvent", "fireEvent", "screen.", "waitFor",
+                       "settleStream", "EventSource", "new Request", "msw", "http.get", "http.post"):
+                if s in win:
+                    orch.append(s)
+            helpers = []
+            for s in ("parseSSE", "parse_sse", "JSON.parse", "Number(", "parseFloat", "Number.parse"):
+                if s in win:
+                    helpers.append(s)
+            rows.append({
+                "kind": "web",
+                "file": path,
+                "case": title,
+                "line": line,
+                "orch": orch,
+                "helpers": helpers,
+                "raises": "toThrow" in win or "rejects" in win,
+                "shape_assert": "toEqual" in win or "toMatchObject" in win,
+                "provisional": "EXTERNAL_REAL_ENTRY" if orch else "HELPER_TOUCH_REVIEW" if helpers else "EXTERNAL_REAL_ENTRY",
+                "contract": None,
+                "real_prod_entry": None,
+                "external_result": None,
+                "existing_tracer": None,
+                "duplicate_of": None,
+                "disposition": None,
+            })
+    return rows
+
+
+def main():
+    py = py_tests()
+    web = web_tests()
+    rows = py + web
+    c = Counter(r["provisional"] for r in rows)
+    by_file = defaultdict(list)
+    for r in rows:
+        by_file[r["file"]].append(r)
+
+    out = {
+        "predicate": (
+            "S2 FULL: git ls-files tests/*.py ALL test_* + web *.{test,spec}.{ts,tsx} ALL it/test titles. "
+            "NO FOCUS symbol whitelist. Provisional labels are mechanical signals only; "
+            "fixer fills contract/entry/result/tracer/disposition per case. "
+            "Classes: EXTERNAL_REAL_ENTRY | INTERNAL_SHAPE | DUPLICATE | INPUT_ADAPT_OR_DOMAIN_FIRST_WRITE."
+        ),
+        "py_count": len(py),
+        "web_count": len(web),
+        "total": len(rows),
+        "provisional_counts": dict(c),
+        "internal_candidates": [r for r in rows if r["provisional"] == "INTERNAL_SHAPE_CANDIDATE"],
+        "helper_touch_review": [r for r in rows if r["provisional"] == "HELPER_TOUCH_REVIEW"],
+        "rows": rows,
+    }
+    (OUTDIR / "s2-full.json").write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # compact TSV of every case
+    tsv_lines = ["kind\tfile\tline\tcase\tprovisional\torch\thelpers\traises\tshape"]
+    for r in rows:
+        tsv_lines.append(
+            f"{r['kind']}\t{r['file']}\t{r['line']}\t{r['case']}\t{r['provisional']}\t"
+            f"{','.join(r['orch'])}\t{','.join(r['helpers'])}\t{int(r['raises'])}\t{int(r['shape_assert'])}"
+        )
+    (OUTDIR / "s2-full.tsv").write_text("\n".join(tsv_lines) + "\n", encoding="utf-8")
+
+    print(f"S2_FULL py={len(py)} web={len(web)} total={len(rows)}")
+    print("provisional:", dict(c))
+    print(f"INTERNAL_SHAPE_CANDIDATE={len(out['internal_candidates'])}")
+    print(f"HELPER_TOUCH_REVIEW={len(out['helper_touch_review'])}")
+    print("--- INTERNAL_SHAPE_CANDIDATE ---")
+    for r in out["internal_candidates"]:
+        print(f"{r['file']}:{r['line']}\t{r['case']}\thelpers={r['helpers']}\traises={r['raises']}\tshape={r['shape_assert']}")
+    print("--- HELPER_TOUCH_REVIEW (no orch) ---")
+    for r in out["helper_touch_review"]:
+        print(f"{r['file']}:{r['line']}\t{r['case']}\thelpers={r['helpers']}")
+
+
+if __name__ == "__main__":
+    main()
