@@ -6,7 +6,7 @@
 - 判词/票面：`fix-packet.md` + `attachments/10-1853-judge-d81e9db05.json`（末份）
 - 基线（本轮施工前 HEAD）：`372bb253d796a5757dd894afcd1c210e4fe49e9c`
 - **本轮实现 commit：** `3cc8901fbc615d22b3acbf71faa1d162905b70d5`
-- **回执文档 HEAD：**
+- **回执文档分支 HEAD：** 见本提交之后 `git rev-parse HEAD`（实现本体为上一行 hash）
 - 未合入目标分支；不 push / 不开 PR；不 amend / 不 stash；未调交卷工具
 
 ## 封驳原文要点（不得以摘要当判词；此处仅索引）
