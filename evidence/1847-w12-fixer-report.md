@@ -3,7 +3,7 @@
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1847-w5`
 - 分支：`ak-roles/1847-fixer-w11-n11-n13-n10-n14-n16`
 - 底座 HEAD（开工）：`82e1da7ae`（`ak-roles: fix #1847 N14 drop CapturingLeg report wash`）
-- 本轮纠正 commit：见交卷 SHA（不 amend）
+- 本轮纠正 commit：`8dda7b2edc9ba4679ce52725cac4ea9fb12dc64f`（不 amend）
 - 判词真源：
   - `~/.ak-roles/books/Ming_LLM/1847/runs/01a109d7-ed74-72c4-bed9-027ef7044a10@fixer/attachments/00-1847-judge-d7fb0dcf7-main.json`
   - `.../01-1847-judge-d7fb0dcf7-correction.json`
