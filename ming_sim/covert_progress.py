@@ -576,14 +576,6 @@ def contract_target_units(contract: Mapping[str, object]) -> float:
     return target
 
 
-def contract_axes_direction(
-    contract: Mapping[str, object],
-) -> tuple[list[str], int]:
-    axes = normalize_axes(contract.get("axes"))
-    if not axes:
-        raise CovertContractError("typed contract 缺少价值轴")
-    return axes, normalize_direction(contract.get("direction"), default=1)
-
 
 def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[str, object]:
     actual = float(review_input.get("actual_units") or 0.0)
@@ -2094,18 +2086,3 @@ def settle_due_secret_orders(
     return results
 
 
-def parse_covert_exec_selections(extracted: Mapping[str, object] | None) -> List[Dict[str, object]]:
-    if not extracted:
-        return []
-    raw = (
-        extracted.get("covert_exec_selections")
-        or extracted.get("密令执行态")
-        or []
-    )
-    if not isinstance(raw, list):
-        return []
-    out: List[Dict[str, object]] = []
-    for item in raw:
-        if isinstance(item, dict):
-            out.append(item)
-    return out

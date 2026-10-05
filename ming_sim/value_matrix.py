@@ -133,22 +133,6 @@ def axis_collision_stances(
     return results
 
 
-def mean_aligned_stance(
-    faction: object,
-    axes: object,
-    *,
-    direction: object = 1,
-) -> float:
-    """合同轴集上 stance×direction 的均值（−2…+2）。无轴 → 0。"""
-    axis_list = normalize_axes(axes)
-    if not axis_list:
-        return 0.0
-    direction_i = normalize_direction(direction, default=1)
-    total = 0.0
-    for axis in axis_list:
-        total += float(faction_axis_stance(faction, axis) * direction_i)
-    return total / float(len(axis_list))
-
 
 def matrix_snapshot() -> Mapping[str, Mapping[str, int]]:
     """只读快照（测试/审计）。"""

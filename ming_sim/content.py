@@ -600,19 +600,6 @@ def load_opening_legacies() -> List[OpeningLegacy]:
     return out
 
 
-def dict_of_string_lists(value: object, path: str) -> Dict[str, List[str]]:
-    data = require_dict(value, path)
-    return {str(key): string_list(item, f"{path}.{key}") for key, item in data.items()}
-
-
-def dict_of_strings(value: object, path: str) -> Dict[str, str]:
-    data = require_dict(value, path)
-    output: Dict[str, str] = {}
-    for key, item in data.items():
-        if not isinstance(item, str):
-            raise SystemExit(f"设定字段应为字符串：{path}.{key}")
-        output[str(key)] = item
-    return output
 
 
 def load_office_definitions() -> Dict[str, Dict[str, object]]:

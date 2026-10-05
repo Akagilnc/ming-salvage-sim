@@ -39,7 +39,6 @@ from ming_sim.error_pack import (
 from ming_sim.exceptions import (
     LLMContractError,
     LLMUnavailable,
-    PromulgationHealEvidence,
     SettlementAbort,
 )
 from ming_sim.faction_brew import VIEW_FACTION_STANCE
@@ -192,24 +191,6 @@ def _collect_compliant_promulgation_items(
     return good
 
 
-def _merge_compliant_promulgation_items(
-    accumulated: List[Dict[str, object]],
-    fresh: Sequence[Dict[str, object]],
-) -> List[Dict[str, object]]:
-    """跨补交轮次并集保留已合规判决：先到先留，后轮不得冲掉前轮好判（#1753）。
-
-    输入仅来自 _collect_compliant_promulgation_items 已过闸项，不再二次类型过滤。
-    """
-    by_id: Dict[int, Dict[str, object]] = {}
-    order: List[int] = []
-    for row in list(accumulated) + list(fresh):
-        dossier_id = int(row["dossier_id"])
-        if dossier_id in by_id:
-            continue
-        by_id[dossier_id] = row
-        order.append(dossier_id)
-    return [by_id[item] for item in order]
-
 
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
     payload = row.get("payload")
@@ -226,12 +207,6 @@ def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) 
     """#658：stalled 廷议不进颁布集合（判官/stub/校验/消费共用）。"""
     return str(_dossier_payload_dict(dossier).get("deliberation_state") or "") == "stalled"
 
-
-def _promulgable_proposed_dossiers(
-    proposed_dossiers: Sequence[Dict[str, object]],
-) -> List[Dict[str, object]]:
-    """本轮可颁布 proposed = 非 stalled 廷议的 proposed 案卷。"""
-    return [row for row in proposed_dossiers if not _is_stalled_deliberation(row)]
 
 
 def resolve_executor_appointment_tenure(
@@ -702,36 +677,6 @@ def _rescript_decisions(
     return decisions
 
 
-def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
-    if not isinstance(simulator_payload, dict):
-        return set()
-    raw = simulator_payload.get("decree_dossiers")
-    if not isinstance(raw, list):
-        return set()
-    return {
-        int(item["id"])
-        for item in raw
-        if isinstance(item, dict) and str(item.get("id") or "").isdigit()
-    }
-
-
-def _open_affair_ids_from_payload(payload: object) -> set[int]:
-    from ming_sim.entities.affair import parse_positive_affair_id
-
-    if not isinstance(payload, dict):
-        return set()
-    raw = payload.get("open_affairs")
-    if not isinstance(raw, list):
-        return set()
-    ids: set[int] = set()
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        try:
-            ids.add(parse_positive_affair_id(item.get("id")))
-        except (TypeError, ValueError):
-            continue
-    return ids
 
 
 

@@ -1238,12 +1238,6 @@ class WebGame:
         self.session.begin_turn()
         return new_config
 
-    def apply_llm_config(self, *args, **kwargs) -> LLMConfig:
-        """同步:build → verify → commit。异步端点 api_set_llm_config 改为分步以 offload verify。"""
-        new_config = self.build_llm_config(*args, **kwargs)
-        _verify_llm_configs_or_raise(new_config)
-        return self.commit_llm_config(new_config)
-
     # ── 便捷属性 ──────────────────────────────────────────────────────────
     @property
     def db(self):
@@ -2207,22 +2201,6 @@ class WebGame:
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
             raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
 
-
-    def _open_night_court_break(self, message: str) -> bool:
-        """#1716：已开夜的收夜口令不得被场外记召短路。
-
-        场外 SUMMON_* 早退会吞掉「退朝/散夜」，夜停 open、chat 无落、拟诏台真空。
-        封闭集 COURT_BREAK 且本夜已开 → 放行既有 command verdict / close_night 缝。
-        """
-        from ming_sim.audience_night import (
-            CMD_CLOSE_NIGHT,
-            get_open_night,
-            recognize_audience_command,
-        )
-
-        if recognize_audience_command(message) != CMD_CLOSE_NIGHT:
-            return False
-        return get_open_night(self.db) is not None
 
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。

@@ -531,12 +531,6 @@ export type ServerChatMessage = {
   highlights?: string[];
 };
 
-export type Suggestion = {
-  label: string;
-  text: string;
-  prefix?: boolean;
-};
-
 export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "history" | "audience_archive" | "menu" | "secret_orders" | "ending";
 
 export type SaveEntry = { name: string; size: number; mtime: number };
@@ -658,18 +652,6 @@ export type RetryReadFailure = {
   postSucceeded: boolean;
   message: string;
   readFailure?: boolean;
-};
-
-/** #501 / #1353：待补叙事抽取诊断状态（不再驱动玩家 CTA）。 */
-export type ExtractionPendingStatus = {
-  night_id: number;
-  count: number;
-  pending: Array<{
-    chat_turn_id: number;
-    minister_name: string;
-    night_id: number;
-  }>;
-  night_status?: string;
 };
 
 export type ChatIdentity = { campaign_id: string; night_id: number; chat_turn_id: number };

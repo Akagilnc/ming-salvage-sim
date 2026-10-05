@@ -1,0 +1,132 @@
+{"path": "ming_sim/action_clusters.py", "line": 255, "shape": "assign", "targets": ["label"], "freeish_name": true, "src": "label = str(obj.get(\"动作类型\") or \"\").strip()"}
+{"path": "ming_sim/action_materialize.py", "line": 1035, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = value.strip()"}
+{"path": "ming_sim/action_materialize.py", "line": 1259, "shape": "assign", "targets": ["body"], "freeish_name": true, "src": "body = ("}
+{"path": "ming_sim/appointment_tenure.py", "line": 46, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(value or \"\").strip()"}
+{"path": "ming_sim/assets.py", "line": 27, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = file.read().strip()"}
+{"path": "ming_sim/audience_night.py", "line": 697, "shape": "assign", "targets": ["message"], "freeish_name": true, "src": "message = ("}
+{"path": "ming_sim/audience_night.py", "line": 757, "shape": "assign", "targets": ["message"], "freeish_name": true, "src": "message = f\"死账校验失败：已殁者不可{context}：{('、'.join(dead))}\""}
+{"path": "ming_sim/audience_night.py", "line": 1994, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(message or \"\").strip()"}
+{"path": "ming_sim/audience_night.py", "line": 2019, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(message or \"\").strip()"}
+{"path": "ming_sim/audience_translate.py", "line": 246, "shape": "assign", "targets": ["body"], "freeish_name": true, "src": "body = \"\\n\".join(lines)"}
+{"path": "ming_sim/breach_plea.py", "line": 81, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(origin_ref or \"\").strip()"}
+{"path": "ming_sim/breach_plea.py", "line": 95, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(origin_context or \"\").strip()"}
+{"path": "ming_sim/centrifuge_ledger.py", "line": 99, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(value).strip()"}
+{"path": "ming_sim/cli_backend.py", "line": 864, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = (stdout_text + stderr).split(\"OpenAI Codex v\")[0]"}
+{"path": "ming_sim/cli_backend.py", "line": 896, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = \"\".join("}
+{"path": "ming_sim/cli_backend.py", "line": 1310, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "lines.append(f\"{name}（别名：{'、'.join(aliases)}）\")"}
+{"path": "ming_sim/cli_backend.py", "line": 2572, "shape": "assign", "targets": ["title"], "freeish_name": true, "src": "title = str("}
+{"path": "ming_sim/cli_backend.py", "line": 2578, "shape": "assign", "targets": ["body"], "freeish_name": true, "src": "body = str("}
+{"path": "ming_sim/cli_backend.py", "line": 3504, "shape": "assign", "targets": ["body"], "freeish_name": true, "src": "body = t[i:j + 1]"}
+{"path": "ming_sim/content.py", "line": 313, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "events.append("}
+{"path": "ming_sim/context.py", "line": 267, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "parts.append(\"；\".join(bits))"}
+{"path": "ming_sim/covert_progress.py", "line": 133, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(raw or \"\").strip()"}
+{"path": "ming_sim/covert_progress.py", "line": 159, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(seed_guilt or \"\").strip()"}
+{"path": "ming_sim/covert_progress.py", "line": 312, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(raw or \"\").strip()"}
+{"path": "ming_sim/covert_progress.py", "line": 792, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(raw or \"\").strip()"}
+{"path": "ming_sim/credit_events.py", "line": 65, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(origin or \"\").strip()"}
+{"path": "ming_sim/credit_events.py", "line": 98, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(part or \"\").strip()"}
+{"path": "ming_sim/db.py", "line": 6155, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "clauses.append(f\"name IN ({','.join('?' for _ in wanted)})\")"}
+{"path": "ming_sim/db.py", "line": 7380, "shape": "assign", "targets": ["reason"], "freeish_name": true, "src": "reason = raw_reason if raw_reason.strip() else str(getattr(event, \"title\", \"\") or \"\")"}
+{"path": "ming_sim/db.py", "line": 7882, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "own.append("}
+{"path": "ming_sim/db.py", "line": 7899, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "other.append("}
+{"path": "ming_sim/db.py", "line": 7981, "shape": "assign", "targets": ["reason"], "freeish_name": true, "src": "reason = raw_reason if raw_reason.strip() else str(getattr(event, \"title\", \"\") or \"\")"}
+{"path": "ming_sim/db.py", "line": 8807, "shape": "assign", "targets": ["reason"], "freeish_name": true, "src": "reason = raw_reason if raw_reason.strip() else str(getattr(event, \"title\", \"\") or \"\")"}
+{"path": "ming_sim/db.py", "line": 12997, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "out.append({"}
+{"path": "ming_sim/db.py", "line": 13666, "shape": "assign", "targets": ["display"], "freeish_name": true, "src": "display = {"}
+{"path": "ming_sim/db.py", "line": 13857, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "base_roster.append({"}
+{"path": "ming_sim/db.py", "line": 14246, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "roster.append({"}
+{"path": "ming_sim/db.py", "line": 16677, "shape": "assign", "targets": ["title"], "freeish_name": true, "src": "title = str(payload.get(\"target_id\") or \"\").strip()"}
+{"path": "ming_sim/db.py", "line": 18522, "shape": "kwarg", "targets": ["decree_text"], "freeish_name": true, "src": "return self._materialize_office_appointment_dossier("}
+{"path": "ming_sim/db.py", "line": 19960, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = payload_json.strip()"}
+{"path": "ming_sim/db.py", "line": 19992, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(raw).strip()"}
+{"path": "ming_sim/db.py", "line": 20624, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(value).strip().lower()"}
+{"path": "ming_sim/decree_vocabulary.py", "line": 372, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "facts.append(\"标记：\" + \"、\".join(markers))"}
+{"path": "ming_sim/due_review.py", "line": 49, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(entry_kind or ENTRY_KIND_STAGED).strip()"}
+{"path": "ming_sim/due_review.py", "line": 77, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(origin_ref or \"\").strip()"}
+{"path": "ming_sim/entities/affair/store.py", "line": 463, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "out.append({"}
+{"path": "ming_sim/entities/affair/store.py", "line": 542, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(origin_ref or \"\").strip()"}
+{"path": "ming_sim/execution_pressure.py", "line": 52, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(raw).strip()"}
+{"path": "ming_sim/execution_pressure.py", "line": 142, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "parts.append(f\"{kinds}∈{'|'.join(sorted(scopes))}\")"}
+{"path": "ming_sim/fiscal_fact_brief.py", "line": 569, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "entries.append({"}
+{"path": "ming_sim/fiscal_fact_brief.py", "line": 589, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "lines.append(\"\\t\".join(["}
+{"path": "ming_sim/flows.py", "line": 1591, "shape": "assign", "targets": ["reason"], "freeish_name": true, "src": "reason = str(item.get(\"reason\") or \"\").strip()"}
+{"path": "ming_sim/highlight_judge.py", "line": 26, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(raw or \"\").strip()"}
+{"path": "ming_sim/issues.py", "line": 232, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(origin_ref or \"\").strip()"}
+{"path": "ming_sim/issues.py", "line": 506, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(resolve_condition or \"\").strip()"}
+{"path": "ming_sim/issues.py", "line": 516, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(resolve_condition or \"\").strip()"}
+{"path": "ming_sim/issues.py", "line": 806, "shape": "assign", "targets": ["display"], "freeish_name": true, "src": "display = str(create.get(\"display\") or \"\").strip() or (db._stem_of(str(create.get(\"key\") or \"\")) or str(create.get(\"key\") or \"\"))"}
+{"path": "ming_sim/issues.py", "line": 2198, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "candidates.append({"}
+{"path": "ming_sim/issues.py", "line": 2325, "shape": "assign", "targets": ["reason"], "freeish_name": true, "src": "reason = f\"人物核心主体永久死亡：{', '.join(dead_subjects)}\""}
+{"path": "ming_sim/issues.py", "line": 2843, "shape": "assign", "targets": ["title"], "freeish_name": true, "src": "title = str(item.get(\"new_title\") or item.get(\"title\") or \"\").strip()"}
+{"path": "ming_sim/issues.py", "line": 4385, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "warns.append("}
+{"path": "ming_sim/issues.py", "line": 4389, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "warns.append("}
+{"path": "ming_sim/issues.py", "line": 4397, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "warns.append("}
+{"path": "ming_sim/issues.py", "line": 5221, "shape": "assign", "targets": ["reason"], "freeish_name": true, "src": "reason = str(cl.get(\"reason\") or \"\").strip().lower()"}
+{"path": "ming_sim/issues.py", "line": 6158, "shape": "assign", "targets": ["title"], "freeish_name": true, "src": "title = str(item.get(\"new_title\") or item.get(\"title\") or \"\").strip()"}
+{"path": "ming_sim/issues.py", "line": 8064, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "applied_person_changes.append({"}
+{"path": "ming_sim/issues.py", "line": 8489, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "applied_person_changes.append({"}
+{"path": "ming_sim/issues.py", "line": 8499, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "created_armies.append({"}
+{"path": "ming_sim/issues.py", "line": 8589, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "event_person_results.append({"}
+{"path": "ming_sim/issues.py", "line": 8750, "shape": "assign", "targets": ["display"], "freeish_name": true, "src": "display = str(create.get(\"display\") or \"\").strip() or (db._stem_of(key) or key)"}
+{"path": "ming_sim/matching.py", "line": 69, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "aliases.append(part.strip())"}
+{"path": "ming_sim/matching.py", "line": 102, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(raw).strip()"}
+{"path": "ming_sim/matching.py", "line": 180, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "aliases.append(part.strip())"}
+{"path": "ming_sim/matching.py", "line": 202, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(raw).strip()"}
+{"path": "ming_sim/materials.py", "line": 96, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(name or \"\").strip() or \"未名\""}
+{"path": "ming_sim/materials.py", "line": 276, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "out.append(str(item.relative_to(root_r)).replace(\"\\\\\", \"/\"))"}
+{"path": "ming_sim/materials.py", "line": 299, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(value or \"\").strip()"}
+{"path": "ming_sim/materials.py", "line": 479, "shape": "assign", "targets": ["opening_text"], "freeish_name": true, "src": "opening_text = raw_latest if raw_latest.strip() else \"见目录。\""}
+{"path": "ming_sim/materials.py", "line": 529, "shape": "assign", "targets": ["situation"], "freeish_name": true, "src": "situation = raw_situation if raw_situation.strip() else \"见目录。\""}
+{"path": "ming_sim/materials.py", "line": 553, "shape": "assign", "targets": ["situation"], "freeish_name": true, "src": "situation = raw_situation if raw_situation.strip() else \"见目录。\""}
+{"path": "ming_sim/materials.py", "line": 564, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = f\"{body}（尚未入档）\" if body.strip() else \"尚未入档\""}
+{"path": "ming_sim/materials.py", "line": 587, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "lines.append({"}
+{"path": "ming_sim/materials.py", "line": 645, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "handled.append(visible[dir_key][:2])"}
+{"path": "ming_sim/materials.py", "line": 709, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "parts.append(spoken if spoken.strip() else \"（尚无）\")"}
+{"path": "ming_sim/materials.py", "line": 802, "shape": "assign", "targets": ["body"], "freeish_name": true, "src": "body = \"\\n\".join("}
+{"path": "ming_sim/materials.py", "line": 1108, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "affairs.append({"}
+{"path": "ming_sim/materials.py", "line": 1580, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "rows.append((\"封闭结局\", \"、\".join(item[\"terminal_reason_labels\"])))"}
+{"path": "ming_sim/materials.py", "line": 1581, "shape": "assign", "targets": ["body"], "freeish_name": true, "src": "body = \"\\n\".join(f\"{label}：{value}\" for label, value in rows)"}
+{"path": "ming_sim/materials.py", "line": 1616, "shape": "assign", "targets": ["body"], "freeish_name": true, "src": "body = \"\\n\".join("}
+{"path": "ming_sim/materials.py", "line": 2219, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "parts.append(spoken if spoken.strip() else \"（尚无）\")"}
+{"path": "ming_sim/month_chain.py", "line": 1755, "shape": "assign", "targets": ["body"], "freeish_name": true, "src": "body = event_id[len(_DECREE_QUESTION_PREFIX):]"}
+{"path": "ming_sim/office_rank.py", "line": 31, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(office or \"\").strip()"}
+{"path": "ming_sim/office_rank.py", "line": 34, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = re.sub(r\"^(?:前|原任|原)\", \"\", text).strip()"}
+{"path": "ming_sim/office_rank.py", "line": 35, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = (text.replace(\"兼掌\", \",\").replace(\"兼署\", \",\").replace(\"兼\", \",\")"}
+{"path": "ming_sim/office_rank.py", "line": 69, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(title or \"\").strip()"}
+{"path": "ming_sim/relation_read.py", "line": 104, "shape": "assign", "targets": ["summary"], "freeish_name": true, "src": "summary = \"\\n\".join(summary_parts)"}
+{"path": "ming_sim/rescript_actions.py", "line": 472, "shape": "assign", "targets": ["label"], "freeish_name": true, "src": "label = str(req.get(\"label\") or \"\").strip()"}
+{"path": "ming_sim/rescript_actions.py", "line": 704, "shape": "assign", "targets": ["decree_text"], "freeish_name": true, "src": "decree_text = note_raw if note_raw.strip() else label_raw"}
+{"path": "ming_sim/rescript_actions.py", "line": 1180, "shape": "kwarg", "targets": ["decree_text"], "freeish_name": true, "src": "dossier_id = int(db.create_decree_dossier("}
+{"path": "ming_sim/rescript_draft.py", "line": 379, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "bits.append(\"必填\" + \"/\".join(str(k) for k in req))  # type: ignore[union-attr]"}
+{"path": "ming_sim/rescript_draft.py", "line": 381, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "bits.append(\"须具其一\" + \"|\".join(str(k) for k in group))  # type: ignore[union-attr]"}
+{"path": "ming_sim/rescript_draft.py", "line": 386, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "bits.append("}
+{"path": "ming_sim/rescript_draft.py", "line": 393, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "bits.append("}
+{"path": "ming_sim/rescript_draft.py", "line": 398, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "bits.append(\"target_kind∈\" + \"|\".join(str(k) for k in tk))  # type: ignore[union-attr]"}
+{"path": "ming_sim/rescript_draft.py", "line": 406, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "bits.append("}
+{"path": "ming_sim/rescript_draft.py", "line": 411, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "bits.append(\"可填\" + \"/\".join(str(k) for k in opt))  # type: ignore[union-attr]"}
+{"path": "ming_sim/rescript_draft.py", "line": 413, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "parts.append(f\"{action}（\" + \"；\".join(bits) + \"）\")"}
+{"path": "ming_sim/rescript_draft.py", "line": 528, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(val).strip()"}
+{"path": "ming_sim/rescript_draft.py", "line": 1153, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = match.group(1).strip()"}
+{"path": "ming_sim/rescript_draft.py", "line": 1155, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = raw.strip()"}
+{"path": "ming_sim/session.py", "line": 1310, "shape": "assign", "targets": ["answer"], "freeish_name": true, "src": "answer = \"\".join(chunks)"}
+{"path": "ming_sim/session.py", "line": 2314, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "out.append({"}
+{"path": "ming_sim/settlement_payload.py", "line": 37, "shape": "assign", "targets": ["label"], "freeish_name": true, "src": "label = str(option.get(\"label\") or \"\").strip()"}
+{"path": "ming_sim/settlement_payload.py", "line": 192, "shape": "assign", "targets": ["title"], "freeish_name": true, "src": "title = str(item.get(\"title\") or \"\").strip()"}
+{"path": "ming_sim/settlement_payload.py", "line": 213, "shape": "assign", "targets": ["title"], "freeish_name": true, "src": "title = str(out.get(\"title\") or \"\").strip()"}
+{"path": "ming_sim/staged_commitment.py", "line": 41, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = raw.strip()"}
+{"path": "ming_sim/staged_commitment.py", "line": 99, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = stages.strip()"}
+{"path": "ming_sim/staged_commitment.py", "line": 250, "shape": "assign", "targets": ["criterion"], "freeish_name": true, "src": "criterion = title if title.strip() else \"依限奏报\""}
+{"path": "ming_sim/staged_commitment.py", "line": 255, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "due.append({"}
+{"path": "ming_sim/supervision.py", "line": 185, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(raw or \"\").strip()"}
+{"path": "ming_sim/supervision.py", "line": 223, "shape": "assign", "targets": ["body"], "freeish_name": true, "src": "body = raw[len(ns):]"}
+{"path": "ming_sim/value_matrix.py", "line": 51, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(raw or \"\").strip()"}
+{"path": "scripts/jisi_army_dispatch_probe.py", "line": 135, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "results.append({"}
+{"path": "scripts/military_flow_probe.py", "line": 150, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "results.append({"}
+{"path": "scripts/play_as_emperor.py", "line": 217, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = raw.strip()"}
+{"path": "scripts/play_as_emperor.py", "line": 480, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "state.history.append({\"step\": step, \"prompt\": prompt_hint.strip(), \"reasoning\": reasoning, \"input\": action})"}
+{"path": "web/src/highlights.ts", "line": 41, "shape": "ts_line", "targets": [], "freeish_name": true, "src": "segments.push({ text: displayContent.slice(cursor), highlight: false });"}
+{"path": "web/src/highlights.ts", "line": 45, "shape": "ts_line", "targets": [], "freeish_name": true, "src": "segments.push({ text: displayContent.slice(cursor, bestIdx), highlight: false });"}
+{"path": "web/src/useSettlementFlow.ts", "line": 300, "shape": "ts_line", "targets": ["report"], "freeish_name": true, "src": "const report = fromPayload.trim() ? fromPayload : fromState;"}
+{"path": "web_app.py", "line": 244, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = text.replace(src, dst)"}
+{"path": "web_app.py", "line": 879, "shape": "append", "targets": ["<append>"], "freeish_name": true, "src": "out.append({"}
+{"path": "web_app.py", "line": 3083, "shape": "assign", "targets": ["text"], "freeish_name": true, "src": "text = str(cur).strip()"}

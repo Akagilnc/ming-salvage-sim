@@ -1,0 +1,125 @@
+zero_kind	kind	qualname	path:line	disposition	reason
+absolute_zero	py_func	_resolve_unique_active_authority	ming_sim/action_materialize.py:1424	KEEP	零调用但无退役职责证据；保留共享/公开表面
+absolute_zero	py_func	apply_audience_turn_translation	ming_sim/audience_translate.py:525	KEEP	零调用但无退役职责证据；保留共享/公开表面
+absolute_zero	py_method	CliChat.ainvoke_stream	ming_sim/cli_backend.py:3737	KEEP	CliChat 公开流式适配表面
+absolute_zero	py_method	CliChat.aresponse_stream	ming_sim/cli_backend.py:3762	KEEP	CliChat 公开流式适配表面
+absolute_zero	py_func	first_character	ming_sim/context.py:316	KEEP	零调用但无退役职责证据；保留共享/公开表面
+absolute_zero	py_method	GameDB.list_office_vacancies	ming_sim/db.py:4048	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.record_economy_moves	ming_sim/db.py:6519	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.turn_power_summary	ming_sim/db.py:7188	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.building_detail	ming_sim/db.py:8947	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.turn_economy_summary	ming_sim/db.py:9033	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.treasury_ledger	ming_sim/db.py:9059	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.mark_chat_turn_failed	ming_sim/db.py:9683	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.append_rescript_drafts	ming_sim/db.py:11067	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.attach_secret_oral_pin	ming_sim/db.py:11310	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.list_open_grant_reconciliations	ming_sim/db.py:12375	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.executable_decree_dossier_ids	ming_sim/db.py:15167	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.clear_directive_needs_clarification	ming_sim/db.py:17718	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.list_promulgated_directives	ming_sim/db.py:17782	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.discard_pending_directives	ming_sim/db.py:18965	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.list_recent_issue_advances	ming_sim/db.py:20605	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_method	GameDB.read_credit_events_as_edges	ming_sim/db.py:22693	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+absolute_zero	py_func	_collect_compliant_promulgation_items	ming_sim/decree.py:162	KEEP	零调用但无退役职责证据；保留共享/公开表面
+absolute_zero	py_method	AffairStore.point_dossier	ming_sim/entities/affair/store.py:290	KEEP	实体 store 公开读面
+absolute_zero	py_method	AffairStore.point_issue	ming_sim/entities/affair/store.py:322	KEEP	实体 store 公开读面
+absolute_zero	py_method	TextualFactStore.pointing_at	ming_sim/entities/textual_fact/store.py:113	KEEP	实体 store 公开读面
+absolute_zero	py_func	_province_transport_ratio	ming_sim/flows.py:65	KEEP	零调用但无退役职责证据；保留共享/公开表面
+absolute_zero	py_func	_province_collection_rate	ming_sim/flows.py:70	KEEP	零调用但无退役职责证据；保留共享/公开表面
+absolute_zero	py_func	_fiscal_container_value	ming_sim/flows.py:296	KEEP	零调用但无退役职责证据；保留共享/公开表面
+absolute_zero	py_field	_HubOutboundResult.k	ming_sim/flows.py:550	KEEP	单字符名枚举不可靠；非退役处置面
+absolute_zero	py_method	MaterialsRoot.__call__	ming_sim/materials.py:178	KEEP	MaterialsRoot 协议调用面
+absolute_zero	py_func	_write_locations_in_source	ming_sim/person_write_inventory.py:113	KEEP	零调用但无退役职责证据；保留共享/公开表面
+absolute_zero	py_func	status_delta_from_delta	ming_sim/report.py:97	KEEP	零调用但无退役职责证据；保留共享/公开表面
+absolute_zero	py_method	ClassifiedWriteGate.holder_kind	ming_sim/session_write_queue.py:110	KEEP	写闸公开属性
+absolute_zero	py_func	hline	scripts/make_steam_assets.py:46	KEEP	探针/脚本本地能力；非生产退役接缝
+absolute_zero	py_field	EmperorState.turn_count	scripts/play_as_emperor.py:162	KEEP	探针/脚本本地能力；非生产退役接缝
+absolute_zero	py_func	S	spike_settle_tick.py:250	KEEP	单字符名枚举不可靠；非退役处置面
+absolute_zero	py_async	dependency_mismatch_handler	web_app.py:4198	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_menu_continue	web_app.py:4518	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_menu_load_save	web_app.py:4637	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_menu_delete_save	web_app.py:4759	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_retry_mechanical_tail	web_app.py:5043	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_secret_orders	web_app.py:5091	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_map	web_app.py:5212	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_buildings	web_app.py:5217	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_audience_chat_history	web_app.py:5298	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_retry_audience_reply	web_app.py:5364	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_retry_pending_translation	web_app.py:5386	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_list_saves	web_app.py:5979	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_delete_save	web_app.py:5997	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_upload_portrait	web_app.py:6174	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_get_portrait	web_app.py:6230	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_admin_tables	web_app.py:6239	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	api_admin_table	web_app.py:6244	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+absolute_zero	py_async	admin_page	web_app.py:6289	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_func	stage_authorization_candidate	ming_sim/action_materialize.py:1622	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	create_rescript_draft_agent	ming_sim/agents.py:796	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	list_night_timeline	ming_sim/audience_night.py:447	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	audit_night_direct_writes	ming_sim/audience_night.py:662	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	list_arrived_unsettled_summons	ming_sim/audience_night.py:1492	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	get_night_protagonist	ming_sim/audience_night.py:2155	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	persons_entered_tonight	ming_sim/audience_night.py:2227	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_method	CliChat.response_stream	ming_sim/cli_backend.py:3741	KEEP	CliChat 公开流式适配表面
+prod_zero_test_only	py_func	build_secret_covert_effect_briefs	ming_sim/covert_progress.py:646	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_method	GameDB.settle_province_tick	ming_sim/db.py:3144	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.turn_region_summary	ming_sim/db.py:7324	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.turn_army_summary	ming_sim/db.py:7919	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.get_message_highlights	ming_sim/db.py:9161	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.record_monthly_supervision_facts	ming_sim/db.py:12675	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.list_dossiers_for_directive	ming_sim/db.py:14662	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.list_endorsed_dossier_candidates	ming_sim/db.py:14680	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.list_dossier_link_rejections	ming_sim/db.py:14983	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.save_pending_promulgation_verdicts	ming_sim/db.py:16234	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.drop_pending_actions_for_minister	ming_sim/db.py:18910	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.list_office_effects_for_dossier	ming_sim/db.py:19216	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.reject_directive	ming_sim/db.py:19508	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB.count_active_initiatives	ming_sim/db.py:19632	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_method	GameDB._is_active_secret_order_assignee	ming_sim/db.py:21320	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_method	GameDB.get_faction_stance_summary	ming_sim/db.py:22889	KEEP	GameDB 公开账本 API 表面；零调用≠删共享读面
+prod_zero_test_only	py_func	execution_side_read_fields	ming_sim/decree.py:233	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	build_fiscal_fact_brief	ming_sim/fiscal_fact_brief.py:334	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	format_fiscal_fact_brief_tsv	ming_sim/fiscal_fact_brief.py:583	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	stage_month_segment	ming_sim/month_translate.py:240	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	revoke_pay_order_decree	ming_sim/pay_order.py:472	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	run_month_end_relation_brew	ming_sim/relation_brew.py:438	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	format_region_changes	ming_sim/report.py:36	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	format_army_changes	ming_sim/report.py:52	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	format_power_changes	ming_sim/report.py:72	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	select_triage_actor	ming_sim/rescript_draft.py:1107	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	generate_rescript_draft	ming_sim/rescript_draft.py:2149	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_method	SessionWriteQueue.is_sealed	ming_sim/session_write_queue.py:262	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_method	SessionWriteQueue.run_exclusive	ming_sim/session_write_queue.py:520	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	value_axes	ming_sim/value_matrix.py:46	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	axis_collision_stances	ming_sim/value_matrix.py:100	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_func	matrix_snapshot	ming_sim/value_matrix.py:137	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	ts_export	IssueGroup	web/src/components/situation.tsx:200	KEEP	测试消费现役缝；生产可达其它路径或公开缝
+prod_zero_test_only	py_async	api_menu_new_game	web_app.py:4414	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_menu_exit	web_app.py:4773	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_menu_shutdown	web_app.py:4802	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_menu_save_llm	web_app.py:4932	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_state	web_app.py:5038	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_memorials_read	web_app.py:5054	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_func	api_history_turns	web_app.py:5163	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_history_turn	web_app.py:5170	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_add_favorite	web_app.py:5222	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_remove_favorite	web_app.py:5233	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_func	api_audience_scroll	web_app.py:5261	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_audience_chat	web_app.py:5326	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_undo_audience_chat	web_app.py:5373	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_audience_chat_stream	web_app.py:5445	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_update_directive	web_app.py:5455	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_delete_directive	web_app.py:5500	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_func	api_advance_without_edict	web_app.py:5516	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_func	api_issue_decree	web_app.py:5642	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_issue_decree_stream	web_app.py:5733	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_resolve_decisions_stream	web_app.py:5856	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_create_save	web_app.py:5984	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_load_save	web_app.py:6003	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_get_llm_config	web_app.py:6014	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_set_llm_config	web_app.py:6078	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_delete_portrait	web_app.py:6201	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_get_court_layout	web_app.py:6216	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_set_court_layout	web_app.py:6222	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_admin_upsert	web_app.py:6258	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）
+prod_zero_test_only	py_async	api_admin_delete	web_app.py:6276	KEEP	公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态）

@@ -72,28 +72,6 @@ def _ctx() -> GameContent:
     return _content
 
 
-def historical_anchor_for_month(year: int, month: int) -> Dict[str, object]:
-    """给 LLM 的历史护栏：关键历史事变必须出现，但玩家可改变走向和结果。"""
-    anchors = {
-        (1626, 9): "努尔哈赤已死于宁远败后不久，后金内部围绕汗位重排，皇太极取得主动。",
-        (1626, 10): "皇太极继后金汗位，改元天聪；此事在游戏开局前已成定局，不可改写为尚未登基。",
-        (1627, 1): "丁卯之役：后金攻朝鲜，朝鲜被迫与后金缔结兄弟之盟，但仍暗中倾明。",
-        (1629, 10): "己巳之变历史窗口开启：皇太极可能绕道蒙古、蓟镇入塞，威胁遵化、京师。",
-        (1629, 11): "己巳之变最危险阶段：若蓟镇、宣大、京营、关宁勤王失措，后金兵锋可逼近北京城下。",
-        (1630, 1): "己巳之变余波：辽东督师、京畿防务与勤王军功过会引发朝廷追责。",
-        (1632, 5): "皇太极西征林丹汗及察哈尔体系的历史压力上升，蒙古各部可能倒向后金。",
-        (1635, 4): "察哈尔衰败后，后金收编蒙古部众、获得传国玉玺一类政治资源的窗口临近。",
-        (1636, 4): "皇太极历史上会改国号为大清、称帝；若后金仍强盛且未被明军压制，应发生称帝建制。",
-        (1637, 1): "丙子之役后朝鲜可能彻底臣服清；若明朝未能牵制辽东，朝鲜倾明空间会急剧缩小。",
-        (1642, 3): "松锦决战历史压力：若关宁、锦州、宁远供给和士气长期恶化，辽东主力可能遭毁灭性打击。",
-    }
-    note = anchors.get((year, month), "")
-    return {
-        "date": f"{year}年{month}月",
-        "note": note or f"本{TURN_UNIT}无硬性历史锚点，但势力仍需按其利益自行推进。",
-        "must_respect": bool(note),
-    }
-
 
 # 结局类型枚举（CLI/Web/总结 agent 共用）。
 # - ongoing：未决
@@ -165,21 +143,6 @@ def state_context(state: GameState) -> str:
             parts.append(f"{key}{value}")
     return "，".join(parts)
 
-
-def parse_json_dict(raw: str) -> Dict[str, int]:
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise LLMContractError(f"数据库中的数值变化 JSON 已损坏：{raw[:200]}") from error
-    if not isinstance(data, dict):
-        raise LLMContractError(f"数据库中的数值变化不是 object：{raw[:200]}")
-    parsed: Dict[str, int] = {}
-    for key, value in data.items():
-        try:
-            parsed[str(key)] = int(value)
-        except (TypeError, ValueError) as error:
-            raise LLMContractError(f"数据库中的数值变化字段不是整数：{key}={value}") from error
-    return parsed
 
 
 def format_metric_delta(delta: Dict[str, int]) -> str:
@@ -349,13 +312,6 @@ def faction_context_with_db(character: Character, db: GameDB) -> str:
     )
 
 
-def event_context(event: Event) -> str:
-    return (
-        f"{event.title}。类型：{event.kind}。奏报：{event.summary} "
-        f"紧急{event.urgency}，严重{event.severity}，可信{event.credibility}。"
-        f"牵涉利益：{', '.join(event.interests)}。"
-    )
-
 
 def first_character() -> Character:
     try:
@@ -363,9 +319,6 @@ def first_character() -> Character:
     except StopIteration as error:
         raise SystemExit("characters.json 至少需要一个人物。") from error
 
-
-def first_character_name() -> str:
-    return first_character().name
 
 
 def character_from_name(name: object) -> Character:

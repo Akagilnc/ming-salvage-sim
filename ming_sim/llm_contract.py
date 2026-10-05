@@ -15,34 +15,7 @@ def abort_llm_contract(stage: str, message: str, raw: Optional[str] = None) -> N
     raise LLMContractError(detail, raw_value=raw if raw is not None else None)
 
 
-def require_non_empty_text(value: object, stage: str, field: str, raw: Optional[str] = None) -> str:
-    if not isinstance(value, str) or not value.strip():
-        abort_llm_contract(stage, f"{field} 必须是非空字符串", raw)
-    # #1834 F16 / #671：判空用副本；返回原文（禁 strip 后当正文）。
-    return value
 
-
-def require_int_range(value: object, stage: str, field: str, low: int, high: int,
-                      raw: Optional[str] = None, clamp: bool = False) -> int:
-    if isinstance(value, bool):
-        abort_llm_contract(stage, f"{field} 必须是 {low}-{high} 的整数", raw)
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as error:
-        raise LLMContractError(f"{stage} 输出不符合约定：{field} 必须是 {low}-{high} 的整数") from error
-    if parsed < low or parsed > high:
-        if clamp:
-            clamped = max(low, min(high, parsed))
-            print(f"[WARN] {stage} {field} 超出范围 {low}-{high}：{parsed} → clamp 到 {clamped}")
-            return clamped
-        abort_llm_contract(stage, f"{field} 超出范围 {low}-{high}：{parsed}", raw)
-    return parsed
-
-
-def require_bool(value: object, stage: str, field: str, raw: Optional[str] = None) -> bool:
-    if not isinstance(value, bool):
-        abort_llm_contract(stage, f"{field} 必须是 boolean", raw)
-    return value
 
 
 def fail_if_llm_error(text: str, stage: str) -> None:

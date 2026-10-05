@@ -195,46 +195,6 @@ def validate_season_option(option: Mapping[str, object]) -> str:
     return action_type
 
 
-def season_option_contract_prompt(kind: str) -> str:
-    """Human-facing season option contract projected from FieldSpec."""
-    specs = _season_specs(kind)
-    details = []
-    effective_values: Dict[str, FrozenSet[str]] = {}
-    for spec in specs:
-        detail = spec.name
-        if spec.allowed is not None:
-            allowed = frozenset(
-                value for value in spec.allowed
-                if all(
-                    field_population_allowed(kind, dependent.name, {spec.name: value})
-                    for dependent in specs
-                    if dependent.populated_when is not None
-                    and dependent.populated_when[0] == spec.name
-                )
-            )
-            effective_values[spec.name] = allowed
-            if spec.allowed_when is not None:
-                controller = spec.allowed_when[0]
-                controller_values = effective_values.get(controller, frozenset())
-                context = (
-                    {controller: next(iter(controller_values))}
-                    if len(controller_values) == 1 else {}
-                )
-                allowed = effective_field_allowed(spec, context) or frozenset()
-            detail += f'（{"|".join(sorted(allowed))}）'
-        if spec.as_int:
-            detail += f"（JSON integer，{spec.int_lo}..{spec.int_hi}，禁数字字符串）"
-        if spec.quantity_unit:
-            detail += f"（单位={spec.quantity_unit}）"
-        details.append(detail)
-    if not details:
-        return ""
-    return (
-        f'协饷 option 须携带 action_type="{kind}"、'
-        + "、".join(details)
-        + "；非协饷 option 保持既有 label/hint，不携带这些字段。"
-    )
-
 
 def cluster_fields_prompt(kind: str) -> str:
     """Render one catalog row's extraction fields without a parallel schema."""
@@ -265,10 +225,6 @@ def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
         for spec in cluster.fields
     }
 
-
-def cluster_effect(kind: str) -> str:
-    c = cluster_by_kind(kind)
-    return c.effect if c else EFFECT_NOOP
 
 
 class ActionCandidateShapeError(ValueError):

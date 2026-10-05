@@ -109,15 +109,6 @@ _MUTATING_SQL_MARKERS = (
 )
 
 
-def discover_character_write_sql_locations() -> tuple[dict[str, str], ...]:
-    """Return current source locations that directly mutate ``characters`` via SQL."""
-    root = Path(__file__).resolve().parents[1]
-    locations: set[str] = set()
-    for path in sorted((root / "ming_sim").rglob("*.py")):
-        relative = path.relative_to(root).as_posix()
-        locations.update(_write_locations_in_source(path.read_text(encoding="utf-8"), relative))
-    return tuple({"location": location} for location in sorted(locations))
-
 
 def _write_locations_in_source(source: str, relative: str) -> set[str]:
     """Scan one module's source for direct ``characters``-mutating execute() SQL.
@@ -153,16 +144,6 @@ def _write_locations_in_source(source: str, relative: str) -> set[str]:
         found.add(_inventory_location(relative, function_name, sql))
     return found
 
-
-def person_write_locations_by_disposition(disposition: str) -> tuple[str, ...]:
-    """Return inventory locations for one migration disposition."""
-    return tuple(
-        sorted(
-            item["location"]
-            for item in PERSON_WRITE_POINT_INVENTORY
-            if item["disposition"] == disposition
-        )
-    )
 
 
 def _enclosing_function_name(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str:

@@ -4380,9 +4380,6 @@ class GameDB:
             )
         return total
 
-    def _primary_source_only_army_pay_container_total(self) -> float:
-        return self._standalone_army_pay_container_total()
-
     def _has_complete_province_pay_containers(self) -> bool:
         rows = self.conn.execute(
             """
@@ -21319,11 +21316,6 @@ class GameDB:
             str(record.get("body") or record.get("content") or ""),
             source_id or str(record.get("source_id") or ""), excluded_names, commit=commit,
         )
-
-    @staticmethod
-    def _is_audience_chat_shared_channel(kind: str = "", source_id: str = "") -> bool:
-        """召对 chat → shared-ledger channel (#883/#976)."""
-        return str(kind or "") == "audience" or str(source_id or "").startswith("chat_message:")
 
     def _is_active_secret_order_assignee(self, minister_name: str) -> bool:
         """True when this minister holds an active/pending private secret brief."""

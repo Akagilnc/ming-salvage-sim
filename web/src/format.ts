@@ -160,16 +160,6 @@ export const labelArmy = (id: any) => labelMaps.army.get(String(id)) || String(i
 export const labelPower = (id: any) => labelMaps.power.get(String(id)) || POWER_ID_CN[String(id)] || String(id ?? "");
 
 
-// extractor 偶尔吐出的英文枚举值，统一翻中文。
-export const EN_VALUE_CN: Record<string, string> = {
-  ...POWER_ID_CN,
-  appoint: "新进朝堂", promote: "升迁", transfer: "调任", demote: "贬", reinstate: "起复",
-  resolved: "已了", failed: "崩坏", dropped: "撤销",
-  situation: "时局", initiative: "举措", crisis: "危机", reform: "改革", decree: "诏令",
-  done: "办结", pending: "在办", active: "进行中",
-  draft: "草案", rejected: "已驳回", cancelled: "已取消",
-};
-
 // extractor 吐的是英文字段名（region/army/class/power 的列名），这里统一翻中文。
 // 查不到的回退原值，至少不空。
 export const EN_FIELD_CN: Record<string, string> = {
