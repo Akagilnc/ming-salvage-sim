@@ -49,7 +49,6 @@ from ming_sim.participant_roster import (
 from ming_sim.person_archive_contract import (
     PERSON_OUSTED_STATUSES,
     PERSON_TITLE_KINDS,
-    archived_office_title_for_ousted,
     wash_ousted_current_office,
 )
 from ming_sim.qualitative import (
@@ -3518,16 +3517,15 @@ class GameDB:
                 )
         if is_fresh_characters_seed:
             for row in self.conn.execute(
-                "SELECT name, office, office_type, status, status_reason FROM characters"
+                "SELECT name, office, office_type, status FROM characters"
             ).fetchall():
                 # 同 add_character/set_character_office 走 person-title 守卫接缝：名分不写脏行。
                 # Jurisdiction only from explicit content office_region — never location.
-                # 离事：现职已洗净时自 status_reason「前…罢居/革职」回收备档职衔；
-                # 无回收且无现职 → 不建空备档。登场未至（未来职衔寄 reason、无形）不建。
-                archive_office = archived_office_title_for_ousted(
-                    row["office"], row["status_reason"],
-                )
-                if not archive_office:
+                # 离事且无现职：不建空备档（不解析 status_reason 造历史职衔）。
+                if (
+                    row["status"] in PERSON_OUSTED_STATUSES
+                    and not str(row["office"] or "").strip()
+                ):
                     continue
                 ch = (
                     self.content.characters.get(row["name"])
@@ -3535,7 +3533,7 @@ class GameDB:
                 )
                 seat = str(getattr(ch, "office_region", "") or "").strip() if ch else ""
                 self._record_character_office(
-                    row["name"], archive_office, row["office_type"], "静态接档",
+                    row["name"], row["office"], row["office_type"], "静态接档",
                     region_id=seat,
                 )
 
@@ -5543,13 +5541,9 @@ class GameDB:
         """月初 tick：offstage 人物到历史登场年月，自动转 active 并发"起用"讯息。
         debut_year=0 视为开局即在场（不会处于 offstage）。
         返回 [{name, office, faction}] 喂给 simulator 当月上下文，由 LLM 写进邸报。
-
-        #1843 / ADR 0009：离事职名分在 seed 已洗净；登场职衔寄放在 status_reason。
-        激活时若 characters.office 仍空，自 status_reason 回填现职（禁 active 无名分）。
         """
         rows = self.conn.execute(
-            """SELECT name, office, office_type, faction, debut_year, debut_month,
-                      status_reason
+            """SELECT name, office, faction, debut_year, debut_month
                FROM characters
                WHERE status = 'offstage' AND debut_year > 0"""
         ).fetchall()
@@ -5563,26 +5557,10 @@ class GameDB:
             if not triggered:
                 continue
             name = r["name"]
-            prior_office = str(r["office"] or "").strip()
-            prior_reason = str(r["status_reason"] or "").strip()
-            office_type = str(r["office_type"] or "").strip() or "待铨"
-            # 洗净后职衔寄 status_reason；无寄放时回落「重臣」占位（旧行为）。
-            debut_office = prior_office or prior_reason or "重臣"
             self.set_character_status(
                 state, name, "active", f"历史登场 {year}年{month or '?'}月",
                 reason_code="登场", content=self.content,
             )
-            if not prior_office and prior_reason:
-                self.conn.execute(
-                    "UPDATE characters SET office=? WHERE name=?",
-                    (prior_reason, name),
-                )
-                self._record_character_office(
-                    name, prior_reason, office_type, "历史登场",
-                )
-                if self.content is not None and name in self.content.characters:
-                    self.content.characters[name].office = prior_reason
-                self.conn.commit()
             self.record_person_log(
                 state, name, "处置",
                 payload_summary=f"历史登场 {year}年{month or '?'}月",
@@ -5590,7 +5568,7 @@ class GameDB:
             )
             debuted.append({
                 "name": name,
-                "office": debut_office,
+                "office": r["office"] or "重臣",
                 "faction": r["faction"] or "",
             })
         return debuted

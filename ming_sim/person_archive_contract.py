@@ -166,30 +166,6 @@ def wash_ousted_current_office(
     return "", reason_text
 
 
-def archived_office_title_for_ousted(
-    office: object = "",
-    status_reason: object = "",
-) -> str:
-    """离事者备档职衔：现职优先；否则从「前…，罢居/革职」status_reason 回收清洗职名。
-
-    seed 洗净 characters.office 后仍须写 character_offices 备档供起复/破格读历史职
-    （ADR 0009 不变式 1 与 set_character_status「原职留备档」同构）。登场未至、
-    status_reason 仅为未来职衔字（无「前…罢居/革职」形）时不建备档。
-    """
-    office_text = str(office or "").strip()
-    if office_text:
-        return office_text
-    reason = str(status_reason or "").strip()
-    if not reason.startswith("前"):
-        return ""
-    body = reason[1:]
-    for sep in ("，罢居", "，革职", "，革"):
-        if sep in body:
-            title = body.split(sep, 1)[0].strip()
-            return title
-    return ""
-
-
 def resolve_person_transition(
     status: str,
     action: str,

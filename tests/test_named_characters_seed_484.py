@@ -22,7 +22,6 @@ def test_r3_named_characters_load_legal_guilt_and_historical_offices():
     assert hu.office == ""
     assert hu.office_type == "督抚"
     assert hu.status == "dismissed"
-    assert hu.status_reason == "前三边总督，革职候勘"
     assert hu.aliases == ["胡廷宴", "胡总督"]
     assert hu.seed_guilt == {
         "crime": "三边兵变弹压失机，已革职候勘；责任待勘，不预判为可坐重罪",
@@ -57,16 +56,14 @@ def test_r4_named_characters_debut_in_historical_order(game):
     db, state, content = game
 
     assert state.year == 1627
-    # ADR 0009：登场前离事不持现职；登场职衔寄 status_reason，office_type 仍标域。
     expected = {
-        "张缙彦": ("", "清涧知县", "地方", 1631, ""),
-        "汤若望": ("", "钦天监历局修历", "礼部", 1630, "beizhili"),
-        "李之藻": ("", "历局修历起复", "礼部", 1629, "beizhili"),
+        "张缙彦": ("清涧知县", "地方", 1631, ""),
+        "汤若望": ("钦天监历局修历", "礼部", 1630, "beizhili"),
+        "李之藻": ("历局修历起复", "礼部", 1629, "beizhili"),
     }
-    for name, (office, status_reason, office_type, debut_year, location) in expected.items():
+    for name, (office, office_type, debut_year, location) in expected.items():
         character = content.characters[name]
         assert (character.office, character.office_type) == (office, office_type)
-        assert character.status_reason == status_reason
         assert character.status == "offstage"
         assert character.debut_year == debut_year
         assert character.location == location
