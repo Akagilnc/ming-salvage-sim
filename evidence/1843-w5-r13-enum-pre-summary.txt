@@ -1,48 +1,13 @@
-CLASS_A_HITS 1037
-CLASS_A_BY_TAG
-  legacy_token	639
-  legacy_person_key	146
-  substrate_hub	113
-  army_pay_cutover	42
-  population_unit	32
-  person_delta_adapter	24
-  normalize_person_changes	20
-  dual_path_comment	8
-  fiscal_engine	8
-  save_meta	5
-CLASS_A_BY_KIND
-  prod	373
-  other	364
-  test	300
-CLASS_B_HITS 4149
-CLASS_B_BY_TAG
-  string_literal_assert	3722
-  rejected_assert	378
-  ddl_shape	44
-  status_reason_lock	5
-CLASS_A_PROD_FILES 25
-  ming_sim/applier.py
-  ming_sim/army_pay.py
-  ming_sim/cli/terminal.py
-  ming_sim/cli_backend.py
-  ming_sim/constants.py
-  ming_sim/content.py
-  ming_sim/db.py
-  ming_sim/declaration_dispatch.py
-  ming_sim/decree.py
-  ming_sim/displaced_population.py
-  ming_sim/flows.py
-  ming_sim/issues.py
-  ming_sim/llm_config.py
-  ming_sim/models.py
-  ming_sim/office_rank.py
-  ming_sim/participant_roster.py
-  ming_sim/pay_order.py
-  ming_sim/person_archive_contract.py
-  ming_sim/person_delta_adapter.py
-  ming_sim/person_write_inventory.py
-  ming_sim/session.py
-  ming_sim/simulation.py
-  ming_sim/situation_drift.py
-  ming_sim/strict_types.py
-  scripts/gen_portraits.py
+F2-R13 enum summary (acceptance fix round)
+predicate_coverage: 旧档兼容/协议/双路径/专属资产加载存储夹具死树互引 | 非契约文本源码内部结构helper重复及失效测试
+class_a_named_members: 39
+class_a_dispositions: {'DELETED': 28, 'RETAIN': 11}
+class_b_named_members: 415
+class_b_dispositions: {'DELETED': 5, 'RETAIN': 410}
+rescan_residual_hits: 3 (web event humanize + save_meta comment only)
+commands_file: evidence/1843-w5-r13-enum-commands.txt (runnable rg; no production scanner)
+notes:
+- deleted retired flag APIs + exclusive asserts + unread marker fixtures + cutover(0,1) matrix
+- HUD word-scan exemption REVOKED by final judgment; retain keyset/input fidelity only
+- CLAUDE.md unauthorized fiscal line restored to 7402d3b80 exact bytes
+- no open CANDIDATE labels; every named hit disposed DELETED or RETAIN

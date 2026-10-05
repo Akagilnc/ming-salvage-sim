@@ -1,34 +1,43 @@
-#1843 F2-R13 修内司整类枚举命令（工作树 Ming_LLM-1843-w5）
+#1843 F2-R13 全仓机械枚举命令（可直接执行；谓词覆盖票面+末判两类定义）
+# 工作树：Ming_LLM-1843-w5
+# 类定义：
+#   F2-R13-1 = 旧档兼容 / 协议 / 双路径 / 专属资产加载存储夹具死树互引
+#   F2-R13-2 = 非契约文本 / 源码 / 内部结构 / helper / 重复 / 失效测试
+# 不新增生产扫描机制；本文件仅 evidence 可复核命令。
 
-## 施工前粗扫
-```bash
-python3 /tmp/1843-r13-enum/enum_r13.py
-# CLASS_A_HITS 1037；CLASS_B_HITS 4149（字面过宽，仅作候选池，不作定类）
-```
+set -euo pipefail
+cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
 
-## 消费链核销（历史消费者 + 现役入口）
-```bash
-rg -n "is_army_pay_source_cutover_enabled|is_substrate_hub_fiscal_engine_enabled|fiscal_engine\(" ming_sim --type py
-rg -n "normalize_person_changes|legacy_gate|legacy_partial|legacy_spillover|_legacy_person_report" ming_sim --type py
-rg -n "save_meta|_mark_population_unit|population_unit" ming_sim --type py
-rg -n "_disable_army_pay_source_cutover|_make_legacy_db|fiscal_engine\(\) == .legacy" tests --type py
-```
+## A1 财政双路径旗标壳 / 标记 / 专属夹具
+rg -n --glob '*.py' --glob '!evidence/**' --glob '!docs/**' \
+  'is_army_pay_source_cutover_enabled|is_substrate_hub_fiscal_engine_enabled|\bfiscal_engine\s*\(|__army_pay_source_cutover|__fiscal_engine|_disable_army_pay|_make_legacy_db|shadow.?isolat|cutover.?off|parametrize\("cutover"' \
+  ming_sim tests web_app.py scripts || true
 
-## 官方做法（施工前）
-WebSearch: Martin Fowler Strangler Fig + Vercel/LaunchDarkly flag cleanup after full rollout
-→ 全量切到胜出路径后删除旗标与旧枝，不留双路径。
+## A2 旧人事顶层协议 / 专属闸报告映射
+rg -n --glob '*.py' --glob '!evidence/**' --glob '!docs/**' \
+  'legacy_gate|legacy_partial|legacy_spillover|_legacy_person|allow_legacy_partial|legacy_person_changes|normalize_person_changes|character_status_changes|office_changes|person_delta_adapter' \
+  ming_sim tests web_app.py scripts || true
 
-## 施工后复扫
-```bash
-python3 - <<'PY'
-# evidence/1843-w5-r13-class-rescan.tsv 生成脚本（见同目录）
-PY
-# RESCAN_TOTAL 13：余项均为 always-True 闸 API / 事件门 humanize 同名 / 注释 / 负向旧键空结果
-```
+## A3 人口双单位 / 孤儿 save_meta
+rg -n --glob '*.py' --glob '!evidence/**' --glob '!docs/**' \
+  'save_meta|_mark_population_unit|_POPULATION_UNIT|population_unit_marker|population_unit\(' \
+  ming_sim tests web_app.py scripts || true
 
-## 双路径不可达探针
-```bash
-# 删除 __army_pay_source_cutover / __fiscal_engine 后
-# fiscal_engine=substrate_hub；国库收入合计仍 267（施工前删标会变 155）
-# save_meta 表不存在
-```
+## A4 旧结算专属资产 / 死树支持名
+rg -n --glob '*.py' --glob '!evidence/**' --glob '!docs/**' \
+  'rescript_draft_prompt|generate_rescript_draft|pending_promulgation_verdicts|turn_extractions|faction_report|turn_region_summary|turn_army_summary|has_player_visible_rejection|build_secret_covert_effect_briefs|execution_distortion_weight' \
+  ming_sim tests web_app.py scripts || true
+
+## B1 非契约措辞 / 源码锁 / 内部形状 / 重复
+rg -n --glob 'tests/**/*.py' \
+  'inspect\.getsource|getsource\(|match\s*=\s*[ru]?[\'\"]|FORBIDDEN|禁词|banned_words|assert not hasattr|pragma_index|sqlite_master.*index|CREATE\s+(UNIQUE\s+)?INDEX|idx_ledger|shadow_tlog|identity.?only' \
+  || true
+
+## B2 HUD 键集与输入保真（保留面；末判撤销词扫豁免，不恢复词扫）
+rg -n --glob 'tests/test_qa_e1_numeric_presentation.py' \
+  'set\(item\)|name.*amount|禁词|banned|FORBIDDEN|word' || true
+
+## A/B 消费链核（符号是否仅测试引用）
+rg -n --glob '*.py' --glob '!evidence/**' --glob '!docs/**' \
+  'is_army_pay_source_cutover_enabled|is_substrate_hub_fiscal_engine_enabled|\bfiscal_engine\b' \
+  ming_sim tests web_app.py scripts || true

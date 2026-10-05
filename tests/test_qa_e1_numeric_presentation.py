@@ -45,7 +45,6 @@ def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
     import ming_sim.flows as flows_mod
 
     db, state, _ = game
-    assert db.fiscal_engine() == "substrate_hub"
     real = flows_mod.compute_budget_lines
     renamed = "完全不同的军饷科目名"
 

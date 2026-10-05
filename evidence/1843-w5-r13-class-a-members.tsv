@@ -1,22 +1,40 @@
 class	kind	member	disposition	reason
-F2-R13-1	prod	ming_sim/db.py fiscal dual-path gates/markers/else	DELETED	always-hub; markers unread/unwritten
-F2-R13-1	prod	ming_sim/flows.py legacy budget/shadow isolation	DELETED	hub-only budget+abort
-F2-R13-1	prod	ming_sim/displaced_population.py hub early-return	DELETED	always run levy path
-F2-R13-1	prod	ming_sim/issues.py surcharge legacy reject-all	DELETED	hub-only
-F2-R13-1	prod	ming_sim/pay_order.py legacy engine guard	DELETED	hub-only
-F2-R13-1	prod	ming_sim/person_delta_adapter old-key translators	DELETED	人物变更 only
-F2-R13-1	prod	ming_sim/issues.py legacy_person_changes/gates/report map	DELETED	exclusive old protocol
-F2-R13-1	prod	ming_sim/declaration_dispatch old-key translate	DELETED	reject non-empty retired keys
-F2-R13-1	prod	ming_sim/db.py save_meta table/mark	DELETED	orphan storage
-F2-R13-1	prod	ming_sim/flows.py+_substrate_hub_*/army_pay	RETAIN	唯一现役财政军饷核
+F2-R13-1	prod	ming_sim/db.py::is_army_pay_source_cutover_enabled	DELETED	退休旗标壳；仅测试消费者；本轮删净
+F2-R13-1	prod	ming_sim/db.py::fiscal_engine	DELETED	退休旗标壳；仅测试消费者；本轮删净
+F2-R13-1	prod	ming_sim/db.py::is_substrate_hub_fiscal_engine_enabled	DELETED	退休旗标壳；仅测试消费者；本轮删净
+F2-R13-1	prod	ming_sim/db.py::__army_pay_source_cutover read/write	DELETED	双路径标记读写已删；生产无引用
+F2-R13-1	prod	ming_sim/db.py::__fiscal_engine read/write	DELETED	双路径标记读写已删；生产无引用
+F2-R13-1	prod	ming_sim/flows.py::legacy budget/shadow/else arms	DELETED	hub-only 预算与 abort
+F2-R13-1	prod	ming_sim/displaced_population.py::hub early-return gate	DELETED	always levy path
+F2-R13-1	prod	ming_sim/issues.py::surcharge legacy reject-all	DELETED	hub-only
+F2-R13-1	prod	ming_sim/pay_order.py::legacy engine guard	DELETED	hub-only
+F2-R13-1	prod	ming_sim/person_delta_adapter.py::old-key translators	DELETED	仅吃人物变更
+F2-R13-1	prod	ming_sim/issues.py::legacy_person_changes/gates/report map	DELETED	专属旧协议
+F2-R13-1	prod	ming_sim/declaration_dispatch.py::old-key translate	DELETED	非空旧键拒收
+F2-R13-1	prod	ming_sim/db.py::save_meta table/mark/_POPULATION_UNIT_KEY	DELETED	孤儿存储
+F2-R13-1	test	tests/test_fiscal_substrate_bridge.py::assert is_army_pay_source_cutover_enabled	DELETED	专属内部断言；随 API 删
+F2-R13-1	test	tests/test_pay_order_override_653.py::assert is_substrate_hub_fiscal_engine_enabled	DELETED	专属内部断言；随 API 删
+F2-R13-1	test	tests/test_qa_e1_numeric_presentation.py::assert fiscal_engine==substrate_hub	DELETED	专属内部断言；随 API 删
+F2-R13-1	test	tests/test_mutiny_latch_315.py::_configure marker writes	DELETED	无读者双路径夹具
+F2-R13-1	test	tests/test_mutiny_noop_whitelist_319.py::_configure marker writes	DELETED	无读者双路径夹具
+F2-R13-1	test	tests/test_mutiny_third_strike_318.py::_configure marker writes	DELETED	无读者双路径夹具
+F2-R13-1	test	tests/test_mutiny_progression_316.py::_configure marker writes	DELETED	无读者双路径夹具
+F2-R13-1	test	tests/test_mutiny_redemption_317.py::_configure marker writes	DELETED	无读者双路径夹具
+F2-R13-1	test	tests/test_player_army_projection_321.py::_configure marker writes	DELETED	无读者双路径夹具
+F2-R13-1	test	tests/test_effect_origin_558.py::INSERT __army_pay_source_cutover	DELETED	无读者双路径夹具
+F2-R13-1	test	tests/test_mutiny_third_strike_318.py::parametrize cutover(0,1) x3	DELETED	双路径兼容矩阵；坍为单路径行为案
+F2-R13-1	test	tests/test_mutiny_third_strike_318.py::per-test marker inserts	DELETED	随矩阵删
+F2-R13-1	test	legacy cutover-disable/shadow-isolation/legacy engine fixtures (prior r13)	DELETED	专属双路径测试
+F2-R13-1	test	legacy person translate/gate/partial/power-key tests (prior r13)	DELETED	专属旧协议
+F2-R13-1	test	tests/test_population_unit_648.py::test_new_save_persistent_population_unit_marker	DELETED	save_meta 专属
+F2-R13-1	prod	ming_sim/flows.py::_substrate_hub_* / army_pay settle	RETAIN	唯一现役财政军饷核
 F2-R13-1	prod	ming_sim/db.py::population_unit	RETAIN	恒「人」现役读口
-F2-R13-1	prod	ming_sim/simulation EMPTY_EXTRACTION/ITEM_FIELD_ALIASES/_canonical/read_beyond_intent	RETAIN	C0/条目归一/beyond_intent
-F2-R13-1	prod	ming_sim/person_delta_adapter::normalize_person_changes(人物变更)	RETAIN	现役人物入口
-F2-R13-1	prod	ming_sim/db.py legacy_modifiers/insert_legacy/_income_amount_after_legacy_modifier	RETAIN	帝国修正物理核非 fiscal dual path
-F2-R13-1	prod	ming_sim/db.py::_agno_legacy_runs_blob	RETAIN	现役 Agno 合并
-F2-R13-1	prod	web_app.py::_legacy_gate_*/_humanize_legacy_gate	RETAIN	事件前提 humanize，非人事 legacy_gate
-F2-R13-1	prod	ming_sim/db.py::is_*_enabled/fiscal_engine always-True API	RETAIN	恒等现役读口，无切换
-F2-R13-1	test	legacy cutover-disable / shadow-isolation / legacy engine fixtures	DELETED	exclusive dual-path tests
-F2-R13-1	test	legacy person translate/gate/partial/power-key tests	DELETED	exclusive old protocol
-F2-R13-1	test	test_new_save_persistent_population_unit_marker	DELETED	save_meta exclusive
-F2-R13-1	test	hub/cutover behavior + new-key person + population scale	RETAIN	现役行为契约
+F2-R13-1	prod	ming_sim/simulation.py::EMPTY_EXTRACTION/ITEM_FIELD_ALIASES/_canonical_item_fields/read_beyond_intent_raw	RETAIN	C0/条目归一/beyond_intent
+F2-R13-1	prod	ming_sim/person_delta_adapter.py::normalize_person_changes(人物变更)	RETAIN	现役人物入口
+F2-R13-1	prod	ming_sim/db.py::legacy_modifiers/insert_legacy/apply_legacy_pct/_income_amount_after_legacy_modifier	RETAIN	帝国修正物理核，非财政 dual path
+F2-R13-1	prod	ming_sim/db.py::_agno_legacy_runs_blob/_rewrite_session_legacy_runs_blob	RETAIN	现役 Agno 合并
+F2-R13-1	prod	web_app.py::_legacy_gate_subject/_humanize_legacy_gate/_LEGACY_GATE_*	RETAIN	事件前提 humanize，非人事 legacy_gate
+F2-R13-1	prod	ming_sim/issues.py::_spawn_legacy_from_effect/_legacy_commitment_stop_gate	RETAIN	帝国修正/承诺门，非旧人事协议
+F2-R13-1	prod	ming_sim/declaration_dispatch.py::reject nonempty appointments/character_status_changes/character_power_changes/office_changes	RETAIN	结构化负向拒收契约
+F2-R13-1	test	hub/cutover-named behavior tests that exercise hub physics (renamed comments ok)	RETAIN	现役行为契约，非双路径切换
+F2-R13-1	test	tests/test_qa_e1_numeric_presentation.py::test_player_budget_payload_strips_engineering_notes keyset	RETAIN	结构化键集{name,amount}；末判撤销词扫豁免后仍保键集，不恢复词扫

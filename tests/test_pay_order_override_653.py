@@ -813,7 +813,6 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     )
 
     db, state, _content = game
-    assert db.is_substrate_hub_fiscal_engine_enabled()
 
     army = db.conn.execute(
         "SELECT id, manpower, salary_rate, owner_power, central_pay_share, "

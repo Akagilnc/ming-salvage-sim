@@ -393,8 +393,6 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
     assert "漕粮" not in fake_regions["settle_meta_defaults"]["ming_province"]["notes"]
 
 def test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi(fresh_db):
-    assert fresh_db.is_army_pay_source_cutover_enabled()
-
     row = fresh_db.conn.execute(
         """
         SELECT arrears, province_pay_arrears, central_pay_arrears,

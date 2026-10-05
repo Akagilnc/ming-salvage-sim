@@ -3373,17 +3373,6 @@ class GameDB:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def is_army_pay_source_cutover_enabled(self) -> bool:
-        """#1843：军饷分源唯一现役路径，不再读兼容标记。"""
-        return True
-
-    def fiscal_engine(self) -> str:
-        """#1843：唯一现役财政核 = substrate_hub。"""
-        return "substrate_hub"
-
-    def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
-        return True
-
     def _initialize_army_pay_source_spine(self, is_fresh_armies_seed: bool) -> None:
         """Fresh-save army pay-source spine for #287 S1."""
         if not is_fresh_armies_seed:
@@ -6635,7 +6624,7 @@ class GameDB:
                     continue
                 if field in consumed_pay_source_fields:
                     continue
-                # #318：cutover 关闭时 owner_power 仍须经唯一 adapter，禁止 text 直写旁路
+                # #318：owner_power 须经唯一 adapter，禁止 text 直写旁路
                 # （同 owner no-op / 未在上方预消费的残余路径）
                 if field == "owner_power":
                     current_row = self.conn.execute(

@@ -1,6 +1,416 @@
 class	kind	member	disposition	reason
-F2-R13-2	test	qa_a3 常熟 wording	DELETED	non-contract
-F2-R13-2	test	army_card fixed status sentence	DELETED	non-contract
-F2-R13-2	test	rescript idx name existence	DELETED	internal shape
-F2-R13-2	test	fiscal duplicate rejected bool	DELETED	duplicate assert
-F2-R13-2	test	structured office/status/keyset/reject/persist/input fidelity	RETAIN	legal contracts
+F2-R13-2	test	tests/test_qa_a3_seed_data.py::常熟 status_reason wording	DELETED	非契约措辞；已删；保留 office/status/非空 status_reason
+F2-R13-2	test	tests/test_army_card_status_1501.py::_GUANNING_STATUS fixed sentence	DELETED	非契约固定句；已删；保留 DB 零改写/键集
+F2-R13-2	test	tests/test_rescript_draft_656.py::idx name existence	DELETED	内部形状；已删；保留列/禁列负向
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::duplicate rejected bool x4	DELETED	重复断言；已删；保留首条+持久状态
+F2-R13-2	test	tests/test_qa_e1_numeric_presentation.py::HUD 词扫	DELETED	末判撤销HUD词扫豁免；词扫已撤且不得恢复
+F2-R13-2	test	tests/test_qa_e1_numeric_presentation.py::keyset {name,amount}	RETAIN	结构化键集与工程字段隔离；输入保真
+F2-R13-2	test	tests/test_adr0015_per_item_rejection.py::test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_adr0015_per_item_rejection.py::test_sqlite_text_sanitization_covers_issue_rows_and_advances	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_applier_contract.py::test_ddl_in_open_transaction_rolls_back	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_appointment_tenure_607.py::test_person_delta_rejects_invalid_appointment_tenure_without_mutation	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_army_card_status_1501.py::test_shared_consumers_still_surface_status	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_army_display_173.py::test_army_payload_exposes_army_needed	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_army_firearms.py::test_score_fields_include_firearm_and_cannon	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_army_firearms.py::test_armies_table_has_firearm_columns	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_continuous_507.py::test_scene_recap_quotes_public_dialogue_within_presence_interval	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_continuous_507.py::test_scene_recap_excludes_dialogue_before_person_entered	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_continuous_507.py::test_qianqing_continuous_night_skeleton_runs	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_continuous_507.py::test_present_roster_reflects_command_dismissal	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_presence_500.py::test_reenter_after_exit_reappears_in_roster	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_presence_500.py::test_present_names_at_uses_timeline_key_not_raw_seq	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_restore_505.py::test_pure_audience_zero_ledger_turn_survives_reopen	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_audience_scroll_539.py::test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_scroll_539.py::test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_scroll_539.py::test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_scroll_539.py::test_closed_night_archive_batches_each_metadata_store_once	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_scroll_539.py::test_read_night_scroll_reads_each_metadata_store_once	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_audience_translate_1837.py::test_appointment_and_relief_through_scene_chat_then_close_and_settle	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_audience_translate_1837.py::test_scene_chat_cli_and_api_same_translation_shape	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_audience_translate_1837_reopen.py::test_prohibit_covert_levy_commission_binds_exposed_dossier	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_audience_translation_1838.py::test_edge_event_and_public_saying_attach_affair	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_audience_travel_gating_670.py::test_arrived_summon_continuation_survives_failed_apply_across_months	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_audience_undo_506.py::test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_audience_undo_506.py::test_undo_restores_staging_row_deleted_by_verbal_reject	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_authority_ledger_611.py::test_production_path_grant_restore_revoke_impression_tracer	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_authority_ledger_611.py::test_authority_changes_rejects_ineligible_keeps_legal_peer	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_authority_ledger_611.py::test_duplicate_active_authority_is_rejected_across_dossiers	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_authority_ledger_611.py::test_production_rejects_bare_domain_scope	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_breach_plea_623.py::test_same_sponsor_two_commitments_both_remove_edges	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_breach_plea_623.py::test_misappropriation_via_tags_producer_pipeline	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_candidate_supply_1893.py::test_translate_request_carries_current_candidate_facts	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_candidate_supply_1893.py::test_supplied_outcome_labels_match_writer_whitelist	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_centrifuge_ledger_690.py::test_t2_kinship_uses_unrounded_formula	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_centrifuge_ledger_690.py::test_t4_happy_path_and_forbidden_kwargs	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_centrifuge_ledger_690.py::test_t5_bastinado_overdraw_batch_and_non_bastinado	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_centrifuge_ledger_690.py::test_t7_cross_faction_isolation	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_centrifuge_ledger_690.py::test_t8_detection_wariness_only_kinship	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_centrifuge_ledger_690.py::test_t9_idempotency_namespace_and_empty_planned	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_centrifuge_ledger_690.py::test_t12_restore_preserves_tables_and_rebuild	RETAIN	结构化键/目录/名单成员
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_secret_alias_exclusion_is_canonicalized_before_projection	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_office_slice_does_not_read_unrelated_sensitive_reports	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_restored_knowledge_uses_current_db_office_after_transfer	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_turn_report_keeps_source_specific_secret_exclusion_boundary	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_turn_report_projects_public_and_secret_items_per_character	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_public_reports_accumulate_across_turns	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_secret_office_exclusion_does_not_hide_unrelated_world_bucket	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_appended_dossier_participant_learns_only_on_join_turn_after_restore	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_knowledge_projects_public_events_without_leaking_private_matters	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_knowledge_projects_mixed_archive_from_durable_source_scope	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_turn_report_counterpart_never_uses_aggregate_when_sources_exist	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_shared_archive_storage_never_writes_restricted_aggregate	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_structured_person_scope_replaces_role_wide_world_reports	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_character_knowledge_489.py::test_current_state_facts_are_selected_by_content_domain_not_role_label	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_chat_stream_failpaths_393.py::test_worker_cleanup_failure_still_emits_error_and_releases_gate	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_chat_stream_failpaths_393.py::test_worker_cleanup_double_failure_emits_original_error_end_and_logs	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_chat_stream_failpaths_393.py::test_worker_postprocess_exception_emits_error_end	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_chat_stream_failpaths_393.py::_parse_sse	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_chat_stream_failpaths_393.py::_assert_structured_llm_http	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_chat_stream_failpaths_393.py::test_chat_stream_run_error_event_sse_system_layer_no_retry	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_chat_stream_failpaths_393.py::test_chat_stream_three_transient_exhausted_system_fail_then_resend	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_chat_stream_failpaths_393.py::test_chat_stream_idle_budget_independent_per_attempt	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_chat_stream_failpaths_393.py::test_chat_stream_halfstream_retry_replaces_temp_presentation	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_run_claude_stdout_only	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_materials_dir_reaches_popen_cwd_and_readonly_argv	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_run_codex_flags_and_stdout	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_run_codex_reasoning_env_optional	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_login_shell_path_uses_printenv_not_dollar_path	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_clichat_invoke_error_traced_and_reraised	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_run_backend_for_config_traces_every_call	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_cli_backend.py::test_material_runner_uses_cwd_and_read_only_tool_surface	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_run_cursor_flags_and_stdout	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_run_kimi_prompt_flag_no_yolo_stdout_only	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_run_grok_flags_effort_and_plain	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_backend.py::test_run_pi_flags_thinking_and_stdout	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_model_choices.py::test_default_label_reflects_env_override	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_model_choices.py::test_codex_offers_spark_fast_tier	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_model_choices.py::test_claude_offers_haiku_and_sonnet_tiers	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_play_turn.py::test_terminal_failure_printer_preserves_zero_id	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_play_turn.py::test_play_turn_reports_default_approval_secret_order_failure	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_play_turn.py::test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_play_turn.py::test_play_turn_reports_secret_order_failure_when_settlement_aborts	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_runner_error_typed_1299.py::test_clichat_normal_reply_still_returns	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_transport_1465.py::test_cli_chat_stream_two_transient_then_success_three_attempts	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_transport_1465.py::test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_resend	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_transport_1465.py::test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_transport_1465.py::test_cli_process_keeps_streaming_past_old_300s_wall	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_cli_transport_1465.py::test_cli_process_idle_over_budget_dies_then_retry_succeeds	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_court_break_player_lock_1727.py::_parse_sse_chunk	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_court_break_player_lock_1727.py::test_court_break_locks_player_writes_and_closes_night	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_covert_levy_651.py::test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_declaration_dispatch_1835.py::test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_declaration_dispatch_1835.py::test_registration_adds_new_person_to_roster_and_rejects_existing_name	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_declaration_dispatch_1835.py::test_staged_declaration_discard_and_idempotent_settle_in_decree_order	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_until_stop_commitment_issue_is_created_with_carrier_fields	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_decree_commitment_dedups_same_batch_fiscal_create_carrier	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_until_stop_commitment_shape_rejects_without_explicit_marker	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_limited_duration_commitment_shape_rejects_without_explicit_marker	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_limited_duration_ongoing_commitment_rejects_past_end_turn	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_future_one_shot_commitment_shape_rejects_without_explicit_marker	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_stop_condition_only_commitment_shape_rejects_without_explicit_marker	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_marker	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_legacy_resolve_condition_person_commitment_rejects_without_marker	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_until_stop_commitment_requires_initiative_kind	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_until_stop_commitment_rejects_non_dict_stop_condition	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_until_stop_commitment_rejects_stop_condition_without_table_prefix	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_until_stop_commitment_requires_origin_ref	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_until_stop_commitment_requires_ongoing_effects	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_until_stop_commitment_rejects_semantically_empty_ongoing_effects	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_until_stop_commitment_rejects_direct_resolved_close	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_creation_136.py::test_until_stop_commitment_rejects_direct_failed_close_without_effects	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_decree_commitment_schema_136.py::test_issues_schema_has_commitment_deadline_columns	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_decree_commitment_schema_136.py::test_existing_issues_table_gets_commitment_columns_idempotently	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_decree_commitment_settlement_229.py::test_commitment_progress_contexts_are_structured	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_decree_commitment_settlement_229.py::test_due_one_shot_commitment_ack_closes_review_loop_without_effects	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_decree_dossiers_571.py::test_month_end_participant_batch_rejects_each_malformed_item	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_decree_dossiers_571.py::test_extractor_never_reconstructs_missing_dossier_authority_from_live_db	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_decree_dossiers_571.py::test_dossier_execution_rejects_non_sqlite_integer_ids	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_deformation_dual_rail_622.py::test_ac5_audit_fork_signal_present_only_with_audit_link	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_deformation_dual_rail_622.py::test_apply_economy_list_four_exit_effective_origin_receipt_matrix	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_dossier_reported_progress_619.py::test_origin_namespace_minimum_closed_set_and_open_append	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_enter_settlement_period_1235.py::_terminal_sse	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_enter_settlement_period_1235.py::test_session_reaccept_orphan_exits_after_owner_release	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_event_chain_cascade.py::test_negative_dependency_invalidates_when_upstream_fired_forbidden_outcome	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_mao_event_effect_uses_unified_person_change_key	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_strategic_foreign_event_rejects_trigger_without_world_state_delta	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate	RETAIN	拒收布尔（重复行已删）
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_event_result_gate	RETAIN	拒收布尔（重复行已删）
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate	RETAIN	拒收布尔（重复行已删）
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_rejected_strategic_foreign_event_preserves_unrelated_region_delta	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_rejected_strategic_event_preserves_unanchored_target_region_delta	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_rejected_strategic_event_preserves_unrelated_person_delta	RETAIN	拒收布尔（重复行已删）
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_rejected_strategic_event_does_not_land_substitute_commander_person_delta	RETAIN	拒收布尔（重复行已删）
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_mao_wenlong_event_pool_rechecks_gate_before_effect	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_huangtaiji_chengdi_lands_only_when_model_picks_it	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_rechecks_after_advances_close_gate	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_rechecks_after_prior_event_effect_closes_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_invalid_location_does_not_block_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_invalid_appointment_does_not_block_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_invalid_allegiance_change_does_not_block_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_disposition_clears_office_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_invalid_location_does_not_clear_transit_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_person_power_change_blocks_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_allegiance_backlash_blocks_power_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_person_changes_are_simulated_sequentially	RETAIN	拒收布尔（重复行已删）
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_alias_appointment_blocks_canonical_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_alias_disposition_blocks_canonical_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_pending_person_gate_prefetches_character_rows_for_displacement	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_appointment_displacement_blocks_displaced_office_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_appointment_clears_reason_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_event_pool_pending_appointment_updates_office_type_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal	RETAIN	拒收布尔（重复行已删）
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_invalid_pending_person_change_does_not_block_event_gate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_mao_wenlong_event_obsolete_when_core_subject_already_dead	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_mao_wenlong_event_excluded_when_yuan_unavailable	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_event_trigger_gate.py::test_mao_wenlong_event_pool_duplicate_emit_is_idempotent	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_execution_joint_liability_565.py::test_terminal_outcomes_charge_lead_and_downgraded_delegator	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_execution_joint_liability_565.py::test_adapter_replay_is_idempotent_on_joint_liability_rows	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_execution_joint_liability_565.py::test_dead_liable_party_skips_satisfaction_but_enters_note	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_execution_joint_liability_565.py::test_explicit_affected_parties_must_pass_full_key_validation	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_execution_joint_liability_565.py::test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_execution_joint_liability_565.py::test_dual_role_lead_and_delegator_primary_wins	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_execution_joint_liability_565.py::test_liability_query_excludes_knowers_but_keeps_delegator_fk	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_execution_joint_liability_565.py::test_living_offstage_delegator_still_charged	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_execution_joint_liability_565.py::test_execution_note_merge_interface_and_restore	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_execution_pressure_654.py::test_mapper_rejects_contradictory_locality_scope_without_overwrite	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_execution_pressure_654.py::test_region_id_column_and_composite_indexes	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_executor_routing_721.py::test_directive_routing_rejection_rolls_back_with_outer_owner	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_faction_brew_637.py::test_authority_revoke_edge_reaches_holder_faction_with_emperor_target	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_faction_class_section_rejections.py::test_issue_effect_faction_rejection_reaches_reports	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_faction_denunciation_627.py::test_veracity_derivation_mechanical_and_origin_marks	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_faction_denunciation_627.py::test_ac3_veracity_true_and_false_from_fork	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_faction_denunciation_627.py::test_ac5_zero_template_exposure_and_622	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_faction_leverage_9.py::test_rank_tier_modulates_impact	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_faction_leverage_9.py::test_restore_uses_new_office_weight_not_old	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_faction_leverage_9.py::test_displaced_minister_faction_leverage_recomputed	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_faction_leverage_9.py::test_weizhongxian_ouster_drops_yandang_by_sili_weight	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_fiscal_beyond_intent_1260.py::test_s1_fiscal_creates_beyond_intent_tracer_and_negatives	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_fiscal_beyond_intent_1260.py::test_s1_fiscal_removes_beyond_intent_tracer_and_negatives	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_fiscal_levy_effect.py::test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_fiscal_levy_effect.py::test_fiscal_levy_events_are_not_in_model_candidate_pool	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_fiscal_levy_effect.py::test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_fiscal_levy_effect.py::test_non_event_world_question_is_not_bound_to_the_only_due_levy	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_fiscal_levy_effect.py::test_fiscal_levy_held_petition_is_supplied_to_next_world_segment	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_armies_provision_empty_mutiny_status_flag	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_army_delta_arrears_rejects_exempt_army_under_cutover	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_army_delta_owner_power_to_ming_requires_same_delta_pay_source	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_army_delta_rejects_unknown_owner_power_without_clearing_arrears	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_army_delta_rejects_pay_source_without_ming_settle_substrate	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_new_ming_army_requires_valid_pay_source_under_cutover	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_new_ming_army_rejects_non_ming_pay_source_region	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_new_ming_army_rejects_initial_arrears_under_cutover	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_zhongyuan_jingshi_primary_source_refinement	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_south_southwest_seeds_have_valid_historical_settle_substrate	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_shaanxi_seed_is_relabelled_to_historical_shadow_scale	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_jiangnan_core_seeds_have_positive_remittance_golden	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_all_settle_substrate_provisional_meta_covers_virtual_fields	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_fiscal_substrate_bridge.py::test_jiangnan_core_uses_wanli_huiji_lu_primary_seed	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_gazette_author_1862.py::test_author_archives_own_title_and_same_run_advances	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_grant_reconciliation_567.py::test_per_route_storage_restore_and_escort_split	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_grant_reconciliation_567.py::test_close_merges_recon_note_without_second_treasury_debit	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_grant_reconciliation_567.py::test_recon_both_amount_fields_rejected_no_guess	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_highlight_judge_544.py::test_chat_stream_done_before_highlights_and_degrade	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_history_decree_text_1843_reopen.py::test_history_turn_reads_decree_text_from_resolve_context	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_impeachment_surge_655.py::test_apply_accepts_only_current_candidate_closed_target_and_free_text	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_impeachment_surge_655.py::test_dynamic_targets_are_roleless_deduplicated_without_participant_roles	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_impeachment_surge_655.py::test_dynamic_apply_deduplicates_same_candidate_within_input_snapshot	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_impeachment_surge_655.py::test_leverage_boundary_and_authoritative_input_snapshot	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_issue_entities.py::test_apply_score_extraction_rejects_unknown_top_level_key	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_material_directory_1830.py::test_prepare_writes_typed_tree_and_index	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_material_directory_1830.py::test_material_tree_contains_only_structurally_related_world_details	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_material_directory_1830.py::test_matter_carriers_follow_the_real_knowledge_projection	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_material_directory_1830.py::test_prepare_fails_loud_when_dossier_read_breaks	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_material_directory_1830.py::test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gazettes	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_material_directory_1830.py::test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_mechanical_tail_1845.py::test_chapter_memory_retired_from_three_readers	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_menu_continue_stream_1195.py::_parse_sse	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_menu_continue_stream_1195.py::test_menu_continue_streams_stage_labels_then_done_state	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_menu_continue_stream_1195.py::test_menu_continue_streams_error_when_llm_unavailable	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_menu_lifecycle_drain_396.py::test_new_game_returns_before_delayed_close_drains	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_menu_lifecycle_drain_396.py::test_new_game_active_write_failure_restores_env_and_old_game	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_menu_lifecycle_drain_396.py::test_drain_waits_for_queued_chat_stream_not_just_gate_holder	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_menu_lifecycle_drain_396.py::test_new_game_switches_db_path_when_web_game_is_none	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_menu_lifecycle_drain_396.py::test_new_game_switches_db_path_when_web_game_none_and_no_env	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_month_call_recovery_1846.py::test_settlement_recovery_projects_month_call_failure	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_month_call_recovery_1846.py::test_edict_settle_code_exception_stops_at_month_entry_and_retries_once	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_month_call_recovery_1846.py::test_error_pack_failure_keeps_original_fault_and_retry_phase	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_month_chain_1843.py::test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_month_chain_1843.py::test_player_entry_recovers_ending_after_interrupted_segment	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_month_chain_1843.py::test_staged_ending_is_available_inside_its_settlement_transaction	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_month_chain_1843.py::test_world_segment_reads_material_directory	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_month_chain_1847.py::test_decree_continuation_keeps_forecast_and_lands_affair_effect	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_month_chain_1847.py::test_fatal_midzhi_rejection_hides_force_option	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_month_chain_1847.py::test_step_4a_no_eligible_objects_skips_run_and_completes	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_month_chain_1847.py::test_step_4a_deferred_disclosure_sees_fresh_0058_progress	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_month_loop_tracer_1468.py::_parse_sse	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_month_loop_tracer_1468.py::_resolve_decisions_via_stream	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_month_translate_1840.py::test_world_segment_rejects_transfer_with_pay_arrears_claim	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_month_translate_1840.py::test_world_segment_applies_domain_effects_and_reports_rejected_effects	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_month_translate_1840.py::test_staged_month_declarations_settle_in_given_order_and_effects_are_idempotent	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_month_translate_1840.py::test_staged_month_effects_keep_input_reference_authority	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_mutiny_actual_residence_659.py::test_fresh_seed_station_region_and_class_slices	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_named_characters_seed_484.py::test_r3_named_characters_load_legal_guilt_and_historical_offices	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_new_game_dependency_mismatch_1721.py::test_new_game_stale_agno_returns_typed_dependency_facts	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_office_inference.py::test_runtime_cli_unknown_office_uses_configured_runner_without_env	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_office_rank_562.py::test_seed_archives_clean_historical_office_for_dismissed_ministers	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_on_scene_immediate_write_1839.py::test_undo_reverses_round_on_scene_writes	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_on_scene_immediate_write_1839.py::test_commission_stays_staged_not_bypassing_promulgation	RETAIN	结构化键/目录/名单成员
+F2-R13-2	test	tests/test_override_breach_costs_564.py::test_breach_skips_dead_but_records_living_offstage_relations	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_override_breach_costs_564.py::test_breach_charges_authority_ministers_and_related_factions_once	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_p4_guard_new_surfaces_547.py::test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_pay_order_override_653.py::test_golden1_pay_order_reversal_breakdown_tsv	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_pay_order_override_653.py::test_golden5_expiry_and_revoke_restore_byte_identical_default	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_pay_order_override_653.py::test_real_revoke_restores_override_same_month_with_active_commitment	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_pay_order_override_653.py::test_stale_until_cleared_by_permanent_overwrite	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_person_archive_schema.py::test_characters_table_has_person_archive_fields	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_person_archive_schema.py::test_person_logs_table_records_person_archive_audit_chain	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rejects_person_change_power_move_without_way	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rejects_invalid_loyalty_assessment	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rejects_malformed_power_move_backlash_before_writing	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rejects_power_move_without_backlash_side_effect	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rejects_unknown_person_change_new_appointment	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rejects_trapped_prisoner_appointment	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_does_not_release_when_derived_appointment_is_invalid	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rolls_back_derived_release_when_office_write_fails	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_derived_release_restores_when_post_office_helper_raises	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_does_not_release_non_ming_when_derived_appointment_is_rejected	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rejects_banish_from_imprisoned	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rejects_unknown_person_change	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rejects_dead_status_outbound	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rejects_invalid_person_travel	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_apply_score_extraction_rejects_unknown_person_travel_region	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_reappoint_rollback_restores_character_reason	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_disposition_syncs_reason_code_to_content_in_txn	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_reappointment_clears_displaced_mark_in_both_db_and_content	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_person_delta_adapter.py::test_s15_amnesty_to_ming_then_appoint	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_missing_dossier_fields_stay_pending_then_full_retry_decides	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_due_commitment_shaped_submit_does_not_poison_or_deadlock	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_lying_label_rebuilt_from_server_option	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_mixed_legal_illegal_options_illegal_choice_stays_pending	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_ordinary_event_with_hallucinated_capability_submits	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_657_return_revise_round_prior_and_clear_anchor	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_657_abi_mapper_matrix_a1_a12	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_1589_empty_desk_rejects_nonempty_keyless_choices	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_657_web_http_hitl_lock_boundary_same_gate	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_657_illegal_summon_target_http_zero_writes	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_1620_http_follow_draft_office_token_routes_to_person	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_1620_http_follow_draft_grant_uses_stored_amount	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_657_s10_http_five_actions_and_1490_no_regress	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_pihong_dossier_1490.py::test_1621_http_follow_draft_uses_catalog_army_id	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_population_transfers_649.py::test_origin_ref_required_and_validated	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_population_transfers_649.py::test_unknown_top_level_key_now_per_section_rejection_not_abort	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_power_section_rejections.py::test_ming_power_update_rejected_with_trace	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_production_person_key_contract_558.py::test_initiative_enrichment_guidance_only_names_canonical_person_writer	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_promulgation_judge_561.py::test_appointment_text_is_pure_gatekeeper_transfer_without_land_confiscation	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_promulgation_judge_561.py::test_ordinary_class_all_promulgated_covers_planted_ordinary_only	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_promulgation_judge_561.py::test_leader_only_mutation_changes_faction_posture_not_roster	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_public_projection_consistency_1830.py::_layer_paths	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_public_projection_consistency_1830.py::_public_layer	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_public_projection_consistency_1830.py::test_scene_person_public_layer_matches_character_and_world_admission	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_a3_seed_data.py::test_lai_zongdao_remains_opening_libu_shangshu	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_qa_b3_409_ux.py::_consume_resolve_sse	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_c2_phase_settlement_mask_1374.py::test_resolve_stream_uses_settlement_period_entry	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_c2_phase_settlement_mask_1374.py::test_resolve_stream_entry_failure_exits_display_when_not_front_half	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_c2_phase_settlement_mask_1374.py::test_resolve_stream_clear_throw_emits_error_not_done	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_d1_decree_normalize_1274.py::test_night_archive_involved_people_drops_non_persons	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_h1_seed_data.py::_deficit_seed	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_h1_seed_data.py::test_dongjiang_commander_is_active_mao_wenlong	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_qa_h1_seed_data.py::test_seed_army_firearms_differentiated_within_p2_caps	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_h1_seed_data.py::test_deficit_stage_text_aligns_with_opening_treasury_and_hubu	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_qa_s2_copy_prompts_1356_1402.py::test_gazette_header_uses_report_own_month_not_current_turn	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_s2_copy_prompts_1356_1402.py::test_gazette_header_cross_year_december_report_under_january_state	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_s2_copy_prompts_1356_1402.py::test_state_payload_projects_previous_reign_period_label	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_u3_map_nodes_1401.py::test_map_nodes_no_double_army_hang	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_qa_u3_map_nodes_1401.py::test_map_nodes_province_garrison_co_node	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_recommendation_edges_635.py::_recommendation_origins	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_recommendation_edges_635.py::test_approved_recommendation_writes_both_edges_atomically	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_recommendation_edges_635.py::test_second_leg_failure_rolls_back_everything	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_recommendation_edges_635.py::test_real_entry_persists_raw_reason_verbatim	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_recommendation_edges_635.py::test_replay_same_event_with_changed_reason_stays_two_rows	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_recommendations.py::test_listed_heard_for_selection_candidate_stays_recovery_type_through_context_and_restore	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_region_citydefense.py::test_regions_have_city_level_and_cannon	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_rejection_wiring.py::test_issue_summary_nested_rejections_are_collected	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_rejection_wiring.py::test_inertia_tolerated_rejections_reach_reports	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_relation_capture_633.py::test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_relation_capture_633.py::test_live_roster_cannot_rescue_endpoint_outside_passed_union	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_relation_read_640.py::test_dto_shape_summary_plus_recent_context_with_backref	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_relation_read_640.py::test_judge_face_reads_edges_invisible_to_role_view	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_relation_seed_638.py::test_reverse_chronological_seed_keeps_latest_event_readable	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_relation_seed_638.py::test_issue_639_seed_owner_audit_corrections	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_relation_store_632.py::test_edge_event_kind_and_evidence_are_fail_closed	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_rescript_draft_656.py::test_persist_then_abort_draft_never_enters_hitl_envelope	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_rescript_draft_656.py::test_657_s1_schema_columns_and_no_banned_fields	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_rescript_draft_656.py::test_657_s1_list_rescript_desk_merges_cross_month_and_decisions	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_run_agent_text_transport_1465.py::test_run_agent_text_history_backed_drops_empty_completed_before_retry	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_scene_llm_1836.py::test_xuan_lands_enter_then_present_on_next_prepare	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_dossier_participants_1252.py::test_s2_public_dossier_participants_still_rejects_secret_id	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_dossier_participants_1252.py::test_s2_private_field_rejects_non_batch_and_public_ids	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_dossier_participants_1252.py::test_s2_missing_secret_authority_never_rebuilds_from_live_db	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_order_isolation_883.py::test_883_two_turn_probe_secret_never_enters_shared_archives	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_secret_order_isolation_883.py::test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_order_isolation_883.py::test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_order_monthly_progress_566.py::test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_order_monthly_progress_566.py::test_character_terminal_status_closes_secret_orders_through_canonical_progress_rail	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_order_monthly_progress_566.py::_rollback_snapshot	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_order_monthly_progress_566.py::test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_order_payoff_1504.py::test_supply_call_writes_identity_materials_into_its_own_tree	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_order_payoff_1504.py::test_invalid_investigation_declaration_is_rejected_not_zero_effort	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_secret_order_section_rejections.py::test_update_valid_active_order_applies_no_reject	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_order_section_rejections.py::test_apply_score_extraction_secret_order_update_respects_outer_transaction_rollback	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_secret_order_update.py::test_upsert_creates_then_updates	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_section4_rejections.py::test_region_controlled_by_accepts_existing_power_ids_and_restore_hook	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_section4_rejections.py::test_issue_path_tolerated_rejections_reach_reports	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_session_write_queue_1353.py::test_write_turn_orders_cs_not_whole_leg_llm	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_six_sciences_seed_608.py::test_fresh_seed_contains_sourced_six_sciences_censors	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_start_sh_deps_1721.py::test_start_sh_syncs_requirements_before_uvicorn	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_start_sh_deps_1721.py::test_start_sh_default_path_runs_pip_frontend_and_uvicorn_in_order	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_start_sh_deps_1721.py::test_start_sh_pip_failure_does_not_start_uvicorn	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_style_temperament_641.py::test_temperament_style_preserves_raw_bytes_through_write_kernel	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_style_temperament_641.py::test_apply_score_extraction_rejects_invalid_temperament	RETAIN	真实拒收+持久/分类
+F2-R13-2	test	tests/test_supervision_625.py::test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_supervision_625.py::test_ac1_monthly_write_idempotent_readable_and_restore	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_supervision_625.py::test_ac2_paired_observation_slots_and_countermeasure_hard_gate	RETAIN	DDL 禁列片段负向契约（结构化），非自由文本词扫
+F2-R13-2	test	tests/test_supervision_625.py::test_ac4_exposure_history_delta_on_tendency_surface	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_supervision_625.py::test_ac4_unified_presence_gate_on_terminal_and_recon_paths	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_surcharge_causal_chain_650.py::test_levy_ledger_corruption_fails_loud	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_transaction_boundary.py::test_ddl_first_inside_atomic_rolls_back	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_transaction_boundary.py::_rejection_table_exists	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_urge_lever_624.py::test_grace_plea_payload_truth_hidden_from_player_ac6	RETAIN	结构化键/目录/名单成员
+F2-R13-2	test	tests/test_web_audience_night_498.py::_parse_sse	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_web_audience_night_498.py::test_asgi_dossiered_directive_has_no_retired_review_surface	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_web_budget_payload.py::test_budget_payload_filters_central_army_pay_fixed_flow	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_web_chat_serialization_393.py::test_chat_stream_sse_waits_for_sync_generator_in_executor	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_web_court_visibility.py::test_shi_kefa_not_in_summonable_court_roster	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_web_court_visibility.py::test_identity_resolves_weishi_and_vassal_aliases_no_duplicate_file	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_web_llm_runtime_config.py::test_menu_status_reports_reasoning_strength_capability_for_cli_runner	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_web_llm_runtime_config.py::test_1271_three_endpoints_grok_reasoning_supported_and_capability_list	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_web_llm_runtime_config.py::_assert_hud	RETAIN	结构化键/目录/名单成员
+F2-R13-2	test	tests/test_web_llm_runtime_config.py::test_hot_replace_http_success_reopens_state_and_writes	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_world_materials_1834.py::test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_world_materials_1834.py::test_all_characters_get_an_experience_file_not_just_current_court	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_world_materials_1834.py::test_character_army_region_textual_facts_reach_world_directory	RETAIN	结构化/状态契约
+F2-R13-2	test	tests/test_world_materials_1834.py::test_prepare_rebuilds_from_world_record_after_restore	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_world_materials_1834.py::test_world_materials_include_textual_facts_once_and_gazette_not_duplicated	RETAIN	结构化 origin/id 前缀契约
+F2-R13-2	test	tests/test_world_materials_1834.py::test_world_materials_carry_eligible_person_event_candidates	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留
+F2-R13-2	test	tests/test_world_materials_1834.py::test_world_materials_carry_due_fiscal_levy_petitions	RETAIN	全仓谓词命中，但核为结构化成员/异常路径/名单/origin 契约，非非契约呈现措辞或内部形状锁；保留

@@ -240,7 +240,7 @@ def _as_settle_param_nonnegative_float(label: str, value: object) -> float:
 
 
 def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True) -> Tuple[float, float]:
-    """Salt and commerce taxes stay as central side-channel income under cutover."""
+    """Salt and commerce taxes stay as central side-channel income under hub."""
     salt_total = 0.0
     commerce_total = 0.0
     rows = db.conn.execute(

@@ -18,13 +18,6 @@ BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
 
 
 def _configure(db) -> None:
-    value = 1  # active substrate_hub cutover
-    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
-        db.conn.execute(
-            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
@@ -205,20 +198,10 @@ def test_zero_manpower_latched_clears_before_continue_no_third_strike(game):
     assert logs, "零兵清闩须写 army_logs 审计"
 
 
-@pytest.mark.parametrize("cutover", (0, 1))
-def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(
-    game, cutover
-):
-    """DB adapter 事实契约（apply_army_deltas），非结算财政 path 兼容矩阵。"""
+def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(game):
+    """DB adapter 事实契约（apply_army_deltas）：空来源不得改 latched 军归属。"""
     db, state, _ = game
     _configure(db)
-    # adapter 事实：cutover 开/关均须经同一 adapter，禁止 text 直写旁路（非结算兼容）
-    db.conn.execute(
-        "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',?,'meta','adapter-fact') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (cutover,),
-    )
     for count in (1, 2):
         _set(
             db, loyalty=15, arrears=6, latched=1,
@@ -260,11 +243,6 @@ def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(
 def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     db, state, _ = game
     _configure(db)
-    db.conn.execute(
-        "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',1,'meta','test') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
-    )
     _set(db, loyalty=70, arrears=3, latched=0, mutiny_count=0)
     db.conn.execute(
         """UPDATE armies SET pay_source_region='liaodong',
@@ -304,17 +282,10 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
     assert writeoff["id"] < owner_log["id"]
 
 
-@pytest.mark.parametrize("cutover", (0, 1))
-def test_transfer_to_ming_rejects_mutiny_count_ge_3(game, cutover):
-    """DB adapter 事实契约（apply_army_deltas），非结算财政 path 兼容矩阵。"""
+def test_transfer_to_ming_rejects_mutiny_count_ge_3(game):
+    """DB adapter 事实契约（apply_army_deltas）：mutiny_count≥3 拒收回明。"""
     db, state, _ = game
     _configure(db)
-    db.conn.execute(
-        "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',?,'meta','adapter-fact') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (cutover,),
-    )
     db.conn.execute(
         """UPDATE armies SET owner_power='bandits', mutiny_count=3, is_mutinied=0,
            pay_source_region='', province_pay_share=0, central_pay_share=0,
@@ -348,17 +319,10 @@ def test_transfer_to_ming_rejects_mutiny_count_ge_3(game, cutover):
     assert any(c.get("rejected") for c in changes)
 
 
-@pytest.mark.parametrize("cutover", (0, 1))
-def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
-    """DB adapter 事实契约：外军 mutiny<3 同条合法 D6→ming；非结算财政 path 兼容。"""
+def test_transfer_to_ming_requires_d6_pay_source(game):
+    """DB adapter 事实契约：外军 mutiny<3 同条合法 D6→ming。"""
     db, state, _ = game
     _configure(db)
-    db.conn.execute(
-        "INSERT INTO fiscal_config(key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',?,'meta','adapter-fact') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (cutover,),
-    )
     db.conn.execute(
         """UPDATE armies SET owner_power='houjin', mutiny_count=0, is_mutinied=0,
            pay_source_region='', province_pay_share=0, central_pay_share=0,
@@ -425,7 +389,7 @@ def test_hub_excluded_zero_manpower_latched_clears_once(game, identity):
         db, loyalty=10, arrears=0, latched=1,
         mutiny_count=2, mutiny_probation=3, manpower=0,
     )
-    # 豁免军双累加器/份额须为 0（cutover 守恒）；本测只钉清闩，不测发饷
+    # 豁免军双累加器/份额须为 0（hub 守恒）；本测只钉清闩，不测发饷
     db.conn.execute(
         """UPDATE armies SET is_tusi=?, self_funded_pay=?,
            pay_source_region='', province_pay_share=0, central_pay_share=0,
