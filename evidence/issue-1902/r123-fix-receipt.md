@@ -4,7 +4,7 @@
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5`
 - 底座 HEAD（开工）：`f21f118da251bc2fa971255bb6f47bfa704a8de6`
 - 本轮代码+回执提交：`ece7bfdfb551d49a73d3fe9e766c5f667f7a5e10`
-- 回执盖章 HEAD：
+- 回执盖章链：`1a0e6c54d` → 本文件最终以 `git rev-parse HEAD` 为准（交卷时查询）
 - 判词真源：附件 `04-1902-judge-f21f118da.json` → `outcome.payloads[-1]`（status=continue；findings R1/R2/R3）
 - 派单：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a10975-803c-7cac-80e8-e2ad1c6ae22c@fixer/fix-packet.md`
 - 枚举原始输出：
@@ -221,5 +221,6 @@ BRANCH: ak-roles/1902-r123-fixer-f21f118da
 BASE:   f21f118da251bc2fa971255bb6f47bfa704a8de6
 FIX:    ece7bfdfb551d49a73d3fe9e766c5f667f7a5e10
 STAMP:  1a0e6c54d25e0013e565fb5d21be6222153b80d3
-status: clean working tree after final stamp
+NOTE:   delivery HEAD = git rev-parse after this docs correction commit
+status: working tree clean after docs correction
 ```
