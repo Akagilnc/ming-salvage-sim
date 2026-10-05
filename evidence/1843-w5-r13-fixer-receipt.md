@@ -2,7 +2,7 @@
 
 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5`
 分支：`ak-roles/issue-1843-w5-r13-f2-compat`
-commitSha：`PENDING`
+commitSha：`3f039f1136203f314bacaa7b56c9ff0c12560fb6`
 冻结判词：`05-1843-judge-7402d3b80.json` 末份（F2-R13-1 / F2-R13-2）
 派单定位：`evidence/1843-w5-r13-fixer-receipt.md` 所指判词/fix-packet；本轮针对验收「A1–A4 固定名样本 / B1 未覆盖全文类定义」补强。
 基线：`b7f2e5ec1`（上轮 acceptance）之上新提交；未 amend / stash / push / PR。
