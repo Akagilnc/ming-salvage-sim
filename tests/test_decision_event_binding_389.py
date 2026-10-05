@@ -1,4 +1,8 @@
-"""Candidate authority is enforced when the player submits the rescript desk."""
+"""Candidate authority is enforced when the player submits the rescript desk.
+
+Binding uses structured event_id only (ADR 0115 / #1900 J20): titles never invent
+or rescue identity.
+"""
 
 import pytest
 
@@ -7,10 +11,10 @@ from ming_sim.session import GameSession
 
 
 @pytest.mark.parametrize(("echo", "title", "candidates", "expected"), [
-    (None, "裁断", [{"id": "candidate", "title": "裁断"}], "candidate"),
     ("candidate", "另一标题", [{"id": "candidate", "title": "裁断"}], "candidate"),
-    ("off-snapshot", "裁断", [{"id": "candidate", "title": "裁断"}], "candidate"),
+    ("off-snapshot", "裁断", [{"id": "candidate", "title": "裁断"}], None),
     ("off-snapshot", "不相干", [{"id": "candidate", "title": "裁断"}], None),
+    (None, "裁断", [{"id": "candidate", "title": "裁断"}], ""),
     (None, "同名", [{"id": "a", "title": "同名"}, {"id": "b", "title": "同名"}], ""),
 ])
 def test_candidate_binding_at_player_prewrite(game, echo, title, candidates, expected):

@@ -1115,9 +1115,12 @@ def _attach_commission_staging_fields(
         from ming_sim.db import GameDB
 
         existing = payload.get("participant_roster")
+        # 新交办名单走既有严格参与人语义（ADR 0053／#1900 J19）：
+        # 拒字符串兼容与缺档猜「知情」；完整条目 equality 合并不变。
         payload["participant_roster"] = GameDB.merge_participant_roster_entries(
             existing if isinstance(existing, list) else [],
             roster,
+            strict_incoming=True,
         )
     elif lead and not isinstance(payload.get("participant_roster"), list):
         payload["participant_roster"] = [{

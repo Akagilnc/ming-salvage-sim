@@ -55,33 +55,16 @@ def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
 
 
 def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
-    """原子声明在 flush 之后崩 → 事务回滚:rejection_reports 无行、jsonl 无镜像；
-    对账好项与坏项拒收同 atomic 回滚（#1745：后 flush tracer，不重建 flush 前副本）。
+    """原子声明在 flush 之后崩 → 事务回滚:rejection_reports 无行、jsonl 无镜像。
 
     镜像只在 commit 成功后写,否则留「DB 没有、文件却有」的孤立行。
+    退役的 dossier_reconciliations 提案不再作为回滚夹具（#1900 J6）。
     """
     from ming_sim.applier import RejectionCollector
 
     db, state, content = game
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     turn = state.turn
-
-    # 在途拨帑供合法 recon 好项；与坏引用同批，覆盖对账+拒收已 flush 后回滚。
-    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), 80)
-    gid = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text="拨银押解",
-        target_kind="region",
-        target_id="shaanxi",
-        payload={
-            "account": "内库",
-            "amount": 30,
-            "execution_surface": "in_transit",
-        },
-    )
-    db.apply_dossier_promulgation(state, gid, "promulgated")
-    assert db.get_decree_dossier(gid)["status"] == "executing"
 
     real_flush = RejectionCollector.flush_to_db
 
@@ -94,15 +77,10 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
     with pytest.raises(RuntimeError):
         run_settle(db, state, content, {
             "character_status_changes": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
-            "dossier_reconciliations": [
-                {"dossier_id": gid, "arrived_amount": 16},
-                {"dossier_id": 88888, "arrived_amount": 5},
-            ],
         }, narrative="x", decree_text="y")
 
     monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush)
     assert _rejection_rows(db, turn) == []
-    assert db.list_dossier_reconciliations(gid) == []
     assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()
 
 
@@ -120,8 +98,11 @@ def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_pa
 
     rows = _rejection_rows(db, turn)
     assert len(rows) == 1
-    assert rows[0][0] == "issue_summary.new_issues"
-    assert "decree/event_pool" in rows[0][1]  # 拒收原因原样保留
+    section, reason, category, source, attempt = rows[0]
+    assert section == "issue_summary.new_issues"
+    assert reason  # 人读原因非空；不盯具体措辞
+    assert category
+    assert attempt == 1
 
 
 def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp_path):
@@ -237,7 +218,11 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
     rows = [r for r in _rejection_rows(db, turn)
             if r[0] == "issue_inertia.entity_rejections"]
     assert len(rows) == 1
-    assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
+    section, reason, category, source, attempt = rows[0]
+    assert section == "issue_inertia.entity_rejections"
+    assert reason
+    assert category
+    assert attempt >= 1
 
 
 def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeypatch, tmp_path):

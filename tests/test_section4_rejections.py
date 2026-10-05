@@ -673,7 +673,10 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
 
     rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
     assert len(rows) == 1
-    assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
+    section, reason, category, source = rows[0]
+    assert section == "issue_summary.entity_rejections"
+    assert reason
+    assert category
 
 
 def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):

@@ -1,0 +1,418 @@
+=== J20 precise ===
+167:      hallucinated), binds on a unique exact title match inside
+171:      off-snapshot id with no unique title match is UNBOUND (event_id removed) — the
+175:      title match simply stays unbound.
+186:    title_to_ids: Dict[str, List[str]] = {}
+196:            title_to_ids.setdefault(title, []).append(event_id)
+211:        # 缺 id，或回显 id 不在权威候选快照里：以快照唯一标题为准（重）绑，不被 LLM 回显牵着走。
+213:        ids = title_to_ids.get(title) or []
+218:            # off-snapshot 回显 id 且无唯一标题可绑 → 解绑，不保留这个非候选 id（codex
+tests/test_pihong_dossier_1490.py:333:    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+tests/test_pihong_dossier_1490.py:336:    out = bind_decisions_to_candidate_events(decisions, payload)
+tests/test_pihong_dossier_1490.py:342:    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+tests/test_pihong_dossier_1490.py:345:    out = bind_decisions_to_candidate_events(decisions, payload)
+ming_sim/settlement_payload.py:29:def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
+ming_sim/settlement_payload.py:87:            bind_decision_options(options)
+ming_sim/settlement_payload.py:156:def bind_decisions_to_candidate_events(
+ming_sim/settlement_payload.py:186:    title_to_ids: Dict[str, List[str]] = {}
+ming_sim/settlement_payload.py:196:            title_to_ids.setdefault(title, []).append(event_id)
+ming_sim/settlement_payload.py:213:        ids = title_to_ids.get(title) or []
+tests/test_decision_event_binding_389.py:10:    (None, "裁断", [{"id": "candidate", "title": "裁断"}], "candidate"),
+tests/test_decision_event_binding_389.py:11:    ("candidate", "另一标题", [{"id": "candidate", "title": "裁断"}], "candidate"),
+tests/test_decision_event_binding_389.py:12:    ("off-snapshot", "裁断", [{"id": "candidate", "title": "裁断"}], "candidate"),
+tests/test_decision_event_binding_389.py:13:    ("off-snapshot", "不相干", [{"id": "candidate", "title": "裁断"}], None),
+tests/test_decision_event_binding_389.py:16:def test_candidate_binding_at_player_prewrite(game, echo, title, candidates, expected):
+ming_sim/decree.py:77:    bind_decision_options,
+ming_sim/decree.py:78:    bind_decisions_to_candidate_events,
+ming_sim/session.py:2058:        # 猜绑，唯一权威仍是 bind_decisions_to_candidate_events）；scope 与旧
+ming_sim/session.py:2061:            from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+ming_sim/session.py:2064:            desk = other_rows + bind_decisions_to_candidate_events(
+ming_sim/rescript_actions.py:42:    bind_decision_options,
+ming_sim/rescript_actions.py:491:            labels = bind_decision_options(row.get("options") or [])
+ming_sim/rescript_draft.py:16:issue 盘面事实，不新建 issue。event_id 绑定走 bind_decisions_to_candidate_events 同款
+tests/test_fiscal_levy_effect.py:715:    """一事件一裁断（ADR 0115:3）：结局一经语义写口落定即不可翻。"""
+ming_sim/issues.py:1226:        # 一事件一裁断（ADR 0115:3 first-wins）：结局已落定即不可翻。
+tests/test_event_trigger_gate.py:466:# ── #12(b)：trigger_gate key/cond fail-loud（ADR 0012 残留 4b，Q3 裁断=fail-loud）──
+tests/test_advance_paths_atomic.py:66:        "title": "毛文龙裁断",
+tests/test_advance_paths_atomic.py:131:        {"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
+tests/test_advance_paths_atomic.py:134:        "title": "毛文龙裁断",
+tests/test_advance_paths_atomic.py:198:    original = {"label": "斩", "note": "原裁断"}
+tests/test_advance_paths_atomic.py:206:        "title": "毛文龙裁断", "context": "c",
+tests/test_pihong_dossier_1490.py:287:    db.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '批红待裁', 'context': '密查陕西驿卒', 'rejection_reason': '科臣封驳', 'opposition': '东林', 'options': options}])
+tests/test_pihong_dossier_1490.py:334:    decisions = [{'event_id': 'dossier:8', 'title': '批红待裁', 'options': [{'label': '强颁', 'dossier_id': 8, 'dossier_decision': 'force_promulgated'}]}]
+tests/test_pihong_dossier_1490.py:343:    decisions = [{'event_id': 'dossier:12', 'title': '承诺到期核验', 'options': [{'label': '准其销号', 'hint': '事已办结'}, {'label': '着再催办', 'hint': '期限宽延'}]}]
+tests/test_pihong_dossier_1490.py:351:    db.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '承诺到期核验', 'context': '清丈之诺届期', 'options': options}])
+tests/test_pihong_dossier_1490.py:428:    db.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '批红待裁', 'context': '密查陕西驿卒', 'options': options}])
+tests/test_pihong_dossier_1490.py:478:    db.save_pending_decisions(state.turn, [{'event_id': event_id, 'title': '边警', 'context': '辽东来报', 'options': [{'label': '准其销号', 'hint': '事已办结'}, {'label': '强颁', 'hint': '幻觉批红', 'dossier_id': 3, 'dossier_decision': 'hold'}]}])
+tests/test_pihong_dossier_1490.py:479:    db.save_resolve_context(state.turn, '诏曰边警', {'candidate_events': [{'id': event_id, 'title': '边警'}]})
+tests/test_pihong_dossier_1490.py:790:    desk = _657_plant_awaiting_web(web_game, decisions=[{'title': '科参驳还', 'context': '科臣封驳', 'options': [{'label': '打回', 'hint': '驳'}, {'label': '准', 'hint': ''}], 'event_id': ''}])
+tests/test_pihong_dossier_1490.py:819:    db.save_pending_decisions(int(state.turn), [{'title': '边警', 'context': 'c', 'options': [{'label': '打回', 'hint': '驳回'}, {'label': '准', 'hint': ''}], 'event_id': 'ev-class5'}])
+tests/test_pihong_dossier_1490.py:1169:    db.save_pending_decisions(state.turn, [{'event_id': '', 'title': '内帑', 'context': 'c', 'options': [options[0]]}, {'event_id': '', 'title': '国库', 'context': 'c', 'options': [options[1]]}])
+tests/test_pihong_dossier_1490.py:1189:    db.save_pending_decisions(state.turn, [{'event_id': '', 'title': '先拨内帑', 'context': 'c', 'options': [options[0]]}, {'event_id': '', 'title': '后拨内帑失读', 'context': 'c', 'options': [options[0]]}])
+tests/test_pihong_dossier_1490.py:1469:    desk = _657_plant_awaiting_web(web_game, drafts=[{'title': '混批急务', 'context': 'c', 'options': [opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}], decisions=[{'title': '打回件', 'context': '科臣封驳', 'options': [{'label': '打回', 'hint': '驳'}, {'label': '准', 'hint': ''}], 'event_id': ''}, {'title': '发帑件', 'context': '协济军需', 'options': [{'label': '发内帑', 'hint': '济军', 'action_type': 'grant_allocation', 'grant_action': '协饷', 'account': '内库', 'amount': 3, 'purpose': '补饷', 'target_kind': 'army', 'target_id': 'guanning', 'cadence': '一次性'}, {'label': '暂缓', 'hint': '守财'}], 'event_id': ''}])
+tests/test_pihong_dossier_1490.py:1525:    _657_plant_awaiting_web(web_game, drafts=[{'title': '混批急务', 'context': 'c', 'options': [opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}], decisions=[{'title': '打回件', 'context': '科臣封驳', 'options': [{'label': '打回', 'hint': '驳'}, {'label': '准', 'hint': ''}], 'event_id': ''}])
+tests/test_pihong_dossier_1490.py:1554:    _657_plant_awaiting_web(web_game, decisions=[{'title': '科参驳还', 'context': '科臣封驳', 'options': [{'label': '打回', 'hint': '驳'}, {'label': '准', 'hint': ''}], 'event_id': ''}])
+ming_sim/settlement_payload.py:171:      off-snapshot id with no unique title match is UNBOUND (event_id removed) — the
+ming_sim/settlement_payload.py:196:            title_to_ids.setdefault(title, []).append(event_id)
+tests/test_gazette_author_1862.py:256:        "(turn, idx, event_id, title, context, options_json, choice_json, status) "
+tests/test_loyalty_soft_adjust_clamp_320.py:19:def _event(event_id: object = "test", title: str = "军心变更"):
+tests/test_loyalty_soft_adjust_clamp_320.py:20:    return type("Event", (), {"id": event_id, "title": title})()
+tests/test_fiscal_levy_effect.py:613:        assert {"id": event_id, "title": ev.title, "terminal_state": "expired"} in applied
+tests/test_month_chain_1847.py:591:        "(turn, idx, event_id, title, context, options_json, choice_json, "
+tests/test_event_trigger_gate.py:839:    assert {"id": event_id, "title": ev.title, "issue_id": 999} in triggered
+tests/test_advance_paths_atomic.py:131:        {"candidate_events": [{"id": event_id, "title": "毛文龙裁断"}]},
+tests/test_advance_paths_atomic.py:272:        "event_id": f"dossier:{dossier_id}", "title": "批红待裁",
+tests/test_promulgation_judge_561.py:531:        {"event_id": f"dossier:{hostile}", "title": "批红", "context": "h",
+tests/test_promulgation_judge_561.py:540:        {"event_id": f"dossier:{vital}", "title": "批红", "context": "v",
+tests/test_promulgation_judge_561.py:547:        {"event_id": f"dossier:{appointment}", "title": "批红", "context": "a",
+tests/test_promulgation_judge_561.py:556:        {"event_id": f"dossier:{authority_edge}", "title": "批红", "context": "e",
+tests/test_rescript_draft_656.py:228:    for field in ("event_id", "title", "context", "options"):
+tests/test_rescript_draft_656.py:1262:        " (turn, idx, event_id, title, context, options_json, choice_json,\n"
+tests/test_rescript_draft_656.py:1288:        " (turn, idx, event_id, title, context, options_json, choice_json,\n"
+ming_sim/issues.py:3660:    event_title = content.event_by_id[event_id].title if event_id in content.event_by_id else event_id
+ming_sim/issues.py:3704:            return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
+ming_sim/issues.py:3708:            return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
+ming_sim/issues.py:3713:            f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} "
+ming_sim/issues.py:3814:                        f"战略/外敌事件「{event_title or event_id}」事件结局「{outcome_label}」"
+ming_sim/issues.py:3829:                return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
+ming_sim/issues.py:3831:                return f"战略/外敌事件「{event_title or event_id}」地区战果须为对象：{region_id}"
+ming_sim/issues.py:3837:                    return f"战略/外敌事件「{event_title or event_id}」战果引用非法地区字段：{raw_field}"
+ming_sim/issues.py:3854:                            f"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by "
+
+=== J19 precise: merge/normalize without strict ===
+ming_sim/rescript_draft.py:707:    return GameDB._normalize_participant_roster(value, strict_structured=True)
+ming_sim/cli_backend.py:2073:    canonical_roster = db._normalize_participant_roster(
+ming_sim/declaration_dispatch.py:1055:        shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
+ming_sim/declaration_dispatch.py:1076:    payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+ming_sim/declaration_dispatch.py:1118:        payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+ming_sim/db.py:13768:        base_roster = self._normalize_participant_roster(
+ming_sim/db.py:13784:            base_roster = self._normalize_participant_roster(
+ming_sim/db.py:13858:            roster = self._normalize_participant_roster(
+ming_sim/db.py:14160:        roster = self._normalize_participant_roster(roster_source, strict_structured=True)
+ming_sim/db.py:14216:        roster = self._normalize_participant_roster(roster, strict_structured=True)
+ming_sim/db.py:14461:        existing = self._normalize_participant_roster(
+ming_sim/db.py:14464:        additions = self._normalize_participant_roster(participants, strict_structured=True)
+ming_sim/db.py:17608:        new_roster = self._normalize_participant_roster(
+ming_sim/db.py:17614:            incoming["participant_roster"] = self.merge_participant_roster_entries(
+ming_sim/db.py:20149:        participant_roster = self._normalize_participant_roster(participants)
+ming_sim/db.py:20860:    def _normalize_participant_roster(
+ming_sim/db.py:20897:    def merge_participant_roster_entries(
+ming_sim/db.py:20909:        base = GameDB._normalize_participant_roster(list(existing or []))
+ming_sim/db.py:20910:        add = GameDB._normalize_participant_roster(
+ming_sim/cli_backend.py:2074:        roster, strict_structured=True,
+ming_sim/rescript_draft.py:707:    return GameDB._normalize_participant_roster(value, strict_structured=True)
+ming_sim/db.py:13769:            base_roster_source, strict_structured=True,
+ming_sim/db.py:13785:                base_roster, strict_structured=True,
+ming_sim/db.py:13859:                entry["participants"], strict_structured=True,
+ming_sim/db.py:14160:        roster = self._normalize_participant_roster(roster_source, strict_structured=True)
+ming_sim/db.py:14216:        roster = self._normalize_participant_roster(roster, strict_structured=True)
+ming_sim/db.py:14464:        additions = self._normalize_participant_roster(participants, strict_structured=True)
+ming_sim/db.py:20861:        participants: Iterable[object] | str | None, *, strict_structured: bool = False,
+ming_sim/db.py:20868:                if strict_structured:
+ming_sim/db.py:20874:                if strict_structured and not character_id:
+ming_sim/db.py:20876:                if strict_structured and tier_value is None:
+ming_sim/db.py:20878:                tier = str(tier_value or ("" if strict_structured else "知情")).strip()
+ming_sim/db.py:20883:                if strict_structured:
+ming_sim/db.py:20901:        strict_incoming: bool = False,
+ming_sim/db.py:20911:            list(incoming or []), strict_structured=strict_incoming,
+ming_sim/declaration_dispatch.py:1055:        shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
+ming_sim/declaration_dispatch.py:1079:        strict_incoming=True,
+
+=== J6 precise targeted files ===
+
+    镜像只在 commit 成功后写,否则留「DB 没有、文件却有」的孤立行。
+    """
+    from ming_sim.applier import RejectionCollector
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+
+    # 在途拨帑供合法 recon 好项；与坏引用同批，覆盖对账+拒收已 flush 后回滚。
+    state.metrics["内库"] = max(int(state.metrics.get("内库") or 0), 80)
+    gid = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="拨银押解",
+        target_kind="region",
+        target_id="shaanxi",
+        payload={
+            "account": "内库",
+            "amount": 30,
+            "execution_surface": "in_transit",
+        },
+    )
+    db.apply_dossier_promulgation(state, gid, "promulgated")
+    assert db.get_decree_dossier(gid)["status"] == "executing"
+
+    real_flush = RejectionCollector.flush_to_db
+
+    def _boom(self, db_):
+        real_flush(self, db_)
+        raise RuntimeError("crash after flush")
+
+    monkeypatch.setattr(RejectionCollector, "flush_to_db", _boom)
+
+    with pytest.raises(RuntimeError):
+        run_settle(db, state, content, {
+            "character_status_changes": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
+            "dossier_reconciliations": [
+                {"dossier_id": gid, "arrived_amount": 16},
+                {"dossier_id": 88888, "arrived_amount": 5},
+            ],
+        }, narrative="x", decree_text="y")
+
+    monkeypatch.setattr(RejectionCollector, "flush_to_db", real_flush)
+    assert _rejection_rows(db, turn) == []
+    assert db.list_dossier_reconciliations(gid) == []
+    assert not (tmp_path / "error_packs" / "rejections.jsonl").exists()
+
+
+def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_path):
+    """issue_summary 是 dict(嵌套 new_issues/cancels 列表),桥接不能只看顶层 list
+    ——new_issues 正是实测最常被喂脏的段(origin_kind 缺失被拒,agy 实录),
+    决定 5 的「哪个 section 最常被喂脏」聚合对它失明即失去主要价值(cmr S0 r1,2/2)。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+
+    run_settle(db, state, content, {
+        "new_issues": [{"title": "臆造局势", "kind": "initiative"}],  # 缺 origin_kind → 拒
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn)
+    assert len(rows) == 1
+    assert rows[0][0] == "issue_summary.new_issues"
+    assert "decree/event_pool" in rows[0][1]  # 拒收原因原样保留
+
+
+def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp_path):
+    """嵌套 atomic 内跑 settle:mirror 必须等最外层 commit——否则外层回滚后
+    DB 行消失而 jsonl 已写=孤立镜像行(违决定 5「commit 成功后才 append」;
+    异常路有对称守门,成功路同样要有)(cmr S0 r1,2/2)。"""
+    from ming_sim.applier import atomic
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    turn = state.turn
+
+    with pytest.raises(RuntimeError):
+        with atomic(db):
+            run_settle(db, state, content, {
+                "人物状态变化": [{"name": "查无此人戊", "status": "dead", "reason": "测试"}],
+---
+            "questions": None,
+            "forecast_text": "补跑不可见",
+            "visible_refs": snapshot.get("visible_refs"),
+        }
+
+    real_settle = declaration_dispatch.settle_staged_declarations_in_decree_order
+    armed = {"fail": True}
+
+    def flaky(db_, state_, refs, **kwargs):
+        if armed["fail"] and refs == [second_ref]:
+            armed["fail"] = False
+            raise RuntimeError("过月中断")
+        return real_settle(db_, state_, refs, **kwargs)
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    monkeypatch.setattr("ming_sim.decree_forecast.produce_forecast_product", product)
+    monkeypatch.setattr(declaration_dispatch, "settle_staged_declarations_in_decree_order", flaky)
+    session = make_light_session(db, state, content)
+    session.llm_config = object()
+    with pytest.raises(SettlementAbort) as exc_info:
+        session.resolve_turn(allow_empty_decree=True)
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    assert "过月中断" in str(exc_info.value.__cause__)
+    assert db.staged_declarations.is_settled(first_ref)
+    assert not db.staged_declarations.is_settled(second_ref)
+    first_rows = db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
+    ).fetchone()[0]
+    session.resolve_turn(allow_empty_decree=True)
+    assert produced == [second_ref]
+    assert db.staged_declarations.is_settled(second_ref)
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
+    ).fetchone()[0] == first_rows
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM economy_ledger WHERE category='大凌河'",
+    ).fetchone()[0] == 1
+    del first_id
+
+def test_questions_hold_rescript_and_gazette_is_required_before_advance(game, monkeypatch):
+---
+        "UPDATE staged_declarations SET declaration_json=? WHERE decree_ref=?",
+        (json.dumps(staged.declaration, ensure_ascii=False), ref),
+    )
+    db.conn.commit()
+    turn = int(state.turn)
+    calls = []
+
+    def world(*_args, **_kwargs):
+        calls.append("world")
+        if len(calls) == 1:
+            raise RuntimeError("interrupted after decree settlement")
+        return "世界段完成"
+
+    _forbid_extractor(monkeypatch)
+    monkeypatch.setattr(month_chain, "run_world_segment_text", world)
+    monkeypatch.setattr(month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}})
+    session = make_light_session(db, state, content)
+
+    from ming_sim.exceptions import SettlementAbort
+
+    with pytest.raises(SettlementAbort) as caught:
+        session.resolve_turn(allow_empty_decree=True)
+    assert "interrupted after decree settlement" in str(caught.value.__cause__)
+    assert db.staged_declarations.is_settled(ref)
+    assert caught.value.error_pack_path
+
+    waiting = session.resolve_turn(allow_empty_decree=True)
+    assert waiting.stage == "gazette"
+    payload = db.get_resolve_context(turn)["simulator_payload"]
+    assert payload["month_chain"]["declaration_outcome"]["status"] == "emperor_abdicate"
+    assert "call_failure" not in payload["month_chain"]
+
+    db.conn.execute(
+        "INSERT INTO turn_reports (turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (turn, state.year, state.period, "邸报已成"),
+    )
+    db.conn.commit()
+    advanced = session.resolve_turn(allow_empty_decree=True)
+
+    assert advanced.advanced is True
+    assert state.ended is True
+---
+    events = list(game.chat_stream("殿上", "边饷如何？"))
+    chat_turn_id = int(next(ev for ev in events if ev["type"] == "accepted")["chat_turn_id"])
+    assert [ev["type"] for ev in events][-2:] == ["error", "end"]
+    retries = game.pending_translation_retries(chat_turn_id=chat_turn_id)
+    assert [r["chat_turn_id"] for r in retries] == [chat_turn_id]
+    assert retries[0]["error_pack_path"]
+    assert [(m["role"], m["content"], m["chat_turn_id"]) for m in game.chat_projection("殿上")] == [
+        ("user", "边饷如何？", chat_turn_id), ("minister", "臣遵旨。", chat_turn_id)]
+    stub_audience_translate(monkeypatch)
+    game.retry_pending_translation(chat_turn_id)
+    assert game.pending_translation_retries(chat_turn_id=chat_turn_id) == []
+    assert [(m["role"], m["content"]) for m in game.chat_projection("殿上")] == [
+        ("user", "边饷如何？"), ("minister", "臣遵旨。")]
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+
+def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monkeypatch):
+    """#1353 fold-in r8：外层已持闸时 resolve 不得再抢同一把非重入锁。"""
+    from ming_sim.session import GameSession, TurnPhase
+
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    state.turn_phase = TurnPhase.REVIEWING.value
+
+    from ming_sim.session_write_queue import SessionWriteQueue
+    queue = SessionWriteQueue()
+    gate = queue.write_gate
+    assert gate.acquire(blocking=False)
+
+    sess = object.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = object()
+    sess._write_queue = queue
+    sess._write_gate = gate
+    sess.agno_db = None
+    sess.last_decree = ""
+    sess._decree_draft_fingerprint = ()
+    sess.deaths_this_turn = []
+    sess.debuts_this_turn = []
+
+    try:
+        # 无草案 + held 闸：公开契约是 ValueError；不得为证内部参数再 stub auto_close。
+        with pytest.raises(ValueError):
+            sess.resolve_turn(write_gate_already_held=True)
+    finally:
+        gate.release()
+---
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 6
+    assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    assert _edge_rows(db) == []
+
+
+def test_missing_or_forged_provenance_rejected_with_trace_no_edges(game):
+    """缺 provenance/伪前缀/未知未授权案卷/自带 round 的伪造值：逐项拒收留痕不落边。"""
+    db, state, content = game
+    base = {"施动者": "甲", "受动者": "乙", "类目": "结怨", "语境": "x"}
+    out = apply_score_extraction(
+        db, state,
+        {
+            "relation_edge_events": [
+                dict(base),  # 缺 provenance 条目
+                {**base, "来源引用": None},  # 空来源
+                {**base, "来源引用": "   "},  # 空白来源
+                {**base, "来源引用": "盘面自发|round:999"},  # 伪造当前回合回指
+                {**base, "来源引用": "dossier:999999"},  # 未知案卷
+                {**base, "来源引用": "fake"},  # 伪前缀自由文本
+                {**base, "来源引用": " 盘面自发 "},  # 空白包裹哨兵变体
+                {**base, "来源引用": "\n盘面自发\t"},  # 换行/制表包裹变体
+            ],
+        },
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == 8
+    assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    # 全部拒收：库里零边、无任何 origin 被默认成「盘面自发」落库
+    assert _edge_rows(db) == []
+
+
+def test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue(game):
+    """r2 残余：来源只收精确 canonical 值——空白/变体一律拒收留痕，不 strip 后放行。
+
+    庭裁 probe：守门曾先 strip 后授权，把非 canonical provenance 归一成合法
+    来源（fail-open）；本负例钉死精确匹配契约。"""
+    db, state, content = game
+    base = {"施动者": "甲", "受动者": "乙", "类目": "结怨", "语境": "x"}
+    variants = [" 盘面自发 ", "\n盘面自发\t", "盘面自发\n", "\t盘面自发", "盘面自发 "]
+    out = apply_score_extraction(
+        db, state,
+        {"relation_edge_events": [{**base, "来源引用": v} for v in variants]},
+        content=content,
+    )
+    res = out["relation_edge_event_resolutions"]
+    rejected = [r for r in res if r.get("rejected")]
+    assert len(rejected) == len(variants), res
+    assert all(r["category"] == "invalid_relation_event" for r in rejected)
+    # 零写入：无任何归一后的「盘面自发」origin 溜进库
+    assert _edge_rows(db) == []
+
+
+def test_settlement_edge_origin_rejects_missing_and_non_string():
+    """拼装器本体不再静默默认哨兵；缺失/非字符串诚实报错。"""
+    import pytest
+
+    from ming_sim.relations import settlement_edge_origin
+
+    with pytest.raises(ValueError):
+        settlement_edge_origin(None, "联名")
+    with pytest.raises(ValueError):
+        settlement_edge_origin(123, "联名")
+    with pytest.raises(ValueError):
+        settlement_edge_origin("   ", "联名")
+    # 合法条目照常拼装；拼装器不独立 strip——值原样进入 origin（空白只作非空谓词）
+    assert settlement_edge_origin("盘面自发", "联名") == "盘面自发:relation:联名"
+
+
+def _promulgated_dossier(db, state, holder, token):
+    """建并颁布一个案卷，返回 id（effect_origin_rejection 授权路径）。"""
+    did = db.create_decree_dossier(
+        state,
+        action_type="assignment",
+        decree_text="结算口来源验",
+        target_kind="issue",
