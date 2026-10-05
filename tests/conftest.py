@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import copy
-from concurrent.futures import Future
 from contextlib import contextmanager
 import os
 import shutil
@@ -64,45 +63,6 @@ def _opening_game(content, workdir):
             db.close()
 
 
-
-
-class InlineExecutor:
-    """Execute the submitted native job deterministically on the calling thread."""
-
-    def submit(self, fn):
-        future = Future()
-        try:
-            future.set_result(fn())
-        except Exception as exc:
-            future.set_exception(exc)
-        return future
-
-
-class DeferredExecutor:
-    """Existing tail tracer scheduler: the caller chooses the submission boundary."""
-
-    def submit(self, fn):
-        self.fn = fn
-        self.future = Future()
-        return self.future
-
-
-def run_deferred(executor):
-    if not hasattr(executor, "fn") or executor.future.done():
-        return
-    try:
-        executor.future.set_result(executor.fn())
-    except BaseException as exc:
-        executor.future.set_exception(exc)
-        raise
-
-
-@pytest.fixture
-def deferred_background_jobs(monkeypatch):
-    executor = DeferredExecutor()
-    monkeypatch.setattr("ming_sim.audience_translation._executor", executor)
-    yield executor
-    run_deferred(executor)
 
 
 def wait_for_background_jobs(db):

@@ -1,54 +1,47 @@
 {
-  "round": "final-self-verify-drop-proof-tests-full-enum",
   "predicates": {
-    "T1": "拆除显式及隐式强杀路径和硬期限兜底；保留合法静默判定，如实报告终止缺口，不另造监督层。",
-    "T2": "删除从自由输出词面判故障、切分呈现横幅的机制及钉误判测试；用已有原生状态或结构化契约。枚举一切输出变量绑定→分支/正则/切分及结果状态候选，不以指定词穷尽。",
-    "T3": "代码故障响亮失败；确证安全旁路保留真因日志；不给所有 catch 另加统一框架。",
-    "T4": "合并恢复生命周期，删入口编排副本；保留输入/呈现/宿主适配。after-snapshot 失败不得伪造差异；不声称跳过 diff 仍保副作用回滚。",
-    "T5": "全仓现存 Py/TS 测试函数按真实入口/调用/断言契约归类与重复契约分组；处置纯内部与重复证明；不按行数/操作符盲删；不为修复新造证明测。",
-    "T6": "全生产符号引用/可达入口（非测试）候选 ∧ 当前消费者清退授权内退役类子树/独占证明；撤销底座时点豁免；保留真实共享能力。"
+    "T4": "合并恢复生命周期；删 snapshot catch；快照/宿主故障原错上抛；回执如实记录无法恢复，不伪造回滚、不另造第二套机制。",
+    "T5": "全仓现存 Py/TS 测试按语义契约分类+重复分组；删内部/重复（既有测承接）与死夹具；保留拒收/来源契约；不按行数盲删。",
+    "T6": "授权退役词表∩生产符号；清授权内残根；保留现役/共享；例外写依据；撤销底座时点豁免。"
   },
-  "candidate_universe_sizes": {
-    "T1": 7,
-    "T2_dataflow_plus_explicit": 21,
-    "T2_raw_ast_compare_in_overinclusive": 2098,
-    "T3": 313,
-    "T4": 103,
-    "T5_all_tests": 3364,
-    "T5_refined_internal_reviewed": 79,
-    "T6_prod_symbols_focused": 1927,
-    "T6_KEEP_NEVER_WIRED": 133
-  },
-  "actionable_counts": {
-    "T1": 0,
-    "T2": 0,
-    "T3": 0,
-    "T4_block_snapshot_sidefx": 1,
-    "T5_delete": 0,
-    "T6_auth_residual_open": 0
-  },
-  "proof_tests_deleted": [
-    "tests/test_audience_restore_505.py::test_retry_keyerror_after_cas_won_fails_closed_not_cas_bypass",
-    "tests/test_audience_restore_505.py::test_fail_audience_chat_turn_snapshot_failure_keeps_recovery_without_forged_diffs",
-    "tests/test_audience_restore_505.py::_KeyErrorAfterCasRetrySession"
-  ],
-  "evidence_instead_of_proof_tests": {
-    "existing": [
-      "test_lost_reopen_cas_rejects_without_second_reply",
-      "test_failed_retry_rolls_back_side_effects_and_keeps_question",
-      "test_run_codex_stdout_empty_does_not_parse_stderr_banner"
+  "T4": "snapshot catch removed; loud capture; M3a/M3b PASS without BLOCK",
+  "T5": {
+    "T5_universe": 3360,
+    "T5_class_counts": {
+      "EXTERNAL_BEHAVIOR": 1040,
+      "BEHAVIOR_OR_UNKNOWN": 1050,
+      "EXTERNAL_ENTRY": 110,
+      "REJECT_GATE": 896,
+      "SOURCE_CONTRACT": 264
+    },
+    "T5_dup_groups_shared_entry": 70,
+    "T5_deleted_this_round": 4,
+    "T5_dead_fixtures_cleared": [
+      "deferred_background_jobs",
+      "DeferredExecutor",
+      "InlineExecutor",
+      "run_deferred"
     ],
-    "temp_mutations": "evidence/issue-1902/t1t6-mutations-script.py.txt → t1t6-mutations.out"
+    "T6_auth_named_defs": 1,
+    "T6_dispositions": {
+      "KEEP_live_shared_capability": 1
+    },
+    "T4_snapshot_catch": "REMOVED — loud capture_chat_rollback_snapshot in fail_audience_chat_turn"
   },
-  "T4_fail_snapshot": {
-    "safe": false,
-    "mutation": "M3b_fail_snapshot_side_effect_rollback FAIL loyalty0=45 loyalty1=85 delta=40 rollback_items=0 status=interrupted",
-    "control": "M3c_control_fail_retry_rolls_back_when_snapshot_ok PASS",
-    "law": "restore_interrupted_after_failed_retry 依赖 chat_turn_rollback_items；无 after-snapshot 则无法 record diffs → 副作用不回滚。不伪造 before==after。完整补救需第二套快照/回滚设计 = 未授权 → BLOCK。"
+  "T6": {
+    "members": [
+      {
+        "name": "generate_rescript_draft",
+        "file": "ming_sim/rescript_draft.py",
+        "line": 2149,
+        "prod": 1,
+        "test": 5,
+        "disposition": "KEEP_live_shared_capability",
+        "basis": "现役共享拟旨能力；多消费者（批红/急务/CLI）；非退役入口残根"
+      }
+    ],
+    "text_hits_n": 40
   },
-  "commands": [
-    "python3 evidence/issue-1902/t1t6-enum-script.py.txt  # or /tmp copy; body identical",
-    "python3 evidence/issue-1902/t1t6-mutations-script.py.txt",
-    "env MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python3 -m pytest -q -p no:cacheprovider <focus files>"
-  ]
+  "focus": "411 passed",
+  "mutations": "7/7 PASS"
 }

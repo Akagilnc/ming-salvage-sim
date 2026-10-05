@@ -74,7 +74,7 @@ with tempfile.TemporaryDirectory() as td:
         f'raised={type(raised).__name__}:{raised}; status={row["status"]}',
     )
 
-# M3a: after-snapshot fail — no forged diffs (status may still flip)
+# M3a: after-snapshot fail must LOUD-raise original snap cause; no catch, no forged diffs
 with tempfile.TemporaryDirectory() as td:
     db, state, content = _env(td)
     minister = _active_minister(db, content)
@@ -91,12 +91,16 @@ with tempfile.TemporaryDirectory() as td:
     session = GameSession.__new__(GameSession)
     session.db = db
     session.state = state
-    GameSession.fail_audience_chat_turn(session, turn, replied=False, error=RuntimeError('llm'))
+    raised = None
+    try:
+        GameSession.fail_audience_chat_turn(session, turn, replied=False, error=RuntimeError('llm'))
+    except Exception as e:
+        raised = e
     row = db.conn.execute('SELECT status FROM chat_turns WHERE id=?', (ct,)).fetchone()
     record(
-        'M3a_fail_snapshot_no_forged_diffs',
-        recorded == [] and row['status'] == 'interrupted',
-        f'recorded={len(recorded)}; status={row["status"]}',
+        'M3a_fail_snapshot_loud_original_cause',
+        isinstance(raised, RuntimeError) and str(raised) == 'snap boom' and recorded == [],
+        f'raised={type(raised).__name__}:{raised}; recorded={len(recorded)}; status={row["status"]}',
     )
 
 # M3b CRITICAL: after-snapshot fail WITH prior side effects — is loyalty restored?
@@ -134,14 +138,17 @@ with tempfile.TemporaryDirectory() as td:
     items = db.conn.execute(
         'SELECT COUNT(*) c FROM chat_turn_rollback_items WHERE chat_turn_id=?', (ct,)
     ).fetchone()['c']
-    # SAFE iff loyalty restored to loyalty0. If loyalty1 == loyalty0+40, side effects LOST.
-    side_effect_rolled_back = (loyalty1 == loyalty0)
+    # Host/storage snapshot fault: rollback diffs cannot be recorded honestly.
+    # Expect: original retry failure still surfaces (or snap boom); NO forged zero-diff
+    # recovery claim. Side effects may remain — receipt must say unrestorable, not BLOCK-for-new-mechanism.
+    loud = raised is not None
+    no_forged_items = items == 0  # never recorded fake diffs
     record(
-        'M3b_fail_snapshot_side_effect_rollback',
-        side_effect_rolled_back,
+        'M3b_fail_snapshot_unrestorable_honest',
+        loud and no_forged_items,
         f'loyalty0={loyalty0} loyalty1={loyalty1} delta={loyalty1-loyalty0} '
         f'status={row["status"]} rollback_items={items} raised={type(raised).__name__}:{raised} '
-        f'capture_calls={calls["n"]}',
+        f'capture_calls={calls["n"]} note=host_snapshot_fault_unrestorable_not_safe_rollback',
     )
 
 # M3c control: same failing retry WITHOUT snapshot boom — existing contract must still roll back

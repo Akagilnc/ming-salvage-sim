@@ -72,15 +72,3 @@ class TestTimedBarIntegration:
         assert progress is not None
         assert progress["months_elapsed"] == 2
         assert commitment_timed_bar_value(progress, row) == 50
-
-    def test_origin_turn_unset_falls_back_to_state_turn(self, game):
-        db, state, _content = game
-        state.turn = 7
-        base = {
-            "id": -1, "commitment_kind": "until_stop", "end_turn": 0,
-            "ongoing_effects": "{}", "stop_condition": "", "resolve_condition": "",
-        }
-        for row in ({**base, "origin_turn": None}, {**base, "origin_turn": 0}, dict(base)):
-            progress = commitment_progress_payload(db, state, row)
-            assert progress is not None
-            assert progress["months_elapsed"] == 0

@@ -1,0 +1,23 @@
+{
+  "T5_universe": 3360,
+  "T5_class_counts": {
+    "EXTERNAL_BEHAVIOR": 1040,
+    "BEHAVIOR_OR_UNKNOWN": 1050,
+    "EXTERNAL_ENTRY": 110,
+    "REJECT_GATE": 896,
+    "SOURCE_CONTRACT": 264
+  },
+  "T5_dup_groups_shared_entry": 70,
+  "T5_deleted_this_round": 4,
+  "T5_dead_fixtures_cleared": [
+    "deferred_background_jobs",
+    "DeferredExecutor",
+    "InlineExecutor",
+    "run_deferred"
+  ],
+  "T6_auth_named_defs": 1,
+  "T6_dispositions": {
+    "KEEP_live_shared_capability": 1
+  },
+  "T4_snapshot_catch": "REMOVED — loud capture_chat_rollback_snapshot in fail_audience_chat_turn"
+}

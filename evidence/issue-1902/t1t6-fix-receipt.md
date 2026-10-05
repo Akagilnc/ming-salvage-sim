@@ -1,9 +1,9 @@
-# #1902 修内司 T1–T6 回执（最终自验 · 删证明测 · 全文枚举）
+# #1902 修内司 T1–T6 回执（T4 响亮收口 · T5 语义合并 · 清误称 BLOCK）
 
 - 分支：`ak-roles/1902-t1t6-fixer-092109acf`
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5`
-- 上一轮 HEAD：`452fb6e04`（stamp）／功能基线 `a18683603`
-- 本轮 HEAD：`7eca74e0e`（独立新 commit，禁止 amend）
+- 上一轮 HEAD：`b2c2c54ef`（stamp）／功能基线 `7eca74e0e`
+- 本轮：独立新 commit（禁止 amend）
 - 判词真源：`06-1902-judge-092109acf.json` → `outcome.payloads[-1]`（T1–T6）
 - fix-packet：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a10a10-a917-76cc-966b-7ef94176ba78@fixer/fix-packet.md`
 - **不宣称已合并 / 总票完成**；未 stash/push/PR；未改治理文件与宿主席位
@@ -26,111 +26,111 @@ env \
 
 ---
 
-## 本轮硬纠偏（相对 a18683603 回执）
+## 本轮硬纠偏（相对 7eca74e0e 误称 BLOCK）
 
 | 问题 | 处置 |
 |---|---|
-| 新增 `test_retry_keyerror_after_cas_won...` / `test_fail_audience...snapshot...` 为修复证明测 | **已删**（含独占夹具 `_KeyErrorAfterCasRetrySession`）。证据改走已有 `test_lost_reopen_cas_*` / `test_failed_retry_rolls_back_side_effects_*` / `test_run_codex_stdout_empty_does_not_parse_stderr_banner` + 系统临时变异脚本。 |
-| T2 谓词限词串 | 改为输出变量**数据流**枚举（bind stdout/stderr/communicate/agent.run → compare/re/split）+ 显式 returncode／负向闸；过宽 `compare_in` 2098 条仅作噪声对照，不当宇宙。 |
-| T5 仅 SectionResult/ApplyContext + 旧 68 批量 KEEP_EXTERNAL | 全仓 **3364** Py/TS 测试函数预分类；对精细 INTERNAL 候选 **79** 条逐案读 docstring/入口后处置（成员表逐条不同文案）；**无**批量 `KEEP_EXTERNAL_...`。 |
-| T6 仅旧 133 名单 | 生产符号聚焦枚举 **1927** + 授权退役词表 ∩ 当前引用；133 KEEP_NEVER_WIRED **逐名**标 prod/test/auth 与处置（撤销底座时点豁免理由）。 |
-| T4 fail_snapshot「无伪造差异」冒充安全 | 变异 **M3b FAIL**：副作用 +40 忠诚未回滚、`rollback_items=0`。对照 M3c 快照正常则回滚。→ **BLOCK**（完整补救=未授权第二套回滚设计）。日志改为 `logger.exception` 明示「副作用可能残留」。 |
+| T4 新增 after-snapshot `try/except` + 跳过 diff + 谎称需第二套回滚 → **误称 BLOCK** | **删除** snapshot catch，恢复原响亮 `capture → record diffs`；快照故障原错上抛；回执如实记「宿主/存储故障无法记 diff／可能残留副作用」，**不**另造机制、**不** BLOCK |
+| T5 以「未授权按行数盲删」阻断整仓重复契约合并 | 授权已明：语义契约分类合并。全仓 **3360**（3364−本轮删 4）逐案归类+重复分组；删内部/重复（既有测承接）+死夹具；保留拒收/来源 |
+| T6 例外依据不清 | 全文授权谓词枚举；`generate_rescript_draft` KEEP（现役共享）；`_require_active_minister` 已清；无授权内未清残根 |
 
 成员表：`evidence/issue-1902/t1t6-member-tables.json`  
-复扫摘要：`evidence/issue-1902/t1t6-rescan.json`  
-枚举脚本全文：`evidence/issue-1902/t1t6-enum-script.py.txt`  
-变异脚本全文：`evidence/issue-1902/t1t6-mutations-script.py.txt`
+全量 T5 分类：`evidence/issue-1902/t5-full-classified.json`  
+复扫：`evidence/issue-1902/t1t6-rescan.json`  
+变异脚本：`evidence/issue-1902/t1t6-mutations-script.py.txt`
 
-### 可核复扫命令
+### 可核命令
 
 ```bash
-python3 evidence/issue-1902/t1t6-enum-script.py.txt
-# 另产 /tmp/ming1902-t1t6-final/raw_full.json（T5 全 3364 预分类在 results.T5）
-python3 evidence/issue-1902/t1t6-mutations-script.py.txt
-# T2 数据流补充（同轮临时；逻辑亦在 enum 报告）：
-#   AST：函数内 bind .stdout/.stderr/communicate/run → compare|re|split 使用
-rg -n --glob '*.py' -g '!tests/**' '(\.kill\(|SIGKILL|subprocess\.run\([^)]*timeout\s*=|os\.kill\()' ming_sim web_app.py scripts
-rg -n 'returncode|llm_empty_output|does_not_parse_stderr_banner|<<<CMRPATH>>>' ming_sim/cli_backend.py tests/test_cli_backend.py
-rg -n 'reopen_interrupted_chat_turn_for_retry|execute_interrupted_reply_retry|fail_audience_chat_turn|record_chat_turn_rollback_diffs' ming_sim web_app.py tests
+rg -n 'after-snapshot failed|after_snapshot = None|skip rollback diffs' ming_sim/session.py
+# 预期：无命中（catch 已删）
+rg -n 'capture_chat_rollback_snapshot\(\)' ming_sim/session.py
+python3 evidence/issue-1902/t1t6-mutations-script.py.txt   # 或 /tmp 副本；七 BIN 前缀
 ```
-
-候选宇宙（机械）→ 语义处置后 actionable：
 
 | 类 | 候选宇宙 | actionable |
 |---|---|---|
-| T1 | 7 | 0 |
-| T2 | 21（数据流+显式）；对照噪声 2098 | 0 |
-| T3 | 313 | 0 |
-| T4 | 103 + snapshot 缺口 | **1 BLOCK** |
-| T5 | 3364 预分类；79 精细逐案 | 0 可删 |
-| T6 | 1927 生产符号 + 133 KNW 逐名 | 0 授权内未清残根 |
+| T1–T3 | （上轮已结；本轮未重开） | 0 |
+| T4 | 恢复共核 + snapshot 路径 | **0 BLOCK**（响亮失败+诚实回执） |
+| T5 | 3360 全分类；dup 同入口组 70（均 KEEP 异场景） | 删 4 测 + 4 死夹具符号 |
+| T6 | auth 命名定义 1（`generate_rescript_draft` KEEP） | 0 授权内残根 |
 
 ---
 
 ## 逐类结果
 
-### T1
-无可执行 `.kill`/timeout-subprocess；宿主自 SIGTERM KEEP；注释/文档禁 SIGKILL KEEP。终止缺口 `logger.warning` 如实报告（变异 M4）。
-
-### T2
-生产无「自由输出词面→鉴权故障／横幅切分」路径；`returncode!=0` 与 `llm_empty_output` 为原生/结构化状态 KEEP；`<<<CMRPATH>>>` sentinel 非故障推断 KEEP；负向闸 `test_run_codex_stdout_empty_does_not_parse_stderr_banner` KEEP。数据流 17 bind 均无 fault 近邻使用。
-
-### T3
-沿用全文 except→pass/continue/return 分类（313）；canonicalize 响亮（M5）；旁路真因日志保留。不另加统一 catch 框架。
-
 ### T4
-共核 `execute_interrupted_reply_retry`：CAS→`None`；赢后失败→`fail_audience_chat_turn`。Web/CLI 读 `None` 译 409／提示。  
-**未结／阻断**：after-snapshot 失败时跳过 `record_chat_turn_rollback_diffs` → `restore_interrupted_after_failed_retry` **不能**还原本次副作用（M3b）。不伪造零差异；亦不声称「仍安全」。完整补救需未授权新设计 → **BLOCK**。现仅 `logger.exception` 明示缺口。
+删除 `fail_audience_chat_turn` 内 after-snapshot catch。恢复：
+
+```python
+self.db.record_chat_turn_rollback_diffs(
+    turn.chat_turn_id, turn.before_snapshot,
+    self.db.capture_chat_rollback_snapshot(),
+)
+```
+
+- 快照失败 → **原错上抛**（M3a：`RuntimeError: snap boom`），不伪造 diffs。
+- 重试路径：fail 收口二次失败只 `logger.exception`，**外层仍抛原始 LLM 失败**（M3b：`raised=重试 LLM 失败`）；`rollback_items=0`；loyalty 可残留 → 回执写「宿主快照故障导致无法诚实记 diff／未安全回滚」，**不是**缺第二套回滚机制的 BLOCK。
+- 对照 M3c：快照正常时既有回滚真源仍还原副作用。
 
 ### T5
-删除本轮两条新增证明测。`SectionResult`/`ApplyContext` 纯内部形状测仍为 0；applier 余下 = PUBLIC_STRUCTURED（ADR 0008）逐案。全仓 3364 预分类见 raw；79 精细 INTERNAL 候选逐条读入口后均为真实行为／公开契约／附带 isinstance——**无**可删纯内部重复。负向闸保留。
+全仓语义分类（`REJECT_GATE` / `SOURCE_CONTRACT` / `EXTERNAL_BEHAVIOR` / `EXTERNAL_ENTRY` / `BEHAVIOR_OR_UNKNOWN`）。同入口重复组 70 个均为**异场景** KEEP（不按行数盲删）。
+
+本轮删除（既有测承接）：
+
+| 删除 | 承接 |
+|---|---|
+| `test_origin_turn_unset_falls_back_to_state_turn` | 同文件 wall-clock 集成 + `insert_issue` 真 origin_turn |
+| `test_657_s1_derive_draft_capability_stable_and_sensitive` | layer_a roundtrip + choices_563 stamp + pihong capability 不等式 |
+| `test_run_agent_text_prior_messages_sent_as_message_list` | 1746 heal 经 `_prior_roles/_prior_contents` |
+| `test_run_agent_text_without_prior_passes_plain_prompt` | 同上入口无 prior 路径；solo adapter 属内部 |
+
+死夹具清退：`tests/conftest.py` 的 `InlineExecutor` / `DeferredExecutor` / `run_deferred` / `deferred_background_jobs`（零引用）。
+
+拒收闸与 ADR 0008 来源/Provenance/RejectionCollector 落库契约 **保留**。
 
 ### T6
-`_require_active_minister` 定义已清、仅历史注释。`generate_rescript_draft` KEEP（现役共享能力）。133 KEEP_NEVER_WIRED 逐名：授权退役且 prod=0 仅 `_require_active_minister`（已 CLEARED）；其余为现役单一定义／多消费者，或 **OUT_OF_T6_SCOPE**（非入口/手拟授权退役类，不按零引用整仓盲删）。不按底座时点豁免 KEEP。
+授权谓词全文枚举生产命名定义：仅 `generate_rescript_draft` 命中 → **KEEP_live_shared_capability**（批红/急务/CLI 现役共享；非退役入口）。`_require_active_minister` 定义已不在；测试仅历史注释。无「底座时点豁免」KEEP。授权外零引用整仓盲删不在本票——本轮无此类可执行残根冒称已清。
 
 ---
 
 ## 聚焦测试
 
 ```
-296 passed in 7.27s
+411 passed in 8.29s
 ```
 
-（相对上轮 298：−2 = 删除的两条证明测。）  
-命令与文件集见 `evidence/issue-1902/t1t6-focus-pytest.txt`（含七 BIN）。
+命令与文件集见 `evidence/issue-1902/t1t6-focus-pytest.txt`（含七 BIN + 本轮触及的 commitment/rescript 文件）。
 
 **未**新增红→绿证明测。
 
 ---
 
-## 变异真跑（已有 Web retry / GameSession / CLI terminate / enrich）
+## 变异真跑
 
-`evidence/issue-1902/t1t6-mutations.out` + `t1t6-mutations.collected.txt` + 脚本全文 `t1t6-mutations-script.py.txt`
+`evidence/issue-1902/t1t6-mutations.out` + `t1t6-mutations.collected.txt`
 
-| 变异 | 入口 | 结果 |
-|---|---|---|
-| CAS 未赢 | `GameSession.execute_interrupted_reply_retry` | `None` PASS |
-| CAS 后 KeyError | `WebGame.retry_interrupted_reply` | KeyError；status=`interrupted` PASS |
-| after-snapshot 失败无伪造 diffs | `fail_audience_chat_turn` | recorded=0；interrupted PASS |
-| after-snapshot 失败+副作用 | `_FailingRetrySession` + Web retry | **FAIL** loyalty +40 残留；rollback_items=0 → **T4 BLOCK 证据** |
-| 对照：快照正常 | 同上无 boom | loyalty 回滚 PASS |
-| terminate 未退 | `_terminate_cli_process` | terminate+wait；无 kill PASS |
-| canonicalize RuntimeError | `enrich_initiative_effects` | LOUD PASS |
+| 变异 | 结果 |
+|---|---|
+| M1 CAS 未赢 → None | PASS |
+| M2 CAS 后 KeyError → interrupted | PASS |
+| M3a after-snapshot 响亮原错 | PASS（`snap boom`；recorded=0） |
+| M3b 快照故障+副作用 | PASS（原错保留；items=0；**诚实无法恢复**，非 BLOCK） |
+| M3c 快照正常回滚 | PASS |
+| M4 terminate 无 kill | PASS |
+| M5 canonicalize 响亮 | PASS |
+| **SUMMARY** | **7 / 7** |
 
 ---
 
 ## 质量 / 合法性
 
 - 未改 `CLAUDE.md` / `AGENTS.md` / `CONTEXT.md` / ADR。
-- 未新增永久扫描器、通用编排框架、第二运行配置、钉误判证明测试。
-- 未恢复手拟入口；未按 AST 零引用整删生产类型。
-- 临时枚举/变异脚本全文落入 `evidence/issue-1902/*-script.py.txt`（可复现命令记录，非常驻机制）。
-- 自查二连 done：同类型（证明测≠质量；伪造零差异≠副作用安全）+ 引入（删测后契约仍由已有测+变异覆盖；exception 日志不改变回滚语义）。
+- 未新增永久扫描器、第二套回滚/编排、证明测。
+- 自查二连 done：同类型（catch 洗白≠诚实失败；未授权≠已授权的语义合并）+ 引入（删测后契约由既有 roundtrip/heal/wall-clock 承接；响亮上抛不伪造 interrupted）。
 
 ## 剩余 / 阻断
 
-- **阻断（T4）**：`fail_audience_chat_turn` 在 after-snapshot 失败时无法记 rollback diffs，副作用可能残留。完整补救需要未授权的第二套快照/回滚或等价新机制——**本轮不瞎补**。现状：不伪造差异 + `logger.exception` 明示缺口。
-- 剩余：#1902 其它已结面；家族收尾/合并/关票不在授权内。
-- T3 `KEEP_narrow_exc_control_flow` 等窄类型控制流 KEEP（见成员表 T3_all）非本轮新增沉默故障。
-- T5 全 3364 预分类中非精细 79 条的「重复契约」深度合并未在本轮做整仓删并（无行数盲删；若要继续需另授权按契约 ID 合并）——**未结项：T5 重复契约整仓合并**（非虚假零剩余；公开声明未做）。
-- T6 授权外零引用符号整仓清退 **不在** #1902 授权——如实标 `OUT_OF_T6_SCOPE`，不冒称已清。
+- **无 BLOCK。** 上轮 T4「需第二套回滚」为误称——已用删 catch + 响亮失败 + 诚实回执收口。
+- 家族收尾/合并/关票不在授权内。
+- T5 同入口 70 组保持异场景 KEEP；若后续要再压场景密度，须按契约 ID 点名，不按行数。

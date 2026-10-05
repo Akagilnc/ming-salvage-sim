@@ -1287,23 +1287,12 @@ class GameSession:
                 translation_dispatched=translation_dispatched,
                 court_action=court_action,
             )
-        # after 快照失败不得伪造 before==after（洗白差异）。既有回滚依赖
-        # record_chat_turn_rollback_diffs→rollback_items；无 after 则无法记 diff，
-        # restore_interrupted 只能翻回 interrupted／截 agno，**不能**还原本次副作用
-        # （#1902 T4 取证 M3b）。不另造第二套快照／回滚机制；缺口响亮留痕。
-        after_snapshot = None
-        try:
-            after_snapshot = self.db.capture_chat_rollback_snapshot()
-        except Exception as snap_exc:
-            logger.exception(
-                "fail_audience_chat_turn after-snapshot failed chat_turn_id=%s; "
-                "skip rollback diffs — side effects from this attempt may remain: %s",
-                turn.chat_turn_id, snap_exc,
-            )
-        if after_snapshot is not None:
-            self.db.record_chat_turn_rollback_diffs(
-                turn.chat_turn_id, turn.before_snapshot, after_snapshot,
-            )
+        # 回滚真源：capture → record diffs → restore。快照／宿主故障须原错上抛，
+        # 不 catch 洗白、不伪造 before==after、不谎称已安全收口（#1902 T4）。
+        self.db.record_chat_turn_rollback_diffs(
+            turn.chat_turn_id, turn.before_snapshot,
+            self.db.capture_chat_rollback_snapshot(),
+        )
         if not turn.user_message_id:
             user_row = self.db.conn.execute(
                 "SELECT user_message_id FROM chat_turns WHERE id = ?",
