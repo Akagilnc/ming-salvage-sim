@@ -302,9 +302,6 @@ class ProvinceFiscalTickOutcome(NamedTuple):
 
 
 _ARMY_PAY_SOURCE_CUTOVER_KEY = "__army_pay_source_cutover"
-_FISCAL_ENGINE_KEY = "__fiscal_engine"
-_FISCAL_ENGINE_LEGACY = 0
-_FISCAL_ENGINE_SUBSTRATE_HUB = 1
 _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY = "central_army_pay_arrears"
 _STANDALONE_MILITARY_PAY_FUNNEL_ID = "__standalone_military_pay_funnel__"
 _STRUCTURAL_FISCAL_MINIMUMS = {
@@ -2567,7 +2564,7 @@ class GameDB:
             self.conn.commit()
         return base_key
 
-    # dynamic 税科目 → regions.fiscal 子字段映射。dynamic 税实收走 calc_province_fiscal
+    # dynamic 税科目 → regions.fiscal 子字段映射。dynamic 税实收走 substrate hub 预算入账
     # 读 region.fiscal（不读 fiscal_config 的 base），故对这些 key 做裁撤/调额必须同步改
     # 各省 fiscal 字段才真生效——否则只动目录不动钱（账目与叙事脱节）。
     #   田赋无独立字段（=tax_per_turn 减其余三税的残差），裁撤走 tax_per_turn 压低；
@@ -2636,7 +2633,7 @@ class GameDB:
 
         settle_tick 纯读 st（不就地改），故无需深拷贝；new_st 是全新 dict，覆盖回 settle.st。
         官民田/隐田（清丈重分类）只写进 settle.st，不同步顶层 registered_land/hidden_land——
-        基座 dormant 期与旧 calc_province_fiscal 解耦，接入并轨在 slice3。
+        基座已并入 substrate hub 固定财政。
         """
         row = self.conn.execute(
             "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
@@ -3337,18 +3334,6 @@ class GameDB:
         ).fetchone()
         return bool(row and int(row["value"] or 0) == 1)
 
-    def fiscal_engine(self) -> str:
-        row = self.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = ?",
-            (_FISCAL_ENGINE_KEY,),
-        ).fetchone()
-        value = int(row["value"] or 0) if row is not None else _FISCAL_ENGINE_LEGACY
-        return "substrate_hub" if value == _FISCAL_ENGINE_SUBSTRATE_HUB else "legacy"
-
-    def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
-        return self.fiscal_engine() == "substrate_hub"
-
-
     def _mark_army_pay_source_cutover_enabled(self) -> None:
         self.conn.execute(
             """
@@ -3357,16 +3342,6 @@ class GameDB:
             ON CONFLICT(key) DO UPDATE SET value=excluded.value, kind=excluded.kind, note=excluded.note
             """,
             (_ARMY_PAY_SOURCE_CUTOVER_KEY,),
-        )
-
-    def _mark_substrate_hub_fiscal_engine_enabled(self) -> None:
-        self.conn.execute(
-            """
-            INSERT INTO fiscal_config (key, value, kind, note)
-            VALUES (?, ?, 'meta', 'fiscal_engine=substrate_hub; legacy=0 substrate_hub=1')
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value, kind=excluded.kind, note=excluded.note
-            """,
-            (_FISCAL_ENGINE_KEY, _FISCAL_ENGINE_SUBSTRATE_HUB),
         )
 
     def _initialize_army_pay_source_spine(self, is_fresh_armies_seed: bool) -> None:
@@ -3450,7 +3425,6 @@ class GameDB:
                 ),
             )
         self._mark_army_pay_source_cutover_enabled()
-        self._mark_substrate_hub_fiscal_engine_enabled()
         self._reconcile_all_army_pay_source_regions()
         self._reconcile_central_army_pay_arrears_container()
         self.assert_army_pay_source_container_conservation()
@@ -3694,24 +3668,23 @@ class GameDB:
                 "army "
                 f"{exempt_bad['id']} 自养/非明军双累加器必须为 0"
             )
-        if self.is_substrate_hub_fiscal_engine_enabled():
-            province_source_rows = self.conn.execute(
-                """
-                SELECT id, pay_source_region
-                FROM armies
-                WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-                  AND (
-                    ABS(COALESCE(province_pay_share, 0)) > 1e-9 OR
-                    ABS(COALESCE(province_pay_arrears, 0)) > 1e-9
-                  )
-                ORDER BY id
-                """
-            ).fetchall()
-            for province_source in province_source_rows:
-                self._require_valid_pay_source_region(
-                    str(province_source["id"]),
-                    str(province_source["pay_source_region"] or ""),
-                )
+        province_source_rows = self.conn.execute(
+            """
+            SELECT id, pay_source_region
+            FROM armies
+            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+              AND (
+                ABS(COALESCE(province_pay_share, 0)) > 1e-9 OR
+                ABS(COALESCE(province_pay_arrears, 0)) > 1e-9
+              )
+            ORDER BY id
+            """
+        ).fetchall()
+        for province_source in province_source_rows:
+            self._require_valid_pay_source_region(
+                str(province_source["id"]),
+                str(province_source["pay_source_region"] or ""),
+            )
         derived_bad = self.conn.execute(
             """
             SELECT id, arrears, province_pay_arrears, central_pay_arrears
@@ -5447,9 +5420,7 @@ class GameDB:
         )
         # 军饷科目取数认 budget_key；呈现名跟预算行 name（玩家/摘要同源）。
         other_expense = (
-            ("中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
-            if self.is_substrate_hub_fiscal_engine_enabled()
-            else ("宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
+            "中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护"
         )
         expense_present = [
             army_pay_label if army_pay_amt else "",
@@ -5472,8 +5443,6 @@ class GameDB:
 
     def treasury_hub_result(self, state: GameState) -> Optional[Dict[str, int]]:
         """已执行边饷 hub 三项结果；只读 ledger/container，不重算结算。"""
-        if not self.is_substrate_hub_fiscal_engine_enabled():
-            return None
         # pre_settle 已在当月 state.turn 写 ledger/覆盖容器，settling/awaiting_decision
         # 相位下 next_period 尚未推进——此刻 state.turn 本身就是刚结算完的 turn（两者语义
         # 相同，见 FRONT_HALF_DONE_PHASES 单一真源）。换月后（summoning 等其它相位）

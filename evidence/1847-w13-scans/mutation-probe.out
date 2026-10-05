@@ -1,0 +1,14 @@
+TMP /var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1847-w13-mut-yatopafi
+CURRENT_fresh_budget_income ['起运', '盐税', '商税']
+CURRENT_fresh_has_qiyun False has_legacy_tax_line False
+CURRENT_fresh_gk_delta -101
+CURRENT_unmarked_fiscal_budget_income ['起运', '盐税', '商税']
+CURRENT_unmarked_has_qiyun False has_legacy_tax_line False
+MUTATED_selector_unmarked legacy hub_enabled False
+MUTATED_selector_zero legacy hub_enabled False
+MUTATED_budget_income ['田赋辽饷盐商']
+CURRENT_wrapper_absent True
+MUTATED_wrapper_identity True
+RESTORED_wrapper_absent True
+TMP_CLEANED True
+MUTATION_PROBE_DONE

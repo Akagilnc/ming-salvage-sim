@@ -2363,7 +2363,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                     _apply_issue_entities(
                         db,
                         state,
-                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        ev.effect_on_trigger,
                         f"事件#{ev.id}触发",
                         content=c,
                     )
@@ -2387,7 +2387,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                 _apply_issue_entities(
                     db,
                     state,
-                    _content_population_effect_for_save(db, ev.effect_on_trigger),
+                    ev.effect_on_trigger,
                     f"事件#{ev.id}触发",
                     content=c,
                 )
@@ -2500,11 +2500,9 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     if ev.issue_inertia:
         inertia = ev.issue_inertia
     if ev.effect_on_resolve:
-        # #648：content 真源人口量已「人」，持久化进 issue 行前按本档口径换算，
-        # 使后续结案/失败落账（读行内 effect）天然按档口径，无需在读取端再换算。
-        effect_resolve = _content_population_effect_for_save(db, ev.effect_on_resolve)
+        effect_resolve = ev.effect_on_resolve
     if ev.effect_on_fail:
-        effect_fail = _content_population_effect_for_save(db, ev.effect_on_fail)
+        effect_fail = ev.effect_on_fail
     # insert 的代码/DB 真异常上抛（ADR 0008 决定1 / ADR 0005 fail-loud），与 decree 路径
     # （apply_issue_tracker_output 的 new_issues 段）一致；旧 `except Exception: WARN; return None`
     # 把真异常吞成 None、调用方记普通 rejected，正是 #14/#63 catalog「该落没落无人知」实例
@@ -2539,7 +2537,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         _apply_issue_entities(
             db,
             state,
-            _content_population_effect_for_save(db, ev.effect_on_trigger),
+            ev.effect_on_trigger,
             f"事件#{ev.id}触发",
             content=_ctx(),
         )
@@ -3112,15 +3110,6 @@ def _spawn_legacy_from_effect(
     print(f"[帝国修正] 局势#{issue_id}「{issue_title}」落「{name}」({dur_label}) {modifiers}")
     return summary
 
-
-def _content_population_effect_for_save(
-    db: GameDB, effect: Dict[str, object]
-) -> Dict[str, object]:
-    """#648：content 静态人口量已全线「人」；#1847 退役万人换算，原样落档。
-
-    只用于 content 事件真源（effect_on_trigger / event_to_issue 持久化）；LLM 产 delta
-    已按本档口径写，不得经此换算。"""
-    return effect
 
 
 def _apply_issue_entities(
@@ -4584,7 +4573,7 @@ def apply_issue_tracker_output(
                         _apply_issue_entities(
                             db,
                             state,
-                            _content_population_effect_for_save(db, ev.effect_on_trigger),
+                            ev.effect_on_trigger,
                             f"事件#{ev.id}触发",
                             content=runtime_content,
                             llm_config=llm_config,
@@ -4610,7 +4599,7 @@ def apply_issue_tracker_output(
                     _apply_issue_entities(
                         db,
                         state,
-                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        ev.effect_on_trigger,
                         f"事件#{ev.id}触发",
                         content=runtime_content,
                         llm_config=llm_config,
@@ -6612,14 +6601,6 @@ def _apply_surcharge_decrees(
     should_commit = bool(commit) and db.owns_transaction()
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
-    if not db.is_substrate_hub_fiscal_engine_enabled():
-        for item in (items if isinstance(items, list) else []):
-            rejected.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": "surcharge_decrees 仅适用于 substrate_hub 财政档",
-                "item": item if isinstance(item, dict) else {"raw_value": item},
-            })
-        return applied, rejected
     claimed_origins: set[tuple[str, str]] = set()
     for item in (items if isinstance(items, list) else []):
         if not isinstance(item, dict):

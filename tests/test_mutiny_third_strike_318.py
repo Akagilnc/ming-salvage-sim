@@ -34,8 +34,8 @@ def _find_simulator_army(rows, army_id: str = ARMY):
 
 
 def _configure(db) -> None:
-    value = 1  # active substrate_hub cutover
-    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
+    value = 1  # active army pay source cutover
+    for key in ("__army_pay_source_cutover",):
         db.conn.execute(
             "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

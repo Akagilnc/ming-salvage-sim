@@ -1,0 +1,8 @@
+POST_TOTAL 2
+by_klass Counter({'重复或闲置测试流程': 2})
+by_kind Counter({'idle_flow_helper': 2})
+重复或闲置测试流程	idle_flow_helper	tests/conftest.py	497	persist_and_schedule_scene
+重复或闲置测试流程	idle_flow_helper	tests/section_rejection_helpers.py	14	run_declaration
+WROTE /Users/akagilnc/WorkSpace/Ming_LLM-1847-w5/evidence/1847-w13-scans/members_post.tsv
+CLEAR_A_functional True
+CLEAR_B_delete_candidates False

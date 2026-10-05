@@ -397,19 +397,4 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
 
 # ── non-substrate fiscal engine：加派入口不消费 ─────────────────────────────
 
-def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(game, monkeypatch):
-    db, state, content = game
-    db.conn.execute("UPDATE fiscal_config SET value=0 WHERE key='__fiscal_engine'")
-    db.conn.commit()
-    before = _pop(db, "流民", "shaanxi")
-    applied = apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(db, state, monthly_amount=50.0)],
-    }, content, None)
-    assert not applied["surcharge_decrees"]
-    assert len(applied["surcharge_decrees_rejections"]) == 1
-    from tests.test_due_review_621 import _settle_empty_month
-    _settle_empty_month(db, state, content, monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == before
-
-
 # ── AC4/AC5：e2e 验收锚用例①前半——陕西加派→流民↑→回响；restore 接续；停加派止 ──

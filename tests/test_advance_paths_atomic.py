@@ -13,12 +13,6 @@ import ming_sim.decree as decree_mod
 import ming_sim.issues as I
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
-def _ledger_count(db, turn: int) -> int:
-    return db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
-    ).fetchone()[0]
-
-
 # ---------------------------------------------------------------------------
 # B. 恢复入口消费：由玩家月链接续已保存的结算进度
 # ---------------------------------------------------------------------------

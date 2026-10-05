@@ -84,12 +84,6 @@ def test_reload_content_no_crash(game):
     assert state.turn_phase == "reviewing"
 
 
-def _ledger_count(db, turn: int) -> int:
-    return db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
-    ).fetchone()[0]
-
-
 def test_reload_scrubs_dirty_settling_phase(game):
     """reload 单元：手工造脏 settling 相位（DB 是旧相位）→ reload 刷回 DB 真相（非 settling）。
 

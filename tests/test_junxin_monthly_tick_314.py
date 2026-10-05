@@ -48,12 +48,6 @@ def _loyalty_of(db, aid):
         "SELECT loyalty FROM armies WHERE id=?", (aid,)).fetchone()["loyalty"])
 
 
-def _run_months(db, state, months, *, fund_fully=True):
-    for _ in range(months):
-        state.metrics["国库"] = 10 ** 9 if fund_fully else 0
-        apply_fixed_period_flows(db, state)
-
-
 def test_army_loyalty_tick_delta_tiers():
     """分档 oracle：满饷 +5；半欠/短欠 dead-band 0；≥3 月 -5；零需短路 0。"""
     assert army_loyalty_tick_delta(0, 1) == 5

@@ -1,0 +1,92 @@
+class	kind	file	line	symbol	disposition	why
+旧兼容及退役残余闭包	legacy_engine_literal	ming_sim/simulation.py	62	"legacy": "legacy", "帝国修正": "legacy", "遗产": "legacy",	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	legacy_engine_literal	ming_sim/issues.py	910	"legacy",	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	shadow_parallel	ming_sim/issues.py	1467	#259 shadow 阶段只处理 category=fiscal_levy 的历史事件；结局值必须经事件自身	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	legacy_engine_literal	ming_sim/issues.py	3055	legacy = effect.get("legacy")	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/issues.py	6615	if not db.is_substrate_hub_fiscal_engine_enabled():	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	identity_wrapper_post_retire	ming_sim/issues.py	3116	_content_population_effect_for_save	DELETE_INLINE	退休后恒等包装：函数体仅 return 入参，调用方可直接用原值
+旧兼容及退役残余闭包	fiscal_marker_rw	ming_sim/db.py	305	_FISCAL_ENGINE_KEY = "__fiscal_engine"	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	legacy_engine_literal	ming_sim/db.py	306	_FISCAL_ENGINE_LEGACY = 0	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	fiscal_engine_selector	ming_sim/db.py	3340	def fiscal_engine(self) -> str:	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	fiscal_marker_rw	ming_sim/db.py	3343	(_FISCAL_ENGINE_KEY,),	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	legacy_engine_literal	ming_sim/db.py	3345	value = int(row["value"] or 0) if row is not None else _FISCAL_ENGINE_LEGACY	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	legacy_engine_literal	ming_sim/db.py	3346	return "substrate_hub" if value == _FISCAL_ENGINE_SUBSTRATE_HUB else "legacy"	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/db.py	3348	def is_substrate_hub_fiscal_engine_enabled(self) -> bool:	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	fiscal_engine_selector	ming_sim/db.py	3349	return self.fiscal_engine() == "substrate_hub"	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	fiscal_marker_rw	ming_sim/db.py	3362	def _mark_substrate_hub_fiscal_engine_enabled(self) -> None:	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	legacy_fiscal_word	ming_sim/db.py	3366	VALUES (?, ?, 'meta', 'fiscal_engine=substrate_hub; legacy=0 substrate_hub=1')	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	fiscal_marker_rw	ming_sim/db.py	3369	(_FISCAL_ENGINE_KEY, _FISCAL_ENGINE_SUBSTRATE_HUB),	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	fiscal_marker_rw	ming_sim/db.py	3453	self._mark_substrate_hub_fiscal_engine_enabled()	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/db.py	3697	if self.is_substrate_hub_fiscal_engine_enabled():	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/db.py	5451	if self.is_substrate_hub_fiscal_engine_enabled()	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/db.py	5475	if not self.is_substrate_hub_fiscal_engine_enabled():	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	legacy_engine_literal	ming_sim/pay_order.py	328	if callable(engine) and engine() == "legacy":	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	legacy_fiscal_word	ming_sim/pay_order.py	330	"pay_order_override 在 fiscal_engine=legacy 下无结算消费方，禁物化"	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	legacy_engine_literal	ming_sim/models.py	318	_legacy_effect_has_work(effect.get("legacy")),	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/displaced_population.py	59	if not db.is_substrate_hub_fiscal_engine_enabled():	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	shadow_parallel	ming_sim/flows.py	103	Shadow substrate 自己有 fail-loud+隔离日志；固定税收不能因为一个省的 fiscal JSON	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	legacy_budget_calc	ming_sim/flows.py	127	def calc_province_fiscal(	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	shadow_parallel	ming_sim/flows.py	261	def _project_substrate_hub_remittance(db: GameDB) -> float:	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	shadow_parallel	ming_sim/flows.py	361	raw_remittance = _round_nonnegative_amount(_project_substrate_hub_remittance(db))	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	shadow_parallel	ming_sim/flows.py	430	db: GameDB, state: GameState, *, project_substrate_hub: bool = True	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/flows.py	440	if db.is_substrate_hub_fiscal_engine_enabled():	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	shadow_parallel	ming_sim/flows.py	442	db, state, project_missing=project_substrate_hub	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	legacy_budget_calc	ming_sim/flows.py	446	gk_tax, nk_huang, _ = calc_province_fiscal(state, db)	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/flows.py	1058	if db.is_substrate_hub_fiscal_engine_enabled():	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	shadow_parallel	ming_sim/flows.py	1164	db, state, project_substrate_hub=not skip_substrate_hub_lines	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/flows.py	1189	_apply_budget_lines(skip_substrate_hub_lines=db.is_substrate_hub_fiscal_engine_enabled())	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/flows.py	1260	if db.is_substrate_hub_fiscal_engine_enabled()	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/flows.py	1263	if db.is_substrate_hub_fiscal_engine_enabled():	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	substrate_hub_gate	ming_sim/flows.py	1414	f"（{'hub，待入国库' if db.is_substrate_hub_fiscal_engine_enabled() else 'shadow，未入国库'}）"	REVIEW	财政选择器/平行分支/读写端候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_qa_e1_numeric_presentation.py	49	assert db.fiscal_engine() == "substrate_hub"	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_qa_e1_numeric_presentation.py	78	assert any(item.get("internal") == "substrate_hub"	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	old_save_test	tests/conftest.py	526	def _atomic_connless_test_shell_compat():	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_pay_order_override_653.py	646	"VALUES ('__fiscal_engine', 0, 'meta', 'test legacy engine') "	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_pay_order_override_653.py	650	assert db.fiscal_engine() == "legacy"	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_pay_order_override_653.py	834	assert db.is_substrate_hub_fiscal_engine_enabled()	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	294	VALUES ('__fiscal_engine', 0, 'meta', 'test legacy engine')	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	710	def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	773	def test_substrate_hub_dual_track_sanity_keeps_legacy_calc_as_reference(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	777	legacy_treasury, legacy_inner, legacy_lines = flows_mod.calc_province_fiscal(state, db)	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	789	def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	824	def test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	850	def test_fixed_flows_substrate_hub_central_capacity_reduces_current_central_arrears(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	915	def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_grants(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1085	def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_jingyun(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1255	def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1323	if row.get("internal") == "substrate_hub"]	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1325	if row.get("internal") == "substrate_hub"]	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1429	def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1467	if row.get("internal") == "substrate_hub"]	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1469	if row.get("internal") == "substrate_hub") == [3, 4, 11]	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1475	def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1496	if row.get("internal") == "substrate_hub")	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1510	assert any(row.get("internal") == "substrate_hub" for row in salt_lines)	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1511	assert any(row.get("internal") != "substrate_hub" for row in salt_lines)	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1530	def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1632	def test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1728	def test_substrate_hub_debit_fails_loud_when_required_debit_not_booked(fresh_db, monkeypatch):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1730	from ming_sim.flows import _HubOutboundResult, _debit_substrate_hub_outbound	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1750	_debit_substrate_hub_outbound(fresh_db, SimpleNamespace(), hub_outbound)	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1753	def test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit(fresh_game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_fiscal_substrate_bridge.py	1948	def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game, monkeypatch):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	old_save_test	tests/test_web_audience_night_498.py	677	"""Legacy saves with only turn_directives.status=pending remain operable at the	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	old_save_test	tests/test_army_pay_source_prompt_contract.py	4	def test_prompt_compatible_ming_new_army_pay_source_aliases_land(game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_mutiny_latch_315.py	18	value = 1  # active substrate_hub cutover	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_mutiny_latch_315.py	19	for key in ("__army_pay_source_cutover", "__fiscal_engine"):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_player_army_projection_321.py	104	value = 1  # active substrate_hub cutover	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_player_army_projection_321.py	105	for key in ("__army_pay_source_cutover", "__fiscal_engine"):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_surcharge_causal_chain_650.py	400	def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(game, monkeypatch):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_surcharge_causal_chain_650.py	402	db.conn.execute("UPDATE fiscal_config SET value=0 WHERE key='__fiscal_engine'")	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_mutiny_redemption_317.py	15	value = 1  # active substrate_hub cutover	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_mutiny_redemption_317.py	16	for key in ("__army_pay_source_cutover", "__fiscal_engine"):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_mutiny_third_strike_318.py	37	value = 1  # active substrate_hub cutover	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_mutiny_third_strike_318.py	38	for key in ("__army_pay_source_cutover", "__fiscal_engine"):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_junxin_monthly_tick_314.py	3	seam = 月末确定性结算 tick（apply_fixed_period_flows，现役 substrate_hub）。	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_junxin_monthly_tick_314.py	70	def test_substrate_hub_pure_province_source_loyalty_regression(game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_junxin_monthly_tick_314.py	101	def test_substrate_hub_hybrid_source_loyalty_regression(game):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_mutiny_progression_316.py	16	value = 1  # active substrate_hub cutover	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_mutiny_progression_316.py	17	for key in ("__army_pay_source_cutover", "__fiscal_engine"):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_mutiny_noop_whitelist_319.py	65	value = 1  # active substrate_hub cutover	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	fiscal_legacy_test	tests/test_mutiny_noop_whitelist_319.py	66	for key in ("__army_pay_source_cutover", "__fiscal_engine"):	REVIEW	专属测试/旧兼容夹具候选
+旧兼容及退役残余闭包	old_save_test	tests/test_bandit_power_model_190.py	36	def test_old_save_schema_init_backfills_bandit_power_split(game):	REVIEW	专属测试/旧兼容夹具候选

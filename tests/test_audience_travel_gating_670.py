@@ -10,15 +10,6 @@ from ming_sim import audience_night as an
 
 
 
-def _run_exclusive(q, fn):
-    """Test-local: live queue seam is claim+run+complete (#1847 N11)."""
-    ticket = q.claim()
-    assert ticket is not None
-    try:
-        return q.run(ticket, fn)
-    finally:
-        q.complete(ticket)
-
 def _session(game):
     db, _state, content = game
     sess = GameSession.__new__(GameSession)

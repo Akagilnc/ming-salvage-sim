@@ -1,0 +1,193 @@
+class	kind	file	line	symbol	disposition	why
+重复或闲置测试流程	idle_test_helper	tests/test_audience_presence_500.py	178	_session_double	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_audience_presence_500.py	193	_tool_registry	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/cli_process_doubles.py	208	install_fake_cli_runner	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_qa_t1_extraction_dual_source_1353.py	57	web_game	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_deformation_dual_rail_622.py	28	_insert_final_stage	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_audience_restore_505.py	59	restore_env	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_audience_restore_505.py	794	web_game	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_audience_restore_505.py	861	_657_active_minister	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_adr0015_per_item_rejection.py	7	_reports	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	27	content	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	121	_game_template_path	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	138	read_game	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	164	_restore_content_characters	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	183	_transport_retry_interval_instant	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	200	game	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	238	saved_game	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	270	active_ming_character	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	292	plant_character_axis_sentinels	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	306	open_audience_night	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	313	append_night_chat	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	330	_isolated_user_data_dir	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	359	open_hall_turn	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	405	offline_empty_audience_translate	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	417	_offline_audience_translation_provider	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	441	stub_scene_agent	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	487	stub_audience_translate	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	497	persist_and_schedule_scene	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	516	_offline_scene_beat_generator	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	526	_atomic_connless_test_shell_compat	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	556	_isolate_cli_bin_resolution	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/conftest.py	577	covering_monthly_extract	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_applier_contract.py	88	clean_rejections	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_pay_order_override_653.py	936	_pin_shortfall_board	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_fiscal_substrate_bridge.py	36	fresh_db	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_fiscal_substrate_bridge.py	3934	fresh_game	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_web_audience_night_498.py	118	web_game	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_audience_translation_1838.py	168	_scene_session	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_audience_translation_1838.py	203	_drain_scene_owner	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_month_loop_tracer_1468.py	114	tracer_client	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_month_loop_tracer_1468.py	171	_install_canned_minister	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_month_loop_tracer_1468.py	181	_month_ord_of	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_month_loop_tracer_1468.py	305	_play_one_month	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_month_loop_tracer_1468.py	465	_setup_open_night_participant	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_month_loop_tracer_1468.py	499	_assert_court_break_closed	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/fiscal_test_utils.py	1	zero_non_meta_fiscal_config	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/dossier_test_helpers.py	22	create_test_secret_order	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/dossier_test_helpers.py	41	_cost_events	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/dossier_test_helpers.py	48	_sat	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/dossier_test_helpers.py	56	rejected_verdict	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/dossier_test_helpers.py	95	promulgate_proposed_appointments	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_fiscal_beyond_intent_1260.py	43	_insert_final_stage	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_decree_dossiers_571.py	1891	_complete_session	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_fiscal_levy_effect.py	65	_settled_land_by_region	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_character_knowledge_489.py	1358	household_ledger_reads	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_qa_c2_phase_settlement_mask_1374.py	27	_null_cm	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/legacy_staging_helpers.py	35	stage_punishment	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/legacy_staging_helpers.py	52	close_night_dossier	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/legacy_staging_helpers.py	64	stage_yuan_appointment_summon	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/legacy_staging_helpers.py	97	close_office_to_dossier	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/legacy_staging_helpers.py	124	yuan_row	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_audience_background.py	153	_wait_for_pending_writes_to_drain	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_audience_background.py	162	_assert_next_accepted	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_economy_section_rejections.py	26	_guoku	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_audience_travel_gating_670.py	13	_run_exclusive	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/wait_utils.py	11	wait_until	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/wait_utils.py	20	reset_menu_path_leases	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/web_audience_test_doubles.py	15	allow_hall_admission	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/web_audience_test_doubles.py	31	allow_hall_admit_audience	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/web_audience_test_doubles.py	49	install_hall_admission	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/web_audience_test_doubles.py	56	minister_double	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_secret_order_monthly_progress_566.py	45	_canned_monthly_settlement	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_player_army_projection_321.py	76	_row	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_player_army_projection_321.py	161	_web_runtime	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_player_army_projection_321.py	191	_find_army_in_map_nodes	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_player_army_projection_321.py	199	_assert_structured_situation	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_player_army_projection_321.py	212	_assert_chain_embeds_situation	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_advance_paths_atomic.py	16	_ledger_count	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_month_open_snapshot_1234.py	62	_null_cm	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_state_reload.py	20	_restore_content	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_state_reload.py	87	_ledger_count	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/section_rejection_helpers.py	14	run_declaration	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/section_rejection_helpers.py	29	rejection_rows	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_court_break_player_lock_1727.py	44	web_game	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_issue_entities.py	22	_army_count	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_promulgation_seam_560.py	30	_stage_policy_dossier	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_execution_tenure_613.py	92	_clear_character_offices	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/army_pay_helpers.py	4	_set_guanning_arrears	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_executor_routing_721.py	18	env	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_mutiny_actual_residence_659.py	26	_pop	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_mutiny_actual_residence_659.py	34	_global_population	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_mutiny_actual_residence_659.py	38	_pin_split_arrears	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_mutiny_actual_residence_659.py	53	_executing_dossier	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_mutiny_actual_residence_659.py	82	_simulator_army_dicts	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_structured_decree_contract_1624.py	78	_month_end_ctx	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_structured_decree_contract_1624.py	120	_army_none_legal_item	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_structured_decree_contract_1624.py	241	_executing_counts	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_new_game_dependency_mismatch_1721.py	38	stale_agno_site	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/month_chain_helpers.py	11	make_light_session	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/month_chain_helpers.py	36	empty_rescript_response	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/month_chain_helpers.py	43	canned_full_settlement	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_qa_h1_seed_data.py	32	_bajiu_names	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_mutiny_third_strike_318.py	20	_simulator_army_dicts	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_mutiny_third_strike_318.py	28	_find_simulator_army	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_execution_pressure_654.py	18	env	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_transit_countdown_668.py	246	_assert_ledger_match	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_refugee_loop_652.py	63	_reflux	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_qa_c2_settlement_display_lifecycle_1343.py	59	_blocking_gate	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_junxin_monthly_tick_314.py	32	_setup_army	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_junxin_monthly_tick_314.py	51	_run_months	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_army_card_status_1501.py	70	_assert_ming_register	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_army_card_status_1501.py	113	_web_runtime	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_cli_play_turn.py	29	_noop_atomic	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_centrifuge_ledger_690.py	75	_set_identity	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_enter_settlement_period_1235.py	52	_fake_settlement_llm	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_enter_settlement_period_1235.py	82	web_game	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_enter_settlement_period_1235.py	120	_terminal_sse	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_highlight_judge_544.py	187	_restore_highlight_seams	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_highlight_judge_544.py	200	_drain	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_supervision_625.py	111	_insert_staged	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_relation_capture_633.py	496	_module_of	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_draft_admission_resubmit_1769.py	105	admission_game	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_pre_settle_transaction.py	215	_drive_resolve_directives	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_relation_seed_638.py	25	fresh_session	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_new_game_smoke.py	33	fresh_game_dir	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_new_game_write_path_1749.py	145	_empty_translate_fn	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_population_transfers_662.py	29	disaster_shaanxi	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_population_transfers_662.py	40	war_shaanxi	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_relation_read_640.py	43	ledger	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_relation_read_640.py	147	r3_guard	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/directive_seed_helpers.py	21	seed_manual_draft	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_pihong_dossier_1490.py	19	rescript_llm_boundary	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	idle_test_helper	tests/test_pihong_dossier_1490.py	76	_658_session	DELETE	同文件无调用的测试流程/helper
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_new_issues_section_rejections.py	95	_hist_event	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_event_chain_cascade.py', 10, '_hist_event')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_event_chain_cascade.py	10	_hist_event	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_new_issues_section_rejections.py', 95, '_hist_event')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_web_audience_night_498.py	147	_active_minister	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_court_break_player_lock_1727.py', 59, '_active_minister'), ('tests/test_enter_settlement_period_1235.py', 99, '_active_minister')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_court_break_player_lock_1727.py	59	_active_minister	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_web_audience_night_498.py', 147, '_active_minister'), ('tests/test_enter_settlement_period_1235.py', 99, '_active_minister')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_enter_settlement_period_1235.py	99	_active_minister	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_web_audience_night_498.py', 147, '_active_minister'), ('tests/test_court_break_player_lock_1727.py', 59, '_active_minister')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_web_audience_night_498.py	162	_client	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_court_break_player_lock_1727.py', 70, '_client'), ('tests/test_enter_settlement_period_1235.py', 110, '_client')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_court_break_player_lock_1727.py	70	_client	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_web_audience_night_498.py', 162, '_client'), ('tests/test_enter_settlement_period_1235.py', 110, '_client')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_enter_settlement_period_1235.py	110	_client	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_web_audience_night_498.py', 162, '_client'), ('tests/test_court_break_player_lock_1727.py', 70, '_client')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_army_maintenance_retire_173.py	21	_pay_source	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_section4_rejections.py', 45, '_pay_source'), ('tests/test_army_firearms.py', 16, '_pay_source')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_section4_rejections.py	45	_pay_source	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_army_maintenance_retire_173.py', 21, '_pay_source'), ('tests/test_army_firearms.py', 16, '_pay_source')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_army_firearms.py	16	_pay_source	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_army_maintenance_retire_173.py', 21, '_pay_source'), ('tests/test_section4_rejections.py', 45, '_pay_source')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_audience_translation_1838.py	209	_active_chat_turn	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_audience_translate_1837.py', 781, '_active_chat_turn')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_audience_translate_1837.py	781	_active_chat_turn	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_audience_translation_1838.py', 209, '_active_chat_turn')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_faction_denunciation_627.py	184	_table_cols	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_supervision_625.py', 141, '_table_cols')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_supervision_625.py	141	_table_cols	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_faction_denunciation_627.py', 184, '_table_cols')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_decree_commitment_creation_136.py	13	_promulgated_commitment_origin	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_decree_commitment_settlement_229.py', 14, '_promulgated_commitment_origin')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_decree_commitment_settlement_229.py	14	_promulgated_commitment_origin	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_decree_commitment_creation_136.py', 13, '_promulgated_commitment_origin')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_audience_night_498.py	41	_active_minister	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_audience_undo_506.py', 26, '_active_minister')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_audience_undo_506.py	26	_active_minister	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_audience_night_498.py', 41, '_active_minister')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_month_chain_1843.py	20	_forbid_extractor	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_month_call_recovery_1846.py', 24, '_forbid_extractor')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_month_call_recovery_1846.py	24	_forbid_extractor	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_month_chain_1843.py', 20, '_forbid_extractor')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_qa_c2_phase_settlement_mask_1374.py	27	_null_cm	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_month_open_snapshot_1234.py', 62, '_null_cm')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_month_open_snapshot_1234.py	62	_null_cm	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_qa_c2_phase_settlement_mask_1374.py', 27, '_null_cm')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_qa_c2_phase_settlement_mask_1374.py	31	_click_before	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_qa_c2_settlement_display_lifecycle_1343.py', 24, '_click_before'), ('tests/test_enter_settlement_period_1235.py', 116, '_click_before')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_qa_c2_settlement_display_lifecycle_1343.py	24	_click_before	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_qa_c2_phase_settlement_mask_1374.py', 31, '_click_before'), ('tests/test_enter_settlement_period_1235.py', 116, '_click_before')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_enter_settlement_period_1235.py	116	_click_before	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_qa_c2_phase_settlement_mask_1374.py', 31, '_click_before'), ('tests/test_qa_c2_settlement_display_lifecycle_1343.py', 24, '_click_before')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_court_layout_1290.py	42	_invoke	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_settlement_write_guard_393.py', 128, '_invoke')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_settlement_write_guard_393.py	128	_invoke	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_court_layout_1290.py', 42, '_invoke')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_audience_travel_gating_670.py	13	_run_exclusive	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_session_write_queue_1353.py', 25, '_run_exclusive')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_session_write_queue_1353.py	25	_run_exclusive	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_audience_travel_gating_670.py', 13, '_run_exclusive')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_relation_brew_636.py	85	_add_edge	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_faction_brew_637.py', 44, '_add_edge'), ('tests/test_relation_read_640.py', 34, '_add_edge')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_faction_brew_637.py	44	_add_edge	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_relation_brew_636.py', 85, '_add_edge'), ('tests/test_relation_read_640.py', 34, '_add_edge')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_relation_read_640.py	34	_add_edge	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_relation_brew_636.py', 85, '_add_edge'), ('tests/test_faction_brew_637.py', 44, '_add_edge')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_secret_order_monthly_progress_566.py	9	_actor	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_secret_dossier_participants_1252.py', 13, '_actor'), ('tests/test_grant_reconciliation_567.py', 46, '_actor')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_secret_dossier_participants_1252.py	13	_actor	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_secret_order_monthly_progress_566.py', 9, '_actor'), ('tests/test_grant_reconciliation_567.py', 46, '_actor')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_grant_reconciliation_567.py	46	_actor	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_secret_order_monthly_progress_566.py', 9, '_actor'), ('tests/test_secret_dossier_participants_1252.py', 13, '_actor')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_authority_ledger_611.py	11	_minister	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_faction_brew_637.py', 384, '_minister')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_faction_brew_637.py	384	_minister	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_authority_ledger_611.py', 11, '_minister')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_advance_paths_atomic.py	16	_ledger_count	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_state_reload.py', 87, '_ledger_count'), ('tests/test_pre_settle_transaction.py', 25, '_ledger_count')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_state_reload.py	87	_ledger_count	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_advance_paths_atomic.py', 16, '_ledger_count'), ('tests/test_pre_settle_transaction.py', 25, '_ledger_count')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_pre_settle_transaction.py	25	_ledger_count	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_advance_paths_atomic.py', 16, '_ledger_count'), ('tests/test_state_reload.py', 87, '_ledger_count')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_population_transfers_649.py	27	_pop	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_surcharge_causal_chain_650.py', 36, '_pop'), ('tests/test_mutiny_actual_residence_659.py', 26, '_pop'), ('tests/test_refugee_loop_652.py', 32, '_pop')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_surcharge_causal_chain_650.py	36	_pop	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_population_transfers_649.py', 27, '_pop'), ('tests/test_mutiny_actual_residence_659.py', 26, '_pop'), ('tests/test_refugee_loop_652.py', 32, '_pop')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_mutiny_actual_residence_659.py	26	_pop	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_population_transfers_649.py', 27, '_pop'), ('tests/test_surcharge_causal_chain_650.py', 36, '_pop'), ('tests/test_refugee_loop_652.py', 32, '_pop')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_refugee_loop_652.py	32	_pop	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_population_transfers_649.py', 27, '_pop'), ('tests/test_surcharge_causal_chain_650.py', 36, '_pop'), ('tests/test_mutiny_actual_residence_659.py', 26, '_pop')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_population_transfers_649.py	35	_global_population	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_mutiny_actual_residence_659.py', 34, '_global_population')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_mutiny_actual_residence_659.py	34	_global_population	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_population_transfers_649.py', 35, '_global_population')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_execution_joint_liability_565.py	39	_cost_events	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_due_review_621.py', 110, '_cost_events')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_due_review_621.py	110	_cost_events	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_execution_joint_liability_565.py', 39, '_cost_events')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_recommendation_edges_635.py	14	_pick_recommender	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_recommendation_batch_snapshot_1583.py', 17, '_pick_recommender')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_recommendation_batch_snapshot_1583.py	17	_pick_recommender	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_recommendation_edges_635.py', 14, '_pick_recommender')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_executor_routing_721.py	18	env	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_execution_pressure_654.py', 18, 'env')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_execution_pressure_654.py	18	env	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_executor_routing_721.py', 18, 'env')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_mutiny_redemption_317.py	14	_configure	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_mutiny_progression_316.py', 15, '_configure')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_mutiny_progression_316.py	15	_configure	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_mutiny_redemption_317.py', 14, '_configure')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_mutiny_third_strike_318.py	36	_configure	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_mutiny_noop_whitelist_319.py', 64, '_configure')]
+重复或闲置测试流程	duplicate_test_helper_ast	tests/test_mutiny_noop_whitelist_319.py	64	_configure	DEDUP	跨文件 AST 同形 helper；同伴=[('tests/test_mutiny_third_strike_318.py', 36, '_configure')]
+重复或闲置测试流程	exclusive_helper	tests/test_audience_travel_gating_670.py	13	_run_exclusive	DELETE	exclusive 测试流程 helper
+重复或闲置测试流程	exclusive_helper	tests/test_session_write_queue_1353.py	25	_run_exclusive	KEEP_USED	exclusive 测试流程 helper
+重复或闲置测试流程	exclusive_helper	tests/test_session_write_queue_1353.py	352	test_run_exclusive_serializes_writes	DELETE	exclusive 测试流程 helper
