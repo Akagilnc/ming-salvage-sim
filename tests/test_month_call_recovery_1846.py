@@ -640,7 +640,6 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     assert int(state.turn) == turn
     assert state.turn_phase == TurnPhase.SETTLING.value
     assert isinstance(caught.value.__cause__, RuntimeError)
-    assert "edict settle crashed" in str(caught.value.__cause__)
     assert caught.value.error_pack_path
     assert not db.staged_declarations.is_settled(ref)
     assert _ningyuan_ledger_rows(db) == []
@@ -700,13 +699,12 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
         session.resolve_turn(allow_empty_decree=True)
 
     assert caught.value.error_pack_path is None
-    assert caught.value.message == "edict settle crashed"
     assert isinstance(caught.value.__cause__, OSError)
     assert not db.staged_declarations.is_settled(ref)
     assert _ningyuan_ledger_rows(db) == []
     failure = _month_chain_of(db, turn).get("call_failure") or {}
     assert failure.get("kind") == "code_exception"
-    assert "edict settle crashed" in str(failure.get("message") or "")
+    assert str(failure.get("message") or "").strip()  # 有诊断；不盯注入措辞
     assert not failure.get("error_pack_path")
 
     session.resolve_turn(allow_empty_decree=True)

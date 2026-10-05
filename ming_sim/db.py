@@ -17605,8 +17605,10 @@ class GameDB:
         old = self._decode_directive_dossier_payload(existing_json)
         incoming = dict(new_payload or {})
         # 先规范化新名单一次：规范化为空则 pop，不覆盖旧名册；否则与旧名册共同 merge。
+        # #1900 J19：改草写入的新名单亦走严格参与人语义，拒字符串/缺档猜「知情」。
         new_roster = self._normalize_participant_roster(
             list(incoming.get("participant_roster") or []),
+            strict_structured=True,
         )
         if not new_roster:
             incoming.pop("participant_roster", None)
@@ -17614,6 +17616,7 @@ class GameDB:
             incoming["participant_roster"] = self.merge_participant_roster_entries(
                 old.get("participant_roster") or [],
                 new_roster,
+                strict_incoming=True,
             )
 
         # 先对 incoming 互斥分类（并存即拒），再决定从 old 继承哪些字段

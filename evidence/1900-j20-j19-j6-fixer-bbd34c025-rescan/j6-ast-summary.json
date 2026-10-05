@@ -1,0 +1,30 @@
+{
+  "python_files": 227,
+  "ts_files": 21,
+  "python_candidates": 13448,
+  "ts_candidates": 1663,
+  "paths_sample": [
+    "tests/army_pay_helpers.py",
+    "tests/cli_process_doubles.py",
+    "tests/conftest.py",
+    "tests/directive_seed_helpers.py",
+    "tests/dossier_test_helpers.py",
+    "tests/fiscal_test_utils.py",
+    "tests/legacy_staging_helpers.py",
+    "tests/month_chain_helpers.py",
+    "tests/offline_audience_reply.py",
+    "tests/section_rejection_helpers.py",
+    "tests/test_adr0015_per_item_rejection.py",
+    "tests/test_advance_paths_atomic.py",
+    "tests/test_advances_section_rejections.py",
+    "tests/test_affairs_1831.py",
+    "tests/test_applier_contract.py",
+    "tests/test_appointment_tenure_607.py",
+    "tests/test_army_card_status_1501.py",
+    "tests/test_army_display_173.py",
+    "tests/test_army_firearms.py",
+    "tests/test_army_maintenance_retire_173.py"
+  ],
+  "path_count": 248,
+  "enum_mode": "FULL_NO_NUMERIC_DROP"
+}

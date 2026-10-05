@@ -1,0 +1,10 @@
+M1 J17 disable _validated_settlement_origin: 2 failed; restore 2 passed
+M2 held save boom (raw): ERROR at setup — invalid (fixture save_state); superseded by M2b
+M2b held arm after resolve_directives: see mutations.log
+M3 J20 restore title bind: 2 failed / 3 passed; restore 5 passed
+M4 J19 strict string → ValueError; loose → 知情
+28:MUTANT_HELD_SAVE_BOOM 1
+31:RESTORE_HELD 0
+56:=== M2b held: arm save boom only after resolve_directives ===
+89:MUTANT_HELD 1 ARMED_RESOLVE_CALLS 1
+98:RESTORE_HELD 0

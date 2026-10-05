@@ -1,0 +1,82 @@
+## enum commands
+rg title/name×event_id paths; bind_decisions; candidate title equality; web decisionRouting
+
+=== production bind / id sets ===
+ming_sim/session.py:2151:            candidates = ra.list_deliberation_candidate_ids(self.db, self.content)
+ming_sim/rescript_actions.py:1076:def list_deliberation_candidate_ids(db: Any, content: Any) -> List[str]:
+ming_sim/rescript_actions.py:1103:    candidate_ids: Sequence[str],
+ming_sim/rescript_actions.py:1117:    candidate_set = {str(x) for x in candidate_ids}
+ming_sim/rescript_actions.py:1157:    candidates = list_deliberation_candidate_ids(db, content)
+ming_sim/rescript_actions.py:1161:        candidate_ids=candidates,
+ming_sim/materials.py:491:    candidate_ids = dossier_participant_ids | set(linked_material) | handling_ids
+ming_sim/materials.py:494:    for affair_id in candidate_ids:
+ming_sim/materials.py:1365:    人物事件候选走既有 ``gather_candidate_events`` 硬门（时间窗 / 状态门 /
+ming_sim/materials.py:1372:        gather_candidate_events,
+ming_sim/materials.py:1376:    events = [_candidate_event_fact(ev) for ev in gather_candidate_events(state, db)]
+ming_sim/materials.py:1513:    候选资格与结构化事实由 gather_candidate_events 单一真源判（窗口/前提门/已发
+ming_sim/materials.py:1516:    from ming_sim.issues import gather_candidate_events
+ming_sim/materials.py:1518:    return [_candidate_event_fact(ev) for ev in gather_candidate_events(state, db)]
+ming_sim/issues.py:1183:    return _ctx().event_by_id.get(event_id)
+ming_sim/issues.py:2219:def gather_candidate_events(state: GameState, db: GameDB) -> List[Event]:
+ming_sim/issues.py:2274:    亲裁权在皇帝，故这些事件**不进** gather_candidate_events（那里是交模型代选
+ming_sim/issues.py:3446:    ev = _ctx().event_by_id.get(event_id)
+ming_sim/issues.py:3482:        ev = content.event_by_id.get(event_id)
+ming_sim/issues.py:3609:    ev = content.event_by_id.get(str(event_id or "").strip()) if content is not None else None
+ming_sim/issues.py:4194:    event = resolved.event_by_id.get(eid) if resolved is not None else None
+ming_sim/issues.py:4210:    candidates = {event.id for event in gather_candidate_events(state, db)}
+ming_sim/issues.py:4215:        event = content.event_by_id.get(event_id)
+ming_sim/issues.py:4467:        else {candidate.id for candidate in gather_candidate_events(state, db)}
+ming_sim/issues.py:4705:            ev = event_by_id.get(event_id)
+ming_sim/issues.py:4747:                current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
+ming_sim/issues.py:7851:        candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
+ming_sim/issues.py:7917:        if getattr(runtime_content.event_by_id.get(event_id), "category", "")
+ming_sim/issues.py:8514:        ev = runtime_content.event_by_id.get(event_id)
+ming_sim/knowledge.py:58:        ev = event_by_id.get(origin_ref)
+ming_sim/settlement_payload.py:156:def bind_decisions_to_candidate_events(
+ming_sim/settlement_payload.py:178:    candidate_ids: set[str] = set()
+ming_sim/settlement_payload.py:184:            candidate_ids.add(event_id)
+ming_sim/settlement_payload.py:190:        if explicit and explicit in candidate_ids:
+ming_sim/cli_backend.py:3983:    candidate_ids = {
+ming_sim/cli_backend.py:3994:        if target in candidate_ids and relation in DOSSIER_LINK_TYPES and note:
+
+=== title used only as presentation (sample) ===
+ming_sim/public_sayings.py:21:    title = str(item.get("title") or LAYER_TITLE)
+ming_sim/issues.py:2837:        title = str(item.get("new_title") or item.get("title") or "").strip()
+ming_sim/issues.py:3660:    event_title = content.event_by_id[event_id].title if event_id in content.event_by_id else event_id
+ming_sim/issues.py:3662:        return "", f"战略/外敌事件「{event_title}」缺事件结局标签"
+ming_sim/issues.py:3666:            f"战略/外敌事件「{event_title}」事件结局标签无法归一：{label}；"
+ming_sim/issues.py:3676:    event_title: str,
+ming_sim/issues.py:3704:            return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
+ming_sim/issues.py:3708:            return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
+ming_sim/issues.py:3713:            f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} "
+ming_sim/issues.py:3814:                        f"战略/外敌事件「{event_title or event_id}」事件结局「{outcome_label}」"
+ming_sim/issues.py:3829:                return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
+ming_sim/issues.py:3831:                return f"战略/外敌事件「{event_title or event_id}」地区战果须为对象：{region_id}"
+ming_sim/issues.py:3837:                    return f"战略/外敌事件「{event_title or event_id}」战果引用非法地区字段：{raw_field}"
+ming_sim/issues.py:3854:                            f"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by "
+ming_sim/issues.py:3868:                return f"战略/外敌事件「{event_title or event_id}」战果引用未入库军队：{army_id}"
+ming_sim/issues.py:3870:                return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
+ming_sim/issues.py:3880:                    return f"战略/外敌事件「{event_title or event_id}」随军炮转移目标或负数拟转量非法：{army_id}"
+ming_sim/issues.py:3897:                    return f"战略/外敌事件「{event_title or event_id}」战果引用非法军队字段：{raw_field}"
+ming_sim/issues.py:3953:                return f"战略/外敌事件「{event_title or event_id}」势力战果须为对象：{power_id}"
+ming_sim/issues.py:3969:                    f"战略/外敌事件「{event_title or event_id}」势力战果拒收："
+ming_sim/issues.py:4020:                                f"战略/外敌事件「{event_title or event_id}」人物战果拒收："
+ming_sim/issues.py:4072:                    f"战略/外敌事件「{event_title or event_id}」人物战果拒收："
+ming_sim/issues.py:4080:                            f"战略/外敌事件「{event_title or event_id}」人物战果反噬拒收："
+ming_sim/issues.py:4109:                        f"战略/外敌事件「{event_title or event_id}」新军战果拒收："
+ming_sim/issues.py:4113:                return f"战略/外敌事件「{event_title or event_id}」新军战果无真实世界状态变化"
+ming_sim/issues.py:4141:            f"战略/外敌事件「{event_title or event_id}」{kind}战果来源拒收："
+ming_sim/issues.py:4146:            f"战略/外敌事件「{event_title or event_id}」战果来源不在本段冻结可见引用内"
+ming_sim/issues.py:4270:            db, state, event_id, event.title, label, dict(region_items), dict(army_items),
+ming_sim/issues.py:6150:        title = str(item.get("new_title") or item.get("title") or "").strip()
+ming_sim/issues.py:7985:            explicit_title = str(item.get("new_title") or item.get("title") or "").strip()
+ming_sim/issues.py:8450:    def _reject_suppressed_strategic_results(event_id: str, event_title: str, reason: str = "") -> None:
+ming_sim/issues.py:8456:        reason = reason or f"战略/外敌事件「{event_title or event_id}」未触发，战果不落主账"
+ming_sim/context.py:354:        f"{event.title}。类型：{event.kind}。奏报：{event.summary} "
+ming_sim/db.py:3769:                str(event.title),
+ming_sim/db.py:7372:            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+ming_sim/db.py:7967:            reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
+ming_sim/db.py:8780:            reason = str(raw_changes.get("reason") or event.title).strip()[:80]
+ming_sim/db.py:10480:                "\n".join(str(item.get("body") or item.get("title") or "")
+ming_sim/db.py:10603:                str(item.get("title") or default_title),
+ming_sim/db.py:10867:                   e.title AS event_title

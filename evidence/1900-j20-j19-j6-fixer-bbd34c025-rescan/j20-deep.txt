@@ -1,0 +1,121 @@
+=== J20-E functions that resolve/bind id from title/name ===
+web_app.py:3722:def _lookup_holder(path: str, runtime: Any) -> Optional[_HolderEntry]:
+ming_sim/action_materialize.py:1117:def _match_office_row_by_name_office(
+ming_sim/office_rank.py:29:def concurrent_office_titles(office: object) -> list[str]:
+ming_sim/office_rank.py:55:def canonical_office_title(office: object) -> str:
+ming_sim/office_rank.py:157:def _is_substantive_office(title: object, office_type: object = "") -> bool:
+ming_sim/credit_events.py:758:def resolve_credit_events_from_extraction(
+ming_sim/materials.py:436:    def _collect_linked(issue_id: int, title: str, body: str) -> None:
+ming_sim/materials.py:1179:def _with_archived_gazette_titles(
+ming_sim/materials.py:1199:def _gazette_index_line(rel: str, year: int, period: int, title: str) -> str:
+ming_sim/relations.py:295:def resolve_relation_edge_events_from_extraction(
+ming_sim/situation_drift.py:94:def default_situation_shape(kind: str, title: str):
+ming_sim/db.py:814:def resolve_office_type_preserving_title(
+ming_sim/db.py:16582:    def _initiative_title_and_body(
+ming_sim/db.py:21610:    def record_character_participation(self, state: GameState, participants: Iterable[str], kind: str, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None, *, commit: bool = True) -> None:
+ming_sim/issues.py:2825:    def current_title_kind(row: Dict[str, str]) -> str:
+ming_sim/issues.py:2836:    def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
+ming_sim/issues.py:6149:    def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
+ming_sim/issues.py:8450:    def _reject_suppressed_strategic_results(event_id: str, event_title: str, reason: str = "") -> None:
+ming_sim/cli_backend.py:3638:def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = None) -> Dict[str, Any]:
+ming_sim/person_archive_contract.py:101:def normalize_title_kind(value: object) -> str:
+ming_sim/settlement_payload.py:156:def bind_decisions_to_candidate_events(
+
+=== J20-F title equality used as identity gate ===
+ming_sim/office_rank.py:191:            or (current_title == "听用候铨" and str(row["reason_code"] or "") == "被顶替")
+ming_sim/db.py:14674:            if row is not None and normalize_office(str(row["office_title"] or "")) == title:
+
+=== J20-G content.event_by_id / event maps ===
+ming_sim/llm_transport.py:49:# RunErrorEvent(content=str(e)) 后 typed 语义只剩散文；本 ContextVar 在 model 调用
+ming_sim/knowledge.py:57:        event_by_id = getattr(content, "event_by_id", None) or {}
+ming_sim/knowledge.py:58:        ev = event_by_id.get(origin_ref)
+ming_sim/month_chain.py:1667:    的病根。写入走 :meth:`db.record_event_petition_answer`：**只记账，不置结局**。
+ming_sim/month_chain.py:1684:            db.record_event_petition_answer(
+ming_sim/month_translate.py:44:    from ming_sim.issues import _fiscal_levy_event_by_id, petition_outcome_is_admissible
+ming_sim/month_translate.py:53:        ev = _fiscal_levy_event_by_id(event_id)
+ming_sim/rescript_actions.py:1412:                    db.record_event_decision_choice(
+ming_sim/content.py:312:            Event(
+ming_sim/content.py:686:    event_by_id: Dict[str, Event] = field(default_factory=dict)
+ming_sim/content.py:727:            event_by_id={ev.id: ev for ev in (*events, *seed_events)},
+ming_sim/db.py:16215:        pseudo = Event(
+ming_sim/db.py:19743:        的 ``choice_json`` 里（:meth:`record_event_petition_answer`），因此后续世界段
+ming_sim/db.py:19787:    def record_event_petition_answer(
+ming_sim/db.py:19808:        终态翻动——与 :meth:`record_event_decision_choice` 同款终态不可逆纪律。
+ming_sim/db.py:19844:    def record_event_decision_choice(
+ming_sim/issues.py:401:_ISSUE_PSEUDO_EVENT = Event(
+ming_sim/issues.py:1182:def _fiscal_levy_event_by_id(event_id: str) -> Optional[Event]:
+ming_sim/issues.py:1183:    return _ctx().event_by_id.get(event_id)
+ming_sim/issues.py:1210:    event = _fiscal_levy_event_by_id(eid) if eid else None
+ming_sim/issues.py:1222:        # 已呈原文与原批语在 record_event_petition_answer 的 choice_json 里。
+ming_sim/issues.py:1338:    if _fiscal_levy_event_by_id(_JIAO_LEVY_START_EVENT_ID) is None:
+ming_sim/issues.py:1340:    if _fiscal_levy_event_by_id(_JIAO_LEVY_STOP_EVENT_ID) is None:
+ming_sim/issues.py:1962:            if cid not in db.content.event_by_id:
+ming_sim/issues.py:2224:    （``fiscal_levy``）是皇帝亲裁的加派决策，由批红时的圣旨／``record_event_decision_choice``
+ming_sim/issues.py:3446:    ev = _ctx().event_by_id.get(event_id)
+ming_sim/issues.py:3455:        for event_id, ev in content.event_by_id.items()
+ming_sim/issues.py:3482:        ev = content.event_by_id.get(event_id)
+ming_sim/issues.py:3609:    ev = content.event_by_id.get(str(event_id or "").strip()) if content is not None else None
+ming_sim/issues.py:3660:    event_title = content.event_by_id[event_id].title if event_id in content.event_by_id else event_id
+ming_sim/issues.py:4194:    event = resolved.event_by_id.get(eid) if resolved is not None else None
+ming_sim/issues.py:4212:    pseudo_event = Event(id="season", title="月末整体推演", kind="月末", summary="",
+ming_sim/issues.py:4215:        event = content.event_by_id.get(event_id)
+ming_sim/issues.py:4456:    event_by_id = runtime_content.event_by_id
+ming_sim/issues.py:4705:            ev = event_by_id.get(event_id)
+ming_sim/issues.py:7917:        if getattr(runtime_content.event_by_id.get(event_id), "category", "")
+ming_sim/issues.py:8080:    pseudo_event = Event(
+ming_sim/issues.py:8514:        ev = runtime_content.event_by_id.get(event_id)
+
+=== J20-H tests asserting title-based bind behavior ===
+tests/test_decision_event_binding_389.py:3:Binding uses structured event_id only (ADR 0115 / #1900 J20): titles never invent
+tests/test_decision_event_binding_389.py:14:    ("candidate", "另一标题", [{"id": "candidate", "title": "裁断"}], "candidate"),
+tests/test_decision_event_binding_389.py:15:    ("off-snapshot", "裁断", [{"id": "candidate", "title": "裁断"}], None),
+tests/test_decision_event_binding_389.py:16:    ("off-snapshot", "不相干", [{"id": "candidate", "title": "裁断"}], None),
+tests/test_decision_event_binding_389.py:17:    (None, "裁断", [{"id": "candidate", "title": "裁断"}], ""),
+tests/test_decision_event_binding_389.py:26:        row["event_id"] = echo
+tests/test_decision_event_binding_389.py:28:    db.save_resolve_context(state.turn, "诏", {"candidate_events": candidates})
+tests/test_decision_event_binding_389.py:38:    assert prepared["batch"].items[0].row.get("event_id") == expected
+tests/test_pihong_dossier_1490.py:7:3. bind 保带能力字段的 dossier: event_id。
+tests/test_pihong_dossier_1490.py:284:    """种 QA 同形：dossier 批红待裁 + resolve_context（含 candidate_events，触发 bind）。"""
+tests/test_pihong_dossier_1490.py:287:    db.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '批红待裁', 'context': '密查陕西驿卒', 'rejection_reason': '科臣封驳', 'opposition': '东林', 'options': options}])
+tests/test_pihong_dossier_1490.py:288:    db.save_resolve_context(state.turn, '诏曰密查', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}], 'transit_semantics': []})
+tests/test_pihong_dossier_1490.py:331:def test_bind_preserves_dossier_event_id():
+tests/test_pihong_dossier_1490.py:332:    """#1490 接收端病灶：bind 不得把 dossier: 前缀 event_id 当 off-snapshot 解绑。"""
+tests/test_pihong_dossier_1490.py:333:    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+tests/test_pihong_dossier_1490.py:334:    decisions = [{'event_id': 'dossier:8', 'title': '批红待裁', 'options': [{'label': '强颁', 'dossier_id': 8, 'dossier_decision': 'force_promulgated'}]}]
+tests/test_pihong_dossier_1490.py:335:    payload = {'candidate_events': [{'id': 'ev1', 'title': '边警'}]}
+tests/test_pihong_dossier_1490.py:336:    out = bind_decisions_to_candidate_events(decisions, payload)
+tests/test_pihong_dossier_1490.py:337:    assert out[0]['event_id'] == 'dossier:8'
+tests/test_pihong_dossier_1490.py:342:    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+tests/test_pihong_dossier_1490.py:343:    decisions = [{'event_id': 'dossier:12', 'title': '承诺到期核验', 'options': [{'label': '准其销号', 'hint': '事已办结'}, {'label': '着再催办', 'hint': '期限宽延'}]}]
+tests/test_pihong_dossier_1490.py:344:    payload = {'candidate_events': [{'id': 'ev1', 'title': '边警'}]}
+tests/test_pihong_dossier_1490.py:345:    out = bind_decisions_to_candidate_events(decisions, payload)
+tests/test_pihong_dossier_1490.py:346:    assert 'event_id' not in out[0] or not str(out[0].get('event_id') or '').startswith('dossier:'), out[0]
+tests/test_pihong_dossier_1490.py:349:    """种 due-commitment 同形：event_id=dossier:N，options 仅 {label,hint}。"""
+tests/test_pihong_dossier_1490.py:351:    db.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '承诺到期核验', 'context': '清丈之诺届期', 'options': options}])
+tests/test_pihong_dossier_1490.py:352:    db.save_resolve_context(state.turn, '诏曰核验', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}]})
+tests/test_pihong_dossier_1490.py:428:    db.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '批红待裁', 'context': '密查陕西驿卒', 'options': options}])
+tests/test_pihong_dossier_1490.py:429:    db.save_resolve_context(state.turn, '诏曰密查', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}]})
+tests/test_pihong_dossier_1490.py:471:    """#1494-F1：普通 event_id + options 幻觉能力对不得入批红轨。
+tests/test_pihong_dossier_1490.py:477:    event_id = 'mao_wenlong'
+tests/test_pihong_dossier_1490.py:478:    db.save_pending_decisions(state.turn, [{'event_id': event_id, 'title': '边警', 'context': '辽东来报', 'options': [{'label': '准其销号', 'hint': '事已办结'}, {'label': '强颁', 'hint': '幻觉批红', 'dossier_id': 3, 'dossier_decision': 'hold'}]}])
+tests/test_pihong_dossier_1490.py:479:    db.save_resolve_context(state.turn, '诏曰边警', {'candidate_events': [{'id': event_id, 'title': '边警'}]})
+tests/test_pihong_dossier_1490.py:673:    db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
+tests/test_pihong_dossier_1490.py:776:    db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
+tests/test_pihong_dossier_1490.py:790:    desk = _657_plant_awaiting_web(web_game, decisions=[{'title': '科参驳还', 'context': '科臣封驳', 'options': [{'label': '打回', 'hint': '驳'}, {'label': '准', 'hint': ''}], 'event_id': ''}])
+tests/test_pihong_dossier_1490.py:819:    db.save_pending_decisions(int(state.turn), [{'title': '边警', 'context': 'c', 'options': [{'label': '打回', 'hint': '驳回'}, {'label': '准', 'hint': ''}], 'event_id': 'ev-class5'}])
+tests/test_pihong_dossier_1490.py:883:        probe.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
+tests/test_pihong_dossier_1490.py:1169:    db.save_pending_decisions(state.turn, [{'event_id': '', 'title': '内帑', 'context': 'c', 'options': [options[0]]}, {'event_id': '', 'title': '国库', 'context': 'c', 'options': [options[1]]}])
+tests/test_pihong_dossier_1490.py:1189:    db.save_pending_decisions(state.turn, [{'event_id': '', 'title': '先拨内帑', 'context': 'c', 'options': [options[0]]}, {'event_id': '', 'title': '后拨内帑失读', 'context': 'c', 'options': [options[0]]}])
+tests/test_pihong_dossier_1490.py:1309:                int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
+tests/test_pihong_dossier_1490.py:1443:        int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
+tests/test_pihong_dossier_1490.py:1469:    desk = _657_plant_awaiting_web(web_game, drafts=[{'title': '混批急务', 'context': 'c', 'options': [opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}], decisions=[{'title': '打回件', 'context': '科臣封驳', 'options': [{'label': '打回', 'hint': '驳'}, {'label': '准', 'hint': ''}], 'event_id': ''}, {'title': '发帑件', 'context': '协济军需', 'options': [{'label': '发内帑', 'hint': '济军', 'action_type': 'grant_allocation', 'grant_action': '协饷', 'account': '内库', 'amount': 3, 'purpose': '补饷', 'target_kind': 'army', 'target_id': 'guanning', 'cadence': '一次性'}, {'label': '暂缓', 'hint': '守财'}], 'event_id': ''}])
+tests/test_pihong_dossier_1490.py:1525:    _657_plant_awaiting_web(web_game, drafts=[{'title': '混批急务', 'context': 'c', 'options': [opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}], decisions=[{'title': '打回件', 'context': '科臣封驳', 'options': [{'label': '打回', 'hint': '驳'}, {'label': '准', 'hint': ''}], 'event_id': ''}])
+tests/test_pihong_dossier_1490.py:1554:    _657_plant_awaiting_web(web_game, decisions=[{'title': '科参驳还', 'context': '科臣封驳', 'options': [{'label': '打回', 'hint': '驳'}, {'label': '准', 'hint': ''}], 'event_id': ''}])
+tests/test_pihong_dossier_1490.py:1747:    db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
+tests/test_pihong_dossier_1490.py:1786:    db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
+tests/test_pihong_dossier_1490.py:2654:    db.insert_issue(state, kind='situation', title='南迁绑定', origin_kind='decree', origin_ref=f'dossier:{bind_did}')
+tests/test_pihong_dossier_1490.py:2877:        db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
+tests/test_pihong_dossier_1490.py:333:    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+tests/test_pihong_dossier_1490.py:336:    out = bind_decisions_to_candidate_events(decisions, payload)
+tests/test_pihong_dossier_1490.py:342:    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+tests/test_pihong_dossier_1490.py:345:    out = bind_decisions_to_candidate_events(decisions, payload)

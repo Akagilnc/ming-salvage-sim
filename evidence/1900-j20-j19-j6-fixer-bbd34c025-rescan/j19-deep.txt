@@ -1,0 +1,287 @@
+=== merge call sites with context ===
+ming_sim/db.py-17613-        else:
+ming_sim/db.py:17614:            incoming["participant_roster"] = self.merge_participant_roster_entries(
+ming_sim/db.py-17615-                old.get("participant_roster") or [],
+ming_sim/db.py-17616-                new_roster,
+ming_sim/db.py-17617-            )
+--
+ming_sim/db.py-20896-    @staticmethod
+ming_sim/db.py:20897:    def merge_participant_roster_entries(
+ming_sim/db.py-20898-        existing: Iterable[object] | None,
+ming_sim/db.py-20899-        incoming: Iterable[object] | None,
+ming_sim/db.py-20900-        *,
+--
+ming_sim/declaration_dispatch.py-1075-    existing = payload.get("participant_roster")
+ming_sim/declaration_dispatch.py:1076:    payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+ming_sim/declaration_dispatch.py-1077-        existing if isinstance(existing, list) else [],
+ming_sim/declaration_dispatch.py-1078-        roster,
+ming_sim/declaration_dispatch.py-1079-        strict_incoming=True,
+--
+ming_sim/declaration_dispatch.py-1119-        # 拒字符串兼容与缺档猜「知情」；完整条目 equality 合并不变。
+ming_sim/declaration_dispatch.py:1120:        payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+ming_sim/declaration_dispatch.py-1121-            existing if isinstance(existing, list) else [],
+ming_sim/declaration_dispatch.py-1122-            roster,
+ming_sim/declaration_dispatch.py-1123-            strict_incoming=True,
+
+=== _normalize_participant_roster WITHOUT strict_structured=True ===
+ming_sim/cli_backend.py-2071-        raise ValueError("参与人须为对象列表")
+ming_sim/cli_backend.py-2072-
+ming_sim/cli_backend.py:2073:    canonical_roster = db._normalize_participant_roster(
+ming_sim/cli_backend.py-2075-    )
+--
+ming_sim/rescript_draft.py-705-    if not isinstance(value, list):
+ming_sim/rescript_draft.py-706-        raise ValueError("participant_roster 须为 list")
+ming_sim/rescript_draft.py-708-
+ming_sim/rescript_draft.py-709-
+--
+ming_sim/declaration_dispatch.py-1053-    # → canon/非人归一。三件事各走各的既有接缝，不靠嗅错误文案分类。
+ming_sim/declaration_dispatch.py-1054-    try:
+ming_sim/declaration_dispatch.py-1056-    except ValueError as exc:
+ming_sim/declaration_dispatch.py-1057-        raise DecreeMaterializationValidationError(
+--
+ming_sim/db.py-13766-                or payload_map.get("participants")
+ming_sim/db.py-13767-            )
+ming_sim/db.py:13768:        base_roster = self._normalize_participant_roster(
+ming_sim/db.py-13770-        )
+--
+ming_sim/db.py-13782-                "role": "", "delegator_id": None,
+ming_sim/db.py-13783-            })
+ming_sim/db.py:13784:            base_roster = self._normalize_participant_roster(
+ming_sim/db.py-13786-            )
+--
+ming_sim/db.py-13856-        # ② 全量验证：校验名单引用（写库前）；失败上抛由三路成案点各自终态处理
+ming_sim/db.py-13857-        for entry in plan:
+ming_sim/db.py:13858:            roster = self._normalize_participant_roster(
+ming_sim/db.py-13860-            )
+--
+ming_sim/db.py-14158-                or canonical_payload.get("participants")
+ming_sim/db.py-14159-            )
+ming_sim/db.py-14161-        has_canonical_lead = any(item.get("tier") == "主办" for item in roster)
+ming_sim/db.py-14162-        if (
+--
+ming_sim/db.py-14214-            existing_leads.add(lead)
+ming_sim/db.py-14215-        # 自动补入者与调用方名单共走 0053 的引用、委派链单一校验口。
+ming_sim/db.py-14217-        self._validate_participant_roster_references(roster)
+ming_sim/db.py-14218-        self._validate_dossier_delegations(roster)
+--
+ming_sim/db.py-14459-        except (TypeError, ValueError):
+ming_sim/db.py-14460-            existing_raw = []
+ming_sim/db.py:14461:        existing = self._normalize_participant_roster(
+ming_sim/db.py-14462-            existing_raw if isinstance(existing_raw, list) else []
+ming_sim/db.py-14463-        )
+ming_sim/db.py-14465-        self._validate_participant_roster_references(additions)
+ming_sim/db.py-14466-        by_character = {str(item["character_id"]): item for item in existing}
+--
+ming_sim/db.py-17606-        incoming = dict(new_payload or {})
+ming_sim/db.py-17607-        # 先规范化新名单一次：规范化为空则 pop，不覆盖旧名册；否则与旧名册共同 merge。
+ming_sim/db.py:17608:        new_roster = self._normalize_participant_roster(
+ming_sim/db.py-17609-            list(incoming.get("participant_roster") or []),
+ming_sim/db.py-17610-        )
+--
+ming_sim/db.py-20147-        severity = max(0, min(100, int(severity)))
+ming_sim/db.py-20148-        phase = self._derive_issue_phase(bar_value)
+ming_sim/db.py:20149:        participant_roster = self._normalize_participant_roster(participants)
+ming_sim/db.py-20150-        participant_names = [item["character_id"] for item in participant_roster]
+ming_sim/db.py-20151-        normalized_targets = list(dict.fromkeys(
+--
+ming_sim/db.py-20858-
+ming_sim/db.py-20859-    @staticmethod
+ming_sim/db.py:20860:    def _normalize_participant_roster(
+ming_sim/db.py-20861-        participants: Iterable[object] | str | None, *, strict_structured: bool = False,
+ming_sim/db.py-20862-    ) -> List[Dict[str, object]]:
+--
+ming_sim/db.py-20907-        ``append_decree_dossier_participants``。
+ming_sim/db.py-20908-        """
+ming_sim/db.py:20909:        base = GameDB._normalize_participant_roster(list(existing or []))
+ming_sim/db.py:20910:        add = GameDB._normalize_participant_roster(
+ming_sim/db.py-20911-            list(incoming or []), strict_structured=strict_incoming,
+ming_sim/db.py-20912-        )
+
+=== action_materialize participant defaults ===
+        if not str(staged.get("title") or "").strip():
+            label = purpose or action
+            if label:
+                staged["title"] = str(label).strip()
+    # #1783+#1778：承办人/名单来自分类器或后置抽取，挂本案；不把当前大臣填成主办。
+    lead = str(assignee or "").strip()
+    if lead:
+        staged["assignee"] = lead
+    if isinstance(participant_roster, list) and participant_roster:
+        staged["participant_roster"] = list(participant_roster)
+    elif lead:
+        staged["participant_roster"] = [{
+            "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
+        }]
+    if existing_id:
+        return db.update_directive_candidate(existing_id, staged)
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        source_chat_turn_id=int(source_chat_turn_id or 0),
+    )
+
+
+
+def _parse_json_field(raw: object) -> Any:
+    """Classifier FieldSpec 只能承字符串；dict/list JSON 串在此还原。"""
+    if isinstance(raw, (dict, list)):
+        return raw
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        origin_cid = 0
+    # #1890：来源轮不写进载荷——它只落 pending_actions.source_chat_turn_id 一列
+    # （交办的统一身份）。载荷里留副本等于同一事实两处可写，改草与迟到转译
+    # 会让两者漂移；成案侧已改读该列。
+    category = str(transaction_category or "").strip()
+    if category:
+        staged["transaction_category"] = category
+    # #1778：承办人只来后置抽取；禁止代码填当前召对大臣。
+    lead = str(assignee or "").strip()
+    if lead:
+        staged["assignee"] = lead
+    if isinstance(participant_roster, list):
+        staged["participant_roster"] = list(participant_roster)
+    # 承诺形状保留：until_stop 正常携带；缺 marker 的毒字段也不得在 stage 洗掉，
+    # 交既有 initiative 校验在判后接缝拒收（#520 commitment-poison-shape-preservation）。
+    kind_raw = str(commitment_kind or "").strip()
+    parsed_stop = _parse_json_field(stop_condition)
+    has_stop = parsed_stop not in (None, "", {})
+    absolute_end = _assignment_absolute_end_turn(
+        int(turn), end_turn=end_turn, deadline_months=deadline_months,
+    )
+    parsed_ongoing = _parse_json_field(ongoing_effects)
+    has_ongoing = isinstance(parsed_ongoing, dict) and bool(parsed_ongoing)
+    if kind_raw == "until_stop":
+        staged["commitment_kind"] = "until_stop"
+    # #620 AC2 / #1890 / ADR 0142：分段里程碑是机械事实（到期判账），只承接
+
+=== db.py merge default + 17608 area ===
+        """改草保留未修改的机械字段；显式新值覆盖后统一校验。
+
+        #658：普通 triad 与御笔 target 互斥生命周期——
+        普通改草不得继承旧 target；纯强推改草不得继承旧 triad。
+        """
+        old = self._decode_directive_dossier_payload(existing_json)
+        incoming = dict(new_payload or {})
+        # 先规范化新名单一次：规范化为空则 pop，不覆盖旧名册；否则与旧名册共同 merge。
+        new_roster = self._normalize_participant_roster(
+            list(incoming.get("participant_roster") or []),
+        )
+        if not new_roster:
+            incoming.pop("participant_roster", None)
+        else:
+            incoming["participant_roster"] = self.merge_participant_roster_entries(
+                old.get("participant_roster") or [],
+                new_roster,
+            )
+
+        # 先对 incoming 互斥分类（并存即拒），再决定从 old 继承哪些字段
+        incoming_kind = (
+            classify_directive_structured_kind(incoming)
+            if incoming else "empty"
+        )
+        merged = {**old, **incoming}
+        if incoming_kind == "ordinary":
+            merged.pop("target_dossier_id", None)
+            merged.pop("目标案卷ID", None)
+        elif incoming_kind == "push":
+            # 只清互斥 ordinary triad，保留 text/actor 等非互斥字段
+            for key in ("dossier_action_type", "target_kind", "target_id"):
+        if cancellable not in ("decree", "never", "by_progress"):
+            raise ValueError(f"cancellable 非法：{cancellable}")
+        bar_value = max(0, min(100, int(bar_value)))
+        # severity 与 bar_value 同为 0-100 分值，同样 clamp：原仅 int(severity) 直绑 SQLite，
+        # severity=10**100 这类（int() 过得了但绑定超 64-bit）会抛 OverflowError——new_issues 段
+        # 移除 broad except 后会逃逸成 SettlementAbort（cmr ni r2 codex）。clamp 既治溢出又补齐与
+        # bar_value 一致的值域不变式（出域静默归 0-100，同 bar_value，非拒整项）。
+        severity = max(0, min(100, int(severity)))
+        phase = self._derive_issue_phase(bar_value)
+        participant_roster = self._normalize_participant_roster(participants)
+        participant_names = [item["character_id"] for item in participant_roster]
+        normalized_targets = list(dict.fromkeys(
+            str(character_id).strip() for character_id in (target_roster or [])
+            if str(character_id).strip()
+        ))
+        from ming_sim.staged_commitment import stages_to_json
+        # 字符串面经 stages_to_json 正确解析或响亮拒绝，禁止 char-iterate 静默存 []
+        stages_blob = stages_to_json([] if stages_json is None else stages_json)
+        cur = self.conn.execute(
+            """
+            INSERT INTO issues (
+        self.conn.commit()
+
+    # ----- secret_orders（密令系统）-----
+
+    @staticmethod
+    def _normalize_participant_roster(
+        participants: Iterable[object] | str | None, *, strict_structured: bool = False,
+    ) -> List[Dict[str, object]]:
+        """Normalize ADR 0053 entries while retaining explicit legacy string input."""
+        values = [participants] if isinstance(participants, str) else list(participants or [])
+        roster: List[Dict[str, object]] = []
+        for value in values:
+            if isinstance(value, Mapping):
+                if strict_structured:
+                    character_id = str(value.get("character_id") or "").strip()
+                    tier_value = value.get("tier")
+                else:
+                    character_id = str(value.get("character_id") or value.get("name") or "").strip()
+                    tier_value = value.get("tier") if "tier" in value else value.get("档")
+                if strict_structured and not character_id:
+                    raise ValueError("参与人物 character_id 不能为空")
+                if strict_structured and tier_value is None:
+                    raise ValueError("参与人物 tier 必须显式提供")
+                tier = str(tier_value or ("" if strict_structured else "知情")).strip()
+                raw_role = str(value.get("role") or value.get("职分") or "")
+                role = raw_role if raw_role.strip() else ""
+                delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
+            else:
+                if strict_structured:
+                    raise ValueError("结构化参与人名单每项必须为对象")
+                character_id, tier, role, delegator = str(value).strip(), "知情", "", ""
+            if not character_id:
+                continue
+            if tier not in PARTICIPANT_TIERS:
+                raise ValueError(f"参与人机械档非法：{tier}")
+            item = {"character_id": character_id, "tier": tier, "role": role,
+                    "delegator_id": delegator or None}
+            if item not in roster:
+                roster.append(item)
+        return roster
+
+    @staticmethod
+    def merge_participant_roster_entries(
+        existing: Iterable[object] | None,
+        incoming: Iterable[object] | None,
+        *,
+        strict_incoming: bool = False,
+    ) -> List[Dict[str, object]]:
+        """载荷侧名单合并：先 normalize，再按完整条目 equality 追加。
+
+        与 ``_merge_directive_payload`` 名册分支同一条规则；不按 character_id
+        静默丢后项。持久化案卷追加冲突（同人异档）仍走
+        ``append_decree_dossier_participants``。
+        """
+        base = GameDB._normalize_participant_roster(list(existing or []))
+        add = GameDB._normalize_participant_roster(
+            list(incoming or []), strict_structured=strict_incoming,
+        )
+        return base + [item for item in add if item not in base]
+
+    def _validate_participant_roster_references(
+        self, roster: Iterable[Mapping[str, object]],
+    ) -> None:
+        """Enforce ADR 0053 character primary-key references at the DB write seam."""
+        entries = list(roster)
+        referenced = {
+            str(value).strip()
+            for item in entries
+            for value in (item.get("character_id"), item.get("delegator_id"))
+            if str(value or "").strip()
+        }
+        if not referenced:
+            return
+        placeholders = ",".join("?" for _ in referenced)
+        known = {
+            str(row["name"])

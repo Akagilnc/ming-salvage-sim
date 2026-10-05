@@ -1,0 +1,263 @@
+=== J19-A merge_participant_roster_entries all callers ===
+ming_sim/declaration_dispatch.py:1076:    payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+ming_sim/declaration_dispatch.py:1120:        payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+ming_sim/db.py:17614:            incoming["participant_roster"] = self.merge_participant_roster_entries(
+ming_sim/db.py:20897:    def merge_participant_roster_entries(
+
+=== J19-B _normalize_participant_roster / strict flags ===
+ming_sim/cli_backend.py:1788:        out["participant_roster"] = normalize_draft_person_roster(
+ming_sim/cli_backend.py:1818:                item["participant_roster"] = normalize_draft_person_roster(
+ming_sim/cli_backend.py:2063:def normalize_draft_person_roster(
+ming_sim/cli_backend.py:2073:    canonical_roster = db._normalize_participant_roster(
+ming_sim/cli_backend.py:2074:        roster, strict_structured=True,
+ming_sim/cli_backend.py:2100:        out["participant_roster"] = normalize_draft_person_roster(
+ming_sim/cli_backend.py:2112:                item["participant_roster"] = normalize_draft_person_roster(
+ming_sim/rescript_draft.py:193:# 机械三档与条目形状唯一真源＝GameDB._normalize_participant_roster（ADR 0053）；
+ming_sim/rescript_draft.py:700:    """票拟参与名单归一：形状真源＝GameDB._normalize_participant_roster（ADR 0053）。
+ming_sim/rescript_draft.py:707:    return GameDB._normalize_participant_roster(value, strict_structured=True)
+ming_sim/decree_vocabulary.py:75:# GameDB._normalize_participant_roster；此处只登记键名与 capability 派生方式。
+ming_sim/declaration_dispatch.py:1050:    from ming_sim.cli_backend import normalize_draft_person_roster
+ming_sim/declaration_dispatch.py:1055:        shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
+ming_sim/declaration_dispatch.py:1068:    roster = normalize_draft_person_roster(
+ming_sim/declaration_dispatch.py:1079:        strict_incoming=True,
+ming_sim/declaration_dispatch.py:1123:            strict_incoming=True,
+ming_sim/declaration_dispatch.py:1388:                    from ming_sim.cli_backend import normalize_draft_person_roster
+ming_sim/declaration_dispatch.py:1389:                    roster = normalize_draft_person_roster(
+ming_sim/db.py:13768:        base_roster = self._normalize_participant_roster(
+ming_sim/db.py:13769:            base_roster_source, strict_structured=True,
+ming_sim/db.py:13784:            base_roster = self._normalize_participant_roster(
+ming_sim/db.py:13785:                base_roster, strict_structured=True,
+ming_sim/db.py:13858:            roster = self._normalize_participant_roster(
+ming_sim/db.py:13859:                entry["participants"], strict_structured=True,
+ming_sim/db.py:14160:        roster = self._normalize_participant_roster(roster_source, strict_structured=True)
+ming_sim/db.py:14216:        roster = self._normalize_participant_roster(roster, strict_structured=True)
+ming_sim/db.py:14461:        existing = self._normalize_participant_roster(
+ming_sim/db.py:14464:        additions = self._normalize_participant_roster(participants, strict_structured=True)
+ming_sim/db.py:17608:        new_roster = self._normalize_participant_roster(
+ming_sim/db.py:20149:        participant_roster = self._normalize_participant_roster(participants)
+ming_sim/db.py:20860:    def _normalize_participant_roster(
+ming_sim/db.py:20861:        participants: Iterable[object] | str | None, *, strict_structured: bool = False,
+ming_sim/db.py:20868:                if strict_structured:
+ming_sim/db.py:20874:                if strict_structured and not character_id:
+ming_sim/db.py:20876:                if strict_structured and tier_value is None:
+ming_sim/db.py:20878:                tier = str(tier_value or ("" if strict_structured else "知情")).strip()
+ming_sim/db.py:20883:                if strict_structured:
+ming_sim/db.py:20901:        strict_incoming: bool = False,
+ming_sim/db.py:20909:        base = GameDB._normalize_participant_roster(list(existing or []))
+ming_sim/db.py:20910:        add = GameDB._normalize_participant_roster(
+ming_sim/db.py:20911:            list(incoming or []), strict_structured=strict_incoming,
+
+=== J19-C 知情 default / string roster / missing tier ===
+ming_sim/action_materialize.py:796:    participant_roster: object = None,
+ming_sim/action_materialize.py:938:    if isinstance(participant_roster, list) and participant_roster:
+ming_sim/action_materialize.py:939:        staged["participant_roster"] = list(participant_roster)
+ming_sim/action_materialize.py:941:        staged["participant_roster"] = [{
+ming_sim/action_materialize.py:1489:    participant_roster: object = None,
+ming_sim/action_materialize.py:1508:    #1778：承办人/名单来自大臣复述后置抽取（assignee / participant_roster），
+ming_sim/action_materialize.py:1586:    if isinstance(participant_roster, list):
+ming_sim/action_materialize.py:1587:        staged["participant_roster"] = list(participant_roster)
+ming_sim/cli_backend.py:56:from ming_sim.participant_roster import (
+ming_sim/cli_backend.py:1416:    failed_fields = ("assignee", "participant_roster")
+ming_sim/cli_backend.py:1456:    if "participant_roster" in result:
+ming_sim/cli_backend.py:1457:        _absorb(result.get("participant_roster"))
+ming_sim/cli_backend.py:1459:        if isinstance(draft, dict) and "participant_roster" in draft:
+ming_sim/cli_backend.py:1460:            _absorb(draft.get("participant_roster"))
+ming_sim/cli_backend.py:1626:    if "participant_roster" in result:
+ming_sim/cli_backend.py:1628:            result.get("participant_roster"), db=db, content=content,
+ming_sim/cli_backend.py:1631:        if isinstance(draft, dict) and "participant_roster" in draft:
+ming_sim/cli_backend.py:1633:                draft.get("participant_roster"), db=db, content=content,
+ming_sim/cli_backend.py:1776:    base_roster = baseline.get("participant_roster")
+ming_sim/cli_backend.py:1780:            correction.get("participant_roster"),
+ming_sim/cli_backend.py:1788:        out["participant_roster"] = normalize_draft_person_roster(
+ming_sim/cli_backend.py:1801:            base_item_roster = base_draft.get("participant_roster")
+ming_sim/cli_backend.py:1810:                    corr_item.get("participant_roster"),
+ming_sim/cli_backend.py:1818:                item["participant_roster"] = normalize_draft_person_roster(
+ming_sim/cli_backend.py:2073:    canonical_roster = db._normalize_participant_roster(
+ming_sim/cli_backend.py:2090:    db._validate_participant_roster_references(person_roster)
+ming_sim/cli_backend.py:2097:    """对单条/批抽结果的 participant_roster 做 normalize+validate（就地拷贝）。"""
+ming_sim/cli_backend.py:2099:    if "participant_roster" in out and out.get("participant_roster") is not None:
+ming_sim/cli_backend.py:2100:        out["participant_roster"] = normalize_draft_person_roster(
+ming_sim/cli_backend.py:2101:            out.get("participant_roster"), db=db, content=content,
+ming_sim/cli_backend.py:2111:            if "participant_roster" in item and item.get("participant_roster") is not None:
+ming_sim/cli_backend.py:2112:                item["participant_roster"] = normalize_draft_person_roster(
+ming_sim/cli_backend.py:2113:                    item.get("participant_roster"), db=db, content=content,
+ming_sim/cli_backend.py:2266:    """组合纠错成功：仅采纳 typed 失败字段，逐 draft 保留首抽 participant_roster。
+ming_sim/cli_backend.py:2274:    if "participant_roster" in baseline:
+ming_sim/cli_backend.py:2275:        out["participant_roster"] = baseline["participant_roster"]
+ming_sim/cli_backend.py:2295:            if "participant_roster" in base_draft:
+ming_sim/cli_backend.py:2296:                item["participant_roster"] = base_draft["participant_roster"]
+ming_sim/cli_backend.py:2347:        roster = item.get("participant_roster")
+ming_sim/cli_backend.py:2420:        out["participant_roster"] = obj.get("参与人") if obj.get("参与人") is not None else []
+ming_sim/cli_backend.py:2421:    elif "participant_roster" in obj:
+ming_sim/cli_backend.py:2422:        out["participant_roster"] = obj.get("participant_roster")
+ming_sim/cli_backend.py:2442:    逐 draft 保留首抽 participant_roster 与未失败结构，再走既有名册校验
+ming_sim/cli_backend.py:2573:            ("participant_roster" in result and result.get("participant_roster") is not None)
+ming_sim/cli_backend.py:2575:                isinstance(d, dict) and "participant_roster" in d
+ming_sim/cli_backend.py:2785:            '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
+ming_sim/cli_backend.py:2912:            # 组合校验挪到整批结果建成后：失败时 partial 仍带首抽 participant_roster。
+ming_sim/cli_backend.py:2949:                "participant_roster": value["参与人"] if "参与人" in value else [],
+ming_sim/cli_backend.py:3003:        '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
+ming_sim/cli_backend.py:3165:    # 组合校验延后到结果建成：失败 partial 仍带首抽 participant_roster。
+ming_sim/cli_backend.py:3217:            "participant_roster": obj["参与人"] if "参与人" in obj else [],
+ming_sim/cli_backend.py:3259:        "participant_roster": obj["参与人"] if "参与人" in obj else [],
+ming_sim/cli_backend.py:3412:        "deadline_months", "participant_roster", "locality_scope", "entries",
+ming_sim/cli_backend.py:3760:# 卫/司 类机关整词：单源 INSTITUTION_PARTICIPANT_TOKENS（participant_roster）。
+ming_sim/cli_backend.py:3771:    非人参与人判定见 participant_roster.is_non_person_participant_name（#1279/#1391）。
+ming_sim/cli_backend.py:3776:# 兼容旧测/调用：闭集与判定真源在 participant_roster（上表 import 别名）。
+ming_sim/declaration_dispatch.py:1029:    ``participant_roster`` 单一真源。合法缺省＝没给 ``escort``；已声明却不是
+ming_sim/declaration_dispatch.py:1055:        shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
+ming_sim/declaration_dispatch.py:1071:    # 单一真源：参与人名单只存 participant_roster；escort 记录是它的押解投影。
+ming_sim/declaration_dispatch.py:1075:    existing = payload.get("participant_roster")
+ming_sim/declaration_dispatch.py:1076:    payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+ming_sim/declaration_dispatch.py:1092:    """透传既有 staging 字段：assignee / participant_roster / due_turn。
+ming_sim/declaration_dispatch.py:1108:    roster = item.get("participant_roster")
+ming_sim/declaration_dispatch.py:1110:        roster = grant.get("participant_roster")
+ming_sim/declaration_dispatch.py:1112:        # 押解名单已先写入 participant_roster。此处再给一份名单时合并，
+ming_sim/declaration_dispatch.py:1117:        existing = payload.get("participant_roster")
+ming_sim/declaration_dispatch.py:1120:        payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+ming_sim/declaration_dispatch.py:1125:    elif lead and not isinstance(payload.get("participant_roster"), list):
+ming_sim/declaration_dispatch.py:1126:        payload["participant_roster"] = [{
+ming_sim/declaration_dispatch.py:1386:                roster = assignment.get("participant_roster")
+ming_sim/declaration_dispatch.py:1397:                    participant_roster=roster,
+ming_sim/db.py:44:from ming_sim.participant_roster import (
+ming_sim/db.py:46:    participant_roster_names,
+ming_sim/db.py:1595:                participant_roster TEXT NOT NULL DEFAULT '[]',
+ming_sim/db.py:1970:                participant_roster TEXT NOT NULL DEFAULT '[]',
+ming_sim/db.py:2122:                participant_roster TEXT NOT NULL DEFAULT '[]',
+ming_sim/db.py:2420:        self.ensure_column("issues", "participant_roster", "TEXT NOT NULL DEFAULT '[]'")
+ming_sim/db.py:2437:            "(turn,year,period,kind,title,body,source_id,participant_roster) "
+ming_sim/db.py:2439:            "'issue:' || id, participant_roster FROM issues WHERE participant_roster <> '[]'"
+ming_sim/db.py:2495:            "decree_dossiers", "participant_roster", "TEXT NOT NULL DEFAULT '[]'"
+ming_sim/db.py:10650:            "SELECT title, body, source_id, participant_roster, excluded_names, "
+ming_sim/db.py:10660:            participants = participant_roster_names(row["participant_roster"])
+ming_sim/db.py:11897:            roster = json.loads(out.get("participant_roster") or "[]")
+ming_sim/db.py:11899:            raise ValueError(f"案卷#{out['id']} participant_roster 无效") from exc
+ming_sim/db.py:11901:            raise ValueError(f"案卷#{out['id']} participant_roster 非列表")
+ming_sim/db.py:11902:        out["participant_roster"] = roster
+ming_sim/db.py:12284:        参与人名单 ``participant_roster`` 的押解投影（ADR 0053 单一真源），此处只
+ming_sim/db.py:12300:    # 普通押解仍走 grant.escort→participant_roster；关联槽仍走 decree_dossier_links。
+ming_sim/db.py:12886:        from ming_sim.participant_roster import resolve_dossier_owner_name
+ming_sim/db.py:12940:        from ming_sim.participant_roster import resolve_dossier_owner_name
+ming_sim/db.py:12955:                   executor_kind, participant_roster, status
+ming_sim/db.py:13130:        from ming_sim.participant_roster import resolve_dossier_owner_name
+ming_sim/db.py:13765:                payload_map.get("participant_roster")
+ming_sim/db.py:13768:        base_roster = self._normalize_participant_roster(
+ming_sim/db.py:13784:            base_roster = self._normalize_participant_roster(
+ming_sim/db.py:13831:                    participant_roster=row_participants,
+ming_sim/db.py:13858:            roster = self._normalize_participant_roster(
+ming_sim/db.py:13861:            self._validate_participant_roster_references(roster)
+ming_sim/db.py:14147:            # 0 = 非召对来源，participant_roster 走载荷既有口径。
+ming_sim/db.py:14157:                canonical_payload.get("participant_roster")
+ming_sim/db.py:14160:        roster = self._normalize_participant_roster(roster_source, strict_structured=True)
+ming_sim/db.py:14173:        self._validate_participant_roster_references(roster)
+ming_sim/db.py:14192:                payload=canonical_payload, participant_roster=roster,
+ming_sim/db.py:14216:        roster = self._normalize_participant_roster(roster, strict_structured=True)
+ming_sim/db.py:14217:        self._validate_participant_roster_references(roster)
+ming_sim/db.py:14253:                 extension_json,participant_roster,office_archive_keys,
+ming_sim/db.py:14452:            "SELECT participant_roster,action_type,decree_text FROM decree_dossiers WHERE id=?",
+ming_sim/db.py:14458:            existing_raw = json.loads(row["participant_roster"] or "[]")
+ming_sim/db.py:14461:        existing = self._normalize_participant_roster(
+ming_sim/db.py:14464:        additions = self._normalize_participant_roster(participants, strict_structured=True)
+ming_sim/db.py:14465:        self._validate_participant_roster_references(additions)
+ming_sim/db.py:14479:        self._validate_participant_roster_references(merged)
+ming_sim/db.py:14514:                "UPDATE decree_dossiers SET participant_roster=?,office_archive_keys=?,"
+ming_sim/db.py:15927:            roster = dossier.get("participant_roster") or []
+ming_sim/db.py:15997:        return project_execution_liability_parties(dossier.get("participant_roster"))
+ming_sim/db.py:16108:                dossier.get("participant_roster"),
+ming_sim/db.py:16559:        from ming_sim.participant_roster import resolve_dossier_owner_name
+ming_sim/db.py:16708:        from ming_sim.participant_roster import resolve_dossier_owner_name
+ming_sim/db.py:16737:            "participant_roster": [{"character_id": owner, "tier": "主办"}],
+ming_sim/db.py:17608:        new_roster = self._normalize_participant_roster(
+ming_sim/db.py:17609:            list(incoming.get("participant_roster") or []),
+ming_sim/db.py:17612:            incoming.pop("participant_roster", None)
+ming_sim/db.py:17614:            incoming["participant_roster"] = self.merge_participant_roster_entries(
+ming_sim/db.py:17615:                old.get("participant_roster") or [],
+ming_sim/db.py:19114:        roster = dossier.get("participant_roster") or []
+ming_sim/db.py:20149:        participant_roster = self._normalize_participant_roster(participants)
+ming_sim/db.py:20150:        participant_names = [item["character_id"] for item in participant_roster]
+ming_sim/db.py:20164:                tags, participants, participant_roster, target_roster, ongoing_effects, cancellable, cancel_cost,
+ming_sim/db.py:20177:                safe_json_dumps(participant_roster, ensure_ascii=False),
+ming_sim/db.py:20202:            participant_roster,
+ming_sim/db.py:20860:    def _normalize_participant_roster(
+ming_sim/db.py:20878:                tier = str(tier_value or ("" if strict_structured else "知情")).strip()
+ming_sim/db.py:20885:                character_id, tier, role, delegator = str(value).strip(), "知情", "", ""
+ming_sim/db.py:20897:    def merge_participant_roster_entries(
+ming_sim/db.py:20909:        base = GameDB._normalize_participant_roster(list(existing or []))
+ming_sim/db.py:20910:        add = GameDB._normalize_participant_roster(
+ming_sim/db.py:20915:    def _validate_participant_roster_references(
+ming_sim/db.py:20936:        from ming_sim.participant_roster import is_non_person_participant_name
+ming_sim/db.py:21001:            "SELECT turn, year, period, kind, title, body, source_id, participant_roster, excluded_names "
+ming_sim/db.py:21004:            names = participant_roster_names(row["participant_roster"])
+ming_sim/db.py:21014:        # Durable records are discovered by their participant_roster column,
+ming_sim/db.py:21017:        for table, columns in self._participant_roster_tables():
+ming_sim/db.py:21037:                f"{source_sql} AS source_id, participant_roster "
+ming_sim/db.py:21038:                f"FROM {quoted} WHERE participant_roster <> '[]'{secrecy_sql} ORDER BY turn, {id_expr}"
+ming_sim/db.py:21044:                names = participant_roster_names(row["participant_roster"])
+ming_sim/db.py:21057:    def _participant_roster_tables(self) -> List[tuple[str, set[str]]]:
+ming_sim/db.py:21074:            if "participant_roster" in columns:
+ming_sim/db.py:21190:        roster = record.get("participant_roster")
+ming_sim/db.py:21515:        self, state: GameState, participant_roster: Iterable[Mapping[str, object]],
+ming_sim/db.py:21534:            dict(item) for item in participant_roster
+ming_sim/db.py:21541:            "(turn,year,period,kind,title,body,source_id,participant_roster,excluded_names,excluded_targets) "
+
+=== J19-D commission/grant roster attach paths ===
+33:「各自所属事务」（existing-only `affair_declaration`）已接入 commissions /
+127:    commissions: SectionResult
+147:            commissions=self.commissions.merge(other.commissions),
+166:    "commissions", "promises", "endorsements", "textual_facts", "public_sayings",
+177:        commissions=empty, promises=empty, endorsements=empty,
+252:    commissions = _dispatch_commissions(
+253:        db, state, declaration.get("commissions"),
+273:        commissions=commissions,
+845:def _commission_appointment_fields(
+899:def _assert_commission_grant_target_exists(
+930:def _commission_grant_payload(
+985:    _assert_commission_grant_target_exists(db, target_kind, target_id)
+1016:    _attach_commission_escort(db, grant, payload)
+1020:def _attach_commission_escort(
+1029:    ``participant_roster`` 单一真源。合法缺省＝没给 ``escort``；已声明却不是
+1055:        shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
+1071:    # 单一真源：参与人名单只存 participant_roster；escort 记录是它的押解投影。
+1075:    existing = payload.get("participant_roster")
+1076:    payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+1089:def _attach_commission_staging_fields(
+1092:    """透传既有 staging 字段：assignee / participant_roster / due_turn。
+1094:    字段可在交办顶层，或挂在 grant 对象内（与 stage_grant_allocation_candidate
+1108:    roster = item.get("participant_roster")
+1110:        roster = grant.get("participant_roster")
+1112:        # 押解名单已先写入 participant_roster。此处再给一份名单时合并，
+1117:        existing = payload.get("participant_roster")
+1120:        payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+1125:    elif lead and not isinstance(payload.get("participant_roster"), list):
+1126:        payload["participant_roster"] = [{
+1134:    # 与 stage_assignment / stage_grant 同缝：相对月数或绝对回合 → 绝对 due_turn。
+1144:def _attach_commission_affair(
+1164:def _dispatch_commissions(
+1256:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+1288:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+1383:            from ming_sim.action_materialize import stage_assignment_candidate
+1384:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+1386:                roster = assignment.get("participant_roster")
+1392:                row_id = stage_assignment_candidate(
+1397:                    participant_roster=roster,
+1436:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+1439:            if not _attach_commission_affair(
+1473:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+1516:            actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+1530:        appointment_fields, appt_rejected = _commission_appointment_fields(
+1563:                payload = _commission_grant_payload(
+1582:                        "target_id": f"commission-text:{int(state.turn)}:{len(applied)}",
+1613:        # #1783/#1778：承办人、名单、期限为既有 staging 字段（stage_grant 同款），
+1620:            _attach_commission_staging_fields(
+1627:        if not _attach_commission_affair(
+1709:            actor = _commission_fallback_actor(db)
+1721:def _commission_fallback_actor(db: Any) -> str:
+1879:    actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+2048:        actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
+
+=== J19-E all participant_roster write sites in production ===
+ming_sim/declaration_dispatch.py:1397:                    participant_roster=roster,
+ming_sim/db.py:13831:                    participant_roster=row_participants,
+ming_sim/db.py:14192:                payload=canonical_payload, participant_roster=roster,
+ming_sim/db.py:14514:                "UPDATE decree_dossiers SET participant_roster=?,office_archive_keys=?,"
+ming_sim/db.py:20149:        participant_roster = self._normalize_participant_roster(participants)

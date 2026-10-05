@@ -355,7 +355,6 @@ def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monke
 
 def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monkeypatch):
     """#1353 fold-in r8：外层已持闸时 resolve 不得再抢同一把非重入锁。"""
-    from ming_sim.decree import ResolveResult
     from ming_sim.session import GameSession, TurnPhase
 
     db, state, content = game
@@ -382,11 +381,8 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
     sess.debuts_this_turn = []
     sess.auto_save = lambda *_a, **_k: None
 
-    # 被测是持闸落相位，不是月链本身；替 resolve_directives 使前置合法后到达持闸分支。
-    monkeypatch.setattr(
-        "ming_sim.session.resolve_directives",
-        lambda *_a, **_k: ResolveResult(awaiting=False, advanced=False),
-    )
+    # 合法真实前置：无旨月 + 外部 LLM 缝 canned；不替 resolve_directives（被测持闸在其后）。
+    _canned_full_settlement(monkeypatch, narrative="持闸落相位探针邸报。")
 
     try:
         result = sess.resolve_turn(
