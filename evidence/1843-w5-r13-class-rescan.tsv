@@ -1,4 +1,5 @@
 class	path	line	tag	snippet
-F2-R13-1	web_app.py	279	person_legacy_gate_web	def _legacy_gate_subject(raw_key: str, content: Any) -> str:
-F2-R13-1	web_app.py	300	person_legacy_gate_web	def _humanize_legacy_gate(gate: Dict[str, str], content: Any) -> str:
-F2-R13-1	ming_sim/db.py	80	save_meta	# 同刻度）。#1843：双单位/save_meta 标已退役，读口恒为「人」。
+F2-R13-1	ming_sim/db.py	80	save_meta_comment_only	#1843：双单位/save_meta 标已退役，读口恒为「人」。
+F2-R13-1	web_app.py	279	empire_clear_gate_humanize	def _legacy_gate_subject — 帝国修正 clear_gate 中文呈现，非人事旧顶层协议
+F2-R13-1	web_app.py	300	empire_clear_gate_humanize	def _humanize_legacy_gate — web 开局修正面板消费
+F2-R13-2	(none)	0	idx_name_lock	assert idx_* name existence — 0 hits after delete

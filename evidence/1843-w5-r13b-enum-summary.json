@@ -1,0 +1,13 @@
+{
+  "class_a_candidates": 7483,
+  "class_a_wide_kw": 2440,
+  "class_a_hist_chase": 4543,
+  "class_a_ast_def": 500,
+  "hist_seeds": 4423,
+  "class_b_test_fns": 2806,
+  "class_b_asserts": 12786,
+  "class_b_flagged_wording": 1830,
+  "class_b_flagged_shape": 64,
+  "class_b_flagged_dup": 4100,
+  "class_b_flagged_source": 0
+}

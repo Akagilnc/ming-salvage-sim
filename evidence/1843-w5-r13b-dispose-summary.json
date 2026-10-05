@@ -1,0 +1,10 @@
+{
+  "class_a_rows": 7413,
+  "class_a_deleted": 4258,
+  "class_a_retain": 3155,
+  "class_b_fns": 2811,
+  "class_b_fn_deleted": 5,
+  "class_b_asserts": 12791,
+  "class_b_assert_deleted": 5,
+  "class_b_assert_retain": 12786
+}

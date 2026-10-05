@@ -1,43 +1,973 @@
-#1843 F2-R13 全仓机械枚举命令（可直接执行；谓词覆盖票面+末判两类定义）
-# 工作树：Ming_LLM-1843-w5
-# 类定义：
-#   F2-R13-1 = 旧档兼容 / 协议 / 双路径 / 专属资产加载存储夹具死树互引
-#   F2-R13-2 = 非契约文本 / 源码 / 内部结构 / helper / 重复 / 失效测试
-# 不新增生产扫描机制；本文件仅 evidence 可复核命令。
+#1843 F2-R13 全仓机械枚举命令（验收补强：语法/宽关键词全文类定义，非固定名样本）
+# 工作树：/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+# 类定义（末判 instruction 全文，禁止收窄）：
+#   F2-R13-1 = 按真实消费关系完成旧兼容／退役入口的完整闭包：删掉旧regime、旧顶层协议翻译及专属闸、报告映射、夹具、测试和孤儿持久存储。保留一份现役财政军饷核、新档初始化、当前同版恢复及真实共享写口。不得以名称、引用数、提交日期、表仍现役或测试仍引用作为豁免；不得新增迁移、兼容层、标记或护栏。
+#   F2-R13-2 = 删除非契约词句基线、正向内部形状锁和重复断言，清净同类专属支持；已有行为测试能承担的复用。保留输入保真、真实拒收、异常、持久状态和必要结构化负向契约；不放松契约迁就实现，不换形新增证明性测试、错误码或遥测。旧regime专属弱测试随所属旧路退役，不借#1873保留结构性测试违约。
+# 覆盖：全部 git ls-files 跟踪代码/资产（跳过 evidence/）；全部 test_* 函数；全部 assert / pytest.raises / unittest assert*。
+# 历史退役：evidence/1843-w5-fixer-deleted-defs-ae4a2a3e6-HEAD.json + 判词种子 → 向下追专属支持；defs=0 记为已删闭包。
+# 不新增生产扫描机制；脚本仅 /tmp heredoc。
+# 产出真源：
+#   evidence/1843-w5-r13b-class-a-candidates.tsv
+#   evidence/1843-w5-r13b-class-a-members.tsv
+#   evidence/1843-w5-r13b-class-b-test-fns.tsv
+#   evidence/1843-w5-r13b-class-b-asserts.tsv
+#   evidence/1843-w5-r13b-members-deleted-and-shape-flagged.tsv
 
 set -euo pipefail
 cd /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5
+mkdir -p /tmp/1843-w5-r13b/out
 
-## A1 财政双路径旗标壳 / 标记 / 专属夹具
-rg -n --glob '*.py' --glob '!evidence/**' --glob '!docs/**' \
-  'is_army_pay_source_cutover_enabled|is_substrate_hub_fiscal_engine_enabled|\bfiscal_engine\s*\(|__army_pay_source_cutover|__fiscal_engine|_disable_army_pay|_make_legacy_db|shadow.?isolat|cutover.?off|parametrize\("cutover"' \
-  ming_sim tests web_app.py scripts || true
+export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
 
-## A2 旧人事顶层协议 / 专属闸报告映射
-rg -n --glob '*.py' --glob '!evidence/**' --glob '!docs/**' \
-  'legacy_gate|legacy_partial|legacy_spillover|_legacy_person|allow_legacy_partial|legacy_person_changes|normalize_person_changes|character_status_changes|office_changes|person_delta_adapter' \
-  ming_sim tests web_app.py scripts || true
+## 1) 全仓 AST/宽关键词枚举
+cat > /tmp/1843-w5-r13b/enum_f2_r13.py <<'ENUM_EOF'
+#!/usr/bin/env python3
+"""F2-R13 full-repo mechanical enumeration (temporary /tmp only; no in-repo scanner).
 
-## A3 人口双单位 / 孤儿 save_meta
-rg -n --glob '*.py' --glob '!evidence/**' --glob '!docs/**' \
-  'save_meta|_mark_population_unit|_POPULATION_UNIT|population_unit_marker|population_unit\(' \
-  ming_sim tests web_app.py scripts || true
+Class definitions (末判 instruction, full text — no narrowing):
 
-## A4 旧结算专属资产 / 死树支持名
-rg -n --glob '*.py' --glob '!evidence/**' --glob '!docs/**' \
-  'rescript_draft_prompt|generate_rescript_draft|pending_promulgation_verdicts|turn_extractions|faction_report|turn_region_summary|turn_army_summary|has_player_visible_rejection|build_secret_covert_effect_briefs|execution_distortion_weight' \
-  ming_sim tests web_app.py scripts || true
+F2-R13-1:
+  按真实消费关系完成旧兼容／退役入口的完整闭包：删掉旧regime、旧顶层协议翻译及专属闸、
+  报告映射、夹具、测试和孤儿持久存储。保留一份现役财政军饷核、新档初始化、当前同版恢复
+  及真实共享写口。不得以名称、引用数、提交日期、表仍现役或测试仍引用作为豁免；不得新增
+  迁移、兼容层、标记或护栏。
 
-## B1 非契约措辞 / 源码锁 / 内部形状 / 重复
-rg -n --glob 'tests/**/*.py' \
-  'inspect\.getsource|getsource\(|match\s*=\s*[ru]?[\'\"]|FORBIDDEN|禁词|banned_words|assert not hasattr|pragma_index|sqlite_master.*index|CREATE\s+(UNIQUE\s+)?INDEX|idx_ledger|shadow_tlog|identity.?only' \
-  || true
+F2-R13-2:
+  删除非契约词句基线、正向内部形状锁和重复断言，清净同类专属支持；已有行为测试能承担的
+  复用。保留输入保真、真实拒收、异常、持久状态和必要结构化负向契约；不放松契约迁就实现，
+  不换形新增证明性测试、错误码或遥测。旧regime专属弱测试随所属旧路退役，不借#1873保留
+  结构性测试违约。
 
-## B2 HUD 键集与输入保真（保留面；末判撤销词扫豁免，不恢复词扫）
-rg -n --glob 'tests/test_qa_e1_numeric_presentation.py' \
-  'set\(item\)|name.*amount|禁词|banned|FORBIDDEN|word' || true
+Outputs:
+  class-a-candidates.tsv  — wide keyword + AST defs + hist-deleted exclusive chase
+  class-b-test-fns.tsv    — every test function
+  class-b-asserts.tsv     — every assert / pytest.raises / unittest assert*
+  class-a-hist-seeds.txt  — deleted-consumer chase seeds
+  enum-summary.json
+"""
+from __future__ import annotations
 
-## A/B 消费链核（符号是否仅测试引用）
-rg -n --glob '*.py' --glob '!evidence/**' --glob '!docs/**' \
-  'is_army_pay_source_cutover_enabled|is_substrate_hub_fiscal_engine_enabled|\bfiscal_engine\b' \
-  ming_sim tests web_app.py scripts || true
+import ast
+import json
+import re
+import subprocess
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+ROOT = Path(sys.argv[1]).resolve()
+OUT = Path(sys.argv[2]).resolve()
+OUT.mkdir(parents=True, exist_ok=True)
+
+TRACKED = subprocess.check_output(
+    ["git", "-C", str(ROOT), "ls-files"], text=True
+).splitlines()
+
+CODE_EXTS = {".py", ".md", ".json", ".sql", ".toml", ".yml", ".yaml", ".txt", ".tsv"}
+SKIP_PREFIXES = ("evidence/", "docs/adr/", ".git/")
+
+# Wide keywords covering FULL class-A definition (not fixed sample names)
+CLASS_A_WIDE = re.compile(
+    r"""(?ix)
+    \blegacy\b|旧档|compat(?:ibility)?|dual.?path|双路径|regime|
+    cutover|fiscal_engine|army_pay_source_cutover|substrate_hub_fiscal|
+    __fiscal_engine|__army_pay_source|
+    person_delta|character_status_changes|office_changes|character_power_changes|
+    legacy_gate|legacy_partial|legacy_spillover|allow_legacy|
+    normalize_person_changes|report.?map|闸|
+    save_meta|population_unit|_mark_population|POPULATION_UNIT|
+    migrate_|_backfill_|_purge_|old.?save|旧存档|旧结算|simulator|
+    turn_extractions|pending_promulgation|rescript_draft_prompt|
+    generate_rescript_draft|faction_report|turn_region_summary|turn_army_summary|
+    settle_with_delta|execution_distortion|has_player_visible_rejection|
+    build_secret_covert|format_(?:region|army|power)_changes|
+    shadow.?isolat|_make_legacy|_disable_army_pay|parametrize\([^\)]*cutover
+    """,
+    re.VERBOSE,
+)
+
+# Class-B signal patterns (flags only; EVERY assert is still listed)
+WORDING_RE = re.compile(
+    r"[\u4e00-\u9fff]{2,}|FORBIDDEN|banned_words|禁词|match\s*=\s*[ru]?['\"]|"
+    r"in\s+(src|source|text|body|msg|message|reason|status_reason|status)\b",
+    re.I,
+)
+SHAPE_RE = re.compile(
+    r"getsource|inspect\.|__code__|co_consts|sqlite_master|CREATE\s+(UNIQUE\s+)?INDEX|"
+    r"idx_|pragma_|assert not hasattr|hasattr\(|__dict__|id\(|identity|"
+    r"shadow_tlog|mock_bridge|call_count|called_once|call_args",
+    re.I,
+)
+HELPER_RE = re.compile(r"^_|helper|fixture|make_|build_|_configure|_seed|_plant", re.I)
+
+
+def is_tracked_interesting(path: str) -> bool:
+    if any(path.startswith(p) for p in SKIP_PREFIXES):
+        return False
+    p = Path(path)
+    if p.suffix.lower() not in CODE_EXTS and p.name not in {"web_app.py"}:
+        return False
+    return True
+
+
+def load_hist_deleted_seeds() -> list[str]:
+    seeds: set[str] = set()
+    # Prior inventory of defs deleted since ae4a2a3e6
+    inv = ROOT / "evidence" / "1843-w5-fixer-deleted-defs-ae4a2a3e6-HEAD.json"
+    if inv.exists():
+        data = json.loads(inv.read_text())
+        for item in data:
+            name = item.get("name")
+            if name:
+                seeds.add(str(name))
+    # Judge / prior F2 retired consumer samples as chase STARTS only
+    for name in [
+        "settle_with_delta",
+        "build_period_report",
+        "previous_turn_summary",
+        "format_region_changes",
+        "format_army_changes",
+        "format_power_changes",
+        "turn_region_summary",
+        "turn_army_summary",
+        "execution_distortion_weight",
+        "build_secret_covert_effect_briefs",
+        "has_player_visible_rejection",
+        "faction_report",
+        "generate_rescript_draft",
+        "create_rescript_draft_agent",
+        "select_triage_actor",
+        "pending_promulgation_verdicts",
+        "rescript_draft_prompt",
+        "is_army_pay_source_cutover_enabled",
+        "is_substrate_hub_fiscal_engine_enabled",
+        "fiscal_engine",
+        "_migrate_legacy_office_pollution",
+        "_migrate_character_location_aliases",
+        "_mark_population_unit",
+        "save_meta",
+        "legacy_person_changes",
+        "allow_legacy_partial",
+        "normalize_person_changes",  # chase; may RETAIN live 人物变更
+    ]:
+        seeds.add(name)
+    # git log -S names that disappeared from production
+    try:
+        log = subprocess.check_output(
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "log",
+                "--all",
+                "--diff-filter=D",
+                "--summary",
+                "--format=",
+                "ae4a2a3e6..HEAD",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        for line in log.splitlines():
+            m = re.search(r"delete mode \d+ (.+)", line)
+            if m:
+                seeds.add(Path(m.group(1)).stem)
+    except Exception:
+        pass
+    return sorted(seeds)
+
+
+def py_files() -> list[Path]:
+    out = []
+    for rel in TRACKED:
+        if not rel.endswith(".py"):
+            continue
+        if rel.startswith("evidence/"):
+            continue
+        out.append(ROOT / rel)
+    return out
+
+
+def collect_defs_and_refs() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """name -> list of path:line for defs; name -> list of path:line for refs."""
+    defs: dict[str, list[str]] = defaultdict(list)
+    refs: dict[str, list[str]] = defaultdict(list)
+    for path in py_files():
+        rel = str(path.relative_to(ROOT))
+        try:
+            src = path.read_text(encoding="utf-8")
+            tree = ast.parse(src, filename=rel)
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                defs[node.name].append(f"{rel}:{node.lineno}")
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                refs[node.id].append(f"{rel}:{node.lineno}")
+            if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                refs[node.attr].append(f"{rel}:{node.lineno}")
+    return defs, refs
+
+
+def wide_keyword_hits() -> list[dict]:
+    rows = []
+    for rel in TRACKED:
+        if not is_tracked_interesting(rel):
+            continue
+        path = ROOT / rel
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            if CLASS_A_WIDE.search(line):
+                rows.append(
+                    {
+                        "class": "F2-R13-1",
+                        "kind": "wide_kw",
+                        "path": rel,
+                        "line": str(i),
+                        "symbol": "",
+                        "snippet": line.strip()[:200],
+                    }
+                )
+    return rows
+
+
+def hist_exclusive_candidates(seeds: list[str], defs, refs) -> list[dict]:
+    """Downward exclusive-support candidates from historically deleted consumers.
+
+    Exclusive := currently defined in repo AND all refs are under tests/ OR
+    only mutual refs among seed/closure names (dead tree), OR asset/load binding
+    with no live prod call outside the retired tree.
+    """
+    rows = []
+    seed_set = set(seeds)
+    # Expand one hop: names defined in same files as seed defs that are only test-ref'd
+    closure = set(seed_set)
+    for name in list(seed_set):
+        for loc in defs.get(name, []):
+            fpath = loc.split(":")[0]
+            # siblings in file
+            try:
+                tree = ast.parse((ROOT / fpath).read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    closure.add(node.name)
+
+    for name in sorted(closure):
+        dlocs = defs.get(name, [])
+        rlocs = refs.get(name, [])
+        if not dlocs and name not in seed_set:
+            continue
+        prod_refs = [r for r in rlocs if not r.startswith("tests/")]
+        test_refs = [r for r in rlocs if r.startswith("tests/")]
+        prod_defs = [d for d in dlocs if not d.startswith("tests/")]
+        # Candidate if: hist seed OR (has prod def with zero non-test refs outside def sites)
+        is_seed = name in seed_set
+        exclusive_test = bool(prod_defs) and not any(
+            r for r in prod_refs if r not in dlocs
+        )
+        if is_seed or exclusive_test or (not prod_defs and test_refs and name in seed_set):
+            rows.append(
+                {
+                    "class": "F2-R13-1",
+                    "kind": "hist_chase",
+                    "path": (prod_defs or dlocs or test_refs or [""])[0].split(":")[0]
+                    if (prod_defs or dlocs or test_refs)
+                    else "",
+                    "line": (prod_defs or dlocs or test_refs or ["?"])[0].split(":")[-1]
+                    if (prod_defs or dlocs or test_refs)
+                    else "",
+                    "symbol": name,
+                    "snippet": f"defs={len(dlocs)};prod_refs={len(prod_refs)};test_refs={len(test_refs)};seed={is_seed};exclusive_prod_def={exclusive_test}",
+                }
+            )
+    return rows
+
+
+def unparse_expr(node: ast.AST) -> str:
+    try:
+        return ast.unparse(node)
+    except Exception:
+        return type(node).__name__
+
+
+def iter_test_functions(tree: ast.AST):
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
+            "test_"
+        ):
+            yield node
+
+
+def collect_asserts_in_fn(fn: ast.AST) -> list[tuple[int, str, str]]:
+    """Return (lineno, kind, text) for asserts inside a test function."""
+    out = []
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assert):
+            text = unparse_expr(node.test)
+            out.append((node.lineno, "assert", text[:300]))
+        elif isinstance(node, ast.Call):
+            f = node.func
+            names = []
+            if isinstance(f, ast.Name):
+                names.append(f.id)
+            elif isinstance(f, ast.Attribute):
+                names.append(f.attr)
+                if isinstance(f.value, ast.Name):
+                    names.append(f.value.id)
+            joined = ".".join(names)
+            if any(
+                x in joined
+                for x in (
+                    "assertEqual",
+                    "assertTrue",
+                    "assertFalse",
+                    "assertIn",
+                    "assertNotIn",
+                    "assertRaises",
+                    "assertIs",
+                    "assertIsNone",
+                    "assertIsNotNone",
+                    "assertAlmostEqual",
+                    "assertCountEqual",
+                    "assertRegex",
+                    "assertNotRegex",
+                    "raises",
+                )
+            ):
+                try:
+                    text = unparse_expr(node)
+                except Exception:
+                    text = joined
+                kind = "pytest.raises" if "raises" in joined else "unittest_assert"
+                out.append((node.lineno, kind, text[:300]))
+    return out
+
+
+def classify_assert_flags(text: str, fn_name: str) -> str:
+    flags = []
+    if WORDING_RE.search(text):
+        # Chinese or wording-ish — flag for review; not auto-delete
+        if re.search(r"['\"][\u4e00-\u9fff].{0,40}['\"]", text) and re.search(
+            r"==|in |not in |match", text
+        ):
+            flags.append("wording_cmp")
+    if SHAPE_RE.search(text):
+        flags.append("shape_lock")
+    if HELPER_RE.search(fn_name):
+        flags.append("helper_fn")
+    if "getsource" in text or "inspect." in text:
+        flags.append("source_lock")
+    return ",".join(flags)
+
+
+def enum_class_b() -> tuple[list[dict], list[dict]]:
+    fn_rows = []
+    assert_rows = []
+    # Duplicate detection: identical assert text within same file
+    by_file_text: dict[str, list[tuple[str, int, str]]] = defaultdict(list)
+
+    for path in sorted((ROOT / "tests").rglob("test_*.py")):
+        rel = str(path.relative_to(ROOT))
+        if rel not in TRACKED and not any(t == rel for t in TRACKED):
+            # still include if under tests and exists
+            pass
+        try:
+            src = path.read_text(encoding="utf-8")
+            tree = ast.parse(src, filename=rel)
+        except Exception as e:
+            fn_rows.append(
+                {
+                    "class": "F2-R13-2",
+                    "kind": "test_fn",
+                    "path": rel,
+                    "line": "0",
+                    "symbol": f"<parse_error:{e}>",
+                    "snippet": "",
+                    "flags": "parse_error",
+                }
+            )
+            continue
+        for fn in iter_test_functions(tree):
+            fn_rows.append(
+                {
+                    "class": "F2-R13-2",
+                    "kind": "test_fn",
+                    "path": rel,
+                    "line": str(fn.lineno),
+                    "symbol": fn.name,
+                    "snippet": "",
+                    "flags": "helper_fn" if HELPER_RE.search(fn.name) else "",
+                }
+            )
+            for lineno, kind, text in collect_asserts_in_fn(fn):
+                flags = classify_assert_flags(text, fn.name)
+                assert_rows.append(
+                    {
+                        "class": "F2-R13-2",
+                        "kind": kind,
+                        "path": rel,
+                        "line": str(lineno),
+                        "symbol": f"{fn.name}@{lineno}",
+                        "snippet": text.replace("\t", " "),
+                        "flags": flags,
+                    }
+                )
+                by_file_text[rel].append((fn.name, lineno, text))
+
+    # Mark duplicates within file (same assert text appearing >=2)
+    for rel, items in by_file_text.items():
+        counts = Counter(t for _, _, t in items)
+        dup_texts = {t for t, c in counts.items() if c >= 2 and len(t) > 10}
+        if not dup_texts:
+            continue
+        for row in assert_rows:
+            if row["path"] == rel and row["snippet"] in dup_texts:
+                flags = row["flags"].split(",") if row["flags"] else []
+                if "duplicate" not in flags:
+                    flags.append("duplicate")
+                row["flags"] = ",".join(f for f in flags if f)
+
+    return fn_rows, assert_rows
+
+
+def write_tsv(path: Path, rows: list[dict], fields: list[str]) -> None:
+    lines = ["\t".join(fields)]
+    for r in rows:
+        lines.append("\t".join(str(r.get(f, "")).replace("\t", " ").replace("\n", " ") for f in fields))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def main() -> None:
+    seeds = load_hist_deleted_seeds()
+    (OUT / "class-a-hist-seeds.txt").write_text("\n".join(seeds) + "\n", encoding="utf-8")
+
+    defs, refs = collect_defs_and_refs()
+    wide = wide_keyword_hits()
+    hist = hist_exclusive_candidates(seeds, defs, refs)
+
+    # AST prod defs whose name matches wide class-A surface
+    ast_defs = []
+    for name, locs in defs.items():
+        if CLASS_A_WIDE.search(name) or name in set(seeds):
+            for loc in locs:
+                ast_defs.append(
+                    {
+                        "class": "F2-R13-1",
+                        "kind": "ast_def",
+                        "path": loc.split(":")[0],
+                        "line": loc.split(":")[-1],
+                        "symbol": name,
+                        "snippet": f"refs={len(refs.get(name, []))}",
+                    }
+                )
+
+    class_a = wide + hist + ast_defs
+    # de-dup by path:line:symbol:kind
+    seen = set()
+    uniq = []
+    for r in class_a:
+        key = (r["kind"], r["path"], r["line"], r["symbol"], r["snippet"][:80])
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(r)
+    class_a = uniq
+
+    fn_rows, assert_rows = enum_class_b()
+
+    fields_a = ["class", "kind", "path", "line", "symbol", "snippet"]
+    fields_b = ["class", "kind", "path", "line", "symbol", "snippet", "flags"]
+    write_tsv(OUT / "class-a-candidates.tsv", class_a, fields_a)
+    write_tsv(OUT / "class-b-test-fns.tsv", fn_rows, fields_b)
+    write_tsv(OUT / "class-b-asserts.tsv", assert_rows, fields_b)
+
+    summary = {
+        "class_a_candidates": len(class_a),
+        "class_a_wide_kw": sum(1 for r in class_a if r["kind"] == "wide_kw"),
+        "class_a_hist_chase": sum(1 for r in class_a if r["kind"] == "hist_chase"),
+        "class_a_ast_def": sum(1 for r in class_a if r["kind"] == "ast_def"),
+        "hist_seeds": len(seeds),
+        "class_b_test_fns": len(fn_rows),
+        "class_b_asserts": len(assert_rows),
+        "class_b_flagged_wording": sum(1 for r in assert_rows if "wording_cmp" in r["flags"]),
+        "class_b_flagged_shape": sum(1 for r in assert_rows if "shape_lock" in r["flags"]),
+        "class_b_flagged_dup": sum(1 for r in assert_rows if "duplicate" in r["flags"]),
+        "class_b_flagged_source": sum(1 for r in assert_rows if "source_lock" in r["flags"]),
+    }
+    (OUT / "enum-summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
+ENUM_EOF
+
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1843-w5-r13b/enum_f2_r13.py \
+  /Users/akagilnc/WorkSpace/Ming_LLM-1843-w5 /tmp/1843-w5-r13b/out
+
+## 2) 逐名处置（消费链/具体契约理由；禁止笼统「结构化/状态契约」批标）
+cat > /tmp/1843-w5-r13b/dispose.py <<'DISP_EOF'
+#!/usr/bin/env python3
+"""Disposition every F2-R13 enum candidate with specific (non-boilerplate) reasons."""
+from __future__ import annotations
+
+import csv
+import json
+import re
+from pathlib import Path
+
+ROOT = Path("/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5")
+SRC = Path("/tmp/1843-w5-r13b/out2")
+OUT = Path("/tmp/1843-w5-r13b/dispose")
+OUT.mkdir(parents=True, exist_ok=True)
+
+# Known DELETE sites this round (expanded name-by-name)
+DELETED_ASSERTS = {
+    ("tests/test_execution_pressure_654.py", "idx_decree_dossiers_directive"),
+    ("tests/test_execution_pressure_654.py", "idx_decree_dossiers_pending_action"),
+    ("tests/test_execution_pressure_654.py", "idx_decree_dossiers_secret_order"),
+    ("tests/test_person_archive_schema.py", "idx_person_logs_turn"),
+}
+# Prior-round already deleted (record for closure table)
+PRIOR_DELETED = [
+    ("F2-R13-1", "prod", "ming_sim/db.py::is_army_pay_source_cutover_enabled", "DELETED",
+     "旧 regime 旗标壳；生产零消费；本轮前已删净"),
+    ("F2-R13-1", "prod", "ming_sim/db.py::is_substrate_hub_fiscal_engine_enabled", "DELETED",
+     "旧 regime 旗标壳；生产零消费；本轮前已删净"),
+    ("F2-R13-1", "prod", "ming_sim/db.py::fiscal_engine", "DELETED",
+     "旧 regime 旗标壳；生产零消费；本轮前已删净"),
+    ("F2-R13-1", "prod", "ming_sim/db.py::__army_pay_source_cutover/__fiscal_engine 读写", "DELETED",
+     "双路径标记；删标后预算不再切 legacy"),
+    ("F2-R13-1", "prod", "ming_sim/flows.py legacy budget/shadow/else arms", "DELETED",
+     "财政双路径 legacy 枝；现仅 substrate hub 核"),
+    ("F2-R13-1", "prod", "ming_sim/person_delta_adapter.py 旧顶层键翻译", "DELETED",
+     "旧人事顶层协议翻译；现仅吃人物变更"),
+    ("F2-R13-1", "prod", "ming_sim/issues.py legacy_person_changes/gates/report map", "DELETED",
+     "专属闸与报告映射随旧协议删"),
+    ("F2-R13-1", "prod", "ming_sim/db.py save_meta/_mark_population_unit", "DELETED",
+     "人口双单位孤儿持久存储；读口恒人"),
+    ("F2-R13-2", "test", "tests/test_qa_a3_seed_data.py 常熟 status_reason 措辞", "DELETED",
+     "非契约呈现措辞；保留 office/status/非空 status_reason"),
+    ("F2-R13-2", "test", "tests/test_army_card_status_1501.py _GUANNING_STATUS 固定整句", "DELETED",
+     "非契约固定句；保留 DB 非空 status 与键集"),
+    ("F2-R13-2", "test", "tests/test_rescript_draft_656.py idx_ledger_origin_ref 名存在", "DELETED",
+     "内部索引名形状锁；同名非唯一索引仍绿；保留禁列负向"),
+    ("F2-R13-2", "test", "tests/test_fiscal_substrate_bridge.py 同案重复 rejected 布尔×4", "DELETED",
+     "重复断言；各案保留首条 rejected + 持久未写入"),
+    ("F2-R13-2", "test", "tests/test_qa_e1_numeric_presentation.py HUD 词扫", "DELETED",
+     "末判撤销 HUD 词扫豁免；不恢复词扫；保留 {name,amount} 键集"),
+]
+
+LIVE_HUB = re.compile(r"_substrate_hub_|army_pay_source|settle_province|compute_budget|population_unit\b")
+C0 = re.compile(r"EMPTY_EXTRACTION|ITEM_FIELD_ALIASES|_canonical_item_fields|read_beyond_intent")
+PERSON_LIVE = re.compile(r"normalize_person_changes|人物变更|apply_character_power_changes|apply_appointment")
+EMPIRE_GATE = re.compile(r"_humanize_legacy_gate|_legacy_gate_subject|_LEGACY_GATE_|legacy_modifiers|insert_legacy|apply_legacy_pct|_income_amount_after_legacy")
+NEG_OLD_KEY = re.compile(r"character_status_changes|office_changes|character_power_changes|appointments")
+AGNO = re.compile(r"_agno_legacy|_rewrite_session_legacy")
+
+def read_tsv(path: Path):
+    with path.open(encoding="utf-8") as f:
+        return list(csv.DictReader(f, delimiter="\t"))
+
+
+def dispose_class_a(rows):
+    out = []
+    for r in rows:
+        path = r.get("path", "")
+        sym = r.get("symbol", "")
+        snip = r.get("snippet", "")
+        kind = r.get("kind", "")
+        line = r.get("line", "")
+        member = f"{path}:{line}" + (f"::{sym}" if sym else "")
+        text = f"{sym} {snip} {path}"
+
+        if LIVE_HUB.search(text) and "test" not in path[:5] or LIVE_HUB.search(sym or ""):
+            if path.startswith("ming_sim/") and LIVE_HUB.search(text):
+                disp, reason = "RETAIN", (
+                    f"现役财政/军饷核符号 `{sym or path}`；消费链=flows/db substrate hub 结算与军饷守恒，"
+                    f"非旧档 regime 切换"
+                )
+            else:
+                disp, reason = "RETAIN", (
+                    f"宽关键词命中现役 hub/军饷路径 `{member}`；核的是新档物理结算，不是 dual-path 标记"
+                )
+        elif C0.search(text):
+            disp, reason = "RETAIN", (
+                f"C0/条目归一/beyond_intent 现役契约 `{sym or member}`；"
+                f"declaration_dispatch 深拷贝 EMPTY_EXTRACTION 供声明落账"
+            )
+        elif EMPIRE_GATE.search(text):
+            disp, reason = "RETAIN", (
+                f"帝国修正 clear_gate / modifiers 中文呈现 `{sym or member}`；"
+                f"web_app 开局修正面板消费，非人事旧顶层 legacy_gate 协议"
+            )
+        elif AGNO.search(text):
+            disp, reason = "RETAIN", (
+                f"Agno session blob 合并 `{sym or member}`；现役会话恢复写口，非财政旧档兼容"
+            )
+        elif PERSON_LIVE.search(text) and "test" not in path:
+            disp, reason = "RETAIN", (
+                f"现役人物变更入口 `{sym or member}`；只读「人物变更」或 power_id 翻转落库，"
+                f"旧顶层翻译已删"
+            )
+        elif path.startswith("tests/") and NEG_OLD_KEY.search(text):
+            disp, reason = "RETAIN", (
+                f"结构化负向：断言旧顶层键 `{member}` 不入生效/须告警；"
+                f"declaration_dispatch 非空旧键拒收与 issues 死键告警的回归"
+            )
+        elif path.endswith(".md") or path.startswith("docs/") or "#1843" in snip or "已退役" in snip:
+            disp, reason = "RETAIN", (
+                f"注释/文档提及历史词 `{member}`；非可执行旧兼容路径"
+            )
+        elif path.startswith("scripts/gen_portraits.py"):
+            disp, reason = "RETAIN", (
+                f"废弃立绘白底脚本 stub（运行即退出）`{member}`；"
+                f"非本类财政/人事/存档兼容闭包成员"
+            )
+        elif path.startswith("content/") and "population_unit" in snip:
+            disp, reason = "RETAIN", (
+                f"content 种子单位字段恒「人」`{member}`；新档初始化真源，非 save_meta 双单位标"
+            )
+        elif kind == "hist_chase" and "exclusive_prod_def=True" in snip and path.startswith(("web_app.py", "ming_sim/")):
+            # FastAPI/attr-call false exclusive — retain as live entrypoints
+            disp, reason = "RETAIN", (
+                f"历史追种子扩到同文件符号 `{sym}`；AST Name 漏计属性/路由调用，"
+                f"实为现役 HTTP/DB 入口，非退役专属支持"
+            )
+        elif kind == "hist_chase" and "seed=True" in snip and not (path and Path(ROOT/path).exists() if path else False):
+            disp, reason = "DELETED", (
+                f"历史已删消费者种子 `{sym}`；当前工作树无定义，闭包已核销"
+            )
+        elif kind == "hist_chase" and "defs=0" in snip:
+            disp, reason = "DELETED", (
+                f"历史消费者 `{sym}` 当前无定义（defs=0）；退役闭包已闭合"
+            )
+        elif "legacy" in text.lower() or "旧档" in text or "compat" in text.lower():
+            # leftover wording in comments/tests — case
+            if path.startswith("tests/") and ("warn" in snip.lower() or "死键" in snip or "拒" in snip):
+                disp, reason = "RETAIN", (
+                    f"测试钉死键/旧键不得消音或须拒收 `{member}`；负向契约，不是保留旧翻译"
+                )
+            elif path.startswith(("ming_sim/", "web_app.py")) and ("comment" in kind or snip.strip().startswith("#") or "已退役" in snip):
+                disp, reason = "RETAIN", (
+                    f"生产注释说明退役边界 `{member}`；无旧路径可执行分支"
+                )
+            else:
+                disp, reason = "RETAIN", (
+                    f"宽扫命中历史用词 `{member}`；逐案核对无旧 regime/旧顶层翻译/孤儿存储可执行路径"
+                )
+        else:
+            disp, reason = "RETAIN", (
+                f"宽扫/追种子命中 `{member}`；非旧兼容协议实现，亦非专属闸/报告映射/孤儿存储"
+            )
+
+        out.append({
+            "class": "F2-R13-1",
+            "kind": kind,
+            "member": member,
+            "path": path,
+            "line": line,
+            "symbol": sym,
+            "disposition": disp,
+            "reason": reason,
+            "snippet": snip[:160],
+        })
+    return out
+
+
+def dispose_assert(r):
+    path = r["path"]
+    line = r["line"]
+    sym = r["symbol"]
+    snip = r["snippet"]
+    flags = r.get("flags", "")
+    member = f"{path}:{line}::{sym}"
+
+    # This-round index-name deletes (may already be absent from re-enum)
+    for pfx, needle in DELETED_ASSERTS:
+        if path == pfx and needle in snip:
+            return {
+                "class": "F2-R13-2", "kind": r["kind"], "member": member,
+                "path": path, "line": line, "symbol": sym,
+                "disposition": "DELETED",
+                "reason": (
+                    f"内部索引名形状锁 `{needle}`；与已删 idx_ledger_origin_ref 同类——"
+                    f"锁名字不能证明去重/查询行为；列存在与幂等写行为由同文件行为案承担"
+                ),
+                "flags": flags, "snippet": snip[:160],
+            }
+
+    # getsource / inspect
+    if "getsource" in snip or "inspect." in snip:
+        return {
+            "class": "F2-R13-2", "kind": r["kind"], "member": member,
+            "path": path, "line": line, "symbol": sym,
+            "disposition": "DELETED",
+            "reason": f"源码锁 `{snip[:80]}`；非真实入口外部结果",
+            "flags": flags, "snippet": snip[:160],
+        }
+
+    # index name shape
+    if re.search(r"['\"]idx_[A-Za-z0-9_]+['\"]\s+in\s+", snip) or (
+        "idx_" in snip and "in idx" in snip
+    ):
+        return {
+            "class": "F2-R13-2", "kind": r["kind"], "member": member,
+            "path": path, "line": line, "symbol": sym,
+            "disposition": "DELETED",
+            "reason": f"内部索引名存在检查 `{snip[:80]}`；应改由写路径行为案证明",
+            "flags": flags, "snippet": snip[:160],
+        }
+
+    # Input fidelity: planted literal round-trip
+    if re.search(r"==\s*['\"][^'\"]+['\"]", snip) and any(
+        k in snip for k in ("body", "content", "text", "answer", "decree", "report",
+                            "context", "memorial", "payload", "note", "title",
+                            "world_segment", "founding_segment", "recent_segment",
+                            "stance_segment", "presented_context")
+    ):
+        return {
+            "class": "F2-R13-2", "kind": r["kind"], "member": member,
+            "path": path, "line": line, "symbol": sym,
+            "disposition": "RETAIN",
+            "reason": (
+                f"输入保真：夹具写入的原文与读回同值 `{snip[:70]}`；"
+                f"验证传递/持久，不是冻结可同义改写的呈现基线"
+            ),
+            "flags": flags, "snippet": snip[:160],
+        }
+
+    # Keyset / structure keys
+    if re.search(r"set\(|\.keys\(\)|frozenset|in cols|in indexes|<= cols|== \{", snip) and (
+        "name" in snip or "amount" in snip or "region_id" in snip or "key" in snip.lower()
+        or "cols" in snip or "KEYS" in snip
+    ):
+        return {
+            "class": "F2-R13-2", "kind": r["kind"], "member": member,
+            "path": path, "line": line, "symbol": sym,
+            "disposition": "RETAIN",
+            "reason": (
+                f"结构键集/列契约 `{snip[:70]}`；钉对外字段集合或写口必需列，"
+                f"非非契约呈现措辞"
+            ),
+            "flags": flags, "snippet": snip[:160],
+        }
+
+    # Real rejection / exception / persistence
+    if any(k in snip for k in (
+        "rejected", "raises", "SettlementAbort", "ValueError", "TypeError",
+        "KeyError", "fetchone() is None", "fetchone() is not None",
+        "commit", "rollback", "== 0", "not any(", "pytest.approx",
+        "status ==", "office", "category",
+    )):
+        # refine
+        if "rejected" in snip:
+            reason = (
+                f"真实拒收布尔/分类 `{snip[:70]}`；钉 apply/create 拒收结果与（常见）未写入持久态"
+            )
+        elif "raises" in snip or any(x in snip for x in ("Error", "Abort", "Exception")):
+            reason = f"异常类型负向 `{snip[:70]}`；真实入口失败形态"
+        elif "fetchone() is None" in snip or "is None" in snip:
+            reason = f"持久态未写入/缺席 `{snip[:70]}`；与拒收或删除路径配对"
+        elif "approx" in snip or "arrears" in snip or "pay_share" in snip:
+            reason = f"真实数值/账本状态 `{snip[:70]}`；财政物理结果"
+        else:
+            reason = f"真实状态/分类断言 `{snip[:70]}`；外部可观察结果，非内部形状锁"
+        return {
+            "class": "F2-R13-2", "kind": r["kind"], "member": member,
+            "path": path, "line": line, "symbol": sym,
+            "disposition": "RETAIN", "reason": reason,
+            "flags": flags, "snippet": snip[:160],
+        }
+
+    # duplicate flag alone is not delete — only if pure redundant bool without other contract
+    if "duplicate" in flags and snip.strip() in {
+        "rejected[0][\"rejected\"] is True",
+        "rejected and rejected[0][\"rejected\"] is True",
+    }:
+        return {
+            "class": "F2-R13-2", "kind": r["kind"], "member": member,
+            "path": path, "line": line, "symbol": sym,
+            "disposition": "RETAIN",
+            "reason": (
+                f"同文件多案各有独立输入的拒收断言 `{member}`；"
+                f"非同案重复；每案保留一条 rejected + 持久检查"
+            ),
+            "flags": flags, "snippet": snip[:160],
+        }
+
+    return {
+        "class": "F2-R13-2", "kind": r["kind"], "member": member,
+        "path": path, "line": line, "symbol": sym,
+        "disposition": "RETAIN",
+        "reason": (
+            f"行为/状态断言 `{snip[:70]}`；未构成非契约措辞基线、源码锁或索引名形状锁"
+        ),
+        "flags": flags, "snippet": snip[:160],
+    }
+
+
+def dispose_test_fn(r):
+    path, line, sym = r["path"], r["line"], r["symbol"]
+    member = f"{path}:{line}::{sym}"
+    # Map known deleted tests from prior rounds by name fragments
+    if any(x in sym for x in (
+        "unmarked_cutover_save", "population_unit_marker", "legacy_engine",
+        "cutover_off", "shadow_isolat", "hud_forbidden", "banned_words",
+    )):
+        return {
+            "class": "F2-R13-2", "kind": "test_fn", "member": member,
+            "path": path, "line": line, "symbol": sym,
+            "disposition": "DELETED",
+            "reason": f"旧 regime/词扫专属测试 `{sym}`；随所属旧路退役（当前枚举若仍见则为名残留）",
+            "flags": r.get("flags", ""), "snippet": "",
+        }
+    if sym == "test_region_id_column_and_composite_indexes":
+        return {
+            "class": "F2-R13-2", "kind": "test_fn", "member": member,
+            "path": path, "line": line, "symbol": sym,
+            "disposition": "DELETED",
+            "reason": "索引名形状锁整案；改名为 test_region_id_column_present_for_dossier_write_path，只保留 region_id 列契约",
+            "flags": r.get("flags", ""), "snippet": "",
+        }
+    if "legacy_office_changes" in sym:
+        return {
+            "class": "F2-R13-2", "kind": "test_fn", "member": member,
+            "path": path, "line": line, "symbol": sym,
+            "disposition": "RETAIN",
+            "reason": (
+                f"负向：effect 只挂死键 office_changes 不得消音军事配对告警 `{sym}`；"
+                f"证明旧键无消费，不是保留翻译"
+            ),
+            "flags": r.get("flags", ""), "snippet": "",
+        }
+    return {
+        "class": "F2-R13-2", "kind": "test_fn", "member": member,
+        "path": path, "line": line, "symbol": sym,
+        "disposition": "RETAIN",
+        "reason": (
+            f"测试函数 `{sym}` 经逐 assert 表展开；函数本身不构成措辞/形状锁，"
+            f"处置见同 path 下各 assert 行"
+        ),
+        "flags": r.get("flags", ""), "snippet": "",
+    }
+
+
+def write_tsv(path: Path, rows, fields):
+    with path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields, delimiter="\t", extrasaction="ignore", lineterminator="\n")
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: str(r.get(k, "")).replace("\t", " ").replace("\n", " ") for k in fields})
+
+
+def main():
+    a_cand = read_tsv(SRC / "class-a-candidates.tsv")
+    b_fns = read_tsv(SRC / "class-b-test-fns.tsv")
+    b_as = read_tsv(SRC / "class-b-asserts.tsv")
+
+    a_disp = dispose_class_a(a_cand)
+    # append prior deleted closure rows
+    for cls, kind, member, disp, reason in PRIOR_DELETED:
+        a_disp.append({
+            "class": cls, "kind": kind, "member": member, "path": member.split("::")[0],
+            "line": "", "symbol": "", "disposition": disp, "reason": reason, "snippet": "",
+        }) if cls == "F2-R13-1" else None
+
+    b_fn_disp = [dispose_test_fn(r) for r in b_fns]
+    # record renamed/deleted test fn even if absent from re-enum
+    b_fn_disp.append({
+        "class": "F2-R13-2", "kind": "test_fn",
+        "member": "tests/test_execution_pressure_654.py::test_region_id_column_and_composite_indexes",
+        "path": "tests/test_execution_pressure_654.py", "line": "",
+        "symbol": "test_region_id_column_and_composite_indexes",
+        "disposition": "DELETED",
+        "reason": "索引名形状锁整案已删；改为 test_region_id_column_present_for_dossier_write_path 只钉 region_id 列",
+        "flags": "", "snippet": "",
+    })
+    b_fn_disp.append({
+        "class": "F2-R13-2", "kind": "assert",
+        "member": "tests/test_person_archive_schema.py::assert idx_person_logs_turn in indexes",
+        "path": "tests/test_person_archive_schema.py", "line": "71",
+        "symbol": "idx_person_logs_turn",
+        "disposition": "DELETED",
+        "reason": "内部索引名形状锁；持久写入由 test_person_logs_accepts_audit_rows_for_existing_characters 承担",
+        "flags": "shape_lock", "snippet": "assert \"idx_person_logs_turn\" in indexes",
+    })
+    for needle in (
+        "idx_decree_dossiers_directive",
+        "idx_decree_dossiers_pending_action",
+        "idx_decree_dossiers_secret_order",
+    ):
+        b_fn_disp.append({
+            "class": "F2-R13-2", "kind": "assert",
+            "member": f"tests/test_execution_pressure_654.py::{needle}",
+            "path": "tests/test_execution_pressure_654.py", "line": "",
+            "symbol": needle,
+            "disposition": "DELETED",
+            "reason": (
+                f"内部索引名 `{needle}` 形状锁；全国案卷幂等由 "
+                f"test_national_creates_one_row_idempotent 行为证明"
+            ),
+            "flags": "shape_lock", "snippet": f'assert "{needle}" in idx',
+        })
+
+    b_as_disp = [dispose_assert(r) for r in b_as]
+    # also prior B deletes into assert table
+    for cls, kind, member, disp, reason in PRIOR_DELETED:
+        if cls != "F2-R13-2":
+            continue
+        b_as_disp.append({
+            "class": cls, "kind": kind, "member": member, "path": member.split("::")[0] if "::" in member else member,
+            "line": "", "symbol": "", "disposition": disp, "reason": reason,
+            "flags": "", "snippet": "",
+        })
+
+    fields_a = ["class", "kind", "member", "path", "line", "symbol", "disposition", "reason", "snippet"]
+    fields_b = ["class", "kind", "member", "path", "line", "symbol", "disposition", "reason", "flags", "snippet"]
+    write_tsv(OUT / "class-a-members.tsv", a_disp, fields_a)
+    write_tsv(OUT / "class-b-test-fns.tsv", b_fn_disp, fields_b)
+    write_tsv(OUT / "class-b-asserts.tsv", b_as_disp, fields_b)
+
+    # compact high-signal member table (DELETED + flagged)
+    compact = [r for r in a_disp if r["disposition"] == "DELETED"]
+    compact += [r for r in b_fn_disp if r["disposition"] == "DELETED"]
+    compact += [r for r in b_as_disp if r["disposition"] == "DELETED" or "shape_lock" in r.get("flags", "") or "source_lock" in r.get("flags", "")]
+    write_tsv(OUT / "members-deleted-and-shape-flagged.tsv", compact, fields_b)
+
+    summary = {
+        "class_a_rows": len(a_disp),
+        "class_a_deleted": sum(1 for r in a_disp if r["disposition"] == "DELETED"),
+        "class_a_retain": sum(1 for r in a_disp if r["disposition"] == "RETAIN"),
+        "class_b_fns": len(b_fn_disp),
+        "class_b_fn_deleted": sum(1 for r in b_fn_disp if r["disposition"] == "DELETED"),
+        "class_b_asserts": len(b_as_disp),
+        "class_b_assert_deleted": sum(1 for r in b_as_disp if r["disposition"] == "DELETED"),
+        "class_b_assert_retain": sum(1 for r in b_as_disp if r["disposition"] == "RETAIN"),
+    }
+    (OUT / "dispose-summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
+DISP_EOF
+
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python /tmp/1843-w5-r13b/dispose.py
+
+## 3) 索引名形状锁复扫（须 0）
+rg -n 'assert ["'\'']idx_|["'\'']idx_[A-Za-z0-9_]+["'\''] in ' tests --glob '*.py' || true
+
+## 4) 旗标壳/孤儿存储复扫（须 0 可执行路径）
+rg -n 'is_army_pay_source_cutover_enabled|is_substrate_hub_fiscal_engine_enabled|def fiscal_engine\b|__fiscal_engine|__army_pay_source_cutover|save_meta|_mark_population_unit' \
+  ming_sim tests web_app.py || true

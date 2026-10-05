@@ -64,12 +64,6 @@ def test_person_logs_table_records_person_archive_audit_chain(read_game):
     for name in ("payload_summary", "derived_from", "normalized", "source"):
         assert info[name]["dflt_value"] == "''"
 
-    indexes = {
-        row["name"]
-        for row in db.conn.execute("PRAGMA index_list(person_logs)").fetchall()
-    }
-    assert "idx_person_logs_turn" in indexes
-
     foreign_keys = {
         (row["from"], row["table"], row["to"])
         for row in db.conn.execute("PRAGMA foreign_key_list(person_logs)").fetchall()
