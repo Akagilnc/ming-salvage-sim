@@ -393,6 +393,70 @@ def test_strategic_event_cannon_transfer_preflight_reuses_transfer_write_path(ga
     assert cannons[target] == 3
 
 
+def test_strategic_same_value_text_with_numeric_change_preflight_allows(game):
+    """#1835 S2 R3：同值文本不计 noop；数值实变须过预检（region controlled_by + army station）。"""
+    db, state, content = game
+    issue_engine.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    _configure(db)
+    _set(db, loyalty=50, arrears=0, latched=0, mutiny_count=0, manpower=10000)
+    db.conn.execute(
+        "UPDATE armies SET is_mutinied=0, station=?, manpower=10000 WHERE id=?",
+        ("宁远", ARMY),
+    )
+    db.conn.execute(
+        "UPDATE regions SET military_pressure=?, controlled_by='ming' WHERE id=?",
+        (20, "beizhili"),
+    )
+    before_station = db.conn.execute(
+        "SELECT station FROM armies WHERE id=?", (ARMY,)
+    ).fetchone()["station"]
+    assert before_station == "宁远"
+    db.conn.execute("DELETE FROM event_triggers WHERE event_id='jisi_lubian'")
+    db.conn.commit()
+
+    from ming_sim.month_translate import dispatch_month_segment
+
+    dispatch_month_segment(
+        db,
+        state,
+        segment="战略同值文本实变预检",
+        translate_fn=lambda _request, _config: {
+            "effects": [{
+                "event_id": "jisi_lubian",
+                "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+                "事件结局": {"jisi_lubian": "入塞被遏"},
+                "region_delta": {
+                    "beizhili": {
+                        "origin_ref": "盘面自发",
+                        "military_pressure": 35,
+                        "controlled_by": "ming",
+                    }
+                },
+                "army_delta": {
+                    ARMY: {
+                        "origin_ref": "盘面自发",
+                        "station": before_station,
+                        "manpower": -10,
+                    }
+                },
+            }],
+        },
+    )
+
+    assert db.has_event_triggered("jisi_lubian")
+    region = db.conn.execute(
+        "SELECT military_pressure, controlled_by FROM regions WHERE id=?",
+        ("beizhili",),
+    ).fetchone()
+    assert region["military_pressure"] == 55
+    assert region["controlled_by"] == "ming"
+    row = _row(db, "station", "manpower")
+    assert row["station"] == before_station
+    assert row["manpower"] == 9990
+
+
 def test_latched_mixed_item_allows_and_denies_per_field(game):
     db, state, _ = game
     _configure(db)

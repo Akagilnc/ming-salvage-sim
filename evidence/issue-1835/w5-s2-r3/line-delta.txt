@@ -1,0 +1,4 @@
+preflight.py lines: now=    1022 a16d5804e=1044 e1ffba6ef=1053
+diffstat vs a16d5804e HEAD parent:
+ ming_sim/settlement/preflight.py | 70 ++++++++++++++--------------------------
+ 1 file changed, 24 insertions(+), 46 deletions(-)

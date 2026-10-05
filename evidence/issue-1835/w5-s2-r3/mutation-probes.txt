@@ -1,0 +1,11 @@
+=== S2 R1/R2/R3 MUTATION (dispatch_month_segment; in-process reinject) ===
+tmp=/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1835-s2-mut-y_u8uux4
+COMMAND: env MING_SIM_*_BIN=/usr/bin/false python -B evidence/issue-1835/w5-s2/run_mutation_probes.py
+R1_CURRENT_TRANSFER_GREEN: triggered=True src=2 dst=3 (expect triggered=True src=2 dst=3)
+R2_CURRENT_PER_FIELD_GREEN: triggered=False loyalty=80 manpower=10000 pressure=20 (expect triggered=False loyalty=80 manpower=10000 pressure=20)
+R3_CURRENT_TEXT_SKIP_GREEN: triggered=True pressure=55 manpower=9990 (expect triggered=True pressure=55 manpower=9990)
+R1_OLD_APPLY_ARMY_DELTAS_RED: triggered=False src=5 dst=0 (expect triggered=True src=2 dst=3)
+R2_OLD_CLASS_ANY_MATERIAL_RED: triggered=True loyalty=80 manpower=9900 pressure=55 (expect triggered=False loyalty=80 manpower=10000 pressure=20)
+R3_OLD_A16D5804E_TEXT_SNAPSHOT_RED: triggered=False pressure=20 manpower=10000 (expect triggered=True pressure=55 manpower=9990)
+WITHDRAWN_T1_CLAIM: w5-s1s4 mutation-probes S2_EVENT_WHOLE_PACKAGE_REJECT only exercised loyalty-only envelope; must not claim mixed-field/cannon-transfer whole-package preflight was established.
+ALL_S2_MUTATION_PROBES_DONE

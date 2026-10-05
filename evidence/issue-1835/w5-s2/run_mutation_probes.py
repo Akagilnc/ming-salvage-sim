@@ -187,15 +187,84 @@ def _r2_scenario(db, state, content, *, label: str) -> str:
     )
 
 
+def _r3_scenario(db, state, content, *, label: str) -> str:
+    """同值文本 + 数值实变：旧 a16d5804e 快照误拒；现应 triggered=True。"""
+    from ming_sim import issues as issue_engine
+    from ming_sim.month_translate import dispatch_month_segment
+
+    issue_engine.bind_content(content)
+    army = "guanning"
+    _configure_pay(db)
+    db.conn.execute(
+        """UPDATE armies SET owner_power='ming', is_mutinied=0, mutiny_count=0,
+           loyalty=50, arrears=0, manpower=10000, station=? WHERE id=?""",
+        ("宁远", army),
+    )
+    db.conn.execute(
+        "UPDATE regions SET military_pressure=?, controlled_by='ming' WHERE id='beizhili'",
+        (20,),
+    )
+    db.conn.execute("DELETE FROM event_triggers WHERE event_id='jisi_lubian'")
+    db.conn.commit()
+    station = db.conn.execute(
+        "SELECT station FROM armies WHERE id=?", (army,)
+    ).fetchone()["station"]
+    dispatch_month_segment(
+        db,
+        state,
+        segment=f"s2-r3-{label}",
+        translate_fn=lambda _r, _c: {
+            "effects": [
+                {
+                    "event_id": "jisi_lubian",
+                    "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+                    "事件结局": {"jisi_lubian": "入塞被遏"},
+                    "region_delta": {
+                        "beizhili": {
+                            "origin_ref": "盘面自发",
+                            "military_pressure": 35,
+                            "controlled_by": "ming",
+                        }
+                    },
+                    "army_delta": {
+                        army: {
+                            "origin_ref": "盘面自发",
+                            "station": station,
+                            "manpower": -10,
+                        }
+                    },
+                }
+            ]
+        },
+    )
+    triggered = db.has_event_triggered("jisi_lubian")
+    pressure = db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id='beizhili'"
+    ).fetchone()["military_pressure"]
+    manpower = db.conn.execute(
+        "SELECT manpower FROM armies WHERE id=?", (army,)
+    ).fetchone()["manpower"]
+    return (
+        f"triggered={triggered} pressure={pressure} manpower={manpower} "
+        f"(expect triggered=True pressure=55 manpower=9990)"
+    )
+
+
 def main() -> int:
     import ming_sim.entities.army.delta_section as army_section
     import ming_sim.settlement.preflight as pf
+    from ming_sim.constants import (
+        ARMY_FIELD_ALIASES,
+        ARMY_TEXT_FIELDS,
+        REGION_FIELD_ALIASES,
+        REGION_TEXT_FIELDS,
+    )
 
-    log("=== S2 R1/R2 MUTATION (dispatch_month_segment; in-process reinject) ===")
+    log("=== S2 R1/R2/R3 MUTATION (dispatch_month_segment; in-process reinject) ===")
     log(f"tmp={TMP}")
     log(
         "COMMAND: env MING_SIM_*_BIN=/usr/bin/false "
-        ".venv/bin/python -B evidence/issue-1835/w5-s2/run_mutation_probes.py"
+        "python -B evidence/issue-1835/w5-s2/run_mutation_probes.py"
     )
 
     db, state, content = boot_game()
@@ -207,6 +276,12 @@ def main() -> int:
     db, state, content = boot_game()
     try:
         log(f"R2_CURRENT_PER_FIELD_GREEN: {_r2_scenario(db, state, content, label='cur')}")
+    finally:
+        db.close()
+
+    db, state, content = boot_game()
+    try:
+        log(f"R3_CURRENT_TEXT_SKIP_GREEN: {_r3_scenario(db, state, content, label='cur')}")
     finally:
         db.close()
 
@@ -347,6 +422,89 @@ def main() -> int:
             log(
                 f"R2_OLD_CLASS_ANY_MATERIAL_RED: "
                 f"{_r2_scenario(db, state, content, label='old-r2')}"
+            )
+        finally:
+            db.close()
+    finally:
+        pf._strategic_event_result_preflight_error = orig_preflight
+
+    # R3 old: 装回 a16d5804e「文本同值也进快照→计 noop」口径
+    def preflight_with_text_same_value_noop(
+        db, state, event_id, event_title, outcome_label,
+        region_deltas, army_deltas, power_updates, person_changes, new_armies,
+        content, llm_config, preflight_event,
+        ordered_region_items=None, ordered_army_items=None, ordered_power_items=None,
+    ):
+        region_items = list(
+            ordered_region_items
+            if ordered_region_items is not None
+            else region_deltas.items()
+        )
+        army_items = list(
+            ordered_army_items if ordered_army_items is not None else army_deltas.items()
+        )
+        for region_id, raw_changes in region_items:
+            if not isinstance(raw_changes, dict):
+                continue
+            row = db.conn.execute(
+                "SELECT * FROM regions WHERE id = ?", (region_id,)
+            ).fetchone()
+            if row is None:
+                continue
+            for raw_field, value in raw_changes.items():
+                field = REGION_FIELD_ALIASES.get(
+                    str(raw_field).strip(), str(raw_field).strip()
+                )
+                if field not in REGION_TEXT_FIELDS:
+                    continue
+                current = row[field]
+                declared = (
+                    str(value).strip() if field == "controlled_by" and value is not None
+                    else ("" if value is None else str(value))
+                )
+                if declared and str(declared) == str(current):
+                    return (
+                        f"战略/外敌事件「{event_title or event_id}」战果 "
+                        f"region.{region_id}.{raw_field} 无真实世界状态变化：{value!r}"
+                    )
+        for army_id, raw_changes in army_items:
+            if not isinstance(raw_changes, dict):
+                continue
+            row = db.conn.execute(
+                "SELECT * FROM armies WHERE id = ?", (army_id,)
+            ).fetchone()
+            if row is None:
+                continue
+            for raw_field, value in raw_changes.items():
+                field = ARMY_FIELD_ALIASES.get(
+                    str(raw_field).strip(), str(raw_field).strip()
+                )
+                if field not in ARMY_TEXT_FIELDS:
+                    continue
+                declared = "" if value is None else str(value)
+                if field in ("station", "status"):
+                    declared = declared.strip() if declared.strip() else declared
+                if declared and str(declared) == str(row[field]):
+                    return (
+                        f"战略/外敌事件「{event_title or event_id}」战果 "
+                        f"army.{army_id}.{raw_field} 无真实世界状态变化：{value!r}"
+                    )
+        return orig_preflight(
+            db, state, event_id, event_title, outcome_label,
+            region_deltas, army_deltas, power_updates, person_changes, new_armies,
+            content, llm_config, preflight_event,
+            ordered_region_items=ordered_region_items,
+            ordered_army_items=ordered_army_items,
+            ordered_power_items=ordered_power_items,
+        )
+
+    pf._strategic_event_result_preflight_error = preflight_with_text_same_value_noop
+    try:
+        db, state, content = boot_game()
+        try:
+            log(
+                f"R3_OLD_A16D5804E_TEXT_SNAPSHOT_RED: "
+                f"{_r3_scenario(db, state, content, label='old-r3')}"
             )
         finally:
             db.close()

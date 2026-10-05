@@ -1,0 +1,7 @@
+REGION_TEXT_FIELDS= ('natural_disaster', 'human_disaster', 'status', 'controlled_by')
+ARMY_TEXT_FIELDS= ('station', 'station_region', 'commander', 'controller', 'troop_type', 'status', 'owner_power')
+POWER_TEXT_FIELDS= ('leader', 'stance', 'agenda', 'status', 'last_action')
+NOOP_POLICY=numeric_snapshot+landed; TEXT_FIELDS skipped (old _region/_army_noop_error)
+POWER_POLICY=cross_power any(material) aggregate (restored from e1ffba6ef; not per-field)
+R1_KEEP=apply_army_delta_with_cannon_transfer
+R2_KEEP=per-target/field reject via landed non-material + numeric unchanged

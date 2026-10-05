@@ -23,7 +23,7 @@ from ming_sim.constants import (
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
     BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
     POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
-    REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, POWER_FIELD_ALIASES, GATE_TABLES,
+    REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, GATE_TABLES,
     LEVY_DISPLACEMENT_RATE,
     BANDIT_ABSORPTION_FIELDS,
     BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
@@ -446,12 +446,6 @@ def _strategic_event_result_preflight_error(
         row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
         return row[field]
 
-    def _power_world_value(power_id: str, field: str) -> object:
-        row = db.conn.execute("SELECT * FROM powers WHERE id = ?", (power_id,)).fetchone()
-        if row is None:
-            return None
-        return row[field]
-
     def _reject_landed_or_unchanged(
         kind: str,
         default_target_id: str,
@@ -459,7 +453,11 @@ def _strategic_event_result_preflight_error(
         snapshots: List[tuple[object, str, str, object, object]],
         reader,
     ) -> str:
-        """按目标/字段拒收：写核已记的非 material，或声明字段写后世界值未变。"""
+        """按目标/字段拒收：写核已记的非 material，或数值字段写后世界值未变。
+
+        文本字段（REGION/ARMY_TEXT_FIELDS）不计 noop——同旧 _region_noop_error /
+        _army_noop_error；快照只收数值，故不在此另开文本判别层。
+        """
         for result in landed:
             if _strategic_result_item_has_material_world_state(result):
                 continue
@@ -513,7 +511,8 @@ def _strategic_event_result_preflight_error(
                             f"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by "
                             f"必须是 powers.id 中的非空真实势力 id：{value!r}"
                         )
-                if field in seen_fields:
+                # 文本不计 noop（旧 _region_noop_error 对 REGION_TEXT_FIELDS 直接放行）。
+                if field in REGION_TEXT_FIELDS or field in seen_fields:
                     continue
                 seen_fields.add(field)
                 snapshots.append(
@@ -575,7 +574,8 @@ def _strategic_event_result_preflight_error(
                     err = _int_delta_error("army", army_id, raw_field, value)
                     if err:
                         return err
-                if field in seen_fields:
+                # 文本不计 noop（旧 _army_noop_error 对 ARMY_TEXT_FIELDS 直接放行）。
+                if field in ARMY_TEXT_FIELDS or field in seen_fields:
                     continue
                 seen_fields.add(field)
                 snapshots.append(
@@ -602,58 +602,36 @@ def _strategic_event_result_preflight_error(
         db.conn.execute("ROLLBACK TO SAVEPOINT strategic_entity_result_preflight")
         db.conn.execute("RELEASE SAVEPOINT strategic_entity_result_preflight")
 
+    # power：回旧跨势力聚合 any(material)；逐字段/快照拒属 a16d5804e 擅自新增口径。
     power_items = ordered_power_items if ordered_power_items is not None else list(power_updates.items())
     if power_items:
         for power_id, raw_changes in power_items:
             if not isinstance(raw_changes, dict):
                 return f"战略/外敌事件「{event_title or event_id}」势力战果须为对象：{power_id}"
-        power_score_fields = frozenset({"leverage", "military_strength", "supply"})
+        power_results: List[Dict[str, object]] = []
+        power_rejections: List[RejectedItem] = []
         db.conn.execute("SAVEPOINT strategic_power_result_preflight")
         try:
             for power_id, raw_changes in power_items:
-                snapshots = []
-                seen_fields: set[str] = set()
-                power_row = db.conn.execute(
-                    "SELECT 1 FROM powers WHERE id = ?", (power_id,),
-                ).fetchone()
-                for raw_field, value in raw_changes.items():
-                    field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                    if field in ("reason", "last_action", "origin_ref"):
-                        continue
-                    if field not in power_score_fields:
-                        # 非法字段交写核拒收；不预读未知列。
-                        continue
-                    if power_row is None or field in seen_fields:
-                        continue
-                    seen_fields.add(field)
-                    snapshots.append(
-                        (
-                            raw_field,
-                            str(power_id),
-                            field,
-                            _power_world_value(str(power_id), field),
-                            value,
-                        )
-                    )
                 landed, refused = db.apply_power_deltas(
                     state,
                     {power_id: {key: value for key, value in raw_changes.items() if key != "origin_ref"}},
                     commit=False,
                 source=Provenance.system_simulation)
-                for result in refused:
-                    if isinstance(result, RejectedItem):
-                        return (
-                            f"战略/外敌事件「{event_title or event_id}」势力战果拒收："
-                            f"{result.reason or result.category}"
-                        )
-                err = _reject_landed_or_unchanged(
-                    "power", str(power_id), landed, snapshots, _power_world_value,
-                )
-                if err:
-                    return err
+                power_results.extend(landed)
+                power_rejections.extend(refused)
         finally:
             db.conn.execute("ROLLBACK TO SAVEPOINT strategic_power_result_preflight")
             db.conn.execute("RELEASE SAVEPOINT strategic_power_result_preflight")
+        for result in power_rejections:
+            if isinstance(result, RejectedItem):
+                return (
+                    f"战略/外敌事件「{event_title or event_id}」势力战果拒收："
+                    f"{result.reason or result.category}"
+                )
+        if not any(_strategic_result_item_has_material_world_state(result) for result in power_results):
+            power_id, raw_changes = power_items[0]
+            return _noop_error("power", str(power_id), "power_updates", raw_changes)
 
     if person_changes:
         for item in person_changes:
