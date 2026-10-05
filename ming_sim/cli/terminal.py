@@ -646,47 +646,23 @@ def play_turn(session: GameSession) -> None:
 
         if action == "back":
             continue
-        if action == "skip":
+        # #1891/#1899 DRY-C1/D1：skip／issue 共用快照、write_gate、异常、失败报告与
+        # None/ended/awaiting/advanced 收尾；仅业务 session 调用处分派，不另造 helper 框架。
+        if action in ("skip", "issue"):
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)
             try:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
-                result = session.advance_without_decree()
+                result = (
+                    session.advance_without_decree()
+                    if action == "skip"
+                    else session.resolve_turn()
+                )
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
                 # #1700：空 simulator 的 LLMContractError 同形，不落到 run_cli「程序中止」。
-                print(f"\n{error}")
-                _print_pending_action_failures(
-                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
-                )
-                continue
-            _print_pending_action_failures(
-                _new_secret_order_failure_payloads(session, turn_before, failed_before)
-            )
-            # #1891 R1：生产路径不再自动代选批红；候裁停本回合，由既有批红接缝承接。
-            if result is None:
-                return
-            print(result.report)
-            if getattr(session.state, "ended", False):
-                return
-            if getattr(result, "awaiting", False):
-                return
-            if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
-                session.end_turn()
-                return
-            continue
-        if action == "issue":
-            turn_before = int(session.state.turn)
-            failed_before = _failed_secret_order_ids(session, turn_before)
-            try:
-                # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
-                _cli_write_gate(session)
-                result = session.resolve_turn()
-            except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
-                # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）/ 契约失败（#1700）：打印指引后留在
-                # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。
                 print(f"\n{error}")
                 _print_pending_action_failures(
                     _new_secret_order_failure_payloads(session, turn_before, failed_before)

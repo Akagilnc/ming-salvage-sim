@@ -7,7 +7,6 @@ return 会退出 play_turn，外层主循环重进时重印回合引导/在册�
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -22,11 +21,6 @@ from ming_sim.session import TurnPhase
 def _cli_schedule_pending_noop(self, result):
     """#1842：CLI persist 尾必调 schedule_pending_scene_translation；轻壳无 pending 时 no-op。"""
     return None
-
-
-@contextmanager
-def _noop_atomic(_db):
-    yield
 
 
 class _Snap:

@@ -5,7 +5,6 @@ import pytest
 
 from ming_sim.decree import pre_settle
 from ming_sim.exceptions import SettlementAbort
-from ming_sim.army_pay import army_needed
 from ming_sim.issues import apply_historical_fiscal_rates
 import ming_sim.issues as issues
 
@@ -38,14 +37,6 @@ def _settle_land_sum(db):
         settle = _settle_payload(db, region_id)
         total += max(0.0, float(settle["st"].get("官民田") or 0.0))
     return total
-
-
-def _settled_land_by_region(db):
-    land_by_region = {}
-    for region_id in _settled_region_ids(db):
-        settle = _settle_payload(db, region_id)
-        land_by_region[region_id] = max(0.0, float(settle["st"].get("官民田") or 0.0))
-    return land_by_region
 
 
 def _expected_land_share_levy(settle, national_monthly, total_land):
@@ -82,8 +73,6 @@ def test_shaanxi_primary_source_liao_seed_keeps_opening_transport_cap(game):
         rel_tol=1e-9,
         abs_tol=1e-9,
     )
-
-
 
 
 def test_liao_levy_rise_applies_after_emperor_approves_before_fiscal_tick(game):
@@ -253,12 +242,6 @@ def test_fiscal_levy_rescript_golden_all_seeded_provinces(
         assert settle["p"]["起运定额"] >= 0
 
 
-
-
-
-
-
-
 def test_fiscal_levy_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass(game, monkeypatch):
     db, state, content = game
     issues.bind_content(content)
@@ -392,8 +375,6 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, mo
     )
 
 
-
-
 @pytest.mark.parametrize("bad_shape", ["land", "p", "st", "settle"])
 def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
     game, monkeypatch, bad_shape
@@ -447,8 +428,6 @@ def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
     assert math.isclose(restored["p"]["三饷应征"], expected_liao + expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
 
 
-
-
 @pytest.mark.parametrize("bad_meta_key", ["剿饷基线", "练饷基线", "饷率田亩分母基线"])
 def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
     game, monkeypatch, bad_meta_key
@@ -492,10 +471,6 @@ def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
     restored = _settle_payload(db, "huguang")
     assert "剿饷基线" in restored["_meta"]
     assert restored["p"]["三饷应征"] > expected_liao
-
-
-
-
 
 
 def test_fiscal_levy_events_are_not_in_model_candidate_pool(game):

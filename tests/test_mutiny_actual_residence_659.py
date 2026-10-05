@@ -32,14 +32,6 @@ def _global_population(db: GameDB) -> int:
     return int(db.conn.execute("SELECT COALESCE(SUM(population),0) FROM classes").fetchone()[0])
 
 
-def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: float) -> None:
-    db.conn.execute(
-        "UPDATE armies SET province_pay_arrears=?, central_pay_arrears=?, arrears=? WHERE id=?",
-        (province, central, province + central, army_id),
-    )
-    db.conn.commit()
-
-
 def _pseudo_event(title: str = "调防") -> Event:
     return Event(
         id="test_659", title=title, kind="圣旨", summary="",
@@ -74,13 +66,6 @@ def _executing_dossier(db, state, region_id: str) -> int:
     )
     db.conn.commit()
     return int(did)
-
-
-def _simulator_army_dicts(payload_armies):
-    if isinstance(payload_armies, dict) and "rows" in payload_armies:
-        cols = payload_armies.get("cols") or payload_armies.get("columns") or []
-        return [dict(zip(cols, row)) for row in payload_armies["rows"]]
-    return list(payload_armies)
 
 
 def test_station_region_rejects_unknown_region_id(game):

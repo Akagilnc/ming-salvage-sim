@@ -2100,27 +2100,6 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
     assert db.get_decree_dossier(stalled_id)['status'] == 'proposed'
     assert _dossier_payload(db.get_decree_dossier(stalled_id)).get('deliberation_state') == 'stalled'
 
-def _658_session(db, state, content, *, agent=None):
-    """最小真 GameSession 壳：只填 chat/add_directive 所需属性。"""
-    from types import SimpleNamespace
-    from ming_sim.session import GameSession
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.llm_config = SimpleNamespace(channel='api')
-    sess.temporary_characters = set()
-    sess._refuse_if_settling = lambda: None
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    if agent is not None:
-
-        class _Registry:
-
-            def get(self, _character, **_kw):
-                return agent
-        sess.registry = _Registry()
-    return sess
-
 def test_658_deliberate_backed_and_stalled_dossier_first(game):
     """#658：有站台 → backed+当面站台背书；无人 → stalled+dossier: issue；非法身份零写。"""
     from ming_sim import rescript_actions as ra

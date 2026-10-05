@@ -34,19 +34,6 @@ class _FakeAgent:
         yield RunCompletedEvent()
 
 
-class _SecretOrderAgent:
-    """A streamed tool result, matching the WebGame tool-result boundary."""
-
-    def __init__(self, result: str):
-        self.result = result
-
-    def run(self, *args, **kwargs):
-        yield _RunContent("臣已领密旨。")
-        completed = RunCompletedEvent()
-        completed.tools = [SimpleNamespace(tool_name="secret_order", result=self.result)]
-        yield completed
-
-
 class _FakeSession(HallAdmissionSessionMixin):
     temporary_characters = set()
 

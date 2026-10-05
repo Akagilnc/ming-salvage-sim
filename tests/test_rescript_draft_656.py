@@ -38,12 +38,6 @@ def _layer_a_opt(label: str = "拟", hint: str = "h", **kw) -> dict:
 def _two_opts(a: str = "甲", ha: str = "h1", b: str = "乙", hb: str = "h2", **kw) -> list:
     return [_layer_a_opt(label=a, hint=ha, **kw), _layer_a_opt(label=b, hint=hb, **kw)]
 
-def _retire_existing_actors(db) -> None:
-    db.conn.execute(
-        "UPDATE characters SET status='retired' WHERE status='active' AND power_id='ming' "
-        "AND (office LIKE '%首辅%' OR office LIKE '%掌印%')"
-    )
-
 # ---------------------------------------------------------------------------
 # F2.1/F2.2 载体与字段映射
 # ---------------------------------------------------------------------------
@@ -118,25 +112,6 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
 # ---------------------------------------------------------------------------
 # shape 校验＋权威快照绑定（F2.2/F2.3/F2.5）
 # ---------------------------------------------------------------------------
-
-
-def _valid_item(i: int) -> dict:
-    return {
-        "title": f"条目{i}", "context": f"导语{i}",
-        "options": _two_opts("甲拟", "所安者饥民", "乙拟", "所拂者小农"),
-    }
-
-
-def _legal_item() -> dict:
-    return {
-        "title": "陕西告饥",
-        "context": "秦地赤旱千里。",
-        "options": _two_opts("发帑赈济", "所安者饥民", "缓征加赈", "先赈后征"),
-    }
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +214,6 @@ def test_r3_strict_parse_concatenated_objects_raises_contract_error():
     raw = '{"items": [{"title": "甲", "context": "c", "options": [{"label": "a", "hint": "h1"}, {"label": "b", "hint": "h2"}]}]}{"items": []}'
     with pytest.raises(LLMContractError):
         _parse_rescript_json_strict(raw)
-
 
 
 # ---------------------------------------------------------------------------

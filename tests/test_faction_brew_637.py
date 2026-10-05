@@ -13,19 +13,16 @@
 
 from __future__ import annotations
 
-import json
 
 
 from ming_sim.faction_brew import (
-    STANCE_KEY,
-    VIEW_FACTION_STANCE,
     build_faction_brew_input,
     collect_new_edge_events_for_faction,
     project_character_factions,
     select_faction_brew_targets,
 )
 from ming_sim.exceptions import LLMUnavailable
-from ming_sim.relation_brew import FOUNDINGS_KEY, MonthEndRelationBrewLeg, RECENT_KEY
+from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.relations import EMPEROR_NODE
 
 
@@ -35,38 +32,6 @@ def _add_edge(db, state, *, source, target, kind, context, origin):
         origin=origin, turn=int(state.turn),
         year=int(state.year), period=int(state.period),
     )
-
-
-def _dual_brew_fn_factory(calls, *, stance="朝局如常。"):
-    """确定性假酿制手（双契约分派）：派系工作项回 stance 契约，关系工作项按序消费脚本。
-
-    派系项可经 stances 按序注入脚本化输出（缺省恒成功）。"""
-
-    def _brew(payload_json: str) -> str:
-        payload = json.loads(payload_json)
-        calls.append(payload)
-        if payload.get("view") == VIEW_FACTION_STANCE:
-            scripted = getattr(_brew, "stances", None)
-            out = (
-                scripted.pop(0)
-                if scripted
-                else {STANCE_KEY: stance}
-            )
-            if isinstance(out, BaseException):
-                raise out
-            if isinstance(out, str):
-                return out  # raw 字符串（畸形产出的注入缝）
-            return json.dumps(out, ensure_ascii=False)
-        script = _brew.outputs.pop(0) if getattr(_brew, "outputs", None) else {
-            FOUNDINGS_KEY: [], RECENT_KEY: "无事近况。",
-        }
-        return json.dumps(script, ensure_ascii=False)
-
-    return _brew
-
-
-def _relation_script(foundings=None, recent="近况重酿。"):
-    return {FOUNDINGS_KEY: list(foundings or []), RECENT_KEY: recent}
 
 
 def _faction_rows(db):

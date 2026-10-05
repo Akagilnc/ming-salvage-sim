@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-from tests.wait_utils import wait_until
 from types import SimpleNamespace
 
 import pytest
@@ -49,12 +48,6 @@ class _FakeAgent:
             yield RunContent(chunk)
         self.completed.set()
         yield RunOutput(self.tools)
-
-
-class _EmptyAgent(_FakeAgent):
-    def run(self, *_args, **_kwargs):
-        self.completed.set()
-        yield RunOutput()
 
 
 class _FakeSession(HallAdmissionSessionMixin):
@@ -142,26 +135,6 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
         stub_scene_agent(monkeypatch, agent)
         stub_audience_translate(monkeypatch)
     return game
-
-
-def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
-    """等本局唯一写队列进入 idle。"""
-    q = getattr(web_game, "_write_queue", None)
-    if q is not None and hasattr(q, "wait_idle"):
-        q.wait_idle()  # unlimited; CI job final line owns hang
-    else:
-        wait_until(lambda: web_game._runtime_write_queue().inflight_count() == 0)
-
-
-def _assert_next_accepted(stream) -> None:
-    accepted = next(stream)
-    assert isinstance(accepted, dict)
-    assert accepted["type"] == "accepted"
-    assert isinstance(accepted["campaign_id"], str)
-    assert isinstance(accepted["night_id"], int)
-    assert accepted["night_id"] > 0
-    assert isinstance(accepted["chat_turn_id"], int)
-    assert accepted["chat_turn_id"] > 0
 
 
 def test_chat_reload_exposes_retryable_failed_secret_order(game):

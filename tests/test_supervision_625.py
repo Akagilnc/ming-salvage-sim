@@ -87,36 +87,6 @@ def _audit_dossier(db, state, *, auditor: str, subject_id: int, token: str = "au
     return aid
 
 
-def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
-    import ming_sim.issues as issue_engine
-
-    stages = [{
-        "stage_idx": 0,
-        "due_turn": int(due_turn),
-        "criterion_text": "清丈见眉目",
-        "origin_context": "限期清丈",
-    }]
-    out = issue_engine.apply_score_extraction(
-        db, state,
-        {
-            "new_issues": [{
-                "origin_kind": "decree",
-                "origin_ref": f"dossier:{int(dossier_id)}",
-                "kind": "initiative",
-                "title": f"清丈分段-{dossier_id}",
-                "stage_text": "限期清丈",
-                "commitment_kind": "until_stop",
-                "ongoing_effects": {},
-                "stages": stages,
-            }],
-        },
-        content=content,
-    )
-    created = out["issue_summary"]["new_issues"][0]
-    assert created.get("rejected") is False, created
-    return int(created["issue_id"])
-
-
 # ── AC1 事实底 ────────────────────────────────────────────────────
 
 

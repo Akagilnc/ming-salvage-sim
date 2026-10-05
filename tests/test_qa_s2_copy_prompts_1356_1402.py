@@ -1,20 +1,14 @@
-"""#1274 QA S2：文案/prompt 小包钉测（#1429/#1430 + #1344 夹带 + #1356 + #1402）。
+"""#1274 QA S2：文案/prompt 小包钉测（#1429/#1430 + #1344 夹带 + #1356）。
 
-四条真缝各一钉：
-1. minister_agent 召对称谓正向口径（陛下/皇上/臣；亲王才殿下）
-2. season_simulator 停自算年号，上下文喂 reign_period_label 事实
-3. #1356 邸报报头年月 ≡ 报文自身月（后端 previous_reign_period_label 投影；FE 渲染见 vitest）
-4. web _require_active_minister 的拒绝文案与 session.can_summon 的原因是同一段
+真缝钉：
+1. #1356 邸报报头年月 ≡ 报文自身月（后端 previous_reign_period_label 投影；FE 渲染见 vitest）
+2. state_payload 投影 previous_reign_period_label 与当前 turn 标签分离
+
+#1891/#1899 TEST-C1：旧 web._require_active_minister 专属案已随入口退役删除；
+现役资格负向见 test_web_court_visibility.can_summon。
 """
 
 from __future__ import annotations
-
-from types import SimpleNamespace
-
-import pytest
-
-
-
 
 
 
@@ -106,48 +100,3 @@ def test_state_payload_projects_previous_reign_period_label(game):
     assert "真结算九月报文" in payload["previous_summary"]
     assert payload["turn"]["reign_period_label"] == reign_period_label(state.year, state.period)
     assert payload["previous_reign_period_label"] != payload["turn"]["reign_period_label"]
-
-
-def test_require_active_minister_uses_can_summon_reason(game, monkeypatch):
-    """#1402：offstage 拒绝走 session.can_summon；web 详情与该原因同一段文字。"""
-    import web_app
-    from fastapi import HTTPException
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    # 挑一个可物化的非宗藩大明人物，置 offstage
-    name = next(
-        (
-            n
-            for n, c in content.characters.items()
-            if getattr(c, "office_type", "") not in ("宗藩", "后宫")
-            and getattr(c, "power_id", "ming") == "ming"
-        ),
-        None,
-    )
-    assert name is not None
-    db.add_character(state, content.characters[name], source="测试物化")
-    db.set_character_status(state, name, "offstage", "史实尚未登场")
-    assert db.get_character_status(name)[0] == "offstage"
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.temporary_characters = {}
-
-    ok, reason = sess.can_summon(content.characters[name])
-    assert ok is False
-
-    stub = SimpleNamespace(
-        session=sess,
-        content=content,
-        db=db,
-        character_power_id=lambda c: web_app._character_power_id(c, db),
-    )
-    monkeypatch.setattr(web_app, "web_game", stub)
-
-    with pytest.raises(HTTPException) as ei:
-        web_app._require_active_minister(name)
-    assert ei.value.status_code == 409
-    detail = ei.value.detail
-    # DRY（#1402 的真契约）：web 的拒绝文案逐字取自 can_summon，无平行副本。
-    assert detail == reason.strip()

@@ -2,7 +2,9 @@
 
 基线 HEAD（本轮开工）：`82d35dd08f5c88b5a2d42c11ab0edee1e6e3957c`。
 本回执覆盖：(1) 82d35dd 施工修法重复（镜像 helper）DRY；(2) 已删 `_require_active_minister` 测试残留；(3) 授权面 predicate 轮询全表；(4) **最终 DRY 闭合**：唯一 async helper 落 `tests/wait_utils.py`，audience ×2 与 SSE.tick 同 import。
-**不改 F1/A/B/C**；不扩大 #1873 角色判断；不新增 timeout / 兼容属性 / 第三 wait 机制；不扩 `_require_active_minister` 非等待老资格 gate 案（R2 边界）。
+**不改 F1/A/B/C**；不扩大 #1873 角色判断；不新增 timeout / 兼容属性 / 第三 wait 机制。
+
+> **范围排除错误撤回（保留本历史文件）**：上文曾写「不扩 `_require_active_minister` 非等待老资格 gate 案（R2 边界）」。给事中／大理寺末份判决已驳回该排除——#1812 明文要求旧专属测试退出；R2 功能缺口不阻切片 ≠ 允许保留旧入口专属测试。正式处置见 `docs/reports/1891-1899-dry-test-closure.md`（删除三案及 `_stub_game`；保留现役 `can_summon` 负向）。
 
 ## 撤回史（上一轮误述）
 
