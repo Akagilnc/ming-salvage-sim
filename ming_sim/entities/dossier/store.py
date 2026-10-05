@@ -2486,3 +2486,38 @@ class DossierStore:
             (int(dossier_id),),
         ).fetchone()
         return float(row["total"] if row is not None else 0.0)
+
+    def actual_progress_at(self, dossier_id: int, turn: int) -> Optional[dict[str, object]]:
+        row = self._conn.execute(
+            "SELECT id, units FROM dossier_actual_progress "
+            "WHERE dossier_id=? AND turn=? LIMIT 1",
+            (int(dossier_id), int(turn)),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def pending_source_status(self, action_id: int) -> Any:
+        return self._conn.execute(
+            "SELECT source_chat_turn_id, status FROM pending_actions WHERE id=?",
+            (int(action_id),),
+        ).fetchone()
+
+    def pending_voidable_for_chat_turn(self, chat_turn_id: int) -> list[Any]:
+        return self._conn.execute(
+            "SELECT id, kind, version FROM pending_actions "
+            "WHERE source_chat_turn_id = ? AND status = 'pending' ORDER BY id",
+            (int(chat_turn_id),),
+        ).fetchall()
+
+    def pending_ids_for_chat_turn(self, chat_turn_id: int) -> list[int]:
+        rows = self._conn.execute(
+            "SELECT id FROM pending_actions WHERE source_chat_turn_id = ? ORDER BY id",
+            (int(chat_turn_id),),
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
+
+    def void_pending_if_pending(self, action_id: int) -> None:
+        self._conn.execute(
+            "UPDATE pending_actions SET status='voided', night_approved=0 "
+            "WHERE id=? AND status='pending'",
+            (int(action_id),),
+        )

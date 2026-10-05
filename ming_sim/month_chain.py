@@ -1057,9 +1057,7 @@ def _identity_materials(db: Any, state: Any, name: str) -> Dict[str, Any]:
     who = str(name or "").strip()
     if not who:
         return {}
-    if not db.conn.execute(
-        "SELECT 1 FROM characters WHERE name=?", (who,),
-    ).fetchone():
+    if db.characters.row(who) is None:
         # 不是真人物（如「某类人」式题名）：没有身份材料，如实留空，不编。
         return {"name": who}
     from ming_sim.knowledge import build_character_knowledge

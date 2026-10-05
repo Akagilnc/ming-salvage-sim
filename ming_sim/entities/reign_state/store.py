@@ -517,6 +517,43 @@ class ReignStateStore:
             "SELECT * FROM audience_nights WHERE status='closed' ORDER BY turn,id"
         ).fetchall()
 
+    def closed_nights_archive_rows(self) -> Any:
+        return self._conn.execute(
+            """
+            SELECT id,turn,year,period,time_of_day,location,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY turn, location, time_of_day ORDER BY id
+                   ) AS scene_number,
+                   COUNT(*) OVER (
+                       PARTITION BY turn, location, time_of_day
+                   ) AS scene_count
+            FROM audience_nights WHERE status='closed' ORDER BY turn,id
+            """
+        ).fetchall()
+
+    def ledger_archive_rows_for_nights(self, night_ids: list[int]) -> Any:
+        if not night_ids:
+            return []
+        placeholders = ",".join("?" for _ in night_ids)
+        return self._conn.execute(
+            f"SELECT night_id,person_names,tags,source_chat_turn_id "
+            f"FROM story_ledger_entries WHERE night_id IN ({placeholders}) "
+            "ORDER BY night_id,COALESCE(order_key,seq),id",
+            night_ids,
+        ).fetchall()
+
+    def chat_turn_archive_rows_for_nights(self, night_ids: list[int]) -> Any:
+        if not night_ids:
+            return []
+        placeholders = ",".join("?" for _ in night_ids)
+        return self._conn.execute(
+            f"SELECT night_id,minister_name FROM chat_turns "
+            f"WHERE night_id IN ({placeholders}) "
+            f"AND status NOT IN ('undone', 'failed', 'consumed') "
+            "ORDER BY night_id,night_seq,id",
+            night_ids,
+        ).fetchall()
+
     def list_night_ids(self) -> Any:
         return self._conn.execute("SELECT id FROM audience_nights ORDER BY id").fetchall()
 

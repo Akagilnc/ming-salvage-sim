@@ -461,10 +461,7 @@ def dossier_override_still_in_force(db: Any, dossier_id: int) -> bool:
     """
     turn = db._current_settle_turn()
     origin = f"dossier:{int(dossier_id)}"
-    rows = db.conn.execute(
-        "SELECT key,value FROM fiscal_config WHERE origin_ref=? AND kind='override'",
-        (origin,),
-    ).fetchall()
+    rows = db.fiscal_config.override_rows_for_origin(origin)
     config = {str(row["key"]): int(row["value"]) for row in rows}
     return any(_is_override_key(key) and _live(config, key, turn) for key in config)
 

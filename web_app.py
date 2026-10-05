@@ -1318,7 +1318,8 @@ class WebGame:
 
     def set_custom_portrait(self, name: str, portrait_id: str) -> None:
         """落库并回写内存：把某人物 portrait_id 指向自定义立绘。"""
-        self.db.set_portrait_id(name, portrait_id)
+        self.db.characters.update(name, {"portrait_id": portrait_id})
+        self.db.conn.commit()
         character = self.content.characters.get(name)
         if character is not None:
             character.portrait_id = portrait_id

@@ -2778,7 +2778,7 @@ class GameDB:
             offset = int(content_faction.leverage) - weight_sum
             self.factions.set_leverage_offset(faction, offset)
             self.recompute_faction_leverage(faction)
-        self._set_meta_flag("__leverage_offsets_calibrated")
+        self.reign.upsert_metric("__leverage_offsets_calibrated", 1)
         self._leverage_offsets_calibrated = True
 
     def _has_meta_flag(self, key: str) -> bool:
@@ -2787,10 +2787,6 @@ class GameDB:
         row = ReignStateStore(self.conn).read_has_meta_flag((key,))
         return row is not None and int(row["value"]) == 1
 
-    def _set_meta_flag(self, key: str) -> None:
-        """置 metrics 表里某持久标记=1（幂等 upsert）。不在此 commit——由调用方统一提交，
-        与同事务的其它写一并落库或一并回滚。"""
-        self.reign.upsert_metric(key, 1)
 
     def record_person_log(
         self,
@@ -3076,10 +3072,6 @@ class GameDB:
             n += 1
         return f"{prefix}{n}"
 
-    def set_portrait_id(self, name: str, portrait_id: str) -> None:
-        """改某人物的头像标识（如皇帝上传自定义立绘后落库）。"""
-        self.characters.update(name, {"portrait_id": portrait_id})
-        self.conn.commit()
 
     def add_character(
         self,
@@ -5323,10 +5315,6 @@ class GameDB:
         "relation_edge_events": "id",
     }
 
-    def _delete_turn_scoped_knowledge_sources_in_tx(self, chat_turn_id: int) -> None:
-        self.character_knowledge.delete_sources_matching(
-            f"%:chat_turn:{int(chat_turn_id)}", commit=False,
-        )
 
     def _row_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
         return {key: row[key] for key in row.keys()}
@@ -5425,10 +5413,7 @@ class GameDB:
         ctid = int(chat_turn_id or 0)
         if aid <= 0 or ctid <= 0:
             return False
-        row = self.conn.execute(
-            "SELECT source_chat_turn_id, status FROM pending_actions WHERE id=?",
-            (aid,),
-        ).fetchone()
+        row = self.dossiers.pending_source_status(aid)
         if row is None:
             return False
         return (
@@ -5454,11 +5439,7 @@ class GameDB:
         if ctid <= 0:
             return []
         # 与 _pending_action_owned_by_turn_in_tx 同一判据（同源轮 + 仍 pending）。
-        rows = self.conn.execute(
-            "SELECT id, kind, version FROM pending_actions "
-            "WHERE source_chat_turn_id = ? AND status = 'pending' ORDER BY id",
-            (ctid,),
-        ).fetchall()
+        rows = self.dossiers.pending_voidable_for_chat_turn(ctid)
         voided: List[int] = []
         for row in rows:
             action_id = int(row["id"])
@@ -5471,11 +5452,7 @@ class GameDB:
             if str(row["kind"] or "") == "office":
                 from ming_sim.audience_night import discard_inactive_office_summon
                 discard_inactive_office_summon(self, action_id)
-            self.conn.execute(
-                "UPDATE pending_actions SET status='voided', night_approved=0 "
-                "WHERE id=? AND status='pending'",
-                (action_id,),
-            )
+            self.dossiers.void_pending_if_pending(action_id)
             voided.append(action_id)
         return voided
 
@@ -5531,10 +5508,7 @@ class GameDB:
 
         # issue 目标：经 origin_ref 回指案卷；无合法案卷来源不得免代价终结
         if target_dossier_id <= 0 and target_issue_id > 0:
-            issue_row = self.conn.execute(
-                "SELECT kind, status, origin_ref FROM issues WHERE id=?",
-                (int(target_issue_id),),
-            ).fetchone()
+            issue_row = self.issues.row(int(target_issue_id))
             if issue_row is None:
                 raise ValueError("撤回成命目标事项不存在")
             if str(issue_row["kind"] or "").strip() != "initiative":
@@ -5680,11 +5654,6 @@ class GameDB:
             })
         return out
 
-    def _load_secret_order_body_row(self, order_id: int, *, active_only: bool) -> Optional[sqlite3.Row]:
-        sql = "SELECT * FROM secret_orders WHERE id = ?"
-        if active_only:
-            sql += " AND status = 'active'"
-        return self.conn.execute(sql, (int(order_id),)).fetchone()
 
     def _write_secret_order_body(
         self,
@@ -5696,7 +5665,7 @@ class GameDB:
         extra_params: Sequence[object] = (),
     ) -> None:
         assert column in _SECRET_ORDER_BODY_COLUMNS
-        row = self._load_secret_order_body_row(order_id, active_only=False)
+        row = self.character_knowledge.secret_order_row(int(order_id), active_only=False)
         if row is None:
             return
         log = _secret_order_body_log(row)
@@ -5709,15 +5678,13 @@ class GameDB:
         sets = f"{column} = ?, text_log_json = ?, updated_at = CURRENT_TIMESTAMP"
         if extra_assignments:
             sets = f"{extra_assignments}, {sets}"
-        params.append(int(order_id))
-        self.conn.execute(
-            f"UPDATE secret_orders SET {sets} WHERE id = ?",
-            params,
+        self.character_knowledge.update_secret_order_assignments(
+            int(order_id), sets, params,
         )
 
     def _read_secret_order_body_before_write(self, order_id: int) -> None:
         """写正文前先读账。读失败在调用方事务内、本写事务外抛出。"""
-        row = self._load_secret_order_body_row(int(order_id), active_only=True)
+        row = self.character_knowledge.secret_order_row(int(order_id), active_only=True)
         if row is not None:
             _secret_order_body_log(row)
 
@@ -5749,39 +5716,18 @@ class GameDB:
                 turn = int(state_row["turn"]) if turn is None else turn
                 year = int(state_row["year"]) if year is None else year
                 period = int(state_row["period"]) if period is None else period
-        self.conn.execute(
-            """
-            INSERT INTO investigation_spoiled_facts
-                (target_name, fact_key, turn, year, period, effect, origin_ref)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(target_name, fact_key, effect) DO NOTHING
-            """,
-            (
-                target, key, int(turn or 0), int(year or 0), int(period or 0),
-                eff, str(origin_ref or "")[:120],
-            ),
+        row = self.character_knowledge.record_investigation_spoiled_fact(
+            target_name=target,
+            fact_key=key,
+            turn=int(turn or 0),
+            year=int(year or 0),
+            period=int(period or 0),
+            effect=eff,
+            origin_ref=str(origin_ref or ""),
         )
         if commit and self.owns_transaction():
             self.conn.commit()
-        row = self.conn.execute(
-            "SELECT * FROM investigation_spoiled_facts "
-            "WHERE target_name=? AND fact_key=? AND effect=?",
-            (target, key, eff),
-        ).fetchone()
-        return dict(row) if row is not None else {}
-
-    def list_investigation_spoiled_facts(
-        self, target_name: str,
-    ) -> List[Dict[str, object]]:
-        target = str(target_name or "").strip()
-        if not target:
-            return []
-        rows = self.conn.execute(
-            "SELECT * FROM investigation_spoiled_facts WHERE target_name=? "
-            "ORDER BY fact_key, id",
-            (target,),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        return row
 
     def _snapshot_table(self, table: str, pk: str) -> Dict[str, Dict[str, Any]]:
         if table in ("secret_orders", "public_sayings"):
@@ -6048,21 +5994,11 @@ class GameDB:
                     ids.append(pid)
             if not ids:
                 return
-            placeholders = ",".join("?" for _ in ids)
             draft_ids_to_delete.extend(
-                int(row["id"]) for row in self.conn.execute(
-                    "SELECT id FROM turn_directives "
-                    f"WHERE source_pending_action_id IN ({placeholders}) ORDER BY id",
-                    tuple(ids),
-                ).fetchall()
+                self.issues.directive_ids_for_pending_actions(ids)
             )
 
-        _reclaim([
-            int(row["id"]) for row in self.conn.execute(
-                "SELECT id FROM pending_actions WHERE source_chat_turn_id = ? ORDER BY id",
-                (int(chat_turn_id),),
-            ).fetchall()
-        ])
+        _reclaim(self.dossiers.pending_ids_for_chat_turn(int(chat_turn_id)))
         prior_ids: List[object] = []
         for item in items:
             if str(item["target_table"]) != "pending_actions":
@@ -6074,16 +6010,13 @@ class GameDB:
                 pa_id = before_data.get("id")
             if pa_id is None:
                 continue
-            owner = self.conn.execute(
-                "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
-                (int(pa_id),),
-            ).fetchone()
+            owner = self.dossiers.pending_source_status(int(pa_id))
             if owner is None or int(owner["source_chat_turn_id"] or 0) == int(chat_turn_id):
                 continue
             prior_ids.append(pa_id)
         _reclaim(prior_ids)
         with self.conn:
-            self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
+            self.character_knowledge.delete_sources_matching(f"%:chat_turn:{int(chat_turn_id)}", commit=False)
             # #634 撤回联动（ADR 0038 白名单③）：删该轮源绑定的召对边事件；undone 轮
             # 天然出判官窗口（status != active），水位随逐轮标记失效自动回退。
             self.delete_relation_edge_events_for_chat_turn(chat_turn_id)
@@ -6251,12 +6184,7 @@ class GameDB:
         the report is rendered, and the archive write must
         not lose that item's access boundary.
         """
-        rows = self.conn.execute(
-            "SELECT turn, year, period, kind, title, body, source_id, excluded_names "
-            "FROM character_knowledge_events WHERE character_name='' AND turn=? "
-            "ORDER BY id",
-            (int(turn),),
-        ).fetchall()
+        rows = self.character_knowledge.public_events_for_turn(int(turn))
         by_source: Dict[str, Dict[str, object]] = {}
         # An explicit public row is the payload for that source. A later
         # source_projection of the same source_id must not replace it.
@@ -6279,15 +6207,8 @@ class GameDB:
             if key and is_public:
                 public_kept.add(key)
 
-        source_rows = self.conn.execute(
-            "SELECT title, body, source_id, participant_roster, excluded_names, "
-            "excluded_targets FROM character_knowledge_sources WHERE turn=? "
-            "ORDER BY id",
-            (int(turn),),
-        ).fetchall()
-        characters = self.conn.execute(
-            "SELECT name, office, office_type FROM characters"
-        ).fetchall()
+        source_rows = self.character_knowledge.sources_for_turn(int(turn))
+        characters = self.characters.read_knowledge_items_for_turn(())
         character_names = {str(row["name"]) for row in characters}
         for row in source_rows:
             participants = participant_roster_names(row["participant_roster"])
@@ -6402,38 +6323,15 @@ class GameDB:
 
     def list_closed_night_archives(self) -> List[Dict[str, object]]:
         """逐场列出 closed audience night，并保留玩家可见命名所需的容器属性。"""
-        rows = self.conn.execute(
-            """
-            SELECT id,turn,year,period,time_of_day,location,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY turn, location, time_of_day ORDER BY id
-                   ) AS scene_number,
-                   COUNT(*) OVER (
-                       PARTITION BY turn, location, time_of_day
-                   ) AS scene_count
-            FROM audience_nights WHERE status='closed' ORDER BY turn,id
-            """
-        ).fetchall()
+        rows = self.reign.closed_nights_archive_rows()
         if not rows:
             return []
 
         from ming_sim.audience_night import _json_list, night_archive_metadata
 
         night_ids = [int(row["id"]) for row in rows]
-        placeholders = ",".join("?" for _ in night_ids)
-        ledger_rows = self.conn.execute(
-            f"SELECT night_id,person_names,tags,source_chat_turn_id "
-            f"FROM story_ledger_entries WHERE night_id IN ({placeholders}) "
-            "ORDER BY night_id,COALESCE(order_key,seq),id",
-            night_ids,
-        ).fetchall()
-        turn_rows = self.conn.execute(
-            f"SELECT night_id,minister_name FROM chat_turns "
-            f"WHERE night_id IN ({placeholders}) "
-            f"AND status NOT IN ('undone', 'failed', 'consumed') "
-            "ORDER BY night_id,night_seq,id",
-            night_ids,
-        ).fetchall()
+        ledger_rows = self.reign.ledger_archive_rows_for_nights(night_ids)
+        turn_rows = self.reign.chat_turn_archive_rows_for_nights(night_ids)
         ledgers_by_night: Dict[int, List[Dict[str, Any]]] = {night_id: [] for night_id in night_ids}
         turns_by_night: Dict[int, List[Dict[str, Any]]] = {night_id: [] for night_id in night_ids}
         for row in ledger_rows:
@@ -13784,11 +13682,6 @@ class GameDB:
             return False
         return self.character_knowledge.has_active_secret_brief(name)
 
-    def _delete_shared_knowledge_source_ids(
-        self, source_ids: Iterable[str], *, commit: bool = True,
-    ) -> None:
-        """Delete shared ledger rows by source_id (events + sources)."""
-        self.character_knowledge.delete_by_source_ids(source_ids, commit=commit)
 
     def _coerce_positive_message_ids(
         self, message_ids: Optional[Iterable[Any]] = None,
@@ -13882,7 +13775,7 @@ class GameDB:
         for mid in live_ids:
             self.chat_messages.set_knowledge_status(mid, "withheld")
             source_ids.append(f"chat_message:{mid}")
-        self._delete_shared_knowledge_source_ids(source_ids, commit=False)
+        self.character_knowledge.delete_by_source_ids(source_ids, commit=False)
         if commit:
             self.conn.commit()
         return live_ids
@@ -15314,7 +15207,7 @@ class GameDB:
         items = self.reign._chat_turn_rollback_items(chat_turn_id)
         restored_pending_action_ids: List[int] = []
         with self.conn:
-            self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
+            self.character_knowledge.delete_sources_matching(f"%:chat_turn:{int(chat_turn_id)}", commit=False)
             self.reign.delete_ledger_for_chat_turn(int(chat_turn_id))
             # 空 undone 消息集：只还原业务副作用，一句问话/回话都不删。
             restored_pending_action_ids = self._restore_chat_rollback_items_in_tx(items, [])
@@ -15384,7 +15277,7 @@ class GameDB:
         ]
         restored_pending_action_ids: List[int] = []
         with self.conn:
-            self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
+            self.character_knowledge.delete_sources_matching(f"%:chat_turn:{int(chat_turn_id)}", commit=False)
             # Same family as undo_chat_turn: drop enter/exit placeholders bound to this
             # turn so failed attach/exit cannot freeze night presence or scene pads (T16/C11).
             self.reign.delete_ledger_for_chat_turn(int(chat_turn_id))

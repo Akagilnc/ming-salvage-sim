@@ -79,9 +79,7 @@ def write_identity_materials(
     written: List[str] = []
     for raw in names:
         name = str(raw or "").strip()
-        row = db.conn.execute(
-            "SELECT name,office,office_type FROM characters WHERE name=?", (name,),
-        ).fetchone() if name else None
+        row = db.characters.row(name) if name else None
         if row is None:
             continue  # 不是真人物（如「某类人」式题名）：没有身份材料，不编
         character = SimpleNamespace(**dict(row))

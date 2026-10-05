@@ -309,6 +309,17 @@ class IssueStore:
     def delete_directive_row(self, directive_id: object) -> None:
         self._conn.execute("DELETE FROM turn_directives WHERE id=?", (directive_id,))
 
+    def directive_ids_for_pending_actions(self, pending_action_ids: list[int]) -> list[int]:
+        if not pending_action_ids:
+            return []
+        placeholders = ",".join("?" for _ in pending_action_ids)
+        rows = self._conn.execute(
+            "SELECT id FROM turn_directives "
+            f"WHERE source_pending_action_id IN ({placeholders}) ORDER BY id",
+            tuple(int(i) for i in pending_action_ids),
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
+
     def directive(self, directive_id: int) -> Any:
         return self._conn.execute(
             "SELECT id, text, status, turn, dossier_payload_json FROM turn_directives WHERE id=?",

@@ -61,12 +61,12 @@ class FiscalConfigStore:
     def set_origin(self, key: str, origin: str) -> None:
         self._conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin, key))
 
-    def override(self, key: str, value: int, note: str, origin: str) -> None:
-        self._conn.execute(
-            "INSERT INTO fiscal_config (key,value,kind,note,origin_ref) VALUES (?,?,'override',?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, origin_ref=excluded.origin_ref",
-            (key, value, note, origin),
-        )
+    def override_rows_for_origin(self, origin: str) -> list[Any]:
+        return list(self._conn.execute(
+            "SELECT key,value FROM fiscal_config WHERE origin_ref=? AND kind='override'",
+            (str(origin),),
+        ).fetchall())
+
 
     def delete(self, key: str) -> None:
         self._conn.execute("DELETE FROM fiscal_config WHERE key=?", (key,))

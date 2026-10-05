@@ -946,7 +946,7 @@ def test_reaction_declarations_need_real_knowledge_across_months(game):
          "spoliation": {"effect": "harder", "fact_key": key},
          "suppression": {"form": "托人斡旋"}},
     ])
-    spoiled = db.list_investigation_spoiled_facts(target)
+    spoiled = db.character_knowledge.list_investigation_spoiled_facts(target)
     assert [s["fact_key"] for s in spoiled] == [key]
     payload = json.loads(db.dossiers.get_for_secret_order(oid)["payload_json"])
     acts = payload.get(INVESTIGATION_ACTS_KEY, [])
@@ -1289,7 +1289,7 @@ def test_spoliation_requires_real_knowledge_source(game):
     # 断言行为（未毁、实证不动），不锁诊断散文的措辞
     assert out["applied"] is False
     assert out["reason"]
-    assert db.list_investigation_spoiled_facts(target) == []
+    assert db.character_knowledge.list_investigation_spoiled_facts(target) == []
 
     # 凭空捏造一个不相干的人 → 仍不毁（账本里查无此关系边）
     stranger = next(
@@ -1308,7 +1308,7 @@ def test_spoliation_requires_real_knowledge_source(game):
         knowledge_source=stranger, commit=True,
     )
     assert out["applied"] is False
-    assert db.list_investigation_spoiled_facts(target) == []
+    assert db.character_knowledge.list_investigation_spoiled_facts(target) == []
 
     # 光有关系边不够：没有真实传话声明，仍判未知情（关系边存在 ≠ 话递到了）
     informer = _relation_informer(db, name, target)
@@ -1317,7 +1317,7 @@ def test_spoliation_requires_real_knowledge_source(game):
         knowledge_source=informer, commit=True,
     )
     assert out["applied"] is False
-    assert db.list_investigation_spoiled_facts(target) == []
+    assert db.character_knowledge.list_investigation_spoiled_facts(target) == []
 
     # 真实关系网里的人确经关系网把话递到（4a 声明）→ 知情成立，毁证被承接
     oid = _issue(
@@ -1333,7 +1333,7 @@ def test_spoliation_requires_real_knowledge_source(game):
     )
     assert out["applied"] is True
     assert out["knowledge_source"] == informer
-    spoiled = db.list_investigation_spoiled_facts(target)
+    spoiled = db.character_knowledge.list_investigation_spoiled_facts(target)
     assert [(row["fact_key"], row["effect"]) for row in spoiled] == [(key, "gone")]
 
 
@@ -1369,7 +1369,7 @@ def test_4a_unknown_target_declaring_spoliation_is_rejected(game):
         }],
         commit=True,
     )
-    assert db.list_investigation_spoiled_facts(target) == []
+    assert db.character_knowledge.list_investigation_spoiled_facts(target) == []
     assert key in live_investigation_fact_keys(db, target)
     assert investigation_lane_actual_units(db, did) == 0.0
 
@@ -1421,7 +1421,7 @@ def test_spoliation_makes_fact_harder_and_survives_case_reopen(game):
         "tip_off": {"source": informer},
         "spoliation": {"effect": "harder", "fact_key": target},
     }])
-    spoiled = db.list_investigation_spoiled_facts(target)
+    spoiled = db.character_knowledge.list_investigation_spoiled_facts(target)
     assert [(row["fact_key"], row["effect"]) for row in spoiled] == [(target, "harder")]
 
     _next_month(db, state)
@@ -1456,7 +1456,7 @@ def test_spoliation_makes_fact_harder_and_survives_case_reopen(game):
     assert investigation_lane_actual_units(db, reopen_did) == 0.0
     assert target in live_investigation_fact_keys(db, target)
     rows = [
-        row for row in db.list_investigation_spoiled_facts(target)
+        row for row in db.character_knowledge.list_investigation_spoiled_facts(target)
         if row["fact_key"] == target
     ]
     assert [row["effect"] for row in rows] == ["harder", "gone"]
@@ -1570,7 +1570,7 @@ def test_4a_declaration_lands_actions_and_spoliation_through_month_chain(game):
     # 深挖落在所点的那条罪上。毁证落在账上，不改真相底。
     lane = _lanes(db, oid)[target]
     assert lane["effort"] > 0.0
-    spoiled = db.list_investigation_spoiled_facts(target)
+    spoiled = db.character_knowledge.list_investigation_spoiled_facts(target)
     assert [(row["fact_key"], row["effect"]) for row in spoiled] == [(str(edge_id), "harder")]
     assert str(edge_id) in live_investigation_fact_keys(db, target)
     assert target in live_investigation_fact_keys(db, target)
@@ -2416,7 +2416,7 @@ def test_spoliated_fact_reported_as_unreachable_in_feed(game):
     zero_order = next(o for o in feed["active_secret_orders"] if int(o["id"]) == zero_oid)
     zero_fact = next(f for f in zero_order["investigation_facts"] if f["fact_key"] == untouched)
     assert zero_fact["state"] == "在查"
-    assert db.list_investigation_spoiled_facts(untouched) == []
+    assert db.character_knowledge.list_investigation_spoiled_facts(untouched) == []
 
 
 def test_closed_case_blocks_same_fact_on_later_case_and_due(game):

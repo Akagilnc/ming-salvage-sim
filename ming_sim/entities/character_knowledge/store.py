@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from ming_sim.applier import load_stored_json, load_stored_list, load_stored_object, safe_json_dumps, sanitize_sqlite_text
 from ming_sim.participant_roster import participant_roster_names
@@ -376,12 +376,68 @@ class CharacterKnowledgeStore:
         """The public lane for one month, oldest first."""
         return [
             dict(row) for row in self._conn.execute(
-                "SELECT turn, year, period, title, body, source_id, excluded_names "
+                "SELECT turn, year, period, kind, title, body, source_id, excluded_names "
                 "FROM character_knowledge_events WHERE character_name='' AND turn=? "
                 "ORDER BY id",
                 (int(turn),),
             ).fetchall()
         ]
+
+    def record_investigation_spoiled_fact(
+        self,
+        *,
+        target_name: str,
+        fact_key: str,
+        turn: int,
+        year: int,
+        period: int,
+        effect: str,
+        origin_ref: str = "",
+    ) -> Dict[str, object]:
+        """Persist one investigation spoil row; idempotent on (target, fact_key, effect)."""
+        self._conn.execute(
+            """
+            INSERT INTO investigation_spoiled_facts
+                (target_name, fact_key, turn, year, period, effect, origin_ref)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(target_name, fact_key, effect) DO NOTHING
+            """,
+            (
+                target_name, fact_key, int(turn), int(year), int(period),
+                effect, str(origin_ref or "")[:120],
+            ),
+        )
+        row = self._conn.execute(
+            "SELECT * FROM investigation_spoiled_facts "
+            "WHERE target_name=? AND fact_key=? AND effect=?",
+            (target_name, fact_key, effect),
+        ).fetchone()
+        return dict(row) if row is not None else {}
+
+    def list_investigation_spoiled_facts(
+        self, target_name: str,
+    ) -> List[Dict[str, object]]:
+        rows = self._conn.execute(
+            "SELECT * FROM investigation_spoiled_facts WHERE target_name=? "
+            "ORDER BY fact_key, id",
+            (str(target_name or "").strip(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def secret_order_row(self, order_id: int, *, active_only: bool = False) -> Any:
+        sql = "SELECT * FROM secret_orders WHERE id = ?"
+        if active_only:
+            sql += " AND status = 'active'"
+        return self._conn.execute(sql, (int(order_id),)).fetchone()
+
+    def update_secret_order_assignments(
+        self, order_id: int, assignments_sql: str, params: Sequence[object],
+    ) -> None:
+        """Write pre-checked SET assignments for one secret_orders row."""
+        self._conn.execute(
+            f"UPDATE secret_orders SET {assignments_sql} WHERE id = ?",
+            tuple(params) + (int(order_id),),
+        )
 
     def sources_for_turn(self, turn: int) -> List[Dict[str, object]]:
         """Shared sources registered in one month, oldest first."""

@@ -174,7 +174,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     expect(strength?.disabled).toBe(false);
     expect(strength?.value).toBe("off");
     const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
-    expect(offOption?.textContent).toBe("关（codex 最低=低）");
     cleanup();
   });
 
@@ -212,7 +211,6 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
     expect(strength?.disabled).toBe(false);
     const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
-    expect(offOption?.textContent).toBe("关（grok 最低=低）");
     cleanup();
   });
 

@@ -777,10 +777,7 @@ def _is_seed_guilt_fact_key(target: str, fact_key: str) -> bool:
 
 
 def _seed_guilt_severity(db: Any, target: str) -> str:
-    row = db.conn.execute(
-        "SELECT seed_guilt FROM characters WHERE name=?",
-        (str(target),),
-    ).fetchone()
+    row = db.characters.field_row("seed_guilt", str(target))
     if row is None:
         return ""
     raw = row["seed_guilt"]
@@ -902,7 +899,7 @@ def investigation_fact_is_gone(db: Any, target: str, fact_key: str) -> bool:
     return any(
         str(row.get("fact_key") or "") == key
         and str(row.get("effect") or "") == "gone"
-        for row in db.list_investigation_spoiled_facts(name)
+        for row in db.character_knowledge.list_investigation_spoiled_facts(name)
     )
 
 
@@ -977,18 +974,14 @@ def investigation_fact_difficulty(
     # 该列 NOT NULL INTEGER（content 侧 0–100 校验），故 int 直取、不设解析兜底；
     # 0 是合法值（0–100 闭集下端）且**必须**走 clamp——早前的 `if intrigue > 0`
     # 守卫会让最不会遮掩的人跳过乘子、落回参考值同难度，凭空造出一道非单调的台阶。
-    target_row = db.conn.execute(
-        "SELECT intrigue FROM characters WHERE name=?", (name,),
-    ).fetchone()
+    target_row = db.characters.field_row("intrigue", name)
     if target_row is not None:
         difficulty *= max(int(target_row["intrigue"]), _INTRIGUE_MIN) / _INTRIGUE_REFERENCE
 
     # 办案人能力（ADR 0092 带宽①同源）：能力强 → 同难度所需投入更少。
     worker = str(investigator or "").strip()
     if worker:
-        ability_row = db.conn.execute(
-            "SELECT ability FROM characters WHERE name=?", (worker,),
-        ).fetchone()
+        ability_row = db.characters.field_row("ability", worker)
         if ability_row is not None:
             try:
                 ability = float(ability_row["ability"])
@@ -1004,7 +997,7 @@ def investigation_fact_difficulty(
 
     if investigation_fact_is_gone(db, name, key):
         return float("inf")
-    for spoiled in db.list_investigation_spoiled_facts(name):
+    for spoiled in db.character_knowledge.list_investigation_spoiled_facts(name):
         if str(spoiled.get("fact_key") or "") != key:
             continue
         if str(spoiled.get("effect") or "") == "gone":
@@ -1031,9 +1024,7 @@ def _investigator_on_site(db: Any, worker_row: Any, target: str) -> bool:
     if not who or not name:
         return True  # 该轴不参与（退化）
     # 查案对象不是真人物（如「某类人」式题名）时无当地可核，按退化放行。
-    target_row = db.conn.execute(
-        "SELECT location FROM characters WHERE name=?", (name,),
-    ).fetchone()
+    target_row = db.characters.field_row("location", name)
     if target_row is None:
         return True
     there = str(target_row["location"] or "").strip()
@@ -1062,10 +1053,7 @@ def investigation_monthly_capacity(
     worker = str(investigator or "").strip()
     if not worker:
         return _CAPACITY_MIN
-    row = db.conn.execute(
-        "SELECT ability, location, transit_to FROM characters WHERE name=?",
-        (worker,),
-    ).fetchone()
+    row = db.characters.row(worker)
     if row is not None and not _investigator_on_site(db, row, target):
         return _CAPACITY_MIN  # 未到差：无差可查，投入为零
     capacity = 1.0
@@ -1079,14 +1067,12 @@ def investigation_monthly_capacity(
             capacity *= 1.0 + _ABILITY_CAPACITY_WEIGHT * (
                 (ability - _ABILITY_CAPACITY_REFERENCE) / _ABILITY_CAPACITY_REFERENCE
             )
-    open_errands = db.conn.execute(
-        "SELECT COUNT(*) AS n FROM decree_dossiers "
-        "WHERE executor_kind='character' AND executor_id=? "
-        "AND status IN ('promulgated','executing') AND id<>?",
-        (worker, int(dossier_id or 0)),
-    ).fetchone()
+    open_n = sum(
+        1 for errand in db.dossiers.open_by_executor(worker)
+        if int(errand["id"]) != int(dossier_id or 0)
+    )
     capacity *= 1.0 - _BANDWIDTH_PER_ERRAND * min(
-        int(open_errands["n"] or 0), _BANDWIDTH_ERRAND_CAP,
+        open_n, _BANDWIDTH_ERRAND_CAP,
     )
     return max(_CAPACITY_MIN, min(_CAPACITY_MAX, float(capacity)))
 
@@ -1429,9 +1415,7 @@ def _investigation_knowledge_known(
         return False
     if who == name:
         return False  # 不作自己的信息来源
-    if not db.conn.execute(
-        "SELECT 1 FROM characters WHERE name=?", (who,),
-    ).fetchone():
+    if db.characters.row(who) is None:
         return False
     # 传话记录与关系边必须是同一人。别人递过话，不能把未递话的关系人算成知情来源。
     if not any(
@@ -1878,11 +1862,7 @@ def _apply_investigation_selection(
     rejected_reactions: List[Dict[str, object]] = []
     # 同月重入不重复施加投入：实况轨已有本月行即说明本月已核算过。lane 累加本身
     # 不带幂等键，若不在此拦一道，同一 turn 内被扫两次就会把力气算两遍。
-    existing = db.conn.execute(
-        "SELECT id, units FROM dossier_actual_progress "
-        "WHERE dossier_id=? AND turn=? LIMIT 1",
-        (did, int(turn)),
-    ).fetchone()
+    existing = db.dossiers.actual_progress_at(did, int(turn))
     declaration = _investigation_declaration(sel)
     invalid = str(declaration.get("invalid") or "").strip()
     if invalid:
