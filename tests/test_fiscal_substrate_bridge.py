@@ -1411,33 +1411,6 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     )
 
 
-def test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills(fresh_db):
-    """A capped report must still carry the army identity for a real change."""
-    state = fresh_db.load_state()
-    earlier_armies = [row["id"] for row in fresh_db.conn.execute(
-        "SELECT id FROM armies WHERE id != 'fujian_navy' ORDER BY id LIMIT 10"
-    ).fetchall()]
-    assert len(earlier_armies) == 10
-    for army_id in earlier_armies:
-        fresh_db.conn.execute(
-            """INSERT INTO army_logs
-            (turn, year, period, army_id, field, old_value, new_value, delta, reason, actor)
-            VALUES (?, ?, ?, ?, 'morale', '80', '80', 0, '中央军饷足额', '户部')""",
-            (state.turn, state.year, state.period, army_id),
-        )
-    fresh_db.conn.execute(
-        """INSERT INTO army_logs
-        (turn, year, period, army_id, field, old_value, new_value, delta, reason, actor)
-        VALUES (?, ?, ?, 'fujian_navy', 'morale', '80', '72', -8, '本月省源军饷分账', '户部')""",
-        (state.turn, state.year, state.period),
-    )
-    fresh_db.conn.commit()
-    army_name = fresh_db.conn.execute(
-        "SELECT name FROM armies WHERE id='fujian_navy'"
-    ).fetchone()["name"]
-    assert army_name in fresh_db.turn_army_summary(state.turn, limit=len(earlier_armies))
-
-
 def test_budget_projection_preserves_persisted_fiscal_snapshots(fresh_game):
     from ming_sim.flows import compute_budget_lines
 

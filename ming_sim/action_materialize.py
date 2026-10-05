@@ -1284,45 +1284,6 @@ def _write_path_nature_ledger(
 
 
 
-def _authorization_privilege(raw: object) -> str:
-    """公开委任默认 privilege=便宜行事；显式四闭集权项原样保留。"""
-    from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
-
-    priv = str(raw or "").strip()
-    if priv in {"", "无"}:
-        return "便宜行事"
-    if priv in AUTHORITY_PRIVILEGE_SET:
-        return priv
-    return ""
-
-def _authorization_scope_parts(
-    target_id: object = "",
-    *,
-    target_kind: object = "",
-    scope: object = "",
-) -> Optional[Tuple[str, str, str]]:
-    """公开委任事域：典范键 target_kind:target_id；缺事域 → None。"""
-    raw_scope = str(scope or "").strip()
-    if raw_scope and ":" in raw_scope:
-        kind, _, tid = raw_scope.partition(":")
-        kind = kind.strip()
-        tid = tid.strip()
-        if kind and tid:
-            return kind, tid, f"{kind}:{tid}"
-    tid = str(target_id or "").strip()
-    kind = str(target_kind or "").strip()
-    if tid and ":" in tid and not kind:
-        kind, _, rest = tid.partition(":")
-        kind = kind.strip()
-        rest = rest.strip()
-        if kind and rest:
-            return kind, rest, f"{kind}:{rest}"
-    if not tid:
-        return None
-    if not kind:
-        kind = "issue"
-    return kind, tid, f"{kind}:{tid}"
-
 _PURE_AUTHORITY_DOSSIER_ACTIONS = frozenset({
     "authorization", "secret_authorization",
 })
@@ -1420,59 +1381,6 @@ def _parse_revoke_decree_target(
         "dossier_id": tid,
         "issue_id": 0,
     }
-
-def _resolve_unique_active_authority(
-    db: Any,
-    turn: int,
-    *,
-    authority_id: object = 0,
-    holder_id: object = "",
-    privilege: object = "",
-) -> Optional[Dict[str, Any]]:
-    """候选层：自然语言/结构字段唯一解析到现存在持 authority_records 行。
-
-    0/多条 → None（不得发生产项）。显式 authority_id 优先。
-    """
-    holder = str(holder_id or "").strip()
-    priv = str(privilege or "").strip()
-    if priv in {"", "无"}:
-        priv = ""
-    try:
-        aid = int(authority_id or 0)
-    except (TypeError, ValueError):
-        aid = 0
-    if aid > 0:
-        rec = db.get_authority(aid)
-        if rec is None or bool(rec.get("revoked")):
-            return None
-        try:
-            effective = int(rec.get("effective_turn") or 0)
-        except (TypeError, ValueError):
-            effective = 0
-        if effective > int(turn):
-            return None
-        exp = rec.get("expires_turn")
-        if exp not in (None, ""):
-            try:
-                if int(exp) < int(turn):
-                    return None
-            except (TypeError, ValueError):
-                return None
-        if holder and str(rec.get("holder_id") or "") != holder:
-            return None
-        if priv and str(rec.get("privilege") or "") != priv:
-            return None
-        return rec
-    if not holder:
-        return None
-    matches = list(db.list_active_authorities(int(turn), holder_id=holder))
-    if priv:
-        matches = [
-            m for m in matches if str(m.get("privilege") or "") == priv
-        ]
-    if len(matches) != 1:
-        return None
-    return matches[0]
 
 def stage_assignment_candidate(
     db: Any,
@@ -1618,93 +1526,6 @@ def stage_assignment_candidate(
         int(turn), minister_name, payload=staged,
         source_chat_turn_id=origin_cid,
     )
-
-def stage_authorization_candidate(
-    db: Any,
-    turn: int,
-    minister_name: str,
-    *,
-    text: str,
-    privilege: object = "",
-    target_id: object = "",
-    target_kind: object = "",
-    scope: object = "",
-    extracted_mode: object = None,
-    target_candidate: object = None,
-    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
-) -> int:
-    """Shared authorization candidate write (#528 / #611).
-
-    holder = 确认闸对象 = 当前大臣；收夜只成案卷；授予走 authority_changes，判后物化。
-    禁止技能 id / grant_skill 镜像。
-    """
-    from ming_sim.cli_backend import resolve_directive_mode
-
-    if str(target_candidate or "").strip() == "含糊":
-        return 0
-    body = str(text or "")
-    if not body.strip():
-        return 0
-    holder = str(minister_name or "").strip()
-    if not holder:
-        return 0
-    priv = _authorization_privilege(privilege)
-    if not priv:
-        return 0
-    parts = _authorization_scope_parts(
-        target_id, target_kind=target_kind, scope=scope,
-    )
-    if parts is None:
-        return 0
-    kind, tid, scope_key = parts
-
-    pending_rows = list(pend_for_minister or [])
-    if not pending_rows:
-        pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
-            if p.get("kind") == "directive" and p.get("status") == "pending"
-        ]
-    existing_id = 0
-    existing_mode = None
-    pointed = str(target_candidate or "").strip()
-    if pointed.isdigit():
-        want_id = int(pointed)
-        for row in pending_rows:
-            if int(row["id"]) != want_id:
-                continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
-            if str(payload.get("dossier_action_type") or "").strip() != "authorization":
-                break
-            existing_id = want_id
-            existing_mode = payload.get("mode")
-            break
-
-    mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
-    staged: Dict[str, Any] = {
-        "text": body,
-        "actor": minister_name,
-        "dossier_action_type": "authorization",
-        "target_kind": kind,
-        "target_id": tid,
-        "assignee": holder,
-        "holder_id": holder,
-        "name": holder,
-        "privilege": priv,
-        "scope": scope_key,
-        "mode": mode,
-    }
-    # #654/#1624：authorization materialize 自建 staged（无 LLM 属地字段），
-    # 不属三入口 structured_decree 契约；仅缺省补全，非覆盖已给 locality。
-    staged["locality_scope"] = write_locality_scope_for_target_kind(kind)
-    if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
-
 
 def stage_revoke_decree_candidate(
     db: Any,

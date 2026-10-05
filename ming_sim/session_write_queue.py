@@ -107,10 +107,6 @@ class ClassifiedWriteGate:
         with self._cv:
             return self._held
 
-    def holder_kind(self) -> Optional[str]:
-        with self._cv:
-            return self._kind
-
     def is_held_by_translation(self) -> bool:
         with self._cv:
             return self._held and self._kind == HOLDER_TRANSLATION

@@ -520,30 +520,3 @@ def translate_audience_turn(
     except Exception as exc:
         raise AudienceTranslateError(str(exc) or exc.__class__.__name__) from exc
     return normalize_audience_declaration(raw)
-
-
-def apply_audience_turn_translation(
-    db: Any,
-    state: Any,
-    declaration: Mapping[str, object],
-    *,
-    night_id: int,
-    chat_turn_id: int = 0,
-    minister_name: str = "",
-    source: Provenance = Provenance.system_simulation,
-) -> DeclarationDispatchResult:
-    """把转译声明交给场中承接落账核（C0 分派 + 源轮/水位）。
-
-    ``chat_turn_id`` 是当场实况源轮；落账核经统一分派器自记撤回前像。
-    """
-    from ming_sim.audience_translation import apply_audience_round_translation
-
-    return apply_audience_round_translation(
-        db,
-        state,
-        declaration,
-        night_id=int(night_id or 0),
-        chat_turn_id=int(chat_turn_id or 0),
-        minister_name=minister_name,
-        source=source,
-    )

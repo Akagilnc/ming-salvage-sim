@@ -287,9 +287,6 @@ class AffairStore:
         if owns:
             self._conn.commit()
 
-    def point_dossier(self, dossier_id: int, affair_id: int) -> None:
-        self.attach_pointer("decree_dossiers", dossier_id, affair_id)
-
     def _current_pointer(self, table: str, row_id: int | str) -> int:
         label = _POINTER_TABLES.get(table)
         if label is None:
@@ -318,9 +315,6 @@ class AffairStore:
             }
             for row in rows
         )
-
-    def point_issue(self, issue_id: int, affair_id: int) -> None:
-        self.attach_pointer("issues", issue_id, affair_id)
 
     def assert_origin_matches_declaration(
         self, origin_ref: str, declaration: Mapping[str, object]

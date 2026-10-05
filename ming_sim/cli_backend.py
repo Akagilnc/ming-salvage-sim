@@ -3734,10 +3734,6 @@ class CliChat(OpenAIChat):
                 raise
             raise cli_runner_unavailable(exc, backend=self.backend) from exc
 
-    async def ainvoke_stream(self, *args, **kwargs):  # type: ignore[override]
-        for response in self.invoke_stream(*args, **kwargs):
-            yield response
-
     def response_stream(  # type: ignore[override]
         self,
         messages: List[Message],

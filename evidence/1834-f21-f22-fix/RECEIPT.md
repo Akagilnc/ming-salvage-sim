@@ -1,52 +1,31 @@
-# 1834 F21/F22 修内司回执（交卷证据根因纠正）
+# 1834 F22-R 修内司回执（absolute_zero / 专属旧结构删除）
 
 BASELINE: `ebcd2d1a168e46da52ccf7f3f898406b9e29e54f`
 BRANCH: `ak-roles/1834-f21-f22-ebcd2d1a1`
-PRODUCTION（代码 FIX/DELETE 已落）: `66b88fa77f5158c8f015d97480803e798283dd3e`
 （最终 SHA 见本轮 commit stdout；回执不 stamp HEAD）
 
-## 本轮只修证据根因
+## 本轮范围
 
-1. **ENUM_CMDS.txt** 曾退化成搜固定保原文样本文字 / 具名已删列表 → 恢复可执行：
-   - F21：全仓 broad `rg`（strip 带参 / re.sub / replace / split / join / slice）
-   - F22：inline ~50 行一次性 Python AST（defs/fields + TS export/type + 引用计数，覆盖 zero/test-only）
-   - 不恢复永久 `scripts/` 分类层 / 全量 jsonl
-2. **test-only KEEP** 同句套话不可结清 → MEMBER_TABLE 逐条补具体测试 consumer 路径 + 现行职责；明示 KEEP≠已证全部现役
-3. **mutation_real_entry.out** 曾只剩 current_green → 用 `/tmp` 脚本从 `git show ebcd2d1a1` 装完整旧函数入 mapper/物化/highlights 真实入口；old_red + current_green；脚本不入库
+- **只修 F22-R**。F21 庭核已通过，不重开。
+- 根因：成员表对「全仓只剩定义」用「零调用但无退役职责证据／公开 API 表面」循环 KEEP；与判词「没有消费者就是没有现行职责」抵触。
 
-## 根因（生产语义不变）
+## 根因与全类枚举处置路径
 
-- **F21**：人读自由字段不得 strip 改写落库；判空用副本。
-- **F22**：退役零消费者专属结构删除后全仓复验；无退役证据不泛删。
+1. 读全局仓级法 + 本树 `ENUM_CMDS.txt` / `MEMBER_TABLE.md` + PI 会话末份 F22-R 判词。
+2. 全仓 inline AST 定义/引用扫描（stdlib+rg；无永久分类脚本）。
+3. **先删 absolute_zero**（排除 HTTP 装饰器路由、Protocol/dunder、scripts/spike）。
+4. **重扫**级联 dead helpers → 再删（`person_write_inventory` 整模块、`list_night_promulgated_directives`、`_authorization_*` 等）。
+5. **test-only**：仅旧结构专属测试支撑者删结构+专属测试；共享现役能力（财政桥、写闸、拟旨、HTTP 等）KEEP。
+6. 重写 `MEMBER_TABLE.md` §F22；更新 `ENUM_CMDS.txt` ABSENT_CHECK；聚焦测试。
 
-## 枚举计数（本轮实跑）
+## 枚举计数（F22-R 实跑）
 
 | CMD | 结果 |
 |---|---|
-| F21 CMD1 broad | HIT_COUNT=2205 |
-| F21 CMD2 strip-with-args | HIT_COUNT=10 |
-| F21 CMD3 assign/append/return | HIT_COUNT=1146 |
-| F22 inline AST | def_count=3349；zero_abs=51；zero_prod_test_only=69；py_files=118；ts_files=45；corpus_files=422 |
+| F22 inline AST recount | def_count=3306；zero_abs=21（含 HTTP/scripts 排除项）；zero_prod_test_only=63；py_files=117；ts_files=45；corpus_files=421 |
+| ABSENT_CHECK 点名样本 | `_collect_compliant_promulgation_items` / `apply_audience_turn_translation` / `mark_chat_turn_failed` / `stage_authorization_candidate` / `format_region_changes` / `person_write_inventory` / `status_delta_from_delta` → hits=0 |
 
-成员表：`MEMBER_TABLE.md`（F21 FIX 组 + 132 freeish 处置；F22 DELETE 表 + zero 候选处置；test-only 已列具体测试路径）。
-
-## 真实入口旧红新绿
-
-方法（临时 `/tmp/1834-f21-f22-r5/real_entry_mutation.py`，不入库）：
-`git show ebcd2d1a1` 完整函数体 → `map_rescript_option_or_choice` / `_parse_highlights_json` / `_apply_military_order_station_effect` 真实入口。
-
-```
-old_map_src_chars=14279 old_parse_src_chars=420 old_apply_src_chars=1846
-current_mapper_preserved=true current_hl_preserved=true current_materialize_preserved=true
-current_materialize_station="  山海关  "
-old_mapper_preserved=false old_mapper_station=山海关
-old_hl_preserved=false old_hl_read=["辽饷"]
-old_materialize_preserved=false old_materialize_station=山海关
-current_green=true old_red=true
-MUTATION_OK current_green_old_red real_old_funcs_from_ebcd2d1a1
-```
-
-完整 stdout：`mutation_real_entry.out`。不得伪称仅 rg 当前站点 intact = 真实入口证明。伪变异撤销见 `MUTATION_FAKE_REVOKED.txt`。
+成员表：`MEMBER_TABLE.md`（F21 保留；F22 DELETE 表 + 仍存候选完整处置）。
 
 ## 聚焦测试（七 BIN=/usr/bin/false；完整命令）
 
@@ -73,10 +52,13 @@ export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
   tests/test_promulgation_judge_561.py::test_leader_only_mutation_changes_faction_posture_not_roster \
   tests/test_faction_leverage_9.py \
   tests/test_execution_pressure_654.py \
-  -q -p no:cacheprovider --basetemp=/tmp/1834-f21-f22-r5/pytest-focus --tb=line
+  tests/test_section4_rejections.py \
+  tests/test_power_section_rejections.py \
+  tests/test_pay_order_override_653.py \
+  -q -p no:cacheprovider --basetemp=/tmp/1834-f22-r/pytest-focus --tb=line
 ```
 
-结果：`323 passed, 1 warning in 10.05s`（real 10.50s）→ `pytest-focus.out`
+结果：`470 passed, 1 skipped, 1 warning in 11.69s`（real 12.20s）→ `pytest-focus.out`
 
 ```
 cd web && ./node_modules/.bin/vitest run --environment jsdom \
@@ -87,16 +69,18 @@ cd web && ./node_modules/.bin/vitest run --environment jsdom \
   src/staleGuard.test.tsx
 ```
 
-结果：`Test Files 5 passed；Tests 158 passed；Duration 4.43s`（real 4.63s）→ `vitest-focus.out`
+结果：`Test Files 5 passed；Tests 158 passed；Duration 4.03s`（real 4.22s）→ `vitest-focus.out`
 
-## 准确剩余 scope（不冒充全清）
 
-- prod_zero_test_only / absolute_zero KEEP：已列测试 consumer 或公开表面职责；**未证明全部现役热路径**。
-- 冻结 evidence 内旧符号叙述不改写。
-- 本票其它未结类 / 接线票不在本回执范围。
+## 保留例外
+
+- 装饰器注册 HTTP 路由（函数名零 Python 调用属常态）
+- Protocol / dunder
+- scripts / spike 本地定义；及仅被 scripts 消费的 `require_fresh_cli_trace`
+- 共享现役能力的 prod_zero_test_only（如 `settle_province_tick`、`SessionWriteQueue.*`、`generate_rescript_draft`、value_matrix 兄弟读口等）— 理由=真实现役架构职责，非「公开 API」空话
 
 ## Advisor
 
 - 未改治理/Soul/配置；未 stash/amend/push/PR/kill/全量。
 - 未新增永久分类层或永久证明测试。
-- 自查二连：同类型（机械枚举 vs 样本文字哨兵；真实入口旧函数 vs current_green-only）；引入（证据纠正不改生产语义）。
+- 自查二连：同类型（循环 KEEP vs 零消费者即删；专属测试 vs 共享能力）；引入（删定义-only 不误伤 HTTP/共享管线）。

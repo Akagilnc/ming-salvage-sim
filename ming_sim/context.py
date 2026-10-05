@@ -313,14 +313,6 @@ def faction_context_with_db(character: Character, db: GameDB) -> str:
 
 
 
-def first_character() -> Character:
-    try:
-        return next(iter(_ctx().characters.values()))
-    except StopIteration as error:
-        raise SystemExit("characters.json 至少需要一个人物。") from error
-
-
-
 def character_from_name(name: object) -> Character:
     value = str(name or "")
     character = _ctx().characters.get(value)

@@ -964,47 +964,6 @@ def test_location_canonical_seed_and_write_seam(env, tmp_path):
         GameDB(str(bad), content)
 
 
-def test_authorization_region_gets_single_locality(env):
-    """D：authorization region 目标 producer 写 locality_scope=single。"""
-    import ming_sim.action_materialize  # noqa: F401
-    from ming_sim.action_materialize import stage_authorization_candidate
-
-    db, state, _ = env
-    holder = "毕自严"
-    pending_id = stage_authorization_candidate(
-        db,
-        state.turn,
-        holder,
-        text="准其便宜行事于陕西。",
-        privilege="便宜行事",
-        target_id="shaanxi",
-        target_kind="region",
-    )
-    assert pending_id
-    row = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()
-    payload = json.loads(row["payload_json"])
-    assert payload["target_kind"] == "region"
-    assert payload["locality_scope"] == "single"
-    # 新建非 region 路径每次显式 none
-    pending2 = stage_authorization_candidate(
-        db,
-        state.turn,
-        holder,
-        text="准其便宜行事。",
-        privilege="便宜行事",
-        target_id=holder,
-        target_kind="character",
-    )
-    assert pending2
-    row2 = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (pending2,),
-    ).fetchone()
-    payload2 = json.loads(row2["payload_json"])
-    assert payload2["locality_scope"] == "none"
-
-
 def test_grant_region_to_character_amendment_clears_single_locality(env):
     """#654 P2：同一 pending grant region→character 改草须覆盖 locality_scope=none。"""
     import ming_sim.action_materialize  # noqa: F401
@@ -1044,64 +1003,6 @@ def test_grant_region_to_character_amendment_clears_single_locality(env):
         target_id=actor,
         amount=5,
         account="内库",
-        target_candidate=str(pending_id),
-    )
-    assert updated == pending_id
-    revised = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["payload_json"])
-    assert revised["target_kind"] == "character"
-    assert revised["locality_scope"] == "none"
-
-    normalized = db._normalize_directive_dossier_payload(
-        revised, content=content, current_turn=int(state.turn),
-    )
-    assert normalized["target_kind"] == "character"
-    assert normalized["locality_scope"] == "none"
-
-    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
-    rows = [
-        d for d in db.list_decree_dossiers()
-        if int(d.get("pending_action_id") or 0) == int(pending_id)
-    ]
-    assert len(rows) == 1
-    stored = json.loads(str(rows[0].get("payload_json") or "{}"))
-    assert stored.get("locality_scope") == "none"
-    assert rows[0]["target_kind"] == "character"
-
-
-def test_authorization_region_to_character_amendment_clears_single_locality(env):
-    """#654 P2：同一 pending authorization region→character 改草须覆盖 locality_scope=none。"""
-    import ming_sim.action_materialize  # noqa: F401
-    from ming_sim.action_materialize import stage_authorization_candidate
-
-    db, state, content = env
-    holder = "毕自严"
-
-    pending_id = stage_authorization_candidate(
-        db,
-        state.turn,
-        holder,
-        text="准其便宜行事于陕西。",
-        privilege="便宜行事",
-        target_id="shaanxi",
-        target_kind="region",
-    )
-    assert pending_id
-    first = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["payload_json"])
-    assert first["target_kind"] == "region"
-    assert first["locality_scope"] == "single"
-
-    updated = stage_authorization_candidate(
-        db,
-        state.turn,
-        holder,
-        text="准其便宜行事。",
-        privilege="便宜行事",
-        target_id=holder,
-        target_kind="character",
         target_candidate=str(pending_id),
     )
     assert updated == pending_id

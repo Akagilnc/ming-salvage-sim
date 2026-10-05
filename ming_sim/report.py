@@ -33,66 +33,9 @@ def print_header(state: GameState, db: Optional[GameDB] = None) -> None:
     print()
 
 
-def format_region_changes(changes: List[Dict[str, object]]) -> str:
-    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
-    changes = [c for c in (changes or []) if not (isinstance(c, dict) and c.get("rejected"))]
-    if not changes:
-        return f"本{TURN_UNIT}未见明确地区盘面变化。"
-    parts = []
-    for change in changes:
-        delta = change["delta"]
-        if delta is None:
-            parts.append(f"{change['region']}{change['label']}改为{change['new']}（{change['reason']}）")
-        else:
-            sign = "+" if int(delta) > 0 else ""
-            parts.append(f"{change['region']}{change['label']}{sign}{int(delta)}（{change['reason']}）")
-    return "；".join(parts) + "。"
-
-
-def format_army_changes(changes: List[Dict[str, object]]) -> str:
-    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
-    changes = [c for c in (changes or []) if not (isinstance(c, dict) and c.get("rejected"))]
-    if not changes:
-        return f"本{TURN_UNIT}未见明确军队盘面变化。"
-    parts = []
-    for change in changes:
-        delta = change["delta"]
-        field = str(change["field"])
-        if delta is None:
-            parts.append(f"{change['army']}{change['label']}改为{change['new']}（{change['reason']}）")
-        elif field == "manpower":
-            sign = "+" if int(delta) > 0 else ""
-            parts.append(f"{change['army']}{change['label']}{sign}{int(delta)}人（{change['reason']}）")
-        else:
-            sign = "+" if int(delta) > 0 else ""
-            parts.append(f"{change['army']}{change['label']}{sign}{int(delta)}（{change['reason']}）")
-    return "；".join(parts) + "。"
-
-
-def format_power_changes(changes: List[Dict[str, object]]) -> str:
-    # 拒收项(ADR 0008 决定 1)与 applied 项同列，但不是盘面变化，先滤掉。
-    applied = [c for c in (changes or []) if not (isinstance(c, dict) and c.get("rejected"))]
-    if not applied:
-        return f"本{TURN_UNIT}未见明确势力盘面变化。"
-    parts = []
-    for change in applied:
-        delta = change["delta"]
-        if delta is None:
-            parts.append(f"{change['power']}{change['label']}改为{change['new']}（{change['reason']}）")
-        else:
-            sign = "+" if int(delta) > 0 else ""
-            parts.append(f"{change['power']}{change['label']}{sign}{int(delta)}（{change['reason']}）")
-    return "；".join(parts) + "。"
-
-
 def metric_delta(before: Dict[str, int], after: Dict[str, int]) -> Dict[str, int]:
     keys = list(before.keys())
     for key in after:
         if key not in before:
             keys.append(key)
     return {key: after.get(key, 0) - before.get(key, 0) for key in keys if after.get(key, 0) != before.get(key, 0)}
-
-
-
-def status_delta_from_delta(delta: Dict[str, int]) -> str:
-    return format_metric_delta(delta).replace("数值变化：", "")

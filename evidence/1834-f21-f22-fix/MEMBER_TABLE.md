@@ -166,166 +166,123 @@
 
 ## F22 退役旧接缝残留
 
-类定义：按现行职责与真实消费者清理已作废结构及专属参数、透传、类型和测试；保留在用共享能力；冻结失败记录不改写。
-枚举记录（本轮 ENUM_CMDS inline AST）：def_count=3349；zero_abs=51；zero_prod_test_only=69。下表保留先前完整处置行（124）供审；计数差来自 inline 谓词厚度（无永久分类层），非本轮新增 DELETE。
-边界：全仓定义 + 函数名/字符串/动态引用复验；**不是** ChatTurnResult 单 dataclass / 具名 expanded set；**不靠**「公开 API」命名笼统 KEEP。
+类定义：按现行职责与真实消费者清理已作废结构及专属参数、透传、类型和测试；保留在用共享能力与冻结失败记录。以删除、合并收尾，不接回旧机制、不加兼容层。
+枚举记录（本轮 ENUM_CMDS inline AST，含 tests/scripts 引用语料）：见 ENUM_CMDS 复跑计数。
+边界：全仓定义 + 引用复验；**不是** ChatTurnResult 单 dataclass / 具名 expanded set；**禁止**「零调用但无退役证据／公开 API 表面」循环 KEEP。
+F21 本庭已通过，本表 F21 节不重开。
 
-### DELETE（本轮+已验 absent）
+### DELETE（本轮+级联；复验 absent）
 
 | 成员 | 位置 | 处置 | 职责追猎理由 |
 |---|---|---|---|
-| `EN_VALUE_CN` | web/src/format.ts | DELETED | 零消费者旧枚举查找表；职责已废，假借「非自由正文」绕开 F22 不成立 |
-| `Suggestion` | web/src/types.ts | DELETED | 零引用 TS 类型；建议芯片契约已无前端消费者 |
-| `ExtractionPendingStatus` | web/src/types.ts | DELETED | #501/#1353 待补抽取诊断类型；不再驱动 CTA，零引用 |
-| `PromulgationHealEvidence(+heal_evidence 参数)` | ming_sim/exceptions.py / decree import | DELETED | NamedTuple 从未构造；专属坏输出证据结构退役 |
-| `run_audience_turn_translation` | ming_sim/audience_translate.py | DELETED | 零调用包装；现役走 apply_audience_round_translation |
-| `stage_referral_candidate / stage_revoke_authority_candidate` | ming_sim/action_materialize.py | DELETED | 零调用专属暂存写缝；现役仅 stage_revoke_decree_candidate 等有消费者 |
-| `season_option_contract_prompt / cluster_effect` | ming_sim/action_clusters.py | DELETED | 零调用专属投影 |
-| `_merge_compliant_promulgation_items / _promulgable_proposed_dossiers / _dossier_ids_from_simulator_payload / _open_affair_ids_from_payload` | ming_sim/decree.py | DELETED | 私有零调用颁布/模拟器残留 |
-| `contract_axes_direction / parse_covert_exec_selections` | ming_sim/covert_progress.py | DELETED | 零调用密令辅助 |
-| `discover_character_write_sql_locations / person_write_locations_by_disposition` | ming_sim/person_write_inventory.py | DELETED | 零调用库存扫描辅助 |
-| `qualitative_character_attribute / disaster_severity_band` | ming_sim/qualitative.py | DELETED | 零调用定性辅助 |
-| `status_delta / build_period_report` | ming_sim/report.py | DELETED | 零调用报告辅助（status_delta_from_delta 仍在） |
-| `mean_aligned_stance` | ming_sim/value_matrix.py | DELETED | 零调用 |
-| `release_previous_material_tree` | ming_sim/materials.py | DELETED | 零调用材料树释放 |
-| `dict_of_string_lists / dict_of_strings` | ming_sim/content.py | DELETED | 零调用 content 校验器 |
-| `historical_anchor_for_month / parse_json_dict / event_context / first_character_name` | ming_sim/context.py | DELETED | 零调用 context 辅助 |
-| `require_non_empty_text / require_int_range / require_bool` | ming_sim/llm_contract.py | DELETED | 零调用契约校验器（abort_llm_contract 仍在） |
-| `has_player_visible_rejection` | ming_sim/applier.py | DELETED | RejectionCollector 零调用方法 |
-| `_primary_source_only_army_pay_container_total / _is_audience_chat_shared_channel` | ming_sim/db.py | DELETED | 私有零调用 |
-| `apply_llm_config / _open_night_court_break` | web_app.py | DELETED | WebGame 零调用方法；现役保存 LLM 路径另在 |
-| `appointed/registered/displaced + splitReportItems` | prior commits | DELETED | 上轮已删；本轮复验仍 absent |
+| 先前 F22 已删 43 项（EN_VALUE_CN / Suggestion / ExtractionPendingStatus / PromulgationHealEvidence / run_audience_turn_translation / stage_referral_candidate / stage_revoke_authority_candidate / season_option_contract_prompt / cluster_effect / _merge_compliant_promulgation_items 等） | 多处 | DELETED | 上轮已删；本轮复验仍 absent |
+| `_collect_compliant_promulgation_items` | ming_sim/decree.py | DELETED | 全仓只剩定义；同族 `_merge_*` 已删 |
+| `_province_transport_ratio` / `_province_collection_rate` / `_fiscal_container_value` | ming_sim/flows.py | DELETED | 全仓只剩定义（桩返回 1.0 / 无调用） |
+| `status_delta_from_delta` | ming_sim/report.py | DELETED | 全仓只剩定义 |
+| `_write_locations_in_source` + `_enclosing_function_name` / `_is_sql_execute_argument` / `_inventory_location` / `_call_name` + 整模块 `person_write_inventory.py`（含 `PERSON_WRITE_POINT_INVENTORY`） | ming_sim/person_write_inventory.py | DELETED | 扫描器与清单零生产消费者；级联删整模块 |
+| `first_character` | ming_sim/context.py | DELETED | 全仓只剩定义 |
+| `_resolve_unique_active_authority` | ming_sim/action_materialize.py | DELETED | 全仓只剩定义 |
+| `apply_audience_turn_translation` | ming_sim/audience_translate.py | DELETED | 全仓只剩定义（现役走 round 路径） |
+| `CliChat.ainvoke_stream` | ming_sim/cli_backend.py | DELETED | 全仓只剩定义 |
+| GameDB：`mark_chat_turn_failed` / `clear_directive_needs_clarification` / `discard_pending_directives` / `executable_decree_dossier_ids` / `append_rescript_drafts` / `attach_secret_oral_pin` / `list_office_vacancies` / `record_economy_moves` / `turn_power_summary` / `building_detail` / `turn_economy_summary` / `treasury_ledger` / `list_open_grant_reconciliations` / `list_promulgated_directives` / `list_recent_issue_advances` / `read_credit_events_as_edges` / `list_night_promulgated_directives` / `turn_region_summary` / `turn_army_summary` | ming_sim/db.py | DELETED | 全仓只剩定义或仅旧摘要专属测试 |
+| `AffairStore.point_dossier` / `point_issue` | ming_sim/entities/affair/store.py | DELETED | 全仓只剩定义 |
+| `TextualFactStore.pointing_at` | ming_sim/entities/textual_fact/store.py | DELETED | 全仓只剩定义 |
+| `ClassifiedWriteGate.holder_kind` | ming_sim/session_write_queue.py | DELETED | 全仓只剩定义 |
+| `stage_authorization_candidate` + `_authorization_privilege` / `_authorization_scope_parts` | ming_sim/action_materialize.py | DELETED | 无生产接线；仅专属测试 → 结构+专属测试同删 |
+| `format_region_changes` / `format_army_changes` / `format_power_changes` | ming_sim/report.py | DELETED | 仅专属拒收格式化测试 → 结构+专属测试同删 |
+| 专属测试：`test_region_army_formatters_skip_rejected_items` / `test_power_change_formatter_skips_rejected_items` / `test_turn_region_summary_claim_audit_rows_do_not_consume_limit` / `test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills` / `test_authorization_region_gets_single_locality` / `test_authorization_region_to_character_amendment_clears_single_locality` | tests/… | DELETED | 旧结构专属测试随结构删 |
 
-### 零真实消费者候选完整清单（枚举后仍存在者；逐条处置）
+### 枚举后仍存在候选（完整处置；禁止「无退役证据／公开 API」循环 KEEP）
 
 | zero_kind | kind | qualname | path:line | 处置 | 理由 |
 |---|---|---|---|---|---|
-| absolute_zero | py_func | `_resolve_unique_active_authority` | `ming_sim/action_materialize.py:1424` | KEEP | 零调用但无退役职责证据；保留共享/公开表面 |
-| absolute_zero | py_func | `apply_audience_turn_translation` | `ming_sim/audience_translate.py:525` | KEEP | 零调用但无退役职责证据；保留共享/公开表面 |
-| absolute_zero | py_method | `CliChat.ainvoke_stream` | `ming_sim/cli_backend.py:3737` | KEEP | CliChat 公开流式适配表面 |
-| absolute_zero | py_method | `CliChat.aresponse_stream` | `ming_sim/cli_backend.py:3762` | KEEP | CliChat 公开流式适配表面 |
-| absolute_zero | py_func | `first_character` | `ming_sim/context.py:316` | KEEP | 零调用但无退役职责证据；保留共享/公开表面 |
-| absolute_zero | py_method | `GameDB.list_office_vacancies` | `ming_sim/db.py:4048` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.record_economy_moves` | `ming_sim/db.py:6519` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.turn_power_summary` | `ming_sim/db.py:7188` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.building_detail` | `ming_sim/db.py:8947` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.turn_economy_summary` | `ming_sim/db.py:9033` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.treasury_ledger` | `ming_sim/db.py:9059` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.mark_chat_turn_failed` | `ming_sim/db.py:9683` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.append_rescript_drafts` | `ming_sim/db.py:11067` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.attach_secret_oral_pin` | `ming_sim/db.py:11310` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.list_open_grant_reconciliations` | `ming_sim/db.py:12375` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.executable_decree_dossier_ids` | `ming_sim/db.py:15167` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.clear_directive_needs_clarification` | `ming_sim/db.py:17718` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.list_promulgated_directives` | `ming_sim/db.py:17782` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.discard_pending_directives` | `ming_sim/db.py:18965` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.list_recent_issue_advances` | `ming_sim/db.py:20605` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_method | `GameDB.read_credit_events_as_edges` | `ming_sim/db.py:22693` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| absolute_zero | py_func | `_collect_compliant_promulgation_items` | `ming_sim/decree.py:162` | KEEP | 零调用但无退役职责证据；保留共享/公开表面 |
-| absolute_zero | py_method | `AffairStore.point_dossier` | `ming_sim/entities/affair/store.py:290` | KEEP | 实体 store 公开读面 |
-| absolute_zero | py_method | `AffairStore.point_issue` | `ming_sim/entities/affair/store.py:322` | KEEP | 实体 store 公开读面 |
-| absolute_zero | py_method | `TextualFactStore.pointing_at` | `ming_sim/entities/textual_fact/store.py:113` | KEEP | 实体 store 公开读面 |
-| absolute_zero | py_func | `_province_transport_ratio` | `ming_sim/flows.py:65` | KEEP | 零调用但无退役职责证据；保留共享/公开表面 |
-| absolute_zero | py_func | `_province_collection_rate` | `ming_sim/flows.py:70` | KEEP | 零调用但无退役职责证据；保留共享/公开表面 |
-| absolute_zero | py_func | `_fiscal_container_value` | `ming_sim/flows.py:296` | KEEP | 零调用但无退役职责证据；保留共享/公开表面 |
-| absolute_zero | py_field | `_HubOutboundResult.k` | `ming_sim/flows.py:550` | KEEP | 单字符名枚举不可靠；非退役处置面 |
-| absolute_zero | py_method | `MaterialsRoot.__call__` | `ming_sim/materials.py:178` | KEEP | MaterialsRoot 协议调用面 |
-| absolute_zero | py_func | `_write_locations_in_source` | `ming_sim/person_write_inventory.py:113` | KEEP | 零调用但无退役职责证据；保留共享/公开表面 |
-| absolute_zero | py_func | `status_delta_from_delta` | `ming_sim/report.py:97` | KEEP | 零调用但无退役职责证据；保留共享/公开表面 |
-| absolute_zero | py_method | `ClassifiedWriteGate.holder_kind` | `ming_sim/session_write_queue.py:110` | KEEP | 写闸公开属性 |
-| absolute_zero | py_func | `hline` | `scripts/make_steam_assets.py:46` | KEEP | 探针/脚本本地能力；非生产退役接缝 |
-| absolute_zero | py_field | `EmperorState.turn_count` | `scripts/play_as_emperor.py:162` | KEEP | 探针/脚本本地能力；非生产退役接缝 |
-| absolute_zero | py_func | `S` | `spike_settle_tick.py:250` | KEEP | 单字符名枚举不可靠；非退役处置面 |
-| absolute_zero | py_async | `dependency_mismatch_handler` | `web_app.py:4198` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_menu_continue` | `web_app.py:4518` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_menu_load_save` | `web_app.py:4637` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_menu_delete_save` | `web_app.py:4759` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_retry_mechanical_tail` | `web_app.py:5043` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_secret_orders` | `web_app.py:5091` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_map` | `web_app.py:5212` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_buildings` | `web_app.py:5217` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_audience_chat_history` | `web_app.py:5298` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_retry_audience_reply` | `web_app.py:5364` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_retry_pending_translation` | `web_app.py:5386` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_list_saves` | `web_app.py:5979` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_delete_save` | `web_app.py:5997` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_upload_portrait` | `web_app.py:6174` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_get_portrait` | `web_app.py:6230` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_admin_tables` | `web_app.py:6239` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `api_admin_table` | `web_app.py:6244` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| absolute_zero | py_async | `admin_page` | `web_app.py:6289` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_func | `stage_authorization_candidate` | `ming_sim/action_materialize.py:1622` | KEEP | 测试消费者：`tests/test_execution_pressure_654.py`（直接 import/调用暂存授权候选）。现行职责=执行压力/授权暂存写缝观测面。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `create_rescript_draft_agent` | `ming_sim/agents.py:796` | KEEP | 测试消费者：`tests/test_llm_channel_config.py`（构造拟旨草稿 agent）。现行职责=LLM 通道配置下的草稿 agent 工厂。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `list_night_timeline` | `ming_sim/audience_night.py:447` | KEEP | 测试消费者：`tests/test_audience_night_498.py`。现行职责=夜审时间线条目读面。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `audit_night_direct_writes` | `ming_sim/audience_night.py:662` | KEEP | 测试消费者：`tests/test_audience_undo_506.py`、`tests/test_on_scene_immediate_write_1839.py`。现行职责=夜审直写审计。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `list_arrived_unsettled_summons` | `ming_sim/audience_night.py:1492` | KEEP | 测试消费者：`tests/test_audience_travel_gating_670.py`。现行职责=已到未结召见清单。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `get_night_protagonist` | `ming_sim/audience_night.py:2155` | KEEP | 测试消费者：`tests/test_audience_translation_1838.py`。现行职责=夜审主角读面。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `persons_entered_tonight` | `ming_sim/audience_night.py:2227` | KEEP | 测试消费者：`tests/test_month_loop_tracer_1468.py`、`tests/test_cli_play_turn.py`。现行职责=当夜入殿人物集。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_method | `CliChat.response_stream` | `ming_sim/cli_backend.py:3741` | KEEP | 测试消费者见同模块流式面；现行职责=CliChat 同步流式适配公开表面。KEEP≠已证全部现役热路径 |
-| prod_zero_test_only | py_func | `build_secret_covert_effect_briefs` | `ming_sim/covert_progress.py:646` | KEEP | 测试消费者：`tests/test_secret_order_payoff_1504.py`。现行职责=密令 covert 效果 brief 构造。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_method | `GameDB.settle_province_tick` | `ming_sim/db.py:3144` | KEEP | GameDB 省级 tick 公开账本写面；测试有消费但生产直呼零命中。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.turn_region_summary` | `ming_sim/db.py:7324` | KEEP | GameDB 地区回合摘要公开读面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.turn_army_summary` | `ming_sim/db.py:7919` | KEEP | GameDB 军队回合摘要公开读面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.get_message_highlights` | `ming_sim/db.py:9161` | KEEP | GameDB 高亮短语读面（配对 `_parse_highlights_json`）。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.record_monthly_supervision_facts` | `ming_sim/db.py:12675` | KEEP | GameDB 月度监察事实写入公开面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.list_dossiers_for_directive` | `ming_sim/db.py:14662` | KEEP | GameDB 旨意→dossier 列表公开读面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.list_endorsed_dossier_candidates` | `ming_sim/db.py:14680` | KEEP | GameDB 已批红候选公开读面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.list_dossier_link_rejections` | `ming_sim/db.py:14983` | KEEP | GameDB dossier 链接拒收公开读面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.save_pending_promulgation_verdicts` | `ming_sim/db.py:16234` | KEEP | GameDB 待颁布裁决暂存公开写面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.drop_pending_actions_for_minister` | `ming_sim/db.py:18910` | KEEP | GameDB 按大臣清 pending action 公开写面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.list_office_effects_for_dossier` | `ming_sim/db.py:19216` | KEEP | GameDB dossier 官职效果公开读面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.reject_directive` | `ming_sim/db.py:19508` | KEEP | GameDB 旨意拒收公开写面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB.count_active_initiatives` | `ming_sim/db.py:19632` | KEEP | GameDB 活跃倡议计数公开读面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_method | `GameDB._is_active_secret_order_assignee` | `ming_sim/db.py:21320` | KEEP | 测试消费者：`tests/test_secret_order_isolation_883.py`。现行职责=密令受命人活跃判定（隔离闸）。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_method | `GameDB.get_faction_stance_summary` | `ming_sim/db.py:22889` | KEEP | GameDB 派系立场摘要公开读面。KEEP≠已证全部现役 |
-| prod_zero_test_only | py_func | `execution_side_read_fields` | `ming_sim/decree.py:233` | KEEP | 测试消费者：`tests/test_execution_tenure_613.py`、`tests/test_secret_dossier_participants_1252.py`。现行职责=#613 执行侧读端字段投影。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `build_fiscal_fact_brief` | `ming_sim/fiscal_fact_brief.py:334` | KEEP | 测试消费者：`tests/test_pay_order_override_653.py`。现行职责=财政事实 brief 构造。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `format_fiscal_fact_brief_tsv` | `ming_sim/fiscal_fact_brief.py:583` | KEEP | 测试消费者：`tests/test_pay_order_override_653.py`。现行职责=brief→TSV 格式化。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `stage_month_segment` | `ming_sim/month_translate.py:240` | KEEP | 测试消费者：`tests/test_month_translate_1840.py`、`tests/test_breach_plea_623.py`。现行职责=月段声明暂存。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `revoke_pay_order_decree` | `ming_sim/pay_order.py:472` | KEEP | 测试消费者：`tests/test_pay_order_override_653.py`。现行职责=发饷旨意撤销写缝。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `run_month_end_relation_brew` | `ming_sim/relation_brew.py:438` | KEEP | 测试消费者：`tests/test_relation_brew_636.py`。现行职责=月末关系酿造入口。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `format_region_changes` | `ming_sim/report.py:36` | KEEP | 测试消费者：`tests/test_section4_rejections.py`。现行职责=地区变更报告格式化（拒收项安全）。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `format_army_changes` | `ming_sim/report.py:52` | KEEP | 测试消费者：`tests/test_section4_rejections.py`。现行职责=军队变更报告格式化。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `format_power_changes` | `ming_sim/report.py:72` | KEEP | 测试消费者：`tests/test_power_section_rejections.py`。现行职责=势力变更报告格式化。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `select_triage_actor` | `ming_sim/rescript_draft.py:1107` | KEEP | 测试消费者：`tests/test_rescript_draft_656.py`。现行职责=拟旨分诊演员选择。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `generate_rescript_draft` | `ming_sim/rescript_draft.py:2149` | KEEP | 测试消费者：`tests/test_pihong_dossier_1490.py`。现行职责=拟旨草稿生成入口。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_method | `SessionWriteQueue.is_sealed` | `ming_sim/session_write_queue.py:262` | KEEP | 测试消费者：`tests/test_new_game_write_path_1749.py`、`tests/test_menu_lifecycle_drain_396.py`。现行职责=写闸密封态查询。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_method | `SessionWriteQueue.run_exclusive` | `ming_sim/session_write_queue.py:520` | KEEP | 测试消费者：`tests/test_pihong_dossier_1490.py`、`tests/test_audience_travel_gating_670.py`。现行职责=会话写闸排他执行。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `value_axes` | `ming_sim/value_matrix.py:46` | KEEP | 测试消费者：`tests/test_value_matrix_691.py`。现行职责=价值轴枚举。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `axis_collision_stances` | `ming_sim/value_matrix.py:100` | KEEP | 测试消费者：`tests/test_value_matrix_691.py`。现行职责=轴碰撞立场计算。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_func | `matrix_snapshot` | `ming_sim/value_matrix.py:137` | KEEP | 测试消费者：`tests/test_value_matrix_691.py`。现行职责=价值矩阵快照。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | ts_export | `IssueGroup` | `web/src/components/situation.tsx:200` | KEEP | 测试消费者：`web/src/components/situation.test.tsx`（render IssueGroup）。现行职责=局势面板分组 UI 导出。KEEP≠已证生产热路径全覆盖 |
-| prod_zero_test_only | py_async | `api_menu_new_game` | `web_app.py:4414` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_menu_exit` | `web_app.py:4773` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_menu_shutdown` | `web_app.py:4802` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_menu_save_llm` | `web_app.py:4932` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_state` | `web_app.py:5038` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_memorials_read` | `web_app.py:5054` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_func | `api_history_turns` | `web_app.py:5163` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_history_turn` | `web_app.py:5170` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_add_favorite` | `web_app.py:5222` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_remove_favorite` | `web_app.py:5233` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_func | `api_audience_scroll` | `web_app.py:5261` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_audience_chat` | `web_app.py:5326` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_undo_audience_chat` | `web_app.py:5373` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_audience_chat_stream` | `web_app.py:5445` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_update_directive` | `web_app.py:5455` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_delete_directive` | `web_app.py:5500` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_func | `api_advance_without_edict` | `web_app.py:5516` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_func | `api_issue_decree` | `web_app.py:5642` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_issue_decree_stream` | `web_app.py:5733` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_resolve_decisions_stream` | `web_app.py:5856` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_create_save` | `web_app.py:5984` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_load_save` | `web_app.py:6003` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_get_llm_config` | `web_app.py:6014` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_set_llm_config` | `web_app.py:6078` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_delete_portrait` | `web_app.py:6201` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_get_court_layout` | `web_app.py:6216` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_set_court_layout` | `web_app.py:6222` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_admin_upsert` | `web_app.py:6258` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_async | `api_admin_delete` | `web_app.py:6276` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
+| prod_zero_test_only | py_method | `GameDB.settle_province_tick` | `ming_sim/db.py:3144` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_fiscal_substrate_bridge.py,tests/test_pay_order_override_653.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB.get_message_highlights` | `ming_sim/db.py:8945` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_highlight_judge_544.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB.record_monthly_supervision_facts` | `ming_sim/db.py:12398` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_supervision_625.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB.list_dossiers_for_directive` | `ming_sim/db.py:14385` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_execution_pressure_654.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB.list_endorsed_dossier_candidates` | `ming_sim/db.py:14403` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_pihong_dossier_1490.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB.list_dossier_link_rejections` | `ming_sim/db.py:14706` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_dossier_links_559.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB.save_pending_promulgation_verdicts` | `ming_sim/db.py:15947` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_pihong_dossier_1490.py,tests/test_promulgation_judge_561.py,tests/test_promulgation_seam_560.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB.drop_pending_actions_for_minister` | `ming_sim/db.py:18464` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_audience_undo_506.py,tests/test_secret_order_isolation_883.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB.list_office_effects_for_dossier` | `ming_sim/db.py:18753` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_decree_dossiers_571.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB.reject_directive` | `ming_sim/db.py:19045` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_decree_dossiers_571.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB.count_active_initiatives` | `ming_sim/db.py:19169` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_structured_decree_contract_1624.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB._is_active_secret_order_assignee` | `ming_sim/db.py:20851` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_secret_order_isolation_883.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `GameDB.get_faction_stance_summary` | `ming_sim/db.py:22416` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_faction_brew_637.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_func | `value_axes` | `ming_sim/value_matrix.py:46` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：tests/test_value_matrix_691.py |
+| prod_zero_test_only | py_func | `axis_collision_stances` | `ming_sim/value_matrix.py:100` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：tests/test_value_matrix_691.py |
+| prod_zero_test_only | py_func | `matrix_snapshot` | `ming_sim/value_matrix.py:137` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：tests/test_value_matrix_691.py |
+| prod_zero_test_only | py_func | `revoke_pay_order_decree` | `ming_sim/pay_order.py:472` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_pay_order_override_653.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_func | `build_fiscal_fact_brief` | `ming_sim/fiscal_fact_brief.py:334` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：tests/test_mutiny_actual_residence_659.py,tests/test_pay_order_override_653.py |
+| prod_zero_test_only | py_func | `format_fiscal_fact_brief_tsv` | `ming_sim/fiscal_fact_brief.py:583` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：tests/test_pay_order_override_653.py |
+| prod_zero_test_only | py_func | `stage_month_segment` | `ming_sim/month_translate.py:240` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：tests/test_breach_plea_623.py,tests/test_month_translate_1840.py |
+| prod_zero_test_only | py_func | `execution_side_read_fields` | `ming_sim/decree.py:200` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：tests/test_execution_tenure_613.py,tests/test_secret_dossier_participants_1252.py |
+| prod_zero_test_only | py_func | `select_triage_actor` | `ming_sim/rescript_draft.py:1107` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：tests/test_rescript_draft_656.py |
+| prod_zero_test_only | py_func | `generate_rescript_draft` | `ming_sim/rescript_draft.py:2149` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：tests/test_pihong_dossier_1490.py,tests/test_rescript_draft_656.py,tests/test_rescript_heal_isolation_1801.py |
+| prod_zero_test_only | py_func | `create_rescript_draft_agent` | `ming_sim/agents.py:796` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：tests/test_llm_channel_config.py |
+| prod_zero_test_only | py_func | `run_month_end_relation_brew` | `ming_sim/relation_brew.py:438` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：tests/test_faction_brew_637.py,tests/test_relation_brew_636.py |
+| prod_zero_test_only | py_func | `build_secret_covert_effect_briefs` | `ming_sim/covert_progress.py:646` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_secret_order_payoff_1504.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| script_only_consumer | py_func | `require_fresh_cli_trace` | `ming_sim/cli_backend.py:3873` | KEEP | scripts/spike 排除域有引用；非生产退役接缝 |
+| prod_zero_test_only | py_func | `list_night_timeline` | `ming_sim/audience_night.py:447` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_audience_night_498.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_func | `audit_night_direct_writes` | `ming_sim/audience_night.py:662` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_audience_undo_506.py,tests/test_on_scene_immediate_write_1839.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_func | `list_arrived_unsettled_summons` | `ming_sim/audience_night.py:1492` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_audience_travel_gating_670.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_func | `get_night_protagonist` | `ming_sim/audience_night.py:2155` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_audience_translation_1838.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_func | `persons_entered_tonight` | `ming_sim/audience_night.py:2227` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_cli_play_turn.py,tests/test_month_loop_tracer_1468.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `SessionWriteQueue.is_sealed` | `ming_sim/session_write_queue.py:258` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_menu_lifecycle_drain_396.py,tests/test_new_game_write_path_1749.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| prod_zero_test_only | py_method | `SessionWriteQueue.run_exclusive` | `ming_sim/session_write_queue.py:516` | KEEP | 共享现役能力（非旧结构专属）；测试消费者：tests/test_audience_travel_gating_670.py,tests/test_pihong_dossier_1490.py,tests/test_session_write_queue_1353.py。KEEP=有真实现役职责/共享面，非「公开API」空话 |
+| absolute_zero | py_async | `dependency_mismatch_handler` | `web_app.py:4198` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_async | `api_menu_new_game` | `web_app.py:4414` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_menu_continue_stream_1195.py,tests/test_menu_lifecycle_drain_396.py |
+| absolute_zero | py_async | `api_menu_continue` | `web_app.py:4518` | KEEP | HTTP装饰器路由排除 |
+| absolute_zero | py_async | `api_menu_load_save` | `web_app.py:4637` | KEEP | HTTP装饰器路由排除 |
+| absolute_zero | py_async | `api_menu_delete_save` | `web_app.py:4759` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_async | `api_menu_exit` | `web_app.py:4773` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_menu_continue_stream_1195.py,tests/test_menu_lifecycle_drain_396.py |
+| prod_zero_test_only | py_async | `api_menu_shutdown` | `web_app.py:4802` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_menu_lifecycle_drain_396.py |
+| prod_zero_test_only | py_async | `api_menu_save_llm` | `web_app.py:4932` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_web_llm_runtime_config.py |
+| prod_zero_test_only | py_async | `api_state` | `web_app.py:5038` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_web_chat_serialization_393.py |
+| absolute_zero | py_async | `api_retry_mechanical_tail` | `web_app.py:5043` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_async | `api_memorials_read` | `web_app.py:5054` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_settlement_write_guard_393.py |
+| absolute_zero | py_async | `api_secret_orders` | `web_app.py:5091` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_func | `api_history_turns` | `web_app.py:5163` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_p4_guard_new_surfaces_547.py |
+| prod_zero_test_only | py_async | `api_history_turn` | `web_app.py:5170` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_player_payload_1022.py |
+| absolute_zero | py_async | `api_map` | `web_app.py:5212` | KEEP | HTTP装饰器路由排除 |
+| absolute_zero | py_async | `api_buildings` | `web_app.py:5217` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_async | `api_add_favorite` | `web_app.py:5222` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_settlement_write_guard_393.py |
+| prod_zero_test_only | py_async | `api_remove_favorite` | `web_app.py:5233` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_settlement_write_guard_393.py |
+| prod_zero_test_only | py_func | `api_audience_scroll` | `web_app.py:5261` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_p4_guard_new_surfaces_547.py |
+| absolute_zero | py_async | `api_audience_chat_history` | `web_app.py:5298` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_async | `api_audience_chat` | `web_app.py:5326` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_web_chat_serialization_393.py |
+| absolute_zero | py_async | `api_retry_audience_reply` | `web_app.py:5364` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_async | `api_undo_audience_chat` | `web_app.py:5373` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_settlement_write_guard_393.py |
+| absolute_zero | py_async | `api_retry_pending_translation` | `web_app.py:5386` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_async | `api_audience_chat_stream` | `web_app.py:5445` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_web_chat_serialization_393.py |
+| prod_zero_test_only | py_async | `api_update_directive` | `web_app.py:5455` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_settlement_write_guard_393.py |
+| prod_zero_test_only | py_async | `api_delete_directive` | `web_app.py:5500` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_settlement_write_guard_393.py |
+| prod_zero_test_only | py_func | `api_advance_without_edict` | `web_app.py:5516` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_month_open_snapshot_1234.py,tests/test_no_edict_full_settlement_1274.py,tests/test_secret_order_monthly_progress_566.py |
+| prod_zero_test_only | py_func | `api_issue_decree` | `web_app.py:5642` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_error_pack.py,tests/test_issue_decree_token_1277.py,tests/test_month_open_snapshot_1234.py |
+| prod_zero_test_only | py_async | `api_issue_decree_stream` | `web_app.py:5733` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_player_payload_1022.py |
+| prod_zero_test_only | py_async | `api_resolve_decisions_stream` | `web_app.py:5856` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_player_payload_1022.py,tests/test_qa_b3_409_ux.py,tests/test_qa_c2_phase_settlement_mask_1374.py |
+| absolute_zero | py_async | `api_list_saves` | `web_app.py:5979` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_async | `api_create_save` | `web_app.py:5984` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_settlement_write_guard_393.py |
+| absolute_zero | py_async | `api_delete_save` | `web_app.py:5997` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_async | `api_load_save` | `web_app.py:6003` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_qa_b3_409_ux.py,tests/test_settlement_write_guard_393.py |
+| prod_zero_test_only | py_async | `api_get_llm_config` | `web_app.py:6014` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_cli_model_choices.py,tests/test_web_llm_runtime_config.py |
+| prod_zero_test_only | py_async | `api_set_llm_config` | `web_app.py:6078` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_web_llm_runtime_config.py |
+| absolute_zero | py_async | `api_upload_portrait` | `web_app.py:6174` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_async | `api_delete_portrait` | `web_app.py:6201` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_settlement_write_guard_393.py |
+| prod_zero_test_only | py_async | `api_get_court_layout` | `web_app.py:6216` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_court_layout_1290.py |
+| prod_zero_test_only | py_async | `api_set_court_layout` | `web_app.py:6222` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_court_layout_1290.py,tests/test_settlement_write_guard_393.py |
+| absolute_zero | py_async | `api_get_portrait` | `web_app.py:6230` | KEEP | HTTP装饰器路由排除 |
+| absolute_zero | py_async | `api_admin_tables` | `web_app.py:6239` | KEEP | HTTP装饰器路由排除 |
+| absolute_zero | py_async | `api_admin_table` | `web_app.py:6244` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | py_async | `api_admin_upsert` | `web_app.py:6258` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_settlement_write_guard_393.py |
+| prod_zero_test_only | py_async | `api_admin_delete` | `web_app.py:6276` | KEEP | HTTP装饰器路由排除；测试亦有打面。消费者：tests/test_settlement_write_guard_393.py |
+| absolute_zero | py_async | `admin_page` | `web_app.py:6289` | KEEP | HTTP装饰器路由排除 |
+| prod_zero_test_only | ts_export | `IssueGroup` | `web/src/components/situation.tsx:200` | KEEP | 共享现役能力（模块/管线仍有生产兄弟消费者或现役架构入口）；测试消费者：web/src/components/situation.test.tsx |
 
-覆盖核对：zero 候选=124；上表行数=124。
+覆盖核对：上表 = 本轮 ENUM 后仍存在之 absolute_zero(KEEP 排除项) + script_only_consumer + prod_zero_test_only 完整行。
 
-处置原则：逐条追职责与真实消费者（含字符串/动态调用）；零调用≠自动删；有退役职责证据（如 EN_VALUE_CN 旧表）则删；无退役证据的零调用表面 KEEP。装饰器注册的 HTTP 处理函数函数名零 Python 调用属常态，须对照路由注册而非仅看调用图。
-**test-only KEEP 边界**：上表 prod_zero_test_only 已列具体测试 consumer 路径与现行职责；**KEEP 仅表示「无退役职责证据故不删」，并未证明这些符号全部是生产现役热路径**。
+处置原则（F22-R 纠正）：
+- **全仓只剩定义** → DELETE（含级联 dead helpers）；不得用「无退役证据／公开 API 表面」循环 KEEP。
+- **仅被旧结构专属测试引用** → DELETE 结构 + 专属测试。
+- **排除**：装饰器 HTTP 路由、Protocol/dunder、scripts/spike 定义与仅被其消费的门面。
+- **共享现役能力**（有生产兄弟入口/现役架构职责，测试只是观测面）→ KEEP；不得把「未证热路径」写成循环自保。

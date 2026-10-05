@@ -159,39 +159,6 @@ def stub_promulgation_verdicts(
     ]
 
 
-def _collect_compliant_promulgation_items(
-    batch: object,
-    db: GameDB,
-    *,
-    proposed_modes: Dict[int, str],
-    prepared_context: Optional[Dict[str, object]],
-    reviewed_dossier_ids: Optional[set[int]],
-) -> List[Dict[str, object]]:
-    """从不合规整批中收集单项已过闸的判决（证据保留，不落判、不伪造缺案）。"""
-    if not isinstance(batch, list):
-        return []
-    good: List[Dict[str, object]] = []
-    seen: set[int] = set()
-    for candidate in batch:
-        try:
-            valid = _validate_promulgation_verdict_item(
-                candidate, db,
-                proposed_modes=proposed_modes,
-                prepared_context=prepared_context,
-            )
-        except LLMContractError:
-            continue
-        dossier_id = int(valid["dossier_id"])
-        if reviewed_dossier_ids is not None and dossier_id not in reviewed_dossier_ids:
-            continue
-        if dossier_id in seen:
-            continue
-        seen.add(dossier_id)
-        good.append(valid)
-    return good
-
-
-
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
     payload = row.get("payload")
     if isinstance(payload, dict):
