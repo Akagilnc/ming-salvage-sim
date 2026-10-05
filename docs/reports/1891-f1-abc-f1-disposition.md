@@ -53,7 +53,7 @@
 - PARTIAL strips:
   - tests/test_dossier_reported_progress_619.py::test_execution_surface_dossier_can_record_and_list_full_history — stripped is_secret/secret/track absence asserts; kept record/list history behavior
   - tests/test_pihong_dossier_1490.py::test_657_five_actions_domain_writes — stripped consumed_epoch absence; kept five-action domain writes via apply_rescript_batch
-  - tests/test_pihong_dossier_1490.py — stripped rescript_origin absence fragments where present; kept ABI/domain write asserts
+  - tests/test_pihong_dossier_1490.py::test_657_abi_mapper_matrix_a1_a12 — stripped rescript_origin absence; kept ABI/domain write asserts (real diff only this qualname)
   - tests/test_faction_denunciation_627.py::test_ac5_zero_template_exposure_and_622 — stripped end-block whitelist equality against `_DENUNCIATION_ALLOWED_COLS`
 
 ## KEEP (122 — every line from candidates.txt)
@@ -90,7 +90,7 @@
 - tests/test_declaration_dispatch_1835.py::test_edge_event_attaches_declared_affair L555-579 shapes=['select_order_limit'] :: db.affairs; dispatch_declaration | ORDER BY…LIMIT is fixture picker then production API assert
 - tests/test_declaration_dispatch_1835.py::test_edge_event_conflicting_affair_pointer_is_rejected_first_binding_kept L582-623 shapes=['select_order_limit'] :: db.affairs; dispatch_declaration | ORDER BY…LIMIT is fixture picker then production API assert
 - tests/test_decree_commitment_schema_136.py::_table_columns L19-23 shapes=['pragma_table_info'] :: helper→consumers: test_existing_issues_table_gets_commitment_columns_idempotently (GameDB reopen twice) | migrate/reopen = GameDB init_schema path; PRAGMA reads end_turn/stop_condition/commitment_kind defaults after ALTER — not isolated whitelist self-proof
-- tests/test_decree_commitment_schema_136.py::test_issue_resolution_removes_building_and_keeps_remove_audit_log L51-80 shapes=['select_order_limit'] :: I.apply_issue_tracker_output; db.insert_issue | post_write_lookup
+- tests/test_decree_commitment_schema_136.py::test_issue_resolution_removes_building_and_keeps_remove_audit_log L67-96 shapes=['select_order_limit'] :: I.apply_issue_tracker_output; db.insert_issue | post_write_lookup
 - tests/test_decree_dossiers_571.py::_active_people L7-15 shapes=['select_order_limit'] :: fixture helper → consumers: _active_minister, test_dossier_roster_preserves_multiple_leads_support_roles_and_knowers, test_dossier_roster_write_boundary_rejects_invalid_delegator, test_dossier_roster_append_keeps_existing_entries_and_delegator, test_month_end_extractor_appends_self_dispatched_participant, test_month_end_participant_batch_rejects_each_malformed_item | ORDER BY…LIMIT picks fixture rows for production API tests; not business-priority self-proof
 - tests/test_deformation_dual_rail_622.py::test_ac5_audit_fork_signal_present_only_with_audit_link L191-241 shapes=['select_order_limit'] :: create_test_secret_order; db.add_dossier_links; db.get_dossier_for_secret_order; db.list_monthly_dossier_progress_nudges; db.record_dossier_execution | ORDER BY…LIMIT is fixture picker then production API assert
 - tests/test_deformation_dual_rail_622.py::test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent L259-375 shapes=['select_order_limit'] :: _apply_economy_list (economy write seam) | post_write_lookup of economy_ledger beyond_intent row
