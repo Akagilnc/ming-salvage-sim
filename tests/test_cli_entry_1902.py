@@ -260,18 +260,27 @@ def test_cli_blank_pick_on_urgent_reaches_core_hold(game, monkeypatch):
 
 
 def test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core(game, monkeypatch):
-    """回车语义只在急务成立：若入口交空 pick，真核整批拒（此钉核侧事实）。"""
-    from ming_sim import rescript_actions as ra
+    """回车语义只在急务成立：若入口交空 pick，真核整批拒（此钉核侧事实）。
 
-    db, state, _content = game
+    #1902 R3：复用同文件真实 GameSession 提交夹具，不绕道 helper-only validate_all。
+    """
+    db, state, content = game
     db.save_pending_decisions(int(state.turn), [{
         "event_id": "mao_wenlong", "title": "毛文龙裁断", "context": "东江事急",
         "options": [{"label": "斩", "hint": "严肃军纪"}, {"label": "留", "hint": "暂稳东江"}],
     }])
     db.conn.commit()
+    session = _real_submit_session(
+        monkeypatch, db, state, content, candidate_ids=("mao_wenlong",),
+    )
     desk_row = db.list_rescript_desk(int(state.turn))[0]
     with pytest.raises(ValueError):
-        ra.validate_all([desk_row], [{"decision_key": desk_row["decision_key"]}])
+        session.submit_hitl_choices(
+            [{"decision_key": desk_row["decision_key"]}],
+            write_gate=session._write_gate,
+        )
+    stored = db.list_pending_decisions(int(state.turn))[0]
+    assert stored["status"] == "pending"
 
 
 def test_cli_chosen_option_reaches_core_and_lands_decision(game, monkeypatch):

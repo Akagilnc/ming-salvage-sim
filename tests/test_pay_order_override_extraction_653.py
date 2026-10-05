@@ -77,6 +77,7 @@ def test_single_pay_order_capture_rejects_missing_entries(monkeypatch):
             "目标类型": "account", "目标ID": "pay_order", "颁布方式": "普通",
         }, ensure_ascii=False), {}),
     )
-    with pytest.raises(ValueError, match="entries"):
+    # #1902 R2：钉非法 entries 响亮拒收；不锁诊断词面。
+    with pytest.raises(ValueError):
         cli_backend.extract_draft_intent("拟旨改饷序", "臣已拟妥")
 

@@ -1,0 +1,155 @@
+TOTAL pytest.raises match= : 80
+tests/test_advances_section_rejections.py:108	RuntimeError	'模拟 advance_issue'	with pytest.raises(RuntimeError, match="模拟 advance_issue"):
+tests/test_affairs_1831.py:256	RuntimeError	'attach boom'	with pytest.raises(RuntimeError, match="attach boom"):
+tests/test_audience_night_498.py:511	RuntimeError	'inject roster fail'	with pytest.raises(RuntimeError, match="inject roster fail"):
+tests/test_audience_restore_505.py:954	RuntimeError	'inject summon_enter fail'	with pytest.raises(RuntimeError, match="inject summon_enter fail"):
+tests/test_audience_translate_1837.py:201	RuntimeError	'translation unavailable'	with pytest.raises(RuntimeError, match="translation unavailable"):
+tests/test_audience_travel_gating_670.py:597	RuntimeError	'injected multi-origin applier failure'	with pytest.raises(RuntimeError, match="injected multi-origin applier failure"):
+tests/test_audience_travel_gating_670.py:791	RuntimeError	'injected summon recorder failure'	with pytest.raises(RuntimeError, match="injected summon recorder failure"):
+tests/test_audience_travel_gating_670.py:1018	RuntimeError	'injected settle failure'	with pytest.raises(RuntimeError, match="injected settle failure"):
+tests/test_centrifuge_ledger_690.py:709	?	'simulated write failure'	with pytest.raises(sqlite3.OperationalError, match="simulated write failure"):
+tests/test_centrifuge_ledger_690.py:739	?	'simulated rebuild failure'	with pytest.raises(sqlite3.OperationalError, match="simulated rebuild failure"):
+tests/test_cli_entry_1902.py:433	RuntimeError	'association boom'	with pytest.raises(RuntimeError, match="association boom"):
+tests/test_cli_play_turn.py:232	RuntimeError	'LLM down'	with pytest.raises(RuntimeError, match="LLM down"):
+tests/test_cli_play_turn.py:287	RuntimeError	'LLM down'	with pytest.raises(RuntimeError, match="LLM down"):
+tests/test_cli_play_turn.py:327	RuntimeError	'reply persist failed'	with pytest.raises(RuntimeError, match="reply persist failed"):
+tests/test_close_issues_section_rejections.py:165	RuntimeError	'模拟 close_issue'	with pytest.raises(RuntimeError, match="模拟 close_issue"):
+tests/test_decree_dossiers_571.py:69	ValueError	'参与人物不存在'	with pytest.raises(ValueError, match="参与人物不存在"):
+tests/test_decree_dossiers_571.py:82	ValueError	'委派人不存在'	with pytest.raises(ValueError, match="委派人不存在"):
+tests/test_decree_dossiers_571.py:155	ValueError	'机械档不同'	with pytest.raises(ValueError, match="机械档不同"):
+tests/test_decree_dossiers_571.py:159	ValueError	'机械档不同'	with pytest.raises(ValueError, match="机械档不同"):
+tests/test_decree_dossiers_571.py:2043	ValueError	'打回判决缺少'	with pytest.raises(ValueError, match="打回判决缺少"):
+tests/test_decree_dossiers_571.py:2060	ValueError	'打回判决缺少'	with pytest.raises(ValueError, match="打回判决缺少"):
+tests/test_decree_dossiers_571.py:2078	ValueError	'typed 判据快照'	with pytest.raises(ValueError, match="typed 判据快照"):
+tests/test_decree_dossiers_571.py:2100	ValueError	'打回判决缺少'	with pytest.raises(ValueError, match="打回判决缺少"):
+tests/test_decree_dossiers_571.py:105	ValueError	'委派人须为同案主办/协办且不得自委派'	with pytest.raises(ValueError, match="委派人须为同案主办/协办且不得自委派"):
+tests/test_decree_dossiers_571.py:117	ValueError	'委派人须为同案主办/协办且不得自委派'	with pytest.raises(ValueError, match="委派人须为同案主办/协办且不得自委派"):
+tests/test_decree_dossiers_571.py:1247	RuntimeError	'dossier close failed'	with pytest.raises(RuntimeError, match="dossier close failed"):
+tests/test_due_review_621.py:736	RuntimeError	'ownership lookup boom'	with pytest.raises(RuntimeError, match="ownership lookup boom"):
+tests/test_error_pack.py:45	RuntimeError	'atomic'	with pytest.raises(RuntimeError, match="atomic"):
+tests/test_event_chain_cascade.py:244	RuntimeError	'injected cancel failure'	with pytest.raises(RuntimeError, match="injected cancel failure"):
+tests/test_event_trigger_gate.py:2167	RuntimeError	'boom after issue insert'	with pytest.raises(RuntimeError, match="boom after issue insert"):
+tests/test_executor_routing_721.py:360	RuntimeError	'rollback first'	with pytest.raises(RuntimeError, match="rollback first"):
+tests/test_executor_routing_721.py:393	RuntimeError	'force outer rollback'	with pytest.raises(RuntimeError, match="force outer rollback"):
+tests/test_faction_brew_637.py:292	?	'派系认领库不可写'	with pytest.raises(sqlite3.OperationalError, match="派系认领库不可写"):
+tests/test_faction_brew_637.py:305	?	'派系落定库不可写'	with pytest.raises(sqlite3.OperationalError, match="派系落定库不可写"):
+tests/test_fiscal_substrate_bridge.py:2023	RuntimeError	'boom after hub'	with pytest.raises(RuntimeError, match="boom after hub"):
+tests/test_fiscal_substrate_bridge.py:4857	RuntimeError	'rollback probe'	with pytest.raises(RuntimeError, match="rollback probe"):
+tests/test_material_directory_1830.py:283	RuntimeError	'secret-order-db-boom'	with pytest.raises(RuntimeError, match="secret-order-db-boom"):
+tests/test_menu_lifecycle_drain_396.py:316	RuntimeError	'close failed'	with pytest.raises(RuntimeError, match="close failed"):
+tests/test_month_chain_1843.py:490	RuntimeError	'chain persistence failed'	with pytest.raises(RuntimeError, match="chain persistence failed"):
+tests/test_month_chain_1843.py:569	RuntimeError	'transient settlement crash'	with pytest.raises(RuntimeError, match="transient settlement crash"):
+tests/test_month_chain_1843.py:620	RuntimeError	'injected tail failure'	with pytest.raises(RuntimeError, match="injected tail failure"):
+tests/test_month_chain_1847.py:1801	RuntimeError	'injected chain save failure'	with pytest.raises(RuntimeError, match="injected chain save failure"):
+tests/test_month_chain_1847.py:2256	RuntimeError	'injected disclosure save failure'	with pytest.raises(RuntimeError, match="injected disclosure save failure"):
+tests/test_month_open_snapshot_1234.py:260	RuntimeError	'stop-after-capture'	with pytest.raises(RuntimeError, match="stop-after-capture"):
+tests/test_month_open_snapshot_1234.py:293	RuntimeError	'stop-after-capture-advance'	with pytest.raises(RuntimeError, match="stop-after-capture-advance"):
+tests/test_new_game_write_path_1749.py:473	RuntimeError	'begin_turn boom'	with pytest.raises(RuntimeError, match="begin_turn boom"):
+tests/test_new_game_write_path_1749.py:506	RuntimeError	'load_state boom'	with pytest.raises(RuntimeError, match="load_state boom"):
+tests/test_new_issues_section_rejections.py:311	RuntimeError	'模拟 insert_issue'	with pytest.raises(RuntimeError, match="模拟 insert_issue"):
+tests/test_new_issues_section_rejections.py:354	RuntimeError	'模拟 event_to_issue'	with pytest.raises(RuntimeError, match="模拟 event_to_issue"):
+tests/test_new_issues_section_rejections.py:373	RuntimeError	'模拟 event_pool'	with pytest.raises(RuntimeError, match="模拟 event_pool"):
+tests/test_override_breach_costs_564.py:384	RuntimeError	'after authority'	with pytest.raises(RuntimeError, match="after authority"):
+tests/test_override_breach_costs_564.py:453	RuntimeError	'later'	with pytest.raises(RuntimeError, match="later"):
+tests/test_pay_order_override_extraction_653.py:80	ValueError	'entries'	with pytest.raises(ValueError, match="entries"):
+tests/test_pihong_dossier_1490.py:839	RuntimeError	'event ledger inject'	with pytest.raises(RuntimeError, match='event ledger inject'):
+tests/test_pihong_dossier_1490.py:921	RuntimeError	'prewrite LLM 失败|llm down'	with pytest.raises(RuntimeError, match='prewrite LLM 失败|llm down'):
+tests/test_power_section_rejections.py:136	KeyError	'canonical person power writer bug'	with pytest.raises(KeyError, match="canonical person power writer bug"):
+tests/test_pre_settle_transaction.py:103	RuntimeError	'phase-write boom'	with pytest.raises(RuntimeError, match="phase-write boom"):
+tests/test_pre_settle_transaction.py:127	RuntimeError	'pre_settle boom'	with pytest.raises(RuntimeError, match="pre_settle boom"):
+tests/test_pre_settle_transaction.py:154	RuntimeError	'auto_submit boom'	with pytest.raises(RuntimeError, match="auto_submit boom"):
+tests/test_pre_settle_transaction.py:432	RuntimeError	'placeholder save crash'	with pytest.raises(RuntimeError, match="placeholder save crash"):
+tests/test_rejection_wiring.py:94	RuntimeError	'crash after flush'	with pytest.raises(RuntimeError, match="crash after flush"):
+tests/test_rejection_wiring.py:137	RuntimeError	'outer rollback'	with pytest.raises(RuntimeError, match="outer rollback"):
+tests/test_relation_brew_636.py:426	?	'认领库不可写'	with pytest.raises(sqlite3.OperationalError, match="认领库不可写"):
+tests/test_relation_brew_636.py:449	?	'落定库不可写'	with pytest.raises(sqlite3.OperationalError, match="落定库不可写"):
+tests/test_relation_brew_636.py:468	?	'pending 库不可写'	with pytest.raises(sqlite3.OperationalError, match="pending 库不可写"):
+tests/test_relation_brew_636.py:483	KeyError	'酿制手程序错误'	with pytest.raises(KeyError, match="酿制手程序错误"):
+tests/test_relation_brew_636.py:503	ValueError	'酿制手程序错误'	with pytest.raises(ValueError, match="酿制手程序错误"):
+tests/test_relation_seed_638.py:278	RuntimeError	'injected write failure'	with pytest.raises(RuntimeError, match="injected write failure"):
+tests/test_relation_seed_638.py:300	ValueError	'injected seed failure'	with pytest.raises(ValueError, match="injected seed failure"):
+tests/test_rescript_draft_656.py:837	RuntimeError	'programmer bug sentinel'	with pytest.raises(RuntimeError, match="programmer bug sentinel"):
+tests/test_secret_order_monthly_progress_566.py:366	RuntimeError	'post-fiscal failure 566'	with pytest.raises(RuntimeError, match="post-fiscal failure 566"):
+tests/test_session_write_queue_1353.py:536	RuntimeError	'queue boom'	with pytest.raises(RuntimeError, match="queue boom"):
+tests/test_session_write_queue_1353.py:525	AssertionError	'did not drain'	with pytest.raises(AssertionError, match="did not drain"):
+tests/test_state_reload.py:125	RuntimeError	'save boom'	with pytest.raises(RuntimeError, match="save boom"):
+tests/test_state_reload.py:166	RuntimeError	'post-commit step crash'	with pytest.raises(RuntimeError, match="post-commit step crash"):
+tests/test_state_reload.py:258	RuntimeError	'post-commit step crash'	with pytest.raises(RuntimeError, match="post-commit step crash"):
+tests/test_state_reload.py:301	RuntimeError	'boom'	with pytest.raises(RuntimeError, match="boom"):
+tests/test_state_reload.py:345	RuntimeError	'orig'	with pytest.raises(RuntimeError, match="orig") as ei:
+tests/test_transaction_boundary.py:429	RuntimeError	'boom'	with pytest.raises(RuntimeError, match="boom"):
+tests/test_transaction_boundary.py:547	RuntimeError	'boom'	with pytest.raises(RuntimeError, match="boom"):
+
+=== substring diagnostic patterns (in / str.contains on reason/exc) ===
+tests/test_audience_scroll_539.py:102: assert [set(message) for message in live["messages"]] == [set(message) for message in closed["messages"]]
+tests/test_audience_scroll_539.py:103: assert [message["content"] for message in live["messages"]] == [message["content"] for message in closed["messages"]]
+tests/test_audience_scroll_539.py:121: assert all(not message["content"] for message in payload["messages"])
+tests/test_audience_scroll_539.py:163: assert any(message["role"] == "attendant" and message["speaker"] == "杨嗣昌" for message in payload["messages"])
+tests/test_audience_scroll_539.py:217: assert [m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"] if m.get("chat_turn_id") == turn_id and m["role"] != "user"] == se
+tests/test_audience_scroll_539.py:270: assert not any(message.get("record_id") for message in messages)
+tests/test_audience_scroll_539.py:271: assert [message.get("chat_turn_id") for message in messages if message["role"] == "scene" and message.get("chat_turn_id")] == [first_turn, second_turn]
+tests/test_audience_travel_gating_670.py:516: assert "injected continuation applier failure" in str(excinfo.value.__cause__)
+tests/test_character_knowledge_489.py:39: assert "魏忠贤" in row["excluded_names"]
+tests/test_character_knowledge_489.py:457: assert excluded.name in row["excluded_names"]
+tests/test_character_knowledge_489.py:516: assert not any(item.get("source_id") == source_id for item in excluded_view["public_events"])
+tests/test_character_knowledge_489.py:545: assert "魏忠贤" in json.loads(saved["excluded_names"])
+tests/test_character_knowledge_489.py:874: assert "test:mixed-public" in excluded_ids
+tests/test_character_knowledge_489.py:876: assert "test:mixed-source" not in excluded_ids
+tests/test_character_knowledge_489.py:914: assert "test:durable-public" in excluded_ids
+tests/test_character_knowledge_489.py:916: assert "test:durable-secret" not in excluded_ids
+tests/test_character_knowledge_489.py:943: assert "test:rewritten-secret" not in excluded_ids
+tests/test_character_knowledge_489.py:975: assert excluded.name in rows[0]["excluded_names"]
+tests/test_character_knowledge_489.py:1403: assert clerk.name in json.loads(row["excluded_names"])
+tests/test_chat_stream_failpaths_393.py:431: assert "highlight trail boom" in str(err.get("message") or ""), err
+tests/test_chat_stream_failpaths_393.py:652: assert "Unknown model error" in str(detail.get("provider_message") or "")
+tests/test_chat_stream_failpaths_393.py:1122: assert "workdir" not in str(detail.get("message") or "")
+tests/test_chat_stream_failpaths_393.py:1123: assert "exit code" not in str(detail.get("message") or "").lower()
+tests/test_cli_backend.py:651: assert "cli down" in (ei.value.provider_message or "")
+tests/test_cli_backend.py:652: assert "cli down" not in ei.value.message
+tests/test_cli_backend.py:824: assert recs[0]["error"] and "codex 挂了" in recs[0]["error"]
+tests/test_cli_play_turn.py:73: assert str(exc) in capsys.readouterr().out
+tests/test_cli_play_turn.py:453: assert str(exc) in capsys.readouterr().out
+tests/test_cli_runner_error_typed_1299.py:48: assert _RUNNER_BANNER not in exc.message
+tests/test_cli_runner_error_typed_1299.py:86: assert _RUNNER_BANNER not in ei.value.message
+tests/test_cli_transport_1465.py:212: assert "Authentication required" in str(detail.get("provider_message") or ""), detail
+tests/test_cli_transport_1465.py:276: assert "stdin" in str(detail.get("provider_message") or ""), detail
+tests/test_decree_dossiers_571.py:1503: assert any("account" in str(r["reason"]) for r in rej)
+tests/test_decree_dossiers_571.py:1610: assert any("canonical target" in r or "target" in r for r in reasons)
+tests/test_decree_dossiers_571.py:1914: assert any("assignee" in r for r in reasons)
+tests/test_deformation_dual_rail_622.py:532: pooled_rows = [r for r in _ledger_after(before) if pooled_reason in str(r["reason"] or "")]
+tests/test_draft_admission_resubmit_1769.py:447: assert _UNKNOWN_NAME not in resubmit_calls[0]["failure_reason"]
+tests/test_draft_admission_resubmit_1769.py:448: assert _UNKNOWN_NAME in resubmit_calls[1]["failure_reason"]
+tests/test_fiscal_substrate_bridge.py:3649: assert "salt_tax" in meta["excluded_from_settle"]
+tests/test_fiscal_substrate_bridge.py:3650: assert "commerce_tax" in meta["excluded_from_settle"]
+tests/test_gazette_author_1862.py:376: assert secret_did in seen["treasury_options"]["exclude_dossier_ids"]
+tests/test_issue_entities.py:373: if "region_delta_typo" in str(r.get("reason"))]
+tests/test_material_directory_1830.py:169: assert "dossier boom" in str(exc)
+tests/test_menu_lifecycle_drain_396.py:364: assert "disk full" in str(exc)
+tests/test_month_call_recovery_1846.py:439: assert "核账期可见原文" in str(recovery.get("message") or "")
+tests/test_month_call_recovery_1846.py:716: assert "edict settle crashed" in str(failure.get("message") or "")
+tests/test_month_chain_1843.py:205: assert "过月中断" in str(exc_info.value.__cause__)
+tests/test_month_chain_1847.py:700: assert "预推不可见:陕西赈灾" in message
+tests/test_month_chain_1847.py:701: assert question_context in message
+tests/test_new_game_dependency_mismatch_1721.py:80: assert "message" in detail and str(detail["message"]).strip()
+tests/test_p4_guard_new_surfaces_547.py:143: assert all("beat" in m and "role" in m for m in payload["messages"])
+tests/test_person_delta_adapter.py:1235: assert "simulated office write failure" in changes[0]["reason"]
+tests/test_person_delta_adapter.py:1318: assert "simulated office write failure" in changes[1]["reason"]
+tests/test_person_delta_adapter.py:1376: assert "simulated post-office failure" in changes[0]["reason"]
+tests/test_pihong_dossier_1490.py:1796: assert '不存在的人' not in str(payload.get('assignee_name') or '')
+tests/test_pihong_dossier_1490.py:1797: assert '不存在的人' not in str(created.get('executor_id') or '')
+tests/test_population_transfers_649.py:230: if "population_transfers" in str(r.get("reason"))]
+tests/test_population_transfers_649.py:295: if "region_delta_typo" in str(r.get("reason"))]
+tests/test_public_sayings_1829.py:167: assert excluded_name in saying["excluded_names"]
+tests/test_qa_t1_extraction_dual_source_1353.py:578: assert [ev["type"] for ev in events][-3:] == ["done", "error", "end"]
+tests/test_qa_t1_extraction_dual_source_1353.py:606: assert [ev["type"] for ev in events][-2:] == ["error", "end"]
+tests/test_relation_capture_633.py:557: assert "幻觉丙" in rejected[0]["reason"]
+tests/test_relation_capture_633.py:744: assert any("幻觉甲" in r["reason"] for r in rejected)
+tests/test_relation_capture_633.py:769: assert "王绍徽" in res[0]["reason"]
+tests/test_rescript_draft_656.py:819: assert "LLM 不可用" in json.loads(note.read_text(encoding="utf-8"))["reason"]
+tests/test_secret_order_monthly_progress_566.py:362: assert "post-fiscal failure 566" in str(detail.get("message") or detail)
+tests/test_surcharge_causal_chain_650.py:223: assert not [r for r in applied["population_transfers"] if r.get("reason") == "加派"]
+tests/test_web_audience_night_498.py:545: assert "着户部核边饷" in str(match["text"])
+tests/test_web_chat_serialization_393.py:273: assert [m["content"] for m in runtime.db.messages if m["role"] == "user"] == ["请奏"]
+tests/test_web_llm_runtime_config.py:980: assert "grok" in status["llm"]["cli_reasoning_runners"]
+tests/test_web_llm_runtime_config.py:1000: assert "grok" in get_result["cli_reasoning_runners"]
+tests/test_web_llm_runtime_config.py:1018: assert "grok" in post_result["cli_reasoning_runners"]

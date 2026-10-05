@@ -1322,11 +1322,12 @@ def _invalid_participant_names_from_error(exc: BaseException) -> List[str]:
 
 
 def _person_ids_from_extract_result(result: Dict[str, Any]) -> List[str]:
-    """单条/批抽结果中的人物键（character_id + delegator_id/delegator，保序去重）。
+    """单旨抽取结果中的人物键（character_id + delegator_id/delegator，保序去重）。
 
     除名闸 prior/new 同键空间：委派人与主办/协办同属人物参与侧，漏收会把
     「毕自」→「毕自严」的委派人自愈误判 removal_only，或丢合法委派人不触发
     lost_prior_valid。raw `delegator` 与 `delegator_id` 同收（与 normalize 接缝一致）。
+    #1902 R1：批抽 drafts 形状已无生产产出，只读顶层 roster。
     """
     ids: List[str] = []
 
@@ -1343,9 +1344,6 @@ def _person_ids_from_extract_result(result: Dict[str, Any]) -> List[str]:
 
     if "participant_roster" in result:
         _absorb(result.get("participant_roster"))
-    for draft in result.get("drafts") or []:
-        if isinstance(draft, dict) and "participant_roster" in draft:
-            _absorb(draft.get("participant_roster"))
     return ids
 
 
@@ -1509,18 +1507,12 @@ def _count_failed_person_slots_in_roster(
 def _count_failed_person_slots(
     result: Dict[str, Any], *, db: Any, content: Any,
 ) -> int:
-    """首抽整个结果的人物失败槽数（顶层 roster + 全 drafts；机构/泛称排除）。"""
-    n = 0
-    if "participant_roster" in result:
-        n += _count_failed_person_slots_in_roster(
-            result.get("participant_roster"), db=db, content=content,
-        )
-    for draft in result.get("drafts") or []:
-        if isinstance(draft, dict) and "participant_roster" in draft:
-            n += _count_failed_person_slots_in_roster(
-                draft.get("participant_roster"), db=db, content=content,
-            )
-    return n
+    """首抽单旨结果的人物失败槽数（顶层 roster；机构/泛称排除）。"""
+    if "participant_roster" not in result:
+        return 0
+    return _count_failed_person_slots_in_roster(
+        result.get("participant_roster"), db=db, content=content,
+    )
 
 
 def _collect_corr_person_ids(roster: Any, *, db: Any, content: Any) -> List[str]:
@@ -1654,8 +1646,9 @@ def _backfill_healed_participant_refs(
     """首抽权威快照 + 纠错轮一一对应槽级修补；对应不明 → None。
 
     非参与人字段一律保首抽；纠错轮增人/重排/改档不落库。
-    失败槽不变式（全局）：顶层 roster + 全 drafts 合计人物失败槽须恰好为 1
+    失败槽不变式：顶层 roster 人物失败槽须恰好为 1
     （机构/泛称按 normalize 口径排除）；≠1 → None；唯一失败槽同下标修补。
+    #1902 R1：批抽 drafts 合并已无生产消费者，删。
     """
     # 全局闸：复用 _count_failed_person_slots（禁第三套扫描器）
     if _count_failed_person_slots(baseline, db=db, content=content) != 1:
@@ -1676,38 +1669,6 @@ def _backfill_healed_participant_refs(
         out["participant_roster"] = normalize_draft_person_roster(
             patched, db=db, content=content,
         )
-    base_drafts = baseline.get("drafts")
-    corr_drafts = correction.get("drafts")
-    if isinstance(base_drafts, list):
-        merged: List[Any] = []
-        corr_list = corr_drafts if isinstance(corr_drafts, list) else []
-        for idx, base_draft in enumerate(base_drafts):
-            if not isinstance(base_draft, dict):
-                merged.append(base_draft)
-                continue
-            item = dict(base_draft)
-            base_item_roster = base_draft.get("participant_roster")
-            if isinstance(base_item_roster, list):
-                corr_item = (
-                    corr_list[idx]
-                    if idx < len(corr_list) and isinstance(corr_list[idx], dict)
-                    else {}
-                )
-                patched = _patch_roster_slots_one_to_one(
-                    base_item_roster,
-                    corr_item.get("participant_roster"),
-                    player_message=player_message,
-                    failed_slot_refs=pending_unknown,
-                    db=db,
-                    content=content,
-                )
-                if patched is None:
-                    return None
-                item["participant_roster"] = normalize_draft_person_roster(
-                    patched, db=db, content=content,
-                )
-            merged.append(item)
-        out["drafts"] = merged
     return out
 
 
@@ -1948,26 +1909,12 @@ def normalize_draft_person_roster(
 def _apply_validated_roster_to_extract_result(
     result: Dict[str, Any], *, db: Any, content: Any,
 ) -> Dict[str, Any]:
-    """对单条/批抽结果的 participant_roster 做 normalize+validate（就地拷贝）。"""
+    """对单旨结果的 participant_roster 做 normalize+validate（就地拷贝）。"""
     out = dict(result)
     if "participant_roster" in out and out.get("participant_roster") is not None:
         out["participant_roster"] = normalize_draft_person_roster(
             out.get("participant_roster"), db=db, content=content,
         )
-    drafts = out.get("drafts")
-    if isinstance(drafts, list):
-        healed_drafts: List[Any] = []
-        for draft in drafts:
-            if not isinstance(draft, dict):
-                healed_drafts.append(draft)
-                continue
-            item = dict(draft)
-            if "participant_roster" in item and item.get("participant_roster") is not None:
-                item["participant_roster"] = normalize_draft_person_roster(
-                    item.get("participant_roster"), db=db, content=content,
-                )
-            healed_drafts.append(item)
-        out["drafts"] = healed_drafts
     return out
 
 
@@ -2028,25 +1975,22 @@ def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dic
     if row is None:
         return result
     current_turn = int(row["turn"])
-    drafts = result.get("drafts")
-    items = drafts if isinstance(drafts, list) else [result]
-    for item in items:
-        if not isinstance(item, dict) or item.get("dossier_action_type") != "pay_order_override":
+    if result.get("dossier_action_type") != "pay_order_override":
+        return result
+    for entry in result.get("entries") or []:
+        if not isinstance(entry, dict):
             continue
-        for entry in item.get("entries") or []:
-            if not isinstance(entry, dict):
-                continue
-            if "duration_months" in entry:
-                duration = entry.pop("duration_months")
-                if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
-                    raise ValueError(f"override 相对期限 duration_months 须为正整数：{duration!r}")
-                entry["until_turn"] = current_turn + duration - 1
-            elif "until_turn" in entry and (
-                isinstance(entry["until_turn"], bool)
-                or not isinstance(entry["until_turn"], int)
-                or entry["until_turn"] < current_turn
-            ):
-                raise ValueError(f"override until_turn 已过期或无效：{entry['until_turn']!r}")
+        if "duration_months" in entry:
+            duration = entry.pop("duration_months")
+            if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+                raise ValueError(f"override 相对期限 duration_months 须为正整数：{duration!r}")
+            entry["until_turn"] = current_turn + duration - 1
+        elif "until_turn" in entry and (
+            isinstance(entry["until_turn"], bool)
+            or not isinstance(entry["until_turn"], int)
+            or entry["until_turn"] < current_turn
+        ):
+            raise ValueError(f"override until_turn 已过期或无效：{entry['until_turn']!r}")
     return result
 
 
@@ -2054,37 +1998,12 @@ def _finalize_extract_with_combo(
     result: Dict[str, Any],
     *,
     needs_combo: bool = False,
-    draft_combo_flags: Optional[List[bool]] = None,
 ) -> Dict[str, Any]:
-    """结果建成后做组合校验；失败携带 partial + typed 可修字段边界。
+    """单旨结果建成后做组合校验；失败携带 partial + typed 可修字段边界。
 
-    needs_combo / draft_combo_flags 为调用方局部布尔，不写入结果字典。
+    needs_combo 为调用方局部布尔，不写入结果字典。
+    #1902 R1：批抽 draft_combo_flags 路径已无生产消费者，删。
     """
-    if draft_combo_flags is not None:
-        drafts = result.get("drafts") or []
-        # 一次收齐全部 draft 失败图；禁首败短接导致其余非法草稿在 heal 后漏检放行。
-        draft_failures: Dict[int, frozenset] = {}
-        first_exc: Optional[StructuredDecreeCombinationError] = None
-        for idx, flag in enumerate(draft_combo_flags):
-            if not flag or idx >= len(drafts):
-                continue
-            draft = drafts[idx]
-            if not isinstance(draft, dict):
-                continue
-            try:
-                validate_structured_decree_combination(draft)
-            except StructuredDecreeCombinationError as exc:
-                draft_failures[idx] = frozenset(exc.failed_fields)
-                if first_exc is None:
-                    first_exc = exc
-        if first_exc is not None:
-            raise StructuredDecreeCombinationError(
-                str(first_exc),
-                partial_result=dict(result),
-                failed_fields=first_exc.failed_fields,
-                draft_failures=draft_failures,
-            ) from first_exc
-        return result
     if needs_combo:
         try:
             validate_structured_decree_combination(result)
@@ -2115,11 +2034,11 @@ def _merge_combo_correction_preserving_roster(
     corrected: Dict[str, Any],
     *,
     failed_fields: Optional[frozenset] = None,
-    draft_failures: Optional[Dict[int, frozenset]] = None,
 ) -> Dict[str, Any]:
-    """组合纠错成功：仅采纳 typed 失败字段，逐 draft 保留首抽 participant_roster。
+    """组合纠错成功：仅采纳 typed 失败字段，保留首抽 participant_roster。
 
     未失败的动作/目标/承办/类别与旨文、名册一律保留首抽；不另建第二 retry。
+    #1902 R1：批抽 draft_failures / drafts 合并已无生产消费者，删。
     """
     out = dict(baseline)
     top_fields = frozenset(failed_fields or ())
@@ -2127,29 +2046,6 @@ def _merge_combo_correction_preserving_roster(
         _apply_failed_fields_from_correction(out, corrected, top_fields)
     if "participant_roster" in baseline:
         out["participant_roster"] = baseline["participant_roster"]
-    base_drafts = baseline.get("drafts")
-    corr_drafts = corrected.get("drafts")
-    if isinstance(base_drafts, list):
-        merged: List[Any] = []
-        corr_list = corr_drafts if isinstance(corr_drafts, list) else []
-        failures = dict(draft_failures or {})
-        for idx, base_draft in enumerate(base_drafts):
-            if not isinstance(base_draft, dict):
-                merged.append(base_draft)
-                continue
-            item = dict(base_draft)
-            corr_item = (
-                corr_list[idx]
-                if idx < len(corr_list) and isinstance(corr_list[idx], dict)
-                else None
-            )
-            draft_fields = frozenset(failures.get(idx) or ())
-            if corr_item is not None and draft_fields:
-                _apply_failed_fields_from_correction(item, corr_item, draft_fields)
-            if "participant_roster" in base_draft:
-                item["participant_roster"] = base_draft["participant_roster"]
-            merged.append(item)
-        out["drafts"] = merged
     return out
 
 
@@ -2157,21 +2053,8 @@ def _revalidate_merged_combo_result(
     result: Dict[str, Any],
     *,
     failed_fields: Optional[frozenset] = None,
-    draft_failures: Optional[Dict[int, frozenset]] = None,
 ) -> None:
-    """合并失败字段后重走共同组合校验；仍败则 typed 上抛（全图失败一并带回）。
-
-    批 draft 路径复用 _finalize_extract_with_combo 的 collect-all 闸，
-    不平行再写一份 validate→收集→包装循环。
-    """
-    drafts = result.get("drafts")
-    if isinstance(drafts, list) and draft_failures:
-        flags = [False] * len(drafts)
-        for idx, fields in draft_failures.items():
-            if fields and 0 <= int(idx) < len(flags):
-                flags[int(idx)] = True
-        _finalize_extract_with_combo(result, draft_combo_flags=flags)
-        return
+    """合并失败字段后重走共同组合校验；仍败则 typed 上抛。"""
     if failed_fields:
         try:
             validate_structured_decree_combination(result)
@@ -2239,14 +2122,14 @@ def extract_draft_intent_with_roster_heal(
 
     #1624：组合校验失败只回喂结构契约，不改写自由文本旨文；不得各入口另造 heal。
     组合纠错复用 baseline_result：只更新该次不变式 failed_fields 边界内字段，
-    逐 draft 保留首抽 participant_roster 与未失败结构，再走既有名册校验
+    保留首抽 participant_roster 与未失败结构，再走既有名册校验
     （禁合法甲→合法乙、未失败动作/目标/类别静默漂移）。
     自愈只许抄写纠错（修完仍是皇帝所指之人）。真不在册 / 擅自除名 →
     raise UnknownParticipantEscalate（调用方戏内回禀，不落草案）。
     db/content 缺一则只抽不校验名册（与旧 extract 同）；组合校验在 extract 内已做。
     LLM 在纠错路上挂死 → 原样上抛。
     initial_correction（#1769）：成案拒收补交时把失败事实与原产物作为首轮回喂。
-    #1902 N5：无生产消费者的 require_execution_lead / harvest / _lead_gate 已清退。
+    #1902 R1：批抽 draft_failures / drafts 承接已无生产消费者，删。
     """
     retries = max(0, int(heal_retries))
     correction = str(initial_correction or "")
@@ -2256,7 +2139,6 @@ def extract_draft_intent_with_roster_heal(
     baseline_result: Optional[Dict[str, Any]] = None
     baseline_from_combo = False
     baseline_failed_fields: frozenset = frozenset()
-    baseline_draft_failures: Dict[int, frozenset] = {}
 
     for attempt in range(retries + 1):
         # llm_config 关键字传：别族 fake_draft(msg, reply, **kw) 形仍合法，
@@ -2280,11 +2162,6 @@ def extract_draft_intent_with_roster_heal(
                 baseline_result = dict(partial)
                 baseline_from_combo = True
                 baseline_failed_fields = frozenset(getattr(exc, "failed_fields", None) or ())
-                raw_draft_failures = getattr(exc, "draft_failures", None) or {}
-                baseline_draft_failures = {
-                    int(idx): frozenset(fields or ())
-                    for idx, fields in dict(raw_draft_failures).items()
-                }
                 if attempt >= retries:
                     raise
                 correction = combination_correction_feedback(exc)
@@ -2299,13 +2176,11 @@ def extract_draft_intent_with_roster_heal(
                     baseline_result,
                     partial,
                     failed_fields=baseline_failed_fields,
-                    draft_failures=baseline_draft_failures,
                 )
                 try:
                     _revalidate_merged_combo_result(
                         result,
                         failed_fields=baseline_failed_fields,
-                        draft_failures=baseline_draft_failures,
                     )
                 except StructuredDecreeCombinationError as merged_exc:
                     if attempt >= retries:
@@ -2313,9 +2188,6 @@ def extract_draft_intent_with_roster_heal(
                             str(merged_exc),
                             partial_result=dict(result),
                             failed_fields=merged_exc.failed_fields,
-                            draft_failures=getattr(
-                                merged_exc, "draft_failures", None
-                            ),
                         ) from merged_exc
                     correction = combination_correction_feedback(merged_exc)
                     _log(
@@ -2337,12 +2209,10 @@ def extract_draft_intent_with_roster_heal(
                 baseline_result,
                 result,
                 failed_fields=baseline_failed_fields,
-                draft_failures=baseline_draft_failures,
             )
             _revalidate_merged_combo_result(
                 result,
                 failed_fields=baseline_failed_fields,
-                draft_failures=baseline_draft_failures,
             )
             baseline_result = dict(result)
             baseline_from_combo = False
@@ -2351,11 +2221,7 @@ def extract_draft_intent_with_roster_heal(
         if db is None or content is None:
             return result
         has_roster_field = (
-            ("participant_roster" in result and result.get("participant_roster") is not None)
-            or any(
-                isinstance(d, dict) and "participant_roster" in d
-                for d in (result.get("drafts") or [])
-            )
+            "participant_roster" in result and result.get("participant_roster") is not None
         )
         if not has_roster_field:
             # 纠错路上抽掉参与人字段 = 除名企图 → 篡改，回禀

@@ -1,0 +1,24 @@
+counts Counter({'KEEP_injected_or_source': 49, 'R2_diag_wording': 13, 'CANDIDATE_diag': 6})
+
+=== R2_diag_wording remaining ===
+tests/test_advances_section_rejections.py:108 match='模拟 advance_issue'
+tests/test_close_issues_section_rejections.py:165 match='模拟 close_issue'
+tests/test_faction_brew_637.py:292 match='派系认领库不可写'
+tests/test_faction_brew_637.py:305 match='派系落定库不可写'
+tests/test_new_issues_section_rejections.py:311 match='模拟 insert_issue'
+tests/test_new_issues_section_rejections.py:354 match='模拟 event_to_issue'
+tests/test_new_issues_section_rejections.py:373 match='模拟 event_pool'
+tests/test_power_section_rejections.py:136 match='canonical person power writer bug'
+tests/test_relation_brew_636.py:426 match='认领库不可写'
+tests/test_relation_brew_636.py:449 match='落定库不可写'
+tests/test_relation_brew_636.py:468 match='pending 库不可写'
+tests/test_relation_brew_636.py:483 match='酿制手程序错误'
+tests/test_relation_brew_636.py:503 match='酿制手程序错误'
+
+=== CANDIDATE_diag remaining ===
+tests/test_cli_play_turn.py:327 match='reply persist failed'
+tests/test_decree_dossiers_571.py:1247 match='dossier close failed'
+tests/test_menu_lifecycle_drain_396.py:316 match='close failed'
+tests/test_month_chain_1843.py:490 match='chain persistence failed'
+tests/test_override_breach_costs_564.py:384 match='after authority'
+tests/test_secret_order_monthly_progress_566.py:366 match='post-fiscal failure 566'

@@ -1,0 +1,58 @@
+=== R1 probe ===
+R1_PROBE_flags: _finalize_extract_with_combo() got an unexpected keyword argument 'draft_combo_flags'
+R1_PROBE_exc: StructuredDecreeCombinationError.__init__() got an unexpected keyword argument 'draft_failures'. Did
+R1_PROBE_extract_no_drafts_literal_OK
+
+=== R1_skip_combo MUTATED rc=1 ===
+            for i in (result.get("participant_roster") or [])
+        ]
+        assert ids == [first], f"roster drifted to {ids!r}, expected {[first]!r}"
+        assert result.get("locality_scope") == "single"
+        assert result.get("dossier_action_type") == "assignment"
+>       assert result.get("target_kind") == "region"
+E       AssertionError: assert 'office' == 'region'
+E         
+E         - region
+E         + office
+
+tests/test_structured_decree_contract_1624.py:598: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_structured_decree_contract_1624.py::test_combo_correction_preserves_first_draw_roster
+1 failed, 6 passed in 3.25s
+RESULT R1: RED_OK
+=== R1 RESTORED rc=0 ===
+.......                                                                  [100%]
+7 passed in 1.96s
+RESULT R1_RESTORE: GREEN_OK
+
+=== R2_REWRITE_DIAG rc=0 ===
+....................                                                     [100%]
+20 passed in 1.24s
+RESULT R2_REWRITE: GREEN_OK_wording_independent
+=== R2 RESTORED rc=0 ===
+.....                                                                    [100%]
+5 passed in 0.97s
+RESULT R2_RESTORE: GREEN_OK
+
+=== R3_DISABLE_SUBMIT rc=1 ===
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'GameSession' object has no attribute 'submit_hitl_choices'
+
+ming_sim/cli/terminal.py:767: AttributeError
+----------------------------- Captured stdout call -----------------------------
+
+【月末重大抉择】（逐案亲裁）
+
+· 陕西告饥
+  秦地赤旱
+  1. 发饷（照拟）
+=========================== short test summary info ============================
+FAILED tests/test_cli_entry_1902.py::test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core
+FAILED tests/test_cli_entry_1902.py::test_cli_blank_pick_on_urgent_reaches_core_hold
+2 failed in 1.06s
+RESULT R3: RED_OK
+=== R3 RESTORED rc=0 ===
+..                                                                       [100%]
+2 passed in 1.11s
+RESULT R3_RESTORE: GREEN_OK
+NO_LEFTOVERS_OK
