@@ -1679,20 +1679,17 @@ def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
             "execution_surface": "immediate",
         },
     )
-    # #654 路3：缺 canonical target → rejection，不抛穿
+    # #654 路3：缺 target → rejection，不抛穿（结构化：section + 非空拒收；不锁生产 reason 措辞）
     db.ensure_dossiers_for_draft_directives(state)
     assert db.dossiers.get_for_directive(directive_id) is None
     status = db.conn.execute(
         "SELECT status FROM turn_directives WHERE id=?", (directive_id,),
     ).fetchone()["status"]
     assert status == "draft"
-    reasons = [
-        str(r["reason"])
-        for r in db.conn.execute(
-            "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
-        ).fetchall()
-    ]
-    assert any("canonical target" in r or "target" in r for r in reasons)
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM rejection_reports "
+        "WHERE section='directive_locality'",
+    ).fetchone()["n"] >= 1
 
 def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
     db, state, _content = game

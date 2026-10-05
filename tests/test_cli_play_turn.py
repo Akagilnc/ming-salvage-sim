@@ -124,13 +124,15 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
 def test_review_issue_reaches_staged_directive_default_approval(monkeypatch):
     """CLI issue reaches the end-turn owner without reviving decree preview/review."""
 
-    class Db:
-        def list_pending_actions(self, turn):
-            return [{"kind": "directive", "status": "pending"}]
-
     class Session:
         def __init__(self):
-            self.db = Db()
+            self.db = SimpleNamespace(
+                dossiers=SimpleNamespace(
+                    list_pending_actions=lambda turn, status=None: [
+                        {"kind": "directive", "status": "pending"}
+                    ],
+                ),
+            )
             self.state = SimpleNamespace(turn=1, turn_phase=TurnPhase.REVIEWING.value)
             self.calls = []
 
@@ -431,20 +433,18 @@ def test_terminal_failure_printer_preserves_zero_id(capsys):
 def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, capsys, action):
     """#415: 退朝默认提交密令失败时，CLI 也必须给出失败 id。"""
 
-    class Db:
-        def __init__(self):
-            self.actions = []
-
-        def list_pending_actions(self, turn, status=None):
-            if status == "failed":
-                return list(self.actions)
-            return []
-
     class Session:
         previous_summary = ""
 
         def __init__(self):
-            self.db = Db()
+            self.actions = []
+            self.db = SimpleNamespace(
+                dossiers=SimpleNamespace(
+                    list_pending_actions=lambda turn, status=None: (
+                        list(self.actions) if status == "failed" else []
+                    ),
+                ),
+            )
             self.state = SimpleNamespace(turn=7)
             self.calls = []
 
@@ -457,7 +457,7 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
 
         def advance_without_decree(self):
             self.calls.append("advance")
-            self.db.actions.append({
+            self.actions.append({
                 "id": 42,
                 "kind": "secret_order",
                 "action": "新建",
@@ -465,7 +465,7 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
 
         def resolve_turn(self):
             self.calls.append("resolve")
-            self.db.actions.append({
+            self.actions.append({
                 "id": 42,
                 "kind": "secret_order",
                 "action": "新建",
@@ -516,7 +516,9 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
         previous_summary = ""
 
         def __init__(self):
-            self.db = SimpleNamespace(list_pending_actions=lambda *a, **k: [])
+            self.db = SimpleNamespace(
+                dossiers=SimpleNamespace(list_pending_actions=lambda *a, **k: []),
+            )
             self.state = SimpleNamespace(turn=7)
             self.calls = []
 
@@ -548,20 +550,18 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
 def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch, capsys):
     """pre_settle 已标 failed 后若后续结算中止，CLI 仍须显示失败 id。"""
 
-    class Db:
-        def __init__(self):
-            self.actions = []
-
-        def list_pending_actions(self, turn, status=None):
-            if status == "failed":
-                return list(self.actions)
-            return []
-
     class Session:
         previous_summary = ""
 
         def __init__(self):
-            self.db = Db()
+            self.actions = []
+            self.db = SimpleNamespace(
+                dossiers=SimpleNamespace(
+                    list_pending_actions=lambda turn, status=None: (
+                        list(self.actions) if status == "failed" else []
+                    ),
+                ),
+            )
             self.state = SimpleNamespace(turn=7)
             self.calls = []
 
@@ -574,7 +574,7 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
 
         def resolve_turn(self):
             self.calls.append("resolve")
-            self.db.actions.append({
+            self.actions.append({
                 "id": 42,
                 "kind": "secret_order",
                 "action": "新建",
