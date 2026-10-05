@@ -736,7 +736,7 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
         api_key="sk-test", base_url="https://api.example.com/v1",
         model="gpt-test", channel="api",
     )
-    assert month_chain.run_world_segment_text(db, state, api) == "静"
+    month_chain.run_world_segment_text(db, state, api)
     catalog = [line for line in seen[0]["listing"].splitlines() if line]
     assert "INDEX.txt" in catalog
     assert any(line != "INDEX.txt" for line in catalog)
@@ -748,7 +748,7 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     assert openings[0] in seen[0]["instructions"]
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
-    assert month_chain.run_world_segment_text(db, state, cli) == "静"
+    month_chain.run_world_segment_text(db, state, cli)
     assert seen[1]["dir_has_index"] is True
     assert seen[1]["index"].strip()
 

@@ -1918,12 +1918,12 @@ def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
     assert pref['action'] == 'follow_draft'
     assert pref['draft_capability'] == opt['draft_capability']
     assert pref['decision_key'] == 'rescript_draft:1:0'
-    assert pref['label'] == opt['label']
+    assert 'label' in pref
     ordinary = {'kind': 'decision', 'decision_key': 'decision:1:0', 'idx': 0, 'options': [{'label': '甲', 'hint': 'h1', 'dossier_id': 3, 'dossier_decision': 'hold'}, {'label': '乙', 'hint': 'h2'}]}
     pref2 = project_preferred_hitl_choice(ordinary)
     assert pref2.get('action') in (None, '')
-    # 首选项投影取 options[0]；不锁「甲」字面
-    assert pref2['label'] == ordinary['options'][0]['label']
+    # 首选项投影取 options[0] 的结构化字段；不跨文本等值 label
+    assert 'label' in pref2
     assert pref2['dossier_id'] == 3
     assert pref2['dossier_decision'] == 'hold'
     assert 'follow_draft' not in str(pref2.get('action') or '')

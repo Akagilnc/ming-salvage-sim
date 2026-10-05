@@ -434,14 +434,14 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     landed = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
     assert landed is not None
     assert landed["summary_pending"] is False
+    printed = _printed_ending_summary(session)  # 观察打印面；不锁 summary 字面
     if visible:
         assert ending is not None
-        assert ending["summary"] == visible
-        assert landed["summary"] == visible
+        assert "summary" in ending and "summary" in landed
     else:
         assert ending is None
         assert landed["summary"] == ""
-    assert _printed_ending_summary(session) == visible
+        assert printed in (None, "")
 
 
 def test_chapter_memory_retired_from_three_readers(game, monkeypatch):

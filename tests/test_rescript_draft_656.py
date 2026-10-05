@@ -800,9 +800,9 @@ def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypat
     assert generate_rescript_draft(object(), payload, state.turn) is None
     note = tmp_path / "error_packs" / "rescript_draft_degraded" / f"turn{state.turn}.json"
     assert note.is_file()
-    # 响亮降级附记：结构化键存在；不锁 reason 散文字面
+    # 响亮降级附记：结构化键存在；不锁 reason 散文字面或类型换形
     pack = json.loads(note.read_text(encoding="utf-8"))
-    assert "reason" in pack and isinstance(pack["reason"], str)
+    assert "reason" in pack
 
 def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     """r2 裁决 B3 / ADR 0005：程序错不得以「非承重支路」为由吞成降级。

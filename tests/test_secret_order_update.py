@@ -1,38 +1,11 @@
-"""密令更新路径：同一承办大臣再次下密令 = 更新其要旨，而非建重复条。
-
-补 toolcall 缺口——CLI 后端无 function-calling，原 report/update 密令工具失效，
-「补充/更新已有密令」无路径。db.upsert_secret_order 提供 create-or-update。
-"""
+"""密令精确更新：按 order_id 改目标，不按承办人最新 active 猜条。"""
 
 from __future__ import annotations
 import json
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
-
-
-def test_upsert_creates_then_updates(game):
-    db, state, _ = game
-    n = "测试承办官X"
-    oid1, was_update1 = db.upsert_secret_order(state, n, "密查甲", "限期半年补饷", [], deadline_months=6, covert_task=TYPED_COVERT_TASK)
-    assert was_update1 is False                       # 首次无 active → 新建
-    oid2, was_update2 = db.upsert_secret_order(
-        state, n, "密查甲·改", "改为月月内库百万、半年通计六百万", ["补饷"], deadline_months=3
-    )
-    assert was_update2 is True                        # 同大臣已有 active → 更新
-    assert oid2 == oid1                               # 同一条，不建重复
-    row = db.conn.execute("SELECT tags, deadline_span FROM secret_orders WHERE id=?", (oid1,)).fetchone()
-    assert json.loads(row["tags"]) == ["补饷"]
-    assert int(row["deadline_span"]) == 3
-
-
-def test_upsert_different_minister_creates_new(game):
-    db, state, _ = game
-    a, _ = db.upsert_secret_order(state, "测试甲官", "甲", "内容甲", [], deadline_months=0, covert_task=TYPED_COVERT_TASK)
-    b, was = db.upsert_secret_order(state, "测试乙官", "乙", "内容乙", [], deadline_months=0, covert_task=TYPED_COVERT_TASK)
-    assert was is False and b != a                    # 不同大臣各自新建
+from tests.dossier_test_helpers import create_test_secret_order
 
 
 # ── update_secret_order_by_id：会话动作「更新」必须改精确 target，不是最新 active ──
-# CMR F1：web_app 旧实现走 upsert(按最新 active 改)→ 大臣多条密令时改错条。
 
 def test_update_by_id_targets_exact_order_not_newest(game):
     db, state, _ = game

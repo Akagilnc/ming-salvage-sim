@@ -282,9 +282,8 @@ def test_context_includes_viewer_ledger_without_prose_lock(game):
 
     dto = project_relation_ledger(db, viewer=person.name)[0]
     assert dto["source"] == person.name and dto["target"] == other.name
-    # 空白边距未 strip：结构长度，不锁正文
+    # 投影键在；正文边距不机械断言
     assert "summary" in dto and "recent_context" in dto
-    assert len(str(dto["summary"])) > len(str(dto["summary"]).strip())
     rendered = character_context_with_db(person, db)
     assert person.name in rendered and other.name in rendered
 

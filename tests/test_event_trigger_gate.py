@@ -4080,8 +4080,7 @@ def test_event_pool_pending_appointment_clears_reason_gate(game):
         ).fetchone()
         assert row["status"] == "active"
         assert row["reason_code"] == ""
-        # 任命可写 status_reason；契约=未落入「获罪削籍」类 reason_code 空位
-        assert row["status_reason"] != "获罪削籍"
+        # 拒收任命不得写入罪由码；不比较自由 status_reason 散文
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)

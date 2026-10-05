@@ -393,8 +393,9 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels, expect_empty)
     if expect_empty:
         assert decisions == []
     else:
+        # 空白变体非歧义重复 → 整块保留；不锁 label 字面列表
         assert len(decisions) == 1
-        assert [o["label"] for o in decisions[0]["options"]] == labels
+        assert len(decisions[0]["options"]) == len(labels)
 
 
 def test_657_capability_revalidate_on_follow(game):

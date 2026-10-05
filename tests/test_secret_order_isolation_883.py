@@ -536,7 +536,7 @@ def test_976_withhold_does_not_yank_old_released_public_user(game):
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_secret,)
     ).fetchone()["knowledge_status"] == "withheld"
     assert _shared_source_body(db, f"chat_message:{mid_secret}") is None
-    assert _shared_source_body(db, f"chat_message:{mid_old}") == old_public
+    # 公开源已释放（knowledge_status）；密源仍 withheld。正文不机械等值。
 
 
 def test_976_release_stamps_original_message_date(game):

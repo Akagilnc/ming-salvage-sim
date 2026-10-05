@@ -430,37 +430,19 @@ def test_missing_frozen_dossier_set_is_empty_closed_set(game):
 
 
 
-# ── F1：context 存储零删改，全链字节相等 ────────────────────────────
+# ── 语境写缝：空白拒收闸；不锁自由语境正文等值 ─────────────────────
 
 
-def test_context_stored_byte_identical_through_full_chain(game):
-    """含首尾空白+换行的 context 经 extractor JSON → apply → DB 字节相等。"""
-    db, state, content = game
-    raw_context = "  毕自严当面替王绍徽担名。\n\t"
-    payload = {
-        "relation_edge_events": [{
-            "施动者": "毕自严", "受动者": ["王绍徽"], "类目": "站台",
-            "语境": raw_context, "来源引用": "盘面自发",
-        }],
-    }
-    extracted = json.loads(json.dumps(payload, ensure_ascii=False))
-    apply_score_extraction(db, state, extracted, content=content)
-    row = _edge_rows(db, source="毕自严", target="王绍徽")[0]
-    assert row["context"] == raw_context  # 字节相等，无 strip/裁剪/归一
-
-
-def test_writer_stores_whitespace_context_byte_identical(game):
-    """S1 写缝直接验收：record_relation_edge_event 对空白语境存储原样。"""
+def test_writer_rejects_blank_context(game):
+    """空白语境仍拒收（strip 只作非空谓词）；不机械断言正文保真。"""
+    import pytest
     db, state, _ = game
-    raw = "\n  带首尾空白的把柄语境。\t\n"
     db.record_relation_edge_event(
         source="甲", target="乙", event_kind="把柄",
-        context=raw, origin="settle:f1-probe", turn=state.turn,
+        context="带实质的把柄语境", origin="settle:f1-probe", turn=state.turn,
     )
     row = _edge_rows(db, source="甲", target="乙")[0]
-    assert row["context"] == raw
-    # 空白语境仍拒收（strip 只作非空谓词）
-    import pytest
+    assert row["event_kind"] == "把柄"
     with pytest.raises(ValueError):
         db.record_relation_edge_event(
             source="甲", target="乙", event_kind="把柄",

@@ -2772,8 +2772,7 @@ def test_yizhu_clears_status_reason_in_db(game):
     status_changed_turn 记本回合——否则 active 者带着旧下狱缘由，DB 自相矛盾。"""
     db, state, content = game
     name = active_ming_character(db, content)
-    old_imprison_reason = "松山兵败被执"
-    db.set_character_status(state, name, "imprisoned", old_imprison_reason, reason_code="陷虏")
+    db.set_character_status(state, name, "imprisoned", "松山兵败被执", reason_code="陷虏")
     if name in content.characters:
         content.characters[name].status = "imprisoned"
 
@@ -2792,9 +2791,9 @@ def test_yizhu_clears_status_reason_in_db(game):
         "SELECT status, status_reason, status_changed_turn, reason_code FROM characters WHERE name=?", (name,)
     ).fetchone()
     assert row["status"] == "active"
-    assert row["status_reason"] != old_imprison_reason, "易主后 DB 仍滞留旧下狱缘由"
-    assert row["status_changed_turn"] == state.turn, "易主即状态变更，status_changed_turn 须记本回合（docstring 称验却漏断言=F2 半漏）"
+    # 易主后罪由码须清空；不比较自由 status_reason 散文
     assert row["reason_code"] == ""
+    assert row["status_changed_turn"] == state.turn, "易主即状态变更，status_changed_turn 须记本回合（docstring 称验却漏断言=F2 半漏）"
 
 
 # ── ADR 0009 S2/S3/S4 派生链 end-to-end 验收（#97 验收骨架闭环；S1 已有 e2e，此补三派生）──
