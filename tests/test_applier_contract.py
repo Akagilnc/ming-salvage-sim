@@ -1,8 +1,10 @@
 """S0 — ming_sim/applier.py 公开结构化契约与拒收落库行为。
 
-覆盖：Provenance 枚举 / RejectedItem 来源契约 / RejectionCollector
-缓冲→flush_to_db / mirror_to_jsonl。纯内部 SectionResult／ApplyContext 形状
-证明已按 #1902 T5 清退；聚合／落账行为复用 declaration_dispatch 真实入口测。
+分类（#1902 T5；不得把下列标成 EXTERNAL_REAL_ENTRY 或 INTERNAL_SHAPE=0 假清）：
+- PUBLIC_STRUCTURED：Provenance 枚举／RejectedItem 字段／RejectionCollector
+  flush→DB／mirror_to_jsonl——ADR 0008 对外结构化契约与落库行为。
+- 纯内部 SectionResult／ApplyContext 形状证明已清退。
+- 聚合／落账真实入口行为复用 tests/test_declaration_dispatch_1835.py。
 """
 
 from __future__ import annotations

@@ -1,0 +1,4 @@
+('T3_canonical', 'LOUD', "printed=''")
+('T3_llm_bypass', ['effect_on_fail', 'effect_on_resolve', 'ongoing_effects'], 'log=True')
+('T1', [['terminate'], ['wait', 5]], 'has_kill=False', 'warn=True')
+('T4_snapshot', 'status=interrupted')

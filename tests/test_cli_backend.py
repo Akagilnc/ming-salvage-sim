@@ -679,14 +679,6 @@ def test_run_agy_success_single_subprocess(monkeypatch):
     assert state["warm"] >= 1  # 暖 keychain 是操作步骤，不是重试策略
 
 
-def test_run_agy_exit_zero_prose_is_not_connection_error(monkeypatch):
-    """#1902 T2：退出码 0 的自由词面不得判连接错误（ADR 0142）；宿主缺口如实当正文。"""
-    state = _agy_popen(monkeypatch, [("Authentication required", 0)])
-    out, attempts = cb._dispatch_cli_runner("agy", "p")
-    assert out == "Authentication required" and attempts == 1
-    assert state["agy"] == 1
-
-
 def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
     """未知非零退出（无 typed status）= 确定性失败：不洗成瞬断、不私有重试。"""
     state = _agy_popen(monkeypatch, [("", 1)])

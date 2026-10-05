@@ -237,8 +237,8 @@ def _print_interrupted_reply_retry_hint(session: GameSession) -> None:
 def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Optional[str]:
     """#505 CLI：复用已持久问话重新生成回话（与 web retry 同核语义：不重记问话）。
 
-    #1902 T4：生命周期走 ``GameSession.execute_interrupted_reply_retry``；本入口只取
-    待重试项、呈现回话、调度收夜。
+    #1902 T4：生命周期走 ``GameSession.execute_interrupted_reply_retry``（含收夜调度）；
+    本入口只取待重试项与呈现回话。
 
     成功且 court_action 为 court_break 时返回 typed 'court_break'，供 minister_chat
     退出对话进入 play_turn 审阅；收夜失败仍返回 None，留在原对话。
@@ -263,6 +263,9 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             user_message_id=int(target.get("user_message_id") or 0),
             scene_minister_name=SCENE_CHAT_SPEAKER,
             schedule_translation=True,
+            schedule_close_night=True,
+            write_gate=_cli_write_gate(session),
+            close_night_write_gate=_cli_write_gate(session),
         )
     except LookupError:
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
@@ -271,12 +274,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         print(f"重试回话失败：{exc}\n")
         return None
     print(f"\n{message_speaker}：{wrap(str(getattr(result, 'answer', '') or ''))}\n")
-    # #1716/#1842：与 Web retry 同缝——回话已落库后消费 court_action 收夜。
-    court_action = str(getattr(result, "court_action", "") or "")
-    session.schedule_close_night_after_chat_if_needed(
-        court_action, write_gate=_cli_write_gate(session),
-    )
-    if court_action == "court_break":
+    if str(getattr(result, "court_action", "") or "") == "court_break":
         return "court_break"
     return None
 

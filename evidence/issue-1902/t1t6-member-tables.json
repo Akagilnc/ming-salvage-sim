@@ -1,169 +1,253 @@
 {
-  "T1": {
-    "predicate": "生产代码中显式 .kill()/SIGKILL，或 subprocess.run/call/_RAW_RUN 带 timeout=（官方文档确认超时会 kill→POSIX SIGKILL）；以及 terminate→wait→kill 硬期限兜底。保留合法静默判定（idle check）与 terminate+报告缺口。",
-    "official_docs": "https://docs.python.org/3/library/subprocess.html — run(timeout) kills child; Popen.kill sends SIGKILL on POSIX",
-    "pre_fix_members": [
-      {
-        "member": "ming_sim/cli_backend.py::_terminate_cli_process proc.kill",
-        "disposition": "DELETE kill fallback; terminate+log gap"
-      },
-      {
-        "member": "ming_sim/cli_backend.py::_login_shell_path _RAW_RUN timeout=8",
-        "disposition": "DELETE timeout= (no hard-kill path)"
-      },
-      {
-        "member": "ming_sim/cli_backend.py::_warm_keychain subprocess.run timeout=5",
-        "disposition": "DELETE timeout="
-      },
-      {
-        "member": "web_app.py os.kill(getpid,SIGTERM)",
-        "disposition": "KEEP host self-exit SIGTERM, not CLI hard-kill"
-      },
-      {
-        "member": "cli_backend docstring SIGKILL prohibition",
-        "disposition": "KEEP documentation of hard rule"
-      },
-      {
-        "member": "worker.join(timeout=5)",
-        "disposition": "KEEP thread join wait, does not kill process"
-      }
-    ]
+  "note": "T5 actionable = nail-misjudgment tests + pure internal-shape test proofs only. Production SectionResult/ApplyContext are shared types with consumers (KEEP), not AST-zero-ref delete targets.",
+  "T1": [
+    {
+      "line": "web_app.py:4700:            _os.kill(_os.getpid(), _signal.SIGTERM)",
+      "disposition": "KEEP_host_self_SIGTERM"
+    },
+    {
+      "line": "ming_sim/cli_backend.py:229:        # 硬规9：禁 subprocess.run(timeout=…)——超时路径会 SIGKILL。登录 PATH 探测无期限杀。",
+      "disposition": "KEEP_comment"
+    },
+    {
+      "line": "ming_sim/cli_backend.py:352:        # 硬规9：禁 timeout=（subprocess.run 超时会 SIGKILL）。keychain 暖探无期限杀。",
+      "disposition": "KEEP_comment"
+    },
+    {
+      "line": "ming_sim/cli_backend.py:392:    \"\"\"收尾子进程：已退时 terminate 是 no-op；否则只 SIGTERM，不 SIGKILL（硬规9）。",
+      "disposition": "KEEP_comment"
+    },
+    {
+      "line": "ming_sim/cli_backend.py:405:            \"CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）：%s\", exc,",
+      "disposition": "KEEP_comment"
+    },
+    {
+      "line": "ming_sim/cli_backend.py:422:      不 SIGKILL，硬规9）。",
+      "disposition": "KEEP_comment"
+    },
+    {
+      "line": "ming_sim/cli_backend.py:2789:        出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。\"\"\"",
+      "disposition": "KEEP_docstring"
+    }
+  ],
+  "T2": [
+    {
+      "line": "tests/test_cli_backend.py:284:    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=\"OpenAI Codex v0\\nlogs\"))",
+      "disposition": "KEEP_fixture_or_unrelated"
+    },
+    {
+      "line": "tests/test_cli_backend.py:458:        _P(stdout=\"\", stderr=\"STDOUT_BODY\\nOpenAI Codex v0.125.0\\nlogs\"),",
+      "disposition": "KEEP_fixture_or_unrelated"
+    },
+    {
+      "line": "tests/test_cli_transport_1465.py:177:    #1902 T2：禁再以 Authentication required 词面钉连接错误。",
+      "disposition": "KEEP_comment_negative"
+    },
+    {
+      "line": "tests/test_cli_runner_error_typed_1299.py:24:    \"OpenAI Codex v0.50.0\\n\"",
+      "disposition": "KEEP_fixture_or_unrelated"
+    }
+  ],
+  "T3_canonical": [
+    {
+      "line": "ming_sim/flows.py:1718:    from ming_sim.simulation import _canonical_item_fields",
+      "disposition": "KEEP_call_loud"
+    },
+    {
+      "line": "ming_sim/flows.py:1725:            fields = _canonical_item_fields(fields)",
+      "disposition": "KEEP_call_loud"
+    },
+    {
+      "line": "ming_sim/cli_backend.py:2734:    from ming_sim.simulation import _canonical_item_fields",
+      "disposition": "KEEP_call_loud"
+    },
+    {
+      "line": "ming_sim/cli_backend.py:2735:    norm = _canonical_item_fields(obj) if obj else {}",
+      "disposition": "KEEP_call_loud"
+    },
+    {
+      "line": "ming_sim/simulation.py:210:def _canonical_item_fields(value: object) -> object:",
+      "disposition": "KEEP_call_loud"
+    },
+    {
+      "line": "ming_sim/simulation.py:212:        return [_canonical_item_fields(item) for item in value]",
+      "disposition": "KEEP_call_loud"
+    },
+    {
+      "line": "ming_sim/simulation.py:216:        ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip()): _canonical_item_fields(val)",
+      "disposition": "KEEP_call_loud"
+    }
+  ],
+  "T3_silent_broad": [
+    {
+      "line": "ming_sim/audience_night.py:959:        except Exception:",
+      "disposition": "KEEP_nested_rollback_then_raise"
+    },
+    {
+      "line": "ming_sim/audience_night.py:960:            pass",
+      "disposition": "KEEP_nested_rollback_then_raise"
+    },
+    {
+      "line": "ming_sim/settlement_payload.py:56:        except Exception:",
+      "disposition": "KEEP_parse_skip_invalid_block"
+    },
+    {
+      "line": "ming_sim/settlement_payload.py:57:            continue",
+      "disposition": "KEEP_parse_skip_invalid_block"
+    },
+    {
+      "line": "ming_sim/rescript_actions.py:249:            except Exception:",
+      "disposition": "KEEP_parse_skip_invalid_block"
+    },
+    {
+      "line": "ming_sim/rescript_actions.py:250:                continue",
+      "disposition": "KEEP_parse_skip_invalid_block"
+    },
+    {
+      "line": "ming_sim/db.py:22611:                except Exception:",
+      "disposition": "KEEP_nested_rollback_then_raise"
+    },
+    {
+      "line": "ming_sim/db.py:22612:                    pass",
+      "disposition": "KEEP_nested_rollback_then_raise"
+    },
+    {
+      "line": "ming_sim/db.py:22644:                except Exception:",
+      "disposition": "KEEP_nested_rollback_then_raise"
+    },
+    {
+      "line": "ming_sim/db.py:22645:                    pass",
+      "disposition": "KEEP_nested_rollback_then_raise"
+    },
+    {
+      "line": "ming_sim/db.py:22777:                except Exception:",
+      "disposition": "KEEP_nested_rollback_then_raise"
+    },
+    {
+      "line": "ming_sim/db.py:22778:                    pass",
+      "disposition": "KEEP_nested_rollback_then_raise"
+    },
+    {
+      "line": "ming_sim/db.py:22831:                except Exception:",
+      "disposition": "KEEP_nested_rollback_then_raise"
+    },
+    {
+      "line": "ming_sim/db.py:22832:                    pass",
+      "disposition": "KEEP_nested_rollback_then_raise"
+    }
+  ],
+  "T4": [
+    {
+      "line": "ming_sim/session.py:1046:    def schedule_close_night_after_chat_if_needed(",
+      "disposition": "SHARED_CORE"
+    },
+    {
+      "line": "ming_sim/session.py:1355:    def execute_interrupted_reply_retry(",
+      "disposition": "SHARED_CORE"
+    },
+    {
+      "line": "ming_sim/session.py:1379:        （Web：须先放行 pending write）；共核仍是 ``schedule_close_night_after_chat_if_needed``。",
+      "disposition": "SHARED_CORE"
+    },
+    {
+      "line": "ming_sim/session.py:1395:                if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):",
+      "disposition": "SHARED_CORE"
+    },
+    {
+      "line": "ming_sim/session.py:1422:                self.schedule_close_night_after_chat_if_needed(",
+      "disposition": "SHARED_CORE"
+    },
+    {
+      "line": "web_app.py:2204:                turn, result, minister_message_id = self.session.execute_interrupted_reply_retry(",
+      "disposition": "ENTRY_CALLS_CORE"
+    },
+    {
+      "line": "web_app.py:2268:                self.session.schedule_close_night_after_chat_if_needed(",
+      "disposition": "KEEP_web_after_ticket_adapter"
+    },
+    {
+      "line": "ming_sim/cli/terminal.py:240:    #1902 T4：生命周期走 ``GameSession.execute_interrupted_reply_retry``（含收夜调度）；",
+      "disposition": "KEEP"
+    },
+    {
+      "line": "ming_sim/cli/terminal.py:258:        _turn, result, _mid = session.execute_interrupted_reply_retry(",
+      "disposition": "ENTRY_CALLS_CORE"
+    },
+    {
+      "line": "ming_sim/cli/terminal.py:329:            session.schedule_close_night_after_chat_if_needed(",
+      "disposition": "CHECK"
+    }
+  ],
+  "T5_tests": [
+    {
+      "line": "tests/test_qa_s2_copy_prompts_1356_1402.py:7:#1902 T6：旧 web _require_active_minister 包装及专属文案钉已随退役入口清退；",
+      "disposition": "KEEP_history_comment"
+    },
+    {
+      "line": "tests/test_applier_contract.py:6:- 纯内部 SectionResult／ApplyContext 形状证明已清退。",
+      "disposition": "KEEP_doc_only"
+    },
+    {
+      "line": "tests/test_declaration_dispatch_1835.py:628:    不冒称 `SectionResult.applied`（那意味着已落库）。\"\"\"",
+      "disposition": "ACTIONABLE_internal"
+    }
+  ],
+  "T5_actionable_tests": [],
+  "T5_applier_remaining": {
+    "classification": "PUBLIC_STRUCTURED (ADR 0008 Provenance/RejectedItem/RejectionCollector flush+mirror); NOT EXTERNAL_REAL_ENTRY; NOT INTERNAL_SHAPE",
+    "tests": [
+      "test_provenance_enum_values",
+      "test_provenance_from_string",
+      "test_rejected_item_fields",
+      "test_rejection_collector_flush_before_record_leaves_db_empty",
+      "test_rejection_collector_flush_writes_rows",
+      "test_rejection_collector_flush_clears_buffer",
+      "test_rejection_collector_flush_stores_item_as_json",
+      "test_mirror_to_jsonl_writes_lines",
+      "test_mirror_to_jsonl_appends_on_multiple_calls",
+      "test_mirror_to_jsonl_empty_buffer_writes_nothing",
+      "test_flush_then_mirror_writes_jsonl",
+      "test_mirror_idempotent_after_flush",
+      "test_unflushed_rows_never_mirrored",
+      "test_reset_discards_pending_and_flushed",
+      "test_record_accepts_plain_string_source",
+      "test_record_rejects_unknown_source_string",
+      "test_collector_counts_deterministic_on_polluted_save",
+      "test_ddl_in_open_transaction_rolls_back"
+    ],
+    "aggregation_reuse": "tests/test_declaration_dispatch_1835.py"
   },
-  "T2": {
-    "predicate": "从自由输出词面判故障或切分呈现横幅的机制，及钉误判的测试；用原生退出码/结构化契约。",
-    "pre_fix_members": [
-      {
-        "member": "cli_backend._AGY_AUTH_MARKERS + match→llm_connection_error",
-        "disposition": "DELETE"
-      },
-      {
-        "member": "cli_backend OpenAI Codex v stderr split",
-        "disposition": "DELETE"
-      },
-      {
-        "member": "tests/test_cli_backend.py::test_run_agy_auth_race_*",
-        "disposition": "REPLACE with negative prose test"
-      },
-      {
-        "member": "tests/test_cli_backend.py::test_run_codex_stdout_empty_fallback",
-        "disposition": "REPLACE assert no banner parse"
-      },
-      {
-        "member": "tests/test_cli_transport_1465.py auth prose injection",
-        "disposition": "REWRITE to empty-output typed retry"
-      },
-      {
-        "member": "docs/raw/.../agg.py Codex split",
-        "disposition": "KEEP out-of-prod harness; not game entry"
-      },
-      {
-        "member": "typed error fixture banners in test_cli_runner_error_typed_1299",
-        "disposition": "KEEP provider_message fixture"
-      }
-    ]
+  "T6": [
+    {
+      "line": "tests/test_qa_s2_copy_prompts_1356_1402.py:7:#1902 T6：旧 web _require_active_minister 包装及专属文案钉已随退役入口清退；",
+      "disposition": "KEEP_history_comment"
+    }
+  ],
+  "production_SectionResult_ApplyContext_KEEP": 63,
+  "counts": {
+    "T1_actionable": 0,
+    "T2_actionable": 0,
+    "T3_canonical_whitewash": 0,
+    "T3_silent_review": 0,
+    "T4_entry_owns_reopen": 0,
+    "T6_live_refs": 0,
+    "T5_actionable_tests": 0
   },
-  "T3": {
-    "predicate": "代码故障响亮失败；确证安全旁路须留真因日志，不依赖 MING_SIM_LLM_DEBUG/_log 开关。",
-    "pre_fix_members": [
-      {
-        "member": "cli_backend._trace except → _log only",
-        "disposition": "FIX logger.warning"
-      },
-      {
-        "member": "cli_backend.enrich_initiative_effects canonicalize/_run except → _log",
-        "disposition": "FIX logger.warning"
-      },
-      {
-        "member": "session.auto_save except → silent return None",
-        "disposition": "FIX logger.warning"
-      },
-      {
-        "member": "cli_backend._login_shell_path/_warm_keychain bare except",
-        "disposition": "FIX logger.warning"
-      },
-      {
-        "member": "terminal retry print(exc)",
-        "disposition": "KEEP loud user-facing presentation"
-      },
-      {
-        "member": "web_app stdout reconfigure pass",
-        "disposition": "KEEP host startup adapt"
-      },
-      {
-        "member": "web_app verify smoke except→HTTPException",
-        "disposition": "KEEP loud HTTP failure"
-      }
-    ]
+  "predicates": {
+    "T1": "production executable hard-kill: .kill(/SIGKILL/subprocess.run(... timeout=) under ming_sim|web_app.py; comment-only KEEP",
+    "T2": "production prose→fault: _AGY_AUTH_MARKERS or stdout/stderr Authentication/Codex-banner split→connection error; nail-misjudgment tests DELETE",
+    "T3": "code fault silent: canonicalize catch return original; auto_save/trace/_log-only without logger.warning; confirmed-safe bypass must log",
+    "T4": "entry-owned reopen+scene_chat+fail+close_night lifecycle outside GameSession.execute_interrupted_reply_retry",
+    "T5": "INTERNAL_SHAPE SectionResult/ApplyContext identity; nail-misjudgment prose tests; PUBLIC_STRUCTURED ADR0008 keep with explicit label",
+    "T6": "retired _require_active_minister live production/test refs (not base-time KEEP)"
   },
-  "T4": {
-    "predicate": "Web/CLI 入口各自编排 reopen→snapshot→scene_chat→complete/fail 恢复生命周期副本。",
-    "pre_fix_members": [
-      {
-        "member": "ming_sim/cli/terminal.py::_retry_interrupted_reply_cli",
-        "disposition": "REWRITE call GameSession.execute_interrupted_reply_retry"
-      },
-      {
-        "member": "web_app.WebGame.retry_interrupted_reply lifecycle block",
-        "disposition": "REWRITE call shared core; keep tickets/gates/projection"
-      },
-      {
-        "member": "GameSession.complete/fail/pending_retries (already shared)",
-        "disposition": "KEEP"
-      }
-    ]
-  },
-  "T5": {
-    "predicate": "纯内部形状/重复证明；虚假零剩余分类；保留公开结构化契约与真实落库行为测。",
-    "pre_fix_members": [
-      {
-        "member": "test_section_result_holds_applied_and_rejected",
-        "disposition": "DELETE INTERNAL_SHAPE"
-      },
-      {
-        "member": "test_section_result_merge",
-        "disposition": "DELETE; covered by declaration_dispatch real entry"
-      },
-      {
-        "member": "test_section_result_merge_empty",
-        "disposition": "DELETE"
-      },
-      {
-        "member": "test_apply_context_holds_all_fields",
-        "disposition": "DELETE INTERNAL_SHAPE"
-      },
-      {
-        "member": "Provenance/RejectedItem/RejectionCollector flush-mirror tests",
-        "disposition": "KEEP public structured / real DB behavior"
-      },
-      {
-        "member": "evidence s123-s2-classification INTERNAL_SHAPE=0 false claim",
-        "disposition": "CORRECTED in this receipt"
-      }
-    ]
-  },
-  "T6": {
-    "predicate": "授权内退役入口残根/独占证明；撤销底座时点豁免；保留有真实用途的共享能力。",
-    "pre_fix_members": [
-      {
-        "member": "web_app._require_active_minister",
-        "disposition": "DELETE retired zero-prod-call wrapper"
-      },
-      {
-        "member": "tests/test_web_court_visibility.py vassal/consort _require_* tests",
-        "disposition": "DELETE exclusive proofs"
-      },
-      {
-        "member": "tests/test_qa_s2_copy_prompts_*::test_require_active_minister_*",
-        "disposition": "DELETE exclusive proof"
-      },
-      {
-        "member": "monkeypatches of _require_active_minister in stream/serialization tests",
-        "disposition": "DELETE dead patches"
-      },
-      {
-        "member": "session.can_summon",
-        "disposition": "KEEP shared real capability"
-      }
-    ]
-  }
+  "commands": [
+    "rg -n --glob '*.py' -g '!tests/**' '(\\.kill\\(|SIGKILL|subprocess\\.run\\([^)]*timeout\\s*=)' ming_sim web_app.py",
+    "rg -n --glob '*.py' '_AGY_AUTH_MARKERS|Authentication required|OpenAI Codex v' ming_sim web_app.py tests",
+    "rg -n --glob '*.py' '_canonical_item_fields|规范化失败|norm = obj' ming_sim",
+    "rg -n -U --glob '*.py' -g '!tests/**' -g '!scripts/**' 'except Exception(?: as \\w+)?:\\n(?:\\s+#.*\\n)*\\s+(pass|return None|return \\{\\}|return \\[\\]|return \"\"|continue)\\b' ming_sim web_app.py",
+    "rg -n 'reopen_interrupted_chat_turn_for_retry|execute_interrupted_reply_retry|schedule_close_night_after_chat_if_needed' ming_sim/cli/terminal.py web_app.py ming_sim/session.py",
+    "rg -n 'SectionResult|ApplyContext|prose_is_not_connection|_require_active_minister' tests ming_sim web_app.py"
+  ]
 }
+FINAL_COUNTS {'T1_actionable': 0, 'T2_actionable': 0, 'T3_canonical_whitewash': 0, 'T3_silent_review': 0, 'T4_entry_owns_reopen': 0, 'T6_live_refs': 0, 'T5_actionable_tests': 0}

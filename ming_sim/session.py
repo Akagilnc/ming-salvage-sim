@@ -1287,9 +1287,18 @@ class GameSession:
                 translation_dispatched=translation_dispatched,
                 court_action=court_action,
             )
+        # 回滚差异的 after 快照失败不得阻断 interrupted 翻回（#1902 T4：
+        # reopen 已赢时遗留 generating 比丢差异更糟；旁路留真因）。
+        try:
+            after_snapshot = self.db.capture_chat_rollback_snapshot()
+        except Exception as snap_exc:
+            logger.warning(
+                "fail_audience_chat_turn after-snapshot failed chat_turn_id=%s: %s",
+                turn.chat_turn_id, snap_exc,
+            )
+            after_snapshot = turn.before_snapshot or {}
         self.db.record_chat_turn_rollback_diffs(
-            turn.chat_turn_id, turn.before_snapshot,
-            self.db.capture_chat_rollback_snapshot(),
+            turn.chat_turn_id, turn.before_snapshot, after_snapshot,
         )
         if not turn.user_message_id:
             user_row = self.db.conn.execute(
@@ -1354,34 +1363,46 @@ class GameSession:
         scene_minister_name: str = "",
         stream_emit: Optional[Callable[..., None]] = None,
         schedule_translation: bool = True,
+        schedule_close_night: bool = True,
         write_gate: Any = None,
+        close_night_write_gate: Any = None,
     ) -> Tuple[AudienceChatTurn, "ChatTurnResult", int]:
-        """中断回话恢复共核：reopen CAS → 快照 → scene_chat → 落回话／失败收口。
+        """中断回话恢复共核：reopen CAS → 快照 → scene_chat → 落回话／失败收口／收夜。
 
         #1902 T4：Web／CLI 入口只做输入、呈现与宿主资源适配，生命周期编排只此一处。
-        reopen CAS 未赢 → 返回前抛 ``LookupError``（入口自行译成 409／提示）。
-        生成或落库失败 → ``fail_audience_chat_turn`` 后原错上抛。
+        reopen CAS 未赢 → 返回前抛 ``LookupError``（入口自行译成 409／提示；未进 generating）。
+        reopen 已赢后的任何失败（含快照）→ ``fail_audience_chat_turn`` 后原错上抛，
+        不遗留 generating。
         返回 ``(turn, result, minister_message_id)``；``schedule_translation=False``
-        时转译由入口在闸外自行安排。
+        时转译由入口在闸外自行安排（Web 票据挂票后再派）。
+        ``schedule_close_night=False`` 时收夜由入口在宿主票／屏障交接后再调
+        （Web：须先放行 pending write）；共核仍是 ``schedule_close_night_after_chat_if_needed``。
         ``write_gate`` 可选：宿主短写闸（reopen／落库／失败收口）；LLM 生成在闸外。
+        ``close_night_write_gate`` 可选：收夜专用闸（默认同 ``write_gate``）。
         """
         import contextlib
 
         gate_cm = write_gate if write_gate is not None else contextlib.nullcontext()
-        with gate_cm:
-            if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
-                raise LookupError(f"chat_turn {chat_turn_id} reopen CAS lost")
-            turn = AudienceChatTurn(
-                chat_turn_id=int(chat_turn_id),
-                accepted_turn=int(accepted_turn),
-                night_id=0,
-                before_snapshot=self.db.capture_chat_rollback_snapshot(),
-                user_message_id=int(user_message_id or 0),
-            )
+        close_gate = (
+            close_night_write_gate if close_night_write_gate is not None else write_gate
+        )
         scene_name = str(scene_minister_name or message_speaker or "")
+        turn: Optional[AudienceChatTurn] = None
         result: Optional[ChatTurnResult] = None
         translation_dispatched = False
         try:
+            with gate_cm:
+                if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+                    raise LookupError(f"chat_turn {chat_turn_id} reopen CAS lost")
+                # reopen 已赢即建 turn 句柄，保证后续任意失败（含快照）能走 fail 收口。
+                turn = AudienceChatTurn(
+                    chat_turn_id=int(chat_turn_id),
+                    accepted_turn=int(accepted_turn),
+                    night_id=0,
+                    before_snapshot={},
+                    user_message_id=int(user_message_id or 0),
+                )
+                turn.before_snapshot = self.db.capture_chat_rollback_snapshot()
             result = self.scene_chat(
                 question,
                 chat_turn_id=chat_turn_id,
@@ -1397,22 +1418,31 @@ class GameSession:
                     schedule_translation=schedule_translation,
                 )
             translation_dispatched = bool(schedule_translation and result is not None)
-            return turn, result, int(minister_message_id or 0)
-        except Exception as exc:
-            try:
-                with gate_cm:
-                    self.fail_audience_chat_turn(
-                        turn,
-                        replied=result is not None,
-                        error=exc,
-                        translation_dispatched=translation_dispatched,
-                        court_action=str(getattr(result, "court_action", "") or ""),
-                    )
-            except Exception:
-                logger.exception(
-                    "interrupted reply retry fail_audience_chat_turn failed chat_turn_id=%s",
-                    chat_turn_id,
+            if schedule_close_night:
+                self.schedule_close_night_after_chat_if_needed(
+                    str(getattr(result, "court_action", "") or ""),
+                    write_gate=close_gate,
                 )
+            return turn, result, int(minister_message_id or 0)
+        except LookupError:
+            # CAS 未赢：轮仍 interrupted，无 generating 需收口。
+            raise
+        except Exception as exc:
+            if turn is not None:
+                try:
+                    with gate_cm:
+                        self.fail_audience_chat_turn(
+                            turn,
+                            replied=result is not None,
+                            error=exc,
+                            translation_dispatched=translation_dispatched,
+                            court_action=str(getattr(result, "court_action", "") or ""),
+                        )
+                except Exception:
+                    logger.exception(
+                        "interrupted reply retry fail_audience_chat_turn failed chat_turn_id=%s",
+                        chat_turn_id,
+                    )
             raise
 
     def scene_chat(

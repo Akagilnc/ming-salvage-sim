@@ -2730,13 +2730,9 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     except Exception as exc:  # 补全失败不阻断结算（trace 已在咽喉记下，含 error）
         logger.warning("国策效果补全失败：%s", exc)
     obj = _loads_lenient(raw) or {}
-    try:
-        from ming_sim.simulation import _canonical_item_fields
-        norm = _canonical_item_fields(obj) if obj else {}
-    except Exception as exc:
-        # #1902 T3 / ADR 0005：规范化旁路可继续，但不得依赖调试开关才留痕。
-        logger.warning("国策效果字段规范化失败：%s", exc)
-        norm = obj
+    # #1902 T3 / ADR 0005：规范化是代码侧契约故障，不得 catch 洗成原对象继续。
+    from ming_sim.simulation import _canonical_item_fields
+    norm = _canonical_item_fields(obj) if obj else {}
     # isinstance 守门：norm 或其子段被 LLM 给成非 dict 时归 {}，不让 dict("乱填") 抛错
     # 越过上层 floor、把空壳国策放进库（CMR codexB）。
     def _d(v):

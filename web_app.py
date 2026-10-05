@@ -2184,7 +2184,13 @@ class WebGame:
                 detail="本夜收夜中，暂不能召对。",
             )
         gate = self._ticketed_write_gate(pending_ticket)
+        # 票可能已 complete 后的失败收口必须走裸 runtime gate（与旧 cleanup_gate 同缝）。
+        cleanup_gate = self._runtime_write_gate()
         # #1902 T4：reopen→快照→生成→落回话／失败收口走会话共核；此处只做票据、写闸、投影。
+        # 收夜须在放行 pending write 之后，故 schedule_close_night=False，成功后再调共核调度。
+        turn = None
+        result = None
+        translation_scheduled = False
         try:
             with gate:
                 self._reject_if_settlement_phase()
@@ -2195,7 +2201,7 @@ class WebGame:
                     raise HTTPException(
                         status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
             try:
-                _turn, result, minister_message_id = self.session.execute_interrupted_reply_retry(
+                turn, result, minister_message_id = self.session.execute_interrupted_reply_retry(
                     chat_turn_id=chat_turn_id,
                     question=question,
                     message_speaker=minister_name,
@@ -2204,61 +2210,90 @@ class WebGame:
                     scene_minister_name=minister_name,
                     stream_emit=lambda _delta, **_kwargs: None,
                     schedule_translation=False,
+                    schedule_close_night=False,
                     write_gate=gate,
                 )
             except LookupError:
                 raise HTTPException(
                     status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。",
                 ) from None
-            proposed = None
-            if result.proposed_directive is not None:
-                d = result.proposed_directive
-                proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-            payload = self._chat_payload(
-                minister_name, result.answer,
-                court_action=result.court_action, next_minister=result.next_minister,
-                proposed_directive=proposed, appointed_minister=result.appointed_minister,
-                registered_minister=result.registered_minister,
-                displaced_minister=result.displaced_minister,
-                secret_order_id=result.secret_order_id,
-                pending_action_id=getattr(result, "pending_action_id", 0),
-                chat_turn_id=chat_turn_id,
-                accepted_turn=accepted_turn,
-                before_snapshot=_turn.before_snapshot,
-                directive_confirmation_ambiguous=getattr(
-                    result, "directive_confirmation_ambiguous", None),
-                decree_validation_failure=getattr(
-                    result, "decree_validation_failure", None),
-                secret_order_landing_recovery=getattr(
-                    result, "secret_order_landing_recovery", None),
-                persisted_message_id=minister_message_id,
-            )
-            # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
-            result._admitted_write_ticket = pending_ticket
-            self.session.schedule_pending_scene_translation(result)
-            answer_text = str(getattr(result, "answer", "") or "")
-            message_id = int(payload.get("minister_message_id") or 0)
-            # #1842：旧读心/抽取/判官退役；放行整轮票后高亮仍可跑。
-            if chat_turn_id and answer_text:
-                self._complete_pending_write(pending_ticket)
-                pending_ticket = None
-            if message_id and answer_text:
-                # #544：重试非流式同折窗封顶（自领 turn 票，无裸写）
-                self._trail_highlight_judge_after_reply(
-                    answer_text,
-                    message_id=message_id,
+            try:
+                proposed = None
+                if result.proposed_directive is not None:
+                    d = result.proposed_directive
+                    proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+                payload = self._chat_payload(
+                    minister_name, result.answer,
+                    court_action=result.court_action, next_minister=result.next_minister,
+                    proposed_directive=proposed, appointed_minister=result.appointed_minister,
+                    registered_minister=result.registered_minister,
+                    displaced_minister=result.displaced_minister,
+                    secret_order_id=result.secret_order_id,
+                    pending_action_id=getattr(result, "pending_action_id", 0),
                     chat_turn_id=chat_turn_id,
+                    accepted_turn=accepted_turn,
+                    before_snapshot=turn.before_snapshot,
+                    directive_confirmation_ambiguous=getattr(
+                        result, "directive_confirmation_ambiguous", None),
+                    decree_validation_failure=getattr(
+                        result, "decree_validation_failure", None),
+                    secret_order_landing_recovery=getattr(
+                        result, "secret_order_landing_recovery", None),
+                    persisted_message_id=minister_message_id,
                 )
-                payload["history"] = self.chat_projection(minister_name)
-            # #1353：若无尾随仍须放行整轮票后再收夜。
-            if pending_ticket is not None:
-                self._complete_pending_write(pending_ticket)
-                pending_ticket = None
-            court_action = getattr(result, "court_action", "") or ""
-            self.session.schedule_close_night_after_chat_if_needed(
-                court_action, write_gate=self._runtime_write_gate(),
-            )
-            return payload
+                # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
+                result._admitted_write_ticket = pending_ticket
+                self.session.schedule_pending_scene_translation(result)
+                translation_scheduled = True
+                answer_text = str(getattr(result, "answer", "") or "")
+                message_id = int(payload.get("minister_message_id") or 0)
+                # #1842：旧读心/抽取/判官退役；放行整轮票后高亮仍可跑。
+                if chat_turn_id and answer_text:
+                    self._complete_pending_write(pending_ticket)
+                    pending_ticket = None
+                if message_id and answer_text:
+                    # #544：重试非流式同折窗封顶（自领 turn 票，无裸写）
+                    self._trail_highlight_judge_after_reply(
+                        answer_text,
+                        message_id=message_id,
+                        chat_turn_id=chat_turn_id,
+                    )
+                    payload["history"] = self.chat_projection(minister_name)
+                # #1353：若无尾随仍须放行整轮票后再收夜。
+                if pending_ticket is not None:
+                    self._complete_pending_write(pending_ticket)
+                    pending_ticket = None
+                court_action = getattr(result, "court_action", "") or ""
+                # 宿主票已放行：收夜走共核调度 + runtime gate（非 ticketed）。
+                self.session.schedule_close_night_after_chat_if_needed(
+                    court_action, write_gate=cleanup_gate,
+                )
+                return payload
+            except Exception as error:
+                # 投影／转译调度失败：共核已落回话时仍须 fail 收口；票可能已 complete，
+                # 故用 runtime gate，不得再持 ticketed gate。
+                try:
+                    with cleanup_gate:
+                        GameSession.fail_audience_chat_turn(
+                            self.session,
+                            turn if turn is not None else AudienceChatTurn(
+                                chat_turn_id=chat_turn_id,
+                                accepted_turn=accepted_turn,
+                                night_id=0,
+                                before_snapshot={},
+                                user_message_id=int(target.get("user_message_id") or 0),
+                            ),
+                            replied=result is not None,
+                            error=error,
+                            translation_dispatched=translation_scheduled,
+                            court_action=str(getattr(result, "court_action", "") or ""),
+                        )
+                except Exception:
+                    logger.exception(
+                        "retry adapter cleanup: fail_audience_chat_turn failed chat_turn_id=%s",
+                        chat_turn_id,
+                    )
+                raise
         finally:
             self._complete_pending_write(pending_ticket)
 
