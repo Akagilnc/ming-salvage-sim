@@ -237,7 +237,6 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
         "FROM issues WHERE id=?",
         (issue_id,),
     ).fetchone()
-    assert issue_row is not None
     assert issue_row["resolve_condition"] == ""
     assert json.loads(issue_row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
     assert issue_row["commitment_kind"] == "until_stop"

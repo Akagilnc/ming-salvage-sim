@@ -1471,13 +1471,14 @@ def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollbac
     getattr(db, rollback_entry)(chat_turn_id)
 
     restored_order = db.conn.execute(
-        "SELECT title, content FROM secret_orders WHERE id=?", (order_id,),
+        "SELECT id FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
     restored_brief = db.conn.execute(
-        "SELECT title, body, origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+        "SELECT order_id, origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
         (order_id,),
     ).fetchone()
-    assert restored_order is not None and restored_brief is not None
+    assert int(restored_order["id"]) == int(order_id)
+    assert int(restored_brief["order_id"]) == int(order_id)
     assert restored_brief["origin_chat_message_ids"] == old_brief["origin_chat_message_ids"]
 
 

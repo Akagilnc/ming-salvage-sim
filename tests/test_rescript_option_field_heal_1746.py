@@ -317,7 +317,6 @@ def test_contract_failure_heals_not_batch_reject(
     for name in must_fields:
         assert name in ff
     opts = drafts[0]["options"]
-    assert len(opts) >= 1
     grant = next(o for o in opts if o.get("grant_action") == "协饷")
     assert grant["amount"] == 300
     assert grant.get("purpose") == "补饷"
@@ -391,7 +390,7 @@ def test_army_single_combo_heals_not_batch_redraw(monkeypatch, tmp_path):
     assert "target_id" in ff
     grant = next(o for o in drafts[0]["options"] if o.get("grant_action") == "协饷")
     assert grant["locality_scope"] == "none"
-    assert len(drafts[0]["options"]) >= 2
+    assert any(o.get("transaction_category") == "督赈" and o.get("grant_action") is None for o in drafts[0]["options"])
 
 
 def test_dual_missing_discriminator_heals_grant_action(monkeypatch, tmp_path):
@@ -463,7 +462,8 @@ def test_typed_illegal_also_heals(bad_factory, heal_fix, must_fields, monkeypatc
     ff = _field_failure_map(_parse_heal_request(heal_prompt)["failures"][0])
     for name in must_fields:
         assert name in ff
-    assert len(drafts[0]["options"]) >= 1
+    # 兄弟 hold 仍在（action_type 结构），不空壳 len(options)
+    assert any(o.get("action_type") == sibling.get("action_type") for o in drafts[0]["options"])
 
 
 def _overflow_case_matrix():
@@ -556,7 +556,7 @@ def test_overflow_json_number_heals_not_batch(
         assert isinstance(cur, float) and abs(cur) == float("inf")
     opts = drafts[0]["options"]
     assert len(opts) == 2
-    fixed = next(o for o in opts if o.get("amount") == heal_fix.get("amount") or o.get("due_turn") == heal_fix.get("due_turn") or o.get("punish_action") == heal_fix.get("punish_action"), opts[0])
+    fixed = next((o for o in opts if o.get("amount") == heal_fix.get("amount") or o.get("due_turn") == heal_fix.get("due_turn") or o.get("punish_action") == heal_fix.get("punish_action")), opts[0])
     for k, v in heal_fix.items():
         assert fixed.get(k) == v
 
@@ -664,9 +664,13 @@ def test_option_shape_failures_heal_not_batch(
     ff = _field_failure_map(req["failures"][0])
     assert must_field in ff
     assert ff[must_field]["expected"] is not None or must_field == "extra_junk"
-    assert len(drafts[0]["options"]) >= 1
-
-
+    # 兄弟项仍在：按 sibling 的 locality/transaction 结构识别，不锁 label 散文
+    assert any(
+        o.get("transaction_category") == sibling.get("transaction_category")
+        and o.get("locality_scope") == sibling.get("locality_scope")
+        and o.get("target_id") == sibling.get("target_id")
+        for o in drafts[0]["options"]
+    )
 
 
 def test_provider_still_whole_batch_item_missing_heals_and_drops(monkeypatch, tmp_path):
@@ -693,7 +697,7 @@ def test_provider_still_whole_batch_item_missing_heals_and_drops(monkeypatch, tm
     drafts = generate_rescript_draft(object(), _ctx(), turn=20)
     assert drafts is not None
     assert len(drafts) == 1
-    assert "title" in drafts[0] and len(drafts[0].get("options") or []) >= 1
+    assert drafts[0]["options"][0]["transaction_category"] == "督赈"
     assert "rescript-draft-heal" in tags
 
 

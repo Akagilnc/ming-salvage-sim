@@ -2187,3 +2187,156 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 - **F2：修净**（执行区宽吞仍删；缺案卷响亮）。
 - **F3：修净**（真成员已清；保留例外上表记账；UNREVIEWED=0；不以 5500 未审结案）。
 - **未 push / 未 PR / 未 amend / 未 stash**。
+
+---
+
+## 纠正回执（G1–G3 修类，本轮）
+
+- 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5`
+- 分支：`ak-roles/issue-1897-g1-g3-fixer-20261005-090129`
+- 施工前 tip：`e4d3ae58a5e32144b3b39a6250aa7c3c6de27fae`
+- 相对基线：`b8370cc4bcd36667ce87eaacfd183a15d9ba3b5d`
+- **F1/F2 生产未动**；本轮仅测试语法/负向闸/空壳断言
+- **未 push / 未 PR / 未 amend / 未 stash**
+- **未声称已 merge / 关票 / reviewer 放行**
+
+### 顾问（施工前）
+
+| 类 | 正确行为 | 根因 | 最简修法 |
+|---|---|---|---|
+| G1 | 改动测试可编译/收集/运行 | `next(gen, default)` 缺括号 → SyntaxError；枚举时曾因解析失败误报整案删除 | 括号化 generator；复扫 32 文件全编译 |
+| G2 | title>80 与 stop_condition=dict 拒收有真实入口负向 | 整案删 `#39` 带走闸；`abi_mapper` 仅留 empty-stop | 并入 `test_657_abi_mapper_matrix_a1_a12` 最短 mapper 负向 |
+| G3 | 不以存在/类型/非空/长度/键存在顶替原契约 | F3 清散文后留空壳；gazette 样本他处已覆盖 | 删空壳 / 改 id·status·月份·来源；修误替 exact-dict / status_reason=="" |
+
+诊断：判词已定点 → 跳过假设排名；用可观测 compile/collect/mutation 闭环。
+
+### G1：语法
+
+可复跑：
+
+```bash
+BASE=b8370cc4bcd36667ce87eaacfd183a15d9ba3b5d
+{ git diff --name-only "$BASE" HEAD -- tests/; git diff --name-only -- tests/; } | sort -u > /tmp/1897-g1g3/changed_tests.txt
+while IFS= read -r f; do ../Ming_LLM/.venv/bin/python -m py_compile "$f"; done < /tmp/1897-g1g3/changed_tests.txt
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python -m pytest -q -p no:cacheprovider --collect-only \
+  $(cat /tmp/1897-g1g3/changed_tests.txt)
+```
+
+| 成员 | 处置 |
+|---|---|
+| `tests/test_rescript_option_field_heal_1746.py` `next(o for o in opts if …, opts[0])` | **改** `next((o for …), opts[0])` |
+| 其余 31 改动测试文件 | 编译通过；无第二处同类 SyntaxError |
+
+实测：`CHANGED=32`；`COMPILE_OK`；`1196 tests collected in 2.19s`。
+
+### G2：整案删除闸负向
+
+可复跑枚举（语法修复后）：
+
+```bash
+../Ming_LLM/.venv/bin/python - <<'PY'
+# 见施工过程 /tmp/1897-g1g3/deleted_tests_v2.json
+PY
+```
+
+整案删除（8；相对 b837→当前工作树）：
+
+| # | 成员 | 结构化拒收/校验 | 现存覆盖 | 处置 |
+|---:|---|---|---|---|
+| 1 | `test_657_p6_mapper_deliberate_preserve_free_text` | title\*81 ValueError；stop_condition=dict ValueError；empty until_stop；layer_a 缺键 | empty-stop 已在 abi_mapper；**title>80 / dict 缺失** | **并入** `test_657_abi_mapper_matrix_a1_a12` |
+| 2 | `test_657_default_hold_preserves_red_pen_note` | 无结构化拒收（朱笔散文） | default_hold 他案 | 维持删 |
+| 3–5 | secret_order_update 截断/长文案 | 无闸负向 | — | 维持删（失效证明） |
+| 6 | monthly_progress emperor_private 重复案 | 无闸 | 月报 turn 案 | 维持删 |
+| 7–8 | style 保真整案 | blank→invalid_enum | `test_temperament_blank_style_rejected_keeps_prior` | 维持删 |
+
+#### G2 变异（可复跑）
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-g1g3/mutate_g2.py
+```
+
+实测：
+
+- 当前：`title81=ValueError:assignment title 超 80 字：81`；`stop_dict=ValueError:stop_condition 须为 str（C.6），拒 dict`
+- 临时 `len(title_raw) > 80`→`> 8000`：`title81_under_8000=NO_RAISE`；`test_657_abi_mapper_matrix_a1_a12` **RED**（DID NOT RAISE）
+- 恢复后同测 **GREEN**
+- `verdict=GREEN`
+
+### G3：空壳断言
+
+样本与处置：
+
+| 成员 | 空壳 | 处置 |
+|---|---|---|
+| `test_gazette_author_1862` archive is not None / keys title·report / isinstance text / INDEX | 他处覆盖 | **删**；改 `list_turn_reports` turn 身份 + 路径键 `公开说法/邸报/` |
+| `test_character_knowledge_489` archive is not None；isinstance excluded | 空壳 | **删/改** source_id 公开可见性 |
+| `test_decree_dossiers_571` decree_text in / is not None | 空壳 | **改** `status==proposed` |
+| `test_new_issues` / `person_delta` row is not None | 冗余 | **删**（保留 status） |
+| `test_event_trigger` exact-dict 去 title 后 `in` 假红；`status_reason==""` 误替 | 误替 | **改** any(id+issue_id)；恢复 `!=获罪削籍` |
+| `test_fiscal_levy` exact-dict 去 title | 误替 | **改** any(id+terminal_state) |
+| `test_rescript_choices` `["甲"," 甲 "]` 期望 [] | 与 #1897 label 原样键冲突 | **改** 空白拒收 / 空白变体保留原样 |
+| payoff / isolation / staged / web / mechanical / heal / draft / effect_origin | 非空·isinstance·键存在洗绿 | 删或改 id/status/turn/source |
+
+#### G3 变异（可复跑）
+
+```bash
+TD=/tmp/1897-g1g3/g3site
+# sitecustomize：save_turn_report 后 title/report = [:2]
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH="$TD:$PWD" \
+  ../Ming_LLM/.venv/bin/python -m pytest -q -p no:cacheprovider \
+  tests/test_gazette_author_1862.py
+# 3 passed（空壳已删；他处覆盖）
+
+PYTHONPATH="$TD:$PWD" ../Ming_LLM/.venv/bin/python -m pytest -q -p no:cacheprovider \
+  tests/test_character_knowledge_489.py \
+  tests/test_secret_order_isolation_883.py \
+  tests/test_mechanical_tail_1845.py \
+  tests/test_world_materials_1834.py
+# 2 failed（isolation / world_materials 正文或 INDEX 仍咬截断）→ 他处覆盖证据
+```
+
+### 全部改动测试（最终修面）
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line \
+  $(cat /tmp/1897-g1g3/changed_tests.txt)
+```
+
+**实测**：`1189 passed, 1 skipped, 6 failed in 47.16s`。未跑全仓全量。
+
+#### 已知基线失败（如实记账；未 deselect）
+
+| 案 | 证据 | 归类 |
+|---|---|---|
+| `test_appointment_and_relief_through_scene_chat_then_close_and_settle` | `FOREIGN KEY constraint failed` | 预存 #1812→#1873；本片不接 |
+| `test_1682_phase2_surfaces_ambiguous_stored_choice` | `LLMContractError: 无待决推演上下文` | 预存；本片不接 |
+| `test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice` | terminal 空 vs 已准 | **分支预存**：b837 测文件 + 当前生产同红 |
+| `test_same_batch_keeps_the_first_event_outcome` | terminal 空 vs 已驳 | 同上 |
+| `test_unbound_envelope_does_not_overwrite_the_first_event_outcome` | rejected 期望 1 得 0 | 同上 |
+| `test_later_illegal_outcome_does_not_discard_the_first_ruling` | terminal 空 vs 已驳 | 同上 |
+
+### 自查二连
+
+1. **同类型**：G1 只修语法；G2 只补既有 mapper 负向；G3 删空壳/修误替，不锁散文，不新建平行体系；F1/F2 生产未动。
+2. **引入面**：改动集 1189 绿；6 基线失败记账；G2 变异新绿旧红；G3 gazette 截断仍绿、他处红；生产 `>80` 未残留变异。
+
+### 交卷 HEAD（本轮）
+
+- 以交卷后 `git rev-parse HEAD` 为准。
+- **未 push / 未 PR / 未 amend / 未 stash**。

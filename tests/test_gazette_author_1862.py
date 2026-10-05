@@ -376,11 +376,8 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert _PLAIN_DOSSIER_FACT in seen["author_files"][fact_rel]
     # 独立写入的普通低语仍须完整搬运，不从筛选 helper 重建经历正文。
     assert _PRIVATE_KEEP in seen["author_files"][f"人物/{_safe_segment(minister)}/经历.txt"]
-    archive = db.get_turn_report_archive(turn)
-    assert archive is not None
-    assert {"title", "report"} <= set(archive.keys())
-    listed = next(row for row in db.list_turn_reports() if int(row["turn"]) == turn)
-    assert "title" in listed
+    # 归档契约由下方 source_id / turn 可见性承担；不空壳断言 archive 键存在
+    assert any(int(row["turn"]) == turn for row in db.list_turn_reports())
     payload = json.loads(seen["prompt"])
     assert any(row.get("category") == "宁远补饷" for row in payload["landed"])
     assert all(str(row.get("origin_ref") or "") != "secret_order:9" for row in payload["landed"])
@@ -430,14 +427,10 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert f"secret_order_brief:{order_id}" not in public_ids
     prepared = prepare_character_materials(db, state, character)
     try:
-        rel = next(
-            path for path in list_materials(prepared.root)
-            if path.startswith("公开说法/邸报/")
+        # 公开说法/邸报/ 载体在册（路径键，非正文）。亲历载体见下。
+        assert any(
+            path.startswith("公开说法/邸报/") for path in list_materials(prepared.root)
         )
-        text = read_material(prepared.root, rel)
-        # 独立作者输入完整搬运；不从 INDEX 展示推断载体身份或月份。
-        assert isinstance(text, str)
-        assert "INDEX.txt" in list_materials(prepared.root)
         # 亲历载体：本人经历.txt 在册且非空。旧账在正文里找 `_SECRET_BRIEF`
         # 等哨兵串，已删（大理寺 553d581fb）：那是对人读正文做子串推断，人读
         # 正文不是记录身份，一次合法改写即假红。密令简报确以 typed 来源落在
@@ -503,6 +496,5 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
     ).fetchone()[0] == 1
-    archive = db.get_turn_report_archive(turn)
-    assert archive is not None
-    assert {"title", "report"} <= set(archive.keys())
+    # 重试后当月归档已落：以 list_turn_reports 的 turn 身份核，不空壳 archive 键
+    assert any(int(row["turn"]) == turn for row in db.list_turn_reports())

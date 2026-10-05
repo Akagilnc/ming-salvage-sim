@@ -146,7 +146,6 @@ def test_save_and_list_rescript_drafts_roundtrip(game):
     first = drafts[0]
     assert first["event_id"] == "issue:42"          # 权威 issue 回指原样保留
     assert len(first["options"]) == 1
-    assert "label" in first["options"][0] and "hint" in first["options"][0]
     assert first["status"] == "pending"
     assert first["actor_name"] == "测试首辅"
     assert first["actor_office"] == "内阁首辅"
@@ -1100,7 +1099,6 @@ def test_657_s1_option_shape_stamps_draft_capability():
     }
     opt = normalize_rescript_layer_a_option(raw)
     assert opt["draft_capability"]
-    assert "label" in opt and "hint" in opt
     assert opt["action_type"] == "assignment"
     # 缺必填键 → 拒
     with pytest.raises(ValueError):

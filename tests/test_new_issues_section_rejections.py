@@ -329,7 +329,6 @@ def test_new_issue_valid_decree_still_creates(game):
     assert len(created) == 1, out
     iid = int(created[0]["issue_id"])
     row = db.conn.execute("SELECT status FROM issues WHERE id=?", (iid,)).fetchone()
-    assert row is not None
     assert row["status"] == "active"
 
 

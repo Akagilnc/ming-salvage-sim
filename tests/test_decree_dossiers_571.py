@@ -1012,7 +1012,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
 
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive_id)
-    assert dossier is not None and "decree_text" in dossier
+    assert dossier["status"] == "proposed"
     assert dossier["target_id"]
     assert dossier["participant_roster"][0]["character_id"] == aliased.name
     if case == "controlled_verb":

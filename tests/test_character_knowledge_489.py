@@ -475,7 +475,16 @@ def test_disclosed_secret_source_keeps_its_public_projection(game):
     items = db.knowledge_items_for_turn(state.turn)
 
     disclosed = next(item for item in items if item["source_id"] == f"secret_order:{order}")
-    assert isinstance(disclosed.get("excluded_names"), list)
+    # 公开披露投影：非排除者可见该 source_id；不锁 title/body 散文
+    viewer = next(
+        c.name for c in content.characters.values()
+        if c.name != excluded.name and c.office_type not in ("后宫", "宗藩")
+    )
+    public_ids = {
+        item.get("source_id")
+        for item in db.get_character_knowledge(state, viewer).get("public_events") or []
+    }
+    assert disclosed["source_id"] in public_ids
 
 @pytest.mark.parametrize("exclusion_owner", ["event", "source", "projection"])
 def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game, exclusion_owner):
@@ -995,8 +1004,6 @@ def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
         for item in db.get_character_knowledge(state, reader.name)[bucket]
     }
     assert "test:report-source-bound-public" in visible_ids
-    # Archive row exists for the turn; public source_id visibility is the contract.
-    assert db.get_turn_report_archive(state.turn) is not None
 
 def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     db, state, content = game
@@ -1012,7 +1019,6 @@ def test_shared_archive_storage_never_writes_restricted_aggregate(game):
 
     db.save_turn_report(state, f"{public}；{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn))
 
-    assert db.get_turn_report_archive(state.turn) is not None
     outsider = next(name for name in content.characters if name != participant)
     outsider_ids = {
         item.get("source_id")

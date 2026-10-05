@@ -610,7 +610,10 @@ def test_fiscal_levy_expired_pending_choice_is_terminalized(game):
         ).fetchone()
         assert row["terminal_state"] == "expired"
         assert row["terminal_reason"] == "已准"
-        assert {"id": event_id, "terminal_state": "expired"} in applied
+        assert any(
+            item.get("id") == event_id and item.get("terminal_state") == "expired"
+            for item in applied
+        )
     finally:
         content.events.remove(ev)
 

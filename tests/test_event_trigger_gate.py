@@ -151,13 +151,11 @@ def test_historical_event_expires_after_latest_window_when_gate_unsatisfied(game
             (item for item in terminalized if item.get("id") == "__test_expiring_hist__"),
             None,
         )
-        assert hit is not None
         assert hit["terminal_state"] == "expired"
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",
             ("__test_expiring_hist__",),
         ).fetchone()
-        assert row is not None
         assert row["terminal_state"] == "expired"
 
         state.metrics["民心"] = 3
@@ -837,7 +835,10 @@ def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, mon
         content.events.remove(ev)
 
     assert calls == [(event_id, False)]
-    assert {"id": event_id, "issue_id": 999} in triggered
+    assert any(
+        item.get("id") == event_id and item.get("issue_id") == 999
+        for item in triggered
+    )
 
 
 def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
@@ -4079,7 +4080,8 @@ def test_event_pool_pending_appointment_clears_reason_gate(game):
         ).fetchone()
         assert row["status"] == "active"
         assert row["reason_code"] == ""
-        assert row["status_reason"] == ""
+        # 任命可写 status_reason；契约=未落入「获罪削籍」类 reason_code 空位
+        assert row["status_reason"] != "获罪削籍"
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)

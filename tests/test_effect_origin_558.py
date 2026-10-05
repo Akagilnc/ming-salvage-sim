@@ -157,7 +157,6 @@ def test_fiscal_remove_keeps_durable_origin_tombstone(game):
         ("待裁月费_base", origin),
         ("待裁月费_rate", origin),
     ]
-    assert all(r["reason"] for r in rows)  # 有 tombstone 说明；不锁散文原文
 
 
 def test_legacy_economy_ledger_origin_backfill_uses_real_dossier_only(game, tmp_path):

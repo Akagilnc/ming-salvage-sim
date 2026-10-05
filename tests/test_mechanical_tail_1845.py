@@ -494,11 +494,10 @@ def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
     gazettes = seen["payload"]["gazettes"]
     assert gazettes
     for row in gazettes:
-        assert "body" in row
         # 模型输入每期正文只一份，不另带 gazette 重复键
         assert "gazette" not in row
     ending = db.get_ending_summary()
-    assert ending is not None
+    assert ending["ending_status"] == "emperor_abdicate"
     for row in ending["timeline"]:
         assert "gazette" in row
         assert "decree_brief" not in row
@@ -565,4 +564,5 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     chain = month_chain._load_chain(db, closed_turn)
     assert chain["mechanical_tail"]["status"] == "done"
     ending = db.get_ending_summary()
-    assert ending is not None  # 重试写结局行；不锁总评散文
+    assert ending["ending_status"] == "emperor_abdicate"
+    assert int(ending["turn"]) == closed_turn

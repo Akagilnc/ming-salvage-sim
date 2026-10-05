@@ -374,7 +374,6 @@ def test_declared_new_secret_order_lands_and_undo_removes_all_records(game):
     brief = db.conn.execute(
         "SELECT order_id FROM secret_order_briefs WHERE order_id=?", (order_id,),
     ).fetchone()
-    assert brief is not None
     assert int(brief["order_id"]) == order_id
 
     # 撤「准」那一轮：密令本体与 briefs 一并逆转（ADR 0038 白名单①的前像还原）。
