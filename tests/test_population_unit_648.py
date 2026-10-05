@@ -209,5 +209,3 @@ def test_new_save_restore_jianzhou_keeps_persons_unit(game):
     ).fetchone()[0]
     assert after == JIANZHOU_RESTORE_POP_PERSONS
     assert after != 90  # 漏迁/漏换算任一即 FAIL（×10⁴ mutation 咬点）
-
-

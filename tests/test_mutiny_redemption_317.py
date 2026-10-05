@@ -122,5 +122,3 @@ def test_army_delta_clamps_loyalty_to_dynamic_mutiny_cap(
         "SELECT loyalty FROM armies WHERE id=?", (ARMY,)
     ).fetchone()["loyalty"]
     assert loyalty == expected_loyalty
-
-
