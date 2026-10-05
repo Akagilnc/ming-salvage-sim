@@ -1,2 +1,1 @@
-### git diff --check ecdbc39ab HEAD
-EXIT:0
+DIFF_CHECK_EXIT=0

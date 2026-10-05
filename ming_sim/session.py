@@ -167,8 +167,6 @@ class ChatTurnResult:
     directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
     # Typed decree validation recovery (failed_fields + LLM report); sync/retry must project it.
     decree_validation_failure: Optional[Dict[str, Any]] = None
-    # #1765：密令落不了库 → 大臣揣摩/追问（landing_gaps + report）；与拟旨 recovery 同投影缝。
-    secret_order_landing_recovery: Optional[Dict[str, Any]] = None
     # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
     # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
     pending_audience_translation: Optional[Dict[str, Any]] = None
