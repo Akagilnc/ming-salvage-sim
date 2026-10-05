@@ -19,32 +19,93 @@ K1	tests/test_gazette_author_1862.py	330	compat_orphan	"assert all(str(row.get("
 K1	tests/test_month_chain_1847.py	1901	compat_orphan	"f""secret_order:{order_id}"","
 K1	tests/test_month_chain_1847.py	1903	compat_orphan	"{""kind"": ""secret_order"", ""origin_ref"": f""secret_order:{order_id}"","
 K1	tests/test_month_chain_1847.py	1945	compat_orphan	"{""kind"": ""secret_order"", ""origin_ref"": f""secret_order:{order_id}"","
+K1	tests/test_no_edict_full_settlement_1274.py	17	compat_orphan	# Back-compat aliases for this file's call sites.
 K1	tests/test_secret_dossier_participants_1252.py	74	compat_orphan	"f""secret_order:{order_id}"", dossier_before,"
 K1	tests/test_secret_order_isolation_883.py	77	compat_orphan	"""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"""
 K1	tests/test_secret_order_isolation_883.py	83	compat_orphan	"str(item.get(""source_id"") or """").startswith(""secret_order:"")"
 K1	tests/test_secret_order_isolation_883.py	102	compat_orphan	"source_id=""secret_order:force-shared"","
 K1	tests/test_secret_order_isolation_883.py	108	compat_orphan	"""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"""
 K3	evidence/1889-c6-member-disposition.tsv	1407	prose_lock	tests/test_chat_stream_failpaths_393.py:492 2 assert+compare assert|other;compare|other DELETE_REVOKED_K3 1889 last-judge K3: free diagnostic prose negative is not a contract; revoked prior KEEP_P4_ABSENCE tests/test_cha
-K3	evidence/1889-seven-class-enumerate.py	78	prose_lock	"re.compile(r""KEEP_P4_ABSENCE""),"
-K3	evidence/1889-seven-class-enumerate.py	373	prose_lock	"if ""KEEP_P4_ABSENCE"" in text and cls == ""K3"":"
-K3	evidence/1889-seven-class-enumerate.py	374	prose_lock	"return ""DELETE_REVOKED_K3"", ""error KEEP_P4_ABSENCE label; free diagnostic prose is not contract"""
-K3	evidence/1889-seven-class-enumerate.py	478	prose_lock	"if ""KEEP_P4_ABSENCE"" in text:"
-K3	evidence/1889-seven-class-enumerate.py	484	prose_lock	"return ""DELETE_REVOKED_K3"", ""evidence residual of revoked KEEP_P4_ABSENCE / deleted prose lock"""
 K3	evidence/1889-six-class-fixer-receipt.md	163	prose_lock	| KEEP_P4_ABSENCE | 2 |
+K3	tests/test_advances_section_rejections.py	108	match_assert	"pytest.raises(RuntimeError, match=""模拟 advance_issue"")"
+K3	tests/test_affairs_1831.py	211	match_assert	pytest.raises(RuntimeError, match='attach boom')
 K3	tests/test_army_card_status_1501.py	222	noncontract_assert	"assert seed_status in detail, f""army_detail 缺关宁 status\n{detail!r}"""
+K3	tests/test_audience_night_498.py	510	match_assert	"pytest.raises(RuntimeError, match=""inject roster fail"")"
+K3	tests/test_audience_restore_505.py	716	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?"",         (origin,),     ).fetchone()[""c""] == 1"
+K3	tests/test_audience_restore_505.py	759	match_assert	pytest.raises(RuntimeError, match='inject summon_enter fail')
+K3	tests/test_audience_restore_505.py	763	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?"",         (origin,),     ).fetchone()[""c""] == 0"
+K3	tests/test_audience_translate_1837.py	200	match_assert	pytest.raises(RuntimeError, match='translation unavailable')
+K3	tests/test_audience_travel_gating_670.py	585	match_assert	pytest.raises(RuntimeError, match='injected multi-origin applier failure')
+K3	tests/test_audience_travel_gating_670.py	763	match_assert	pytest.raises(RuntimeError, match='injected summon recorder failure')
+K3	tests/test_audience_travel_gating_670.py	963	match_assert	pytest.raises(RuntimeError, match='injected settle failure')
+K3	tests/test_audience_undo_506.py	320	match_assert	pytest.raises(RuntimeError, match='注入：撤回中途崩溃')
+K3	tests/test_audience_undo_506.py	519	match_assert	pytest.raises(RuntimeError, match='inject crash: enter 已落、origin 未绑')
+K3	tests/test_audience_undo_506.py	592	noncontract_assert	"db.conn.execute(         ""SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?"", (origin,),     ).fetchone()[0] == 1"
+K3	tests/test_audience_undo_506.py	600	noncontract_assert	"db.conn.execute(         ""SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?"", (origin,),     ).fetchone()[0] == 0"
+K3	tests/test_candidate_supply_1893.py	269	noncontract_assert	"db.conn.execute(             ""SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?"",             (ev.id,),         ).fetchone()[0] == 1"
+K3	tests/test_candidate_supply_1893.py	282	noncontract_assert	"db.conn.execute(             ""SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?"",             (ev.id,),         ).fetchone()[0] == 1"
+K3	tests/test_centrifuge_ledger_690.py	709	match_assert	pytest.raises(sqlite3.OperationalError, match='simulated write failure')
+K3	tests/test_centrifuge_ledger_690.py	739	match_assert	pytest.raises(sqlite3.OperationalError, match='simulated rebuild failure')
+K3	tests/test_character_knowledge_489.py	215	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_events WHERE source_id=?"", (source_id,)     ).fetchone()[0] == 0"
+K3	tests/test_character_knowledge_489.py	218	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"", (source_id,)     ).fetchone()[0] == 0"
+K3	tests/test_character_knowledge_489.py	235	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_events WHERE source_id=?"", (source_id,)     ).fetchone()[0] == 0"
+K3	tests/test_character_knowledge_489.py	238	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"", (source_id,)     ).fetchone()[0] == 0"
 K3	tests/test_chat_stream_failpaths_393.py	492	prose_lock|baseline_gone	"[base 6b513b99f]     assert ""Internal Server Error"" not in response.text"
 K3	tests/test_chat_stream_failpaths_393.py	493	prose_lock|baseline_gone	"[base 6b513b99f]     assert ""Internal Server Error"" not in str(detail.get(""message"") or """")"
+K3	tests/test_chat_stream_failpaths_393.py	712	noncontract_assert	"""Unknown model error"" in str(detail.get(""provider_message"") or """")"
 K3	tests/test_chat_stream_failpaths_393.py	1166	prose_lock	"assert provider not in detail[""message""]"
 K3	tests/test_cli_backend.py	785	prose_lock	"assert ""cli down"" not in ei.value.message"
+K3	tests/test_cli_play_turn.py	258	match_assert	"pytest.raises(RuntimeError, match=""LLM down"")"
+K3	tests/test_cli_play_turn.py	355	match_assert	"pytest.raises(RuntimeError, match=""LLM down"")"
+K3	tests/test_cli_play_turn.py	408	match_assert	"pytest.raises(RuntimeError, match=""reply persist failed"")"
 K3	tests/test_cli_runner_error_typed_1299.py	48	prose_lock	assert _RUNNER_BANNER not in exc.message
 K3	tests/test_cli_runner_error_typed_1299.py	86	prose_lock	assert _RUNNER_BANNER not in ei.value.message
+K3	tests/test_close_issues_section_rejections.py	165	match_assert	"pytest.raises(RuntimeError, match=""模拟 close_issue"")"
+K3	tests/test_commitment_backlash_626.py	370	noncontract_assert	"assert not any(         str(row[""origin_ref""] or """") == HALFWAY_SETBACK_EVENT_ID         for row in db.conn.execute(""SELECT origin_ref FROM issues"").fetchall()     )"
+K3	tests/test_commitment_backlash_626.py	729	noncontract_assert	"int(restored_post.conn.execute(             ""SELECT COUNT(*) AS c FROM issues WHERE origin_kind=? AND origin_ref=?"",             (BACKLASH_ORIGIN_KIND, origin),         ).fetchone()[""c""]) == 1"
 K3	tests/test_covert_levy_651.py	504	noncontract_assert	"settle_exposure_from_canonical_actions(db, state, {         ""economy_moves"": directed + pooled,         ""population_transfers"": [{""origin_ref"": origin, ""reason"": ""摊派""}],     }) == 0"
+K3	tests/test_declaration_dispatch_1835.py	199	match_assert	pytest.raises(RuntimeError, match='simulated flush_to_db failure')
+K3	tests/test_decree_dossiers_571.py	462	match_assert	pytest.raises(RuntimeError, match='dossier write failed')
+K3	tests/test_decree_dossiers_571.py	1333	match_assert	pytest.raises(RuntimeError, match='dossier close failed')
+K3	tests/test_decree_dossiers_571.py	1856	noncontract_assert	"'""category"": ""invalid_origin_ref""' in json.dumps(result, ensure_ascii=False)"
+K3	tests/test_due_review_621.py	723	match_assert	pytest.raises(RuntimeError, match='ownership lookup boom')
 K3	tests/test_effect_origin_558.py	88	noncontract_assert	"db.conn.execute(         ""SELECT origin_ref FROM economy_ledger WHERE category='父案卷支出'""     ).fetchone()[""origin_ref""] == origin"
+K3	tests/test_effect_origin_558.py	91	noncontract_assert	"db.conn.execute(         ""SELECT origin_ref FROM building_logs WHERE building_id=?"",         (close[""building_ops""][0][""building_id""],),     ).fetchone()[""origin_ref""] == origin"
+K3	tests/test_effect_origin_558.py	95	noncontract_assert	"db.conn.execute(         ""SELECT origin_ref FROM region_logs WHERE region_id=? ORDER BY id DESC LIMIT 1"",         (region_id,),     ).fetchone()[""origin_ref""] == origin"
 K3	tests/test_effect_origin_558.py	124	noncontract_assert	"db.conn.execute(         ""SELECT origin_ref FROM economy_ledger WHERE category='同月持续支出' ORDER BY id DESC LIMIT 1""     ).fetchone()[""origin_ref""] == origin"
+K3	tests/test_effect_origin_558.py	127	noncontract_assert	"db.conn.execute(         ""SELECT origin_ref FROM region_logs WHERE region_id=? ORDER BY id DESC LIMIT 1"",         (region_id,),     ).fetchone()[""origin_ref""] == origin"
 K3	tests/test_effect_origin_558.py	149	noncontract_assert	"[(r[""key""], r[""origin_ref""], r[""reason""]) for r in rows] == [         (""待裁月费_base"", origin, ""奉旨裁撤""),         (""待裁月费_rate"", origin, ""奉旨裁撤""),     ]"
+K3	tests/test_event_chain_cascade.py	244	match_assert	pytest.raises(RuntimeError, match='injected cancel failure')
+K3	tests/test_event_trigger_gate.py	1974	match_assert	pytest.raises(RuntimeError, match='boom after issue insert')
+K3	tests/test_event_trigger_gate.py	3347	match_assert	pytest.raises(RuntimeError, match='rollback appointment probe')
+K3	tests/test_event_trigger_gate.py	4282	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?"",         (""huangtaiji_chengdi"",),     ).fetchone()[0] == 1"
+K3	tests/test_executor_routing_721.py	360	match_assert	"pytest.raises(RuntimeError, match=""rollback first"")"
+K3	tests/test_executor_routing_721.py	393	match_assert	"pytest.raises(RuntimeError, match=""force outer rollback"")"
+K3	tests/test_faction_brew_637.py	292	match_assert	pytest.raises(sqlite3.OperationalError, match='派系认领库不可写')
+K3	tests/test_faction_brew_637.py	305	match_assert	pytest.raises(sqlite3.OperationalError, match='派系落定库不可写')
+K3	tests/test_fiscal_substrate_bridge.py	1820	match_assert	pytest.raises(RuntimeError, match='boom after hub')
 K3	tests/test_fiscal_substrate_bridge.py	2476	noncontract_assert	"applied == [{         ""account"": ""国库"", ""delta"": -5, ""reason"": ""测试补饷"",         ""origin_ref"": """", ""beyond_intent"": False, ""applied"": True,     }]"
 K3	tests/test_fiscal_substrate_bridge.py	2538	noncontract_assert	"applied == [{         ""account"": ""国库"", ""delta"": -3, ""reason"": ""测试纯省源补饷"",         ""origin_ref"": """", ""beyond_intent"": False, ""applied"": True,     }]"
 K3	tests/test_fiscal_substrate_bridge.py	2650	noncontract_assert	"applied == [{         ""account"": ""国库"", ""delta"": -3, ""reason"": ""测试小数欠饷不超扣"",         ""origin_ref"": """", ""beyond_intent"": False, ""applied"": True,     }]"
+K3	tests/test_fiscal_substrate_bridge.py	4246	match_assert	pytest.raises(RuntimeError, match='rollback probe')
+K3	tests/test_llm_channel_config.py	550	match_assert	"pytest.raises(LLMUnavailable, match=""agy missing"")"
+K3	tests/test_month_chain_1843.py	140	noncontract_assert	"sources_before == {         str(row[0]) for row in db.conn.execute(""SELECT source_id FROM character_knowledge_sources"")     }"
+K3	tests/test_month_chain_1843.py	490	match_assert	pytest.raises(RuntimeError, match='chain persistence failed')
+K3	tests/test_month_chain_1843.py	569	match_assert	pytest.raises(RuntimeError, match='transient settlement crash')
+K3	tests/test_month_chain_1843.py	620	match_assert	pytest.raises(RuntimeError, match='injected tail failure')
+K3	tests/test_month_chain_1847.py	1733	match_assert	pytest.raises(RuntimeError, match='injected chain save failure')
+K3	tests/test_month_chain_1847.py	2167	match_assert	pytest.raises(RuntimeError, match='injected disclosure save failure')
+K3	tests/test_month_loop_tracer_1468.py	148	noncontract_assert	"assert resp.status_code < 500, (         f""{step}: unexpected {resp.status_code}; detail={detail!r}""     )"
+K3	tests/test_new_game_write_path_1749.py	465	match_assert	pytest.raises(RuntimeError, match='begin_turn boom')
+K3	tests/test_new_game_write_path_1749.py	500	match_assert	pytest.raises(RuntimeError, match='load_state boom')
+K3	tests/test_new_issues_section_rejections.py	311	match_assert	"pytest.raises(RuntimeError, match=""模拟 insert_issue"")"
+K3	tests/test_new_issues_section_rejections.py	354	match_assert	"pytest.raises(RuntimeError, match=""模拟 event_to_issue"")"
+K3	tests/test_new_issues_section_rejections.py	373	match_assert	"pytest.raises(RuntimeError, match=""模拟 event_pool"")"
+K3	tests/test_override_breach_costs_564.py	312	match_assert	"pytest.raises(RuntimeError, match=""after authority"")"
+K3	tests/test_pay_order_override_653.py	471	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) c FROM fiscal_config_tombstones WHERE origin_ref=?"",         (origin,),     ).fetchone()[""c""] == 0"
+K3	tests/test_pay_order_override_653.py	475	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) c FROM fiscal_config_changes WHERE origin_ref=?"",         (origin,),     ).fetchone()[""c""] == 0"
+K3	tests/test_pay_order_override_653.py	517	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) c FROM fiscal_config_tombstones WHERE origin_ref=?"",         (origin,),     ).fetchone()[""c""] == 0"
+K3	tests/test_pay_order_override_653.py	521	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) c FROM fiscal_config_changes WHERE origin_ref=?"",         (origin,),     ).fetchone()[""c""] == 0"
 K3	tests/test_pay_order_override_653.py	799	noncontract_assert	"[(e[""affected_class""], e[""value""], e[""origin_ref""]) for e in displaced] == [         (""军户"", pytest.approx(0.97), f""dossier:{did}""),     ]"
 K3	tests/test_pay_order_override_653.py	928	noncontract_assert	"[(e[""affected_class""], e[""value""], e[""origin_ref""])             for e in displaced] == [         (""官僚"", pytest.approx(1.93), f""dossier:{did}""),     ]"
 K3	tests/test_person_delta_adapter.py	173	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
@@ -77,42 +138,105 @@ K3	tests/test_person_delta_adapter.py	2055	noncontract_assert	"changes[1][""item
 K3	tests/test_person_delta_adapter.py	2075	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
 K3	tests/test_person_delta_adapter.py	2080	noncontract_assert	"changes[0][""item""] == {""name"": name, ""origin_ref"": ""盘面自发"", ""动作"": ""行止"", ""transit_to"": ""not_a_region""}"
 K3	tests/test_person_delta_adapter.py	2207	noncontract_assert	"applied[""applied_person_changes""] == [             {""name"": name, ""origin_ref"": ""盘面自发"", ""动作"": ""处置"", ""status"": ""dismissed"", ""reason"": ""legacy status""}         ]"
+K3	tests/test_pihong_dossier_1490.py	829	match_assert	pytest.raises(RuntimeError, match='event ledger inject')
+K3	tests/test_pihong_dossier_1490.py	911	match_assert	pytest.raises(RuntimeError, match='llm down')
+K3	tests/test_pihong_dossier_1490.py	2469	noncontract_assert	"db.conn.execute('SELECT COUNT(*) AS c FROM issues WHERE origin_ref=?', (f""dossier:{int(drow['id'])}"",)).fetchone()['c'] == 0"
 K3	tests/test_population_transfers_649.py	61	noncontract_assert	"rec[""origin_ref""] == ""盘面自发"""
+K3	tests/test_power_section_rejections.py	136	match_assert	pytest.raises(KeyError, match='canonical person power writer bug')
+K3	tests/test_pre_settle_transaction.py	105	match_assert	pytest.raises(RuntimeError, match='phase-write boom')
+K3	tests/test_pre_settle_transaction.py	129	match_assert	"pytest.raises(RuntimeError, match=""pre_settle boom"")"
+K3	tests/test_pre_settle_transaction.py	156	match_assert	"pytest.raises(RuntimeError, match=""auto_submit boom"")"
+K3	tests/test_pre_settle_transaction.py	436	match_assert	pytest.raises(RuntimeError, match='placeholder save crash')
+K3	tests/test_qa_1281_issue_audience_case_facts.py	200	match_assert	pytest.raises(RuntimeError, match='audience ledger read failed')
+K3	tests/test_recommendation_edges_635.py	143	match_assert	pytest.raises(RuntimeError, match='第二腿写入失败')
+K3	tests/test_rejection_wiring.py	94	match_assert	pytest.raises(RuntimeError, match='crash after flush')
+K3	tests/test_rejection_wiring.py	137	match_assert	pytest.raises(RuntimeError, match='outer rollback')
+K3	tests/test_relation_brew_636.py	465	match_assert	pytest.raises(sqlite3.OperationalError, match='认领库不可写')
+K3	tests/test_relation_brew_636.py	488	match_assert	pytest.raises(sqlite3.OperationalError, match='落定库不可写')
+K3	tests/test_relation_brew_636.py	507	match_assert	pytest.raises(sqlite3.OperationalError, match='pending 库不可写')
+K3	tests/test_relation_brew_636.py	522	match_assert	pytest.raises(KeyError, match='酿制手程序错误')
+K3	tests/test_relation_brew_636.py	542	match_assert	pytest.raises(ValueError, match='酿制手程序错误')
+K3	tests/test_relation_seed_638.py	287	match_assert	pytest.raises(RuntimeError, match='injected write failure')
+K3	tests/test_rescript_draft_656.py	837	match_assert	"pytest.raises(RuntimeError, match=""programmer bug sentinel"")"
+K3	tests/test_secret_order_isolation_883.py	131	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid}"",),     ).fetchone()[0] == 0"
+K3	tests/test_secret_order_isolation_883.py	264	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid_public}"",),     ).fetchone()[0] == 0"
+K3	tests/test_secret_order_isolation_883.py	307	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid}"",),     ).fetchone()[0] == 0"
+K3	tests/test_secret_order_isolation_883.py	402	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid}"",),     ).fetchone()[0] == 0"
+K3	tests/test_secret_order_isolation_883.py	414	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid}"",),     ).fetchone()[0] == 1"
+K3	tests/test_secret_order_isolation_883.py	435	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid}"",),     ).fetchone()[0] == 0"
+K3	tests/test_secret_order_isolation_883.py	531	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid_old}"",),     ).fetchone()[0] == 1"
+K3	tests/test_secret_order_isolation_883.py	549	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid_old}"",),     ).fetchone()[0] == 1"
+K3	tests/test_secret_order_isolation_883.py	626	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid}"",),     ).fetchone()[0] == 0"
+K3	tests/test_secret_order_isolation_883.py	742	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid}"",),     ).fetchone()[0] == 0"
+K3	tests/test_secret_order_isolation_883.py	866	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid_sec}"",),     ).fetchone()[0] == 0"
+K3	tests/test_secret_order_isolation_883.py	884	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?"",         (f""chat_message:{mid_sec}"",),     ).fetchone()[0] == 0"
+K3	tests/test_secret_order_isolation_883.py	1129	noncontract_assert	"assert f""chat_message:{mid_pub}"" in _view_source_ids(db, state, minister), (                 f""{action}: pure public not remembered after project""             )"
+K3	tests/test_secret_order_monthly_progress_566.py	336	match_assert	pytest.raises(RuntimeError, match='post-fiscal failure 566')
 K3	tests/test_section_fiscal_rejections.py	674	noncontract_assert	"(row[""value""], row[""origin_ref""]) == (before * 2, ""盘面自发"")"
 K3	tests/test_section_fiscal_rejections.py	675	noncontract_assert	"(history[""old_value""], history[""new_value""], history[""origin_ref""]) == (             before, before * 2, ""盘面自发"",         )"
+K3	tests/test_session_write_queue_1353.py	525	match_assert	"pytest.raises(AssertionError, match=""did not drain"")"
+K3	tests/test_session_write_queue_1353.py	536	match_assert	"pytest.raises(RuntimeError, match=""queue boom"")"
+K3	tests/test_staged_assignment_identity_1890.py	712	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) c FROM issues WHERE origin_ref=?"", (origin_ref,),     ).fetchone()[""c""] == 0"
+K3	tests/test_state_reload.py	125	match_assert	"pytest.raises(RuntimeError, match=""save boom"")"
+K3	tests/test_state_reload.py	166	match_assert	"pytest.raises(RuntimeError, match=""post-commit step crash"")"
+K3	tests/test_state_reload.py	258	match_assert	"pytest.raises(RuntimeError, match=""post-commit step crash"")"
 K3	tests/test_style_temperament_641.py	103	noncontract_assert	"applied[""applied_person_changes""] == [         {             ""name"": PERSON,             ""origin_ref"": ""盘面自发"",             ""动作"": ""性情"",             ""style"": NEW_STYLE,             ""old_style"": before,             ""new_sty"
 K3	tests/test_style_temperament_641.py	141	noncontract_assert	"change == {         ""name"": PERSON,         ""origin_ref"": ""盘面自发"",         ""动作"": ""性情"",         ""style"": PADDED_STYLE,         ""old_style"": before,         ""new_style"": PADDED_STYLE,         ""reason"": ""经事锤炼，固有层改写"",     }"
 K3	tests/test_style_temperament_641.py	240	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
 K3	tests/test_surcharge_causal_chain_650.py	205	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM population_transfer_ledger WHERE reason='灾害' ""         ""AND amount=1 AND origin_ref=?"", (other[""origin_ref""],),     ).fetchone()[0] == 1"
 K4	ming_sim/db.py	1412	retired_api|baseline_gone	[base 6b513b99f]     def scale_tian_fu(self, ratio: float, commit: bool = True) -> int:
 K4	ming_sim/entities/region/store.py	140	retired_api|baseline_gone	[base 6b513b99f]     def read_scale_tian_fu(self, params: Any = ()) -> Any:
+K5	ming_sim/breach_plea.py	137	forward_shell|module_store_forward	._issue_row -> IssueStore(db.conn).row(int(commitment_ref))
+K5	ming_sim/db.py	2451	forward_shell|gamedb_facade_pending	GameDB.save_state thin Store forward ops=1 commits=0 :: self.reign.save(year=state.year, period=state.period, turn=state.turn, turn_phas
+K5	ming_sim/db.py	3252	forward_shell|gamedb_facade_pending	GameDB.class_rows -> ClassStore(self.conn).read_class_rows((region_id,))
 K5	ming_sim/db.py	5201	forward_shell|baseline_gone	[prior 1f53dd887]     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
+K5	ming_sim/db.py	5263	dup_sql_cross|schema_probe	_table_exists :: SELECT 1 FROM sqlite_master WHERE type='table' AND name=? || BASIS:local schema/existence probe helper across modules — not domain dual write authority
+K5	ming_sim/db.py	5269	dup_sql_cross|schema_probe	table_has_rows :: SELECT 1 FROM || BASIS:local schema/existence probe helper across modules — not domain dual write authority
+K5	ming_sim/db.py	6175	forward_shell|gamedb_facade_pending	GameDB.save_ending_summary thin Store forward ops=1 commits=1 :: ReignStateStore(self.conn).write_save_ending_summary((state.turn, state.year, st
+K5	ming_sim/db.py	12121	forward_shell|gamedb_facade_pending	GameDB.save_resolve_context thin Store forward ops=1 commits=1 :: self.resolve_contexts.upsert(turn=int(turn), decree_text=sanitize_sqlite_text(de
+K5	ming_sim/db.py	12144	forward_shell|gamedb_facade_pending	GameDB.clear_resolve_context thin Store forward ops=2 commits=1 :: self.resolve_contexts.delete(int(turn)) | self.dossiers.clear_pending_promulgation_verdicts(int(turn))
 K5	ming_sim/db.py	12187	forward_shell|baseline_gone	[prior 1f53dd887]     def clear_month_open_snapshot(self, turn: int) -> None:
-K5	ming_sim/entities/character_knowledge/store.py	160	dup_sql	set_secret_period_line :: UPDATE secret_orders SET
-K5	ming_sim/entities/character_knowledge/store.py	224	dup_sql	record_participation :: INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)
-K5	ming_sim/entities/character_knowledge/store.py	245	dup_sql	record_public_event :: INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)
-K5	ming_sim/entities/character_knowledge/store.py	438	dup_sql	update_secret_order_assignments :: UPDATE secret_orders SET
+K5	ming_sim/db.py	12377	forward_shell|gamedb_facade_pending	GameDB.get_directive -> IssueStore(self.conn).directive(int(directive_id))
+K5	ming_sim/db.py	12494	forward_shell|gamedb_facade_pending	GameDB.reject_directive thin Store forward ops=1 commits=1 :: IssueStore(self.conn).set_directive_status(directive_id, 'rejected', expected='p
+K5	ming_sim/db.py	12562	forward_shell|gamedb_facade_pending	GameDB.list_closed_issues_at -> IssueStore(self.conn).read_list_closed_issues_at((int(closed_turn),))
+K5	ming_sim/db.py	12570	forward_shell|gamedb_facade_pending	GameDB.find_active_issue_by_origin -> IssueStore(self.conn).read_find_active_issue_by_origin((origin_kind, origin_ref))
+K5	ming_sim/db.py	12573	forward_shell|gamedb_facade_pending	GameDB.find_any_issue_by_origin -> IssueStore(self.conn).read_find_any_issue_by_origin((origin_kind, origin_ref))
+K5	ming_sim/entities/affair/store.py	278	dup_sql_cross|shape_dup_review	_current_pointer :: SELECT affair_id FROM || BASIS:near-duplicate SQL shape — requires sibling function/status review; not auto-KEEP
+K5	ming_sim/entities/character/store.py	56	dup_sql_cross|schema_probe	has_any :: SELECT 1 FROM || BASIS:local schema/existence probe helper across modules — not domain dual write authority
+K5	ming_sim/entities/character_knowledge/store.py	127	dup_sql_cross|shape_dup_review	snapshot_rows :: SELECT * FROM || BASIS:near-duplicate SQL shape — requires sibling function/status review; not auto-KEEP
+K5	ming_sim/entities/character_knowledge/store.py	160	dup_sql_same|field_selection	set_secret_period_line :: UPDATE secret_orders SET || BASIS:secret_orders field/selection variants — different columns or assignment sets, not dual rule
+K5	ming_sim/entities/character_knowledge/store.py	224	dup_sql_same|lifecycle_source	record_participation :: INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?) || BASIS:character_knowledge_events particip
+K5	ming_sim/entities/character_knowledge/store.py	245	dup_sql_same|lifecycle_source	record_public_event :: INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?) || BASIS:character_knowledge_events participa
+K5	ming_sim/entities/character_knowledge/store.py	438	dup_sql_same|field_selection	update_secret_order_assignments :: UPDATE secret_orders SET || BASIS:secret_orders field/selection variants — different columns or assignment sets, not dual rule
 K5	ming_sim/entities/character_knowledge/store.py	649	forward_shell|baseline_gone	[base 6b513b99f]     def read_get_secret_order(self, params: Any = ()) -> Any:
-K5	ming_sim/entities/dossier/store.py	465	dup_sql	list_dossiers :: SELECT * FROM decree_dossiers
-K5	ming_sim/entities/dossier/store.py	1799	dup_sql	snapshot_rows :: SELECT * FROM decree_dossiers
+K5	ming_sim/entities/column_write.py	36	dup_sql_cross|shape_dup_review	bind_affair_once :: SELECT affair_id FROM || BASIS:near-duplicate SQL shape — requires sibling function/status review; not auto-KEEP
+K5	ming_sim/entities/dossier/store.py	465	dup_sql_same|list_vs_snapshot	list_dossiers :: SELECT * FROM decree_dossiers || BASIS:decree_dossiers list vs snapshot read — different consumer lifecycle, shared row shape
+K5	ming_sim/entities/dossier/store.py	1799	dup_sql_same|list_vs_snapshot	snapshot_rows :: SELECT * FROM decree_dossiers || BASIS:decree_dossiers list vs snapshot read — different consumer lifecycle, shared row shape
+K5	ming_sim/entities/fiscal_container/config.py	152	dup_sql_cross|shape_dup_review	effects :: SELECT * FROM || BASIS:near-duplicate SQL shape — requires sibling function/status review; not auto-KEEP
 K5	ming_sim/entities/issue/store.py	126	forward_shell|baseline_gone	[base 6b513b99f]     def read_ack_due_commitment_issue(self, params: Any = ()) -> Any:
-K5	ming_sim/entities/issue/store.py	278	dup_sql	write_mark_event_triggered_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'triggered', ?) ON CONFLICT(event_id)
-K5	ming_sim/entities/issue/store.py	281	dup_sql	write_mark_event_avoided_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'avoided', ?) ON CONFLICT(event_id) DO
-K5	ming_sim/entities/issue/store.py	284	dup_sql	write_mark_event_obsolete_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'obsolete', ?) ON CONFLICT(event_id) D
-K5	ming_sim/entities/issue/store.py	504	dup_sql	_delete_pending_decision_rows :: DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'
-K5	ming_sim/entities/issue/store.py	578	dup_sql	save_rescript_drafts :: DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'
-K5	ming_sim/entities/person_log/store.py	56	dup_sql	edge_snapshot_rows :: SELECT * FROM relation_edge_events
-K5	ming_sim/entities/person_log/store.py	218	dup_sql	read_get_relation_edge_events_owned :: SELECT * FROM relation_edge_events
-K5	ming_sim/entities/region/store.py	153	dup_sql	read_due_order_displacement_entries :: SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_NewDebt','settle_宗禄欠_NewDebt')
-K5	ming_sim/entities/region/store.py	156	dup_sql	read_arrears_order_displacement_entries :: SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_Repaid','settle_宗禄欠_Repaid')
-K5	ming_sim/entities/reign_state/store.py	188	dup_sql	write_clear_gated_legacies :: UPDATE legacies SET status='cleared' WHERE id=?
-K5	ming_sim/entities/reign_state/store.py	270	dup_sql	write_expire_legacies :: UPDATE legacies SET status='expired' WHERE id=?
-K5	ming_sim/entities/reign_state/store.py	805	dup_sql	chat_turn_ids_for_message_ids :: SELECT id FROM chat_turns WHERE user_message_id IN (
-K5	ming_sim/entities/reign_state/store.py	841	dup_sql	latest_chat_turn_id_for_message_ids :: SELECT id FROM chat_turns WHERE user_message_id IN (
-K5	ming_sim/entities/social_class/store.py	84	dup_sql	read_apply_bandit_absorptions :: SELECT population FROM classes WHERE name='流民' AND region_id=?
-K5	ming_sim/entities/social_class/store.py	93	dup_sql	read_apply_levy_driven_transfers :: SELECT population FROM classes WHERE name='农民' AND region_id=?
-K5	ming_sim/entities/staged_declaration/store.py	143	dup_sql	write :: UPDATE staged_declarations SET status='discarded' WHERE decree_ref=? AND status='staged'
-K5	ming_sim/entities/staged_declaration/store.py	242	dup_sql	mark_settled :: UPDATE staged_declarations SET status='settled' WHERE decree_ref=? AND status='staged'
+K5	ming_sim/entities/issue/store.py	278	dup_sql_same|terminal_state_variants	write_mark_event_triggered_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'triggered', ?) ON CONFLICT(event_id) DO UPDATE SET || BASIS:e
+K5	ming_sim/entities/issue/store.py	281	dup_sql_same|terminal_state_variants	write_mark_event_avoided_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'avoided', ?) ON CONFLICT(event_id) DO UPDATE SET || BASIS:event
+K5	ming_sim/entities/issue/store.py	284	dup_sql_same|terminal_state_variants	write_mark_event_obsolete_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'obsolete', ?) ON CONFLICT(event_id) DO UPDATE SET || BASIS:eve
+K5	ming_sim/entities/issue/store.py	504	dup_sql_same|lifecycle_kind	_delete_pending_decision_rows :: DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision' || BASIS:pending_decisions different kind/lifecycle (decision vs rescript_draft); judge C6
+K5	ming_sim/entities/issue/store.py	578	dup_sql_same|lifecycle_kind	save_rescript_drafts :: DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft' || BASIS:pending_decisions different kind/lifecycle (decision vs rescript_draft); judge C6
+K5	ming_sim/entities/person_log/store.py	56	dup_sql_same|list_vs_snapshot	edge_snapshot_rows :: SELECT * FROM relation_edge_events || BASIS:relation_edge_events snapshot vs owned read — different consumer path
+K5	ming_sim/entities/person_log/store.py	218	dup_sql_same|list_vs_snapshot	read_get_relation_edge_events_owned :: SELECT * FROM relation_edge_events || BASIS:relation_edge_events snapshot vs owned read — different consumer path
+K5	ming_sim/entities/region/store.py	153	dup_sql_same|field_selection	read_due_order_displacement_entries :: SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_NewDebt','settle_宗禄欠_NewDebt') || BASIS:region_logs different field/selection filters — n
+K5	ming_sim/entities/region/store.py	156	dup_sql_same|field_selection	read_arrears_order_displacement_entries :: SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_Repaid','settle_宗禄欠_Repaid') || BASIS:region_logs different field/selection filters —
+K5	ming_sim/entities/reign_state/store.py	188	dup_sql_same|lifecycle_status	write_clear_gated_legacies :: UPDATE legacies SET status='cleared' WHERE id=? || BASIS:legacies status transitions (cleared vs expired) — different terminal status, shared table shape
+K5	ming_sim/entities/reign_state/store.py	270	dup_sql_same|lifecycle_status	write_expire_legacies :: UPDATE legacies SET status='expired' WHERE id=? || BASIS:legacies status transitions (cleared vs expired) — different terminal status, shared table shape
+K5	ming_sim/entities/reign_state/store.py	805	dup_sql_same|selection_variant	chat_turn_ids_for_message_ids :: SELECT id FROM chat_turns WHERE user_message_id IN ( || BASIS:chat_turns selection variants (list vs latest) — different selection, shared table
+K5	ming_sim/entities/reign_state/store.py	841	dup_sql_same|selection_variant	latest_chat_turn_id_for_message_ids :: SELECT id FROM chat_turns WHERE user_message_id IN ( || BASIS:chat_turns selection variants (list vs latest) — different selection, shared table
+K5	ming_sim/entities/reign_state/store.py	951	dup_sql_cross|schema_probe	_table_exists :: SELECT 1 FROM sqlite_master WHERE type='table' AND name=? || BASIS:local schema/existence probe helper across modules — not domain dual write authority
+K5	ming_sim/entities/social_class/store.py	84	dup_sql_same|field_selection	read_apply_bandit_absorptions :: SELECT population FROM classes WHERE name='流民' AND region_id=? || BASIS:classes different field/selection filters — not the same business rule authority
+K5	ming_sim/entities/social_class/store.py	93	dup_sql_same|field_selection	read_apply_levy_driven_transfers :: SELECT population FROM classes WHERE name='农民' AND region_id=? || BASIS:classes different field/selection filters — not the same business rule authority
+K5	ming_sim/entities/staged_declaration/store.py	143	dup_sql_same|lifecycle_status	write :: UPDATE staged_declarations SET status='discarded' WHERE decree_ref=? AND status='staged' || BASIS:staged_declarations discarded vs settled — different status verbs on same table
+K5	ming_sim/entities/staged_declaration/store.py	242	dup_sql_same|lifecycle_status	mark_settled :: UPDATE staged_declarations SET status='settled' WHERE decree_ref=? AND status='staged' || BASIS:staged_declarations discarded vs settled — different status verbs on same table
+K5	ming_sim/flows.py	247	forward_shell|module_store_forward	._set_fiscal_container thin Store forward ops=1 commits=0 :: FiscalContainerStore(db.conn).replace(key, value, note)
+K5	ming_sim/flows.py	251	forward_shell|module_store_forward	._add_fiscal_container thin Store forward ops=1 commits=0 :: FiscalContainerStore(db.conn).add(key, delta, note)
+K5	ming_sim/issues.py	6006	forward_shell|module_store_forward	.character_row -> CharacterStore(db.conn).read_character_row((name,))
+K5	scripts/midzhi_spiral_judge_gate_570.py	187	dup_sql_cross|script_fixture	_open_pair :: UPDATE factions SET leverage=70, agenda=? WHERE name='东林' || BASIS:scripts gate/fixture board SQL — not production dual Store authority
+K5	scripts/promulgation_gate_561.py	314	dup_sql_cross|script_fixture	_apply_base_board :: UPDATE factions SET leverage=95, agenda=? WHERE name='东林' || BASIS:scripts gate/fixture board SQL — not production dual Store authority
 K7	ming_sim/entities/affair/store.py	81	stale_contract|baseline_gone	"[base 6b513b99f]     """"""World-record home for affairs. Close only by explicit declaration."""""""
 K8	ming_sim/db.py	6122	excluded_decode	"excluded_names = _load_list(row[""excluded_names""])"
 K8	ming_sim/db.py	6139	excluded_decode	"excluded_names = _load_list(row[""excluded_names""])"
