@@ -65,7 +65,7 @@ tests/test_recommendations.py	3	8	json	DELETE	no Name/Attr/fixture/__all__/side-
 tests/test_recommendations.py	7	29	ming_sim.models.Character	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
 tests/test_region_cannon_delta.py	10	8	pytest	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
 tests/test_rejection_wiring.py	10	21	pathlib.Path	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
-tests/test_rejection_wiring.py	15	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import
+tests/test_rejection_wiring.py	14	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import; split from rejection_rows + noqa (independent lint red→fix)
 tests/test_secret_order_section_rejections.py	15	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import
 tests/test_section4_rejections.py	650	31	ming_sim.issues	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
 tests/test_section_fiscal_rejections.py	19	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import

@@ -11,9 +11,10 @@
 | 653 | `653b83d47c0cfb776fecdeb6640300aaf31de008` | docs pin choice-cleanup 日志指针／SHA |
 | 764 | `764f64b06a744eda6b1465fa23570b0251348d54` | 全层 F401／orphan cleanup + 回执（曾重写抹掉 113／83 史；本轮恢复） |
 | 2f0 | `2f0c1e3930ee2b69c9119d658174ac5b6e1f23d5` | Class 方法同形残余 2 DELETE + 回执 A／C／选择器／病史修补 |
-| 本轮 | （本 commit） | docs-only：D 自包含 AST 命令＋消费语义∨＋ZERO_STATIC23＋最初13点名补表＋CHOICE 全仓 `terminal_reason` 清单 |
+| d59 | `d590e92e3268df54257870bc4cb94c0577b7b576` | docs-only：D 自包含 AST 命令＋消费语义∨＋ZERO_STATIC23＋最初13点名补表＋CHOICE 全仓 `terminal_reason` 清单 |
+| 本轮 | （本 commit） | ACMR lint 红史→`test_rejection_wiring` `game` fixture 拆行 `# noqa: F401`；独立 thcaU3 事实入档 |
 
-法源方向：CHOICE 退役选项契约残留；CLEANUP 无消费者冗余绑定；**用户授权**＝全仓同类 Class 方法／闭包零静态死定义一并清（非 advisor 可选宽口径）。本轮**仅 docs forward**，不改生产／测试代码；已有 2 实例死定义无新残余、不施工。
+法源方向：CHOICE 退役选项契约残留；CLEANUP 无消费者冗余绑定；**用户授权**＝全仓同类 Class 方法／闭包零静态死定义一并清（非 advisor 可选宽口径）。本轮**仅** fixture 发现标注小修（不改断言／功能）；独立复跑事实与 lint 红史并入回执。
 附件：`docs/reports/1891-1899-f401-member-table.tsv`（86＝F401+context）；`docs/reports/1891-1899-class-methods-zero.tsv`（ZERO_STATIC23）。
 
 ## 撤回
@@ -636,12 +637,60 @@ ObservingLock / ToolExec: already gone; no new residual
 member table: original-13 + F401-86 + class-method-2 (no whitelist gaps)
 ```
 
+## 独立复跑事实（主助手；原卷 `/tmp/1891-choice-cleanup-independent.thcaU3/`）
+
+主助手独立已复跑报告 D／C／F1 并聚焦最终代码；本段只钉原卷实测，不改断言口径。
+
+| 件 | 原卷 | 实测 |
+| --- | --- | --- |
+| D methods | `methods.py`／`methods.log` | TRACKED_PY／PARSED **351**；METHOD_DEFS **1105**；ZERO_STATIC_COUNT **23** |
+| C nested | `nested.py`／`nested.log` | scan_files **345**（非 raw）；NESTED_FN_ORPHANS **0** |
+| F1 choice | `choice.py`／`choice.log` | helper canonical；`choices_equal_helper` **True**；canonical／runtime `terminal_reason` 皆 **false**（**非**真入口变异证明） |
+| 选择器 | `command.txt` | **23** 选择器＝764＋2f0 去重聚焦面 |
+| 聚焦测 | `focus.log` | 七 BIN＝false；`user`／`basetemp`＝`$TMPROOT/{user,pytest}`；`PYTHONDONTWRITEBYTECODE=1`；`-p no:cacheprovider`；**317 passed in 11.25s**（墙钟 **11.833s**） |
+
+## lint 红史 → fixture 标记修正（本轮）
+
+ACMR 真跑（**无** `--ignore-noqa`；`34262577a..HEAD` ACMR `*.py`）：
+
+```bash
+UV_TOOL_DIR=/tmp/1891-uv-tools UV_CACHE_DIR=/tmp/1891-uv-cache \
+  uv tool run --from ruff==0.11.2 ruff check \
+  --target-version py313 --select F401,F821 \
+  $(git diff --name-only --diff-filter=ACMR 34262577a..HEAD -- '*.py')
+```
+
+- **修前红**：`tests/test_rejection_wiring.py:14:45` F401 `tests.section_rejection_helpers.game` imported but unused（与 `rejection_rows` 同 import 行；`game` 为真 pytest fixture，不可删）。
+- **修正**：拆行 + 仅 fixture 豁免，对齐 `test_adr0015_per_item_rejection.py`／`section_rejection_helpers` re-export 生态：
+  - `from tests.section_rejection_helpers import game  # noqa: F401  # pytest fixture discovery`
+  - `from tests.section_rejection_helpers import rejection_rows`（无 noqa）
+- **修后**：同上 ACMR 命令 **All checks passed!**
+- **A 口径不变**：`F401 --ignore-noqa` 全仓 COUNT **18**（全部 KEEP）＝正确非失败；成员表 `game` KEEP 行号改为 L14（豁免后仍入 18）。
+
+本轮聚焦测（仅受影响文件；事务契约两案亦可）：
+
+```bash
+export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
+$PY -m pytest -p no:cacheprovider -q --tb=short \
+  tests/test_rejection_wiring.py::test_rejected_item_lands_in_reports_and_jsonl \
+  tests/test_rejection_wiring.py::test_rollback_leaves_no_rows_and_no_jsonl
+```
+
+本轮实测原卷：`/tmp/1891-fixture-noqa.b5oxUm/logs/`
+
+- `acmr-f401-f821.txt`：**All checks passed!**
+- `f401-ignore-noqa.count.txt`：COUNT **18**（含 `tests/test_rejection_wiring.py:14:45	tests.section_rejection_helpers.game` KEEP）
+- `focus-rejection-wiring.txt`：**2 passed in 0.70s**（墙钟 real 1.09s）
 ## 自查二连
 
-1. **同类**：F401 全表处置保留；嵌套 FunctionDef 孤儿 0（C 范围诚实）；Class 方法修前正确 25＝2 DELETE＋23 KEEP，修后 ZERO_STATIC23；消费语义改为 OR；最初 13 点名回成员表；CHOICE 全仓 `terminal_reason` 清单命令齐；无新非协议残余、不施工。
-2. **引入 bug**：本轮仅 docs；未改财政／DRY／事件账 `terminal_reason`；未恢复兼容 import；未加永久测试／仓脚本框架。
+1. **同类**：F401 全表处置保留；嵌套 FunctionDef 孤儿 0（C 范围诚实）；Class 方法修前正确 25＝2 DELETE＋23 KEEP，修后 ZERO_STATIC23；消费语义改为 OR；最初 13 点名回成员表；CHOICE 全仓 `terminal_reason` 清单命令齐；独立 thcaU3 351／1105／ZERO23＋NESTED0＋choice helper＋23 选择器／317 passed 入档；ACMR lint 红＝fixture 缺 noqa，按既有 discovery 标注修，不删 `game`。
+2. **引入 bug**：本轮只拆 `game` import＋`# noqa: F401` 与回执／TSV 行号；未改断言／功能／财政／DRY／事件账 `terminal_reason`；未恢复兼容 import；未加永久测试／仓脚本框架；`--ignore-noqa` 18 KEEP 口径未动。
 
 ## 交卷
 
-文档：本回执（D 自包含 AST＋OR 语义＋25／23 病史＋最初 13 补表＋F2 全仓清单）+ `1891-1899-class-methods-zero.tsv`（qualified 含函数内嵌套 Class）。
-forward `ak-roles:` 提交（不 amend／stash／reset／push）。本轮不跑测试。
+文档：本回执（独立 thcaU3 事实＋lint 红史→fixture noqa）+ `1891-1899-f401-member-table.tsv`（`test_rejection_wiring` `game` L14 KEEP）。
+代码：仅 `tests/test_rejection_wiring.py` fixture 发现标注。
+forward `ak-roles:` 提交（不 amend／stash／reset／push）。
