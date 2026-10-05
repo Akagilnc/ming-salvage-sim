@@ -25,16 +25,63 @@ def _cli_schedule_pending_noop(self, result):
     return None
 
 
-class _CliChatDbStub:
-    """#1853 J8：生产直调必备重试查询；轻壳夹具须提供同名接口，不得靠 hasattr 空结果护栏。"""
-
-    def get_interrupted_reply_retries(self, minister_name=None):
-        return []
+_FAKE_NIGHT = {"id": 1, "status": "open"}
 
 
 @contextmanager
 def _noop_atomic(_db):
     yield
+
+
+class _CliChatDbStub:
+    """#1853 J8-R：生产直调必备 GameDB 召对接口；夹具提供同名能力，不靠 hasattr 替身分支。"""
+
+    def __init__(self):
+        self.messages = []
+        self._next_turn_id = 1
+        self.conn = SimpleNamespace(
+            execute=lambda *_a, **_k: SimpleNamespace(fetchone=lambda: None, fetchall=lambda: []),
+        )
+
+    def get_interrupted_reply_retries(self, minister_name=None):
+        return []
+
+    def capture_chat_rollback_snapshot(self):
+        return {}
+
+    def create_chat_turn(self, *_a, **_k):
+        tid = self._next_turn_id
+        self._next_turn_id += 1
+        return tid
+
+    def update_chat_turn_messages(self, *_a, **_k):
+        return None
+
+    def record_chat_turn_rollback_diffs(self, *_a, **_k):
+        return None
+
+    def persist_minister_reply(self, minister_name, turn, content, chat_turn_id, **_kw):
+        return self.append_chat_message(minister_name, turn, "minister", content)
+
+    def fail_chat_turn(self, chat_turn_id):
+        """对齐生产：失败轮清掉本轮尚未成对的 user 可见写入。"""
+        msgs = getattr(self, "messages", None)
+        if isinstance(msgs, list) and msgs and len(msgs[-1]) >= 3 and msgs[-1][2] == "user":
+            self.messages = msgs[:-1]
+        return []
+
+    def append_chat_message(self, minister_name, turn, role, content):
+        self.messages.append((minister_name, turn, role, content))
+        return len(self.messages)
+
+
+def _patch_cli_night(monkeypatch):
+    monkeypatch.setattr(an, "get_open_night", lambda _db: dict(_FAKE_NIGHT))
+    monkeypatch.setattr(
+        an, "ensure_open_night_for_audience", lambda _db, _state: dict(_FAKE_NIGHT),
+    )
+    monkeypatch.setattr(an, "ensure_summon_enter", lambda *_a, **_k: None)
+    monkeypatch.setattr("ming_sim.applier.atomic", _noop_atomic)
 
 
 class _Snap:
@@ -163,12 +210,7 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
     """
 
     class Db(_CliChatDbStub):
-        def __init__(self):
-            self.messages = []
-
-        def append_chat_message(self, minister_name, turn, role, content):
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
+        pass
 
     class Session:
         def __init__(self):
@@ -194,6 +236,7 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
         def schedule_pending_scene_translation(self, result):
             return _cli_schedule_pending_noop(self, result)
 
+    _patch_cli_night(monkeypatch)
     answers = iter(["交给洪承畴督办陕西赈灾，东厂暗助护赈银。", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
@@ -210,19 +253,9 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
 
     class Db(_CliChatDbStub):
         def __init__(self):
+            super().__init__()
             self.messages = [
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
-            ]
-
-        def append_chat_message(self, minister_name, turn, role, content):
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
-
-        def delete_chat_messages(self, message_ids):
-            doomed = {int(mid) for mid in message_ids}
-            self.messages = [
-                msg for idx, msg in enumerate(self.messages, 1)
-                if idx not in doomed
             ]
 
     class Session:
@@ -242,6 +275,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(mon
         def schedule_pending_scene_translation(self, result):
             return _cli_schedule_pending_noop(self, result)
 
+    _patch_cli_night(monkeypatch)
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
@@ -259,19 +293,9 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
 
     class Db(_CliChatDbStub):
         def __init__(self):
+            super().__init__()
             self.messages = [
                 ("魏忠贤", 6, "user", "前一轮召对内容"),
-            ]
-
-        def append_chat_message(self, minister_name, turn, role, content):
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
-
-        def delete_chat_messages(self, message_ids):
-            doomed = {int(mid) for mid in message_ids}
-            self.messages = [
-                msg for idx, msg in enumerate(self.messages, 1)
-                if idx not in doomed
             ]
 
     class Session:
@@ -291,6 +315,7 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
         def schedule_pending_scene_translation(self, result):
             return _cli_schedule_pending_noop(self, result)
 
+    _patch_cli_night(monkeypatch)
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
@@ -307,10 +332,7 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
     """回滚删除失败不能盖掉原始 scene_chat/chat 异常。"""
 
     class Db(_CliChatDbStub):
-        def append_chat_message(self, minister_name, turn, role, content):
-            return 1
-
-        def delete_chat_messages(self, message_ids):
+        def fail_chat_turn(self, chat_turn_id):
             raise RuntimeError("rollback failed")
 
     class Session:
@@ -326,6 +348,7 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
         def schedule_pending_scene_translation(self, result):
             return _cli_schedule_pending_noop(self, result)
 
+    _patch_cli_night(monkeypatch)
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
@@ -333,22 +356,23 @@ def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(monkeyp
         term.minister_chat(Session(), SimpleNamespace(name="魏忠贤"))
 
 
-def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeypatch):
-    """大臣已回话后，minister 行落库失败不误删已落 user 行。"""
+def test_terminal_minister_chat_reply_persist_failure_uses_fail_chat_turn(monkeypatch):
+    """大臣已回话后 minister 落库失败走 fail_chat_turn（现役生命周期），不走无轮 delete。"""
 
     class Db(_CliChatDbStub):
         def __init__(self):
-            self.messages = []
-            self.deleted = False
+            super().__init__()
+            self.fail_calls = []
 
-        def append_chat_message(self, minister_name, turn, role, content):
-            if role == "minister":
-                raise RuntimeError("reply persist failed")
-            self.messages.append((minister_name, turn, role, content))
-            return len(self.messages)
+        def persist_minister_reply(self, minister_name, turn, content, chat_turn_id, **_kw):
+            raise RuntimeError("reply persist failed")
+
+        def fail_chat_turn(self, chat_turn_id):
+            self.fail_calls.append(int(chat_turn_id))
+            return super().fail_chat_turn(chat_turn_id)
 
         def delete_chat_messages(self, message_ids):
-            self.deleted = True
+            raise AssertionError("chat_turn_id 已立时不得走无轮 delete_chat_messages")
 
     class Session:
         def __init__(self):
@@ -371,6 +395,7 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
         def schedule_pending_scene_translation(self, result):
             return _cli_schedule_pending_noop(self, result)
 
+    _patch_cli_night(monkeypatch)
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     session = Session()
@@ -378,10 +403,8 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
     with pytest.raises(RuntimeError, match="reply persist failed"):
         term.minister_chat(session, SimpleNamespace(name="魏忠贤"))
 
-    assert session.db.deleted is False
-    assert session.db.messages == [
-        ("魏忠贤", 7, "user", "命洪承畴督办陕西赈灾，东厂暗助护赈银。"),
-    ]
+    assert session.db.fail_calls == [1]
+    assert session.db.messages == []
 
 
 

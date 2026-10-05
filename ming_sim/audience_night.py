@@ -325,8 +325,6 @@ def write_audience_error_pack(
 
 def resolve_standing_roster(db: Any) -> List[str]:
     """开夜时动态解析常在员额：在职且 active 的御前近臣槽位持有者。"""
-    if not hasattr(db, "conn"):
-        return []
     rows = db.conn.execute(
         "SELECT name, office, office_type, status FROM characters "
         "WHERE status = 'active' ORDER BY name"
@@ -725,30 +723,12 @@ def audit_night_direct_writes(db: Any, night_id: int) -> set[str]:
 
 
 def _allocate_seq(db: Any, night_id: int) -> int:
-    if hasattr(db, "allocate_night_seq"):
-        return int(db.allocate_night_seq(int(night_id)))
-    row = db.conn.execute(
-        "SELECT next_event_seq FROM audience_nights WHERE id = ?",
-        (int(night_id),),
-    ).fetchone()
-    if row is None:
-        raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
-    nxt = int(row["next_event_seq"] or 0) + 1
-    db.conn.execute(
-        "UPDATE audience_nights SET next_event_seq = ? WHERE id = ?",
-        (nxt, int(night_id)),
-    )
-    return nxt
+    return int(db.allocate_night_seq(int(night_id)))
 
 
 def _character_status(db: Any, name: str) -> str:
-    if hasattr(db, "get_character_status"):
-        status, _reason = db.get_character_status(name)
-        return str(status or "")
-    row = db.conn.execute(
-        "SELECT status FROM characters WHERE name = ?", (name,)
-    ).fetchone()
-    return str(row["status"]) if row is not None else ""
+    status, _reason = db.get_character_status(name)
+    return str(status or "")
 
 
 def assert_persons_not_dead(
@@ -1011,21 +991,7 @@ def summon_enter(
 
 
 def list_in_flight_chat_turns(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    if hasattr(db, "list_in_flight_chat_turns"):
-        return db.list_in_flight_chat_turns(night_id=int(night_id))
-    rows = db.conn.execute(
-        """
-        SELECT * FROM chat_turns
-        WHERE night_id = ?
-          AND (
-            status = 'generating'
-            OR (status = 'active' AND (minister_message_id IS NULL OR minister_message_id = 0))
-          )
-        ORDER BY id ASC
-        """,
-        (int(night_id),),
-    ).fetchall()
-    return [_row_dict(r) for r in rows]
+    return db.list_in_flight_chat_turns(night_id=int(night_id))
 
 
 def wait_in_flight_clear(
@@ -1076,8 +1042,6 @@ def _commit_night_approved(
     """收夜提交本夜已应允白名单。沿用 commit_pending_actions 既有 terminal 语义：
     落得了标 committed；业务拒收/软拒收标 failed；真异常留 pending 并上抛
     （#1853：原轮/月链 error_pack 与失败路径承接，不另造 failed 专属传输）。"""
-    if not hasattr(db, "list_night_approved_pending"):
-        return []
     rows: List[Dict[str, object]] = []
     for kind in sorted(kinds):
         rows.extend(db.list_night_approved_pending(int(night_id), kind=kind))
@@ -2240,7 +2204,7 @@ def audience_scene_recap(
     空串（AC3 负向：未在场者的组装输入不含殿内对话）。区间与可闻性判据复用
     audible_entries_for（御前低语不流入、入殿前不闻），不另立第二套在场/可闻性真源。"""
     name = str(person_name or "").strip()
-    if not name or not hasattr(db, "conn"):
+    if not name:
         return ""
     nid = night_id
     if nid is None:
@@ -2460,8 +2424,6 @@ def mark_actions_night_approved(
     db: Any, action_ids: Sequence[int], *, night_id: Optional[int] = None,
 ) -> int:
     """对话应允时：把暂存标为本夜已应允，收夜再提交（密令除外，调用方分流）。"""
-    if not hasattr(db, "mark_pending_night_approved"):
-        return 0
     nid = night_id
     if nid is None:
         open_n = assert_night_accepts_player_input(db, what="应允暂存")

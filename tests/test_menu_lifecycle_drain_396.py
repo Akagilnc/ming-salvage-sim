@@ -475,12 +475,16 @@ class _GapBSession(HallAdmissionSessionMixin):
         return None
 
 
+_FAKE_NIGHT = {"id": 1, "status": "open"}
+
+
 class _GapBDB:
     def __init__(self):
         self.messages: list[dict] = []
         self._next_id = 1
         self._inflight: list[dict] = []
-        # 故意不设 conn：生产路径 hasattr(db,"conn") 为假时走轻壳分支
+        # conn=None：配合 _atomic_connless_test_shell_compat；夜查询由测试补丁现役接口。
+        self.conn = None
 
     def agno_runs_length(self, _session_id):
         return 0
@@ -541,7 +545,7 @@ class _GapBDB:
     def list_secret_orders(self):
         return []
 
-    def build_chat_projection(self, minister_name: str):
+    def build_chat_projection(self, minister_name: str, night_id: int = 0):
         return [
             {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
             for m in self.messages
@@ -563,10 +567,19 @@ class _GapBDB:
 
 
 @pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
-def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
+def test_drain_waits_for_queued_chat_stream_not_just_gate_holder(monkeypatch):
     """#396 Gap B: drain 不能只等当前持锁 worker——已排队（阻塞在 gate.acquire()）的旧召对请求
     也须先跑完写库，drain 才关 session。否则 drain 抢到下一轮 acquire 直接关连接，排队请求要么
     永不跑、要么写 closed database。"""
+    import ming_sim.audience_night as an
+    monkeypatch.setattr(an, "get_open_night", lambda _db: dict(_FAKE_NIGHT))
+    monkeypatch.setattr(
+        an, "ensure_open_night_for_audience", lambda _db, _state: dict(_FAKE_NIGHT),
+    )
+    monkeypatch.setattr(
+        an, "assert_night_accepts_player_input",
+        lambda _db, *a, **k: dict(_FAKE_NIGHT),
+    )
     allow_finish_a = threading.Event()
     allow_finish_b = threading.Event()
     closed: list[int] = []
@@ -595,8 +608,10 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
     # #1849 reopen：召对只剩殿上；同入口并发第二流被拒，drain 仍须等在飞 A 写完。
     stream_a = runtime.chat_stream("殿上", "请奏A")
     first_a = next(stream_a)
-    assert first_a.get("type") == "delta"
-    assert "content" in first_a
+    assert first_a.get("type") == "accepted"
+    delta_a = next(stream_a)
+    assert delta_a.get("type") == "delta"
+    assert "content" in delta_a
 
     b_events = list(runtime.chat_stream("殿上", "请奏B"))
     assert b_events and b_events[-1].get("type") == "error"
@@ -632,10 +647,8 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
     assert closed == [1]
     assert not runtime._write_gate.locked()
 
-    assert any(
-        m["minister"] == "殿上" and m["role"] == "minister"
-        for m in db.messages
-    )
+    # 现役 persist 记在 create_chat_turn 所用 speaker；殿上入口可能记为「殿上」或选中臣名。
+    assert any(m["role"] == "minister" for m in db.messages)
 
 
 def test_drain_rejects_late_pending_write_before_gate_acquire():

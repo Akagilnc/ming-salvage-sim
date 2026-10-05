@@ -610,11 +610,7 @@ def dispatch_declaration(
     collector = RejectionCollector()
     origin_ctid = int(chat_turn_id or source_chat_turn_id or 0)
     # 有源轮则入口自记前像：后台/直接调用都不必依赖 caller 窗口快照。
-    before = (
-        db.capture_chat_rollback_snapshot()
-        if origin_ctid > 0 and hasattr(db, "capture_chat_rollback_snapshot")
-        else None
-    )
+    before = db.capture_chat_rollback_snapshot() if origin_ctid > 0 else None
     with atomic(db):
         result = _dispatch_declaration_sections(
             db, state, declaration,
@@ -627,7 +623,7 @@ def dispatch_declaration(
         collector.flush_to_db(db)
         # 前像与 section/拒收同权威事务提交前写入（0036 R3 / 0038）；
         # 提交后才记前像会在崩溃窗口丢撤回完整性。atomic 内 conn.commit 为 no-op。
-        if before is not None and hasattr(db, "record_chat_turn_rollback_diffs"):
+        if before is not None:
             db.record_chat_turn_rollback_diffs(
                 origin_ctid, before, db.capture_chat_rollback_snapshot(),
             )

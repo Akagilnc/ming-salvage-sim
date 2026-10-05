@@ -820,9 +820,8 @@ class WebGame:
                 self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
             # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
             # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
-            if hasattr(self.db, "conn"):
-                self.db.reconcile_interrupted_chat_turns()
-                self.db.reconcile_post_reply_recovery()
+            self.db.reconcile_interrupted_chat_turns()
+            self.db.reconcile_post_reply_recovery()
             # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
             self._spawn_startup_extraction_catch_up()
         except Exception as init_exc:
@@ -1784,10 +1783,8 @@ class WebGame:
         # 序：核账期（含停住，ADR 0149 点即入）→ settlement；夜未收 → audience；其余 → month。
         # 点退朝后收夜前并存窗：快照已立，开夜不得覆盖核账落点。
         reopen_landing = "month"
-        open_night = None
-        if hasattr(self.db, "conn"):
-            from ming_sim.audience_night import get_open_night
-            open_night = get_open_night(self.db)
+        from ming_sim.audience_night import get_open_night
+        open_night = get_open_night(self.db)
         if settlement_display:
             reopen_landing = "settlement"
         elif open_night is not None:
@@ -1870,9 +1867,7 @@ class WebGame:
 
     # ── 聊天 ──────────────────────────────────────────────────────────────
     def chat_projection(self, minister_name: str) -> List[Dict[str, Any]]:
-        """当前召对夜的殿上投影；轻量测试替身可只实现单参读取。"""
-        if not hasattr(self.db, "conn"):
-            return self.db.build_chat_projection(minister_name)
+        """当前召对夜的殿上投影。"""
         from ming_sim.audience_night import get_open_night, SCENE_CHAT_SPEAKER
         night = get_open_night(self.db)
         return self.db.build_chat_projection(
@@ -1882,7 +1877,7 @@ class WebGame:
     def _minister_agno_session_id(self, minister_name: str) -> str:
         # 所有 Web 召对都由场景 agent 生成；chat_turn 与 agent 必须绑同一 Agno session。
         from ming_sim.audience_night import get_open_night
-        night = get_open_night(self.db) if hasattr(self.db, "conn") else None
+        night = get_open_night(self.db)
         if night is not None:
             return f"scene-night-{int(night['id'])}"
         return f"scene-night-pending-turn-{int(self.state.turn)}"
@@ -1891,7 +1886,7 @@ class WebGame:
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             return False
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        if minister_name == SCENE_CHAT_SPEAKER and hasattr(self.db, "conn"):
+        if minister_name == SCENE_CHAT_SPEAKER:
             night = get_open_night(self.db)
             if night:
                 turns = self.db.list_hall_chat_turns(int(night["id"]))
@@ -1903,20 +1898,15 @@ class WebGame:
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
         """同夜场景共用一个 agent session：前轮回话未落定时不准开下一轮。
 
-        后台转译不在此等待。无夜的轻量替身仍按大臣查；在飞的定义由 DB 写口维护。
+        后台转译不在此等待。无夜时按大臣查；在飞的定义由 DB 写口维护。
         """
-        if hasattr(self.db, "list_in_flight_chat_turns"):
-            if hasattr(self.db, "conn"):
-                from ming_sim.audience_night import get_open_night
-                night = get_open_night(self.db)
-                if night is not None:
-                    return bool(self.db.list_in_flight_chat_turns(night_id=int(night["id"])))
-            return bool(self.db.list_in_flight_chat_turns(
-                minister_name=minister_name, turn=int(self.state.turn),
-            ))
-        # 极薄兜底：旧替身无接口时不挡（与 get_last_active 语义接近）
-        existing = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
-        return existing is not None and not existing.get("minister_message_id")
+        from ming_sim.audience_night import get_open_night
+        night = get_open_night(self.db)
+        if night is not None:
+            return bool(self.db.list_in_flight_chat_turns(night_id=int(night["id"])))
+        return bool(self.db.list_in_flight_chat_turns(
+            minister_name=minister_name, turn=int(self.state.turn),
+        ))
 
     def _start_chat_turn(
         self, minister_name: str, *, attach_to_hall: bool = True,
@@ -1926,38 +1916,27 @@ class WebGame:
         runs_before = self.db.agno_runs_length(agno_session_id)
         snapshot = self.db.capture_chat_rollback_snapshot()
         # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
-        # 测试替身无 conn/夜表时回退 create_chat_turn（lifecycle 双接口仍可测）。
         # #1566：场外密疏只挂当前夜，不入殿、不启殿上 scene；route 落 chat_turns。
         # #1838 reopen：建轮 = 确保开夜 + create_chat_turn；入殿账只由「宣 X」/批红召见写。
-        if hasattr(self.db, "conn"):
-            from ming_sim.audience_night import (
-                ensure_open_night_for_audience,
-                get_open_night,
-            )
-            night_was_open = get_open_night(self.db) is not None
-            night = get_open_night(self.db) or ensure_open_night_for_audience(
-                self.db, self.state,
-            )
-            if not night_was_open:
-                from ming_sim.decree_forecast import schedule_held_decree_forecasts
-                schedule_held_decree_forecasts(self.session)
-            chat_turn_id = self.db.create_chat_turn(
-                self.state,
-                minister_name,
-                agno_session_id,
-                runs_before,
-                night_id=int(night["id"]),
-                status="generating",
-            )
-        else:
-            agno_session_id = self._minister_agno_session_id(minister_name)
-            runs_before = self.db.agno_runs_length(agno_session_id)
-            chat_turn_id = self.db.create_chat_turn(
-                self.state,
-                minister_name,
-                agno_session_id,
-                runs_before,
-            )
+        from ming_sim.audience_night import (
+            ensure_open_night_for_audience,
+            get_open_night,
+        )
+        night_was_open = get_open_night(self.db) is not None
+        night = get_open_night(self.db) or ensure_open_night_for_audience(
+            self.db, self.state,
+        )
+        if not night_was_open:
+            from ming_sim.decree_forecast import schedule_held_decree_forecasts
+            schedule_held_decree_forecasts(self.session)
+        chat_turn_id = self.db.create_chat_turn(
+            self.state,
+            minister_name,
+            agno_session_id,
+            runs_before,
+            night_id=int(night["id"]),
+            status="generating",
+        )
         return chat_turn_id, snapshot
 
     def _record_chat_rollback_items(
@@ -2165,16 +2144,14 @@ class WebGame:
                 self.db.append_chat_message(minister_name, turn, "minister", answer)
             )
         self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
-        open_night = None
-        if hasattr(self.db, "conn"):
-            from ming_sim.audience_night import get_open_night
-            open_night = get_open_night(self.db)
+        from ming_sim.audience_night import get_open_night
+        open_night = get_open_night(self.db)
         return {
             "minister": minister_name,
             "answer": answer,
             # Persisted identity travels with the real player response; the web client
             # never infers night ownership from cross-night personal chat history.
-            "campaign_id": str(self.db.kv_get("campaign_id") or "") if hasattr(self.db, "kv_get") else "",
+            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
             "night_id": int(open_night["id"]) if open_night else 0,
             # #499 单一投影：user/minister 带 chat_turn_id、既存读心记录按轮归位；
             # 前端 setChat 不再抹掉历史读心记录。
@@ -2328,9 +2305,8 @@ class WebGame:
                 with gate:
                     self._reject_if_settlement_phase()
                     # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
-                    if hasattr(self.db, "conn"):
-                        from ming_sim.audience_night import assert_night_accepts_player_input
-                        assert_night_accepts_player_input(self.db, what="召对")
+                    from ming_sim.audience_night import assert_night_accepts_player_input
+                    assert_night_accepts_player_input(self.db, what="召对")
                     if self._audience_turn_in_flight(minister_name):
                         raise HTTPException(
                             status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
@@ -2775,23 +2751,22 @@ class WebGame:
                 yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
                 return
             # #612：CLOSING 冻结新对话——唯一玩家输入准入真源，无平行 status 判断。
-            if hasattr(self.db, "conn"):
-                from ming_sim.audience_night import (
-                    AudienceNightError,
-                    assert_night_accepts_player_input,
-                )
-                try:
-                    assert_night_accepts_player_input(self.db, what="召对")
-                except AudienceNightError as err:
-                    if getattr(err, "code", "") == "night_closing":
-                        self._complete_pending_write(pending_ticket)
-                        yield {
-                            "type": "error",
-                            "message": str(err) or "本夜收夜中，暂不能召对。",
-                            "code": "night_closing",
-                        }
-                        return
-                    raise
+            from ming_sim.audience_night import (
+                AudienceNightError,
+                assert_night_accepts_player_input,
+            )
+            try:
+                assert_night_accepts_player_input(self.db, what="召对")
+            except AudienceNightError as err:
+                if getattr(err, "code", "") == "night_closing":
+                    self._complete_pending_write(pending_ticket)
+                    yield {
+                        "type": "error",
+                        "message": str(err) or "本夜收夜中，暂不能召对。",
+                        "code": "night_closing",
+                    }
+                    return
+                raise
             if self._audience_turn_in_flight(minister_name):
                 self._complete_pending_write(pending_ticket)
                 yield {"type": "error", "message": "本夜上一轮回奏仍在进行，请稍候再问。"}
@@ -2840,9 +2815,8 @@ class WebGame:
         # must close the durable turn and pending owner through the same terminal path as a
         # worker failure, rather than escaping this SSE generator.
         try:
-            if hasattr(self.db, "kv_get"):
-                identity["campaign_id"] = str(self.db.kv_get("campaign_id") or "")
-            if chat_turn_id and hasattr(self.db, "conn"):
+            identity["campaign_id"] = str(self.db.kv_get("campaign_id") or "")
+            if chat_turn_id:
                 from ming_sim.audience_night import get_open_night
                 open_night = get_open_night(self.db)
                 identity["night_id"] = int(open_night["id"]) if open_night else 0
@@ -5266,7 +5240,7 @@ async def api_audience_chat_history() -> Dict[str, Any]:
     """Live audience state belongs to the open scene, never to a roster member."""
     game = get_game()
     from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-    open_night = get_open_night(game.db) if hasattr(game.db, "conn") else None
+    open_night = get_open_night(game.db)
     return {
         "minister": {
             "name": SCENE_CHAT_SPEAKER, "office": "一夜一卷", "office_type": "scene",

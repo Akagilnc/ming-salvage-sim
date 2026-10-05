@@ -147,7 +147,7 @@ def mark_turn_translation_done(
 ) -> None:
     """水位单真源：源轮 extract_status → done（控制口令早退与转译落账共用）。"""
     ctid = int(chat_turn_id or 0)
-    if ctid <= 0 or not hasattr(db, "conn"):
+    if ctid <= 0:
         return
     db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' "
@@ -208,7 +208,7 @@ def _observe_finished_future(
 
 def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> None:
     ctid = int(chat_turn_id or 0)
-    if ctid <= 0 or not hasattr(db, "mark_story_extraction_pending"):
+    if ctid <= 0:
         return
     # 失败路径短持：与 job 内读写同属转译持闸类（ClassifiedWriteGate kind）。
     with _translation_write_cm(write_gate):
@@ -299,8 +299,7 @@ def run_turn_translation_job(
                     f"源轮回话未落定：chat_turn_id={ctid} status={status}"
                 )
             already_done = db.get_story_extract_status(ctid) == "done"
-            # 写生命周期：缺 mark 口则跳过置 pending，不属查询空投影护栏。
-            if not already_done and hasattr(db, "mark_story_extraction_pending"):
+            if not already_done:
                 db.mark_story_extraction_pending(ctid)
         if already_done:
             from ming_sim.applier import SectionResult
@@ -370,8 +369,7 @@ def run_turn_translation_job(
             )
     except Exception as exc:
         _mark_translation_pending(db, ctid, write_gate)
-        # 写生命周期：缺 set_chat_turn_error_pack 则跳过落错误包，随后仍上抛。
-        if ctid > 0 and hasattr(db, "set_chat_turn_error_pack"):
+        if ctid > 0:
             from ming_sim.exceptions import LLMUnavailable
             if not isinstance(exc, LLMUnavailable):
                 from ming_sim.audience_night import write_audience_error_pack
