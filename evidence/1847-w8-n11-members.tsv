@@ -1,20 +1,58 @@
-symbol	disposition	reason	hits
-_migrate_legacy_reaction_severity	DELETE	旧 severity 形状兼容；仅开库自调用+专属测试	0 after fix
-_migrate_reaction_value	DELETE	仅被 legacy severity 迁移调用	0 after fix
-_backfill_proposed_appointment_break_ranks	DELETE	pre-#562 旧案回填；新写入已产 break_rank	0 after fix
-compose_decree_validation_recovery	DELETE	定义无生产调用方	0 after fix
-decree_validation_failure	DELETE	ChatTurnResult/web 空投影；无赋值无前端消费者	0 after fix
-test_existing_proposed_appointment_dossier_gets_one_time_break_rank_backfill	DELETE	专属维护回填残余	deleted
-test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently	DELETE	专属维护旧 severity 迁移	deleted
-_migrate_building_logs_to_durable_audit	KEEP	现役开库 schema 审计升级；非本轮点名旧兼容闭包且仍服务新开库路径	open-hook+def
-_backfill_salary_rate	KEEP	募兵/军饷基线仍依赖；army_pay 文档引用	open-hook+shared
-_migrate_arrears_unit_to_silver	KEEP	财政单位真源升级；新档开库仍走	open-hook+def
-_migrate_character_location_aliases	KEEP	人物地点别名现役	open-hook
-_migrate_next_audience_todos_drop_issue_fk	KEEP	案头 schema 现役	open-hook
-_backfill_person_core_character_static_fields	KEEP	person_write_inventory 现役真源引用	open-hook+inventory
-_migrate_character_identity_seed	KEEP	person_write_inventory 现役	open-hook+inventory
-_backfill_bandit_power_split	KEEP	person_write_inventory 现役	open-hook+inventory
-_backfill_event_triggers_from_event_pool_issues	KEEP	事件池触发现役	open-hook
-_migrate_offsets_to_float_precision	KEEP	偏移精度现役	open-hook
-_migrate_missing_fiscal_engine_from_pay_source_cutover	KEEP	财政引擎 cutover 现役	open-hook
-_backfill_healed_participant_refs	KEEP	cli_backend 现役调用 :2564	live caller
+symbol	qual	loc	disposition	behavior	prod_refs	test_refs	notes
+AMBIGUOUS_CLOSE_COMMANDS	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+CMD_AMBIGUOUS_CLOSE	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+CMD_STAY_ATTEND	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+STAY_ATTEND_COMMANDS	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+TAG_STAY_ATTEND	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_CLI_RECOMMENDATION_CALL	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_agno_legacy_runs_blob	ming_sim/db.py:9338	ming_sim/db.py:9338	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=ming_sim/db.py:9355
+_ambiguous_close_confirm_cue	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_annotate_legacy_person_rejections	ming_sim/issues.py:7668	ming_sim/issues.py:7668	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=ming_sim/issues.py:7703
+_assert_commission_grant_target_exists	ming_sim/declaration_dispatch.py:902	ming_sim/declaration_dispatch.py:902	KEEP_LIVE	has_prod_consumers	1	0	prod=1;test=0;P=ming_sim/declaration_dispatch.py:988
+_backfill_bandit_power_split	ming_sim/db.py:5076	ming_sim/db.py:5076	KEEP_ACTIVE_ENSURE	open_hook_INSERT_OR_IGNORE_only_old_compat_stripped	2	0	prod=2;test=0;P=ming_sim/db.py:2355,ming_sim/person_write_inventory.py:23
+_backfill_event_triggers_from_event_pool_issues	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_backfill_healed_participant_refs	ming_sim/cli_backend.py:1741	ming_sim/cli_backend.py:1741	KEEP_LIVE_SHARED	live_cli_backend_caller	1	0	prod=1;test=0;P=ming_sim/cli_backend.py:2520
+_backfill_person_core_character_static_fields	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_backfill_proposed_appointment_break_ranks	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_backfill_salary_rate	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_cli_prompt	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_cli_recommendation_call	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_cli_stream_safe_prefix	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_grant_target	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_humanize_legacy_effect	web_app.py:335	web_app.py:335	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=web_app.py:1617
+_humanize_legacy_gate	web_app.py:299	web_app.py:299	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	2	0	prod=2;test=0;P=web_app.py:1607,web_app.py:1609
+_income_amount_after_legacy_modifier	ming_sim/flows.py:343	ming_sim/flows.py:343	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	6	0	prod=6;test=0;P=ming_sim/flows.py:378,ming_sim/flows.py:379,ming_sim/flows.py:382
+_is_active_secret_order_assignee	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_is_audience_chat_shared_channel	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_legacy_effect_entity_name	web_app.py:323	web_app.py:323	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=web_app.py:349
+_legacy_effect_has_work	ming_sim/models.py:258	ming_sim/models.py:258	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=ming_sim/models.py:318
+_legacy_gate_subject	web_app.py:278	web_app.py:278	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=web_app.py:303
+_legacy_pct	web_app.py:331	web_app.py:331	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	2	0	prod=2;test=0;P=web_app.py:341,web_app.py:354
+_legacy_person_report_section	ming_sim/issues.py:6531	ming_sim/issues.py:6531	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=ming_sim/issues.py:7671
+_migrate_arrears_unit_to_silver	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_migrate_building_logs_to_durable_audit	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_migrate_character_identity_seed	ming_sim/db.py:5051	ming_sim/db.py:5051	KEEP_ACTIVE_ENSURE	open_hook_INSERT_OR_IGNORE_only_old_compat_stripped	2	0	prod=2;test=0;P=ming_sim/db.py:2354,ming_sim/person_write_inventory.py:17
+_migrate_character_location_aliases	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_migrate_legacy_reaction_severity	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_migrate_missing_fiscal_engine_from_pay_source_cutover	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_migrate_next_audience_todos_drop_issue_fk	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_migrate_offsets_to_float_precision	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_migrate_reaction_value	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_open_night_court_break	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+_recovery_effective_silver_wan	ming_sim/displaced_population.py:122	ming_sim/displaced_population.py:122	KEEP_LIVE	has_prod_consumers	1	0	prod=1;test=0;P=ming_sim/displaced_population.py:226
+_rewrite_session_legacy_runs_blob	ming_sim/db.py:9361	ming_sim/db.py:9361	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=ming_sim/db.py:9416
+_spawn_legacy_from_effect	ming_sim/issues.py:3035	ming_sim/issues.py:3035	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	6	0	prod=6;test=0;P=ming_sim/issues.py:4382,ming_sim/issues.py:4405,ming_sim/issues.py:5159
+_summon_origin_tag	ming_sim/audience_night.py:1398	ming_sim/audience_night.py:1398	KEEP_LIVE	has_prod_consumers	3	0	prod=3;test=0;P=ming_sim/audience_night.py:1677,ming_sim/audience_night.py:1768,ming_sim/audience_night.py:1928
+apply_legacy_pct	ming_sim/db.py:19691	ming_sim/db.py:19691	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	15	5	prod=15;test=5;P=ming_sim/issues.py:3638,ming_sim/issues.py:3648,ming_sim/issues.py:3691;T=tests/test_fiscal_substrate_bridge.py:1317,tests/test_fiscal_substrate_bridge.py:1318
+apply_recovery_driven_transfers	ming_sim/displaced_population.py:146	ming_sim/displaced_population.py:146	KEEP_LIVE	has_prod_consumers	2	0	prod=2;test=0;P=ming_sim/month_chain.py:1916,ming_sim/month_chain.py:1917
+claim_post_reply_recovery	ming_sim/db.py:8962	ming_sim/db.py:8962	KEEP_LIVE	has_prod_consumers	1	0	prod=1;test=0;P=web_app.py:2254
+compose_decree_validation_recovery	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+decree_validation_failure	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+insert_legacy	ming_sim/db.py:19569	ming_sim/db.py:19569	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	3	4	prod=3;test=4;P=ming_sim/issues.py:3099,ming_sim/issues.py:8930,ming_sim/db.py:19651;T=tests/test_db_broad_except_surface.py:83,tests/test_event_trigger_gate.py:2872
+legacy_modifiers	ming_sim/db.py:19643	ming_sim/db.py:19643	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	10	10	prod=10;test=10;P=ming_sim/issues.py:3597,ming_sim/db.py:6970,ming_sim/db.py:7012;T=tests/test_db_broad_except_surface.py:9,tests/test_db_broad_except_surface.py:81
+legacy_reasoning_strength	ming_sim/llm_config.py:307	ming_sim/llm_config.py:307	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	4	0	prod=4;test=0;P=ming_sim/llm_config.py:188,ming_sim/llm_config.py:363,web_app.py:64
+legacy_remaining_months	ming_sim/db.py:19635	ming_sim/db.py:19635	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	1	0	prod=1;test=0;P=web_app.py:1604
+reconcile_post_reply_recovery	ming_sim/db.py:8980	ming_sim/db.py:8980	KEEP_LIVE	has_prod_consumers	2	0	prod=2;test=0;P=web_app.py:839,web_app.py:1059
+release_post_reply_recovery	ming_sim/db.py:8972	ming_sim/db.py:8972	KEEP_LIVE	has_prod_consumers	1	0	prod=1;test=0;P=web_app.py:2270
+settle_summon_origin	ming_sim/audience_night.py:1589	ming_sim/audience_night.py:1589	KEEP_LIVE	has_prod_consumers	3	5	prod=3;test=5;P=ming_sim/audience_night.py:1563,ming_sim/audience_night.py:1632,ming_sim/audience_night.py:1652;T=tests/test_audience_travel_gating_670.py:232,tests/test_audience_travel_gating_670.py:233
+stay_attend_in_audience	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0

@@ -265,6 +265,24 @@ def _typed_status_from_run_error_event(event: Any) -> Optional[int]:
     return _typed_provider_status.get()
 
 
+def _exception_text_with_causes(error: BaseException) -> str:
+    """Existing provider_message / str(error) exit: include PEP 3134 cause chain.
+
+    Notes and bare ``__cause__`` memory are not this exit (PEP 678 / #1847 N13).
+    No new diagnostic fields — only the text already carried on ClassifiedFailure /
+    LLMUnavailable / trace.error.
+    """
+    parts: list[str] = []
+    cur: BaseException | None = error
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        text = str(cur).strip() or type(cur).__name__
+        parts.append(text)
+        cur = cur.__cause__
+    return " | caused by: ".join(parts)
+
+
 def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
     """先分类后重试。只认 typed 信号；不从错误散文猜语义（ADR 0142）。
 
@@ -275,12 +293,13 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
     本函数是 APITimeout/Connection/Status/空输出/RunError → code/retryable/status 的唯一权威
     （llm_unavailable_from_error / run_error_event_failure / empty_output_failure 委派或同构）。
     """
+    err_text = _exception_text_with_causes(error)
     if isinstance(error, TransportIdleTimeout):
         return ClassifiedFailure(
             retryable=True,
             code="llm_idle_timeout",
             status_code=None,
-            provider_message=str(error) or "idle timeout",
+            provider_message=err_text or "idle timeout",
             message="LLM 调用空转超时。",
         )
     if isinstance(error, APITimeoutError):
@@ -288,7 +307,7 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
             retryable=True,
             code="llm_timeout",
             status_code=None,
-            provider_message=str(error),
+            provider_message=err_text,
             message="LLM 调用超时。",
         )
     if isinstance(error, APIConnectionError):
@@ -296,7 +315,7 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
             retryable=True,
             code="llm_connection_error",
             status_code=None,
-            provider_message=str(error),
+            provider_message=err_text,
             message="LLM 连接失败。",
         )
     if isinstance(error, APIStatusError):
@@ -306,13 +325,20 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
             retryable=_status_retryable(status_i),
             code=code,
             status_code=status_i,
-            provider_message=str(error),
+            provider_message=err_text,
             message=f"LLM 调用失败（HTTP {status_i}）。" if status_i else "LLM 调用失败。",
         )
     if isinstance(error, LLMUnavailable):
         status = error.status_code
         code = str(error.code or "llm_unavailable")
-        pmsg = str(error.provider_message or error.message or "")
+        # Prefer structured fields; still append cause chain when present so
+        # composite cleanup+idle is not reduced to a single layer in packages.
+        base = str(error.provider_message or error.message or "")
+        cause = error.__cause__
+        if cause is not None:
+            pmsg = _exception_text_with_causes(error)
+        else:
+            pmsg = base
         status_i = _coerce_status(status)
         if status_i is not None:
             return ClassifiedFailure(
@@ -359,8 +385,8 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
         retryable=False,
         code="llm_error",
         status_code=None,
-        provider_message=str(error),
-        message=f"LLM 调用失败：{error}",
+        provider_message=err_text,
+        message=f"LLM 调用失败：{err_text}",
     )
 
 

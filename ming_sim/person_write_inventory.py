@@ -14,22 +14,16 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "开局 seed 不产 RejectedItem，ADR 0009 明确豁免。",
     },
     {
-        "location": "ming_sim/db.py:_backfill_person_core_character_static_fields",
-        "owner": "migration",
-        "disposition": "adr0009_exempt",
-        "reason": "#191 旧档静态字段补丁（init 时幂等，仅补缺省值），不产 RejectedItem。",
-    },
-    {
         "location": "ming_sim/db.py:_migrate_character_identity_seed",
         "owner": "migration",
         "disposition": "adr0009_exempt",
-        "reason": "#488 旧档身份/污点补丁（init 时幂等，仅补未初始化字段及缺失名册），不产 RejectedItem。",
+        "reason": "#1847：仅 INSERT OR IGNORE 确保 content 名册在场（旧身份/别名补丁已退役），不产 RejectedItem。",
     },
     {
         "location": "ming_sim/db.py:_backfill_bandit_power_split",
         "owner": "migration",
         "disposition": "adr0009_exempt",
-        "reason": "#190 旧档流寇分股静态补丁（init 时幂等，仅迁移 legacy bandits/空值），不产 RejectedItem。",
+        "reason": "#1847：仅 INSERT OR IGNORE 确保流寇分股 powers 在场（旧 leader/power_id 改写已退役），不产 RejectedItem。",
     },
     {
         "location": "ming_sim/db.py:set_character_status",

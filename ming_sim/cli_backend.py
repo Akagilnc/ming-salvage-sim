@@ -1079,7 +1079,9 @@ def _run_backend_for_config(
         attempts = len(attempt_records)
         return text, attempts
     except Exception as exc:
-        error = str(exc)
+        # Persist cause chain on the existing trace.error exit (#1847 N13).
+        from ming_sim.llm_transport import _exception_text_with_causes
+        error = _exception_text_with_causes(exc)
         raise
     finally:
         _trace({
@@ -3575,71 +3577,10 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
 
 
 
-_CLI_RECOMMENDATION_CALL = re.compile(
-    r"\n?\[\[recommend_person:(\{.*?\})\]\]\s*$", re.DOTALL,
-)
-_CLI_RECOMMENDATION_PREFIX = "[[recommend_person:"
 
 
-def _cli_prompt(
-    messages: List[Message], response_format: object, tools: object,
-    *,
-    materials_dir: Optional[str] = None,
-) -> str:
-    """Build one CLI prompt, including instructions derived from offered tools."""
-    prompt = _messages_to_prompt(messages, response_format, materials_dir=materials_dir)
-    recommendation_schema = next(
-        (tool.get("function", tool) for tool in (tools or [])
-         if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
-        None,
-    )
-    if recommendation_schema:
-        prompt += (
-            "\n\n【荐人调用】只有确要调用此工具时，回答末尾追加"
-            f"[[recommend_person:<arguments JSON>]]；arguments 须严格符合以下已提供的工具 schema：{json.dumps(recommendation_schema.get('parameters') or {}, ensure_ascii=False)}"
-        )
-    return prompt
 
 
-def _cli_stream_safe_prefix(text: str) -> tuple[str, str]:
-    """Release text that cannot belong to a trailing recommendation envelope."""
-    marker_at = text.rfind(_CLI_RECOMMENDATION_PREFIX)
-    if marker_at >= 0:
-        return text[:marker_at], text[marker_at:]
-    keep = 0
-    for length in range(1, min(len(text), len(_CLI_RECOMMENDATION_PREFIX) - 1) + 1):
-        if text.endswith(_CLI_RECOMMENDATION_PREFIX[:length]):
-            keep = length
-    return (text[:-keep], text[-keep:]) if keep else (text, "")
-
-
-def _cli_recommendation_call(text: str, tools: object) -> tuple[str, list[ChatCompletionMessageFunctionToolCall]]:
-    """Adapt an explicit CLI recommendation envelope into the existing tool seam."""
-    offered = next(
-        (tool.get("function", tool) for tool in (tools or [])
-         if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
-        None,
-    )
-    match = _CLI_RECOMMENDATION_CALL.search(text) if offered else None
-    if not match:
-        return text, []
-    try:
-        payload = json.loads(match.group(1))
-    except (TypeError, ValueError):
-        return text, []
-    schema = offered.get("parameters") or {}
-    required = schema.get("required") or []
-    properties = schema.get("properties") or {}
-    if (not isinstance(payload, dict)
-            or any(not str(payload.get(key) or "").strip() for key in required)
-            or any(key not in properties for key in payload)):
-        return text, []
-    call = ChatCompletionMessageFunctionToolCall(
-        id="cli-recommendation",
-        type="function",
-        function=ToolFunction(name=offered["name"], arguments=json.dumps(payload, ensure_ascii=False)),
-    )
-    return text[:match.start()], [call]
 
 
 def _fake_completion(
@@ -3707,8 +3648,10 @@ class CliChat(OpenAIChat):
             # 错误串不得进 content 当叙事（agno 吞 Exception 会把 str(e) 塞 content）。
             from ming_sim.exceptions import LLMUnavailable
             from ming_sim.llm_model import cli_runner_unavailable
-            from ming_sim.llm_transport import TransportIdleTimeout
-            error = str(exc)
+            from ming_sim.llm_transport import (
+                TransportIdleTimeout, _exception_text_with_causes,
+            )
+            error = _exception_text_with_causes(exc)
             # 已 typed 的可重试瞬断（空转/空输出/连接）原样上浮：套成
             # llm_cli_* 会让 transport 把瞬断误判成确定性失败，一次即终。
             if isinstance(exc, (LLMUnavailable, TransportIdleTimeout)):

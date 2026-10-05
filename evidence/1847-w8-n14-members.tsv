@@ -1,0 +1,643 @@
+file	line	kind	disposition	snippet
+test_army_card_status_1501.py	94	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"id": row["id"],
+test_army_card_status_1501.py	95	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"name": row["name"],
+test_army_card_status_1501.py	96	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"station": row["station"],
+test_army_card_status_1501.py	97	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"theater": row["theater"],
+test_army_card_status_1501.py	98	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"commander": row["commander"],
+test_army_card_status_1501.py	99	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"controller": row["controller"],
+test_army_card_status_1501.py	100	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"troop_type": row["troop_type"],
+test_army_card_status_1501.py	109	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"owner_power": row["owner_power"],
+test_army_card_status_1501.py	243	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _guanning_db_status(db) == seed_status
+test_army_salary_44.py	205	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _coerce_new_salary_rate(-1) == 1.5, "负值=白嫖→锚点"
+test_army_salary_44.py	206	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _coerce_new_salary_rate(0) == 1.5
+test_army_salary_44.py	207	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _coerce_new_salary_rate(None) == 1.5
+test_army_salary_44.py	208	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _coerce_new_salary_rate("脏") == 1.5, "非数→锚点"
+test_army_salary_44.py	209	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _coerce_new_salary_rate(True) == 1.5, "bool→锚点"
+test_army_salary_44.py	210	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _coerce_new_salary_rate(2.0) == 2.0, "正常正值保留"
+test_army_salary_44.py	220	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _coerce_new_salary_rate(float("inf")) == 1.5, "inf→锚点"
+test_army_salary_44.py	221	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _coerce_new_salary_rate(float("-inf")) == 1.5, "-inf→锚点"
+test_army_salary_44.py	222	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _coerce_new_salary_rate(float("nan")) == 1.5, "nan→锚点"
+test_audience_background.py	252	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _carryover_drafts(db, state) == []
+test_audience_draft_grant_once_1777.py	186	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _turn_of(after) == turn_before + 1, after.get("turn")
+test_audience_presence_500.py	75	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _last_seq(db, nid) == seq_before  # 未追加任何账
+test_audience_presence_500.py	234	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _enters() == before + 1
+test_audience_presence_500.py	237	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _enters() == before + 1
+test_audience_presence_500.py	252	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _last_seq(db, nid) == seq_before  # 非法召法不落账
+test_audience_restore_505.py	667	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _agno_public_run_ids(env.path, "sess") == ["r0", "r0", "r1"]
+test_audience_restore_505.py	672	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _agno_public_run_ids(env.path, "sess") == ["r0"]
+test_audience_restore_505.py	761	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _agno_public_run_ids(env.path, "sess") == ["r0", "r1"]
+test_audience_restore_505.py	762	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _agno_public_run_ids(env.path, "other") == ["other-0"]
+test_audience_translate_1837.py	417	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"grant": case["grant"],
+test_audience_translation_once_1898.py	86	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ledger_rows(again, nid, ctid) == 1
+test_audience_travel_gating_670.py	53	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"location": row["location"],
+test_audience_travel_gating_670.py	54	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"transit_to": row["transit_to"],
+test_audience_travel_gating_670.py	55	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"transit_start_turn": row["transit_start_turn"],
+test_audience_travel_gating_670.py	170	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _chat_turn_count(db) == 0
+test_audience_travel_gating_670.py	171	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _chat_message_count(db) == 0
+test_audience_travel_gating_670.py	197	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _travel_row(db, person.name) == before_travel
+test_audience_travel_gating_670.py	290	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _arrive_at_destination(game, person.name) == [
+test_audience_travel_gating_670.py	471	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _arrive_at_destination(game, person.name) == [
+test_audience_travel_gating_670.py	731	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _chat_turn_count(db) == 0
+test_audience_travel_gating_670.py	732	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _chat_message_count(db) == 0
+test_audience_travel_gating_670.py	871	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _arrive_at_destination(game, person.name) == [
+test_audience_travel_gating_670.py	1028	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _travel_row(db, person.name) == before_travel
+test_audience_travel_gating_670.py	1150	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _travel_row(db, person.name) == before_travel
+test_audience_travel_gating_670.py	1189	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _travel_row(db, person.name) == before_travel
+test_audience_travel_gating_670.py	1263	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _arrive_at_destination(game, person.name) == [
+test_audience_travel_gating_670.py	1394	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _travel_row(db, first.name) == before_first
+test_audience_travel_gating_670.py	1395	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _travel_row(db, second.name) == before_second
+test_audience_travel_gating_670.py	223	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _travel_row(restored, person.name) == before_travel
+test_breach_plea_623.py	160	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, did) == costs_before
+test_breach_plea_623.py	225	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, did) == []
+test_breach_plea_623.py	269	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pending_pleas(db) == []
+test_breach_plea_623.py	591	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, did) == []
+test_breach_plea_623.py	592	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pending_pleas(db) == []
+test_breach_plea_623.py	666	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, did) == []
+test_breach_plea_623.py	672	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pending_pleas(db) == []
+test_breach_plea_623.py	717	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, did, identity="breach") == breach_costs
+test_breach_plea_623.py	811	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, did, identity="breach") == []
+test_breach_plea_623.py	841	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pending_pleas(db) == []
+test_breach_plea_623.py	903	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pending_pleas(db) == []
+test_breach_plea_623.py	905	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, did) == []
+test_breach_plea_623.py	967	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, did2, identity="连坐") == []
+test_breach_plea_623.py	1278	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pending_pleas(db) == []
+test_breach_plea_623.py	1310	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pending_pleas(db) == []
+test_centrifuge_ledger_690.py	224	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == before
+test_centrifuge_ledger_690.py	350	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == before
+test_centrifuge_ledger_690.py	394	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == before
+test_centrifuge_ledger_690.py	516	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == mid
+test_centrifuge_ledger_690.py	540	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == before_payload
+test_centrifuge_ledger_690.py	571	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == before_subset
+test_centrifuge_ledger_690.py	600	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == before_empty
+test_centrifuge_ledger_690.py	645	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == before
+test_centrifuge_ledger_690.py	720	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == before_fail
+test_centrifuge_ledger_690.py	742	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == before_rebuild
+test_centrifuge_ledger_690.py	775	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(second) == snap
+test_centrifuge_ledger_690.py	867	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == before
+test_centrifuge_ledger_690.py	280	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == snap
+test_centrifuge_ledger_690.py	478	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db) == snap
+test_character_knowledge_489.py	1273	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert db._office_archive_key(
+test_character_knowledge_489.py	1296	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert db._office_archive_key("朝鲜国王", "外臣") == ""
+test_cli_backend.py	130	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._run_backend("x") == (out, 1)
+test_cli_backend.py	359	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._codex_final_text(
+test_cli_backend.py	362	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._codex_final_text(
+test_cli_backend.py	365	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._codex_final_text({"type": "agent_message", "message": "TOP"}) == "TOP"
+test_cli_backend.py	442	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._resolve_cli_bin("codex", "codex") == "/usr/local/bin/codex"
+test_cli_backend.py	464	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._resolve_cli_bin("codex", "codex") == home_bin
+test_cli_backend.py	478	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._resolve_cli_bin("codex", "codex") == "/opt/odd/bin/codex"
+test_cli_backend.py	485	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._resolve_cli_bin("codex", "codex") == "codex"
+test_cli_backend.py	490	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._resolve_cli_bin("codex", "codex") == "/Users/x/.local/bin/codex"
+test_cli_backend.py	503	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
+test_cli_backend.py	504	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
+test_cli_backend.py	520	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._login_shell_path() == "/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin"
+test_cli_backend.py	532	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._login_shell_path() == "/usr/bin"
+test_cli_backend.py	545	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._login_shell_path() == "/a/bin:/b/bin"
+test_cli_backend.py	696	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb.CliChat(id="m-codex", backend="codex", timeout=111)._call_cli("p") == ("CODEX", 1)
+test_cli_backend.py	697	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb.CliChat(id="m-claude", backend="claude", timeout=222)._call_cli("p") == ("CLAUDE", 1)
+test_cli_backend.py	698	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb.CliChat(id="m-agy", backend="agy", timeout=333)._call_cli("p") == ("AGY", 1)
+test_cli_backend.py	973	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._run_backend("x") == (out, 1)
+test_cli_backend.py	1011	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert chat._call_cli("p") == ("OK", 1)
+test_cli_play_turn.py	654	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert term._cli_write_gate(session) is gate
+test_commitment_backlash_626.py	176	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _backlash_issues(db) == []
+test_commitment_backlash_626.py	328	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _backlash_issues(db) == []
+test_commitment_backlash_626.py	474	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _backlash_issues(db) == []
+test_commitment_backlash_626.py	535	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _backlash_issues(db) == []
+test_commitment_backlash_626.py	582	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _backlash_issues(db) == []
+test_commitment_backlash_626.py	637	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _backlash_issues(db) == []
+test_decree_commitment_creation_136.py	323	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "每月补宣大蓟镇直到补齐") is None
+test_decree_commitment_creation_136.py	361	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "连续两月补饷但缺承诺标记") is None
+test_decree_commitment_creation_136.py	401	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "本回合即到期的每月补饷承诺") is None
+test_decree_commitment_creation_136.py	443	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "过去回合已到期的每月补饷承诺") is None
+test_decree_commitment_creation_136.py	540	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "长期安抚毛文龙但缺承诺标记") is None
+test_decree_commitment_creation_136.py	568	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "三月后复核孙承宗但缺承诺标记") is None
+test_decree_commitment_creation_136.py	596	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "只写停止条件的安抚毛文龙") is None
+test_decree_commitment_creation_136.py	624	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "字符串停止条件但无月度动作") is None
+test_decree_commitment_creation_136.py	661	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "旧形状安抚毛文龙") is None
+test_decree_commitment_creation_136.py	690	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "每月补辽饷但类型写成局势") is None
+test_decree_commitment_creation_136.py	758	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "字符串忠诚安抚承诺") is None
+test_decree_commitment_creation_136.py	787	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "每月补辽饷但停止条件是坏串") is None
+test_decree_commitment_creation_136.py	816	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "每月补辽饷但停止条件无表前缀") is None
+test_decree_commitment_creation_136.py	844	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "每月补辽饷但无诏书引用") is None
+test_decree_commitment_creation_136.py	872	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "每月补辽饷但没有月度动作") is None
+test_decree_commitment_creation_136.py	901	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "每月补辽饷但月度动作只是空壳") is None
+test_decree_commitment_creation_136.py	934	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_by_title(db, "每月重复建军的错误承诺") is None
+test_decree_commitment_creation_136.py	1084	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _has_stop_condition({"army.guanning.arrears": "<=0"}) is True
+test_decree_commitment_creation_136.py	1085	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _has_stop_condition(["legacy"]) is True
+test_decree_commitment_creation_136.py	1086	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _has_stop_condition({}) is False
+test_decree_commitment_creation_136.py	1087	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _has_stop_condition(" { } ") is False
+test_decree_commitment_creation_136.py	1088	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _has_stop_condition("\n[]\n") is False
+test_decree_commitment_creation_136.py	1090	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _has_stop_condition("character.毛文龙.loyalty >= 65") is False
+test_decree_commitment_settlement_229.py	162	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _character_loyalty(db, "毛文龙") == 46
+test_decree_commitment_settlement_229.py	202	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _faction_satisfaction(db, "军队") == 52
+test_decree_commitment_settlement_229.py	203	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _class_satisfaction(db, "士绅") == 47
+test_decree_commitment_settlement_229.py	240	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _faction_satisfaction(db, "军队") == 52
+test_decree_commitment_settlement_229.py	393	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _region_cannon(db, "beizhili") == 3
+test_decree_commitment_settlement_229.py	872	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _army_arrears(db, "guanning") == 0
+test_decree_commitment_settlement_229.py	1053	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _army_arrears(db, "guanning") == 101
+test_decree_commitment_settlement_229.py	1054	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _army_arrears(db, "xuan_da") == 100
+test_decree_commitment_settlement_229.py	1101	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _army_arrears(db, "guanning") == 101
+test_decree_commitment_settlement_229.py	1102	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _army_arrears(db, "xuan_da") == 100
+test_decree_dossiers_571.py	760	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"name": person["name"], "动作": "调任", "office": "兵部尚书",
+test_decree_dossiers_571.py	792	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"name": person["name"], "动作": "调任", "office": "前置异官",
+test_decree_dossiers_571.py	797	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"name": person["name"], "动作": "调任", "office": "同名未知官",
+test_decree_dossiers_571.py	825	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"name": person["name"],
+test_decree_dossiers_571.py	833	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"name": person["name"], "动作": "评定", "loyalty": 1,
+test_deformation_dual_rail_622.py	121	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _world_fingerprint(db) == mid_fp  # AC2/AC3：假进度零入 apply
+test_deformation_dual_rail_622.py	185	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _world_fingerprint(db) == fp_before_fake
+test_deformation_dual_rail_622.py	555	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ledger_after(before) == [], (label, [dict(r) for r in _ledger_after(before)])
+test_draft_admission_resubmit_1769.py	276	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _turn_of(_get_state(client)) == turn + 1
+test_draft_admission_resubmit_1769.py	327	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _turn_of(_get_state(client)) == turn + 1
+test_draft_admission_resubmit_1769.py	411	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _turn_of(_get_state(client)) == turn + 1
+test_draft_admission_resubmit_1769.py	508	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _turn_of(_get_state(client)) == turn + 1
+test_draft_admission_resubmit_1769.py	559	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _turn_of(_get_state(client)) == turn + 1
+test_draft_admission_resubmit_1769.py	603	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _turn_of(_get_state(client)) == turn + 1
+test_draft_admission_resubmit_1769.py	667	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _turn_of(_get_state(client)) == turn + 1
+test_draft_admission_resubmit_1769.py	695	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _turn_of(_get_state(client)) == turn + 1
+test_due_review_621.py	308	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_due_review_621.py	462	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_economy_section_rejections.py	73	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _rejection_rows(db, turn, ECO_REJ) == []
+test_economy_section_rejections.py	86	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _rejection_rows(db, turn, ECO_REJ) == []
+test_economy_section_rejections.py	144	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _rejection_rows(db, turn, ECO_REJ) == []
+test_enrich_list_guards.py	33	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _apply_economy_list(db, state, bad) == []
+test_enrich_list_guards.py	82	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _apply_metric_dict(state, bad, db=db) == {}
+test_enrich_list_guards.py	83	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _apply_faction_dict(db, bad) == ({}, [])
+test_enrich_list_guards.py	84	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _apply_class_dict(db, bad) == ({}, [])
+test_enter_settlement_period_1235.py	488	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert web_app._accept_settlement_period(game) is True
+test_enter_settlement_period_1235.py	521	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert web_app._accept_settlement_period(game) is True
+test_enter_settlement_period_1235.py	610	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert web_app._accept_settlement_period(game) is True
+test_enter_settlement_period_1235.py	767	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert web_app._settlement_entry_inflight(game) == 0
+test_enter_settlement_period_1235.py	507	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert web_app._accept_settlement_period(game) is False
+test_event_chain_cascade.py	96	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_numeric_gt0_expired__ 已入非触发终态：expired")
+test_event_chain_cascade.py	112	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_numeric_lt1_triggered__ 已触发")
+test_event_chain_cascade.py	201	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _terminal_state(db, downstream.id) == (
+test_event_chain_cascade.py	291	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_bad_outcome__ 已发禁用结局：坏结局")
+test_event_trigger_gate.py	441	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _gate_passed(None, state.metrics, db) is True
+test_event_trigger_gate.py	449	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _gate_passed({"民心": 60}, state.metrics, db) is False
+test_event_trigger_gate.py	450	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _gate_passed({"民心": True}, state.metrics, db) is False
+test_event_trigger_gate.py	1390	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert issues._pending_person_changes_block_event_gate(
+test_execution_joint_liability_565.py	76	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_execution_joint_liability_565.py	77	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "东林") == before_donglin
+test_execution_joint_liability_565.py	78	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "西学") == before_xixue
+test_execution_joint_liability_565.py	104	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "东林") == max(0, before_donglin + lead_delta)
+test_execution_joint_liability_565.py	109	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "皇党") == before_huang
+test_execution_joint_liability_565.py	154	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == first
+test_execution_joint_liability_565.py	183	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_execution_joint_liability_565.py	197	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "东林") == before_donglin
+test_execution_joint_liability_565.py	202	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "西学") == max(0, before_xixue - 4)
+test_execution_joint_liability_565.py	233	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_execution_joint_liability_565.py	250	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, outsider) == before_outsider
+test_execution_joint_liability_565.py	283	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "东林") == max(0, before_donglin - 8)
+test_execution_joint_liability_565.py	284	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "西学") == max(0, before_xixue - 4)
+test_execution_joint_liability_565.py	323	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "东林") == max(0, before_donglin - 8)
+test_execution_joint_liability_565.py	324	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "西学") == max(0, before_xixue - 8)
+test_execution_joint_liability_565.py	381	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "西学") == max(0, before - 4)
+test_execution_joint_liability_565.py	424	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_execution_joint_liability_565.py	106	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "西学") == before_xixue
+test_execution_joint_liability_565.py	108	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "西学") == max(0, before_xixue + delegator_delta)
+test_execution_joint_liability_565.py	412	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(restored, dossier_id) == costs
+test_execution_pressure_654.py	692	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cb._coerce_draft_target_kind(kind) == kind
+test_faction_brew_637.py	347	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _faction_rows(db) == before
+test_faction_brew_637.py	365	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _faction_rows(db) == before
+test_faction_brew_637.py	371	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _faction_rows(db) == before
+test_faction_class_section_rejections.py	87	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _class_satisfaction(db, good) == max(0, min(100, before + 6))
+test_faction_class_section_rejections.py	121	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _class_satisfaction(db, good) == before
+test_faction_class_section_rejections.py	139	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _class_satisfaction(db, good) == before
+test_faction_class_section_rejections.py	178	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _rejection_rows(db, turn, FACTION_REJ_SECTION) == []
+test_faction_class_section_rejections.py	204	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _class_satisfaction(db, good) == before + 6
+test_faction_class_section_rejections.py	217	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _rejection_rows(db, turn, FACTION_REJ_SECTION) == []
+test_faction_denunciation_627.py	478	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _world_fingerprint(db) == fp_before
+test_faction_denunciation_627.py	487	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _table_cols(db, DENUNCIATION_TABLE) == DENUNCIATION_ALLOWED_COLS
+test_faction_leverage_9.py	350	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _member_office_weight("兵部", "") == 0.0, (
+test_faction_leverage_9.py	474	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _member_office_weight("东厂", "司礼监秉笔太监,东厂提督") == 20.0
+test_faction_leverage_9.py	476	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _member_office_weight("礼部", "礼部尚书,东阁大学士") == 18.0
+test_faction_leverage_9.py	478	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _member_office_weight("兵部", "兵部尚书") == 12.0
+test_faction_leverage_9.py	480	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _member_office_weight("司礼监", "") == 0.0
+test_faction_leverage_9.py	491	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("副总兵") == 0.5, "副总兵⊃总兵 不该被误判正职 1.0"
+test_faction_leverage_9.py	492	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("锦州副总兵") == 0.5, "锦州副总兵(祖大寿) 不该被误判正职 1.0"
+test_faction_leverage_9.py	493	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("佥都御史") == 0.5, "佥都御史⊃都御史 不该被误判正职 1.0"
+test_faction_leverage_9.py	494	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("佥都御史，巡按") == 0.5, "佥都御史(吴甡) 带尾缀仍 0.5"
+test_faction_leverage_9.py	496	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("总兵") == 1.0
+test_faction_leverage_9.py	497	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("都御史") == 1.0
+test_faction_leverage_9.py	498	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("兵部尚书") == 1.0
+test_faction_leverage_9.py	499	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("内阁首辅") == 1.0
+test_faction_leverage_9.py	500	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("司礼监掌印太监") == 1.0
+test_faction_leverage_9.py	501	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("司礼监秉笔太监") == 1.0
+test_faction_leverage_9.py	503	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("侍郎") == 0.5
+test_faction_leverage_9.py	504	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("东阁大学士") == 0.5
+test_faction_leverage_9.py	505	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("次辅") == 0.5
+test_faction_leverage_9.py	507	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("兵部职方") == 0.25
+test_faction_leverage_9.py	508	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("郎中") == 0.25
+test_faction_leverage_9.py	509	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("游击") == 0.25
+test_faction_leverage_9.py	511	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("礼部尚书,东阁大学士") == 1.0
+test_faction_leverage_9.py	513	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("火器西法") == 1.0
+test_faction_leverage_9.py	526	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("副都御史") == 0.5, "副都御史⊃都御史 不该被误判正职 1.0"
+test_faction_leverage_9.py	527	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("右副都御史") == 0.5, "右副都御史(带方位前缀)仍 0.5"
+test_faction_leverage_9.py	528	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("都督佥事") == 0.5, "都督佥事⊃都督 是佐贰、应 0.5"
+test_faction_leverage_9.py	529	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("都督同知") == 0.5, "都督同知⊃都督 是佐贰、应 0.5"
+test_faction_leverage_9.py	531	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("同知") == 0.5
+test_faction_leverage_9.py	532	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("佥事") == 0.5
+test_faction_leverage_9.py	533	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("指挥同知") == 0.5, "卫指挥同知 是佐贰、应 0.5"
+test_faction_leverage_9.py	535	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("副总兵") == 0.5
+test_faction_leverage_9.py	536	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("佥都御史") == 0.5
+test_faction_leverage_9.py	538	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("左都御史") == 1.0, "左都御史 是都察院堂官、应 1.0"
+test_faction_leverage_9.py	539	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("右都御史") == 1.0, "右都御史 是都察院堂官、应 1.0"
+test_faction_leverage_9.py	540	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("提督东厂") == 1.0
+test_faction_leverage_9.py	541	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("提督京营") == 1.0
+test_faction_leverage_9.py	542	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("总督军务") == 1.0
+test_faction_leverage_9.py	543	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("秉笔太监") == 1.0
+test_faction_leverage_9.py	544	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_rank_multiplier("都指挥使") == 1.0
+test_faction_leverage_9.py	553	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _member_office_weight("边镇", "锦州副总兵") == 5.0, (
+test_faction_leverage_9.py	557	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _member_office_weight("边镇", "锦州总兵") == 10.0
+test_faction_leverage_9.py	571	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _member_office_weight("刑部", "刑部尚书") == 5.0, (
+test_faction_leverage_9.py	588	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _office_type_from_table("御马监掌印太监") == "内廷", (
+test_faction_leverage_9.py	593	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _member_office_weight("内廷", "御马监掌印太监") == 4.0, (
+test_faction_leverage_9.py	1027	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert db._faction_office_weight_sum(faction) == 2.5
+test_faction_leverage_9.py	1060	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert db._faction_office_weight_sum(faction) == 2.5
+test_family_tail_615.py	199	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(restored, "factions", "东林") == before_faction
+test_family_tail_615.py	200	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(restored, dossier_id) == []
+test_family_tail_615.py	232	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(restored, "factions", "东林") == before_faction
+test_family_tail_restore_570.py	177	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _face(restored, appt_id) == before_appt
+test_family_tail_restore_570.py	178	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _face(restored, errand_id) == before_errand
+test_fiscal_levy_effect.py	1369	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"decision_key": row["decision_key"],
+test_fiscal_levy_effect.py	1459	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"decision_key": row["decision_key"],
+test_fiscal_levy_effect.py	1538	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	[{"decision_key": row["decision_key"], "note": "姑候户部再核"}],
+test_fiscal_levy_effect.py	1610	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _liao_terminal(db) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
+test_fiscal_levy_effect.py	1641	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _liao_terminal(db) == {"terminal_state": "", "terminal_reason": ""}
+test_fiscal_levy_effect.py	1661	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _liao_terminal(db) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
+test_fiscal_levy_effect.py	1685	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _liao_terminal(db) == {"terminal_state": "triggered", "terminal_reason": "已驳"}
+test_fiscal_substrate_bridge.py	1035	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"jingyun_paid": expense_row["jingyun_paid"],
+test_fiscal_substrate_bridge.py	1036	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"central_paid": expense_row["central_paid"],
+test_fiscal_substrate_bridge.py	1037	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"transport_loss": expense_row["transport_loss"],
+test_fiscal_substrate_bridge.py	1228	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"jingyun_paid": expense_row["jingyun_paid"],
+test_fiscal_substrate_bridge.py	1229	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"central_paid": expense_row["central_paid"],
+test_fiscal_substrate_bridge.py	1230	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"transport_loss": expense_row["transport_loss"],
+test_fiscal_substrate_bridge.py	844	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _hub_ledger_snapshot(db, turn=turn) == before_ledger
+test_fiscal_substrate_bridge.py	845	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _hub_container_snapshot(db) == before_containers
+test_fiscal_substrate_bridge.py	2828	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _province_pay_arrears(fresh_db, "shaanxi") == pytest.approx(
+test_fiscal_substrate_bridge.py	2886	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _province_pay_arrears(fresh_db, "fujian") == pytest.approx(
+test_fiscal_substrate_bridge.py	3070	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _province_pay_arrears(fresh_db, "shaanxi") == pytest.approx(before_province)
+test_fiscal_substrate_bridge.py	3172	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _province_pay_arrears(fresh_db, "shaanxi") == pytest.approx(0)
+test_fiscal_substrate_bridge.py	4258	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _read_settle(db, "taiwan") is None, "明控但无 settle 的省不应被创建/推进"
+test_fiscal_substrate_bridge.py	4282	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _read_settle(db) is None, "前提：陕西无 settle 基座"
+test_fiscal_substrate_bridge.py	4806	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", fiscal) == fiscal
+test_fiscal_substrate_bridge.py	4818	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", fiscal) is None
+test_fiscal_substrate_bridge.py	4829	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", payload) is None
+test_grant_reconciliation_567.py	527	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _recon_rejections(db) == []
+test_issue_entities.py	43	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _army_count(db) == before + 1
+test_issue_entities.py	312	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _army_count(db) == before
+test_issue_entities.py	389	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _army_count(db) == before          # 扩编不新建军队
+test_junxin_monthly_tick_314.py	79	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty_of(db, KEG) == 45, "hub 路欠 3 月 → -5"
+test_junxin_monthly_tick_314.py	108	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty_of(db, aid) == 45, "纯省源欠 3 月结算后 loyalty 应 -5"
+test_junxin_monthly_tick_314.py	139	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty_of(db, aid) == 45, "混合省源欠 3 月结算后 loyalty 应 -5"
+test_junxin_monthly_tick_314.py	163	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty_of(db, KEG) == 50, "土司自养军 loyalty 不得被 tick 动"
+test_junxin_monthly_tick_314.py	164	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty_of(db, ELITE) == before_non_ming, "非明军 loyalty 不得被 tick 动"
+test_junxin_monthly_tick_314.py	179	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty_of(db, KEG) == 50, "自养军 loyalty 不得被 tick 动"
+test_junxin_monthly_tick_314.py	193	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty_of(db, KEG) == 30, "零兵残军 loyalty 不得被 tick 动"
+test_loyalty_soft_adjust_clamp_320.py	56	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty(db) == 55
+test_loyalty_soft_adjust_clamp_320.py	70	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty(db) == 25
+test_loyalty_soft_adjust_clamp_320.py	80	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty(db) == 0
+test_loyalty_soft_adjust_clamp_320.py	90	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty(db) == 60
+test_loyalty_soft_adjust_clamp_320.py	112	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty(db) == 45
+test_loyalty_soft_adjust_clamp_320.py	122	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty(db) == 55
+test_loyalty_soft_adjust_clamp_320.py	156	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty(db) == 55
+test_loyalty_soft_adjust_clamp_320.py	166	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty(db) == 55
+test_loyalty_soft_adjust_clamp_320.py	176	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty(db) == 85
+test_loyalty_soft_adjust_clamp_320.py	192	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _loyalty(db) == 55
+test_manual_directive_institution_normalize_1279.py	207	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._is_non_person_participant_name("韩阁老") is False
+test_manual_directive_institution_normalize_1279.py	208	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._is_non_person_participant_name("毕户部") is False
+test_manual_directive_institution_normalize_1279.py	209	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._is_non_person_participant_name("曹太监") is False
+test_manual_directive_institution_normalize_1279.py	211	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._is_non_person_participant_name("司礼监") is True
+test_manual_directive_institution_normalize_1279.py	212	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._is_non_person_participant_name("户部") is True
+test_manual_directive_institution_normalize_1279.py	213	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._is_non_person_participant_name("陛下") is True
+test_manual_directive_institution_normalize_1279.py	214	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._is_non_person_participant_name("大理寺") is True
+test_manual_directive_institution_normalize_1279.py	215	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._is_non_person_participant_name("翰林院") is True
+test_manual_directive_institution_normalize_1279.py	216	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._is_non_person_participant_name("通政使司") is True
+test_manual_directive_institution_normalize_1279.py	217	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._is_non_person_participant_name("西厂") is True
+test_mechanical_tail_1845.py	446	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _printed_ending_summary(session) == visible
+test_menu_lifecycle_drain_396.py	535	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	out.setdefault(m["minister"], []).append({"role": m["role"], "content": m["content"]})
+test_menu_lifecycle_drain_396.py	546	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	{"role": m["role"], "content": m["content"], "chat_turn_id": 0}
+test_menu_lifecycle_drain_396.py	561	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	{"role": m["role"], "content": m["content"]})
+test_menu_lifecycle_drain_396.py	137	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert web_app._get_main_db_path() == active_db_path
+test_menu_lifecycle_drain_396.py	661	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert runtime._mark_pending_write() is None
+test_month_call_recovery_1846.py	571	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _world_ledger_rows(db) == []
+test_month_call_recovery_1846.py	648	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ningyuan_ledger_rows(db) == []
+test_month_call_recovery_1846.py	708	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ningyuan_ledger_rows(db) == []
+test_month_chain_1843.py	277	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"decision_key": desk_row["decision_key"],
+test_month_chain_1843.py	278	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"label": opt["label"],
+test_month_chain_1843.py	254	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == pool_before
+test_month_chain_1843.py	288	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == pool_before
+test_month_chain_1843.py	299	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == pool_before - 10 * RECOVERY_PERSONS_PER_WAN
+test_month_chain_1843.py	300	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "shaanxi") == farmers_before + 10 * RECOVERY_PERSONS_PER_WAN
+test_month_chain_1843.py	899	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _three_province_unrest(db) == {"shaanxi": 75, "shanxi": 75, "henan": 75}
+test_month_chain_1847.py	205	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"decision_key": desk_row["decision_key"],
+test_month_chain_1847.py	206	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"label": selected["label"],
+test_month_chain_1847.py	208	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"dossier_id": selected["dossier_id"],
+test_month_chain_1847.py	273	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"decision_key": desk_row["decision_key"],
+test_month_chain_1847.py	274	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"label": choice["label"],
+test_month_chain_1847.py	356	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"decision_key": desk_row["decision_key"],
+test_month_chain_1847.py	357	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"label": choice["label"],
+test_month_chain_1847.py	438	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"decision_key": desk_row["decision_key"],
+test_month_chain_1847.py	439	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"label": choice["label"],
+test_month_chain_1847.py	507	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"decision_key": desk_row["decision_key"],
+test_month_chain_1847.py	508	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"label": choice["label"],
+test_month_chain_1847.py	693	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"revisions": [{"decision_key": row["decision_key"], "title": "改票", "context": "修订奏折",
+test_month_chain_1847.py	731	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	batch = [{"decision_key": row["decision_key"], "label": row["options"][0]["label"]}
+test_month_chain_1847.py	991	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"decision_key": desk_row["decision_key"],
+test_month_chain_1847.py	1006	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"decision_key": desk_row["decision_key"],
+test_month_chain_1847.py	1029	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	[{"decision_key": ordinary["decision_key"], "note": "只写批语"}],
+test_month_chain_1847.py	1079	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"decision_key": row["decision_key"],
+test_month_chain_1847.py	1080	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"label": option["label"],
+test_month_loop_tracer_1468.py	459	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _turn_of(after) == turn0, "dead-llm must not advance month"
+test_month_translate_1840.py	565	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == refugees_before
+test_month_translate_1840.py	806	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _army_rejection_categories(db, "jisi_hidden_affair_1840") == {category}
+test_month_translate_1840.py	843	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _army_rejection_categories(db, "jisi_hidden_only_1840") == {"event_rejected"}
+test_month_translate_1840.py	671	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "shaanxi") == farmers_before - (300 if triggered else 0)
+test_month_translate_1840.py	672	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == refugees_before + (300 if triggered else 0)
+test_mutiny_actual_residence_659.py	157	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "军户", "liaodong") == JUNHU_LIAODONG
+test_mutiny_actual_residence_659.py	158	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "liaodong") == LIUMIN_LIAODONG
+test_mutiny_actual_residence_659.py	159	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
+test_mutiny_actual_residence_659.py	160	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
+test_mutiny_noop_whitelist_319.py	498	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db, PAY_SOURCE_DENY_FIELDS) == before
+test_mutiny_noop_whitelist_319.py	518	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _snapshot(db, PAY_SOURCE_DENY_FIELDS) == before
+test_new_game_write_path_1749.py	223	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"campaign_id": acc_data["campaign_id"],
+test_new_game_write_path_1749.py	274	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"chat_turn_id": chat["chat_turn_id"],
+test_new_game_write_path_1749.py	275	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"night_id": chat["night_id"],
+test_new_game_write_path_1749.py	276	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"minister_message_id": chat["minister_message_id"],
+test_new_game_write_path_1749.py	399	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _campaign(g3) == c2
+test_new_game_write_path_1749.py	470	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _campaign(g0) == c0
+test_new_game_write_path_1749.py	539	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _drained(Path(web_app.user_data_path())) == []
+test_override_breach_costs_564.py	44	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "classes", "士绅") == max(0, before["士绅"] - 8)
+test_override_breach_costs_564.py	45	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "factions", "东林") == max(0, before["东林"] - 4)
+test_override_breach_costs_564.py	46	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "factions", "阉党") == before["阉党"]
+test_override_breach_costs_564.py	70	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "factions", "东林") == min(100, before_faction + 4)
+test_override_breach_costs_564.py	71	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "classes", "士绅") == max(0, before_class - 8)
+test_override_breach_costs_564.py	84	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "factions", "东林") == before_faction
+test_override_breach_costs_564.py	85	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "classes", "士绅") == before_class
+test_override_breach_costs_564.py	96	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "factions", "东林") == before_faction
+test_override_breach_costs_564.py	97	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "classes", "士绅") == before_class
+test_override_breach_costs_564.py	112	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "factions", "东林") == before_faction
+test_override_breach_costs_564.py	113	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "classes", "士绅") == before_class
+test_override_breach_costs_564.py	114	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_override_breach_costs_564.py	136	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "classes", "农民") == before_new_party
+test_override_breach_costs_564.py	137	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "factions", "东林") == before_faction
+test_override_breach_costs_564.py	176	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "factions", "东林") == max(0, after_force - 4)
+test_override_breach_costs_564.py	218	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "factions", dead_faction) == max(0, before_dead_faction - 4)
+test_override_breach_costs_564.py	332	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_override_breach_costs_564.py	347	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_override_breach_costs_564.py	366	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_override_breach_costs_564.py	384	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_override_breach_costs_564.py	400	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, dossier_id) == []
+test_override_breach_costs_564.py	434	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, issued) == []
+test_override_breach_costs_564.py	454	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _cost_events(db, never) == []
+test_override_breach_costs_564.py	301	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "factions", "东林") == before_f
+test_override_breach_costs_564.py	302	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _sat(db, "classes", "士绅") == before_c
+test_p4_guard_new_surfaces_547.py	195	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"pending_decisions": page["pending_decisions"],
+test_p4_guard_new_surfaces_547.py	196	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"ministers": page["ministers"],
+test_p4_guard_new_surfaces_547.py	197	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"consorts": page["consorts"],
+test_p4_guard_new_surfaces_547.py	198	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"talent_pool": page["talent_pool"],
+test_person_transit_write_667.py	171	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert db._commit_office_action(
+test_pihong_dossier_1490.py	133	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	choice = {"decision_key": row["decision_key"], "action": "imperial_push", "note": "  朕独担  "}
+test_pihong_dossier_1490.py	186	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	choice = {"decision_key": original["decision_key"], "action": "midzhi", "note": "  朕亲拟\n旨意  "}
+test_pihong_dossier_1490.py	270	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	[{"decision_key": r["decision_key"], "label": "准"} for r in rows],
+test_player_army_projection_321.py	107	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert sit["morale_text"] == _qualitative_army_stat("morale", row["morale"])
+test_population_transfers_649.py	85	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 3000
+test_population_transfers_649.py	86	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 3000
+test_population_transfers_649.py	87	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _global_population(db) == total_before  # 全局守恒
+test_population_transfers_649.py	146	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "shaanxi") == farmer_before - 50
+test_population_transfers_649.py	147	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == displaced_before + 50
+test_population_transfers_649.py	163	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI
+test_population_transfers_649.py	164	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
+test_population_transfers_649.py	196	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
+test_population_transfers_649.py	216	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
+test_population_transfers_649.py	315	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "shaanxi") == LEGACY_FARMER_SHAANXI - 3
+test_population_transfers_649.py	316	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == LEGACY_DISPLACED_SHAANXI + 3
+test_population_transfers_649.py	329	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "shaanxi") == 0
+test_population_transfers_649.py	330	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == displaced_before + source_before
+test_population_transfers_662.py	69	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - disaster_amount
+test_population_transfers_662.py	70	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "军户", "shaanxi") == garrison_before - war_amount
+test_population_transfers_662.py	71	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == (
+test_population_transfers_662.py	74	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _global_population(db) == total_before
+test_population_transfers_662.py	151	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 7000  # 单行合流
+test_population_transfers_662.py	152	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 7000
+test_population_transfers_662.py	153	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _global_population(db) == total_before  # 全局守恒不变式
+test_pre_settle_transaction.py	439	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ledger_count(db, turn) == before_ledger   # 财政随占位一起回滚
+test_pre_settle_transaction.py	53	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ledger_count(db2, turn) == after_first  # 财政只落一次
+test_promulgation_judge_561.py	77	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"imperial_authority_band": context["imperial_authority_band"],
+test_promulgation_judge_561.py	250	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"imperial_authority_band": context["imperial_authority_band"],
+test_promulgation_judge_561.py	291	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"imperial_authority_band": context["imperial_authority_band"],
+test_promulgation_judge_561.py	192	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _judge_payload_from_prompt(prompt) == expected
+test_promulgation_judge_561.py	455	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _select_second_verdict(True, 7, [promoted], [rejected]) == promoted
+test_promulgation_judge_561.py	456	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _select_second_verdict(False, 7, [rejected], [promoted]) == promoted
+test_promulgation_judge_561.py	618	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _appointment_rejection_proves_faction_gate(ok) is True
+test_promulgation_judge_561.py	620	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _appointment_rejection_proves_faction_gate(
+test_promulgation_judge_561.py	623	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _appointment_rejection_proves_faction_gate(
+test_promulgation_judge_561.py	626	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _appointment_rejection_proves_faction_gate(
+test_promulgation_judge_561.py	629	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _appointment_rejection_proves_faction_gate(
+test_promulgation_judge_561.py	632	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _appointment_rejection_proves_faction_gate(
+test_promulgation_judge_561.py	646	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ordinary_class_all_promulgated([
+test_promulgation_judge_561.py	652	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ordinary_class_all_promulgated([
+test_promulgation_judge_561.py	655	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ordinary_class_all_promulgated([
+test_promulgation_judge_561.py	660	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ordinary_class_all_promulgated([
+test_promulgation_judge_561.py	694	helper_eq_helper	KEEP_BEFORE_AFTER_INVARIANT	assert _gatekeeper_names(after) == _gatekeeper_names(before)
+test_public_sayings_1829.py	227	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _saying_hits(excluded_name) == []
+test_public_sayings_1829.py	242	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _saying_hits_on(reopened, reopened_state, excluded_name, source_id) == []
+test_qa_1281_issue_audience_case_facts.py	58	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_paths(audience, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+test_qa_1281_issue_audience_case_facts.py	59	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_paths(outsider, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+test_qa_1281_issue_audience_case_facts.py	81	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_paths(prepared, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+test_qa_1281_issue_audience_case_facts.py	111	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_paths(audience, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+test_qa_1281_issue_audience_case_facts.py	112	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _issue_paths(outsider, issue_id) == set()
+test_qa_c2_settlement_display_lifecycle_1343.py	126	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert web_app._settlement_entry_inflight(runtime) == 0
+test_qa_c2_settlement_display_lifecycle_1343.py	167	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert web_app._settlement_entry_inflight(runtime) == 0, "clear 抛错后 inflight 须归零"
+test_qa_c2_settlement_display_lifecycle_1343.py	194	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert web_app._settlement_entry_inflight(runtime) == 0
+test_qa_c2_settlement_display_lifecycle_1343.py	227	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert web_app._settlement_entry_inflight(runtime) == 0
+test_qa_d1_decree_normalize_1274.py	92	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._is_non_person_participant_name(name) is True
+test_qa_t1_extraction_dual_source_1353.py	519	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert game._trail_highlight_judge_after_reply(
+test_qa_t1_extraction_dual_source_1353.py	623	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert game._mark_pending_write() is None
+test_recommendation_batch_snapshot_1583.py	26	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"name": row["name"], "office": office,
+test_recommendation_batch_snapshot_1583.py	27	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"faction": row["faction"], "reason": reason,
+test_recommendation_edges_635.py	27	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"name": row["name"], "office": office,
+test_recommendation_edges_635.py	28	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"faction": row["faction"], "reason": reason,
+test_recommendation_edges_635.py	212	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"name": row["name"], "office": "巡盐御史",
+test_recommendation_edges_635.py	213	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"faction": row["faction"], "reason": "",
+test_recommendation_edges_635.py	108	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _recommendation_origins(db) == []
+test_recommendation_edges_635.py	122	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _recommendation_origins(db) == []
+test_recommendation_edges_635.py	219	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _recommendation_origins(db) == []
+test_recommendations.py	236	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"name": row["name"], "office": office,
+test_recommendations.py	237	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"faction": row["faction"], "reason": "荐人采纳",
+test_refugee_loop_652.py	151	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == before_pool
+test_refugee_loop_652.py	175	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == 0
+test_refugee_loop_652.py	176	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _strength(db, pid) == min(100, before + delta)
+test_refugee_loop_652.py	188	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _strength(db, pid) == empty_str
+test_refugee_loop_652.py	203	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _strength(db, "bandits") == 100
+test_refugee_loop_652.py	234	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == before_pool - clean_req
+test_refugee_loop_652.py	235	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _strength(db, pid) == before_str + rec["strength_delta"]
+test_refugee_loop_652.py	249	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _strength(db, pid) == before
+test_refugee_loop_652.py	250	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _strength(db, "houjin") == min(100, houjin_before + 2)
+test_refugee_loop_652.py	256	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _strength(db, pid) == max(0, before2 - 3)
+test_refugee_loop_652.py	271	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
+test_refugee_loop_652.py	306	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == before
+test_refugee_loop_652.py	323	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == before
+test_refugee_loop_652.py	446	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == 100000
+test_refugee_loop_652.py	461	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == 100000
+test_refugee_loop_652.py	464	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == 0
+test_refugee_loop_652.py	465	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "shaanxi") == before_farmers + 100000
+test_refugee_loop_652.py	637	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == before
+test_refugee_loop_652.py	470	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(loaded, "流民", "shaanxi") == 0
+test_refugee_loop_652.py	471	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(loaded, "农民", "shaanxi") == before_farmers + 100000
+test_refugee_loop_652.py	548	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == displaced_before
+test_refugee_loop_652.py	587	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(loaded, "流民", "shaanxi") == displaced_before - expected
+test_refugee_loop_652.py	588	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(loaded, "农民", "shaanxi") == farmer_before + expected
+test_rejection_wiring.py	104	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _rejection_rows(db, turn) == []
+test_rejection_wiring.py	144	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _rejection_rows(db, turn) == []  # DB 行随外层回滚消失
+test_rejection_wiring.py	566	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _provenance_from_stored(Provenance.player_decree) is Provenance.player_decree
+test_rejection_wiring.py	568	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _provenance_from_stored("player_decree") == Provenance.player_decree
+test_rejection_wiring.py	569	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _provenance_from_stored("system_simulation") == Provenance.system_simulation
+test_rejection_wiring.py	571	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _provenance_from_stored("Provenance.player_decree") == Provenance.player_decree
+test_rejection_wiring.py	572	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _provenance_from_stored("Provenance.system_simulation") == Provenance.system_simulation
+test_rejection_wiring.py	574	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _provenance_from_stored("") == Provenance.system_simulation
+test_rejection_wiring.py	575	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _provenance_from_stored(None) == Provenance.system_simulation
+test_rejection_wiring.py	576	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _provenance_from_stored("查无此来源") == Provenance.system_simulation
+test_rejection_wiring.py	577	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _provenance_from_stored("Provenance.查无此成员") == Provenance.system_simulation
+test_relation_capture_633.py	73	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _edge_rows(db, source="王绍徽", target="毕自严") == []
+test_relation_capture_633.py	98	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _triplets(rows) == {
+test_relation_capture_633.py	177	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _edge_rows(db) == []
+test_relation_capture_633.py	206	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _edge_rows(db) == []
+test_relation_capture_633.py	234	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _edge_rows(db) == []
+test_relation_capture_633.py	255	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _edge_rows(db) == []
+test_relation_capture_633.py	394	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _edge_rows(db) == []
+test_relation_capture_633.py	417	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _edge_rows(db) == []
+test_relation_capture_633.py	481	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _edge_rows(db, source="甲", target="乙") == []
+test_relation_capture_633.py	535	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _edge_rows(db) == []
+test_relation_capture_633.py	560	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
+test_relation_capture_633.py	596	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
+test_relation_capture_633.py	633	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
+test_relation_capture_633.py	649	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _triplets(_edge_rows(db)) == {("孙传庭", "洪承畴", "恩义")}
+test_relation_capture_633.py	745	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _triplets(_edge_rows(db)) == {
+test_relation_capture_633.py	770	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _edge_rows(db) == []  # 零边写入
+test_relation_capture_633.py	785	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _edge_rows(db) == []  # 零边副作用
+test_runtime_llm_config.py	452	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert cli_backend._backend_label(cfg) == "agy"
+test_secret_order_isolation_883.py	149	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid}") is None
+test_secret_order_isolation_883.py	195	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_origin}") is None
+test_secret_order_isolation_883.py	211	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_other}") == other_public
+test_secret_order_isolation_883.py	231	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, "chat_message:replay-secret") == f"臣复述密旨：{marker}"
+test_secret_order_isolation_883.py	272	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_public}") == public_line
+test_secret_order_isolation_883.py	277	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_ack}") == ack
+test_secret_order_isolation_883.py	279	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_secret}") is None
+test_secret_order_isolation_883.py	310	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid}") == paraphrase
+test_secret_order_isolation_883.py	338	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid}") is None
+test_secret_order_isolation_883.py	369	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid}") is None
+test_secret_order_isolation_883.py	410	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid}") == public_line
+test_secret_order_isolation_883.py	496	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_public_q}") == public_q
+test_secret_order_isolation_883.py	497	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_public_reply}") == public_reply
+test_secret_order_isolation_883.py	540	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_secret}") is None
+test_secret_order_isolation_883.py	541	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_old}") == old_public
+test_secret_order_isolation_883.py	778	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_sec}") is None
+test_secret_order_isolation_883.py	1163	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_b) == "withheld"
+test_secret_order_isolation_883.py	1166	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid_a) == 0
+test_secret_order_isolation_883.py	1167	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid_a_reply) == 0
+test_secret_order_isolation_883.py	1174	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_a) == "released"
+test_secret_order_isolation_883.py	1175	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_a_reply) == "released"
+test_secret_order_isolation_883.py	1176	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid_a) == 1
+test_secret_order_isolation_883.py	1177	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid_a_reply) == 1
+test_secret_order_isolation_883.py	1210	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_committed) == "withheld"
+test_secret_order_isolation_883.py	1212	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid_failed) == 0
+test_secret_order_isolation_883.py	1240	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_a_user) == "withheld"
+test_secret_order_isolation_883.py	1241	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_a_min) == "released"
+test_secret_order_isolation_883.py	1242	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_b_user) == "held"
+test_secret_order_isolation_883.py	1243	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_b_min) == "held"
+test_secret_order_isolation_883.py	1244	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid_b_user) == 0
+test_secret_order_isolation_883.py	1245	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid_b_min) == 0
+test_secret_order_isolation_883.py	1259	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_b_user) == "withheld"
+test_secret_order_isolation_883.py	1260	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_b_min) == "released"
+test_secret_order_isolation_883.py	1261	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_a_user) == "withheld"
+test_secret_order_isolation_883.py	1262	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_a_min) == "released"
+test_secret_order_isolation_883.py	1263	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid_a_min) == 1
+test_secret_order_isolation_883.py	1264	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid_b_min) == 1
+test_secret_order_isolation_883.py	1265	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_a_min}") == ack_a
+test_secret_order_isolation_883.py	1266	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_b_min}") == ack_b
+test_secret_order_isolation_883.py	1300	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid_a_user) == 0
+test_secret_order_isolation_883.py	1313	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_a2) == "withheld"
+test_secret_order_isolation_883.py	1314	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid_a2) == 0
+test_secret_order_isolation_883.py	1347	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_late_user) == "held"
+test_secret_order_isolation_883.py	1348	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_late_ack) == "held"
+test_secret_order_isolation_883.py	1349	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_other) == "held"
+test_secret_order_isolation_883.py	1352	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_late_user) == "released"
+test_secret_order_isolation_883.py	1353	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_late_ack) == "released"
+test_secret_order_isolation_883.py	1354	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_other) == "released"
+test_secret_order_isolation_883.py	1355	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_late_user}") == late_user
+test_secret_order_isolation_883.py	1356	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_late_ack}") == late_ack
+test_secret_order_isolation_883.py	1357	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_other}") == other_public
+test_secret_order_isolation_883.py	1364	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db, f"chat_message:{mid_even_later}") == later_line
+test_secret_order_isolation_883.py	1515	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid_late) == "held"
+test_secret_order_isolation_883.py	1583	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid) == "withheld"
+test_secret_order_isolation_883.py	1586	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid) == "withheld"
+test_secret_order_isolation_883.py	1587	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db, mid) == 0
+test_secret_order_isolation_883.py	1234	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db, mid) == "held"
+test_secret_order_isolation_883.py	1551	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db2, mid_u) == "withheld"
+test_secret_order_isolation_883.py	1552	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_count(db2, mid_u) == 0
+test_secret_order_isolation_883.py	1553	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db2, mid_late) == "released"
+test_secret_order_isolation_883.py	1554	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db2, f"chat_message:{mid_late}") == late
+test_secret_order_isolation_883.py	1555	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ks(db2, mid_pub) == "released"
+test_secret_order_isolation_883.py	1556	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _shared_source_body(db2, f"chat_message:{mid_pub}") == pending_public
+test_secret_order_payoff_1504.py	635	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	for item in (submitted or [{"id": oid, "status": order["status"]}]))
+test_secret_order_payoff_1504.py	1684	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _open_errands(db, name) == 0
+test_secret_order_payoff_1504.py	1698	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _open_errands(db, name, except_dossier=busy_did) == 3
+test_secret_order_payoff_1504.py	1702	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _open_errands(db, name) == 0
+test_secret_order_payoff_1504.py	1792	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _open_errands(db, name) == 0
+test_secret_order_section_rejections.py	73	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _rejection_rows(db, turn, "secret_order_updates") == []
+test_secret_order_update.py	124	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	assert dict(source) == {"title": order["title"], "body": order["content"]}
+test_section_fiscal_rejections.py	309	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _rejection_rows(db, turn, "fiscal_changes") == []
+test_section_fiscal_rejections.py	420	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _rejection_rows(db, turn, "fiscal_changes") == []
+test_shared_resource_order_1844.py	376	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _invalid_shape_matches(db, "economy_moves", "category", "冲突笔") == 1
+test_shared_resource_order_1844.py	377	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _invalid_shape_matches(db, "economy_moves", "category", "坏声明") == 1
+test_shared_resource_order_1844.py	378	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _invalid_shape_matches(db, "new_issues", "id", "stamp-once-bad-issue") == 1
+test_six_sciences_seed_608.py	46	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert db._faction_office_weight_sum("中立") == before
+test_six_sciences_seed_608.py	52	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert db._faction_office_weight_sum("中立") == before + _member_office_weight(
+test_state_reload.py	135	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _ledger_count(db, turn) == before_ledger
+test_style_temperament_641.py	70	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _style_row(db) == NEW_STYLE
+test_style_temperament_641.py	138	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _style_row(db) == PADDED_STYLE
+test_style_temperament_641.py	169	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _style_row(db) == blank_before
+test_style_temperament_641.py	191	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _style_row(db) == before_db
+test_style_temperament_641.py	205	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _style_row(db) == NEW_STYLE
+test_style_temperament_641.py	233	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _style_row(db) == before
+test_style_temperament_641.py	380	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _style_row(db, source) == before_db[source]
+test_style_temperament_641.py	381	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _style_row(db, target) == before_db[target]
+test_style_temperament_641.py	408	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _style_row(db) == NEW_STYLE
+test_surcharge_causal_chain_650.py	181	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"reason": "加派", "origin_ref": decree["origin_ref"],
+test_surcharge_causal_chain_650.py	199	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	"reason": "灾害", "origin_ref": other["origin_ref"],
+test_surcharge_causal_chain_650.py	220	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == before
+test_surcharge_causal_chain_650.py	270	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == before + want
+test_surcharge_causal_chain_650.py	272	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == before + want
+test_surcharge_causal_chain_650.py	300	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "liaodong") == farmer_before
+test_surcharge_causal_chain_650.py	301	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "liaodong") == displaced_before
+test_surcharge_causal_chain_650.py	317	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "henan") == before
+test_surcharge_causal_chain_650.py	327	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "henan") == pool_before
+test_surcharge_causal_chain_650.py	383	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _gazette_projection_body(db, state, "温体仁", first_turn) == first_body
+test_surcharge_causal_chain_650.py	393	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _gazette_projection_body(db, state, "温体仁", second_turn) == free_body
+test_surcharge_causal_chain_650.py	447	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "农民", "shaanxi") == farmer_before
+test_surcharge_causal_chain_650.py	448	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == displaced_before
+test_surcharge_causal_chain_650.py	461	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == before
+test_surcharge_causal_chain_650.py	473	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
+test_surcharge_causal_chain_650.py	478	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + want
+test_surcharge_causal_chain_650.py	482	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + want
+test_transaction_boundary.py	184	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _fiscal_config_value(db, key) == before + 1
+test_transaction_boundary.py	186	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _fiscal_config_value(db, key) == before
+test_transaction_boundary.py	207	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _fiscal_config_value(db, first_key) == first_before + 1
+test_transaction_boundary.py	208	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _fiscal_config_value(db, second_key) == second_before + 2
+test_transaction_boundary.py	210	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _fiscal_config_value(db, first_key) == first_before
+test_transaction_boundary.py	211	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _fiscal_config_value(db, second_key) == second_before
+test_transit_countdown_668.py	172	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	return {'location': row['location'], 'transit_to': row['transit_to'], 'remaining': row['transit_distance_remaining'], 'f
+test_transit_countdown_668.py	49	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _oracle_n(r0, 1.0) == 1
+test_transit_countdown_668.py	98	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _oracle_n(r0, 1.0) == 1
+test_transit_countdown_668.py	128	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _oracle_n(r0, 1.0) == 1
+test_web_audience_night_498.py	517	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _count(game.db, "audience_nights") == nights0
+test_web_audience_night_498.py	518	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _count(game.db, "chat_turns") == turns0
+test_web_audience_night_498.py	355	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _count(game.db, "chat_turns") == turns_before_retry
+test_web_chat_serialization_393.py	144	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	{"role": m["role"], "content": m["content"], "chat_turn_id": 0}
+test_web_chat_serialization_393.py	168	self_same_dict_field	KEEP_PAYLOAD_CONSTRUCTION	out.setdefault(m["minister"], []).append({"role": m["role"], "content": m["content"]})
+test_web_court_visibility.py	104	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert web_app._character_power_id(ch, db) == "ming"
+test_web_court_visibility.py	383	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _find_existing_minister(content, 归明, db) == 归明, "DB 已归明者却被内存值挡出 ming-guard（可召不可罢）"
+test_web_court_visibility.py	386	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _find_existing_minister(content, enemy, db) is None
+test_web_court_visibility.py	487	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _find_existing_minister(content, "史可法", db) == "史可法"
+test_web_court_visibility.py	488	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _find_existing_minister(content, "史宪之", db) == "史可法"
+test_web_court_visibility.py	518	test_local_helper_assert	KEEP_TEST_FIXTURE_HELPER	assert _find_existing_minister(content, "福王", db) == prince
