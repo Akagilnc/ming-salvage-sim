@@ -2,7 +2,8 @@
 
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1847-w5`
 - 分支：`ak-roles/1847-fixer-w13-n11-n14-legacy-idle`
-- 上一交卷：`6bd93c86c`（不 amend；本文件为独立纠正 commit）
+- 上一交卷：`6bd93c86c`（不 amend）
+- 本轮纠正 commit：`3015b9ca5f29a796f0e968ef89e8374d42de4c94`
 - 判词真源（末份）：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a10a32-a35a-7e5a-9232-b51070108168@fixer/attachments/07-1847-judge-80aea7cd3.json` 末 payload
 - 未结类别（只取末份全文，不另立更窄边界）：
   1. **旧兼容及退役残余闭包** — 沿选择器、执行分支、读写端、专属测试追清；退休后恒等包装随删；保留现役账本与新档接续；不改治理、不迁旧档、不加识别/拒收
