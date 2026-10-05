@@ -2,6 +2,7 @@
 
 现场：`/Users/akagilnc/WorkSpace/Ming_LLM-1899-w5`，分支 `ak-roles/1891-class-sweep`。  
 开工 HEAD：`34262577af3f6dbf455e64698ee5335dfcd51ddd`。  
+代码交卷：`d80db9754eca88b28d7daefa0ae50228134f36d5`（本回执日志指针随 docs forward 校正）。  
 法源：末判原卷最后 payload——`1891m-judge-34262577a.json`、`1899c-judge-34262577a.json`（本局只送两根因）。  
 用户类原文方向：退役选项契约残留；退役消费者与测试支持物闭包不全。  
 advisor（只读 PASS，非正式）：`canonical_choice` 键表删 `terminal_reason` 最简；equality 走既有统一真源；保留事件账 `db.mark_event_triggered`／`Event.terminal_reason_labels` 等。
@@ -16,7 +17,7 @@ export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
   MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
   MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
 PY=/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python
-TMPROOT=/tmp/1891-choice-cleanup.nKTt1L
+TMPROOT=/tmp/1891-choice-cleanup.x4Z74B
 UV_TOOL_DIR=/tmp/1891-uv-tools UV_CACHE_DIR=/tmp/1891-uv-cache
 # ruff 0.11.2 via: uv tool run --from ruff==0.11.2 ruff
 ```
@@ -114,8 +115,8 @@ ruff F401 --ignore-noqa on focus imports: All checks passed!
 
 | 日志 | 选择器摘要 | 结果 |
 | --- | --- | --- |
-| `$TMPROOT/logs/focus-core.log` | levy 月链／财政废除／财政 effect／rescript_choices／cli_play_turn／zongfan can_summon | **113 passed in 33.38s** |
-| `$TMPROOT/logs/focus-support.log` | web_chat_serialization／pihong 657 锁窗／payoff1504／web_court_visibility／qa_s2 | **83 passed in 3.38s** |
+| `$TMPROOT/logs/focus-core.log` | levy 月链／财政废除／财政 effect／rescript_choices／cli_play_turn／zongfan can_summon | **113 passed in 54.87s** |
+| `$TMPROOT/logs/focus-support.log` | web_chat_serialization／pihong 657 锁窗／payoff1504／web_court_visibility／qa_s2 | **83 passed in 3.48s** |
 
 未跑全量、未调真实模型。
 
@@ -134,4 +135,5 @@ ruff F401 --ignore-noqa on focus imports: All checks passed!
 ## 交卷
 
 代码 diff：`rescript_actions`／`context`／`models`／`session`／`web_app` + 四测试文件；净删。  
-commit：见 git log（`ak-roles:` 前缀 forward，禁止 amend）。
+代码 commit：`d80db9754eca88b28d7daefa0ae50228134f36d5`（`ak-roles:` forward，未 amend／push）。  
+可核日志根：`/tmp/1891-choice-cleanup.x4Z74B/logs/`（focus-core／focus-support／choice-mutation）。
