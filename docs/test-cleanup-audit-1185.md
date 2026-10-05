@@ -1228,7 +1228,7 @@
 |---|---:|---|---|
 | `test_created_future_limited_duration_commitment_applies_first_month` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progress` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
+| `test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached` | 1 | **retired (#1835 S3)** | 旧 resolve_condition→stop 兼容专属测；兼容链已删 |
 | `test_faction_class_commitment_ongoing_applies_monthly_when_counted` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crashing` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_commitment_stop_gate_resolve_respects_outer_transaction_rollback` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
@@ -2130,7 +2130,7 @@
 | `test_bad_status_raises` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_empty_effect_noop` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_apply_score_extraction_splits_bad_nested_entity` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
-| `test_apply_score_extraction_accepts_flat_faction_scalar` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
+| `test_apply_score_extraction_accepts_flat_faction_scalar` | 1 | **retired (#1835 S3)** | 失去所称契约检出能力；已删 |
 | `test_apply_score_extraction_rejects_nondict_power_second_level_per_entity` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_apply_score_extraction_rejects_nondict_list_item_per_item` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_apply_score_extraction_tolerates_null_field` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
@@ -2139,9 +2139,9 @@
 | `test_army_delta_unknown_army_raises` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_non_dict_character_status_item_raises` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_new_issue_nondict_effect_fields_do_not_crash` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
-| `test_initiative_floor_applies_when_enrich_empty` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
-| `test_runtime_cli_initiative_floor_applies_without_backend_env` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
-| `test_api_channel_initiative_does_not_use_backend_env_floor` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
+| `test_initiative_floor_applies_when_enrich_empty` | 1 | **retired (#1835 S4)** | 保活民心+1 floor；floor 已删 |
+| `test_runtime_cli_initiative_floor_applies_without_backend_env` | 1 | **retired (#1835 S4)** | 保活 floor；已删 |
+| `test_api_channel_initiative_does_not_use_backend_env_enrich` | 1 | **keep** | API 通道不得误触 CLI enrich（改名后保留） |
 | `test_inertia_natural_resolve_applies_entities` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_inertia_natural_resolve_applies_unified_person_change_with_bound_content` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_issue_resolve_person_effect_is_visible_to_effect_brief` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
@@ -2432,7 +2432,7 @@
 | `test_new_issue_bad_kind_rejected` | 3 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_new_issue_dirty_inertia_rejected` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_new_issue_oversized_severity_clamped_not_abort` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
-| `test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
+| `test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition` | 1 | **retired (#1835 S3)** | 旧 fallback 专属测；兼容链已删 |
 | `test_new_issue_infinity_field_rejected_not_abort` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_new_issue_infinity_expected_months_rejected_not_abort` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
 | `test_new_issue_severity_zero_preserved` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |

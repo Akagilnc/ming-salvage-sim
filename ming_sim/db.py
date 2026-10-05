@@ -110,9 +110,6 @@ def _army_owner_transition_pay_kwargs(normalized: Mapping[str, object]) -> Dict[
         key: (normalized[key] if key in normalized else _SENTINEL)
         for key in _ARMY_OWNER_TRANSITION_PAY_KEYS
     }
-_COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
-
-
 def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
     """ADR 0025 D6 唯一军心上限真源。"""
     return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
@@ -453,10 +450,6 @@ def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
         "morale_text": _qualitative_army_stat("morale", row["morale"]),
         "arrears_text": _army_arrears_report_text(row, monthly_pay),
     }
-
-
-def _is_commitment_stop_condition(resolve_condition: object) -> bool:
-    return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
 
 
 def _has_stop_condition(stop_condition: object) -> bool:
@@ -20050,11 +20043,8 @@ class GameDB:
         new_status = row["status"]
         closed_turn = row["closed_turn"]
         has_stop_condition = _has_stop_condition(row["stop_condition"])
-        commitment_stop_condition = (
-            bool(row["commitment_kind"])
-            or has_stop_condition
-            or _is_commitment_stop_condition(row["resolve_condition"])
-        )
+        # 仅 typed stop_condition / commitment_kind；旧 resolve_condition 散文不得冒充停止条件。
+        commitment_stop_condition = bool(row["commitment_kind"]) or has_stop_condition
         if to_value >= 100 and not commitment_stop_condition:
             new_status = "resolved"
             closed_turn = state.turn

@@ -1,59 +1,1790 @@
-=== S1 typed 段旧 dict/旧响应消费 ===
-ming_sim/covert_levy.py:46	sub	result['applied']	result["applied"]
-ming_sim/covert_progress.py:1810	get	result['rejected']	result.get("rejected")
-TOTAL=2
-=== S2 预检影子数量公式 / 独立 stages 捕获 ===
-417:            if max(0, min(cap, old_value + delta)) == old_value:
-428:            if max(0, min(100, old_value + delta)) == old_value:
-438:            if max(0, min(100, old_value + delta)) == old_value:
-466:            if max(0, min(12, old_value + int(value))) == old_value:
-481:            if max(0, min(100, old_value + delta)) == old_value:
-ming_sim/settlement/preflight.py:409:    def _region_noop_error(region_id: str, row: sqlite3.Row, raw_field: object, value: object) -> str:
-ming_sim/settlement/preflight.py:450:    def _army_noop_error(army_id: str, row: sqlite3.Row, raw_field: object, value: object) -> str:
-ming_sim/staged_commitment.py:71:def stages_to_json(stages: object) -> str:
-ming_sim/staged_commitment.py:119:def capture_commitment_stages(
-ming_sim/action_materialize.py:1600:        stages_norm = json.loads(stages_to_json(stages))
-ming_sim/entities/issue/tracker.py:465:                stages_for_commitment = capture_commitment_stages(
-ming_sim/entities/issue/tracker.py:622:            capture_commitment_stages(stages_source_from_issue_item(ni))
-ming_sim/urge_lever.py:326:    stages_blob = stages_to_json(stages)
-ming_sim/db.py:16578:        stages_norm = json.loads(stages_to_json(
-ming_sim/db.py:19924:        stages_blob = stages_to_json([] if stages_json is None else stages_json)
-ming_sim/staged_commitment.py:71:def stages_to_json(stages: object) -> str:
-ming_sim/staged_commitment.py:119:def capture_commitment_stages(
-=== S3 旧停止条件兼容链 / 无效测 / 死夹具 ===
-tests/test_new_issues_section_rejections.py:202:def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(game):
-tests/test_decree_commitment_creation_136.py:230:def test_legacy_resolve_condition_person_commitment_rejects_without_marker(read_game, monkeypatch):
-ming_sim/entities/issue/tracker.py:408:        legacy_resolve_text = issues._issue_condition_text(ni.get("resolve_condition"))
-ming_sim/entities/issue/tracker.py:409:        if not legacy_resolve_text.strip() and isinstance(stop_condition_raw, str):
-ming_sim/entities/issue/tracker.py:410:            legacy_resolve_text = stop_condition
-ming_sim/entities/issue/tracker.py:411:        legacy_resolve_commitment_shape = (
-ming_sim/entities/issue/tracker.py:412:            issues.commitment_condition_role(legacy_resolve_text).get("condition_role")
-ming_sim/entities/issue/tracker.py:420:                or legacy_resolve_commitment_shape
-ming_sim/entities/issue/tracker.py:546:            resolve_condition = stop_condition
-ming_sim/entities/issue/commitment_display.py:23:        _commitment_stop_gate,
-ming_sim/entities/issue/commitment_display.py:29:    gate = _commitment_stop_gate(row)
-ming_sim/entities/issue/commitment_display.py:70:        _commitment_stop_gate,
-ming_sim/entities/issue/commitment_display.py:84:    stop_gate = _commitment_stop_gate(row)
-ming_sim/entities/issue/commitment_display.py:119:        _commitment_stop_gate,
-ming_sim/entities/issue/commitment_display.py:127:    if _commitment_stop_gate(row):
-tests/test_decree_commitment_settlement_229.py:159:def test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached(game):
-tests/test_decree_commitment_settlement_229.py:281:def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
-ming_sim/situation_drift.py:32:    _commitment_stop_gate,
-ming_sim/situation_drift.py:217:        commitment_stop_gate = _commitment_stop_gate(row)
-ming_sim/situation_drift.py:279:            stop_gate = _commitment_stop_gate(row)
-ming_sim/situation_drift.py:450:        stop_gate = _commitment_stop_gate(row) if is_commitment else {}
-ming_sim/issues.py:148:def _legacy_commitment_stop_gate(resolve_condition: object) -> Dict[str, str]:
-ming_sim/issues.py:156:def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
-ming_sim/issues.py:165:    return _legacy_commitment_stop_gate(row["resolve_condition"] if "resolve_condition" in keys else "")
-ming_sim/issues.py:222:    return any(".arrears" in str(key) for key in _commitment_stop_gate(row))
-ming_sim/issues.py:227:    for key in _commitment_stop_gate(row):
-tests/test_qa_e1_numeric_presentation.py:95:def _seed_province_pay_split_scenario(db) -> None:
-tests/test_person_delta_adapter.py:105:def test_apply_score_extraction_reports_no_legacy_person_response_keys(game):
-tests/test_issue_entities.py:369:def test_apply_score_extraction_accepts_flat_faction_scalar(game):
-=== S4 政治收益默认值 / 保活测 ===
-tests/test_issue_entities.py:474:def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
-tests/test_issue_entities.py:475:    """CLI 后端国策 enrich 没补出 resolve（或抛错）时，floor 兜最小回报，绝不入空壳（codexB）。"""
-tests/test_issue_entities.py:491:def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypatch):
-ming_sim/entities/issue/tracker.py:492:        # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
-ming_sim/entities/issue/tracker.py:505:                # floor 在 try 外：即便 enrich 抛错或没补上，CLI 后端国策也绝不入空壳（codexB）。
-ming_sim/entities/issue/tracker.py:507:                    resolve_eff = {"metrics": {"民心": 1}}
+=== S1 typed producers (80) ===
+ming_sim/applier.py:238	SectionResult.merge	ann=SectionResult	constructs=True
+ming_sim/audience_translate.py:524	apply_audience_turn_translation	ann=DeclarationDispatchResult	constructs=False
+ming_sim/audience_translate.py:551	run_audience_turn_translation	ann=DeclarationDispatchResult	constructs=False
+ming_sim/audience_translation.py:74	apply_audience_round_translation	ann=DeclarationDispatchResult	constructs=False
+ming_sim/audience_translation.py:251	run_turn_translation_job	ann=DeclarationDispatchResult	constructs=True
+ming_sim/declaration_dispatch.py:117	ProtagonistResult.merge	ann=ProtagonistResult	constructs=True
+ming_sim/declaration_dispatch.py:147	DeclarationDispatchResult.merge	ann=DeclarationDispatchResult	constructs=True
+ming_sim/declaration_dispatch.py:178	_empty_dispatch_result	ann=DeclarationDispatchResult	constructs=True
+ming_sim/declaration_dispatch.py:214	_dispatch_declaration_sections	ann=DeclarationDispatchResult	constructs=True
+ming_sim/declaration_dispatch.py:439	_dispatch_effects	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:597	dispatch_declaration	ann=DeclarationDispatchResult	constructs=False
+ming_sim/declaration_dispatch.py:1149	_dispatch_commissions	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:1729	_dispatch_endorsements	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:1947	_dispatch_inquiries	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:1999	_dispatch_rushes	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:2102	_dispatch_travel_tones	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:2168	_dispatch_promises	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:2395	_dispatch_textual_facts	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:2454	_dispatch_public_sayings	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:2505	_dispatch_on_scene_facts	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:2598	_dispatch_presence	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:2652	_dispatch_scene_facts	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:2731	_dispatch_edge_events	ann=SectionResult	constructs=True
+ming_sim/declaration_dispatch.py:2798	_dispatch_protagonist	ann=ProtagonistResult	constructs=True
+ming_sim/declaration_dispatch.py:2826	_dispatch_registrations	ann=SectionResult	constructs=True
+ming_sim/decree.py:734	resolve_directives	ann=ResolveResult	constructs=False
+ming_sim/entities/affair/delta_section.py:15	apply	ann=None	constructs=True
+ming_sim/entities/army/delta_section.py:24	apply_new_armies	ann=None	constructs=True
+ming_sim/entities/army/delta_section.py:45	apply_deltas	ann=None	constructs=True
+ming_sim/entities/authority/delta_section.py:26	apply	ann=None	constructs=True
+ming_sim/entities/breach_plea/delta_section.py:13	apply	ann=None	constructs=True
+ming_sim/entities/character/delta_section.py:18	apply_declared_person_changes	ann=None	constructs=True
+ming_sim/entities/credit_event/delta_section.py:45	apply	ann=None	constructs=True
+ming_sim/entities/dossier/delta_section.py:16	apply_participants	ann=None	constructs=True
+ming_sim/entities/dossier/delta_section.py:29	apply_secret_dossier_participants	ann=None	constructs=True
+ming_sim/entities/dossier/delta_section.py:42	apply_executions	ann=None	constructs=True
+ming_sim/entities/economy/delta_section.py:17	apply	ann=SectionResult	constructs=True
+ming_sim/entities/faction/delta_section.py:11	apply	ann=SectionResult	constructs=True
+ming_sim/entities/fiscal/delta_section.py:63	apply_removes	ann=SectionResult	constructs=True
+ming_sim/entities/fiscal/delta_section.py:120	apply_creates	ann=SectionResult	constructs=True
+ming_sim/entities/fiscal/delta_section.py:195	apply_changes	ann=SectionResult	constructs=True
+ming_sim/entities/issue/delta_section.py:20	apply	ann=SectionResult	constructs=False
+ming_sim/entities/issue/delta_section.py:105	_resolve_strategic_events	ann=Dict	constructs=True
+ming_sim/entities/issue/effects.py:474	_apply_monthly_ongoing_entities	ann=SectionResult	constructs=True
+ming_sim/entities/issue/tracker.py:23	apply_issue_tracker_output	ann=IssueSectionResult	constructs=True
+ming_sim/entities/metric/delta_section.py:13	apply	ann=SectionResult	constructs=True
+ming_sim/entities/population/delta_section.py:18	apply	ann=None	constructs=True
+ming_sim/entities/power/delta_section.py:21	apply	ann=SectionResult	constructs=True
+ming_sim/entities/region/delta_section.py:13	apply	ann=None	constructs=True
+ming_sim/entities/relation/delta_section.py:18	apply	ann=None	constructs=True
+ming_sim/entities/secret_order/delta_section.py:19	apply	ann=None	constructs=True
+ming_sim/entities/social_class/delta_section.py:12	apply	ann=SectionResult	constructs=True
+ming_sim/entities/surcharge/delta_section.py:13	apply	ann=None	constructs=True
+ming_sim/fiscal_tick.py:160	settle_tick	ann=FiscalTickResult	constructs=True
+ming_sim/month_chain.py:545	_run_loaded_month_chain	ann=Any	constructs=True
+ming_sim/month_chain.py:1886	_pause	ann=Any	constructs=True
+ming_sim/month_translate.py:267	dispatch_month_segment	ann=DeclarationDispatchResult	constructs=False
+ming_sim/rescript_actions.py:1326	apply_rescript_batch	ann=ApplyResult	constructs=True
+ming_sim/session.py:1086	GameSession.scene_chat	ann=ChatTurnResult	constructs=True
+ming_sim/session.py:1748	GameSession.resolve_turn	ann=ResolveResult	constructs=True
+ming_sim/settlement/outcome.py:61	IssueSectionResult.merge	ann=IssueSectionResult	constructs=True
+ming_sim/settlement/run.py:347	_empty	ann=SectionResult	constructs=True
+ming_sim/settlement/run.py:351	_store	ann=None	constructs=True
+ming_sim/settlement/run.py:375	_stored	ann=SectionResult	constructs=False
+ming_sim/settlement/run.py:459	_build_outcome	ann=SettlementOutcome	constructs=True
+ming_sim/settlement/run.py:516	settle_delta	ann=SettlementOutcome	constructs=False
+ming_sim/settlement/run.py:625	apply_person_changes_only	ann=SectionResult	constructs=True
+tests/test_audience_restore_505.py:242	_RetrySession.chat	ann=None	constructs=True
+tests/test_chat_stream_failpaths_393.py:94	_base_runtime	ann=None	constructs=True
+tests/test_highlight_judge_544.py:282	test_chat_nonstream_folds_judge_within_timeout	ann=None	constructs=True
+tests/test_highlight_judge_544.py:318	test_chat_nonstream_timeout_returns_reply_without_highlights	ann=None	constructs=True
+tests/test_issue_decree_token_1277.py:73	test_double_issue_same_token_second_is_409_turn_plus_one	ann=None	constructs=True
+tests/test_menu_lifecycle_drain_396.py:460	_GapBSession.scene_chat	ann=None	constructs=True
+tests/test_month_open_snapshot_1234.py:314	test_web_issue_entry_exposes_settlement_display	ann=None	constructs=True
+tests/test_month_open_snapshot_1234.py:351	test_web_advance_entry_exposes_settlement_display	ann=None	constructs=True
+tests/test_month_open_snapshot_1234.py:398	test_web_advance_entry_awaiting_keeps_phase_and_decisions	ann=None	constructs=True
+tests/test_promulgation_judge_561.py:461	test_run_resolve_arm_recovers_settled_verdicts_from_history	ann=None	constructs=True
+tests/test_qa_t1_extraction_dual_source_1353.py:555	test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn	ann=None	constructs=True
+tests/test_qa_t1_extraction_dual_source_1353.py:588	test_dispatch_exception_after_persist_retains_reply_recovery	ann=None	constructs=True
+tests/test_web_chat_serialization_393.py:68	_FakeSession.scene_chat	ann=None	constructs=True
+=== S1 dict_shape_consumers (303) ===
+ming_sim/action_materialize.py:380	subscript	issue['status']	issue["status"]
+ming_sim/action_materialize.py:380	subscript	issue['origin_kind']	issue["origin_kind"]
+ming_sim/action_materialize.py:385	subscript	issue['target_roster']	issue["target_roster"]
+ming_sim/action_materialize.py:389	subscript	issue['target_roster']	issue['target_roster']
+ming_sim/army_pay.py:96	subscript	army['is_mutinied']	army["is_mutinied"]
+ming_sim/army_pay.py:98	subscript	army['loyalty']	army["loyalty"]
+ming_sim/army_pay.py:99	call_keys	army[None]	army.keys()
+ming_sim/army_pay.py:99	subscript	army['mutiny_probation']	army["mutiny_probation"]
+ming_sim/cli_backend.py:2650	subscript	issue['title']	issue["title"]
+ming_sim/cli_backend.py:2652	subscript	issue['id']	issue['id']
+ming_sim/content.py:374	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/content.py:404	subscript	fiscal['settle']	fiscal["settle"]
+ming_sim/content.py:388	subscript	fiscal['settle']	fiscal["settle"]
+ming_sim/context.py:326	subscript	faction['agenda']	faction['agenda']
+ming_sim/context.py:332	subscript	faction['agenda']	faction['agenda']
+ming_sim/context.py:327	subscript	faction['leverage']	faction['leverage']
+ming_sim/context.py:333	subscript	faction['leverage']	faction['leverage']
+ming_sim/context.py:334	subscript	faction['satisfaction']	faction['satisfaction']
+ming_sim/db.py:3210	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/db.py:4535	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/db.py:4346	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/db.py:5056	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/db.py:5516	subscript	metric['key']	metric["key"]
+ming_sim/db.py:4215	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/db.py:4385	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/db.py:5035	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/db.py:5516	subscript	metric['value']	metric["value"]
+ming_sim/db.py:16620	subscript	issue['status']	issue["status"]
+ming_sim/db.py:3115	call_get	fiscal[None]	fiscal.get(field, 0)
+ming_sim/db.py:7405	call_get	fiscal[None]	fiscal.get(field, 50)
+ming_sim/db.py:7567	call_get	fiscal[None]	fiscal.get(sub_field, 0)
+ming_sim/db.py:16618	subscript	issue['origin_kind']	issue["origin_kind"]
+ming_sim/db.py:3320	call_get	fiscal['commerce_tax']	fiscal.get("commerce_tax", 0)
+ming_sim/db.py:4384	subscript	region['fiscal']	region["fiscal"]
+ming_sim/db.py:11635	subscript	power['kind']	power["kind"]
+ming_sim/db.py:11636	subscript	power['stance']	power["stance"]
+ming_sim/db.py:11637	subscript	power['leader']	power["leader"]
+ming_sim/db.py:3318	call_get	fiscal['liao_xiang']	fiscal.get("liao_xiang", 0)
+ming_sim/db.py:3319	call_get	fiscal['salt_tax']	fiscal.get("salt_tax", 0)
+ming_sim/db.py:4382	subscript	region['controlled_by']	region["controlled_by"]
+ming_sim/db.py:16630	subscript	issue['faction_hint']	issue["faction_hint"]
+ming_sim/db.py:16624	subscript	issue['target_roster']	issue["target_roster"]
+ming_sim/db.py:15405	subscript	army['arrears']	army["arrears"]
+ming_sim/declaration_dispatch.py:2551	call_get	result['name']	result.get("name")
+ming_sim/displaced_population.py:73	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/entities/surcharge/apply.py:72	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/fiscal_fact_brief.py:98	subscript	fiscal['settle']	fiscal["settle"]
+ming_sim/fiscal_fact_brief.py:242	subscript	army['v']	army["v"]
+ming_sim/fiscal_fact_brief.py:299	subscript	army['v']	army["v"]
+ming_sim/flows.py:77	call_get	fiscal['corruption']	fiscal.get("corruption", 50)
+ming_sim/flows.py:127	call_get	fiscal['huang_tian']	fiscal.get("huang_tian", 0)
+ming_sim/flows.py:128	call_get	fiscal['liao_xiang']	fiscal.get("liao_xiang", 0)
+ming_sim/flows.py:129	call_get	fiscal['salt_tax']	fiscal.get("salt_tax", 0)
+ming_sim/flows.py:130	call_get	fiscal['commerce_tax']	fiscal.get("commerce_tax", 0)
+ming_sim/flows.py:231	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/flows.py:505	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/flows.py:205	call_get	fiscal['salt_tax']	fiscal.get("salt_tax", 0)
+ming_sim/flows.py:208	call_get	fiscal['commerce_tax']	fiscal.get("commerce_tax", 0)
+ming_sim/issues.py:640	call_get	fiscal['settle']	fiscal.get("settle")
+ming_sim/knowledge.py:36	call_keys	issue[None]	issue.keys()
+ming_sim/knowledge.py:38	subscript	issue['origin_kind']	issue["origin_kind"]
+ming_sim/knowledge.py:207	subscript	issue['id']	issue["id"]
+ming_sim/knowledge.py:216	subscript	issue['id']	issue["id"]
+ming_sim/knowledge.py:224	subscript	issue['kind']	issue["kind"]
+ming_sim/knowledge.py:225	subscript	issue['origin_kind']	issue["origin_kind"]
+ming_sim/knowledge.py:226	subscript	issue['origin_ref']	issue["origin_ref"]
+ming_sim/knowledge.py:227	subscript	issue['title']	issue["title"]
+ming_sim/knowledge.py:228	subscript	issue['stage_text']	issue["stage_text"]
+ming_sim/knowledge.py:229	subscript	issue['resolve_condition']	issue["resolve_condition"]
+ming_sim/knowledge.py:230	subscript	issue['fail_condition']	issue["fail_condition"]
+ming_sim/knowledge.py:232	subscript	issue['participant_roster']	issue["participant_roster"]
+ming_sim/knowledge.py:490	subscript	issue['stage_text']	issue["stage_text"]
+ming_sim/knowledge.py:704	subscript	issue['participant_roster']	issue["participant_roster"]
+ming_sim/knowledge.py:719	subscript	issue['origin_kind']	issue["origin_kind"]
+ming_sim/knowledge.py:499	subscript	issue['origin_turn']	issue["origin_turn"]
+ming_sim/knowledge.py:505	subscript	issue['title']	issue["title"]
+ming_sim/knowledge.py:703	subscript	issue['id']	issue['id']
+ming_sim/knowledge.py:723	subscript	issue['kind']	issue["kind"]
+ming_sim/knowledge.py:724	subscript	issue['origin_kind']	issue["origin_kind"]
+ming_sim/knowledge.py:724	subscript	issue['origin_ref']	issue["origin_ref"]
+ming_sim/knowledge.py:725	subscript	issue['title']	issue["title"]
+ming_sim/knowledge.py:725	subscript	issue['bar_value']	issue["bar_value"]
+ming_sim/knowledge.py:726	subscript	issue['bar_good_meaning']	issue["bar_good_meaning"]
+ming_sim/knowledge.py:727	subscript	issue['bar_bad_meaning']	issue["bar_bad_meaning"]
+ming_sim/knowledge.py:728	subscript	issue['stage_text']	issue["stage_text"]
+ming_sim/knowledge.py:728	subscript	issue['faction_hint']	issue["faction_hint"]
+ming_sim/knowledge.py:729	subscript	issue['severity']	issue["severity"]
+ming_sim/knowledge.py:730	subscript	issue['resolve_condition']	issue["resolve_condition"]
+ming_sim/knowledge.py:731	subscript	issue['fail_condition']	issue["fail_condition"]
+ming_sim/knowledge.py:732	subscript	issue['stop_condition']	issue["stop_condition"]
+ming_sim/knowledge.py:733	subscript	issue['origin_turn']	issue["origin_turn"]
+ming_sim/knowledge.py:734	subscript	issue['end_turn']	issue["end_turn"]
+ming_sim/knowledge.py:735	subscript	issue['commitment_kind']	issue["commitment_kind"]
+ming_sim/knowledge.py:738	subscript	issue['participant_roster']	issue["participant_roster"]
+ming_sim/knowledge.py:39	subscript	issue['origin_ref']	issue["origin_ref"]
+ming_sim/knowledge.py:231	subscript	issue['affair_id']	issue["affair_id"]
+ming_sim/knowledge.py:487	subscript	issue['id']	issue['id']
+ming_sim/knowledge.py:716	subscript	issue['target_roster']	issue["target_roster"]
+ming_sim/knowledge.py:723	subscript	issue['id']	issue["id"]
+ming_sim/knowledge.py:737	subscript	issue['affair_id']	issue["affair_id"]
+ming_sim/materials.py:442	subscript	issue['id']	issue["id"]
+ming_sim/materials.py:469	subscript	issue['id']	issue["id"]
+ming_sim/materials.py:473	subscript	issue['participant_roster']	issue["participant_roster"]
+ming_sim/materials.py:530	subscript	issue['id']	issue["id"]
+ming_sim/materials.py:640	subscript	issue['id']	issue["id"]
+ming_sim/materials.py:646	subscript	issue['participant_roster']	issue["participant_roster"]
+ming_sim/materials.py:534	call_get	issue['title']	issue.get("title")
+ming_sim/materials.py:539	call_get	issue['stage_text']	issue.get("stage_text")
+ming_sim/materials.py:591	call_get	issue['id']	issue.get("id")
+ming_sim/materials.py:592	call_get	issue['title']	issue.get("title")
+ming_sim/materials.py:595	call_get	issue['stage_text']	issue.get("stage_text")
+ming_sim/materials.py:596	call_get	issue['resolve_condition']	issue.get("resolve_condition")
+ming_sim/materials.py:597	call_get	issue['fail_condition']	issue.get("fail_condition")
+ming_sim/materials.py:444	call_get	issue['title']	issue.get("title")
+ming_sim/materials.py:445	call_get	issue['stage_text']	issue.get("stage_text")
+ming_sim/materials.py:607	call_get	issue['participant_roster']	issue.get("participant_roster")
+ming_sim/materials.py:600	call_get	issue['affair_id']	issue.get("affair_id")
+ming_sim/materials.py:605	call_get	issue['source_id']	issue.get("source_id")
+ming_sim/materials.py:606	call_get	issue['audience_names']	issue.get("audience_names")
+ming_sim/materials.py:602	call_get	issue['stage_text']	issue.get("stage_text")
+ming_sim/materials.py:1237	subscript	region['id']	region["id"]
+ming_sim/materials.py:1238	subscript	region['name']	region["name"]
+ming_sim/materials.py:1242	subscript	army['id']	army["id"]
+ming_sim/materials.py:1243	subscript	army['name']	army["name"]
+ming_sim/rescript_actions.py:1263	subscript	issue['id']	issue["id"]
+ming_sim/settlement/preflight.py:811	call_get	issue['origin_kind']	issue.get("origin_kind")
+ming_sim/settlement/preflight.py:812	call_get	issue['id']	issue.get("id")
+ming_sim/settlement/preflight.py:812	call_get	issue['origin_ref']	issue.get("origin_ref")
+tests/test_army_display_173.py:94	subscript	army['id']	army["id"]
+tests/test_army_display_173.py:69	subscript	army['id']	army["id"]
+tests/test_audience_scroll_539.py:84	subscript	person['name']	person["name"]
+tests/test_audience_scroll_539.py:84	subscript	person['portrait_id']	person["portrait_id"]
+tests/test_audience_scroll_539.py:164	subscript	person['name']	person["name"]
+tests/test_audience_scroll_539.py:164	subscript	person['portrait_id']	person["portrait_id"]
+tests/test_audience_translate_1837_reopen.py:61	subscript	army['id']	army["id"]
+tests/test_commitment_backlash_626.py:191	subscript	issue['status']	issue["status"]
+tests/test_commitment_backlash_626.py:196	subscript	issue['id']	issue["id"]
+tests/test_commitment_backlash_626.py:240	subscript	issue['id']	issue["id"]
+tests/test_covert_levy_651.py:22	subscript	army['id']	army["id"]
+tests/test_covert_levy_651.py:29	subscript	army['id']	army["id"]
+tests/test_declaration_dispatch_1835.py:131	subscript	region['id']	region["id"]
+tests/test_decree_dossiers_571.py:698	subscript	person['name']	person["name"]
+tests/test_decree_dossiers_571.py:723	subscript	person['name']	person["name"]
+tests/test_decree_dossiers_571.py:753	subscript	person['name']	person["name"]
+tests/test_decree_dossiers_571.py:768	subscript	person['loyalty']	person["loyalty"]
+tests/test_decree_dossiers_571.py:700	subscript	person['name']	person["name"]
+tests/test_decree_dossiers_571.py:725	subscript	person['name']	person["name"]
+tests/test_decree_dossiers_571.py:736	subscript	person['name']	person["name"]
+tests/test_decree_dossiers_571.py:737	subscript	person['name']	person["name"]
+tests/test_decree_dossiers_571.py:755	subscript	person['name']	person["name"]
+tests/test_decree_dossiers_571.py:757	subscript	person['name']	person["name"]
+tests/test_decree_dossiers_571.py:708	subscript	person['name']	person['name']
+tests/test_decree_dossiers_571.py:733	subscript	person['name']	person['name']
+tests/test_decree_dossiers_571.py:733	subscript	person['name']	person['name']
+tests/test_decree_dossiers_571.py:739	subscript	person['name']	person["name"]
+tests/test_decree_dossiers_571.py:763	subscript	person['name']	person['name']
+tests/test_decree_dossiers_571.py:767	subscript	person['name']	person["name"]
+tests/test_enrich_list_guards.py:20	subscript	effects['effect_on_resolve']	effects["effect_on_resolve"]
+tests/test_event_trigger_gate.py:3095	subscript	region['unrest']	region["unrest"]
+tests/test_event_trigger_gate.py:3099	subscript	army['manpower']	army["manpower"]
+tests/test_event_trigger_gate.py:3103	subscript	power['leverage']	power["leverage"]
+tests/test_event_trigger_gate.py:3107	subscript	faction['satisfaction']	faction["satisfaction"]
+tests/test_event_trigger_gate.py:3063	subscript	region['id']	region["id"]
+tests/test_event_trigger_gate.py:3064	subscript	army['id']	army["id"]
+tests/test_event_trigger_gate.py:3065	subscript	power['id']	power["id"]
+tests/test_event_trigger_gate.py:3066	subscript	faction['name']	faction["name"]
+tests/test_event_trigger_gate.py:3094	subscript	region['id']	region["id"]
+tests/test_event_trigger_gate.py:3098	subscript	army['id']	army["id"]
+tests/test_event_trigger_gate.py:3102	subscript	power['id']	power["id"]
+tests/test_event_trigger_gate.py:3106	subscript	faction['name']	faction["name"]
+tests/test_executor_routing_721.py:206	subscript	person['faction']	person["faction"]
+tests/test_fiscal_levy_effect.py:883	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_levy_effect.py:981	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_levy_effect.py:29	call_get	fiscal['settle']	fiscal.get("settle")
+tests/test_fiscal_levy_effect.py:311	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_levy_effect.py:339	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_levy_effect.py:340	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_levy_effect.py:388	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_levy_effect.py:841	call_get	fiscal['settle']	fiscal.get("settle")
+tests/test_fiscal_levy_effect.py:1067	call_get	fiscal['settle']	fiscal.get("settle")
+tests/test_fiscal_levy_effect.py:313	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_levy_effect.py:437	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_levy_effect.py:439	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_levy_effect.py:443	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_levy_effect.py:491	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_levy_effect.py:441	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:63	subscript_attr	fiscal['settle']	content_mod.load_region_content()[region_id].fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:79	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:424	subscript_attr	fiscal['settle']	content_mod.load_region_content()["test_province"].fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:3514	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4285	call_pop	fiscal[None]	fiscal.pop("settle", None)
+tests/test_fiscal_substrate_bridge.py:1172	subscript	army['central_pay_arrears']	army["central_pay_arrears"]
+tests/test_fiscal_substrate_bridge.py:1173	subscript	army['arrears']	army["arrears"]
+tests/test_fiscal_substrate_bridge.py:1753	subscript	army['central_pay_arrears']	army["central_pay_arrears"]
+tests/test_fiscal_substrate_bridge.py:1874	subscript	army['central_pay_arrears']	army["central_pay_arrears"]
+tests/test_fiscal_substrate_bridge.py:1875	subscript	army['arrears']	army["arrears"]
+tests/test_fiscal_substrate_bridge.py:1970	subscript	army['province_pay_arrears']	army["province_pay_arrears"]
+tests/test_fiscal_substrate_bridge.py:1973	subscript	army['central_pay_arrears']	army["central_pay_arrears"]
+tests/test_fiscal_substrate_bridge.py:1974	subscript	army['morale']	army["morale"]
+tests/test_fiscal_substrate_bridge.py:2042	subscript	army['central_pay_arrears']	army["central_pay_arrears"]
+tests/test_fiscal_substrate_bridge.py:2043	subscript	army['arrears']	army["arrears"]
+tests/test_fiscal_substrate_bridge.py:3519	subscript	fiscal['guan_min_tian']	fiscal["guan_min_tian"]
+tests/test_fiscal_substrate_bridge.py:3520	subscript	fiscal['huang_tian']	fiscal["huang_tian"]
+tests/test_fiscal_substrate_bridge.py:4079	subscript	fiscal['huang_tian']	fiscal["huang_tian"]
+tests/test_fiscal_substrate_bridge.py:4367	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4442	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4621	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4653	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4696	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4874	call_get	fiscal['settle']	fiscal.get("settle")
+tests/test_fiscal_substrate_bridge.py:71	call_get	fiscal['settle']	fiscal.get("settle")
+tests/test_fiscal_substrate_bridge.py:146	call_get	fiscal['settle']	fiscal.get("settle")
+tests/test_fiscal_substrate_bridge.py:354	call_get	fiscal['settle']	fiscal.get("settle")
+tests/test_fiscal_substrate_bridge.py:4178	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4196	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4303	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4325	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4346	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4471	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_fiscal_substrate_bridge.py:4084	subscript	fiscal['guan_min_tian']	fiscal["guan_min_tian"]
+tests/test_fiscal_substrate_bridge.py:423	subscript	region['fiscal']	region["fiscal"]
+tests/test_fiscal_substrate_bridge.py:3993	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_material_directory_1830.py:99	subscript	army['id']	army["id"]
+tests/test_material_directory_1830.py:115	subscript	army['name']	army['name']
+tests/test_material_directory_1830.py:115	subscript	army['id']	army['id']
+tests/test_month_translate_1840.py:675	subscript	faction['satisfaction']	faction["satisfaction"]
+tests/test_month_translate_1840.py:676	subscript	social_class['satisfaction']	social_class["satisfaction"]
+tests/test_month_translate_1840.py:619	subscript	faction['name']	faction["name"]
+tests/test_month_translate_1840.py:620	subscript	social_class['name']	social_class["name"]
+tests/test_month_translate_1840.py:675	subscript	faction['name']	faction["name"]
+tests/test_month_translate_1840.py:676	subscript	social_class['name']	social_class["name"]
+tests/test_on_scene_immediate_write_1839.py:321	subscript	army['id']	army["id"]
+tests/test_p4_guard_new_surfaces_547.py:51	subscript	army['manpower']	army["manpower"]
+tests/test_p4_guard_new_surfaces_547.py:63	subscript	army['name']	army["name"]
+tests/test_p4_guard_new_surfaces_547.py:56	subscript	army['name']	army["name"]
+tests/test_pay_order_override_653.py:872	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:873	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:1000	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:1001	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:1588	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:1589	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:494	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:669	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:669	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:737	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:1308	subscript	army['central_pay_arrears']	army["central_pay_arrears"]
+tests/test_pay_order_override_653.py:1310	subscript	army['arrears']	army["arrears"]
+tests/test_pay_order_override_653.py:1511	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:1557	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:1558	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:495	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:722	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:738	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:750	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:751	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_pay_order_override_653.py:1306	subscript	army['province_pay_share']	army["province_pay_share"]
+tests/test_pay_order_override_653.py:1307	subscript	army['central_pay_share']	army["central_pay_share"]
+tests/test_pay_order_override_653.py:1324	subscript	army['central_pay_share']	army["central_pay_share"]
+tests/test_pihong_dossier_1490.py:595	subscript	issue['title']	issue['title']
+tests/test_pihong_dossier_1490.py:596	subscript	issue['stage_text']	issue['stage_text']
+tests/test_pihong_dossier_1490.py:994	subscript	army['id']	army['id']
+tests/test_pihong_dossier_1490.py:1050	subscript	army['id']	army['id']
+tests/test_pihong_dossier_1490.py:995	subscript	army['station']	army['station']
+tests/test_pihong_dossier_1490.py:2478	subscript	issue['status']	issue['status']
+tests/test_pihong_dossier_1490.py:736	subscript	issue['origin_ref']	issue['origin_ref']
+tests/test_player_army_projection_321.py:209	call_get	army['id']	army.get("id")
+tests/test_promulgation_judge_561.py:368	subscript	authority['dossier_id']	authority["dossier_id"]
+tests/test_promulgation_judge_561.py:397	subscript	authority['scope']	authority["scope"]
+tests/test_promulgation_judge_561.py:369	subscript	authority['dossier_id']	authority["dossier_id"]
+tests/test_promulgation_judge_561.py:396	subscript	authority['dossier_id']	authority["dossier_id"]
+tests/test_public_sayings_1829.py:302	subscript	person['involved_characters']	person["involved_characters"]
+tests/test_public_sayings_1829.py:303	subscript	person['affair_ref']	person["affair_ref"]
+tests/test_public_sayings_1829.py:304	subscript	affair['involved_characters']	affair["involved_characters"]
+tests/test_public_sayings_1829.py:305	subscript	affair['affair_ref']	affair["affair_ref"]
+tests/test_qa_e1_numeric_presentation.py:104	subscript	army['id']	army["id"]
+tests/test_qa_h1_seed_data.py:56	subscript	army['commander']	army["commander"]
+tests/test_qa_h1_seed_data.py:57	subscript	army['controller']	army["controller"]
+tests/test_qa_h1_seed_data.py:73	subscript	army['commander']	army["commander"]
+tests/test_qa_h1_seed_data.py:73	subscript	army['commander']	army["commander"]
+tests/test_qa_h1_seed_data.py:74	subscript	army['commander']	army["commander"]
+tests/test_qa_u3_map_nodes_1401.py:33	subscript	army['id']	army["id"]
+tests/test_qa_u3_map_nodes_1401.py:145	call_get	region['name']	region.get("name")
+tests/test_refugee_loop_652.py:116	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_secret_order_monthly_progress_566.py:276	call_get	fiscal['economy_accounts']	fiscal.get("economy_accounts", [])
+tests/test_section4_rejections.py:163	subscript	region['public_support']	region["public_support"]
+tests/test_section_fiscal_rejections.py:85	call_get	fiscal['liao_xiang']	fiscal.get("liao_xiang", 0)
+tests/test_section_fiscal_rejections.py:349	call_get	fiscal['liao_xiang']	fiscal.get("liao_xiang", 0)
+tests/test_shared_resource_order_1844.py:74	call_get	fiscal['settle']	fiscal.get("settle")
+tests/test_shared_resource_order_1844.py:87	subscript	fiscal['salt_tax']	fiscal["salt_tax"]
+tests/test_shared_resource_order_1844.py:88	subscript	fiscal['commerce_tax']	fiscal["commerce_tax"]
+tests/test_staged_assignment_identity_1890.py:619	subscript	issue['stages_json']	issue["stages_json"]
+tests/test_staged_assignment_identity_1890.py:620	subscript	issue['commitment_kind']	issue["commitment_kind"]
+tests/test_staged_assignment_identity_1890.py:621	subscript	issue['end_turn']	issue["end_turn"]
+tests/test_staged_assignment_identity_1890.py:680	subscript	issue['commitment_kind']	issue["commitment_kind"]
+tests/test_staged_assignment_identity_1890.py:681	subscript	issue['stages_json']	issue["stages_json"]
+tests/test_staged_assignment_identity_1890.py:625	subscript	issue['id']	issue["id"]
+tests/test_surcharge_causal_chain_650.py:281	call_pop	fiscal[None]	fiscal.pop("settle", None)
+tests/test_surcharge_causal_chain_650.py:259	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_surcharge_causal_chain_650.py:394	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_surcharge_causal_chain_650.py:315	subscript	fiscal['settle']	fiscal["settle"]
+tests/test_transit_countdown_668.py:148	subscript	issue['status']	issue['status']
+tests/test_world_materials_1834.py:201	subscript	region['id']	region["id"]
+tests/test_world_materials_1834.py:242	subscript	region['id']	region["id"]
+=== S1 old_response_field_accesses (62) ===
+ming_sim/breach_plea.py:1372	get	base=extracted	key='economy_moves'	extracted.get("economy_moves")
+ming_sim/breach_plea.py:1385	get	base=extracted	key='fiscal_creates'	extracted.get("fiscal_creates")
+ming_sim/breach_plea.py:1389	get	base=extracted	key='fiscal_changes'	extracted.get("fiscal_changes")
+ming_sim/credit_events.py:302	get	base=extracted	key='person_changes'	extracted.get("person_changes")
+ming_sim/db.py:16095	get	base=payload	key='office_changes'	payload.get("office_changes")
+ming_sim/entities/army/delta_section.py:27	get	base=run.current_extracted	key='new_armies'	run.current_extracted.get("new_armies")
+ming_sim/entities/authority/delta_section.py:35	get	base=run.current_extracted	key='authority_changes'	run.current_extracted.get("authority_changes")
+ming_sim/entities/economy/delta_section.py:29	get	base=run.current_extracted	key='economy_moves'	run.current_extracted.get("economy_moves")
+ming_sim/entities/faction/delta_section.py:16	get	base=run.current_ordered	key='faction_delta'	run.current_ordered.get("faction_delta")
+ming_sim/entities/fiscal/delta_section.py:69	get	base=run.current_extracted	key='fiscal_removes'	run.current_extracted.get("fiscal_removes")
+ming_sim/entities/fiscal/delta_section.py:126	get	base=run.current_extracted	key='fiscal_creates'	run.current_extracted.get("fiscal_creates")
+ming_sim/entities/fiscal/delta_section.py:207	get	base=run.current_extracted	key='fiscal_changes'	run.current_extracted.get("fiscal_changes")
+ming_sim/entities/issue/delta_section.py:87	subscript	base=rows	key='region_changes'	rows["region_changes"]
+ming_sim/entities/issue/delta_section.py:89	subscript	base=rows	key='army_changes'	rows["army_changes"]
+ming_sim/entities/issue/delta_section.py:96	subscript	base=rows	key='new_armies'	rows["new_armies"]
+ming_sim/entities/issue/delta_section.py:169	subscript	base=bucket	key='new_armies'	bucket["new_armies"]
+ming_sim/entities/issue/delta_section.py:170	subscript	base=reject_bucket	key='new_armies'	reject_bucket["new_armies"]
+ming_sim/entities/issue/delta_section.py:178	subscript	base=bucket	key='region_changes'	bucket["region_changes"]
+ming_sim/entities/issue/delta_section.py:179	subscript	base=reject_bucket	key='region_changes'	reject_bucket["region_changes"]
+ming_sim/entities/issue/delta_section.py:184	subscript	base=bucket	key='army_changes'	bucket["army_changes"]
+ming_sim/entities/issue/delta_section.py:185	subscript	base=reject_bucket	key='army_changes'	reject_bucket["army_changes"]
+ming_sim/entities/issue/effects.py:215	get	base=effect	key='new_armies'	effect.get("new_armies")
+ming_sim/entities/issue/tracker.py:107	get	base=adv	key='metric_delta'	adv.get("metric_delta")
+ming_sim/entities/issue/tracker.py:800	subscript	base=close_record	key='applied_person_changes'	close_record["applied_person_changes"]
+ming_sim/entities/metric/delta_section.py:18	get	base=run.current_ordered	key='metric_delta'	run.current_ordered.get("metric_delta")
+ming_sim/entities/social_class/delta_section.py:17	get	base=run.current_ordered	key='class_delta'	run.current_ordered.get("class_delta")
+ming_sim/issues.py:303	get	base=effect	key='class_delta'	effect.get("class_delta")
+ming_sim/issues.py:200	subscript	base=row	key='metric_delta'	row["metric_delta"]
+ming_sim/models.py:258	get	base=effect	key='economy_moves'	effect.get("economy_moves")
+ming_sim/models.py:260	get	base=effect	key='faction_delta'	effect.get("faction_delta")
+ming_sim/models.py:262	get	base=effect	key='class_delta'	effect.get("class_delta")
+ming_sim/models.py:281	get	base=effect	key='new_armies'	effect.get("new_armies")
+ming_sim/models.py:283	get	base=effect	key='person_changes'	effect.get("person_changes")
+ming_sim/settlement/outcome.py:145	subscript	base=flat	key='fiscal_removes'	flat["fiscal_removes"]
+ming_sim/settlement/outcome.py:146	subscript	base=flat	key='fiscal_creates'	flat["fiscal_creates"]
+ming_sim/settlement/outcome.py:147	subscript	base=flat	key='fiscal_changes'	flat["fiscal_changes"]
+ming_sim/settlement/outcome.py:149	subscript	base=flat	key='issue_summary'	flat["issue_summary"]
+ming_sim/settlement/preflight.py:317	get	base=extracted	key='new_armies'	extracted.get("new_armies")
+ming_sim/settlement/preflight.py:318	get	base=ordered_effect_event_ids or {}	key='new_armies'	(ordered_effect_event_ids or {}).get("new_armies", [])
+ming_sim/settlement/preflight.py:319	get	base=extracted	key='new_armies'	extracted.get("new_armies")
+ming_sim/settlement/preflight.py:830	get	base=item	key='new_armies'	item.get("new_armies")
+ming_sim/settlement/run.py:310	get	base=run.ordered_effect_event_ids	key='new_armies'	run.ordered_effect_event_ids.get("new_armies", [])
+ming_sim/settlement/run.py:318	get	base=clean	key='new_armies'	clean.get("new_armies")
+ming_sim/settlement/run.py:415	get	base=step_extracted	key='economy_moves'	step_extracted.get("economy_moves")
+ming_sim/settlement/run.py:313	get	base=clean	key='new_armies'	clean.get("new_armies")
+ming_sim/settlement/run.py:411	get	base=step_extracted	key='new_armies'	step_extracted.get("new_armies")
+tests/test_cli_backend.py:112	subscript	base=out["effect_on_resolve"]	key='new_armies'	out["effect_on_resolve"]["new_armies"]
+tests/test_declaration_dispatch_1835.py:1203	subscript	base=payload	key='metric_delta'	payload["metric_delta"]
+tests/test_decree_commitment_settlement_229.py:154	subscript	base=advances[0]	key='metric_delta'	advances[0]["metric_delta"]
+tests/test_decree_commitment_settlement_229.py:193	subscript	base=advances[0]	key='metric_delta'	advances[0]["metric_delta"]
+tests/test_decree_commitment_settlement_229.py:383	subscript	base=advances[0]	key='metric_delta'	advances[0]["metric_delta"]
+tests/test_decree_commitment_settlement_229.py:675	subscript	base=advances[0]	key='metric_delta'	advances[0]["metric_delta"]
+tests/test_decree_commitment_settlement_229.py:719	subscript	base=advances[0]	key='metric_delta'	advances[0]["metric_delta"]
+tests/test_decree_commitment_settlement_229.py:465	subscript	base=row	key='metric_delta'	row["metric_delta"]
+tests/test_decree_commitment_settlement_229.py:1312	subscript	base=row	key='metric_delta'	row["metric_delta"]
+tests/test_month_translate_1840.py:627	subscript	base=first_effect	key='new_armies'	first_effect["new_armies"]
+tests/test_section4_rejections.py:28	get	base=extracted	key='new_armies'	extracted.get("new_armies")
+tests/test_section_fiscal_rejections.py:645	get	base=cats	key='fiscal_creates'	cats.get("fiscal_creates")
+tests/test_section_fiscal_rejections.py:646	get	base=cats	key='fiscal_removes'	cats.get("fiscal_removes")
+tests/test_section_fiscal_rejections.py:647	get	base=cats	key='fiscal_changes'	cats.get("fiscal_changes")
+tests/test_shared_resource_order_1844.py:124	subscript	base=_settled_declaration(db, first_ref)["effects"]	key='economy_moves'	_settled_declaration(db, first_ref)["effects"]["economy_moves"]
+tests/test_shared_resource_order_1844.py:125	subscript	base=_settled_declaration(db, second_ref)["effects"]	key='economy_moves'	_settled_declaration(db, second_ref)["effects"]["economy_moves"]
+=== S2 rule_members (264) ===
+ming_sim/action_clusters.py:240	project_cluster_fields	tags=admission	kernel=False	
+ming_sim/action_clusters.py:256	cluster_effect	tags=quantity_clamp_cap	kernel=False	
+ming_sim/action_materialize.py:649	canonicalize_xiexang_army_target	tags=admission	kernel=False	
+ming_sim/action_materialize.py:781	stage_grant_allocation_candidate	tags=stages_parse_validate	kernel=False	
+ming_sim/action_materialize.py:1027	parse_responsible_bodies	tags=admission	kernel=False	
+ming_sim/action_materialize.py:1482	stage_assignment_candidate	tags=stages_parse_validate	kernel=False	
+ming_sim/action_materialize.py:1969	_build_catalog	tags=quantity_clamp_cap	kernel=False	
+ming_sim/appointment_tenure.py:58	execution_distortion_weight	tags=quantity_clamp_cap	kernel=False	
+ming_sim/army_pay.py:75	army_loyalty_tick_delta	tags=quantity_clamp_cap	kernel=True	
+ming_sim/army_pay.py:115	_advance_mutiny	tags=quantity_clamp_cap	kernel=True	
+ming_sim/army_pay.py:205	settle_hub_central_army_pay	tags=quantity_clamp_cap	kernel=False	
+ming_sim/army_pay.py:307	settle_hub_army_loyalty_tick	tags=quantity_clamp_cap	kernel=True	
+ming_sim/army_pay.py:388	_auto_pay_arrears_by_priority	tags=quantity_clamp_cap	kernel=False	
+ming_sim/army_pay.py:452	_payable_army_arrears_cap	tags=quantity_clamp_cap	kernel=False	
+ming_sim/army_pay.py:459	_pay_single_army_arrears	tags=quantity_clamp_cap	kernel=False	
+ming_sim/army_pay.py:124	<line:124>	tags=quantity_clamp_cap_line	kernel=False	new_count = max(0, min(3, int(count)))
+ming_sim/army_pay.py:263	<line:263>	tags=quantity_clamp_cap_line	kernel=False	new_morale = max(0, min(100, old_morale + morale_delta))
+ming_sim/army_pay.py:340	<line:340>	tags=quantity_clamp_cap_line	kernel=True	new_loyalty_val = max(0, min(100, old_loyalty_val + loyalty_delta_unified))
+ming_sim/audience_night.py:665	_night_direct_write_allowed_tables	tags=admission	kernel=False	
+ming_sim/audience_night.py:672	audit_night_direct_writes	tags=admission	kernel=False	
+ming_sim/audience_night.py:1591	settle_summon_origin	tags=admission	kernel=False	
+ming_sim/audience_night.py:1639	settle_unsettled_summons_for_person	tags=admission	kernel=False	
+ming_sim/audience_night.py:1820	commit_fresh_summons_for_night	tags=admission	kernel=False	
+ming_sim/audience_night.py:2040	_presence_delta	tags=quantity_clamp_cap	kernel=False	
+ming_sim/audience_night.py:2193	audience_scene_recap	tags=quantity_clamp_cap	kernel=False	
+ming_sim/audience_translate.py:173	_person_candidate_grounding	tags=quantity_clamp_cap	kernel=False	
+ming_sim/audience_translate.py:199	build_translation_target_grounding	tags=stages_parse_validate	kernel=False	
+ming_sim/audience_translate.py:256	build_c0_declaration_shape	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:94	encode_plea_meta	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:100	decode_plea_meta	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:111	commitment_natural_due_turn	tags=quantity_clamp_cap,stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:228	find_pending_plea	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:258	_find_pending_plea_same_turn	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:272	_merge_plea_kind_into_todo	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:319	write_breach_plea_todo	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:412	project_breach_plea_scene	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:473	assess_foundation_tier	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:692	finalize_persist	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:778	finalize_regret	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:805	expire_breach_pleas_on_due	tags=stages_parse_validate	kernel=False	
+ming_sim/breach_plea.py:1307	resolve_breach_pleas_from_extraction	tags=stages_parse_validate	kernel=False	
+ming_sim/centrifuge_ledger.py:111	_clamp	tags=quantity_clamp_cap	kernel=False	
+ming_sim/centrifuge_ledger.py:327	_accrue_centrifuge	tags=quantity_clamp_cap	kernel=False	
+ming_sim/cli/terminal.py:90	choose_minister	tags=admission	kernel=False	
+ming_sim/cli/terminal.py:163	_handle_court_command	tags=admission	kernel=False	
+ming_sim/cli_backend.py:3326	build_draft_admission_resubmit_feedback	tags=admission	kernel=False	
+ming_sim/cli_backend.py:3437	resubmit_draft_admission_payload	tags=admission	kernel=False	
+ming_sim/content.py:408	load_region_content	tags=admission	kernel=False	
+ming_sim/content.py:446	load_army_content	tags=quantity_clamp_cap	kernel=True	
+ming_sim/content.py:476	<line:476>	tags=quantity_clamp_cap_line	kernel=True	firearm_equipment=max(0, min(100, int(item.get("firearm_equipment", 30) or 0))),
+ming_sim/content.py:477	<line:477>	tags=quantity_clamp_cap_line	kernel=True	cannon_equipment=max(0, min(12, int(item.get("cannon_equipment", 0) or 0))),
+ming_sim/context.py:119	victory_status	tags=admission	kernel=False	
+ming_sim/covert_levy.py:174	write_exposure_todos	tags=stages_parse_validate	kernel=False	
+ming_sim/covert_progress.py:322	build_covert_task_contract	tags=stages_parse_validate	kernel=False	
+ming_sim/covert_progress.py:588	decide_secret_order_settlement	tags=stages_parse_validate	kernel=False	
+ming_sim/covert_progress.py:886	_append_investigation_log	tags=quantity_clamp_cap	kernel=False	
+ming_sim/covert_progress.py:919	investigation_fact_difficulty	tags=quantity_clamp_cap	kernel=False	
+ming_sim/covert_progress.py:1055	investigation_monthly_capacity	tags=quantity_clamp_cap	kernel=False	
+ming_sim/covert_progress.py:1275	apply_investigation_monthly_effort	tags=quantity_clamp_cap	kernel=False	
+ming_sim/covert_progress.py:1673	_declared_intensity	tags=quantity_clamp_cap	kernel=False	
+ming_sim/covert_progress.py:2027	list_due_secret_orders_for_settlement	tags=stages_parse_validate	kernel=False	
+ming_sim/covert_progress.py:2038	settle_due_secret_orders	tags=stages_parse_validate	kernel=False	
+ming_sim/credit_events.py:552	_urge_todo_context	tags=stages_parse_validate	kernel=False	
+ming_sim/credit_events.py:559	_resolve_one_urge_todo	tags=admission	kernel=False	
+ming_sim/db.py:116	mutiny_loyalty_cap	tags=quantity_clamp_cap	kernel=True	
+ming_sim/db.py:176	compute_loyalty_soft_adjust	tags=quantity_clamp_cap	kernel=True	
+ming_sim/db.py:515	parse_backing_dossier_id	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:565	_coerce_deadline_months	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:664	_member_office_weight	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:803	resolve_office_type_preserving_title	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:849	clamp_grant_arrival_amount	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:972	GameDB.init_schema	tags=admission,stages_parse_validate	kernel=True	
+ming_sim/db.py:3161	GameDB.settle_ming_province_substrate_ticks	tags=admission	kernel=False	
+ming_sim/db.py:3390	GameDB._migrate_next_audience_todos_drop_issue_fk	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:3526	GameDB.apply_region_cannon	tags=quantity_clamp_cap	kernel=True	
+ming_sim/db.py:3793	GameDB.seed_static_data	tags=admission	kernel=True	
+ming_sim/db.py:4205	GameDB._province_army_pay_container_total	tags=admission	kernel=False	
+ming_sim/db.py:4319	GameDB._standalone_army_pay_container_total	tags=admission	kernel=False	
+ming_sim/db.py:4367	GameDB._has_complete_province_pay_containers	tags=admission	kernel=False	
+ming_sim/db.py:4526	GameDB._require_valid_pay_source_region	tags=admission	kernel=False	
+ming_sim/db.py:5029	GameDB._reconcile_all_army_pay_source_regions	tags=admission	kernel=False	
+ming_sim/db.py:5066	GameDB._apply_region_army_pay_tick	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:5819	GameDB.recompute_faction_leverage	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:5851	GameDB._faction_offsets_all_zero	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:5873	GameDB._calibrate_faction_offsets	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:5935	GameDB._migrate_offsets_to_float_precision	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:6791	GameDB.adjust_classes	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:6948	GameDB.apply_power_deltas	tags=quantity_clamp_cap	kernel=True	
+ming_sim/db.py:7155	GameDB.region_payload	tags=admission	kernel=False	
+ming_sim/db.py:7187	GameDB.region_report	tags=admission	kernel=False	
+ming_sim/db.py:7207	GameDB.region_detail	tags=quantity_clamp_cap,admission	kernel=True	
+ming_sim/db.py:7276	GameDB.apply_region_deltas	tags=quantity_clamp_cap,admission	kernel=True	
+ming_sim/db.py:7539	GameDB._apply_on_restore	tags=admission	kernel=False	
+ming_sim/db.py:7843	GameDB.apply_army_deltas	tags=quantity_clamp_cap	kernel=True	
+ming_sim/db.py:8244	GameDB.create_armies_from_extraction	tags=quantity_clamp_cap	kernel=True	
+ming_sim/db.py:8492	GameDB.add_building	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:8588	GameDB.apply_building_deltas	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:8787	GameDB.adjust_factions	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:11240	GameDB._normalize_directive_dossier_payload	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:11658	GameDB._dossier_row	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:12171	GameDB.record_monthly_grant_reconciliations	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:12961	GameDB.accept_faction_denunciations	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:13378	GameDB._apply_army_pay_grant_effect	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:13473	GameDB.create_decree_dossier	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:13523	GameDB.create_decree_dossiers	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:13843	GameDB._create_decree_dossier_row	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:14164	GameDB._validate_dossier_endorsement	tags=admission	kernel=False	
+ming_sim/db.py:15163	GameDB.apply_dossier_promulgation	tags=admission,stages_parse_validate	kernel=False	
+ming_sim/db.py:16089	GameDB._apply_military_order_office_effect	tags=admission	kernel=False	
+ming_sim/db.py:16356	GameDB._apply_military_order_verdict_effect	tags=admission,stages_parse_validate	kernel=True	
+ming_sim/db.py:16510	GameDB._apply_assignment_verdict_effect	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:16602	GameDB._apply_punishment_verdict_effect	tags=admission	kernel=False	
+ming_sim/db.py:17062	GameDB.attach_pending_action_endorsement	tags=admission	kernel=False	
+ming_sim/db.py:17971	GameDB._apply_pending_action	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:18959	GameDB._ensure_directive_dossier	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:19104	GameDB.confirm_directive	tags=admission	kernel=False	
+ming_sim/db.py:19720	GameDB.insert_next_audience_todo	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:19765	GameDB.list_next_audience_todos	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:19873	GameDB.insert_issue	tags=quantity_clamp_cap,stages_parse_validate	kernel=False	
+ming_sim/db.py:20020	GameDB.advance_issue	tags=quantity_clamp_cap	kernel=False	
+ming_sim/db.py:21373	GameDB.create_secret_order	tags=quantity_clamp_cap,stages_parse_validate	kernel=False	
+ming_sim/db.py:21603	GameDB.update_secret_order_by_id	tags=quantity_clamp_cap,stages_parse_validate	kernel=False	
+ming_sim/db.py:21687	GameDB.list_secret_orders	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:21855	GameDB.submit_secret_order_for_review	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:21997	GameDB.rush_secret_order	tags=quantity_clamp_cap,stages_parse_validate	kernel=False	
+ming_sim/db.py:22056	GameDB.get_secret_order	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:22073	GameDB.auto_submit_due_secret_orders	tags=stages_parse_validate	kernel=False	
+ming_sim/db.py:194	<line:194>	tags=quantity_clamp_cap_line	kernel=False	new_value = max(0, min(upper_bound, int(old) + delta))
+ming_sim/db.py:579	<line:579>	tags=quantity_clamp_cap_line	kernel=False	return max(0, min(deadline, 36))
+ming_sim/db.py:3535	<line:3535>	tags=quantity_clamp_cap_line	kernel=False	new_value = max(0, min(cap, int(row["cannon"]) + int(delta)))
+ming_sim/db.py:5160	<line:5160>	tags=quantity_clamp_cap_line	kernel=False	new_morale = max(0, min(100, old_morale + morale_delta))
+ming_sim/db.py:5833	<line:5833>	tags=quantity_clamp_cap_line	kernel=False	new_lev = max(0, min(100, round(offset + weight_sum)))
+ming_sim/db.py:6820	<line:6820>	tags=quantity_clamp_cap_line	kernel=False	sat = max(0, min(100, sat))
+ming_sim/db.py:6821	<line:6821>	tags=quantity_clamp_cap_line	kernel=False	lev = max(0, min(100, lev))
+ming_sim/db.py:7005	<line:7005>	tags=quantity_clamp_cap_line	kernel=False	new_value = max(0, min(100, int(old_value) + delta))
+ming_sim/db.py:7412	<line:7412>	tags=quantity_clamp_cap_line	kernel=False	new_value = max(0, min(100, int(old_value) + delta))
+ming_sim/db.py:7453	<line:7453>	tags=quantity_clamp_cap_line	kernel=False	new_value = max(0, min(100, int(old_value) + delta))
+ming_sim/db.py:8055	<line:8055>	tags=quantity_clamp_cap_line	kernel=False	new_value = max(0, min(12, int(old_value) + delta))
+ming_sim/db.py:8105	<line:8105>	tags=quantity_clamp_cap_line	kernel=False	new_value = max(0, min(100, int(old_value) + delta))
+ming_sim/db.py:8359	<line:8359>	tags=quantity_clamp_cap_line	kernel=False	return max(0, min(100, int(raw)))
+ming_sim/db.py:8362	<line:8362>	tags=quantity_clamp_cap_line	kernel=False	return max(0, min(12, int(raw or 0)))
+ming_sim/db.py:8540	<line:8540>	tags=quantity_clamp_cap_line	kernel=False	max(0, min(100, int(condition))),
+ming_sim/db.py:8542	<line:8542>	tags=quantity_clamp_cap_line	kernel=False	max(0, min(100, int(risk))),
+ming_sim/db.py:8626	<line:8626>	tags=quantity_clamp_cap_line	kernel=False	new_value = max(0, min(100, int(old_value) + int(value)))
+ming_sim/db.py:8824	<line:8824>	tags=quantity_clamp_cap_line	kernel=False	new_sat = max(0, min(100, int(row["satisfaction"]) + sat_d))
+ming_sim/db.py:8836	<line:8836>	tags=quantity_clamp_cap_line	kernel=False	new_lev = max(0, min(100, int(row["leverage"]) + lev_d))
+ming_sim/db.py:19909	<line:19909>	tags=quantity_clamp_cap_line	kernel=False	bar_value = max(0, min(100, int(bar_value)))
+ming_sim/db.py:19914	<line:19914>	tags=quantity_clamp_cap_line	kernel=False	severity = max(0, min(100, int(severity)))
+ming_sim/db.py:21461	<line:21461>	tags=quantity_clamp_cap_line	kernel=False	deadline = max(0, min(int(deadline_months or 0), 36))
+ming_sim/db.py:21636	<line:21636>	tags=quantity_clamp_cap_line	kernel=False	deadline = max(0, min(int(deadline_months or 0), 36))
+ming_sim/db.py:22017	<line:22017>	tags=quantity_clamp_cap_line	kernel=False	months = max(0, min(int(deadline_months), 36))
+ming_sim/declaration_dispatch.py:1054	_attach_commission_staging_fields	tags=stages_parse_validate	kernel=False	
+ming_sim/declaration_dispatch.py:1149	_dispatch_commissions	tags=quantity_clamp_cap,admission	kernel=False	
+ming_sim/declaration_dispatch.py:1999	_dispatch_rushes	tags=quantity_clamp_cap,stages_parse_validate	kernel=False	
+ming_sim/declaration_dispatch.py:2102	_dispatch_travel_tones	tags=admission	kernel=False	
+ming_sim/declaration_dispatch.py:2434	_assert_characters_exist	tags=admission	kernel=False	
+ming_sim/declaration_dispatch.py:2505	_dispatch_on_scene_facts	tags=admission	kernel=False	
+ming_sim/declaration_dispatch.py:2598	_dispatch_presence	tags=admission	kernel=False	
+ming_sim/declaration_dispatch.py:2798	_dispatch_protagonist	tags=admission	kernel=False	
+ming_sim/declaration_dispatch.py:2029	<line:2029>	tags=quantity_clamp_cap_line	kernel=False	deadline = max(0, min(int(raw_deadline), 36))
+ming_sim/decree.py:644	write_decree_with_agno	tags=admission	kernel=False	
+ming_sim/decree_forecast.py:171	_pending_snapshot	tags=stages_parse_validate	kernel=False	
+ming_sim/displaced_population.py:42	apply_levy_driven_transfers	tags=quantity_clamp_cap,admission	kernel=False	
+ming_sim/displaced_population.py:98	<line:98>	tags=quantity_clamp_cap_line	kernel=False	support = max(0, min(100, int(row["public_support"] or 0)))
+ming_sim/due_review.py:75	_issue_meta	tags=stages_parse_validate	kernel=False	
+ming_sim/due_review.py:97	is_final_stage	tags=stages_parse_validate	kernel=False	
+ming_sim/due_review.py:144	build_due_review_input	tags=stages_parse_validate	kernel=False	
+ming_sim/due_review.py:232	project_due_review_scene	tags=stages_parse_validate	kernel=False	
+ming_sim/due_review.py:283	list_due_review_scenes	tags=stages_parse_validate	kernel=False	
+ming_sim/due_review.py:312	dossiers_with_pending_due_review	tags=stages_parse_validate	kernel=False	
+ming_sim/due_review.py:371	decide_due_review_verdict	tags=stages_parse_validate	kernel=False	
+ming_sim/due_review.py:423	_apply_dossier_verdict	tags=quantity_clamp_cap	kernel=False	
+ming_sim/entities/character/apply.py:30	allegiance_change_rejection	tags=admission	kernel=False	
+ming_sim/entities/character/apply.py:120	apply_person_changes	tags=quantity_clamp_cap	kernel=True	
+ming_sim/entities/character/apply.py:268	<line:268>	tags=quantity_clamp_cap_line	kernel=True	new_loyalty = max(0, min(100, old_loyalty + raw_delta))
+ming_sim/entities/character/delta_section.py:18	apply_declared_person_changes	tags=admission	kernel=False	
+ming_sim/entities/economy/apply.py:11	_apply_economy_list	tags=quantity_clamp_cap	kernel=False	
+ming_sim/entities/issue/commitment_display.py:112	commitment_timed_bar_value	tags=quantity_clamp_cap	kernel=False	
+ming_sim/entities/issue/commitment_display.py:146	_commitment_bar_value	tags=quantity_clamp_cap	kernel=False	
+ming_sim/entities/issue/commitment_display.py:143	<line:143>	tags=quantity_clamp_cap_line	kernel=False	return max(0, min(100, int(round(months * 100 / duration))))
+ming_sim/entities/issue/commitment_display.py:158	<line:158>	tags=quantity_clamp_cap_line	kernel=False	return max(0, min(100, int(round(paid * 100 / total))))
+ming_sim/entities/issue/delta_section.py:79	_suppressed_rows	tags=admission	kernel=False	
+ming_sim/entities/issue/delta_section.py:105	_resolve_strategic_events	tags=admission	kernel=True	
+ming_sim/entities/issue/effects.py:152	_apply_issue_entities	tags=admission	kernel=True	
+ming_sim/entities/issue/effects.py:311	_clamp_pct	tags=quantity_clamp_cap	kernel=False	
+ming_sim/entities/issue/effects.py:320	_spawn_legacy_from_effect	tags=quantity_clamp_cap	kernel=False	
+ming_sim/entities/issue/effects.py:474	_apply_monthly_ongoing_entities	tags=admission	kernel=True	
+ming_sim/entities/issue/tracker.py:23	apply_issue_tracker_output	tags=quantity_clamp_cap,admission,stages_parse_validate	kernel=False	
+ming_sim/entities/metric/apply.py:13	apply_metric_dict	tags=quantity_clamp_cap	kernel=True	
+ming_sim/entities/power/apply.py:18	_apply_bandit_absorptions	tags=quantity_clamp_cap,admission	kernel=True	
+ming_sim/entities/surcharge/apply.py:18	_apply_surcharge_decrees	tags=quantity_clamp_cap,admission	kernel=False	
+ming_sim/execution_pressure.py:65	_resolve_single_region_id	tags=admission	kernel=False	
+ming_sim/execution_pressure.py:101	_region_row_to_locality	tags=admission	kernel=False	
+ming_sim/faction_brew.py:174	parse_faction_stance_output	tags=quantity_clamp_cap	kernel=False	
+ming_sim/fiscal_fact_brief.py:80	_ming_settle_bases	tags=admission	kernel=False	
+ming_sim/flows.py:71	_province_efficiency	tags=quantity_clamp_cap	kernel=False	
+ming_sim/flows.py:195	_substrate_hub_salt_commerce_income_split	tags=admission	kernel=False	
+ming_sim/flows.py:213	_project_substrate_hub_remittance	tags=admission	kernel=False	
+ming_sim/flows.py:380	compute_budget_lines	tags=quantity_clamp_cap	kernel=False	
+ming_sim/flows.py:497	_substrate_hub_jingyun_due_by_region	tags=admission	kernel=False	
+ming_sim/flows.py:576	_allocate_substrate_hub_paid_ints	tags=quantity_clamp_cap	kernel=False	
+ming_sim/flows.py:682	apply_fixed_period_flows	tags=quantity_clamp_cap	kernel=True	
+ming_sim/flows.py:465	<line:465>	tags=quantity_clamp_cap_line	kernel=False	cond = max(0, min(100, int(r["condition"])))
+ming_sim/flows.py:888	<line:888>	tags=quantity_clamp_cap_line	kernel=False	condition = max(0, min(100, int(row["condition"])))
+ming_sim/flows.py:902	<line:902>	tags=quantity_clamp_cap_line	kernel=False	state.metrics[metric] = max(0, min(100, before + produced))
+ming_sim/issues.py:1443	_eval_gate_key_str	tags=admission	kernel=False	
+ming_sim/issues.py:1841	_bar_ascii	tags=quantity_clamp_cap	kernel=False	
+ming_sim/issues.py:1842	<line:1842>	tags=quantity_clamp_cap_line	kernel=False	value = max(0, min(100, int(value)))
+ming_sim/llm_config.py:133	_transport_runtime_slot	tags=quantity_clamp_cap	kernel=False	
+ming_sim/llm_config.py:154	cli_idle_timeout_seconds	tags=quantity_clamp_cap	kernel=False	
+ming_sim/llm_contract.py:24	require_int_range	tags=quantity_clamp_cap	kernel=False	
+ming_sim/matching.py:60	is_capital_location	tags=admission	kernel=False	
+ming_sim/materials.py:378	_spoken_this_scene	tags=quantity_clamp_cap	kernel=False	
+ming_sim/materials.py:719	_write_secret_order_file	tags=quantity_clamp_cap,stages_parse_validate	kernel=False	
+ming_sim/materials.py:1027	_write_public_by_month	tags=admission	kernel=False	
+ming_sim/materials.py:1058	_write_character_public_layer	tags=admission	kernel=False	
+ming_sim/models.py:637	GameState.clamp	tags=quantity_clamp_cap	kernel=False	
+ming_sim/models.py:642	<line:642>	tags=quantity_clamp_cap_line	kernel=False	self.metrics[key] = max(0, min(100, value))
+ming_sim/month_chain.py:1406	_run_month_drift	tags=admission	kernel=False	
+ming_sim/month_translate.py:110	build_month_segment_translate_prompt	tags=quantity_clamp_cap	kernel=False	
+ming_sim/pay_order.py:494	dossier_override_still_in_force	tags=admission	kernel=False	
+ming_sim/person_archive_contract.py:113	resolve_person_transition	tags=admission	kernel=False	
+ming_sim/qualitative.py:114	city_defense_description	tags=quantity_clamp_cap	kernel=False	
+ming_sim/qualitative.py:117	<line:117>	tags=quantity_clamp_cap_line	kernel=False	level = max(0, min(level, 5))
+ming_sim/relation_brew.py:167	parse_brew_output	tags=quantity_clamp_cap	kernel=False	
+ming_sim/rescript_actions.py:76	project_preferred_hitl_choice	tags=quantity_clamp_cap	kernel=False	
+ming_sim/rescript_actions.py:109	canonical_choice	tags=quantity_clamp_cap,stages_parse_validate	kernel=False	
+ming_sim/rescript_actions.py:223	_option_by_capability	tags=quantity_clamp_cap	kernel=False	
+ming_sim/rescript_actions.py:323	validate_all	tags=quantity_clamp_cap	kernel=False	
+ming_sim/rescript_actions.py:673	map_rescript_option_or_choice	tags=stages_parse_validate	kernel=False	
+ming_sim/rescript_actions.py:1011	_create_from_mapped	tags=stages_parse_validate	kernel=False	
+ming_sim/rescript_actions.py:1326	apply_rescript_batch	tags=quantity_clamp_cap	kernel=False	
+ming_sim/rescript_draft.py:346	layer_a_option_shape	tags=admission	kernel=False	
+ming_sim/rescript_draft.py:472	_enforce_layer_a_action_conditional	tags=stages_parse_validate	kernel=False	
+ming_sim/rescript_draft.py:722	normalize_rescript_layer_a_option	tags=admission	kernel=False	
+ming_sim/rescript_draft.py:1384	validate_rescript_draft_items	tags=quantity_clamp_cap,admission	kernel=False	
+ming_sim/rescript_draft.py:2147	generate_rescript_draft	tags=quantity_clamp_cap	kernel=False	
+ming_sim/session.py:378	_appointment_intent_is_current_office_noop	tags=quantity_clamp_cap	kernel=False	
+ming_sim/session.py:877	GameSession.admit_audience	tags=admission	kernel=False	
+ming_sim/session.py:910	GameSession.consume_audience_admission	tags=admission	kernel=False	
+ming_sim/session.py:1086	GameSession.scene_chat	tags=admission	kernel=False	
+ming_sim/session.py:1514	GameSession._resubmit_draft_admission_failures	tags=admission	kernel=False	
+ming_sim/session.py:1748	GameSession.resolve_turn	tags=admission	kernel=False	
+ming_sim/session.py:1959	GameSession.prepare_rescript_prewrite	tags=admission	kernel=False	
+ming_sim/session_write_queue.py:375	SessionWriteQueue.wait_prior	tags=admission	kernel=False	
+ming_sim/settlement/outcome.py:61	IssueSectionResult.merge	tags=admission	kernel=False	
+ming_sim/settlement/preflight.py:361	_strategic_event_result_preflight_error	tags=quantity_clamp_cap,admission	kernel=True	
+ming_sim/settlement/run.py:459	_build_outcome	tags=quantity_clamp_cap,admission	kernel=False	
+ming_sim/settlement_payload.py:228	list_due_commitments	tags=stages_parse_validate	kernel=False	
+ming_sim/situation_drift.py:195	apply_situation_monthly_drift	tags=quantity_clamp_cap,stages_parse_validate	kernel=False	
+ming_sim/situation_drift.py:225	<line:225>	tags=quantity_clamp_cap_line	kernel=False	new_bar = max(0, min(100, bar + inertia))
+ming_sim/staged_commitment.py:27	normalize_commitment_stages	tags=stages_parse_validate	kernel=False	
+ming_sim/staged_commitment.py:69	stages_to_json	tags=stages_parse_validate	kernel=False	
+ming_sim/staged_commitment.py:113	stages_list_from_source	tags=stages_parse_validate	kernel=False	
+ming_sim/staged_commitment.py:118	stages_source_from_issue_item	tags=stages_parse_validate	kernel=False	
+ming_sim/staged_commitment.py:126	is_stage_derived_end_turn	tags=stages_parse_validate	kernel=False	
+ming_sim/staged_commitment.py:156	list_due_stages_for_scan	tags=stages_parse_validate	kernel=False	
+ming_sim/staged_commitment.py:190	list_due_grant_report_dossiers_for_scan	tags=stages_parse_validate	kernel=False	
+ming_sim/staged_commitment.py:245	write_due_staged_commitment_todos	tags=stages_parse_validate	kernel=False	
+ming_sim/urge_lever.py:76	collect_urge_history	tags=stages_parse_validate	kernel=False	
+ming_sim/urge_lever.py:222	_record_commitment_urge	tags=stages_parse_validate	kernel=False	
+ming_sim/urge_lever.py:266	rush_staged_commitment_stage	tags=quantity_clamp_cap,stages_parse_validate	kernel=False	
+ming_sim/urge_lever.py:373	project_urge_audience_scene	tags=stages_parse_validate	kernel=False	
+ming_sim/urge_lever.py:310	<line:310>	tags=quantity_clamp_cap_line	kernel=False	months = max(0, min(int(deadline_months if deadline_months is not None else 1), 36))
+=== S2 identical_body_groups (0) ===
+=== S2 stages_line_hits (585) ===
+ming_sim/action_materialize.py:922	# 期限单源＝due_turn（军令同款；禁 end_turn 双写）。
+ming_sim/action_materialize.py:927	staged["due_turn"] = absolute_due
+ming_sim/action_materialize.py:1596	# stages_to_json 的严格串行面：非 JSON 字符串响亮 ValueError（由交办分派
+ming_sim/action_materialize.py:1598	from ming_sim.staged_commitment import stages_to_json
+ming_sim/action_materialize.py:1600	stages_norm = json.loads(stages_to_json(stages))
+ming_sim/action_materialize.py:2158	# 与 secret 共享期限月数；限期出战 stage/admission 换算绝对 due_turn
+ming_sim/audience_translate.py:225	"SELECT id, title, stages_json FROM issues WHERE status='active' ORDER BY id"
+ming_sim/audience_translate.py:227	stages = normalize_commitment_stages(row['stages_json'])
+ming_sim/audience_translate.py:230	lines.append(f"stage\t{int(row['id'])}\t{stage['stage_idx']}\t{stage}")
+ming_sim/audience_translate.py:323	'"stage_idx": 0, "deadline_months": 1, "reason": "催办缘由"}],\n'
+ming_sim/breach_plea.py:4	stage_idx = 触发当回合 turn（同承诺先后两次松手各得独立哭谏条）。
+ming_sim/breach_plea.py:95	"""origin_context 承载机读元数据。"""
+ming_sim/breach_plea.py:100	def decode_plea_meta(origin_context: object) -> Dict[str, object]:
+ming_sim/breach_plea.py:101	text = str(origin_context or "").strip()
+ming_sim/breach_plea.py:111	def commitment_natural_due_turn(row: Any) -> int:
+ming_sim/breach_plea.py:114	stages_raw = row["stages_json"] if "stages_json" in keys else (
+ming_sim/breach_plea.py:115	row.get("stages_json") if isinstance(row, dict) else None
+ming_sim/breach_plea.py:119	return max(int(s["due_turn"]) for s in stages)
+ming_sim/breach_plea.py:242	meta = decode_plea_meta(todo.get("origin_context"))
+ming_sim/breach_plea.py:266	if int(todo.get("stage_idx") or 0) != int(turn):
+ming_sim/breach_plea.py:282	meta = decode_plea_meta(todo.get("origin_context"))
+ming_sim/breach_plea.py:312	"UPDATE next_audience_todos SET origin_context=? WHERE id=?",
+ming_sim/breach_plea.py:330	"""松手当回合写挽留 todo。stage_idx=触发 turn。
+ming_sim/breach_plea.py:345	due = commitment_natural_due_turn(row)
+ming_sim/breach_plea.py:346	due_turn = due if due > 0 else turn
+ming_sim/breach_plea.py:352	existing_meta = decode_plea_meta(existing.get("origin_context"))
+ming_sim/breach_plea.py:382	stage_idx=turn,  # 法：触发当回合 turn
+ming_sim/breach_plea.py:383	due_turn=int(due_turn),
+ming_sim/breach_plea.py:384	criterion_text=label,
+ming_sim/breach_plea.py:385	origin_context=encode_plea_meta(meta),
+ming_sim/breach_plea.py:415	meta = decode_plea_meta(todo.get("origin_context"))
+ming_sim/breach_plea.py:417	label = BREACH_KIND_LABELS.get(breach_kind, str(todo.get("criterion_text") or "松手"))
+ming_sim/breach_plea.py:423	"stage_idx": int(todo["stage_idx"]),
+ming_sim/breach_plea.py:424	"due_turn": int(todo.get("due_turn") or 0),
+ming_sim/breach_plea.py:426	"criterion_text": str(todo.get("criterion_text") or label),
+ming_sim/breach_plea.py:479	row["stages_json"] if "stages_json" in row.keys() else None
+ming_sim/breach_plea.py:704	meta = decode_plea_meta(todo.get("origin_context"))
+ming_sim/breach_plea.py:712	raw_reason = str(meta.get("reason") or todo.get("criterion_text") or "")
+ming_sim/breach_plea.py:786	meta = decode_plea_meta(todo.get("origin_context"))
+ming_sim/breach_plea.py:828	natural_due = commitment_natural_due_turn(row)
+ming_sim/breach_plea.py:839	"due_turn": natural_due,
+ming_sim/breach_plea.py:1408	meta = decode_plea_meta(todo.get("origin_context"))
+ming_sim/covert_levy.py:220	commitment_ref=issue_id, stage_idx=did, due_turn=int(state.turn),
+ming_sim/covert_levy.py:221	criterion_text="暗渠摊派揭破待裁", origin_context="案卷实况与奏报有异",
+ming_sim/covert_progress.py:325	due_turn: int = 0,
+ming_sim/covert_progress.py:348	del tags, deadline_span, due_turn
+ming_sim/covert_progress.py:592	origin = str(review_input.get("origin_context") or "")
+ming_sim/covert_progress.py:2031	due_turn = int(order.get("due_turn") or 0)
+ming_sim/covert_progress.py:2032	if due_turn > 0 and due_turn <= turn:
+ming_sim/covert_progress.py:2070	"criterion_text": str(order.get("title") or order.get("content") or "密令"),
+ming_sim/covert_progress.py:2072	"origin_context": secret_order_origin(oid),
+ming_sim/credit_events.py:12	语境=extraction 真叙事字段（note/reason/purpose/criterion_text），禁 CTX_* 模板（P7）。
+ming_sim/credit_events.py:554	todo.get("criterion_text"),
+ming_sim/credit_events.py:555	todo.get("origin_context"),
+ming_sim/db.py:1533	due_turn INTEGER NOT NULL DEFAULT 0,
+ming_sim/db.py:1587	due_turn INTEGER NOT NULL DEFAULT 0,
+ming_sim/db.py:1972	stages_json TEXT NOT NULL DEFAULT '[]',
+ming_sim/db.py:1988	stage_idx INTEGER NOT NULL,
+ming_sim/db.py:1989	due_turn INTEGER NOT NULL,
+ming_sim/db.py:1990	criterion_text TEXT NOT NULL DEFAULT '',
+ming_sim/db.py:1991	origin_context TEXT NOT NULL DEFAULT '',
+ming_sim/db.py:1997	UNIQUE(commitment_ref, stage_idx, entry_kind)
+ming_sim/db.py:2000	ON next_audience_todos(status, due_turn);
+ming_sim/db.py:2335	self.ensure_column("issues", "stages_json", "TEXT NOT NULL DEFAULT '[]'")
+ming_sim/db.py:2389	# 密令期限：0=无硬期限；due_turn>0 且 ≤当前回合时，settle 尾部按实进度对账派生 done/failed（#1504）。
+ming_sim/db.py:2390	self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
+ming_sim/db.py:2396	"MAX(COALESCE(due_turn, 0)-COALESCE(turn_issued, 0), 0)"
+ming_sim/db.py:3404	stage_idx INTEGER NOT NULL,
+ming_sim/db.py:3405	due_turn INTEGER NOT NULL,
+ming_sim/db.py:3406	criterion_text TEXT NOT NULL DEFAULT '',
+ming_sim/db.py:3407	origin_context TEXT NOT NULL DEFAULT '',
+ming_sim/db.py:3413	UNIQUE(commitment_ref, stage_idx, entry_kind)
+ming_sim/db.py:3420	id, commitment_ref, stage_idx, due_turn, criterion_text,
+ming_sim/db.py:3421	origin_context, status, entry_kind, created_turn,
+ming_sim/db.py:3424	SELECT id, commitment_ref, stage_idx, due_turn, criterion_text,
+ming_sim/db.py:3425	origin_context, status, entry_kind, created_turn,
+ming_sim/db.py:3436	"ON next_audience_todos(status, due_turn)"
+ming_sim/db.py:11495	# #521 r1：仅限期出战（无 station 调驻面）强制未来 due_turn；
+ming_sim/db.py:11498	raw_due_turn = normalized.get("due_turn")
+ming_sim/db.py:11501	due_turn = (
+ming_sim/db.py:11502	0 if raw_due_turn in (None, "")
+ming_sim/db.py:11503	else strict_int(raw_due_turn, accept_numeric_strings=False)
+ming_sim/db.py:11511	f"军令期限非法：due_turn={raw_due_turn!r} "
+ming_sim/db.py:11514	if due_turn <= 0 and deadline > 0 and current_turn > 0:
+ming_sim/db.py:11515	due_turn = int(current_turn) + deadline
+ming_sim/db.py:11517	has_deadline_intent = due_turn > 0 or deadline > 0
+ming_sim/db.py:11519	if due_turn > int(current_turn or 0):
+ming_sim/db.py:11520	normalized["due_turn"] = due_turn
+ming_sim/db.py:11523	raise DeclarationDataError("军令缺少有效未来 due_turn/deadline_months")
+ming_sim/db.py:11526	normalized.pop("due_turn", None)
+ming_sim/db.py:11664	"due_turn", "created_turn", "created_year", "created_period",
+ming_sim/db.py:13489	due_turn: int = 0,
+ming_sim/db.py:13515	due_turn=due_turn,
+ming_sim/db.py:13539	due_turn: int = 0,
+ming_sim/db.py:13755	due_turn=due_turn,
+ming_sim/db.py:13859	due_turn: int = 0,
+ming_sim/db.py:14095	directive_id,secret_order_id,region_id,decree_text,payload_json,status,due_turn,
+ming_sim/db.py:14108	max(0, int(due_turn or 0)),
+ming_sim/db.py:15541	# #521 / ADR 0055：军令 station/office 自案卷物化；due_turn 已在案卷。
+ming_sim/db.py:15547	# 不另立承诺事项/不占在办名额。到期由 write_due 扫案卷 due_turn → 0076。
+ming_sim/db.py:15548	# 其它类型终局路径不动。期限真源＝案卷列/payload.due_turn（军令同款单源）。
+ming_sim/db.py:15550	due_turn = int(row.get("due_turn") or 0)
+ming_sim/db.py:15551	if due_turn <= 0:
+ming_sim/db.py:15552	due_turn = int(payload.get("due_turn") or 0)
+ming_sim/db.py:15553	if due_turn > int(state.turn):
+ming_sim/db.py:16363	- 期限只落案卷 due_turn（限期出战 admission 写入）；无胜负引擎
+ming_sim/db.py:16391	# due_turn：admission/create_decree_dossier 已落案卷列；限期出战无另表。
+ming_sim/db.py:16575	from ming_sim.staged_commitment import stages_to_json
+ming_sim/db.py:16578	stages_norm = json.loads(stages_to_json(
+ming_sim/db.py:16579	payload.get("stages") or payload.get("stages_json"),
+ming_sim/db.py:18103	stage_idx = int(payload.get("stage_idx") if payload.get("stage_idx") is not None else 0)
+ming_sim/db.py:18109	stage_idx=stage_idx,
+ming_sim/db.py:18118	"stage_idx": int(stage_idx),
+ming_sim/db.py:18120	"new_due": int(result["due_turn"]),
+ming_sim/db.py:18122	"tightness": max(0, int(result["old_due"]) - int(result["due_turn"])),
+ming_sim/db.py:19056	due_turn=int(structured.get("due_turn") or 0),
+ming_sim/db.py:19724	stage_idx: int,
+ming_sim/db.py:19725	due_turn: int,
+ming_sim/db.py:19726	criterion_text: str = "",
+ming_sim/db.py:19727	origin_context: str = "",
+ming_sim/db.py:19734	"""#620 P2：次回合召对待办写端。UNIQUE(commitment_ref, stage_idx, entry_kind) 去重。
+ming_sim/db.py:19743	commitment_ref, stage_idx, due_turn, criterion_text, origin_context,
+ming_sim/db.py:19749	int(stage_idx),
+ming_sim/db.py:19750	int(due_turn),
+ming_sim/db.py:19751	str(criterion_text or ""),
+ming_sim/db.py:19752	str(origin_context or ""),
+ming_sim/db.py:19783	SELECT id, commitment_ref, stage_idx, due_turn, criterion_text,
+ming_sim/db.py:19784	origin_context, status, entry_kind, created_turn, payload_json
+ming_sim/db.py:19787	ORDER BY due_turn, commitment_ref, stage_idx, id
+ming_sim/db.py:19795	"stage_idx": int(r["stage_idx"]),
+ming_sim/db.py:19796	"due_turn": int(r["due_turn"]),
+ming_sim/db.py:19797	"criterion_text": str(r["criterion_text"] or ""),
+ming_sim/db.py:19798	"origin_context": str(r["origin_context"] or ""),
+ming_sim/db.py:19902	stages_json: str | list | None = None,
+ming_sim/db.py:19922	from ming_sim.staged_commitment import stages_to_json
+ming_sim/db.py:19923	# 字符串面经 stages_to_json 正确解析或响亮拒绝，禁止 char-iterate 静默存 []
+ming_sim/db.py:19924	stages_blob = stages_to_json([] if stages_json is None else stages_json)
+ming_sim/db.py:19933	end_turn, stop_condition, commitment_kind, stages_json, last_advance_turn
+ming_sim/db.py:21462	due_turn = int(state.turn) + deadline if deadline else 0
+ming_sim/db.py:21481	(turn_issued, due_turn, deadline_span, year_issued, period_issued, minister_name, title, content, tags, importance, status, excluded_names, excluded_targets)
+ming_sim/db.py:21484	(state.turn, due_turn, deadline, state.year, state.period, minister_name, title, content, tags_json, importance,
+ming_sim/db.py:21527	due_turn=due_turn,
+ming_sim/db.py:21657	"UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, deadline_span=?, excluded_names=?, excluded_targets=?, "
+ming_sim/db.py:21708	"due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
+ming_sim/db.py:21856	"""#1504：大臣自认办结 → 缩 due_turn 至当月，月末机械对账。
+ming_sim/db.py:21876	extra_assignments="due_turn = ?",
+ming_sim/db.py:22006	"SELECT id, title, status, result, due_turn FROM secret_orders WHERE id = ?",
+ming_sim/db.py:22019	old_due = int(row["due_turn"] or 0)
+ming_sim/db.py:22031	due_turn = int(state.turn)
+ming_sim/db.py:22034	extra_assignments="due_turn = ?, deadline_span = 0",
+ming_sim/db.py:22035	extra_params=(due_turn,),
+ming_sim/db.py:22039	due_turn = target_turn if old_due <= 0 else min(old_due, target_turn)
+ming_sim/db.py:22048	extra_assignments="due_turn = ?, deadline_span = ?",
+ming_sim/db.py:22049	extra_params=(due_turn, max(int(due_turn) - int(state.turn), 0)),
+ming_sim/db.py:22053	tlog(f"[secret_order] rush id={order_id} old_due={old_due} due={due_turn} status={status}")
+ming_sim/db.py:22054	return {"id": int(order_id), "title": row["title"], "status": status, "due_turn": due_turn}
+ming_sim/db.py:22069	"due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
+ming_sim/db.py:22079	WHERE status = 'active' AND due_turn > 0 AND due_turn <= ?
+ming_sim/declaration_dispatch.py:1057	"""透传既有 staging 字段：assignee / participant_roster / due_turn。
+ming_sim/declaration_dispatch.py:1060	kwargs 同口径）。期限单源＝due_turn；deadline_months / end_turn 仅作换算输入。
+ming_sim/declaration_dispatch.py:1082	due_src = item if item.get("due_turn") not in (None, "", 0) else grant
+ming_sim/declaration_dispatch.py:1087	# 与 stage_assignment / stage_grant 同缝：相对月数或绝对回合 → 绝对 due_turn。
+ming_sim/declaration_dispatch.py:1090	end_turn=(due_src or item).get("due_turn") or (end_src or item).get("end_turn") or 0,
+ming_sim/declaration_dispatch.py:1094	payload["due_turn"] = absolute_due
+ming_sim/declaration_dispatch.py:2041	"SELECT id, status, stages_json FROM issues WHERE id=?",
+ming_sim/declaration_dispatch.py:2055	stage_idx = int(item["stage_idx"])
+ming_sim/declaration_dispatch.py:2060	stages = normalize_commitment_stages(row["stages_json"])
+ming_sim/declaration_dispatch.py:2061	if not any(int(stage["stage_idx"]) == stage_idx for stage in stages):
+ming_sim/declaration_dispatch.py:2065	"stage_idx": stage_idx,
+ming_sim/decree_forecast.py:215	"due_turn": int(payload.get("due_turn") or state.turn),
+ming_sim/decree_vocabulary.py:58	("due_turn", 0),
+ming_sim/due_review.py:77	"SELECT id, title, origin_ref, stages_json, stage_text FROM issues WHERE id=?",
+ming_sim/due_review.py:92	"stages": normalize_commitment_stages(row["stages_json"]),
+ming_sim/due_review.py:97	def is_final_stage(stages: List[Dict[str, object]], stage_idx: int) -> bool:
+ming_sim/due_review.py:101	indices = [int(s["stage_idx"]) for s in stages]
+ming_sim/due_review.py:102	return int(stage_idx) == max(indices)
+ming_sim/due_review.py:153	stage_idx = int(todo["stage_idx"])
+ming_sim/due_review.py:160	meta["title"] = str(todo.get("criterion_text") or "")[:40]
+ming_sim/due_review.py:209	"stage_idx": stage_idx,
+ming_sim/due_review.py:210	"due_turn": int(todo.get("due_turn") or 0),
+ming_sim/due_review.py:211	"criterion_text": str(todo.get("criterion_text") or ""),
+ming_sim/due_review.py:212	"origin_context": str(todo.get("origin_context") or ""),
+ming_sim/due_review.py:216	"mid_stage": not is_final_stage(stages, stage_idx),
+ming_sim/due_review.py:240	origin = str(inp.get("origin_context") or todo.get("origin_context") or "").strip()
+ming_sim/due_review.py:252	"stage_idx": int(todo["stage_idx"]),
+ming_sim/due_review.py:253	"due_turn": int(todo.get("due_turn") or 0),
+ming_sim/due_review.py:266	"stage_idx": int(todo["stage_idx"]),
+ming_sim/due_review.py:267	"due_turn": int(todo.get("due_turn") or 0),
+ming_sim/due_review.py:268	"origin_context": origin,
+ming_sim/due_review.py:269	"criterion_text": str(todo.get("criterion_text") or ""),
+ming_sim/due_review.py:286	"""次回合召对顶出序：复用 (due_turn, commitment_ref, stage_idx, id)。
+ming_sim/due_review.py:292	# list_next_audience_todos 已按 due_turn, commitment_ref, stage_idx, id 排序
+ming_sim/due_review.py:339	(int(t["commitment_ref"]), int(t["stage_idx"]))
+ming_sim/due_review.py:348	key = (int(item["commitment_ref"]), int(item["stage_idx"]))
+ming_sim/due_review.py:383	criterion = str(review_input.get("criterion_text") or "").strip() or "所约之事"
+ming_sim/due_review.py:384	origin = str(review_input.get("origin_context") or "").strip()
+ming_sim/entities/issue/tracker.py:460	stages_list_from_source,
+ming_sim/entities/issue/tracker.py:463	stages_for_commitment = stages_list_from_source(
+ming_sim/entities/issue/tracker.py:605	stages_list_from_source,
+ming_sim/entities/issue/tracker.py:609	stages_list_from_source(stages_source_from_issue_item(ni))
+ming_sim/entities/issue/tracker.py:643	stages_json=stages_norm,
+ming_sim/entities/issue/tracker.py:702	elif is_stage_derived_end_turn(chk["stages_json"], int(chk["end_turn"] or 0)):
+ming_sim/materials.py:738	due_turn = int(o.get("due_turn") or 0)
+ming_sim/materials.py:740	f"；御限剩 {max(0, due_turn - int(state.turn))} 月" if due_turn else ""
+ming_sim/rescript_actions.py:145	for key in ("end_turn", "deadline_months", "due_turn", "amount",
+ming_sim/rescript_actions.py:780	due = 0 if src.get("due_turn") in (None, "") else int(src.get("due_turn"))
+ming_sim/rescript_actions.py:789	payload["due_turn"] = due
+ming_sim/rescript_actions.py:1034	due_turn = int(normalized.get("due_turn") or 0)
+ming_sim/rescript_actions.py:1045	due_turn=due_turn,
+ming_sim/rescript_draft.py:216	"end_turn", "due_turn",
+ming_sim/rescript_draft.py:225	"require_any_nonempty": (("station", "due_turn", "deadline_months"),),
+ming_sim/rescript_draft.py:227	"optional_keys": ("station", "due_turn", "deadline_months", "office"),
+ming_sim/rescript_draft.py:518	"""require_any 在场：通用非空串；due_turn/deadline_months 须正值。
+ming_sim/rescript_draft.py:522	if key in ("due_turn", "deadline_months"):
+ming_sim/settlement_payload.py:248	stages_raw = row["stages_json"]
+ming_sim/settlement_payload.py:259	"due_turn": int(row["end_turn"] or 0),
+ming_sim/situation_drift.py:287	if not is_stage_derived_end_turn(row["stages_json"], end_turn):
+ming_sim/staged_commitment.py:3	一条多段里程碑 = 单一 commitment issue（stages_json）。
+ming_sim/staged_commitment.py:9	- 段表：issues.stages_json（JSON 数组，挂在单一承诺对象上）
+ming_sim/staged_commitment.py:31	goes through ``stages_to_json`` (strict serial; non-JSON strings raise).
+ming_sim/staged_commitment.py:47	due_turn = int(item.get("due_turn") or 0)
+ming_sim/staged_commitment.py:48	if due_turn <= 0:
+ming_sim/staged_commitment.py:50	stage_idx = int(item.get("stage_idx", idx))
+ming_sim/staged_commitment.py:51	criterion = str(item.get("criterion_text") or item.get("criterion") or "")
+ming_sim/staged_commitment.py:52	origin_context = str(item.get("origin_context") or item.get("origin") or "")
+ming_sim/staged_commitment.py:53	if not criterion.strip() and origin_context.strip():
+ming_sim/staged_commitment.py:54	criterion = origin_context
+ming_sim/staged_commitment.py:57	if not origin_context.strip():
+ming_sim/staged_commitment.py:58	origin_context = criterion
+ming_sim/staged_commitment.py:60	"stage_idx": stage_idx,
+ming_sim/staged_commitment.py:61	"due_turn": due_turn,
+ming_sim/staged_commitment.py:62	"criterion_text": criterion,
+ming_sim/staged_commitment.py:63	"origin_context": origin_context,
+ming_sim/staged_commitment.py:65	out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
+ming_sim/staged_commitment.py:69	def stages_to_json(stages: object) -> str:
+ming_sim/staged_commitment.py:86	f"stages_json 须为 JSON 数组字符串，解析失败：{text!r}"
+ming_sim/staged_commitment.py:90	f"stages_json 须为 JSON 数组，得 {type(data).__name__}"
+ming_sim/staged_commitment.py:97	"stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
+ming_sim/staged_commitment.py:107	"stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
+ming_sim/staged_commitment.py:110	raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
+ming_sim/staged_commitment.py:113	def stages_list_from_source(stages: object) -> List[Dict[str, object]]:
+ming_sim/staged_commitment.py:114	"""Strict serial capture: reuse ``stages_to_json``, never a parallel parser."""
+ming_sim/staged_commitment.py:115	return json.loads(stages_to_json(stages))
+ming_sim/staged_commitment.py:119	"""Single stages key fallback for new_issues items (stages | stages_json)."""
+ming_sim/staged_commitment.py:123	return ni.get("stages_json")
+ming_sim/staged_commitment.py:130	"""True when end_turn is purely max(stages.due_turn) display-compat (no independent due)."""
+ming_sim/staged_commitment.py:137	return et == max(int(s["due_turn"]) for s in norm)
+ming_sim/staged_commitment.py:159	去重键在写端用 (commitment_id, stage_idx)；此处返回全部到期段候选。
+ming_sim/staged_commitment.py:163	SELECT id, title, stages_json, origin_ref, origin_turn, stage_text
+ming_sim/staged_commitment.py:167	AND stages_json IS NOT NULL
+ming_sim/staged_commitment.py:168	AND stages_json != ''
+ming_sim/staged_commitment.py:169	AND stages_json != '[]'
+ming_sim/staged_commitment.py:175	stages = normalize_commitment_stages(row["stages_json"])
+ming_sim/staged_commitment.py:177	if int(stage["due_turn"]) <= int(turn):
+ming_sim/staged_commitment.py:180	"stage_idx": int(stage["stage_idx"]),
+ming_sim/staged_commitment.py:181	"due_turn": int(stage["due_turn"]),
+ming_sim/staged_commitment.py:182	"criterion_text": str(stage["criterion_text"]),
+ming_sim/staged_commitment.py:183	"origin_context": str(stage["origin_context"]),
+ming_sim/staged_commitment.py:193	"""#1783：执行中拨帑案卷 due_turn 到期 → 0076 候选（不另立 issue）。
+ming_sim/staged_commitment.py:195	commitment_ref=0；stage_idx=dossier_id 作 UNIQUE 去重键；
+ming_sim/staged_commitment.py:201	SELECT id, decree_text, payload_json, due_turn, execution_outcome, status
+ming_sim/staged_commitment.py:205	AND due_turn > 0
+ming_sim/staged_commitment.py:206	AND due_turn <= ?
+ming_sim/staged_commitment.py:216	# due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
+ming_sim/staged_commitment.py:218	due_turn = int(row["due_turn"] or 0)
+ming_sim/staged_commitment.py:230	"stage_idx": did,  # UNIQUE(commitment_ref, stage_idx, entry_kind)
+ming_sim/staged_commitment.py:231	"due_turn": due_turn,
+ming_sim/staged_commitment.py:232	"criterion_text": criterion,
+ming_sim/staged_commitment.py:233	"origin_context": origin,
+ming_sim/staged_commitment.py:250	#1783：并入拨帑案卷 due_turn 直挂（commitment_ref=0），不另立承诺事项。
+ming_sim/staged_commitment.py:261	stage_idx=int(item["stage_idx"]),
+ming_sim/staged_commitment.py:262	due_turn=int(item["due_turn"]),
+ming_sim/staged_commitment.py:263	criterion_text=str(item["criterion_text"]),
+ming_sim/staged_commitment.py:264	origin_context=str(item["origin_context"]),
+ming_sim/urge_lever.py:5	- 密令：secret_orders.due_turn（既有 rush_secret_order）
+ming_sim/urge_lever.py:6	- 分段承诺：issues.stages_json[].due_turn（本模块 rush_staged_commitment_stage）
+ming_sim/urge_lever.py:23	stages_to_json,
+ming_sim/urge_lever.py:106	"stage_idx": int(payload.get("stage_idx") or 0),
+ming_sim/urge_lever.py:146	"stage_idx": -1,
+ming_sim/urge_lever.py:227	stage_idx: int,
+ming_sim/urge_lever.py:236	"stage_idx": int(stage_idx),
+ming_sim/urge_lever.py:271	stage_idx: int,
+ming_sim/urge_lever.py:277	"""分段承诺真加速唯一写口：缩 issues.stages_json[].due_turn。
+ming_sim/urge_lever.py:279	不用 decree_dossiers.due_turn。同对象不得双真源。
+ming_sim/urge_lever.py:289	"SELECT id, stages_json, status, commitment_kind FROM issues WHERE id=?",
+ming_sim/urge_lever.py:295	stages = normalize_commitment_stages(row["stages_json"])
+ming_sim/urge_lever.py:302	if int(stage["stage_idx"]) == int(stage_idx):
+ming_sim/urge_lever.py:307	raise ValueError(f"承诺 issue#{int(commitment_ref)} 无 stage_idx={stage_idx}")
+ming_sim/urge_lever.py:315	old_due = int(target_stage["due_turn"])
+ming_sim/urge_lever.py:324	"due_turn": int(new_due),
+ming_sim/urge_lever.py:326	stages_blob = stages_to_json(stages)
+ming_sim/urge_lever.py:328	# 唯一写口：stages_json[].due_turn。禁侧写 issues.end_turn（票面单口 + #620 不落 DB）。
+ming_sim/urge_lever.py:332	SET stages_json=?, updated_at=CURRENT_TIMESTAMP
+ming_sim/urge_lever.py:343	stage_idx=int(stage_idx),
+ming_sim/urge_lever.py:355	"stage_idx": int(stage_idx),
+ming_sim/urge_lever.py:357	"due_turn": int(new_due),
+ming_sim/urge_lever.py:376	criterion = str(todo.get("criterion_text") or "")
+ming_sim/urge_lever.py:377	origin = str(todo.get("origin_context") or "")
+ming_sim/urge_lever.py:384	"stage_idx": int(todo.get("stage_idx") or 0),
+ming_sim/urge_lever.py:385	"due_turn": int(todo.get("due_turn") or 0),
+ming_sim/urge_lever.py:386	"origin_context": origin,
+ming_sim/urge_lever.py:387	"criterion_text": criterion,
+tests/test_audience_draft_grant_once_1777.py:140	"due_turn": turn_before + 1,
+tests/test_audience_draft_grant_once_1777.py:164	assert int(payload.get("due_turn") or 0) == turn_before + 1
+tests/test_audience_draft_grant_once_1777.py:209	assert int(pay_dossiers[0].get("due_turn") or 0) == turn_before + 1, pay_dossiers[0]
+tests/test_audience_translate_1837_reopen.py:405	"INSERT INTO issues(kind, title, status, stages_json, origin_turn) "
+tests/test_audience_translate_1837_reopen.py:409	{"stage_idx": 0, "due_turn": int(state.turn) + 2, "criterion_text": "首段"},
+tests/test_audience_translate_1837_reopen.py:410	{"stage_idx": 1, "due_turn": int(state.turn) + 3, "criterion_text": "次段"},
+tests/test_audience_translate_1837_reopen.py:422	"stage_idx": 1,
+tests/test_audience_translate_1837_reopen.py:438	assert int(payload["stage_idx"]) == 1
+tests/test_audience_translate_1837_reopen.py:444	"SELECT stages_json FROM issues WHERE id=?", (issue_id,)
+tests/test_audience_translate_1837_reopen.py:445	).fetchone()["stages_json"])
+tests/test_audience_translate_1837_reopen.py:446	assert int(stages[0]["due_turn"]) == int(state.turn) + 2
+tests/test_audience_translate_1837_reopen.py:447	assert int(stages[1]["due_turn"]) == int(state.turn) + 1
+tests/test_audience_undo_506.py:422	"SELECT title, due_turn, tags, excluded_names, excluded_targets "
+tests/test_breach_plea_623.py:4	- ENTRY_KIND_BREACH_PLEA 写端（stage_idx=触发 turn）
+tests/test_breach_plea_623.py:121	stages_json=stages,
+tests/test_breach_plea_623.py:165	assert pleas[0]["criterion_text"] == "断供"
+tests/test_breach_plea_623.py:166	assert int(pleas[0]["stage_idx"]) == int(state.turn)
+tests/test_breach_plea_623.py:207	assert any(p["criterion_text"] == "挪用" for p in pleas)
+tests/test_breach_plea_623.py:232	assert any(p["criterion_text"] == "撤人" for p in pleas)
+tests/test_breach_plea_623.py:271	stage_idxs = sorted(int(p["stage_idx"]) for p in pleas)
+tests/test_breach_plea_623.py:272	assert stage_idxs[0] != stage_idxs[1]
+tests/test_breach_plea_623.py:521	"stage_idx": 0, "due_turn": state.turn,
+tests/test_breach_plea_623.py:522	"criterion_text": "火器", "origin_context": "三年火器",
+tests/test_breach_plea_623.py:679	meta = decode_plea_meta(pleas[0]["origin_context"])
+tests/test_breach_plea_623.py:841	assert any(p["criterion_text"] == "挪用" for p in _pending_pleas(db))
+tests/test_breach_plea_623.py:868	meta = decode_plea_meta(pleas[0]["origin_context"])
+tests/test_breach_plea_623.py:953	meta = decode_plea_meta(todo["origin_context"])
+tests/test_breach_plea_623.py:992	meta = decode_plea_meta(todo["origin_context"])
+tests/test_credit_events_628.py:85	stages_json=[{
+tests/test_credit_events_628.py:86	"stage_idx": 0,
+tests/test_credit_events_628.py:87	"due_turn": int(state.turn) + 6,
+tests/test_credit_events_628.py:88	"criterion_text": "见成数",
+tests/test_credit_events_628.py:89	"origin_context": title,
+tests/test_credit_events_628.py:209	commitment_ref=cid_b, stage_idx=0,
+tests/test_credit_events_628.py:273	commitment_ref=cid_g, stage_idx=0, due_turn=state.turn + 2,
+tests/test_credit_events_628.py:274	criterion_text="乞恩宽限", origin_context="催紧",
+tests/test_credit_events_628.py:286	commitment_ref=cid_rg, stage_idx=0, due_turn=state.turn + 2,
+tests/test_credit_events_628.py:287	criterion_text="乞恩宽限", origin_context="再催",
+tests/test_credit_events_628.py:299	commitment_ref=cid_rr, stage_idx=0, due_turn=state.turn + 1,
+tests/test_credit_events_628.py:300	criterion_text="期限过急，恐难如期", origin_context="急催",
+tests/test_decree_dossiers_571.py:1623	def test_military_directive_projects_normalized_due_turn_to_dossier(game):
+tests/test_decree_dossiers_571.py:1639	assert payload["due_turn"] == state.turn + 4
+tests/test_decree_dossiers_571.py:1640	assert dossier["due_turn"] == state.turn + 4
+tests/test_decree_dossiers_571.py:1727	due_turn=state.turn + 3,
+tests/test_deformation_dual_rail_622.py:52	out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '所约之事依限办结。', 'commitment_kind': 'until_stop', 'ongoing
+tests/test_deformation_dual_rail_622.py:168	"criterion_text": "清丈见成数",
+tests/test_deformation_dual_rail_622.py:169	"origin_context": "清丈畿辅田亩",
+tests/test_deformation_dual_rail_622.py:296	"criterion_text": "清丈见成数",
+tests/test_deformation_dual_rail_622.py:297	"origin_context": "清丈畿辅田亩",
+tests/test_due_review_621.py:5	- list_due_review_scenes 次回合召对复命场面（P4 定性、含 origin_context）
+tests/test_due_review_621.py:109	"stage_idx": 0,
+tests/test_due_review_621.py:110	"due_turn": state.turn,
+tests/test_due_review_621.py:111	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:112	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:132	"stage_idx": 0,
+tests/test_due_review_621.py:133	"due_turn": state.turn,
+tests/test_due_review_621.py:134	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:135	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:153	"stage_idx": 0,
+tests/test_due_review_621.py:154	"due_turn": state.turn,
+tests/test_due_review_621.py:155	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:156	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:163	origin_context = pending[0]["origin_context"]
+tests/test_due_review_621.py:171	assert still[0]["origin_context"] == origin_context
+tests/test_due_review_621.py:181	assert todos2[0]["origin_context"] == origin_context
+tests/test_due_review_621.py:188	def test_due_review_scene_tops_next_audience_with_origin_context(game):
+tests/test_due_review_621.py:193	"stage_idx": 0,
+tests/test_due_review_621.py:194	"due_turn": state.turn,
+tests/test_due_review_621.py:195	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:196	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:204	assert scene["origin_context"] == "三年火器见眉目"
+tests/test_due_review_621.py:221	"stage_idx": 0,
+tests/test_due_review_621.py:222	"due_turn": state.turn,
+tests/test_due_review_621.py:223	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:224	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:261	"stage_idx": 0,
+tests/test_due_review_621.py:262	"due_turn": state.turn,
+tests/test_due_review_621.py:263	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:264	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:267	"stage_idx": 1,
+tests/test_due_review_621.py:268	"due_turn": state.turn + 24,
+tests/test_due_review_621.py:269	"criterion_text": "新历成",
+tests/test_due_review_621.py:270	"origin_context": "五年新历成",
+tests/test_due_review_621.py:282	assert scenes and scenes[0]["origin_context"] == "三年火器见眉目"
+tests/test_due_review_621.py:302	"stage_idx": 0,
+tests/test_due_review_621.py:303	"due_turn": state.turn,
+tests/test_due_review_621.py:304	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:305	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:329	"stage_idx": 0,
+tests/test_due_review_621.py:330	"due_turn": state.turn,
+tests/test_due_review_621.py:331	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:332	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:374	"stage_idx": 0,
+tests/test_due_review_621.py:375	"due_turn": state.turn,
+tests/test_due_review_621.py:376	"criterion_text": "农政见效",
+tests/test_due_review_621.py:377	"origin_context": "七八年农政见效",
+tests/test_due_review_621.py:417	"stage_idx": 0,
+tests/test_due_review_621.py:418	"due_turn": state.turn,
+tests/test_due_review_621.py:419	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:420	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:423	"stage_idx": 1,
+tests/test_due_review_621.py:424	"due_turn": state.turn + 12,
+tests/test_due_review_621.py:425	"criterion_text": "新历成",
+tests/test_due_review_621.py:426	"origin_context": "五年新历成",
+tests/test_due_review_621.py:456	"stage_idx": 0,
+tests/test_due_review_621.py:457	"due_turn": state.turn,
+tests/test_due_review_621.py:458	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:459	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:520	"stage_idx": 0,
+tests/test_due_review_621.py:521	"due_turn": state.turn + 1,
+tests/test_due_review_621.py:522	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:523	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:558	"stage_idx": 0,
+tests/test_due_review_621.py:559	"due_turn": state.turn,
+tests/test_due_review_621.py:560	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:561	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:581	"stage_idx": 0,
+tests/test_due_review_621.py:582	"due_turn": state.turn,
+tests/test_due_review_621.py:583	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:584	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:605	"stage_idx": 0,
+tests/test_due_review_621.py:606	"due_turn": state.turn,
+tests/test_due_review_621.py:607	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:608	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:667	"stage_idx": 0,
+tests/test_due_review_621.py:668	"due_turn": state.turn,
+tests/test_due_review_621.py:669	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:670	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:725	"stage_idx": 0,
+tests/test_due_review_621.py:726	"due_turn": state.turn,
+tests/test_due_review_621.py:727	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:728	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:758	"stage_idx": 0,
+tests/test_due_review_621.py:759	"due_turn": state.turn,
+tests/test_due_review_621.py:760	"criterion_text": "火器见眉目",
+tests/test_due_review_621.py:761	"origin_context": "三年火器见眉目",
+tests/test_due_review_621.py:768	assert scene["criterion_text"] == "火器见眉目"
+tests/test_fiscal_beyond_intent_1260.py:46	out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '所约之事依限办结。', 'commitment_kind': 'until_stop', 'ongoing
+tests/test_month_chain_1843.py:656	db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (turn, order_id))
+tests/test_month_chain_1843.py:778	"UPDATE secret_orders SET turn_issued=?, due_turn=? WHERE id=?",
+tests/test_month_chain_1847.py:1583	"UPDATE secret_orders SET turn_issued=?, due_turn=? WHERE id=?",
+tests/test_month_chain_1847.py:1882	"UPDATE secret_orders SET turn_issued=?, due_turn=? WHERE id=?",
+tests/test_pihong_dossier_1490.py:1004	assert int(created_due.get('due_turn') or 0) == int(state.turn) + 3
+tests/test_pre_settle_transaction.py:93	"UPDATE secret_orders SET status='active', due_turn=?, result='' WHERE id=2", (turn,))
+tests/test_rescript_option_field_heal_1746.py:477	for key in ("end_turn", "deadline_months", "due_turn", "amount"):
+tests/test_rescript_option_field_heal_1746.py:577	bad = _hold(due_turn=_OVERFLOW_SENTINEL, label="坏项")
+tests/test_rescript_option_field_heal_1746.py:604	assert list(dropped[0].get("missing_fields") or []) == ["due_turn"]
+tests/test_secret_order_monthly_progress_566.py:223	assert rushed["due_turn"] == state.turn + 1
+tests/test_secret_order_monthly_progress_566.py:227	assert db.get_decree_dossier(dossier_id)["due_turn"] != state.turn + 3
+tests/test_secret_order_payoff_1504.py:238	"actual_units": 3.0, "target_units": 3.0, "criterion_text": "密查甲",
+tests/test_secret_order_payoff_1504.py:243	"actual_units": 0.5, "target_units": 3.0, "criterion_text": "密查甲",
+tests/test_secret_order_payoff_1504.py:256	deadline_span=3, due_turn=10,
+tests/test_secret_order_payoff_1504.py:262	deadline_span=3, due_turn=10,
+tests/test_secret_order_payoff_1504.py:276	deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
+tests/test_secret_order_payoff_1504.py:375	"UPDATE secret_orders SET due_turn=? WHERE id=?",
+tests/test_secret_order_payoff_1504.py:403	"UPDATE secret_orders SET due_turn=? WHERE id=?",
+tests/test_secret_order_payoff_1504.py:436	"SELECT due_turn, deadline_span FROM secret_orders WHERE id=?", (oid,)
+tests/test_secret_order_payoff_1504.py:438	assert state.turn == int(order["due_turn"])
+tests/test_secret_order_payoff_1504.py:466	"SELECT due_turn FROM secret_orders WHERE id=?", (oid,)
+tests/test_secret_order_payoff_1504.py:467	).fetchone()["due_turn"]
+tests/test_secret_order_payoff_1504.py:513	"SELECT due_turn FROM secret_orders WHERE id=?", (oid,)
+tests/test_secret_order_payoff_1504.py:514	).fetchone()["due_turn"])
+tests/test_secret_order_payoff_1504.py:625	"SELECT due_turn FROM secret_orders WHERE id=?", (oid,)
+tests/test_secret_order_payoff_1504.py:626	).fetchone()["due_turn"]
+tests/test_secret_order_payoff_1504.py:698	assert int(db.get_secret_order(oid)["due_turn"] or 0) == 0
+tests/test_secret_order_payoff_1504.py:705	assert int(live["due_turn"]) == int(state.turn)
+tests/test_secret_order_payoff_1504.py:728	assert int(live["due_turn"]) == int(state.turn)
+tests/test_secret_order_payoff_1504.py:768	assert int(live["due_turn"]) == int(state.turn)
+tests/test_secret_order_payoff_1504.py:1507	state.turn = int(db.get_secret_order(oid)["due_turn"])
+tests/test_secret_order_payoff_1504.py:2759	db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn, oid))
+tests/test_staged_assignment_identity_1890.py:549	# ``issues.stages_json`` 才算数。暂存里有没有 ``stages`` 键证明不了任何东西——
+tests/test_staged_assignment_identity_1890.py:599	"SELECT id, commitment_kind, stages_json, end_turn FROM issues WHERE origin_ref=?",
+tests/test_staged_assignment_identity_1890.py:608	旧实现对已归一正文跑中文数词正则，落出两段带 ``due_turn`` 的机械事实。
+tests/test_staged_assignment_identity_1890.py:609	段表只认显式结构化 ``stages``；本条钉最终那行：``stages_json`` 空、无承诺
+tests/test_staged_assignment_identity_1890.py:619	assert normalize_commitment_stages(issue["stages_json"]) == []
+tests/test_staged_assignment_identity_1890.py:665	"""显式结构化 stages 走完整交办链，最终 ``issues.stages_json`` 落两段。
+tests/test_staged_assignment_identity_1890.py:673	{"stage_idx": 0, "due_turn": 46, "criterion_text": "修渠"},
+tests/test_staged_assignment_identity_1890.py:674	{"stage_idx": 1, "due_turn": 70, "criterion_text": "通航"},
+tests/test_staged_assignment_identity_1890.py:681	assert [s["due_turn"] for s in normalize_commitment_stages(issue["stages_json"])] == [46, 70]
+tests/test_staged_assignment_identity_1890.py:711	# 库层没有因此长出承诺行（更没有带 due_turn 的段表）。
+tests/test_staged_assignment_identity_1890.py:733	{"stage_idx": 0, "due_turn": 46, "criterion_text": "火器见眉目"},
+tests/test_staged_assignment_identity_1890.py:734	{"stage_idx": 1, "due_turn": 70, "criterion_text": "新历成"},
+tests/test_staged_assignment_identity_1890.py:742	"SELECT stages_json FROM issues WHERE id=?", (int(created["issue_id"]),),
+tests/test_staged_assignment_identity_1890.py:743	).fetchone()["stages_json"])
+tests/test_staged_assignment_identity_1890.py:744	assert [s["due_turn"] for s in stages] == [46, 70]
+tests/test_structured_decree_contract_1624.py:501	**mil_base, "station": "", "due_turn": 0, "deadline_months": "0",
+tests/test_supervision_625.py:113	def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
+tests/test_supervision_625.py:117	"stage_idx": 0,
+tests/test_supervision_625.py:118	"due_turn": int(due_turn),
+tests/test_supervision_625.py:119	"criterion_text": "清丈见眉目",
+tests/test_supervision_625.py:120	"origin_context": "限期清丈",
+tests/test_supervision_625.py:301	_insert_staged(db, state, content, dossier_id=sub_m, due_turn=state.turn)
+tests/test_supervision_625.py:431	_insert_staged(db, state, content, dossier_id=subject_id, due_turn=state.turn)
+tests/test_urge_lever_624.py:4	- rush_staged_commitment_stage → issues.stages_json[].due_turn（真加速唯一写口）
+tests/test_urge_lever_624.py:87	"stage_idx": 0,
+tests/test_urge_lever_624.py:88	"due_turn": d0,
+tests/test_urge_lever_624.py:89	"criterion_text": "火器见眉目",
+tests/test_urge_lever_624.py:90	"origin_context": "三年火器见眉目",
+tests/test_urge_lever_624.py:93	"stage_idx": 1,
+tests/test_urge_lever_624.py:94	"due_turn": d1,
+tests/test_urge_lever_624.py:95	"criterion_text": "新历成",
+tests/test_urge_lever_624.py:96	"origin_context": "五年新历成",
+tests/test_urge_lever_624.py:115	"SELECT stages_json, end_turn FROM issues WHERE id=?", (issue_id,),
+tests/test_urge_lever_624.py:117	before = normalize_commitment_stages(before_row["stages_json"])
+tests/test_urge_lever_624.py:118	old_due = int(before[0]["due_turn"])
+tests/test_urge_lever_624.py:124	stage_idx=0,
+tests/test_urge_lever_624.py:128	assert result["due_turn"] < old_due
+tests/test_urge_lever_624.py:129	assert int(result["due_turn"]) == state.turn + 3
+tests/test_urge_lever_624.py:132	"SELECT stages_json, end_turn FROM issues WHERE id=?", (issue_id,),
+tests/test_urge_lever_624.py:134	after = normalize_commitment_stages(after_row["stages_json"])
+tests/test_urge_lever_624.py:135	assert int(after[0]["due_turn"]) == state.turn + 3
+tests/test_urge_lever_624.py:136	# 宪法级：催办唯一写口=stages_json；issues.end_turn 逐位不变
+tests/test_urge_lever_624.py:138	# 真源唯一：stages_json；不写 decree_dossiers.due_turn 作第二源
+tests/test_urge_lever_624.py:140	assert int(dossier.get("due_turn") or 0) == 0 or int(dossier.get("due_turn") or 0) != int(after[0]["due_turn"])
+tests/test_urge_lever_624.py:152	stage_idx=0,
+tests/test_urge_lever_624.py:153	due_turn=int(after[0]["due_turn"]),
+tests/test_urge_lever_624.py:154	criterion_text="火器见眉目",
+tests/test_urge_lever_624.py:155	origin_context="三年火器见眉目",
+tests/test_urge_lever_624.py:181	"stage_idx": 0,
+tests/test_urge_lever_624.py:182	"due_turn": state.turn + 24,
+tests/test_urge_lever_624.py:183	"criterion_text": "火器见眉目",
+tests/test_urge_lever_624.py:184	"origin_context": "三年火器见眉目",
+tests/test_urge_lever_624.py:198	stage_idx=0,
+tests/test_urge_lever_624.py:199	due_turn=state.turn,
+tests/test_urge_lever_624.py:200	criterion_text="火器见眉目",
+tests/test_urge_lever_624.py:201	origin_context="三年火器见眉目",
+tests/test_urge_lever_624.py:210	db, state, commitment_ref=issue_id, stage_idx=0,
+tests/test_urge_lever_624.py:214	db, state, commitment_ref=issue_id, stage_idx=0,
+tests/test_urge_lever_624.py:245	stage_idx=0,
+tests/test_urge_lever_624.py:246	due_turn=state.turn,
+tests/test_urge_lever_624.py:247	criterion_text="乞恩宽限",
+tests/test_urge_lever_624.py:248	origin_context="稍加催促",
+tests/test_urge_lever_624.py:270	marked = dict(grace[0], origin_context="上奏 grace_fake 待议", criterion_text="求宽限 truth")
+tests/test_urge_lever_624.py:272	assert projected["origin_context"] == marked["origin_context"]
+tests/test_urge_lever_624.py:273	assert projected["criterion_text"] == marked["criterion_text"]
+tests/test_urge_lever_624.py:278	stage_idx=0,
+tests/test_urge_lever_624.py:279	due_turn=state.turn,
+tests/test_urge_lever_624.py:280	criterion_text="火器见眉目",
+tests/test_urge_lever_624.py:281	origin_context="三年火器见眉目",
+tests/test_urge_lever_624.py:313	"stage_idx": 0,
+tests/test_urge_lever_624.py:314	"due_turn": state.turn,
+tests/test_urge_lever_624.py:315	"criterion_text": "火器见眉目",
+tests/test_urge_lever_624.py:316	"origin_context": "三年火器见眉目",
+tests/test_urge_lever_624.py:321	stage_idx=0,
+tests/test_urge_lever_624.py:322	due_turn=state.turn,
+tests/test_urge_lever_624.py:323	criterion_text="火器见眉目",
+tests/test_urge_lever_624.py:324	origin_context="三年火器见眉目",
+tests/test_urge_lever_624.py:342	db, state, commitment_ref=issue_id, stage_idx=0,
+tests/test_urge_lever_624.py:361	db, state, commitment_ref=9_999_999, stage_idx=0,
+tests/test_urge_lever_624.py:377	"stage_idx": 0,
+tests/test_urge_lever_624.py:378	"due_turn": state.turn + 12,
+tests/test_urge_lever_624.py:379	"criterion_text": "火器见眉目",
+tests/test_urge_lever_624.py:380	"origin_context": "三年火器见眉目",
+tests/test_urge_lever_624.py:388	stage_idx=0,
+tests/test_urge_lever_624.py:389	due_turn=state.turn,
+tests/test_urge_lever_624.py:390	criterion_text="期限过急",
+tests/test_urge_lever_624.py:391	origin_context="着即赶办",
+tests/test_urge_lever_624.py:399	stage_idx=0,
+tests/test_urge_lever_624.py:400	due_turn=state.turn,
+tests/test_urge_lever_624.py:401	criterion_text="求宽限",
+tests/test_urge_lever_624.py:402	origin_context="着即赶办",
+tests/test_urge_lever_624.py:443	"stage_idx": 0,
+tests/test_urge_lever_624.py:444	"due_turn": state.turn + 5,
+tests/test_urge_lever_624.py:445	"criterion_text": "火器见眉目",
+tests/test_urge_lever_624.py:446	"origin_context": "三年火器见眉目",
+tests/test_urge_lever_624.py:452	stage_idx=0,
+tests/test_urge_lever_624.py:453	due_turn=state.turn,
+tests/test_urge_lever_624.py:454	criterion_text="求宽限",
+tests/test_urge_lever_624.py:455	origin_context="稍催",
+tests/test_urge_lever_624.py:472	"""宪法级：催后 issues.end_turn 逐位不变（唯一写口=stages_json）。"""
+tests/test_urge_lever_624.py:490	db, state, commitment_ref=issue_id, stage_idx=0,
+tests/test_urge_lever_624.py:517	stage_idx=0,
+tests/test_urge_lever_624.py:518	due_turn=state.turn,
+tests/test_urge_lever_624.py:519	criterion_text="期限过急",
+tests/test_urge_lever_624.py:520	origin_context="着一月内了结",
+tests/test_urge_lever_624.py:565	"SELECT stages_json FROM issues WHERE id=?", (issue_id,),
+tests/test_urge_lever_624.py:566	).fetchone()["stages_json"]
+tests/test_urge_lever_624.py:568	old_due = int(before[0]["due_turn"])
+tests/test_urge_lever_624.py:578	payload={"stage_idx": 0, "deadline_months": 1, "reason": "闸门催"},
+tests/test_urge_lever_624.py:586	"SELECT stages_json FROM issues WHERE id=?", (issue_id,),
+tests/test_urge_lever_624.py:587	).fetchone()["stages_json"]
+tests/test_urge_lever_624.py:589	assert int(after[0]["due_turn"]) == state.turn + 1
+tests/test_urge_lever_624.py:590	assert int(after[0]["due_turn"]) < old_due
+=== S3 stop_touch_members (115) ===
+ming_sim/action_materialize.py:1482	stage_assignment_candidate	stop_condition_touch	legacyish=False
+ming_sim/action_materialize.py:1969	_build_catalog	stop_condition_touch	legacyish=False
+ming_sim/audience_translate.py:256	build_c0_declaration_shape	stop_condition_touch	legacyish=False
+ming_sim/content.py:247	load_event_content	stop_condition_touch	legacyish=False
+ming_sim/db.py:458	_is_commitment_stop_condition	legacy_stop_compat	legacyish=True
+ming_sim/db.py:462	_has_stop_condition	legacy_stop_compat	legacyish=True
+ming_sim/db.py:972	GameDB.init_schema	legacy_stop_compat	legacyish=True
+ming_sim/db.py:5619	GameDB.seed_opening_crises	stop_condition_touch	legacyish=False
+ming_sim/db.py:16510	GameDB._apply_assignment_verdict_effect	stop_condition_touch	legacyish=False
+ming_sim/db.py:19873	GameDB.insert_issue	legacy_stop_compat	legacyish=True
+ming_sim/db.py:20020	GameDB.advance_issue	legacy_stop_compat	legacyish=True
+ming_sim/declaration_dispatch.py:1149	_dispatch_commissions	legacy_stop_compat	legacyish=True
+ming_sim/entities/issue/commitment_display.py:12	commitment_progress_payload	stop_condition_touch	legacyish=False
+ming_sim/entities/issue/commitment_display.py:67	commitment_display_text	stop_condition_touch	legacyish=False
+ming_sim/entities/issue/commitment_display.py:112	commitment_timed_bar_value	stop_condition_touch	legacyish=False
+ming_sim/entities/issue/tracker.py:23	apply_issue_tracker_output	legacy_stop_compat	legacyish=True
+ming_sim/issues.py:81	_validate_commitment_stop_condition	stop_condition_touch	legacyish=False
+ming_sim/issues.py:133	commitment_condition_role	legacy_stop_compat	legacyish=True
+ming_sim/issues.py:148	_commitment_stop_gate	stop_condition_touch	legacyish=False
+ming_sim/issues.py:212	_commitment_gate_references_arrears	stop_condition_touch	legacyish=False
+ming_sim/issues.py:216	_commitment_arrears_gate_army_ids	stop_condition_touch	legacyish=False
+ming_sim/issues.py:1886	event_to_issue	stop_condition_touch	legacyish=False
+ming_sim/knowledge.py:194	project_issue_materials	stop_condition_touch	legacyish=False
+ming_sim/knowledge.py:513	build_character_knowledge	legacy_stop_compat	legacyish=True
+ming_sim/materials.py:587	_visible_affair_lines	stop_condition_touch	legacyish=False
+ming_sim/materials.py:905	_write_tree	stop_condition_touch	legacyish=False
+ming_sim/materials.py:1298	_candidate_event_fact	stop_condition_touch	legacyish=False
+ming_sim/materials.py:1548	_write_candidate_event_files	stop_condition_touch	legacyish=False
+ming_sim/rescript_actions.py:109	canonical_choice	stop_condition_touch	legacyish=False
+ming_sim/rescript_actions.py:673	map_rescript_option_or_choice	stop_condition_touch	legacyish=False
+ming_sim/rescript_draft.py:694	normalize_stop_condition	stop_condition_touch	legacyish=False
+ming_sim/rescript_draft.py:722	normalize_rescript_layer_a_option	stop_condition_touch	legacyish=False
+ming_sim/situation_drift.py:195	apply_situation_monthly_drift	stop_condition_touch	legacyish=False
+tests/test_breach_plea_623.py:94	_insert_commitment	stop_condition_touch	legacyish=False
+tests/test_cli_backend.py:530	test_resolve_cli_bin_falls_back_and_miss_not_cached	legacy_stop_compat	legacyish=True
+tests/test_commitment_display_348.py:15	_row	legacy_stop_compat	legacyish=True
+tests/test_commitment_display_348.py:30	TestCommitmentTimedBarValue.test_timed_bar_percentage_clamp_and_none_cases	stop_condition_touch	legacyish=False
+tests/test_commitment_display_348.py:81	TestTimedBarIntegration.test_origin_turn_unset_falls_back_to_state_turn	legacy_stop_compat	legacyish=True
+tests/test_db_broad_except_surface.py:21	test_pending_decisions_corrupt_options_json_falls_back_and_surfaces	legacy_stop_compat	legacyish=True
+tests/test_db_broad_except_surface.py:58	test_resolve_context_corrupt_payload_falls_back_and_surfaces	legacy_stop_compat	legacyish=True
+tests/test_decree_commitment_creation_136.py:36	test_until_stop_commitment_issue_is_created_with_carrier_fields	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:107	test_until_stop_commitment_shape_rejects_without_explicit_marker	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:153	test_future_one_shot_commitment_issue_is_created_with_deadline_only	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:170	test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:208	test_stop_condition_only_commitment_shape_rejects_without_explicit_marker	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:219	test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_marker	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:230	test_legacy_resolve_condition_person_commitment_rejects_without_marker	legacy_stop_compat	legacyish=True
+tests/test_decree_commitment_creation_136.py:241	test_until_stop_commitment_requires_initiative_kind	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:252	test_until_stop_commitment_supports_character_loyalty_condition	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:274	test_until_stop_commitment_rejects_non_dict_stop_condition	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:285	test_until_stop_commitment_rejects_stop_condition_without_table_prefix	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:296	test_until_stop_commitment_requires_origin_ref	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:307	test_until_stop_commitment_requires_ongoing_effects	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:318	test_until_stop_commitment_rejects_semantically_empty_ongoing_effects	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:329	test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:340	test_until_stop_commitment_rejects_direct_resolved_close	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:360	test_until_stop_commitment_rejects_direct_failed_close_without_effects	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:386	test_until_stop_commitment_advance_to_full_stays_active	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:406	test_stop_condition_without_commitment_kind_advance_to_full_stays_active	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:433	test_has_stop_condition_handles_preparsed_and_json_whitespace	legacy_stop_compat	legacyish=True
+tests/test_decree_commitment_creation_136.py:443	test_empty_json_stop_condition_allows_advance_to_resolved	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_creation_136.py:469	test_commitment_skips_cli_resolve_effect_enrich	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_schema_136.py:28	test_issues_schema_has_commitment_deadline_columns	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_schema_136.py:123	test_insert_issue_persists_commitment_deadline_columns	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_schema_136.py:146	test_insert_issue_serializes_structured_stop_condition_as_json	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_schema_136.py:164	test_new_issue_persists_commitment_columns_from_tracker_output	legacy_stop_compat	legacyish=True
+tests/test_decree_commitment_schema_136.py:193	test_decree_commitment_shape_with_string_stop_condition_requires_marker	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_schema_136.py:220	test_existing_issues_table_gets_commitment_columns_idempotently	legacy_stop_compat	legacyish=True
+tests/test_decree_commitment_settlement_229.py:112	test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progress	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:237	test_commitment_stop_gate_resolve_respects_outer_transaction_rollback	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:325	test_commitment_progress_skips_non_numeric_gate_values	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:387	test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:472	test_commitment_progress_contexts_are_structured	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:508	test_commitment_progress_fractional_strict_gate_can_be_satisfied	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:570	test_commitment_ongoing_economy_not_scaled_by_bar_discount	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:604	test_arrears_commitment_preserves_explicit_monthly_payment_target	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:645	test_high_bar_metric_only_commitment_applies_and_records_monthly_progress	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:724	test_commitment_end_turn_expires_without_resolve_effects	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:767	test_limited_duration_commitment_ticks_until_end_turn_then_expires	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:823	test_until_stop_condition_beats_later_end_turn_for_stacked_commitment	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:912	test_commitment_missing_purpose_still_routes_arrears_budget	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:932	test_commitment_targeted_pay_uses_explicit_arrears_target	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:973	test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:1021	test_non_arrears_commitment_missing_pay_target_does_not_open_priority_pool	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:1069	test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:1115	test_commitment_progress_keeps_strict_stop_gate_semantics	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:1141	test_end_turn_without_ongoing_is_not_expired_by_settlement_tick	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:1161	test_one_shot_end_turn_commitment_stays_active_after_month	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:1193	test_semantically_empty_one_shot_commitment_acks_once	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:1232	test_metadata_only_one_shot_commitment_acks_once	stop_condition_touch	legacyish=False
+tests/test_decree_commitment_settlement_229.py:1272	test_due_one_shot_commitment_ack_closes_review_loop_without_effects	stop_condition_touch	legacyish=False
+tests/test_deformation_dual_rail_622.py:414	test_commitment_pooled_pay_arrears_inherits_beyond_intent	stop_condition_touch	legacyish=False
+tests/test_economy_section_rejections.py:89	test_issue_effect_bad_account_economy_reaches_reports	stop_condition_touch	legacyish=False
+tests/test_economy_section_rejections.py:147	test_issue_effect_cancel_economy_reaches_reports	stop_condition_touch	legacyish=False
+tests/test_error_pack.py:161	test_version_read_failure_falls_back_to_unknown	legacy_stop_compat	legacyish=True
+tests/test_event_trigger_gate.py:1416	test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome	stop_condition_touch	legacyish=False
+tests/test_faction_class_section_rejections.py:220	test_issue_effect_faction_rejection_reaches_reports	stop_condition_touch	legacyish=False
+tests/test_month_chain_1843.py:645	test_month_drift_settles_due_secret_and_records_inertia_rejection	stop_condition_touch	legacyish=False
+tests/test_pay_order_override_653.py:181	test_r4_golden2_expiry_falls_back_to_next_specific	legacy_stop_compat	legacyish=True
+tests/test_pay_order_override_653.py:815	test_revoke_provincial_falls_back_to_nationwide	legacy_stop_compat	legacyish=True
+tests/test_pay_order_override_653.py:923	test_fact_brief_priority_provenance_falls_back_to_nationwide_scope	legacy_stop_compat	legacyish=True
+tests/test_person_delta_adapter.py:122	test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta	legacy_stop_compat	legacyish=True
+tests/test_pihong_dossier_1490.py:563	test_657_p6_mapper_deliberate_preserve_free_text	stop_condition_touch	legacyish=False
+tests/test_pihong_dossier_1490.py:923	test_657_abi_mapper_matrix_a1_a12	legacy_stop_compat	legacyish=True
+tests/test_rejection_wiring.py:195	test_inertia_tolerated_rejections_reach_reports	stop_condition_touch	legacyish=False
+tests/test_release_bundle_assets.py:19	test_pool_portrait_scan_falls_back_to_built_dist_when_public_absent	legacy_stop_compat	legacyish=True
+tests/test_rescript_draft_656.py:81	test_triage_actor_falls_back_to_eunuch_director	legacy_stop_compat	legacyish=True
+tests/test_runtime_llm_config.py:543	test_runtime_llm_transport_nonpositive_falls_back_to_defaults	legacy_stop_compat	legacyish=True
+tests/test_section4_rejections.py:589	test_issue_path_tolerated_rejections_reach_reports	stop_condition_touch	legacyish=False
+tests/test_section4_rejections.py:633	test_inertia_natural_resolution_tolerated_rejection_no_crash	stop_condition_touch	legacyish=False
+docs/DELTA_SCHEMA.md:265	doc_legacy_stop	| `resolve_condition` | 文本；旧结案条件 / 兼容字段 |
+docs/adr/0023-frontier-pay-source-ratio-and-arrears-reconciliation.md:35	doc_legacy_stop	- **④ 补饷 = 唯一手动偿还杠杆（phase2）= 真钱 `economy_moves(purpose=补饷, account, target=该军)`，对两源都开放（cmr R3/R6）**：补饷是真钱（从指定 account 出账、走预算流、守 D10/ADR 0007——**非 `army_delta.arrears` 无现金直减**，cmr R6）；它按该军**当前 `省份额欠 : 
+docs/test-cleanup-audit-1185.md:1183	doc_legacy_stop	| `test_legacy_resolve_condition_person_commitment_rejects_without_marker` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
+docs/test-cleanup-audit-1185.md:1231	doc_legacy_stop	| `test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
+docs/test-cleanup-audit-1185.md:2435	doc_legacy_stop	| `test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition` | 1 | **keep** | 🔒 闸类/负向或主契约，默认保留 |
+=== S3 weak_or_lost_tests (2) ===
+tests/test_llm_channel_config.py:542	test_verify_llm_available_legacy_env_only_failure_raises	asserts=0
+tests/test_power_section_rejections.py:125	test_canonical_person_power_writer_code_exception_is_fail_loud	asserts=0
+=== S3 unused_fixtures (57) ===
+tests/cli_process_doubles.py:96	_ScriptedStream.__iter__	refs=0
+tests/conftest.py:164	_restore_content_characters	refs=0
+tests/conftest.py:183	_transport_retry_interval_instant	refs=0
+tests/conftest.py:330	_isolated_user_data_dir	refs=0
+tests/conftest.py:417	_offline_audience_translation_provider	refs=0
+tests/conftest.py:516	_offline_scene_beat_generator	refs=0
+tests/conftest.py:526	_atomic_connless_test_shell_compat	refs=0
+tests/conftest.py:556	_isolate_cli_bin_resolution	refs=0
+tests/test_applier_contract.py:12	_make_ri	refs=0
+tests/test_audience_background.py:110	_FakeSession.note_chat_rollback	refs=0
+tests/test_audience_background.py:113	_FakeSession.refresh_runtime_after_chat_rollback	refs=0
+tests/test_audience_background.py:156	_assert_next_accepted	refs=0
+tests/test_audience_presence_500.py:178	_session_double	refs=0
+tests/test_audience_presence_500.py:193	_tool_registry	refs=0
+tests/test_chat_stream_failpaths_393.py:84	_FailingPrologueDB.load_all_chat_history	refs=0
+tests/test_chat_stream_failpaths_393.py:242	_DoubleFailDB.load_all_chat_history	refs=0
+tests/test_chat_stream_failpaths_393.py:295	_WorkerPathDB.load_all_chat_history	refs=0
+tests/test_cli_backend.py:31	_so_json	refs=0
+tests/test_cli_backend.py:43	_patch_backend	refs=0
+tests/test_cli_play_turn.py:29	_noop_atomic	refs=0
+tests/test_decree_dossiers_571.py:1899	_complete_session	refs=0
+tests/test_enter_settlement_period_1235.py:117	_terminal_sse	refs=0
+tests/test_event_chain_cascade.py:34	_TempEvents.__enter__	refs=0
+tests/test_event_chain_cascade.py:41	_TempEvents.__exit__	refs=0
+tests/test_execution_tenure_613.py:92	_clear_character_offices	refs=0
+tests/test_fiscal_levy_effect.py:64	_settled_land_by_region	refs=0
+tests/test_menu_lifecycle_drain_396.py:532	_GapBDB.load_all_chat_history	refs=0
+tests/test_menu_lifecycle_drain_396.py:557	_GapBDB.load_all_chat_history	refs=0
+tests/test_month_loop_tracer_1468.py:169	_install_canned_minister	refs=0
+tests/test_month_loop_tracer_1468.py:179	_month_ord_of	refs=0
+tests/test_month_loop_tracer_1468.py:303	_play_one_month	refs=0
+tests/test_month_loop_tracer_1468.py:463	_setup_open_night_participant	refs=0
+tests/test_month_loop_tracer_1468.py:497	_assert_court_break_closed	refs=0
+tests/test_mutiny_actual_residence_659.py:84	_simulator_army_dicts	refs=0
+tests/test_mutiny_third_strike_318.py:20	_simulator_army_dicts	refs=0
+tests/test_mutiny_third_strike_318.py:28	_find_simulator_army	refs=0
+tests/test_new_issues_section_rejections.py:33	_TempEvents.__enter__	refs=0
+tests/test_new_issues_section_rejections.py:47	_TempEvents.__exit__	refs=0
+tests/test_opening_gazette_delete_1356.py:32	_canned_settle	refs=0
+tests/test_pihong_dossier_1490.py:2419	_658_session	refs=0
+tests/test_player_payload_1022.py:31	_HistoryDB.list_directives_by_turn	refs=0
+tests/test_pre_settle_transaction.py:242	_drive_resolve_directives	refs=0
+tests/test_qa_b3_409_ux.py:32	_ClosingNightDB.conn_execute	refs=0
+tests/test_qa_h1_seed_data.py:32	_bajiu_names	refs=0
+tests/test_refugee_loop_652.py:65	_reflux	refs=0
+tests/test_relation_capture_633.py:390	_module_of	refs=0
+tests/test_rescript_option_field_heal_1746.py:110	_stamp_heal_ids	refs=0
+tests/test_secret_order_monthly_progress_566.py:47	_canned_monthly_settlement	refs=0
+tests/test_settlement_write_guard_393.py:60	_RecordingDB.admin_upsert	refs=0
+tests/test_settlement_write_guard_393.py:64	_RecordingDB.admin_delete	refs=0
+tests/test_settlement_write_guard_393.py:108	_FakeGame.find_character	refs=0
+tests/test_settlement_write_guard_393.py:111	_FakeGame.set_custom_portrait	refs=0
+tests/test_state_reload.py:20	_restore_content	refs=0
+tests/test_structured_decree_contract_1624.py:120	_army_none_legal_item	refs=0
+tests/test_transit_countdown_668.py:246	_assert_ledger_match	refs=0
+tests/test_web_chat_serialization_393.py:62	_FakeSession._merge_staged_new_secret_order_content	refs=0
+tests/test_web_chat_serialization_393.py:162	_RecordingDB.load_all_chat_history	refs=0
+=== S4 political_default_candidates (312) ===
+ming_sim/agents.py:503	create_promulgation_judge_agent	political_default_function
+ming_sim/applier.py:43	floor=True	metrics=[]	# 类属性兜底：sqlite3 可能在 __init__ 前调用 commit（理论上不会，但稳妥）。
+ming_sim/appointment_tenure.py:33	floor=True	metrics=[]	"""读取公开中文字段或内部英文别名；仅无任别字段的旧载荷按真除兜底。"""
+ming_sim/appointment_tenure.py:46	floor=True	metrics=[]	"""执行侧读端：非法/空值按真除兜底，不抛（旧档与缺备档兼容）。"""
+ming_sim/army_pay.py:76	floor=True	metrics=['军心']	"""#314 军心月度 tick：+5 严格系于 arrears==0；floor 只用于 dead-band 与 ≥3 月分档。
+ming_sim/army_pay.py:79	floor=True	metrics=[]	0<arrears 且 floor(arrears/needed)<3 → 0（dead-band，短欠忍得住、守「不清欠则不脱困」）；
+ming_sim/army_pay.py:80	floor=True	metrics=[]	floor≥3 月 → -5（欠到第 3 月起逐月流失）。clamp 由调用方落库时做（[0,100]）。
+ming_sim/army_pay.py:89	floor=True	metrics=[]	months_in_arrears = math.floor(arrears / full_needed)
+ming_sim/army_pay.py:152	floor=True	metrics=[]	months = math.floor(arrears / full_needed) if full_needed > 0 else 0
+ming_sim/army_pay.py:218	floor=True	metrics=['morale']	零有效 Due 月（合法折发 floor=0）归零连续缺口、不改旧欠、不跑 morale/流水。
+ming_sim/army_pay.py:226	floor=True	metrics=[]	# #651×#653：合法折发可使有效 Due floor=0。纯中央军不进省 applier，
+ming_sim/army_pay.py:457	floor=True	metrics=[]	return math.floor(total + 1e-9)
+ming_sim/army_pay.py:75	army_loyalty_tick_delta	political_default_function
+ming_sim/army_pay.py:147	_army_loyalty_reason	political_default_function
+ming_sim/army_pay.py:205	settle_hub_central_army_pay	political_default_function
+ming_sim/army_pay.py:452	_payable_army_arrears_cap	political_default_function
+ming_sim/audience_night.py:158	floor=True	metrics=[]	# 夜容器时地兜底（#498 AC：时辰/地点须持久且可读）。真实入口（web/CLI attach）多不带玩家
+ming_sim/audience_night.py:159	floor=True	metrics=[]	# 选值——缺省时以 in-world 兜底落库（非空字符串），而非留空串成不可读的裸空。开夜账正文同用。
+ming_sim/audience_night.py:917	floor=True	metrics=[]	# 时地兜底在落库前统一定死（单一 seam）：真实入口缺玩家选值时也持久非空、可读（#498 AC）。
+ming_sim/audience_night.py:1341	floor=True	metrics=[]	# #1838 reopen：不写收夜旁白账与代码兜底句；收讫以 status=closed 为准。
+ming_sim/breach_plea.py:738	floor=True	metrics=[]	# 无撤人且无案卷且未走 0056 → 兜底辜负
+ming_sim/breach_plea.py:751	floor=True	metrics=[]	# 无案卷且未走 0056：兜底辜负
+ming_sim/breach_plea.py:1235	floor=True	metrics=[]	# 不应再出现：write 并入后必返 id；仍空则非 deferred
+ming_sim/cli/terminal.py:631	floor=True	metrics=[]	# result.decisions 已是合并 desk；若空则回读 session.pending_decisions
+ming_sim/cli_backend.py:155	floor=True	metrics=[]	可用性仍取决于账号类型(ChatGPT vs API key)与 CLI 版本，连通性检查仍是兜底。
+ming_sim/cli_backend.py:218	floor=True	metrics=[]	"""问用户登录 shell 要真实 PATH（GUI/.app 不继承 shell PATH 的**最后**一级兜底）。
+ming_sim/cli_backend.py:232	floor=True	metrics=[]	# 选项）；分开形式各 shell 通吃，仍由外层 try 兜底（gemini PR#115 high）。
+ming_sim/cli_backend.py:259	floor=True	metrics=[]	"""当前 PATH + 常见安装目录，去重保序（**不含**登录 shell——那是更后一级兜底，
+ming_sim/cli_backend.py:269	floor=True	metrics=[]	"""runner（agy/codex/claude）解析成可执行绝对路径，**命中才缓存**。分级兜底，
+ming_sim/cli_backend.py:390	floor=True	metrics=[]	"""收尾子进程：已退时 terminate 是 no-op；否则 terminate→kill 兜底，防泄漏。"""
+ming_sim/cli_backend.py:840	floor=True	metrics=[]	# 判活之后才交文本：json 事件流已边到边出过，只补终包兜底；纯文本一次交全。
+ming_sim/cli_backend.py:2688	floor=True	metrics=[]	（target_candidate=该道 id）。指称不明时按候选条数兜底：单条→补那条（沿用 last-write-wins），
+ming_sim/cli_backend.py:3181	floor=True	metrics=[]	# 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
+ming_sim/cli_backend.py:3204	floor=True	metrics=[]	# 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
+ming_sim/cli_backend.py:3529	floor=False	metrics=['皇威', '民心']	'    "metrics": {"民心": int, "皇威": int, "国库": int},   // 抽象国势回报，按需，可省\n'
+ming_sim/cli_backend.py:3536	floor=False	metrics=['民心']	'  "effect_on_fail": {"metrics": {"民心": 负int}}\n'
+ming_sim/cli_backend.py:3865	floor=True	metrics=[]	help="api 通道 base_url；空则读 OPENAI_BASE_URL / MING_SIM_API_BASE_URL",
+ming_sim/cli_backend.py:3869	floor=True	metrics=[]	help="api 通道 key；空则读 OPENAI_API_KEY / MING_SIM_API_KEY（不落库）",
+ming_sim/cli_backend.py:2665	extract_draft_intent	political_default_function
+ming_sim/cli_backend.py:3519	enrich_initiative_effects	political_default_function
+ming_sim/commitment_backlash.py:35	floor=True	metrics=['皇威', '民心']	BACKLASH_NAMED_METRICS: Dict[str, int] = {"民心": -1, "皇威": -1}
+ming_sim/constants.py:29	floor=True	metrics=[]	# #44 边军史实月饷锚点（两/兵·月）：ming 军 salary_rate<=0 非法（=白嫖）时的兜底率。单一真源——
+ming_sim/constants.py:30	floor=True	metrics=[]	# 募兵默认（db._coerce_new_salary_rate）/ 旧档迁移兜底（db._backfill_salary_rate）/ 结算咽喉
+ming_sim/content.py:189	floor=True	metrics=[]	字段名(列)是否存在由 _eval_gate_key 运行期对 DB schema 兜底（content load 无 DB 不校验列）。"""
+ming_sim/content.py:298	floor=True	metrics=[]	# 字段名(列)是否存在由求值器运行期对 DB schema 兜底（load 无 DB）。
+ming_sim/content.py:525	floor=True	metrics=[]	"""阶级人口设定。key = "name@region_id"（region_id 为空则 key="name"）。"""
+ming_sim/context.py:200	floor=True	metrics=[]	"""返回人物特征档料；没有富化资料时保留 S1 的通用兜底。
+ming_sim/context.py:202	floor=True	metrics=[]	脾性位：非空持久化 character.style 优先，否则 dossier.temperament / 通用兜底。
+ming_sim/covert_progress.py:77	floor=True	metrics=[]	# 真实状态折算本月实投。**不设单月硬顶、不设最低在查月数 floor**——那是 ADR 0098
+ming_sim/covert_progress.py:78	floor=True	metrics=[]	# 后出修订明文退役的旧轨门槛（#1896「旧单月加成上限、最低在查月数 floor 的退役」）；
+ming_sim/covert_progress.py:987	floor=True	metrics=[]	# 该列 NOT NULL INTEGER（content 侧 0–100 校验），故 int 直取、不设解析兜底；
+ming_sim/covert_progress.py:1116	floor=True	metrics=[]	ADR 0098:11 的「各源加成」与兜底路由都只作用于**真实存在的来源**（检举、
+ming_sim/covert_progress.py:1118	floor=True	metrics=[]	凭空造一条空指针线索再让它走兜底路由，等于每道查案密令首月白送一次实投
+ming_sim/covert_progress.py:1189	floor=True	metrics=[]	"""无指针的通用线索该助哪条既有实证（ADR 0098:11 确定性兜底路由）。
+ming_sim/covert_progress.py:1223	floor=True	metrics=[]	**无指针的真实来源线索走 ADR 0098:11 的确定性兜底路由**（该条路由是既有已准
+ming_sim/covert_progress.py:1250	floor=True	metrics=[]	clue["routed_fact_key"] = key  # ADR 0098:11 确定性兜底路由
+ming_sim/covert_progress.py:1290	floor=True	metrics=[]	**无单月硬顶、无最低在查月数 floor**——两者已随旧轨退役（#1896 明文），
+ming_sim/covert_progress.py:1538	floor=True	metrics=[]	"""密令合同自陈的线索所指事实（空＝不带指针，按 ADR 0098 兜底路由）。"""
+ming_sim/covert_progress.py:1856	floor=True	metrics=[]	floor_state="",
+ming_sim/covert_progress.py:2004	floor=True	metrics=[]	did, turn, units=units, fidelity_state="", floor_state="",
+ming_sim/covert_progress.py:1275	apply_investigation_monthly_effort	political_default_function
+ming_sim/covert_progress.py:1756	apply_monthly_covert_actual_progress	political_default_function
+ming_sim/covert_progress.py:1877	_apply_investigation_selection	political_default_function
+ming_sim/credit_events.py:505	floor=True	metrics=[]	# 3) 包庇：责任面求交（删 or covered 兜底逸出）
+ming_sim/db.py:380	floor=True	metrics=[]	return int(math.floor(value / step + 0.5) * step)
+ming_sim/db.py:566	floor=True	metrics=[]	"""解析密令期限；显式 0 是合法值，不能被缺省兜底吞掉。"""
+ming_sim/db.py:588	floor=True	metrics=[]	cmr r3 codex medium）。salary_rate 非必填，脏值不拒整军、兜底锚点。"""
+ming_sim/db.py:596	floor=True	metrics=[]	# 抛 OverflowError 崩结算（线上 gemini high + coderabbit inf 探针）。salary_rate 非必填、脏值兜底锚点，
+ming_sim/db.py:669	floor=True	metrics=[]	recompute 热路安全调用）；office_type 桶作下限兜底（分项均无已知 domain 关键词时）。
+ming_sim/db.py:772	floor=True	metrics=[]	use_llm=False：跳过 LLM 兜底。表查不中时直接信传入的 current_type（content/DB 既定值，
+ming_sim/db.py:777	floor=True	metrics=[]	（cmr R2 codex）。动态生造官名（任免/issues）仍走默认 use_llm=True（保留 LLM 兜底 +
+ming_sim/db.py:1753	floor=True	metrics=[]	floor_state TEXT NOT NULL,
+ming_sim/db.py:2306	floor=True	metrics=[]	# 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
+ming_sim/db.py:2869	floor=True	metrics=[]	# 别动其它——这样玩家改过的全保住。未登记版本只保留旧兼容兜底，不作为正常迁移路径。
+ming_sim/db.py:3486	floor=True	metrics=[]	避免每次启动重扫；与 army_needed 的 rate<=0 锚定互为兜底，迁移负责持久化合理率供显示/欠饷，
+ming_sim/db.py:5249	floor=True	metrics=[]	# 末尾另有 commit 兜底，此处显式化事务边界、不依赖后续步骤的提交时机）
+ming_sim/db.py:5515	floor=True	metrics=[]	metrics = {
+ming_sim/db.py:5837	floor=True	metrics=[]	"""#9 cmr R2：全量重算所有白名单朝堂派系 leverage（集中化兜底层）。
+ming_sim/db.py:5842	floor=True	metrics=[]	(2) 本方法（reconcile 兜底）——在月末结算尾（delta 全部
+ming_sim/db.py:6177	floor=True	metrics=[]	"""既有官员调任/升迁：改 characters.office（office_type 给空则不动），
+ming_sim/db.py:8042	floor=True	metrics=[]	# 正常情况由 flows 唯一变更；此处兜底允许 extractor 在战损/裁军等
+ming_sim/db.py:8043	floor=True	metrics=[]	# 非现金原因下写入（提示词已禁，但保留兜底以防 LLM 越界不至于截断）。
+ming_sim/db.py:8439	floor=True	metrics=[]	_cannon(),  # 随军大炮=门数，clamp 0-12，非 int 兜底 0
+ming_sim/db.py:8793	floor=True	metrics=[]	派生、结算尾 recompute_all_faction_leverage() 绝对幂等兜底。若此处对白名单直写 leverage 列，
+ming_sim/db.py:13669	floor=True	metrics=[]	# #1778 决定 3：代码不按职司表配人（那条兜底已随本票删除）。
+ming_sim/db.py:17504	floor=True	metrics=[]	turn_from/to 为闭区间；留空则不设该端界。与 list_night_promulgated_directives
+ming_sim/db.py:20041	floor=True	metrics=[]	floor = 0 if can_collapse else 1
+ming_sim/db.py:20045	floor=True	metrics=[]	to_value = max(floor, min(100, from_value + delta_bar))
+ming_sim/db.py:20319	floor=True	metrics=[]	开放兜底永不得回归——畸形输入不得捏造肯定标记（0072/0118 真相层）。
+ming_sim/db.py:20447	floor=True	metrics=[]	floor_state: str,
+ming_sim/db.py:20457	floor=True	metrics=[]	(dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
+ming_sim/db.py:20462	floor=True	metrics=[]	floor_state=excluded.floor_state,
+ming_sim/db.py:20471	floor=True	metrics=[]	str(floor_state),
+ming_sim/db.py:20487	floor=True	metrics=[]	"floor_state": str(floor_state),
+ming_sim/db.py:379	_round_half_up_to_step	political_default_function
+ming_sim/db.py:972	GameDB.init_schema	political_default_function
+ming_sim/db.py:20020	GameDB.advance_issue	political_default_function
+ming_sim/db.py:20440	GameDB.record_dossier_actual_progress	political_default_function
+ming_sim/declaration_dispatch.py:46	floor=True	metrics=[]	要同样的回滚兜底（直接调用，失败即代表某处不变式被打破，按 ADR 0005 响亮
+ming_sim/entities/character/apply.py:561	floor=True	metrics=[]	# 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
+ming_sim/entities/issue/effects.py:139	floor=True	metrics=[]	metrics = _m if isinstance(_m, dict) else {}
+ming_sim/entities/issue/effects.py:184	floor=True	metrics=[]	metrics = {} if effect.get("metrics") is None else effect["metrics"]
+ming_sim/entities/issue/tracker.py:117	floor=True	metrics=[]	applied_metrics = {}
+ming_sim/entities/issue/tracker.py:505	floor=True	metrics=[]	# 回退（其 expected_months 路自带兜底，但旧 inertia 字段在 try 外，cmr ni r2 codex）。
+ming_sim/entities/issue/tracker.py:506	floor=True	metrics=[]	# _normalize_cancellable / 各 str() 自带兜底不抛。原 except Exception WARN-skip 整项保留为
+ming_sim/entities/issue/tracker.py:756	floor=True	metrics=[]	# reason=resolved 对 active issue 今天必返回非 None（不可达此分支）；留通用兜底
+ming_sim/entities/issue/tracker.py:23	apply_issue_tracker_output	political_default_function
+ming_sim/faction_brew.py:132	floor=True	metrics=[]	否则若显式传入 db/character_factions 则现算，否则按 None 兜底（显式 null）。
+ming_sim/fiscal_fact_brief.py:20	floor=True	metrics=[]	④ 中央折发＝flows._central_dues_with_haircut 唯一读端直接复用（每军 floor，余数=
+ming_sim/fiscal_fact_brief.py:507	floor=True	metrics=[]	#    floor（与真账同舍入），禁先聚省再舍入的伪重建；免除额按 station_region
+ming_sim/fiscal_tick.py:20	floor=True	metrics=[]	钉进存档）。现金守恒断言是债务 oracle 的兜底，**不可删**（能污染省内可支的 bug 必破现金守恒）。
+ming_sim/fiscal_tick.py:89	floor=True	metrics=[]	"""#653 折发改写 Due 应得额：floor(Due×bp/10000)；余数=免除额（不入 CLAIM 不积欠）。"""
+ming_sim/fiscal_tick.py:129	floor=True	metrics=[]	折发语义同律（floor(Due×bp/10000)、bp=10000 或缺省=无折），但代码自成一路。"""
+ming_sim/fiscal_tick.py:149	floor=True	metrics=[]	out[h] = float(math.floor(d * bp / 10000)) if bp is not None else d
+ming_sim/fiscal_tick.py:88	_effective_dues	political_default_function
+ming_sim/fiscal_tick.py:127	_oracle_effective_dues	political_default_function
+ming_sim/flows.py:276	floor=True	metrics=[]	return max(0, int(math.floor(max(0.0, float(value)) + 0.5)))
+ming_sim/flows.py:590	floor=True	metrics=[]	caps = [int(math.floor(due)) for _, _, due, _scaled in items]
+ming_sim/flows.py:592	floor=True	metrics=[]	max(0, int(math.floor(max(0.0, treasury_available)))),
+ming_sim/flows.py:596	floor=True	metrics=[]	floors = [
+ming_sim/flows.py:597	floor=True	metrics=[]	min(cap, int(math.floor(scaled)))
+ming_sim/flows.py:600	floor=True	metrics=[]	remainder = max(0, target - sum(floors))
+ming_sim/flows.py:601	floor=True	metrics=[]	allocations = floors[:]
+ming_sim/flows.py:604	floor=True	metrics=[]	key=lambda idx: (items[idx][3] - floors[idx], -idx),
+ming_sim/flows.py:656	floor=True	metrics=[]	只改写中央份额 Due 输入值：floor(Due×bp/10000)，余数=免除不入欠（F1.5）。
+ming_sim/flows.py:275	_round_nonnegative_amount	political_default_function
+ming_sim/flows.py:576	_allocate_substrate_hub_paid_ints	political_default_function
+ming_sim/flows.py:651	_central_dues_with_haircut	political_default_function
+ming_sim/issues.py:1132	floor=True	metrics=[]	:class:`SettlementAbort` 响亮失败（ADR 0014：绝不兜底写未支撑值），不猜、不兜。
+ming_sim/issues.py:1910	floor=False	metrics=['民心']	ongoing = {"metrics": {"民心": -2}, "economy": [{"account": "国库", "delta": -8, "category": "赈济损耗", "reason": ev.title}]}
+ming_sim/issues.py:1913	floor=False	metrics=['民心']	ongoing = {"metrics": {"民心": -2}}
+ming_sim/issues.py:1916	floor=False	metrics=['皇威']	ongoing = {"metrics": {"皇威": -1}}
+ming_sim/issues.py:1922	floor=False	metrics=['民心']	ongoing = {"metrics": {"民心": 2}}
+ming_sim/issues.py:1926	floor=False	metrics=['皇威']	ongoing = {"metrics": {"皇威": 1}}
+ming_sim/issues.py:1933	floor=False	metrics=['皇威']	ongoing = {"metrics": {"皇威": 1}}
+ming_sim/issues.py:2137	floor=True	metrics=[]	floor = db.fiscal_config_minimum_value(key) or 0
+ming_sim/issues.py:2138	floor=True	metrics=[]	new_value = max(int(floor), int(current) - max(0, contribution))
+ming_sim/issues.py:2063	neutralize_covert_fiscal_effects	political_default_function
+ming_sim/llm_config.py:104	floor=True	metrics=[]	return caster(float(value))  # "4096.0" / 含小数的字符串兜底
+ming_sim/llm_config.py:351	floor=True	metrics=[]	# API 模式才要真实 key：占位符不算，空则索要/报错，别拿假 key 探 OpenAI。
+ming_sim/llm_transport.py:69	floor=True	metrics=[]	# 真源 = 设置页那一格（cli.timeout_seconds），此处只兜底其默认。
+ming_sim/mechanical_tail.py:239	floor=True	metrics=[]	metrics=dict(getattr(state, "metrics", {}) or {}),
+ming_sim/models.py:323	floor=True	metrics=[]	# TransportPolicy.idle_timeout_seconds 由它兜底），默认 60 秒。
+ming_sim/models.py:332	floor=True	metrics=[]	# 空转阈值不在此另立默认：真源 = 设置页那一格（CLI_DEFAULT_TIMEOUT_SECONDS 兜底）。
+ming_sim/month_chain.py:588	floor=True	metrics=[]	# 到期密令结案已由步骤 4a 办理；drift 内再调为幂等兜底。
+ming_sim/month_translate.py:161	floor=True	metrics=[]	"其中一个标签，为空则不写 事件结局。其余候选事件的效果不写 event_id，"
+ming_sim/pay_order.py:10	floor=True	metrics=[]	10000=无折，5000=折半）；越界 fail-loud。舍入=``floor(Due × bp / 10000)``，
+ming_sim/pay_order.py:21	floor=True	metrics=[]	（flows 读端按 r3 全序取胜出键、floor 折算，余数=免除不入欠），hub 恒先、合并 k
+ming_sim/pay_order.py:241	floor=True	metrics=[]	"""折发记账语义（F1.5/r2）：应得=``floor(Due × bp / 10000)``；余数=免除额。
+ming_sim/pay_order.py:247	floor=True	metrics=[]	effective = float(math.floor(float(due) * bp / 10000))
+ming_sim/pay_order.py:240	haircut_due	political_default_function
+ming_sim/recommendations.py:194	floor=True	metrics=[]	context=荐词原句逐字透传，非空必填（空则响亮拒绝，零模板宪法）。
+ming_sim/rescript_actions.py:338	floor=True	metrics=[]	成功时第二返回值若非空则视为 canonical name 写回 choice（仍零 DB 写）。
+ming_sim/rescript_actions.py:1340	floor=True	metrics=[]	# #1778 决定 3：本批成案缝已无拒收产源（职司兜底连同 duty_route_unmapped 已删）；
+ming_sim/rescript_draft.py:1122	floor=True	metrics=[]	r2 裁决 B1（票面 F3.1「司礼监掌印」明文＋P3 角色保真）：兜底不得用宽模式
+ming_sim/rescript_draft.py:2000	floor=True	metrics=[]	- drop_option → 剔该 option；条目 options 空则整条去掉（F2.3）。
+ming_sim/session.py:370	floor=True	metrics=[]	（ADR 0005：失败须响亮，不静默兜底——apply_appointment 亦直呼不 guard）。"""
+ming_sim/session.py:1795	floor=True	metrics=[]	# Web 入口另在 await/close 前先 capture（点即入时序）；此处幂等兜底 CLI/直调。
+ming_sim/session.py:1806	floor=True	metrics=[]	# 此处幂等兜底 CLI/直调。
+ming_sim/settlement/outcome.py:107	floor=False	metrics=['authority']	authority: SectionResult = field(default_factory=lambda: SectionResult([], []))
+tests/conftest.py:187	floor=True	metrics=[]	独立 MonkeyPatch：测试内 monkeypatch.undo() 不会撤掉本兜底。
+tests/conftest.py:331	floor=True	metrics=[]	"""全套测试隔离 user-data（错误包/拒收镜像）——集中兜底（cmr S1 r2 P1）。
+tests/conftest.py:335	floor=True	metrics=[]	自己的 tmp_path 仍可覆盖本兜底（后设者胜）。
+tests/conftest.py:342	floor=True	metrics=[]	测试里 monkeypatch.undo() 会把本兜底一并撤掉（实证 test_noready_recovery
+tests/conftest.py:563	floor=True	metrics=[]	的 runner 测试——移到 conftest 集中兜底。）
+tests/conftest.py:566	floor=True	metrics=[]	把本兜底一并撤掉。需真跑 _login_shell_path 解析逻辑的测试，自行把 _DISCOVERED_LOGIN_PATH
+tests/test_advances_section_rejections.py:127	floor=True	metrics=[]	assert dict(state.metrics) == before, f"missing_ref advance 不得泄漏 metric：{before} → {dict(state.metrics)}"
+tests/test_advances_section_rejections.py:155	floor=True	metrics=[]	assert dict(state.metrics) == before, "非 dict metric_delta 须 sanitize 为 {}、metrics 不变"
+tests/test_advances_section_rejections.py:119	test_advance_missing_issue_no_metric_leak	political_default_function
+tests/test_appointment_tenure_607.py:65	floor=True	metrics=[]	dossier = _promulgate_appointment(db, state, content, name, "旧档兜底官")
+tests/test_army_firearms.py:46	floor=True	metrics=[]	"""新建军未指定火器/大炮时默认 0（列默认值 + 落库兜底）。"""
+tests/test_army_salary_44.py:107	floor=True	metrics=[]	并入锚点兜底（该回填仅 salary_rate 列首次 ADD 时跑一次，现存档早跑过、不再触发）。"""
+tests/test_army_salary_44.py:145	floor=True	metrics=[]	manpower<=0）→ ②反推兜底落边军史实锚点（不除零、不留 0 率白嫖）。两 case 锁退化两支
+tests/test_army_salary_44.py:157	floor=True	metrics=[]	f"维护费列在但 maint={maint}/manpower={manpower} 应落锚点（②反推兜底），得 {row['salary_rate']}"
+tests/test_army_salary_44.py:217	floor=True	metrics=[]	assert spent > 0, "兜底拨饷应能花到该军"
+tests/test_cli_backend.py:104	floor=False	metrics=['皇威']	"metrics": {"皇威": 5},
+tests/test_cli_model_choices.py:122	floor=True	metrics=[]	前端据此显示「默认」档；不能只给被 cli_model_from_env 兜底成默认名的 resolved 值，
+tests/test_close_issues_section_rejections.py:82	floor=True	metrics=['民心']	effect_on_resolve={"metrics": {"民心": 1}})
+tests/test_close_issues_section_rejections.py:97	floor=True	metrics=['民心']	effect_on_resolve={"metrics": {"民心": 1}}, effect_on_fail={})
+tests/test_close_issues_section_rejections.py:120	floor=True	metrics=['民心']	iid = db.insert_issue(state, kind="situation", title="真实结案", effect_on_resolve={"metrics": {"民心": 1}})
+tests/test_close_issues_section_rejections.py:79	test_close_already_inactive_rejected_missing_ref	political_default_function
+tests/test_close_issues_section_rejections.py:92	test_close_failed_on_uncollapsible_rejected_invalid_enum	political_default_function
+tests/test_close_issues_section_rejections.py:118	test_close_valid_issue_still_succeeds	political_default_function
+tests/test_commitment_display_348.py:31	floor=False	metrics=['皇威']	timed = _row(end_turn=17, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}})
+tests/test_commitment_display_348.py:38	floor=False	metrics=['皇威']	_row(end_turn=0, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}}),
+tests/test_commitment_display_348.py:43	floor=False	metrics=['皇威']	_row(end_turn=20, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}},
+tests/test_commitment_display_348.py:66	floor=False	metrics=['皇威']	ongoing_effects={"metrics": {"皇威": 1}}, end_turn=origin + duration,
+tests/test_court_layout_1290.py:35	floor=True	metrics=[]	self.state = SimpleNamespace(turn=1, turn_phase="summoning", metrics={})
+tests/test_decree_commitment_creation_136.py:174	floor=False	metrics=['皇威']	out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'open-ended-appeasement'), 'kind': 'initiative', 'title': '长期安抚毛文龙', 'stage_text': '遣臣常驻皮岛安抚
+tests/test_decree_commitment_creation_136.py:182	floor=False	metrics=['皇威']	assert json.loads(row["ongoing_effects"]) == {"metrics": {"皇威": -1}}
+tests/test_decree_commitment_creation_136.py:190	floor=False	metrics=['皇威']	out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:open-ended-without-marker', 'kind': 'initiative', 'title': '长期安抚毛文龙但缺承诺标记', 'stage_text': '遣臣常驻皮岛安抚，未设硬时限。', 'ongoing_e
+tests/test_decree_commitment_creation_136.py:256	floor=False	metrics=['皇威']	settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'appease-mao'), 'kind': 'initiative', 'title': '安抚毛文龙直到效顺', 'stage_text': '遣臣赴皮岛安抚', 'ongoing_effe
+tests/test_decree_commitment_creation_136.py:365	floor=False	metrics=['民心']	settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'pay-liao-fail-guard'), 'kind': 'initiative', 'title': '每月补辽饷直到补齐防失败误结案', 'ongoing_effects': {'eco
+tests/test_decree_commitment_creation_136.py:479	floor=False	metrics=['民心']	or {"effect_on_resolve": {"metrics": {"民心": 9}}, "ongoing_effects": {}, "effect_on_fail": {}},
+tests/test_decree_commitment_schema_136.py:51	floor=False	metrics=['民心']	{"metrics": {"民心": 0}},
+tests/test_decree_commitment_schema_136.py:52	floor=False	metrics=['民心']	{"metrics": {"民心": 0}, "note": "无月度动作"},
+tests/test_decree_commitment_schema_136.py:63	floor=False	metrics=['皇威']	{"metrics": {"皇威": 1}},
+tests/test_decree_commitment_schema_136.py:89	floor=True	metrics=[]	effect_on_resolve={
+tests/test_decree_commitment_settlement_229.py:94	floor=False	metrics=['皇威', 'authority']	out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'future-monthly-authority'), 'kind': 'initiative', 'title': '连续两月宣示皇威', 'stage_text': '连续两月遣
+tests/test_decree_commitment_settlement_229.py:280	floor=False	metrics=['皇威']	ongoing_effects={"metrics": {"皇威": -1}},
+tests/test_decree_commitment_settlement_229.py:309	floor=False	metrics=['皇威']	ongoing_effects={"metrics": {"皇威": 1}},
+tests/test_decree_commitment_settlement_229.py:336	floor=False	metrics=['皇威']	ongoing_effects={"metrics": {"皇威": 1}},
+tests/test_decree_commitment_settlement_229.py:428	floor=False	metrics=['民心']	ongoing_effects={"metrics": {"民心": 1}},
+tests/test_decree_commitment_settlement_229.py:660	floor=False	metrics=['皇威']	ongoing_effects={"metrics": {"皇威": 1}},
+tests/test_decree_commitment_settlement_229.py:676	floor=True	metrics=['皇威']	assert payload["metrics"] == {"皇威": 1}
+tests/test_decree_commitment_settlement_229.py:695	floor=False	metrics=['皇威']	ongoing_effects={"metrics": {"皇威": 5}},
+tests/test_decree_commitment_settlement_229.py:706	floor=False	metrics=['皇威']	ongoing_effects={"metrics": {"皇威": 1}},
+tests/test_decree_commitment_settlement_229.py:720	floor=True	metrics=[]	assert payload["metrics"] == {}
+tests/test_decree_commitment_settlement_229.py:746	floor=True	metrics=['民心']	effect_on_resolve={"metrics": {"民心": 9}},
+tests/test_decree_commitment_settlement_229.py:877	floor=False	metrics=['民心']	ongoing_effects={"metrics": {"民心": 1}},
+tests/test_decree_commitment_settlement_229.py:890	floor=False	metrics=['民心']	ongoing_effects={"metrics": {"民心": 1}},
+tests/test_decree_commitment_settlement_229.py:1289	floor=True	metrics=['民心']	effect_on_resolve={"metrics": {"民心": 9}},
+tests/test_decree_commitment_settlement_229.py:1290	floor=False	metrics=['民心']	effect_on_fail={"metrics": {"民心": -7}},
+tests/test_decree_commitment_settlement_229.py:325	test_commitment_progress_skips_non_numeric_gate_values	political_default_function
+tests/test_decree_commitment_settlement_229.py:645	test_high_bar_metric_only_commitment_applies_and_records_monthly_progress	political_default_function
+tests/test_decree_commitment_settlement_229.py:680	test_metric_commitment_records_progress_when_monthly_cap_blocks_effect	political_default_function
+tests/test_decree_commitment_settlement_229.py:724	test_commitment_end_turn_expires_without_resolve_effects	political_default_function
+tests/test_decree_commitment_settlement_229.py:1272	test_due_one_shot_commitment_ack_closes_review_loop_without_effects	political_default_function
+tests/test_decree_forecast_1861.py:237	floor=True	metrics=[]	# 有限时排空：真挂死在此报红，不靠 CI job 终线兜底（见 _DRAIN_TIMEOUT_S）。
+tests/test_deformation_dual_rail_622.py:275	floor=True	metrics=[]	开放兜底永不得回归。
+tests/test_economy_section_rejections.py:99	floor=True	metrics=[]	effect_on_resolve={"economy": [{"account": "金库", "delta": -9, "reason": "非法账户"}]},
+tests/test_economy_section_rejections.py:156	floor=True	metrics=[]	tags=[], ongoing_effects={}, effect_on_resolve={}, effect_on_fail={},
+tests/test_effect_origin_558.py:61	floor=True	metrics=[]	effect_on_resolve={
+tests/test_enrich_list_guards.py:15	floor=False	metrics=['民心']	raw = json.dumps({"effect_on_resolve": {"buildings": bad, "metrics": {"民心": 1}},
+tests/test_env_isolation.py:1	floor=True	metrics=[]	"""user-data 隔离兜底 pin(cmr S1 r2 P1)。
+tests/test_env_isolation.py:5	floor=True	metrics=[]	conftest autouse 集中兜底——本 pin 钉住「任何测试里 user_data_dir 永不指向仓内 data/」。
+tests/test_env_isolation.py:17	floor=True	metrics=[]	assert os.environ.get("MING_SIM_USER_DATA_DIR"), "autouse 兜底未生效"
+tests/test_event_trigger_gate.py:2437	floor=True	metrics=['民心']	effect_on_resolve={"metrics": {"民心": 1}},
+tests/test_event_trigger_gate.py:2530	floor=True	metrics=['民心']	effect_on_resolve={"metrics": {"民心": 1}},
+tests/test_event_trigger_gate.py:2658	floor=False	metrics=['民心']	"effect_on_resolve": {"metrics": {"民心": 1}},
+tests/test_event_trigger_gate.py:2680	floor=False	metrics=['民心']	effect_on_fail={"metrics": {"民心": -1}},
+tests/test_event_trigger_gate.py:2716	floor=True	metrics=[]	effect_on_resolve={"economy": [{"account": "国库", "delta": -1, "category": "测试", "reason": reason}]},
+tests/test_event_trigger_gate.py:2755	floor=True	metrics=['民心']	effect_on_resolve={"metrics": {"民心": 1}},
+tests/test_event_trigger_gate.py:2756	floor=False	metrics=['民心']	effect_on_fail={"metrics": {"民心": -1}},
+tests/test_event_trigger_gate.py:2803	floor=True	metrics=[]	effect_on_resolve={
+tests/test_event_trigger_gate.py:2849	floor=True	metrics=[]	effect_on_resolve={
+tests/test_event_trigger_gate.py:2895	floor=True	metrics=[]	effect_on_resolve={
+tests/test_event_trigger_gate.py:3214	floor=True	metrics=['民心']	effect_on_resolve={"metrics": {"民心": 1}},
+tests/test_event_trigger_gate.py:3251	floor=True	metrics=['民心']	effect_on_resolve={"metrics": {"民心": 1}},
+tests/test_event_trigger_gate.py:2425	test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances	political_default_function
+tests/test_event_trigger_gate.py:2518	test_event_pool_rechecks_after_advances_close_gate	political_default_function
+tests/test_event_trigger_gate.py:2745	test_issue_tracker_close_respects_outer_transaction_rollback	political_default_function
+tests/test_event_trigger_gate.py:3203	test_issue_tracker_cancel_respects_outer_transaction_rollback	political_default_function
+tests/test_event_trigger_gate.py:3239	test_issue_tracker_cancel_cost_respects_outer_transaction_rollback	political_default_function
+tests/test_faction_class_section_rejections.py:231	floor=True	metrics=[]	effect_on_resolve={"factions": {"查无此派系": {"satisfaction": 9}}},
+tests/test_faction_leverage_9.py:403	floor=True	metrics=[]	"""#9 cmr R2 finding#1（集中化兜底）：绕过所有 hook 的裸 UPDATE 改了 faction 成员 office_type 后，
+tests/test_faction_leverage_9.py:404	floor=True	metrics=[]	recompute_all_faction_leverage() 把全部白名单派系重算回公式值（结算尾兜底层等价直测）。"""
+tests/test_faction_leverage_9.py:434	floor=True	metrics=[]	# 兜底重算全部白名单派系。
+tests/test_faction_leverage_9.py:461	floor=True	metrics=[]	之前。否则同回合经兜底 reconcile 才更新的 faction leverage（易主/裸 UPDATE 改成员、绕即时 hook）
+tests/test_faction_leverage_9.py:672	floor=True	metrics=[]	兜底重算时不被抹回——LLM 的「影响力变化」与官职派生权重复合留存。
+tests/test_faction_leverage_9.py:684	floor=True	metrics=[]	# 模拟结算尾兜底 reconcile。
+tests/test_fiscal_levy_effect.py:53	floor=True	metrics=[]	跳过而非兜底写账，测试据此按年断言哪几项在征。
+tests/test_fiscal_levy_effect.py:736	floor=True	metrics=[]	"""结局标签不在事件自声明的封闭集内 → 响亮失败，不兜底写未支撑值（ADR 0014）。"""
+tests/test_issue_entities.py:355	floor=False	metrics=['民心']	I._apply_issue_entities(db, state, {"metrics": {"民心": 5}}, "局势#测试")
+tests/test_issue_entities.py:504	floor=True	metrics=[]	effect_on_resolve={"new_armies": [{
+tests/test_issue_entities.py:525	floor=True	metrics=[]	effect_on_resolve={
+tests/test_loyalty_soft_adjust_clamp_320.py:76	floor=True	metrics=[]	def test_negative_delta_floors_at_zero(game):
+tests/test_loyalty_soft_adjust_clamp_320.py:76	test_negative_delta_floors_at_zero	political_default_function
+tests/test_month_chain_1843.py:663	floor=True	metrics=['士气']	effect_on_resolve={"army_delta": {army_id: {"origin_ref": "盘面自发", "士气大振": 9}}},
+tests/test_month_chain_1843.py:645	test_month_drift_settles_due_secret_and_records_inertia_rejection	political_default_function
+tests/test_new_game_write_path_1749.py:139	floor=True	metrics=[]	"""外层模型工厂缝：create_scene_agent → canned（密令/旧 registry 路兜底）。"""
+tests/test_new_issues_section_rejections.py:229	floor=False	metrics=['民心']	"severity": 0, "effect_on_resolve": {"metrics": {"民心": 1}}}],
+tests/test_new_issues_section_rejections.py:298	floor=False	metrics=['民心']	"effect_on_resolve": {"metrics": {"民心": 1}},
+tests/test_office_inference.py:3	floor=True	metrics=[]	无 CLI 后端时 LLM 兜底不触发（表查不中→待铨），故这里只测表命中的确定性分类，
+tests/test_office_inference.py:162	floor=True	metrics=[]	assert called, "默认 use_llm=True 应仍走 LLM 兜底"
+tests/test_override_breach_costs_564.py:245	floor=False	metrics=['民心']	cancel = {"issue_id": issue_id, "narrative": "撤回成命", "applied_cost": {"metrics": {"民心": -9}}}
+tests/test_pay_order_override_653.py:257	floor=True	metrics=[]	"""②「宗禄折半」：floor(Due×bp/10000)；折掉部分不入宗禄欠；NewDebt 只含折后未付。
+tests/test_pay_order_override_653.py:1259	floor=True	metrics=[]	"""中央份额 Due 折发读端：floor 折算、余数免除、地域/饷源精确、无折恒等。"""
+tests/test_pay_order_override_653.py:1281	floor=True	metrics=[]	# 陕西中央侧取 @shaanxi#central=5000：floor(2.1×0.5)=1.0，免除 1.1
+tests/test_pay_order_override_653.py:1282	floor=True	metrics=[]	assert dues["shaanxi_army"] == pytest.approx(float(math.floor(shaanxi_raw * 0.5)))
+tests/test_pay_order_override_653.py:1283	floor=True	metrics=[]	assert exempt["shaanxi_army"] == pytest.approx(shaanxi_raw - math.floor(shaanxi_raw * 0.5))
+tests/test_pay_order_override_653.py:1286	floor=True	metrics=[]	assert dues["jingying"] == pytest.approx(math.floor(jy_raw * 0.6))
+tests/test_pay_order_override_653.py:1291	floor=True	metrics=[]	"""#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
+tests/test_pay_order_override_653.py:1345	floor=True	metrics=[]	"""mutation①破坏舍入：落账侧 floor 改 ceil → 独立 oracle 必红。"""
+tests/test_pay_order_override_653.py:1473	floor=True	metrics=[]	def test_fact_brief_central_haircut_floor_per_army_matches_real_accounting(game):
+tests/test_pay_order_override_653.py:1475	floor=True	metrics=[]	floor（账实同舍入），禁先聚省再舍入。beizhili 三军 raw=9.0/4.0/7.2、bp=5000：
+tests/test_pay_order_override_653.py:1476	floor=True	metrics=[]	每军 floor 免除合计=5.0+2.0+4.2=11.2 ≠ 聚省后 floor 的 20.2×0.5→免除 10.1。"""
+tests/test_pay_order_override_653.py:1492	floor=True	metrics=[]	assert expected_bz == pytest.approx(11.2)      # 每军 floor 后的免除合计
+tests/test_pay_order_override_653.py:256	test_golden2_haircut_half_is_exemption_not_debt	political_default_function
+tests/test_pay_order_override_653.py:1258	test_central_due_haircut_consumer	political_default_function
+tests/test_pay_order_override_653.py:1290	test_pure_central_zero_haircut_due_clears_shortfall_counter	political_default_function
+tests/test_pay_order_override_653.py:1344	test_oracle_independent_of_shared_haircut_helper	political_default_function
+tests/test_pay_order_override_653.py:1473	test_fact_brief_central_haircut_floor_per_army_matches_real_accounting	political_default_function
+tests/test_person_delta_adapter.py:2083	floor=True	metrics=[]	# _restore_content_characters 已兜底深还原，此为防 smell 的显式补全，gemini PR#138 R1）。
+tests/test_person_delta_adapter.py:2107	floor=True	metrics=[]	# _restore_content_characters 已兜底深还原，此为防 smell 的显式补全，gemini PR#138 R1）。
+tests/test_person_delta_adapter.py:2132	floor=True	metrics=[]	# _restore_content_characters 已兜底深还原，此为防 smell 的显式补全，gemini PR#138 R1）。
+tests/test_qa_d1_decree_normalize_1274.py:239	floor=True	metrics=[]	# 不是罩饿死后的 special_decree 兜底。
+tests/test_rejection_wiring.py:208	floor=True	metrics=['morale', '士气']	effect_on_resolve={"army_delta": {aid: {"origin_ref": "盘面自发", "morale": 1, "士气大振": 9}}},
+tests/test_rejection_wiring.py:457	floor=True	metrics=[]	effect_on_resolve={
+tests/test_rejection_wiring.py:518	floor=True	metrics=[]	effect_on_resolve={"人物变更": [{
+tests/test_rejection_wiring.py:195	test_inertia_tolerated_rejections_reach_reports	political_default_function
+tests/test_runtime_llm_config.py:25	floor=True	metrics=[]	(covers caster(value) / caster(float(value)) 兜底 / garbage→default 三分支)。"""
+tests/test_secret_order_payoff_1504.py:335	floor=True	metrics=[]	did, state.turn, units=1.0, fidelity_state="忠实", floor_state="忠实",
+tests/test_secret_order_payoff_1504.py:643	floor=True	metrics=[]	# The old loyalty-derived floor must not rewrite the selected execution state.
+tests/test_secret_order_payoff_1504.py:1145	floor=True	metrics=[]	ADR 0098:11 的「各源加成」与兜底路由只作用于真实存在的来源（检举、证词、
+tests/test_secret_order_payoff_1504.py:1147	floor=True	metrics=[]	也照样记一条空线索，再让它走兜底路由，每道查案密令首月就会白得一次实投——
+tests/test_secret_order_payoff_1504.py:327	test_actual_progress_container_separate_from_reported_rail	political_default_function
+tests/test_section4_rejections.py:555	floor=False	metrics=['morale']	"SELECT morale, cannon_equipment FROM armies WHERE id='default_army_ok'").fetchone()
+tests/test_section4_rejections.py:603	floor=True	metrics=[]	effect_on_resolve={
+tests/test_section4_rejections.py:647	floor=True	metrics=['morale', '士气']	effect_on_resolve={"army_delta": {aid: {"morale": 1, "士气大振": 9}}},
+tests/test_section4_rejections.py:589	test_issue_path_tolerated_rejections_reach_reports	political_default_function
+tests/test_section4_rejections.py:633	test_inertia_natural_resolution_tolerated_rejection_no_crash	political_default_function
+tests/test_section_fiscal_rejections.py:352	floor=True	metrics=[]	def test_change_structural_sink_loss_rate_below_floor_rejected(game):
+tests/test_section_fiscal_rejections.py:352	test_change_structural_sink_loss_rate_below_floor_rejected	political_default_function
+tests/test_settlement_write_guard_393.py:71	floor=True	metrics=[]	self.state = SimpleNamespace(turn=3, turn_phase=turn_phase, metrics={})
+tests/test_staged_assignment_identity_1890.py:155	floor=True	metrics=[]	# ── 整轮撤回：本轮交办作废、前轮保持，且不靠回滚日志兜底 ───────────────
+tests/test_structured_decree_contract_1624.py:418	floor=True	metrics=['民心']	effect_on_resolve={"metrics": {"民心": 1}},
+tests/test_structured_decree_contract_1624.py:390	test_http_manual_directive_lands_beyond_fifteen_initiatives_1790	political_default_function
+tests/test_style_temperament_641.py:67	floor=True	metrics=[]	effect_on_resolve={"人物变更": [_temperament_item()]},
+tests/test_transit_aging_346.py:1	floor=True	metrics=[]	"""在途启程账与 #668 倒数 tick 的保留契约（原 #346 旧 ≥2 月硬兜底已拆除）。
+tests/test_web_audience_night_498.py:61	floor=True	metrics=[]	allow：非空则在首帧与终帧之间阻塞（挂起在飞），待置位再收尾。"""
+tests/test_world_materials_1834.py:286	floor=True	metrics=[]	# 候选集合＝权威快照逐条可达；快照为空则本例无意义，故先钉非空。
