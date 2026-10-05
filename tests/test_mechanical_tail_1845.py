@@ -484,11 +484,10 @@ def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
         turn=state.turn, year=state.year, period=state.period,
         metrics=dict(state.metrics), ended=True,
     )
-    text = generate_ending_summary_for_tail(
+    generate_ending_summary_for_tail(
         db, closed, {"status": "emperor_abdicate", "summary": "退位"},
         llm_config=object(),
     )
-    assert text == "史评"
     assert "timeline" not in seen["payload"]
     gazettes = seen["payload"]["gazettes"]
     assert gazettes

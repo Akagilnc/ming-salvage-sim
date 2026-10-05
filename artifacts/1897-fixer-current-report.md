@@ -1,13 +1,13 @@
-# #1897 修内司回执（J1 / J2 / F3）— 纠正复扫
+# #1897 修内司回执（J1 / J2 / F3）— F3 HEAD 纠正
 
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5`
 - 分支：`ak-roles/issue-1897-j1-j2-f3-fixer-20261005-101325`
 - 相对基线：`10e64fbef2857a4603c51394d16cea791b4f44c2`
-- 施工前 tip：`725d3aaa4932981435c94dfc85093d687eeffeed`
+- 施工前 tip：`c905115fdb0a84f26d1c9b4b26701e621ba89dc8`
 - 判词：末份 `~/.ak-roles/books/Ming_LLM/unbound/runs/01a1099e-2506-7580-a2b3-0f15a8209f3b@fixer/attachments/03-1897-judge-5d0b04dec.json`（先前三份仅参考；未结只取 J1/J2/F3）
 - 派单：同 run `fix-packet.md`
 - 票面：`gh issue view 1897` / `1812`；验收真源=#1812「重构验收」
-- 本回纠正上轮：F3 换形空壳（键存在/长度/类型/非空/计数）、错误豁免 memory↔DB `status_reason`、J1/J2 枚举过窄、43 名单只落临时路径、`turn` 退休兼容形参
+- 本回纠正（HEAD 核对）：上轮回执错误豁免 rendered 人名、content seed summary 子串、pay_order summary 过滤、criterion_text「闭集」；缺可复放全断言枚举；month_chain 续推 spy / read_material 无结果却称递送；J1 旧逻辑探针冒称变异证明
 - 本回执不自指待生成 SHA；提交后以 `git rev-parse HEAD` 为准
 
 ## 环境前缀
@@ -25,10 +25,10 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 
 ### 类定义（判词）
 
-boundary：故事账持久来源接缝
+boundary：故事账持久来源接缝  
 direction：清退当前夜／最后轮猜源兼容及其附属物，沿已有持久来源承接；不新增补账、等待或恢复协议。
 
-### 枚举命令（可复跑；不限已知函数名）
+### 枚举命令（可复跑）
 
 ```bash
 python3 - <<'PY'
@@ -57,33 +57,17 @@ PY
 rg -n 'get_open_night|get_last_active_chat_turn|_current_open_night_id' ming_sim -g'*.py'
 ```
 
-### 完整成员表与处置
+### 成员与处置
 
-| # | 成员 | 根因 | 处置 |
-|---:|---|---|---|
-| 1 | `action_materialize._write_path_nature_ledger` | 缺源夜时曾 `get_open_night`+`get_last_active_chat_turn` | **已清猜源分支**；缺源夜直接 return；删无用 `turn` 形参与调用方传参；无退休兼容注释 |
-| 2 | `action_materialize._persist_appointment_summon` | 缺源夜时曾 `_current_open_night_id()` | **已清**；只传 `pinned_night` |
+| # | 成员 | 处置 |
+|---:|---|---|
+| 1 | `action_materialize._write_path_nature_ledger` | 已清猜源；缺源夜直接 return；无 `turn` 退休兼容 |
+| 2 | `action_materialize._persist_appointment_summon` | 已清；只传 `pinned_night` |
 
-### 枚举命中但非本类（保留依据）
+### 变异取证（诚实口径）
 
-| 符号 | 为何不是 J1 |
-|---|---|
-| `audience_night.assert_night_accepts_player_input` / `open_night` / `dismiss_*` / `stay_*` | 当前夜操作/开夜本身，不是「缺持久源时猜夜写故事账」 |
-| `db.undo_chat_turn`「最后一轮」 | 撤回全局最后一轮召对的既有规则文案，非故事账猜源旁路 |
-| `session.consume_audience_admission`+`get_open_night` | 入殿读当前夜，非缺源猜写账 |
-| `db.update_*_candidate` 缺省 `_current_open_night_id` | pending 归属缝，非 `append_ledger_entry` 猜源；未扩改（避免发明新恢复协议） |
-| materials/session/web 的 `get_open_night` | 供料与 UI 读当前夜 |
-
-说明：枚举仍命中 `_write_path_nature_ledger` / `_persist_appointment_summon`，因 docstring 含「缺源夜不写／不猜」；**代码路径已无** `get_open_night` / `get_last_active_chat_turn` / `_current_open_night_id`。
-
-### 变异取证
-
-授权套件中无专打 path-nature 猜源的真实入口案；对生产函数做进程内旧逻辑探针（七变量前缀）：
-
-- CURRENT 缺 `night_id`：ledger delta=0
-- 装回旧 `get_open_night` 猜源：delta=1
-- 恢复当前：delta=0
-- 结果：`J1_MUTATION GREEN`（输出见本轮 `/tmp/1897-fixer-rescan/j1-mutation.txt`，回执已摘录，不依赖该临时文件）
+授权套件中**无**专打 path-nature 猜源的真实入口红绿案。上轮进程内装回旧 `get_open_night` 探针仅说明当前缺源夜不写账，**未提供**「旧逻辑 RED → 新逻辑 GREEN」的可复放变异证据。  
+**本回执不把该探针记为变异证明**；J1 以生产路径无猜源调用 + 枚举复扫记账，不以 GREEN 标签冒充变异闭合。
 
 ---
 
@@ -91,48 +75,27 @@ rg -n 'get_open_night|get_last_active_chat_turn|_current_open_night_id' ming_sim
 
 ### 类定义（判词）
 
-boundary：密令创建／精确更新接缝
+boundary：密令创建／精确更新接缝  
 direction：清退按承办人最新 active 猜目标的退休入口、说明和专属测试；不补新调用。
 
-### 枚举命令（可复跑；不限 upsert 符号）
+### 枚举命令（可复跑）
 
 ```bash
 rg -n --type py \
   'upsert_secret_order\b|最新 active|最新active|create-or-update|该大臣最新|承办人最新|status=.active. ORDER BY id DESC' \
   ming_sim tests docs content -g '!**/__pycache__/**' -g '!**/CMR_*' -g '!**/TEST_AUDIT*' -g '!**/docs/raw/**'
-
-python3 - <<'PY'
-import ast, re
-from pathlib import Path
-for path in sorted(Path('ming_sim').rglob('*.py')):
-    src = path.read_text(encoding='utf-8')
-    try: tree = ast.parse(src)
-    except SyntaxError: continue
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)): continue
-        body = ast.get_source_segment(src, node) or ''
-        if re.search(r"status\s*=\s*['\"]active['\"].*ORDER BY id DESC|ORDER BY id DESC.*active", body, re.S):
-            if 'minister' in body or 'secret_order' in body.lower():
-                print(f'{path}:{node.name}:{node.lineno}')
-PY
 ```
 
-### 完整成员表
+### 成员
 
 | # | 成员 | 处置 |
 |---:|---|---|
-| 1 | `db.upsert_secret_order` 定义+说明 | **已删**（上轮） |
-| 2 | `update_secret_order_by_id` 文档对 upsert 的对比说明 | **已删**（上轮） |
-| 3 | `create_secret_order` 注释「upsert 回落 create」 | **本轮删**该退休措辞 |
-| 4 | `tests/test_secret_order_update.py` upsert 两案+模块说明 | **已删/改**为精确 id 更新说明（上轮） |
-| — | `upsert_secret_order_brief` | **非本类**（不同符号，现役 brief 写口） |
-| — | `get_active_secret_orders_for_minister` | **非本类**（列举 active，不猜更新目标） |
-| — | `create_secret_order` 内 `chat_turns … ORDER BY id DESC` | **非本类**（由 provenance message_ids 取源轮，非按大臣最新密令） |
-| — | `docs/CMR_REPORT_y2_probe.md` 等历史记载 | **保留过程史** |
+| 1 | `db.upsert_secret_order` | 已删 |
+| 2 | `update_secret_order_by_id` 对 upsert 的对比说明 | 已删 |
+| 3 | `create_secret_order`「upsert 回落」措辞 | 已删 |
+| 4 | `tests/test_secret_order_update.py` upsert 专属两案 | 已删 |
 
-### 复扫
-
-`def upsert_secret_order(`：无。生产/测试对「最新 active 猜条」仅剩精确更新说明中的否定表述。
+复扫：`def upsert_secret_order(` 无。
 
 ---
 
@@ -140,10 +103,10 @@ PY
 
 ### 类定义（判词）
 
-boundary：授权改动对应测试体系
+boundary：授权改动对应测试体系  
 direction：按行为契约清退散文机械依赖、换形保真证明及无价值断言；复用必要真实入口结构化测试，保留闸类负向；不得恢复锁文或另建平行证明体系。
 
-### 授权触及测试清单（43，完整名单在回执内）
+### 授权触及测试清单（43）
 
 ```bash
 git diff --name-only 10e64fbef HEAD -- tests | grep '^tests/test_.*\.py$' | sort
@@ -193,111 +156,149 @@ git diff --name-only 10e64fbef HEAD -- tests | grep '^tests/test_.*\.py$' | sort
 42. `tests/test_urge_lever_624.py`
 43. `tests/test_web_chat_serialization_393.py`
 
-### 断言枚举方法（不限等值/词表）
+### 可复放：全断言 + pytest.raises(match=) 枚举命令
 
-对上述 43 文件 AST 枚举全部 `assert`（本轮约 5350 条），再按独立外部行为契约逐案语义终裁；预分类仅辅助，不代替终裁。禁止把承重锁文改成键存在/长度/类型/非空/计数后宣称清净。
+不按字段词表收窄成员；对 43 文件 AST 走全部 `assert` 与 `raises(..., match=)`：
 
-### 本轮须清成员（含上轮换形空壳）与处置
+```bash
+python3 - <<'PY'
+import ast
+from pathlib import Path
+files = [Path(x) for x in Path('/tmp/1897-f3-corr7/authorized-43.txt').read_text().splitlines()]
+# 或: git diff --name-only 10e64fbef HEAD -- tests | grep '^tests/test_.*\.py$' | sort > /tmp/1897-f3-corr7/authorized-43.txt
+n_assert = n_raises = 0
+for path in files:
+    src = path.read_text(encoding='utf-8'); tree = ast.parse(src)
+    fmap = {}
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for sn in ast.walk(n):
+                if hasattr(sn, 'lineno'): fmap[sn.lineno] = n.name
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assert):
+            n_assert += 1
+            seg = (ast.get_source_segment(src, n) or '').replace('\n', ' ')[:180]
+            print(f'ASSERT\t{path}:{n.lineno}\t{fmap.get(n.lineno,"?")}\t{seg}')
+        elif isinstance(n, ast.Call):
+            fn = ast.get_source_segment(src, n.func) or ''
+            if 'raises' in fn:
+                for kw in n.keywords or []:
+                    if kw.arg == 'match':
+                        n_raises += 1
+                        seg = (ast.get_source_segment(src, n) or '').replace('\n', ' ')[:180]
+                        print(f'RAISES_MATCH\t{path}:{n.lineno}\t{fmap.get(n.lineno,"?")}\t{seg}')
+print(f'# TOTAL_ASSERT={n_assert} TOTAL_RAISES_MATCH={n_raises}')
+PY
+```
 
-| # | 成员 | 形状 | 处置 | 保留的真正契约（若有） |
+本回实测落盘：`/tmp/1897-f3-corr7/full-assert-enum.txt`  
+**`TOTAL_ASSERT=5291` `TOTAL_RAISES_MATCH=15`**（清退后；清退前同命令约 5332 assert）。
+
+### 所谓「闭集」生产 / schema 真相（不可自称）
+
+| 字段 / 说法 | 真相 | 本回合口径 |
+|---|---|---|
+| `criterion_text` | `TEXT NOT NULL DEFAULT ''`（`db.py` 列定义）；无 CHECK IN | **非闭集**。松手类中文「断供/挪用/撤人」只是 `BREACH_KIND_LABELS` 写入自由列的标签。断言改认 `origin_context` 内结构化 `breach_kind` |
+| `status_reason` | `TEXT` 自由列 | **非闭集**；空白闸可留；非空字面 / 跨面等值不可豁免 |
+| `reason_code` | `PERSON_REASON_CODES` 机器码 | **闭集**可锁 |
+| `form`（背书） | `CHECK(form IN ('会签','当面站台','御笔手敕'))` | **闭集**可锁 |
+| `close_issue` / heal `reason` 如 `resolved` / `commitment_due` / `option_missing_fields_heal_exhausted` | 生产枚举／哨兵码 | **机器码**可锁 |
+| content seed `summary`/`title`/… | `content/events.json` 自由文 | 夹具固定 **≠** 字段变闭集；子串锁文仍违宪 |
+| `turn_region_summary` 拼接 `reason` | 返回自由摘要串 | 不可用「民变事实」等子串作契约 |
+| HITL `label`「强颁/收回/留中」 | `decree.py` 展示文；决策码在 `dossier_decision` | 认 `dossier_decision` 码，不锁展示 label |
+
+夹具固定、测试未真调 LLM，**均不**构成自由字段豁免。
+
+### 本轮发现成员完整表与逐案独立契约依据
+
+#### A. 须清 / 已清（自由文本机械依赖或无价值证明）
+
+| # | 成员 | 形状 | 处置 | 保留的真正独立契约（若有） |
 |---:|---|---|---|---|
-| 1 | `test_style_temperament` summary len/strip 与后续 `"summary" in dto` | LEN_STRIP→KEY 换形 | **删空壳键存在** | source/target 身份；rendered 含人名 |
-| 2 | `test_relation_capture` 全文链 context 等值 | CROSS 保真 | **整案已删**（上轮） | — |
-| 3 | 同文件 whitespace 保真改写后的 happy-path+event_kind | 无价值新断言 | **只留空白拒收负向闸** | `ValueError` + 零行 |
-| 4 | `test_pihong` preferred_hitl `label==`→`'label' in` | CROSS→KEY 换形 | **删 label 断言** | action/draft_capability/decision_key/dossier_* |
-| 5 | `test_pihong` `_body_canonical==` / `'新拟甲' in labels` / `"新甲" in labels` | 正文/label 锁 | **删** | revision_round/status/action/capability；options 非空 |
-| 6 | `test_person_delta` `status_reason != old` 及 memory↔DB `status_reason` 等值 | 自由 reason / 伪「三面」豁免 | **删跨面散文等值** | `reason_code` 闭集同步/清空；status；status_changed_turn；空白闸 `status_reason==""`（被顶替清除） |
-| 7 | `test_person_delta` `payload_summary` 字面 | LIT | **删** | action/derived_from/source/reason_code |
-| 8 | `test_person_delta` 拒收还原元组含 status_reason | CROSS | **DB/内存比较去掉 status_reason** | status/office/office_type/reason_code/transit* |
-| 9 | `test_month_chain_1847` world_segment/forecast/`label in`/segments 非空/`sim_note in` | LIT/KEY/COUNT 换形 | **删** | continuation 调用次数；turn_phase；world_continued；decree_ref；目录键+read |
-| 10 | `test_month_chain_1843` `run_world_segment_text=="静"` | LIT | **删等值**（上轮） | 材料目录/INDEX 侧效 |
-| 11 | `test_gazette_author` 事实/经历子串与 world_segment 等值→键存在 | LIT→KEY | **删 world_segment 键空壳**；目录键保留 | author_files 目录键；origin_ref/exclude；reign_period_label；rescript event_id |
-| 12 | `test_fiscal_levy` presented_context/emperor_note→键存在 | LIT→KEY | **删空壳** | `held is True`；petition id 集合 |
-| 13 | `test_decree_dossiers` promulgation_reason/execution_note/decree_text 键；revised_text in prompt；restore reason 等值 | LIT/KEY | **删** | layer/status/action_type/amount/account/mode/国库 delta；decision 结构化字段 |
-| 14 | `test_mechanical_tail` summary 跨等值→`"summary" in` | CROSS→KEY | **删空壳** | summary_pending；空白闸 `summary==""`；ending is not None |
-| 15 | `test_secret_order_isolation` body==old_public | CROSS | **删等值**（上轮） | knowledge_status withheld/释放 |
-| 16 | `test_urge_lever` origin_context/criterion 等值→键存在 | CROSS→KEY | **删空壳**；改 assert 投影无 payload_json | truth/grace_fake；payload_json 不泄漏 |
-| 17 | `test_event_trigger` status_reason!="获罪削籍" | 自由 reason | **删**（上轮） | `reason_code==""` |
-| 18 | `test_rescript_choices` labels 列表等值→options 计数 | LABEL→COUNT | **删计数** | 空 label 负向；非空分支 `len(decisions)==1` |
-| 19 | `test_rescript_draft` isinstance(reason,str)→`'reason' in pack` | TYPE→KEY | **保留 error-pack schema 键**（非正文锁） | 降级文件存在；`'reason' in pack` |
-| 20 | J2 upsert 专属两案 | 退休机制专属 | **随 J2 删** | 精确 id 更新四案 |
+| 1 | `test_style_temperament_641::test_context_includes_viewer_ledger_without_prose_lock` | `person.name/other.name in rendered` | **整案删**（独立锁文证明；不改成键/计数空壳） | — |
+| 2 | 同文件 `test_character_context_with_db_reads_own_style_and_viewer_ledger` 的 `other.name in rendered` | NAME_IN_RENDERED | **删** | ledger `source`/`target` 身份；style before≠after |
+| 3 | 同文件成功路径 `content.characters.style == after` / `old_style`/`new_style` 等值 | CROSS 保真 | **删** | 性情落库：`动作`/person_logs；拒收/回滚 before 不变闸保留 |
+| 4 | `test_event_trigger_gate::test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome` | content seed summary/title/… 子串 | **整案删** | — |
+| 5 | 同文件 economy `out[...]["reason"] == reason` | EQ 自由 reason | **删** | 外层 rollback 后 ledger count==0 |
+| 6 | `test_breach_plea_623` 四处 `criterion_text == "断供/挪用/撤人"` | 伪闭集锁文 | **改** `decode_plea_meta(...).breach_kind == BREACH_KIND_*` | 写 plea、dossier/issue status、皇威/代价不变等原结构断言 |
+| 7 | `test_pay_order_override_653::...claim_audit...` `"民变事实" in summary` 与 claim reason 子串 | LIT_IN 摘要 | **删**；改查 summary SQL 窗口 `field` 集合 | `settle_*欠_*` 不进 limit 窗口；`unrest` 可见 |
+| 8 | `test_month_chain_1847` `len(continuation_calls[0])==1` | 内部 spy 替代 label 锁文 | **清无价值半截**；留 `len(continuation_calls)==1` 幂等 | turn_phase / world_questions 清空 / world_continued / gazette |
+| 9 | 同文件 `"预推不可见:…" in message` / `question_context in message` | LIT_IN message | **删** | payload `this_decree.status`；经济 ledger 计数；材料根释放 |
+| 10 | 同文件 HITL `labels >= {"强颁","收回","留中"}` | 展示 label | **改** `dossier_decision` 码集 | rescript_pending；affected_parties |
+| 11 | 同文件 `read_material(...)` 无结果断言却称递送 | 无价值 | **删调用**；目录键 `rel in list_materials` 保留 | 目录键递送 |
+| 12 | `test_grant_reconciliation_567` `"赈银押解到达" in note` | LIT_IN execution_note | **删** | status=closed；arrived_amount；无二次扣库 |
+| 13 | `test_mechanical_tail_1845` `text == "史评"` | mock 透传保真 | **删** | ending_status；timeline 结构键；payload 无重复 gazette |
+| 14 | `test_new_issues_section_rejections` resolve/stop 表达式字面等值 | EQ 自由表达式 | **改** `resolve_condition == stop_condition`（回落契约） | bar/status 推进 |
+| 15 | `test_rescript_option_field_heal_1746` `text == '{"ok":true}'` | mock 透传 | **删** | prior_messages → Message 列表角色序 |
+| 16 | `test_person_delta_adapter` displaced 元组锁 `status_reason=="被顶替"` | 自由 reason | **删该字段比较** | office / office_type / **reason_code**（真闭集） |
+| 17 | `test_secret_order_isolation_883` 多处 `_shared_source_body == fixture` | 正文保真 | **删等值**；`is None` 扣留闸保留 | knowledge_status；source_id 可见性 |
+| 18 | 同文件 `test_883_shared_write_seam_keeps_public_assignee_audience` | 仅正文等值承重 | **整案删** | — |
 
-### 保留例外（非缺陷；逐案依据）
+#### B. 保留例外（逐案依据；非「局部探针整类完成」）
 
-| 类型 | 依据 |
-|---|---|
-| SSE `event: done/error` | 线协议控序 |
-| 空位闸 `label==""` / `summary==""` / blank context `ValueError` / 被顶替清除 `status_reason==""` | 闸类负向 |
-| `reason_code` / `mode` / `status` / `deliberation_state` / `event_kind` / `decision_key` 等闭集 | 结构化机器码 |
-| origin_ref / decree_ref / dossier_id / order_id | 身份键 |
-| Event/Future 握手（declaration landing） | 判词显式保留 |
-| 材料目录键 `rel in list_materials` / `fact_rel in author_files` | 供料递送结构化契约，不锁正文 |
-| breach `criterion_text`∈{断供,挪用,撤人} | 闭集准则码，非自由生成文 |
-| content seed 事件 summary 子串（event_trigger） | 内容域夹具，非 LLM 产出锁 |
-| pay_order summary 过滤「民变事实」vs settle claim reasons | 区域摘要过滤契约的夹具观察点 |
-| 性情拒收 before==after style | 结构化字段未变 |
-| **不**豁免 memory↔DB `status_reason` 跨散文等值 | 字段名/「三面一致」不能豁免 |
+| 类型 | 成员样例 | 独立契约依据 |
+|---|---|---|
+| SSE 线协议 | `test_pihong_dossier_1490` 多处 `'event: done'/'event: error' in r.text` | HTTP SSE 控序；非 LLM 散文 |
+| 空白闸 | `summary==""` / `status_reason==""` / blank style 拒收 before 不变 | 闸类负向 |
+| 机器码闭集 | `reason_code`；`form` CHECK；`breach_kind`；`dossier_decision`；`resolved`/`commitment_due`/heal exhausted | schema / 生产枚举 |
+| 身份键 | origin_ref / decree_ref / dossier_id / order_id / source/target | 结构化身份 |
+| Event/Future 握手 | `test_secret_order_declaration_landing_1897` | 判词显式保留 |
+| 材料目录键 | `rel in list_materials` | 供料递送；**不**把无断言的 `read_material` 当递送证明 |
+| 隔离扣留 | `_shared_source_body(...) is None` + knowledge_status | 缺席/状态，非正文等值 |
+| `pytest.raises(..., match=注入哨兵)` | 15 处 | 合法负向闸（注入错误串） |
+| 性情/边 before 不变 | style == before_* 于拒收/回滚/边不改 style | 负向「未变」，非成功路径锁文 |
 
-### 复扫声明
+### 复扫声明（禁止局部探针冒充整类完成）
 
-- 已复扫上轮换形空壳点名样本：**不再**以键存在/长度/类型/非空/计数承接正文锁。
-- 未对全部 5350 条断言宣称「仓内再无任何自由文字」；上表与保留表为本次语义终裁账本。
-- 未新增平行测试文件；未恢复锁文。
+- 已对 **43 授权文件全部 5291 assert + 15 raises(match=)** 做 AST 枚举（命令见上；全文 `/tmp/1897-f3-corr7/full-assert-enum.txt`）。
+- 自由字段机械依赖复扫（Subscript 键 + Compare + raises match）：清退后残留 **LIT_IN 33（皆 SSE）+ EMPTY_GATE 7 + RAISES_MATCH 15**；**无** EQ_FREE / NAME_IN_RENDERED / criterion_text 字面 / rendered 人名。
+- **不声称**「仓内再无任何自由文字」或「F3 全仓散文锁已结清」——仅记账本授权 43 文件本轮语义终裁；出界文件未扩扫。
+- **不**用键存在/长度/类型/非空/计数承接已删正文锁；**不**因「测试未跑真 LLM / 夹具固定」豁免自由列。
 
 ---
 
-## 测试（聚焦，非全量）
+## 测试（聚焦，非全量；七变量前缀）
 
 ```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
 ../Ming_LLM/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line \
-  tests/test_secret_order_update.py \
   tests/test_style_temperament_641.py \
-  tests/test_relation_capture_633.py \
-  tests/test_pihong_dossier_1490.py \
-  tests/test_person_delta_adapter.py \
-  tests/test_month_chain_1847.py \
-  tests/test_month_chain_1843.py \
-  tests/test_gazette_author_1862.py \
-  tests/test_fiscal_levy_effect.py \
-  tests/test_decree_dossiers_571.py \
-  tests/test_mechanical_tail_1845.py \
-  tests/test_secret_order_isolation_883.py \
-  tests/test_urge_lever_624.py \
   tests/test_event_trigger_gate.py \
-  tests/test_rescript_choices_563.py \
-  tests/test_rescript_draft_656.py \
+  tests/test_breach_plea_623.py \
+  tests/test_pay_order_override_653.py \
+  tests/test_month_chain_1847.py \
+  tests/test_grant_reconciliation_567.py \
+  tests/test_mechanical_tail_1845.py \
+  tests/test_new_issues_section_rejections.py \
+  tests/test_rescript_option_field_heal_1746.py \
+  tests/test_person_delta_adapter.py \
+  tests/test_secret_order_isolation_883.py \
+  tests/test_secret_order_update.py \
   tests/test_secret_order_declaration_landing_1897.py \
-  tests/test_staged_assignment_identity_1890.py \
-  tests/test_audience_translate_1837_reopen.py \
-  --basetemp=/tmp/1897-fixer-rescan/pytest-final
+  --basetemp=/tmp/1897-f3-corr7/pytest-focus
 ```
 
-**实测**（`/usr/bin/time -p`）：`5 failed, 813 passed, 1 skipped in 43.33s`；`real 44.10` / `user 29.95` / `sys 10.37`。
-
-### 失败如实记录（不冒称全绿；#1812→#1873）
-
-| 失败 | 归属 |
-|---|---|
-| `test_pihong_dossier_1490.py::test_1682_phase2_surfaces_ambiguous_stored_choice` | 判词/前轮已记功能线索 |
-| `test_fiscal_levy_effect.py` 四条事件结局/首判 | #1873 功能线索 |
-
-本轮引入的 yizhu 空 `status_reason` 误闸已当场撤销；上表五失败改前改后均在。
+**实测**：`639 passed, 1 skipped in 11.99s`（`real 12.51`）。  
+跳过：`test_person_delta_adapter` 缺 `data/probe.db`（预存 #5 followup），非本轮引入。
 
 未跑全量；未调真实模型。
 
 ### 测试最小必要成本（一行）
 
-聚焦 19 文件≈818 例 / ~44s；契约=删换形空壳与自由 reason 跨面等值，保留闸/闭集/Event·Future/目录键。
+聚焦 13 文件≈640 例 / ~12s；契约=清自由字段机械依赖与无价值 spy/空壳，保留闸/机器码/SSE/Event·Future/目录键。
 
 ---
 
 ## 自查二连
 
-1. **同类型**：J1 全仓故事账+猜源谓词复扫后清旁路与 `turn` 死参；J2 覆盖 upsert 以外形状与说明；F3 按行为语义删空壳而非换形，不豁免 status_reason 跨散文。
-2. **引入面**：未加恢复/补账/适配层；未 stash/reset/amend/push/PR；未动 Soul/宪法/宿主；自建物仅本仓 `artifacts/` 与 `/tmp/1897-fixer-rescan/`。
+1. **同类型**：F3 按 schema 真相撤伪闭集豁免；删独立锁文/保真案而非换形；全 43 可复放枚举进回执；J1 变异不作假。
+2. **引入面**：未加恢复/补账/适配层；未 stash/reset/amend/push/PR；未动 Soul/宪法/宿主；自建物仅本仓 `artifacts/` 与 `/tmp/1897-f3-corr7/`。
 
 ## 账目
 
-- 本轮相对 `725d3aaa`：约 13 files，`+25 / −58`（以 `git diff --stat` 为准）
+- 本轮相对 `c905115fd`：11 test files，`+45 / −142`（以 `git diff --stat` 为准）+ 本回执
 - 未 push / 未 PR / 未 amend
 - 提交 SHA：见提交后 stdout / `git rev-parse HEAD`

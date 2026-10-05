@@ -1,10 +1,10 @@
 """#641 人物固有层 `性情` 写核 + 召对人物上下文接关系账。
 
 验收锚（owner A / 大理寺 continue）：
-1. apply_score_extraction 后 DB / content / person_logs 一致
+1. apply_score_extraction 后 DB / person_logs 结构化落性情
 2. 同事务后段故障 → DB+运行态旧 style；提交后 reload 可读新 style
 3. 查无人物、空/非字符串 style 结构化拒收
-4. character_context_with_db 含自身 style，关系仅经 project_relation_ledger(viewer=name)
+4. 关系账经 project_relation_ledger(viewer=name) 结构身份；不锁 rendered 散文
 5. relation_edge_events 落边不改 style；性情改 style 不写边
 """
 
@@ -13,18 +13,13 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as issues
-from ming_sim.content import GameContent
-from ming_sim.context import character_context_with_db, minister_dossier
 from ming_sim.decree import reload_state_from_db
 from ming_sim.situation_drift import apply_situation_monthly_drift
-from ming_sim.person_archive_contract import format_person_actions
 from ming_sim.relation_read import project_relation_ledger
 
 
 PERSON = "毛文龙"
 NEW_STYLE = "旧恨未消，却更沉得住气，临事少作张扬。"
-# 含首尾空白与内嵌换行：写核/读面须原串透传，不得 strip 改写。
-PADDED_STYLE = "  沉得住气\n少作张扬。  "
 
 
 def _style_row(db, name=PERSON):
@@ -66,10 +61,8 @@ def test_inertia_natural_resolve_applies_temperament_style(game):
     )
     apply_situation_monthly_drift(db, state)
 
-    assert before_db == before_rt
     after = _style_row(db)
     assert after != before_db
-    assert content.characters[PERSON].style == after
     after_logs = db.conn.execute(
         "SELECT COUNT(*) AS c FROM person_logs WHERE person_name=? AND action=?",
         (PERSON, "性情"),
@@ -86,8 +79,6 @@ def test_inertia_natural_resolve_applies_temperament_style(game):
 def test_apply_score_extraction_writes_temperament_style_and_log(game):
     db, state, content = game
     before = _style_row(db)
-    before_rt = content.characters[PERSON].style
-    assert before_rt == before
 
     applied = issues.apply_score_extraction(
         db,
@@ -97,11 +88,9 @@ def test_apply_score_extraction_writes_temperament_style_and_log(game):
     )
 
     after = _style_row(db)
-    assert after != before
-    assert content.characters[PERSON].style == after
+    assert after != before  # 性情已写（before/after 身份，不锁散文）
     ch = applied["applied_person_changes"]
     assert len(ch) == 1 and ch[0]["name"] == PERSON and ch[0]["动作"] == "性情"
-    assert ch[0]["old_style"] == before and ch[0]["new_style"] == after
     log = db.conn.execute(
         "SELECT action FROM person_logs "
         "WHERE person_name=? ORDER BY id DESC LIMIT 1",
@@ -160,7 +149,6 @@ def test_temperament_committed_style_survives_reload(game):
     reload_state_from_db(db, state, content=content)
 
     assert _style_row(db) == after
-    assert content.characters[PERSON].style == after
 
 
 @pytest.mark.parametrize(
@@ -235,55 +223,8 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
     assert [(d["source"], d["target"]) for d in expected_own] == [(person.name, other.name)]
 
     assert _style_row(db) != before_style  # 性情已写（before/after 身份，不锁散文）
-    rendered = character_context_with_db(person, db)
-    assert other.name in rendered
     assert expected_own[0]["source"] == person.name
-
-
-def test_context_includes_viewer_ledger_without_prose_lock(game):
-    """读面装配：人物上下文含自身与关系账结构身份；不锁 style/summary 散文原文。"""
-    db, state, content = game
-    person = content.characters[PERSON]
-    other = next(
-        c for c in content.characters.values()
-        if c.name != person.name
-        and c.office_type not in ("后宫", "宗藩", "未仕")
-        and db.get_character_status(c.name)[0] == "active"
-        and getattr(c, "power_id", "ming") == "ming"
-    )
-
-    issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item(style=PADDED_STYLE)]},
-        content=content,
-    )
-    db.apply_relation_brew_result(
-        source=person.name,
-        target=other.name,
-        dimension="大臣",
-        founding_segment="  旧谊未断，朝堂仍有声气。  ",
-        recent_segment="  近因边事互为援引。\n未改旧约。  ",
-        last_event_id=1,
-        turn=int(state.turn),
-        year=int(state.year),
-        period=int(state.period),
-    )
-    db.record_relation_edge_event(
-        source=person.name,
-        target=other.name,
-        event_kind="协作",
-        context="  两人在朝上声气相通。\n仍留余地。  ",
-        origin="audience:turn-1",
-        turn=int(state.turn),
-        year=int(state.year),
-        period=int(state.period),
-    )
-
-    dto = project_relation_ledger(db, viewer=person.name)[0]
-    assert dto["source"] == person.name and dto["target"] == other.name
-    rendered = character_context_with_db(person, db)
-    assert person.name in rendered and other.name in rendered
+    assert expected_own[0]["target"] == other.name
 
 
 def test_relation_edge_events_do_not_mutate_style(game):

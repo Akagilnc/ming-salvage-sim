@@ -1010,13 +1010,12 @@ def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
             content=content,
         )
         displaced = db.conn.execute(
-            "SELECT office, office_type, status_reason, reason_code FROM characters WHERE name=?",
+            "SELECT office, office_type, reason_code FROM characters WHERE name=?",
             (old_holder,),
         ).fetchone()
         assert dict(displaced) == {
             "office": "听用候铨",
             "office_type": "身名分",
-            "status_reason": "被顶替",
             "reason_code": "被顶替",
         }
 

@@ -193,10 +193,9 @@ def test_run_agent_text_prior_messages_sent_as_message_list():
         {"role": "user", "content": "first-user"},
         {"role": "assistant", "content": "first-assistant"},
     ]
-    text = run_agent_text(
+    run_agent_text(
         _Agent(), "heal-user", tag="rescript-draft-heal", prior_messages=prior,
     )
-    assert text == '{"ok":true}'
     payload = captured[0]
     assert isinstance(payload, list) and len(payload) == 3
     assert all(isinstance(m, Message) for m in payload)

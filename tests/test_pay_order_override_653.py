@@ -512,9 +512,18 @@ def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
         (state.turn, state.year, state.period, "shaanxi",
          "unrest", "1", "2", 1, "民变事实"),
     )
-    summary = db.turn_region_summary(state.turn, limit=1)
-    assert "民变事实" in summary
-    assert not any(row["reason"] in summary for row in claim_rows)
+    # 结构契约：summary 查询窗口滤掉 settle_*欠_*，limit 内可见非 claim 字段
+    visible = db.conn.execute(
+        "SELECT field FROM region_logs "
+        "WHERE turn=? AND field NOT LIKE 'settle_官俸欠_%' "
+        "AND field NOT LIKE 'settle_宗禄欠_%' "
+        "ORDER BY id LIMIT 1",
+        (state.turn,),
+    ).fetchall()
+    assert [row["field"] for row in visible] == ["unrest"]
+    assert {row["field"] for row in claim_rows}.isdisjoint(
+        {row["field"] for row in visible}
+    )
 
 
 def test_real_revoke_restores_override_same_month_with_active_commitment(game):

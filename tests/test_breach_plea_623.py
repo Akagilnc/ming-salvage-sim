@@ -150,7 +150,8 @@ def test_funding_cutoff_writes_plea_no_damage_same_turn(game):
     assert written
     pleas = _pending_pleas(db)
     assert len(pleas) == 1
-    assert pleas[0]["criterion_text"] == "断供"
+    meta = decode_plea_meta(pleas[0]["origin_context"])
+    assert meta.get("breach_kind") == BREACH_KIND_FUNDING
     assert int(pleas[0]["stage_idx"]) == int(state.turn)
     # 当回合无损
     assert db.get_decree_dossier(did)["status"] == "executing"
@@ -192,7 +193,11 @@ def test_misappropriation_writes_plea(game):
     written = scan_and_write_breach_pleas(db, state, commit=True)
     assert written
     pleas = _pending_pleas(db)
-    assert any(p["criterion_text"] == "挪用" for p in pleas)
+    assert any(
+        decode_plea_meta(p["origin_context"]).get("breach_kind")
+        == BREACH_KIND_MISAPPROPRIATION
+        for p in pleas
+    )
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "active"
@@ -217,7 +222,11 @@ def test_remove_sponsor_writes_plea(game):
     written = scan_and_write_breach_pleas(db, state, commit=True)
     assert written
     pleas = _pending_pleas(db)
-    assert any(p["criterion_text"] == "撤人" for p in pleas)
+    assert any(
+        decode_plea_meta(p["origin_context"]).get("breach_kind")
+        == BREACH_KIND_REMOVE_SPONSOR
+        for p in pleas
+    )
     # 当回合承诺仍 active；0056 不落（撤人）
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
@@ -1220,7 +1229,11 @@ def test_misappropriation_via_tags_producer_pipeline(game):
     )
     written = scan_and_write_breach_pleas(db, state, commit=True)
     assert written
-    assert any(p["criterion_text"] == "挪用" for p in _pending_pleas(db))
+    assert any(
+        decode_plea_meta(p["origin_context"]).get("breach_kind")
+        == BREACH_KIND_MISAPPROPRIATION
+        for p in _pending_pleas(db)
+    )
 
 
 # ── #623 r2：merged 条 persist 链只认 primary 的三面 ──────────────────

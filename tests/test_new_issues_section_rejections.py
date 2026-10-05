@@ -216,8 +216,8 @@ def test_new_issue_whitespace_resolve_condition_falls_back_to_stop_condition(gam
     iid = int(created[0]["issue_id"])
     row = db.conn.execute(
         "SELECT resolve_condition, stop_condition FROM issues WHERE id=?", (iid,)).fetchone()
-    assert row["resolve_condition"] == "region.shaanxi.unrest <= 30"
-    assert row["stop_condition"] == "region.shaanxi.unrest <= 30"
+    # 空白 resolve_condition 回落 stop_condition：两列同值；不锁表达式字面
+    assert row["resolve_condition"] == row["stop_condition"]
 
     advanced = db.advance_issue(
         state, iid, trigger_kind="decree", delta_bar=20,
