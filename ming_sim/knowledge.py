@@ -228,7 +228,7 @@ def project_issue_materials(
         row["audience_names"] = tuple(sorted(audiences or ()))
         projected[issue_id] = row
 
-    active_issues = db.list_active_issues() if hasattr(db, "list_active_issues") else []
+    active_issues = db.issues.active_rows() if hasattr(db, "issues") else []
     for issue in active_issues:
         issue_id = int(issue["id"])
         if issue_id in projected:
@@ -281,9 +281,9 @@ def project_court_roster_rows(
 
 def _appointment_register(db: Any, state: Any) -> str:
     """吏部任免簿：当前在朝职名，不是派系底账。"""
-    if not hasattr(db, "current_court_roster_rows"):
+    if not hasattr(db, "characters"):
         return "任免簿：暂无。"
-    rows = db.current_court_roster_rows(state)
+    rows = db.characters.current_court_rows(int(state.year), int(state.period))
     if not rows:
         return "任免簿：暂无。"
     return "任免簿：\n" + "\n".join(
@@ -494,7 +494,7 @@ def _issue_audience_case_events(
     known = set(known_source_ids or ())
     synthesized: list[Dict[str, object]] = []
     active_issues = (
-        db.list_active_issues() if hasattr(db, "list_active_issues") else []
+        db.issues.active_rows() if hasattr(db, "issues") else []
     )
     for issue in active_issues:
         try:
@@ -741,7 +741,7 @@ def build_character_knowledge(
         if row.get("source_id")
     }
     visible_issues = []
-    for issue in db.list_active_issues() if hasattr(db, "list_active_issues") else []:
+    for issue in db.issues.active_rows() if hasattr(db, "issues") else []:
         source_id = f"issue:{issue['id']}"
         participants = participant_roster_names(issue["participant_roster"])
         # Unassigned issues are public; assigned issues are visible only when

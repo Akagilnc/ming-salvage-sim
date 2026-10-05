@@ -282,7 +282,7 @@ def test_decree_commitment_unrelated_account_keeps_fiscal_item(game, monkeypatch
         content=content,
     )
 
-    assert db.get_fiscal_config()["neiku_dujiang_base"] == 10
+    assert db.fiscal_config.values()["neiku_dujiang_base"] == 10
 
 
 def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):

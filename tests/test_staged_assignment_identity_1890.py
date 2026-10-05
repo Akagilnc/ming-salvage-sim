@@ -229,7 +229,7 @@ def test_voided_assignment_cannot_be_approved_after_retraction(game):
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (action_id,),
     ).fetchone()["status"] == "voided"
-    assert action_id not in [r["id"] for r in db.list_night_approved_pending(night_id)]
+    assert action_id not in [r["id"] for r in db.dossiers.list_night_approved_pending(night_id)]
 
 
 def test_revision_keeps_original_source_turn_and_undo_restores_it(game):

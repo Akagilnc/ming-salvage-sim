@@ -112,14 +112,14 @@ def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
     )
     db.update_directive_candidate(candidate_id, {"text": "增列核验期限"})
     pending = next(
-        row for row in db.list_pending_actions(state.turn)
+        row for row in db.dossiers.list_pending_actions(state.turn)
         if row["id"] == candidate_id
     )
     assert json.loads(pending["payload_json"])["mode"] == "midzhi"
 
     db.update_directive_candidate(candidate_id, {"mode": "ordinary"})
     pending = next(
-        row for row in db.list_pending_actions(state.turn)
+        row for row in db.dossiers.list_pending_actions(state.turn)
         if row["id"] == candidate_id
     )
     assert json.loads(pending["payload_json"])["mode"] == "ordinary"

@@ -322,7 +322,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
 
     entries: List[Dict[str, Any]] = []
     turn = _current_turn(db)
-    config = db.get_fiscal_config()
+    config = db.fiscal_config.values()
 
     # ① 明控省基座：加派量当月流 ＋ 赈济未敷（unmet_relief）＋ 省内池折发免除（受损）
     for region_id, st, p in _ming_settle_bases(db):

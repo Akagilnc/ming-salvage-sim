@@ -1428,7 +1428,7 @@ class WebGame:
         """对话式拟旨暂存数（pending_actions kind=directive）唯一计数缝——state/chat done 共用。"""
         rows = pending_actions
         if rows is None:
-            rows = self.db.list_pending_actions(int(self.state.turn))
+            rows = self.db.dossiers.list_pending_actions(int(self.state.turn))
         return sum(1 for a in rows if a["kind"] == "directive")
 
     def map_nodes(self) -> List[Dict[str, Any]]:
@@ -1537,7 +1537,7 @@ class WebGame:
 
     def issue_payloads(self) -> List[Dict[str, Any]]:
         payloads: List[Dict[str, Any]] = []
-        for row in self.db.list_active_issues():
+        for row in self.db.issues.active_rows():
             commitment_progress = commitment_progress_payload(self.db, self.state, row)
             payload = {
                 "id": int(row["id"]),
@@ -1729,7 +1729,7 @@ class WebGame:
     def state_payload(self) -> Dict[str, Any]:
         directives = [self.directive_payload(row) for row in self.directive_rows()]
         cased_directives = self.cased_directive_payloads()
-        pending_actions = self.db.list_pending_actions(int(self.state.turn))
+        pending_actions = self.db.dossiers.list_pending_actions(int(self.state.turn))
         visible_non_directive_pending = [
             a for a in pending_actions
             if a["kind"] != "directive" and not (a["kind"] == "secret_order" and a["action"] == "新建")
@@ -1863,7 +1863,7 @@ class WebGame:
                 if a["kind"] == "secret_order"),
             "pending_non_directive_action_count": len(visible_non_directive_pending),
             "failed_secret_order_count": sum(
-                1 for _a in self.db.list_failed_secret_order_actions()),
+                1 for _a in self.db.dossiers.list_failed_secret_order_actions()),
             "pending_decisions": pending_decisions,
             # #657：phase1 已落 decided、desk 只查 pending 为空时，投影 typed 续跑信号。
             # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
@@ -2288,13 +2288,13 @@ class WebGame:
     def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
         return [
             _pending_action_failure_payload(action)
-            for action in self.db.list_failed_secret_order_actions(minister_name)
+            for action in self.db.dossiers.list_failed_secret_order_actions(minister_name)
         ]
 
     def pending_action_failures(self) -> List[Dict[str, Any]]:
         return [
             _pending_action_failure_payload(action)
-            for action in self.db.list_failed_secret_order_actions()
+            for action in self.db.dossiers.list_failed_secret_order_actions()
         ]
 
     def retry_interrupted_reply(self, minister_name: str, target_chat_turn_id: Optional[int] = None) -> Dict[str, Any]:
@@ -5144,11 +5144,11 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
 
 def _failed_secret_order_ids_for_turn(game: WebGame, turn: int) -> set[int]:
     db = getattr(game, "db", None)
-    if db is None or not hasattr(db, "list_pending_actions"):
+    if db is None or not hasattr(db, "dossiers"):
         return set()
     return {
         int(action.get("id") or 0)
-        for action in db.list_pending_actions(int(turn), status="failed")
+        for action in db.dossiers.list_pending_actions(int(turn), status="failed")
         if action.get("kind") == "secret_order"
     }
 
@@ -5157,11 +5157,11 @@ def _new_secret_order_failure_payloads_for_turn(
     game: WebGame, turn: int, before_ids: set[int],
 ) -> List[Dict[str, Any]]:
     db = getattr(game, "db", None)
-    if db is None or not hasattr(db, "list_pending_actions"):
+    if db is None or not hasattr(db, "dossiers"):
         return []
     return [
         _pending_action_failure_payload(action)
-        for action in db.list_pending_actions(int(turn), status="failed")
+        for action in db.dossiers.list_pending_actions(int(turn), status="failed")
         if action.get("kind") == "secret_order" and int(action.get("id") or 0) not in before_ids
     ]
 

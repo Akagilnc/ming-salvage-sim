@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
-from ming_sim.entities.column_write import checked_columns, upsert_by_pk
+from ming_sim.entities.column_write import checked_columns
 
 
 ARMY_COLUMNS = frozenset({
@@ -95,12 +95,6 @@ class ArmyStore:
             payload,
         )
 
-    def upsert(self, row: Mapping[str, object]) -> None:
-        """Debug replace of one army. Caller commits."""
-        upsert_by_pk(
-            self._conn, "armies", row,
-            pk="id", allowed=ARMY_COLUMNS | {"updated_at"}, what="armies",
-        )
 
     def delete(self, army_id: str) -> int:
         cursor = self._conn.execute("DELETE FROM armies WHERE id=?", (army_id,))
@@ -193,7 +187,7 @@ class ArmyStore:
         return self._conn.execute("SELECT * FROM armies WHERE owner_power='ming' AND arrears>0", params).fetchall()
 
     def read_apply_fixed_period_flows(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n        SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,\n               pay_source_region, province_pay_share, central_pay_share,\n               province_pay_arrears, central_pay_arrears, is_tusi, self_funded_pay\n        FROM armies\n        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n          AND central_pay_share > 0\n        ", params).fetchall()
+        return self._conn.execute("\n        SELECT id, name, manpower, salary_rate, owner_power, arrears, morale, loyalty,\n               pay_source_region, province_pay_share, central_pay_share,\n               province_pay_arrears, central_pay_arrears, consecutive_pay_shortfall_months,\n               is_tusi, self_funded_pay\n        FROM armies\n        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n          AND central_pay_share > 0\n        ", params).fetchall()
 
     def read_apply_fixed_period_flows_id_manpower_salary_rate_owner_power_is_mutinied_mutiny_count(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT id, manpower, salary_rate, owner_power, is_mutinied, mutiny_count FROM armies', params).fetchall()

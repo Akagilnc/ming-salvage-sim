@@ -88,7 +88,7 @@ def stage_yuan_appointment_summon(
         minister_name=minister, target_id=None, payload=payload,
     )
     pending = next(
-        row for row in db.list_pending_actions(state.turn)
+        row for row in db.dossiers.list_pending_actions(state.turn)
         if int(row["id"]) == int(pending_id)
     )
     return pending, f"office:{pending['id']}"

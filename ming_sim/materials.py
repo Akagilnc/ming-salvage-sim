@@ -415,11 +415,8 @@ def _own_affair_lines(
     it mirrors the existing participant/audience "handling" gate already
     applied to ordinary (non-linked) issues, checked against whichever linked
     issue points here — the #1830 opening min-set's established criterion,
-    unchanged by this fix. `AffairStore.declare_closed` (ADR 0154 decision
-    key `affair-close-requires-no-active-linked-issues`) rejects closing an
-    affair that still has an active linked issue, so "closed affair with a
-    still-active linked issue" cannot occur — this function does not need to
-    special-case it.
+    unchanged by this fix. ADR 0154 后出裁定已撤回显式了结及拒绝守门；
+    事务何时成为往事由事项实况承接，本函数不另设了结特例。
     """
     from ming_sim.knowledge import _issue_audience_case_events, _reader_in_issue_audience
     from ming_sim.participant_roster import participant_roster_names
@@ -475,7 +472,7 @@ def _own_affair_lines(
         )
 
     handling_ids: set[int] = set()
-    for issue in (db.list_active_issues() if hasattr(db, "list_active_issues") else []):
+    for issue in (db.issues.active_rows() if hasattr(db, "issues") else []):
         try:
             issue_id = int(issue["id"])
         except (KeyError, IndexError, TypeError, ValueError):
@@ -657,7 +654,7 @@ def _opening_affair_lines(
     }
     handled: list[tuple[str, str]] = []
     seen: set[str] = set()
-    active = db.list_active_issues() if hasattr(db, "list_active_issues") else []
+    active = db.issues.active_rows() if hasattr(db, "issues") else []
     for issue in active:
         try:
             issue_id = int(issue["id"])
@@ -916,9 +913,9 @@ def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> 
         knowledge.get("office_type") or getattr(character, "office_type", "") or ""
     )
     rows: list[Any] = []
-    if hasattr(db, "current_court_roster_rows"):
+    if hasattr(db, "characters"):
         rows = project_court_roster_rows(
-            db.current_court_roster_rows(state),
+            db.characters.current_court_rows(int(state.year), int(state.period)),
             knowledge,
             office_type,
         )
@@ -1401,9 +1398,9 @@ def _world_board_text(
 
 
 def _world_roster_text(db: Any, state: Any) -> str:
-    if not hasattr(db, "current_court_roster_rows"):
+    if not hasattr(db, "characters"):
         return "在朝名册：暂无。"
-    rows = db.current_court_roster_rows(state)
+    rows = db.characters.current_court_rows(int(state.year), int(state.period))
     if not rows:
         return "在朝名册：暂无。"
     return "在朝名册：\n" + "\n".join(

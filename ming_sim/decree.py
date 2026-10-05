@@ -283,7 +283,7 @@ def build_promulgation_judge_context(
     """Build the deterministic snapshot from persisted dossier evidence only."""
     faction_rows = FactionStore(db.conn).read_build_promulgation_judge_context()
     class_rows = ClassStore(db.conn).read_ordered_names()
-    issue_rows = db.list_active_issues()
+    issue_rows = db.issues.active_rows()
     authority = int(state.metrics.get("皇威", 0))
     authority_band = imperial_authority_band(authority)
     assert authority_band in IMPERIAL_AUTHORITY_BANDS
@@ -789,7 +789,7 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
         db.dossiers.list_dossiers(status="proposed")
     ) or executing_work or any(
         row.get("kind") == "directive"
-        for row in db.list_pending_actions(state.turn)
+        for row in db.dossiers.list_pending_actions(state.turn)
     )
 
 
@@ -797,7 +797,7 @@ def _carry_pending_clarification_actions(
     db: GameDB, state: GameState, before_turn: int, *, content=None,
 ) -> None:
     """Keep unresolved pre-edict drafts discoverable in the new month."""
-    for pending_action in db.list_pending_actions(before_turn):
+    for pending_action in db.dossiers.list_pending_actions(before_turn):
         prepared = db._prepare_pending_directive(state, pending_action, content=content)
         if prepared["classification"] == "needs_clarification":
             db.dossiers.carry_pending_to_turn(
@@ -1148,7 +1148,7 @@ def pre_settle(
             # 无聊天暂存时为空操作；committed 行不重跑。
             # #1560 / CONTEXT：过回合丢弃既有 failed secret-order intents，再 commit；
             # 顺序在 commit 前，避免误清同次 commit 新产生的 failure。
-            discarded_failed = db.discard_failed_secret_order_intents()
+            discarded_failed = db.dossiers.delete_failed_secret_order_intents()
             if discarded_failed:
                 tlog(f"[pending_actions] 过回合丢弃既有 failed 密令意图 {discarded_failed} 条")
             committed = db.commit_pending_actions(

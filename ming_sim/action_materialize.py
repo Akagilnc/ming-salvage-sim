@@ -91,7 +91,7 @@ def _persist_appointment_summon(
     )
     with atomic(session.db):
         if promote_payload:
-            row = session.db.pending_action_payload_row(pending_id)
+            row = session.db.dossiers.pending_action_payload_row(pending_id)
             if row is None:
                 raise ValueError("任命后传召所关联的暂存任命不存在")
             stored = load_stored_object(row["payload_json"], label='payload_json')
@@ -180,7 +180,7 @@ def _apply_existing_appointment_hit(
             if pending_id:
                 resolved = int(pending_id)
         if recommendation_fields:
-            current = session.db.pending_action_payload_row(resolved)
+            current = session.db.dossiers.pending_action_payload_row(resolved)
             stored = load_stored_object(current["payload_json"], label='payload_json')
             stored.update(recommendation_fields)
             session.db.dossiers.set_pending_payload(
@@ -225,7 +225,7 @@ def stage_pacification_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
 
@@ -371,7 +371,7 @@ def stage_punishment_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
 
@@ -810,7 +810,7 @@ def stage_grant_allocation_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
 
@@ -1020,7 +1020,7 @@ def _list_pending_office_rows(
     """本夜/本回合 pending 人事候选（kind=office）。不另建索引。"""
     rows = list(pend_for_minister or [])
     if not rows:
-        rows = list(db.list_pending_actions(int(turn)))
+        rows = list(db.dossiers.list_pending_actions(int(turn)))
     out: List[Dict[str, Any]] = []
     for row in rows:
         if row.get("kind") != "office":
@@ -1445,7 +1445,7 @@ def stage_assignment_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
 
@@ -1572,7 +1572,7 @@ def stage_authorization_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
     existing_id = 0
@@ -1672,7 +1672,7 @@ def stage_referral_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
 
@@ -1759,7 +1759,7 @@ def stage_revoke_authority_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
     existing_id = 0
@@ -1833,7 +1833,7 @@ def stage_revoke_decree_candidate(
     pending_rows = list(pend_for_minister or [])
     if not pending_rows:
         pending_rows = [
-            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            p for p in db.dossiers.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
     existing_id = 0

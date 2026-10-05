@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from ming_sim.entities.column_write import checked_columns, upsert_by_pk
+from ming_sim.entities.column_write import checked_columns
 
 
 BUILDING_COLUMNS = frozenset({
@@ -91,12 +91,6 @@ class BuildingStore:
             tuple(row.get(column) for column in _LOG_COLUMNS),
         )
 
-    def upsert(self, row: Mapping[str, object]) -> None:
-        """Debug replace of one building. Caller commits."""
-        upsert_by_pk(
-            self._conn, "buildings", row,
-            pk="id", allowed=BUILDING_COLUMNS | {"updated_at"}, what="buildings",
-        )
 
     def read_buildings_report(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM buildings WHERE region_id = ? ORDER BY category, name', params).fetchall()

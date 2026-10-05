@@ -455,7 +455,7 @@ def is_weishi(character: "Character") -> bool:
     - cli: terminal.choose_minister
     - cli_backend: _draft_intent_character_roster_facts（拟诏事实块）
     - materials: 人物/朝臣名册.txt
-    - db: current_court_roster_rows（已排）
+    - db.characters.current_court_rows（已排）
     - web_app: in_talent_pool（未入仕非「可起复前臣」）
     任命写路径（apply_office_appointment）**不**守本闸——未仕入仕是合法铨选。
     同型 seed 先例：郑成功/张煌言等诸生童生 offstage（非钱谦益——钱为罢居礼部、非未仕）。

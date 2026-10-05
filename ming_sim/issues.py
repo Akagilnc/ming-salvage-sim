@@ -2445,7 +2445,7 @@ def _format_inertia(inertia: int) -> str:
 
 
 def show_active_issues(db: GameDB) -> None:
-    issues = db.list_active_issues()
+    issues = db.issues.active_rows()
     if not issues:
         return
     state = db.load_state()
@@ -6956,77 +6956,6 @@ def _apply_surcharge_decrees(
     return applied, rejected
 
 
-def _apply_levy_driven_transfers(
-    db: GameDB,
-    *,
-    commit: bool = True,
-) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
-    """#650/0089 环后半段：结算按账机械驱动农民→流民入池（0087「applier 机械转移」，
-    P6 代码只供事实＋clamp）。
-
-    口径（AC2 确定性可断言）：每明省读 settle._meta「加派基线」(万两/月)，
-    入池(人) = 基线 × LEVY_DISPLACEMENT_RATE(人/万两·月) × (100−民心)/100。
-    加派入池随 substrate hub 的省级账结算。
-    结果钳到农民@省余额后再交 _apply_population_transfers 守恒原语落账
-    （reason=加派；累积账月效统一使用 `盘面自发`，不伪归最后一道改账旨）。基线 ≤0 或折算后
-    ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
-    """
-    records: List[Dict[str, object]] = []
-    rows = RegionStore(db.conn).read_apply_levy_driven_transfers()
-    for row in rows:
-        region_id = str(row["id"])
-        try:
-            fiscal = load_stored_object(row["fiscal"], label='fiscal')
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{region_id}.fiscal 持久 JSON 损坏，无法结算加派账") from exc
-        if not isinstance(fiscal, dict):
-            raise ValueError(f"{region_id}.fiscal 必须是 object，无法结算加派账")
-        settle = fiscal.get("settle")
-        # 财政月效的动态成员只包括已有 settle 基座的明省；legacy/内容扩展中
-        # 合法的无基座省自然出列，不能让任意 delta apply 因此失败。
-        if settle is None:
-            continue
-        if not isinstance(settle, dict):
-            raise ValueError(f"{region_id}.fiscal.settle 必须是 object，无法结算加派账")
-        meta = settle.get("_meta")
-        if meta is not None and not isinstance(meta, dict):
-            raise ValueError(f"{region_id}.fiscal.settle._meta 必须是 object，无法结算加派账")
-        raw = meta.get(SETTLE_META_JIAPIAI_KEY, 0) if meta is not None else 0
-        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(float(raw)):
-            raise ValueError(f"{region_id}.settle._meta.{SETTLE_META_JIAPIAI_KEY} 必须是有限数值")
-        base = max(0.0, float(raw))
-        if base <= 0:
-            continue
-        pool_members = _surcharge_population_pool_members(db, region_id)
-        if pool_members == {"农民", "流民"}:
-            pass  # 完整加派人口池
-        elif "农民" not in pool_members:
-            # 无农民源：空池或 #659 边镇仅军户/流民切片——无加派人口效应，不 soft-lock。
-            continue
-        else:
-            # 有农民无流民＝农业省池残缺，fail-loud（#650 missing_pool）
-            raise ValueError(f"{region_id} 有正加派账但仅有部分农民/流民省级人口行")
-        support = max(0, min(100, int(row["public_support"] or 0)))
-        raw_persons = base * LEVY_DISPLACEMENT_RATE * (100 - support) / 100.0
-        amount = int(round(raw_persons))
-        if amount <= 0:
-            continue
-        balance = int(ClassStore(db.conn).read_apply_levy_driven_transfers((region_id,))["population"])
-        amount = min(amount, balance)  # clamp：原语超余额即拒，先钳免噪音
-        if amount <= 0:
-            continue
-        records.append({
-            "source": f"农民@{region_id}",
-            "target": f"流民@{region_id}",
-            "amount": amount,
-            "reason": "加派",
-            # 月度后果来自累积账，不伪归因给最后一道改变账额的旨。
-            "origin_ref": "盘面自发",
-        })
-    if not records:
-        return [], []
-    return _apply_population_transfers(db, records, commit=commit)
-
 
 def _is_bandit_power_id(power_id: str) -> bool:
     """流寇总股与分股（bandits / bandit_*）；投贼吸收与正实力门控共用。"""
@@ -7164,117 +7093,6 @@ def _apply_bandit_absorptions(
     return applied, rejected, power_changes
 
 
-def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, turn: int) -> int:
-    """回流成本面唯一读缝：只认实付证据。
-
-    本回合对账实抵优先；否则累加该案已落 economy_moves 负向出账。
-    **不**回退 payload.amount（ordered 非实付，零 ledger 不得假阳性出回流）。
-    """
-    history = db.dossiers.reconciliations(int(dossier_id))
-    arrived_this_turn = [
-        int(row["arrived_amount"])
-        for row in history
-        if int(row.get("turn") or 0) == int(turn)
-    ]
-    if arrived_this_turn:
-        return max(0, sum(arrived_this_turn))
-    paid = 0
-    for move in db.list_economy_moves_for_dossier(int(dossier_id)):
-        try:
-            delta = int(move.get("delta") or 0)
-        except (TypeError, ValueError):
-            continue
-        if delta < 0:
-            paid += -delta
-    return max(0, paid)
-
-
-def _apply_recovery_driven_transfers(
-    db: GameDB,
-    state: GameState,
-    *,
-    commit: bool = True,
-) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
-    """#652/0087：赈济/招抚屯田回流单核（确定性；LLM 零产回流）。
-
-    触发：带 recovery 身份的 grant_allocation（赈灾/招抚屯田）+ 属地 region +
-    本回合已付代价 + 已落结构化执行判决。基线=实抵万两×RECOVERY_PERSONS_PER_WAN，
-    再经执行 outcome 成色折减；经 _apply_population_transfers reason=回流 唯一落库。
-    幂等键 (dossier_id, turn)：同键不双扣池。立即开仓/#522 pacification 不在此列。
-    """
-    turn = int(state.turn)
-    # 月份推进事务只执行一次；同一案在本次扫描内仅回流一次。
-    seen_keys: set[tuple[int, int]] = set()
-
-    records: List[Dict[str, object]] = []
-    remaining_by_region: Dict[str, int] = {}
-    rows = db.dossiers.grant_allocation_rows()
-    for row in rows:
-        dossier_id = int(row["id"])
-        if (dossier_id, turn) in seen_keys:
-            continue
-        payload = load_stored_object(row["payload_json"], label="payload_json")
-        if not isinstance(payload, dict):
-            continue
-        grant_action = str(payload.get("grant_action") or "").strip()
-        if grant_action not in RECOVERY_GRANT_ACTIONS:
-            continue
-        target_kind = str(row["target_kind"] or payload.get("target_kind") or "").strip()
-        region_id = str(row["target_id"] or payload.get("target_id") or "").strip()
-        if target_kind != "region" or not region_id:
-            continue
-        if RegionStore(db.conn).read_assert_commission_grant_target_exists((region_id,)) is None:
-            continue
-        outcome = str(row["execution_outcome"] or "").strip()
-        if outcome not in RECOVERY_OUTCOME_FACTORS:
-            continue
-        cadence = str(payload.get("cadence") or "").strip()
-        closed_turn = int(row["closed_turn"] or 0)
-        if cadence != "每月" and closed_turn != turn:
-            continue
-        factor = float(RECOVERY_OUTCOME_FACTORS[outcome])
-        if factor <= 0:
-            seen_keys.add((dossier_id, turn))
-            continue
-        if cadence == "每月":
-            reconciled = [
-                int(item["arrived_amount"])
-                for item in db.dossiers.reconciliations(dossier_id)
-                if int(item.get("turn") or 0) == turn
-            ]
-            if reconciled:
-                silver = max(0, sum(reconciled))
-            else:
-                paid_row = ReignStateStore(db.conn).read_apply_recovery_driven_transfers((f"dossier:{dossier_id}", turn))
-                silver = max(0, int(paid_row[0] or 0))
-        else:
-            silver = _recovery_effective_silver_wan(db, dossier_id, turn)
-        if silver <= 0:
-            continue
-        raw_persons = silver * RECOVERY_PERSONS_PER_WAN * factor
-        amount = int(round(raw_persons))
-        if amount <= 0:
-            continue
-        pool_row = ClassStore(db.conn).read_apply_bandit_absorptions((region_id,))
-        farmer_row = ClassStore(db.conn).read_apply_recovery_driven_transfers((region_id,))
-        if pool_row is None or farmer_row is None:
-            continue
-        remaining = remaining_by_region.setdefault(region_id, int(pool_row["population"]))
-        amount = min(amount, remaining)
-        if amount <= 0:
-            continue
-        records.append({
-            "source": f"流民@{region_id}",
-            "target": f"农民@{region_id}",
-            "amount": amount,
-            "reason": "回流",
-            "origin_ref": f"dossier:{dossier_id}",
-        })
-        remaining_by_region[region_id] = remaining - amount
-        seen_keys.add((dossier_id, turn))
-    if not records:
-        return [], []
-    return _apply_population_transfers(db, records, commit=commit)
 
 
 _COVERT_NEUTRALIZATION_REASON = "禁摊派：一次性撤销旧案暗渠财政效果"
@@ -7328,7 +7146,7 @@ def neutralize_covert_fiscal_effects(
         ):
             continue
 
-        current = db.get_fiscal_config().get(key)
+        current = db.fiscal_config.values().get(key)
         if current is None:
             continue
         latest_remove = db.fiscal_config.latest_lifecycle("remove", key)
@@ -7424,7 +7242,7 @@ def record_secret_order_disclosure(
     # event — re-true each month must not mint another public row.
     disclosure_prefix = f"secret_order_disclosure:{order_id}:"
     # LIKE treats `_`/`%` as wildcards; escape the literal prefix
-    # (same ESCAPE idiom as db.py iter_budget_items / get_fiscal_config).
+    # (same ESCAPE idiom as db.py iter_budget_items / fiscal_config.values).
     like_prefix = (
         disclosure_prefix
         .replace("\\", "\\\\")
@@ -7492,7 +7310,7 @@ def apply_score_extraction(
     # 在人物变更全部落定后、relations 解析前另取。不建持久 snapshot、不新增
     # 编排：atomic 回滚重试重新进入本函数时由同一 pre-state 自然重算。
     _relation_pre_roster = {
-        row["name"] for row in db.current_court_roster_rows(state)
+        row["name"] for row in db.characters.current_court_rows(int(state.year), int(state.period))
     }
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
@@ -8413,23 +8231,6 @@ def _apply_score_extraction_body(
         defer_event_trigger_ids=strategic_event_pool_ids,
         open_affair_ids_at_input=authorized_open_affairs)
 
-    # Affair closure observes the batch's final issue state. In particular, a
-    # same-batch linked issue must prevent closure rather than leave a closed
-    # affair pointing at active work.
-    for raw in extracted.get("affair_declarations") or []:
-        try:
-            if not isinstance(raw, dict):
-                raise ValueError("事务声明须为对象")
-            db.affairs.close_from_declaration(
-                raw,
-                turn=int(state.turn),
-                authorized_ids=frozen_open_affairs,
-            )
-        except (TypeError, ValueError, KeyError) as exc:
-            validate_rejections.append(
-                ("affair_declarations", {"raw_value": raw}, str(exc)),
-            )
-
     commitment_economy_carriers: List[Dict[str, object]] = []
     for item in issue_summary.get("new_issues") or []:
         if not (
@@ -8678,7 +8479,7 @@ def _apply_score_extraction_body(
                 "category": "invalid_enum", "item": remove,
             })
             continue
-        fiscal_config = db.get_fiscal_config()
+        fiscal_config = db.fiscal_config.values()
         stem = db._stem_of(key)
         if key not in fiscal_config and not any(
             candidate in fiscal_config for candidate in (f"{stem}_base", f"{stem}_rate")
@@ -8825,7 +8626,7 @@ def _apply_score_extraction_body(
 
     # 7) fiscal_changes：调整月度固定收支系数
     applied_fiscal: List[Dict[str, object]] = []
-    fiscal_config_snapshot = db.get_fiscal_config()
+    fiscal_config_snapshot = db.fiscal_config.values()
     deferred_loss_pair_changes: List[Dict[str, object]] = []
     loss_pair_running: Dict[str, int] = {}
     loss_pair_final_by_pair: Dict[Tuple[str, str], Dict[str, int]] = {}
@@ -8868,7 +8669,7 @@ def _apply_score_extraction_body(
             # 显式 int 0 = 无操作（脏值已在上方拒掉,此处只剩真 int;空 key 已在循环顶记拒）。
             continue
         delta = delta_raw
-        current = db.get_fiscal_config().get(key)
+        current = db.fiscal_config.values().get(key)
         if current is None:
             # 未知 key = 正常业务拒绝,逐项拒收留痕（不再 print 静默跳）。
             applied_fiscal.append({
@@ -9126,7 +8927,7 @@ def _apply_score_extraction_body(
         # 互动都落；前后均不合格（幻觉/皇帝入大臣端）仍拒收。此处已在该批人物
         # 变更全部 apply 之后，live 投影即 post-roster。
         allowed_endpoint_names=relation_pre_roster | {
-            row["name"] for row in db.current_court_roster_rows(state)
+            row["name"] for row in db.characters.current_court_rows(int(state.year), int(state.period))
         },
     )
 
@@ -9209,19 +9010,6 @@ def _resolve_victory(db: GameDB, state: GameState, extracted: Dict[str, object])
         return declared
     return victory_status(db, state)
 
-
-def apply_issue_inertia_and_ongoing(
-    db: GameDB,
-    state: GameState,
-    touched_ids: Optional[set] = None,
-    applied_person_changes: Optional[List[Dict[str, object]]] = None,
-) -> List[Dict[str, object]]:
-    """兼容旧名：月度漂移真源在 situation_drift.apply_situation_monthly_drift。"""
-    _ = touched_ids
-    from ming_sim.situation_drift import apply_situation_monthly_drift
-    return apply_situation_monthly_drift(
-        db, state, applied_person_changes=applied_person_changes,
-    )
 
 
 def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:

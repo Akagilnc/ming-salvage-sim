@@ -45,11 +45,11 @@ _REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
 
 def _failed_secret_order_ids(session: GameSession, turn: int) -> set[int]:
     db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "list_pending_actions"):
+    if db is None or not hasattr(getattr(db, "dossiers", None), "list_pending_actions"):
         return set()
     return {
         int(action.get("id") or 0)
-        for action in db.list_pending_actions(int(turn), status="failed")
+        for action in db.dossiers.list_pending_actions(int(turn), status="failed")
         if action.get("kind") == "secret_order"
     }
 
@@ -58,10 +58,10 @@ def _new_secret_order_failure_payloads(
     session: GameSession, turn: int, before_ids: set[int],
 ) -> List[dict]:
     db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "list_pending_actions"):
+    if db is None or not hasattr(getattr(db, "dossiers", None), "list_pending_actions"):
         return []
     failures: List[dict] = []
-    for action in db.list_pending_actions(int(turn), status="failed"):
+    for action in db.dossiers.list_pending_actions(int(turn), status="failed"):
         if action.get("kind") != "secret_order":
             continue
         action_id = int(action.get("id") or 0)
@@ -152,42 +152,6 @@ def choose_minister(session: GameSession) -> Optional[Character]:
             continue
         return candidate
 
-
-def _fail_cli_chat_turn_scene(
-    session: GameSession,
-    chat_turn_id: int,
-    *,
-    before_snapshot=None,
-    scaffold_owned: bool = False,
-    entry_id: int = 0,
-) -> None:
-    """CLI chat-turn scene 失败清理——与 minister_chat 中断同族（abandon + fail/回滚）。
-
-    cleanup 自身失败由调用方链到原 scene 异常（不得 `except: pass` 吞掉）。
-    """
-    if scaffold_owned:
-        if before_snapshot is not None and hasattr(
-            session.db, "record_chat_turn_rollback_diffs",
-        ):
-            session.db.record_chat_turn_rollback_diffs(
-                int(chat_turn_id),
-                before_snapshot,
-                session.db.capture_chat_rollback_snapshot(),
-            )
-        # Delete scaffold exit placeholder in the same cleanup path before fail.
-        # fail_chat_turn also drops origin-bound rows; explicit entry_id covers
-        # doubles whose fail path is thinner than production GameDB.
-        if entry_id and hasattr(session.db, "conn") and getattr(session.db, "conn", None):
-            session.db.reign.delete_ledger_entry(int(entry_id))
-            session.db.conn.commit()
-        restored_ids = session.db.fail_chat_turn(int(chat_turn_id))
-        from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-        schedule_restored_decree_forecasts(session, restored_ids)
-        return
-    if entry_id:
-        # Prior Q&A turn must stay intact; only drop the failed exit placeholder.
-        session.db.reign.delete_ledger_entry(int(entry_id))
-        session.db.conn.commit()
 
 
 def _record_audience_exit(session: GameSession, name: str) -> None:
@@ -555,7 +519,7 @@ def review_directives(session: GameSession) -> str:
         pending = [d for d in directives if d.status == "pending"]
         drafts = [d for d in directives if d.status == "draft"]
         staged_directives = [
-            p for p in session.db.list_pending_actions(session.state.turn)
+            p for p in session.db.dossiers.list_pending_actions(session.state.turn)
             if p.get("kind") == "directive"
         ]
         print(f"\n本{TURN_UNIT}诏书草案：")

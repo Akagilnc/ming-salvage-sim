@@ -621,7 +621,7 @@ class GameSession:
             self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
             # #638 S7：新开档判据必须在 load_state 建 game_state 行之前取（行在＝旧档，
             # 关系 seed 导入一律不触；验收条「只对新开档生效，旧档不受影响」的机械口径）。
-            fresh_save = not self.db.has_state()
+            fresh_save = not self.db.reign.exists()
             # 接档载入阶段计时（#84）：原为零日志盲区，群友以为死机；逐阶段 tlog 用时，
             # 自部署者在 server 控制台看得见进度、定位慢阶段。
             from ming_sim.token_stats import tlog
@@ -1483,7 +1483,7 @@ class GameSession:
         拟旨/任免 staged 时不得假 0）。确认闸门/落库时序不动。
         """
         n = self.db.count_pending_directives(self.state)
-        pending_actions = self.db.list_pending_actions(self.state.turn)
+        pending_actions = self.db.dossiers.list_pending_actions(self.state.turn)
         n += sum(
             1 for a in pending_actions
             if a["kind"] in {"secret_order", "directive", "office"}
@@ -1791,7 +1791,7 @@ class GameSession:
             self.db.list_directives(self.state, statuses=("pending",))
             or any(
                 row.get("kind") == "directive"
-                for row in self.db.list_pending_actions(self.state.turn)
+                for row in self.db.dossiers.list_pending_actions(self.state.turn)
             )
         ):
             raise ValueError("月末结算恢复期新增拟旨须先核定，不能并入已冻结的结算")
@@ -1886,7 +1886,7 @@ class GameSession:
         settlement_due = _requires_full_settlement(self.state, self.db)
         # Pending non-directive actions (secret orders etc.) enter resolve_directives
         # so pre_settle owns materialization with the rest of the settlement spine.
-        pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
+        pending_action_due = bool(self.db.dossiers.list_pending_actions(self.state.turn))
         # #1769 耗尽：产物错 draft 留到下月；不得把引擎拒因串透传给皇帝，不得挡月份。
         # 真拒因已在 rejection_reports 留痕（#1591 保留面）。
         product_exhaust = bool(dossier_rejections)

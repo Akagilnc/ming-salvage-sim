@@ -93,7 +93,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         def _translate(prompt, _cfg):
             scene = offline_empty_audience_translate(prompt, _cfg)
             rows = [
-                r for r in game.db.list_pending_actions(game.state.turn)
+                r for r in game.db.dossiers.list_pending_actions(game.state.turn)
                 if r.get("kind") == "directive" and r.get("status") == "pending"
             ]
             if rows:
@@ -137,7 +137,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
 
         # 成案前：单候选、期限=下一回合；无 assignment 候选
         pending = [
-            p for p in game.db.list_pending_actions(turn_before)
+            p for p in game.db.dossiers.list_pending_actions(turn_before)
             if p.get("status") == "pending"
         ]
         assert len(pending) == 1, pending

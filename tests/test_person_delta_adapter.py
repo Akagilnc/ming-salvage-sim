@@ -1871,7 +1871,7 @@ def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
         and db.get_character_status(n)[0] == "active"
     )
     prepare_character_materials(db, state, content.characters[minister_name])
-    court = {row["name"] for row in db.current_court_roster_rows(state)}
+    court = {row["name"] for row in db.characters.current_court_rows(int(state.year), int(state.period))}
     assert name not in court
 
 def test_apply_office_appointment_rejects_vassal_prince(game):

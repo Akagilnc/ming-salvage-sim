@@ -804,7 +804,7 @@ def test_1627_stamp_ignores_pre_edict_clarification_directive(web_game):
         assert row['turn'] == next_turn
         assert row['night_id'] == 0
         assert row['night_approved'] == 0
-        assert pending_id in {int(action['id']) for action in probe.list_pending_actions(next_turn)}
+        assert pending_id in {int(action['id']) for action in probe.dossiers.list_pending_actions(next_turn)}
     finally:
         probe.close()
 

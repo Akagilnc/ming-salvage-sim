@@ -220,7 +220,7 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     did, _, army_id, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did)
     origin = f"dossier:{did}"
-    key = next(iter(db.get_fiscal_config()))
+    key = next(iter(db.fiscal_config.values()))
     db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=10 WHERE id=?", (army_id,))
 
     # An unrelated ordinary fiscal receipt must not impersonate the terminal order.
@@ -308,7 +308,7 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     did, _, army_id, _ = _bound_case(db, state)
     other_did, _, _, _ = _bound_case(db, state)
     origin, other_origin = f"dossier:{did}", f"dossier:{other_did}"
-    key = next(iter(db.get_fiscal_config()))
+    key = next(iter(db.fiscal_config.values()))
     setup = apply_score_extraction(db, state, {"fiscal_creates": [
         {"key": "待禁裁项", "account": "国库", "direction": "income", "init_value": 2,
          "origin_ref": origin, "beyond_intent": True},
@@ -372,8 +372,8 @@ def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game)
     assert not result["fiscal_creates"][1].get("rejected")
     assert result["population_transfers_rejections"][0]["category"] == "forbidden_effect"
     assert len(result["population_transfers"]) == 1
-    assert db.get_fiscal_config().get("待禁裁项_base") == 2
-    assert db.get_fiscal_config().get("待禁新项_base") is None
+    assert db.fiscal_config.values().get("待禁裁项_base") == 2
+    assert db.fiscal_config.values().get("待禁新项_base") is None
     current_rows = {
         (row["effect_kind"], row["id"]): row
         for row in db.list_fiscal_effects_for_dossier(did)
@@ -399,7 +399,7 @@ def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, 
     prohibition = _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    assert db.get_fiscal_config()[key] == 0  # only one point remained, so rollback clamps
+    assert db.fiscal_config.values()[key] == 0  # only one point remained, so rollback clamps
     receipts = db.conn.execute(
         "SELECT * FROM fiscal_config_changes WHERE origin_ref=? AND key=?",
         (f"dossier:{prohibition}", key),
@@ -428,7 +428,7 @@ def test_prohibition_neutralizes_once_with_zero_receipt_and_partial_clamp(game, 
         "key": key2, "delta": 3, "origin_ref": f"dossier:{other}",
     }]}, content, None, dossier_ids_at_input={other})
     assert settle_exposure_from_canonical_actions(db, state, {}) == 0
-    assert db.get_fiscal_config()[key2] == 3
+    assert db.fiscal_config.values()[key2] == 3
 
 
 def test_prohibition_uses_only_current_canonical_incarnation(game, monkeypatch):
@@ -458,7 +458,7 @@ def test_prohibition_uses_only_current_canonical_incarnation(game, monkeypatch):
     }, content, None, dossier_ids_at_input={did, other})
     _promulgated_prohibition(db, state, did)
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    assert db.get_fiscal_config()[key] == 10
+    assert db.fiscal_config.values()[key] == 10
 
 
 def test_prohibition_removes_live_covert_creation_without_rewriting_history(game, monkeypatch):
@@ -474,7 +474,7 @@ def test_prohibition_removes_live_covert_creation_without_rewriting_history(game
     prohibition = _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    assert "暗渠新项_base" not in db.get_fiscal_config()
+    assert "暗渠新项_base" not in db.fiscal_config.values()
     assert list(db.list_fiscal_effects_for_dossier(did)) == before
     tombstones = db.conn.execute(
         "SELECT key FROM fiscal_config_tombstones WHERE origin_ref=? ORDER BY key",

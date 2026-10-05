@@ -134,7 +134,7 @@ def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(gam
     assert db.commit_pending_actions(state, action_ids=[action_id]) == []
 
     assert len(db.list_secret_orders()) == before_orders
-    assert db.list_pending_actions(state.turn, status="failed")[0]["id"] == action_id
+    assert db.dossiers.list_pending_actions(state.turn, status="failed")[0]["id"] == action_id
     audit = db.dossiers.link_rejections(pending_action_id=action_id)
     assert audit[-1]["target_dossier_id"] == 999999
 

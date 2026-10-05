@@ -325,7 +325,7 @@ def materialize_pay_order_decree(
     prepared = prepare_pay_order_entries(db, entries)
 
     written: List[Dict[str, Any]] = []
-    current = db.get_fiscal_config()
+    current = db.fiscal_config.values()
     owns = db.owns_transaction() if commit else False
     for key, value, until in prepared:
         old = int(current.get(key, _default_of(key)))

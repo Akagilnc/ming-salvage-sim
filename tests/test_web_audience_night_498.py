@@ -655,7 +655,7 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
     assert not ({"confirm", "reject", "pending_review"} & {event["event"] for event in events})
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
     assert int(game.state.turn) == turn_before + 1
-    assert not game.db.list_night_approved_pending(int(night["id"]), kind="directive")
+    assert not game.db.dossiers.list_night_approved_pending(int(night["id"]), kind="directive")
     rows = game.db.conn.execute(
         "SELECT status, text FROM turn_directives WHERE turn=?",
         (turn_before,),

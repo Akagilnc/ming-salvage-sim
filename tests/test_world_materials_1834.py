@@ -68,7 +68,7 @@ def test_all_characters_get_an_experience_file_not_just_current_court(game, tmp_
     朝的人物经历整条消失（#1819 决定 1：各人物经历三层全可读，不按当前在朝状态
     收窄）。挑一个真实不在当前朝臣名册里的人物，断言其经历文件仍存在于目录。"""
     db, state, content = game
-    active_names = {row["name"] for row in db.current_court_roster_rows(state)}
+    active_names = {row["name"] for row in db.characters.current_court_rows(int(state.year), int(state.period))}
     all_names = [
         row["name"] for row in db.conn.execute("SELECT name FROM characters ORDER BY name").fetchall()
     ]

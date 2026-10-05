@@ -271,11 +271,6 @@ def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
         "UPDATE armies SET manpower=0, province_pay_arrears=3, central_pay_arrears=2 WHERE id=?",
         (army_id,),
     )
-    db.conn.execute(
-        "INSERT OR REPLACE INTO fiscal_config (key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',1,'meta','active hub cutover')"
-    )
-
     db.conn.execute("UPDATE armies SET owner_power='houjin' WHERE id=?", (army_id,))
     non_ming_noop = issue_engine.apply_score_extraction(
         db, state, {"army_delta": {army_id: {"manpower": 0}}}, content=content

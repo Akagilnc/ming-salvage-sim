@@ -55,7 +55,7 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
     monkeypatch.setattr(db, "treasury_report", lambda *_args, **_: "不应读取的账目")
 
     view = db.get_character_knowledge(state, minister.name)["world"]
-    roster = db.current_court_roster_rows(state)
+    roster = db.characters.current_court_rows(int(state.year), int(state.period))
     assert roster
     assert "personnel" in view
     assert "military" not in view
@@ -1313,5 +1313,5 @@ def test_central_ledgers_and_unbounded_household_history_reach_final_materials(g
     personnel_archive = _office_archive_from_materials(
         db, state, personnel, tmp_path / "personnel",
     )
-    roster_names = [str(row["name"]) for row in db.current_court_roster_rows(state)]
+    roster_names = [str(row["name"]) for row in db.characters.current_court_rows(int(state.year), int(state.period))]
     assert roster_names and any(name in personnel_archive for name in roster_names)

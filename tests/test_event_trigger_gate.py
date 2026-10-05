@@ -2657,7 +2657,7 @@ def test_apply_score_extraction_top_level_economy_respects_outer_transaction_rol
 def test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollback(game):
     """post-merge CMR R7：顶层 fiscal_changes 不得由 fiscal_config helper 提前提交。"""
     db, state, content = game
-    key, before = next(iter(db.get_fiscal_config().items()))
+    key, before = next(iter(db.fiscal_config.values().items()))
     db.conn.commit()
 
     db.conn.execute("BEGIN")
@@ -2670,7 +2670,7 @@ def test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollbac
     assert out["fiscal_changes"][0]["key"] == key
     db.conn.rollback()
 
-    assert db.get_fiscal_config()[key] == before
+    assert db.fiscal_config.values()[key] == before
 
 
 def test_apply_score_extraction_class_delta_respects_outer_transaction_rollback(game):
@@ -2780,7 +2780,7 @@ def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transactio
 def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback(game):
     """post-merge CMR R7：顶层 fiscal_creates/removes 不得由财政 helper 提前提交。"""
     db, state, content = game
-    remove_key = next(iter(db.get_fiscal_config()))
+    remove_key = next(iter(db.fiscal_config.values()))
     created_key = "__test_fiscal_txn_r7_base"
     created_rate_key = "__test_fiscal_txn_r7_rate"
     db.conn.commit()
@@ -2808,7 +2808,7 @@ def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transacti
     assert out["fiscal_creates"][0]["key"] == created_key
     db.conn.rollback()
 
-    assert remove_key in db.get_fiscal_config()
+    assert remove_key in db.fiscal_config.values()
     assert db.conn.execute(
         "SELECT key FROM fiscal_config WHERE key IN (?, ?)",
         (created_key, created_rate_key),

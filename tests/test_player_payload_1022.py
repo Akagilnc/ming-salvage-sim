@@ -91,7 +91,7 @@ class _SettlementGame:
         # resolve 路径锁前预检读 awaiting_decision（#1322）；issue 路径不依赖相位。
         self.state = SimpleNamespace(turn=9, ended=False, turn_phase="awaiting_decision")
         self.session = _SettlementSession(self.state)
-        self.db = SimpleNamespace(list_pending_actions=lambda *_args, **_kwargs: [])
+        self.db = SimpleNamespace(dossiers=SimpleNamespace(list_pending_actions=lambda *_args, **_kwargs: []))
         self._write_gate = ClassifiedWriteGate()
 
     def refresh_turn(self):

@@ -989,11 +989,11 @@ def _commit_night_approved(
     落得了标 committed、落不了标 failed（都不留 pending，故幂等、可续跑）；失败由既有
     pending_action_failures 渠道显眼上报，不在此另造「可续跑」的假失败阻断（否则第二次
     只读 pending 会漏交终态 failed）。"""
-    if not hasattr(db, "list_night_approved_pending"):
+    if not hasattr(db, "dossiers"):
         return []
     rows: List[Dict[str, object]] = []
     for kind in sorted(kinds):
-        rows.extend(db.list_night_approved_pending(int(night_id), kind=kind))
+        rows.extend(db.dossiers.list_night_approved_pending(int(night_id), kind=kind))
     if not rows:
         return []
     action_ids = [int(r["id"]) for r in rows]

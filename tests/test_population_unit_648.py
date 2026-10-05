@@ -20,7 +20,6 @@ from ming_sim.issues import (
 )
 
 # ── F3/r2 冻结 seed oracle（独立真源=票面冻结表，非实现推导）──────────────────
-AGENDA_FROZEN = "就食求赈，流徙谋生"
 DISPLACED_PROVINCES = [
     "beizhili", "nanzhili", "shandong", "shanxi", "henan", "shaanxi", "zhejiang",
     "jiangxi", "huguang", "sichuan", "fujian", "guangdong", "guangxi", "yunnan", "guizhou",
@@ -68,18 +67,16 @@ def test_new_save_displaced_class_seed_frozen_table(game):
         assert by_region[prov]["population"] == DEFAULT_DISPLACED_POP, prov
         assert by_region[prov]["satisfaction"] == DEFAULT_SAT, prov
 
-    # 全部行 leverage=5、agenda 冻结句
+    # 全部行 leverage=5（agenda 为叙事字段，不锁措辞）
     for r in rows:
         assert r["leverage"] == DEFAULT_LEV, r["region_id"]
-        assert r["agenda"] == AGENDA_FROZEN, r["region_id"]
 
-    # 全国行 = 省级求和派生（展示汇总），基线三字段
+    # 全国行 = 省级求和派生（展示汇总），基线数值字段
     nat = by_region[""]
     assert nat["population"] == NATIONAL_DISPLACED_POP
     assert nat["population"] == sum(by_region[p]["population"] for p in DISPLACED_PROVINCES)
     assert nat["satisfaction"] == DEFAULT_SAT
     assert nat["leverage"] == DEFAULT_LEV
-    assert nat["agenda"] == AGENDA_FROZEN
 
 
 def test_new_save_classes_seed_persons_scale(game):

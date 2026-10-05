@@ -21,6 +21,7 @@ import math
 from typing import Dict, List, Optional, Tuple
 
 from ming_sim.assets import format_wanliang_amount
+from ming_sim.entities.army.store import ArmyStore
 from ming_sim.constants import SALARY_RATE_ANCHOR, TURN_UNIT
 from ming_sim.db import GameDB, mutiny_loyalty_cap
 from ming_sim.models import GameState
@@ -159,17 +160,14 @@ def _clear_zero_manpower_mutiny_latch(db: "GameDB", state: "GameState", row) -> 
     if not int(row["is_mutinied"] or 0):
         return
     army_id = str(row["id"])
-    db.conn.execute(
-        "UPDATE armies SET is_mutinied = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (army_id,),
-    )
-    db.conn.execute(
-        """INSERT INTO army_logs
-           (turn, year, period, army_id, field, old_value, new_value, delta, reason,
-            event_id, edict_id, actor)
-           VALUES (?, ?, ?, ?, 'is_mutinied', '1', '0', -1, ?, NULL, NULL, '兵部')""",
-        (state.turn, state.year, state.period, army_id, "零兵残军—无兵不成哗变，清闩"),
-    )
+    ArmyStore(db.conn).update(army_id, {"is_mutinied": 0})
+    ArmyStore(db.conn).append_log({
+        "turn": state.turn, "year": state.year, "period": state.period,
+        "army_id": army_id, "field": "is_mutinied",
+        "old_value": "1", "new_value": "0", "delta": -1,
+        "reason": "零兵残军—无兵不成哗变，清闩",
+        "event_id": None, "edict_id": None, "actor": "兵部",
+    })
 
 def _maybe_third_strike_defect(
     db: "GameDB",
@@ -186,7 +184,7 @@ def _maybe_third_strike_defect(
     """
     if not (bool(new_latched) and int(new_mutiny_count) >= 3):
         return False
-    row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+    row = ArmyStore(db.conn).row(army_id)
     if row is None:
         return False
     # 已非明军则不重复转移
@@ -227,9 +225,8 @@ def settle_hub_central_army_pay(
             # 本缝是其连续缺口计数唯一 owner——零有效 Due 月亦按「本月缺口=0」归零。
             # 不入 shortfall/due 月桥、不改 central_pay_arrears、不跑 morale/流水。
             if float(row["province_pay_share"] or 0) <= 0:
-                db.conn.execute(
-                    "UPDATE armies SET consecutive_pay_shortfall_months = 0 WHERE id = ?",
-                    (army_id,),
+                ArmyStore(db.conn).update(
+                    army_id, {"consecutive_pay_shortfall_months": 0}, touch=False,
                 )
             continue
         pay_current = min(needed, hub_outbound.central_paid_by_army.get(army_id, 0.0))
@@ -251,25 +248,21 @@ def settle_hub_central_army_pay(
         else:
             # Pure-central armies never enter the province substrate applier,
             # so this is their existing monthly settlement owner seam.
-            db.conn.execute(
-                """UPDATE armies
-                   SET consecutive_pay_shortfall_months = CASE
-                       WHEN ? > 1e-9 THEN consecutive_pay_shortfall_months + 1 ELSE 0 END
-                   WHERE id = ?""",
-                (shortfall, army_id),
+            months = int(row["consecutive_pay_shortfall_months"] or 0)
+            months = months + 1 if shortfall > 1e-9 else 0
+            ArmyStore(db.conn).update(
+                army_id, {"consecutive_pay_shortfall_months": months}, touch=False,
             )
             # #653：折发后中央份额应得额（无折＝原值）；morale 公式不变，只吃折后 Due。
             morale_delta = army_pay_morale_delta(needed, shortfall, old_arrears)
         new_morale = max(0, min(100, old_morale + morale_delta))
 
-        db.conn.execute(
-            """
-            UPDATE armies
-            SET central_pay_arrears = ?, morale = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (central_arrears, new_morale, army_id),
+        ArmyStore(db.conn).update(
+            army_id,
+            {
+                "central_pay_arrears": central_arrears,
+                "morale": new_morale,
+            },
         )
         if shortfall > 0:
             reason_tag = (
@@ -278,19 +271,22 @@ def settle_hub_central_army_pay(
             )
         else:
             reason_tag = f"{TURN_UNIT}中央军饷足额"
-        db.conn.executemany(
-            """INSERT INTO army_logs
-               (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '户部')""",
-            [
-                (state.turn, state.year, state.period, army_id,
-                 "arrears", str(old_arrears), str(new_arrears), new_arrears - old_arrears,
-                 reason_tag),
-                (state.turn, state.year, state.period, army_id,
-                 "morale", str(old_morale), str(new_morale), new_morale - old_morale,
-                 reason_tag),
-            ],
-        )
+        ArmyStore(db.conn).append_logs([
+            {
+                "turn": state.turn, "year": state.year, "period": state.period,
+                "army_id": army_id, "field": "arrears",
+                "old_value": str(old_arrears), "new_value": str(new_arrears),
+                "delta": new_arrears - old_arrears, "reason": reason_tag,
+                "event_id": None, "edict_id": None, "actor": "户部",
+            },
+            {
+                "turn": state.turn, "year": state.year, "period": state.period,
+                "army_id": army_id, "field": "morale",
+                "old_value": str(old_morale), "new_value": str(new_morale),
+                "delta": new_morale - old_morale, "reason": reason_tag,
+                "event_id": None, "edict_id": None, "actor": "户部",
+            },
+        ])
 
         flows.append({
             "dir": "arrears", "account": "中央军饷欠账", "category": "中央军饷",
@@ -309,16 +305,7 @@ def settle_hub_army_loyalty_tick(db: "GameDB", state: "GameState") -> None:
 
     欠饷以两源合计为准（arrears 列滞后时以 province+central 合计纠偏）。
     """
-    loyalty_rows = db.conn.execute(
-        """
-        SELECT id, name, manpower, salary_rate, owner_power,
-               arrears, province_pay_arrears, central_pay_arrears,
-               loyalty, is_tusi, self_funded_pay, is_mutinied,
-               mutiny_count, mutiny_probation, full_pay_streak, redemption_count
-        FROM armies
-        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-        """
-    ).fetchall()
+    loyalty_rows = ArmyStore(db.conn).read_apply_fixed_period_flows_id_name_manpower_salary_rate_owner_power_arrears_province_pay_arr()
     for lr in loyalty_rows:
         full_needed_loyalty = army_needed(lr)
         if full_needed_loyalty <= 0:
@@ -353,31 +340,41 @@ def settle_hub_army_loyalty_tick(db: "GameDB", state: "GameState") -> None:
             full_pay_streak=int(lr["full_pay_streak"]),
             redemption_count=int(lr["redemption_count"]),
         )
-        db.conn.execute(
-            """UPDATE armies SET loyalty = ?, is_mutinied = ?, mutiny_count = ?,
-               mutiny_probation = ?, full_pay_streak = ?, redemption_count = ?,
-               updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
-            (new_loyalty_val, new_is_mutinied_val, new_mutiny_count_val,
-             new_mutiny_probation_val, new_full_pay_streak_val,
-             new_redemption_count_val, army_id_loyalty),
+        ArmyStore(db.conn).update(
+            army_id_loyalty,
+            {
+                "loyalty": new_loyalty_val,
+                "is_mutinied": new_is_mutinied_val,
+                "mutiny_count": new_mutiny_count_val,
+                "mutiny_probation": new_mutiny_probation_val,
+                "full_pay_streak": new_full_pay_streak_val,
+                "redemption_count": new_redemption_count_val,
+            },
         )
         loyalty_reason_unified = _army_loyalty_reason(new_arrears_loyalty, full_needed_loyalty)
-        db.conn.executemany(
-            """INSERT INTO army_logs
-               (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '户部')""",
-            [
-                (state.turn, state.year, state.period, army_id_loyalty,
-                 "loyalty", str(old_loyalty_val), str(new_loyalty_val),
-                 new_loyalty_val - old_loyalty_val, loyalty_reason_unified),
-                (state.turn, state.year, state.period, army_id_loyalty,
-                 "mutiny_count", str(old_mutiny_count_val), str(new_mutiny_count_val),
-                 new_mutiny_count_val - old_mutiny_count_val, loyalty_reason_unified),
-                (state.turn, state.year, state.period, army_id_loyalty,
-                 "mutiny_probation", str(old_mutiny_probation_val), str(new_mutiny_probation_val),
-                 new_mutiny_probation_val - old_mutiny_probation_val, loyalty_reason_unified),
-            ],
-        )
+        ArmyStore(db.conn).append_logs([
+            {
+                "turn": state.turn, "year": state.year, "period": state.period,
+                "army_id": army_id_loyalty, "field": "loyalty",
+                "old_value": str(old_loyalty_val), "new_value": str(new_loyalty_val),
+                "delta": new_loyalty_val - old_loyalty_val, "reason": loyalty_reason_unified,
+                "event_id": None, "edict_id": None, "actor": "户部",
+            },
+            {
+                "turn": state.turn, "year": state.year, "period": state.period,
+                "army_id": army_id_loyalty, "field": "mutiny_count",
+                "old_value": str(old_mutiny_count_val), "new_value": str(new_mutiny_count_val),
+                "delta": new_mutiny_count_val - old_mutiny_count_val, "reason": loyalty_reason_unified,
+                "event_id": None, "edict_id": None, "actor": "户部",
+            },
+            {
+                "turn": state.turn, "year": state.year, "period": state.period,
+                "army_id": army_id_loyalty, "field": "mutiny_probation",
+                "old_value": str(old_mutiny_probation_val), "new_value": str(new_mutiny_probation_val),
+                "delta": new_mutiny_probation_val - old_mutiny_probation_val, "reason": loyalty_reason_unified,
+                "event_id": None, "edict_id": None, "actor": "户部",
+            },
+        ])
         _maybe_third_strike_defect(
             db, state, army_id=army_id_loyalty,
             new_latched=new_is_mutinied_val,
@@ -410,10 +407,8 @@ def _auto_pay_arrears_by_priority(
         if allowed_army_ids is not None
         else None
     )
-    rows = db.conn.execute(
-        "SELECT * FROM armies "
-        "WHERE owner_power='ming' AND province_pay_arrears + central_pay_arrears > 0"
-    ).fetchall()
+    # arrears = province + central 生成合计；既有 Store 读口按 arrears>0 取应付池。
+    rows = ArmyStore(db.conn).read_auto_pay_arrears_by_priority()
     if allowed_ids is not None:
         rows = [row for row in rows if str(row["id"]) in allowed_ids]
     army_map = {str(r["id"]): r for r in rows}
@@ -494,22 +489,21 @@ def _pay_single_army_arrears(
     province_new = max(0.0, province_old - province_pay)
     central_new = max(0.0, central_old - central_pay)
     new_arrears = province_new + central_new
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET province_pay_arrears = ?, central_pay_arrears = ?
-        WHERE id = ?
-        """,
-        (province_new, central_new, str(row["id"])),
+    ArmyStore(db.conn).update(
+        str(row["id"]),
+        {
+            "province_pay_arrears": province_new,
+            "central_pay_arrears": central_new,
+        },
+        touch=False,
     )
-    db.conn.execute(
-        """INSERT INTO army_logs
-           (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)""",
-        (state.turn, state.year, state.period, str(row["id"]), "arrears",
-         str(current_arrears), str(new_arrears), new_arrears - current_arrears,
-         f"诏拨补饷{format_wanliang_amount(paid)}万两{f'（{log_suffix}）' if log_suffix else ''}", actor),
-    )
-    if origin_ref:
-        db.conn.execute("UPDATE army_logs SET origin_ref=? WHERE id=last_insert_rowid()", (origin_ref,))
+    ArmyStore(db.conn).append_log({
+        "turn": state.turn, "year": state.year, "period": state.period,
+        "army_id": str(row["id"]), "field": "arrears",
+        "old_value": str(current_arrears), "new_value": str(new_arrears),
+        "delta": new_arrears - current_arrears,
+        "reason": f"诏拨补饷{format_wanliang_amount(paid)}万两{f'（{log_suffix}）' if log_suffix else ''}",
+        "event_id": None, "edict_id": None, "actor": actor,
+        "origin_ref": origin_ref or "",
+    })
     return int(round(paid))

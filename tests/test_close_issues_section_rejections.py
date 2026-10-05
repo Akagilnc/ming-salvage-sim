@@ -170,7 +170,7 @@ def test_close_issue_code_exception_propagates(read_game, monkeypatch):
 
 def test_close_valid_issue_still_succeeds(game):
     db, state, _ = game
-    active = db.list_active_issues()
+    active = db.issues.active_rows()
     if not active:
         pytest.skip("seed 无 active issue，跳过 happy-path 控制")
     iid = int(active[0]["id"])

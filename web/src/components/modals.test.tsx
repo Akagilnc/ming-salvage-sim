@@ -356,6 +356,7 @@ describe("#1732 ChatModal · 撤回就地确认", () => {
       (b.textContent || "").includes("撤回本轮")
     ) as HTMLButtonElement;
     act(() => undo.click());
+    expect(host.querySelector('[aria-label="撤回召对确认"]')).not.toBeNull();
 
     const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
     act(() => {
@@ -369,7 +370,7 @@ describe("#1732 ChatModal · 撤回就地确认", () => {
     act(() => send.click());
 
     expect(onSend).toHaveBeenCalledWith("周延儒", "问边饷");
-
+    expect(host.querySelector('[aria-label="撤回召对确认"]')).toBeNull();
   });
 
   it("#1732 T3 开着确认条点散夜后确认条关闭", () => {
@@ -384,6 +385,7 @@ describe("#1732 ChatModal · 撤回就地确认", () => {
       (b.textContent || "").includes("撤回本轮")
     ) as HTMLButtonElement;
     act(() => undo.click());
+    expect(host.querySelector('[aria-label="撤回召对确认"]')).not.toBeNull();
 
     const retreat = Array.from(host.querySelectorAll("button")).find((b) =>
       (b.textContent || "").includes("散夜")
@@ -391,7 +393,7 @@ describe("#1732 ChatModal · 撤回就地确认", () => {
     act(() => retreat.click());
 
     expect(onSend).toHaveBeenCalledWith("周延儒", "退朝");
-
+    expect(host.querySelector('[aria-label="撤回召对确认"]')).toBeNull();
   });
 });
 
@@ -533,15 +535,17 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       resolveScroll({ ok: true, json: async () => ({ night_id: 17, protagonist: "", roster: [], translation_pending: false, messages: [{ role: "user", content: "卷首" }] }) });
       await Promise.resolve(); await Promise.resolve();
     });
+    expect(log.scrollTop).toBe(600);
 
     scrollHeight = 700;
     await act(async () => { updateChat([{ role: "user", content: "完成一轮" }]); await Promise.resolve(); });
+    expect(log.scrollTop).toBe(700);
 
     log.scrollTop = 100;
     act(() => log.dispatchEvent(new Event("scroll", { bubbles: true })));
     scrollHeight = 800;
     await act(async () => { updateChat([{ role: "user", content: "完成二轮" }]); await Promise.resolve(); });
-
+    expect(log.scrollTop).toBe(100);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
@@ -552,7 +556,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     const log = host.querySelector(".chat-log") as HTMLDivElement;
     Object.defineProperties(log, { scrollHeight: { value: 600 }, clientHeight: { value: 200 } });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-
+    expect(log.scrollTop).toBe(137);
     log.scrollTop = 91;
     act(() => log.dispatchEvent(new Event("scroll", { bubbles: true })));
     expect(save).toHaveBeenLastCalledWith(91);

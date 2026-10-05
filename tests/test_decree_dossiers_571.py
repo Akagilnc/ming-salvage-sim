@@ -1080,7 +1080,7 @@ def test_manual_directive_capture_rejects_malformed_roster(
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
     assert terminal.review_directives(session) == "back"
 
-    assert db.list_pending_actions(state.turn) == []
+    assert db.dossiers.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
     assert db.dossiers.list_dossiers() == []
 
@@ -1120,7 +1120,7 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
         )
         session.add_directive("手工旨意", dossier_payload=payload)
 
-    assert db.list_pending_actions(state.turn) == []
+    assert db.dossiers.list_pending_actions(state.turn) == []
     assert db.list_directives(state) == []
     assert db.dossiers.list_dossiers() == []
 

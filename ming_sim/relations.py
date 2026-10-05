@@ -109,7 +109,7 @@ def _validated_settlement_endpoints(
     """结算口端点守门（V1 + T1 r5 owner 裁决 B 案时间语义）：大臣边两端须为
     批内任一 canonical 名册投影的合格大臣。
 
-    复用 GameDB.current_court_roster_rows 既有 canonical 名册投影（不另立
+    复用 CharacterStore.current_court_rows 既有 canonical 名册投影（不另立
     第二名册、不下沉到通用写口——ADR 0081 君臣边与 seed 仍由该写口合法承载
     皇帝节点）：幻觉名/错字/「皇帝」节点及前后两投影均不合格者一律逐项拒收
     留痕。时间语义＝批内瞬态 pre∪post 并集（``allowed_endpoint_names`` 由

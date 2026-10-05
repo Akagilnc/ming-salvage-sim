@@ -16,12 +16,7 @@ ARMY = "guanning"
 
 def _configure(db):
     value = 1  # active substrate_hub cutover
-    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
-        db.conn.execute(
-            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
+    # hub-only: cutover markers retired (#1889)
 
 
 def _setup(

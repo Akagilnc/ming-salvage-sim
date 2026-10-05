@@ -51,7 +51,6 @@ INVESTIGATION_PROVENANCE_KEY = "investigation_provenance"
 INVESTIGATION_TIPS_KEY = "investigation_tips"
 INVESTIGATION_CLUES_KEY = "investigation_clues"
 INVESTIGATION_ACTS_KEY = "investigation_acts"
-DEFAULT_SUBSTANTIATION_REASON = "依律"
 
 # #1896 逐证难度：首版常数随 playtest（同 0011-4 D4-6 先例），本 ADR 不发明精确值。
 # 真相底两类事实的基准难度不同：seed_guilt 是一条待坐实的罪谱，把柄边是已落库的
@@ -1162,53 +1161,7 @@ def seed_investigation_fact_lanes(
     return lanes
 
 
-def _substantiate_lane(lane: Dict[str, object]) -> None:
-    code = DEFAULT_SUBSTANTIATION_REASON if DEFAULT_SUBSTANTIATION_REASON in PERSON_LEGAL_REASON_CODES else ""
-    lane["progress"] = 1.0
-    lane["reason_code"] = code
-    lane["used"] = bool(code)
 
-
-def read_substantiated_legal_reason_code(
-    db: Any, target: str, fact_key: str,
-) -> str:
-    """D4-4 consumption: legal-set reason_code for a substantiated fact lane."""
-    name = str(target or "").strip()
-    key = str(fact_key or "").strip()
-    if not name or not key:
-        return ""
-    for row_id, payload_json in db.dossiers.all_payloads():
-        from ming_sim.applier import load_stored_object
-
-        payload = load_stored_object(payload_json, label=f"案卷#{int(row_id)} payload_json")
-        contract = payload.get(CONTRACT_KEY) if isinstance(payload.get(CONTRACT_KEY), Mapping) else {}
-        if _investigation_target_of(contract) != name:
-            continue
-        for lane in _lanes_from_payload(payload):
-            if str(lane["fact_key"]) != key:
-                continue
-            code = str(lane.get("reason_code") or "").strip()
-            if float(lane.get("progress") or 0.0) >= 1.0 and code in PERSON_LEGAL_REASON_CODES:
-                return code
-    return ""
-
-
-def mark_investigation_fact_used(
-    db: Any, dossier_id: int, fact_key: str, *, commit: bool = False,
-) -> None:
-    key = str(fact_key)
-    lanes = _lanes_from_payload(_dossier_payload_map(db, dossier_id))
-    found = False
-    for lane in lanes:
-        if str(lane["fact_key"]) == key:
-            _substantiate_lane(lane)
-            found = True
-            break
-    if not found:
-        lane = {"fact_key": key}
-        _substantiate_lane(lane)
-        lanes.append(lane)
-    _write_fact_lanes(db, dossier_id, lanes, commit=commit)
 
 
 def investigation_lane_actual_units(db: Any, dossier_id: int) -> float:

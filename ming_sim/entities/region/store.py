@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
-from ming_sim.entities.column_write import checked_columns, upsert_by_pk
+from ming_sim.entities.column_write import checked_columns
 
 
 REGION_COLUMNS = frozenset({
@@ -102,12 +102,6 @@ class RegionStore:
             params = (limit,)
         return self._conn.execute(sql, params).fetchall()
 
-    def upsert(self, row: Mapping[str, object]) -> None:
-        """Debug replace of one region. Caller commits."""
-        upsert_by_pk(
-            self._conn, "regions", row,
-            pk="id", allowed=REGION_COLUMNS | {"updated_at"}, what="regions",
-        )
 
     def delete(self, region_id: str) -> int:
         cursor = self._conn.execute("DELETE FROM regions WHERE id=?", (region_id,))

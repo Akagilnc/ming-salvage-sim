@@ -192,7 +192,7 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
     db.record_monthly_supervision_facts(turn, commit=True)
     db.record_monthly_supervision_facts(turn, commit=True)  # 幂等不双计
 
-    presence = db.list_supervision_presence(subject_id)
+    presence = db.dossiers.presence_rows(subject_id)
     assert len(presence) == 1
     row = presence[0]
     assert row["turn"] == turn
@@ -233,7 +233,7 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
         assert restored.dossiers.exposure_rows(subject_id) == expected_exp
         # restore 后同 turn 重跑不双计
         restored.record_monthly_supervision_facts(turn, commit=True)
-        assert len(restored.list_supervision_presence(subject_id)) == 1
+        assert len(restored.dossiers.presence_rows(subject_id)) == 1
     finally:
         restored.close()
 
@@ -248,9 +248,9 @@ def test_ac1_settle_segment_writes_presence(game, monkeypatch):
         db, state, auditor=str(auditor["name"]), subject_id=subject_id, token="seg",
     )
     before_turn = int(state.turn)
-    before = len(db.list_supervision_presence(subject_id))
+    before = len(db.dossiers.presence_rows(subject_id))
     _settle_empty_month(db, state, content, monkeypatch)
-    after = db.list_supervision_presence(subject_id)
+    after = db.dossiers.presence_rows(subject_id)
     assert len(after) == before + 1
     # settle 推进 turn；在场行键控 before_turn
     assert any(int(r["turn"]) == before_turn for r in after)

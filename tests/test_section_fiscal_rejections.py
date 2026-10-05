@@ -29,7 +29,7 @@ def run_settle(db, state, content, extracted, **kwargs):
 
 def _a_fiscal_key(db):
     """取一个开局在册的 fiscal base key,供「好项照落」对照。"""
-    cfg = db.get_fiscal_config()
+    cfg = db.fiscal_config.values()
     for k in cfg:
         if k.endswith("_base"):
             return k
@@ -90,7 +90,7 @@ def test_remove_structural_sink_loss_rate_rejected(game):
     db, state, content = game
     turn = state.turn
     key = "central_taicang_sink_loss_rate"
-    before = db.get_fiscal_config()[key]
+    before = db.fiscal_config.values()[key]
 
     run_settle(db, state, content, {
         "fiscal_removes": [{"key": key, "reason": "试图抹平自然损耗"}],
@@ -99,7 +99,7 @@ def test_remove_structural_sink_loss_rate_rejected(game):
     rows = _rejection_rows(db, turn, "fiscal_removes")
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
-    assert db.get_fiscal_config()[key] == before
+    assert db.fiscal_config.values()[key] == before
 
 
 def test_remove_central_human_loss_rate_rejected_as_loss_pair(game):
@@ -107,7 +107,7 @@ def test_remove_central_human_loss_rate_rejected_as_loss_pair(game):
     db, state, content = game
     turn = state.turn
     key = "central_taicang_human_loss_rate"
-    before = db.get_fiscal_config()[key]
+    before = db.fiscal_config.values()[key]
 
     run_settle(db, state, content, {
         "fiscal_removes": [{"key": key, "reason": "试图裁撤人为损耗"}],
@@ -116,7 +116,7 @@ def test_remove_central_human_loss_rate_rejected_as_loss_pair(game):
     rows = _rejection_rows(db, turn, "fiscal_removes")
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
-    assert db.get_fiscal_config()[key] == before
+    assert db.fiscal_config.values()[key] == before
 
 
 def test_remove_central_human_loss_rate_stem_rejected_as_loss_pair(game):
@@ -124,7 +124,7 @@ def test_remove_central_human_loss_rate_stem_rejected_as_loss_pair(game):
     db, state, content = game
     turn = state.turn
     key = "central_taicang_human_loss_rate"
-    before = db.get_fiscal_config()[key]
+    before = db.fiscal_config.values()[key]
 
     run_settle(db, state, content, {
         "fiscal_removes": [{
@@ -136,19 +136,19 @@ def test_remove_central_human_loss_rate_stem_rejected_as_loss_pair(game):
     rows = _rejection_rows(db, turn, "fiscal_removes")
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
-    assert db.get_fiscal_config()[key] == before
+    assert db.fiscal_config.values()[key] == before
 
 
 def test_direct_remove_central_human_loss_rate_stem_refuses_loss_pair(read_game):
     """db.remove_fiscal_item 自身也要拒绝 stem 形态的中央损耗率配置。"""
     db, _, _ = read_game
     key = "central_taicang_human_loss_rate"
-    before = db.get_fiscal_config()[key]
+    before = db.fiscal_config.values()[key]
 
     removed = db.remove_fiscal_item("central_taicang_human_loss")
 
     assert removed is None
-    assert db.get_fiscal_config()[key] == before
+    assert db.fiscal_config.values()[key] == before
 
 
 # ---- fiscal_creates：重复 key / 非法枚举 / 脏 init_value ----
@@ -254,7 +254,7 @@ def test_change_unknown_key_rejected_good_change_lands(game):
     db, state, content = game
     turn = state.turn
     good = _a_fiscal_key(db)
-    before = db.get_fiscal_config()[good]
+    before = db.fiscal_config.values()[good]
 
     run_settle(db, state, content, {
         "fiscal_changes": [
@@ -269,7 +269,7 @@ def test_change_unknown_key_rejected_good_change_lands(game):
     assert reason
     assert category == "missing_ref"
     # 好项照落
-    assert db.get_fiscal_config()[good] == max(0, before + 5)
+    assert db.fiscal_config.values()[good] == max(0, before + 5)
 
 
 @pytest.mark.parametrize("bad_delta", ["增三成", 3.7, True])
@@ -279,7 +279,7 @@ def test_change_dirty_delta_rejected_sibling_lands(game, bad_delta):
     db, state, content = game
     turn = state.turn
     good = _a_fiscal_key(db)
-    before = db.get_fiscal_config()[good]
+    before = db.fiscal_config.values()[good]
 
     run_settle(db, state, content, {
         "fiscal_changes": [
@@ -293,7 +293,7 @@ def test_change_dirty_delta_rejected_sibling_lands(game, bad_delta):
     assert rows[0][2] == "invalid_enum"
     assert rows[0][1]
     # 好项照落
-    assert db.get_fiscal_config()[good] == max(0, before + 3)
+    assert db.fiscal_config.values()[good] == max(0, before + 3)
 
 
 def test_change_zero_delta_no_op_not_rejected(game):
@@ -334,13 +334,13 @@ def test_change_dynamic_tax_rate_scales_region_field(game):
         " WHERE id=(SELECT id FROM regions LIMIT 1)")
     db.conn.commit()
     rid = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
-    old_rate = db.get_fiscal_config()["辽饷_rate"]
+    old_rate = db.fiscal_config.values()["辽饷_rate"]
 
     run_settle(db, state, content, {
         "fiscal_changes": [{"key": "辽饷_rate", "delta": -50, "reason": "减辽饷"}],
     }, narrative="x", decree_text="y")
 
-    new_rate = db.get_fiscal_config()["辽饷_rate"]
+    new_rate = db.fiscal_config.values()["辽饷_rate"]
     assert new_rate == max(0, old_rate - 50)
     import json as _json
     fiscal = _json.loads(db.conn.execute(
@@ -354,7 +354,7 @@ def test_change_structural_sink_loss_rate_below_floor_rejected(game):
     db, state, content = game
     turn = state.turn
     key = "central_jingyun_sink_loss_rate"
-    before = db.get_fiscal_config()[key]
+    before = db.fiscal_config.values()[key]
 
     run_settle(db, state, content, {
         "fiscal_changes": [{"key": key, "delta": -before, "reason": "试图清零自然运损"}],
@@ -363,7 +363,7 @@ def test_change_structural_sink_loss_rate_below_floor_rejected(game):
     rows = _rejection_rows(db, turn, "fiscal_changes")
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
-    assert db.get_fiscal_config()[key] == before
+    assert db.fiscal_config.values()[key] == before
 
 
 def test_change_central_loss_rate_pair_above_100_rejected(game):
@@ -371,8 +371,8 @@ def test_change_central_loss_rate_pair_above_100_rejected(game):
     db, state, content = game
     turn = state.turn
     key = "central_taicang_human_loss_rate"
-    before_human = db.get_fiscal_config()[key]
-    before_sink = db.get_fiscal_config()["central_taicang_sink_loss_rate"]
+    before_human = db.fiscal_config.values()[key]
+    before_sink = db.fiscal_config.values()["central_taicang_sink_loss_rate"]
 
     run_settle(db, state, content, {
         "fiscal_changes": [{
@@ -385,7 +385,7 @@ def test_change_central_loss_rate_pair_above_100_rejected(game):
     rows = _rejection_rows(db, turn, "fiscal_changes")
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
-    cfg = db.get_fiscal_config()
+    cfg = db.fiscal_config.values()
     assert cfg[key] == before_human
     assert cfg["central_taicang_sink_loss_rate"] == before_sink
 
@@ -418,7 +418,7 @@ def test_change_central_loss_rate_rebalance_uses_batch_final_total(game):
     }, narrative="x", decree_text="y")
 
     assert _rejection_rows(db, turn, "fiscal_changes") == []
-    cfg = db.get_fiscal_config()
+    cfg = db.fiscal_config.values()
     assert cfg["central_taicang_human_loss_rate"] == 85
     assert cfg["central_taicang_sink_loss_rate"] == 15
 
@@ -429,7 +429,7 @@ def test_falsy_dirty_delta_still_rejected(game, bad):
     吞掉(cmr S3 r1 claude:与 S1 的「bool 先判」顺序对称才成立)。"""
     db, state, content = game
     turn = state.turn
-    key = next(iter(db.get_fiscal_config()))
+    key = next(iter(db.fiscal_config.values()))
 
     run_settle(db, state, content, {
         "fiscal_changes": [{"key": key, "delta": bad}],
@@ -599,8 +599,8 @@ def test_lossless_int_string_same_verdict_both_paths(game):
     """无损整数串("5"/"300")在 applier 归一接受，不能只依赖可选 cleaner。"""
     db, state, content = game
     turn = state.turn
-    key = next(iter(db.get_fiscal_config()))
-    before = db.get_fiscal_config()[key]
+    key = next(iter(db.fiscal_config.values()))
+    before = db.fiscal_config.values()[key]
 
     run_settle(db, state, content, {
         "fiscal_changes": [{"key": key, "delta": "5"}],
@@ -609,7 +609,7 @@ def test_lossless_int_string_same_verdict_both_paths(game):
     }, narrative="x", decree_text="y")
 
     assert [r for r in _rejection_rows(db, turn)] == []  # 两项都不拒
-    assert db.get_fiscal_config()[key] == before + 5
+    assert db.fiscal_config.values()[key] == before + 5
     assert db.conn.execute(
         "SELECT value FROM fiscal_config WHERE key='整串测试_base'").fetchone()[0] == 300
 
@@ -653,7 +653,7 @@ def test_fiscal_change_reopens_with_value_origin_history_and_scaled_rows(game):
 
     db, state, content = game
     key = "商税_base"
-    before = db.get_fiscal_config()[key]
+    before = db.fiscal_config.values()[key]
     fiscal_before = {
         row["id"]: __import__("json").loads(row["fiscal"] or "{}").get("commerce_tax", 0)
         for row in db.conn.execute("SELECT id,fiscal FROM regions")

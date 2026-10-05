@@ -200,7 +200,7 @@ def test_prohibit_covert_levy_commission_binds_exposed_dossier(game, monkeypatch
     })
     assert active_prohibition_dossier(db, other_did)["id"] == dossier["id"]
     assert int(state.turn) > before
-    assert db.get_fiscal_config().get("禁后摊派_base") is None
+    assert db.fiscal_config.values().get("禁后摊派_base") is None
     from ming_sim.due_review import list_due_review_scenes
     scenes = list_due_review_scenes(db, state)
     assert any(s["decision"] == "禁摊派" and s["shortfall_reopened"] for s in scenes)

@@ -44,7 +44,7 @@ def test_new_game_memorial_inbox_empty(game):
     assert db.list_player_memorials() == []
     assert db.unread_memorial_count() == 0
     # 开局常有局势，但奏疏计数必须与之脱钩
-    assert len(db.list_active_issues()) >= 1
+    assert len(db.issues.active_rows()) >= 1
 
 
 def test_progress_and_denunciation_project_as_memorials(game):

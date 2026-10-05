@@ -65,6 +65,11 @@ class IssueStore:
         )
         return int(cursor.lastrowid)
 
+    def row(self, issue_id: int):
+        return self._conn.execute(
+            "SELECT * FROM issues WHERE id=?", (int(issue_id),),
+        ).fetchone()
+
     def update(self, issue_id: int, values: Mapping[str, object]) -> int:
         columns = _checked(values)
         if not columns:
@@ -234,6 +239,25 @@ class IssueStore:
 
     def write_record_event_decision_choice(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            INSERT INTO event_triggers\n                (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)\n            VALUES (?, ?, ?, ?, ?, '', ?, ?)\n            ON CONFLICT(event_id) DO UPDATE SET\n                -- 终态账不可逆（codex correctness）：HITL 选择只暂存 choice_json；新行不抢先\n                -- 写 triggered，待 phase2 的 event_pool 正常立局势后再由 mark_event_triggered 补终态。\n                -- 冲突时**保留**已有 terminal_state——\n                -- HITL 选择只补 choice_json，绝不把已有的 expired/avoided/obsolete 翻成\n                -- triggered。source 同理：只有空终态暂存行或已是 triggered 的行才更新成\n                -- hitl_decision，expired/avoided/obsolete 不被误标。\n                source = CASE\n                    WHEN COALESCE(event_triggers.terminal_state, '') IN ('', 'triggered')\n                    THEN excluded.source\n                    ELSE event_triggers.source\n                END,\n                terminal_state = event_triggers.terminal_state,\n                terminal_reason = CASE\n                    WHEN COALESCE(event_triggers.terminal_state, '') = ''\n                    THEN excluded.terminal_reason\n                    WHEN COALESCE(event_triggers.terminal_reason, '') = ''\n                    THEN excluded.terminal_reason\n                    ELSE event_triggers.terminal_reason\n                END,\n                choice_json = excluded.choice_json\n            ", params)
+
+    def write_record_event_petition_answer(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            """
+            INSERT INTO event_triggers
+                (event_id, turn, year, period, source, terminal_state, terminal_reason, choice_json)
+            VALUES (?, ?, ?, ?, 'petition', '', '', ?)
+            ON CONFLICT(event_id) DO UPDATE SET
+                choice_json = excluded.choice_json
+            """,
+            params,
+        )
+
+    def read_event_petition_trigger_rows(self, params: Any = ()) -> Any:
+        return self._conn.execute(
+            "SELECT rowid, event_id, turn, year, period, terminal_state, "
+            "terminal_reason, choice_json FROM event_triggers",
+            params,
+        ).fetchall()
 
     def read_has_event_triggered(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered' LIMIT 1", params).fetchone()

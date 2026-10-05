@@ -20,6 +20,7 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 
 from ming_sim.db import GameDB
+from ming_sim.entities.issue.store import IssueStore
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
     ISSUE_METRIC_LOCK_CAPS,
@@ -265,36 +266,28 @@ def _resolve_commitment_issue(
     from_value = int(row["bar_value"])
     progress = commitment_progress_payload(db, state, row) or {}
     metric_delta = {"commitment_progress": progress} if progress else {}
-    db.conn.execute(
-        """
-        UPDATE issues SET bar_value=100, phase=?, status='resolved',
-                          resolution_summary=?, closed_turn=?,
-                          last_advance_turn=?, updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-        """,
-        (
-            db._derive_issue_phase(100),
-            "承诺停止条件已达成，自动结清。",
-            state.turn,
-            state.turn,
-            issue_id,
-        ),
+    IssueStore(db.conn).update(
+        issue_id,
+        {
+            "bar_value": 100,
+            "phase": db._derive_issue_phase(100),
+            "status": "resolved",
+            "resolution_summary": "承诺停止条件已达成，自动结清。",
+            "closed_turn": state.turn,
+            "last_advance_turn": state.turn,
+        },
     )
-    db.conn.execute(
-        """
-        INSERT INTO issue_advances (
-            issue_id, turn, trigger_kind, delta_bar,
-            from_value, to_value, narrative, metric_delta
-        ) VALUES (?, ?, 'commitment_resolve', ?, ?, 100, ?, ?)
-        """,
-        (
-            issue_id,
-            state.turn,
-            100 - from_value,
-            from_value,
-            "承诺停止条件已达成，自动结清。",
-            json.dumps(metric_delta, ensure_ascii=False),
-        ),
+    IssueStore(db.conn).append_advance(
+        {
+            "issue_id": issue_id,
+            "turn": state.turn,
+            "trigger_kind": "commitment_resolve",
+            "delta_bar": 100 - from_value,
+            "from_value": from_value,
+            "to_value": 100,
+            "narrative": "承诺停止条件已达成，自动结清。",
+            "metric_delta": json.dumps(metric_delta, ensure_ascii=False),
+        },
     )
     if commit:
         db.conn.commit()
@@ -310,35 +303,26 @@ def _expire_commitment_issue(
     from_value = int(row["bar_value"])
     progress = commitment_progress_payload(db, state, row) or {}
     metric_delta = {"commitment_progress": progress} if progress else {}
-    db.conn.execute(
-        """
-        UPDATE issues SET status='dropped', resolution_summary=?,
-                          closed_turn=?, last_advance_turn=?,
-                          updated_at=CURRENT_TIMESTAMP
-        WHERE id=?
-        """,
-        (
-            "承诺期限已至，停账收尾。",
-            state.turn,
-            state.turn,
-            issue_id,
-        ),
+    IssueStore(db.conn).update(
+        issue_id,
+        {
+            "status": "dropped",
+            "resolution_summary": "承诺期限已至，停账收尾。",
+            "closed_turn": state.turn,
+            "last_advance_turn": state.turn,
+        },
     )
-    db.conn.execute(
-        """
-        INSERT INTO issue_advances (
-            issue_id, turn, trigger_kind, delta_bar,
-            from_value, to_value, narrative, metric_delta
-        ) VALUES (?, ?, 'expire', 0, ?, ?, ?, ?)
-        """,
-        (
-            issue_id,
-            state.turn,
-            from_value,
-            from_value,
-            "承诺期限已至，停账收尾。",
-            json.dumps(metric_delta, ensure_ascii=False),
-        ),
+    IssueStore(db.conn).append_advance(
+        {
+            "issue_id": issue_id,
+            "turn": state.turn,
+            "trigger_kind": "expire",
+            "delta_bar": 0,
+            "from_value": from_value,
+            "to_value": from_value,
+            "narrative": "承诺期限已至，停账收尾。",
+            "metric_delta": json.dumps(metric_delta, ensure_ascii=False),
+        },
     )
     if commit:
         db.conn.commit()
@@ -354,7 +338,7 @@ def apply_situation_monthly_drift(
     # inertia 是每月自然漂移基础量，对所有进行中 issue 都生效（含本月被 advance 触动的）。
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
     inertia_rejections: List[Dict[str, object]] = []
-    active = db.list_active_issues()
+    active = db.issues.active_rows()
     commit_local = not bool(getattr(db.conn, "in_transaction", False))
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}
@@ -430,7 +414,7 @@ def apply_situation_monthly_drift(
                         inertia_rejections.append(_tr)
                     _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]))
                     continue
-                row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+                row = IssueStore(db.conn).row(issue_id)
                 if row is None:
                     continue
                 bar = int(row["bar_value"])
@@ -565,10 +549,13 @@ def apply_situation_monthly_drift(
             to_bar = commitment_bar if commitment_bar is not None else bar
             actual_bar = int(to_bar) - int(from_bar)
             if commitment_bar is not None and actual_bar != 0:
-                db.conn.execute(
-                    "UPDATE issues SET bar_value=?, phase=?, last_advance_turn=?, updated_at=CURRENT_TIMESTAMP "
-                    "WHERE id=?",
-                    (int(commitment_bar), db._derive_issue_phase(int(commitment_bar)), state.turn, issue_id),
+                IssueStore(db.conn).update(
+                    issue_id,
+                    {
+                        "bar_value": int(commitment_bar),
+                        "phase": db._derive_issue_phase(int(commitment_bar)),
+                        "last_advance_turn": state.turn,
+                    },
                 )
                 bar = int(commitment_bar)
             metric_delta: Dict[str, object] = {"metrics": metric_part, "economy": economy_part}
@@ -584,23 +571,22 @@ def apply_situation_monthly_drift(
                     else f"持续效果落账 (折扣 {int(scale*100)}%)"
                 )
             )
-            db.conn.execute(
-                """
-                    INSERT INTO issue_advances (
-                        issue_id, turn, trigger_kind, delta_bar,
-                        from_value, to_value, narrative, metric_delta
-                    ) VALUES (?, ?, 'ongoing', ?, ?, ?, ?, ?)
-                """,
-                (
-                    issue_id, state.turn, actual_bar, from_bar, int(to_bar),
-                    narrative,
-                    json.dumps(metric_delta, ensure_ascii=False),
-                ),
+            IssueStore(db.conn).append_advance(
+                {
+                    "issue_id": issue_id,
+                    "turn": state.turn,
+                    "trigger_kind": "ongoing",
+                    "delta_bar": actual_bar,
+                    "from_value": from_bar,
+                    "to_value": int(to_bar),
+                    "narrative": narrative,
+                    "metric_delta": json.dumps(metric_delta, ensure_ascii=False),
+                },
             )
             if commit_local:
                 db.conn.commit()
 
-        row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+        row = IssueStore(db.conn).row(issue_id)
         if row is None or row["status"] != "active":
             continue
         stop_gate = _commitment_stop_gate(row) if is_commitment else {}
