@@ -31,7 +31,6 @@ from ming_sim.distance import DistanceMatrix
 from ming_sim.paths import bundled_path
 from ming_sim.db import (
     GameDB,
-    POPULATION_UNIT_PERSONS,
     _LEVERAGE_FACTIONS,
     _approx_wanliang,
     compute_loyalty_soft_adjust,
@@ -68,6 +67,7 @@ from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
     PERSON_STATUSES,
+    current_title_kind,
     normalize_reason_code,
     resolve_person_transition,
 )
@@ -2391,7 +2391,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                     _apply_issue_entities(
                         db,
                         state,
-                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        ev.effect_on_trigger,
                         f"事件#{ev.id}触发",
                         content=c,
                     )
@@ -2415,7 +2415,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                 _apply_issue_entities(
                     db,
                     state,
-                    _content_population_effect_for_save(db, ev.effect_on_trigger),
+                    ev.effect_on_trigger,
                     f"事件#{ev.id}触发",
                     content=c,
                 )
@@ -2530,9 +2530,9 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     if ev.effect_on_resolve:
         # #648：content 真源人口量已「人」，持久化进 issue 行前按本档口径换算，
         # 使后续结案/失败落账（读行内 effect）天然按档口径，无需在读取端再换算。
-        effect_resolve = _content_population_effect_for_save(db, ev.effect_on_resolve)
+        effect_resolve = ev.effect_on_resolve
     if ev.effect_on_fail:
-        effect_fail = _content_population_effect_for_save(db, ev.effect_on_fail)
+        effect_fail = ev.effect_on_fail
     # insert 的代码/DB 真异常上抛（ADR 0008 决定1 / ADR 0005 fail-loud），与 decree 路径
     # （apply_issue_tracker_output 的 new_issues 段）一致；旧 `except Exception: WARN; return None`
     # 把真异常吞成 None、调用方记普通 rejected，正是 #14/#63 catalog「该落没落无人知」实例
@@ -2567,7 +2567,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         _apply_issue_entities(
             db,
             state,
-            _content_population_effect_for_save(db, ev.effect_on_trigger),
+            ev.effect_on_trigger,
             f"事件#{ev.id}触发",
             content=_ctx(),
         )
@@ -2822,17 +2822,6 @@ def _pending_person_changes_block_event_gate(
             agg = "min"
         return int(_GATE_AGG_FUNCS[agg](values))
 
-    def current_title_kind(row: Dict[str, str]) -> str:
-        current_office = row_value(row, "office").strip()
-        current_office_type = row_value(row, "office_type").strip()
-        if (
-            not current_office
-            or current_office_type == "身名分"
-            or current_office in PERSON_IDENTITY_TITLES
-        ):
-            return "身名分"
-        return "职名分"
-
     def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
         title = str(item.get("new_title") or item.get("title") or "").strip()
         if title:
@@ -2938,7 +2927,10 @@ def _pending_person_changes_block_event_gate(
                 cur_status,
                 action,
                 reason_code=str(row_value(row, "reason_code") or item.get("reason_code") or ""),
-                current_title_kind=current_title_kind(row),
+                current_title_kind=current_title_kind(
+                    row_value(row, "office"),
+                    row_value(row, "office_type"),
+                ),
             )
             if transition.startswith("reject:"):
                 continue
@@ -3177,15 +3169,6 @@ def _spawn_legacy_from_effect(
     return summary
 
 
-def _content_population_effect_for_save(
-    db: GameDB, effect: Dict[str, object]
-) -> Dict[str, object]:
-    """#648（ADR 0088）：content 静态人口量已全线「人」，落本档原样。
-
-    #1843：旧档万人换算已退役。只用于 content 事件真源透传；LLM 产 delta 仍按本档口径。
-    """
-    del db  # 口径统一后不再按档换算
-    return effect
 
 
 def _apply_issue_entities(
@@ -4784,7 +4767,7 @@ def apply_issue_tracker_output(
                         _apply_issue_entities(
                             db,
                             state,
-                            _content_population_effect_for_save(db, ev.effect_on_trigger),
+                            ev.effect_on_trigger,
                             f"事件#{ev.id}触发",
                             content=runtime_content,
                             llm_config=llm_config,
@@ -4810,7 +4793,7 @@ def apply_issue_tracker_output(
                     _apply_issue_entities(
                         db,
                         state,
-                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        ev.effect_on_trigger,
                         f"事件#{ev.id}触发",
                         content=runtime_content,
                         llm_config=llm_config,
@@ -6361,18 +6344,12 @@ def _apply_person_changes(
                 continue
             current_office = str(row["office"] or "").strip()
             current_office_type = str(row["office_type"] or "").strip()
-            current_title_kind = (
-                "身名分"
-                if not current_office
-                or current_office_type == "身名分"
-                or current_office in PERSON_IDENTITY_TITLES
-                else "职名分"
-            )
+            title_kind = current_title_kind(current_office, current_office_type)
             transition = resolve_person_transition(
                 str(row["status"] or "active"),
                 action,
                 reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
-                current_title_kind=current_title_kind,
+                current_title_kind=title_kind,
             )
             if transition.startswith("reject:"):
                 applied.append(
@@ -6990,9 +6967,6 @@ def _apply_surcharge_decrees(
                 f"surcharge_decrees {region_id!r} 无 settle 财政基座，逐省累积账无处落",
             )
             continue
-        if db.population_unit != POPULATION_UNIT_PERSONS:
-            _reject("missing_ref", "surcharge_decrees 仅适用于 population_unit='人' 的人口池档")
-            continue
         if surcharge_population_pool_members(db, region_id) != {"农民", "流民"}:
             _reject("missing_ref", f"surcharge_decrees {region_id!r} 缺农民/流民省级人口池")
             continue
@@ -7073,15 +7047,6 @@ def _apply_bandit_absorptions(
     rejected: List[Dict[str, object]] = []
     power_changes: List[Dict[str, object]] = []
     items = absorptions if isinstance(absorptions, list) else []
-    # 仅 substrate 人口径新档开环；legacy 不误开（对齐 #649/#650）。
-    if db.population_unit != POPULATION_UNIT_PERSONS:
-        for item in items:
-            rejected.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": "bandit_absorptions 仅适用于 population_unit='人' 的人口池档",
-                "item": item if isinstance(item, dict) else {"raw_value": item},
-            })
-        return applied, rejected, power_changes
 
     for item in items:
         if not isinstance(item, dict):

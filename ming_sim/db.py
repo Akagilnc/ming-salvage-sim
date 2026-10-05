@@ -46,7 +46,11 @@ from ming_sim.participant_roster import (
     participant_roster_names,
     project_execution_liability_parties,
 )
-from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
+from ming_sim.person_archive_contract import (
+    PERSON_OUSTED_STATUSES,
+    PERSON_TITLE_KINDS,
+    wash_ousted_current_office,
+)
 from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
@@ -649,10 +653,6 @@ _OFFICE_LEVERAGE_WEIGHT = {
 
 # 品级档 multiplier 已迁到 content/offices.json rank_rules（#562）：
 # faction leverage 与破格检测共用 ming_sim.office_rank 查表，不再在此维护第二套词干 parser。
-
-# 退场类状态(削职)——与 active 互斥（set_character_status 据此清空 office）。
-_OUSTED_STATES = {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
-
 
 def _office_rank_multiplier(office: str, already_normalized: bool = False) -> float:
     """从 office 头衔字串解析品级 multiplier。唯一真源=offices.json rank_rules。
@@ -2571,10 +2571,9 @@ class GameDB:
         # #9 派系势力 offset 锚点：leverage = clamp(offset + 在朝官职权重和)。开局校准时
         # offset = 钦定基线 − 开局权重和（见 _calibrate_faction_offsets）。
         # #1843：老档缺省反推校准已退役；仅新档 seed 末尾 fresh 校准。
-        self._leverage_offset_col_added = self.ensure_column(
+        self.ensure_column(
             "factions", "leverage_offset", "REAL NOT NULL DEFAULT 0"
         )
-        self._leverage_offsets_calibrated = self._has_meta_flag("__leverage_offsets_calibrated")
         # 拒收 provenance source（#144 / ADR 0008 决定 5）：崩溃恢复重放须用原始来源，否则玩家
         # 来源(player_decree/hitl)的拒收被恢复路记成 system_simulation、静默不提示。老档缺省
         # 'system_simulation'（旧档缺来源时的默认值）。
@@ -2654,12 +2653,8 @@ class GameDB:
     def init_fiscal_config(self) -> None:
         """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
 
-        base/rate 单位为【月度】万两/%。科目目录与元数据全走 JSON 设定（铁律：设定走 JSON）；
-        新档整体 seed 一次。#1843：老档逐版差量升版已退役——已有版本行的库不再补 key。
-
-        - `cur == 0`（全新库，无版本行）：整体 seed JSON 全表 → 版本号置 JSON 版。
-        - `cur > 0`：不迁移、不补缺；仅当 cur < json 时抬版本标记（不碰玩家科目行）。
-        - `cur >= json`：啥都不做。
+        base/rate 单位为【月度】万两/%。科目目录与元数据全走 JSON 设定（铁律：设定走 JSON）。
+        #1843：仅全新库（无版本行）整体 seed 一次；已有版本行的库不迁移、不补 key、不抬版本。
         """
         items = list(self.content.fiscal_items)
         if not items or "__schema_version" not in items[0]:
@@ -2680,22 +2675,17 @@ class GameDB:
         cur_ver_row = self.conn.execute(
             "SELECT value FROM fiscal_config WHERE key = '__schema_version'"
         ).fetchone()
-        cur_ver = int(cur_ver_row["value"]) if cur_ver_row else 0
+        if cur_ver_row is not None:
+            return  # 已有版本行：玩家科目神圣，不碰
 
-        if cur_ver >= schema_version:
-            return  # 已最新，玩家状态神圣，碰都不碰
-
-        if cur_ver == 0:
-            # 全新库：整体 seed 一次。
-            self.conn.executemany(
-                f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [_meta(rec) for rec in rows],
-            )
-
+        # 全新库：整体 seed 一次。
+        self.conn.executemany(
+            f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [_meta(rec) for rec in rows],
+        )
         self.conn.execute(
             "INSERT INTO fiscal_config (key, value, kind, note) VALUES "
-            "('__schema_version', ?, 'meta', '财政默认值大版本号；新档整体 seed，不做老档差量升版') "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            "('__schema_version', ?, 'meta', '财政默认值大版本号；新档整体 seed，不做老档差量升版')",
             (schema_version,),
         )
         self.conn.commit()
@@ -3438,17 +3428,10 @@ class GameDB:
 
     @property
     def population_unit(self) -> str:
-        """本档人口存储单位口径（ADR 0088/#648）：新档「人」。
+        """本档人口存储单位口径（ADR 0088/#648）：一律「人」。
 
-        判别只读存档 DB 内的持久标记（save_meta），不读 content 元信息。
-        #1843：无标旧档「万人」legacy 已退役——缺标亦按「人」。"""
-        row = self.conn.execute(
-            "SELECT value FROM save_meta WHERE key = ?", (_POPULATION_UNIT_KEY,)
-        ).fetchone()
-        if row is None:
-            return POPULATION_UNIT_PERSONS
-        value = str(row[0])
-        return value if value == POPULATION_UNIT_PERSONS else POPULATION_UNIT_PERSONS
+        #1843：旧档「万人」legacy 已退役；不再按 save_meta 分支换算。"""
+        return POPULATION_UNIT_PERSONS
 
     def _mark_population_unit_persons(self) -> None:
         """新档 classes 首次 seed 时落持久人口单位标「人」（commit 由 seed_static_data 末尾统一提交）。"""
@@ -3456,12 +3439,6 @@ class GameDB:
             "INSERT OR REPLACE INTO save_meta (key, value) VALUES (?, ?)",
             (_POPULATION_UNIT_KEY, POPULATION_UNIT_PERSONS),
         )
-
-    def scale_content_population_to_save_unit(self, value: int) -> int:
-        """content 静态人口量（事件 effect 等）已全线「人」；落本档原样。
-
-        #1843：旧档万人换算已退役。"""
-        return int(value)
 
     def seed_static_data(self) -> None:
         self._ensure_office_type_parents()
@@ -3477,26 +3454,24 @@ class GameDB:
             )
 
         if not self.table_has_rows("characters"):
-            from ming_sim.person_archive_contract import PERSON_IDENTITY_TITLES
-            _identity_office_types = {"未仕", "外臣", "宗藩", "身名分", "后宫"}
             for character in self.content.characters.values():
                 office = normalize_office(character.office)
+                # ADR 0009：离事者职名分必清；身名分可留（先按 content 声明桶洗，再推断）。
+                office, status_reason = wash_ousted_current_office(
+                    character.status,
+                    office,
+                    character.office_type,
+                    character.status_reason,
+                )
                 # 静态名册接档：content 已写好 office_type，表查不中也不逐人现拉 codex
                 # （开局 LLM 风暴根因，~28 外藩/宗藩/平民官名 × 串行 codex ≈ 5 分钟）。
-                office_type = infer_office_type_from_office(
-                    office, character.office_type, self.llm_config, use_llm=False
-                )
-                status_reason = character.status_reason
-                # ADR 0009：离事者职名分必清；身名分可留。历史来历走 status_reason。
-                if character.status in _OUSTED_STATES and office:
-                    if (
-                        office_type not in _identity_office_types
-                        and office not in PERSON_IDENTITY_TITLES
-                        and office_type != "身名分"
-                    ):
-                        if not str(status_reason or "").strip():
-                            status_reason = office
-                        office = ""
+                # 洗净后无现职文本时保留声明桶（罢居域），勿因空文本把朝堂类降成待铨。
+                if office:
+                    office_type = infer_office_type_from_office(
+                        office, character.office_type, self.llm_config, use_llm=False
+                    )
+                else:
+                    office_type = (character.office_type or "").strip() or "待铨"
                 self.conn.execute(
                     """
                     INSERT INTO characters
@@ -3543,7 +3518,10 @@ class GameDB:
                 # 同 add_character/set_character_office 走 person-title 守卫接缝：名分不写脏行。
                 # Jurisdiction only from explicit content office_region — never location.
                 # 离事且无现职：不建空备档。
-                if (row["status"] in _OUSTED_STATES) and not str(row["office"] or "").strip():
+                if (
+                    row["status"] in PERSON_OUSTED_STATUSES
+                    and not str(row["office"] or "").strip()
+                ):
                     continue
                 ch = (
                     self.content.characters.get(row["name"])
@@ -3704,10 +3682,8 @@ class GameDB:
         # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
         # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT。
-        # cmr R3：传 offset 列「本次是否刚 ADD」——老档反推只在迁移那次跑，常规 load 不碰 offset。
-        self._calibrate_faction_offsets(
-            is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
-        )
+        # #1843：仅新档 fresh 校准；老档反推参数已退役。
+        self._calibrate_faction_offsets(is_fresh_factions_seed)
         self.conn.commit()
 
     def list_office_vacancies(self) -> List[Dict[str, object]]:
@@ -5198,7 +5174,7 @@ class GameDB:
         ).fetchone()
         # 去职（下狱/革职/流放/致仕/出宫/死）即削职：清空 characters.office，
         # 原职仍留在 character_offices 备档可追溯。复职（active）不动 office。
-        ousted = status in _OUSTED_STATES
+        ousted = status in PERSON_OUSTED_STATUSES
         reason_code_value = str(reason_code or "")[:40]
         if ousted:
             self.conn.execute(
@@ -5222,7 +5198,7 @@ class GameDB:
         # #9：状态变更后全重算该人物所属朝堂派系 leverage（绝对值、读当前所有在朝成员 → 无漂移）。
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
-        if status in _OUSTED_STATES:
+        if ousted:
             self.interrupt_dossiers_for_character(
                 state, name, f"人物终态：{status}；{reason}".rstrip("；"),
                 commit=False,
@@ -5276,23 +5252,17 @@ class GameDB:
         for faction in _LEVERAGE_FACTIONS:
             self.recompute_faction_leverage(faction)
 
-    def _calibrate_faction_offsets(
-        self, is_fresh_factions_seed: bool, offset_col_added: bool = False
-    ) -> None:
+    def _calibrate_faction_offsets(self, is_fresh_factions_seed: bool) -> None:
         """#9 offset 校准：offset = 基线 leverage − 当前在朝官职权重和。
 
         新档（is_fresh_factions_seed）：基线取钦定 content.factions[f].leverage，
         校准后立即 recompute。#1843：老档反推校准已退役——非 fresh 直接 return。
         只校准白名单 faction。不在此 commit——由 seed_static_data 末尾统一提交。
         """
-        del offset_col_added  # 旧档迁移参数已无消费者；保留签名免动 seed 调用点
         if not is_fresh_factions_seed:
-            self._leverage_offset_col_added = False
             return
         if self._has_meta_flag("__leverage_offsets_calibrated"):
-            self._leverage_offset_col_added = False
             return
-        self._leverage_offset_col_added = False
         for faction in _LEVERAGE_FACTIONS:
             row = self.conn.execute(
                 "SELECT leverage FROM factions WHERE name=?", (faction,)
@@ -5310,7 +5280,6 @@ class GameDB:
             )
             self.recompute_faction_leverage(faction)
         self._set_meta_flag("__leverage_offsets_calibrated")
-        self._leverage_offsets_calibrated = True
 
     def _has_meta_flag(self, key: str) -> bool:
         """查 metrics 表里某持久标记是否存在（#9 R3 crash-safe 迁移标记用）。metrics 在 init_schema
@@ -6816,12 +6785,8 @@ class GameDB:
                 continue
             old_val = row[raw_field]
             if raw_field in (REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS):
-                # #648（ADR 0088）：on_restore 是 content 静态真源→存档接缝，population
-                # 已全线「人」，落本档前按存档口径换算（新档原样；无标旧档无损÷10⁴）。
-                new_val: object = (
-                    self.scale_content_population_to_save_unit(value)
-                    if raw_field == "population" else int(value)
-                )
+                # #648（ADR 0088）：population 已全线「人」；#1843 旧档万人换算已退役。
+                new_val: object = int(value)
             else:
                 new_val = str(value)
             if str(old_val) == str(new_val):

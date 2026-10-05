@@ -1962,47 +1962,6 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
     assert state.metrics["国库"] == before_balance
 
 
-@pytest.mark.parametrize("starting_schema_version", [6, 7])
-def test_fiscal_config_v8_migration_preserves_deleted_old_keys(
-    fresh_db, starting_schema_version
-):
-    path = fresh_db.path
-    content = fresh_db.content
-    new_loss_keys = (
-        "central_taicang_human_loss_rate",
-        "central_taicang_sink_loss_rate",
-        "central_jingyun_human_loss_rate",
-        "central_jingyun_sink_loss_rate",
-    )
-    fresh_db.conn.execute("DELETE FROM fiscal_config WHERE key = '官俸_base'")
-    fresh_db.conn.executemany(
-        "DELETE FROM fiscal_config WHERE key = ?",
-        [(key,) for key in new_loss_keys],
-    )
-    fresh_db.conn.execute(
-        "UPDATE fiscal_config SET value = ? WHERE key = '__schema_version'",
-        (starting_schema_version,),
-    )
-    fresh_db.conn.commit()
-
-    reopened = GameDB(path, content)
-    try:
-        deleted = reopened.conn.execute(
-            "SELECT 1 FROM fiscal_config WHERE key = '官俸_base'"
-        ).fetchone()
-        assert deleted is None
-        rows = reopened.conn.execute(
-            f"SELECT key FROM fiscal_config WHERE key IN ({','.join('?' for _ in new_loss_keys)})",
-            new_loss_keys,
-        ).fetchall()
-        assert {str(row["key"]) for row in rows} == set(new_loss_keys)
-        version = reopened.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = '__schema_version'"
-        ).fetchone()
-        assert int(version["value"]) == 8
-    finally:
-        reopened.conn.close()
-
 def test_armies_provision_empty_mutiny_status_flag(fresh_db):
     columns = {
         row["name"]: row

@@ -30,6 +30,11 @@ PERSON_STATUSES = (
     "dead",
 )
 
+# ADR 0009 不变式 1：离事者（非 active）职名分必清。由 PERSON_STATUSES 派生，禁止各入口另造平行集合。
+PERSON_OUSTED_STATUSES = frozenset(
+    status for status in PERSON_STATUSES if status != "active"
+)
+
 PERSON_REASON_CODES = (
     "被顶替",
     "获罪削籍",
@@ -108,6 +113,51 @@ def normalize_title_kind(value: object) -> str:
     if raw in PERSON_IDENTITY_TITLES:
         return "身名分"
     return ""
+
+
+def current_title_kind(office: object = "", office_type: object = "") -> str:
+    """ADR 0009 当前名分类别：职名分 / 身名分。
+
+    空职、显式「身名分」、PERSON_IDENTITY_TITLES，以及 models 已定义的未仕/宗藩
+    身份桶与既有后宫/外臣身份桶 → 身名分；其余非空现职 → 职名分。
+    各入口必须调用本函数，禁止再造平行身份集合。
+    """
+    # 延迟导入：避免 contract↔models 环依赖；常量真源仍在 models。
+    from ming_sim.models import VASSAL_PRINCE_OFFICE_TYPE, WEISHI_OFFICE_TYPE
+
+    office_text = str(office or "").strip()
+    kind = str(office_type or "").strip()
+    if (
+        not office_text
+        or kind == "身名分"
+        or kind in {WEISHI_OFFICE_TYPE, VASSAL_PRINCE_OFFICE_TYPE, "后宫", "外臣"}
+        or office_text in PERSON_IDENTITY_TITLES
+        or normalize_title_kind(office_text) == "身名分"
+    ):
+        return "身名分"
+    return "职名分"
+
+
+def wash_ousted_current_office(
+    status: object,
+    office: object,
+    office_type: object = "",
+    status_reason: object = "",
+) -> tuple[str, str]:
+    """离事者职名分必清；身名分保留。历史来历写入 status_reason（若尚空）。
+
+    供 GameContent.load 与 GameDB.seed_static_data 共用，避免只改静态名册子集。
+    """
+    status_key = str(status or "").strip() or "active"
+    office_text = str(office or "").strip()
+    reason_text = str(status_reason or "").strip()
+    if status_key not in PERSON_OUSTED_STATUSES or not office_text:
+        return office_text, reason_text
+    if current_title_kind(office_text, office_type) != "职名分":
+        return office_text, reason_text
+    if not reason_text:
+        reason_text = office_text
+    return "", reason_text
 
 
 def resolve_person_transition(

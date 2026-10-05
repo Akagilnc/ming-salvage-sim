@@ -57,6 +57,11 @@ from ming_sim.models import (
 # --- 单项加载器（保留原签名，便于复用与单测）---
 
 def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
+    from ming_sim.person_archive_contract import (
+        PERSON_OUSTED_STATUSES,
+        wash_ousted_current_office,
+    )
+
     data = require_dict(load_json_asset("characters.json"), "characters.json")
     factions: Dict[str, Faction] = {}
     for idx, raw in enumerate(require_list(data.get("factions"), "characters.json.factions"), 1):
@@ -116,18 +121,20 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         if name in characters:
             raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
         status = str(item.get("status") or "active")
-        # ADR 0009：离事者可不持现职名分（office 可空）；在事者 office 仍必非空。
-        _ousted = {
-            "offstage", "dismissed", "imprisoned", "exiled", "retired", "dead",
-        }
-        if status in _ousted:
+        office_type = str_field(item, "office_type", f"characters.json.characters[{idx}]")
+        status_reason = str(item.get("status_reason") or "").strip()
+        # ADR 0009：在事者 office 必非空；离事者职名分必清、身名分可留（contract 真源）。
+        if status in PERSON_OUSTED_STATUSES:
             office = str(item.get("office") or "").strip()
+            office, status_reason = wash_ousted_current_office(
+                status, office, office_type, status_reason,
+            )
         else:
             office = str_field(item, "office", f"characters.json.characters[{idx}]")
         characters[name] = Character(
             name=name,
             office=office,
-            office_type=str_field(item, "office_type", f"characters.json.characters[{idx}]"),
+            office_type=office_type,
             faction=str_field(item, "faction", f"characters.json.characters[{idx}]"),
             aliases=string_list(item.get("aliases", []), f"characters.json.characters[{idx}].aliases"),
             personal_skills=string_list(item.get("personal_skills"), f"characters.json.characters[{idx}].personal_skills"),
@@ -146,7 +153,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             debut_year=int(item.get("debut_year") or 0),
             debut_month=int(item.get("debut_month") or 0),
             status=status,
-            status_reason=str(item.get("status_reason") or "").strip(),
+            status_reason=status_reason,
             reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),

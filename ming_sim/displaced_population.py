@@ -22,7 +22,7 @@ from ming_sim.constants import (
     RECOVERY_OUTCOME_FACTORS,
     RECOVERY_PERSONS_PER_WAN,
 )
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.db import GameDB
 from ming_sim.flows import _apply_population_transfers
 from ming_sim.models import GameState
 
@@ -56,8 +56,7 @@ def apply_levy_driven_transfers(
     （reason=加派；累积账月效统一使用 `盘面自发`，不伪归最后一道改账旨）。基线 ≤0 或折算后
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
     """
-    if (not db.is_substrate_hub_fiscal_engine_enabled()
-            or db.population_unit != POPULATION_UNIT_PERSONS):
+    if not db.is_substrate_hub_fiscal_engine_enabled():
         return [], []
     records: List[Dict[str, object]] = []
     rows = db.conn.execute(
@@ -156,8 +155,6 @@ def apply_recovery_driven_transfers(
     再经执行 outcome 成色折减；经 _apply_population_transfers reason=回流 唯一落库。
     幂等键 (dossier_id, turn)：同键不双扣池。立即开仓/#522 pacification 不在此列。
     """
-    if db.population_unit != POPULATION_UNIT_PERSONS:
-        return [], []
     turn = int(state.turn)
     # 月份推进事务只执行一次；同一案在本次扫描内仅回流一次。
     seen_keys: set[tuple[int, int]] = set()
