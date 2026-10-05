@@ -284,7 +284,7 @@ def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
 def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypatch):
     """#1353 fold-in / #1842：转译 LLM 死透 → 耗尽失败单源；夜可重按。
 
-    非流式兼容口轻钉：结构化 HTTP 409 SettlementAbort + detail 单源。
+    真入口 POST /api/decree/issue/stream：SSE error + typed stage 单源。
     """
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
@@ -309,16 +309,13 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 
     stub_audience_translate(monkeypatch, _boom_translate)
 
-    issue = client.post("/api/decree/issue", json={"expected_turn": turn0})
-    _assert_not_bare_500(issue, step="dead-llm issue")
-    # #1842：转译耗尽 → SettlementAbort → 409 + typed stage（非玩家补写 CTA）。
-    assert issue.status_code == 409, (
-        f"expected translation-exhaustion 409, got {issue.status_code}: {issue.text}"
+    body = _post_issue_stream(
+        client, expected_turn=turn0, step="dead-llm issue", allow_error=True,
     )
-    detail = issue.json().get("detail")
-    assert isinstance(detail, dict), detail
-    assert detail.get("stage") == "audience_translation_exhausted", detail
-    assert detail.get("error_pack_path"), detail
+    # #1842：转译耗尽 → SettlementAbort → SSE error + typed stage（非玩家补写 CTA）。
+    assert body.get("_event") == "error", body
+    assert body.get("stage") == "audience_translation_exhausted", body
+    assert body.get("error_pack_path"), body
 
     # 诊断面仍可见欠账；夜保持开，玩家重按过月=重试整段
     pending = _pending_payload(client)

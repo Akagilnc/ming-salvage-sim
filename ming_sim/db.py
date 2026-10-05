@@ -2302,12 +2302,10 @@ class GameDB:
             """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
         # #1847/#1812：旧档 ensure_column／退役表 DROP／索引重建支链已清；
-        # 新档列与索引权威在上方 CREATE。保留新档/现役共享：父表物化、内容名册同步、实体 store、财政初始 seed。
+        # 新档列与索引权威在上方 CREATE。保留新档/现役共享：父表物化、实体 store、财政初始 seed（内容名册由 seed_static_data）。
         self._ensure_office_type_parents()
         self._ensure_event_parents()
         self._apply_region_city_levels()
-        self._migrate_character_identity_seed()
-        self._backfill_bandit_power_split()
         # Read-side projection is registry-driven.  Only issue rows are shared
         # knowledge sources; #883 deliberately keeps secret orders out of it.
         self.conn.execute(
@@ -4492,65 +4490,6 @@ class GameDB:
         if not isinstance(st, dict):
             raise ValueError("settle.st 非法")
         st["军饷欠"] = standalone_arrears + row_arrears_total
-
-    def _migrate_character_identity_seed(self) -> None:
-        """Ensure content roster rows exist (INSERT OR IGNORE). Old identity/alias patches retired (#1847/#1812)."""
-        if not self.table_has_rows("characters"):
-            return
-        for character in self.content.characters.values():
-            office = normalize_office(character.office)
-            office_type = infer_office_type_from_office(office, character.office_type, self.llm_config, use_llm=False)
-            self.conn.execute(
-                """INSERT OR IGNORE INTO characters
-                   (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, intrigue, seed_guilt,
-                    birth_year, historical_death_year, historical_death_month, debut_year, debut_month, status, status_reason, reason_code, status_changed_turn,
-                    portrait_id, power_id, location, transit_to, summary)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
-                (character.name, office, office_type, character.faction,
-                 json.dumps(character.aliases, ensure_ascii=False), json.dumps(character.personal_skills, ensure_ascii=False),
-                 character.loyalty, character.ability, character.integrity, character.courage, character.style,
-                 character.identity, character.intrigue, _seed_guilt_storage_value(character.seed_guilt),
-                 character.birth_year, character.historical_death_year,
-                 character.historical_death_month, character.debut_year, character.debut_month, character.status,
-                 character.status_reason, character.reason_code,
-                 character.portrait_id, character.power_id, character.location, character.transit_to, character.summary),
-            )
-        self.conn.commit()
-
-
-    def _backfill_bandit_power_split(self) -> None:
-        """Ensure content bandit power rows exist. Old leader/power_id rewrites retired (#1847/#1812)."""
-        for power_id in ("bandit_li_zicheng", "bandit_zhang_xianzhong"):
-            power = self.content.powers.get(power_id)
-            if not power:
-                continue
-            self.conn.execute(
-                """
-                INSERT OR IGNORE INTO powers
-                (id, name, kind, leader, stance, leverage, satisfaction, military_strength,
-                 cohesion, supply, agenda, status, last_action, aliases)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    power.id,
-                    power.name,
-                    power.kind,
-                    power.leader,
-                    power.stance,
-                    power.leverage,
-                    power.satisfaction,
-                    power.military_strength,
-                    power.cohesion,
-                    power.supply,
-                    power.agenda,
-                    power.status,
-                    power.last_action,
-                    json.dumps(power.aliases, ensure_ascii=False)
-                    if isinstance(power.aliases, list)
-                    else power.aliases,
-                ),
-            )
-        self.conn.commit()
 
 
     def has_state(self) -> bool:

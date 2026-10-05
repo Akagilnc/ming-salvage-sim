@@ -448,26 +448,10 @@ def _parse_sse(text: str) -> list[tuple[str, dict]]:
     return events
 
 
-def _assert_structured_llm_http(response) -> dict:
-    assert response.status_code != 500, response.text
-    assert response.status_code == 400, response.text
-    body = response.json()
-    detail = body.get("detail") if isinstance(body, dict) else None
-    assert isinstance(detail, dict), body
-    assert detail.get("code"), detail
-    assert detail.get("message"), detail
-    assert "provider_message" in detail, detail
-    assert "Internal Server Error" not in response.text
-    assert "Internal Server Error" not in str(detail.get("message") or "")
-    return detail
-
-
-
-
-def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
+def test_issue_stream_llm_unavailable_is_structured_not_500(
     game, monkeypatch,
 ):
-    """#1452 A：POST /api/decree/issue 底层 LLMUnavailable → 非 500 结构化（禁 409 相位门顶替）。"""
+    """#1452 A：POST /api/decree/issue/stream 底层 LLMUnavailable → SSE 结构化非裸 500。"""
     db, state, content = game
     provider = "拟诏 upstream 503 connection refused"
 
@@ -500,11 +484,17 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
-    response = TestClient(web_app.app).post("/api/decree/issue", json={})
-    detail = _assert_structured_llm_http(response)
-    assert detail["code"] == "llm_error"
-    assert detail["message"] == CLI_RUNNER_PLAYER_MESSAGE
-    assert detail["provider_message"] == provider
+    response = TestClient(web_app.app).post("/api/decree/issue/stream", json={})
+    assert response.status_code == 200, response.text
+    assert "Internal Server Error" not in response.text
+    events = _parse_sse(response.text)
+    assert events, response.text
+    assert events[-1][0] == "error", events[-1]
+    detail = events[-1][1]
+    assert isinstance(detail, dict), detail
+    assert detail.get("code") == "llm_error", detail
+    assert detail.get("message") == CLI_RUNNER_PLAYER_MESSAGE, detail
+    assert detail.get("provider_message") == provider, detail
 
 
 # ── #1452 B / #1465：召对流真实入口 transport 验收 ───────────────────────────

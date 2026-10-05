@@ -13,18 +13,6 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "开局 seed 不产 RejectedItem，ADR 0009 明确豁免。",
     },
     {
-        "location": "ming_sim/db.py:_migrate_character_identity_seed",
-        "owner": "migration",
-        "disposition": "adr0009_exempt",
-        "reason": "#1847：仅 INSERT OR IGNORE 确保 content 名册在场（旧身份/别名补丁已退役），不产 RejectedItem。",
-    },
-    {
-        "location": "ming_sim/db.py:_backfill_bandit_power_split",
-        "owner": "migration",
-        "disposition": "adr0009_exempt",
-        "reason": "#1847：仅 INSERT OR IGNORE 确保流寇分股 powers 在场（旧 leader/power_id 改写已退役），不产 RejectedItem。",
-    },
-    {
         "location": "ming_sim/db.py:set_character_status",
         "owner": "legacy_person_path",
         "disposition": "migrate_to_person_applier",

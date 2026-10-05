@@ -70,16 +70,17 @@ klass	kind	file	loc	symbol	disposition	keep_or_fix_basis
 重复或闲置测试流程	called_duplicate_flow	tests/test_month_call_recovery_1846.py	_forbid_extractor	FIX_REUSE_IMPORT	AST 同形；保留 test_month_chain_1843（1847 已同入口）
 重复或闲置测试流程	rescan	tests/**/*.py	enum_post_w14	idle+called_dup	CLEAR	复扫 B_hits=0（idle_unused_helper=0, called_duplicate_flow=0）
 旧兼容及退役残余闭包	compat_alias	ming_sim/action_materialize.py	635	IncompleteXiexangPayloadError.missing_fields	FIX_REMOVE_ALIAS	注释自称 compatibility alias；全仓无 missing_fields 读者；只留 field_failures/failed_fields
-旧兼容及退役残余闭包	dedicated_old_save_test	tests/test_bandit_power_model_190.py	36	test_old_save_schema_init_backfills_bandit_power_split	FIX_REMOVE_TEST	锁已退役的人物 power_id/leader 旧档改写；现 _backfill 仅 INSERT OR IGNORE；案已红
-旧兼容及退役残余闭包	content_sync_test	tests/test_bandit_power_model_190.py	(renamed)	test_bandit_power_content_sync_*	KEEP_ACTIVE_CONTENT_SYNC	保留内容名册同步行为案（list aliases / 不改写人物归属）；非旧档改写
-旧兼容及退役残余闭包	content_sync	ming_sim/db.py	4496/4521	_migrate_character_identity_seed/_backfill_bandit_power_split	KEEP_ACTIVE_CONTENT_SYNC	职责=INSERT OR IGNORE 内容名册；docstring 已写 Old rewrites retired；init_schema 现役共享 seed（非无标选引擎）
+旧兼容及退役残余闭包	dedicated_old_save_test	tests/test_bandit_power_model_190.py	36	test_old_save_schema_init_backfills_bandit_power_split	FIX_REMOVE_TEST	锁已退役的人物 power_id/leader 旧档改写；案已红（w14）
+旧兼容及退役残余闭包	false_keep_content_sync_test	tests/test_bandit_power_model_190.py	(was)	test_bandit_power_content_sync_*	FIX_DELETE_TEST	w15纠正：上轮 KEEP_ACTIVE_CONTENT_SYNC 不实；专锁已删 migrate/backfill 的案随入口删；保留 seed_static_data 新档播种案 test_seed_splits_*
+旧兼容及退役残余闭包	false_keep_content_sync	ming_sim/db.py	(was 4496/4521)	_migrate_character_identity_seed/_backfill_bandit_power_split	FIX_DELETE	w15纠正：非新档接续/非账本；seed_static_data 已 INSERT OR IGNORE 全 powers；identity_seed 仅旧档补人；难迁≠保留。删函数+init_schema 调用+inventory 两条
 旧兼容及退役残余闭包	identity_comment	ming_sim/models.py	745	monthly_amount	KEEP_ACTIVE_CLAMP	非恒等：max(0,int)；db 盘面展示多处调用；去掉「兼容旧调用点」措辞
 旧兼容及退役残余闭包	unmarked_default_read	ming_sim/appointment_tenure.py	44	normalize_appointment_tenure	KEEP_ACTIVE_READ_DEFAULT	缺/非法任别→真除；supervision/command_power_rank 现役读端；非旧档选择器。写端 appointment_tenure_from 仍严校验
 旧兼容及退役残余闭包	empire_opening	ming_sim/issues.py	8835	sync_opening_legacies	KEEP_EMPIRE_MODIFIERS	判词 conflicts：帝国修正非仅凭名字可删；新档全补/缺行补齐/达标清残是现役开局校准
 旧兼容及退役残余闭包	transport_heal	ming_sim/cli_backend.py	1730	_backfill_healed_participant_refs	KEEP_ACTIVE_TRANSPORT	会话组合路径参与人回填；现役 transport 愈合，非存档 schema 升版
-旧兼容及退役残余闭包	api_optional_token	web_app.py	670/5638/5645	expected_turn Optional None-skip	KEEP_ACTIVE_API	可选令牌；现役测试与部分入口可省略。非无标选旧引擎。生产 UI 常带 turn
-旧兼容及退役残余闭包	parallel_api	web_app.py	5663	POST /api/decree/issue 非流式	KEEP_ACTIVE_HTTP_ENTRY	标注「保留兼容」但 test_error_pack/chat_stream_failpaths/enter_settlement/tracer 仍作同步 JSON 真入口；stream 为 UI 主路。未另造机制；迁测删口属更大切片
+旧兼容及退役残余闭包	api_optional_token	web_app.py	expected_turn Optional None-skip	KEEP_ACTIVE_API	可选令牌；现役测试与部分入口可省略。非无标选旧引擎。生产 UI 常带 turn
+旧兼容及退役残余闭包	false_keep_parallel_api	web_app.py	(was 5663)	POST /api/decree/issue 非流式	FIX_DELETE_ENTRY	w15纠正：docstring 自写保留兼容；web/src 只调 stream。删口；迁测至 /issue/stream（1235/1468/393 + 复扫发现的 error_pack/token_1277/snapshot_1234/payload_1022）；无新适配层
 旧兼容及退役残余闭包	identity_wrapper	tests/test_settlement_write_guard_393.py	105	directive_payload return row	KEEP_TEST_DOUBLE	测试替身 API 透传；有调用职责
 旧兼容及退役残余闭包	governance_excluded	docs/adr/**	scan SKIP_PARTS	ADR/史料	KEEP_EXCLUDED	全仓可执行枚举故意排除 docs/archive/evidence；不改治理文
 旧兼容及退役残余闭包	comment_retired_note	ming_sim/db.py等	多处「旧档…已清/已退役」注释	KEEP_COMMENT	机械命中为已退役说明句，非活选择器；职责复查无执行分支
-旧兼容及退役残余闭包	rescan_functional	enum_post_w14	财政选择器/军饷 cutover/calc_province_fiscal/identity 生产包装	CLEAR_PRIOR	功能选择器命中 0；余机械多为注释/现役 KEEP 项
+旧兼容及退役残余闭包	rescan_functional	enum_post_w15	财政选择器/非流式口/migrate_backfill	CLEAR_TARGETED	非流式口与两 migrate/backfill 已删；seed_static_data 保留；B_hits=0；类2本轮无新增
+旧兼容及退役残余闭包	rescan	tests/**/*.py	enum_post_w15	idle+called_dup	CLEAR	复扫 B_hits=0

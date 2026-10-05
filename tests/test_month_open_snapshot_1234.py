@@ -312,7 +312,9 @@ def test_player_month_advance_expires_snapshot(game, monkeypatch):
 
 
 def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
-    """真实颁布 API 入口：受理后状态口含核账态 + 快照四键。"""
+    """真实颁布 API 入口（/api/decree/issue/stream）：受理后状态口含核账态 + 快照四键。"""
+    import asyncio
+    import json
     from ming_sim.decree import ResolveResult
 
     db, state, _content = game
@@ -339,8 +341,25 @@ def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
     monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
-    result = web_app.api_issue_decree(web_app.IssueDecreeRequest())
-    assert result["awaiting_decision"] is True
+    async def _consume():
+        response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
+        chunks = [
+            chunk.decode() if isinstance(chunk, bytes) else chunk
+            async for chunk in response.body_iterator
+        ]
+        return "".join(chunks)
+
+    serialized = asyncio.run(_consume())
+    event = None
+    data_raw = None
+    for line in serialized.strip().splitlines():
+        if line.startswith("event:"):
+            event = line.split(":", 1)[1].strip()
+        elif line.startswith("data:"):
+            data_raw = line.split(":", 1)[1].strip()
+    assert event == "decisions", serialized
+    result = json.loads(data_raw or "{}")
+    assert isinstance(result.get("decisions"), list), result
 
     payload = runtime.state_payload()
     assert payload["turn"]["settlement_display"] is True

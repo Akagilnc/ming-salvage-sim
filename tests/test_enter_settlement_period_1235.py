@@ -237,7 +237,7 @@ def test_true_failure_pending_translation_exits_display(web_game, monkeypatch, t
 
 
 def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
-    """AC2 颁布入口同形。"""
+    """AC2 颁布入口同形（真入口 POST /api/decree/issue/stream）。"""
     from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 
@@ -273,12 +273,29 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
 
     async def go():
         async with _client() as client:
-            return await client.post("/api/decree/issue", json={})
+            async with client.stream(
+                "POST", "/api/decree/issue/stream", json={},
+            ) as resp:
+                body = ""
+                async for chunk in resp.aiter_text():
+                    body += chunk
+                return resp.status_code, body
 
-    resp = asyncio.run(go())
-    # #1842：转译耗尽 → SettlementAbort（HTTP 409 + typed stage）；issue 与 advance 同形。
-    assert resp.status_code == 409, resp.text
-    detail = resp.json().get("detail")
+    status, body = asyncio.run(go())
+    # #1842：转译耗尽 → SettlementAbort → SSE error + typed stage
+    assert status == 200, body
+    terminal = None
+    for block in (body or "").strip().split("\n\n"):
+        cur: dict = {}
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                cur["event"] = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                cur["data"] = line[len("data:"):].strip()
+        if cur.get("event"):
+            terminal = cur
+    assert terminal and terminal.get("event") == "error", body
+    detail = json.loads(terminal.get("data") or "{}")
     assert isinstance(detail, dict), detail
     assert detail.get("stage") == "audience_translation_exhausted", detail
     assert detail.get("error_pack_path"), detail
@@ -512,12 +529,8 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
     assert game.db.get_month_open_snapshot(turn) is None
 
 
-@pytest.mark.parametrize("entry", [
-    pytest.param("issue", id="issue"),
-    pytest.param("stream", id="stream"),
-])
-def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch, entry):
-    """#1235 r3 / #1241 S5：session-reaccept-orphan-after-web-noncreator（issue/stream 同根）。
+def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch):
+    """#1235 r3 / #1241 S5：session-reaccept-orphan-after-web-noncreator（issue/stream 真入口）。
 
     A web-accept 真新建并持 gate；B web-accept 得 False 后堵在阻塞 gate；
     A 失败 exit 清快照并放锁 → B 进 resolve（session 再 accept 新建）后失败 →
@@ -553,7 +566,7 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
         # 模拟 session.resolve_turn 内二次 accept 后 ValueError（无 session exit 臂）
         created = accept_settlement_period(game.db, game.state)
         saw["session_reaccept"] = created
-        raise ValueError(f"推演失败·{entry} session再创建后注入")
+        raise ValueError("推演失败·stream session再创建后注入")
 
     monkeypatch.setattr(game.session, "resolve_turn", _boom_resolve)
 
@@ -567,9 +580,6 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
         try:
             async def go():
                 async with _client() as client:
-                    if entry == "issue":
-                        resp = await client.post("/api/decree/issue", json={})
-                        return resp.status_code, resp.text
                     async with client.stream(
                         "POST", "/api/decree/issue/stream", json={},
                     ) as resp:
@@ -592,7 +602,7 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     while saw["web_created"] is None:
         time.sleep(0.01)  # backoff only
     assert saw["web_created"] is False, "B 须为 web 非创建者"
-    assert not b_done.is_set(), f"B 不得在 A 持锁时完成 {entry}"
+    assert not b_done.is_set(), "B 不得在 A 持锁时完成 stream"
     assert game.db.get_month_open_snapshot(turn) == before
 
     # A 失败 exit 清快照后再放锁（判词序：清后放锁，逼出 B session 再创建）
@@ -604,20 +614,13 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     b_done.wait()
     t.join()
     assert "err" not in b_result, b_result.get("err")
-    if entry == "issue":
-        assert b_result.get("status") == 400, b_result
-    else:
-        assert b_result.get("status") == 200, b_result
-        assert "error" in (b_result.get("body") or "")
+    assert b_result.get("status") == 200, b_result
+    assert "error" in (b_result.get("body") or "")
     # B 进 resolve 后 session 再创建了孤儿快照
     assert saw["session_reaccept"] is True
     # B finally 须清掉该孤儿（created_display=False 不得再跳过 exit）
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
-    if entry == "issue":
-        assert game.state.turn_phase not in (
-            TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
-        )
 
 
 def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypatch):

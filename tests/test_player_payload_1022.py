@@ -158,10 +158,8 @@ def test_issue_terminals_keep_unadvanced_month_visible(monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: game)
 
     event, streamed = asyncio.run(_serialized_terminal_event("issue"))
-    synced = web_app.api_issue_decree()
 
     assert event == "done"
     assert streamed["advanced"] is False
-    assert synced["advanced"] is False
     assert game.state.turn == 9
     assert game.session.actions == []
