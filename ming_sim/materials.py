@@ -112,7 +112,7 @@ def _materials_campaign_dir(db: Any) -> Path:
     night-/turn- 键挂在 parent/materials/ 下，并行 prepare 会抢同一 scene.tmp
     （Errno 2/17/66）。按 db stem 再隔一层后，各档原子重建互不影响。
     """
-    db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
+    db_path = Path(str(db.path)).resolve()
     stem = _safe_segment(db_path.stem if db_path.suffix else db_path.name)
     return db_path.parent / "materials" / stem
 
@@ -148,7 +148,6 @@ def _materials_invocation_dir(db: Any, state: Any) -> Path:
     from ming_sim.audience_night import get_open_night
 
 
-    db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
     night = get_open_night(db)
     key = f"night-{int(night['id'])}" if night else f"turn-{int(state.turn)}"
     return (
@@ -2196,7 +2195,7 @@ def prepare_scene_materials(
     night = get_open_night(db)
     night_id = int(night["id"]) if night is not None else 0
     spoken = _scene_spoken_text(db)
-    content = getattr(db, "content", None)
+    content = db.content
     characters = getattr(content, "characters", None) or {}
 
     # 一次 prepare 冻结每人 knowledge + matter_lines，目录与 opening 共用。

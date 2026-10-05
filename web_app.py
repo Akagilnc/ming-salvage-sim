@@ -1035,9 +1035,8 @@ class WebGame:
             favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
             if not fav_raw:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
-            if hasattr(candidate.db, "conn"):
-                candidate.db.reconcile_interrupted_chat_turns()
-                candidate.db.reconcile_post_reply_recovery()
+            candidate.db.reconcile_interrupted_chat_turns()
+            candidate.db.reconcile_post_reply_recovery()
         except Exception as rebuild_exc:
             residual = candidate or getattr(rebuild_exc, "residual_session", None)
             if residual is not None:

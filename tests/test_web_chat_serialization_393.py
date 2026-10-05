@@ -290,20 +290,6 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner(mo
     assert completed == [True]
 
 
-@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
-def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature(monkeypatch):
-    runtime, minister_name, allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race(monkeypatch)
-    stream = runtime.chat_stream("殿上", "请奏")
-    assert next(stream)["type"] == "accepted"
-    assert next(stream)["type"] == "delta"
-    allow_finish.set()
-    while True:
-        item = next(stream)
-        if item["type"] == "done":
-            break
-        assert item["type"] in {"delta", "highlights", "protagonist_changed", "end"}, item
-
-
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     events: list[str] = []
     entered = threading.Event()

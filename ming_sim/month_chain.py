@@ -702,7 +702,7 @@ def _abort_month_call(
     # 内存相位（world_committed 等）不随失败写回。
     if kind == "code_exception" and db.owns_transaction():
         from ming_sim.decree import reload_state_from_db
-        reload_state_from_db(db, state, content=getattr(db, "content", None))
+        reload_state_from_db(db, state, content=db.content)
     committed = _load_chain(db, turn)
     escape_armed = False
     if kind == "model_exhausted" and step in _TRANSLATE_ESCAPE_STEPS:

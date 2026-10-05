@@ -3870,10 +3870,7 @@ class GameDB:
             for row in self.conn.execute("SELECT name, office, office_type FROM characters").fetchall():
                 # 同 add_character/set_character_office 走 person-title 守卫接缝：名分不写脏行。
                 # Jurisdiction only from explicit content office_region — never location.
-                ch = (
-                    self.content.characters.get(row["name"])
-                    if getattr(self, "content", None) is not None else None
-                )
+                ch = self.content.characters.get(row["name"])
                 seat = str(getattr(ch, "office_region", "") or "").strip() if ch else ""
                 self._record_character_office(
                     row["name"], row["office"], row["office_type"], "存档迁移",
@@ -5673,8 +5670,6 @@ class GameDB:
         数据源已并入 seed_events.json：取标了 auto_trigger 且 trigger_gate 为空（开局盘面无条件
         即达标）的 situation 事件，开局直接立项，使玩家召见前就看到三大危机。
         其余带 gate 的 seed 事件靠 auto_trigger_seed_issues 在 gate 达标的回合再硬立。"""
-        if not getattr(self, "content", None):
-            return
         for ev in self.content.seed_events:
             if not ev.auto_trigger or ev.trigger_gate:
                 continue

@@ -52,7 +52,7 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
         saw_db_row = True
         raw = row["audiences"]
     if not saw_db_row:
-        content = getattr(db, "content", None)
+        content = db.content
         event_by_id = getattr(content, "event_by_id", None) or {}
         ev = event_by_id.get(origin_ref)
         if ev is None:
