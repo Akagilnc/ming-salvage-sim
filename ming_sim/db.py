@@ -2309,12 +2309,7 @@ class GameDB:
         # 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
         # #1847/#1812：salary_rate 已在 CREATE；旧档首次 ADD 回填退役。新军走 _coerce_new_salary_rate / army_needed 锚点。
         self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0")
-        # #173：维护费列退役迁移——**必须在每个打开路径跑**。现存档只走 GameDB.__init__→
-        # init_schema、不走 seed_static_data；若只挂 seed，现存档（probe.db: maintenance INTEGER
-        # NOT NULL 无 default）永不删列 → 删列后建新军 INSERT（已不含该列）崩（cmr drop R1 codex high）。
-        # 现存档此刻维护费列在：先确保 arrears 换算读完维护费（幂等 version gate），再 drop；新档此时
-        # armies 空（CREATE TABLE 已无该列）→ 两步皆 no-op，seed 路再正常建。
-        self._drop_maintenance_column()
+        # #173/#1847：maintenance_per_turn 旧档 DROP 迁移已退役（新档 CREATE 本无该列）。
         self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
         # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
         self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
@@ -2716,8 +2711,6 @@ class GameDB:
             self._set_meta_flag("__leverage_offsets_float_v2")
             self.conn.commit()
         self.init_fiscal_config()
-        # #1356：旧档精确 DELETE 已知 seed 全文（不动真实结算产物）
-        self._purge_fixed_opening_gazette_seed()
 
     def init_fiscal_config(self) -> None:
         """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
@@ -3087,19 +3080,12 @@ class GameDB:
                 fiscal = json.loads(str(row["fiscal"] or "{}"))
                 if isinstance(fiscal, dict) and "settle" not in fiscal:
                     continue
-                overrides = p_overrides_by_region.get(region_id)
-                if overrides:
-                    result = self._settle_province_tick_from_fiscal(
-                        region_id,
-                        fiscal,
-                        actions_by_region.get(region_id, []),
-                        overrides,
-                    )
-                else:
-                    # Shared single-province seam (#1847 N11): batch path reuses it.
-                    result = self.settle_province_tick(
-                        region_id, actions_by_region.get(region_id, []),
-                    )
+                result = self._settle_province_tick_from_fiscal(
+                    region_id,
+                    fiscal,
+                    actions_by_region.get(region_id, []),
+                    p_overrides_by_region.get(region_id),
+                )
             except (ValueError, FiscalConservationError) as exc:
                 outcomes.append(ProvinceFiscalTickOutcome(region_id, None, exc))
                 continue
@@ -5028,19 +5014,6 @@ class GameDB:
             raise ValueError("settle.st 非法")
         st["军饷欠"] = standalone_arrears + row_arrears_total
 
-    def _drop_maintenance_column(self) -> None:
-        """#173：物理移除退役的 armies.maintenance_per_turn 列（月饷由 army_needed 按兵力派生）。
-        幂等：列存在才 DROP（SQLite 3.35+ 支持 ALTER TABLE DROP COLUMN，本仓 3.53）。调用点保证排在
-        所有读维护费的迁移之后（见 init_schema：salary_rate backfill + arrears 换算之后）：老档此刻列
-        仍在、迁移已读完，drop 安全；新档/已删档无此列，PRAGMA 查不到 → no-op。"""
-        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()}
-        if "maintenance_per_turn" in cols:
-            self.conn.execute("ALTER TABLE armies DROP COLUMN maintenance_per_turn")
-            self.conn.commit()  # DDL 显式提交，保证 drop 跨打开/环境持久（Gemini PR R3；init_schema
-                                # 末尾另有 commit 兜底，此处显式化事务边界、不依赖后续步骤的提交时机）
-
-
-
     def _migrate_character_identity_seed(self) -> None:
         """Ensure content roster rows exist (INSERT OR IGNORE). Old identity/alias patches retired (#1847/#1812)."""
         if not self.table_has_rows("characters"):
@@ -5217,36 +5190,11 @@ class GameDB:
             )
         self.conn.commit()
 
-    def _known_opening_gazette_seed_text(self) -> str:
-        """#1356 已知固定开局邸报全文指纹（与历史 seed 写入一致：strip 后入库）。"""
-        try:
-            from pathlib import Path
-            from ming_sim.paths import bundled_path
-            path = Path(bundled_path("content", "opening_gazette.md"))
-            if path.is_file():
-                return path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return ""
-        return ""
-
-    def _purge_fixed_opening_gazette_seed(self) -> None:
-        """#1356：旧档精确 DELETE 已知 seed 全文。
-
-        单条 SQL 等值匹配，天然幂等；不扫表、不写 meta、不按短语 substring。
-        真实结算邸报（哪怕含 seed 短语）因全文不等而不被删。
-        """
-        known = self._known_opening_gazette_seed_text()
-        if not known:
-            return
-        self.conn.execute("DELETE FROM turn_reports WHERE report = ?", (known,))
-        self.conn.commit()
-
     def seed_opening_gazette(self, state: GameState) -> None:
         """开局公共见闻（新君登基/倒魏）。
 
         #1356/#1292：不再写入固定开局邸报文到 turn_reports（P7 禁固定模板直显）。
-        首份玩家可见邸报由第一个正常月末 LLM 结算产生；content/opening_gazette.md
-        仅作旧档 purge 指纹源，不进玩家面。
+        首份玩家可见邸报由第一个正常月末 LLM 结算产生。
         """
         # Keep the two opening facts addressable as public knowledge rather than
         # requiring a character to infer them from an undifferentiated gazette.
@@ -17833,14 +17781,11 @@ class GameDB:
         ).fetchone()
         # #1890：来源轮只认 pending_actions.source_chat_turn_id 这一列（交办的
         # 统一身份），并按 turn_directives.source_pending_action_id 从新指旧找到
-        # 那道交办（ADR 0054：禁反向回填）。载荷里那份副本已删——同一事实两处
-        # 可写，改草/迟到转译会让两者漂移。认不到行（无 pending 的直写路径）
-        # 时回落载荷，仅保旧档兼容，不作为常规来源。
+        # 那道交办（ADR 0054：禁反向回填）。无 pending 行时 source_chat_turn_id=0；
+        # 不再回落载荷副本（#1847：旧档兼容回落已退役）。
         dossier_source_turn = 0
         if pending is not None:
             dossier_source_turn = int(pending["source_chat_turn_id"] or 0)
-        if dossier_source_turn <= 0:
-            dossier_source_turn = int(structured.get("source_chat_turn_id") or 0)
         return self.create_decree_dossiers(
             state,
             action_type=action_type,

@@ -599,8 +599,6 @@ def drain_and_close_session(owner: Any) -> None:
             session.close()
             return
     q.seal()
-    if not q.is_sealed():
-        raise RuntimeError("write queue seal failed")
 
     def _close() -> None:
         gate = q.write_gate

@@ -335,12 +335,13 @@ def classify_transport_failure(error: BaseException) -> ClassifiedFailure:
     if isinstance(error, LLMUnavailable):
         status = error.status_code
         code = str(error.code or "llm_unavailable")
-        # Prefer structured fields; still append cause chain when present so
-        # composite cleanup+idle is not reduced to a single layer in packages.
+        # Keep structured provider_message; append PEP 3134 cause chain when
+        # present. Do not replace provider body with str(error)/message.
         base = str(error.provider_message or error.message or "")
         cause = error.__cause__
         if cause is not None:
-            pmsg = _exception_text_with_causes(error)
+            cause_text = _exception_text_with_causes(cause)
+            pmsg = f"{base} | caused by: {cause_text}" if base else cause_text
         else:
             pmsg = base
         status_i = _coerce_status(status)

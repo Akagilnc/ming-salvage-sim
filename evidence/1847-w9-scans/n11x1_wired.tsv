@@ -1,0 +1,4 @@
+member	disposition	notes
+session_write_queue.seal_guard	DELETE_GUARD	is_sealed_def=True; prod_guard=False
+db.settle_ming_province_substrate_ticks_branch	REVERTED	calls_settle_province_tick=False; calls__from_fiscal=True
+relation_brew.run_month_end_relation_brew	PROD_DELETED_TEST_LOCAL_OK	prod_def=False; test_local_def=True
