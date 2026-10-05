@@ -3,7 +3,8 @@
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1847-w5`
 - 分支：`ak-roles/1847-fixer-w11-n11-n13-n10-n14-n16`
 - 底座 HEAD：`d7fb0dcf7a5b957514487497686aa939fa7a289c`
-- 上一轮 delivery：`4c40f7e2c66b37ed0165e04103150c79d5aadf2d`（本轮纠正，不 amend）
+- 上一轮 delivery：`4c40f7e2c66b37ed0165e04103150c79d5aadf2d`
+- 本轮纠正 commit：`98c5bfb22540122ab1cbace4f948458393d5681a`（不 amend）
 - 判词真源：
   - `~/.ak-roles/books/Ming_LLM/unbound/runs/01a109d7-ed74-72c4-bed9-027ef7044a10@fixer/attachments/00-1847-judge-d7fb0dcf7-main.json`
   - `.../01-1847-judge-d7fb0dcf7-correction.json`
