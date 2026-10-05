@@ -1836,10 +1836,8 @@ def apply_monthly_covert_actual_progress(
             continue
         dossier = db.get_dossier_for_secret_order(oid)
         if dossier is None:
-            applied.append({
-                "order_id": oid, "rejected": True, "reason": "密令缺少案卷",
-            })
-            continue
+            # #1897 / ADR0005：active 密令缺案卷是内部故障，不得洗成逐项拒收后继续。
+            raise ValueError("密令进展缺少对应案卷")
         if str(dossier.get("status") or "") == "closed":
             continue
         did = int(dossier["id"])
@@ -2080,10 +2078,8 @@ def settle_due_secret_orders(
         oid = int(order["id"])
         dossier = db.get_dossier_for_secret_order(oid)
         if dossier is None:
-            results.append({
-                "order_id": oid, "rejected": True, "reason": "密令缺少案卷",
-            })
-            continue
+            # #1897 / ADR0005：到期结案缺案卷响亮传播；不得拒收跳过并标阶段完成。
+            raise ValueError("密令进展缺少对应案卷")
         if str(order.get("status") or "") in {"done", "failed"}:
             continue
         did = int(dossier["id"])

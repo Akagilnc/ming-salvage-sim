@@ -22018,6 +22018,9 @@ class GameDB:
     ) -> None:
         def close_in_current_transaction() -> None:
             dossier = self.get_dossier_for_secret_order(int(order_id))
+            if dossier is None:
+                # #1897 / ADR0005：在办密令缺必需案卷是内部故障，不得半截结案。
+                raise ValueError("密令进展缺少对应案卷")
             close_text = str(result or "")
             self.conn.execute(
                 """
@@ -22027,7 +22030,7 @@ class GameDB:
                 """,
                 (status, close_text, turn_closed, int(order_id)),
             )
-            if dossier is not None and dossier["status"] != "closed":
+            if dossier["status"] != "closed":
                 if dossier["status"] == "promulgated":
                     self.transition_decree_dossier(
                         int(dossier["id"]), "executing", commit=False,
@@ -22083,10 +22086,12 @@ class GameDB:
             "SELECT status FROM secret_orders WHERE id=?", (int(order_id),),
         ).fetchone()
         if row is None or row["status"] != "active":
+            # 未知／非 active：领域拒收（调用方见 False），不是内部故障。
             return False
         dossier = self.get_dossier_for_secret_order(int(order_id))
         if dossier is None:
-            return False
+            # #1897 / ADR0005：已准入 active 密令缺案卷 → 响亮故障；不得洗成 False 终结暂存。
+            raise ValueError("密令进展缺少对应案卷")
         self.record_dossier_progress(
             int(dossier["id"]), self._current_game_turn(), band, raw,
             origin=origin, commit=False,

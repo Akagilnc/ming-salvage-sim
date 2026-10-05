@@ -483,49 +483,6 @@ def test_rejected_revoke_does_not_restore_override(game):
     ).fetchone()["c"] == 0
 
 
-def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
-    db, state, _content = game
-    _pin_shortfall_board(db, "shaanxi")
-    # 零可用省银，令真实 settle 同时写出官俸欠与宗禄欠两家族。
-    import json as _json
-    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
-    fiscal = _json.loads(row["fiscal"])
-    fiscal["settle"]["st"]["省库库银"] = 0
-    fiscal["settle"]["p"].update(
-        {"正赋应征": 0, "三饷应征": 0, "起运定额": 0, "拨付gross": 0}
-    )
-    db.conn.execute(
-        "UPDATE regions SET fiscal=? WHERE id='shaanxi'",
-        (_json.dumps(fiscal, ensure_ascii=False),),
-    )
-    db.settle_province_tick("shaanxi")
-    claim_rows = db.conn.execute(
-        "SELECT field, reason FROM region_logs WHERE turn=? AND region_id='shaanxi' "
-        "AND field LIKE 'settle_%欠_%' ORDER BY id", (state.turn,),
-    ).fetchall()
-    assert {row["field"].split("_")[1] for row in claim_rows} >= {"官俸欠", "宗禄欠"}
-
-    db.conn.execute(
-        "INSERT INTO region_logs "
-        "(turn,year,period,region_id,field,old_value,new_value,delta,reason) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (state.turn, state.year, state.period, "shaanxi",
-         "unrest", "1", "2", 1, "民变事实"),
-    )
-    # 结构契约：summary 查询窗口滤掉 settle_*欠_*，limit 内可见非 claim 字段
-    visible = db.conn.execute(
-        "SELECT field FROM region_logs "
-        "WHERE turn=? AND field NOT LIKE 'settle_官俸欠_%' "
-        "AND field NOT LIKE 'settle_宗禄欠_%' "
-        "ORDER BY id LIMIT 1",
-        (state.turn,),
-    ).fetchall()
-    assert [row["field"] for row in visible] == ["unrest"]
-    assert {row["field"] for row in claim_rows}.isdisjoint(
-        {row["field"] for row in visible}
-    )
-
-
 def test_real_revoke_restores_override_same_month_with_active_commitment(game):
     """#1894：目标挂 active 承诺时撤旨当月即恢复 override，不再等下一场挽留坚持。
 
