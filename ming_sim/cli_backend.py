@@ -1966,24 +1966,6 @@ def compose_decree_validation_recovery(
     )
 
 
-# #1765：密令落库缺口的 typed 标签（机面事实；不进玩家分类文案）。
-_SECRET_LANDING_GAP_LABELS = {
-    "title": "结构化标题",
-    "content": "密令正文",
-    "covert_task": "差务合同",
-    "extract": "抽取结果",
-}
-
-
-def _secret_landing_gap_feature(landing_gaps: Optional[List[str]] = None) -> str:
-    """Shared gaps → human feature labels for feedback and recovery prompts."""
-    gaps = [str(g).strip() for g in (landing_gaps or []) if str(g).strip()]
-    labels = [
-        _SECRET_LANDING_GAP_LABELS.get(g, g) for g in gaps
-    ] or ["密令结构化要件"]
-    return "、".join(labels)
-
-
 def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
     """Typed gaps that block a new secret order from landing. Empty ⇒ can land."""
     so = secret if isinstance(secret, dict) else {}
@@ -2003,41 +1985,6 @@ def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
 def secret_order_can_land(secret: Optional[Dict[str, Any]]) -> bool:
     """True when extract result has title + content + frozen contract and no extract_failed."""
     return not secret_order_landing_gaps(secret)
-
-
-def compose_secret_order_landing_recovery(
-    landing_gaps: Optional[List[str]] = None,
-    *,
-    speaker_name: str = "",
-    speaker_role: str = "",
-    emperor_words: str = "",
-    prior_output: str = "",
-    contract_error: str = "",
-    llm_config: Any = None,
-) -> str:
-    """#1765：落不了库时大臣以本职揣摩/追问；角色特征化、零形式约束（0033）。"""
-    feature = _secret_landing_gap_feature(landing_gaps)
-    err = str(contract_error or "").strip()
-    err_clause = f"（诊断：{err}）" if err else ""
-    role = str(speaker_role or "").strip()
-    if not role:
-        name = str(speaker_name or "").strip()
-        role = f"大臣{name}" if name else "大臣"
-    prompt = (
-        f"你是{role}。皇帝刚下的密令意图已受理，"
-        f"但还落不了库，缺：{feature}{err_clause}。"
-        f"以本职揣摩圣意：能从皇帝原话与既有交代补全的，陈述你理解的密令要点请皇帝确认；"
-        f"揣摩不出的，以本职口吻当场请示皇帝所需。"
-    )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
-        prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
-        prompt += f"\n【原抽取产出】{prior}"
-    return _compose_inworld_fact_report(
-        prompt, llm_config=llm_config, tag="secret_order_landing_recovery",
-    )
 
 
 def _canon_person_id_key(raw: Any, *, db: Any, content: Any) -> Optional[str]:
