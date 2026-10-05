@@ -695,8 +695,10 @@ $PY -m pytest -p no:cacheprovider -q --tb=short \
 代码：仅 `tests/test_rejection_wiring.py` fixture 发现标注。
 forward `ak-roles:` 提交（不 amend／stash／reset／push）。
 
-## 追加：CLEANUP-C1 已删符号闭包——范围结论撤回（不变 CHOICE）
+## 追加：CLEANUP-C1 已删符号——范围撤回 + 框架删简（不变 CHOICE）
 
-**撤回**：把旧 `/tmp/cleanup-c1-audit` 的 **3233 OK** 摘要当成「对已删生产符号打补丁」全类闭合。该卷 `runtime_verified.json` 仅摘要；仍含 **192 unresolved／17 nonprod／4 dynamic**；`AUDIT_COMMANDS.sh` 无枚举。未 resolve 不得空口 0。
+**撤回**：把旧 `/tmp/cleanup-c1-audit` 的 **3233 OK** 摘要当成全类闭合（仅摘要；192 unresolved 无成员表）。
 
-本类闭包真源改见短回执 **`docs/reports/1891-1899-deleted-symbol-tests.md`**（全员 3447 TSV／JSON 附表＋取证；真残留仅 `decree._next_attempt` 专属案已删；`error_pack._next_attempt` KEEP）。**CHOICE 结论与处置不变**。
+**再撤回**：曾入库的 835 行解析器 + AUDIT 壳 + 全员 JSON/TSV/卡片——属超授权「新框架／报告生成物」，已 **forward 删除**；证据仅在 `/tmp/cleanup-c1-forward-delete.hIkScB`。
+
+本类短回执：**`docs/reports/1891-1899-deleted-symbol-tests.md`**（缺符删项 + 9 nonprod + 6 dynamic + 深解析合并表 + 自包含 AST 命令）。**CHOICE 结论与处置不变**。
