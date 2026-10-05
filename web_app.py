@@ -2635,7 +2635,7 @@ class WebGame:
         """存档（重）加载后在后台发起一次抽取补跑（重开崩溃窗口丢的站台/进出账补落）。
 
         #1353 r7：无待补时不领票——空 catch-up 占票会与同 session 的 barrier/
-        `_pending_writes_count` 钉竞态（全量 xdist 下 residual ticket）。有待补才
+        inflight_count 钉竞态（全量 xdist 下 residual ticket）。有待补才
         claim+spawn；key=("startup",) 与 turn/pending 区分。
         #1353 r10：预检 list_unextracted 短持 runtime gate（共享 conn 禁裸读）。
         """

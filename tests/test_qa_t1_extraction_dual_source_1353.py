@@ -17,24 +17,18 @@
 from __future__ import annotations
 
 import threading
-from types import SimpleNamespace
 
 import pytest
 
 import ming_sim.audience_translation as audience_translation
 from ming_sim.audience_translation import list_pending_translations
-import ming_sim.cli.terminal as term
-import ming_sim.issues as issues_mod
 import web_app
 from ming_sim import audience_night as an
-from ming_sim.exceptions import ExitGame
-from ming_sim.session import GameSession, TurnPhase
 from tests.test_audience_extraction_501 import (
     _minister,
     _open_night_with_persisted_reply,
 )
-from ming_sim.session_write_queue import SessionWriteQueue, ClassifiedWriteGate
-from tests.test_no_edict_full_settlement_1274 import _canned_full_settlement
+from ming_sim.session_write_queue import SessionWriteQueue
 from tests.conftest import stub_audience_translate
 
 def _close_with_gate(db, state, *, night_id, translate_fn=None, llm_config=object(), **extra):
@@ -303,7 +297,6 @@ def test_empty_startup_catchup_claims_zero_tickets(web_game):
     q = game._runtime_write_queue()
     # fresh WebGame 无未抽回话；init 时 spawn 必须早退，队列空。
     assert q.inflight_count() == 0
-    assert int(game._pending_writes_count) == 0
     # 显式再调仍不领票。
     game._spawn_startup_extraction_catch_up()
     assert q.inflight_count() == 0
@@ -312,11 +305,12 @@ def test_empty_startup_catchup_claims_zero_tickets(web_game):
 def test_barrier_waits_trail_ticket_then_auto_close(web_game, monkeypatch):
     """#1353 生产接缝屏障钉：尾随领票未完成时 entry 不得抢跑；完成后一次过。"""
     game = web_game
+    q = game._runtime_write_queue()
     # 空库 startup 不得占票；本钉只见自领 1 票（全量 xdist 顺序依赖根因）。
-    assert int(game._pending_writes_count) == 0
+    assert q.inflight_count() == 0
     ticket = game._mark_pending_write(key=("turn", 1))
     assert ticket is not None
-    assert int(game._pending_writes_count) == 1
+    assert q.inflight_count() == 1
 
     order: list[str] = []
     trail_holding = threading.Event()
@@ -359,7 +353,7 @@ def test_barrier_waits_trail_ticket_then_auto_close(web_game, monkeypatch):
     et.join()
     assert not t.is_alive() and not et.is_alive()
     assert order == ["release", "trail_end", "auto_close", "body"], order
-    assert int(game._pending_writes_count) == 0
+    assert q.inflight_count() == 0
 
 
 def test_production_seam_cancel_blocks_trail_write(web_game):

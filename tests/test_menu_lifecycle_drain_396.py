@@ -667,7 +667,7 @@ def test_spawn_pending_write_thread_start_failure_releases_ownership():
     finally:
         web_app.threading.Thread = orig_thread
 
-    assert runtime._pending_writes_count == 0  # pending ownership 未泄漏
+    assert runtime._runtime_write_queue().inflight_count() == 0  # pending ownership 未泄漏
 
 
 # ── #396 Step5 R4: web_game is None 时 new_game 仍须切换库路径 ───────────

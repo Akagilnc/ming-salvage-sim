@@ -434,10 +434,17 @@ async def _drain_tasks(*tasks: asyncio.Task) -> None:
         task.exception()
 
 
-async def _wait_for(pred) -> None:
-    """轮询真实状态直至成立；永久不成立 → CI job 终线。"""
-    while not pred():
+async def _await_inflight_or_task(game, task: asyncio.Task) -> None:
+    """等真实在飞领票（inflight>0）或 worker 终态；失败原样传播，禁缺属性默认 0 空转。"""
+    q = game._runtime_write_queue()
+    while q.inflight_count() == 0 and not task.done():
         await asyncio.sleep(0)
+    if task.done():
+        exc = task.exception()
+        if exc is not None:
+            raise exc
+        if q.inflight_count() == 0:
+            raise AssertionError("worker finished without claiming write ticket")
 
 
 async def _start_hanging_chat(game, client, minister, monkeypatch):
@@ -493,8 +500,8 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
             try:
                 chat_task = asyncio.create_task(
                     client.post("/api/audience/chat/stream", json={"message": "边饷如何？"}))
-                # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
-                await _wait_for(lambda: getattr(game, "_pending_writes_count", 0) > 0)
+                # 等真实在飞领票（锁前查之后、抢 gate 之前）或 worker 终态——读队列 inflight，不读已删兼容属性
+                await _await_inflight_or_task(game, chat_task)
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
             finally:
                 game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
