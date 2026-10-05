@@ -970,17 +970,23 @@ def test_run_backend_for_config_passes_reasoning_strength_to_codex(monkeypatch):
 
 
 def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
+    """真实 runner 失败后，trace.error 须保留原故障可见诊断（非仅非空）。"""
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
+    injected = RuntimeError("codex 挂了")
 
     def boom(prompt, model=None, **kwargs):
-        raise RuntimeError("codex 挂了")
+        raise injected
 
     monkeypatch.setattr(cb, "_run_codex", boom)
-    with pytest.raises(RuntimeError):
+    # 官方：ExceptionInfo.value 对象身份
+    # https://docs.pytest.org/en/stable/how-to/assert.html#assertions-about-expected-exceptions
+    with pytest.raises(RuntimeError) as ei:
         cb._run_backend_for_config("任意提示", _cli_codex_cfg(), tag="probe")
+    assert ei.value is injected
     assert len(recs) == 1
-    assert recs[0].get("error")  # 错误已入 trace；不盯注入措辞
+    # 可见诊断须能回溯到原故障来源，不是任意非空串
+    assert recs[0].get("error") == str(injected)
 
 
 def test_office_inference_llm_call_is_traced(monkeypatch):

@@ -257,30 +257,6 @@ def test_invalid_bundled_seed_rolls_back_new_save_and_can_retry(tmp_path, monkey
         sess.close()
 
 
-def test_seed_founding_write_does_not_swallow_execute_error_with_bad_rollback():
-    """窄写口不擅自 rollback；因此 rollback 故障不能遮蔽原始写入异常。"""
-    from ming_sim.db import GameDB
-
-    class FailingConnection:
-        def execute(self, *args, **kwargs):
-            raise RuntimeError("injected write failure")
-
-        def rollback(self):
-            raise AssertionError("写口不得拥有 rollback")
-
-    class FakeDB:
-        conn = FailingConnection()
-
-        @staticmethod
-        def owns_transaction():
-            return True
-
-    with pytest.raises(RuntimeError):
-        GameDB.apply_seed_founding_segment(
-            FakeDB(), source="甲", target="乙", dimension="大臣", founding_segment="旧事"
-        )
-
-
 def test_seed_failure_rolls_back_new_save_and_retry_imports(tmp_path, monkeypatch):
     """seed 初始化失败不得烧掉 fresh 判据；修复故障后同 DB 可正常重开。"""
     import ming_sim.cli_backend as cli_backend

@@ -394,8 +394,10 @@ def test_worker_postprocess_exception_emits_error_end():
         }
     )
 
+    postprocess_error = RuntimeError("highlight trail boom")
+
     def _boom_spawn(*_a, **_k):
-        raise RuntimeError("highlight trail boom")
+        raise postprocess_error
 
     runtime._spawn_pending_write_thread = _boom_spawn  # type: ignore[method-assign]
 
@@ -415,6 +417,7 @@ def test_worker_postprocess_exception_emits_error_end():
         finally:
             done.set()
 
+    # 施工席自选：Thread + Event 确定性等实际 worker 结束（非新增框架）
     th = threading.Thread(target=consume, daemon=True)
     th.start()
     done.wait()
@@ -428,7 +431,8 @@ def test_worker_postprocess_exception_emits_error_end():
     assert types[err_idx + 1] == "end", types
     err = next(e for e in events if e.get("type") == "error")
     assert err.get("type") == "error"
-    assert str(err.get("message") or "").strip()  # 有可读诊断；不盯注入措辞
+    # SSE 可见诊断须回溯到后处理真实故障来源（非仅非空）
+    assert err.get("message") == str(postprocess_error)
     _assert_write_path_free(runtime)
 
 

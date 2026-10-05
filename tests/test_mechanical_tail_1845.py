@@ -544,7 +544,8 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     turn, tail = failure
     assert turn == closed_turn
     assert tail["status"] == "failed"
-    assert str(tail.get("error") or "").strip()
+    # 本案带 ending_outcome：真实首个失败源是结局总评缺配置（非关系酿制）
+    assert tail.get("error") == "结局总评缺少模型配置"
     assert tail.get("error_pack_path")
 
     monkeypatch.setattr(

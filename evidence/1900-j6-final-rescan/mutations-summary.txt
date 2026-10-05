@@ -1,0 +1,7 @@
+cli_trace_error: RED_OK
+cli_trace_error: GREEN_OK
+sse_postprocess_message: RED_OK
+sse_postprocess_message: GREEN_OK
+mechanical_tail_error: RED_OK
+mechanical_tail_error: GREEN_OK
+all_ok=True
