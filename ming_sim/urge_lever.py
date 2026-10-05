@@ -111,7 +111,7 @@ def collect_urge_history(
 
     # 密令路：案卷挂 secret_order_id 时并入史源
     if dossier_id is not None:
-        dossier = db.get_decree_dossier(int(dossier_id)) if hasattr(db, "get_decree_dossier") else None
+        dossier = db.get_decree_dossier(int(dossier_id))
         so_id = 0
         if isinstance(dossier, dict):
             try:
@@ -155,7 +155,7 @@ def collect_urge_history(
 def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional[int]) -> Dict[str, object]:
     """承办人：案卷主办优先，否则 issue participants 首名；缺省中性档。"""
     name = ""
-    if dossier_id is not None and hasattr(db, "get_decree_dossier"):
+    if dossier_id is not None:
         dossier = db.get_decree_dossier(int(dossier_id))
         if isinstance(dossier, dict):
             roster = dossier.get("participant_roster") or []

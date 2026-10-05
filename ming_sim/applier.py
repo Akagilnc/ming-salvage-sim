@@ -209,8 +209,14 @@ def atomic(db: Any) -> Iterator[None]:
                 conn._atomic_rollback_only = False
                 if started_here:
                     conn.rollback()
+                    raise RuntimeError(
+                        "atomic: 内层异常被调用方吞掉，本层事务已整体回滚。"
+                        "flat 语义下内层无独立原子性——请勿在 atomic 之间吞内层异常。"
+                    )
+                # 借用外层 BEGIN/atomic：本层不得抢先 ROLLBACK；只响亮要求外层整体回滚。
                 raise RuntimeError(
-                    "atomic: 内层异常被调用方吞掉，事务已整体回滚。"
+                    "atomic: 内层异常被调用方吞掉；本层借用外层事务，未抢先 rollback，"
+                    "外层必须整体回滚。"
                     "flat 语义下内层无独立原子性——请勿在 atomic 之间吞内层异常。"
                 )
             if not started_here:

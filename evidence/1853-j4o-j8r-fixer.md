@@ -1,118 +1,104 @@
-# #1853 修内司交卷：实际事务提交权单一权威 + 必备DB能力兼容残余清退
+# #1853 修内司交卷补正：实际事务提交权单一权威 + 必备DB能力兼容残余清退
 
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1853-w5`
 - 分支：`ak-roles/issue-1853-policy-cleanup`
-- **交卷 commit：** `0efc2b9a330e8852d917876eb8953f7886e60146`
-- 判词真源：`fix-packet.md`；冻结末份 `10-1853-judge-d81e9db05.json` payload[10]
-- 未结两类：J4-O「实际事务提交权单一权威」、J8-R「必备DB能力兼容残余清退」
+- 上轮交卷：`0efc2b9a330e8852d917876eb8953f7886e60146`（枚举收窄；本轮复核补正）
+- **本轮交卷 commit：** （见 git log / 本文件提交后戳记）
+- 判词真源：`fix-packet.md`；冻结末份 `attachments/10-1853-judge-d81e9db05.json` payload 末份（J4-O / J8-R）
 - **未合入目标分支；不 push / 不开 PR；不 amend / 不 stash**
-- 互联网先行：SQLite Savepoint/COMMIT 语义（https://www.sqlite.org/lang_savepoint.html）；Python sqlite3 commit；hasattr 替身反模式（hynek / CPython 清退例）
 
-## 两类根因
+## 上轮后台任务被杀（如实）
+
+| 项 | 事实 |
+|---|---|
+| 终端 | `terminals/9621.txt` pid **16125**；聚焦 pytest 已跑出约半程点号后停住 |
+| 时长 | `running_for_ms≈104274`（~104s）；`exit_code: unknown` |
+| 终止方式 | 同会话 `terminals/9622.txt` 显式执行 **`kill 16125`**（默认信号 **SIGTERM**，**不是** `kill -9` / SIGKILL），随后 `pkill -f 'pytest -p tests.conftest tests/test_transaction_boundary…'` |
+| 原因 | 操作方判断套件疑似挂起，改跑三则嫌疑单测；**不是**无脑墙钟超时杀进程，也不是 SIGKILL |
+| 后续 | 9622 三则单测亦 `exit_code: unknown`（约 34s），未完结 |
+
+## 两类根因与本轮补正
 
 ### J4-O 实际事务提交权单一权威
 
-`connection_owns_transaction` 在 `in_transaction` 时判外层拥有；`_run_pending_action_commit_lifecycle` 据此跳过外层 `atomic`。但 `atomic()` 在 depth==1 且已有外层 BEGIN 时仍于退出时 `conn.commit()`，与归属契约冲突。SQLite COMMIT 清空 savepoint → `RELEASE pending_action_apply_*` 报 `no such savepoint`，半提交（新密令已落、来源动作仍 pending）。
+上轮已使 `atomic` 在借用外层 BEGIN 时不抢 COMMIT。本轮另核：借用外层且 `_atomic_rollback_only` 时，旧措辞「事务已整体回滚」与实码（不 rollback）不符 → **如实改措辞**（仅本层开事务时才称已回滚）。
 
 ### J8-R 必备DB能力兼容残余清退
 
-生产 `GameSession`/`WebGame` 恒构造完整 `GameDB`，召对/失败/重试接缝仍保留 `hasattr` 替身分支与双实现（空投影、跳过落库、lifecycle_supported、persist 双路径等）。旧回执 `evidence/1853-retry-cleanup.md`「用户裁定」无原话指针。
+上轮回执类二只点名六文件，并把 `materials`/`knowledge` 等**凭文件名**剔出。按类定义全文 + 召对失败重试真实调用链（`decree_forecast`/`session` → `materials` → `knowledge`；`declaration_dispatch`/`urge_lever`/`action_materialize`/`audience_night`），漏项整类修净：直调必备 GameDB 接口；保留业务空态与结算/菜单初始化清理。
 
 ---
 
-## 类一：全仓枚举与处置
+## 全仓机械枚举（定义全文；完整命令与可核表）
 
-### 枚举命令
+命令与原始命中、成员分类表真源：
 
-```bash
-# 事务权威真源与 atomic 落定点
-rg -n 'def connection_owns_transaction|def atomic|started_here|conn\.commit\(\)' ming_sim/applier.py
-# 生产 with atomic( 全成员（冲突实现扇出面）
-rg -n 'with atomic\(' --glob '*.py' -g '!tests/**' -g '!archive/**'
-# 写前归属引用（上轮已归一，本轮复扫保持）
-git grep -n -E 'owns_transaction|connection_owns_transaction' -- '*.py'
-```
+- `evidence/1853-j4o-j8r-enum/ENUM_COMMANDS.md`
+- `evidence/1853-j4o-j8r-enum/class1-raw.txt` / `class1-members.tsv`
+- `evidence/1853-j4o-j8r-enum/class2-raw.txt` / `class2-members.tsv`
+- `evidence/1853-j4o-j8r-enum/sql-raw.txt` / `sql-cross-file-dups.tsv`
+- 临时诊断输出：`evidence/1853-j4o-j8r-enum/diag_out.txt` + `DIAG_COMMANDS.md`
 
-### 成员表
+### 类一谓词（不得收窄为仅 atomic/owns/commit）
+
+`commit` / `rollback` / `BEGIN` / `SAVEPOINT|RELEASE|ROLLBACK TO` / `owns_transaction|connection_owns_transaction` / `in_transaction` / `_commit_suspended|_atomic_depth|_atomic_rollback_only|started_here` / `with atomic(|def atomic`
+
+本轮分类摘要（见 tsv）：权威实现落 `applier.py`；写前归属调用点引用公共真源；其余生产事务位点服从该权威；测试/工具标注。
+
+### 类二谓词（hasattr/getattr/callable + 重复 SQL）
+
+全仓 `hasattr(` / `getattr(` / `callable(` 机械枚举后按语义分类。属类 = 召对/失败呈现/重试真实调用链上「必备 GameDB 能力存在性 → 空结果/跳过」替身分支。
+
+**不属类依据（按职责，非凭文件名）：**
+
+| 命中面 | 依据 |
+|---|---|
+| `month_chain` hasattr(conn)/快照 | 过月结算供料/快照，非失败呈现/重试接缝 |
+| `web_app` month_open_snapshot / candidate.db.conn / restorable / close_night 无 db | 结算或菜单初始化清理（J8-R 明示保留） |
+| `agents` agno / `flows` / `db` 内部 / `cli_backend` / `mechanical_tail` / `recommendations` | 非本接缝 |
+| `decree_forecast` owner_or_db 形参 | owner vs db 分流，非缺能力→空投影 |
+| `store` affair/textual hasattr | store 可缺业务态 |
+| 结果/行/exc getattr·hasattr | 非 DB 能力替身 |
+| 测试命中 | TEST_annotate |
+
+修后复扫：`IN_CLASS_J8R` 剩余 **0**。
+
+### 属类成员处置（本轮补清）
 
 | 成员 | 处置 |
 |---|---|
-| `applier.atomic` 退出路径（depth==1 且已有 `in_transaction` 仍 commit/rollback） | **修正**：`started_here` 仅本层 BEGIN 时为真；借用外层只解除暂停，不抢 COMMIT/ROLLBACK |
-| `applier.connection_owns_transaction` | **保留**唯一归属判据真源 |
-| 全部生产 `with atomic(...)`（db/create_secret_order、month_chain、session、cli、web 等） | **随 atomic 修正统一行为**；不另造事务框架 |
-| 写后提交 / `_commit_suspended` 判断 | **保留**（非写前归属政策副本） |
-
-### 真实入口临时诊断（七 BIN=false）
-
-入口：`create_test_secret_order → stage_pending_action(新建) → {close_false\|BEGIN\|outer atomic\|none} → commit_pending_actions → rollback`。
-
-修前红（摘要）：
-
-```
-close_false: OperationalError: no such savepoint: pending_action_apply_1; old=done; new_n=1; pa=pending
-begin:       同上半提交
-atomic/none: 正常
-```
-
-修后绿：
-
-```
-RESULT {'mode': 'close_false', 'err': None, 'old': 'active', 'new_n': 0, 'pa': 'pending'}
-RESULT {'mode': 'begin', 'err': None, 'old': 'active', 'new_n': 0, 'pa': 'pending'}
-RESULT {'mode': 'atomic', 'err': None, 'old': 'active', 'new_n': 0, 'pa': 'pending'}
-RESULT {'mode': 'none', 'err': None, 'old': 'active', 'new_n': 1, 'pa': 'committed'}
-GREEN_EXIT=0；临时探针与 basetemp 已删
-```
-
-未新增永久证明测试 / 事务框架 / 恢复账本 / 护栏。
+| `applier.atomic` 借用外层 + rollback-only 异常文案 | **修正**如实措辞 |
+| `audience_night._should_commit` getattr(conn,None) | **删** → `db.conn` |
+| `declaration_dispatch` hasattr get_secret_order | **删** → 直调 |
+| `action_materialize.character_person_names` hasattr conn | **删**（保留 `db is None` 业务空集） |
+| `session` 任命 noop / officeholder getattr conn | **删** → `db.conn` |
+| `urge_lever` hasattr get_decree_dossier ×2 | **删** → 直调 |
+| `materials` / `knowledge` 全链必备 conn 与 GameDB 方法 hasattr | **删** → 直调；保留无夜/空名册/无 store 等业务态 |
+| `evidence/1853-retry-cleanup.md`「用户裁定」 | 上轮已改历史派单说明 |
 
 ---
 
-## 类二：全仓枚举与处置
+## 真实入口临时诊断（七 BIN=false；非永久测试）
 
-### 枚举命令
+完整命令见 `evidence/1853-j4o-j8r-enum/DIAG_COMMANDS.md`；输出见 `diag_out.txt`。
 
-```bash
-# 召对/失败/重试接缝能力存在性分支
-rg -n 'hasattr\([^)]*(db|session\.db|self\.db)' \
-  ming_sim/audience_translation.py ming_sim/audience_translate.py \
-  ming_sim/audience_night.py ming_sim/cli/terminal.py web_app.py \
-  ming_sim/declaration_dispatch.py
-# 双实现 / 替身注释
-rg -n 'lifecycle_supported|轻量测试替身|旧替身|测试替身无 conn' \
-  ming_sim/cli/terminal.py web_app.py
-```
+入口：`game` fixture → `create_test_secret_order` → `stage_pending_action(新建)` → `{close_false\|BEGIN\|outer atomic\|none}` → `commit_pending_actions` → `rollback`。
 
-### 属类成员表（全修）
+| 模式 | 当前（新绿） | 旧变异（atomic 深度1 总 commit） |
+|---|---|---|
+| close_false | err=None；rollback 后 old=active, new_n=1, pa=pending | OperationalError no such savepoint；半提交痕迹 |
+| begin | 同上绿 | 同上红 |
+| atomic / none | 正常提交 | （对照） |
 
-| 成员 | 处置 |
-|---|---|
-| `audience_translation`：`hasattr(conn/mark_story_extraction_pending/set_chat_turn_error_pack)` | **删** → 直调；保留 `ctid<=0` 业务态 |
-| `audience_translate`：`hasattr(conn)` 空目录/空摘要 | **删** → 直调；保留 `night_id<=0` |
-| `audience_night`：`resolve_standing_roster/conn`、`_allocate_seq` 双实现、`_character_status` 双实现、`list_in_flight` SQL 副本、`list_night_approved`/`mark_pending_night_approved` 跳过、scene recap `conn` | **删副本** → 直调 GameDB；保留空名业务态 |
-| `cli/terminal`：retry 路径 capture/persist/record/restore hasattr；`lifecycle_supported`；persist 双路径；`_record_audience_exit` conn | **删** → 直调 |
-| `web_app`：chat_projection / agno session / can_undo / in_flight / `_start_chat_turn` / retry·stream 准入 / identity kv·night / reconcile 启动 / api_audience_chat_history | **删替身分支** → 直调 |
-| `declaration_dispatch`：capture/record hasattr | **删** → 直调 |
-| `evidence/1853-retry-cleanup.md`「用户裁定」 | **改**历史派单说明（无法补原话指针；不作 owner 豁免） |
+措辞：`FALSE_CLAIM_ROLLED_BACK=False`；`HONEST_BORROW_WORDING=True`。
 
-### 复扫例外（不属本类）
-
-| 命中 | 依据 |
-|---|---|
-| `web_app.py:1038` rebuild `candidate.db.conn` | 菜单/重建初始化清理，非召对失败重试呈现 |
-| `web_app.py:3180` 结算快照无 db | 核账期初始化，非本类 |
-| `web_app` month_open_snapshot hasattr | 结算面 |
-| materials / month_chain / knowledge `hasattr(conn)` | 供料/过月，非召对失败重试接缝 |
-| 结果对象 `getattr(result/exc/...)` | 可选字段，非 DB 能力替身 |
-
-复扫命令结果：`CAT2_HITS=2`（上表两处例外）；`lifecycle_supported` / 替身注释 EMPTY。
-
-夹具对齐（不削弱负向契约）：`test_cli_play_turn` / `test_web_chat_serialization_393` / `test_menu_lifecycle_drain_396` 补齐现役接口与夜补丁；连续读失败 vitest 仍为 #1873 既有红灯，不追绿。
+J8：旧 hasattr 空列表 vs 当前缺 conn `AttributeError` 响亮失败。`METHODS_RESTORED=true`；临时用例与 basetemp 已删。
 
 ---
 
-## 测试证据（七 BIN=false）
+## 测试证据（七 BIN=false；未跑全量）
 
+前缀：
 ```bash
 export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
   MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
@@ -120,39 +106,35 @@ export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
   MING_SIM_PI_BIN=/usr/bin/false
 ```
 
-### Python 聚焦
+### Python 聚焦（分批；避免上轮整包挂起误杀）
 
-```text
-pytest -p tests.conftest \
-  tests/test_transaction_boundary.py \
-  tests/test_audience_commit_failure_1853.py \
-  tests/test_secret_order_isolation_883.py \
-  tests/test_cli_play_turn.py \
-  tests/test_web_chat_serialization_393.py \
-  tests/test_menu_lifecycle_drain_396.py \
-  tests/test_audience_translate_1837.py \
-  tests/test_web_audience_night_498.py \
-  tests/test_dossier_links_559.py \
-  -q -p no:cacheprovider --basetemp=<tmp>
-→ 151 passed in 8.04s；PY_EXIT=0；OWN_TEMP_GONE=yes
-```
+| 批次 | 文件 | 结果 | 墙钟 |
+|---|---|---|---|
+| A | transaction_boundary, audience_commit_failure_1853, secret_order_isolation_883, audience_translate_1837, web_audience_night_498, dossier_links_559, urge_lever_624 | **120 passed** | 6.91s（real 7.44s） |
+| B1 | test_cli_play_turn | **19 passed** | 0.91s |
+| B2 | test_menu_lifecycle_drain_396 | **18 passed** | 0.71s |
+| B3 | test_material_directory_1830 | **8 passed** | 0.93s |
+| B4 | test_web_chat_serialization_393 + test_character_knowledge_489 + test_world_materials_1834 | **72 passed** | 4.63s |
+
+合计聚焦 **237 passed**。临时 basetemp 均已删。
+
+契约/成本：materials/knowledge/cli/session 直调必备接口；夹具沿用现役 GameDB；不新增永久证明测试；不削弱负向。
 
 ### Vitest（触及面；已知 #1873）
 
 ```text
 vitest run src/components/modals.test.tsx src/appDurableWiring.test.tsx \
   -t 'system-layer reply retry|重试后的记录连续读失败' --environment jsdom --no-cache
-→ 1 failed | 1 passed | 114 skipped；唯一失败仍为 appDurableWiring 连续读失败（#1873）
+→ 1 failed | 1 passed | 114 skipped；唯一失败仍为 appDurableWiring:717 连续读失败（#1873）
+墙钟 real 2.47s
 ```
 
-未跑全量。未改真实席位/宿主配置。未调真实模型。
+未跑全量。未调真实模型。
 
----
+## 合法性与复杂度
 
-## 合法性与复杂度自查
-
-- 授权：本局修内司 apply 劳务指令 + fix-packet 两类未结。
-- 不新增事务框架/恢复账本/护栏/永久证明测试；临时探针已清理。
-- 复杂度：删替身分支与双实现，atomic 与归属判据对齐（减冲突实现），净减并行路径。
-- 自查二连：同类型（借用外层事务抢提交；召对失败重试 hasattr）已整类扫；引入面（轻壳测试）已对齐现役直调，未放宽负向断言追绿。
-- 阻断：无前置缺失；已知 vitest 连续读失败仍归 #1873，非本两类。
+- 授权：fix-packet 两类未结（J4-O / J8-R）；按类定义全文机械枚举，判词点名非白名单。
+- 不新增事务框架/恢复账本/护栏/永久证明测试；临时诊断已清理。
+- 复杂度：删调用链替身与双路径；atomic 措辞与行为对齐（减虚假断言）。
+- 自查二连：同类型（借用外层抢提交；召对失败重试链 hasattr 含 materials/knowledge）整类扫；引入面未放宽负向追绿。
+- 阻断：无前置缺失；已知 vitest 连续读失败仍归 #1873。

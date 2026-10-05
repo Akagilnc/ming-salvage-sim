@@ -1,0 +1,34 @@
+=== CURRENT new-green ===
+[09:30:01.100] [secret_order] create id=1 minister=韩爌 title=旧密令
+[09:30:01.101] [secret_order] close id=1 status=done
+[09:30:01.101] [secret_order] create id=2 minister=韩爌 title=新密令
+RESULT {'old': 'active', 'new_n': 1, 'pa': 'pending', 'mode': 'close_false', 'err': None}
+[09:30:01.103] [secret_order] create id=2 minister=韩爌 title=旧密令
+[09:30:01.103] [secret_order] create id=3 minister=韩爌 title=新密令
+RESULT {'old': 'active', 'new_n': 1, 'pa': 'pending', 'mode': 'begin', 'err': None}
+[09:30:01.105] [secret_order] create id=3 minister=韩爌 title=旧密令
+[09:30:01.105] [secret_order] create id=4 minister=韩爌 title=新密令
+RESULT {'old': 'active', 'new_n': 2, 'pa': 'committed', 'mode': 'atomic', 'err': None}
+[09:30:01.107] [secret_order] create id=5 minister=韩爌 title=旧密令
+[09:30:01.107] [secret_order] create id=6 minister=韩爌 title=新密令
+RESULT {'old': 'active', 'new_n': 2, 'pa': 'committed', 'mode': 'none', 'err': None}
+=== OLD mutation old-red ===
+[09:30:01.108] [secret_order] create id=7 minister=韩爌 title=旧密令
+[09:30:01.109] [secret_order] close id=7 status=done
+[09:30:01.109] [secret_order] create id=8 minister=韩爌 title=新密令
+RESULT_OLD {'old': 'done', 'new_n': 2, 'pa': 'pending', 'mode': 'close_false', 'err': 'OperationalError: no such savepoint: pending_action_apply_5'}
+[09:30:01.111] [secret_order] create id=9 minister=韩爌 title=旧密令
+[09:30:01.111] [secret_order] create id=10 minister=韩爌 title=新密令
+RESULT_OLD {'old': 'active', 'new_n': 2, 'pa': 'pending', 'mode': 'begin', 'err': 'OperationalError: no such savepoint: pending_action_apply_6'}
+=== WORDING borrow rollback-only ===
+WORDING_MSG= atomic: 内层异常被调用方吞掉；本层借用外层事务，未抢先 rollback，外层必须整体回滚。flat 语义下内层无独立原子性——请勿在 atomic 之间吞内层异常。
+FALSE_CLAIM_ROLLED_BACK= False
+HONEST_BORROW_WORDING= True
+=== J8 materials capability shim mutation ===
+CURRENT_LEN= 0
+OLD_SHIM_EMPTY= []
+CURRENT_STUB_FAIL_LOUD= AttributeError 'NoConn' object has no attribute 'conn'
+METHODS_RESTORED=true
+DIAG_DONE
+.
+1 passed in 0.65s

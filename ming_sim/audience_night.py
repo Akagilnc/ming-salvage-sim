@@ -269,10 +269,11 @@ def _row_dict(row: Any) -> Dict[str, Any]:
 def _should_commit(db: Any) -> bool:
     """本域多语句写各自开隐式事务，故用 owns_transaction() 会因自身 in_transaction 恒 False
     而永不 durable commit（跨进程恢复丢失）。改与 db.py 同 idiom：仅当外层无显式 atomic/
-    suspend 持有事务时才提交（用 _commit_suspended / _atomic_depth 判据，不看 in_transaction）。"""
-    conn = getattr(db, "conn", None)
-    if conn is None:
-        return True
+    suspend 持有事务时才提交（用 _commit_suspended / _atomic_depth 判据，不看 in_transaction）。
+
+    #1853 J8-R：必备 GameDB.conn 直调，禁 getattr(conn, None) 替身。
+    """
+    conn = db.conn
     return (
         not bool(getattr(conn, "_commit_suspended", False))
         and int(getattr(conn, "_atomic_depth", 0) or 0) == 0

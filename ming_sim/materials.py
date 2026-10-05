@@ -473,7 +473,7 @@ def _own_affair_lines(
         )
 
     handling_ids: set[int] = set()
-    for issue in (db.list_active_issues() if hasattr(db, "list_active_issues") else []):
+    for issue in db.list_active_issues():
         try:
             issue_id = int(issue["id"])
         except (KeyError, IndexError, TypeError, ValueError):
@@ -655,7 +655,7 @@ def _opening_affair_lines(
     }
     handled: list[tuple[str, str]] = []
     seen: set[str] = set()
-    active = db.list_active_issues() if hasattr(db, "list_active_issues") else []
+    active = db.list_active_issues()
     for issue in active:
         try:
             issue_id = int(issue["id"])
@@ -700,15 +700,11 @@ def _handled_affair_lines(
 
 
 def _carryover_drafts(db: Any, state: Any) -> list[dict]:
-    if not hasattr(db, "list_directives"):
-        return []
+    # #1853 J8-R：必备 list_directives / get_dossier_for_directive 直调。
     return [
         dict(row) for row in db.list_directives(state, statuses=("draft",))
         if int(row["turn"]) < int(state.turn)
-        and (
-            not hasattr(db, "get_dossier_for_directive")
-            or db.get_dossier_for_directive(int(row["id"])) is None
-        )
+        and db.get_dossier_for_directive(int(row["id"])) is None
     ]
 
 
@@ -799,7 +795,7 @@ def _write_textual_fact_files(
     if name:
         subjects.append(("character", name, name))
     region_ids = set((knowledge.get("scope") or {}).get("region_ids") or ())
-    if region_ids and hasattr(db, "region_rows"):
+    if region_ids:
         for row in db.region_rows():
             if str(row["id"] or "") not in region_ids:
                 continue
@@ -808,7 +804,7 @@ def _write_textual_fact_files(
             if rid:
                 subjects.append(("region", rid, rname))
     army_ids = set((knowledge.get("scope") or {}).get("army_ids") or ())
-    if army_ids and hasattr(db, "army_rows"):
+    if army_ids:
         for row in db.army_rows():
             if str(row["id"] or "") not in army_ids:
                 continue
@@ -844,7 +840,7 @@ def _write_textual_fact_files(
 
 def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]:
     region_ids = set((knowledge.get("scope") or {}).get("region_ids") or ())
-    if not region_ids or not hasattr(db, "region_rows"):
+    if not region_ids:
         return []
     index: list[str] = []
     for row in db.region_rows():
@@ -862,7 +858,7 @@ def _write_region_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]
 
 def _write_army_detail_files(tmp: Path, db: Any, knowledge: dict) -> list[str]:
     army_ids = set((knowledge.get("scope") or {}).get("army_ids") or ())
-    if not army_ids or not hasattr(db, "army_rows"):
+    if not army_ids:
         return []
     index: list[str] = []
     for row in db.army_rows():
@@ -900,12 +896,11 @@ def character_office_archive_text(db: Any, state: Any, character: Any, knowledge
         for key, value in world.items()
         if key in _LEDGER_KEYS and str(value or "").strip()
     ]
-    if hasattr(db, "list_referenceable_dossiers"):
-        brief = render_referenceable_dossier_brief(
-            db.list_referenceable_dossiers(name, state.turn),
-        )
-        if brief:
-            office_lines.append(brief)
+    brief = render_referenceable_dossier_brief(
+        db.list_referenceable_dossiers(name, state.turn),
+    )
+    if brief:
+        office_lines.append(brief)
     return "\n".join(office_lines) or "（无）"
 
 
@@ -916,13 +911,11 @@ def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> 
     office_type = str(
         knowledge.get("office_type") or getattr(character, "office_type", "") or ""
     )
-    rows: list[Any] = []
-    if hasattr(db, "current_court_roster_rows"):
-        rows = project_court_roster_rows(
-            db.current_court_roster_rows(state),
-            knowledge,
-            office_type,
-        )
+    rows = project_court_roster_rows(
+        db.current_court_roster_rows(state),
+        knowledge,
+        office_type,
+    )
     if not rows:
         return "见闻中未载所查人物。"
     return "【在朝人事索引】\n" + "\n".join(
@@ -1008,9 +1001,10 @@ def _experience_text(knowledge: dict, audible_entries: Sequence[dict] = ()) -> s
 
 
 def _person_audience_experience(db: Any, name: str) -> list[dict]:
-    """Surviving audience nights, projected through the existing audibility rule."""
-    if not hasattr(db, "conn"):
-        return []
+    """Surviving audience nights, projected through the existing audibility rule.
+
+    #1853 J8-R：必备 GameDB.conn 直调。
+    """
     from ming_sim.audience_night import person_night_experience
 
     nights = db.conn.execute("SELECT id FROM audience_nights ORDER BY id").fetchall()
@@ -1105,13 +1099,10 @@ def _write_character_public_layer(
 
 
 def _character_material_projection(db: Any, state: Any, character: Any) -> tuple[dict, list]:
-    from ming_sim.knowledge import build_character_knowledge, project_issue_materials
+    from ming_sim.knowledge import project_issue_materials
 
     name = str(getattr(character, "name", "") or "")
-    knowledge = (
-        db.get_character_knowledge(state, name) if hasattr(db, "get_character_knowledge")
-        else build_character_knowledge(db, state, name)
-    )
+    knowledge = db.get_character_knowledge(state, name)
     issues = _visible_affair_lines({"issues": project_issue_materials(db, name, knowledge)})
     return knowledge, issues
 
@@ -1182,9 +1173,8 @@ def _with_archived_gazette_titles(
 ) -> list[dict[str, object]]:
     """标题只取 turn_reports 已入档字段。缺标题留空，不读正文。"""
     archived: dict[int, str] = {}
-    if hasattr(db, "list_turn_reports"):
-        for item in db.list_turn_reports():
-            archived[int(item.get("turn") or 0)] = str(item.get("title") or "")
+    for item in db.list_turn_reports():
+        archived[int(item.get("turn") or 0)] = str(item.get("title") or "")
     stamped: list[dict[str, object]] = []
     for row in rows:
         current = str(row.get("title") or "")
@@ -1239,7 +1229,7 @@ def _write_world_textual_fact_files(
     affair facts already ride 事务/*/当前情况.txt — do not mint a second carrier.
     """
     store = getattr(db, "textual_facts", None)
-    if store is None or not hasattr(db, "conn"):
+    if store is None:
         return []
     rows = db.conn.execute(
         "SELECT DISTINCT subject_kind, subject_id FROM textual_facts "
@@ -1260,12 +1250,12 @@ def _write_world_textual_fact_files(
         if not body:
             continue
         label = subject_id
-        if kind == "region" and hasattr(db, "region_rows"):
+        if kind == "region":
             for region in db.region_rows():
                 if str(region["id"] or "") == subject_id:
                     label = str(region["name"] or subject_id)
                     break
-        elif kind == "army" and hasattr(db, "army_rows"):
+        elif kind == "army":
             for army in db.army_rows():
                 if str(army["id"] or "") == subject_id:
                     label = str(army["name"] or subject_id)
@@ -1410,8 +1400,6 @@ def _world_board_text(
 
 
 def _world_roster_text(db: Any, state: Any) -> str:
-    if not hasattr(db, "current_court_roster_rows"):
-        return "在朝名册：暂无。"
     rows = db.current_court_roster_rows(state)
     if not rows:
         return "在朝名册：暂无。"
@@ -1472,8 +1460,6 @@ def _world_roster_names(db: Any) -> list[str]:
     可读——#1819 Resolution 决定 1「各人物经历……三层全可读」不按当前在朝
     状态收窄）。「盘面」里的在朝名册（_world_roster_text）另有独立投影，与此
     处经历目录的人物枚举各司其职，互不作为对方的过滤条件。"""
-    if not hasattr(db, "conn"):
-        return []
     return [
         str(row["name"] or "").strip()
         for row in db.conn.execute("SELECT name FROM characters ORDER BY name").fetchall()
@@ -1483,8 +1469,6 @@ def _world_roster_names(db: Any) -> list[str]:
 
 def _world_subject_ids(db: Any, table: str) -> list[str]:
     """`armies`/`regions` 全量 id（TEXT 主键），世界目录按对象枚举文字事实用。"""
-    if not hasattr(db, "conn"):
-        return []
     return [
         str(row["id"] or "").strip()
         for row in db.conn.execute(f"SELECT id FROM {table} ORDER BY id").fetchall()
@@ -1663,8 +1647,6 @@ def _write_world_tree(
     include_event: Any = None,
     secret_turn_ids: set[int] | None = None,
 ) -> list[str]:
-    from ming_sim.knowledge import build_character_knowledge
-
     index: list[str] = []
     textual_facts = getattr(db, "textual_facts", None)
 
@@ -1685,10 +1667,7 @@ def _write_world_tree(
     index.append(_COURT_ROSTER_REL)
 
     for name in _world_roster_names(db):
-        knowledge = (
-            db.get_character_knowledge(state, name) if hasattr(db, "get_character_knowledge")
-            else build_character_knowledge(db, state, name)
-        )
+        knowledge = db.get_character_knowledge(state, name)
         person_dir = f"{_PERSON_DIR}/{_safe_segment(name)}"
         rel = f"{person_dir}/经历.txt"
         audience = _omit_secret_order_audience(_person_audience_experience(db, name), secret_turn_ids or set())
@@ -1736,7 +1715,7 @@ def _write_world_tree(
     index.extend(_write_gazette_index(
         tmp,
         _with_archived_gazette_titles(
-            db.list_turn_reports() if hasattr(db, "list_turn_reports") else (), db,
+            db.list_turn_reports(), db,
         ),
         prefix=_WORLD_GAZETTE_DIR,
     ))
@@ -1902,12 +1881,11 @@ def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     for name in names:
         office = ""
-        if hasattr(db, "conn"):
-            row = db.conn.execute(
-                "SELECT office FROM characters WHERE name=?", (name,),
-            ).fetchone()
-            if row is not None:
-                office = str(row["office"] or "")
+        row = db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (name,),
+        ).fetchone()
+        if row is not None:
+            office = str(row["office"] or "")
         rows.append((name, office))
     return rows
 
@@ -1972,18 +1950,17 @@ def _resolve_present_character(
     hit = characters.get(name)
     if hit is not None:
         return hit
-    if hasattr(db, "conn"):
-        row = db.conn.execute(
-            """
-            SELECT name, office, office_type, faction, aliases, personal_skills,
-                   loyalty, ability, integrity, courage, style, identity, intrigue,
-                   summary, power_id
-            FROM characters WHERE name=?
-            """,
-            (name,),
-        ).fetchone()
-        if row is not None:
-            return _character_projection_from_db_row(row)
+    row = db.conn.execute(
+        """
+        SELECT name, office, office_type, faction, aliases, personal_skills,
+               loyalty, ability, integrity, courage, style, identity, intrigue,
+               summary, power_id
+        FROM characters WHERE name=?
+        """,
+        (name,),
+    ).fetchone()
+    if row is not None:
+        return _character_projection_from_db_row(row)
     from ming_sim.models import Character
 
     return Character(
@@ -2007,7 +1984,7 @@ def _scene_spoken_text(db: Any) -> str:
     from ming_sim.audience_night import get_open_night, list_chat_turns_for_night
 
     night = get_open_night(db)
-    if night is None or not hasattr(db, "conn"):
+    if night is None:
         return ""
     lines: list[str] = []
     for turn in list_chat_turns_for_night(db, int(night["id"])):
@@ -2123,15 +2100,14 @@ def _write_one_present_person(
     from ming_sim.context import character_context_with_db
 
     dossier_body = character_context_with_db(character, db, turn=int(state.turn))
-    if hasattr(db, "get_character_status"):
-        status, reason = db.get_character_status(name)
-        status_text = str(status or "").strip()
-        reason_text = str(reason or "")
-        if status_text and status_text != "active":
-            line = f"当前状态：{status_text}"
-            if reason_text.strip():
-                line = f"{line}（{reason_text}）"
-            dossier_body = f"{dossier_body}\n{line}"
+    status, reason = db.get_character_status(name)
+    status_text = str(status or "").strip()
+    reason_text = str(reason or "")
+    if status_text and status_text != "active":
+        line = f"当前状态：{status_text}"
+        if reason_text.strip():
+            line = f"{line}（{reason_text}）"
+        dossier_body = f"{dossier_body}\n{line}"
     dossier_rel = f"{base}/人物档料.txt"
     _write_text(tmp / dossier_rel, dossier_body)
     index.append(dossier_rel)
@@ -2232,7 +2208,6 @@ def prepare_scene_materials(
     开场最小集 = 在场身份职位、日期、各人正经手事务一句、本场已说的话。
     CLI cwd / API list-read 同树。
     """
-    from ming_sim.knowledge import build_character_knowledge
     from ming_sim.audience_night import get_open_night
 
     present_rows = _scene_present_rows(db, state)
@@ -2247,10 +2222,7 @@ def prepare_scene_materials(
     handling_by_person: list[tuple[str, list[tuple[str, str]]]] = []
     for name, office in present_rows:
         character = _resolve_present_character(db, name, office, characters)
-        if hasattr(db, "get_character_knowledge"):
-            knowledge = db.get_character_knowledge(state, name)
-        else:
-            knowledge = build_character_knowledge(db, state, name)
+        knowledge = db.get_character_knowledge(state, name)
         matter_lines = _character_affair_lines(db, state, name, knowledge)
         person_payloads.append((character, knowledge, matter_lines))
         handling_by_person.append(

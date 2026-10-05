@@ -1048,8 +1048,11 @@ def parse_responsible_bodies(raw: object) -> List[str]:
 
 
 def character_person_names(db: Any) -> set[str]:
-    """既有人物档名集合（禁新建机关词表；个人名比对复用此源）。"""
-    if db is None or not hasattr(db, "conn"):
+    """既有人物档名集合（禁新建机关词表；个人名比对复用此源）。
+
+    #1853 J8-R：db 可缺（调用方未供）是业务空集；有 db 则必备 conn 直调。
+    """
+    if db is None:
         return set()
     return {
         str(row["name"]).strip()

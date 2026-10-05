@@ -382,14 +382,14 @@ def _appointment_intent_is_current_office_noop(
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
     归一到在册原始名，再查当前 office。"""
-    conn = getattr(db, "conn", None)
+    # #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
-    if conn is None or not clean_name or not desired:
+    if not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
     try:
-        row = conn.execute(
+        row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name = ?",
             (canonical,),
         ).fetchone()
@@ -410,13 +410,13 @@ def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool
 
     R2「免去暂存任命」形——被任者尚未落库、非 active，无职可罢，撤掉暂存任命即净空；
     而在职改任者（active + 有 office）被再革职时，撤暂存任命后仍须落真罢免（不能吞）。"""
-    conn = getattr(db, "conn", None)
+    # #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
     clean = str(name or "").strip()
-    if conn is None or not clean:
+    if not clean:
         return False
     key = _canonical_minister_key(content, clean, db)
     try:
-        row = conn.execute(
+        row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name = ?", (key,)
         ).fetchone()
     except sqlite3.Error:
