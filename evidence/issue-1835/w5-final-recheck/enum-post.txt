@@ -74,7 +74,7 @@
     TRY try: secret_order_id = int(supplied[len(SECRET_ORDER_ORIGIN_PREFIX):]) except (TypeError, ValueError): raise DeclarationDataError('commitment origin_ref 密令 id 非法')
     HDL except (TypeError, ValueError): raise DeclarationDataError('commitment origin_ref 密令 id 非法')
   WASH ming_sim/db.py:7002 GameDB.apply_power_deltas types=['TypeError', 'ValueError'] hint=wash_decl_field_only
-    TRY try: if isinstance(value, bool) or isinstance(value, float): raise ValueError('非整数 delta') delta = int(value) except (TypeError, ValueError): rejections.append(RejectedItem(item={'power_id': power_id, 'field': str(raw_field), 'value': value}, reason=f"power_updates '{raw_field}' 
+    TRY try: if isinstance(value, bool) or isinstance(value, float): raise ValueError('非整数 delta') delta = int(value) except (TypeError, ValueError): rejections.append(RejectedItem(item={'power_id': power_id, 'field': str(raw_field), 'value': value}, reason=f"power_updates '{raw_field}'
     HDL except (TypeError, ValueError): rejections.append(RejectedItem(item={'power_id': power_id, 'field': str(raw_field), 'value': value}, reason=f"power_updates '{raw_field}' 值非整数：{value!r}", category='inv
   WASH ming_sim/db.py:8294 GameDB.create_armies_from_extraction types=['TypeError', 'ValueError'] hint=wash_decl_field_only
     TRY try: if isinstance(manpower, (bool, float)): raise ValueError('非整数') delta = int(manpower) except (TypeError, ValueError): rejections.append(RejectedItem(item=raw, reason=f"new_armies '{aid}' manpower 非整数：{manpower!r}", category='invalid_enum', source=source)) continue
@@ -96,7 +96,7 @@
     HDL except Exception as exc: self.conn.execute(f'ROLLBACK TO {savepoint}') restore_office_memory() from ming_sim.applier import RejectionCollectorRequired if not isinstance(exc, (DeclarationDataError, Dec
   WASH ming_sim/db.py:17946 GameDB._commit_conversational_draft types=['Exception'] hint=wash_persist_or_impl
     TRY try: payload_for_apply = dict(payload) payload_for_apply['_directive_status'] = directive_status ok = self._apply_pending_action(state, pa, payload_for_apply, content=content, rejection_collector=rejection_collector) if ok: self.conn.execute("UPDATE pending_actions SET status='co
-    HDL except Exception as exc: self.conn.execute(f'ROLLBACK TO {savepoint}') from ming_sim.applier import RejectionCollectorRequired if not isinstance(exc, (DeclarationDataError, DeclarationReferenceError, 
+    HDL except Exception as exc: self.conn.execute(f'ROLLBACK TO {savepoint}') from ming_sim.applier import RejectionCollectorRequired if not isinstance(exc, (DeclarationDataError, DeclarationReferenceError,
   WASH ming_sim/db.py:7318 GameDB.apply_region_deltas types=['TypeError', 'ValueError'] hint=wash_decl_field_only
     TRY try: if isinstance(value, bool) or isinstance(value, float): raise ValueError('非整数 delta') cannon_delta = int(value) except (TypeError, ValueError): rejections.append(RejectedItem(item={'region_id': region_id, 'field': field, 'value': value}, reason=f"region_delta 'cannon'（地区 '{r
     HDL except (TypeError, ValueError): rejections.append(RejectedItem(item={'region_id': region_id, 'field': field, 'value': value}, reason=f"region_delta 'cannon'（地区 '{region_id}'）值非整数：{value!r}", category=
@@ -247,7 +247,7 @@
   DECL ming_sim/entities/character/apply.py:404 apply_person_changes types=['ValueError'] hint=broad_on_decl_field
     TRY try: appointment_tenure = appointment_tenure_from(item) except ValueError: rejections.append(rejected(item, '任别非白名单', 'invalid_enum')) continue
   DECL ming_sim/entities/dossier/delta_section.py:81 apply_executions types=['TypeError', 'ValueError', 'KeyError'] hint=broad_on_decl_field
-    TRY try: dossier_id = _parse_sqlite_id(item.get('dossier_id')) outcome = str(item.get('outcome') or '').strip() if outcome not in {'fulfilled', 'degraded', 'failed', 'transformed'}: raise ValueError('执行结果必须为 fulfilled/degraded/failed/transformed') note = item.get('note') note = note 
+    TRY try: dossier_id = _parse_sqlite_id(item.get('dossier_id')) outcome = str(item.get('outcome') or '').strip() if outcome not in {'fulfilled', 'degraded', 'failed', 'transformed'}: raise ValueError('执行结果必须为 fulfilled/degraded/failed/transformed') note = item.get('note') note = note
   DECL ming_sim/entities/economy/apply.py:56 _apply_economy_list types=['TypeError', 'ValueError'] hint=broad_other
     TRY try: delta = 0 if raw_delta in (None, '') else _strict_int(raw_delta) bad_delta = False except (TypeError, ValueError): delta, bad_delta = (0, True)
   DECL ming_sim/entities/fiscal/delta_section.py:43 _commitment_carrier_same_account_unmatched types=['TypeError', 'ValueError'] hint=broad_on_decl_field
