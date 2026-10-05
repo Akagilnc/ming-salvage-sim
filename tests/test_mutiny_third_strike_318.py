@@ -9,28 +9,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from ming_sim.db import GameDB
-from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 
 ARMY = "guanning"
 BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
-
-
-def _simulator_army_dicts(payload_armies):
-    """Normalize simulator armies payload (dict-rows or col/row matrix) to dict list."""
-    if isinstance(payload_armies, dict) and "rows" in payload_armies:
-        cols = payload_armies.get("cols") or payload_armies.get("columns") or []
-        return [dict(zip(cols, row)) for row in payload_armies["rows"]]
-    return list(payload_armies)
-
-
-def _find_simulator_army(rows, army_id: str = ARMY):
-    return next(
-        r
-        for r in rows
-        if "关宁" in str(r.get("name", "")) or str(r.get("id", "")) == army_id
-    )
 
 
 def _configure(db) -> None:
@@ -421,8 +403,6 @@ def test_transfer_to_ming_requires_d6_pay_source(game, cutover):
     assert row["pay_source_region"] == "liaodong"
     assert float(row["province_pay_share"] or 0) == pytest.approx(0.0)
     assert float(row["central_pay_share"] or 0) == pytest.approx(1.0)
-
-
 
 
 @pytest.mark.parametrize(

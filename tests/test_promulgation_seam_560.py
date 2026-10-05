@@ -25,5 +25,3 @@ def test_injected_promulgation_batch_cannot_silently_omit_a_dossier(read_game):
         validate_promulgation_verdicts(
             [{"dossier_id": 7, "decision": "promulgated"}], dossiers, db,
         )
-
-

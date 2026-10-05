@@ -304,5 +304,3 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 
 
 # ── #1716：已开夜场外 COURT_BREAK 不得被 SUMMON_* 短路 ──────────────────
-
-

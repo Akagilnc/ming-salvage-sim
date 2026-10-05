@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 
-
 from ming_sim.faction_brew import (
     build_faction_brew_input,
     collect_new_edge_events_for_faction,
@@ -32,15 +31,6 @@ def _add_edge(db, state, *, source, target, kind, context, origin):
         origin=origin, turn=int(state.turn),
         year=int(state.year), period=int(state.period),
     )
-
-
-def _faction_rows(db):
-    return {
-        row["name"]: dict(row)
-        for row in db.conn.execute(
-            "SELECT * FROM factions"
-        ).fetchall()
-    }
 
 
 # ------------------------------------------------- F1 canonical 党籍投影
@@ -86,26 +76,6 @@ def _minister(db):
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
         "ORDER BY name LIMIT 1"
     ).fetchone()["name"])
-
-
-def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):
-    """真实 effect-eligible 案卷（同 #611 测试口径）作授权变更来源。"""
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="authorization",
-        decree_text="授以便宜行事之权",
-        target_kind=target_kind,
-        target_id=target_id,
-        executor_kind="character",
-        executor_id=holder,
-        participants=[
-            {"character_id": holder, "tier": "主办", "role": "承办"},
-        ],
-        payload={"mode": "ordinary"},
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    assert db.dossier_authorizes_effects(dossier_id)
-    return db.get_decree_dossier(dossier_id)
 
 
 def test_new_events_preserve_source_target_equal_to_db_rows(game):

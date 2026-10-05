@@ -16,14 +16,10 @@ import json
 
 from ming_sim.issues import apply_score_extraction
 from ming_sim.relations import (
-    MINISTER_EDGE_KINDS,
     resolve_relation_edge_events_from_extraction,
     settlement_edge_origin,
 )
 import pytest
-from ming_sim.simulation import (
-    EMPTY_EXTRACTION,
-)
 
 
 def _edge_rows(db, **kw):
@@ -35,8 +31,6 @@ def _triplets(rows):
 
 
 # ── 路由归属：受控 section 归 relations 独占槽 ────────────────────────
-
-
 
 
 # ── TD-1 结算侧：当场落库、origin 回指本回合、方向三元组 ─────────────
@@ -428,8 +422,6 @@ def test_missing_frozen_dossier_set_is_empty_closed_set(game):
     assert len(_edge_rows(db, source="温体仁", target="周延儒")) == 1
 
 
-
-
 # ── F1：context 存储零删改，全链字节相等 ────────────────────────────
 
 
@@ -491,12 +483,6 @@ _CANNED = {
     "personnel_secret": '{"人物变更": [], "secret_order_updates": [], "emperor_fate": null}',
     "relations": '{"大臣互动": [{"施动者": "温体仁", "受动者": ["钱龙锡"], "类目": "联名", "语境": "联名上疏。"}]}',
 }
-
-
-def _module_of(tag: str) -> str:
-    return tag.split("/", 1)[1]
-
-
 
 
 # ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──

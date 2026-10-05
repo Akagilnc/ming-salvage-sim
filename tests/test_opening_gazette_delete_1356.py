@@ -10,18 +10,6 @@ from __future__ import annotations
 
 import pytest
 
-from ming_sim.session import GameSession
-
-
-def _session(db, state, content) -> GameSession:
-    session = GameSession.__new__(GameSession)
-    session.db, session.state, session.content = db, state, content
-    session.registry = session.llm_config = session.agno_db = None
-    session.deaths_this_turn, session.debuts_this_turn = [], []
-    session.last_decree = session.last_report = ""
-    session._decree_draft_fingerprint = ()
-    session.auto_save = lambda *a, **k: None
-    return session
 
 
 def test_new_game_t0_previous_summary_strictly_empty(game):

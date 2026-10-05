@@ -11,21 +11,14 @@ from __future__ import annotations
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
 import asyncio
-import json
 import threading
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-import pytest
 
 import web_app
 from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
-
-
-@contextmanager
-def _null_cm(*_a, **_k):
-    yield None
 
 
 def _click_before(state) -> dict[str, int]:

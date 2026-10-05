@@ -1,8 +1,5 @@
 """#612 endorsement contracts — one real entry tracer per independent external seam."""
 
-import json
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -40,18 +37,6 @@ def _night_reply(db, state, minister, reply="臣愿会签此旨。"):
     db.persist_minister_reply(minister, state.turn, reply, chat_turn_id)
     row = db.conn.execute("SELECT night_seq FROM chat_turns WHERE id=?", (chat_turn_id,)).fetchone()
     return night_id, chat_turn_id, int(row["night_seq"] or 0)
-
-
-
-
-class _Agent:
-    def __init__(self, payload):
-        self.payload = payload
-        self.calls = []
-
-    def run(self, materials):
-        self.calls.append(materials if isinstance(materials, str) else str(materials))
-        return json.dumps(self.payload, ensure_ascii=False)
 
 
 def test_endorsement_forms_persist_restore_and_judge_without_roster_join(game):

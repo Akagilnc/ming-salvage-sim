@@ -1,12 +1,4 @@
-import json
-
-import pytest
-
-from tests.section_rejection_helpers import game
-
-def _reports(db):
-    return [dict(r) for r in db.conn.execute("SELECT turn, section, item_json, reason, category, source, attempt FROM rejection_reports ORDER BY id")]
-
+from tests.section_rejection_helpers import game  # noqa: F401  # pytest fixture discovery
 
 
 
@@ -26,10 +18,6 @@ def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(ga
     row = db.conn.execute("SELECT item_json FROM rejection_reports").fetchone()
     assert "中文" in row["item_json"]
     assert "\\ud800" in row["item_json"]
-
-
-
-
 
 
 def test_sqlite_text_sanitization_covers_issue_rows_and_advances(game):

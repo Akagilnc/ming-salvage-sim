@@ -26,9 +26,6 @@ FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
 
 
-
-
-
 def _pop(db: GameDB, name: str, region_id: str) -> int:
     row = db.conn.execute(
         "SELECT population FROM classes WHERE name=? AND region_id=?",
@@ -58,15 +55,6 @@ def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi
     return dossier_id
 
 
-
-
-def _reflux(transfers, *, dossier_id=None):
-    out = [t for t in transfers if t.get("reason") == "回流"]
-    if dossier_id is not None:
-        out = [t for t in out if t.get("origin_ref") == f"dossier:{dossier_id}"]
-    return out
-
-
 def _reset_shaanxi_pool(db):
     db.conn.execute(
         "UPDATE classes SET population=? WHERE name='流民' AND region_id='shaanxi'",
@@ -80,7 +68,6 @@ def _reset_shaanxi_pool(db):
 
 
 # ── 刀① 池清单 + 投贼吸收 ───────────────────────────────────────────────────
-
 
 
 def _database_path(db: GameDB) -> str:
@@ -152,8 +139,6 @@ def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
     assert db.conn.execute(
         "SELECT fiscal FROM regions WHERE id='shaanxi'"
     ).fetchone()[0] == before_fiscal
-
-
 
 
 def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
@@ -614,8 +599,6 @@ def test_month_settle_with_disaster_and_executing_relief(game, monkeypatch):
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
 
 
-
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_legacy_population_unit_skips_absorption_and_recovery(game, monkeypatch):
     db, state, content = game
@@ -635,5 +618,3 @@ def test_legacy_population_unit_skips_absorption_and_recovery(game, monkeypatch)
     before = _pop(db, "流民", "shaanxi")
     _advance_canned_month(db, state, content, monkeypatch)
     assert _pop(db, "流民", "shaanxi") == before
-
-

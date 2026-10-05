@@ -21,17 +21,6 @@ from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
 
 # ── #1301 玩家面 409 去裸 night_id ──────────────────────────────────────────
 
-class _ClosingNightDB:
-    def __init__(self, night_id: int = 7):
-        self._night = {
-            "id": night_id,
-            "status": an.NIGHT_STATUS_CLOSING,
-            "close_commit_cursor": 0,
-        }
-
-    def conn_execute(self, *_a, **_k):
-        raise AssertionError("assert_night_accepts_player_input must not hit SQL here")
-
 
 def test_closing_player_message_is_diegetic_without_bare_night_id(monkeypatch):
     """#1301：玩家面文案不得拼接裸 night_id；结构化 detail 仍带 night_id。"""
