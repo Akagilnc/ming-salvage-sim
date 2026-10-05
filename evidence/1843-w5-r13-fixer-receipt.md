@@ -2,6 +2,7 @@
 
 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5`
 分支：`ak-roles/issue-1843-w5-r13-f2-compat`
+commitSha：`b7f2e5ec1eb323e38bed0be3efaa90db7a736b50`
 冻结判词：`05-1843-judge-7402d3b80.json` 末份（F2-R13-1 / F2-R13-2）
 派单：`fix-packet.md`
 基线：`7402d3b80`；本轮在既有 r13 提交之上再修验收点。
