@@ -21,13 +21,13 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from collections.abc import Callable
 
 import httpx
 import pytest
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.audience_translate import _default_translate_runner as _real_audience_translate_runner
 from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.wait_utils import _await_condition_or_task
 
 _POLICY_FIELDS = {
     "dossier_action_type": "policy",
@@ -399,25 +399,6 @@ def _parse_sse(text: str) -> list[dict]:
         if cur:
             events.append(cur)
     return events
-
-
-async def _await_condition_or_task(
-    predicate: Callable[[], bool], task: asyncio.Task,
-) -> None:
-    """成功谓词或 worker 终态均可唤醒；worker 异常原样传播，不把失败藏成挂起。
-
-    谓词与 task 同时终态时仍消费 task 异常——不得因谓词先真而吞掉 worker 失败。
-    """
-    while not predicate() and not task.done():
-        await asyncio.sleep(0)
-    if task.done():
-        exc = task.exception()
-        if exc is not None:
-            raise exc
-        if not predicate():
-            raise AssertionError("worker finished without expected condition")
-        return
-    # 谓词已真且 task 仍在跑（如 started 后 hang on allow）——成功会合。
 
 
 async def _drain_tasks(*tasks: asyncio.Task) -> None:

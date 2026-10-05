@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import web_app
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
+from tests.wait_utils import _await_condition_or_task
 from ming_sim.session_write_queue import SessionWriteQueue
 
 
@@ -295,13 +296,7 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
 
         async def tick():
             # entered 或 stream 终态；请求先失败须传播，禁无限等 thread Event（无 deadline）。
-            while not entered.is_set() and not stream_task.done():
-                await asyncio.sleep(0)
-            if stream_task.done() and not entered.is_set():
-                exc = stream_task.exception()
-                if exc is not None:
-                    raise exc
-                raise AssertionError("stream finished without entering sync generator")
+            await _await_condition_or_task(entered.is_set, stream_task)
             events.append("tick")
             release.set()
 
