@@ -8,10 +8,19 @@ import math
 import pytest
 
 from ming_sim.army_pay import army_needed
+from ming_sim.constants import SALARY_RATE_ANCHOR
 
 
 def _army_row(db, army_id):
     return db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
+
+
+def _pay_source():
+    return {
+        "pay_source_region": "shaanxi",
+        "province_pay_share": 1.0,
+        "central_pay_share": 0.0,
+    }
 
 
 @pytest.mark.parametrize("army_id,expected", [
@@ -85,6 +94,45 @@ def test_defected_army_to_ming_owes_salary_not_free(read_game):
         f"倒戈成 ming 的大军(rate<=0)须按锚点 1.5 欠饷、非零饷白嫖（army_needed={needed}）"
     )
     assert needed > 0
+
+
+def test_create_army_illegal_salary_rate_anchors_to_1_5(game):
+    """#44/#1902：真实建军入口 create_armies_from_extraction → _coerce_new_salary_rate。
+    0/负/非有限/非数/bool/None 不得成零饷白嫖军，落库 salary_rate 一律锚点 1.5。
+    覆盖原 test_coerce_new_salary_rate_blocks_freeload + test_non_finite_salary_rate_anchored_not_crash。"""
+    db, state, _ = game
+    cases = [
+        ("sr_zero", 0),
+        ("sr_neg", -1),
+        ("sr_nan", float("nan")),
+        ("sr_ninf", float("-inf")),
+        ("sr_inf", float("inf")),
+        ("sr_junk", "脏"),
+        ("sr_bool", True),
+        ("sr_none", None),
+    ]
+    items = [
+        {
+            "id": aid,
+            "name": f"饷率闸{aid}",
+            "owner_power": "ming",
+            "manpower": 5000,
+            "salary_rate": rate,
+            **_pay_source(),
+        }
+        for aid, rate in cases
+    ]
+    created = db.create_armies_from_extraction(state, items, actor="测试")
+    assert len(created) == len(cases)
+    assert all(not c.get("rejected") for c in created), created
+    for aid, _rate in cases:
+        row = db.conn.execute(
+            "SELECT salary_rate FROM armies WHERE id=?", (aid,)
+        ).fetchone()
+        assert row is not None, aid
+        assert row["salary_rate"] == pytest.approx(SALARY_RATE_ANCHOR), (
+            f"{aid} 非法 salary_rate 须落锚点 {SALARY_RATE_ANCHOR}，得 {row['salary_rate']}"
+        )
 
 
 def _insert_dynamic_ming_army(db, aid, name, manpower):

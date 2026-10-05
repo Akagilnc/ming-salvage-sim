@@ -1,0 +1,12 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   AssertionError: sr_neg 非法 salary_rate 须落锚点 1.5，得 -1.0
+    assert -1.0 == 1.5 ± 1.5e-06
+      
+      comparison failed
+      Obtained: -1.0
+      Expected: 1.5 ± 1.5e-06
+/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/tests/test_army_salary_44.py:133: AssertionError: sr_neg 非法 salary_rate 须落锚点 1.5，得 -1.0
+=========================== short test summary info ============================
+FAILED tests/test_army_salary_44.py::test_create_army_illegal_salary_rate_anchors_to_1_5
+1 failed in 0.64s
