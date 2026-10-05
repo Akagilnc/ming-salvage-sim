@@ -7,7 +7,7 @@
 
 ## 分支 / 提交
 - 工作分支：`ak-roles/1900-j6-j19-fixer-c7d876145`
-- commitSha：见本提交 `git rev-parse HEAD`（证据正文在 `2c43387240b916355f284cd34e6c2fa1f215749d`）
+- commitSha：`2c43387240b916355f284cd34e6c2fa1f215749d`（J6 正文）；docs 填充链至 HEAD
 
 ## J6 纠正（本轮）
 ### 1. 变异证明（弃用旧整入口替换）
