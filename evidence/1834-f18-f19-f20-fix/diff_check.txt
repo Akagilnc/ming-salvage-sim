@@ -1,2 +1,2 @@
-### Post-repair expected: git diff --check ecdbc39ab HEAD (after this commit)
-(will fill after commit)
+### git diff --check ecdbc39ab HEAD
+EXIT:0

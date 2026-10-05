@@ -1,5 +1,5 @@
  .../1834-f16-f3-f3r-f17-fix/F17_F3R_REVOCATION.txt |   12 +-
- evidence/1834-f18-f19-f20-fix/diff_check.txt       |   16 +
+ evidence/1834-f18-f19-f20-fix/diff_check.txt       |    2 +
  evidence/1834-f18-f19-f20-fix/diff_stat.txt        |   26 +
  evidence/1834-f18-f19-f20-fix/enum_f18_after.txt   |  547 +++
  evidence/1834-f18-f19-f20-fix/enum_f18_before.txt  |   35 +
@@ -23,4 +23,4 @@
  ming_sim/session.py                                |   50 +-
  tests/test_audience_translate_1837.py              |   18 -
  tests/test_cli_backend.py                          |  140 -
- 25 files changed, 17298 insertions(+), 932 deletions(-)
+ 25 files changed, 17284 insertions(+), 932 deletions(-)
