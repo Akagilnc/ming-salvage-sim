@@ -653,7 +653,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "12-13"
+    "lines": "11-12"
   },
   {
     "file": "tests/test_person_archive_schema.py",
@@ -661,7 +661,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "16-40"
+    "lines": "15-39"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
