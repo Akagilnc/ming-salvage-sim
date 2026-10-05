@@ -16,7 +16,7 @@ import os
 
 import pytest
 
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN
+from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.issues import apply_score_extraction
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
@@ -43,28 +43,6 @@ def _transfer(**kw):
     base.update(kw)
     return base
 
-
-# ── legacy 档夹具：万口径、无单位标，但保留流民行（÷10⁴）供转移账落账 ────────
-
-def _make_legacy_db(content, path: str) -> GameDB:
-    db = GameDB(path, content)
-    db.seed_static_data()
-    db.conn.execute("UPDATE classes SET population = population / 10000")
-    db.conn.execute("UPDATE regions SET population = population / 10000")
-    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
-    db.conn.commit()
-    return db
-
-
-@pytest.fixture
-def legacy_game(content, tmp_path):
-    path = str(tmp_path / "legacy649.db")
-    db = _make_legacy_db(content, path)
-    state = db.load_state()
-    yield db, state, content, path
-
-
-# ── 守恒双写正例 ─────────────────────────────────────────────────────────────
 
 def test_transfer_two_legs_same_transaction_conservation(game):
     """单条记录 → 源减目标增两侧守恒；sub-万（新档人口径）精确 ±3000。"""
@@ -298,36 +276,7 @@ def test_unknown_top_level_key_now_per_section_rejection_not_abort(game):
     assert applied["metric_delta"].get("民心") == 1  # 其余 section 照落，不整份退
 
 
-# ── 双单位（F3）：新档 sub-万精确；legacy 万口径、sub-万不可表达 ──────────────
-
-def test_legacy_wan_unit_transfer_caps_to_stock_without_unit_conversion(legacy_game):
-    """legacy 档 amount 按「万」读写：±3（万）精确落账；超源请求按万口径封顶。"""
-    db, state, content, _path = legacy_game
-    assert db.population_unit == POPULATION_UNIT_WAN
-    applied = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=3, reason="灾害"),
-        ],
-    }, content, None)
-    assert not applied["population_transfers_rejections"]
-    rec = applied["population_transfers"][0]
-    assert rec["population_unit"] == POPULATION_UNIT_WAN
-    assert _pop(db, "农民", "shaanxi") == LEGACY_FARMER_SHAANXI - 3
-    assert _pop(db, "流民", "shaanxi") == LEGACY_DISPLACED_SHAANXI + 3
-
-    source_before = _pop(db, "农民", "shaanxi")
-    displaced_before = _pop(db, "流民", "shaanxi")
-    applied2 = apply_score_extraction(db, state, {
-        "population_transfers": [
-            _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=3000, reason="灾害"),
-        ],
-    }, content, None)
-    assert not applied2["population_transfers_rejections"]
-    capped = applied2["population_transfers"][0]
-    assert capped["amount"] == source_before
-    assert capped["population_unit"] == POPULATION_UNIT_WAN
-    assert _pop(db, "农民", "shaanxi") == 0
-    assert _pop(db, "流民", "shaanxi") == displaced_before + source_before
+# ── 单位口径：新档为人 ──────────────────────────────────────────────────────
 
 
 def test_new_save_unit_is_persons(game):

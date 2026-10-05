@@ -305,10 +305,7 @@ def _resolve_arm_verdicts(
         return _judgments_at_turn(db, resolve_turn, ids)
     verdicts = []
     for dossier_id in sorted(ids.values()):
-        history = [
-            row for row in db.list_decree_dossier_decisions(dossier_id)
-            if int(row["turn"]) == resolve_turn and not row.get("rescript_action")
-        ]
+        history = _judgments_at_turn(db, resolve_turn, [dossier_id])
         verdicts.append(_select_second_verdict(False, dossier_id, [], history))
     return verdicts
 
@@ -455,10 +452,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
             state, db, agno, cfg, [], "留中案下月重判", content=content,
         )
         second_pending = _judgments_at_turn(db, second_turn, ids)
-        second_history = [
-            row for row in db.list_decree_dossier_decisions(ids["hostile"])
-            if int(row["turn"]) == second_turn and not row.get("rescript_action")
-        ]
+        second_history = _judgments_at_turn(db, second_turn, [ids["hostile"]])
         second_verdict = _select_second_verdict(
             second_result.awaiting, ids["hostile"], second_pending, second_history,
         )

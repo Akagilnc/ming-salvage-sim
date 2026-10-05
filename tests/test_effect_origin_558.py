@@ -159,38 +159,6 @@ def test_fiscal_remove_keeps_durable_origin_tombstone(game):
     ]
 
 
-def test_legacy_economy_ledger_origin_backfill_uses_real_dossier_only(game, tmp_path):
-    db, state, content = game
-    valid_id = _promulgated_policy(db, state)
-    legacy_path = tmp_path / "legacy-origin.db"
-    db.conn.commit()
-    shutil.copy2(db.path, legacy_path)
-    conn = sqlite3.connect(legacy_path)
-    conn.execute("ALTER TABLE economy_ledger DROP COLUMN origin_ref")
-    conn.execute(
-        "INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,dossier_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (state.turn, state.year, state.period, "国库", -1, 0, "旧账", "有效案卷", valid_id),
-    )
-    conn.execute(
-        "INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,dossier_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (state.turn, state.year, state.period, "国库", -1, 0, "旧账", "悬空案卷", valid_id + 9999),
-    )
-    conn.commit()
-    conn.close()
-
-    migrated = GameDB(str(legacy_path), content)
-    try:
-        rows = migrated.conn.execute(
-            "SELECT reason, origin_ref FROM economy_ledger WHERE reason IN ('有效案卷','悬空案卷') ORDER BY reason"
-        ).fetchall()
-        assert {r["reason"]: r["origin_ref"] for r in rows} == {
-            "有效案卷": f"dossier:{valid_id}", "悬空案卷": "",
-        }
-    finally:
-        migrated.close()
-
 
 def test_fabricated_origin_is_rejected_even_without_a_dossier(game):
     db, state, content = game

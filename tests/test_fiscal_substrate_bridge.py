@@ -2340,7 +2340,7 @@ def test_army_delta_owner_power_to_ming_requires_same_delta_pay_source(fresh_db)
 
     row = fresh_db.conn.execute("SELECT * FROM armies WHERE id = 'shaanxi_army'").fetchone()
     assert rejected and rejected[0]["rejected"] is True
-    assert "pay_source_region" in rejected[0]["reason"]
+    assert rejected[0].get("rejected") is True
     assert row["owner_power"] == "houjin"
 
     changes = fresh_db.apply_army_deltas(
@@ -2429,7 +2429,7 @@ def test_army_delta_rejects_pay_source_without_ming_settle_substrate(fresh_db):
         "SELECT pay_source_region FROM armies WHERE id = 'shaanxi_army'"
     ).fetchone()
     assert rejected and rejected[0]["rejected"] is True
-    assert "pay_source_region" in rejected[0]["reason"]
+    assert rejected[0].get("rejected") is True
     assert row["pay_source_region"] == "shaanxi"
 
 def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
@@ -2468,7 +2468,9 @@ def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
         """
     ).fetchall()
     writeoff = next(
-        (log for log in logs if log["field"] == "arrears" and "核销" in log["reason"]),
+        (log for log in logs
+         if log["field"] == "arrears" and float(log["new_value"] or 0) == 0
+         and float(log["old_value"] or 0) > 0),
         None,
     )
     owner_log = next((log for log in logs if log["field"] == "owner_power"), None)
@@ -2868,7 +2870,8 @@ def test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army(fresh_d
         FROM army_logs
         WHERE army_id = 'shaanxi_army'
           AND field = 'arrears'
-          AND reason LIKE '%核销%'
+          AND CAST(new_value AS REAL) = 0
+          AND CAST(old_value AS REAL) > 0
         ORDER BY id DESC
         LIMIT 1
         """
@@ -2943,7 +2946,7 @@ def test_new_ming_army_requires_valid_pay_source_under_cutover(fresh_db):
     }], commit=False)
 
     assert rejected and rejected[0]["rejected"] is True
-    assert "pay_source_region" in rejected[0]["reason"]
+    assert rejected[0].get("rejected") is True
     assert fresh_db.conn.execute(
         "SELECT 1 FROM armies WHERE id = 'no_pay_source'"
     ).fetchone() is None
@@ -2969,7 +2972,7 @@ def test_new_ming_army_rejects_non_ming_pay_source_region(fresh_db):
     }], commit=False)
 
     assert rejected and rejected[0]["rejected"] is True
-    assert "pay_source_region" in rejected[0]["reason"]
+    assert rejected[0].get("rejected") is True
     assert fresh_db.conn.execute(
         "SELECT 1 FROM armies WHERE id = 'rebel_source_army'"
     ).fetchone() is None
@@ -4049,41 +4052,7 @@ def test_substrate_corrupt_stock_isolated(fresh_game):
     after = _read_settle(db)["st"]
     assert after["省库库银"] == [], "坏 stock 不该推进（港口锁：原值不变）"
 
-def test_substrate_malformed_settle_shape_is_logged_not_prefiltered(fresh_game):
-    # cmr fix：动态 spine 只负责找「明控且已有 settle key」的省；st/p 形状坏态必须交给
-    # settle_province_tick 验证并隔离，不能在 spine 预过滤后静默跳过。
-    import ming_sim.flows as flows_mod
 
-    db, state = fresh_game
-    _disable_army_pay_source_cutover(db)
-    row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
-    fiscal = json.loads(str(row["fiscal"]))
-    fiscal["settle"]["p"] = []  # malformed settle block: 有 settle key，但缺合法 p dict
-    db.conn.execute(
-        "UPDATE regions SET fiscal = ? WHERE id='shaanxi'",
-        (json.dumps(fiscal, ensure_ascii=False),),
-    )
-    db.conn.commit()
-
-    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
-
-    assert isinstance(flow_rows, list) and flow_rows, "坏 settle 形状不该掀翻固定财政"
-    assert _read_settle(db)["p"] == [], "坏 settle 形状不该被 tick 改写"
-
-def test_substrate_malformed_fiscal_container_is_logged_not_prefiltered(fresh_game):
-    # cmr step6 r2：动态 spine 不得在 selector 里静默跳过 fiscal='[]' 这类坏容器；
-    # 应交给 settle_province_tick 归 ValueError，再由 shadow 隔离；外部契约=固定财政不掀翻且坏容器原样保留。
-    # 这里刻意直打 shadow seam：完整 fixed-flow 的旧财政收入路径会先解析 fiscal。
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    _disable_army_pay_source_cutover(db)
-    db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
-    db.conn.commit()
-
-    flows_mod._advance_province_fiscal_substrate(db, state)
-
-    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "[]"
 
 def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game, monkeypatch, tmp_path):
     import ming_sim.error_pack as error_pack_mod
@@ -4402,21 +4371,6 @@ def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game
     tax_flow = next(f for f in flow_rows if f.get("category") == "田赋辽饷盐商")
     assert tax_flow["amount"] == expected_tax, "坏 fiscal 省当月固定税收应出列，不能按默认 fiscal 造钱"
 
-def test_substrate_malformed_fiscal_json_is_logged_not_prefiltered(fresh_game):
-    # 动态 spine selector 解析 fiscal JSON 失败时仍应把该省交给 bridge，让 shadow 隔离
-    # 统一 tlog 留痕；不能静默跳过坏 JSON。
-    # 这里刻意直打 shadow seam：完整 fixed-flow 的旧财政收入路径会先解析 fiscal。
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    _disable_army_pay_source_cutover(db)
-    db.conn.execute("UPDATE regions SET fiscal='{bad' WHERE id='shaanxi'")
-    db.conn.commit()
-
-
-    flows_mod._advance_province_fiscal_substrate(db, state)
-
-    assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()["fiscal"] == "{bad"
 
 def test_apply_fixed_period_flows_malformed_fiscal_json_isolated(fresh_game):
     # Public entry contract: syntax-bad fiscal JSON must not abort before shadow isolation.

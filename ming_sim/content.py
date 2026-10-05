@@ -115,9 +115,18 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             seed_guilt = {}
         if name in characters:
             raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
+        status = str(item.get("status") or "active")
+        # ADR 0009：离事者可不持现职名分（office 可空）；在事者 office 仍必非空。
+        _ousted = {
+            "offstage", "dismissed", "imprisoned", "exiled", "retired", "dead",
+        }
+        if status in _ousted:
+            office = str(item.get("office") or "").strip()
+        else:
+            office = str_field(item, "office", f"characters.json.characters[{idx}]")
         characters[name] = Character(
             name=name,
-            office=str_field(item, "office", f"characters.json.characters[{idx}]"),
+            office=office,
             office_type=str_field(item, "office_type", f"characters.json.characters[{idx}]"),
             faction=str_field(item, "faction", f"characters.json.characters[{idx}]"),
             aliases=string_list(item.get("aliases", []), f"characters.json.characters[{idx}].aliases"),
@@ -136,7 +145,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             historical_death_month=int(item.get("historical_death_month") or 0),
             debut_year=int(item.get("debut_year") or 0),
             debut_month=int(item.get("debut_month") or 0),
-            status=str(item.get("status") or "active"),
+            status=status,
             status_reason=str(item.get("status_reason") or "").strip(),
             reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),

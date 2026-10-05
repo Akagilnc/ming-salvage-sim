@@ -105,16 +105,10 @@ def test_zhang_fengyi_office_strips_future_title():
 
 
 def test_qian_qianyi_seed_office_records_bajiu_dismissal():
-    """#1308：钱谦益 seed 须保留史实职名；罢居事由走 status/status_reason（office 不再夹污染串）。
-
-仓内 raw/minister/portrait：前礼部右侍郎，罢居常熟（天启科场案削籍在野）。
-旧档 office 污染迁移已退役——新档 office=纯职名，dismissed + status_reason 承载罢居。
-"""
+    """#1308 / ADR 0009：钱谦益离事不持现职名分；罢居事由走 status_reason。"""
     _, characters = load_character_content()
     ch = characters["钱谦益"]
-    office = ch.office or ""
-    assert office == "礼部右侍郎", office
-    assert "罢居" not in office
+    assert (ch.office or "") == ""
     assert ch.status == "dismissed"
-    assert "罢居" in (ch.status_reason or "")
+    assert (ch.status_reason or "").strip()
     assert "常熟" in (ch.status_reason or "")
