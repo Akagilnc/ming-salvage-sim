@@ -6,7 +6,7 @@
 - 施工前 tip：`cb2dec1cc62c7e6a49d24274f2f5a14a40ec8ca1`
 - 判词来源：本 pi 会话用户续修令（仅 J1 无调用退休附属物）；原 fix-packet=`~/.ak-roles/books/Ming_LLM/1897/runs/01a1099e-2506-7580-a2b3-0f15a8209f3b@fixer/fix-packet.md`；末份封存判词仍为 `…/attachments/03-1897-judge-5d0b04dec.json`（J2/F3 本回不扩改）
 - 票面：`gh issue view 1897` / `1812`；验收真源=#1812「重构验收」
-- 本回执不自指待生成 SHA；提交后以 `git rev-parse HEAD` 为准
+- 本回代码提交 SHA：`dc0470e445366fd411e0627ce672ff15ece149e2`（`git rev-parse HEAD` 于提交后实测；本段若另有 docs tip 钉针提交则以最新 HEAD 为准）
 
 ## 环境前缀
 
@@ -191,4 +191,4 @@ sys 0.65
 
 - 本轮相对 `cb2dec1cc`：8 files，`+11 / −385`（以 `git diff --stat` 为准）+ 本回执
 - 未 push / 未 PR / 未 amend
-- 提交 SHA：见提交后 stdout / `git rev-parse HEAD`
+- 代码提交 SHA：`dc0470e445366fd411e0627ce672ff15ece149e2`
