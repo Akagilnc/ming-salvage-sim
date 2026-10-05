@@ -329,13 +329,14 @@ cd web && npm test -- --run src/components/situation.test.tsx
 
 ---
 
-## Seal（提交前查询；提交后以 git log -1 为准）
+## Seal（精确查询）
 
 ```text
-# 提交前
-HEAD(pre)=6c44b0e029aeb841db6bb62345e0b6e810b803f9
-git status --porcelain：20 测试/Web 改动 + ?? artifacts/1897-t1-review-input.json
-git diff --check HEAD -- tests web：无输出
+HEAD=467625a91619c92efaa8ee186d935cd02c9606dd
+parent=6c44b0e029aeb841db6bb62345e0b6e810b803f9
+branch=ak-roles/issue-1897-k1-k2-f3-fixer-20261005-115628
+git status --porcelain=v1 --untracked-files=all：（提交后清洁，见下轮查询）
+git diff --check HEAD~1 HEAD：artifacts/1897-t1-apply-report.md EOF blank（本轮已去）
 生产 ming_sim/：无改动
+未 push／未开 PR／未关票
 ```
-
