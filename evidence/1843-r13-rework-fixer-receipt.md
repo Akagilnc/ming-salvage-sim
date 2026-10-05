@@ -2,7 +2,7 @@
 
 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5`
 分支：`ak-roles/issue-1843-w5-r13-f2-compat`
-commitSha：`(本提交填充)`
+commitSha：`ab51424fdb9338b28f002410f461b80117f810b4`
 原文：`evidence/1843-r13-rework-packet.json`（完整读取）
 前判回执：`evidence/1843-r13-rework-fixer-receipt.md`（1129efc19；误以「非C0写闸」豁免恒空兼容响应与 has_work）
 基线 HEAD（本轮动手前）：`184240ff2b88b8730c69908b0e5e92abb3502604`
