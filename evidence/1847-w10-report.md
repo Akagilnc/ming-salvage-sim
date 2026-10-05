@@ -55,7 +55,7 @@ w9 将 `ensure_column` 整段、`_FISCAL_MIGRATIONS`、faction offset 老档反�
 
 ### 4) 专属旧档测试删除／改挂
 
-删除：`test_legacy_save_calibrates_offset_on_open` 及 crash/marker helpers、`test_old_save_migration_night_id_index_order`、`test_undo_survives_db_created_before_undone_at_column`、`test_fiscal_config_v8_migration_*`、mutiny／person_archive 旧档补列重开案。  
+删除：`test_legacy_save_calibrates_offset_on_open` 及 crash/marker helpers、`test_old_save_migration_night_id_index_order`、`test_undo_survives_db_created_before_undone_at_column`、`test_fiscal_config_v8_migration_*`、mutiny／person_archive 旧档补列重开案。
 `test_half_weight_odd_baseline_no_round_drift` 改为直接写精确 float offset + recompute（不经旧反推入口）。
 
 ### 5) w9 已结项复扫（仍成立）
