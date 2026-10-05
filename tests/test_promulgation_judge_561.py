@@ -11,13 +11,11 @@ from ming_sim.qualitative import power_band, qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict
 
-
 def _dossier(db, state, text="清丈天下田亩", **payload):
     return db.create_decree_dossier(
         state, action_type="policy", decree_text=text,
         target_kind="issue", target_id=f"policy-{state.turn}", payload=payload,
     )
-
 
 def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     db, state, _content = game
@@ -85,7 +83,6 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
         ]
     )
 
-
 def test_promulgation_context_projects_faction_leverage_as_qualitative_band(game):
     """#614: player-visible judge reasons inherit input-side leverage bands only."""
     db, state, _content = game
@@ -121,7 +118,6 @@ def test_promulgation_context_projects_faction_leverage_as_qualitative_band(game
     assert all(set(row) == {"name", "leverage", "agenda"} for row in context["factions"])
     assert any(row["agenda"] for row in context["factions"])
 
-
 def test_promulgation_context_routes_faction_leverage_through_power_band(
     game, monkeypatch,
 ):
@@ -140,7 +136,6 @@ def test_promulgation_context_routes_faction_leverage_through_power_band(
     )
     by_name = {row["name"]: row for row in context["factions"]}
     assert by_name["东林"]["leverage"] == "routed:42"
-
 
 def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
     db, state, _content = game
@@ -174,7 +169,6 @@ def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
          "marker": "批红强颁", "outcome": "promulgated"},
     ]
 
-
 def test_gate_extracts_actual_cli_judge_payload_and_rejects_ambiguous_capture():
     from scripts.promulgation_gate_561 import (
         _captured_judge_payload,
@@ -204,12 +198,10 @@ def test_gate_extracts_actual_cli_judge_payload_and_rejects_ambiguous_capture():
     with pytest.raises(RuntimeError):
         _judge_payload_from_prompt(prompt.replace(encoded, encoded[:-1]))
 
-
 def test_promulgation_verdict_list_shape_has_one_canonical_authority(game):
     db, _state, _content = game
     with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts({"verdicts": []}, [], db)
-
 
 @pytest.mark.parametrize("decision", ["promulgated", "rejected"])
 def test_promulgation_verdict_rejects_unknown_fields(game, decision):
@@ -228,7 +220,6 @@ def test_promulgation_verdict_rejects_unknown_fields(game, decision):
         decree_mod.validate_promulgation_verdicts(
             [verdict], dossiers, db, prepared_context=context,
         )
-
 
 def test_promulgated_verdict_strips_rejection_only_noise(game):
     """#1397：顺颁夹带打回专属字段 → 剥离后过闸，不卡 settling。
@@ -269,7 +260,6 @@ def test_promulgated_verdict_strips_rejection_only_noise(game):
     # 调用方输入不被原地改写（error-pack / rejection 审计仍见原文）。
     assert set(noisy) == original_keys
 
-
 def test_promulgated_midzhi_strips_affected_parties_with_rejection_noise(game):
     """#657 §C.8：中旨顺颁剥离打回噪声与猜派 affected_parties。"""
     db, state, _content = game
@@ -305,7 +295,6 @@ def test_promulgated_midzhi_strips_affected_parties_with_rejection_noise(game):
     }]
     assert "affected_parties" not in cleaned[0]
 
-
 def test_promulgated_true_path_clean_verdict_passes(game):
     """#1397 钉测：干净顺颁真路径（仅 dossier_id+decision）过闸。"""
     db, state, _content = game
@@ -317,7 +306,6 @@ def test_promulgated_true_path_clean_verdict_passes(game):
         [{"dossier_id": dossier_id, "decision": "promulgated"}],
         dossiers, db, prepared_context=context,
     ) == [{"dossier_id": dossier_id, "decision": "promulgated"}]
-
 
 def test_rejected_verdict_still_requires_full_rejection_contract(game):
     """#1397 负向边界：打回契约不因顺颁容错而放松。"""
@@ -331,7 +319,6 @@ def test_rejected_verdict_still_requires_full_rejection_contract(game):
             [{"dossier_id": dossier_id, "decision": "rejected", "reason": "仅有缘由"}],
             dossiers, db, prepared_context=context,
         )
-
 
 def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(game):
     from scripts.promulgation_gate_561 import _prepare_reconsideration_facts
@@ -368,7 +355,6 @@ def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(g
     assert second["dossiers"][0]["held_authorities"][0]["privilege"] == "便宜行事"
     assert second["imperial_authority_band"] == "强盛"
 
-
 def test_gate_reconsideration_resolves_missing_target_to_land_survey(game):
     from scripts.promulgation_gate_561 import _prepare_reconsideration_facts
 
@@ -395,7 +381,6 @@ def test_gate_reconsideration_resolves_missing_target_to_land_survey(game):
     assert grant["target_kind"] == "issue"
     assert grant["target_id"] == "清丈田亩"
     assert second["dossiers"][0]["held_authorities"][0]["scope"] == "issue:清丈田亩"
-
 
 def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     from scripts.promulgation_gate_561 import _judge_context_for_dossier
@@ -446,7 +431,6 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
         fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
     )
 
-
 def test_gate_second_verdict_reads_pending_or_applied_history_strictly():
     from scripts.promulgation_gate_561 import _select_second_verdict
 
@@ -458,7 +442,6 @@ def test_gate_second_verdict_reads_pending_or_applied_history_strictly():
                  [promoted, promoted], [{"dossier_id": 8, "decision": "promulgated"}]):
         with pytest.raises(RuntimeError):
             _select_second_verdict(True, 7, rows, [])
-
 
 def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatch, tmp_path):
     """Non-awaiting arms must read applied history at the pre-resolve turn."""
@@ -498,7 +481,6 @@ def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatc
     )
     assert all(row["decision"] == "promulgated" for row in result["verdicts"])
 
-
 def test_gatekeeper_successor_removes_donglin_block_posture(game):
     """TD-9 successor must be registered and not recreate the 东林 block."""
     from scripts.promulgation_gate_561 import (
@@ -527,7 +509,6 @@ def test_gatekeeper_successor_removes_donglin_block_posture(game):
         row for row in context["gatekeepers"] if row["name"] == GATEKEEPER_SUCCESSOR
     )
     assert successor["faction"] != "东林"
-
 
 def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
     """Rejected authority_edge must pick withdrawn/hold, never options[0] force."""
@@ -593,75 +574,6 @@ def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
         "force_promulgated"
     )
 
-
-def test_appointment_text_is_pure_gatekeeper_transfer_without_land_confiscation():
-    """Recursive appointment sample must not smuggle hostile 隐田 policy."""
-    from scripts.promulgation_gate_561 import APPOINTMENT_TEXT
-
-    assert "许誉卿" in APPOINTMENT_TEXT
-    for token in ("隐田", "清丈", "追夺", "田亩"):
-        assert token not in APPOINTMENT_TEXT, token
-
-
-def test_appointment_rejection_check_requires_faction_gate_structure():
-    """Appointment reject must prove 东林/许誉卿/blocked_layer, not mere rejected."""
-    from scripts.promulgation_gate_561 import _appointment_rejection_proves_faction_gate
-
-    ok = {
-        "dossier_id": 4,
-        "decision": "rejected",
-        "blocked_layer": "six_offices",
-        "gatekeeper_id": "许誉卿",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        "reason": "调任把关人撞东林逆鳞",
-    }
-    assert _appointment_rejection_proves_faction_gate(ok) is True
-    # Rejected for other reasons / missing structure must fail the causal check.
-    assert _appointment_rejection_proves_faction_gate(
-        {**ok, "decision": "promulgated"}
-    ) is False
-    assert _appointment_rejection_proves_faction_gate(
-        {**ok, "gatekeeper_id": "崔呈秀"}
-    ) is False
-    assert _appointment_rejection_proves_faction_gate(
-        {**ok, "primary_opponents": [{"kind": "faction", "key": "阉党"}]}
-    ) is False
-    assert _appointment_rejection_proves_faction_gate(
-        {**ok, "blocked_layer": ""}
-    ) is False
-    assert _appointment_rejection_proves_faction_gate(
-        {"dossier_id": 4, "decision": "rejected"}
-    ) is False
-
-
-def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
-    """TD-1 / ADR 0055 S6: ordinary class = 寻常补饷; every planted one must pass."""
-    from scripts.promulgation_gate_561 import (
-        ORDINARY_TEXT,
-        _ordinary_class_all_promulgated,
-    )
-
-    # Class is the pay edict itself — not an invented multi-sample roster.
-    assert "补" in ORDINARY_TEXT and "饷" in ORDINARY_TEXT
-    assert _ordinary_class_all_promulgated([
-        ({"ordinary": 1, "hostile": 2},
-         {1: {"decision": "promulgated"}, 2: {"decision": "rejected"}}),
-        ({"ordinary": 3},
-         {3: {"decision": "promulgated"}}),
-    ]) is True
-    assert _ordinary_class_all_promulgated([
-        ({"ordinary": 1}, {1: {"decision": "rejected"}}),
-    ]) is False
-    assert _ordinary_class_all_promulgated([
-        ({"ordinary": 1}, {1: {"decision": "promulgated"}}),
-        ({"ordinary": 4}, {4: {"decision": "rejected"}}),
-    ]) is False
-    # Arms without ordinary do not invent a sample; empty plant is not a pass.
-    assert _ordinary_class_all_promulgated([
-        ({"hostile": 2}, {2: {"decision": "rejected"}}),
-    ]) is False
-
-
 def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     """TD-9: 安抚首领 = 东林 agenda posture; 许誉卿 stays; no 钱谦益 roster swap."""
     from scripts.promulgation_gate_561 import (
@@ -714,7 +626,6 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     assert qian_after["status"] == qian_before["status"]
     assert qian_after["office"] == qian_before["office"]
 
-
 def test_promulgation_judge_omits_max_tokens(monkeypatch):
     """#1472：颁布判官参数面不发 max_tokens。"""
     seen = {}
@@ -730,14 +641,12 @@ def test_promulgation_judge_omits_max_tokens(monkeypatch):
 
     assert "max_tokens" not in seen
 
-
 def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
     # Preserve suite-specific reason/intensity differences via builder knobs.
     return rejected_verdict(
         dossier_id, authority_band, midzhi=midzhi,
         reason="触犯钱粮命门，科臣封驳。", intensity="strong",
     )
-
 
 @pytest.mark.parametrize(
     ("mode", "decision"),
@@ -768,7 +677,6 @@ def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decis
         [verdict], dossiers, db, prepared_context=context,
     ) == expected
 
-
 def test_rejected_exact_keys_accept_only_empty_legal_reason_slot(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)
@@ -787,7 +695,6 @@ def test_rejected_exact_keys_accept_only_empty_legal_reason_slot(game):
             decree_mod.validate_promulgation_verdicts(
                 [verdict], dossiers, db, prepared_context=context,
             )
-
 
 def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, monkeypatch):
     """一批判官一次调用，再走既有校验。入口是 llm_promulgation_verdicts。"""
@@ -827,7 +734,6 @@ def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, 
     assert calls[0][1] == "promulgation-judge"
     assert [row["id"] for row in calls[0][0]["dossiers"]] == [first, second]
 
-
 @pytest.mark.parametrize(
     ("snapshot_key", "forged"),
     [
@@ -852,7 +758,6 @@ def test_rejected_snapshot_must_equal_the_prepared_judge_input(
             [verdict], dossiers, db, prepared_context=context,
         )
 
-
 def test_appointment_tenure_is_the_rejection_snapshot_value(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
@@ -866,7 +771,6 @@ def test_appointment_tenure_is_the_rejection_snapshot_value(game):
 
     assert context["dossiers"][0]["criteria_snapshot_source"]["appointment_tenure"] == "署理"
     assert context["dossiers"][0]["id"] == dossier_id
-
 
 def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
     db, state, _content = game
@@ -886,7 +790,6 @@ def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
             [verdict], dossiers, db, prepared_context=context,
         )
 
-
 def test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)
@@ -900,7 +803,6 @@ def test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable(game):
         decree_mod.validate_promulgation_verdicts(
             [verdict], dossiers, db, prepared_context=context,
         )
-
 
 @pytest.mark.parametrize(
     ("action_type", "mode"),

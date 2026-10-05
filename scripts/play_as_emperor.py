@@ -506,8 +506,11 @@ def run(
             pass
 
     finally:
-        # 硬规9：禁 SIGKILL。pexpect.terminate(force=True) 在 SIGHUP/SIGCONT/SIGINT
-        # 仍未退时会发 SIGKILL（官方文档）。只走非 force terminate；未退如实记缺口。
+        # 硬规9：禁 SIGKILL。
+        # - pexpect.terminate(force=True) 在 SIGHUP/SIGCONT/SIGINT 仍存活时发 SIGKILL
+        # - pexpect.close() / PtyProcess.close() 默认 force=True，同样可落到 SIGKILL
+        # - spawn.__exit__ 调 close()，故禁止 with pexpect.spawn(...) 上下文管理
+        # 只走 terminate(force=False)；不调用 child.close()；未退如实记终止缺口。
         if child.isalive():
             try:
                 exited = bool(child.terminate(force=False))
@@ -518,6 +521,7 @@ def run(
                     log(
                         "[CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）]"
                     )
+        # 故意不调用 child.close()（默认 force=True → 可 SIGKILL）
         log_file.close()
 
     print(f"\n=== 结束。完成 {completed_periods}/{turns} 月。Log: {log_path} ===")

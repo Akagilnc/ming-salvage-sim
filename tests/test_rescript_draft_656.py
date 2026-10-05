@@ -306,7 +306,6 @@ def test_validate_and_persist_preserve_whitespace_verbatim(game):
     assert row["context"] == raw_context
     assert row["options"] == drafts[0]["options"]
 
-
 def test_generate_ungrounded_region_heals_then_drops_sibling_kept(monkeypatch, tmp_path):
     """#1746：region target 未接地 → heal 耗尽只剔该 option，兄弟保留。"""
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
@@ -329,7 +328,6 @@ def test_generate_ungrounded_region_heals_then_drops_sibling_kept(monkeypatch, t
     assert drafts is not None and len(drafts) == 1
     assert len(drafts[0]["options"]) == 1
     assert drafts[0]["options"][0].get("label") == sibling.get("label")
-
 
 def test_generate_ungrounded_army_heals_then_drops_sibling_kept(monkeypatch, tmp_path):
     """#1746：army target 未接地 → heal 耗尽只剔该 option，兄弟保留。"""
@@ -356,7 +354,6 @@ def test_generate_ungrounded_army_heals_then_drops_sibling_kept(monkeypatch, tmp
     assert drafts is not None and len(drafts) == 1
     assert len(drafts[0]["options"]) == 1
     assert drafts[0]["options"][0].get("label") == sibling.get("label")
-
 
 def test_generate_combined_target_and_roster_failures_reported_together_then_land(
     monkeypatch, tmp_path,
@@ -664,7 +661,6 @@ def test_generate_rejects_military_order_empty_assignee(monkeypatch, tmp_path):
     assert len(opts) == 1
     assert opts[0]["action_type"] == "assignment"
     assert opts[0]["label"] == item["options"][1]["label"]
-
 
 # ---------------------------------------------------------------------------
 # shape 校验＋权威快照绑定（F2.2/F2.3/F2.5）
@@ -1012,15 +1008,6 @@ def test_657_s1_schema_columns_and_no_banned_fields(game):
     ]
     assert idx_sql and "origin_ref" in idx_sql[0] and "origin_ref != ''" in idx_sql[0].replace('"', "")
 
-def test_657_s1_rescript_emitted_set_subset_of_dossier():
-    """A12 前置（#1778 后）：只剩 emitted 闭集 ⊂ DOSSIER；七类 routable 已整体取消。"""
-    from ming_sim.decree_vocabulary import (
-        DOSSIER_ACTION_TYPES,
-        RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
-    )
-    assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
-    assert "dismiss_assignment" in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
-
 def test_657_validate_rejects_label_hint_only_options():
     """#657 Class1：旧仅 label/hint 两键输入必须整批失败（无兼容适配层）。"""
     data = {"items": [{
@@ -1162,7 +1149,6 @@ def test_1620_validate_army_pay_grant_kind_maps_to_xiexang():
                 set(),
             )
 
-
 @pytest.mark.parametrize("extra,drop", [
     pytest.param({"grant_action": "赏赉"}, (), id="conflict-reward"),
     pytest.param({"grant_kind": "other"}, (), id="unknown-kind"),
@@ -1191,7 +1177,6 @@ def test_1620_layer_a_army_pay_rejects_bad_typed_shape(extra, drop):
         raw.pop(key, None)
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option(raw)
-
 
 def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
     """desk：旧急务 ORDER BY turn,idx → 本月 decision；decision_key 与新列投影。"""

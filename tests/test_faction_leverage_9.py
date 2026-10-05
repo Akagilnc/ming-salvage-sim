@@ -19,14 +19,12 @@ import pytest
 
 from ming_sim.issues import apply_office_appointment
 
-
 def _yandang_core(db):
     """取阉党一个握高权官(内阁/司礼监/吏部/兵部)的在朝核心。"""
     return db.conn.execute(
         "SELECT name, office_type, office FROM characters WHERE faction='阉党' AND status='active' "
         "AND office_type IN ('内阁','司礼监','吏部','兵部') LIMIT 1"
     ).fetchone()
-
 
 def test_faction_leverage_drops_when_core_minister_ousted(game):
     """#9 核心：握高权官的阉党在朝核心退场 → 阉党 leverage 全重算后下跌。"""
@@ -37,7 +35,6 @@ def test_faction_leverage_drops_when_core_minister_ousted(game):
     db.set_character_status(state, row["name"], "dismissed", reason="清算阉党")
     after = db.faction_leverage("阉党")
     assert after < before, f"核心退场后阉党 leverage 应联动下跌(before={before} after={after})"
-
 
 def test_faction_leverage_rises_back_when_minister_restored(game):
     """#9 对称：退场核心起复(active) → leverage 回到原值（绝对重算、无漂移）。"""
@@ -54,7 +51,6 @@ def test_faction_leverage_rises_back_when_minister_restored(game):
     restored = db.faction_leverage("阉党")
     assert dropped < base, "退场应跌"
     assert restored == base, f"起复+复职应回到原值(base={base} restored={restored})"
-
 
 def test_non_whitelist_faction_row_leverage_not_recomputed(game):
     """#9 cmr R5 finding#3 边界：宗室是真·在 factions 表的行(leverage=40)、但**不在**白名单
@@ -79,7 +75,6 @@ def test_non_whitelist_faction_row_leverage_not_recomputed(game):
     after = db.faction_leverage("宗室")
     assert after == before, "非白名单派系(宗室) leverage 不按明朝官职联动 recompute"
 
-
 def test_xixue_faction_in_whitelist_drops_when_member_ousted(game):
     """#9 finding#1：西学在白名单 → 其握明官成员(徐光启/孙元化)退场，西学 leverage 联动下跌。"""
     db, state, content = game
@@ -92,7 +87,6 @@ def test_xixue_faction_in_whitelist_drops_when_member_ousted(game):
     db.set_character_status(state, row["name"], "dismissed", reason="逐西学")
     after = db.faction_leverage("西学")
     assert after < before, f"西学成员退场后 leverage 应联动下跌(before={before} after={after})"
-
 
 def test_rank_tier_modulates_impact(game):
     """#9 finding#5：同 office_type 不同品级，退场冲击不同。
@@ -123,7 +117,6 @@ def test_rank_tier_modulates_impact(game):
         f"兵部尚书(堂官 ×1.0)退场冲击应大于兵部职方(属官 ×0.25)："
         f"崔呈秀跌{chong_drop} vs 孙元化跌{sun_drop}"
     )
-
 
 def test_restore_uses_new_office_weight_not_old(game):
     """#9 finding#3 时序：先把人 dismissed(低职/无职)，再经 apply_office_appointment 起复到不同权官，
@@ -180,7 +173,6 @@ def test_restore_uses_new_office_weight_not_old(game):
         f"起复到内阁(高权)的 leverage 增量应大于起复到地方(低权)：内阁+{inc_high} vs 地方+{inc_low}"
     )
 
-
 def test_promotion_via_set_character_office_raises_leverage(game):
     """#9 finding(双hook)：active 成员从低权官调到高权官(set_character_office) → faction leverage 上升。
     增量版只挂 set_character_status、漏了升迁联动；全重算双 hook 修此。"""
@@ -197,7 +189,6 @@ def test_promotion_via_set_character_office_raises_leverage(game):
     db.set_character_office(row["name"], "中极殿首辅", "内阁")
     after = db.faction_leverage("阉党")
     assert after > before, f"升迁到内阁后 leverage 应上升(before={before} after={after})"
-
 
 def test_failed_appointment_rolls_back_faction_leverage(game):
     """#9 finding#2 事务回滚：失败的 apply_office_appointment（走 _restore_person_write_state）后，
@@ -236,7 +227,6 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     # 人物状态也应回滚（仍 dismissed，未被中途 set_character_status(active) 残留）
     assert db.get_character_status(name)[0] == "dismissed", "失败任命应回滚人物状态"
 
-
 def test_displaced_minister_faction_leverage_recomputed(game):
     """#9 cmr R1：顶替路也要重算【被顶替者】所属派系 leverage。
     新任者属 A 派系(东林)，经 apply_office_appointment 任命到独占实职(兵部尚书)，
@@ -269,7 +259,6 @@ def test_displaced_minister_faction_leverage_recomputed(game):
         f"被顶替者(崔呈秀)所属阉党 leverage 应在顶替后全重算下跌(before={before} after={after})"
     )
 
-
 def test_offset_not_re_anchored_on_reload_after_clamp(game):
     """#9 cmr R3：老档每次 load 重锚 offset，clamp 后腐蚀基线。
     seed 后取白名单派系 offset；手动把 leverage 打到 0（模拟 clamp 触底）；再开一个 GameDB
@@ -301,7 +290,6 @@ def test_offset_not_re_anchored_on_reload_after_clamp(game):
         f"reload(clamp 后)不应重锚 offset：before={before_offset} after={after_offset}"
     )
 
-
 def test_leverage_clamps_at_zero_no_negative(game):
     """#9 finding#4 clamp 边界：连续退场把某 faction 在朝权重和打到使 offset+和<0 → leverage 恰=0(不为负、真触底)。
     用权重和大、offset 深负的派系(阉党开局钦定 78、offset≈-78)：全员退场后权重和→0、offset+和<0→clamp 0。
@@ -332,7 +320,6 @@ def test_leverage_clamps_at_zero_no_negative(game):
     db.set_character_status(state, members[0]["name"], "active", reason="复一人")
     assert db.faction_leverage(faction) == 0, "起复一人(无职)后仍应恰 clamp 到 0"
 
-
 def test_add_character_appointment_lifts_faction_leverage(game):
     """#9 cmr R2 finding#2：经 apply_office_appointment 任命一个【不在册的新大臣】到白名单派系的握权官，
     该派系 leverage 应即时上升（add_character hook）。修前 add_character 不联动 → leverage 不变（红）。"""
@@ -359,7 +346,6 @@ def test_add_character_appointment_lifts_faction_leverage(game):
     assert after > before, (
         f"经 add_character 新建大臣加入{faction}后 leverage 应上升(before={before} after={after})"
     )
-
 
 def test_active_member_empty_office_contributes_zero_weight(game):
     """#9 cmr R2 finding#3：active + power_id='ming' + office='' + office_type 非空(理论可达边界)
@@ -396,7 +382,6 @@ def test_active_member_empty_office_contributes_zero_weight(game):
     assert weight_sum == 0.0, (
         f"仅剩 active 空 office 成员时 faction 权重和应为 0(weight_sum={weight_sum})"
     )
-
 
 def test_recompute_all_reconciles_drift_from_unhooked_path(game):
     """#9 cmr R2 finding#1（集中化兜底）：绕过所有 hook 的裸 UPDATE 改了 faction 成员 office_type 后，
@@ -454,7 +439,6 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
         exp = max(0, min(100, round(float(row["leverage_offset"] or 0) + ws)))
         assert row["leverage"] == exp, f"{f} 应被 recompute_all 重算到公式值(got={row['leverage']} exp={exp})"
 
-
 def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch):
     """#9 线上 R6（codex P2）：结算尾 recompute_all_faction_leverage() 必须排在 clear_gated_legacies()
     之前。否则同回合经兜底 reconcile 才更新的 faction leverage（易主/裸 UPDATE 改成员、绕即时 hook）
@@ -498,71 +482,6 @@ def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch)
         f"得 status={after}（reconcile 后 leverage={reconciled}）"
     )
 
-
-def test_office_rank_deputy_titles_not_inflated_to_principal():
-    """#9 线上 R2（gemini high + codex P2 concur）：品级子串误匹配——副职头衔含正职关键词作子串
-    （副总兵⊃总兵、佥都御史⊃都御史）被误判成正职档(1.0)。修法=每个分项取「所有命中档里最低」
-    （副职关键词更长、与正职子串共同命中时取 min 自然落副职档），纯正职单独命中仍 1.0；跨分项取 max。
-    修前红：副总兵/锦州副总兵/佥都御史 返 1.0（应 0.5）。"""
-    from ming_sim.db import _office_rank_multiplier
-
-    # 副职(佐贰)：含正职子串但应判 0.5——本 finding 的核心两例 + 通治验证。
-    assert _office_rank_multiplier("副总兵") == 0.5, "副总兵⊃总兵 不该被误判正职 1.0"
-    assert _office_rank_multiplier("锦州副总兵") == 0.5, "锦州副总兵(祖大寿) 不该被误判正职 1.0"
-    assert _office_rank_multiplier("佥都御史") == 0.5, "佥都御史⊃都御史 不该被误判正职 1.0"
-    assert _office_rank_multiplier("佥都御史，巡按") == 0.5, "佥都御史(吴甡) 带尾缀仍 0.5"
-    # 纯正职(堂官)：单独命中、无更长副职词 → 仍 1.0（别被 min 误降）。
-    assert _office_rank_multiplier("总兵") == 1.0
-    assert _office_rank_multiplier("都御史") == 1.0
-    assert _office_rank_multiplier("兵部尚书") == 1.0
-    assert _office_rank_multiplier("内阁首辅") == 1.0
-    assert _office_rank_multiplier("司礼监掌印太监") == 1.0
-    assert _office_rank_multiplier("司礼监秉笔太监") == 1.0
-    # 其余佐贰仍 0.5（不被误降到属官）。
-    assert _office_rank_multiplier("侍郎") == 0.5
-    assert _office_rank_multiplier("东阁大学士") == 0.5
-    assert _office_rank_multiplier("次辅") == 0.5
-    # 属官 0.25 不变。
-    assert _office_rank_multiplier("兵部职方") == 0.25
-    assert _office_rank_multiplier("郎中") == 0.25
-    assert _office_rank_multiplier("游击") == 0.25
-    # 多职跨分项取 max：礼部尚书(堂官 1.0)胜过东阁大学士(佐贰 0.5)。
-    assert _office_rank_multiplier("礼部尚书,东阁大学士") == 1.0
-    # 整串无识别词 → 保守默认 1.0（现有行为不破）。
-    assert _office_rank_multiplier("火器西法") == 1.0
-
-
-def test_office_rank_aux_titles_audit_offices_json():
-    """#9 线上 R3（codex P2）：副都御史 是 offices.json 认的合法佐贰官名、⊃都御史(1.0 子串)，
-    经 min-within-part 却只命中 1.0 档 → 误判正职、都察院权重×1.0（应 0.5）。本测通治审计
-    offices.json 里所有「含某 1.0 档关键词作子串」的佐贰官名（副/佥/同知 类），断言全归 0.5；
-    同时把同批已修的 副总兵/佥都御史 一起验，并守正职(左/右都御史 是都察院堂官、提督/总督 类)
-    不被误降。修前红：副都御史/都督佥事/都督同知/同知/指挥同知 现返 1.0（应 0.5）。"""
-    from ming_sim.db import _office_rank_multiplier
-
-    # 含 1.0 子串的佐贰（应 0.5）——审计补全：
-    #   副都御史 ⊃ 都御史（本 finding 核心）、都督佥事 ⊃ 都督、都督同知 ⊃ 都督。
-    assert _office_rank_multiplier("副都御史") == 0.5, "副都御史⊃都御史 不该被误判正职 1.0"
-    assert _office_rank_multiplier("右副都御史") == 0.5, "右副都御史(带方位前缀)仍 0.5"
-    assert _office_rank_multiplier("都督佥事") == 0.5, "都督佥事⊃都督 是佐贰、应 0.5"
-    assert _office_rank_multiplier("都督同知") == 0.5, "都督同知⊃都督 是佐贰、应 0.5"
-    # 通治 generic 佐贰词干（同知/佥事）——覆盖将来其它复合衔（指挥同知/府同知…）。
-    assert _office_rank_multiplier("同知") == 0.5
-    assert _office_rank_multiplier("佥事") == 0.5
-    assert _office_rank_multiplier("指挥同知") == 0.5, "卫指挥同知 是佐贰、应 0.5"
-    # 同批已修两例一起验（防回归）。
-    assert _office_rank_multiplier("副总兵") == 0.5
-    assert _office_rank_multiplier("佥都御史") == 0.5
-    # 正职护栏：左/右都御史 是都察院堂官（非副），提督/总督 类是主官——不被新增 0.5 词误降。
-    assert _office_rank_multiplier("左都御史") == 1.0, "左都御史 是都察院堂官、应 1.0"
-    assert _office_rank_multiplier("右都御史") == 1.0, "右都御史 是都察院堂官、应 1.0"
-    assert _office_rank_multiplier("提督东厂") == 1.0
-    assert _office_rank_multiplier("提督京营") == 1.0
-    assert _office_rank_multiplier("总督军务") == 1.0
-    assert _office_rank_multiplier("秉笔太监") == 1.0
-    assert _office_rank_multiplier("都指挥使") == 1.0
-
-
 def test_all_court_allowed_types_have_leverage_weight():
     """#9 cmr R5 finding#2 完整性锁（集中化，防再漏第三个）：遍历 offices.json allowed_types，
     除纯民/无朝堂实权的 {后宫,生员,乡绅,富商,布衣,流寇,待铨} 外，每个 allowed_type 都必须在
@@ -580,7 +499,6 @@ def test_all_court_allowed_types_have_leverage_weight():
             f"allowed_type「{t}」有朝堂实权却缺 _OFFICE_LEVERAGE_WEIGHT 权重（该类在朝者贡献 0）"
         )
 
-
 def test_weizhongxian_ouster_drops_yandang_by_sili_weight(game):
     """#9（用户挑战）：魏忠贤(九千岁)退场对阉党的冲击应按司礼监批红(20)算，不是东厂(8)。
     他真权在司礼监秉笔=批红，office_type=东厂只是兼差。退场掉 20 而非 8。"""
@@ -596,7 +514,6 @@ def test_weizhongxian_ouster_drops_yandang_by_sili_weight(game):
     after = db.faction_leverage("阉党")
     drop = before - after
     assert drop == 20, f"九千岁退场应按司礼监批红掉 20（非东厂 8）：before={before} after={after} drop={drop}"
-
 
 def test_whitelist_faction_delta_routes_to_offset_survives_reconcile(game):
     """#9 cmr R5 finding#1 [HIGH]：白名单派系的 LLM faction_delta.leverage 经 adjust_factions
@@ -621,7 +538,6 @@ def test_whitelist_faction_delta_routes_to_offset_survives_reconcile(game):
         f"白名单 faction_delta +8 注入 offset 后应经 reconcile 留存、不被抹回"
         f"（before={before} after_reconcile={after_reconcile}）"
     )
-
 
 def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
     """#9 cmr R7 端到端：白名单派系的 LLM faction_delta.leverage 经【整条真实结算路】
@@ -662,7 +578,6 @@ def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
         f"（before={before} after={after}）"
     )
 
-
 def test_non_whitelist_faction_delta_direct_leverage_survives_reconcile(game):
     """#9 cmr R5 finding#1：非白名单派系(宗室)的 faction_delta.leverage 仍直写 leverage 列，
     recompute_all 不碰非白名单 → 增量留存（维持原行为）。"""
@@ -682,11 +597,9 @@ def test_non_whitelist_faction_delta_direct_leverage_survives_reconcile(game):
         f"非白名单(宗室) leverage 不被 reconcile 动、增量留存（after_reconcile={after_reconcile}）"
     )
 
-
 # ----------------------------------------------------------------------------
 # #9 线上 R1 评审 6 项 fix 的回归测试
 # ----------------------------------------------------------------------------
-
 
 def _make_legacy_save_without_offset_col(content, tmp_path):
     """构造「老档」：有 factions+characters 行、leverage 为玩过后的真值、但无 leverage_offset 列。
@@ -712,7 +625,6 @@ def _make_legacy_save_without_offset_col(content, tmp_path):
     seed_db.conn.commit()
     seed_db.close()
     return path
-
 
 def test_legacy_save_calibrates_offset_on_open(game, tmp_path):
     """#9 R1 finding#1 [P1]：老档经 GameDB() 打开（仅 init_schema，不 seed_static_data）
@@ -744,7 +656,6 @@ def test_legacy_save_calibrates_offset_on_open(game, tmp_path):
     finally:
         db.close()
 
-
 def _make_legacy_save_col_added_uncalibrated(content, tmp_path):
     """构造「列已加但未校准」的老档（崩溃断点态）：有 factions+characters 行、leverage 为玩过后的
     真值、leverage_offset 列**已存在**（非本次刚 ADD、值全 0），但**校准从未完成**——持久校准标记
@@ -775,7 +686,6 @@ def _make_legacy_save_col_added_uncalibrated(content, tmp_path):
     seed_db.conn.commit()
     seed_db.close()
     return path
-
 
 def test_col_added_uncalibrated_save_recalibrates_on_open(game, tmp_path):
     """#9 线上 R3（codex P2）crash-safety：老档「列已加但 offset 未校准（留 0）」态——上次崩在
@@ -821,7 +731,6 @@ def test_col_added_uncalibrated_save_recalibrates_on_open(game, tmp_path):
     finally:
         db.close()
 
-
 def _make_legacy_save_calibrated_no_marker(content, tmp_path):
     """构造「已校准但缺持久标记」的老档（R4 codex P2 场景）：offset 已是正确校准值（非 0）、
     leverage 已被 clamp 到偏离基线的值（这里全打到 0）、但 __leverage_offsets_calibrated 标记缺失。
@@ -854,7 +763,6 @@ def _make_legacy_save_calibrated_no_marker(content, tmp_path):
     seed_db.conn.commit()
     seed_db.close()
     return path, offsets
-
 
 def test_calibrated_save_without_marker_not_re_anchored(game, tmp_path):
     """#9 线上 R4（codex P2）：DB 已有 leverage_offset 且 offset 已正确校准（非 0），但缺持久标记
@@ -889,7 +797,6 @@ def test_calibrated_save_without_marker_not_re_anchored(game, tmp_path):
     finally:
         db.close()
 
-
 def test_rollback_snapshot_restores_leverage_offset(game):
     """#9 R1 finding#2：person 写状态快照/还原须含 leverage_offset（leverage 由 offset+权重派生、
     二者一个逻辑态）。构造：改 offset 后还原，断言 offset 也回到原值。"""
@@ -915,7 +822,6 @@ def test_rollback_snapshot_restores_leverage_offset(game):
     assert after_offset == before_offset, (
         f"回滚应还原 leverage_offset：before={before_offset} after={after_offset}"
     )
-
 
 def test_chat_rollback_restores_faction_leverage(game):
     """#9 R1 finding#4：chat 回滚快照表集须含 factions。leverage hook 会改 factions.leverage，
@@ -945,11 +851,9 @@ def test_chat_rollback_restores_faction_leverage(game):
         f"chat 撤回应连 factions leverage 一并还原：before={before} restored={restored}"
     )
 
-
 # ----------------------------------------------------------------------------
 # #177 两个 bug 的回归测试
 # ----------------------------------------------------------------------------
-
 
 def test_power_id_defection_drops_faction_leverage_immediately(game):
     """#177 R2（P2）：明臣投敌（power_id ming→外藩）经 apply_character_power_changes 后，
@@ -974,7 +878,6 @@ def test_power_id_defection_drops_faction_leverage_immediately(game):
     assert after < before, (
         f"投敌后原派系 leverage 应即时下跌（不等 reconcile）：before={before} after={after}"
     )
-
 
 def test_half_weight_odd_baseline_no_round_drift(game):
     """#177 R4（P3）：weight_sum 含 .5 + 奇数基线 → leverage 精确命中基线、不因双 round 漂 ±1。
@@ -1007,7 +910,6 @@ def test_half_weight_odd_baseline_no_round_drift(game):
     assert lev == baseline, (
         f"weight_sum=2.5 + 奇数基线 {baseline} → leverage 应={baseline}（不漂），实得 {lev}"
     )
-
 
 def test_old_integer_offset_migrated_to_float(game):
     """#177 R1 finding#1（codex P2）：旧版 #9 校准 round 了 offset（存整数如 76 而非 76.5），

@@ -1,409 +1,178 @@
 {
-  "T1_predicate": "显式/隐式强杀与硬期限：.kill/SIGKILL/killpg/os.kill*/send_signal/psutil/terminate(force=True)/close(force=True)/subprocess timeout/communicate(timeout=)",
+  "T1_predicate": "显式/隐式强杀：.kill/SIGKILL/killpg/os.kill*/send_signal/psutil/terminate(force=True)/(child|spawn|ptyproc).close()默认force/with pexpect.spawn/close(force=True)/subprocess timeout/communicate(timeout=)；不含 session.close/math.isclose",
   "T1_members": [
     {
       "file": "ming_sim/cli_backend.py",
       "line": 229,
       "text": "# 硬规9：禁 subprocess.run(timeout=…)——超时路径会 SIGKILL。登录 PATH 探测无期限杀。",
-      "disposition": "KEEP_comment_or_doc_ban",
-      "reason": "注释/文档禁强杀或终止缺口说明"
+      "disposition": "KEEP_comment_or_doc_ban"
     },
     {
       "file": "ming_sim/cli_backend.py",
       "line": 352,
       "text": "# 硬规9：禁 timeout=（subprocess.run 超时会 SIGKILL）。keychain 暖探无期限杀。",
-      "disposition": "KEEP_comment_or_doc_ban",
-      "reason": "注释/文档禁强杀或终止缺口说明"
+      "disposition": "KEEP_comment_or_doc_ban"
     },
     {
       "file": "ming_sim/cli_backend.py",
       "line": 392,
       "text": "\"\"\"收尾子进程：已退时 terminate 是 no-op；否则只 SIGTERM，不 SIGKILL（硬规9）。",
-      "disposition": "KEEP_comment_or_doc_ban",
-      "reason": "注释/文档禁强杀或终止缺口说明"
+      "disposition": "KEEP_comment_or_doc_ban"
     },
     {
       "file": "ming_sim/cli_backend.py",
       "line": 405,
       "text": "\"CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）：%s\", exc,",
-      "disposition": "KEEP_comment_or_doc_ban",
-      "reason": "注释/文档禁强杀或终止缺口说明"
+      "disposition": "KEEP_comment_or_doc_ban"
     },
     {
       "file": "ming_sim/cli_backend.py",
       "line": 422,
       "text": "不 SIGKILL，硬规9）。",
-      "disposition": "KEEP_comment_or_doc_ban",
-      "reason": "注释/文档禁强杀或终止缺口说明"
+      "disposition": "KEEP_comment_or_doc_ban"
     },
     {
       "file": "ming_sim/cli_backend.py",
       "line": 2789,
       "text": "出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。\"\"\"",
-      "disposition": "KEEP_comment_or_doc_ban",
-      "reason": "非执行强杀路径"
+      "disposition": "KEEP_comment_or_doc_ban"
     },
     {
       "file": "scripts/play_as_emperor.py",
       "line": 509,
-      "text": "# 硬规9：禁 SIGKILL。pexpect.terminate(force=True) 在 SIGHUP/SIGCONT/SIGINT",
-      "disposition": "KEEP_comment_or_doc_ban",
-      "reason": "注释/文档禁强杀或终止缺口说明"
+      "text": "# 硬规9：禁 SIGKILL。",
+      "disposition": "KEEP_comment_or_doc_ban"
     },
     {
       "file": "scripts/play_as_emperor.py",
       "line": 510,
-      "text": "# 仍未退时会发 SIGKILL（官方文档）。只走非 force terminate；未退如实记缺口。",
-      "disposition": "KEEP_comment_or_doc_ban",
-      "reason": "注释/文档禁强杀或终止缺口说明"
+      "text": "# - pexpect.terminate(force=True) 在 SIGHUP/SIGCONT/SIGINT 仍存活时发 SIGKILL",
+      "disposition": "KEEP_comment_or_doc_ban"
     },
     {
       "file": "scripts/play_as_emperor.py",
-      "line": 515,
+      "line": 511,
+      "text": "# - pexpect.close() / PtyProcess.close() 默认 force=True，同样可落到 SIGKILL",
+      "disposition": "KEEP_comment_or_doc_ban"
+    },
+    {
+      "file": "scripts/play_as_emperor.py",
+      "line": 512,
+      "text": "# - spawn.__exit__ 调 close()，故禁止 with pexpect.spawn(...) 上下文管理",
+      "disposition": "KEEP_comment_or_doc_ban"
+    },
+    {
+      "file": "scripts/play_as_emperor.py",
+      "line": 513,
+      "text": "# 只走 terminate(force=False)；不调用 child.close()；未退如实记终止缺口。",
+      "disposition": "KEEP_comment_or_doc_ban"
+    },
+    {
+      "file": "scripts/play_as_emperor.py",
+      "line": 518,
       "text": "log(f\"[CLI 子进程 terminate 失败（终止缺口，不 SIGKILL）: {exc}]\")",
-      "disposition": "KEEP_comment_or_doc_ban",
-      "reason": "注释/文档禁强杀或终止缺口说明"
+      "disposition": "KEEP_comment_or_doc_ban"
     },
     {
       "file": "scripts/play_as_emperor.py",
-      "line": 519,
+      "line": 522,
       "text": "\"[CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）]\"",
-      "disposition": "KEEP_comment_or_doc_ban",
-      "reason": "注释/文档禁强杀或终止缺口说明"
+      "disposition": "KEEP_comment_or_doc_ban"
+    },
+    {
+      "file": "scripts/play_as_emperor.py",
+      "line": 524,
+      "text": "# 故意不调用 child.close()（默认 force=True → 可 SIGKILL）",
+      "disposition": "KEEP_comment_or_doc_ban"
     },
     {
       "file": "web_app.py",
       "line": 4700,
       "text": "_os.kill(_os.getpid(), _signal.SIGTERM)",
-      "disposition": "KEEP_self_sigterm_graceful",
-      "reason": "对本进程 SIGTERM 优雅退出"
+      "disposition": "KEEP_self_sigterm"
     }
   ],
-  "T1_actionable": [],
-  "T5_deleted": [
+  "T1_actionable": 0,
+  "T5_deleted_this_round": [
     {
-      "file": "tests/test_decree_commitment_schema_136.py",
-      "case": "test_effect_dict_has_work_recognizes_schema_effects",
-      "reason": "仅 helper effect_dict_has_work 真；issue resolve 真入口另有"
-    },
-    {
-      "file": "tests/test_decree_commitment_schema_136.py",
-      "case": "test_effect_dict_has_work_ignores_empty_or_invalid_payloads",
-      "reason": "仅 helper effect_dict_has_work 假；issue resolve 真入口另有"
-    },
-    {
-      "file": "tests/test_decree_commitment_schema_136.py",
-      "case": "test_issues_schema_has_commitment_deadline_columns",
-      "reason": "仅 PRAGMA 列名/default；落库由 test_insert_issue_persists_commitment_deadline_columns 承接"
-    },
-    {
-      "file": "tests/test_pay_order_override_653.py",
-      "case": "test_override_key_legal_shapes",
-      "reason": "仅 parse_override_key(...).subject 非空；非法形闸类 test_override_key_illegal_shapes_fail_loud 承接"
-    },
-    {
-      "file": "tests/test_army_salary_44.py",
-      "case": "test_non_finite_salary_rate_anchored_not_crash",
-      "reason": "纯 coerce 非有限锚点，无入口"
-    },
-    {
-      "file": "tests/test_army_salary_44.py",
-      "case": "test_coerce_new_salary_rate_blocks_freeload",
-      "reason": "纯 coerce_new_salary_rate，无建军入口"
-    },
-    {
-      "file": "tests/test_army_salary_44.py",
-      "case": "test_army_pay_morale_delta_tiers",
-      "reason": "纯 army_pay_morale_delta oracle，无发饷/DB 入口"
-    },
-    {
-      "file": "tests/test_army_firearms.py",
-      "case": "test_score_fields_include_firearm_and_cannon",
-      "reason": "仅字面 ∈ ARMY_SCORE_FIELDS；apply_army_delta 入口另有"
+      "file": "tests/test_person_delta_adapter.py",
+      "case": "test_normalize_legacy_person_changes_preserves_origin",
+      "reason": "纯 normalize_person_changes 形状；apply_score_extraction person 入口案承接",
+      "successor": "tests/test_person_delta_adapter.py::test_apply_score_extraction_does_not_echo_normalized_person_changes"
     },
     {
       "file": "tests/test_llm_key_helpers.py",
-      "case": "test_real_api_key_or_empty_returns_trimmed_real_key",
-      "reason": "纯 real_api_key_or_empty helper"
+      "case": "test_is_real_api_key_rejects_none_empty_placeholder_whitespace",
+      "reason": "纯 is_real_api_key helper；web_app.api_set_llm_config / _llm_config_from_runtime 入口承接",
+      "successor": "tests/test_web_llm_runtime_config.py::test_llm_config_from_runtime_api_channel_drops_placeholder_key"
     },
     {
       "file": "tests/test_llm_key_helpers.py",
-      "case": "test_real_api_key_or_empty_normalizes_falsy_and_placeholder_to_empty",
-      "reason": "纯 real_api_key_or_empty helper"
-    },
-    {
-      "file": "tests/test_llm_key_helpers.py",
-      "case": "test_is_real_api_key_accepts_real_key_trimmed",
-      "reason": "纯 is_real_api_key helper"
-    },
-    {
-      "file": "tests/test_execution_pressure_654.py",
-      "case": "test_normalize_locality_scope",
-      "reason": "纯 normalize_locality_scope helper"
-    },
-    {
-      "file": "tests/test_decree_commitment_creation_136.py",
-      "case": "test_has_stop_condition_handles_preparsed_and_json_whitespace",
-      "reason": "纯 has_stop_condition helper"
-    },
-    {
-      "file": "tests/test_qa_d1_decree_normalize_1274.py",
-      "case": "test_is_non_person_covers_generics_and_collectives",
-      "reason": "纯 is_non_person helper 集合"
-    },
-    {
-      "file": "tests/test_manual_directive_institution_normalize_1279.py",
-      "case": "test_non_person_filter_does_not_use_institution_substring_class",
-      "reason": "纯 non_person 过滤 helper"
-    },
-    {
-      "file": "tests/test_junxin_monthly_tick_314.py",
-      "case": "test_army_loyalty_tick_delta_tiers",
-      "reason": "纯 army_loyalty_tick_delta oracle，无月结入口"
-    },
-    {
-      "file": "tests/test_mutiny_latch_315.py",
-      "case": "test_derive_mutiny_state_boundaries_and_latch",
-      "reason": "纯 derive_army_mutiny_state helper"
-    },
-    {
-      "file": "tests/test_faction_denunciation_627.py",
-      "case": "test_fork_predicate_pure_and_single_source_expression",
-      "reason": "纯 is_reported_actual_fork predicate helper"
-    },
-    {
-      "file": "tests/test_secret_order_payoff_1504.py",
-      "case": "test_task_specific_contract_from_explicit_fields_not_tags",
-      "reason": "纯 build_covert_task_contract helper"
-    },
-    {
-      "file": "tests/test_secret_order_payoff_1504.py",
-      "case": "test_decide_settlement_delivery_gap_bidirectional",
-      "reason": "纯 decide_secret_order_settlement helper"
-    },
-    {
-      "file": "tests/test_secret_order_payoff_1504.py",
-      "case": "test_seed_guilt_structured_clean_vs_debt",
-      "reason": "纯 seed_guilt_counts_as_debt helper"
-    },
-    {
-      "file": "tests/test_person_delta_adapter.py",
-      "case": "test_empty_new_person_change_key_does_not_shadow_legacy_normalization",
-      "reason": "纯 normalize_person_changes 形状"
-    },
-    {
-      "file": "tests/test_person_delta_adapter.py",
-      "case": "test_normalize_person_changes_ignores_non_item_shapes",
-      "reason": "纯 normalize_person_changes 形状"
-    },
-    {
-      "file": "tests/test_person_delta_adapter.py",
-      "case": "test_normalize_person_changes_translates_legacy_keys_in_replay_order",
-      "reason": "纯 normalize_person_changes 形状"
-    },
-    {
-      "file": "tests/test_person_delta_adapter.py",
-      "case": "test_normalize_person_changes_keeps_new_key_items",
-      "reason": "纯 normalize_person_changes 形状；apply person 入口另有"
-    },
-    {
-      "file": "tests/test_highlight_judge_544.py",
-      "case": "test_parse_highlight_judge_valid_phrases",
-      "reason": "纯 parse_highlight_judge_output helper"
-    },
-    {
-      "file": "tests/test_highlight_judge_544.py",
-      "case": "test_parse_highlight_judge_bad_output_is_empty",
-      "reason": "纯 parse_highlight_judge_output helper"
-    },
-    {
-      "file": "tests/test_office_inference.py",
-      "case": "test_unknown_falls_to_daiquan_without_backend",
-      "reason": "纯 infer 回落 helper"
-    },
-    {
-      "file": "tests/test_office_inference.py",
-      "case": "test_后宫_current_type_short_circuits",
-      "reason": "纯 infer 短路 helper"
-    },
-    {
-      "file": "tests/test_office_inference.py",
-      "case": "test_office_type_from_table",
-      "reason": "纯 infer 查表 helper"
-    },
-    {
-      "file": "tests/test_six_sciences_seed_608.py",
-      "case": "test_six_sciences_offices_infer_to_own_category",
-      "reason": "纯 infer_office_type_from_office helper"
-    },
-    {
-      "file": "tests/test_execution_tenure_613.py",
-      "case": "test_held_authority_privileges_reduce_distortion_weight",
-      "reason": "纯 execution_distortion_weight helper"
-    },
-    {
-      "file": "tests/test_execution_tenure_613.py",
-      "case": "test_authority_command_relief_single_source_from_privileges",
-      "reason": "纯 privileges→command 映射 helper"
-    },
-    {
-      "file": "tests/test_execution_tenure_613.py",
-      "case": "test_command_power_four_tier_strict_order_and_jianshu_not_collapsed",
-      "reason": "纯 command_power 分层 helper"
-    },
-    {
-      "file": "tests/test_distance_matrix.py",
-      "case": "test_bake_selects_fastest_route_and_preserves_triangle_inequality",
-      "reason": "纯 bake_distance_matrix 算法 helper"
-    },
-    {
-      "file": "tests/test_distance_matrix.py",
-      "case": "test_bake_uses_half_endpoint_weights_and_zero_diagonal",
-      "reason": "纯 bake_distance_matrix 算法 helper；baked content 金锚另有"
-    },
-    {
-      "file": "tests/test_audience_undo_506.py",
-      "case": "test_night_direct_write_whitelist_enumerates_authorized_items",
-      "reason": "仅枚举内部 frozenset 白名单成员"
-    },
-    {
-      "file": "tests/test_value_matrix_691.py",
-      "case": "test_value_matrix_matches_adr_0011_3",
-      "reason": "纯 matrix_snapshot 常量对照 helper"
+      "case": "test_is_real_api_key_rejects_keep_sentinel",
+      "reason": "纯 is_real_api_key/real_api_key_or_empty helper；api_set_llm_config keep-sentinel 入口承接",
+      "successor": "tests/test_web_llm_runtime_config.py::test_api_set_llm_config_keep_sentinels_pass_none_to_build"
     },
     {
       "file": "tests/test_faction_leverage_9.py",
-      "case": "test_neiting_has_leverage_weight_like_other_court_eunuchs",
-      "reason": "纯 _member_office_weight helper"
+      "case": "test_office_rank_deputy_titles_not_inflated_to_principal",
+      "reason": "纯 db._office_rank_multiplier helper；set_character_office/faction leverage 入口承接",
+      "successor": "tests/test_faction_leverage_9.py::test_promotion_via_set_character_office_raises_leverage"
     },
     {
       "file": "tests/test_faction_leverage_9.py",
-      "case": "test_xingbu_has_leverage_weight_like_other_ministries",
-      "reason": "纯 _member_office_weight helper"
+      "case": "test_office_rank_aux_titles_audit_offices_json",
+      "reason": "纯 db._office_rank_multiplier helper；faction leverage 入口承接",
+      "successor": "tests/test_faction_leverage_9.py::test_rank_tier_modulates_impact"
     },
     {
-      "file": "tests/test_faction_leverage_9.py",
-      "case": "test_jundadou_deputy_ouster_impact_is_half_of_principal",
-      "reason": "纯 _member_office_weight helper"
+      "file": "tests/test_promulgation_judge_561.py",
+      "case": "test_appointment_rejection_check_requires_faction_gate_structure",
+      "reason": "纯脚本内 _appointment_rejection_proves_faction_gate 形状；颁诏闸入口承接",
+      "successor": "tests/test_promulgation_judge_561.py::test_gate_extracts_actual_cli_judge_payload_and_rejects_ambiguous_capture"
     },
     {
-      "file": "tests/test_faction_leverage_9.py",
-      "case": "test_office_weight_takes_highest_domain_across_joint_offices",
-      "reason": "纯 _member_office_weight helper"
+      "file": "tests/test_promulgation_judge_561.py",
+      "case": "test_ordinary_class_all_promulgated_covers_planted_ordinary_only",
+      "reason": "纯脚本内 _ordinary_class_all_promulgated 形状；颁诏闸入口承接",
+      "successor": "tests/test_promulgation_judge_561.py::test_promulgated_verdict_strips_rejection_only_noise"
+    },
+    {
+      "file": "tests/test_promulgation_judge_561.py",
+      "case": "test_appointment_text_is_pure_gatekeeper_transfer_without_land_confiscation",
+      "reason": "仅字面 ∈ APPOINTMENT_TEXT 常量；颁诏样本闸入口承接",
+      "successor": "tests/test_promulgation_judge_561.py::test_promulgation_context_is_deterministic_and_excludes_satisfaction"
     },
     {
       "file": "tests/test_rescript_draft_656.py",
-      "case": "test_1620_internal_canonical_xiexang_renormalizes_without_kind",
-      "reason": "纯 normalize/canonical helper"
-    },
-    {
-      "file": "tests/test_rescript_draft_656.py",
-      "case": "test_1620_layer_a_reward_with_army_target_stays_reward",
-      "reason": "纯 normalize_rescript_layer_a_option helper"
-    },
-    {
-      "file": "tests/test_relation_brew_636.py",
-      "case": "test_build_brew_input_projects_prior_event_fields",
-      "reason": "纯 build_brew_input 投影 helper"
-    },
-    {
-      "file": "tests/test_player_army_projection_321.py",
-      "case": "test_player_army_situation_six_tier_truth_table",
-      "reason": "纯投影分层 truth table helper"
-    },
-    {
-      "file": "tests/test_qa_b3_409_ux.py",
-      "case": "test_serialized_web_write_phase_messages_cover_front_half_done",
-      "reason": "纯 _front_half_detail 文案 helper"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_emit_preparsed_dict_ongoing_no_false_warn",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_emit_preparsed_list_tags_still_warns",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_malformed_pairing_shape_warns",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_nonlist_economy_no_crash_warns",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_fiscal_numeric_string_delta_no_warn",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_fiscal_account_not_applied_by_flows_warns",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_move_with_only_army_still_warns",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_raise_with_only_person_change_still_warns",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_fiscal_invalid_economy_shell_warns",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_military_effect_with_only_legacy_office_changes_warns",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_neutral_initiative_no_warn",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_fiscal_recurring_with_ongoing_economy_no_warn",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_fiscal_recurring_initiative_without_economy_warns",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_military_initiative_with_office_change_no_warn",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_military_initiative_with_new_armies_no_warn",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
-    },
-    {
-      "file": "tests/test_initiative_resolve_pairing.py",
-      "case": "test_military_initiative_without_army_warns",
-      "reason": "纯 _initiative_resolve_pairing_warnings/_emit helper；apply_issue_tracker_output 入口案承接"
+      "case": "test_657_s1_rescript_emitted_set_subset_of_dossier",
+      "reason": "仅字面集合 ⊆ DOSSIER_ACTION_TYPES；批红/拟旨入口承接",
+      "successor": "tests/test_rescript_draft_656.py::test_save_and_list_rescript_drafts_roundtrip"
     }
   ],
-  "T5_unk_summary": {
-    "prior": 1050,
-    "deleted": 57,
-    "kept_explicit": 993,
+  "T5_former993_summary": {
+    "prior_generic_keep": 993,
+    "deleted_this_round_from_that_bucket": 9,
+    "still_kept": 984,
+    "unique_reasons": 984,
     "disposition_counts": {
-      "KEEP_external_or_public_on_reread": 993,
-      "DELETE_helper_or_internal": 57
+      "KEEP_external_entry": 239,
+      "KEEP_reject_gate": 220,
+      "KEEP_external_behavior": 496,
+      "KEEP_source_contract": 20,
+      "KEEP_source_or_reject": 9
+    }
+  },
+  "T5_universe_summary": {
+    "kept": 3288,
+    "unique_reasons": 3288,
+    "deleted_prior63": 63,
+    "deleted_this_round": 9,
+    "disposition_counts": {
+      "KEEP_external_entry": 1305,
+      "KEEP_reject_gate": 591,
+      "KEEP_source_contract": 567,
+      "KEEP_external_behavior": 684,
+      "KEEP_source_or_reject": 141
     }
   }
 }
