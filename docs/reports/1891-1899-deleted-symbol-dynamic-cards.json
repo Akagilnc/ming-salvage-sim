@@ -1,0 +1,178 @@
+[
+  {
+    "file": "tests/test_cli_backend.py",
+    "line": 161,
+    "func": "test_run_backend_dispatch",
+    "resolved_hint": "ming_sim.cli_backend",
+    "protocol": "dispatch_table_loop_patches__run_*",
+    "active_concrete_attrs_checked": [
+      {
+        "name": "_run_claude",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_agy",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_codex",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_backend_dispatch",
+        "ok": false,
+        "how": "absent"
+      },
+      {
+        "name": "_run_backend",
+        "ok": true,
+        "how": "hasattr"
+      }
+    ],
+    "missing_runners": [
+      "_run_backend_dispatch"
+    ],
+    "raw": "monkeypatch.setattr(cb, attr, lambda p, **kw: (out, 1))",
+    "disposition": "DYNAMIC_WITH_MISSING_CONCRETE",
+    "reason": "Non-const attr name; concrete _run_* symbols checked on ming_sim.cli_backend from nearby source literals."
+  },
+  {
+    "file": "tests/test_cli_backend.py",
+    "line": 895,
+    "func": "test_run_backend_dispatch_new_runners",
+    "resolved_hint": "ming_sim.cli_backend",
+    "protocol": "dispatch_table_loop_patches__run_*",
+    "active_concrete_attrs_checked": [
+      {
+        "name": "_run_cursor",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_kimi",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_grok",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_pi",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_backend_dispatch_new_runners",
+        "ok": false,
+        "how": "absent"
+      },
+      {
+        "name": "_run_backend",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_backend_for_config_dispatches_new_runners",
+        "ok": false,
+        "how": "absent"
+      }
+    ],
+    "missing_runners": [
+      "_run_backend_dispatch_new_runners",
+      "_run_backend_for_config_dispatches_new_runners"
+    ],
+    "raw": "monkeypatch.setattr(cb, attr, lambda p, **kw: (out, 1))",
+    "disposition": "DYNAMIC_WITH_MISSING_CONCRETE",
+    "reason": "Non-const attr name; concrete _run_* symbols checked on ming_sim.cli_backend from nearby source literals."
+  },
+  {
+    "file": "tests/test_cli_backend.py",
+    "line": 909,
+    "func": "test_run_backend_for_config_dispatches_new_runners",
+    "resolved_hint": "ming_sim.cli_backend",
+    "protocol": "fstring__run_{runner}_registration",
+    "active_concrete_attrs_checked": [
+      {
+        "name": "_run_cursor",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_kimi",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_grok",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_pi",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_backend_dispatch_new_runners",
+        "ok": false,
+        "how": "absent"
+      },
+      {
+        "name": "_run_backend",
+        "ok": true,
+        "how": "hasattr"
+      },
+      {
+        "name": "_run_backend_for_config_dispatches_new_runners",
+        "ok": false,
+        "how": "absent"
+      }
+    ],
+    "missing_runners": [
+      "_run_backend_dispatch_new_runners",
+      "_run_backend_for_config_dispatches_new_runners"
+    ],
+    "raw": "monkeypatch.setattr(cb, f\"_run_{runner}\", fake)",
+    "disposition": "DYNAMIC_WITH_MISSING_CONCRETE",
+    "reason": "Non-const attr name; concrete _run_* symbols checked on ming_sim.cli_backend from nearby source literals."
+  },
+  {
+    "file": "tests/test_cli_backend.py",
+    "line": 932,
+    "func": "test_clichat_call_cli_dispatches_new_runners",
+    "resolved_hint": "ming_sim.cli_backend",
+    "protocol": "fstring__run_{runner}_registration",
+    "active_concrete_attrs_checked": [
+      {
+        "name": "_run_backend_for_config",
+        "ok": true,
+        "how": "hasattr"
+      }
+    ],
+    "missing_runners": [],
+    "raw": "monkeypatch.setattr(cb, f\"_run_{runner}\", fake)",
+    "disposition": "DYNAMIC_ACTIVE_PROTOCOL",
+    "reason": "Non-const attr name; concrete _run_* symbols checked on ming_sim.cli_backend from nearby source literals."
+  },
+  {
+    "file": "tests/conftest.py",
+    "line": 332,
+    "func": "plant_character_axis_sentinels",
+    "protocol": "setattr_character_field_loop",
+    "disposition": "DYNAMIC_FIXTURE_PROTOCOL",
+    "reason": "Non-const field name; plants axis sentinels on character instances."
+  },
+  {
+    "file": "tests/test_audience_background.py",
+    "line": 71,
+    "func": "__init__",
+    "protocol": "MethodType_bind_GameSession_methods",
+    "disposition": "DYNAMIC_TEST_DOUBLE_PROTOCOL",
+    "reason": "Binds GameSession methods onto test double via variable _name."
+  }
+]

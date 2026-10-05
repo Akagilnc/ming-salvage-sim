@@ -1,0 +1,122 @@
+[
+  {
+    "file": "tests/test_affairs_1831.py",
+    "line": 251,
+    "func": "test_new_issue_affair_attach_failure_leaves_no_partial_product",
+    "hint": "db.affairs",
+    "attr": "attach_from_declaration",
+    "raw": "monkeypatch.setattr(db.affairs, \"attach_from_declaration\", boom)",
+    "disposition": "NONPROD_OTHER",
+    "reason": "Could not map to production type; left as non-production target."
+  },
+  {
+    "file": "tests/test_cli_backend.py",
+    "line": 365,
+    "func": "test_resolve_cli_bin_found_via_extra_dirs_when_gui_path_bare",
+    "hint": "cb.os.path",
+    "attr": "isdir",
+    "raw": "monkeypatch.setattr(cb.os.path, \"isdir\", lambda p: True)",
+    "disposition": "NONPROD_VIA_MODULE_ATTR",
+    "reason": "`cb.os.path` reaches stdlib via production module attribute; target of patch is non-prod `os`."
+  },
+  {
+    "file": "tests/test_gazette_author_1862.py",
+    "line": 312,
+    "func": "test_author_archives_own_title_and_same_run_advances",
+    "hint": "db.textual_facts",
+    "attr": "readable_materials",
+    "raw": "monkeypatch.setattr(db.textual_facts, \"readable_materials\", observe_facts)",
+    "disposition": "NONPROD_OTHER",
+    "reason": "Could not map to production type; left as non-production target."
+  },
+  {
+    "file": "tests/test_menu_lifecycle_drain_396.py",
+    "line": 380,
+    "func": "test_shutdown_waits_for_drain_before_returning_or_killing",
+    "hint": "os",
+    "attr": "kill",
+    "raw": "monkeypatch.setattr(os, \"kill\", lambda *args, **kwargs: killed.append(args))",
+    "disposition": "NONPROD_STDLIB",
+    "reason": "Target module `os` is stdlib/non-production; outside CLEANUP-C1 deleted-prod-symbol class."
+  },
+  {
+    "file": "tests/test_menu_lifecycle_drain_396.py",
+    "line": 381,
+    "func": "test_shutdown_waits_for_drain_before_returning_or_killing",
+    "hint": "os",
+    "attr": "_exit",
+    "raw": "monkeypatch.setattr(os, \"_exit\", lambda code=0: killed.append(code))",
+    "disposition": "NONPROD_STDLIB",
+    "reason": "Target module `os` is stdlib/non-production; outside CLEANUP-C1 deleted-prod-symbol class."
+  },
+  {
+    "file": "tests/test_menu_lifecycle_drain_396.py",
+    "line": 382,
+    "func": "test_shutdown_waits_for_drain_before_returning_or_killing",
+    "hint": "time",
+    "attr": "sleep",
+    "raw": "monkeypatch.setattr(time, \"sleep\", lambda *_args: None)",
+    "disposition": "NONPROD_STDLIB",
+    "reason": "Target module `time` is stdlib/non-production; outside CLEANUP-C1 deleted-prod-symbol class."
+  },
+  {
+    "file": "tests/test_menu_lifecycle_drain_396.py",
+    "line": 409,
+    "func": "test_shutdown_without_web_game_skips_drain_and_kills",
+    "hint": "os",
+    "attr": "kill",
+    "raw": "monkeypatch.setattr(os, \"kill\", lambda *args, **kwargs: killed.append(args))",
+    "disposition": "NONPROD_STDLIB",
+    "reason": "Target module `os` is stdlib/non-production; outside CLEANUP-C1 deleted-prod-symbol class."
+  },
+  {
+    "file": "tests/test_menu_lifecycle_drain_396.py",
+    "line": 410,
+    "func": "test_shutdown_without_web_game_skips_drain_and_kills",
+    "hint": "os",
+    "attr": "_exit",
+    "raw": "monkeypatch.setattr(os, \"_exit\", lambda code=0: killed.append(code))",
+    "disposition": "NONPROD_STDLIB",
+    "reason": "Target module `os` is stdlib/non-production; outside CLEANUP-C1 deleted-prod-symbol class."
+  },
+  {
+    "file": "tests/test_menu_lifecycle_drain_396.py",
+    "line": 411,
+    "func": "test_shutdown_without_web_game_skips_drain_and_kills",
+    "hint": "time",
+    "attr": "sleep",
+    "raw": "monkeypatch.setattr(time, \"sleep\", lambda *_args: None)",
+    "disposition": "NONPROD_STDLIB",
+    "reason": "Target module `time` is stdlib/non-production; outside CLEANUP-C1 deleted-prod-symbol class."
+  },
+  {
+    "file": "tests/test_month_call_recovery_1846.py",
+    "line": 558,
+    "func": "test_world_commit_failure_after_alongside_retries_uncommitted_segment",
+    "hint": "db.conn",
+    "attr": "commit",
+    "raw": "monkeypatch.setattr(db.conn, \"commit\", commit)",
+    "disposition": "NONPROD_OTHER",
+    "reason": "Could not map to production type; left as non-production target."
+  },
+  {
+    "file": "tests/test_person_transit_write_667.py",
+    "line": 64,
+    "func": "test_departure_reads_matrix_from_frozen_bundle_outside_cwd",
+    "hint": "sys",
+    "attr": "frozen",
+    "raw": "monkeypatch.setattr(sys, \"frozen\", True, raising=False)",
+    "disposition": "NONPROD_STDLIB",
+    "reason": "Target module `sys` is stdlib/non-production; outside CLEANUP-C1 deleted-prod-symbol class."
+  },
+  {
+    "file": "tests/test_person_transit_write_667.py",
+    "line": 65,
+    "func": "test_departure_reads_matrix_from_frozen_bundle_outside_cwd",
+    "hint": "sys",
+    "attr": "_MEIPASS",
+    "raw": "monkeypatch.setattr(sys, \"_MEIPASS\", str(bundle), raising=False)",
+    "disposition": "NONPROD_STDLIB",
+    "reason": "Target module `sys` is stdlib/non-production; outside CLEANUP-C1 deleted-prod-symbol class."
+  }
+]

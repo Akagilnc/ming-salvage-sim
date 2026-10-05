@@ -1,0 +1,21 @@
+[
+  {
+    "kind": "monkeypatch.setattr",
+    "file": "tests/test_rejection_wiring.py",
+    "line": 160,
+    "func": "test_attempt_derivation_failure_does_not_abort_settlement",
+    "target_expr": "decree_mod",
+    "hint": "ming_sim.decree",
+    "hint_source": "import_alias:mod",
+    "attr": "_next_attempt",
+    "raising": true,
+    "raw": "monkeypatch.setattr(decree_mod, \"_next_attempt\", _boom)",
+    "verdict": "MISSING",
+    "detail": "absent",
+    "modname": "ming_sim.decree",
+    "resolved_hint": "ming_sim.decree",
+    "resolved_source": "import_alias:mod",
+    "obj_type": "module",
+    "obj_repr": "<module 'ming_sim.decree' from '/Users/akagilnc/WorkSpace/Ming_LLM-1899-w5/ming_sim/decree.py'>"
+  }
+]
