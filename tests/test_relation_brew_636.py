@@ -101,7 +101,6 @@ def test_founding_summary_survives_consecutive_brews(game):
     assert report["selected"] == 2 and len(report["brewed"]) == 2
 
     first = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
-    assert first is not None
     assert first["dimension"] == "君臣"
     first_event_id = int(first["last_event_id"])
 
@@ -115,7 +114,6 @@ def test_founding_summary_survives_consecutive_brews(game):
     run_month_end_relation_brew(db, state, brew_fn)
 
     second = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
-    assert second is not None
     assert int(second["last_event_id"]) >= first_event_id
     assert second["dimension"] == "君臣"
 
@@ -128,7 +126,6 @@ def test_founding_summary_survives_consecutive_brews(game):
                                recent="杨嗣昌所请被驳，渐生离心。")]
     run_month_end_relation_brew(db, state, brew_fn)
     third = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
-    assert third is not None
     assert int(third["last_event_id"]) >= int(second["last_event_id"])
     assert third["dimension"] == "君臣"
 
@@ -188,7 +185,6 @@ def test_flip_brew_input_must_contain_new_edge_events(game):
     assert payload["new_events"][0]["origin"] == "audience:turn-2"
     assert payload["new_events"][0]["event_kind"] == "辜负"
     summary = db.get_relation_summary(EMPEROR_NODE, "钱谦益")
-    assert summary is not None
     assert summary["last_event_id"] >= flip_id
 
 
@@ -235,7 +231,6 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert len(new_hits) == 1 and prior_hits == []
     assert db.get_relation_brew_pending() == []
     summary = db.get_relation_summary("温体仁", "周延儒")
-    assert summary is not None
     assert summary["dimension"] == "大臣"
     assert int(summary["last_event_id"]) >= int(failed_id)
 
@@ -519,7 +514,6 @@ def test_duplicate_json_objects_rejected_not_first_object_picked(game):
     brew_fn.outputs = [_script(foundings=["越次一召，擢杨嗣昌于五品郎中。"], recent="原文一")]
     run_month_end_relation_brew(db, state, brew_fn)
     first = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
-    assert first is not None
     first_event_id = int(first["last_event_id"])
 
     state.turn += 1
