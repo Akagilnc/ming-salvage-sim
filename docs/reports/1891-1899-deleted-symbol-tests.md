@@ -1,20 +1,21 @@
 # #1891/#1899 CLEANUP-C1 已删符号 — 短回执
 
 现场：`ak-roles/1891-class-sweep`。仅 CLEANUP-C1；CHOICE 不送修。主助手 readonly：冻结卷缺符闭包 **PASS**（代码合法不动；不新框架；不复跑测试）。
+**本轮：仅追加主助手独立复核事实（docs-only forward）**——不改码；不重复施工／测试。复核前 HEAD＝`04c488a4c48d2c49364f2ba0a624c486aec9bc2d`。
 
 ## 撤回
 
 1. 超授权：`ENUMERATE_AND_RESOLVE.py`+AUDIT+全员 JSON/TSV/卡片已 forward 删（`a0ae52798`）。证据只在 `/tmp/cleanup-c1-forward-delete.hIkScB`。
-2. 簿记：`members=3450`／`unique(file,line,kind,target,attr)=3445`／`sites_total=3447` 有重复差异——**撤回唯一精准总数**；独立去重≈3447 候选、**dedup=3445**。**member 不证明 1 missing**。
+2. 簿记／统计口径失败史：`members=3450`／`unique(file,line,kind,target,attr)=3445`／`sites_total=3447` 有重复差异——**撤回唯一精准总数**；独立去重≈3447 候选、**dedup=3445**。**member 不证明 1 missing**。不得再把 3450／3445／3447 当sole totals。
 3. 旧 inline 摘要 **破损史**（`exists=2521 dynamic=124 missing=2`）：(a) `except SyntaxError: continue` 吞错；(b) `setattr("a.b.attr", value)` 118 条两参 string 误当 `attr=None`→dynamic124=118+6。勿用于全扫。
 
 ## 真残留（已删）／nonprod／dynamic
 
 | nodeid | 取证 | 处置 |
 | --- | --- | --- |
-| `tests/test_rejection_wiring.py::test_attempt_derivation_failure_does_not_abort_settlement` | `AttributeError: ming_sim.decree has no attribute '_next_attempt'` | 删 test（`4f277c384`） |
+| `tests/test_rejection_wiring.py::test_attempt_derivation_failure_does_not_abort_settlement` | `AttributeError: ming_sim.decree has no attribute '_next_attempt'`；**1 failed in 0.67s**（史：`/tmp/cleanup-c1-narrow-red.log`；forensic 0.69s） | 删 test（`4f277c384`） |
 
-KEEP `error_pack._next_attempt`。barrier pytest PASSED。第二缺符：无。聚焦史 19 passed。
+KEEP `error_pack._next_attempt`。barrier pytest PASSED。第二缺符：无。邻批史 **1 failed, 20 passed**；删后聚焦史 **19 passed**（`test_rejection_wiring` 整文件 −1 案 + error_pack 两案 + barrier）。
 
 **9 nonprod**（原记录 `…/nonprod.json`）：`cb.os.path.isdir`；`os.kill`/`os._exit`/`time.sleep`×2；`sys.frozen`/`sys._MEIPASS`（raising=False）。
 
@@ -158,5 +159,69 @@ missing=[]  import_error=[]  parse_errors=[]
 
 ## 自查二连
 
-1. 同类：框架已删；`_next_attempt` 唯一真红已删；barrier 绿；32→0／6 dynamic；192 不冒称；簿记已撤回。
+1. 同类：框架已删；`_next_attempt` 唯一真红已删；barrier 绿；32→0／6 dynamic；192 不冒称；簿记已撤回；**0.67 红／19 绿／超框架 forward 删／统计口径失败史原样保留**。
 2. 引入：本 forward **只 docs**；不动码；不新工具；不复跑测试。
+
+## 主助手独立复核（CLEANUP-C1；事实证据；非施工／非庭审）
+
+**执行者**：主助手（非 worker）。**性质**：对短回执既有修正辅助扫描 + 聚焦选择器的**独立复跑取证**；**不重复施工／不另写测试／不改生产代码**。
+**代码结果交付边界**：目标＝事实证据回执 forward；**非**目标 merge，**非**庭审收敛。
+**复核 HEAD**：`04c488a4c48d2c49364f2ba0a624c486aec9bc2d`（相对代码交卷 `1045ec657`／删红案 `4f277c384`／超框架删 `a0ae52798`）。
+**临时根**：`/tmp/1891-deleted-symbol-independent.3sPPTP/`（`enum.py`／`enum.log`／`command.txt`／`focus.log`／`user`／`pytest`）。
+**失败史**：上文 **0.67 红／19 绿／超授权框架 forward 删／簿记与破损统计口径** **原样保留、不改写**；本节只证修后修正口径。
+**边界**：非 fixture 候选闭包**不能**靠此辅助机械断言；沿原冻结深解析取证（fixture／candidate 无法机械判定——见「192／32」）。
+
+### A) 独立辅助扫描（回执 inline 抽取）
+
+做法：从本短回执既有 bash fence 抽取修正口径 inline，写入 `$TMPROOT/enum.py` 后直接运行。
+
+```bash
+TMPROOT=/tmp/1891-deleted-symbol-independent.3sPPTP
+$PY "$TMPROOT/enum.py" | tee "$TMPROOT/enum.log"
+```
+
+主助手实测摘要（数字以 `enum.log` 为准，不改写）：
+
+| 指标 | 值 |
+| --- | --- |
+| candidates_raw／dedup／setattr_string | **2968／2967／118** |
+| exists／candidate／dynamic_attr／nonprod_stdlib | **2632／327／6／2** |
+| missing／import_error／parse_errors | **[]／[]／[]** |
+
+### B) 独立聚焦 pytest（8 selectors → 参数化 34）
+
+8 选择器：`test_rejection_wiring` 整文件 + `error_pack` 两案 + barrier 案 + CLI 4 个 dynamic nodeids（实际 parameter 扩成 **34**）。真实命令全文在 `$TMPROOT/command.txt`：
+
+```bash
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest -p no:cacheprovider --basetemp=/tmp/1891-deleted-symbol-independent.3sPPTP/pytest -q --tb=short tests/test_rejection_wiring.py tests/test_error_pack.py::test_next_attempt_skips_malformed_and_foreign_entries tests/test_error_pack.py::test_attempt_derived_from_existing_dirs tests/test_mechanical_tail_1845.py::test_web_barrier_resumes_pending_tail_before_join tests/test_cli_backend.py::test_run_backend_dispatch tests/test_cli_backend.py::test_run_backend_dispatch_new_runners tests/test_cli_backend.py::test_run_backend_for_config_dispatches_new_runners tests/test_cli_backend.py::test_clichat_call_cli_dispatches_new_runners
+```
+
+安全 env（七项 BIN=`/usr/bin/false` + 字节码关 + 新 user／basetemp；`-p no:cacheprovider`）：
+
+```bash
+export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  MING_SIM_USER_DATA_DIR=/tmp/1891-deleted-symbol-independent.3sPPTP/user
+```
+
+结果：`focus.log` → **`34 passed in 1.17s`**；主助手墙钟 **1.633s**。未跑全量／真实宿主／网络模型。不冒称 typecheck。
+
+### C) 独立 Ruff F401／F821
+
+```bash
+UV_TOOL_DIR=/tmp/1891-uv-tools UV_CACHE_DIR=/tmp/1891-uv-cache \
+  uv tool run --from ruff==0.11.2 ruff check --target-version py313 --select F401,F821 \
+  tests/test_rejection_wiring.py
+```
+
+结果：**All checks passed!**
+
+### D) 工作树洁净
+
+相对复核前 HEAD `04c488a4c48d2c49364f2ba0a624c486aec9bc2d`：`git diff --check 1045ec657..HEAD` 与 `git status` **均无输出**（本 forward 提交前工作树仅追加本节后的 docs diff）。
+
+## 提交约束声明（本轮：docs-only 独立复核 forward）
+
+本轮仅 forward `ak-roles:` **docs**（追加主助手独立复核事实证据；保留 0.67 红／19 绿／超框架 forward 删／统计口径失败史）；不 amend／stash／reset／checkout 覆盖／rebase／squash／push／PR；不改生产／测试代码；不改宪法／Soul／宿主配置／席位表；不造通用机制或永久自证测试；不重复施工／测试；不抹失败史；不冒称正式庭审；不把辅助机械扫描冒称非 fixture 候选全闭合；`git diff --check` 绿。
