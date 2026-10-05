@@ -1,5 +1,7 @@
 M1_cas_lost_returns_None	True	out=None
 M2_web_retry_keyerror_fail_closed	True	raised=KeyError:'mut scene missing'; status=interrupted
-M3_fail_snapshot_no_forged_diffs	True	recorded=0; status=interrupted
+M3a_fail_snapshot_no_forged_diffs	True	recorded=0; status=interrupted
+M3b_fail_snapshot_side_effect_rollback	False	loyalty0=45 loyalty1=85 delta=40 status=interrupted rollback_items=0 raised=RuntimeError:重试 LLM 失败 capture_calls=2
+M3c_control_fail_retry_rolls_back_when_snapshot_ok	True	loyalty0=45 loyalty1=45
 M4_terminate_no_kill	True	calls=['terminate', ('wait', 5)]
 M5_canonicalize_loud_via_enrich	True	loud=True

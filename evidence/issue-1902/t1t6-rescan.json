@@ -1,56 +1,54 @@
 {
+  "round": "final-self-verify-drop-proof-tests-full-enum",
   "predicates": {
-    "T1": "拆除显式及隐式强杀路径和硬期限兜底；保留合法静默判定，如实报告终止缺口，不另造监督层。全仓 ming_sim|web_app|scripts|web 的 .kill(/SIGKILL/subprocess.run(timeout=/Popen.kill/os.kill 可执行与注释均入表。",
-    "T2": "删除从自由输出词面判故障、切分呈现横幅的机制及钉误判测试；用已有原生状态或结构化契约。谓词覆盖 prose→fault / banner-split / nail-misjudgment，不以 Auth|Codex 字串穷尽类。",
-    "T3": "代码故障响亮失败；确证安全旁路保留真因日志（不依赖调试开关）。枚举一切 except 后 pass/continue/return None|empty|原对象/正常值，不只 except+pass。",
-    "T4": "合并恢复生命周期，删入口编排副本；保留输入/呈现/宿主资源适配。CAS 未赢用 reopen False→None 结构化返回，不用 LookupError（其子类 KeyError/IndexError 可来自 scene/snapshot/落库）。snapshot 失败不伪造差异。",
-    "T5": "按独立外部契约处置纯内部和重复证明；复用真实行为测试；修正虚假零剩余；保留负向闸与公开结构化契约。全文=内部形状+重复证明，不得收窄为 nail+SectionResult 点名。",
-    "T6": "按当前实际消费者清退授权内退役入口残根、独占子树和专属证明；撤销底座时点豁免；保留有真实用途的共享能力。不以点名包装穷尽类。"
+    "T1": "拆除显式及隐式强杀路径和硬期限兜底；保留合法静默判定，如实报告终止缺口，不另造监督层。",
+    "T2": "删除从自由输出词面判故障、切分呈现横幅的机制及钉误判测试；用已有原生状态或结构化契约。枚举一切输出变量绑定→分支/正则/切分及结果状态候选，不以指定词穷尽。",
+    "T3": "代码故障响亮失败；确证安全旁路保留真因日志；不给所有 catch 另加统一框架。",
+    "T4": "合并恢复生命周期，删入口编排副本；保留输入/呈现/宿主适配。after-snapshot 失败不得伪造差异；不声称跳过 diff 仍保副作用回滚。",
+    "T5": "全仓现存 Py/TS 测试函数按真实入口/调用/断言契约归类与重复契约分组；处置纯内部与重复证明；不按行数/操作符盲删；不为修复新造证明测。",
+    "T6": "全生产符号引用/可达入口（非测试）候选 ∧ 当前消费者清退授权内退役类子树/独占证明；撤销底座时点豁免；保留真实共享能力。"
   },
   "candidate_universe_sizes": {
     "T1": 7,
-    "T2": 12,
+    "T2_dataflow_plus_explicit": 21,
+    "T2_raw_ast_compare_in_overinclusive": 2098,
     "T3": 313,
-    "T4": 88,
-    "T5_rows": 89,
-    "T5_stale_internal_candidates_reviewed": 68,
-    "T6_symbols": 3,
-    "T6_KEEP_NEVER_WIRED_names": 133
+    "T4": 103,
+    "T5_all_tests": 3364,
+    "T5_refined_internal_reviewed": 79,
+    "T6_prod_symbols_focused": 1927,
+    "T6_KEEP_NEVER_WIRED": 133
   },
   "actionable_counts": {
     "T1": 0,
     "T2": 0,
     "T3": 0,
-    "T4": 0,
-    "T5_internal_shape_remaining": 0,
-    "T5_duplicate_actionable": 0,
-    "T6": 0
+    "T4_block_snapshot_sidefx": 1,
+    "T5_delete": 0,
+    "T6_auth_residual_open": 0
   },
-  "T3_by_disposition": {
-    "KEEP_cancel_control_flow": 1,
-    "KEEP_collect_then_loud_raise": 1,
-    "KEEP_entry_presents_failure_to_player": 1,
-    "KEEP_input_clamp_or_item_reject": 177,
-    "KEEP_loud_to_client": 4,
-    "KEEP_narrow_exc_control_flow": 6,
-    "KEEP_nested_rollback_then_raise": 5,
-    "KEEP_optional_io_or_schema_absent": 17,
-    "KEEP_parse_skip_invalid_input": 30,
-    "KEEP_propagate_or_structured": 12,
-    "KEEP_safe_bypass_with_true_cause_log": 31,
-    "KEEP_script_probe_not_game_runtime": 8,
-    "KEEP_structured_failure_path": 3,
-    "KEEP_typed_domain_reject_or_cancel": 12,
-    "KEEP_typed_llm_fault_to_http": 5
+  "proof_tests_deleted": [
+    "tests/test_audience_restore_505.py::test_retry_keyerror_after_cas_won_fails_closed_not_cas_bypass",
+    "tests/test_audience_restore_505.py::test_fail_audience_chat_turn_snapshot_failure_keeps_recovery_without_forged_diffs",
+    "tests/test_audience_restore_505.py::_KeyErrorAfterCasRetrySession"
+  ],
+  "evidence_instead_of_proof_tests": {
+    "existing": [
+      "test_lost_reopen_cas_rejects_without_second_reply",
+      "test_failed_retry_rolls_back_side_effects_and_keeps_question",
+      "test_run_codex_stdout_empty_does_not_parse_stderr_banner"
+    ],
+    "temp_mutations": "evidence/issue-1902/t1t6-mutations-script.py.txt → t1t6-mutations.out"
   },
-  "T3_actionable": [],
+  "T4_fail_snapshot": {
+    "safe": false,
+    "mutation": "M3b_fail_snapshot_side_effect_rollback FAIL loyalty0=45 loyalty1=85 delta=40 rollback_items=0 status=interrupted",
+    "control": "M3c_control_fail_retry_rolls_back_when_snapshot_ok PASS",
+    "law": "restore_interrupted_after_failed_retry 依赖 chat_turn_rollback_items；无 after-snapshot 则无法 record diffs → 副作用不回滚。不伪造 before==after。完整补救需第二套快照/回滚设计 = 未授权 → BLOCK。"
+  },
   "commands": [
-    "python3 /tmp/ming1902-t1t6-enum/enum_t1t6.py  # full mechanical enum Py/TS/scripts",
-    "rg -n --glob '*.py' -g '!tests/**' '(\\.kill\\(|SIGKILL|subprocess\\.run\\([^)]*timeout\\s*=|os\\.kill\\()' ming_sim web_app.py scripts",
-    "rg -n --glob '*.{py,ts,tsx}' 'llm_connection_error|Authentication required|OpenAI Codex v|_AGY_AUTH|banner|prose_is_not_connection' ming_sim web_app.py tests web/src scripts",
-    "AST except→pass|continue|return None|{}|[]|\"\"|name  (enum_t1t6.t3_scan_py) over ming_sim|web_app|scripts",
-    "rg -n 'reopen_interrupted_chat_turn_for_retry|execute_interrupted_reply_retry|fail_audience_chat_turn|schedule_close_night_after_chat_if_needed' ming_sim web_app.py tests",
-    "AST: SectionResult(|ApplyContext( + attr/identity asserts without I/O/entry across tests/",
-    "rg -n '_require_active_minister|手拟|manual_draft|KEEP_NEVER_WIRED|generate_rescript_draft' ming_sim web_app.py tests scripts evidence/issue-1902/s123-s1-disposition.md"
+    "python3 evidence/issue-1902/t1t6-enum-script.py.txt  # or /tmp copy; body identical",
+    "python3 evidence/issue-1902/t1t6-mutations-script.py.txt",
+    "env MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python3 -m pytest -q -p no:cacheprovider <focus files>"
   ]
 }

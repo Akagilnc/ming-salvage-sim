@@ -1,31 +1,31 @@
 {
-  "note": "Full-predicate member tables. T5 covers INTERNAL_SHAPE + DUPLICATE across repo (not nail-only). T2 covers prose→fault class (not Auth/Codex-only). T6 covers authorized retirement residuals (not named-wrapper-only). Zero-hit counts are after semantic disposition of full candidate sets — candidate set sizes recorded.",
+  "note": "Final self-verify: full enum; deleted proof tests; T4 snapshot gap BLOCK with M3b; no batch KEEP_EXTERNAL.",
   "predicates": {
-    "T1": "拆除显式及隐式强杀路径和硬期限兜底；保留合法静默判定，如实报告终止缺口，不另造监督层。全仓 ming_sim|web_app|scripts|web 的 .kill(/SIGKILL/subprocess.run(timeout=/Popen.kill/os.kill 可执行与注释均入表。",
-    "T2": "删除从自由输出词面判故障、切分呈现横幅的机制及钉误判测试；用已有原生状态或结构化契约。谓词覆盖 prose→fault / banner-split / nail-misjudgment，不以 Auth|Codex 字串穷尽类。",
-    "T3": "代码故障响亮失败；确证安全旁路保留真因日志（不依赖调试开关）。枚举一切 except 后 pass/continue/return None|empty|原对象/正常值，不只 except+pass。",
-    "T4": "合并恢复生命周期，删入口编排副本；保留输入/呈现/宿主资源适配。CAS 未赢用 reopen False→None 结构化返回，不用 LookupError（其子类 KeyError/IndexError 可来自 scene/snapshot/落库）。snapshot 失败不伪造差异。",
-    "T5": "按独立外部契约处置纯内部和重复证明；复用真实行为测试；修正虚假零剩余；保留负向闸与公开结构化契约。全文=内部形状+重复证明，不得收窄为 nail+SectionResult 点名。",
-    "T6": "按当前实际消费者清退授权内退役入口残根、独占子树和专属证明；撤销底座时点豁免；保留有真实用途的共享能力。不以点名包装穷尽类。"
+    "T1": "拆除显式及隐式强杀/硬期限；合法静默保留；终止缺口如实报告；不另造监督层。",
+    "T2": "删除从自由输出词面判故障、切分呈现横幅的机制及钉误判测试；用原生状态/结构化契约。枚举一切输出变量分支/正则/切分及结果状态候选，不以指定词穷尽。",
+    "T3": "代码故障响亮；确证安全旁路保留真因日志；不给所有 catch 加统一框架。",
+    "T4": "合并恢复生命周期，删入口编排副本；保留输入/呈现/宿主适配。snapshot 失败不得伪造差异，亦不声称跳过 diff 仍保副作用回滚。",
+    "T5": "全仓现存 Py/TS 测试函数按真实入口/调用/断言契约归类与重复契约分组；处置纯内部与重复证明；不按行数/操作符盲删。",
+    "T6": "全生产符号引用/可达入口（非测试）候选 ∧ 当前消费者清退授权内退役类子树/独占证明；撤销底座时点豁免；保留真实共享能力。"
   },
   "candidate_universe_sizes": {
     "T1": 7,
-    "T2": 12,
+    "T2_dataflow_plus_explicit": 21,
+    "T2_raw_ast_overinclusive": 2098,
     "T3": 313,
-    "T4": 88,
-    "T5_rows": 89,
-    "T5_stale_internal_candidates_reviewed": 68,
-    "T6_symbols": 3,
-    "T6_KEEP_NEVER_WIRED_names": 133
+    "T4": 103,
+    "T5_all_tests": 3364,
+    "T5_refined_internal_reviewed": 79,
+    "T6_prod_symbols_focused": 1927,
+    "T6_KEEP_NEVER_WIRED": 133
   },
   "actionable_counts": {
-    "T1": 0,
-    "T2": 0,
+    "T1_review": 0,
+    "T2_delete_or_review": 0,
     "T3": 0,
-    "T4": 0,
-    "T5_internal_shape_remaining": 0,
-    "T5_duplicate_actionable": 0,
-    "T6": 0
+    "T4_block": 1,
+    "T5_delete_or_review": 0,
+    "T6_auth_open_prod0": 0
   },
   "T1": [
     {
@@ -80,88 +80,257 @@
   ],
   "T2": [
     {
-      "file": "ming_sim/llm_transport.py",
-      "line": 190,
-      "text": "llm_connection_error 可重试（#1780）。idle / CLI LLMUnavailable / timeout /",
-      "scope": "prod",
-      "disposition": "KEEP_structured_transport_code_not_prose_infer"
+      "file": "ming_sim/issues.py",
+      "line": 4209,
+      "kind": "bind_output",
+      "names": [
+        "content"
+      ],
+      "text": "content = db.content",
+      "fault_window": false,
+      "pre": "BIND",
+      "disposition": "KEEP_not_cli_free_output_binding",
+      "evidence": "t2_dataflow"
     },
     {
-      "file": "ming_sim/llm_transport.py",
-      "line": 272,
-      "text": "code=\"llm_connection_error\",",
-      "scope": "prod",
-      "disposition": "KEEP_structured_transport_code_not_prose_infer"
+      "file": "ming_sim/db.py",
+      "line": 13752,
+      "kind": "bind_output",
+      "names": [
+        "content"
+      ],
+      "text": "content = self.content",
+      "fault_window": false,
+      "pre": "BIND",
+      "disposition": "KEEP_not_cli_free_output_binding",
+      "evidence": "t2_dataflow"
     },
     {
-      "file": "ming_sim/llm_transport.py",
-      "line": 302,
-      "text": "\"llm_connection_error\",",
-      "scope": "prod",
-      "disposition": "KEEP_structured_transport_code_not_prose_infer"
+      "file": "ming_sim/db.py",
+      "line": 13755,
+      "kind": "compare",
+      "names": [
+        "content"
+      ],
+      "text": "if content is not None else \"\"",
+      "fault_window": false,
+      "pre": "USE_OR_COMPARE_NO_FAULT_NEAR",
+      "disposition": "KEEP_use_without_fault_nearby",
+      "evidence": "t2_dataflow"
     },
     {
-      "file": "tests/test_cli_runner_error_typed_1299.py",
-      "line": 24,
-      "text": "\"OpenAI Codex v0.50.0\\n\"",
-      "scope": "test",
-      "disposition": "KEEP_fixture_stderr_body_not_banner_split"
+      "file": "ming_sim/decree_forecast.py",
+      "line": 431,
+      "kind": "bind_output",
+      "names": [
+        "snapshot"
+      ],
+      "text": "snapshot = queue.run(ticket, snapshot_fn)",
+      "fault_window": false,
+      "pre": "BIND",
+      "disposition": "KEEP_not_cli_free_output_binding",
+      "evidence": "t2_dataflow"
     },
     {
-      "file": "tests/test_chat_stream_failpaths_393.py",
-      "line": 671,
-      "text": "code=\"llm_connection_error\",",
-      "scope": "test",
-      "disposition": "KEEP_structured_code_assert_not_prose_nail"
+      "file": "ming_sim/decree_forecast.py",
+      "line": 434,
+      "kind": "bind_output",
+      "names": [
+        "snapshot"
+      ],
+      "text": "snapshot = queue.run(ticket, snapshot_fn)",
+      "fault_window": false,
+      "pre": "BIND",
+      "disposition": "KEEP_not_cli_free_output_binding",
+      "evidence": "t2_dataflow"
     },
     {
-      "file": "tests/test_chat_stream_failpaths_393.py",
-      "line": 700,
-      "text": "assert detail.get(\"code\") == \"llm_connection_error\"",
-      "scope": "test",
-      "disposition": "KEEP_structured_code_assert_not_prose_nail"
+      "file": "ming_sim/decree_forecast.py",
+      "line": 435,
+      "kind": "compare",
+      "names": [
+        "snapshot"
+      ],
+      "text": "if snapshot is None:",
+      "fault_window": false,
+      "pre": "USE_OR_COMPARE_NO_FAULT_NEAR",
+      "disposition": "KEEP_use_without_fault_nearby",
+      "evidence": "t2_dataflow"
     },
     {
-      "file": "tests/test_chat_stream_failpaths_393.py",
-      "line": 885,
-      "text": "code=\"llm_connection_error\",",
-      "scope": "test",
-      "disposition": "KEEP_structured_code_assert_not_prose_nail"
+      "file": "ming_sim/decree_forecast.py",
+      "line": 580,
+      "kind": "bind_output",
+      "names": [
+        "ids"
+      ],
+      "text": "ids = queue.run(ticket, snapshot_held_ids)",
+      "fault_window": false,
+      "pre": "BIND",
+      "disposition": "KEEP_not_cli_free_output_binding",
+      "evidence": "t2_dataflow"
     },
     {
-      "file": "tests/test_chat_stream_failpaths_393.py",
-      "line": 898,
-      "text": "assert detail.get(\"code\") == \"llm_connection_error\"",
-      "scope": "test",
-      "disposition": "KEEP_structured_code_assert_not_prose_nail"
+      "file": "ming_sim/decree.py",
+      "line": 776,
+      "kind": "bind_output",
+      "names": [
+        "run_output"
+      ],
+      "text": "run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))",
+      "fault_window": true,
+      "pre": "BIND",
+      "disposition": "KEEP_agent_run_output_not_prose_fault_infer",
+      "evidence": "t2_dataflow"
     },
     {
-      "file": "tests/test_chat_stream_failpaths_393.py",
-      "line": 995,
-      "text": "code=\"llm_connection_error\",",
-      "scope": "test",
-      "disposition": "KEEP_structured_code_assert_not_prose_nail"
+      "file": "ming_sim/session.py",
+      "line": 1584,
+      "kind": "bind_output",
+      "names": [
+        "output"
+      ],
+      "text": "output = agent.run(agent_prompt)",
+      "fault_window": true,
+      "pre": "BIND",
+      "disposition": "KEEP_agent_run_output_not_prose_fault_infer",
+      "evidence": "t2_dataflow"
     },
     {
-      "file": "tests/test_cli_transport_1465.py",
-      "line": 177,
-      "text": "#1902 T2：禁再以 Authentication required 词面钉连接错误。",
-      "scope": "test",
-      "disposition": "KEEP_negative_contract_comment"
+      "file": "ming_sim/agents.py",
+      "line": 334,
+      "kind": "bind_output",
+      "names": [
+        "output"
+      ],
+      "text": "output = agent.run(run_input)",
+      "fault_window": false,
+      "pre": "BIND",
+      "disposition": "KEEP_agent_run_output_not_prose_fault_infer",
+      "evidence": "t2_dataflow"
+    },
+    {
+      "file": "ming_sim/agents.py",
+      "line": 395,
+      "kind": "bind_output",
+      "names": [
+        "stream"
+      ],
+      "text": "stream = agent.run(prompt, stream=True, stream_events=True)",
+      "fault_window": false,
+      "pre": "BIND",
+      "disposition": "KEEP_not_cli_free_output_binding",
+      "evidence": "t2_dataflow"
+    },
+    {
+      "file": "ming_sim/llm_model.py",
+      "line": 380,
+      "kind": "bind_output",
+      "names": [
+        "run_output"
+      ],
+      "text": "run_output = agent.run(\"输出 ok\")",
+      "fault_window": true,
+      "pre": "BIND",
+      "disposition": "KEEP_agent_run_output_not_prose_fault_infer",
+      "evidence": "t2_dataflow"
+    },
+    {
+      "file": "ming_sim/highlight_judge.py",
+      "line": 80,
+      "kind": "bind_output",
+      "names": [
+        "output"
+      ],
+      "text": "output = local_agent.run(prompt)",
+      "fault_window": false,
+      "pre": "BIND",
+      "disposition": "KEEP_agent_run_output_not_prose_fault_infer",
+      "evidence": "t2_dataflow"
+    },
+    {
+      "file": "ming_sim/highlight_judge.py",
+      "line": 81,
+      "kind": "compare",
+      "names": [
+        "output"
+      ],
+      "text": "raw = extract_agent_text(output) if output is not None else \"\"",
+      "fault_window": false,
+      "pre": "USE_OR_COMPARE_NO_FAULT_NEAR",
+      "disposition": "KEEP_use_without_fault_nearby",
+      "evidence": "t2_dataflow"
+    },
+    {
+      "file": "scripts/promulgation_gate_561.py",
+      "line": 137,
+      "kind": "bind_output",
+      "names": [
+        "chunk"
+      ],
+      "text": "chunk = handle.read()",
+      "fault_window": true,
+      "pre": "BIND",
+      "disposition": "KEEP_not_cli_free_output_binding",
+      "evidence": "t2_dataflow"
+    },
+    {
+      "file": "scripts/play_as_emperor.py",
+      "line": 238,
+      "kind": "bind_output",
+      "names": [
+        "response"
+      ],
+      "text": "response = agent.run(payload)",
+      "fault_window": false,
+      "pre": "BIND",
+      "disposition": "KEEP_agent_run_output_not_prose_fault_infer",
+      "evidence": "t2_dataflow"
+    },
+    {
+      "file": "web_app.py",
+      "line": 3375,
+      "kind": "bind_output",
+      "names": [
+        "active_value"
+      ],
+      "text": "active_value = f.read()",
+      "fault_window": false,
+      "pre": "BIND",
+      "disposition": "KEEP_not_cli_free_output_binding",
+      "evidence": "t2_dataflow"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "line": 832,
+      "kind": "returncode_status",
+      "text": "if returncode != 0: raise RuntimeError(...stderr[:200])",
+      "disposition": "KEEP_native_exit_code_status_not_prose_infer",
+      "evidence": "uses returncode; stderr only in error message body"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "line": 234,
+      "kind": "sentinel_regex",
+      "text": "re.search(<<<CMRPATH>>>...<<<ENDPATH>>>, proc.stdout)",
+      "disposition": "KEEP_structured_sentinel_extract_not_fault_infer",
+      "evidence": "login PATH discovery sentinel; not auth/fault classification"
     },
     {
       "file": "tests/test_cli_backend.py",
-      "line": 284,
-      "text": "captured = _capture_run(monkeypatch, _P(stdout=body, stderr=\"OpenAI Codex v0\\nlogs\"))",
-      "scope": "test",
-      "disposition": "KEEP_fixture_stderr_body_not_banner_split"
+      "line": 451,
+      "kind": "negative_gate",
+      "text": "test_run_codex_stdout_empty_does_not_parse_stderr_banner",
+      "disposition": "KEEP_negative_gate_forbids_banner_split",
+      "evidence": "asserts llm_empty_output when stdout empty"
     },
     {
       "file": "tests/test_cli_backend.py",
-      "line": 458,
-      "text": "_P(stdout=\"\", stderr=\"STDOUT_BODY\\nOpenAI Codex v0.125.0\\nlogs\"),",
-      "scope": "test",
-      "disposition": "KEEP_fixture_stderr_body_not_banner_split"
+      "line": 281,
+      "kind": "fixture_stderr_noise",
+      "text": "test_run_codex_flags_and_stdout stderr fixture",
+      "disposition": "KEEP_fixture_stderr_noise_assert_stdout_body",
+      "evidence": "asserts out==stdout body"
     }
   ],
   "T3_summary": {
@@ -4074,58 +4243,70 @@
   ],
   "T4": [
     {
-      "file": "ming_sim/cli/terminal.py",
-      "line": 240,
-      "text": "#1902 T4：生命周期走 ``GameSession.execute_interrupted_reply_retry``（含收夜调度）；",
-      "disposition": "ENTRY_CALLS_CORE"
+      "file": "web_app.py",
+      "line": 1864,
+      "text": "走 ``GameSession.begin_audience_chat_turn`` 的未绑定真方法（而非",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
     },
     {
-      "file": "ming_sim/cli/terminal.py",
-      "line": 258,
-      "text": "retry_outcome = session.execute_interrupted_reply_retry(",
-      "disposition": "ENTRY_CALLS_CORE"
+      "file": "web_app.py",
+      "line": 1869,
+      "text": "turn = GameSession.begin_audience_chat_turn(",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
     },
     {
-      "file": "ming_sim/cli/terminal.py",
-      "line": 330,
-      "text": "session.schedule_close_night_after_chat_if_needed(",
-      "disposition": "SHARED_OR_ENTRY_ADAPTER"
+      "file": "web_app.py",
+      "line": 1886,
+      "text": "#1902：回滚与失败终态已下沉会话层（``GameSession.fail_audience_chat_turn``，",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
     },
     {
-      "file": "ming_sim/cli/terminal.py",
-      "line": 342,
-      "text": "chat_turn = GameSession.begin_audience_chat_turn(",
-      "disposition": "ENTRY_OR_TEST"
-    },
-    {
-      "file": "ming_sim/cli/terminal.py",
-      "line": 362,
-      "text": "GameSession.complete_audience_chat_turn(",
-      "disposition": "ENTRY_OR_TEST"
-    },
-    {
-      "file": "ming_sim/cli/terminal.py",
-      "line": 368,
+      "file": "web_app.py",
+      "line": 1892,
       "text": "GameSession.fail_audience_chat_turn(",
-      "disposition": "ENTRY_OR_TEST"
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
     },
     {
-      "file": "ming_sim/db.py",
-      "line": 9295,
-      "text": "def capture_chat_rollback_snapshot(self) -> Dict[str, Dict[str, Dict[str, Any]]]:",
-      "disposition": "KEEP_supporting"
+      "file": "web_app.py",
+      "line": 2018,
+      "text": "minister_message_id = GameSession.complete_audience_chat_turn(",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
     },
     {
-      "file": "ming_sim/db.py",
-      "line": 9502,
-      "text": "def reopen_interrupted_chat_turn_for_retry(self, chat_turn_id: int) -> bool:",
-      "disposition": "KEEP_supporting"
+      "file": "web_app.py",
+      "line": 2203,
+      "text": "retry_outcome = self.session.execute_interrupted_reply_retry(",
+      "disposition": "ENTRY_CALLS_CORE"
     },
     {
-      "file": "ming_sim/db.py",
-      "line": 9513,
-      "text": "def restore_interrupted_after_failed_retry(self, chat_turn_id: int) -> List[int]:",
-      "disposition": "KEEP_supporting"
+      "file": "web_app.py",
+      "line": 2268,
+      "text": "self.session.schedule_close_night_after_chat_if_needed(",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
+    },
+    {
+      "file": "web_app.py",
+      "line": 2277,
+      "text": "GameSession.fail_audience_chat_turn(",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
+    },
+    {
+      "file": "web_app.py",
+      "line": 2293,
+      "text": "\"retry adapter cleanup: fail_audience_chat_turn failed chat_turn_id=%s\",",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
+    },
+    {
+      "file": "web_app.py",
+      "line": 2657,
+      "text": "# #1902：建轮与问话落库同走会话层共核（begin_audience_chat_turn 内已落",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
+    },
+    {
+      "file": "web_app.py",
+      "line": 2834,
+      "text": "reply_persisted = GameSession.fail_audience_chat_turn(",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
     },
     {
       "file": "ming_sim/declaration_dispatch.py",
@@ -4135,15 +4316,51 @@
     },
     {
       "file": "ming_sim/declaration_dispatch.py",
+      "line": 630,
+      "text": "db.record_chat_turn_rollback_diffs(",
+      "disposition": "KEEP_supporting"
+    },
+    {
+      "file": "ming_sim/declaration_dispatch.py",
       "line": 631,
       "text": "origin_ctid, before, db.capture_chat_rollback_snapshot(),",
+      "disposition": "KEEP_supporting"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "line": 9300,
+      "text": "def capture_chat_rollback_snapshot(self) -> Dict[str, Dict[str, Dict[str, Any]]]:",
+      "disposition": "KEEP_supporting"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "line": 9507,
+      "text": "def reopen_interrupted_chat_turn_for_retry(self, chat_turn_id: int) -> bool:",
+      "disposition": "KEEP_supporting"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "line": 9518,
+      "text": "def restore_interrupted_after_failed_retry(self, chat_turn_id: int) -> List[int]:",
+      "disposition": "KEEP_supporting"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "line": 9520,
+      "text": "（dismiss 账 / 拟旨 / 任免候选等，已由调用方 record_chat_turn_rollback_diffs 记为",
+      "disposition": "KEEP_supporting"
+    },
+    {
+      "file": "ming_sim/db.py",
+      "line": 9715,
+      "text": "def record_chat_turn_rollback_diffs(",
       "disposition": "KEEP_supporting"
     },
     {
       "file": "ming_sim/session.py",
       "line": 1046,
       "text": "def schedule_close_night_after_chat_if_needed(",
-      "disposition": "SHARED_OR_ENTRY_ADAPTER"
+      "disposition": "SHARED_CORE"
     },
     {
       "file": "ming_sim/session.py",
@@ -4173,6 +4390,12 @@
       "file": "ming_sim/session.py",
       "line": 1183,
       "text": "轮仍停在 generating、没有 minister_message_id，既有 ``fail_audience_chat_turn``",
+      "disposition": "SHARED_CORE"
+    },
+    {
+      "file": "ming_sim/session.py",
+      "line": 1196,
+      "text": "self.db.record_chat_turn_rollback_diffs(",
       "disposition": "SHARED_CORE"
     },
     {
@@ -4207,6 +4430,12 @@
     },
     {
       "file": "ming_sim/session.py",
+      "line": 1301,
+      "text": "self.db.record_chat_turn_rollback_diffs(",
+      "disposition": "SHARED_CORE"
+    },
+    {
+      "file": "ming_sim/session.py",
       "line": 1311,
       "text": "restored_ids = self.db.restore_interrupted_after_failed_retry(turn.chat_turn_id)",
       "disposition": "SHARED_CORE"
@@ -4221,7 +4450,7 @@
       "file": "ming_sim/session.py",
       "line": 1374,
       "text": "reopen CAS 未赢 → 返回 ``None``（沿用 ``reopen_interrupted_chat_turn_for_retry``",
-      "disposition": "SHARED_CORE"
+      "disposition": "KEEP_supporting"
     },
     {
       "file": "ming_sim/session.py",
@@ -4233,13 +4462,13 @@
       "file": "ming_sim/session.py",
       "line": 1382,
       "text": "（Web：须先放行 pending write）；共核仍是 ``schedule_close_night_after_chat_if_needed``。",
-      "disposition": "SHARED_OR_ENTRY_ADAPTER"
+      "disposition": "SHARED_CORE"
     },
     {
       "file": "ming_sim/session.py",
       "line": 1397,
       "text": "if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):",
-      "disposition": "SHARED_CORE"
+      "disposition": "KEEP_supporting"
     },
     {
       "file": "ming_sim/session.py",
@@ -4257,7 +4486,7 @@
       "file": "ming_sim/session.py",
       "line": 1426,
       "text": "self.schedule_close_night_after_chat_if_needed(",
-      "disposition": "SHARED_OR_ENTRY_ADAPTER"
+      "disposition": "SHARED_CORE"
     },
     {
       "file": "ming_sim/session.py",
@@ -4275,19 +4504,73 @@
       "file": "tests/test_audience_presence_500.py",
       "line": 162,
       "text": "session.schedule_close_night_after_chat_if_needed = _close_ok",
-      "disposition": "SHARED_OR_ENTRY_ADAPTER"
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "line": 1382,
+      "text": "snap0 = db.capture_chat_rollback_snapshot()",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "line": 1385,
+      "text": "db.record_chat_turn_rollback_diffs(",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "line": 1386,
+      "text": "ctid_early, snap0, db.capture_chat_rollback_snapshot(),",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "line": 1393,
+      "text": "before = db.capture_chat_rollback_snapshot()",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "line": 1400,
+      "text": "after = db.capture_chat_rollback_snapshot()",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "line": 1401,
+      "text": "db.record_chat_turn_rollback_diffs(ctid, before, after)",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "line": 1465,
+      "text": "before = db.capture_chat_rollback_snapshot()",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "line": 1482,
+      "text": "db.record_chat_turn_rollback_diffs(",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_secret_order_isolation_883.py",
+      "line": 1483,
+      "text": "chat_turn_id, before, db.capture_chat_rollback_snapshot(),",
+      "disposition": "KEEP_test"
     },
     {
       "file": "tests/test_audience_restore_505.py",
       "line": 258,
       "text": "def execute_interrupted_reply_retry(self, **kwargs):",
-      "disposition": "ENTRY_CALLS_CORE"
+      "disposition": "KEEP_test"
     },
     {
       "file": "tests/test_audience_restore_505.py",
       "line": 261,
       "text": "return GameSession.execute_interrupted_reply_retry(self, **kwargs)",
-      "disposition": "ENTRY_CALLS_CORE"
+      "disposition": "KEEP_test"
     },
     {
       "file": "tests/test_audience_restore_505.py",
@@ -4317,7 +4600,7 @@
       "file": "tests/test_audience_restore_505.py",
       "line": 271,
       "text": "def schedule_close_night_after_chat_if_needed(self, court_action, *, write_gate=None):",
-      "disposition": "SHARED_OR_ENTRY_ADAPTER"
+      "disposition": "KEEP_test"
     },
     {
       "file": "tests/test_audience_restore_505.py",
@@ -4333,6 +4616,12 @@
     },
     {
       "file": "tests/test_audience_restore_505.py",
+      "line": 418,
+      "text": "db.record_chat_turn_rollback_diffs(",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_audience_restore_505.py",
       "line": 419,
       "text": "chat_turn_id, before, db.capture_chat_rollback_snapshot(),",
       "disposition": "KEEP_test"
@@ -4344,51 +4633,33 @@
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_audience_restore_505.py",
-      "line": 530,
-      "text": "def test_fail_audience_chat_turn_snapshot_failure_keeps_recovery_without_forged_diffs(",
+      "file": "tests/test_staged_assignment_identity_1890.py",
+      "line": 459,
+      "text": "db.restore_interrupted_after_failed_retry(ctid)",
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_audience_restore_505.py",
-      "line": 542,
-      "text": "assert db.reopen_interrupted_chat_turn_for_retry(ct)",
+      "file": "tests/test_scene_llm_1836.py",
+      "line": 232,
+      "text": "close_worker = sess.schedule_close_night_after_chat_if_needed(close_result.court_action)",
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_audience_restore_505.py",
-      "line": 543,
+      "file": "tests/test_decree_dossiers_571.py",
+      "line": 1218,
       "text": "before = db.capture_chat_rollback_snapshot()",
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_audience_restore_505.py",
-      "line": 564,
-      "text": "monkeypatch.setattr(db, \"capture_chat_rollback_snapshot\", _boom)",
+      "file": "tests/test_decree_dossiers_571.py",
+      "line": 1222,
+      "text": "db.record_chat_turn_rollback_diffs(",
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_audience_restore_505.py",
-      "line": 569,
-      "text": "assert GameSession.fail_audience_chat_turn(",
-      "disposition": "KEEP_test"
-    },
-    {
-      "file": "tests/test_audience_undo_506.py",
-      "line": 4,
-      "text": "`chat_turns` 行。生产走 `capture_chat_rollback_snapshot`（轮前）→ 该轮全部写入 →",
-      "disposition": "KEEP_test"
-    },
-    {
-      "file": "tests/test_audience_undo_506.py",
-      "line": 54,
-      "text": "before = db.capture_chat_rollback_snapshot()",
-      "disposition": "KEEP_test"
-    },
-    {
-      "file": "tests/test_audience_undo_506.py",
-      "line": 72,
-      "text": "after = db.capture_chat_rollback_snapshot()",
+      "file": "tests/test_decree_dossiers_571.py",
+      "line": 1223,
+      "text": "chat_turn_id, before, db.capture_chat_rollback_snapshot(),",
       "disposition": "KEEP_test"
     },
     {
@@ -4404,21 +4675,21 @@
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_chat_stream_failpaths_393.py",
-      "line": 75,
+      "file": "tests/test_character_knowledge_489.py",
+      "line": 254,
+      "text": "db.record_chat_turn_rollback_diffs(chat_turn_id, before, after)",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_menu_lifecycle_drain_396.py",
+      "line": 490,
       "text": "def capture_chat_rollback_snapshot(self):",
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_chat_stream_failpaths_393.py",
-      "line": 234,
-      "text": "def capture_chat_rollback_snapshot(self):",
-      "disposition": "KEEP_test"
-    },
-    {
-      "file": "tests/test_chat_stream_failpaths_393.py",
-      "line": 290,
-      "text": "def capture_chat_rollback_snapshot(self):",
+      "file": "tests/test_menu_lifecycle_drain_396.py",
+      "line": 518,
+      "text": "def record_chat_turn_rollback_diffs(self, *_a, **_k):",
       "disposition": "KEEP_test"
     },
     {
@@ -4440,27 +4711,45 @@
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_cli_play_turn.py",
-      "line": 283,
-      "text": "monkeypatch.setattr(session.db, \"restore_interrupted_after_failed_retry\", _boom_restore)",
+      "file": "tests/test_audience_undo_506.py",
+      "line": 4,
+      "text": "`chat_turns` 行。生产走 `capture_chat_rollback_snapshot`（轮前）→ 该轮全部写入 →",
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_cli_play_turn.py",
-      "line": 526,
-      "text": "turn = GameSession.begin_audience_chat_turn(",
+      "file": "tests/test_audience_undo_506.py",
+      "line": 5,
+      "text": "`record_chat_turn_rollback_diffs`（轮后，前像撤销日志）→ `undo_chat_turn`（逆转）。",
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_decree_dossiers_571.py",
-      "line": 1218,
+      "file": "tests/test_audience_undo_506.py",
+      "line": 54,
       "text": "before = db.capture_chat_rollback_snapshot()",
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_decree_dossiers_571.py",
-      "line": 1223,
-      "text": "chat_turn_id, before, db.capture_chat_rollback_snapshot(),",
+      "file": "tests/test_audience_undo_506.py",
+      "line": 72,
+      "text": "after = db.capture_chat_rollback_snapshot()",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_audience_undo_506.py",
+      "line": 73,
+      "text": "db.record_chat_turn_rollback_diffs(int(chat_id), before, after)",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_web_chat_serialization_393.py",
+      "line": 108,
+      "text": "def capture_chat_rollback_snapshot(self):",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_web_chat_serialization_393.py",
+      "line": 135,
+      "text": "def record_chat_turn_rollback_diffs(self, *args, **kwargs):",
       "disposition": "KEEP_test"
     },
     {
@@ -4476,830 +4765,1842 @@
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_menu_lifecycle_drain_396.py",
-      "line": 490,
-      "text": "def capture_chat_rollback_snapshot(self):",
+      "file": "tests/test_faction_leverage_9.py",
+      "line": 1006,
+      "text": "db.record_chat_turn_rollback_diffs(chat_turn_id, before_snap, after_snap)",
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_scene_llm_1836.py",
-      "line": 232,
-      "text": "close_worker = sess.schedule_close_night_after_chat_if_needed(close_result.court_action)",
-      "disposition": "SHARED_OR_ENTRY_ADAPTER"
-    },
-    {
-      "file": "tests/test_secret_order_isolation_883.py",
-      "line": 1382,
-      "text": "snap0 = db.capture_chat_rollback_snapshot()",
+      "file": "tests/test_cli_play_turn.py",
+      "line": 283,
+      "text": "monkeypatch.setattr(session.db, \"restore_interrupted_after_failed_retry\", _boom_restore)",
       "disposition": "KEEP_test"
     },
     {
-      "file": "tests/test_secret_order_isolation_883.py",
-      "line": 1386,
-      "text": "ctid_early, snap0, db.capture_chat_rollback_snapshot(),",
-      "disposition": "KEEP_test"
-    },
-    {
-      "file": "tests/test_secret_order_isolation_883.py",
-      "line": 1393,
-      "text": "before = db.capture_chat_rollback_snapshot()",
-      "disposition": "KEEP_test"
-    },
-    {
-      "file": "tests/test_secret_order_isolation_883.py",
-      "line": 1400,
-      "text": "after = db.capture_chat_rollback_snapshot()",
-      "disposition": "KEEP_test"
-    },
-    {
-      "file": "tests/test_secret_order_isolation_883.py",
-      "line": 1465,
-      "text": "before = db.capture_chat_rollback_snapshot()",
-      "disposition": "KEEP_test"
-    },
-    {
-      "file": "tests/test_secret_order_isolation_883.py",
-      "line": 1483,
-      "text": "chat_turn_id, before, db.capture_chat_rollback_snapshot(),",
-      "disposition": "KEEP_test"
-    },
-    {
-      "file": "tests/test_staged_assignment_identity_1890.py",
-      "line": 459,
-      "text": "db.restore_interrupted_after_failed_retry(ctid)",
-      "disposition": "KEEP_test"
-    },
-    {
-      "file": "tests/test_web_chat_serialization_393.py",
-      "line": 108,
-      "text": "def capture_chat_rollback_snapshot(self):",
-      "disposition": "KEEP_test"
-    },
-    {
-      "file": "web_app.py",
-      "line": 1864,
-      "text": "走 ``GameSession.begin_audience_chat_turn`` 的未绑定真方法（而非",
-      "disposition": "ENTRY_OR_TEST"
-    },
-    {
-      "file": "web_app.py",
-      "line": 1869,
+      "file": "tests/test_cli_play_turn.py",
+      "line": 526,
       "text": "turn = GameSession.begin_audience_chat_turn(",
-      "disposition": "ENTRY_OR_TEST"
+      "disposition": "KEEP_test"
     },
     {
-      "file": "web_app.py",
-      "line": 1886,
-      "text": "#1902：回滚与失败终态已下沉会话层（``GameSession.fail_audience_chat_turn``，",
-      "disposition": "KEEP_host_adapter_fail_close_after_core"
+      "file": "tests/test_chat_stream_failpaths_393.py",
+      "line": 75,
+      "text": "def capture_chat_rollback_snapshot(self):",
+      "disposition": "KEEP_test"
     },
     {
-      "file": "web_app.py",
-      "line": 1892,
-      "text": "GameSession.fail_audience_chat_turn(",
-      "disposition": "KEEP_host_adapter_fail_close_after_core"
+      "file": "tests/test_chat_stream_failpaths_393.py",
+      "line": 78,
+      "text": "def record_chat_turn_rollback_diffs(self, *a, **k):",
+      "disposition": "KEEP_test"
     },
     {
-      "file": "web_app.py",
-      "line": 2018,
-      "text": "minister_message_id = GameSession.complete_audience_chat_turn(",
-      "disposition": "ENTRY_OR_TEST"
+      "file": "tests/test_chat_stream_failpaths_393.py",
+      "line": 234,
+      "text": "def capture_chat_rollback_snapshot(self):",
+      "disposition": "KEEP_test"
     },
     {
-      "file": "web_app.py",
-      "line": 2203,
-      "text": "retry_outcome = self.session.execute_interrupted_reply_retry(",
+      "file": "tests/test_chat_stream_failpaths_393.py",
+      "line": 237,
+      "text": "def record_chat_turn_rollback_diffs(self, *a, **k):",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_chat_stream_failpaths_393.py",
+      "line": 290,
+      "text": "def capture_chat_rollback_snapshot(self):",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "tests/test_chat_stream_failpaths_393.py",
+      "line": 293,
+      "text": "def record_chat_turn_rollback_diffs(self, *a, **k):",
+      "disposition": "KEEP_test"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "line": 240,
+      "text": "#1902 T4：生命周期走 ``GameSession.execute_interrupted_reply_retry``（含收夜调度）；",
       "disposition": "ENTRY_CALLS_CORE"
     },
     {
-      "file": "web_app.py",
-      "line": 2268,
-      "text": "self.session.schedule_close_night_after_chat_if_needed(",
-      "disposition": "SHARED_OR_ENTRY_ADAPTER"
+      "file": "ming_sim/cli/terminal.py",
+      "line": 258,
+      "text": "retry_outcome = session.execute_interrupted_reply_retry(",
+      "disposition": "ENTRY_CALLS_CORE"
     },
     {
-      "file": "web_app.py",
-      "line": 2277,
+      "file": "ming_sim/cli/terminal.py",
+      "line": 330,
+      "text": "session.schedule_close_night_after_chat_if_needed(",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "line": 342,
+      "text": "chat_turn = GameSession.begin_audience_chat_turn(",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "line": 362,
+      "text": "GameSession.complete_audience_chat_turn(",
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
+    },
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "line": 368,
       "text": "GameSession.fail_audience_chat_turn(",
-      "disposition": "KEEP_host_adapter_fail_close_after_core"
+      "disposition": "ENTRY_OR_HOST_ADAPTER"
     },
     {
-      "file": "web_app.py",
-      "line": 2293,
-      "text": "\"retry adapter cleanup: fail_audience_chat_turn failed chat_turn_id=%s\",",
-      "disposition": "KEEP_host_adapter_fail_close_after_core"
-    },
-    {
-      "file": "web_app.py",
-      "line": 2657,
-      "text": "# #1902：建轮与问话落库同走会话层共核（begin_audience_chat_turn 内已落",
-      "disposition": "ENTRY_OR_TEST"
-    },
-    {
-      "file": "web_app.py",
-      "line": 2834,
-      "text": "reply_persisted = GameSession.fail_audience_chat_turn(",
-      "disposition": "KEEP_host_adapter_fail_close_after_core"
+      "file": "ming_sim/session.py",
+      "line": 1291,
+      "kind": "fail_snapshot_gap",
+      "text": "after-snapshot fail skips rollback diffs",
+      "disposition": "BLOCK_UNAUTHORIZED_COMPLETE_REMEDY",
+      "evidence": "mutation M3b: loyalty+40 survives; rollback_items=0; status=interrupted. restore depends on diffs. No authorized second snapshot/rollback design.",
+      "mutation": [
+        {
+          "name": "M3a_fail_snapshot_no_forged_diffs",
+          "ok": true,
+          "detail": "recorded=0; status=interrupted"
+        },
+        {
+          "name": "M3b_fail_snapshot_side_effect_rollback",
+          "ok": false,
+          "detail": "loyalty0=45 loyalty1=85 delta=40 status=interrupted rollback_items=0 raised=RuntimeError:重试 LLM 失败 capture_calls=2"
+        },
+        {
+          "name": "M3c_control_fail_retry_rolls_back_when_snapshot_ok",
+          "ok": true,
+          "detail": "loyalty0=45 loyalty1=45"
+        }
+      ]
     }
   ],
-  "T5": [
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_provenance_enum_values",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_provenance_from_string",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_rejected_item_fields",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_rejection_collector_flush_before_record_leaves_db_empty",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_rejection_collector_flush_writes_rows",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_rejection_collector_flush_clears_buffer",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_rejection_collector_flush_stores_item_as_json",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_mirror_to_jsonl_writes_lines",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_mirror_to_jsonl_appends_on_multiple_calls",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_mirror_to_jsonl_empty_buffer_writes_nothing",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_flush_then_mirror_writes_jsonl",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_mirror_idempotent_after_flush",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_unflushed_rows_never_mirrored",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_reset_discards_pending_and_flushed",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_record_accepts_plain_string_source",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_record_rejects_unknown_source_string",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_collector_counts_deterministic_on_polluted_save",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "tests/test_applier_contract.py",
-      "case": "test_ddl_in_open_transaction_rolls_back",
-      "disposition": "KEEP_PUBLIC_STRUCTURED_ADR0008_behavior",
-      "external_contract": "ADR0008 Provenance/RejectedItem/RejectionCollector"
-    },
-    {
-      "file": "(full-repo scan)",
-      "case": "SectionResult|ApplyContext constructor+attr-only tests",
-      "disposition": "CLEARED_0_remaining",
-      "note": "AST scan: 0 pure INTERNAL_SHAPE"
-    },
-    {
-      "file": "tests/test_cli_backend.py",
-      "case": "test_run_agy_exit_zero_prose_is_not_connection_error",
-      "disposition": "DELETED_nail_misjudgment"
-    },
-    {
-      "file": "tests/test_cli_entry_1902.py",
-      "case": "urgent blank-pick two seams",
-      "disposition": "KEEP_NOT_DUPLICATE_per_judge_urgentTestRuling"
-    },
-    {
-      "file": "tests/test_affairs_1831.py",
-      "case": "test_conflicting_affair_declaration_on_existing_dossier_fails_loud",
-      "line": 41,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_audience_night_498.py",
-      "case": "test_close_night_crash_then_reopen_db_resumes_idempotent",
-      "line": 322,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_audience_travel_gating_670.py",
-      "case": "test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply",
-      "line": 1278,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_breach_plea_623.py",
-      "case": "test_policy_reversal_revoke_takes_effect_same_month",
-      "line": 228,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_breach_plea_623.py",
-      "case": "test_policy_reversal_revoke_model_verdict_lands_same_month",
-      "line": 275,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_breach_plea_623.py",
-      "case": "test_policy_reversal_revoke_keeps_same_origin_world_situations",
-      "line": 310,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_breach_plea_623.py",
-      "case": "test_revoke_target_identity_falls_back_to_dossier_row",
-      "line": 505,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_breach_plea_623.py",
-      "case": "test_policy_reversal_revoke_rejected_leaves_everything_untouched",
-      "line": 565,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_pending_directive_only_enters_settlement_after_final_approval",
-      "line": 286,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_commitments_bind_explicitly_when_multiple_dossiers_share_a_turn",
-      "line": 482,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejection",
-      "line": 518,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_assignment_promulgation_tracks_executor_until_terminal_state",
-      "line": 551,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_directive_assignee_projects_to_executor_only_for_executable_types",
-      "line": 586,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_close",
-      "line": 864,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_held_dossier_reenters_only_for_next_month_rejudgment",
-      "line": 1306,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_interim_verdict_rejects_reserved_legal_reason_code",
-      "line": 1337,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_directive_edit_replaces_mechanical_payload_before_submission",
-      "line": 1456,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_executing_dossier_stays_visible_and_extractor_can_close_it",
-      "line": 1676,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_allocation_candidate_edit_preserves_mechanical_payload",
-      "line": 1769,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_secret_authorization_dossier_does_not_map_payload_to_skill_grant",
-      "line": 1870,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_in_transit_allocation_requires_execution_verdict",
-      "line": 1931,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_complete_rejection_verdict_is_restoreable_audit_record",
-      "line": 2008,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_rejection_verdict_defaults_omitted_midzhi_marker_to_false",
-      "line": 2033,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_rejection_runtime_contract_rejects_each_missing_field",
-      "line": 2050,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_rejection_runtime_contract_rejects_unknown_references",
-      "line": 2070,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_rejection_snapshot_rejects_malformed_typed_values",
-      "line": 2090,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_decree_dossiers_571.py",
-      "case": "test_rejection_contract_rejects_numeric_contamination_without_history",
-      "line": 2111,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_dossier_links_559.py",
-      "case": "test_force_promulgated_rejected_dossier_is_referenceable",
-      "line": 159,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_effect_origin_558.py",
-      "case": "test_power_backlash_from_allegiance_change_inherits_canonical_origin",
-      "line": 236,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_event_trigger_gate.py",
-      "case": "test_event_pool_pending_alias_appointment_blocks_canonical_gate",
-      "line": 3677,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_event_trigger_gate.py",
-      "case": "test_event_pool_pending_alias_disposition_blocks_canonical_gate",
-      "line": 3732,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_execution_pressure_654.py",
-      "case": "test_create_decree_dossiers_unknown_roster_name_zero_rows_before_insert",
-      "line": 469,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_execution_pressure_654.py",
-      "case": "test_path1_conversational_draft_bad_roster_marks_failed",
-      "line": 581,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_execution_pressure_654.py",
-      "case": "test_locality_fail_create_decree_dossiers_zero_rows",
-      "line": 698,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_execution_pressure_654.py",
-      "case": "test_revoke_decree_523_producer_durable_oracle_chain",
-      "line": 721,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_execution_pressure_654.py",
-      "case": "test_location_canonical_seed_and_write_seam",
-      "line": 835,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_executor_routing_721.py",
-      "case": "test_real_punishment_stage_preserves_category",
-      "line": 250,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_family_tail_615.py",
-      "case": "test_break_rank_appointment_rescript_td4_tracer",
-      "line": 126,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_family_tail_restore_570.py",
-      "case": "test_mid_month_restore_keeps_dossier_four_faces",
-      "line": 83,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_fiscal_levy_effect.py",
-      "case": "test_liao_levy_rewrites_numeric_string_targets_to_canonical_numbers",
-      "line": 861,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_identity_seed_488.py",
-      "case": "test_roster_rejects_duplicate_canonical_name",
-      "line": 137,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_override_breach_costs_564.py",
-      "case": "test_force_land_survey_charges_three_costs_without_eunuch_reaction",
-      "line": 36,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_override_breach_costs_564.py",
-      "case": "test_signed_reactions_use_typed_direction_not_narrative_words",
-      "line": 56,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_override_breach_costs_564.py",
-      "case": "test_midzhi_rejection_no_party_fanout_then_force_only_authority",
-      "line": 74,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_override_breach_costs_564.py",
-      "case": "test_ordinary_rejection_has_zero_reaction_and_authority",
-      "line": 103,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_override_breach_costs_564.py",
-      "case": "test_midzhi_rejudgment_never_applies_party_satisfaction",
-      "line": 117,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_override_breach_costs_564.py",
-      "case": "test_costs_are_idempotent_and_survive_restore",
-      "line": 141,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_override_breach_costs_564.py",
-      "case": "test_force_then_breach_charges_each_real_entry_independently",
-      "line": 164,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_override_breach_costs_564.py",
-      "case": "test_public_apply_rejects_invalid_mode_decision_reaction_shape_before_writes",
-      "line": 268,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_override_breach_costs_564.py",
-      "case": "test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction",
-      "line": 288,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_override_breach_costs_564.py",
-      "case": "test_force_rejects_malformed_judge_reactions_before_any_cost",
-      "line": 408,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_override_breach_costs_564.py",
-      "case": "test_force_rejects_old_only_judge_reactions_atomically",
-      "line": 427,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_pay_order_override_653.py",
-      "case": "test_rejected_revoke_does_not_restore_override",
-      "line": 440,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_pay_order_override_653.py",
-      "case": "test_lifecycle_rejected_decree_zero_config_write",
-      "line": 1165,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_pay_order_override_653.py",
-      "case": "test_lifecycle_force_promulgation_after_rejection",
-      "line": 1183,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_person_delta_adapter.py",
-      "case": "test_add_character_non_canonical_office_type_still_raises",
-      "line": 1718,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_person_transit_write_667.py",
-      "case": "test_noncanonical_origin_is_narrative_only_noop",
-      "line": 125,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_pihong_dossier_1490.py",
-      "case": "test_1620_layer_a_money_grant_requires_positive_amount",
-      "line": 1777,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_power_section_rejections.py",
-      "case": "test_canonical_person_power_writer_code_exception_is_fail_loud",
-      "line": 124,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_promulgation_judge_561.py",
-      "case": "test_promulgation_verdict_list_shape_has_one_canonical_authority",
-      "line": 208,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_promulgation_judge_561.py",
-      "case": "test_run_resolve_arm_recovers_settled_verdicts_from_history",
-      "line": 463,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_rescript_choices_563.py",
-      "case": "test_rejected_midzhi_and_force_promulgation_are_idempotent",
-      "line": 166,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_rescript_choices_563.py",
-      "case": "test_rejected_ordinary_force_promulgation_adds_rescript_stigma",
-      "line": 183,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_rescript_draft_656.py",
-      "case": "test_657_s1_option_shape_stamps_draft_capability",
-      "line": 1100,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_rescript_draft_656.py",
-      "case": "test_1620_layer_a_army_pay_rejects_bad_typed_shape",
-      "line": 1235,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_structured_decree_contract_1624.py",
-      "case": "test_shared_validate_rejects_region_id_and_category_holes",
-      "line": 118,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_structured_decree_contract_1624.py",
-      "case": "test_normalize_rescript_layer_a_option_contract",
-      "line": 461,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    },
-    {
-      "file": "tests/test_structured_decree_contract_1624.py",
-      "case": "test_combo_correction_preserves_first_draw_roster",
-      "line": 524,
-      "disposition": "KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review",
-      "note": "stale provisional INTERNAL_SHAPE_CANDIDATE; body exercises dossier/lifecycle/entry behavior, not pure type-shape",
-      "prior_provisional": "INTERNAL_SHAPE_CANDIDATE"
-    }
-  ],
-  "T6": [
+  "T5": {
+    "universe_size": 3364,
+    "preclass_counts": {
+      "CANDIDATE_BEHAVIOR_OR_UNKNOWN": 2152,
+      "CANDIDATE_EXTERNAL_OR_ENTRY": 916,
+      "CANDIDATE_INTERNAL_SHAPE": 277,
+      "CANDIDATE_MIXED_SHAPE_WITH_ORCH_NAME": 19
+    },
+    "dup_groups_ge3": [
+      {
+        "preclass": "CANDIDATE_EXTERNAL_OR_ENTRY",
+        "fingerprint": [
+          "_legal_item",
+          "_llm",
+          "dict",
+          "generate_rescript_draft",
+          "get",
+          "json.dumps",
+          "json.loads",
+          "len",
+          "monkeypatch.setattr",
+          "monkeypatch.setenv",
+          "object",
+          "prompts.append"
+        ],
+        "count": 3,
+        "members": [
+          "tests/test_rescript_draft_656.py::test_generate_combined_target_and_roster_failures_reported_together_then_land",
+          "tests/test_rescript_draft_656.py::test_generate_combined_target_roster_partial_heal_reports_remaining",
+          "tests/test_rescript_draft_656.py::test_generate_unknown_roster_character_heals_with_legal_set_then_lands"
+        ]
+      }
+    ],
+    "refined_internal_reviewed": [
+      {
+        "file": "tests/test_no_edict_full_settlement_1274.py",
+        "case": "test_no_edict_zero_decisions_completes_without_stuck",
+        "line": 100,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 无新旨月份走同一主链，不停在 awaiting，也不在邸报前推进。"
+      },
+      {
+        "file": "tests/test_commitment_display_348.py",
+        "case": "TestTimedBarIntegration::test_origin_turn_unset_falls_back_to_state_turn",
+        "line": 76,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_or_contract | "
+      },
+      {
+        "file": "tests/test_new_issues_section_rejections.py",
+        "case": "test_event_to_issue_duplicate_returns_none_not_raise",
+        "line": 379,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | "
+      },
+      {
+        "file": "tests/test_pay_order_override_653.py",
+        "case": "test_arrears_order_resolution_default_and_override",
+        "line": 216,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | ①「边饷居末、官俸优先」：省内池不足时军饷先欠、官俸足付；实付分账可 TSV 断言。"
+      },
+      {
+        "file": "tests/test_pay_order_override_653.py",
+        "case": "test_revoke_provincial_falls_back_to_nationwide",
+        "line": 812,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | Codex-11/revoke_shape_exit②：全国+省域并存时撤省域后该省回落全国键。"
+      },
+      {
+        "file": "tests/test_fiscal_substrate_bridge.py",
+        "case": "test_substrate_hub_dual_track_sanity_keeps_legacy_calc_as_reference",
+        "line": 773,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | "
+      },
+      {
+        "file": "tests/test_fiscal_substrate_bridge.py",
+        "case": "test_south_southwest_seeds_have_valid_historical_settle_substrate",
+        "line": 3625,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | "
+      },
+      {
+        "file": "tests/test_fiscal_substrate_bridge.py",
+        "case": "test_shaanxi_seed_is_relabelled_to_historical_shadow_scale",
+        "line": 3714,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | "
+      },
+      {
+        "file": "tests/test_fiscal_substrate_bridge.py",
+        "case": "test_border_slice_raw_content_keeps_primary_source_anchors",
+        "line": 3773,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | "
+      },
+      {
+        "file": "tests/test_fiscal_substrate_bridge.py",
+        "case": "test_jiangnan_core_seeds_have_positive_remittance_golden",
+        "line": 4026,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | "
+      },
+      {
+        "file": "tests/test_fiscal_substrate_bridge.py",
+        "case": "test_jiangnan_core_uses_wanli_huiji_lu_primary_seed",
+        "line": 4985,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | "
+      },
+      {
+        "file": "tests/test_mechanical_tail_1845.py",
+        "case": "test_ending_summary_runs_in_mechanical_tail_after_advance",
+        "line": 356,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 过月入口：模型原文落总评。"
+      },
+      {
+        "file": "tests/test_mechanical_tail_1845.py",
+        "case": "test_mechanical_tail_missing_llm_config_surfaces_retry",
+        "line": 515,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 缺模型配置：机械尾失败，错误落在失败尾上，可点重试。"
+      },
+      {
+        "file": "tests/test_staged_assignment_identity_1890.py",
+        "case": "test_assignment_structured_stages_land_through_full_chain",
+        "line": 663,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 显式结构化 stages 走完整交办链，最终 ``issues.stages_json`` 落两段。"
+      },
+      {
+        "file": "tests/test_person_archive_schema.py",
+        "case": "test_north_star_named_figures_are_seeded_with_identity_metadata",
+        "line": 138,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | ADR 0009 can reject no named target used by north-star scenes/prompts."
+      },
+      {
+        "file": "tests/test_month_chain_1843.py",
+        "case": "test_advance_uses_staged_declaration_ending",
+        "line": 589,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | "
+      },
+      {
+        "file": "tests/test_decree_dossiers_571.py",
+        "case": "test_create_secret_order_has_resumable_dossier",
+        "line": 1296,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | "
+      },
+      {
+        "file": "tests/test_llm_channel_config.py",
+        "case": "test_create_chat_model_respects_api_channel_over_backend_env",
+        "line": 15,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | "
+      },
+      {
+        "file": "tests/test_llm_channel_config.py",
+        "case": "test_create_chat_model_uses_cli_channel_without_backend_env",
+        "line": 30,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | "
+      },
+      {
+        "file": "tests/test_llm_channel_config.py",
+        "case": "test_loaded_api_config_is_not_rerouted_by_later_backend_env",
+        "line": 59,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | "
+      },
+      {
+        "file": "tests/test_llm_channel_config.py",
+        "case": "test_create_chat_model_passes_default_headers_at_transport_boundary",
+        "line": 227,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | #1794：配置附加头整张交给 OpenAIChat.default_headers 公开字段。"
+      },
+      {
+        "file": "tests/test_qa_u3_map_nodes_1401.py",
+        "case": "test_map_nodes_no_nameless_nodes",
+        "line": 132,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_or_contract | #1505：theater/region/external 节点皆须有可见名，禁无名点；id 不得双份。"
+      },
+      {
+        "file": "tests/test_web_court_visibility.py",
+        "case": "test_enemy_active_character_cannot_be_summoned",
+        "line": 244,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | 非大明势力（后金/蒙古/朝鲜/流寇）即便 active 也不可召见——皇帝召的是大明朝廷命官，"
+      },
+      {
+        "file": "tests/test_web_court_visibility.py",
+        "case": "test_normal_ming_minister_still_summonable",
+        "line": 276,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 回归：正常大明 active 大臣不受 #125 power 闸影响，照常可召。"
+      },
+      {
+        "file": "tests/test_web_court_visibility.py",
+        "case": "test_real_court_ministers_not_collateral_damaged_by_1317",
+        "line": 400,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | #1317 回归：真在朝大臣（非未仕）仍可召、仍在名册——禁谓词收窄误伤。"
+      },
+      {
+        "file": "tests/test_player_army_projection_321.py",
+        "case": "test_player_army_situation_six_tier_truth_table",
+        "line": 101,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | "
+      },
+      {
+        "file": "tests/test_month_open_snapshot_1234.py",
+        "case": "test_oracle_normal_phase_clears_via_startup_hook",
+        "line": 182,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | 故障注入常态路：相位常态 + 快照在 → 启动位清后无核账态，盘面为点击前值。"
+      },
+      {
+        "file": "tests/test_month_open_snapshot_1234.py",
+        "case": "test_oracle_settling_phase_keeps_display_for_recovery",
+        "line": 207,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 故障注入 settling 路：启动位后核账态仍在，交既有恢复通道。"
+      },
+      {
+        "file": "tests/test_issue_decree_token_1277.py",
+        "case": "test_double_issue_same_token_second_is_409_turn_plus_one",
+        "line": 84,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 同 expected_turn 连发两次：第二次 409，月份只进一格；resolve 不二次执行。"
+      },
+      {
+        "file": "tests/test_state_reload.py",
+        "case": "test_atomic_and_reload_chains_reload_failure",
+        "line": 335,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | reload 自身再炸：原异常不被顶替，reload 异常链上抛（raise exc from reload_exc）。"
+      },
+      {
+        "file": "tests/test_faction_leverage_9.py",
+        "case": "test_faction_leverage_drops_when_core_minister_ousted",
+        "line": 31,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | #9 核心：握高权官的阉党在朝核心退场 → 阉党 leverage 全重算后下跌。"
+      },
+      {
+        "file": "tests/test_faction_leverage_9.py",
+        "case": "test_faction_leverage_rises_back_when_minister_restored",
+        "line": 42,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | #9 对称：退场核心起复(active) → leverage 回到原值（绝对重算、无漂移）。"
+      },
+      {
+        "file": "tests/test_rescript_option_field_heal_1746.py",
+        "case": "test_run_agent_text_prior_messages_sent_as_message_list",
+        "line": 169,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | "
+      },
+      {
+        "file": "tests/test_qa_b3_409_ux.py",
+        "case": "test_resolve_decisions_stream_phase_precheck_before_lock",
+        "line": 165,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | #1322：非 awaiting 相位在抢锁前快速失败；持锁者不被卡住；submit 不进。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_queue_order_early_claim_late_finish_before_barrier",
+        "line": 40,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 队列序钉：早领票、晚完成的写仍先于屏障落库（完整事件握手）。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_barrier_waits_multiple_prior_tickets",
+        "line": 97,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 屏障钉：多张先领票全清后屏障才跑。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_fail_vacate_lets_barrier_through",
+        "line": 135,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 失败钉：腿失败票据空放行，屏障不卡死。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_post_barrier_claim_run_waits_for_barrier",
+        "line": 147,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | #1353 r6：屏障已开后才领的尾随票，run()/TicketedWriteGate 须等屏障结束后才写。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_cancel_key_vacates_and_blocks_run",
+        "line": 195,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 撤回钉：按 key 取消在飞票据；run 见取消不写库。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_ticketed_gate_cancel_blocks_write",
+        "line": 215,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 生产 seam：TicketedWriteGate 见取消不进写临界区。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_post_barrier_claim_cannot_cross_barrier_write",
+        "line": 229,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 屏障后新领票经 seam 不得越过屏障写（确定性握手）。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_barrier_waits_healthy_slow_worker_terminal",
+        "line": 277,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | K10a：健康工人仍 open 时屏障不得越过；工人终态后屏障续跑（终态顺序，非 elapsed 熔断）。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_barrier_proceeds_after_worker_fail_vacate",
+        "line": 317,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 可控失败终态：工人 vacate 后屏障放行（无 elapsed 伪失败）。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_write_turn_orders_cs_not_whole_leg_llm",
+        "line": 382,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | #1353 r10 / 66nU P5：wait_write_turn 只排写段——先票 LLM 中时后票可进材料读/写。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_write_turn_still_blocks_on_open_barrier",
+        "line": 437,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 写段序仍尊重开放屏障：后票 ticketed gate 不得越过 barrier body。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_get_session_write_queue_wiring_fail_loud_no_broad_swallow",
+        "line": 493,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | #1353 r7 / ADR 0005：WebGame/session 必共享同一 queue/gate（接线实测）。"
+      },
+      {
+        "file": "tests/test_session_write_queue_1353.py",
+        "case": "test_wait_pending_writes_fail_loud_on_false_and_exception",
+        "line": 519,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 单一权威负向：wait_idle=False 与队列异常均须报红，不得被调用方洗白。"
+      },
+      {
+        "file": "tests/test_rescript_draft_656.py",
+        "case": "test_triage_actor_falls_back_to_eunuch_director",
+        "line": 84,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_or_contract | r2 裁决 B1 负例：御马监掌印太监与票拟/批红职权无关，不得顶补分拣 actor。"
+      },
+      {
+        "file": "tests/test_rescript_draft_656.py",
+        "case": "test_triage_actor_duplicate_hits_deterministic_order",
+        "line": 98,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | F3.2 换人即换立场（可机械断言面）：任免后 actor 事实变更。"
+      },
+      {
+        "file": "tests/test_rescript_draft_656.py",
+        "case": "test_657_s1_derive_draft_capability_stable_and_sensitive",
+        "line": 1024,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_or_contract | capability：同字段稳定；闭集任一有效差改变键。"
+      },
+      {
+        "file": "tests/test_section_fiscal_rejections.py",
+        "case": "test_direct_remove_central_human_loss_rate_stem_refuses_loss_pair",
+        "line": 142,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | db.remove_fiscal_item 自身也要拒绝 stem 形态的中央损耗率配置。"
+      },
+      {
+        "file": "tests/test_execution_pressure_654.py",
+        "case": "test_create_decree_dossier_int_abi_single_row",
+        "line": 344,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | INSERT INTO turn_directives"
+      },
+      {
+        "file": "tests/test_transit_countdown_668.py",
+        "case": "test_pre_settle_tick_before_seed_auto_trigger_reads_new_location",
+        "line": 120,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | F7.4：tick 在 pre_settle 落定，seed 门在逐旨后的唯一消费点读到新 location。"
+      },
+      {
+        "file": "tests/test_refugee_loop_652.py",
+        "case": "test_month_settle_with_disaster_and_executing_relief",
+        "line": 596,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 月结入口：有灾 + executing 赈灾仍走真实执行链。"
+      },
+      {
+        "file": "tests/test_intrigue_concealment_1896.py",
+        "case": "test_intrigue_reaches_character_input_only_as_a_qualitative_band",
+        "line": 84,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_or_contract | 结构化轴不是裸整数。"
+      },
+      {
+        "file": "tests/test_enter_settlement_period_1235.py",
+        "case": "test_accept_creator_atomic_only_one_true",
+        "line": 393,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | #1235 r6：双 accept 仅一 True——原子 INSERT 裁定创建者，禁后置见行假 True。"
+      },
+      {
+        "file": "tests/test_faction_brew_637.py",
+        "case": "test_new_event_fields_are_pure_data_no_prose_composition",
+        "line": 485,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | (c) 新增字段为纯数据、无任何拼接散文（ADR 0142：给数据不给话术）。"
+      },
+      {
+        "file": "tests/test_faction_brew_637.py",
+        "case": "test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_month",
+        "line": 594,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | 负例(b) 机械可验：复刻重试月场景（水位之上含旧月事件），断言 prompt 渲染措辞不把旧事件称作本月。"
+      },
+      {
+        "file": "tests/test_secret_order_payoff_1504.py",
+        "case": "test_submit_unlimited_keeps_frozen_target",
+        "line": 689,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_behavior_with_incidental_isinstance | "
+      },
+      {
+        "file": "tests/test_cli_model_choices.py",
+        "case": "test_each_runner_has_default_escape_option_first",
+        "line": 43,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | 无 env 覆盖时，默认档 label 复用 cli_backend 的默认常量，不重写字面量（单一真源）。"
+      },
+      {
+        "file": "tests/test_enrich_list_guards.py",
+        "case": "test_enrich_buildings_non_list_no_crash",
+        "line": 18,
+        "preclass": "CANDIDATE_INTERNAL_SHAPE_refined",
+        "disposition": "KEEP_real_entry_or_behavior | enrich_initiative_effects 的 buildings 被 LLM 给成真值非 list（true/数字/字符串）不抛 TypeError。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_provenance_enum_values",
+        "line": 19,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_behavior_or_contract | 五个成员值与字符串标识一致（ADR 0008 决定 5）。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_provenance_from_string",
+        "line": 28,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_behavior_or_contract | 可按字符串反查成员。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_rejected_item_fields",
+        "line": 38,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | RejectedItem 持 item/reason/category/source 四字段。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_rejection_collector_flush_before_record_leaves_db_empty",
+        "line": 67,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | flush 前 DB 中无 rejection_reports 行。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_rejection_collector_flush_writes_rows",
+        "line": 76,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | record 两项后 flush_to_db，DB 落 2 行，字段内容正确。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_rejection_collector_flush_clears_buffer",
+        "line": 109,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | flush 后缓冲清空，再次 flush 不写新行。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_rejection_collector_flush_stores_item_as_json",
+        "line": 121,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | 原 item dict 以 JSON 字符串存入 DB，可反序列化。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_mirror_to_jsonl_writes_lines",
+        "line": 140,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | flush 后 mirror_to_jsonl 把已落库行 append 为 jsonl 行。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_mirror_to_jsonl_appends_on_multiple_calls",
+        "line": 162,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | 多次「flush→mirror」批次追加而不覆盖。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_mirror_to_jsonl_empty_buffer_writes_nothing",
+        "line": 177,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | 缓冲为空时 mirror_to_jsonl 不创建文件（或文件存在则不追加行）。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_flush_then_mirror_writes_jsonl",
+        "line": 191,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | 规定调用序 record → flush(事务内) → commit → mirror：jsonl 必须有行。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_mirror_idempotent_after_flush",
+        "line": 216,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | 同一批行 mirror 两次只写一次（已镜像的行不重复 append）。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_unflushed_rows_never_mirrored",
+        "line": 232,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | 未 flush（未进 DB）的行不进 jsonl——回滚时这些行会消失，镜像它们=孤立行。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_reset_discards_pending_and_flushed",
+        "line": 245,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | reset()（回滚路径）丢弃缓冲与已 flush 快照，之后 flush/mirror 均无输出。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_record_accepts_plain_string_source",
+        "line": 266,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | source 传普通字符串不崩（运行时不查注解），落库归一为枚举值字符串。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_record_rejects_unknown_source_string",
+        "line": 280,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | source 传非法字符串响亮报错（fail-loud，不静默落非法值）。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_collector_counts_deterministic_on_polluted_save",
+        "line": 292,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | 活存档已带 rejection_reports 行时，clean 起步后计数仍确定（cmr S0 r2 C-R2）。"
+      },
+      {
+        "file": "tests/test_applier_contract.py",
+        "case": "test_ddl_in_open_transaction_rolls_back",
+        "line": 313,
+        "preclass": "PUBLIC_STRUCTURED_CANDIDATE",
+        "disposition": "KEEP_real_entry_or_behavior | CREATE TABLE 在打开的事务内不隐式 commit，且随 rollback 撤销。"
+      }
+    ],
+    "note": "Full case list+preclass in /tmp/ming1902-t1t6-final/raw_full.json results.T5; receipt stores refined item-by-item reviews (no batch KEEP_EXTERNAL)."
+  },
+  "T6_symbols": [
     {
       "symbol": "_require_active_minister",
-      "hits": [
-        "tests/test_qa_s2_copy_prompts_1356_1402.py:7:#1902 T6：旧 web _require_active_minister 包装及专属文案钉已随退役入口清退；"
-      ],
       "disposition": "CLEARED_def_gone_history_comment_only",
-      "note": "revoke base-time KEEP; current consumers=none; exclusive tests cleared; comment-only KEEP"
-    },
-    {
-      "symbol": "S1_KEEP_NEVER_WIRED_universe",
-      "count": 133,
-      "disposition": "RECLASSIFIED_revoke_base_time_exemption",
-      "audit": "full consumer re-check: TEST_ONLY residuals=1 (_require_active_minister comment-only); MISSING=1 (STRUCT); remainder have current prod refs or are never-wired non-retirement symbols — KEEP_shared_or_out_of_T6_retirement_scope without base-time rationale"
+      "note": "prod=0; comment-only in tests/test_qa_s2_copy_prompts_1356_1402.py"
     },
     {
       "symbol": "generate_rescript_draft",
       "disposition": "KEEP_shared_capability_live_consumers",
-      "law": "#1902 must not delete shared extract core by old module name"
+      "note": "shared draft capability still consumed; not authorized whole-delete by old hand-draft name",
+      "refs": {
+        "prod": 1,
+        "test": 5,
+        "prod_files": [
+          "ming_sim/rescript_draft.py"
+        ],
+        "test_files": [
+          "tests/test_pihong_dossier_1490.py",
+          "tests/test_rescript_heal_isolation_1801.py",
+          "tests/test_rescript_draft_656.py",
+          "tests/test_structured_decree_contract_1624.py",
+          "tests/test_rescript_option_field_heal_1746.py"
+        ]
+      }
+    }
+  ],
+  "T6_KEEP_NEVER_WIRED": [
+    {
+      "name": "ACCEPTANCE_SCENARIOS",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/person_archive_contract.py'] test=0"
+    },
+    {
+      "name": "ALLOWED_PORTRAIT_TYPES",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['web_app.py'] test=0"
+    },
+    {
+      "name": "ApplyContext",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/applier.py'] test=1"
+    },
+    {
+      "name": "ChatResult",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/models.py'] test=0"
+    },
+    {
+      "name": "DENUNCIATION_ALLOWED_COLS",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/supervision.py'] test=1"
+    },
+    {
+      "name": "DENUNCIATION_TABLE",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/supervision.py'] test=1"
+    },
+    {
+      "name": "DGOLD",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['scripts/make_steam_assets.py'] test=0"
+    },
+    {
+      "name": "DUE_REVIEW_ENTRY_KIND_WHITELIST",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/due_review.py'] test=0"
+    },
+    {
+      "name": "EXPOSURE_ALLOWED_COLS",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/supervision.py'] test=1"
+    },
+    {
+      "name": "EXPOSURE_TABLE",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/supervision.py'] test=1"
+    },
+    {
+      "name": "FACT_METRICS",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/fiscal_fact_brief.py'] test=1"
+    },
+    {
+      "name": "FORBIDDEN_DULLING_COL_FRAGMENTS",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/supervision.py'] test=1"
+    },
+    {
+      "name": "MINISTER_DISMISS_COMMANDS",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/constants.py'] test=0"
+    },
+    {
+      "name": "MINISTRY_OFFICE_TYPES",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "MONTH_OPEN_KEYS",
+      "prod": 1,
+      "test": 4,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/month_open_snapshot.py'] test=4"
+    },
+    {
+      "name": "MaterialsRoot",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/materials.py'] test=0"
+    },
+    {
+      "name": "PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/person_archive_contract.py'] test=0"
+    },
+    {
+      "name": "PERSON_LEGAL_REASON_CODES",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/person_archive_contract.py'] test=0"
+    },
+    {
+      "name": "PRESENCE_ALLOWED_COLS",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/supervision.py'] test=1"
+    },
+    {
+      "name": "PRESENCE_TABLE",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/supervision.py'] test=1"
+    },
+    {
+      "name": "STRUCT",
+      "prod": 3,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_multi_consumer",
+      "note": "prod=3 test=1 files=['docs/raw/06_harness_scripts/agg.py', 'ming_sim/db.py', 'ming_sim/structured_decree.py']"
+    },
+    {
+      "name": "SUPERVISION_SURFACE_KEYS",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/supervision.py'] test=0"
+    },
+    {
+      "name": "_HUANG_TIAN_RENT_PER_WAN_MU",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/flows.py'] test=0"
+    },
+    {
+      "name": "_STATUS_DISCARDED",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/entities/staged_declaration/store.py'] test=0"
+    },
+    {
+      "name": "_STATUS_SETTLED",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/entities/staged_declaration/store.py'] test=0"
+    },
+    {
+      "name": "_STATUS_STAGED",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/entities/staged_declaration/store.py'] test=0"
+    },
+    {
+      "name": "_TERMINAL_ACTIONS",
+      "prod": 2,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_multi_consumer",
+      "note": "prod=2 test=0 files=['ming_sim/rescript_actions.py', 'ming_sim/decree_vocabulary.py']"
+    },
+    {
+      "name": "_collect_compliant_promulgation_items",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/decree.py'] test=0"
+    },
+    {
+      "name": "_dossier_ids_from_simulator_payload",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/decree.py'] test=0"
+    },
+    {
+      "name": "_fiscal_container_value",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/flows.py'] test=0"
+    },
+    {
+      "name": "_haircut_bp",
+      "prod": 6,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_multi_consumer",
+      "note": "prod=6 test=2 files=['ming_sim/fiscal_tick.py', 'ming_sim/fiscal_fact_brief.py', 'ming_sim/pay_order.py', 'ming_sim/db.py', 'ming_sim/flows.py', 'ming_sim/cli_backend.py']"
+    },
+    {
+      "name": "_merge_compliant_promulgation_items",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/decree.py'] test=0"
+    },
+    {
+      "name": "_open_affair_ids_from_payload",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/decree.py'] test=0"
+    },
+    {
+      "name": "_promulgable_proposed_dossiers",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/decree.py'] test=0"
+    },
+    {
+      "name": "_province_collection_rate",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/flows.py'] test=0"
+    },
+    {
+      "name": "_province_transport_ratio",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/flows.py'] test=0"
+    },
+    {
+      "name": "_require_active_minister",
+      "prod": 0,
+      "test": 1,
+      "auth_retire_hint": true,
+      "disposition": "CLEARED_or_COMMENT_ONLY_auth_retire_residual",
+      "note": "prod=0 test=1 files=['tests/test_qa_s2_copy_prompts_1356_1402.py']"
+    },
+    {
+      "name": "accrue_blood_debt",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/centrifuge_ledger.py'] test=1"
+    },
+    {
+      "name": "accrue_detection_wariness",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/centrifuge_ledger.py'] test=1"
+    },
+    {
+      "name": "ainvoke",
+      "prod": 2,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_multi_consumer",
+      "note": "prod=2 test=0 files=['ming_sim/llm_transport.py', 'ming_sim/cli_backend.py']"
+    },
+    {
+      "name": "ainvoke_stream",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/cli_backend.py'] test=0"
+    },
+    {
+      "name": "army_detail",
+      "prod": 2,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_multi_consumer",
+      "note": "prod=2 test=2 files=['ming_sim/db.py', 'ming_sim/materials.py']"
+    },
+    {
+      "name": "audit_night_direct_writes",
+      "prod": 1,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/audience_night.py'] test=2"
+    },
+    {
+      "name": "axis_collision_stances",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/value_matrix.py'] test=1"
+    },
+    {
+      "name": "build_fiscal_fact_brief",
+      "prod": 1,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/fiscal_fact_brief.py'] test=2"
+    },
+    {
+      "name": "build_period_report",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/report.py'] test=0"
+    },
+    {
+      "name": "build_secret_covert_effect_briefs",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/covert_progress.py'] test=1"
+    },
+    {
+      "name": "building_detail",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "clear_directive_needs_clarification",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "clear_pending_decisions",
+      "prod": 1,
+      "test": 3,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=3"
+    },
+    {
+      "name": "clear_resolve_context",
+      "prod": 1,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=2"
+    },
+    {
+      "name": "cluster_effect",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/action_clusters.py'] test=0"
+    },
+    {
+      "name": "contract_axes_direction",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/covert_progress.py'] test=0"
+    },
+    {
+      "name": "count_active_initiatives",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "dict_of_string_lists",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/content.py'] test=0"
+    },
+    {
+      "name": "dict_of_strings",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/content.py'] test=0"
+    },
+    {
+      "name": "disaster_severity_band",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/qualitative.py'] test=0"
+    },
+    {
+      "name": "discard_pending_directives",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "discover_character_write_sql_locations",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/person_write_inventory.py'] test=0"
+    },
+    {
+      "name": "drop_pending_actions_for_minister",
+      "prod": 1,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=2"
+    },
+    {
+      "name": "event_context",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/context.py'] test=0"
+    },
+    {
+      "name": "execution_side_read_fields",
+      "prod": 1,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/decree.py'] test=2"
+    },
+    {
+      "name": "experiences",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/entities/affair/store.py'] test=0"
+    },
+    {
+      "name": "faction_report",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "first_character_name",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/context.py'] test=0"
+    },
+    {
+      "name": "flag_directive_needs_clarification",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "format_fiscal_fact_brief_tsv",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/fiscal_fact_brief.py'] test=1"
+    },
+    {
+      "name": "format_power_changes",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/report.py'] test=1"
+    },
+    {
+      "name": "get_faction_stance_summary",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "get_message_highlights",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "has_player_visible_rejection",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/applier.py'] test=0"
+    },
+    {
+      "name": "historical_anchor_for_month",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/context.py'] test=0"
+    },
+    {
+      "name": "hline",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['scripts/make_steam_assets.py'] test=0"
+    },
+    {
+      "name": "holder_kind",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/session_write_queue.py'] test=0"
+    },
+    {
+      "name": "is_sealed",
+      "prod": 1,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/session_write_queue.py'] test=2"
+    },
+    {
+      "name": "list_arrived_unsettled_summons",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/audience_night.py'] test=1"
+    },
+    {
+      "name": "list_dossier_actual_rail",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "list_dossier_link_rejections",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "list_dossiers_for_directive",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "list_endorsed_dossier_candidates",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "list_execution_liability_parties",
+      "prod": 2,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_multi_consumer",
+      "note": "prod=2 test=1 files=['ming_sim/db.py', 'ming_sim/participant_roster.py']"
+    },
+    {
+      "name": "list_ministers",
+      "prod": 4,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_multi_consumer",
+      "note": "prod=4 test=2 files=['web_app.py', 'ming_sim/models.py', 'ming_sim/session.py', 'ming_sim/cli/terminal.py']"
+    },
+    {
+      "name": "list_night_promulgated_directives",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "list_night_timeline",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/audience_night.py'] test=1"
+    },
+    {
+      "name": "list_office_effects_for_dossier",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "list_office_vacancies",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "list_open_grant_reconciliations",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "list_promulgated_directives",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "mark_chat_turn_failed",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "matrix_snapshot",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/value_matrix.py'] test=1"
+    },
+    {
+      "name": "mean_aligned_stance",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/value_matrix.py'] test=0"
+    },
+    {
+      "name": "night_dossiers_ready",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/audience_night.py'] test=0"
+    },
+    {
+      "name": "parse_covert_exec_selections",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/covert_progress.py'] test=0"
+    },
+    {
+      "name": "parse_json_dict",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/context.py'] test=0"
+    },
+    {
+      "name": "person_write_locations_by_disposition",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/person_write_inventory.py'] test=0"
+    },
+    {
+      "name": "persons_entered_tonight",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/audience_night.py'] test=1"
+    },
+    {
+      "name": "persons_present_tonight",
+      "prod": 1,
+      "test": 3,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/audience_night.py'] test=3"
+    },
+    {
+      "name": "point_dossier",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/entities/affair/store.py'] test=0"
+    },
+    {
+      "name": "point_issue",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/entities/affair/store.py'] test=0"
+    },
+    {
+      "name": "pointing_at",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/entities/textual_fact/store.py'] test=0"
+    },
+    {
+      "name": "prepare_character_materials",
+      "prod": 1,
+      "test": 10,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/materials.py'] test=10"
+    },
+    {
+      "name": "rebuild_centrifuge_cache",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/centrifuge_ledger.py'] test=1"
+    },
+    {
+      "name": "record_economy_moves",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "record_monthly_supervision_facts",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "reject_directive",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "release_previous_material_tree",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/materials.py'] test=0"
+    },
+    {
+      "name": "require_bool",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/llm_contract.py'] test=0"
+    },
+    {
+      "name": "require_int_range",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/llm_contract.py'] test=0"
+    },
+    {
+      "name": "require_non_empty_text",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/llm_contract.py'] test=0"
+    },
+    {
+      "name": "revoke_pay_order_decree",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/pay_order.py'] test=1"
+    },
+    {
+      "name": "run_agent_stream_text",
+      "prod": 2,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_multi_consumer",
+      "note": "prod=2 test=1 files=['ming_sim/token_stats.py', 'ming_sim/agents.py']"
+    },
+    {
+      "name": "run_audience_turn_translation",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/audience_translate.py'] test=0"
+    },
+    {
+      "name": "run_exclusive",
+      "prod": 1,
+      "test": 3,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/session_write_queue.py'] test=3"
+    },
+    {
+      "name": "run_month_end_relation_brew",
+      "prod": 1,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/relation_brew.py'] test=2"
+    },
+    {
+      "name": "save_pending_promulgation_verdicts",
+      "prod": 1,
+      "test": 3,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=3"
+    },
+    {
+      "name": "season_option_contract_prompt",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/action_clusters.py'] test=0"
+    },
+    {
+      "name": "select_triage_actor",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/rescript_draft.py'] test=1"
+    },
+    {
+      "name": "settle_province_tick",
+      "prod": 1,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=2"
+    },
+    {
+      "name": "stage_authorization_candidate",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/action_materialize.py'] test=1"
+    },
+    {
+      "name": "stage_grant_allocation_candidate",
+      "prod": 2,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_multi_consumer",
+      "note": "prod=2 test=1 files=['ming_sim/action_materialize.py', 'ming_sim/declaration_dispatch.py']"
+    },
+    {
+      "name": "stage_month_segment",
+      "prod": 1,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/month_translate.py'] test=2"
+    },
+    {
+      "name": "stage_referral_candidate",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/action_materialize.py'] test=0"
+    },
+    {
+      "name": "stage_revoke_authority_candidate",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/action_materialize.py'] test=0"
+    },
+    {
+      "name": "state_context",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/context.py'] test=0"
+    },
+    {
+      "name": "status_delta",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/report.py'] test=0"
+    },
+    {
+      "name": "treasury_ledger",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "turn_army_summary",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "turn_economy_summary",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "turn_power_summary",
+      "prod": 1,
+      "test": 0,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=0"
+    },
+    {
+      "name": "turn_region_summary",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=1"
+    },
+    {
+      "name": "upsert_pending_directive",
+      "prod": 1,
+      "test": 2,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/db.py'] test=2"
+    },
+    {
+      "name": "value_axes",
+      "prod": 1,
+      "test": 1,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_definition_or_single_prod_consumer",
+      "note": "prod_files=['ming_sim/value_matrix.py'] test=1"
+    },
+    {
+      "name": "write_decree",
+      "prod": 5,
+      "test": 14,
+      "auth_retire_hint": false,
+      "disposition": "KEEP_live_multi_consumer",
+      "note": "prod=5 test=14 files=['scripts/direct_decree_probe.py', 'ming_sim/cli/terminal.py', 'ming_sim/session.py', 'ming_sim/decree.py', 'ming_sim/db.py']"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "M1_cas_lost_returns_None",
+      "ok": true,
+      "detail": "out=None"
+    },
+    {
+      "name": "M2_web_retry_keyerror_fail_closed",
+      "ok": true,
+      "detail": "raised=KeyError:'mut scene missing'; status=interrupted"
+    },
+    {
+      "name": "M3a_fail_snapshot_no_forged_diffs",
+      "ok": true,
+      "detail": "recorded=0; status=interrupted"
+    },
+    {
+      "name": "M3b_fail_snapshot_side_effect_rollback",
+      "ok": false,
+      "detail": "loyalty0=45 loyalty1=85 delta=40 status=interrupted rollback_items=0 raised=RuntimeError:重试 LLM 失败 capture_calls=2"
+    },
+    {
+      "name": "M3c_control_fail_retry_rolls_back_when_snapshot_ok",
+      "ok": true,
+      "detail": "loyalty0=45 loyalty1=45"
+    },
+    {
+      "name": "M4_terminate_no_kill",
+      "ok": true,
+      "detail": "calls=['terminate', ('wait', 5)]"
+    },
+    {
+      "name": "M5_canonicalize_loud_via_enrich",
+      "ok": true,
+      "detail": "loud=True"
     }
   ],
   "commands": [
-    "python3 /tmp/ming1902-t1t6-enum/enum_t1t6.py  # full mechanical enum Py/TS/scripts",
-    "rg -n --glob '*.py' -g '!tests/**' '(\\.kill\\(|SIGKILL|subprocess\\.run\\([^)]*timeout\\s*=|os\\.kill\\()' ming_sim web_app.py scripts",
-    "rg -n --glob '*.{py,ts,tsx}' 'llm_connection_error|Authentication required|OpenAI Codex v|_AGY_AUTH|banner|prose_is_not_connection' ming_sim web_app.py tests web/src scripts",
-    "AST except→pass|continue|return None|{}|[]|\"\"|name  (enum_t1t6.t3_scan_py) over ming_sim|web_app|scripts",
-    "rg -n 'reopen_interrupted_chat_turn_for_retry|execute_interrupted_reply_retry|fail_audience_chat_turn|schedule_close_night_after_chat_if_needed' ming_sim web_app.py tests",
-    "AST: SectionResult(|ApplyContext( + attr/identity asserts without I/O/entry across tests/",
-    "rg -n '_require_active_minister|手拟|manual_draft|KEEP_NEVER_WIRED|generate_rescript_draft' ming_sim web_app.py tests scripts evidence/issue-1902/s123-s1-disposition.md"
+    "python3 /tmp/ming1902-t1t6-final/enum_t1t6_full.py",
+    "python3 /tmp/ming1902-t1t6-final/mutations.py"
   ]
 }

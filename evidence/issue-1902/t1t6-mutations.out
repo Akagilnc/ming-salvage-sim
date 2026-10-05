@@ -1,8 +1,46 @@
 PASS M1_cas_lost_returns_None: out=None
 PASS M2_web_retry_keyerror_fail_closed: raised=KeyError:'mut scene missing'; status=interrupted
-WARNING:ming_sim.session:fail_audience_chat_turn after-snapshot failed chat_turn_id=1: snap boom
-PASS M3_fail_snapshot_no_forged_diffs: recorded=0; status=interrupted
+ERROR:ming_sim.session:fail_audience_chat_turn after-snapshot failed chat_turn_id=1; skip rollback diffs — side effects from this attempt may remain: snap boom
+Traceback (most recent call last):
+  File "/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/ming_sim/session.py", line 1296, in fail_audience_chat_turn
+    after_snapshot = self.db.capture_chat_rollback_snapshot()
+  File "/tmp/ming1902-t1t6-final/mutations.py", line 89, in <lambda>
+    db.capture_chat_rollback_snapshot = lambda: (_ for _ in ()).throw(RuntimeError('snap boom'))  # type: ignore
+                                                ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/ming1902-t1t6-final/mutations.py", line 89, in <genexpr>
+    db.capture_chat_rollback_snapshot = lambda: (_ for _ in ()).throw(RuntimeError('snap boom'))  # type: ignore
+RuntimeError: snap boom
+PASS M3a_fail_snapshot_no_forged_diffs: recorded=0; status=interrupted
+ERROR:ming_sim.session:fail_audience_chat_turn after-snapshot failed chat_turn_id=1; skip rollback diffs — side effects from this attempt may remain: after snap boom
+Traceback (most recent call last):
+  File "/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/ming_sim/session.py", line 1413, in execute_interrupted_reply_retry
+    result = self.scene_chat(
+        question,
+    ...<2 lines>...
+        stream_emit=stream_emit,
+    )
+  File "/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/tests/test_audience_restore_505.py", line 391, in scene_chat
+    return self.chat(
+           ~~~~~~~~~^
+        minister_name or self._minister, message, chat_turn_id=chat_turn_id,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/tests/test_audience_restore_505.py", line 388, in chat
+    raise RuntimeError("重试 LLM 失败")
+RuntimeError: 重试 LLM 失败
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/ming_sim/session.py", line 1296, in fail_audience_chat_turn
+    after_snapshot = self.db.capture_chat_rollback_snapshot()
+  File "/tmp/ming1902-t1t6-final/mutations.py", line 121, in capture_once_then_boom
+    raise RuntimeError('after snap boom')
+RuntimeError: after snap boom
+FAIL M3b_fail_snapshot_side_effect_rollback: loyalty0=45 loyalty1=85 delta=40 status=interrupted rollback_items=0 raised=RuntimeError:重试 LLM 失败 capture_calls=2
+PASS M3c_control_fail_retry_rolls_back_when_snapshot_ok: loyalty0=45 loyalty1=45
 WARNING:ming_sim.cli_backend:CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）：still alive
 PASS M4_terminate_no_kill: calls=['terminate', ('wait', 5)]
 PASS M5_canonicalize_loud_via_enrich: loud=True
-SUMMARY 5 / 5
+SUMMARY 6 / 7
