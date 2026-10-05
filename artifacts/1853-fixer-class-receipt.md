@@ -5,8 +5,9 @@
 - 判词真源：`…/01a109ce-2123-793c-9df8-5dda245ee7b5@fixer/attachments/11-1853-judge-bbf8f884f.json` 末 payload
 - 票面：#1853 / 总票 #1812「重构验收」
 - 前序实现 commit：`7c7eab3993efac9dd3dfb9bf5e27858a13441adb`
-- **本轮实现 commitSha：**（见文末）
-- 未 amend / push / 开 PR；未改 Soul/宪法；未动宿主/席位配置；**本轮未再 stash**
+- 能力清退实现 commit：`bc86a83c4f50f874bc4104025273652b062fe1ab`
+- **本轮合法性纠正 commitSha：**（见本提交后 `git rev-parse HEAD`；不另开纯 hash 戳提交）
+- 未 amend / push / 开 PR；未改 Soul/宪法；未动宿主/席位配置；**本轮未 stash**
 
 ## 违规 git stash（上轮如实记载；恢复≠未违规）
 
@@ -40,15 +41,34 @@
 | `ming_sim/knowledge.py` `_household_ledger` 同形 | 删软兼容，直调 |
 | `ming_sim/materials.py` `revoke_target_facts` `except (AttributeError, TypeError, ValueError)` | 去掉 `AttributeError`；仅保留业务拒收 `TypeError`/`ValueError`→空 dict |
 
-回归案：`tests/test_j8r2_gamedb_capability_no_attrerror_shim_1853.py`（缺 conn / 缺 resolve 必须响亮 `AttributeError`）。
+### 合法性纠正（本轮；质量法）
 
-### 修改后复扫
+上一轮在实现 commit `bc86a83c4` **违规新增**仓库证明性测试：
+
+- 已删：`tests/test_j8r2_gamedb_capability_no_attrerror_shim_1853.py`
+- 违反：本票质量法「不为证明修复造测试」及末判禁止新增证明测试
+- **不换形再造**（不以其它文件名/夹具形态把同一证明测搬回 `tests/`）
+
+证明方式改为**系统临时目录真实入口变异真跑**（旧逻辑红 / 新逻辑绿），命令与输出留在工作树证据，不进 `tests/`：
+
+- 配方：`artifacts/1853-fixer-enum/LEGAL_CORRECT_DIAG.md`
+- 本次 stdout：`artifacts/1853-fixer-enum/legal-correct-diag_out.txt`
+- 实测：`VERDICT=PASS old_red/new_green`（`NEW_LOGIC=GREEN`；`OLD_LOGIC=RED`；户部 reader-site flip-conn 亦旧红新绿）
+
+## 修改后复扫（合法性纠正后重跑；全仓无自缩窄）
 
 ```text
-Class1 IN_CLASS_J8R2 = 0
-Class2 COPY_ROLLBACK_LOGIC / RETIRED_LIGHTWEIGHT_TEST = 0；needs_attention = 0
+Class1 files_scanned=361；IN_CLASS_J8R2=0
+Class2 test_files_scanned=235；COPY_ROLLBACK_LOGIC=0；RETIRED_LIGHTWEIGHT_TEST=0；needs_attention=0
+证明测文件名在 class1/class2 TSV 残余命中=0
 协作替身 fail_chat_turn 等均为记账/抛错注入，无 msgs[:-1] 回滚复制
 ```
+
+ENUM 复核（对照末判两类定义全文，**未**收窄到符号名 `db` / 生产目录 / 少数方法样本）：
+
+- 脚本仍全仓 `*.py` / `tests/**/*.py` AST 枚举（仅跳过 `.venv`/`node_modules`/`archive` 等非源）
+- Class1：`hasattr`/`getattr`/`callable`/`except AttributeError` 全收集；`IN_CLASS_J8R2` 含任意 GameDB 别名接收者 + try 体触及 `conn`/GameDB API 的 AttributeError 兼容
+- Class2：持久化/回滚方法集与退役标记全表，不限 `fail_chat_turn`/`append` 前几项样本
 
 产物：`class1-raw.tsv` / `class1-post.tsv` / `class2-raw.tsv` / `class2-post.tsv` / `gamedb_api_names.txt`
 
@@ -56,7 +76,7 @@ Class2 COPY_ROLLBACK_LOGIC / RETIRED_LIGHTWEIGHT_TEST = 0；needs_attention = 0
 
 ## 测试
 
-七变量逐项显式（不可写成大括号折叠）：
+七变量逐项显式（不可写成大括号折叠）；**不含**已删证明测；不全量：
 
 ```bash
 MING_SIM_AGY_BIN=/usr/bin/false \
@@ -67,7 +87,6 @@ MING_SIM_KIMI_BIN=/usr/bin/false \
 MING_SIM_GROK_BIN=/usr/bin/false \
 MING_SIM_PI_BIN=/usr/bin/false \
 python3 -m pytest -p tests.conftest \
-  tests/test_j8r2_gamedb_capability_no_attrerror_shim_1853.py \
   tests/test_cli_play_turn.py \
   tests/test_web_chat_serialization_393.py \
   tests/test_menu_lifecycle_drain_396.py \
@@ -78,7 +97,14 @@ python3 -m pytest -p tests.conftest \
   -q
 ```
 
-（实测：**104 passed in 2.18s**。输出：`/tmp/1853-fixer-focused-rescan.txt`）
+实测：**101 passed, 1 warning in 2.26s**；`FOCUSED_EXIT=0`；basetemp 仅 `/tmp/1853-fixer-focused-legal-bt.*`，跑完已删。输出：`/tmp/1853-fixer-focused-legal.txt`。
+
+## 两类结算
+
+| 类 | 边界 | 结算 |
+|---|---|---|
+| J8-R2（Class1） | 成功构造 GameDB 后必备能力 AttributeError/软探测兼容 | `IN_CLASS_J8R2=0`；knowledge/materials 软兼容已清；证明测已删，改临时变异证明 |
+| TEST-PARALLEL（Class2） | 测试复制持久化/回滚或续养退役轻量专属测 | `COPY_ROLLBACK_LOGIC=0`；`RETIRED_LIGHTWEIGHT_TEST=0`；`needs_attention=0` |
 
 ## 未结项
 
@@ -88,4 +114,4 @@ python3 -m pytest -p tests.conftest \
 
 ## commitSha
 
-`bc86a83c4f50f874bc4104025273652b062fe1ab`
+见本合法性纠正提交（删除证明测 + 更新本回执/ENUM 复扫产物）；不另开纯 hash 戳提交。
