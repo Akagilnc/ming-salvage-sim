@@ -431,8 +431,53 @@ def _strategic_event_result_preflight_error(
     army_items = list(
         ordered_army_items if ordered_army_items is not None else army_deltas.items()
     )
-    region_results: List[Dict[str, object]] = []
-    army_results: List[Dict[str, object]] = []
+    # 懒 import：army.delta_section 反向依赖本模块 `_effect_event_ids`，忌模块顶 import。
+    from ming_sim.entities.army.delta_section import (
+        apply_army_delta_with_cannon_transfer,
+    )
+
+    def _region_world_value(region_id: str, field: str) -> object:
+        row = db.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
+        if field in FISCAL_SCORE_FIELDS:
+            return json.loads(str(row["fiscal"] or "{}")).get(field, 50)
+        return row[field]
+
+    def _army_world_value(army_id: str, field: str) -> object:
+        row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
+        return row[field]
+
+    def _power_world_value(power_id: str, field: str) -> object:
+        row = db.conn.execute("SELECT * FROM powers WHERE id = ?", (power_id,)).fetchone()
+        if row is None:
+            return None
+        return row[field]
+
+    def _reject_landed_or_unchanged(
+        kind: str,
+        default_target_id: str,
+        landed: List[Dict[str, object]],
+        snapshots: List[tuple[object, str, str, object, object]],
+        reader,
+    ) -> str:
+        """按目标/字段拒收：写核已记的非 material，或声明字段写后世界值未变。"""
+        for result in landed:
+            if _strategic_result_item_has_material_world_state(result):
+                continue
+            report_target = str(
+                result.get("army_id")
+                or result.get("region_id")
+                or result.get("power_id")
+                or default_target_id
+            )
+            report_field = result.get("field") or kind
+            return _noop_error(kind, report_target, report_field, result.get("delta", result))
+        for raw_field, read_id, field, before, report_value in snapshots:
+            after = reader(read_id, field)
+            if str(after) != str(before):
+                continue
+            return _noop_error(kind, read_id, raw_field, report_value)
+        return ""
+
     db.conn.execute("SAVEPOINT strategic_entity_result_preflight")
     try:
         for region_id, raw_changes in region_items:
@@ -441,6 +486,8 @@ def _strategic_event_result_preflight_error(
                 return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
             if not isinstance(raw_changes, dict):
                 return f"战略/外敌事件「{event_title or event_id}」地区战果须为对象：{region_id}"
+            snapshots: List[tuple[object, str, str, object, object]] = []
+            seen_fields: set[str] = set()
             for raw_field, value in raw_changes.items():
                 field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "origin_ref"):
@@ -466,6 +513,12 @@ def _strategic_event_result_preflight_error(
                             f"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by "
                             f"必须是 powers.id 中的非空真实势力 id：{value!r}"
                         )
+                if field in seen_fields:
+                    continue
+                seen_fields.add(field)
+                snapshots.append(
+                    (raw_field, str(region_id), field, _region_world_value(str(region_id), field), value)
+                )
 
             landed, refused = db.apply_region_deltas(
                 preview_state, preflight_event, None, "档房", {region_id: raw_changes}, commit=False,
@@ -476,7 +529,11 @@ def _strategic_event_result_preflight_error(
                         f"战略/外敌事件「{event_title or event_id}」地区战果拒收："
                         f"{result.reason or result.category}"
                     )
-            region_results.extend(landed)
+            err = _reject_landed_or_unchanged(
+                "region", str(region_id), landed, snapshots, _region_world_value,
+            )
+            if err:
+                return err
 
         for army_id, raw_changes in army_items:
             row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
@@ -494,9 +551,23 @@ def _strategic_event_result_preflight_error(
                         or _int_delta_error("army", army_id, cannon_keys[0], raw_changes[cannon_keys[0]])
                         or _strict_int(raw_changes[cannon_keys[0]]) >= 0):
                     return f"战略/外敌事件「{event_title or event_id}」随军炮转移目标或负数拟转量非法：{army_id}"
+            snapshots = []
+            seen_fields = set()
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field in ("reason", "origin_ref", "cannon_transfer_to"):
+                if field in ("reason", "origin_ref"):
+                    continue
+                if field == "cannon_transfer_to":
+                    transfer_target = str(value)
+                    snapshots.append(
+                        (
+                            raw_field,
+                            transfer_target,
+                            "cannon_equipment",
+                            _army_world_value(transfer_target, "cannon_equipment"),
+                            value,
+                        )
+                    )
                     continue
                 if field not in army_valid_fields:
                     return f"战略/外敌事件「{event_title or event_id}」战果引用非法军队字段：{raw_field}"
@@ -504,9 +575,16 @@ def _strategic_event_result_preflight_error(
                     err = _int_delta_error("army", army_id, raw_field, value)
                     if err:
                         return err
+                if field in seen_fields:
+                    continue
+                seen_fields.add(field)
+                snapshots.append(
+                    (raw_field, str(army_id), field, _army_world_value(str(army_id), field), value)
+                )
 
-            landed, refused = db.apply_army_deltas(
-                preview_state, preflight_event, None, "档房", {army_id: raw_changes}, commit=False,
+            # 与战略事件真写路同口径（issue/army delta_section）：含随军炮转移键。
+            landed, refused = apply_army_delta_with_cannon_transfer(
+                db, preview_state, preflight_event, str(army_id), raw_changes,
             source=Provenance.system_simulation)
             for result in refused:
                 if isinstance(result, RejectedItem):
@@ -514,52 +592,68 @@ def _strategic_event_result_preflight_error(
                         f"战略/外敌事件「{event_title or event_id}」军队战果拒收："
                         f"{result.reason or result.category}"
                     )
-            army_results.extend(landed)
+            err = _reject_landed_or_unchanged(
+                "army", str(army_id), landed, snapshots, _army_world_value,
+            )
+            if err:
+                return err
 
     finally:
         db.conn.execute("ROLLBACK TO SAVEPOINT strategic_entity_result_preflight")
         db.conn.execute("RELEASE SAVEPOINT strategic_entity_result_preflight")
-
-    if region_items and not any(
-        _strategic_result_item_has_material_world_state(result) for result in region_results
-    ):
-        region_id, raw_changes = region_items[0]
-        return _noop_error("region", str(region_id), "region_delta", raw_changes)
-    if army_items and not any(
-        _strategic_result_item_has_material_world_state(result) for result in army_results
-    ):
-        army_id, raw_changes = army_items[0]
-        return _noop_error("army", str(army_id), "army_delta", raw_changes)
 
     power_items = ordered_power_items if ordered_power_items is not None else list(power_updates.items())
     if power_items:
         for power_id, raw_changes in power_items:
             if not isinstance(raw_changes, dict):
                 return f"战略/外敌事件「{event_title or event_id}」势力战果须为对象：{power_id}"
-        power_results: List[Dict[str, object]] = []
-        power_rejections: List[RejectedItem] = []
+        power_score_fields = frozenset({"leverage", "military_strength", "supply"})
         db.conn.execute("SAVEPOINT strategic_power_result_preflight")
         try:
             for power_id, raw_changes in power_items:
+                snapshots = []
+                seen_fields: set[str] = set()
+                power_row = db.conn.execute(
+                    "SELECT 1 FROM powers WHERE id = ?", (power_id,),
+                ).fetchone()
+                for raw_field, value in raw_changes.items():
+                    field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+                    if field in ("reason", "last_action", "origin_ref"):
+                        continue
+                    if field not in power_score_fields:
+                        # 非法字段交写核拒收；不预读未知列。
+                        continue
+                    if power_row is None or field in seen_fields:
+                        continue
+                    seen_fields.add(field)
+                    snapshots.append(
+                        (
+                            raw_field,
+                            str(power_id),
+                            field,
+                            _power_world_value(str(power_id), field),
+                            value,
+                        )
+                    )
                 landed, refused = db.apply_power_deltas(
                     state,
                     {power_id: {key: value for key, value in raw_changes.items() if key != "origin_ref"}},
                     commit=False,
                 source=Provenance.system_simulation)
-                power_results.extend(landed)
-                power_rejections.extend(refused)
+                for result in refused:
+                    if isinstance(result, RejectedItem):
+                        return (
+                            f"战略/外敌事件「{event_title or event_id}」势力战果拒收："
+                            f"{result.reason or result.category}"
+                        )
+                err = _reject_landed_or_unchanged(
+                    "power", str(power_id), landed, snapshots, _power_world_value,
+                )
+                if err:
+                    return err
         finally:
             db.conn.execute("ROLLBACK TO SAVEPOINT strategic_power_result_preflight")
             db.conn.execute("RELEASE SAVEPOINT strategic_power_result_preflight")
-        for result in power_rejections:
-            if isinstance(result, RejectedItem):
-                return (
-                    f"战略/外敌事件「{event_title or event_id}」势力战果拒收："
-                    f"{result.reason or result.category}"
-                )
-        if not any(_strategic_result_item_has_material_world_state(result) for result in power_results):
-            power_id, raw_changes = power_items[0]
-            return _noop_error("power", str(power_id), "power_updates", raw_changes)
 
     if person_changes:
         for item in person_changes:
@@ -676,25 +770,29 @@ def _strategic_event_result_preflight_error(
         if field_armies:
             db.conn.execute("SAVEPOINT strategic_new_army_result_preflight")
             try:
-                created_probe: List[Dict[str, object]] = []
-                created_probe_rejections: List[RejectedItem] = []
                 for raw in field_armies:
                     landed, refused = db.create_armies_from_extraction(
                         state, [raw], actor="档房", commit=False, require_origin=False,
                     source=Provenance.system_simulation)
-                    created_probe.extend(landed)
-                    created_probe_rejections.extend(refused)
+                    for result in refused:
+                        if isinstance(result, RejectedItem):
+                            return (
+                                f"战略/外敌事件「{event_title or event_id}」新军战果拒收："
+                                f"{result.reason or result.category}"
+                            )
+                    if not any(
+                        _strategic_result_item_has_material_world_state(item)
+                        for item in landed
+                    ):
+                        army_label = (
+                            str(raw.get("id") or raw.get("name") or "new_army")
+                            if isinstance(raw, dict)
+                            else "new_army"
+                        )
+                        return _noop_error("army", army_label, "new_armies", raw)
             finally:
                 db.conn.execute("ROLLBACK TO SAVEPOINT strategic_new_army_result_preflight")
                 db.conn.execute("RELEASE SAVEPOINT strategic_new_army_result_preflight")
-            for result in created_probe_rejections:
-                if isinstance(result, RejectedItem):
-                    return (
-                        f"战略/外敌事件「{event_title or event_id}」新军战果拒收："
-                        f"{result.reason or result.category}"
-                    )
-            if not any(_strategic_result_item_has_material_world_state(item) for item in created_probe):
-                return f"战略/外敌事件「{event_title or event_id}」新军战果无真实世界状态变化"
 
     origin_items = (
         [("地区", item) for _, item in (

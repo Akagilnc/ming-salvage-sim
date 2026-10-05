@@ -303,6 +303,96 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
     assert _row(db, "loyalty")["loyalty"] == before_loyalty
 
 
+def test_latched_loyalty_cap_mixed_manpower_preflight_rejects_whole_envelope(game):
+    """#1835 S2 R2：同军 loyalty 贴 cap 的 noop 不得靠 manpower 实变 + 地区压力半落整封。"""
+    db, state, content = game
+    issue_engine.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    _configure(db)
+    _set(db, loyalty=80, arrears=5, latched=1, mutiny_count=1, manpower=10000)
+    db.conn.execute(
+        "UPDATE armies SET redemption_count=0 WHERE id=?", (ARMY,)
+    )
+    db.conn.commit()
+    db.conn.execute("UPDATE regions SET military_pressure = ? WHERE id = ?", (20, "beizhili"))
+
+    from ming_sim.month_translate import dispatch_month_segment
+
+    dispatch_month_segment(db, state, segment="哗变军混合 noop 预检", translate_fn=lambda _request, _config: {
+        "effects": [{
+            "event_id": "jisi_lubian",
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "region_delta": {"beizhili": {
+                "origin_ref": "盘面自发", "military_pressure": 35,
+            }},
+            "army_delta": {ARMY: {
+                "origin_ref": "盘面自发", "loyalty": 5, "manpower": -100,
+            }},
+        }],
+    })
+
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == 20
+    row = _row(db, "loyalty", "manpower")
+    assert row["loyalty"] == 80
+    assert row["manpower"] == 10000
+
+
+def test_strategic_event_cannon_transfer_preflight_reuses_transfer_write_path(game):
+    """#1835 S2 R1：合法随军炮转移须走 apply_army_delta_with_cannon_transfer，不得因转移键误拒。"""
+    db, state, content = game
+    issue_engine.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    armies = [
+        row[0]
+        for row in db.conn.execute(
+            "SELECT id FROM armies WHERE id != ? ORDER BY id LIMIT 1", (ARMY,)
+        )
+    ]
+    assert armies, "fixture needs a second army for cannon transfer"
+    target = armies[0]
+    db.conn.execute(
+        "UPDATE armies SET cannon_equipment=5, is_mutinied=0 WHERE id=?", (ARMY,)
+    )
+    db.conn.execute(
+        "UPDATE armies SET cannon_equipment=0, is_mutinied=0 WHERE id=?", (target,)
+    )
+    db.conn.execute("DELETE FROM event_triggers WHERE event_id='jisi_lubian'")
+    db.conn.commit()
+
+    from ming_sim.month_translate import dispatch_month_segment
+
+    dispatch_month_segment(db, state, segment="战略随军炮转移预检", translate_fn=lambda _request, _config: {
+        "effects": [{
+            "event_id": "jisi_lubian",
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "army_delta": {ARMY: {
+                "origin_ref": "盘面自发",
+                "随军大炮": -3,
+                "cannon_transfer_to": target,
+                "reason": "缴获",
+            }},
+        }],
+    })
+
+    assert db.has_event_triggered("jisi_lubian")
+    cannons = {
+        row["id"]: row["cannon_equipment"]
+        for row in db.conn.execute(
+            "SELECT id, cannon_equipment FROM armies WHERE id IN (?, ?)",
+            (ARMY, target),
+        )
+    }
+    assert cannons[ARMY] == 2
+    assert cannons[target] == 3
+
+
 def test_latched_mixed_item_allows_and_denies_per_field(game):
     db, state, _ = game
     _configure(db)

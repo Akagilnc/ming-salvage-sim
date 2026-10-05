@@ -1,0 +1,12 @@
+PREFLIGHT_HAS_apply_army_deltas_call False
+PREFLIGHT_HAS_transfer_write True
+PREFLIGHT_HAS_class_not_any_material False
+
+apply_army_delta_with_cannon_transfer	ming_sim/entities/army/delta_section.py
+apply_army_delta_with_cannon_transfer	ming_sim/entities/issue/delta_section.py
+apply_army_delta_with_cannon_transfer	ming_sim/settlement/preflight.py
+
+apply_army_deltas (out of S2 preflight scope; retained)
+	ming_sim/db.py (definition + internal)
+	ming_sim/entities/army/delta_section.py (post-transfer remainder / legs)
+	ming_sim/entities/issue/effects.py (issue effect path; not authorized this round)
