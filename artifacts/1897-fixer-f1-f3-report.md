@@ -2340,3 +2340,496 @@ env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
 
 - 以交卷后 `git rev-parse HEAD` 为准。
 - **未 push / 未 PR / 未 amend / 未 stash**。
+
+
+---
+
+## 证据补全（G1–G3 交卷前，本轮）
+
+- 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5`
+- 分支：`ak-roles/issue-1897-g1-g3-fixer-20261005-090129`
+- 相对基线：`b8370cc4bcd36667ce87eaacfd183a15d9ba3b5d`
+- 针对回执 §G2（原 L2236）缺口：可复跑枚举曾仅一行注释；3–5/7–8 分组无名；G2 只做 title 变异；G3 sitecustomize 源码缺；回执第二命令漏写七前缀
+- **七前缀违规核验（事实）**：前轮相关测实跑（fixer transcript line49）`env MING_SIM_*_BIN=/usr/bin/false … PYTHONPATH="$TD:$PWD"` **已带七前缀**；回执 bash 块漏写属文书缺陷，**非漏跑**。本轮两命令均明示七前缀。
+- **代码增量**：`test_657_abi_mapper_matrix_a1_a12` 并入 layer_a 缺键（`assignee_name`/`region_id`/`transaction_category`）最短负向；title/dict/empty_stop 已在既有案；blank_style 由 `test_temperament_blank_style_rejected_keeps_prior` 承重。未新建平行测文件。
+- **未 push / 未 PR / 未 amend / 未 stash**
+
+### G2 可复跑枚举（全文）
+
+```bash
+mkdir -p /tmp/1897-g1g3
+# 脚本全文落 /tmp/1897-g1g3/enum_deleted_gates.py（见下代码块）后：
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-g1g3/enum_deleted_gates.py
+```
+
+```python
+#!/usr/bin/env python3
+"""G2: enumerate wholly-deleted test_* vs baseline; extract structured gate negatives."""
+from __future__ import annotations
+import ast, json, re, subprocess, sys
+from pathlib import Path
+
+ROOT = Path("/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5")
+BASE = "b8370cc4bcd36667ce87eaacfd183a15d9ba3b5d"
+
+def defs_at(rev: str, rel: str) -> dict[str, tuple[int, str]]:
+    raw = subprocess.check_output(["git", "show", f"{rev}:{rel}"], cwd=ROOT, text=True)
+    tree = ast.parse(raw)
+    out = {}
+    for n in tree.body:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_"):
+            src = ast.get_source_segment(raw, n) or ""
+            out[n.name] = (n.lineno, src)
+    return out
+
+def current_defs(rel: str) -> set[str]:
+    p = ROOT / rel
+    if not p.exists():
+        return set()
+    tree = ast.parse(p.read_text(encoding="utf-8"))
+    return {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_")}
+
+def gate_bits(src: str) -> list[str]:
+    bits = []
+    if "字' * 81" in src or '字" * 81' in src or "* 81" in src and "title" in src:
+        bits.append("title>80 ValueError")
+    if "stop_condition" in src and ("dict" in src or "{'army" in src or '{"army' in src):
+        bits.append("stop_condition=dict ValueError")
+    if "until_stop" in src and ("stop_condition': ''" in src or 'stop_condition": ""' in src or "stop_condition': \"\"" in src):
+        bits.append("empty until_stop ValueError")
+    if "normalize_rescript_layer_a_option" in src and ("del bad" in src or "miss" in src):
+        bits.append("layer_a缺键 ValueError")
+    if "invalid_enum" in src and ("style" in src or "空白" in src or "blank" in src.lower() or "\\n\\t" in src):
+        bits.append("blank_style→invalid_enum")
+    # generic raises around map/normalize
+    if "pytest.raises(ValueError)" in src and "map_rescript_option_or_choice" in src and "title" in src:
+        if "title>80 ValueError" not in bits and ("* 81" in src or "超" in src):
+            bits.append("title>80 ValueError")
+    return bits
+
+# files changed under tests vs BASE
+changed = subprocess.check_output(
+    ["bash", "-lc", f"{{ git diff --name-only {BASE} HEAD -- tests/; git diff --name-only -- tests/; }} | sort -u"],
+    cwd=ROOT, text=True,
+).splitlines()
+rows = []
+for rel in changed:
+    if not rel.endswith(".py"):
+        continue
+    try:
+        base_defs = defs_at(BASE, rel)
+    except subprocess.CalledProcessError:
+        continue
+    cur = current_defs(rel)
+    for name, (lineno, src) in sorted(base_defs.items(), key=lambda x: x[1][0]):
+        if name not in cur:
+            rows.append({
+                "file": rel,
+                "test": name,
+                "line": lineno,
+                "doc": ast.get_docstring(ast.parse(src).body[0]) if False else (ast.parse(src).body[0].body and isinstance(ast.parse(src).body[0].body[0], ast.Expr) and isinstance(getattr(ast.parse(src).body[0].body[0], 'value', None), ast.Constant) and isinstance(ast.parse(src).body[0].body[0].value.value, str) and ast.parse(src).body[0].body[0].value.value or ""),
+                "gates": gate_bits(src),
+                "has_raises": "pytest.raises" in src,
+            })
+
+# cleaner docstring
+for r in rows:
+    try:
+        src = defs_at(BASE, r["file"])[r["test"]][1]
+        mod = ast.parse(src)
+        r["doc"] = ast.get_docstring(mod.body[0]) or ""
+        r["gates"] = gate_bits(src)
+    except Exception as e:
+        r["doc_err"] = str(e)
+
+out = Path("/tmp/1897-g1g3-ev/deleted_tests_named.json")
+out.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+print(f"DELETED={len(rows)}")
+for i, r in enumerate(rows, 1):
+    print(f"{i}\t{r['file']}::{r['test']}\tgates={r['gates']}")
+```
+
+实测：`DELETED=8`。
+
+### 整案删除 8 员（逐名字 / 原结构拒收 / 当前覆盖 / 验证成员）
+
+| # | 删除案 | 原结构拒收/校验 | 当前覆盖 | 验证成员 |
+|---:|---|---|---|---|
+| 1 | `tests/test_pihong_dossier_1490.py::test_657_p6_mapper_deliberate_preserve_free_text` | title×81 `ValueError`；`stop_condition=dict` `ValueError`（`canonical_choice`/`map`）；layer_a 缺 `assignee_name`/`region_id`/`transaction_category` `ValueError` | **并入** `test_657_abi_mapper_matrix_a1_a12`（title / stop_dict / layer_a）；empty-stop 本已在同案 | `test_657_abi_mapper_matrix_a1_a12` |
+| 2 | `tests/test_pihong_dossier_1490.py::test_657_default_hold_preserves_red_pen_note` | 无结构化拒收（朱笔 note 散文等值） | default_hold 闸：`test_657_default_hold_missing_and_empty_action` | 维持删 |
+| 3 | `tests/test_secret_order_monthly_progress_566.py::test_emperor_private_payload_preserves_monthly_report` | 无闸负向（月报 payload 保真/材料在册） | 月报 turn/轨：`test_secret_order_monthly_progress_566` 他案 | 维持删 |
+| 4 | `tests/test_secret_order_update.py::test_update_preserves_long_text` | 无闸负向（长标题正文保真） | — | 维持删（失效证明） |
+| 5 | `tests/test_secret_order_update.py::test_update_by_id_keeps_assignee_brief_identical_to_persisted_order` | 无闸负向（跨表 title 截断身份） | 结构化 oid/status 他案 | 维持删 |
+| 6 | `tests/test_secret_order_update.py::test_creation_brief_uses_persisted_truncated_title` | 无闸负向（创建截断身份） | 同上 | 维持删 |
+| 7 | `tests/test_style_temperament_641.py::test_temperament_style_preserves_raw_bytes_through_write_kernel` | blank style → `rejected`+`invalid_enum`（附带原文保真） | **保留闸**：`test_temperament_blank_style_rejected_keeps_prior` | 该案 |
+| 8 | `tests/test_style_temperament_641.py::test_context_passes_raw_style_and_ledger_prose_without_rewrite` | 无闸负向（读面原文保真） | blank 闸见 #7 | 维持删 |
+
+说明：#1 原案**不含** empty-stop；empty-stop 原已在 `abi_mapper`。本轮闸负向核验集合仍覆盖 title / stop_dict / empty_stop / layer_a缺键 / blank_style。
+
+### G2 变异（全文脚本 + 实测）
+
+```bash
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  ../Ming_LLM/.venv/bin/python /tmp/1897-g1g3/mutate_g2_all_gates.py
+```
+
+```python
+#!/usr/bin/env python3
+"""G2 mutations: title80→8000, stop_dict accept, empty_stop accept, layer_a skip assignee_name, blank_style accept.
+Each mutation: focused test RED under mutate, GREEN after restore. Seven-ban env on all pytest."""
+from __future__ import annotations
+import importlib, os, shutil, subprocess, sys, tempfile, textwrap
+from pathlib import Path
+
+ROOT = Path("/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5")
+PYBIN = str(ROOT.parent / "Ming_LLM" / ".venv" / "bin" / "python")
+os.chdir(ROOT)
+sys.path.insert(0, str(ROOT))
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+
+SEVEN = {
+    "MING_SIM_AGY_BIN": "/usr/bin/false",
+    "MING_SIM_CODEX_BIN": "/usr/bin/false",
+    "MING_SIM_CLAUDE_BIN": "/usr/bin/false",
+    "MING_SIM_CURSOR_BIN": "/usr/bin/false",
+    "MING_SIM_KIMI_BIN": "/usr/bin/false",
+    "MING_SIM_GROK_BIN": "/usr/bin/false",
+    "MING_SIM_PI_BIN": "/usr/bin/false",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONPATH": str(ROOT),
+}
+
+def run_pytest(nodeids: list[str]) -> tuple[int, str]:
+    r = subprocess.run(
+        [PYBIN, "-m", "pytest", "-q", "-p", "no:cacheprovider", *nodeids],
+        cwd=str(ROOT), env={**os.environ, **SEVEN}, capture_output=True, text=True,
+    )
+    return r.returncode, (r.stdout + r.stderr)[-600:]
+
+results = {}
+
+# --- live probe current gates ---
+from ming_sim.content import GameContent
+from ming_sim.db import GameDB
+from ming_sim import rescript_actions as ra
+from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+import ming_sim.issues as issues
+
+content = GameContent.load()
+td = tempfile.mkdtemp(prefix="1897-g2ev-")
+db = GameDB(Path(td) / "g.db", content)
+db.seed_static_data()
+state = db.load_state()
+base = {
+    "action_type": "assignment", "label": "x", "hint": "h",
+    "target_kind": "region", "target_id": "shaanxi", "locality_scope": "single",
+    "region_id": "shaanxi", "transaction_category": "督赈", "assignee_name": "",
+}
+layer_a_base = {
+    "label": "拟", "hint": "h", "action_type": "assignment", "target_kind": "region",
+    "target_id": "shaanxi", "locality_scope": "single", "assignee_name": "",
+    "region_id": "shaanxi", "transaction_category": "督赈",
+}
+
+def expect(label, fn):
+    try:
+        fn(); results[label] = "NO_RAISE"
+    except Exception as e:
+        results[label] = f"{type(e).__name__}:{e}"
+
+expect("title81", lambda: ra.map_rescript_option_or_choice({**base, "title": "字"*81}, db=db, content=content, state=state))
+expect("stop_dict", lambda: ra.map_rescript_option_or_choice({**base, "commitment_kind": "until_stop", "stop_condition": {"army.x.arrears": "<=0"}}, db=db, content=content, state=state))
+expect("empty_stop", lambda: ra.map_rescript_option_or_choice({**base, "commitment_kind": "until_stop", "stop_condition": ""}, db=db, content=content, state=state))
+bad = dict(layer_a_base); del bad["assignee_name"]
+expect("layer_a_miss_assignee", lambda: normalize_rescript_layer_a_option(bad))
+
+# blank_style probe via apply_score_extraction
+if hasattr(issues, "bind_content"):
+    issues.bind_content(content)
+PERSON = "杨嗣昌" if "杨嗣昌" in content.characters else next(iter(content.characters))
+def blank_probe():
+    out = issues.apply_score_extraction(db, state, {"人物变更": [{"name": PERSON, "origin_ref": "盘面自发", "动作": "性情", "style": "   \n\t  "}]}, content=content)
+    ch = out["applied_person_changes"][0]
+    if ch.get("rejected") and ch.get("category") == "invalid_enum":
+        raise ValueError("blank_style_rejected")
+    return ch
+expect("blank_style", blank_probe)
+db.close(); shutil.rmtree(td, ignore_errors=True)
+
+# --- file mutations ---
+def mutate_and_test(name, path: Path, old: str, new: str, nodeids: list[str]):
+    text = path.read_text(encoding="utf-8")
+    if old not in text:
+        results[f"{name}_mutate"] = f"PATTERN_MISSING:{old[:60]}"
+        return
+    backup = text
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    try:
+        # clear modules
+        for mod in list(sys.modules):
+            if mod == "ming_sim" or mod.startswith("ming_sim."):
+                del sys.modules[mod]
+        rc, out = run_pytest(nodeids)
+        results[f"{name}_mutated_rc"] = rc
+        results[f"{name}_mutated_tail"] = out.replace("\n", " | ")[-400:]
+        results[f"{name}_mutated_red"] = rc != 0
+    finally:
+        path.write_text(backup, encoding="utf-8")
+        for mod in list(sys.modules):
+            if mod == "ming_sim" or mod.startswith("ming_sim."):
+                del sys.modules[mod]
+    rc2, out2 = run_pytest(nodeids)
+    results[f"{name}_clean_rc"] = rc2
+    results[f"{name}_clean_green"] = rc2 == 0
+
+RA = ROOT / "ming_sim" / "rescript_actions.py"
+RD = ROOT / "ming_sim" / "rescript_draft.py"
+ISS = ROOT / "ming_sim" / "issues.py"
+
+ABI = ["tests/test_pihong_dossier_1490.py::test_657_abi_mapper_matrix_a1_a12"]
+STYLE = ["tests/test_style_temperament_641.py::test_temperament_blank_style_rejected_keeps_prior"]
+
+mutate_and_test("title", RA, "len(title_raw) > 80", "len(title_raw) > 8000", ABI)
+mutate_and_test(
+    "stop_dict", RD,
+    'raise ValueError(\n        f"stop_condition 须为 str（C.6），拒 {type(raw).__name__}"\n    )',
+    'return str(raw)',
+    ABI,
+)
+mutate_and_test(
+    "empty_stop", RA,
+    'raise ValueError("until_stop 缺 stop_condition")',
+    'stop = stop or "x"',
+    ABI,
+)
+# layer_a: make assignee_name not required in PRESENT_KEYS by removing from tuple — but that may be too broad.
+# Narrower: skip missing-field raise when only assignee_name missing — patch the present-keys check.
+# Find the raise for missing present keys and soften assignee_name.
+mutate_and_test(
+    "layer_a", RD,
+    '_LAYER_A_PRESENT_KEYS = (\n    "assignee_name", "region_id", "transaction_category",\n)',
+    '_LAYER_A_PRESENT_KEYS = (\n    "region_id", "transaction_category",\n)',
+    ABI,
+)
+mutate_and_test(
+    "blank_style", ISS,
+    'if not isinstance(raw_style, str) or not raw_style.strip():\n                applied.append(rejected(item, "性情 style 须为非空字符串", "invalid_enum"))',
+    'if not isinstance(raw_style, str):\n                applied.append(rejected(item, "性情 style 须为非空字符串", "invalid_enum"))',
+    STYLE,
+)
+
+verdict = all([
+    str(results.get("title81","")).startswith("ValueError"),
+    str(results.get("stop_dict","")).startswith("ValueError"),
+    str(results.get("empty_stop","")).startswith("ValueError"),
+    "RescriptOptionMissingFieldsError" in str(results.get("layer_a_miss_assignee","")) or str(results.get("layer_a_miss_assignee","")).startswith("ValueError"),
+    str(results.get("blank_style","")).startswith("ValueError"),
+    results.get("title_mutated_red") is True and results.get("title_clean_green") is True,
+    results.get("stop_dict_mutated_red") is True and results.get("stop_dict_clean_green") is True,
+    results.get("empty_stop_mutated_red") is True and results.get("empty_stop_clean_green") is True,
+    results.get("layer_a_mutated_red") is True and results.get("layer_a_clean_green") is True,
+    results.get("blank_style_mutated_red") is True and results.get("blank_style_clean_green") is True,
+])
+print("CURRENT", {k: results[k] for k in ("title81","stop_dict","empty_stop","layer_a_miss_assignee","blank_style")})
+for k in ("title","stop_dict","empty_stop","layer_a","blank_style"):
+    print(k, {
+        "mutated_red": results.get(f"{k}_mutated_red"),
+        "clean_green": results.get(f"{k}_clean_green"),
+        "mutated_rc": results.get(f"{k}_mutated_rc"),
+        "clean_rc": results.get(f"{k}_clean_rc"),
+        "pattern": results.get(f"{k}_mutate"),
+        "tail": results.get(f"{k}_mutated_tail","")[:200],
+    })
+print({"verdict": "GREEN" if verdict else "RED"})
+Path("/tmp/1897-g1g3-ev/mutate_g2_all_out.txt").write_text(
+    "\n".join(f"{k}={v}" for k,v in results.items() if not str(k).endswith("_tail")) + "\nVERDICT=" + ("GREEN" if verdict else "RED") + "\n",
+    encoding="utf-8",
+)
+sys.exit(0 if verdict else 1)
+```
+
+| 闸 | 变异 | 入口测 | 变异下 | 恢复后 |
+|---|---|---|---|---|
+| title>80 | `len(title_raw) > 80`→`> 8000` | `test_657_abi_mapper_matrix_a1_a12` | RED（DID NOT RAISE） | GREEN |
+| stop_dict | `normalize_stop_condition` 拒非 str → `return str(raw)` | 同上 | RED | GREEN |
+| empty_stop | `raise ValueError("until_stop 缺 stop_condition")`→`stop = stop or "x"` | 同上 | RED | GREEN |
+| layer_a缺键 | `_LAYER_A_PRESENT_KEYS` 去掉 `assignee_name` | 同上 | RED | GREEN |
+| blank_style | 性情空白 strip 拒收放宽为仅非 str 拒 | `test_temperament_blank_style_rejected_keeps_prior` | RED（写穿空白） | GREEN |
+
+当前探针：`title81`/`stop_dict`/`empty_stop`/`layer_a_miss_assignee`/`blank_style` 均响亮拒。**verdict=GREEN**。生产文件变异后已恢复（`git diff ming_sim/` 空）。
+
+### G3 空壳成员表（逐案；相对 e4d3ae58a→c74afebbb 修面，非样本组）
+
+| 成员 | 空壳/误替 | 处置 |
+|---|---|---|
+| `test_character_knowledge_489.py::test_disclosed_secret_source_keeps_its_public_projection` | `isinstance(excluded_names, list)` | **改** `source_id in public_ids` |
+| `test_character_knowledge_489.py::test_turn_report_counterpart_never_uses_aggregate_when_sources_exist` | `get_turn_report_archive is not None` | **删** |
+| `test_character_knowledge_489.py::test_shared_archive_storage_never_writes_restricted_aggregate` | `get_turn_report_archive is not None` | **删** |
+| `test_decree_dossiers_571.py::test_manual_directive_capture_reaches_structured_dossier` | `dossier is not None and "decree_text" in dossier` | **改** `status==proposed` |
+| `test_effect_origin_558.py::test_fiscal_remove_keeps_durable_origin_tombstone` | `all(r["reason"] for r in rows)` 非空洗 | **删** |
+| `test_event_trigger_gate.py::test_historical_event_expires_after_latest_window_when_gate_unsatisfied` | `hit/row is not None` | **删** |
+| `test_event_trigger_gate.py::test_auto_trigger_historical_event_to_issue_uses_outer_transaction` | exact-dict `in triggered` | **改** `any(id+issue_id)` |
+| `test_event_trigger_gate.py::test_event_pool_pending_appointment_clears_reason_gate` | `status_reason==""` 误替 | **改** `!=获罪削籍` |
+| `test_fiscal_levy_effect.py::test_fiscal_levy_expired_pending_choice_is_terminalized` | exact-dict `in applied` | **改** `any(id+terminal_state)` |
+| `test_gazette_author_1862.py::test_author_archives_own_title_and_same_run_advances` | archive is not None / keys title·report / isinstance text / INDEX | **删**；改 turn 身份 + `公开说法/邸报/` 路径键 |
+| `test_gazette_author_1862.py::test_gazette_failure_retries_report_only` | archive is not None / keys | **改** turn 身份 |
+| `test_mechanical_tail_1845.py::test_chapter_memory_retired_from_three_readers` | `"body" in row`；`ending is not None` | **改** `ending_status` |
+| `test_mechanical_tail_1845.py::test_mechanical_tail_missing_llm_config_surfaces_retry` | `ending is not None` | **改** status+turn |
+| `test_new_issues_section_rejections.py::test_new_issue_valid_decree_still_creates` | `row is not None` | **删**（保留 status） |
+| `test_person_delta_adapter.py::test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta` | `issue_row is not None` | **删**（保留 status） |
+| `test_rescript_draft_656.py::test_save_and_list_rescript_drafts_roundtrip` | `"label"/"hint" in` 键存在 | **删** |
+| `test_rescript_draft_656.py::test_657_s1_option_shape_stamps_draft_capability` | `"label"/"hint" in` 键存在 | **删**（保留缺键拒收） |
+| `test_rescript_choices_563.py::test_decision_parser_rejects_empty_or_ambiguous_labels` | `["甲"," 甲 "]` 期望 `[]` 与原样键冲突 | **改** 空白拒收 / 空白变体保留原样 |
+| `test_rescript_option_field_heal_1746.py::test_contract_failure_heals_not_batch_reject` | `len(opts)>=1` | **删** |
+| `test_rescript_option_field_heal_1746.py::test_army_single_combo_heals_not_batch_redraw` | `len(options)>=2` | **改** transaction_category 结构 |
+| `test_rescript_option_field_heal_1746.py::test_typed_illegal_also_heals` | `len(options)>=1` | **改** action_type 结构 |
+| `test_rescript_option_field_heal_1746.py::test_option_shape_failures_heal_not_batch` | `len(options)>=1` | **改** locality/transaction 结构 |
+| `test_rescript_option_field_heal_1746.py::test_provider_still_whole_batch_item_missing_heals_and_drops` | `"title" in` + len | **改** transaction_category |
+| `test_secret_order_isolation_883.py::test_1026_secret_order_update_rollback_restores_existing_brief` | `restored_* is not None` | **改** id/order_id |
+| `test_secret_order_payoff_1504.py::test_actual_progress_container_separate_from_reported_rail` | len + 键不存在洗 | **改** turn 身份 |
+| `test_secret_order_payoff_1504.py::test_reaction_declarations_need_real_knowledge_across_months` | `isinstance(suppression, dict)` | **改** len(acts) |
+| `test_secret_order_payoff_1504.py::test_4a_declaration_lands_actions_and_spoliation_through_month_chain` | `isinstance(acts/suppression)` | **改** INVESTIGATION_ACTS 条数 |
+| `test_staged_assignment_identity_1890.py::test_declared_new_secret_order_lands_and_undo_removes_all_records` | `brief is not None` | **删** |
+| `test_web_chat_serialization_393.py::test_identity_setup_failure_preserves_question_and_releases_pending_owner` | message 非空 / isinstance BaseException | **改** 条数结构 |
+| `test_web_chat_serialization_393.py::test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks` | `"answer" in chat_result` | **删** |
+
+未新增纯存在断言换形。结构契约（id/status/turn/source_id/路径键/枚举）保留。
+
+### G3 变异（sitecustomize 源码 + 双命令均七前缀）
+
+sitecustomize（`/tmp/1897-g1g3/g3site/sitecustomize.py`）：
+
+```python
+def _install():
+    try:
+        import ming_sim.db as dbmod
+    except Exception:
+        return
+    real = dbmod.GameDB.save_turn_report
+    def wrapped(self, state, *args, **kwargs):
+        out = real(self, state, *args, **kwargs)
+        row = self.conn.execute(
+            "SELECT turn, title, report FROM turn_reports ORDER BY turn DESC LIMIT 1"
+        ).fetchone()
+        if row is not None:
+            self.conn.execute(
+                "UPDATE turn_reports SET title=?, report=? WHERE turn=?",
+                ((row["title"] or "")[:2], (row["report"] or "")[:2], int(row["turn"])),
+            )
+            self.conn.commit()
+        return out
+    dbmod.GameDB.save_turn_report = wrapped
+_install()
+```
+
+可复跑：
+
+```bash
+TD=/tmp/1897-g1g3/g3site
+# 上列 sitecustomize 写入 $TD/sitecustomize.py 后：
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH="$TD:$PWD" \
+  ../Ming_LLM/.venv/bin/python -m pytest -q -p no:cacheprovider \
+  tests/test_gazette_author_1862.py
+# 3 passed（空壳已删；截断不咬）
+
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONPATH="$TD:$PWD" \
+  ../Ming_LLM/.venv/bin/python -m pytest -q -p no:cacheprovider \
+  tests/test_character_knowledge_489.py \
+  tests/test_secret_order_isolation_883.py \
+  tests/test_mechanical_tail_1845.py \
+  tests/test_world_materials_1834.py
+# 2 failed（isolation / world_materials 正文或 INDEX 仍咬截断）→ 他处覆盖；110 passed
+```
+
+驱动脚本（等价）：
+
+```python
+#!/usr/bin/env python3
+"""G3: sitecustomize truncates turn_reports title/report after save_turn_report."""
+from __future__ import annotations
+import os, subprocess, sys
+from pathlib import Path
+ROOT = Path("/Users/akagilnc/WorkSpace/Ming_LLM-1897-w5")
+TD = Path("/tmp/1897-g1g3/g3site")
+PYBIN = str(ROOT.parent / "Ming_LLM" / ".venv" / "bin" / "python")
+env = {**os.environ,
+  "MING_SIM_AGY_BIN":"/usr/bin/false","MING_SIM_CODEX_BIN":"/usr/bin/false",
+  "MING_SIM_CLAUDE_BIN":"/usr/bin/false","MING_SIM_CURSOR_BIN":"/usr/bin/false",
+  "MING_SIM_KIMI_BIN":"/usr/bin/false","MING_SIM_GROK_BIN":"/usr/bin/false",
+  "MING_SIM_PI_BIN":"/usr/bin/false","PYTHONDONTWRITEBYTECODE":"1",
+  "PYTHONPATH": f"{TD}:{ROOT}"}
+def run(args):
+    r = subprocess.run([PYBIN,"-m","pytest","-q","-p","no:cacheprovider",*args],
+                       cwd=str(ROOT), env=env, capture_output=True, text=True)
+    return r.returncode, r.stdout+r.stderr
+rc1, out1 = run(["tests/test_gazette_author_1862.py"])
+rc2, out2 = run([
+    "tests/test_character_knowledge_489.py",
+    "tests/test_secret_order_isolation_883.py",
+    "tests/test_mechanical_tail_1845.py",
+    "tests/test_world_materials_1834.py",
+])
+print("GAZETTE_RC", rc1)
+print(out1[-500:])
+print("RELATED_RC", rc2)
+print(out2[-800:])
+# Prior receipt's second bash block omitted 七前缀 in docs; actual prior related run (transcript line49) HAD 七 — not a runtime violation.
+# This script both commands use 七.
+Path=Path  # noqa
+from pathlib import Path as P
+P("/tmp/1897-g1g3-ev/mutate_g3_out.txt").write_text(
+    f"GAZETTE_RC={rc1}\nRELATED_RC={rc2}\ngazette_green={rc1==0}\n{out2[-1200:]}\n", encoding="utf-8")
+sys.exit(0 if rc1==0 else 1)
+```
+
+### 全部 32 改动测试（layer_a 并入后重跑；未 deselect）
+
+```bash
+BASE=b8370cc4bcd36667ce87eaacfd183a15d9ba3b5d
+{ git diff --name-only "$BASE" HEAD -- tests/; git diff --name-only -- tests/; } | sort -u > /tmp/1897-g1g3/changed_tests.txt
+while IFS= read -r f; do ../Ming_LLM/.venv/bin/python -m py_compile "$f"; done < /tmp/1897-g1g3/changed_tests.txt
+env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
+  ../Ming_LLM/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line \
+  $(cat /tmp/1897-g1g3/changed_tests.txt)
+```
+
+实测：`COMPILE_OK=32`；`1189 passed, 1 skipped, 6 failed in 45.51s`。未跑全仓全量。
+
+#### 已知失败（如实；当前生产≠谎称原基线）
+
+| 案 | 证据 | 归类 |
+|---|---|---|
+| `test_appointment_and_relief_through_scene_chat_then_close_and_settle` | `FOREIGN KEY constraint failed` | 预存 #1812→#1873；本片不接 |
+| `test_1682_phase2_surfaces_ambiguous_stored_choice` | `LLMContractError: 无待决推演上下文` | 预存；本片不接 |
+| `test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice` | terminal 空 vs 已准 | **分支预存**：b837 测文件 + 当前生产同红 |
+| `test_same_batch_keeps_the_first_event_outcome` | terminal 空 vs 已驳 | 同上 |
+| `test_unbound_envelope_does_not_overwrite_the_first_event_outcome` | rejected 期望 1 得 0 | 同上 |
+| `test_later_illegal_outcome_does_not_discard_the_first_ruling` | terminal 空 vs 已驳 | 同上 |
+
+### 自查二连
+
+1. **同类型**：补可复跑枚举全文与 8 员逐名表；G2 五闸变异齐全；layer_a 缺键并入既有 mapper 负向；G3 空壳逐案表 + sitecustomize 源码；七前缀文书对齐实跑事实。
+2. **引入面**：32 改动文件重跑 1189 绿 / 6 基线红如实记账；变异后生产文件无残留；未 stash/amend/push/PR。
+
+### 交卷 HEAD（本轮）
+
+- 以本提交后 `git rev-parse HEAD` 为准。
+- **未 push / 未 PR / 未 amend / 未 stash**。

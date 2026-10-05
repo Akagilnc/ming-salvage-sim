@@ -937,11 +937,17 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'assignee_name': ''}, db=db, content=content, state=state)
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'assignee_name': '', 'commitment_kind': 'until_stop', 'stop_condition': ''}, db=db, content=content, state=state)
-    # G2：并入既有 mapper 负向——title>80 与 stop_condition=dict 拒收（整案删 #39 后闸曾失守）
+    # G2：并入既有 mapper 负向——title>80 / stop_condition=dict / layer_a 缺键（整案删 #39 后闸曾失守）
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'assignee_name': '', 'title': '字' * 81}, db=db, content=content, state=state)
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'assignment', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'assignee_name': '', 'commitment_kind': 'until_stop', 'stop_condition': {'army.x.arrears': '<=0'}}, db=db, content=content, state=state)
+    layer_a_base = {'label': '拟', 'hint': 'h', 'action_type': 'assignment', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'assignee_name': '', 'region_id': 'shaanxi', 'transaction_category': '督赈'}
+    for miss in ('assignee_name', 'region_id', 'transaction_category'):
+        bad = dict(layer_a_base)
+        del bad[miss]
+        with pytest.raises(ValueError):
+            normalize_rescript_layer_a_option(bad)
     army = db.conn.execute('SELECT id, station FROM armies LIMIT 1').fetchone()
     if army is not None:
         aid = str(army['id'])
