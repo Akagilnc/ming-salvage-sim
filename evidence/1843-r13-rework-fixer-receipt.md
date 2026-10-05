@@ -2,7 +2,7 @@
 
 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1843-w5`
 分支：`ak-roles/issue-1843-w5-r13-f2-compat`
-commitSha：`PENDING_THIS_COMMIT`
+commitSha：`1129efc192fe50e9551043de7587f99cca75b8e7`
 原文：`evidence/1843-r13-rework-packet.json`（完整读取，未以摘要替代）
 前判回执（**错误宣称闭包，本轮纠正**）：`evidence/1843-w5-r13-fixer-receipt.md`
 基线 HEAD（动手前）：`d417046212e9ba8c41d888f255065cbea40a49d5`
