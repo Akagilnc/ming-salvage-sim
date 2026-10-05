@@ -28,6 +28,7 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
     write_due_staged_commitment_todos,
 )
+from ming_sim.entities.issue.store import IssueStore
 from ming_sim.supervision import (
     EMPTY_TRANSFORMATION_TENDENCY_FACTS,
     EXPOSURE_ALLOWED_COLS,
@@ -326,10 +327,8 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     state.turn_phase = TurnPhase.SUMMONING.value
     db.save_state(state)
     pre_settle(state, db, content=content)
-    assert db.find_any_issue_by_origin(
-        "supervision_countermeasure",
-        f"auditor:{upright['name']}:dossier:{sub_u}",
-    ) is None
+    assert IssueStore(db.conn).read_find_any_issue_by_origin(("supervision_countermeasure",
+        f"auditor:{upright['name']}:dossier:{sub_u}",)) is None
 
 
 # ── AC4 空子转移读入面差分 ────────────────────────────────────────

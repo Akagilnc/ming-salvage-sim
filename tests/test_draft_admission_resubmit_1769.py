@@ -31,6 +31,7 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim.decree import write_decree_with_agno as _real_write_decree_with_agno
 from ming_sim.error_pack import latest_error_pack_for_turn
+from ming_sim.entities.issue.store import IssueStore
 from tests.army_pay_helpers import _set_guanning_arrears
 from tests.test_month_loop_tracer_1468 import (
     _get_state,
@@ -213,11 +214,9 @@ def _post_directive(game, text: str) -> int:
 
 
 def _latest_directive_id(game) -> int:
-    row = game.db.get_directive(
-        int(game.db.conn.execute(
-            "SELECT id FROM turn_directives ORDER BY id DESC LIMIT 1"
-        ).fetchone()["id"])
-    )
+    row = IssueStore(game.db.conn).directive(int(game.db.conn.execute(
+        "SELECT id FROM turn_directives ORDER BY id DESC LIMIT 1"
+    ).fetchone()["id"]))
     assert row is not None
     return int(row["id"])
 
@@ -264,7 +263,7 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     draft_id = _latest_directive_id(game)
-    first_row = game.db.get_directive(draft_id)
+    first_row = IssueStore(game.db.conn).directive(draft_id)
     first = game.db.read_directive_dossier_payload(first_row)
     assert first.get("dossier_action_type") == "pay_order_override"
     assert any(
@@ -305,7 +304,7 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     assert dossier["executor_id"] == _GOOD_XIEANG["承办人"] == "郭允厚"
     assert not _rejection_rows(game, draft_id)
     _finish_month_after_gazette(game, turn)
-    row = game.db.get_directive(draft_id)
+    row = IssueStore(game.db.conn).directive(draft_id)
     assert row is not None and str(row["status"]) == "issued"
 
 
@@ -321,12 +320,12 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
-    source_turn = int(game.db.get_directive(did)["turn"])
+    source_turn = int(IssueStore(game.db.conn).directive(did)["turn"])
 
     body = _post_issue_stream(client, expected_turn=turn, step="1769 exhaust")
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
-    row = game.db.get_directive(did)
+    row = IssueStore(game.db.conn).directive(did)
     assert row is not None and str(row["status"]) == "draft"
     assert game.db.dossiers.get_for_directive(did) is None
 
@@ -366,7 +365,7 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     restored = web_app.WebGame(fresh=False, db_path=db_path)
     try:
         monkeypatch.setattr(web_app, "web_game", restored)
-        r_row = restored.db.get_directive(did)
+        r_row = IssueStore(restored.db.conn).directive(did)
         assert r_row is not None
         assert str(r_row["status"]) == "draft"
         assert int(r_row["id"]) == did
@@ -411,9 +410,9 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     assert _turn_of(_get_state(client)) == turn + 1
     assert game.db.dossiers.get_for_directive(good_id) is not None
     _finish_month_after_gazette(game, turn)
-    assert str(game.db.get_directive(good_id)["status"]) == "issued"
+    assert str(IssueStore(game.db.conn).directive(good_id)["status"]) == "issued"
     assert game.db.dossiers.get_for_directive(bad_id) is None
-    assert str(game.db.get_directive(bad_id)["status"]) == "draft"
+    assert str(IssueStore(game.db.conn).directive(bad_id)["status"]) == "draft"
     assert len(_rejection_rows(game, bad_id)) == 1
     assert not _rejection_rows(game, good_id)
     # 名册产物错未被当成系统故障：无错误包、月已推进（上方断言）
@@ -501,14 +500,14 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
-    first = game.db.read_directive_dossier_payload(game.db.get_directive(did))
+    first = game.db.read_directive_dossier_payload(IssueStore(game.db.conn).directive(did))
     assert first.get("dossier_action_type") == "pay_order_override"
 
     _post_issue_stream(client, expected_turn=turn, step="1769 non-intent rewrite")
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
 
-    row = game.db.get_directive(did)
+    row = IssueStore(game.db.conn).directive(did)
     assert row is not None and str(row["status"]) == "draft"
     kept = game.db.read_directive_dossier_payload(row)
     assert kept.get("dossier_action_type") == "pay_order_override"
@@ -550,7 +549,7 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
         game.state, None, _DECREE_TEXT, source="minister",
         actor="郭允厚", status="pending", dossier_payload=bad_payload,
     )
-    assert str(game.db.get_directive(did)["status"]) == "pending"
+    assert str(IssueStore(game.db.conn).directive(did)["status"]) == "pending"
 
     body = _post_issue_stream(
         client, expected_turn=turn, step="1769 pending product-error",
@@ -559,7 +558,7 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
 
-    row = game.db.get_directive(did)
+    row = IssueStore(game.db.conn).directive(did)
     assert row is not None
     assert str(row["status"]) == "draft"  # 不得 rejected / 不得卡 pending
     assert game.db.dossiers.get_for_directive(did) is None
@@ -601,7 +600,7 @@ def test_exhaust_zero_dossier_system_simulation_no_decree(
         client, expected_turn=turn, step="1769 zero-exhaust system_simulation",
     )
     assert _turn_of(_get_state(client)) == turn + 1
-    assert str(game.db.get_directive(did)["status"]) == "draft"
+    assert str(IssueStore(game.db.conn).directive(did)["status"]) == "draft"
     assert game.db.dossiers.get_for_directive(did) is None
 
     assert resolve_calls, "须进入 resolve_directives"

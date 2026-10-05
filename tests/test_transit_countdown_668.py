@@ -13,6 +13,7 @@ import pytest
 from ming_sim.decree import pre_settle, reload_state_from_db, tick_transit_arrivals
 from ming_sim.distance import DistanceMatrix
 from ming_sim.models import Event, TurnPhase
+from ming_sim.entities.issue.store import IssueStore
 from tests.conftest import active_ming_character
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = DistanceMatrix.from_file(ROOT / 'content/distance_matrix.json')
@@ -135,7 +136,7 @@ def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game):
         pre_settle(state, db, content=content)
         row = _ledger(db, name)
         assert row['location'] == 'beizhili' and row['transit_to'] == ''
-        assert db.find_any_issue_by_origin('event_pool', ev.id) is None
+        assert IssueStore(db.conn).read_find_any_issue_by_origin(('event_pool', ev.id)) is None
         from types import SimpleNamespace
         from ming_sim.applier import Provenance
         import ming_sim.month_chain as month_chain
@@ -143,7 +144,7 @@ def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game):
             SimpleNamespace(db=db, state=state), {},
             decree_text="", source=Provenance.system_simulation,
         )
-        issue = db.find_any_issue_by_origin('event_pool', ev.id)
+        issue = IssueStore(db.conn).read_find_any_issue_by_origin(('event_pool', ev.id))
         assert issue is not None, 'seed 门应在 tick 后读新 location 并硬立项'
         assert issue['status'] == 'active'
     finally:

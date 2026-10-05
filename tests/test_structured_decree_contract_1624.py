@@ -7,6 +7,7 @@ import json
 import pytest
 
 from ming_sim.cli_backend import capture_manual_directive_payload as _real_capture
+from ming_sim.entities.issue.store import IssueStore
 from ming_sim.structured_decree import (
     StructuredDecreeCombinationError,
     assemble_structured_decree,
@@ -453,7 +454,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     assert str(dossier.get("region_id") or "") == region_id, dossier
     _assert_drafted_roster_nailed(db, dossier)
 
-    landed = db.find_active_issue_by_origin("decree", f"dossier:{dossier['id']}")
+    landed = IssueStore(db.conn).read_find_active_issue_by_origin(("decree", f"dossier:{dossier['id']}"))
     assert landed is not None and str(landed["kind"]) == "initiative", landed
 
     owner_after, province_after = _executing_counts(

@@ -134,14 +134,6 @@ def commitment_natural_due_turn(row: Any) -> int:
     return end_turn if end_turn > 0 else 0
 
 
-def _issue_row(db: Any, commitment_ref: int) -> Any:
-    return IssueStore(db.conn).row(int(commitment_ref))
-
-
-def list_active_commitments(db: Any) -> List[Any]:
-    return list(IssueStore(db.conn).read_list_active_commitments())
-
-
 def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
     refs: Set[str] = {f"issue:{int(commitment_ref)}"}
     try:
@@ -339,7 +331,7 @@ def write_breach_plea_todo(
     返回新建或并入的 todo id；承诺无效返回 0。
     同回合第二类：并入既有 pending（UNIQUE 不静默吞）。
     """
-    row = _issue_row(db, int(commitment_ref))
+    row = IssueStore(db.conn).row(int(commitment_ref))
     if row is None or str(row["status"] or "") != "active":
         return 0
     if not str(row["commitment_kind"] or "").strip():
@@ -478,7 +470,7 @@ def _spent_amount_and_fiscal_count(
 
 def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     """根基三档：禁完成度数值列；读已过段数（实结算）/ 已投入 / 实际进度定性 band。"""
-    row = _issue_row(db, int(commitment_ref))
+    row = IssueStore(db.conn).row(int(commitment_ref))
     if row is None:
         return FOUNDATION_JUST_STARTED
     stages = normalize_commitment_stages(
@@ -699,7 +691,7 @@ def finalize_persist(
     kinds = plea_kind_set(meta)
     reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")
     commitment_ref = int(todo["commitment_ref"])
-    row = _issue_row(db, commitment_ref)
+    row = IssueStore(db.conn).row(int(commitment_ref))
     origin_ref = str(row["origin_ref"] if row is not None else "")
     target_dossier_id = int(meta.get("target_dossier_id") or 0)
     if target_dossier_id <= 0:
@@ -803,7 +795,7 @@ def expire_breach_pleas_on_due(
         if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
             continue
         commitment_ref = int(todo["commitment_ref"])
-        row = _issue_row(db, commitment_ref)
+        row = IssueStore(db.conn).row(int(commitment_ref))
         if row is None or str(row["status"] or "") != "active":
             db.mark_next_audience_todo_status(
                 int(todo["id"]), TODO_STATUS_CONSUMED,
@@ -899,7 +891,7 @@ def _scan_funding_cutoff(db: Any, state: Any) -> List[int]:
     """断供：停拨（ongoing 空/fiscal 裁撤）或欠额达阈（当月实拨 < 承诺×阈）。"""
     written: List[int] = []
     turn = int(getattr(state, "turn", 0) or 0)
-    for row in list_active_commitments(db):
+    for row in IssueStore(db.conn).read_list_active_commitments():
         cid = int(row["id"])
         if has_pending_plea(db, cid, breach_kind=BREACH_KIND_FUNDING):
             continue
@@ -942,7 +934,7 @@ def _scan_misappropriation(db: Any, state: Any) -> List[int]:
     """挪用：专款账户本回合被非本承诺流向支用（economy + fiscal 流向）。"""
     written: List[int] = []
     turn = int(getattr(state, "turn", 0) or 0)
-    for row in list_active_commitments(db):
+    for row in IssueStore(db.conn).read_list_active_commitments():
         cid = int(row["id"])
         accounts = _dedicated_accounts(row)
         if not accounts:
@@ -1073,7 +1065,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
 def _scan_remove_sponsor(db: Any, state: Any) -> List[int]:
     """撤人：主办罢/调（status 离岗 或 职务变动而仍 active）。"""
     written: List[int] = []
-    for row in list_active_commitments(db):
+    for row in IssueStore(db.conn).read_list_active_commitments():
         cid = int(row["id"])
         if has_pending_plea(db, cid, breach_kind=BREACH_KIND_REMOVE_SPONSOR):
             continue
@@ -1345,7 +1337,7 @@ def resolve_breach_pleas_from_extraction(
         cid = int(todo["commitment_ref"])
         meta = decode_plea_meta(todo.get("origin_context"))
         target_did = int(meta.get("target_dossier_id") or 0)
-        row = _issue_row(db, cid)
+        row = IssueStore(db.conn).row(int(cid))
         origin = str(row["origin_ref"] if row is not None else "")
 
         decision: Optional[str] = None

@@ -8,6 +8,7 @@ CLI 和 Web 各自只做 I/O 包装。
 from __future__ import annotations
 from ming_sim.entities.army.store import ArmyStore
 from ming_sim.entities.character.store import CharacterStore
+from ming_sim.entities.issue.store import IssueStore
 
 import json
 import logging
@@ -1562,7 +1563,7 @@ class GameSession:
                 continue
             if self.db.dossiers.get_for_directive(did) is not None:
                 continue
-            row = self.db.get_directive(did)
+            row = IssueStore(self.db.conn).directive(did)
             if row is None or str(row["status"] or "") != "draft":
                 continue
             try:

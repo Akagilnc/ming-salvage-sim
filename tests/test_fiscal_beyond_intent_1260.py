@@ -18,6 +18,7 @@ from ming_sim.due_review import apply_pending_due_reviews
 from ming_sim.issues import apply_score_extraction
 from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
+from ming_sim.entities.issue.store import IssueStore
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -385,9 +386,8 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
         and h.get("trigger_ref") == f"issue:{cid}"
         for h in hits
     ), hits
-    assert db.find_any_issue_by_origin(
-        BACKLASH_ORIGIN_KIND,
-        backlash_origin_ref(cid, SOURCE_DEFORMATION_EXPOSURE),
+    assert IssueStore(db.conn).read_find_any_issue_by_origin((BACKLASH_ORIGIN_KIND,
+        backlash_origin_ref(cid, SOURCE_DEFORMATION_EXPOSURE)),
     ) is not None
 
 

@@ -1772,7 +1772,7 @@ def apply_event_cascading_invalidations(
                     source="event_chain_invalidated",
                     commit=False,
                 )
-                row = db.find_active_issue_by_origin("event_pool", ev.id)
+                row = IssueStore(db.conn).read_find_active_issue_by_origin(("event_pool", ev.id))
                 if row is not None:
                     db.cancel_issue(state, int(row["id"]), narrative=f"事件链作废：{reason}", commit=False)
                 item: Dict[str, object] = {"id": ev.id, "title": ev.title, "terminal_state": "obsolete", "reason": reason}
@@ -2385,9 +2385,9 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
             # 同源软 issue 已在（存档迁移残留）而事件终态未落：event_to_issue 早退未消费
             # 核心事实，此处补落一次并记终态（#1892 终态与实况同落、只落一次）。
             row = (
-                db.find_active_issue_by_origin("event_pool", ev.id)
+                IssueStore(db.conn).read_find_active_issue_by_origin(("event_pool", ev.id))
                 if ev.trigger_gate
-                else db.find_any_issue_by_origin("event_pool", ev.id)
+                else IssueStore(db.conn).read_find_any_issue_by_origin(("event_pool", ev.id))
             )
             if row is None:
                 raise RuntimeError(f"历史事件 {ev.id} 未建局势且无法找到同源 issue")
@@ -2483,10 +2483,10 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     - 有 trigger_gate（条件触发危机）：只查 active 同源 issue，结案/撤销后 gate 再达标可重新触发。
     """
     if ev.trigger_gate:
-        if db.find_active_issue_by_origin("event_pool", ev.id) is not None:
+        if IssueStore(db.conn).read_find_active_issue_by_origin(("event_pool", ev.id)) is not None:
             return None
     else:
-        if db.find_any_issue_by_origin("event_pool", ev.id) is not None:
+        if IssueStore(db.conn).read_find_any_issue_by_origin(("event_pool", ev.id)) is not None:
             return None
     # 初值由 severity 推一个偏中性的 bar
     bar = max(20, min(60, 50 - int(ev.severity / 5)))
@@ -6003,9 +6003,6 @@ def _apply_person_changes(
         error = db.effect_origin_rejection(origin_ref) if require_origin else None
         return rejected(item, str(error["reason"]), str(error["category"])) if error else None
 
-    def character_row(name: str):
-        return CharacterStore(db.conn).read_character_row((name,))
-
     def log_applied(
         result: Dict[str, object],
         item: Dict[str, object],
@@ -6061,7 +6058,7 @@ def _apply_person_changes(
             name_part = str(part).split(":", 1)[0].strip()
             if not name_part:
                 continue
-            row = character_row(name_part)
+            row = CharacterStore(db.conn).read_character_row((name_part,))
             if row is None:
                 continue
             if str(row["office"] or "") != "听用候铨" or str(row["reason_code"] or "") != "被顶替":
@@ -6272,7 +6269,7 @@ def _apply_person_changes(
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
-            row = character_row(name)
+            row = CharacterStore(db.conn).read_character_row((name,))
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -6483,7 +6480,7 @@ def _apply_person_changes(
             if any(not isinstance(raw_changes, dict) for raw_changes in backlash.values()):
                 applied.append(rejected(item, "易主 反噬 项必须是 object(dict)", "invalid_enum"))
                 continue
-            row = character_row(name)
+            row = CharacterStore(db.conn).read_character_row((name,))
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue

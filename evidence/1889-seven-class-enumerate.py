@@ -412,7 +412,106 @@ def _is_commit_call(call: ast.AST) -> bool:
     return u.endswith(".commit()") or u == "self.conn.commit()"
 
 
-def _forward_kind_for(path: str, cls_name: str, meth: str, shape: str, target: str) -> tuple[str, str]:
+# GameDB methods verified by full-body read: real domain adaptation / multi-fact
+# orchestration / ownership TX — NOT isomorphic Store pass-through. Basis must be
+# method-specific (forbidden: pending ownership review / live call-site KEEP).
+_GAMEDB_DOMAIN_ADAPTER_BASIS: dict[str, str] = {
+    "save_state": (
+        "GameState→ReignStateStore.save field unpacking "
+        "(year/period/turn/turn_phase/ended/ending_status/metrics) at GameDB ownership; "
+        "not equivalent to bare reign.save without state mapping"
+    ),
+    "save_ending_summary": (
+        "packs GameState turn/year/period + ending_status + summary + json.dumps(timeline) "
+        "into ReignStateStore.write_save_ending_summary under GameDB ownership commit; "
+        "not bare store tuple write"
+    ),
+    "save_resolve_context": (
+        "sanitize_sqlite_text + safe_json_dumps + Provenance.value normalize before "
+        "resolve_contexts.upsert + ownership commit; domain read-seam adaptation, "
+        "not isomorphic Store pass-through"
+    ),
+    "clear_resolve_context": (
+        "multi-store orchestration: resolve_contexts.delete + "
+        "dossiers.clear_pending_promulgation_verdicts under one ownership commit; "
+        "not single-Store delete"
+    ),
+}
+
+# Pure isomorphic GameDB→Store(+commit) shells — delete; callers use Store at ownership point.
+_GAMEDB_PURE_FORWARD_DELETE = frozenset({
+    "append_chat_message",
+    "clear_month_open_snapshot",
+    "class_rows",
+    "get_directive",
+    "list_closed_issues_at",
+    "find_active_issue_by_origin",
+    "find_any_issue_by_origin",
+    "reject_directive",
+})
+
+
+def _call_has_domain_adaptation(call: ast.Call) -> bool:
+    """True when call args/kwargs are not plain param passthrough (casts ok)."""
+    adapt_name_bits = (
+        "sanitize_", "safe_json", "json.dumps", "dumps", "loads", "getattr",
+        "coerce_", "normalize_",
+    )
+
+    def walk(node: ast.AST) -> bool:
+        if isinstance(node, ast.Call):
+            u = ast.unparse(node)
+            if any(b in u for b in adapt_name_bits):
+                return True
+            # state.field unpacking
+            if isinstance(node.func, ast.Attribute):
+                pass
+            for a in node.args:
+                if walk(a):
+                    return True
+            for kw in node.keywords:
+                if kw.value is not None and walk(kw.value):
+                    return True
+            return False
+        if isinstance(node, ast.Attribute):
+            # state.year / state.metrics etc.
+            if isinstance(node.value, ast.Name) and node.value.id == "state":
+                return True
+            return walk(node.value)
+        if isinstance(node, ast.JoinedStr):
+            return True
+        if isinstance(node, (ast.BinOp, ast.BoolOp, ast.Compare, ast.IfExp, ast.Dict, ast.List, ast.Tuple)):
+            return any(walk(c) for c in ast.iter_child_nodes(node))
+        if isinstance(node, ast.UnaryOp):
+            return walk(node.operand)
+        if isinstance(node, ast.Subscript):
+            return walk(node.value) or walk(node.slice)
+        if isinstance(node, ast.Name):
+            return False
+        if isinstance(node, ast.Constant):
+            return False
+        return any(walk(c) for c in ast.iter_child_nodes(node))
+
+    for a in call.args:
+        if walk(a):
+            return True
+    for kw in call.keywords:
+        if kw.value is not None and walk(kw.value):
+            return True
+    return False
+
+
+def _forward_kind_for(
+    path: str,
+    cls_name: str,
+    meth: str,
+    shape: str,
+    target: str,
+    *,
+    ops: int = 1,
+    commits: int = 0,
+    adapt: bool = False,
+) -> tuple[str, str]:
     """Classify thin forward → (kind, basis_seed)."""
     # Store-internal return self.OTHER — replaced entry shell (judge K5 samples)
     if shape == "return_self_other" and "/entities/" in path and path.endswith("store.py"):
@@ -426,26 +525,58 @@ def _forward_kind_for(path: str, cls_name: str, meth: str, shape: str, target: s
         )
     # GameDB / facade -> Store(+commit)
     if path.endswith("ming_sim/db.py") or cls_name == "GameDB":
-        if meth in ("append_chat_message", "clear_month_open_snapshot"):
+        if meth in _GAMEDB_PURE_FORWARD_DELETE or meth in (
+            "append_chat_message", "clear_month_open_snapshot",
+        ):
             return (
-                "forward_shell|gamedb_resurrected",
-                "GameDB Store+commit resurrected shell — must delete; callers use Store+conn.commit",
+                "forward_shell|gamedb_pure_forward",
+                f"GameDB.{meth} isomorphic Store(+commit) pass-through — delete; callers use Store+conn.commit",
+            )
+        if meth in _GAMEDB_DOMAIN_ADAPTER_BASIS:
+            return (
+                "forward_shell|gamedb_domain_adapter",
+                _GAMEDB_DOMAIN_ADAPTER_BASIS[meth],
             )
         # Internal GameDB method alias (self._helper / self.other) — not a Store dual entry
         if shape == "return_self_other" and "Store(" not in target:
+            # Pure same-arg alias to another GameDB entry may be a superseded name —
+            # only NON_MEMBER when it binds domain defaults / private impl split.
+            if target.startswith("_") or any(
+                lit in target for lit in ('"', "'")
+            ):
+                return (
+                    "forward_shell|gamedb_internal_alias",
+                    f"GameDB.{meth}->self.{target}: private impl split or domain-bound alias; "
+                    "not Store dual-authority shell",
+                )
             return (
                 "forward_shell|gamedb_internal_alias",
-                "GameDB internal method alias — not Store dual-authority forward shell",
+                f"GameDB.{meth}->self.{target}: same-object method alias (not Store dual entry); "
+                "retain only as named domain binder, not as second persistence authority",
+            )
+        # Multi-store ops under one body = orchestration KEEP
+        if ops >= 2:
+            return (
+                "forward_shell|gamedb_domain_adapter",
+                f"GameDB.{meth} multi-store orchestration ops={ops} commits={commits}; "
+                "not isomorphic single-Store forward",
+            )
+        if adapt:
+            return (
+                "forward_shell|gamedb_domain_adapter",
+                f"GameDB.{meth} adapts inputs (sanitize/json/state-field/enum) before Store write; "
+                "not isomorphic pass-through",
             )
         return (
-            "forward_shell|gamedb_facade_pending",
-            "GameDB thin Store forward — pending domain relocation (票面待接), not auto-deleted facade wipe",
+            "forward_shell|gamedb_pure_forward",
+            f"GameDB.{meth} isomorphic Store(+commit) pass-through — delete; callers use Store+conn.commit",
         )
-    # Other modules constructing Store for a one-liner
+    # Other modules constructing Store for a one-liner — ownership is the Store
     if "Store(" in target or shape in ("return_store", "store_commit"):
         return (
             "forward_shell|module_store_forward",
-            f"{cls_name}.{meth} thin Store forward outside GameDB — review if superseded entry",
+            f"{cls_name}.{meth} module-level Store one-liner — delete; consumers call Store directly "
+            "(pending ownership review / live call-sites are NOT keep grounds)",
         )
     # Non-persistence method aliases (async wrappers, queue gates) — not K5 members
     return (
@@ -529,12 +660,12 @@ def k5_hits() -> list[tuple[str, str, int, str, str]]:
                 if len(body) == 1 and isinstance(body[0], ast.Return) and isinstance(body[0].value, ast.Call):
                     alias = _is_self_method_alias(body[0].value)
                     if alias and alias not in _CONN_ATTRS:
-                        kind, _basis = _forward_kind_for(
+                        kind, basis = _forward_kind_for(
                             self.path, cls_name, node.name, "return_self_other", alias,
                         )
                         hits.append((
                             "K5", self.path, node.lineno, kind,
-                            snip(f"{cls_name}.{node.name} -> self.{alias}"),
+                            snip(f"{cls_name}.{node.name} -> self.{alias} || BASIS:{basis}"),
                         ))
                 return
 
@@ -543,23 +674,25 @@ def k5_hits() -> list[tuple[str, str, int, str, str]]:
                 call = body[0].value
                 alias = _is_self_method_alias(call)
                 if alias:
-                    kind, _basis = _forward_kind_for(
+                    kind, basis = _forward_kind_for(
                         self.path, cls_name, node.name, "return_self_other", alias,
+                        adapt=_call_has_domain_adaptation(call),
                     )
                     hits.append((
                         "K5", self.path, node.lineno, kind,
-                        snip(f"{cls_name}.{node.name} -> self.{alias}"),
+                        snip(f"{cls_name}.{node.name} -> self.{alias} || BASIS:{basis}"),
                     ))
                     return
                 # return XxxStore(...).meth(...)
                 if _is_store_ctor_call(call):
                     target = ast.unparse(call)[:160]
-                    kind, _basis = _forward_kind_for(
+                    kind, basis = _forward_kind_for(
                         self.path, cls_name, node.name, "return_store", target,
+                        adapt=_call_has_domain_adaptation(call),
                     )
                     hits.append((
                         "K5", self.path, node.lineno, kind,
-                        snip(f"{cls_name}.{node.name} -> {target}"),
+                        snip(f"{cls_name}.{node.name} -> {target} || BASIS:{basis}"),
                     ))
                     return
             # 2) Store ctor op(s) + optional commit only (GameDB / non-entity facades)
@@ -567,6 +700,7 @@ def k5_hits() -> list[tuple[str, str, int, str, str]]:
             commits = 0
             other = 0
             targets: list[str] = []
+            adapt = False
             for st in body:
                 if isinstance(st, ast.Return):
                     if st.value is None:
@@ -579,6 +713,7 @@ def k5_hits() -> list[tuple[str, str, int, str, str]]:
                         else:
                             ops += 1
                             targets.append(ast.unparse(st.value)[:80])
+                            adapt = adapt or _call_has_domain_adaptation(st.value)
                         continue
                     if isinstance(st.value, ast.Name):
                         continue
@@ -590,11 +725,13 @@ def k5_hits() -> list[tuple[str, str, int, str, str]]:
                     elif _is_store_ctor_call(st.value):
                         ops += 1
                         targets.append(ast.unparse(st.value)[:80])
+                        adapt = adapt or _call_has_domain_adaptation(st.value)
                     else:
                         other += 1
                 elif isinstance(st, ast.Assign) and isinstance(st.value, ast.Call) and _is_store_ctor_call(st.value):
                     ops += 1
                     targets.append(ast.unparse(st.value)[:80])
+                    adapt = adapt or _call_has_domain_adaptation(st.value)
                 elif isinstance(st, ast.Pass):
                     continue
                 else:
@@ -603,14 +740,16 @@ def k5_hits() -> list[tuple[str, str, int, str, str]]:
                 if self.path.endswith("ming_sim/db.py") or cls_name == "GameDB" or (
                     "/entities/" not in self.path and "Store(" in "|".join(targets)
                 ):
-                    kind, _basis = _forward_kind_for(
+                    kind, basis = _forward_kind_for(
                         self.path, cls_name, node.name, "store_commit", "|".join(targets),
+                        ops=ops, commits=commits, adapt=adapt,
                     )
                     hits.append((
                         "K5", self.path, node.lineno, kind,
                         snip(
                             f"{cls_name}.{node.name} thin Store forward ops={ops} "
-                            f"commits={commits} :: {' | '.join(targets)}"
+                            f"commits={commits} adapt={int(adapt)} :: {' | '.join(targets)} "
+                            f"|| BASIS:{basis}"
                         ),
                     ))
     for rpath in prod_files:
@@ -974,25 +1113,32 @@ def dispose(cls: str, path: str, line: int, kind: str, text: str) -> tuple[str, 
 
     if cls == "K5":
         basis_seed = _basis_from_text_marker(text)
-        if kind.startswith("forward_shell|gamedb_resurrected") or (
-            "append_chat_message" in text or "clear_month_open_snapshot" in text
-        ) and path.endswith("ming_sim/db.py") and "def " in text:
-            return "DELETE", "resurrected GameDB Store+commit shell; callers use Store+conn.commit"
+        if kind.startswith("forward_shell|gamedb_resurrected") or kind.startswith(
+            "forward_shell|gamedb_pure_forward"
+        ):
+            return "DELETE", (
+                basis_seed
+                or "isomorphic GameDB Store(+commit) shell; callers use Store+conn.commit at ownership point"
+            )
         if kind.startswith("forward_shell|store_replaced"):
             return "DELETE", "replaced Store entry / pure forward shell; consumers must use true source"
+        if kind.startswith("forward_shell|gamedb_domain_adapter"):
+            return (
+                "KEEP",
+                basis_seed
+                or "GameDB domain adapter / multi-fact orchestration — not isomorphic Store forward",
+            )
         if kind.startswith("forward_shell|gamedb_internal_alias"):
             return (
                 "NON_MEMBER",
-                "GameDB internal method alias — not Store dual-authority forward shell",
+                basis_seed
+                or "GameDB same-object method alias / private impl split — not Store dual-authority shell",
             )
         if kind.startswith("forward_shell|gamedb_facade_pending"):
-            return (
-                "KEEP",
-                "GameDB thin Store forward — 票面待接领域职责/现役调用入口; not superseded orphan shell "
-                "(contrast deleted append_chat_message/read_ack_* shells)",
-            )
+            # Legacy kind tag — treat as pure forward (pending ownership is NOT a keep ground).
+            return "DELETE", "legacy gamedb_facade_pending tag retired; isomorphic Store forward must delete"
         if kind.startswith("forward_shell|store_self_alias"):
-            # Only delete when clearly a replaced read_* alias; else pending review NON_MEMBER/KEEP
+            # Only delete when clearly a replaced read_* alias; else named authority KEEP
             if any(x in text for x in ("read_ack_due", "read_get_secret_order", "-> self.row", "-> self.secret_order_row")):
                 return "DELETE", "Store-internal replaced forward alias to true source"
             return (
@@ -1001,8 +1147,10 @@ def dispose(cls: str, path: str, line: int, kind: str, text: str) -> tuple[str, 
             )
         if kind.startswith("forward_shell|module_store_forward"):
             return (
-                "KEEP",
-                "module-level Store one-liner — domain helper pending ownership review; not proven replaced entry",
+                "DELETE",
+                basis_seed
+                or "module-level Store one-liner — delete; consumers call Store directly "
+                "(pending ownership review / live call-sites are NOT keep grounds)",
             )
         if kind.startswith("forward_shell|non_persist_alias"):
             return (
@@ -1019,7 +1167,7 @@ def dispose(cls: str, path: str, line: int, kind: str, text: str) -> tuple[str, 
                     # one side is a superseded facade; else KEEP with explicit review basis.
                     if any(x in text.lower() for x in ("scale_tian", "legacy_blob", "sessions.runs")):
                         return "DELETE", basis_seed + " — retired path residual"
-                    return "KEEP", basis_seed + " — retained pending Store ownership consolidation (not auto-merge)"
+                    return "KEEP", basis_seed + " — distinct lifecycle/selection siblings retained (not auto-merge)"
                 if "single_delete_rule" in kind:
                     return "KEEP", basis_seed + " — single helper shared by save/clear (judge: do not dual-delete)"
                 if any(
@@ -1036,13 +1184,15 @@ def dispose(cls: str, path: str, line: int, kind: str, text: str) -> tuple[str, 
                 return "KEEP", basis_seed
             return "NON_MEMBER", "dup_sql hit missing group basis — enumerator bug, not silent KEEP"
         if kind == "orphan_method_candidate":
-            # Orphans that are migrated read_/write_ seams still used via string/getattr
-            # or pending wiring — KEEP as 待接; only retired-named ones DELETE via K1 path.
             if re.search(r"scale_tian|ack_due_commitment|get_secret_order|close_from_declaration", text):
                 return "DELETE", "orphan method named for retired/replaced entry"
+            # No external attr ref in static scan — if name is pure forward leftover, DELETE;
+            # otherwise NON_MEMBER (scanner noise), never pending-review KEEP.
+            if re.search(r"read_ack_|read_get_secret|compat_|deprecated_|old_|bare_", text):
+                return "DELETE", "orphan named like replaced/compat entry with no external refs"
             return (
-                "KEEP",
-                "static orphan Store method candidate — 待接领域职责 or getattr/string call; not proven dead dual rule",
+                "NON_MEMBER",
+                "static orphan Store method candidate without replaced-entry name — scanner noise, not dual authority",
             )
         return "NON_MEMBER", "K5 wide hit without duplicate-rule or forward-shell shape"
 
@@ -1181,6 +1331,19 @@ def baseline_deleted_members() -> list[tuple[str, str, int, str, str]]:
          r"def\s+read_ack_due_commitment_issue\b", "forward_shell"),
         ("K5", "ming_sim/entities/character_knowledge/store.py",
          r"def\s+read_get_secret_order\b", "forward_shell"),
+        ("K5", "ming_sim/db.py", r"def\s+class_rows\b", "forward_shell"),
+        ("K5", "ming_sim/db.py", r"def\s+get_directive\b", "forward_shell"),
+        ("K5", "ming_sim/db.py", r"def\s+list_closed_issues_at\b", "forward_shell"),
+        ("K5", "ming_sim/db.py", r"def\s+find_active_issue_by_origin\b", "forward_shell"),
+        ("K5", "ming_sim/db.py", r"def\s+find_any_issue_by_origin\b", "forward_shell"),
+        ("K5", "ming_sim/db.py", r"def\s+reject_directive\b", "forward_shell"),
+        ("K5", "ming_sim/flows.py", r"def\s+_set_fiscal_container\b", "forward_shell"),
+        ("K5", "ming_sim/flows.py", r"def\s+_add_fiscal_container\b", "forward_shell"),
+        ("K5", "ming_sim/breach_plea.py", r"def\s+_issue_row\b", "forward_shell"),
+        ("K5", "ming_sim/breach_plea.py", r"def\s+list_active_commitments\b", "forward_shell"),
+        # Nested Store one-liner only (not shadow_rows.get character_row helpers).
+        ("K5", "ming_sim/issues.py",
+         r"return CharacterStore\(db\.conn\)\.read_character_row", "forward_shell"),
     ]
     for cls, path, pat, kind in checks:
         try:

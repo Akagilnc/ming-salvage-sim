@@ -1,10 +1,9 @@
-# #1889 七类修内司回执（末判 6b513b99f · 全仓完整类枚举整改）
+# #1889 七类修内司回执（K5 整类实际清退 · forward shells）
 
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1889-w5r`
 - 施工分支：`ak-roles/1889-seven-class-fixer`
-- 判词真源：`…/attachments/05-1889-judge-6b513b99f.json` → `outcome.payloads` **末份**
-- 本轮相对开工：`c47db4675`（其上已清转发壳；本轮扩完整类枚举谓词）
-- 约束：无 amend / rebase / stash / push / PR；七变量 BIN=`/usr/bin/false`；只跑聚焦；不新建证明测试/护栏/兼容/功能补齐；不改治理/Soul/宿主/SDK/席位；不碰既存存档
+- 本轮相对开工：`043a93940`
+- 约束：无 amend / rebase / stash / push / PR；七变量 BIN=`/usr/bin/false`；只跑聚焦；不新建证明测试/护栏/兼容/功能补齐；不改治理/Soul/宿主/SDK/席位；不碰既存存档；不改 batch/事务边界
 
 ---
 
@@ -12,95 +11,76 @@
 
 K4 / K1 / K5 / K8 / K9 / K3 / K7
 
+本轮主施工面：**K5 纯 Store 转发壳实际清退**（禁止「票面待接 / pending ownership review / 现役调用入口」作 KEEP 依据）。
+
 ---
 
-## 可复跑枚举（工作树内完整谓词脚本）
+## K5 逐成员语义判据（本轮真源）
+
+### DELETE — 同形持久转发（消费者直连既有 Store，合法所有权点 commit）
+
+| 成员 | 原形状 | 消费者改法 |
+|---|---|---|
+| `GameDB.class_rows` | `ClassStore.read_class_rows` | `class_report` 直调 `ClassStore` |
+| `GameDB.get_directive` | `IssueStore.directive` | `session` / 测试 → `IssueStore(...).directive` |
+| `GameDB.list_closed_issues_at` | `IssueStore.read_list_closed_issues_at` | `web_app` → Store |
+| `GameDB.find_active_issue_by_origin` | `IssueStore.read_find_active_issue_by_origin` | `issues` / 测试 → Store |
+| `GameDB.find_any_issue_by_origin` | `IssueStore.read_find_any_issue_by_origin` | `db`/`issues`/测试 → `self.issues` 或 Store |
+| `GameDB.reject_directive` | `set_directive_status(...,'rejected', expected='pending')` + commit | 测试在所有权点 `IssueStore` + `conn.commit` |
+| `flows._set_fiscal_container` / `_add_fiscal_container` | `FiscalContainerStore.replace/add` | 调用点直调 Store |
+| `breach_plea._issue_row` / `list_active_commitments` | `IssueStore.row` / `read_list_active_commitments` | 调用点直调 Store |
+| `issues.character_row`（嵌套 Store one-liner） | `CharacterStore.read_character_row` | 调用点直调 Store |
+
+活调用 / 「职责待接」**不是**保留纯转发壳的依据：职责由既有真源 Store 承担。
+
+### KEEP — 逐方法读完整体后的真实职责（禁止同一泛化标签批量 KEEP）
+
+| 方法 | 为何不可等价直调 Store |
+|---|---|
+| `GameDB.save_state` | **GameState→ReignStateStore.save 字段解包**（year/period/turn/turn_phase/ended/ending_status/metrics）；不是裸 `reign.save` |
+| `GameDB.save_ending_summary` | **GameState + timeline `json.dumps` 打包**进 `write_save_ending_summary`，并在 GameDB 所有权点 commit |
+| `GameDB.save_resolve_context` | **`sanitize_sqlite_text` + `safe_json_dumps` + Provenance.value 归一**后再 `resolve_contexts.upsert` + commit；同形转发无法保留该读缝适配 |
+| `GameDB.clear_resolve_context` | **多事实编排**：`resolve_contexts.delete` + `dossiers.clear_pending_promulgation_verdicts` **同一 commit**；不是单 Store delete |
+
+### NON_MEMBER — 内部 alias（不以类名蒙混）
+
+| 方法 | 依据 |
+|---|---|
+| `create_decree_dossier` → `_create_decree_dossier_row` | 公有 API / 私有实现拆分，非 Store 双权威 |
+| `stage_directive_candidate` → `stage_pending_action` | 同对象域绑定（kind=directive / action=拟旨），非 Store 转发壳 |
+| `read_directive_dossier_payload` → `_decode_...` | 行字段抽取 + 严格解码缝，非 Store 双入口 |
+| `get_active_secret_orders_for_minister` → `list_secret_orders` | 同对象命名过滤绑定，非 Store 双权威 |
+| session_write_queue / materials / CliChat aliases | 非持久化 method alias |
+
+---
+
+## 枚举脚本整改
+
+`evidence/1889-seven-class-enumerate.py`：
+
+- 废止 `gamedb_facade_pending` / `module_store_forward` 的 pending-review KEEP。
+- 新 kind：`gamedb_pure_forward`（DELETE）、`gamedb_domain_adapter`（KEEP，方法级 BASIS）。
+- AST：`_call_has_domain_adaptation`（sanitize/json/state 字段/多 Store ops）。
+- baseline 扫描补本轮已删纯壳（含 `list_active_commitments` / nested `character_row`）。
+- orphan 候选：禁止「待接」KEEP；无名噪声 → NON_MEMBER。
+
+可复跑：
 
 ```bash
-cd /Users/akagilnc/WorkSpace/Ming_LLM-1889-w5r
 python3 evidence/1889-seven-class-enumerate.py
 ```
-
-完整输出：`/tmp/1889-seven-enum-final.out`。
-
-### 本轮相对前版的枚举缺口整改
-
-| 缺口（用户指摘） | 整改 |
-|---|---|
-| K5 `k5_hits` 仅 `store_root`、SQL 按 file 分桶 | **全仓生产 Python** SQL（含 root/`scripts/`/`web_app.py`/`spike`）；**全局签名分桶**（`dup_sql_same` / `dup_sql_cross`） |
-| GameDB 薄壳硬编码两样本方法 | 实际薄转发：`XxxStore(...).meth` / Store+commit / `return self.OTHER`；**排除** `self._conn.execute` 真源与非持久别名 |
-| K1_PAT 仅 blob/bare 样本 | 扩 compat/legacy_path/fallback_path/alias_source/deprecated + orphan 存储兼容方法候选；dispose 区分现役遗产·alias·brief·agno_runs |
-| K3_PAT 仅 ISE/负断言 | 保留文本种子；**Python AST**（Assert/Compare/`match=`）+ **TS/TSX expect** 全测试面；NON_MEMBER/KEEP/DELETE 各带语义依据，禁止批量 KEEP 默认 |
-
-全仓含义：生产面不因文件前缀排除 root/scripts；tests/web 进 K3；evidence/docs/enumerate 脚本标 NON_MEMBER。
 
 ### 修后复扫摘要
 
 | 处置 | 条数 |
 |---|---|
-| NON_MEMBER（宽扫非成员+依据） | 4672 |
-| KEEP（31 种 distinct basis） | 289 |
-| DELETE_DONE（修前成员已清） | 29 |
+| NON_MEMBER | 4673 |
+| KEEP（33 distinct basis） | 279 |
+| DELETE_DONE | 40 |
 | DELETE_REVOKED_K3 | 2 |
 | LIVE 生产 DELETE 残差 | **0** |
 
-成员车道（DELETE*/KEEP）按类：K1=26、K3=159、K4=2、K5=51、K7=1、K8=59、K9=22。
-
-K5 覆盖非 entities 生产路径 9（`db.py`/`issues.py`/`flows.py`/`breach_plea.py`/scripts gate 等）；K3 TS hits=483。
-
-生产残差谓词（`ming_sim/` + `web_app.py`，独立复扫）：
-
-| 谓词 | 命中 |
-|---|---|
-| `scale_tian_fu\|read_scale_tian_fu` | 0 |
-| `callable(_commit) and not callable(_conn)` | 0 |
-| `default_terminal_reason` | 0 |
-| `def append_chat_message\|def clear_month_open_snapshot` | 0 |
-| `read_ack_due_commitment_issue\|read_get_secret_order` | 0 |
-| `Close only by explicit declaration\|close_from_declaration` | 0 |
-| `_decode_agno_runs\|merge_runs_table_with_legacy` | 0 |
-| tests `Internal Server Error` 负锁 | 0 |
-
----
-
-## 逐类结果
-
-### K4 — 退役财政标量路径
-
-**处置**：维持已清；`DELETE_DONE`×2；KEEP 现役 dynamic / section_fiscal 旁路。LIVE DELETE=0。未新增税改机制。
-
-### K1 — 被取代来源 / 旧存储兼容
-
-**处置**：宽扫扩至 compat/legacy_path/orphan 存储候选；dispose 显式 KEEP 现役 `legacy_modifiers`/alias fold/brief/`agno_runs`/保密负向。blob/accept-both 仍为 `DELETE_DONE`。未删 SDK/既存存档。
-
-### K5 — 同一持久规则双份权威 / 转发壳
-
-**类定义**：收拢重复规则；删除被替代入口及转发壳；不改事务边界、不把批量写退化成逐项提交。
-
-**本轮枚举**：
-- 全仓 SQL 全局分桶；每组附 `|| BASIS:`（lifecycle/status/field/schema_probe/script_fixture/cross_authority…），**无**「近重复即 KEEP」默认句。
-- 薄转发：GameDB→Store 标 `gamedb_facade_pending` **KEEP**（票面待接领域职责/现役调用入口；对比已删 `append_chat_message`/`read_ack_*`）。
-- Store 内 `return self._conn.execute` **不**标转发壳（真源）。
-- metrics 共享 `_METRIC_UPSERT_SQL`、pending_decisions 单一 `_delete_*` helper 已在代码侧；枚举记 KEEP 依据。
-- `save_pending_*` / `executemany` 边界未改。
-
-**未结（诚实）**：GameDB 薄 Store 转发与 module Store one-liner 仍为待接搬迁面，本轮不泛删现役 facade（避免另造入口/破坏消费者）。
-
-### K8 — 宽松排除解码
-
-**处置**：维持严格 `_load_list` / `_load_targets`；LIVE 宽松 wash=0。既有装回变异证明见前轮 `/tmp/1889-k8-mutation.out`（本轮无再生产改动，未重装）。
-
-### K9 — 未授权护栏 + 提交判别
-
-**处置**：`default_terminal_reason` 与 callable 判别均为 `DELETE_DONE`；无复活 GameDB 提交壳。
-
-### K3 — 自由诊断措辞负断言
-
-**处置**：全仓 Py AST + TS expect 候选入表；ISE 负锁 LIVE=0；结构化/`match=`/machine id/输入保真 KEEP 各带依据；标题/散文形多数 NON_MEMBER（**非**批量 KEEP）。既有上游诊断变异见 `/tmp/1889-k3-mutation.out`。
-
-### K7 — 撤回机制过期说明
-
-**处置**：docstring 过期句 `DELETE_DONE`；scripts 枚举谓词源标 NON_MEMBER（非生产机制）。
+K5 成员车道 52；forward_shell：DELETE_DONE（含本轮纯壳）+ domain_adapter KEEP×4（上表）+ internal/non_persist NON_MEMBER；**无 pending-review 假 KEEP**。
 
 ---
 
@@ -119,30 +99,38 @@ K5 覆盖非 entities 生产路径 9（`db.py`/`issues.py`/`flows.py`/`breach_pl
   tests/test_affairs_1831.py \
   tests/test_rescript_draft_656.py::test_clear_pending_decisions_keeps_rescript_drafts \
   tests/test_promulgation_seam_560.py \
-  tests/test_new_game_smoke.py
+  tests/test_new_game_smoke.py \
+  tests/test_breach_plea_623.py \
+  tests/test_decree_dossiers_571.py::test_pending_directive_only_enters_settlement_after_final_approval \
+  tests/test_commitment_backlash_626.py::test_ac1_breach_verdict_triggers_commitment_backlash \
+  tests/test_commitment_backlash_626.py::test_ac1_deformation_exposure_triggers_commitment_backlash \
+  tests/test_supervision_625.py::test_ac2_paired_observation_slots_and_countermeasure_hard_gate \
+  tests/test_fiscal_substrate_bridge.py::test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses \
+  tests/test_new_issues_section_rejections.py \
+  tests/test_draft_admission_resubmit_1769.py \
+  tests/test_structured_decree_contract_1624.py::test_http_manual_directive_lands_beyond_fifteen_initiatives_1790
 ```
 
-**实测**：`148 passed in 7.23s`。完整输出：`/tmp/1889-seven-focused.out`。
+**实测**：`231 passed in 11.71s`。完整输出：`/tmp/1889-k5-focused.out`。
 
-本轮无新增证明性用例；无生产代码删改（残差已在前轮清零，本轮为枚举/处置完整化）。
+未纳入：`test_rescript_follow_draft_nails_drafted_roster`（既有 `GameDB.save_rescript_drafts` 缺失，与本轮删壳无关，未顺手补兼容）。
+
+无新增证明性用例；未改 batch/事务边界。
 
 ---
 
 ## Advisor 自查（修改前 + 最终）· 自查二连 done
 
 **修改前**：
-- K5 仅 entities + 按 file 分桶 + GameDB 两方法白名单 → **完整类枚举收窄**。
-- K1 仅 blob/bare 样本；K3 文本段偏负锁，未证明 TS/全断言覆盖。
-- K5 dup_sql 批量 KEEP 默认句。
+- disposition 以「票面待接 / 现役调用」KEEP 纯 Store 转发壳 → 违 K5。
+- `reject_directive` 与读口同形转发未分判。
 
 **最终**：
-- 枚举脚本覆盖全仓生产 SQL、跨文件规则、实际薄转发、扩 K1、Py+TS K3；disposition 每条有依据；KEEP basis distinct=31；LIVE DELETE=0。
-- 不泛删不同生命周期 SQL / 现役恢复 / 保密负向 / 输入保真 / SDK；不新增生产机制。
+- 所列纯壳 + 同类 module one-liner 已删；消费者直连 Store；所有权点 commit 未并入新层。
+- 四方法 KEEP 各带不可等价直调依据；无泛化批量 KEEP；无 pending-review 假 KEEP。
+- 枚举谓词与处置表已按实际现状重扫；LIVE DELETE=0。
 - 未改治理宪法 / Soul / 宿主 / SDK / 席位 / 既存存档。
 - 未 amend / stash / push / 开 PR。
-
-**Standards（轻量）**：证据脚本落 `evidence/`；TSV `git diff --check` 干净；无生产旁路新层。  
-**Spec**：对齐末判七类 required + 用户「完整类枚举」指摘；未结 GameDB facade 待接已显式 KEEP 依据。
 
 ---
 
@@ -150,12 +138,10 @@ K5 覆盖非 entities 生产路径 9（`db.py`/`issues.py`/`flows.py`/`breach_pl
 
 | 文件 | 用途 |
 |---|---|
-| `evidence/1889-seven-class-enumerate.py` | 完整可复跑枚举+处置谓词脚本 |
-| `evidence/1889-seven-class-member-disposition.tsv` | 全员处置（含 NON_MEMBER 依据） |
-| `evidence/1889-seven-class-enum.tsv` | 成员车道（DELETE*/KEEP） |
+| `evidence/1889-seven-class-enumerate.py` | 完整可复跑枚举+处置谓词 |
+| `evidence/1889-seven-class-member-disposition.tsv` | 全员处置 |
+| `evidence/1889-seven-class-enum.tsv` | 成员车道 |
 | `evidence/1889-seven-class-enum-raw.tsv` | 宽谓词原始扫 |
 | `evidence/1889-seven-class-fixer-receipt.md` | 本回执 |
-| `/tmp/1889-seven-focused.out` | 聚焦测完整输出 |
-| `/tmp/1889-seven-enum-final.out` | 最终枚举复跑输出 |
-| `/tmp/1889-k8-mutation.out` | K8 装回旧逻辑（前轮） |
-| `/tmp/1889-k3-mutation.out` | K3 上游诊断变异（前轮） |
+| `/tmp/1889-k5-focused.out` | 聚焦测完整输出 |
+| `/tmp/1889-seven-enum-k5.out` | 本轮枚举复跑输出 |

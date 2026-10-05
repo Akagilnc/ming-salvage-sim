@@ -12,6 +12,7 @@ import pytest
 
 import ming_sim.issues as I
 from ming_sim.models import Event
+from ming_sim.entities.issue.store import IssueStore
 from tests.section_rejection_helpers import game
 
 
@@ -75,7 +76,7 @@ def _pick_event_pool_id(db):
             continue
         if getattr(ev, "auto_trigger", False):
             continue
-        if db.find_any_issue_by_origin("event_pool", ev.id) is not None:
+        if IssueStore(db.conn).read_find_any_issue_by_origin(("event_pool", ev.id)) is not None:
             continue
         return eid
     pytest.skip("内容包无可用 situation/非auto/未触发 预设 event，跳过 event_pool 用例")
@@ -400,7 +401,7 @@ def test_new_issue_event_pool_rejects_expired_event(game):
     rej = _rejected(out)
     assert len(rej) == 1, out
     assert rej[0]["id"] == eid
-    assert db.find_any_issue_by_origin("event_pool", eid) is None
+    assert IssueStore(db.conn).read_find_any_issue_by_origin(("event_pool", eid)) is None
 
 
 def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
@@ -434,7 +435,7 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
     rejected = [item for item in _rejected(out) if item.get("id") == downstream.id]
     assert [item["id"] for item in created] == [upstream.id], out
     assert len(rejected) == 1, out
-    assert db.find_any_issue_by_origin("event_pool", downstream.id) is None
+    assert IssueStore(db.conn).read_find_any_issue_by_origin(("event_pool", downstream.id)) is None
 
 
 # --- tags 字段严格化（cmr ni r8 codex medium）---

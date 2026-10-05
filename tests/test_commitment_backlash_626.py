@@ -50,6 +50,7 @@ from ming_sim.situation_drift import (
 )
 from ming_sim.models import TurnPhase, loads_effect_dict
 from ming_sim.staged_commitment import TODO_STATUS_PENDING
+from ming_sim.entities.issue.store import IssueStore
 
 
 # ── fixtures ──────────────────────────────────────────────────────
@@ -183,8 +184,7 @@ def test_ac1_breach_verdict_triggers_commitment_backlash(game):
     assert hits[0]["source_kind"] == SOURCE_BREACH_VERDICT
     assert hits[0]["commitment_ref"] == cid
     assert hits[0]["trigger_ref"] == f"issue:{cid}"
-    issue = db.find_any_issue_by_origin(
-        BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_BREACH_VERDICT),
+    issue = IssueStore(db.conn).read_find_any_issue_by_origin((BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_BREACH_VERDICT)),
     )
     assert issue is not None
     assert str(issue["status"]) == "active"
@@ -230,8 +230,7 @@ def test_ac1_failed_terminal_triggers_commitment_backlash(game):
     assert hits
     assert hits[0]["source_kind"] == SOURCE_FAILED_TERMINAL
     assert hits[0]["commitment_ref"] == cid
-    issue = db.find_any_issue_by_origin(
-        BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_FAILED_TERMINAL),
+    issue = IssueStore(db.conn).read_find_any_issue_by_origin((BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_FAILED_TERMINAL)),
     )
     assert issue is not None
     adv = db.conn.execute(
@@ -291,8 +290,7 @@ def test_ac1_deformation_exposure_triggers_commitment_backlash(game):
     assert hits
     assert hits[0]["source_kind"] == SOURCE_DEFORMATION_EXPOSURE
     assert hits[0]["trigger_ref"] == f"issue:{cid}"
-    issue = db.find_any_issue_by_origin(
-        BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_DEFORMATION_EXPOSURE),
+    issue = IssueStore(db.conn).read_find_any_issue_by_origin((BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_DEFORMATION_EXPOSURE)),
     )
     assert issue is not None
 
@@ -322,8 +320,7 @@ def test_ac1_transformed_without_beyond_intent_does_not_trigger(game):
     state.turn = int(state.turn) + 1
     hits = db.trigger_commitment_backlashes(state, commit=True)
     assert hits == []
-    assert db.find_any_issue_by_origin(
-        BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_DEFORMATION_EXPOSURE),
+    assert IssueStore(db.conn).read_find_any_issue_by_origin((BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_DEFORMATION_EXPOSURE)),
     ) is None
     assert _backlash_issues(db) == []
 
@@ -529,8 +526,7 @@ def test_ac3_regret_then_resolve_no_breach_verdict_hammer(game):
     auto = pre_settle(state, db, content=content)
     bl = [a for a in (auto or []) if a.get("source") == "commitment_backlash"]
     assert bl == []
-    assert db.find_any_issue_by_origin(
-        BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_BREACH_VERDICT),
+    assert IssueStore(db.conn).read_find_any_issue_by_origin((BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_BREACH_VERDICT)),
     ) is None
     assert _backlash_issues(db) == []
 
@@ -576,8 +572,7 @@ def test_ac3_regret_then_expire_dropped_no_hammer(game):
     state.turn = int(state.turn) + 1
     hits = db.trigger_commitment_backlashes(state, commit=True)
     assert hits == []
-    assert db.find_any_issue_by_origin(
-        BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_BREACH_VERDICT),
+    assert IssueStore(db.conn).read_find_any_issue_by_origin((BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_BREACH_VERDICT)),
     ) is None
     assert _backlash_issues(db) == []
     assert int(state.metrics.get("民心", 0) or 0) == minxin_0
@@ -631,8 +626,7 @@ def test_ac3_plea_due_expire_then_commitment_expire_no_hammer(game):
     state.turn = int(state.turn) + 1
     hits = db.trigger_commitment_backlashes(state, commit=True)
     assert hits == []
-    assert db.find_any_issue_by_origin(
-        BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_BREACH_VERDICT),
+    assert IssueStore(db.conn).read_find_any_issue_by_origin((BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_BREACH_VERDICT)),
     ) is None
     assert _backlash_issues(db) == []
     assert int(state.metrics.get("民心", 0) or 0) == minxin_0
@@ -719,7 +713,7 @@ def test_ac4_backlash_survives_restore_both_states(game, tmp_path, content):
     db.backup_to(str(post))
     restored_post = GameDB(str(post), content=content)
     try:
-        row = restored_post.find_any_issue_by_origin(BACKLASH_ORIGIN_KIND, origin)
+        row = IssueStore(restored_post.conn).read_find_any_issue_by_origin((BACKLASH_ORIGIN_KIND, origin))
         assert row is not None
         assert int(row["id"]) == issue_id
         st2 = restored_post.load_state()

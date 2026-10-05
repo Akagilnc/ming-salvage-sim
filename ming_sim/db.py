@@ -2554,7 +2554,7 @@ class GameDB:
             if ev.auto_trigger
             and not ev.trigger_gate
             and ev.event_type == "situation"
-            and self.find_any_issue_by_origin("event_pool", ev.id) is None
+            and self.issues.read_find_any_issue_by_origin(("event_pool", ev.id)) is None
         ]
         if not pending:
             return
@@ -3249,17 +3249,13 @@ class GameDB:
         row = FactionStore(self.conn).read_faction_leverage((faction,))
         return int(row["leverage"]) if row else 50
 
-    def class_rows(self, region_id: str = "") -> List[sqlite3.Row]:
-        """region_id="" 取全国汇总行；其它取该省切片。"""
-        return ClassStore(self.conn).read_class_rows((region_id,))
-
     def class_report(self, *, audience: bool = False) -> str:
         """全国汇总 + 各省紧张切片（sat<=30 且 lev>=60）。
 
         audience=True 时满意度/势力走既有定性档（与 faction_report 同词表），
         供 simulator 等玩家可感混合调用；机面默认仍给裸值。
         """
-        national = self.class_rows("")
+        national = ClassStore(self.conn).read_class_rows(("",))
         if not national:
             return "阶级未建档。"
         if audience:
@@ -7514,8 +7510,8 @@ class GameDB:
             if not is_upright_integrity(integrity):
                 continue
             origin_ref = countermeasure_origin_ref(auditor, dossier_id)
-            existing = self.find_any_issue_by_origin(
-                COUNTERMEASURE_ORIGIN_KIND, origin_ref,
+            existing = self.issues.read_find_any_issue_by_origin(
+                (COUNTERMEASURE_ORIGIN_KIND, origin_ref),
             )
             if existing is not None:
                 continue
@@ -8016,8 +8012,8 @@ class GameDB:
             if origin_ref in seen_origin:
                 continue
             seen_origin.add(origin_ref)
-            existing = self.find_any_issue_by_origin(
-                BACKLASH_ORIGIN_KIND, origin_ref,
+            existing = self.issues.read_find_any_issue_by_origin(
+                (BACKLASH_ORIGIN_KIND, origin_ref),
             )
             if existing is not None:
                 continue
@@ -12374,10 +12370,6 @@ class GameDB:
         placeholders = ",".join("?" for _ in statuses)
         return IssueStore(self.conn).read_list_directives_owned((state.turn, state.turn, *statuses), placeholders).fetchall()
 
-    def get_directive(self, directive_id: int) -> Optional[sqlite3.Row]:
-        """按 id 读单条 turn_directives（#1769 补交读口；禁 session 手写 SELECT）。"""
-        return IssueStore(self.conn).directive(int(directive_id))
-
     @staticmethod
     def _decode_directive_dossier_payload(
         raw: object, *, directive_id: Optional[int] = None,
@@ -12491,11 +12483,6 @@ class GameDB:
             mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
         return rejection_rows
 
-    def reject_directive(self, directive_id: int) -> None:
-        """皇帝驳回大臣拟旨：pending → rejected。"""
-        IssueStore(self.conn).set_directive_status(directive_id, 'rejected', expected='pending')
-        self.conn.commit()
-
     def count_pending_directives(self, state: GameState) -> int:
         """本回合待核定（pending）的大臣拟旨数。颁诏前须为 0。"""
         row = IssueStore(self.conn).count_pending_directives(state.turn)
@@ -12559,20 +12546,9 @@ class GameDB:
             return "终前"
         return "终"
 
-    def list_closed_issues_at(self, closed_turn: int) -> List[sqlite3.Row]:
-        """指定 turn 关闭（resolved / failed / dropped）的 issue。"""
-        return IssueStore(self.conn).read_list_closed_issues_at((int(closed_turn),))
-
     def count_active_initiatives(self) -> int:
         row = IssueStore(self.conn).read_count_active_initiatives()
         return int(row["n"] or 0)
-
-    def find_active_issue_by_origin(self, origin_kind: str, origin_ref: str) -> sqlite3.Row | None:
-        return IssueStore(self.conn).read_find_active_issue_by_origin((origin_kind, origin_ref))
-
-    def find_any_issue_by_origin(self, origin_kind: str, origin_ref: str) -> sqlite3.Row | None:
-        """查任意状态（含 resolved/failed/dropped）的同源 issue，用于 spawn 去重。"""
-        return IssueStore(self.conn).read_find_any_issue_by_origin((origin_kind, origin_ref))
 
     def has_event_triggered(self, event_id: str) -> bool:
         row = IssueStore(self.conn).read_has_event_triggered((event_id,))

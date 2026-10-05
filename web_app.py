@@ -45,6 +45,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
 from ming_sim.constants import ROOT_DIR
+from ming_sim.entities.issue.store import IssueStore
 from ming_sim.paths import bundled_path, user_data_path, user_data_dir
 from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
@@ -1518,7 +1519,7 @@ class WebGame:
         """上回合（resolve 后 state.turn 已 +1）关闭的 issue。"""
         target_turn = max(0, int(self.state.turn) - 1)
         out: List[Dict[str, Any]] = []
-        for row in self.db.list_closed_issues_at(target_turn):
+        for row in IssueStore(self.db.conn).read_list_closed_issues_at((target_turn,)):
             status = str(row["status"])
             effect_key = "effect_on_resolve" if status == "resolved" else "effect_on_fail"
             effect = loads_effect_dict(row[effect_key])  # 统一守门，绝不向前端吐非 dict（#117 R5）

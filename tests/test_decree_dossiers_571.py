@@ -7,6 +7,7 @@ import pytest
 import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
+from ming_sim.entities.issue.store import IssueStore
 from tests.conftest import covering_monthly_extract
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
 
@@ -309,7 +310,8 @@ def test_pending_directive_only_enters_settlement_after_final_approval(game):
 
     assert db.dossiers.get_for_directive(rejected_directive_id) is None
     assert db.dossiers.list_for_simulation(state.turn) == []
-    db.reject_directive(rejected_directive_id)
+    IssueStore(db.conn).set_directive_status(rejected_directive_id, 'rejected', expected='pending')
+    db.conn.commit()
     assert db.dossiers.get_for_directive(rejected_directive_id) is None
     assert db.dossiers.list_for_simulation(state.turn) == []
     assert state.metrics["国库"] == before
@@ -333,7 +335,7 @@ def test_pending_directive_only_enters_settlement_after_final_approval(game):
     ).fetchone()["committed_directive_id"])
     # #1769：confirm 只翻 pending→draft；成案走 ensure 批缝
     db.confirm_directive(approved_directive_id, state)
-    assert str(db.get_directive(approved_directive_id)["status"]) == "draft"
+    assert str(IssueStore(db.conn).directive(approved_directive_id)["status"]) == "draft"
     assert db.dossiers.get_for_directive(approved_directive_id) is None
     assert db.ensure_dossiers_for_draft_directives(state) == []
 

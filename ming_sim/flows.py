@@ -244,14 +244,6 @@ def _substrate_hub_budget_income_lines(
     return income, expense
 
 
-def _set_fiscal_container(db: GameDB, key: str, value: float, note: str) -> None:
-    FiscalContainerStore(db.conn).replace(key, value, note)
-
-
-def _add_fiscal_container(db: GameDB, key: str, delta: float, note: str) -> None:
-    FiscalContainerStore(db.conn).add(key, delta, note)
-
-
 # 固定月度收支科目目录现走数据驱动：db.iter_budget_items() 从 fiscal_config 读
 # budget_role=fixed 的 base 项（account/direction/display）。加新税源只改 content/fiscal_config.json。
 # 税收走 substrate hub 起运/盐商；军饷预算只列京运补与中央份额拟拨，
@@ -892,24 +884,24 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
         raise _SubstrateHubFixedFlowAbort(
             f"substrate_hub 京运补/中央军饷 hub 分配失败：{exc}"
         ) from exc
-    _add_fiscal_container(
-        db, "C_京运克扣", hub_outbound.central_transport_human_loss,
+    FiscalContainerStore(db.conn).add(
+        "C_京运克扣", hub_outbound.central_transport_human_loss,
         "京运转运人为克扣（可追赃）",
     )
-    _add_fiscal_container(
-        db, "C_京运运损", hub_outbound.central_transport_sink_loss,
+    FiscalContainerStore(db.conn).add(
+        "C_京运运损", hub_outbound.central_transport_sink_loss,
         "京运转运自然运损（sink）",
     )
-    _set_fiscal_container(
-        db, "hub_京运损耗", hub_outbound.central_transport_loss,
+    FiscalContainerStore(db.conn).replace(
+        "hub_京运损耗", hub_outbound.central_transport_loss,
         "本月京运转运损耗",
     )
-    _set_fiscal_container(
-        db, "hub_京运实拨", hub_outbound.jingyun_paid_total,
+    FiscalContainerStore(db.conn).replace(
+        "hub_京运实拨", hub_outbound.jingyun_paid_total,
         "本月京运补实拨",
     )
-    _set_fiscal_container(
-        db, "hub_中央军饷实拨", hub_outbound.central_paid_total,
+    FiscalContainerStore(db.conn).replace(
+        "hub_中央军饷实拨", hub_outbound.central_paid_total,
         "本月中央军饷实拨",
     )
     try:
@@ -1074,12 +1066,12 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 f"substrate_hub 太仓入库 hub 分配失败：{exc}"
             ) from exc
         central_loss = taicang_human_loss + taicang_sink_loss
-        _add_fiscal_container(db, "C_太仓挪用", taicang_human_loss, "中央太仓人为亏空（可追赃）")
-        _add_fiscal_container(db, "C_太仓纯亏空", taicang_sink_loss, "中央太仓自然亏空（sink）")
-        _set_fiscal_container(db, "hub_省级起运到京", remittance_amount, "Σ本月明控省起运到京")
-        _set_fiscal_container(db, "hub_盐税解京", salt_amount, "明控省盐税中央旁路")
-        _set_fiscal_container(db, "hub_商税解京", commerce_amount, "明控省商税中央旁路")
-        _set_fiscal_container(db, "hub_太仓亏空", central_loss, "本月中央太仓亏空与挪用")
+        FiscalContainerStore(db.conn).add("C_太仓挪用", taicang_human_loss, "中央太仓人为亏空（可追赃）")
+        FiscalContainerStore(db.conn).add("C_太仓纯亏空", taicang_sink_loss, "中央太仓自然亏空（sink）")
+        FiscalContainerStore(db.conn).replace("hub_省级起运到京", remittance_amount, "Σ本月明控省起运到京")
+        FiscalContainerStore(db.conn).replace("hub_盐税解京", salt_amount, "明控省盐税中央旁路")
+        FiscalContainerStore(db.conn).replace("hub_商税解京", commerce_amount, "明控省商税中央旁路")
+        FiscalContainerStore(db.conn).replace("hub_太仓亏空", central_loss, "本月中央太仓亏空与挪用")
 
         for category, raw_amount, amount, reason in (
             ("起运", raw_remittance_amount, remittance_amount, f"{TURN_UNIT}省级起运入京"),
