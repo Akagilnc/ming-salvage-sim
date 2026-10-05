@@ -1,18 +1,15 @@
 """#649（[#477 S2]）：人口守恒转移原语＋delta 契约。
 
-canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5）：
+canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5；#1843 旧档万人口径已退役）：
 - 原子单记录双写：一条转移记录同事务「源阶级减 N、目标阶级增 N」，LLM 不提交双腿；
 - reason×方向矩阵（加派/摊派/灾害/兵灾/逃亡；回流出池见 #652 settle 真缝），出阵组合逐项拒收；
 - class_delta 写 population 由静默忽略升格逐项拒收；两轴分立（数据拒收不中止事务）；
-- 单位随存档 population_unit（新档人/sub-万精确，legacy 万口径、sub-万不可表达）；
+- 单位随存档 population_unit（新档人／sub-万精确）；
 - restore 后流民池从 classes 只读 DB 无损接续。
 主测缝：apply_score_extraction 落账及恢复后的 DB 状态。
 """
 
 from __future__ import annotations
-
-import json
-import os
 
 import pytest
 
@@ -22,8 +19,6 @@ from ming_sim.issues import apply_score_extraction
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
 DISPLACED_SHAANXI = 150000    # 流民@shaanxi
-LEGACY_FARMER_SHAANXI = 600   # ÷10⁴ 万口径
-LEGACY_DISPLACED_SHAANXI = 15
 
 
 def _pop(db: GameDB, name: str, region_id: str) -> int:

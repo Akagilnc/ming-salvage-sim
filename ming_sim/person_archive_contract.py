@@ -116,21 +116,18 @@ def normalize_title_kind(value: object) -> str:
 
 
 def current_title_kind(office: object = "", office_type: object = "") -> str:
-    """ADR 0009 当前名分类别：职名分 / 身名分。
+    """ADR 0009 当前名分类别（供 resolve_person_transition）：职名分 / 身名分。
 
-    空职、显式「身名分」、PERSON_IDENTITY_TITLES，以及 models 已定义的未仕/宗藩
-    身份桶与既有后宫/外臣身份桶 → 身名分；其余非空现职 → 职名分。
-    各入口必须调用本函数，禁止再造平行身份集合。
+    口径与既有事件闸／声明入口同源：空职、显式「身名分」、PERSON_IDENTITY_TITLES
+    （及 normalize_title_kind 能认作身名分的职衔字）→ 身名分；其余非空现职 → 职名分。
+    未仕／宗藩／后宫／外臣等身份桶的洗档归 wash_ousted_current_office，禁止经本函数
+    扩 transition 语义。
     """
-    # 延迟导入：避免 contract↔models 环依赖；常量真源仍在 models。
-    from ming_sim.models import VASSAL_PRINCE_OFFICE_TYPE, WEISHI_OFFICE_TYPE
-
     office_text = str(office or "").strip()
     kind = str(office_type or "").strip()
     if (
         not office_text
         or kind == "身名分"
-        or kind in {WEISHI_OFFICE_TYPE, VASSAL_PRINCE_OFFICE_TYPE, "后宫", "外臣"}
         or office_text in PERSON_IDENTITY_TITLES
         or normalize_title_kind(office_text) == "身名分"
     ):
@@ -144,20 +141,53 @@ def wash_ousted_current_office(
     office_type: object = "",
     status_reason: object = "",
 ) -> tuple[str, str]:
-    """离事者职名分必清；身名分保留。历史来历写入 status_reason（若尚空）。
+    """离事者职名分必清；身名分与既有身份桶保留。历史来历写入 status_reason（若尚空）。
 
     供 GameContent.load 与 GameDB.seed_static_data 共用，避免只改静态名册子集。
+    身份桶真源复用 models.WEISHI_OFFICE_TYPE / VASSAL_PRINCE_OFFICE_TYPE 与既有
+    「后宫」「外臣」字面（同 seed 洗档旧集），不经 current_title_kind 扩 transition。
     """
+    # 延迟导入：避免 contract↔models 环依赖；常量真源仍在 models。
+    from ming_sim.models import VASSAL_PRINCE_OFFICE_TYPE, WEISHI_OFFICE_TYPE
+
     status_key = str(status or "").strip() or "active"
     office_text = str(office or "").strip()
     reason_text = str(status_reason or "").strip()
     if status_key not in PERSON_OUSTED_STATUSES or not office_text:
         return office_text, reason_text
-    if current_title_kind(office_text, office_type) != "职名分":
+    kind = str(office_type or "").strip()
+    if (
+        current_title_kind(office_text, office_type) != "职名分"
+        or kind in {WEISHI_OFFICE_TYPE, VASSAL_PRINCE_OFFICE_TYPE, "后宫", "外臣"}
+    ):
         return office_text, reason_text
     if not reason_text:
         reason_text = office_text
     return "", reason_text
+
+
+def archived_office_title_for_ousted(
+    office: object = "",
+    status_reason: object = "",
+) -> str:
+    """离事者备档职衔：现职优先；否则从「前…，罢居/革职」status_reason 回收清洗职名。
+
+    seed 洗净 characters.office 后仍须写 character_offices 备档供起复/破格读历史职
+    （ADR 0009 不变式 1 与 set_character_status「原职留备档」同构）。登场未至、
+    status_reason 仅为未来职衔字（无「前…罢居/革职」形）时不建备档。
+    """
+    office_text = str(office or "").strip()
+    if office_text:
+        return office_text
+    reason = str(status_reason or "").strip()
+    if not reason.startswith("前"):
+        return ""
+    body = reason[1:]
+    for sep in ("，罢居", "，革职", "，革"):
+        if sep in body:
+            title = body.split(sep, 1)[0].strip()
+            return title
+    return ""
 
 
 def resolve_person_transition(
