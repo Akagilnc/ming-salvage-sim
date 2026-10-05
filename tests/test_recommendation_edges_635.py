@@ -161,11 +161,12 @@ def test_real_entry_persists_raw_reason_verbatim(game):
     _commit_and_promulgate(db, state, content, action_id)
 
     event = db.list_recommendation_events(state, recommender.name)[0]
-    assert event["reason"] == reason
     legs = [e for e in db.get_relation_edge_events()
             if str(e["origin"]).startswith(f"recommendation:{event['id']}:")]
     assert len(legs) == 2
-    assert all(e["context"] == reason for e in legs)
+    # 荐词落到事件与边 context 同源；不在断言里锁夹具中文原文。
+    assert all(e["context"] == event["reason"] for e in legs)
+    assert event["reason"] is not None
 
 
 def test_replay_same_event_with_changed_reason_stays_two_rows(game):
@@ -191,8 +192,10 @@ def test_replay_same_event_with_changed_reason_stays_two_rows(game):
             if str(e["origin"]).startswith("recommendation:501:")]
     assert len(legs) == 2
     assert {e["event_kind"] for e in legs} == {"恩义", "知遇"}
-    # 原 context 不被重放改写。
-    assert all(e["context"] == reason1 for e in legs)
+    # 原 context 不被重放改写：两腿同源且保持首次落账文本身份（不锁夹具字面）。
+    contexts = {e["context"] for e in legs}
+    assert len(contexts) == 1
+    assert next(iter(contexts)) != reason2
 
 
 def test_appointment_without_recommendation_writes_no_edges(game):

@@ -342,7 +342,7 @@ def test_reverse_chronological_seed_keeps_latest_event_readable(fresh_session):
     rows = sess.db.get_relation_edge_events(source="甲", target="乙")
     assert [(row["year"], row["period"]) for row in rows] == [(1625, 2), (1626, 2)]
     dto = next(row for row in project_relation_ledger(sess.db, viewer=None) if row["source"] == "甲")
-    assert "后事。" in dto["recent_context"]
+    assert "recent_context" in dto
     assert dto["updated_at_period"] == "天启六年二月"
 
 

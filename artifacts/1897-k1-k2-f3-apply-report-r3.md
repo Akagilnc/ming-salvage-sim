@@ -25,7 +25,7 @@
 
 ## 完整成员表
 
-见 [`artifacts/1897-k1-k2-f3-member-tables.md`](1897-k1-k2-f3-member-tables.md)  
+见 [`artifacts/1897-k1-k2-f3-member-tables.md`](1897-k1-k2-f3-member-tables.md)
 枚举生成器：[`artifacts/1897-f3-enum-gen_tables.py`](1897-f3-enum-gen_tables.py)
 
 ### 可执行枚举命令
@@ -92,9 +92,9 @@ K2_OK
 
 ### 驳回点纠正
 
-1. 枚举改为**全断言 + 全函数候选**，不再用 HIGH 字段词表宣布结清。  
-2. r2 空心 style 案（调用 `character_context_with_db` 却断言 `project_relation_ledger`）**整案删除**，不为无关消费者补可变异红证明测试。  
-3. r2 自报余项（mock answer／summary／label 等）本轮按行为语义清完；mock 确定性文字亦不机械锁正文。  
+1. 枚举改为**全断言 + 全函数候选**，不再用 HIGH 字段词表宣布结清。
+2. r2 空心 style 案（调用 `character_context_with_db` 却断言 `project_relation_ledger`）**整案删除**，不为无关消费者补可变异红证明测试。
+3. r2 自报余项（mock answer／summary／label 等）本轮按行为语义清完；mock 确定性文字亦不机械锁正文。
 4. 闸类负向保留（空串、P4 裸数、CLI 标签、确定性 builder、流式重放一致性、夹具回读）。
 
 ### 本轮处置文件

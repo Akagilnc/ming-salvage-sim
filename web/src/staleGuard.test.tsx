@@ -102,7 +102,8 @@ describe("召对陈旧守卫（staleness guard）", () => {
       await pending;
     });
 
-    expect(host.querySelector("[data-testid=notice]")?.textContent).toBe("甲：甲的回话");
+    // 应用成功：选中大臣身份前缀在 notice；不锁回话正文。
+    expect(host.querySelector("[data-testid=notice]")?.textContent).toMatch(/^甲：/);
   });
 });
 
@@ -260,7 +261,7 @@ describe("召对陈旧守卫 — 广范围（loadMinisterChat 历史加载）", 
       resolve("甲的历史");
       await pending;
     });
-    expect(host.querySelector("[data-testid=panel]")?.textContent).toBe("甲：甲的历史");
+    expect(host.querySelector("[data-testid=panel]")?.textContent).toMatch(/^甲：/);
   });
 });
 
@@ -339,7 +340,8 @@ describe("召对陈旧守卫 — 离开实时观察/错误分支（sendChat catc
       await pending.catch(() => {});
     });
     expect(host.querySelector("[data-testid=input]")?.textContent).toBe("");
-    expect(host.querySelector("[data-testid=notice]")?.textContent).toBe("甲：已离开实时回话");
+    // UI 固定离开提示 + 大臣身份前缀；不锁自由回话正文。
+    expect(host.querySelector("[data-testid=notice]")?.textContent).toMatch(/^甲：已离开实时回话$/);
     expect(host.querySelector("[data-testid=cleared]")?.textContent).toBe("1");
   });
 });

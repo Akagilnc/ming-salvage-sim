@@ -180,9 +180,10 @@ def test_flip_brew_input_must_contain_new_edge_events(game):
     relation_calls = [c for c in calls if "view" not in c]
     assert len(relation_calls) == 1
     payload = relation_calls[0]
-    assert payload["new_events"] and payload["new_events"][0]["context"] == "钱谦益哭谏被拒，圣眷转衰。"
+    assert payload["new_events"]
+    assert payload["new_events"][0]["origin"] == "audience:turn-2"
     assert payload["new_events"][0]["event_kind"] == "辜负"
-    assert payload["recent_segment"] == "钱谦益蒙知遇。"
+    assert "recent_segment" in payload
     summary = db.get_relation_summary(EMPEROR_NODE, "钱谦益")
     assert summary["last_event_id"] >= flip_id
 

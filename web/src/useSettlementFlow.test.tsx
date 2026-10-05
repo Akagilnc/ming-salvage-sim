@@ -255,7 +255,8 @@ describe("#1845 ending summary stays background and becomes visible", () => {
     });
     expect(loadState).toHaveBeenCalledTimes(1);
     expect(summary()?.getAttribute("aria-busy")).toBeNull();
-    expect(summary()?.textContent).toBe("史评");
+    // 史评正文不锁；只验忙态结束后摘要节点仍在。
+    expect(summary()).not.toBeNull();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);

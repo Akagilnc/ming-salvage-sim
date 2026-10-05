@@ -1,0 +1,9 @@
+{
+ "python_candidates": 4386,
+ "python_cjk": 2809,
+ "web_candidates": 250,
+ "web_cjk": 135,
+ "consumer_calls": 86,
+ "tests_with_consumers": 65,
+ "note": "candidates only; legality requires hand semantic review"
+}

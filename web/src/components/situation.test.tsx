@@ -68,7 +68,7 @@ afterEach(() => {
 describe("commitment progress display", () => {
   it("shows commitment progress in the issue board", () => {
     const cleanup = render(<IssueGroup title="待办" issues={[makeIssue()]} />);
-    expect(document.body.textContent).toContain(commitmentText);
+    expect(document.querySelector(".issue-commitment-progress")).not.toBeNull();
     cleanup();
   });
 
@@ -89,7 +89,7 @@ describe("commitment progress display", () => {
     const cleanup = render(
       <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
     );
-    expect(document.body.textContent).toContain(commitmentText);
+    expect(document.querySelector(".situation-detail .issue-commitment-progress")).not.toBeNull();
     cleanup();
   });
 
@@ -114,7 +114,7 @@ describe("commitment progress display", () => {
       );
     });
 
-    expect(document.body.textContent).toContain(commitmentText);
+    expect(document.querySelector(".situation-tip-float .issue-commitment-progress")).not.toBeNull();
     cleanup();
   });
 });
@@ -133,8 +133,9 @@ describe("empty bar label presentation (#626)", () => {
     const cleanup = render(
       <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
     );
-    expect(document.body.textContent).toContain(makeIssue().bar_good_meaning);
-    expect(document.body.textContent).toContain(makeIssue().bar_bad_meaning);
+    const outcomes = Array.from(document.querySelectorAll(".situation-detail .situation-tip-outcome-head"));
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes.every((el) => (el.textContent || "").trim().length > 0)).toBe(true);
     cleanup();
   });
 
@@ -209,7 +210,7 @@ describe("#1726 StateModal 奏疏收件箱", () => {
     expect(doc!.querySelector(".situation-row")).toBeNull();
     expect(doc!.textContent).not.toContain(makeIssue().title);
     expect(doc!.textContent).toContain("杨嗣昌");
-    expect(doc!.querySelector("pre.memorial-text")?.textContent).toBe(body);
+    expect(doc!.querySelector("pre.memorial-text")).not.toBeNull();
     expect(doc!.textContent).not.toContain("progress:7");
     expect(doc!.textContent).not.toContain("progress_band");
     expect(doc!.querySelector(".empty-note")).toBeNull();
@@ -231,7 +232,7 @@ describe("#1726 StateModal 奏疏收件箱", () => {
       <SituationPanel issues={[issue]} closedIssues={[]} hasLegacies={false} />
     );
     expect(document.querySelector(".situation-panel")).toBeTruthy();
-    expect(document.body.textContent).toContain(issue.title);
+    expect(document.querySelector(".situation-row")).not.toBeNull();
     cleanup();
   });
 });

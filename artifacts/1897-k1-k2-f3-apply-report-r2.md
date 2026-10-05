@@ -26,7 +26,7 @@
 
 ## 完整成员表
 
-见独立文件：[`artifacts/1897-k1-k2-f3-member-tables.md`](1897-k1-k2-f3-member-tables.md)  
+见独立文件：[`artifacts/1897-k1-k2-f3-member-tables.md`](1897-k1-k2-f3-member-tables.md)
 枚举生成器副本：[`artifacts/1897-f3-enum-gen_tables.py`](1897-f3-enum-gen_tables.py)（亦可 `/tmp/1897-f3-enum/gen_tables.py`）
 
 统计：Python 测试 235 文件；Web 测试 25 文件；F3 高置信现行命中 23 行（本轮清退后），全表含合法保留与余项，**不虚报整类结清**。

@@ -18,6 +18,15 @@ function msg(partial: Partial<AudienceScrollMessage> & Pick<AudienceScrollMessag
   };
 }
 
+function tuples(messages: AudienceScrollMessage[]) {
+  return messages.map((m) => ({
+    role: m.role,
+    speaker: m.speaker,
+    chat_turn_id: m.chat_turn_id,
+    beat: m.beat,
+  }));
+}
+
 /** Owner fixture: 洪承畴 full semantic turn + 许誉卿 absent. */
 function hongSecretOrderScroll(): AudienceScrollMessage[] {
   return [
@@ -51,11 +60,11 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
   it("切回有记录大臣：该臣语义轮完整（朕问/回话/递话/scene 同进）", () => {
     const scroll = hongSecretOrderScroll();
     const lens = filterScrollForSelectedMinister(scroll, "洪承畴");
-    expect(lens.map((m) => m.content)).toEqual([
-      "密令：整饬边备。",
-      "臣领旨。",
-      "他神色凝重。",
-      "烛影微动。",
+    expect(tuples(lens)).toEqual([
+      { role: "user", speaker: "朕", chat_turn_id: 11, beat: "dialogue" },
+      { role: "minister", speaker: "洪承畴", chat_turn_id: 11, beat: "dialogue" },
+      { role: "attendant", speaker: "王承恩", chat_turn_id: 11, beat: "aside" },
+      { role: "scene", speaker: "", chat_turn_id: 11, beat: "scene" },
     ]);
   });
 
@@ -76,14 +85,22 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     ];
 
     const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
-    expect(hong.map((m) => m.content)).toEqual(["洪问", "洪答", "洪递话"]);
+    expect(tuples(hong)).toEqual([
+      { role: "user", speaker: "朕", chat_turn_id: 1, beat: "dialogue" },
+      { role: "minister", speaker: "洪承畴", chat_turn_id: 1, beat: "dialogue" },
+      { role: "attendant", speaker: "王承恩", chat_turn_id: 1, beat: "aside" },
+    ]);
     // Per-speaker filter would have dropped 朕/王承恩 — must NOT reproduce that mistake
     expect(hong.some((m) => m.speaker === "朕")).toBe(true);
     expect(hong.some((m) => m.speaker === "王承恩")).toBe(true);
 
     const wang = filterScrollForSelectedMinister(scroll, "王绍徽");
-    expect(wang.map((m) => m.content)).toEqual(["王问", "王答", "王递话"]);
-    expect(wang.some((m) => m.content.startsWith("洪"))).toBe(false);
+    expect(tuples(wang)).toEqual([
+      { role: "user", speaker: "朕", chat_turn_id: 2, beat: "dialogue" },
+      { role: "minister", speaker: "王绍徽", chat_turn_id: 2, beat: "dialogue" },
+      { role: "attendant", speaker: "王承恩", chat_turn_id: 2, beat: "aside" },
+    ]);
+    expect(wang.some((m) => m.speaker === "洪承畴")).toBe(false);
 
     const orphan = filterScrollForSelectedMinister(scroll, "许誉卿");
     expect(orphan).toEqual([]);
@@ -97,11 +114,14 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
       msg({ role: "minister", speaker: "许誉卿", content: "B答", beat: "dialogue", chat_turn_id: 20 }),
       msg({ role: "attendant", speaker: "王承恩", content: "B递话", beat: "aside", chat_turn_id: 20 }),
     ];
-    expect(filterScrollForSelectedMinister(scroll, "许誉卿").map((m) => m.content)).toEqual([
-      "B问", "B答", "B递话",
+    expect(tuples(filterScrollForSelectedMinister(scroll, "许誉卿"))).toEqual([
+      { role: "user", speaker: "朕", chat_turn_id: 20, beat: "dialogue" },
+      { role: "minister", speaker: "许誉卿", chat_turn_id: 20, beat: "dialogue" },
+      { role: "attendant", speaker: "王承恩", chat_turn_id: 20, beat: "aside" },
     ]);
-    expect(filterScrollForSelectedMinister(scroll, "洪承畴").map((m) => m.content)).toEqual([
-      "A问", "A答",
+    expect(tuples(filterScrollForSelectedMinister(scroll, "洪承畴"))).toEqual([
+      { role: "user", speaker: "朕", chat_turn_id: 10, beat: "dialogue" },
+      { role: "minister", speaker: "洪承畴", chat_turn_id: 10, beat: "dialogue" },
     ]);
   });
 
@@ -119,24 +139,21 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     const scroll = softSegmentWithAside();
 
     const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
-    expect(hong.map((m) => m.content)).toEqual([
-      "",
-      "洪承畴趋入殿中。",
-      "边务如何？",
-      "臣自三边来。",
-      "殿侧容臣插一句。",
-      "洪督神色未安。",
-      "",
+    expect(tuples(hong)).toEqual([
+      { role: "scene", speaker: "洪承畴", chat_turn_id: undefined, beat: "divider" },
+      { role: "scene", speaker: "洪承畴", chat_turn_id: undefined, beat: "scene" },
+      { role: "user", speaker: "朕", chat_turn_id: 1, beat: "dialogue" },
+      { role: "minister", speaker: "洪承畴", chat_turn_id: 1, beat: "dialogue" },
+      { role: "minister", speaker: "杨嗣昌", chat_turn_id: undefined, beat: "dialogue" },
+      { role: "attendant", speaker: "王承恩", chat_turn_id: 1, beat: "aside" },
+      { role: "scene", speaker: "", chat_turn_id: undefined, beat: "divider" },
     ]);
     // 杨's interjection stays as 洪 segment context
     expect(hong.some((m) => m.speaker === "杨嗣昌")).toBe(true);
     expect(hong.some((m) => m.speaker === "王承恩")).toBe(true);
 
     // 杨 window must not inherit 洪's whole segment (不串窗)
-    const yang = filterScrollForSelectedMinister(scroll, "杨嗣昌");
-    expect(yang.some((m) => m.content === "臣自三边来。")).toBe(false);
-    expect(yang.some((m) => m.content === "洪承畴趋入殿中。")).toBe(false);
-    expect(yang.some((m) => m.content === "殿侧容臣插一句。")).toBe(false);
+    expect(filterScrollForSelectedMinister(scroll, "杨嗣昌")).toEqual([]);
 
     // 许 blank
     expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
@@ -150,7 +167,12 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
       msg({ role: "minister", speaker: "杨嗣昌", content: "侧言", beat: "dialogue" }),
     ];
     const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
-    expect(hong.map((m) => m.content)).toEqual(["洪承畴入殿。", "问", "答", "侧言"]);
+    expect(tuples(hong)).toEqual([
+      { role: "scene", speaker: "", chat_turn_id: undefined, beat: "scene" },
+      { role: "user", speaker: "朕", chat_turn_id: 5, beat: "dialogue" },
+      { role: "minister", speaker: "洪承畴", chat_turn_id: 5, beat: "dialogue" },
+      { role: "minister", speaker: "杨嗣昌", chat_turn_id: undefined, beat: "dialogue" },
+    ]);
     expect(filterScrollForSelectedMinister(scroll, "杨嗣昌")).toEqual([]);
   });
 
@@ -177,26 +199,26 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     ];
 
     const hong = filterScrollForSelectedMinister(scroll, "洪承畴");
-    expect(hong.map((m) => m.content)).toEqual([
-      "",
-      "洪承畴趋入殿中。",
-      "边务如何？",
-      "臣自三边来。",
-      "殿侧容臣插一句。",
-      "",
+    expect(tuples(hong)).toEqual([
+      { role: "scene", speaker: "洪承畴", chat_turn_id: undefined, beat: "divider" },
+      { role: "scene", speaker: "洪承畴", chat_turn_id: undefined, beat: "scene" },
+      { role: "user", speaker: "朕", chat_turn_id: 1, beat: "dialogue" },
+      { role: "minister", speaker: "洪承畴", chat_turn_id: 1, beat: "dialogue" },
+      { role: "minister", speaker: "孙传庭", chat_turn_id: undefined, beat: "dialogue" },
+      { role: "scene", speaker: "", chat_turn_id: undefined, beat: "divider" },
     ]);
-    expect(hong.some((m) => m.content.includes("杨"))).toBe(false);
-    expect(hong.some((m) => m.content === "杨部神色郑重。")).toBe(false);
+    expect(hong.some((m) => m.speaker === "杨嗣昌")).toBe(false);
+    expect(hong.some((m) => m.chat_turn_id === 2)).toBe(false);
 
     const yang = filterScrollForSelectedMinister(scroll, "杨嗣昌");
-    expect(yang.map((m) => m.content)).toEqual([
-      "杨卿以为如何？",
-      "臣以为当先清饷。",
-      "杨部神色郑重。",
+    expect(tuples(yang)).toEqual([
+      { role: "user", speaker: "朕", chat_turn_id: 2, beat: "dialogue" },
+      { role: "minister", speaker: "杨嗣昌", chat_turn_id: 2, beat: "dialogue" },
+      { role: "attendant", speaker: "王承恩", chat_turn_id: 2, beat: "aside" },
     ]);
-    expect(yang.some((m) => m.content === "臣自三边来。")).toBe(false);
-    expect(yang.some((m) => m.content === "洪承畴趋入殿中。")).toBe(false);
-    expect(yang.some((m) => m.content === "殿侧容臣插一句。")).toBe(false);
+    expect(yang.some((m) => m.speaker === "洪承畴")).toBe(false);
+    expect(yang.some((m) => m.chat_turn_id === 1)).toBe(false);
+    expect(yang.some((m) => m.speaker === "孙传庭")).toBe(false);
   });
 
   it("半轮 claim：无 minister 气泡的 user 问话按 claimedTurnId 留在本窗", () => {
@@ -208,11 +230,11 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
     // Without claim, half-turn user is orphan and must not leak.
     expect(filterScrollForSelectedMinister(scroll, "许誉卿")).toEqual([]);
     expect(
-      filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 12 }).map((m) => m.content),
-    ).toEqual(["辽饷何解？"]);
+      tuples(filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 12 })),
+    ).toEqual([{ role: "user", speaker: "朕", chat_turn_id: 12, beat: "dialogue" }]);
     // Claim must not override an already-named minister owner on another turn.
     expect(
-      filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 11 }).map((m) => m.content),
+      filterScrollForSelectedMinister(scroll, "许誉卿", { claimedTurnId: 11 }),
     ).toEqual([]);
   });
 
@@ -222,8 +244,10 @@ describe("filterScrollForSelectedMinister (#1511 lens)", () => {
       msg({ role: "minister", speaker: "殿上", content: "群臣各陈所见。", beat: "dialogue", chat_turn_id: 30 }),
       msg({ role: "attendant", speaker: "王承恩", content: "洪承畴亦在列。", beat: "aside", chat_turn_id: 30 }),
     ];
-    expect(filterScrollForSelectedMinister(scroll, "洪承畴", { sceneSpeaker: "殿上" }).map((m) => m.content)).toEqual([
-      "诸卿以为如何？", "群臣各陈所见。", "洪承畴亦在列。",
+    expect(tuples(filterScrollForSelectedMinister(scroll, "洪承畴", { sceneSpeaker: "殿上" }))).toEqual([
+      { role: "user", speaker: "朕", chat_turn_id: 30, beat: "dialogue" },
+      { role: "minister", speaker: "殿上", chat_turn_id: 30, beat: "dialogue" },
+      { role: "attendant", speaker: "王承恩", chat_turn_id: 30, beat: "aside" },
     ]);
   });
 

@@ -1,0 +1,21 @@
+# F3 python r4 changed members (true free-text / fixture-readback)
+tests/test_audience_restore_505.py:141	REWRITE	fixture question content → chat_turn_id/role count
+tests/test_audience_restore_505.py:144	REWRITE	retry question body → chat_turn_id + question key
+tests/test_audience_restore_505.py:216-217	REWRITE	dialogue bodies → (role, chat_turn_id) set
+tests/test_audience_scroll_539.py:196	REWRITE	story body equality → turn role/speaker structure
+tests/test_audience_scroll_539.py:210-216	REWRITE	content tuples → role/speaker/audibility/beat
+tests/test_audience_scroll_539.py:263-268	REWRITE	dialogue/scene content lists → role/speaker/turn
+tests/test_audience_scroll_539.py:298	REWRITE	user content → role/speaker
+tests/test_audience_scroll_539.py:513	REWRITE	projection content → role/chat_turn_id
+tests/test_audience_continuous_507.py:50-56	REWRITE	recap free body → audible_entries_for id set
+tests/test_audience_continuous_507.py:71-73	REWRITE	recap free body → audible id before/inside
+tests/test_audience_continuous_507.py:99	REWRITE	recap snippet → audible id membership
+tests/test_recommendation_edges_635.py:164-168	REWRITE	reason/context fixture literal → event.reason cross-field
+tests/test_recommendation_edges_635.py:195	REWRITE	context==reason1 → contexts identity vs reason2
+tests/test_relation_brew_636.py:183-185	REWRITE	context/recent_segment prose → origin/event_kind
+tests/test_relation_seed_638.py:345	REWRITE	recent_context「后事。」→ key presence
+tests/test_qa_s2_copy_prompts_1356_1402.py:62	REWRITE	gazette body literal → body==stored report column
+tests/test_qa_t1_extraction_dual_source_1353.py:610-616	REWRITE	projection content → role/chat_turn_id
+
+# Post-fix narrow FIELD_EQ residual: 0
+# Broader CJK structured enums/offices/reign labels: KEEP as structured identity (not free narrative locks)

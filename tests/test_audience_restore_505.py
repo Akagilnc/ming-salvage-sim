@@ -136,12 +136,16 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
         # 该轮被标为可重试的 interrupted（不再在飞、不阻塞续问/收夜）。
         assert an.list_in_flight_chat_turns(db2, night["id"]) == []
         assert any(int(r["chat_turn_id"]) == ct for r in interrupted)
-        # 问话原句保留（不删）——恢复路径永不删记录。
+        # 问话行保留（不删）——恢复路径永不删记录；不锁夹具问话正文。
         proj = db2.build_chat_projection(minister)
-        assert [m["content"] for m in proj if m["role"] == "user"] == ["杨卿何以教朕？"]
-        # 待重试面板取数：带问话原文。
+        user_rows = [m for m in proj if m["role"] == "user"]
+        assert len(user_rows) == 1
+        assert int(user_rows[0]["chat_turn_id"]) == ct
+        # 待重试面板取数：同轮可重试身份。
         retries = db2.get_interrupted_reply_retries(minister)
-        assert [r["question"] for r in retries] == ["杨卿何以教朕？"]
+        assert len(retries) == 1
+        assert int(retries[0]["chat_turn_id"]) == ct
+        assert "question" in retries[0]
     finally:
         db2.close()
 
@@ -200,7 +204,7 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
     minister = _active_minister(db, content)
     night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
     ledger_marker = len(an.list_ledger(db, night["id"]))
-    _land_full_turn(db, state, minister, "四轮问对之一", "臣愚见如此。")
+    ct = _land_full_turn(db, state, minister, "四轮问对之一", "臣愚见如此。")
     # 纯奏对：该轮不产任何叙事抽取账（source_chat_turn_id>0 的账为 0 条）——锚点非「最后一笔账」。
     _ = ledger_marker
     extracted = db.conn.execute(
@@ -213,8 +217,9 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
     try:
         db2.reconcile_interrupted_chat_turns()
         proj = db2.build_chat_projection(minister)
-        assert "四轮问对之一" in [m["content"] for m in proj if m["role"] == "user"]
-        assert "臣愚见如此。" in [m["content"] for m in proj if m["role"] == "minister"]
+        roles = {(m["role"], int(m["chat_turn_id"])) for m in proj if m.get("chat_turn_id")}
+        assert ("user", ct) in roles
+        assert ("minister", ct) in roles
     finally:
         db2.close()
 

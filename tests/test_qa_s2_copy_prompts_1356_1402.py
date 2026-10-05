@@ -58,8 +58,14 @@ def test_gazette_header_cross_year_december_report_under_january_state(game):
     header = db.previous_turn_reign_period_label(state)
     assert header == reign_period_label(1627, 12)
     assert header != current
+    # 上月报文投影存在且与库内 turn_reports 同源；不锁邸报自由正文。
     body = db.previous_turn_summary(state)
-    assert "天启七年十二月邸报·跨年钉测" in body
+    stored = db.conn.execute(
+        "SELECT report FROM turn_reports WHERE turn=? AND year=? AND period=?",
+        (5, 1627, 12),
+    ).fetchone()
+    assert stored is not None
+    assert body == stored["report"]
 
 
 def test_state_payload_projects_previous_reign_period_label(game):

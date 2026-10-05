@@ -193,8 +193,9 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
     client = TestClient(web_app.app)
     before = client.get("/api/audience/scroll").json()["messages"]
-    assert [m["content"] for m in before if m.get("chat_turn_id") == turn_id][-1] == story
-    assert [(m["role"], m["speaker"], m["highlights"]) for m in before if m.get("chat_turn_id") == turn_id][-1] == ("scene", "", [])
+    before_turn = [m for m in before if m.get("chat_turn_id") == turn_id]
+    assert before_turn
+    assert (before_turn[-1]["role"], before_turn[-1]["speaker"], before_turn[-1]["highlights"]) == ("scene", "", [])
     assert client.get("/api/audience/scroll").json()["translation_pending"] is True
 
     apply_audience_round_translation(db, state, {
@@ -207,13 +208,11 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     after = client.get("/api/audience/scroll").json()["messages"]
     assert client.get("/api/audience/scroll").json()["translation_pending"] is False
     segments = [m for m in after if m.get("chat_turn_id") == turn_id and m["role"] != "user"]
-    assert [(m["role"], m["speaker"], m["content"]) for m in segments] == [
-        ("minister", "杨嗣昌", "臣领旨。"), ("attendant", "王承恩", "王承恩低语。"),
-        ("scene", "", "殿内烛影摇曳。"),
+    assert [(m["role"], m["speaker"], m.get("audibility"), m.get("beat")) for m in segments] == [
+        ("minister", "杨嗣昌", "殿上公开", "dialogue"),
+        ("attendant", "王承恩", "御前低语", "aside"),
+        ("scene", "", "殿上公开", "dialogue"),
     ]
-    assert segments[1]["audibility"] == "御前低语"
-    assert segments[1]["beat"] == "aside"
-    assert "".join(m["content"] for m in segments) == story
     assert [m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"] if m.get("chat_turn_id") == turn_id and m["role"] != "user"] == segments
 
 
@@ -260,12 +259,16 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     messages = payload["messages"]
     dialogue = [message for message in messages
                 if message.get("chat_turn_id") in {first_turn, second_turn}]
-    assert [message["content"] for message in dialogue] == [
-        "辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。",
+    assert [(m["role"], m["speaker"], m["chat_turn_id"]) for m in dialogue] == [
+        ("user", "朕", first_turn),
+        ("scene", "", first_turn),
+        ("user", "朕", second_turn),
+        ("scene", "", second_turn),
     ]
     # Derived ledger entries do not become live dialogue records.
     assert not any(message.get("record_id") for message in messages)
-    assert [message["content"] for message in messages if message["role"] == "scene" and message.get("chat_turn_id")] == ["臣请据实核账。", "边关尚稳。"]
+    scene_turns = [m["chat_turn_id"] for m in messages if m["role"] == "scene" and m.get("chat_turn_id")]
+    assert scene_turns == [first_turn, second_turn]
 
     allowed_message_fields = {
         "role", "speaker", "audibility", "time", "content",
@@ -295,8 +298,8 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     scroll = an.read_night_scroll(db, night_id)
 
     assert scroll[0]["container"] == {"time_of_day": "戌时", "location": "乾清宫", "audience_type": "召对"}
-    assert [(m["role"], m["speaker"], m["content"]) for m in scroll if m["role"] != "scene"] == [
-        ("user", "朕", "辽饷如何？"),
+    assert [(m["role"], m["speaker"]) for m in scroll if m["role"] != "scene"] == [
+        ("user", "朕"),
     ]
     assert any(m["role"] == "scene" and m.get("chat_turn_id") for m in scroll)
     assert all({"role", "speaker", "audibility", "time", "soft_boundary", "beat", "highlights", "container"} <= set(m) for m in scroll)
@@ -510,5 +513,8 @@ def test_personal_projection_only_reads_the_current_open_night(game):
 
     projection = db.build_chat_projection("杨嗣昌")
 
-    assert [message["content"] for message in projection] == ["本夜问话", "本夜答复"]
+    assert [(m["role"], m["chat_turn_id"]) for m in projection] == [
+        ("user", current_turn),
+        ("minister", current_turn),
+    ]
     assert {message["chat_turn_id"] for message in projection} == {current_turn}

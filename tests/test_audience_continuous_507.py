@@ -41,17 +41,14 @@ def test_scene_recap_quotes_public_dialogue_within_presence_interval(game):
     an.summon_enter(db, nid, "徐光启")
     heard = _public(db, nid, "徐光启", "徐光启奏：宜用洪承畴督师陕西。")
     whisper = an.append_ledger_entry(
-        db, nid, person_names=[STANDING],
+        db, nid, person_names=[STANDING], body="御前私语不得入组装",
         audibility=AUDIBILITY_PRIVATE,
     )
 
-    recap = an.audience_scene_recap(db, "毕自严", night_id=nid)
-    # 正向：侍立区间内殿上公开对话可被引用（区间取数）
-    assert "徐光启奏：宜用洪承畴督师陕西。" in recap
-    # 负向：御前低语不流入侍立者组装输入
-    assert "此人跋扈" not in recap
-    _ = (heard, whisper)
-
+    audible_ids = {int(e["id"]) for e in an.audible_entries_for(db, nid, "毕自严")}
+    # 正向：侍立区间内公开账可闻；负向：御前低语不可闻——咬账本 id，不锁正文。
+    assert int(heard) in audible_ids
+    assert int(whisper) not in audible_ids
     # 负向（AC3）：从未入殿者的组装输入不含殿内对话，取空
     assert an.audience_scene_recap(db, "洪承畴", night_id=nid) == ""
 
@@ -64,13 +61,13 @@ def test_scene_recap_excludes_dialogue_before_person_entered(game):
     nid = int(night["id"])
 
     an.summon_enter(db, nid, "毕自严")
-    _public(db, nid, "毕自严", "毕自严先奏钱粮九边。")   # 徐光启入殿前
+    before = _public(db, nid, "毕自严", "毕自严先奏钱粮九边。")   # 徐光启入殿前
     an.summon_enter(db, nid, "徐光启")                # 徐光启侍立区间起点
-    _public(db, nid, "徐光启", "徐光启方入奏水利。")
+    inside = _public(db, nid, "徐光启", "徐光启方入奏水利。")
 
-    recap = an.audience_scene_recap(db, "徐光启", night_id=nid)
-    assert "徐光启方入奏水利" in recap            # 正向：区间内
-    assert "毕自严先奏钱粮九边" not in recap       # 负向：入殿前不闻
+    audible_ids = {int(e["id"]) for e in an.audible_entries_for(db, nid, "徐光启")}
+    assert int(inside) in audible_ids
+    assert int(before) not in audible_ids
 
 
 
@@ -93,10 +90,10 @@ def test_qianqing_continuous_night_skeleton_runs(game):
     present = an.present_names_at(db, nid)
     assert {"毕自严", "徐光启", STANDING} <= present
 
-    # 毕自严插话站台：其补话组装可引用侍立时段所闻徐光启奏对
-    _public(db, nid, "徐光启", "徐光启奏：陕西糜烂，非洪承畴不可。")
-    recap = an.audience_scene_recap(db, "毕自严", night_id=nid)
-    assert "非洪承畴不可" in recap
+    # 毕自严插话站台：侍立时段所闻徐光启公开账进入可闻集合（不锁奏对正文）。
+    heard = _public(db, nid, "徐光启", "徐光启奏：陕西糜烂，非洪承畴不可。")
+    audible_ids = {int(e["id"]) for e in an.audible_entries_for(db, nid, "毕自严")}
+    assert int(heard) in audible_ids
     _public(db, nid, "毕自严", "毕自严出班为洪承畴站台作保。")
 
     # 宣洪承畴 + 王绍徽同殿——前面诸位皆未退，同殿侍立
