@@ -11,7 +11,7 @@
 
 ## 分支 / commit
 - 分支：`ak-roles/1900-j6-final-rescan-23ea8ed38`
-- commitSha：见交卷后 `git rev-parse HEAD`（本文件提交时写入）
+- commitSha：`7ed27ea11dc23550d1bcdbc2a99e634713565f71`
 
 ## 枚举
 - 命令：`python3 evidence/1900-j6-final-rescan/j6_enum.py`
