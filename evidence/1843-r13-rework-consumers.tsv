@@ -1,0 +1,31 @@
+path	line	keys	disposition	text
+ming_sim/knowledge.py	303	appointments	REVIEW_or_comment	position-scoped fact set and updates automatically after appointments or
+ming_sim/month_chain.py	812	appointments	RETAIN_local_var_dossier_list	appointments = [row for row in db.list_decree_dossiers(status="proposed")
+ming_sim/month_chain.py	815	appointments	REVIEW_or_comment	if len(appointments) > 1:
+ming_sim/month_chain.py	816	appointments	REVIEW_or_comment	invalid = db._invalid_office_recommendation_snapshots(state, appointments)
+ming_sim/month_chain.py	817	appointments	REVIEW_or_comment	prevalidated = {int(row["id"]) for row in appointments} - invalid
+ming_sim/decree.py	1114	office_changes	REVIEW_or_comment	（office_changes/secret_order_* 等）无 'item' 键时才兜底存 wrapper 回显记录。
+ming_sim/models.py	314	character_status_changes	RETAIN_issue_effect_has_work_detector_not_C0_writer	_character_status_effect_has_work(effect.get("character_status_changes")),
+ming_sim/models.py	315	character_power_changes	RETAIN_issue_effect_has_work_detector_not_C0_writer	_character_power_effect_has_work(effect.get("character_power_changes")),
+ming_sim/models.py	443	character_status_changes	REVIEW_or_comment	死/被俘/废为庶人（史实如福王 1641 被李自成所杀），转译产生的 character_status_changes 的
+ming_sim/simulation.py	123	character_power_changes	REVIEW_or_comment	# character_power_changes 子字段（人物易主）
+ming_sim/issues.py	935	character_status_changes	RETAIN_monthly_unsupported_field_list	"character_status_changes",
+ming_sim/issues.py	936	character_power_changes	RETAIN_monthly_unsupported_field_list	"character_power_changes",
+ming_sim/issues.py	3281	office_changes	RETAIN_comment	# new_armies/office_changes、或命月经费/俸/饷却无月度 economy 时响亮告警，堵「只推进度条、
+ming_sim/issues.py	4296	office_changes	RETAIN_comment	# 调将只挂建军仍缺主将调任，混判会互相消音，CMR codex）。office_changes 是 ADR 0009 死键、
+ming_sim/issues.py	4301	character_status_changes	REVIEW_or_comment	# 形对：_apply_issue_entities 只落 list 的 new_armies/人物变更/character_status_changes、
+ming_sim/issues.py	4306	character_status_changes	RETAIN_issue_effect_has_work_detector_not_C0_writer	or _nonempty_list(effect.get("character_status_changes"))
+ming_sim/issues.py	5805	office_changes	REVIEW_or_comment	不在册 → apply_appointment 建新档。extractor 的 office_changes 与 CLI 自然语言任免 commit
+ming_sim/issues.py	5828	office_changes	RETAIN_comment	# 从「宗藩」改成新官署、反解掉所有 roster 隐藏，故必须在此写侧拒（extractor office_changes
+ming_sim/issues.py	7321	appointments	REVIEW_or_comment	content：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
+ming_sim/issues.py	8997	appointments	RETAIN_response_empty_compat_keys_not_C0_shape	"appointments": applied_appointments,
+ming_sim/issues.py	8999	character_status_changes	RETAIN_response_empty_compat_keys_not_C0_shape	"character_status_changes": applied_status_changes,
+ming_sim/issues.py	9000	character_power_changes	RETAIN_response_empty_compat_keys_not_C0_shape	"character_power_changes": applied_power_changes,
+ming_sim/issues.py	9001	office_changes	RETAIN_response_empty_compat_keys_not_C0_shape	"office_changes": applied_office_changes,
+ming_sim/db.py	5019	character_power_changes	REVIEW_or_comment	"reason": "character_power_changes 缺 name/new_power",
+ming_sim/db.py	5027	character_power_changes	REVIEW_or_comment	"reason": f"character_power_changes new_power '{new_power}' 未在 powers",
+ming_sim/db.py	5038	character_power_changes	REVIEW_or_comment	"reason": f"character_power_changes 人物 '{name}' 未入库",
+ming_sim/db.py	13966	office_changes	RETAIN_dossier_payload_local_not_C0	office_changes = self._commit_office_action(
+ming_sim/db.py	13969	office_changes	REVIEW_or_comment	if not office_changes:
+ming_sim/db.py	14652	office_changes	REVIEW_or_comment	"""军令职守面：payload.office / office_changes → 人物变更唯一核。"""
+ming_sim/db.py	14654	office_changes	RETAIN_dossier_payload_local_not_C0	raw_changes = payload.get("office_changes")

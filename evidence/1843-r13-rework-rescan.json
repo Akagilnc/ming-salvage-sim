@@ -1,0 +1,16 @@
+{
+  "EMPTY_four_old_keys": [],
+  "exclusive_gates": [],
+  "unknown_toplevel_rejection_source": [
+    "5713:        if key not in EMPTY_EXTRACTION:",
+    "5718:                 f\"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)。\""
+  ],
+  "tests_dict_duplicate_keys": [],
+  "verdict": {
+    "EMPTY_four_old_keys_count": 0,
+    "exclusive_gates_count": 0,
+    "tests_dup_keys_count": 0,
+    "tests_人物变更_dup_count": 0,
+    "unknown_rejection_source_present": true
+  }
+}

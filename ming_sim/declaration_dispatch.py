@@ -473,19 +473,6 @@ def _dispatch_effects(
         person_changes = normalize_person_changes(clean)
         if person_changes:
             clean["人物变更"] = person_changes
-        # 旧顶层人事键不再翻译落账；非空项按退役协议拒收，空桶清掉以免平行路径。
-        for field in ("appointments", "character_status_changes", "character_power_changes", "office_changes"):
-            retired = clean.pop(field, None)
-            if isinstance(retired, list):
-                for raw_item in retired:
-                    if raw_item in (None, "", [], {}):
-                        continue
-                    rejected.append(RejectedItem(
-                        item=raw_item if isinstance(raw_item, Mapping) else {"raw_value": raw_item},
-                        reason=f"{field} 已退役，人物效果只接受 人物变更",
-                        category="invalid_enum",
-                        source=source,
-                    ))
         clean_items.append((item, event_id, clean))
     if not has_effect:
         return SectionResult(applied=[], rejected=rejected)

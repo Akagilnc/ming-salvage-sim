@@ -3258,11 +3258,6 @@ def _apply_issue_entities(
             if not isinstance(it, dict):
                 raise ValueError(f"{label} 人物变更 非法（全局严格，不静默）：第 {idx} 项非 dict")
     person_changes = normalize_person_changes({"人物变更": raw_person_changes or []})
-    csc = effect.get("character_status_changes")
-    if isinstance(csc, list) and csc:
-        raise ValueError(
-            f"{label} character_status_changes 已退役，人物效果只接受 人物变更"
-        )
     if person_changes:
         results = _apply_person_changes(
             db,

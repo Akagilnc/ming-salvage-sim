@@ -1,0 +1,21 @@
+# T-R13 rework 全仓枚举命令（可复跑）
+
+## C1 C0 EMPTY_EXTRACTION 是否仍含四旧键
+rg -n '"(appointments|character_status_changes|character_power_changes|office_changes)":' ming_sim/simulation.py
+
+## C2 专属拒收闸是否仍在
+rg -n '已退役，人物效果只接受|for field in \("appointments"' ming_sim/
+
+## C3 生产侧旧键字面提及（消费者表原料）
+rg -n --glob '*.py' '\b(appointments|character_status_changes|character_power_changes|office_changes)\b' ming_sim/
+
+## C4 AST：tests+ming_sim dict 重复键 + 旧协议用例名/reason 候选
+# 见 /tmp 一次性脚本产物 → evidence/1843-r13-rework-rescan.json / class-a-members.tsv
+
+## C5 未知顶层键拒收真源仍在
+rg -n '未知 delta 顶层字段|key not in EMPTY_EXTRACTION' ming_sim/issues.py
+
+## 产出
+# evidence/1843-r13-rework-consumers.tsv
+# evidence/1843-r13-rework-class-a-members.tsv
+# evidence/1843-r13-rework-rescan.json
