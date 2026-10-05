@@ -56,7 +56,6 @@ from ming_sim.entities.metric.apply import (
 )
 from ming_sim.flows import (
     ISSUE_METRIC_LOCK_CAPS,
-    _strict_int,
 )
 from ming_sim.models import Event, GameState, effect_dict_has_work, loads_effect_dict
 from ming_sim.participant_roster import project_execution_liability_parties
@@ -380,21 +379,9 @@ def _strategic_event_result_preflight_error(
 
     归属已由转译 event_id 声明；本函数只验信封内容，不再从 reason 推断。
     """
-    region_valid_fields = set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS + FISCAL_SCORE_FIELDS)
-    region_valid_fields.add("cannon")
     region_numeric_fields = set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + FISCAL_SCORE_FIELDS)
     region_numeric_fields.add("cannon")
-    army_valid_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
     army_numeric_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS)
-
-    def _int_delta_error(kind: str, target_id: str, raw_field: object, value: object) -> str:
-        if isinstance(value, bool) or isinstance(value, float):
-            return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
-        try:
-            int(value)
-        except (TypeError, ValueError):
-            return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
-        return ""
 
     def _noop_error(kind: str, target_id: str, raw_field: object, value: object) -> str:
         return (
@@ -479,45 +466,27 @@ def _strategic_event_result_preflight_error(
     db.conn.execute("SAVEPOINT strategic_entity_result_preflight")
     try:
         for region_id, raw_changes in region_items:
-            row = db.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
-            if row is None:
-                return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
             if not isinstance(raw_changes, dict):
                 return f"战略/外敌事件「{event_title or event_id}」地区战果须为对象：{region_id}"
+            # #1835 S2：领域字段/整数/势力准入交写核；此处只组 noop 快照并消费写核拒收。
             snapshots: List[tuple[object, str, str, object, object]] = []
             seen_fields: set[str] = set()
-            for raw_field, value in raw_changes.items():
-                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field in ("reason", "origin_ref"):
-                    continue
-                if field not in region_valid_fields:
-                    return f"战略/外敌事件「{event_title or event_id}」战果引用非法地区字段：{raw_field}"
-                if field in region_numeric_fields:
-                    err = _int_delta_error("region", region_id, raw_field, value)
-                    if err:
-                        return err
-                if field == "controlled_by":
-                    controller = str(value).strip() if value is not None else ""
-                    if (
-                        value is None
-                        or not controller
-                        or controller.lower() == "null"
-                        or db.conn.execute(
-                            "SELECT 1 FROM powers WHERE id = ? LIMIT 1",
-                            (controller,),
-                        ).fetchone() is None
-                    ):
-                        return (
-                            f"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by "
-                            f"必须是 powers.id 中的非空真实势力 id：{value!r}"
-                        )
-                # 文本不计 noop（旧 _region_noop_error 对 REGION_TEXT_FIELDS 直接放行）。
-                if field in REGION_TEXT_FIELDS or field in seen_fields:
-                    continue
-                seen_fields.add(field)
-                snapshots.append(
-                    (raw_field, str(region_id), field, _region_world_value(str(region_id), field), value)
-                )
+            region_row = db.conn.execute(
+                "SELECT 1 FROM regions WHERE id = ? LIMIT 1", (region_id,),
+            ).fetchone()
+            if region_row is not None:
+                for raw_field, value in raw_changes.items():
+                    field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
+                    if field in ("reason", "origin_ref"):
+                        continue
+                    if field in REGION_TEXT_FIELDS or field in seen_fields:
+                        continue
+                    if field not in region_numeric_fields:
+                        continue
+                    seen_fields.add(field)
+                    snapshots.append(
+                        (raw_field, str(region_id), field, _region_world_value(str(region_id), field), value)
+                    )
 
             landed, refused = db.apply_region_deltas(
                 preview_state, preflight_event, None, "档房", {region_id: raw_changes}, commit=False,
@@ -535,47 +504,39 @@ def _strategic_event_result_preflight_error(
                 return err
 
         for army_id, raw_changes in army_items:
-            row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
-            if row is None:
-                return f"战略/外敌事件「{event_title or event_id}」战果引用未入库军队：{army_id}"
             if not isinstance(raw_changes, dict):
                 return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
-            if "cannon_transfer_to" in raw_changes:
-                target_id = raw_changes["cannon_transfer_to"]
-                target = (db.conn.execute("SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (target_id,)).fetchone()
-                          if isinstance(target_id, str) and target_id else None)
-                cannon_keys = [key for key in raw_changes
-                               if ARMY_FIELD_ALIASES.get(key, key) == "cannon_equipment"]
-                if (target is None or target_id == army_id or len(cannon_keys) != 1
-                        or _int_delta_error("army", army_id, cannon_keys[0], raw_changes[cannon_keys[0]])
-                        or _strict_int(raw_changes[cannon_keys[0]]) >= 0):
-                    return f"战略/外敌事件「{event_title or event_id}」随军炮转移目标或负数拟转量非法：{army_id}"
+            # #1835 S2：炮转移/字段/整数准入复用 apply_army_delta_with_cannon_transfer。
             snapshots = []
             seen_fields = set()
+            army_row = db.conn.execute(
+                "SELECT 1 FROM armies WHERE id = ? LIMIT 1", (army_id,),
+            ).fetchone()
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
                 if field in ("reason", "origin_ref"):
                     continue
                 if field == "cannon_transfer_to":
                     transfer_target = str(value)
-                    snapshots.append(
-                        (
-                            raw_field,
-                            transfer_target,
-                            "cannon_equipment",
-                            _army_world_value(transfer_target, "cannon_equipment"),
-                            value,
+                    target_row = db.conn.execute(
+                        "SELECT 1 FROM armies WHERE id = ? LIMIT 1", (transfer_target,),
+                    ).fetchone()
+                    if target_row is not None:
+                        snapshots.append(
+                            (
+                                raw_field,
+                                transfer_target,
+                                "cannon_equipment",
+                                _army_world_value(transfer_target, "cannon_equipment"),
+                                value,
+                            )
                         )
-                    )
                     continue
-                if field not in army_valid_fields:
-                    return f"战略/外敌事件「{event_title or event_id}」战果引用非法军队字段：{raw_field}"
-                if field in army_numeric_fields:
-                    err = _int_delta_error("army", army_id, raw_field, value)
-                    if err:
-                        return err
-                # 文本不计 noop（旧 _army_noop_error 对 ARMY_TEXT_FIELDS 直接放行）。
+                if army_row is None:
+                    continue
                 if field in ARMY_TEXT_FIELDS or field in seen_fields:
+                    continue
+                if field not in army_numeric_fields:
                     continue
                 seen_fields.add(field)
                 snapshots.append(
@@ -974,10 +935,9 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
     cleaned = dict(extracted)
     rejections: list[tuple[str, dict, str]] = []
     for key, value in list(extracted.items()):
-        if key == "_module_rejections":
-            continue
         if key not in DECLARATION_EFFECT_FIELDS:
             # ADR 0015 r4：未知顶层 key＝可拆 section，拒该段留痕、其余段照落，不整份退。
+            # #1835 S3：退役 `_module_rejections` 不再特免，与普通未知字段同形拒收。
             cleaned.pop(key, None)
             rejections.append(
                 (key, {"raw_value": value},

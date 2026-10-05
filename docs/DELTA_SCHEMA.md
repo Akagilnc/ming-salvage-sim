@@ -211,7 +211,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 - 剿股 / 被剿 / 孤儿股平定：写目标股 `power_updates.<power_id>.military_strength` 下降，这是独立 power 级军事镇压。
 - 流寇实力**正增**禁止走本段——须 `bandit_absorptions` 吃池顶（#652）；自由正实力整项拒收。
 - 招安 / 就抚某流寇头目归明：削股不写顶层 `power_updates`，而写在同一条 `人物变更.易主.反噬` 里；同一股同一信封两边都写会拒收顶层 `power_updates` 防双减。
-- 若作为战略/外敌战事同信封主账战果，`reason` / `原因` 必须带事件名或战役名；缺锚点不能单独触发战略事件。
+- 若作为战略/外敌战事同信封主账战果，须在同一 effects 项顶层写显式 `event_id`（与 `new_issues`/`事件结局` 同属）；不得靠 `reason` 战役名散文反推归属。
 
 ### `world_advance` — 四方动向
 - key：势力名（`后金` `蒙古` `朝鲜` `流寇` 等）
@@ -239,15 +239,16 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 
 `origin_kind="event_pool"` 只收当前候选池中的未终态事件。若事件已因超过显式最晚时点进入 `expired` 终态，立项会明确拒收为“事件已过期终态”，不可用后续 delta 让它晚弹或重入。
 
-**战略/外敌战事 node/ending**（如 `jisi_lubian` / `dalingghe` / `lindan_xiqian` / `wuyin_lubian` / `songshan_battle` / `luoyang_fallen` / `kaifeng_siege` / `beijing_fallen`）不能只写 `new_issues`。同一信封必须同时由军务/人事等字段写世界状态主账：`region_delta` / `army_delta` / `power_updates` / `new_armies` / `人物变更`，并在 `reason` / `原因` 带事件名或战役名；程序会在主账落地后记 `event_triggers`，不转长期 issue。只写 event_pool id 会拒收为“缺世界状态主账结果”。
+**战略/外敌战事 node/ending**（如 `jisi_lubian` / `dalingghe` / `lindan_xiqian` / `wuyin_lubian` / `songshan_battle` / `luoyang_fallen` / `kaifeng_siege` / `beijing_fallen`）不能只写 `new_issues`。同一 effects 项须在顶层写显式 `event_id`，并同时由军务/人事等字段写世界状态主账：`region_delta` / `army_delta` / `power_updates` / `new_armies` / `人物变更`；程序会在主账落地后记 `event_triggers`，不转长期 issue。只写 event_pool id、或缺顶层 `event_id` 会拒收为“缺世界状态主账结果”或整封不触发。
 
 若该战略事件定义了闭合结局标签，还必须同信封写 `事件结局`。当前 `jisi_lubian` 只接受三档：`挡于边墙` / `入塞被遏` / `长驱直入`。例如：
 
 ```json
 {
+  "event_id": "jisi_lubian",
   "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
   "事件结局": {"jisi_lubian": "入塞被遏"},
-  "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿", "origin_ref": "盘面自发"}}
+  "region_delta": {"beizhili": {"military_pressure": 35, "reason": "敌逼京畿", "origin_ref": "盘面自发"}}
 }
 ```
 

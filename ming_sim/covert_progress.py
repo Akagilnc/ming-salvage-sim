@@ -1804,16 +1804,12 @@ def apply_monthly_covert_actual_progress(
             result = _apply_investigation_selection(
                 db, state, order=order, dossier=dossier, sel=sel,
                 target=inv_target, investigator=minister, turn=turn,
+                source=source,
             )
-            # #1896：查案无效声明以 applied 行上的 rejected/invalid 标记呈现；
-            # 月链同时扫 applied 与 RejectedItem 列表（见 month_chain Phase-3）。
-            if isinstance(result, dict) and result.get("rejected"):
-                rejections.append(RejectedItem(
-                    item=result.get("item") or sel or {"order_id": oid},
-                    reason=str(result.get("reason") or f"密令 {oid} 查案声明无效"),
-                    category=str(result.get("category") or "invalid_enum"),
-                    source=source,
-                ))
+            # #1835 S1：查案无效只走 canonical RejectedItem，不再回声到 applied dict。
+            if isinstance(result, RejectedItem):
+                rejections.append(result)
+                continue
             applied.append(result)
             continue
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
@@ -1884,12 +1880,13 @@ def _apply_investigation_selection(
     target: str,
     investigator: str,
     turn: int,
-) -> Dict[str, object]:
+    source: Provenance = Provenance.system_simulation,
+) -> Dict[str, object] | RejectedItem:
     """查案密令的逐证落账（#1896）。幂等键＝(dossier, turn)，重开只续未成核算。
 
     无效声明（缺 effort／effort 非数字或非有限／只给了旧执行态）不是合法的
-    零投入：拒收、不写实况行，由月链把本月 4a 产物标成 invalid 重来一次
-    （#1846 失效与重起契约）。
+    零投入：只产 canonical RejectedItem、不写实况行，由月链据 RejectedItem.category
+    把本月 4a 产物标成 invalid 重来一次（#1846 失效与重起契约；#1835 S1 删 dict 回声）。
 
     人物知情与反应按真实因果承接：知情来源解自案卷已落的传话记录（跨月持续），
     毁证与压案共用该判定，未知情不替其落账（见 ``_resolve_investigation_knowledge``）。
@@ -1907,16 +1904,12 @@ def _apply_investigation_selection(
     declaration = _investigation_declaration(sel)
     invalid = str(declaration.get("invalid") or "").strip()
     if invalid:
-        return {
-            "order_id": oid,
-            "dossier_id": did,
-            "rejected": True,
-            "invalid": True,
-            "category": "invalid_enum",
-            "report_section": "covert_exec_selections",
-            "reason": f"密令 {oid} 查案声明无效：{invalid}",
-            "item": sel or {"order_id": oid},
-        }
+        return RejectedItem(
+            item=dict(sel) if isinstance(sel, Mapping) else {"order_id": oid},
+            reason=f"密令 {oid} 查案声明无效：{invalid}",
+            category="invalid_enum",
+            source=source,
+        )
     if existing is not None:
         return {
             "order_id": oid,

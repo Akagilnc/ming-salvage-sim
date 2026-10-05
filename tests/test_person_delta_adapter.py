@@ -85,16 +85,6 @@ def test_retired_legacy_person_keys_are_rejected_per_section_not_silently_droppe
     assert legacy_rejections[0].category == "invalid_shape"
 
 
-def test_retired_legacy_person_keys_normalize_to_nothing_in_the_person_stream():
-    """死别名已删：人物流规范化只认 人物变更 一条流。"""
-    assert normalize_person_changes({
-        "appointments": [{"name": "孙传庭", "office": "陕西总督"}],
-        "office_changes": [{"name": "毕自严", "new_office": "户部尚书"}],
-        "character_status_changes": [{"name": "洪承畴", "status": "imprisoned"}],
-        "character_power_changes": [{"name": "孔有德", "new_power": "houjin"}],
-    }) == []
-
-
 def test_normalize_person_changes_ignores_non_item_shapes():
     assert normalize_person_changes({"人物变更": ["bad", {"name": "毕自严"}]}) == [
         {"name": "毕自严"}

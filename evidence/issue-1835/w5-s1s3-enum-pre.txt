@@ -1,0 +1,75 @@
+ROOT=/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5
+py_files=424 md_files=341
+### S1 count=13
+{"kind": "dual_shape_in_function", "file": "ming_sim/covert_progress.py", "func": "apply_monthly_covert_actual_progress", "lineno": 1756, "end": 1874}
+{"kind": "dict_rejected_true", "file": "ming_sim/covert_progress.py", "lineno": 1913, "line": "\"rejected\": True,"}
+{"kind": "dict_invalid_true", "file": "ming_sim/covert_progress.py", "lineno": 1914, "line": "\"invalid\": True,"}
+{"kind": "dict_rejected_true", "file": "ming_sim/due_review.py", "lineno": 438, "line": "return {\"rejected\": True, \"reason\": \"案卷不存在\"}"}
+{"kind": "dict_rejected_true", "file": "ming_sim/due_review.py", "lineno": 453, "line": "\"rejected\": True,"}
+{"kind": "dict_rejected_true", "file": "ming_sim/due_review.py", "lineno": 522, "line": "\"rejected\": True,"}
+{"kind": "dict_rejected_true", "file": "tests/test_covert_levy_651.py", "lineno": 116, "line": "\"dossier_executions\": [{\"rejected\": True, \"item\": {\"dossier_id\": did, \"outcome\": \"failed\"}}],"}
+{"kind": "dict_rejected_true", "file": "tests/test_covert_levy_651.py", "lineno": 117, "line": "\"population_transfers\": [{\"rejected\": True, \"origin_ref\": f\"dossier:{did}\", \"reason\": \"摊派\"}],"}
+{"kind": "dict_rejected_true", "file": "tests/test_person_delta_adapter.py", "lineno": 1262, "line": "\"rejected\": True,"}
+{"kind": "dict_rejected_true", "file": "tests/test_person_delta_adapter.py", "lineno": 1274, "line": "\"rejected\": True,"}
+{"kind": "dict_rejected_true", "file": "tests/test_person_delta_adapter.py", "lineno": 1286, "line": "\"rejected\": True,"}
+{"kind": "dict_rejected_true", "file": "tests/test_region_cannon_delta.py", "lineno": 87, "line": "改为逐项拒收留痕（region_changes 含 {\"rejected\": True, \"category\": \"invalid_enum\"}），"}
+{"kind": "dict_rejected_true", "file": "ming_sim/entities/power/delta_section.py", "lineno": 63, "line": "positive_ms_rejected = True"}
+
+### S2 count=15
+{"kind": "preflight_admission_helper", "file": "ming_sim/settlement/preflight.py", "func": "_load_pending_gate_valid_regions", "lineno": 68, "end": 72}
+{"kind": "preflight_parallel_admission_then_write", "file": "ming_sim/settlement/preflight.py", "func": "_strategic_event_result_preflight_error", "lineno": 361, "end": 809}
+{"kind": "preflight_admission_helper", "file": "ming_sim/settlement/preflight.py", "func": "_int_delta_error", "lineno": 390, "end": 397}
+{"kind": "preflight_admission_helper", "file": "ming_sim/settlement/preflight.py", "func": "_region_world_value", "lineno": 439, "end": 443}
+{"kind": "preflight_admission_helper", "file": "ming_sim/settlement/preflight.py", "func": "_army_world_value", "lineno": 445, "end": 447}
+{"kind": "admission_keyword", "file": "ming_sim/settlement/preflight.py", "lineno": 413, "kw": "controlled_by", "line": "if field != \"controlled_by\" or value is None:"}
+{"kind": "admission_keyword", "file": "ming_sim/settlement/preflight.py", "lineno": 499, "kw": "controlled_by", "line": "if field == \"controlled_by\":"}
+{"kind": "admission_keyword", "file": "ming_sim/settlement/preflight.py", "lineno": 511, "kw": "controlled_by", "line": "f\"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by \""}
+{"kind": "admission_keyword", "file": "ming_sim/settlement/preflight.py", "lineno": 543, "kw": "cannon_transfer_to", "line": "if \"cannon_transfer_to\" in raw_changes:"}
+{"kind": "admission_keyword", "file": "ming_sim/settlement/preflight.py", "lineno": 544, "kw": "cannon_transfer_to", "line": "target_id = raw_changes[\"cannon_transfer_to\"]"}
+{"kind": "admission_keyword", "file": "ming_sim/settlement/preflight.py", "lineno": 559, "kw": "cannon_transfer_to", "line": "if field == \"cannon_transfer_to\":"}
+{"kind": "admission_keyword", "file": "ming_sim/settlement/preflight.py", "lineno": 494, "kw": "非法地区字段", "line": "return f\"战略/外敌事件「{event_title or event_id}」战果引用非法地区字段：{raw_field}\""}
+{"kind": "admission_keyword", "file": "ming_sim/settlement/preflight.py", "lineno": 572, "kw": "非法军队字段", "line": "return f\"战略/外敌事件「{event_title or event_id}」战果引用非法军队字段：{raw_field}\""}
+{"kind": "admission_keyword", "file": "ming_sim/settlement/preflight.py", "lineno": 392, "kw": "值非整数", "line": "return f\"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}\""}
+{"kind": "admission_keyword", "file": "ming_sim/settlement/preflight.py", "lineno": 396, "kw": "值非整数", "line": "return f\"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}\""}
+
+### S3 count=40
+{"kind": "module_rejections_ref", "file": "ming_sim/settlement/preflight.py", "lineno": 977, "line": "if key == \"_module_rejections\":"}
+{"kind": "doc_campaign_reason", "file": "docs/DELTA_SCHEMA.md", "lineno": 214, "line": "- 若作为战略/外敌战事同信封主账战果，`reason` / `原因` 必须带事件名或战役名；缺锚点不能单独触发战略事件。"}
+{"kind": "doc_campaign_reason", "file": "docs/DELTA_SCHEMA.md", "lineno": 242, "line": "**战略/外敌战事 node/ending**（如 `jisi_lubian` / `dalingghe` / `lindan_xiqian` / `wuyin_lubian` / `songshan_battle` / `luoyang_fallen` / `kaifeng_siege` / `beijing_fal"}
+{"kind": "doc_campaign_reason", "file": "archive/scans-2026-08-09/constitution-texts.md", "lineno": 34, "line": "……必须写 `人物变更`，并在 `reason` / `原因` 里带上事件名或战役名，供同一信封的世界状态主账闸识别。"}
+{"kind": "doc_event_id_note", "file": "archive/scans-2026-08-09/constitution-texts.md", "lineno": 38, "line": "**说明**：归属本该是 typed `event_id` 键；prompt 却教模型把锚点写进白话 `reason`，闸门靠措辞包含判定。"}
+{"kind": "helper_only_test_candidate", "file": "tests/test_covert_levy_651.py", "func": "test_prohibition_consumes_immediately_when_arrears_are_already_zero", "lineno": 283, "end": 291, "size": 510}
+{"kind": "helper_only_test_candidate", "file": "tests/test_covert_levy_651.py", "func": "test_prohibition_reminder_is_consumed_after_later_payoff", "lineno": 294, "end": 304, "size": 690}
+{"kind": "helper_only_test_candidate", "file": "tests/test_qa_a3_seed_data.py", "func": "test_seed_has_exactly_one_active_libu_shangshu", "lineno": 77, "end": 90, "size": 504}
+{"kind": "helper_only_test_candidate", "file": "tests/test_production_person_key_contract_558.py", "func": "test_initiative_enrichment_guidance_only_names_canonical_person_writer", "lineno": 12, "end": 27, "size": 563}
+{"kind": "helper_only_test_candidate", "file": "tests/test_staged_assignment_identity_1890.py", "func": "test_assignment_structured_stages_land_through_full_chain", "lineno": 664, "end": 681, "size": 747}
+{"kind": "helper_only_test_candidate", "file": "tests/test_loyalty_soft_adjust_clamp_320.py", "func": "test_canonical_and_alias_same_event_do_not_double_count_positive", "lineno": 172, "end": 185, "size": 564}
+{"kind": "helper_only_test_candidate", "file": "tests/test_loyalty_soft_adjust_clamp_320.py", "func": "test_canonical_and_alias_same_event_do_not_double_count_negative", "lineno": 188, "end": 201, "size": 568}
+{"kind": "helper_only_test_candidate", "file": "tests/test_person_delta_adapter.py", "func": "test_normalize_person_changes_keeps_new_key_items", "lineno": 37, "end": 58, "size": 557}
+{"kind": "helper_only_test_candidate", "file": "tests/test_person_delta_adapter.py", "func": "test_retired_legacy_person_keys_normalize_to_nothing_in_the_person_stream", "lineno": 88, "end": 95, "size": 450}
+{"kind": "helper_only_test_candidate", "file": "tests/test_person_delta_adapter.py", "func": "test_normalize_person_changes_ignores_non_item_shapes", "lineno": 98, "end": 102, "size": 235}
+{"kind": "helper_only_test_candidate", "file": "tests/test_person_delta_adapter.py", "func": "test_person_log_normalized_not_truncated", "lineno": 1498, "end": 1512, "size": 793}
+{"kind": "helper_only_test_candidate", "file": "tests/test_decree_dossiers_571.py", "func": "test_military_directive_projects_normalized_due_turn_to_dossier", "lineno": 1623, "end": 1640, "size": 678}
+{"kind": "helper_only_test_candidate", "file": "tests/test_llm_key_helpers.py", "func": "test_real_api_key_or_empty_normalizes_falsy_and_placeholder_to_empty", "lineno": 36, "end": 40, "size": 273}
+{"kind": "helper_only_test_candidate", "file": "tests/test_character_knowledge_489.py", "func": "test_secret_alias_exclusion_is_canonicalized_before_projection", "lineno": 32, "end": 36, "size": 355}
+{"kind": "helper_only_test_candidate", "file": "tests/test_dossier_links_559.py", "func": "test_reference_candidates_obey_canonical_disclosure_blacklist", "lineno": 79, "end": 95, "size": 771}
+{"kind": "helper_only_test_candidate", "file": "tests/test_rescript_choices_563.py", "func": "test_657_canonical_choice_stable_key_order", "lineno": 198, "end": 218, "size": 646}
+{"kind": "helper_only_test_candidate", "file": "tests/test_issue_entities.py", "func": "test_issue_effect_with_only_retired_person_key_lands_nothing", "lineno": 252, "end": 271, "size": 694}
+{"kind": "helper_only_test_candidate", "file": "tests/test_executor_routing_721.py", "func": "test_create_dossier_nails_roster_lead_in_canonical_insert_and_restore", "lineno": 61, "end": 79, "size": 743}
+{"kind": "helper_only_test_candidate", "file": "tests/test_executor_routing_721.py", "func": "test_unknown_appointee_normalizes_unrecognized_faction", "lineno": 194, "end": 206, "size": 561}
+{"kind": "helper_only_test_candidate", "file": "tests/test_event_trigger_gate.py", "func": "test_mao_event_effect_uses_unified_person_change_key", "lineno": 830, "end": 841, "size": 559}
+{"kind": "helper_only_test_candidate", "file": "tests/test_rescript_draft_656.py", "func": "test_1620_layer_a_reward_with_army_target_stays_reward", "lineno": 1195, "end": 1213, "size": 623}
+{"kind": "helper_only_test_candidate", "file": "tests/test_rescript_draft_656.py", "func": "test_1620_internal_canonical_xiexang_renormalizes_without_kind", "lineno": 1244, "end": 1253, "size": 445}
+{"kind": "helper_only_test_candidate", "file": "tests/test_person_transit_write_667.py", "func": "test_invalid_tone_is_rejected_before_same_destination_idempotence", "lineno": 236, "end": 248, "size": 628}
+{"kind": "helper_only_test_candidate", "file": "tests/test_office_rank_562.py", "func": "test_leverage_multiplier_uses_canonical_office_rank_table_only", "lineno": 209, "end": 222, "size": 758}
+{"kind": "helper_only_test_candidate", "file": "tests/test_office_rank_562.py", "func": "test_one_tokenizer_preserves_real_concurrent_offices_and_drops_only_pollution", "lineno": 245, "end": 250, "size": 322}
+{"kind": "helper_only_test_candidate", "file": "tests/test_execution_pressure_654.py", "func": "test_normalize_locality_scope", "lineno": 34, "end": 35, "size": 102}
+{"kind": "helper_only_test_candidate", "file": "tests/test_execution_pressure_654.py", "func": "test_cli_target_kinds_accepts_canonical_eight", "lineno": 753, "end": 765, "size": 570}
+{"kind": "helper_only_test_candidate", "file": "tests/test_cli_play_turn.py", "func": "test_cli_write_gate_canonical_session_attr", "lineno": 645, "end": 654, "size": 433}
+{"kind": "helper_only_test_candidate", "file": "tests/test_manual_directive_institution_normalize_1279.py", "func": "test_capture_manual_directive_keeps_surname_title_aliases", "lineno": 157, "end": 166, "size": 340}
+{"kind": "helper_only_test_candidate", "file": "tests/test_faction_brew_637.py", "func": "test_canonical_projection_intersects_existing_factions_only", "lineno": 88, "end": 101, "size": 573}
+{"kind": "helper_only_test_candidate", "file": "tests/test_rejection_wiring.py", "func": "test_issue_section_rejections_are_collected", "lineno": 108, "end": 123, "size": 678}
+{"kind": "helper_only_test_candidate", "file": "tests/test_rejection_wiring.py", "func": "test_person_change_rejection_item_json_keeps_original_delta_item", "lineno": 244, "end": 269, "size": 790}
+{"kind": "helper_only_test_candidate", "file": "tests/test_pihong_dossier_1490.py", "func": "test_657_default_hold_preserves_red_pen_note", "lineno": 1996, "end": 2005, "size": 504}
+{"kind": "helper_only_test_candidate", "file": "tests/test_cli_backend.py", "func": "test_typed_secret_exclusions_canonicalize_roster_alias_and_office", "lineno": 47, "end": 60, "size": 523}
+{"kind": "helper_only_test_candidate", "file": "tests/test_cli_backend.py", "func": "test_enrich_army_parsed_and_normalized", "lineno": 101, "end": 114, "size": 681}

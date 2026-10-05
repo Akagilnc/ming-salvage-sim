@@ -1962,13 +1962,12 @@ def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
     _next_month(db, state)
 
     for bad in ({}, {"effort": "尽力"}, {"fidelity": "忠实", "fact_key": key}):
-        out, _rejections = apply_monthly_covert_actual_progress(
+        out, rejections = apply_monthly_covert_actual_progress(
             db, state, selections=[{"order_id": oid, **bad}], commit=True,
         )
-        row = next(r for r in out if r["order_id"] == oid)
-        assert row["rejected"] is True
-        assert row["invalid"] is True
-        assert row["category"] == "invalid_enum"
+        assert not any(isinstance(r, dict) and r.get("order_id") == oid for r in out)
+        item = next(r for r in rejections if getattr(r, "category", None) == "invalid_enum")
+        assert "查案声明无效" in str(item.reason)
         assert db.list_dossier_actual_progress(did) == []
         assert _lanes(db, oid)[key]["effort"] == 0.0
 
