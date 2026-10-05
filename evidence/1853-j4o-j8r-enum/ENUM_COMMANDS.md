@@ -33,7 +33,7 @@ rg -n --glob '*.py' \
 
 ## 召对失败重试真实调用链（不得凭文件名豁免）
 
-静态入口：`web_app` / `cli/terminal` / `audience_*` / `decree_forecast` / `declaration_dispatch` / `session_write_queue`  
+静态入口：`web_app` / `cli/terminal` / `audience_*` / `decree_forecast` / `declaration_dispatch` / `session_write_queue`
 可达且供料：`materials` ← `decree_forecast.prepare_world_materials` / `session.prepare_scene_materials`；`knowledge` ← materials；另有 `action_materialize` / `urge_lever` / `audience_night` / `session` 任命辅助。
 
 过月 `month_chain` 虽在 import 图可达，职责为结算供料/快照 → **不属类**（见 fixer 回执表）。
