@@ -26,13 +26,7 @@ def _pay_source():
     }
 
 
-# ── schema：列已物理删除 ──────────────────────────────────────────────
-
-def test_armies_table_has_no_maintenance_column(read_game):
-    db, _state, _ = read_game
-    cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(armies)").fetchall()}
-    assert "maintenance_per_turn" not in cols, "维护费列应已物理删除"
-
+# ── schema：列已物理删除（真实迁移／重开；无孤立 PRAGMA 缺席自证）──
 
 def test_drop_maintenance_column_removes_and_idempotent(game):
     # 老档迁移路径：模拟列仍在的旧档 → _drop_maintenance_column 物理移除；再调一次幂等不崩。

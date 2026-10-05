@@ -40,28 +40,12 @@
     "lines": "51-73"
   },
   {
-    "file": "tests/test_army_firearms.py",
-    "member": "_cols",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "24-25"
-  },
-  {
-    "file": "tests/test_army_maintenance_retire_173.py",
-    "member": "test_armies_table_has_no_maintenance_column",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "31-34"
-  },
-  {
     "file": "tests/test_army_maintenance_retire_173.py",
     "member": "test_drop_maintenance_column_removes_and_idempotent",
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "37-47"
+    "lines": "31-41"
   },
   {
     "file": "tests/test_army_maintenance_retire_173.py",
@@ -69,7 +53,7 @@
     "shapes": [
       "pragma_table_info"
     ],
-    "lines": "50-75"
+    "lines": "44-69"
   },
   {
     "file": "tests/test_army_salary_44.py",
@@ -285,7 +269,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "80-109"
+    "lines": "51-80"
   },
   {
     "file": "tests/test_decree_dossiers_571.py",
@@ -313,19 +297,11 @@
   },
   {
     "file": "tests/test_dossier_reported_progress_619.py",
-    "member": "test_execution_surface_dossier_can_record_and_list_full_history",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "78-120"
-  },
-  {
-    "file": "tests/test_dossier_reported_progress_619.py",
     "member": "test_secret_monthly_path_unchanged_and_stays_on_private_rail",
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "123-150"
+    "lines": "114-141"
   },
   {
     "file": "tests/test_dossier_reported_progress_619.py",
@@ -333,7 +309,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "153-172"
+    "lines": "144-163"
   },
   {
     "file": "tests/test_dossier_reported_progress_619.py",
@@ -341,7 +317,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "309-336"
+    "lines": "300-327"
   },
   {
     "file": "tests/test_draft_admission_resubmit_1769.py",
@@ -433,19 +409,11 @@
   },
   {
     "file": "tests/test_execution_pressure_654.py",
-    "member": "test_region_id_column_and_composite_indexes",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "217-236"
-  },
-  {
-    "file": "tests/test_execution_pressure_654.py",
     "member": "test_path3_locality_fail_keeps_draft_no_text_in_rejection",
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "415-463"
+    "lines": "393-441"
   },
   {
     "file": "tests/test_execution_pressure_654.py",
@@ -453,7 +421,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "619-727"
+    "lines": "597-705"
   },
   {
     "file": "tests/test_executor_routing_721.py",
@@ -462,14 +430,6 @@
       "sqlite_master_check"
     ],
     "lines": "378-410"
-  },
-  {
-    "file": "tests/test_faction_denunciation_627.py",
-    "member": "_table_cols",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "189-193"
   },
   {
     "file": "tests/test_faction_leverage_9.py",
@@ -510,14 +470,6 @@
       "select_order_limit"
     ],
     "lines": "2015-2103"
-  },
-  {
-    "file": "tests/test_fiscal_substrate_bridge.py",
-    "member": "test_armies_provision_empty_mutiny_status_flag",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "2107-2121"
   },
   {
     "file": "tests/test_gazette_author_1862.py",
@@ -697,7 +649,7 @@
   },
   {
     "file": "tests/test_person_archive_schema.py",
-    "member": "_columns",
+    "member": "_column_info",
     "shapes": [
       "pragma_table_info"
     ],
@@ -705,19 +657,11 @@
   },
   {
     "file": "tests/test_person_archive_schema.py",
-    "member": "_column_info",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "16-17"
-  },
-  {
-    "file": "tests/test_person_archive_schema.py",
     "member": "test_person_logs_accepts_audit_rows_for_existing_characters",
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "80-104"
+    "lines": "16-40"
   },
   {
     "file": "tests/test_person_delta_adapter.py",
@@ -785,20 +729,11 @@
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
-    "member": "test_657_five_actions_domain_writes",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "673-737"
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
     "member": "test_657_abi_mapper_matrix_a1_a12",
     "shapes": [
-      "pragma_table_info",
       "select_order_limit"
     ],
-    "lines": "908-1147"
+    "lines": "906-1143"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -806,7 +741,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "1560-1577"
+    "lines": "1556-1573"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -814,7 +749,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "1695-1705"
+    "lines": "1691-1701"
   },
   {
     "file": "tests/test_pihong_dossier_1490.py",
@@ -822,7 +757,7 @@
     "shapes": [
       "select_order_limit"
     ],
-    "lines": "1707-1737"
+    "lines": "1703-1733"
   },
   {
     "file": "tests/test_power_section_rejections.py",
@@ -855,14 +790,6 @@
       "select_order_limit"
     ],
     "lines": "87-100"
-  },
-  {
-    "file": "tests/test_region_citydefense.py",
-    "member": "_region_cols",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "11-12"
   },
   {
     "file": "tests/test_rejection_wiring.py",
@@ -903,14 +830,6 @@
       "select_order_limit"
     ],
     "lines": "397-428"
-  },
-  {
-    "file": "tests/test_rescript_draft_656.py",
-    "member": "_add_character",
-    "shapes": [
-      "pragma_table_info"
-    ],
-    "lines": "47-61"
   },
   {
     "file": "tests/test_secret_dossier_participants_1252.py",

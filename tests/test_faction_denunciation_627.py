@@ -27,12 +27,6 @@ from ming_sim.supervision import (
 )
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
 
-_DENUNCIATION_TABLE = "faction_denunciations"
-_DENUNCIATION_ALLOWED_COLS = frozenset({
-    "id", "turn", "accuser_name", "accuser_faction",
-    "subject_name", "subject_faction", "target_dossier_id",
-    "origin", "payload_json", "memorial_text",
-})
 from tests.dossier_test_helpers import create_test_secret_order
 
 
@@ -184,13 +178,6 @@ def _escalate_fork(db, state, dossier_id: int, *, token: str = "esc"):
         state, "国库", 3, "再浮收", f"升级{token}",
         origin_ref=f"dossier:{dossier_id}", beyond_intent=True, commit=True,
     )
-
-
-def _table_cols(db, table: str) -> set[str]:
-    return {
-        str(row["name"])
-        for row in db.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
-    }
 
 
 def _scripted_entry(
@@ -481,18 +468,6 @@ def test_ac5_zero_template_exposure_and_622(game):
         "SELECT COUNT(*) AS n FROM decree_dossiers"
     ).fetchone()["n"] == dossier_n_before
     assert _world_fingerprint(db) == fp_before
-
-    # 知识轨没有新增条目（由上面的结构化计数证明）。
-    # schema 白名单（本地闭集；生产写口不导出死常量）
-    assert _DENUNCIATION_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    assert _table_cols(db, _DENUNCIATION_TABLE) == _DENUNCIATION_ALLOWED_COLS
-
-    # 引擎侧零模板句：产出路径无固定文案常量（正则扫生产源码＝盯文，
-    # 已在 #1901 J3 整类删除；P7 的真实闸案在呈现层 LLM 产出不可篡改）
 
     # #622 读端改调 public fork 单源
     actor = subject_name

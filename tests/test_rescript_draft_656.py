@@ -44,27 +44,6 @@ def _retire_existing_actors(db) -> None:
         "AND (office LIKE '%首辅%' OR office LIKE '%掌印%')"
     )
 
-def _add_character(db, name: str, office: str, faction: str, office_type: str = "内阁") -> None:
-    template = db.conn.execute("SELECT * FROM characters LIMIT 1").fetchone()
-    columns = [r[1] for r in db.conn.execute("PRAGMA table_info(characters)").fetchall()]
-    values = [template[c] for c in columns]
-    values[columns.index("name")] = name
-    values[columns.index("office")] = office
-    values[columns.index("office_type")] = office_type
-    values[columns.index("faction")] = faction
-    values[columns.index("status")] = "active"
-    values[columns.index("power_id")] = "ming"
-    db.conn.execute(
-        f"INSERT INTO characters ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
-        values,
-    )
-    db.conn.commit()
-
-# ---------------------------------------------------------------------------
-# F3.1 分拣人唯一规则
-# ---------------------------------------------------------------------------
-
-
 # ---------------------------------------------------------------------------
 # F2.1/F2.2 载体与字段映射
 # ---------------------------------------------------------------------------

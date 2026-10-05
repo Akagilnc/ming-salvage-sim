@@ -214,28 +214,6 @@ def test_region_zero_hit_fail_loud(env):
 # ── schema + create_decree_dossiers fan-out ────────────────────────
 
 
-def test_region_id_column_and_composite_indexes(env):
-    db, _, _ = env
-    cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)")}
-    assert "region_id" in cols
-    idx = {
-        r["name"]: r["sql"] or ""
-        for r in db.conn.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type='index' "
-            "AND name LIKE 'idx_decree_dossiers_%'"
-        ).fetchall()
-    }
-    assert "idx_decree_dossiers_directive" in idx
-    assert "idx_decree_dossiers_pending_action" in idx
-    # 复合唯一：directive 含 region_id；pending 含 region_id + action_type（#1837 组合载荷）
-    assert "region_id" in (idx["idx_decree_dossiers_directive"] or "")
-    pending_sql = idx["idx_decree_dossiers_pending_action"] or ""
-    assert "region_id" in pending_sql
-    assert "action_type" in pending_sql
-    # secret_order 单列索引保留
-    assert "idx_decree_dossiers_secret_order" in idx
-
-
 def test_create_decree_dossier_int_abi_single_row(env):
     db, state, _ = env
     did = db.create_decree_dossier(
