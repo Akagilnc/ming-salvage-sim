@@ -5,12 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-import ming_sim.audience_night as audience_night
-import ming_sim.simulation as simulation
-from ming_sim.db import GameDB
 from ming_sim import issues as issues_mod
 from ming_sim.issues import apply_score_extraction, apply_issue_tracker_output
-from ming_sim.public_sayings import list_public_sayings, record_public_saying
 from tests.test_declaration_dispatch_1835 import _minister
 
 

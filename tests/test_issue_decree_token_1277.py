@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
-import threading
 from types import SimpleNamespace
 
 import pytest

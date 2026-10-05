@@ -7,7 +7,6 @@ S3 嵌套通道「旨外恶果」别名 → ledger=1
 
 from __future__ import annotations
 
-import json
 
 from ming_sim.commitment_backlash import (
     BACKLASH_ORIGIN_KIND,

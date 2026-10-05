@@ -1,13 +1,14 @@
-# #1891/#1899 CHOICE-C1 + CLEANUP-C1 闭包回执
+# #1891/#1899 CHOICE-C1 + CLEANUP 全层复核回执
 
-现场：`/Users/akagilnc/WorkSpace/Ming_LLM-1899-w5`，分支 `ak-roles/1891-class-sweep`。  
-开工 HEAD：`34262577af3f6dbf455e64698ee5335dfcd51ddd`。  
-代码交卷：`d80db9754eca88b28d7daefa0ae50228134f36d5`（本回执日志指针随 docs forward 校正）。  
-法源：末判原卷最后 payload——`1891m-judge-34262577a.json`、`1899c-judge-34262577a.json`（本局只送两根因）。  
-用户类原文方向：退役选项契约残留；退役消费者与测试支持物闭包不全。  
-advisor（只读 PASS，非正式）：`canonical_choice` 键表删 `terminal_reason` 最简；equality 走既有统一真源；保留事件账 `db.mark_event_triggered`／`Event.terminal_reason_labels` 等。
+现场：`/Users/akagilnc/WorkSpace/Ming_LLM-1899-w5`，分支 `ak-roles/1891-class-sweep`。
+本轮开工 HEAD：`653b83d47c0cfb776fecdeb6640300aaf31de008`。
+法源方向：CHOICE 退役选项契约残留；CLEANUP 无消费者冗余绑定（含同形测试导入／嵌套／方法／失效守面）。
+附件成员表：`docs/reports/1891-1899-f401-member-table.tsv`（82 个 F401 候选逐项 + 4 条 context 孤儿包装）。
 
-旧回执 `docs/reports/1891-1899-dry-test-closure.md` 已文首追加**范围错误撤回**；原失败史留存，不在本文增厚。
+## 撤回
+
+1. **入口变异证明**：撤回。现有对照只覆盖 `canonical_choice`／`_choices_equal` helper，不是 `submit_rescript_decision` 真入口。CHOICE 合法动作只有一键删除接收键表项；不为清退新增永久测试。
+2. **ExceptionGroup「旧误报／非本轮」**：撤回。指派 target 为 py313；漏 `--target-version py313` 才会 F821。本轮按 py313 重跑，记录实际结果（见下），不恢复 import 兼容，不把错误归旧。
 
 ## 环境
 
@@ -17,123 +18,198 @@ export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
   MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
   MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
 PY=/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python
-TMPROOT=/tmp/1891-choice-cleanup.x4Z74B
-UV_TOOL_DIR=/tmp/1891-uv-tools UV_CACHE_DIR=/tmp/1891-uv-cache
-# ruff 0.11.2 via: uv tool run --from ruff==0.11.2 ruff
+# ruff 0.11.2: uv tool run --from ruff==0.11.2 ruff
+# 本轮日志根（可复跑命令不依赖此路径种子；仅作现场指针）
+TMPROOT=/tmp/1891-fullclass.1UvSWC
 ```
 
-官方文档先查：Astral Ruff F401/F841／linter ignoring；Python `ast` 库文档。审计为 inline 自包含标准库 AST + 现成 ruff，不新造通用扫描框架；parse 失败直抛。
+审计为 inline 标准库 `ast` + 现成 ruff；不新造通用扫描框架／永久测试；`ast.parse` 失败直抛。
 
-## 枚举命令（修前）
+## 可复跑枚举命令
 
-1. `git ls-files '*.py'` → 351 文件 `ast.parse`（`PARSED_PYTHON 351`）。  
-2. 递归收集 `FunctionDef|AsyncFunctionDef`（function／method／nested）+ `Import`/`ImportFrom` 绑定。  
-3. 消费者语义区分：`Name(Load)`／`Attribute`／`ImportFrom`／字符串注解／fixture 参数／`usefixtures`／pytest&SDK 协议动态注册；**禁止**机械零删。  
-4. `ruff check --select F401,F841 --ignore-noqa`（含伪保留 noqa）。  
-5. 全仓 `terminal_reason` 与 `_require_active_minister` 文本扫描。
+### A. 全仓 F401（target py313，ignore-noqa）
 
-## CHOICE-C1 成员表
+```bash
+uv tool run --from ruff==0.11.2 ruff check \
+  --target-version py313 --select F401 --ignore-noqa \
+  --output-format json $(git ls-files '*.py') > "$TMPROOT/logs/f401.json"
+$PY - <<'PY'
+import json, re, sys
+from pathlib import Path
+root = Path('.').resolve()
+data = json.loads(Path(sys.argv[1]).read_text())
+for x in data:
+    rel = str(Path(x['filename']).resolve().relative_to(root))
+    m = re.search(r'`([^`]+)` imported but unused', x['message'])
+    sym = m.group(1) if m else x['message']
+    loc = x['location']
+    print(f"{rel}:{loc['row']}:{loc['column']}\t{sym}")
+print('COUNT', len(data), file=sys.stderr)
+PY
+"$TMPROOT/logs/f401.json"
+```
 
-| # | qualified 成员 | 处置 | 依据 |
+修前 COUNT **82**；修后 COUNT **18**（全部 KEEP，见成员表）。
+
+### B. ExceptionGroup／web_app F821（必须带 py313）
+
+```bash
+uv tool run --from ruff==0.11.2 ruff check \
+  --target-version py313 --select F401,F821 --ignore-noqa web_app.py
+# 实际：All checks passed!
+
+uv tool run --from ruff==0.11.2 ruff check \
+  --select F401,F821 --ignore-noqa web_app.py
+# 实际：3× F821 ExceptionGroup（默认 target <3.11）；非源码缺陷，勿加兼容 import
+```
+
+### C. 递归 defs／methods／嵌套（标准 ast inline）
+
+```bash
+$PY - <<'PY'
+import ast, subprocess
+from pathlib import Path
+files = [f for f in subprocess.check_output(['git','ls-files','*.py'], text=True).splitlines()
+         if not f.startswith('docs/raw/')]
+for rel in files:
+    ast.parse(Path(rel).read_text(encoding='utf-8'), filename=rel)
+print('PARSED_PYTHON', len(files))
+orphans = []
+for rel in files:
+    tree = ast.parse(Path(rel).read_text(encoding='utf-8'), filename=rel)
+    class V(ast.NodeVisitor):
+        def visit_FunctionDef(self, node):
+            self._scan(node); self.generic_visit(node)
+        def visit_AsyncFunctionDef(self, node):
+            self._scan(node); self.generic_visit(node)
+        def _scan(self, node):
+            for st in node.body:
+                self._stmt(st, node, rel)
+        def _stmt(self, st, enc, rel):
+            if isinstance(st, ast.ClassDef):
+                return  # 嵌套类方法走 Attribute／协议，不按 Name 误删
+            if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                own = set(range(st.lineno, getattr(st, 'end_lineno', st.lineno) + 1))
+                refs = [n for n in ast.walk(enc)
+                        if isinstance(n, ast.Name) and n.id == st.name
+                        and isinstance(n.ctx, ast.Load) and n.lineno not in own]
+                if not refs:
+                    orphans.append(f'{rel}:{st.lineno}:{enc.name}.{st.name}')
+                return
+            for attr in ('body', 'orelse', 'finalbody'):
+                for st2 in getattr(st, attr, []) or []:
+                    self._stmt(st2, enc, rel)
+            for h in getattr(st, 'handlers', []) or []:
+                for st2 in h.body:
+                    self._stmt(st2, enc, rel)
+    V().visit(tree)
+print('NESTED_FN_ORPHANS', len(orphans))
+for x in orphans:
+    print(x)
+PY
+```
+
+实际：`PARSED_PYTHON 345`；`NESTED_FN_ORPHANS 0`。
+样本：`_FakeSession._merge_staged_new_secret_order_content` 已不存在；pihong `_gen` 已不存在。嵌套类内 duck-typing 方法（`run`／`__init__` 等）按协议／Attribute 保留，不误计自身方法体 Name。
+
+### D. 失效守面（生产 + 现役 docs，排除 raw／reports 病史）
+
+```bash
+rg -n '_require_active_minister' ming_sim web_app.py docs \
+  --glob '!docs/raw/**' --glob '!docs/reports/**'
+# 实际：无命中
+```
+
+`terminal_reason` 在事件账（`mark_event_triggered`／`event_triggers`／`Event.terminal_reason_labels`）为现役 KEEP，与已删 choice 接收键无关。
+
+### E. CHOICE helper-only 核（非入口变异）
+
+```bash
+$PY - <<'PY'
+import ast
+from pathlib import Path
+from ming_sim.rescript_actions import canonical_choice, _choices_equal
+src = Path('ming_sim/rescript_actions.py').read_text(encoding='utf-8')
+tree = ast.parse(src)
+keys = set()
+for node in tree.body:
+    if isinstance(node, ast.FunctionDef) and node.name == 'canonical_choice':
+        for n in ast.walk(node):
+            if isinstance(n, ast.Constant) and isinstance(n.value, str):
+                keys.add(n.value)
+print('canonical_choice_literal_has_terminal_reason', 'terminal_reason' in keys)
+a = {'decision_key': 'rescript_draft:1:0', 'action': 'midzhi', 'label': 'x', 'terminal_reason': '已准'}
+b = {'decision_key': 'rescript_draft:1:0', 'action': 'midzhi', 'label': 'x'}
+print('runtime_canonical_has_terminal_reason', 'terminal_reason' in canonical_choice(a))
+print('choices_equal_helper', _choices_equal(a, b))
+PY
+```
+
+实际：字面量与 runtime 均无 `terminal_reason`；helper equality True。未碰 `submit_rescript_decision`，未加永久测试。
+
+## CHOICE-C1
+
+| # | qualified | 处置 | 依据 |
 | --- | --- | --- | --- |
-| 1 | `ming_sim.rescript_actions.canonical_choice` 键表项 `"terminal_reason"`（原 L132） | **DELETE** | 旧选项解释者已删；该键仅残留于接收规范化，并进入 `_choices_equal`；全仓无第二份 choice 键表含此字段 |
+| 1 | `ming_sim.rescript_actions.canonical_choice` 接收键 `"terminal_reason"` | DELETE（已在 `d80db9754`） | 旧选项解释者已删；仅残留接收规范化；一键删键表项 |
 
-**附属**：无专属测试／兼容层／迁移机制；未改 decided 比较入口，equality 继续经 `canonical_choice` → `_stable_json`。
+KEEP：事件账 `terminal_reason` 全链路（见上 D）。
 
-### KEEP（真实事件账，不删）
+## CLEANUP 成员（全类）
 
-| qualified | 保留依据 |
-| --- | --- |
-| `ming_sim.db.GameDB.mark_event_triggered(..., terminal_reason=...)` | 事件终局写口；财政／月链测试真实消费 |
-| `event_triggers.terminal_reason` 列与读写 SQL（`db.py`） | 持久事件账 |
-| `Event.terminal_reason_labels`／`content.py` 加载 | 事件配置契约 |
-| `issues.py`／月链／财政测试对 ledger `terminal_reason` 的断言 | 现役事件终局消费者，非 choice 接收 |
+完整 86 行处置表见附件 TSV（82 F401 + 4 context）。摘要：
 
-### 临时内存变异取证（不入仓）
+| 桶 | 处置 | 说明 |
+| --- | --- | --- |
+| docs/raw×4 | KEEP | 冻结卷宗，不改 |
+| launcher `urllib.request` | KEEP | `urllib.request.urlopen` 实耗 |
+| `action_materialize` 副作用 import×2 | KEEP | 安装 package catalog |
+| `game`／`tracer_client` fixture 导入×11 | KEEP | 非 conftest 模块的 pytest 发现 |
+| 其余 F401 | DELETE | 无 Name／fixture／副作用消费者；含 qa_c3／settle_core／affairs1831 等同形 |
+| `context.match_{army,region}_id_from_text` + `_match_*` | DELETE | 无 ImportFrom／Name 消费者；权威留 `ming_sim.matching` |
+| `error_pack.atomic`／`urge_lever.tlog` | DELETE | 非副作用，纯闲置绑定 |
+| FakeSession 死 method／pihong `_gen` | 已净 | 本轮复扫 NESTED_FN_ORPHANS=0 |
 
-日志：`$TMPROOT/logs/choice-mutation.txt`
+不以「早于本轮／外 diff」免责；本轮对 82 候选逐项 AST 复核后落删。
 
-- 当前：带／不带多余 `terminal_reason` 的 choice → `canonical_choice` 均无该键；`_choices_equal` = True。  
-- 内存装回旧键表后：带字段规范化保留 `terminal_reason`；`_choices_equal` = False。  
-- 恢复后 equality 再 True。  
-未新增永久证明测试。
-
-## CLEANUP-C1 成员表（全类；实例非白名单）
-
-修前候选经 AST+ruff+反向消费者复核后，**DELETE** 如下：
-
-| # | qualified 成员 | 种类 | 处置 | 消费者复核 |
-| --- | --- | --- | --- | --- |
-| 1 | `tests.test_web_chat_serialization_393._FakeSession._merge_staged_new_secret_order_content` | method | DELETE | Name/Attribute 全仓 0；非 fixture／协议 |
-| 2 | `tests.test_pihong_dossier_1490.test_657_web_http_hitl_lock_boundary_same_gate._gen` | nested | DELETE | 案内无接线；setprofile 历史 0 调用 |
-| 3 | `tests.test_levy_petition_month_chain_1891` → `import math` | import binding | DELETE | 文件内无 Name 消费 |
-| 4 | `tests.test_levy_petition_month_chain_1891` → `from ming_sim.agents import strip_json_fence`（noqa「保证同源」） | import binding | DELETE | 伪保留；权威 `ming_sim.assets.strip_json_fence` 仍由 `agents` 等消费 |
-| 5 | `tests.test_secret_order_payoff_1504` → `offline_empty_audience_translate` | import binding | DELETE | 本文件无 Load；权威 `tests.conftest` 定义仍有他案消费 |
-| 6 | 同上 → `stub_audience_translate` | import binding | DELETE | 同上 |
-| 7 | 同上 → `stub_scene_agent` | import binding | DELETE | 同上 |
-| 8 | `ming_sim.context` → `army_aliases` re-export import | import binding | DELETE | `from ming_sim.context import …` 反向 0；权威 `ming_sim.matching.army_aliases` KEEP |
-| 9 | `ming_sim.context` → `compact_name` | import binding | DELETE | 同上；权威 matching KEEP |
-| 10 | `ming_sim.context` → `region_aliases` | import binding | DELETE | 同上；权威 matching KEEP |
-| 11 | `web_app` → `LLMContractError`（noqa「保留：供错误处理」） | import binding | DELETE | web_app 内 Name Load 0；权威 `ming_sim.exceptions.LLMContractError` 仍被 decree／terminal 等消费 |
-| 12 | `ming_sim.models.is_vassal_prince` 文档守面项 `_require_active_minister` | 失效说明 | DELETE 字样 | 生产函数已不存在；清单改列现役 web／session 面 |
-| 13 | `ming_sim.session.GameSession.can_summon` 注释中「web _require_active_minister」 | 失效说明 | DELETE 字样 | 改为 `is_vassal_prince`／roster 同口径 |
-
-### 枚举后 KEEP（不得机械零删）
-
-| qualified / 面 | 保留依据 |
-| --- | --- |
-| `web_app._NonBlockingWebWriteGate.__enter__`／`__exit__` | 上下文管理器协议方法（SDK／语言协议），非死方法 |
-| `ming_sim.matching.{army_aliases,compact_name,region_aliases}` | 权威实现；matching 内部 Name 消费 |
-| `ming_sim.context.match_{region,army}_id_from_text` | 现役包装，仍 import `_match_*` |
-| `tests.conftest.{offline_empty_audience_translate,stub_audience_translate,stub_scene_agent}` | 多文件真实调用 |
-| `ming_sim.assets.strip_json_fence`／`agents` 内调用 | 权威与生产消费 |
-| `ming_sim.exceptions.LLMContractError` | 多模块 raise／catch |
-| `ming_sim.session` re-export `FRONT_HALF_DONE_PHASES`／`TurnPhase` | `cli/terminal.py` 等 `from ming_sim.session import …` |
-| `action_materialize` F401 副作用 import | 安装 package catalog |
-| pytest fixture discovery 的 `game`／`tracer_client` noqa 导入 | 参数／发现协议 |
-| 测试历史注释中提及已删 `_require_active_minister` | 叙述退役史，非主张现役守面 |
-
-**不在本类**：无关 F841 局部变量、既结 DRY 结算合流、财政现役行为。未新增测试、未放松断言。
-
-## 修后复扫
+## 修后复扫要点
 
 ```
-PARSED_PYTHON 351
-CHOICE_canonical_choice_has_terminal_reason False
-DEF_GONE _merge_staged_new_secret_order_content []
-DEF_GONE _gen []
-UNUSED_IMPORTS (levy/payoff/context/web_app) []
-REQUIRE_ACTIVE in prod: (无)
-ruff F401 --ignore-noqa on focus imports: All checks passed!
+F401 py313 ignore-noqa: COUNT 18 (all KEEP)
+PARSED_PYTHON 345
+NESTED_FN_ORPHANS 0
+context.match_army_id_from_text False
+context.match_region_id_from_text False
+FakeSession_has__merge False
+web_app F401,F821 --target-version py313: All checks passed!
+CHOICE terminal_reason in canonical_choice: False
+_require_active_minister (prod+active docs): none
 ```
-
-触及文件 `ruff --select F401,F821`：`web_app.py` 既有 `ExceptionGroup` F821（ruff 默认 target 低于 3.11 时的误报），**非本轮引入**；不冒称 typecheck。运行时 Python 3.13。
 
 ## 聚焦测试
 
-七 BIN + `MING_SIM_USER_DATA_DIR=$TMPROOT/user` + `--basetemp` + `-p no:cacheprovider`：
+七 BIN + `MING_SIM_USER_DATA_DIR` + `--basetemp` + `-p no:cacheprovider`；未跑全量。
 
-| 日志 | 选择器摘要 | 结果 |
+| 日志 | 选择器 | 结果 |
 | --- | --- | --- |
-| `$TMPROOT/logs/focus-core.log` | levy 月链／财政废除／财政 effect／rescript_choices／cli_play_turn／zongfan can_summon | **113 passed in 54.87s** |
-| `$TMPROOT/logs/focus-support.log` | web_chat_serialization／pihong 657 锁窗／payoff1504／web_court_visibility／qa_s2 | **83 passed in 3.48s** |
+| `$TMPROOT/logs/focus-f401-recount.txt` | qa_c3／settle_core／affairs1831／covert_levy／error_pack／state_reload／due_review／section4／faction_leverage／audience_restore／urge_lever／recommendations／executor_routing／cli_model_choices／style_temperament | **250 passed in 7.56s** |
+| `$TMPROOT/logs/focus-adj.txt` | rescript_choices_563／web_chat_serialization／pihong 657 锁窗／impeachment_surge／month_open_snapshot／court_layout | **51 passed in 2.03s** |
 
-未跑全量、未调真实模型。
+## 尾随空格
+
+```bash
+git diff --check 34262577a..HEAD
+```
+
+本轮重写本回执并去掉历史 trailing whitespace；交卷前再跑 `--check` 须无红。
 
 ## 自查二连
 
-1. **同类**：CHOICE 仅一处键表成员；CLEANUP 覆盖方法／嵌套／导入／伪保留 noqa／失效守面；复扫无同类残留。  
-2. **引入 bug**：未改财政／DRY；choice equality 经变异对照确认；权威实现仅删冗余绑定。
-
-## 文档扫描失效说明
-
-| 文档 | 说明 |
-| --- | --- |
-| `docs/reports/1891-1899-dry-test-closure.md` | 文首已撤回「顶层 ORPHAN=0＝全类清净」；失败史保留 |
-| 其他 `1891-*.md` 历史 | 可含已删符号名作病史；不作现役契约 |
+1. **同类**：82 F401 全表处置；嵌套／方法同形复扫 0 孤儿；失效守面生产+现役 docs 无退休接缝；CHOICE 仅 helper 证伪并撤回入口变异话术。
+2. **引入 bug**：未改财政／DRY／事件账 `terminal_reason`；未恢复兼容 import；权威 matching 保留；fixture／副作用 KEEP。
 
 ## 交卷
 
-代码 diff：`rescript_actions`／`context`／`models`／`session`／`web_app` + 四测试文件；净删。  
-代码 commit：`d80db9754eca88b28d7daefa0ae50228134f36d5`（`ak-roles:` forward，未 amend／push）。  
-可核日志根：`/tmp/1891-choice-cleanup.x4Z74B/logs/`（focus-core／focus-support／choice-mutation）。
+代码：`ming_sim/context.py`／`error_pack.py`／`urge_lever.py` + scripts×2 + 测试闲置导入清退（见 git show）。
+文档：本回执 + `1891-1899-f401-member-table.tsv`。
+forward `ak-roles:` 提交（不 amend／stash／reset／push）。

@@ -13,7 +13,6 @@ oracle：army_loyalty_tick_delta 分档 + hub 路真实落库接线。
 
 from __future__ import annotations
 
-import pytest
 
 from ming_sim.army_pay import army_loyalty_tick_delta
 from ming_sim.flows import apply_fixed_period_flows

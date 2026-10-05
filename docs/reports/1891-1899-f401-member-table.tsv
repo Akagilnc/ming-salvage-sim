@@ -1,0 +1,87 @@
+file	row	col	symbol	disposition	basis
+docs/raw/06_harness_scripts/ab_issues.py	2	8	json	KEEP	docs/raw frozen historical archive
+docs/raw/06_harness_scripts/agg.py	1	24	re	KEEP	docs/raw frozen historical archive
+docs/raw/06_harness_scripts/bench2.py	3	45	statistics	KEEP	docs/raw frozen historical archive
+docs/raw/06_harness_scripts/bench3.py	5	37	ming_sim.cli_backend	KEEP	docs/raw frozen historical archive
+launcher.py	19	8	urllib.request	KEEP	Name loads urllib.request.urlopen in-file
+ming_sim/action_clusters.py	79	12	ming_sim.action_materialize	KEEP	side-effect import installs package catalog
+ming_sim/error_pack.py	24	30	ming_sim.applier.atomic	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+ming_sim/urge_lever.py	25	34	ming_sim.token_stats.tlog	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+scripts/break_rank_judge_gate_562.py	20	8	os	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+scripts/midzhi_spiral_judge_gate_570.py	36	8	os	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_adr0015_per_item_rejection.py	1	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import
+tests/test_advances_section_rejections.py	12	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import
+tests/test_affairs_1831.py	8	35	ming_sim.audience_night	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_affairs_1831.py	9	31	ming_sim.simulation	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_affairs_1831.py	10	25	ming_sim.db.GameDB	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_affairs_1831.py	13	37	ming_sim.public_sayings.list_public_sayings	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_affairs_1831.py	13	58	ming_sim.public_sayings.record_public_saying	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_audience_restore_505.py	931	25	ming_sim.audience_night.summon_enter	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_audience_translate_1837_reopen.py	23	30	ming_sim.session.GameSession	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_cli_model_choices.py	12	8	pytest	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_close_issues_section_rejections.py	12	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import
+tests/test_court_layout_1290.py	15	8	threading	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_covert_levy_651.py	5	5	ming_sim.covert_levy.army_pay_fact_for_dossier	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_covert_levy_651.py	10	33	ming_sim.simulation.EMPTY_EXTRACTION	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_covert_levy_651.py	11	19	types.SimpleNamespace	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_due_review_621.py	18	37	ming_sim.audience_night.list_ledger	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_economy_section_rejections.py	18	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import
+tests/test_empire_modifier_income_only_341.py	11	25	ming_sim.db.GameDB	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_error_pack.py	12	8	sqlite3	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_error_pack.py	17	27	ming_sim.decree	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_error_pack.py	18	33	ming_sim.exceptions.SettlementAbort	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_error_pack.py	110	12	asyncio	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_execution_pressure_654.py	602	12	ming_sim.action_materialize	KEEP	side-effect import installs package catalog
+tests/test_executor_routing_721.py	13	29	ming_sim.decree.pre_settle	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_faction_class_section_rejections.py	18	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import
+tests/test_faction_leverage_9.py	783	37	ming_sim.db._LEVERAGE_FACTIONS	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_fiscal_beyond_intent_1260.py	10	8	json	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_impeachment_surge_655.py	6	27	ming_sim.agents	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_impeachment_surge_655.py	9	29	ming_sim.models.LLMConfig	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_issue_decree_token_1277.py	13	8	threading	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_junxin_monthly_tick_314.py	16	8	pytest	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_manual_directive_locality_1685.py	12	67	tests.test_month_loop_tracer_1468.tracer_client	KEEP	pytest fixture discovery via non-conftest import
+tests/test_memorial_inbox_1726.py	10	8	threading	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_month_chain_1843.py	513	36	ming_sim.month_chain	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_month_open_snapshot_1234.py	356	12	threading	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_month_open_snapshot_1234.py	406	12	threading	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_mutiny_progression_316.py	6	8	pytest	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_new_issues_section_rejections.py	15	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import
+tests/test_player_payload_1022.py	9	8	threading	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_population_transfers_649.py	14	8	json	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_population_transfers_649.py	15	8	os	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_qa_c3_secret_order_path_1357_1376.py	10	8	asyncio	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_qa_c3_secret_order_path_1357_1376.py	11	8	threading	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_qa_c3_secret_order_path_1357_1376.py	12	19	types.MethodType	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_qa_c3_secret_order_path_1357_1376.py	14	8	pytest	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_qa_c3_secret_order_path_1357_1376.py	17	29	ming_sim.models.TurnPhase	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_qa_c3_secret_order_path_1357_1376.py	18	30	ming_sim.session.ChatTurnResult	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_qa_c3_secret_order_path_1357_1376.py	18	46	ming_sim.session.GameSession	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_qa_c3_secret_order_path_1357_1376.py	19	40	tests.dossier_test_helpers.TYPED_COVERT_TASK	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_qa_c3_secret_order_path_1357_1376.py	20	28	tests.conftest.offline_empty_audience_translate	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_qa_c3_secret_order_path_1357_1376.py	20	62	tests.conftest.stub_audience_translate	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_qa_c3_secret_order_path_1357_1376.py	20	87	tests.conftest.stub_scene_agent	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_recommendations.py	3	8	json	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_recommendations.py	7	29	ming_sim.models.Character	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_region_cannon_delta.py	10	8	pytest	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_rejection_wiring.py	10	21	pathlib.Path	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_rejection_wiring.py	15	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import
+tests/test_secret_order_section_rejections.py	15	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import
+tests/test_section4_rejections.py	650	31	ming_sim.issues	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_section_fiscal_rejections.py	19	45	tests.section_rejection_helpers.game	KEEP	pytest fixture discovery via non-conftest import
+tests/test_settle_core.py	6	24	contextlib.contextmanager	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_settle_core.py	7	8	pytest	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_settle_core.py	8	27	ming_sim.decree	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_settle_core.py	12	28	tests.conftest.active_ming_character	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_settle_core.py	12	51	tests.conftest.covering_monthly_extract	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_settle_core.py	12	77	tests.conftest.with_monthly_reports	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_settle_core.py	13	40	tests.dossier_test_helpers.create_test_secret_order	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_state_reload.py	34	27	ming_sim.decree	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_structured_decree_contract_1624.py	18	5	tests.test_month_loop_tracer_1468.tracer_client	KEEP	pytest fixture discovery via non-conftest import
+tests/test_style_temperament_641.py	16	30	ming_sim.content.GameContent	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_style_temperament_641.py	20	46	ming_sim.person_archive_contract.format_person_actions	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+tests/test_urge_lever_624.py	27	29	ming_sim.issues.apply_score_extraction	DELETE	no Name/Attr/fixture/__all__/side-effect consumer
+ming_sim/context.py	128		match_army_id_from_text	DELETE	orphan wrapper; matching authority kept; zero ImportFrom/Name consumers
+ming_sim/context.py	124		match_region_id_from_text	DELETE	orphan wrapper; matching authority kept; zero ImportFrom/Name consumers
+ming_sim/context.py	120		match_army_id_from_text as _match_army	DELETE	only fed deleted wrappers
+ming_sim/context.py	121		match_region_id_from_text as _match_region	DELETE	only fed deleted wrappers

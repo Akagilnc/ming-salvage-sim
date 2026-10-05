@@ -9,13 +9,10 @@ from __future__ import annotations
 
 import json
 import threading
-import sqlite3
 from pathlib import Path
 
 import pytest
 
-import ming_sim.decree as decree_mod
-from ming_sim.exceptions import SettlementAbort
 
 def test_attempt_derived_from_existing_dirs(game, monkeypatch, tmp_path):
     """同 turn 写两次包 → attempt=1,2（从错误目录文件数推导，不从 DB）。"""
@@ -107,7 +104,6 @@ def test_mirror_writes_to_rejections_jsonl_path(game, tmp_path, monkeypatch):
 
 def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     """SettlementAbort 在 /api/decree/issue 回结构化非 500，玩家看得到指引（cmr S6 r2 codex）。"""
-    import asyncio
     from fastapi import HTTPException
     import web_app
     from ming_sim.exceptions import SettlementAbort

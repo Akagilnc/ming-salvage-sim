@@ -10,7 +10,6 @@ from ming_sim.action_materialize import (
     stage_assignment_candidate,
     stage_punishment_candidate)
 from ming_sim.db import atomic
-from ming_sim.decree import pre_settle
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 

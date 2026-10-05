@@ -780,7 +780,7 @@ def test_legacy_save_calibrates_offset_on_open(game, tmp_path):
     """#9 R1 finding#1 [P1]：老档经 GameDB() 打开（仅 init_schema，不 seed_static_data）
     时，leverage_offset 列刚 ADD 后必须立即一次性校准（offset = 当前 DB leverage − 权重和），
     使 leverage == clamp(offset+权重和) == 钦定基线，而非 0+权重和（未锚定基线的错值）。"""
-    from ming_sim.db import GameDB, _LEVERAGE_FACTIONS
+    from ming_sim.db import GameDB
 
     _, _, content = game
     path = _make_legacy_save_without_offset_col(content, tmp_path)

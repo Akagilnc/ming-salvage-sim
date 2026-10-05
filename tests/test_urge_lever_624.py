@@ -24,7 +24,6 @@ from ming_sim.due_review import (
     list_due_review_scenes,
     project_due_review_scene,
 )
-from ming_sim.issues import apply_score_extraction
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,

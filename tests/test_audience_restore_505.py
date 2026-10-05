@@ -928,7 +928,6 @@ def test_657_rescript_summon_atomic_on_enter_failure(game, monkeypatch):
     from ming_sim.audience_night import (
         prepare_rescript_summon_scaffold,
         rescript_summon_origin_ref,
-        summon_enter as real_summon_enter,
     )
     import ming_sim.audience_night as an
 
