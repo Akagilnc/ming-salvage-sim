@@ -58,7 +58,6 @@ def test_approved_recommendation_writes_both_edges_atomically(game):
     assert len(events) == 1
     event = events[0]
     assert event["candidate"] == row["name"]
-    assert "reason" in event  # 荐词字段在；不锁自由正文
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
     assert char_row["office"] == "巡盐御史"

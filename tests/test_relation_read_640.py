@@ -125,8 +125,7 @@ def test_dto_shape_summary_plus_recent_context_with_backref(ledger):
         d for d in judge_face
         if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌")
     )
-    # summary／recent_context 键在冻结 DTO 白名单内；不锁酿制散文成员。
-    assert "summary" in wei_yang and "recent_context" in wei_yang
+    # summary／recent_context 键面由冻结 DTO 白名单锁定；不锁酿制散文成员。
     assert set(wei_yang.keys()) == FROZEN_DTO_WHITELIST
 
 
@@ -165,7 +164,7 @@ def test_judge_face_reads_edges_invisible_to_role_view(ledger):
     assert ("钱谦益", "温体仁") not in jia_pairs
     # 有账与无账行为可辨：判官读面含该君臣对；不锁摘要散文。
     wei_yang = next(d for d in judge_face if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌"))
-    assert "summary" in wei_yang
+    assert (wei_yang["source"], wei_yang["target"]) == (EMPEROR_NODE, "杨嗣昌")
 
 
 def test_omniscient_is_superset_same_core(ledger):

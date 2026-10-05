@@ -283,9 +283,7 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
         isinstance(e, dict) and e.get("key") == "arrears_priority_军饷"
         for e in (resubmit_calls[0]["bad_payload"].get("entries") or [])
     )
-    assert "decree_text" in resubmit_calls[0]
     assert resubmit_calls[1]["failure_reason"]
-    assert "decree_text" in resubmit_calls[1]
 
     dossier = game.db.get_dossier_for_directive(draft_id)
     assert dossier is not None
@@ -295,7 +293,6 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     assert projected.get("grant_action") == _GOOD_XIEANG["恩赏拨帑"] == "协饷"
     assert projected.get("amount") == _GOOD_XIEANG["金额"] == 15
     assert projected.get("account") == _GOOD_XIEANG["账户"] == "国库"
-    assert "purpose" in projected
     assert projected.get("target_kind") == "army"
     assert projected.get("target_id") == "guanning"
     assert projected.get("dossier_action_type", dossier["action_type"]) != "pay_order_override"

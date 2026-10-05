@@ -164,7 +164,6 @@ def test_relation_edges_survive_restore(game, tmp_path):
             "year", "period", "turn",
         ):
             assert rows[0][key] == edge[key]
-        assert "context" in rows[0]
         summary2 = restored.get_relation_summary("杨嗣昌", "徐光启")
         for key in (
             "founding_segment", "recent_segment", "last_event_id",

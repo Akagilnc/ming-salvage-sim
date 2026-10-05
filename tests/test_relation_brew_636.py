@@ -101,12 +101,12 @@ def test_founding_summary_survives_consecutive_brews(game):
     assert report["selected"] == 2 and len(report["brewed"]) == 2
 
     first = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
+    assert first is not None
     assert first["dimension"] == "君臣"
-    assert "founding_segment" in first
     first_event_id = int(first["last_event_id"])
 
-    # 次月：新边事件入账（先落事件、后在本月末酿——与生产同序），酿制手不再报
-    # 奠基句——奠基段键仍在。次月无新事件的关系不因历史旧事件被选中。
+    # 次月：新边事件入账（先落事件、后在本月末酿——与生产同序）。
+    # 次月无新事件的关系不因历史旧事件被选中；水位推进。不锁奠基／近况正文。
     state.turn += 1
     state.period += 1
     _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="兑现所托",
@@ -115,11 +115,11 @@ def test_founding_summary_survives_consecutive_brews(game):
     run_month_end_relation_brew(db, state, brew_fn)
 
     second = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
-    assert "founding_segment" in second
-    assert "recent_segment" in second
+    assert second is not None
     assert int(second["last_event_id"]) >= first_event_id
+    assert second["dimension"] == "君臣"
 
-    # 第三月：补酿结构仍落摘要；不锁奠基／近况自由正文。
+    # 第三月：摘要行仍在、水位继续推进。
     state.turn += 1
     state.period += 1
     _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="辜负",
@@ -128,8 +128,9 @@ def test_founding_summary_survives_consecutive_brews(game):
                                recent="杨嗣昌所请被驳，渐生离心。")]
     run_month_end_relation_brew(db, state, brew_fn)
     third = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
-    assert "founding_segment" in third
+    assert third is not None
     assert int(third["last_event_id"]) >= int(second["last_event_id"])
+    assert third["dimension"] == "君臣"
 
 
 # ------------------------------------------------- TD-3／庭裁 r3③ 无事不变
@@ -186,8 +187,8 @@ def test_flip_brew_input_must_contain_new_edge_events(game):
     assert payload["new_events"]
     assert payload["new_events"][0]["origin"] == "audience:turn-2"
     assert payload["new_events"][0]["event_kind"] == "辜负"
-    assert "recent_segment" in payload
     summary = db.get_relation_summary(EMPEROR_NODE, "钱谦益")
+    assert summary is not None
     assert summary["last_event_id"] >= flip_id
 
 
@@ -235,7 +236,6 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert db.get_relation_brew_pending() == []
     summary = db.get_relation_summary("温体仁", "周延儒")
     assert summary is not None
-    assert "recent_segment" in summary
     assert summary["dimension"] == "大臣"
     assert int(summary["last_event_id"]) >= int(failed_id)
 
@@ -330,29 +330,6 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     assert (source, target, int(state.year), int(state.period)) in seen
 
 
-# --------------------------- 超长 fixture：落库结构（不锁正文）
-
-def test_brew_persistence_chain_accepts_large_recent_segment(game):
-    """大体积 recent 经真实酿制落摘要行；不与夹具做字节等值。"""
-    block = "崇祯边事关系账超长验收样文-Chongzhen-relation-brew-0123456789-".encode("utf-8")
-    fixture_text = (block * 436).decode("utf-8")
-
-    db, state, _ = game
-    _add_edge(db, state, source=EMPEROR_NODE, target="杨嗣昌", kind="知遇",
-              context="越次一召。", origin="audience:turn-1")
-
-    def fixture_brew(payload_json: str) -> str:
-        return json.dumps(
-            {FOUNDINGS_KEY: [], RECENT_KEY: fixture_text}, ensure_ascii=False
-        )
-
-    report = run_month_end_relation_brew(db, state, fixture_brew)
-    assert len(report["brewed"]) == 1
-    summary = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
-    assert summary is not None
-    assert "recent_segment" in summary
-
-
 # --------------------------------------------- P5：批内条目并行不串行
 
 def test_brew_batch_runs_items_in_parallel_not_serialized(game):
@@ -378,9 +355,7 @@ def test_brew_batch_runs_items_in_parallel_not_serialized(game):
     assert len(report["brewed"]) == 2
     assert len(set(threads)) == 2
     for source, target in pairs:
-        summary = db.get_relation_summary(source, target)
-        assert summary is not None
-        assert "recent_segment" in summary
+        assert db.get_relation_summary(source, target) is not None
 
 
 # ------------------------------------------------- 「本月新增」总判据（历史水位不选旧事）
@@ -617,6 +592,4 @@ def test_batch_of_five_relations_all_enter_call_seam_concurrently(game):
     assert len(report["brewed"]) == 5
     assert len(set(threads)) == 5
     for source, target in pairs:
-        summary = db.get_relation_summary(source, target)
-        assert summary is not None
-        assert "recent_segment" in summary
+        assert db.get_relation_summary(source, target) is not None

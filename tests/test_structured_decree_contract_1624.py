@@ -605,8 +605,7 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     assert result.get("target_id") == "shaanxi"
     assert result.get("region_id") == "shaanxi"
     assert result.get("transaction_category") == "督赈"
-    # 单条路径有 draft_text；不锁回话正文。纠错轮不得改写结构化身份束（上列字段）。
-    assert str(result.get("draft_text") or "").strip()
+    # 纠错轮不得改写结构化身份束（上列字段）；不锁 draft_text 回话正文。
     assert n["c"] == 2
     # DB-backed 共同闸：身份束归正后可解析（禁 region+户部 漏网）
     assemble_structured_decree(

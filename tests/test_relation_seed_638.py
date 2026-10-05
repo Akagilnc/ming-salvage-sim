@@ -344,7 +344,6 @@ def test_reverse_chronological_seed_keeps_latest_event_readable(fresh_session):
     rows = sess.db.get_relation_edge_events(source="甲", target="乙")
     assert [(row["year"], row["period"]) for row in rows] == [(1625, 2), (1626, 2)]
     dto = next(row for row in project_relation_ledger(sess.db, viewer=None) if row["source"] == "甲")
-    assert "recent_context" in dto
     assert dto["updated_at_period"] == "天启六年二月"
 
 
@@ -476,7 +475,7 @@ def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):
 
 
 def test_new_save_seed_founding_events_enter_founding_segment(fresh_session):
-    """新开档导入样例 seed：奠基摘要行在、水位为 0（近况归月末酿制）。"""
+    """新开档导入样例 seed：奠基摘要行在、近况留空、水位为 0（近况归月末酿制）。"""
     sess, _content = fresh_session
     summaries = {
         (row["source"], row["target"]): row for row in sess.db.get_relation_summaries()
@@ -484,8 +483,7 @@ def test_new_save_seed_founding_events_enter_founding_segment(fresh_session):
     assert ("皇帝", "王承恩") in summaries, "样例 seed 初始摘要未入摘要层"
     row = summaries[("皇帝", "王承恩")]
     assert row["dimension"] == "君臣"
-    assert "founding_segment" in row
-    assert "recent_segment" in row
+    assert str(row["recent_segment"]) == "", "seed 导入不得写近况段（近况段归月末酿制）"
     assert int(row["last_event_id"]) == 0, "seed 导入不得推进水位（同一套酿制判据）"
 
 

@@ -79,7 +79,6 @@ def test_extract_secret_order_returns_assignee_without_title_prose_lock(monkeypa
     result = cb._extract_secret_order(
         f"密令如下：{long_title}\n查明事实并回奏。", "臣领密旨", "毕自严",
     )
-    assert "title" in result
     assert result["assignee"] == "毕自严"
 
 

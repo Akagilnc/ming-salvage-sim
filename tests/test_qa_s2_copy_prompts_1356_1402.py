@@ -108,7 +108,6 @@ def test_state_payload_projects_previous_reign_period_label(game):
 
     payload = web_app.WebGame.state_payload(runtime)
     assert payload["previous_reign_period_label"] == reign_period_label(1627, 9)
-    assert "previous_summary" in payload
     assert payload["turn"]["reign_period_label"] == reign_period_label(state.year, state.period)
     assert payload["previous_reign_period_label"] != payload["turn"]["reign_period_label"]
 

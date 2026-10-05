@@ -149,6 +149,6 @@ def test_state_payload_t0_previous_summary_empty(game):
     from ming_sim.models import reign_period_label
 
     payload = web_app.WebGame.state_payload(runtime)
-    assert "previous_summary" in payload
+    assert payload.get("previous_summary") == ""
     assert payload["turn"]["reign_period_label"] == reign_period_label(1627, 10)
     assert payload.get("previous_reign_period_label") in ("", None)

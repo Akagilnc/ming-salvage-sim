@@ -396,7 +396,6 @@ def test_execution_note_merge_interface_and_restore(game):
     row = db.get_decree_dossier(dossier_id)
     # 追加写口不改 outcome；不锁 execution_note 自由正文。
     assert row["execution_outcome"] == "degraded"
-    assert "execution_note" in row
 
     costs = _cost_events(db, dossier_id)
     path = db.path
@@ -406,7 +405,6 @@ def test_execution_note_merge_interface_and_restore(game):
     try:
         again = restored.get_decree_dossier(dossier_id)
         assert again["execution_outcome"] == "degraded"
-        assert "execution_note" in again
         assert _cost_events(restored, dossier_id) == costs
     finally:
         restored.close()

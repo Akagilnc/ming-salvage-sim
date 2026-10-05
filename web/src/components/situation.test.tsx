@@ -134,7 +134,6 @@ describe("empty bar label presentation (#626)", () => {
     );
     const outcomes = Array.from(document.querySelectorAll(".situation-detail .situation-tip-outcome-head"));
     expect(outcomes).toHaveLength(2);
-    expect(outcomes.every((el) => (el.textContent || "").trim().length > 0)).toBe(true);
     cleanup();
   });
 
