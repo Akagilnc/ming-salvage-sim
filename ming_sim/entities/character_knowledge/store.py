@@ -646,9 +646,6 @@ class CharacterKnowledgeStore:
     def write_rush_secret_order_secret_orders(self, params: Any = ()) -> Any:
         return self._conn.execute('\n                    UPDATE secret_orders\n                    SET due_turn = ?, deadline_span = ?, result = ?, updated_at = CURRENT_TIMESTAMP\n                    WHERE id = ?\n                    ', params)
 
-    def read_get_secret_order(self, params: Any = ()) -> Any:
-        return self.secret_order_row(int(params[0]))
-
     def read_auto_submit_due_secret_orders(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            SELECT id, title, result FROM secret_orders\n            WHERE status = 'active' AND due_turn > 0 AND due_turn <= ?\n            ORDER BY id\n            ", params).fetchall()
 

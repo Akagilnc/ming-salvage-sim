@@ -1001,7 +1001,7 @@ def _ack_due_commitment_issue(
     })
     if commit:
         db.conn.commit()
-    return IssueStore(db.conn).read_ack_due_commitment_issue((issue_id,))
+    return IssueStore(db.conn).row(issue_id)
 
 
 def _event_issue_refs(db: GameDB) -> set:
@@ -5176,7 +5176,7 @@ def apply_issue_tracker_output(
             })
             continue
         narrative = str(cl.get("narrative") or "")
-        chk = IssueStore(db.conn).read_ack_due_commitment_issue((issue_id,))
+        chk = IssueStore(db.conn).row(issue_id)
         if reason == "acknowledged":
             from ming_sim.staged_commitment import is_stage_derived_end_turn
             if chk is None:
@@ -5322,7 +5322,7 @@ def apply_issue_tracker_output(
             issue_id = int(cn.get("issue_id"))
         except (TypeError, ValueError):
             continue
-        row = IssueStore(db.conn).read_ack_due_commitment_issue((issue_id,))
+        row = IssueStore(db.conn).row(issue_id)
         if row is None or row["status"] != "active":
             continue
         if row["cancellable"] != "decree":

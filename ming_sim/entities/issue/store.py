@@ -123,9 +123,6 @@ class IssueStore:
     def read_dispatch_rushes(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT id, status, stages_json FROM issues WHERE id=?', params).fetchone()
 
-    def read_ack_due_commitment_issue(self, params: Any = ()) -> Any:
-        return self.row(int(params[0]))
-
     def read_event_issue_refs(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT origin_ref FROM issues WHERE origin_kind='event_pool'", params).fetchall()
 

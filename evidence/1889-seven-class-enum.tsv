@@ -1,341 +1,197 @@
 class	path	line	kind	text
-K1	evidence/1830-w4merge-boundary-followup.md	87	source_regex	| fact：作者事实公开筛无条件允许 | 1 passed 2.05s | 1 failed 1.65s，消费来源含 secret_order:9 / 密令案卷 | 上述聚焦绿 |
-K1	evidence/1830-w4merge-boundary-followup.md	88	source_regex	| event：作者经历公开筛无条件允许 | 1 passed 2.29s | 1 failed 1.62s，经历输入含 secret_order_brief:1 | 聚焦绿 |
-K1	evidence/1889-c6-member-disposition.tsv	391	legacy_blob_ref	tests/test_audience_restore_505.py:610 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='legacy' fn=test_legacy_agno_sessions_runs_blob_still_counts_and_trun
-K1	evidence/1889-c6-member-disposition.tsv	392	legacy_blob_ref	tests/test_audience_restore_505.py:613 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='legacy' fn=test_legacy_agno_sessions_runs_blob_still_counts_and_trun
-K1	evidence/1889-c6-member-disposition.tsv	393	legacy_blob_ref	tests/test_audience_restore_505.py:619 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='r1' fn=test_legacy_agno_sessions_runs_blob_still_counts_and_truncate
-K1	evidence/1889-c6-member-disposition.tsv	1200	source_regex	tests/test_character_knowledge_489.py:129 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='source_id' fn=test_public_directive_is_seen_by_uninvolved_ministe
-K1	evidence/1889-c6-member-disposition.tsv	1207	source_regex	tests/test_character_knowledge_489.py:152 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:' fn=test_turn_report_keeps_source_specific_secret_e
-K1	evidence/1889-c6-member-disposition.tsv	1230	source_regex	tests/test_character_knowledge_489.py:287 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:' fn=test_secret_blacklist_survives_later_public_pro
-K1	evidence/1889-c6-member-disposition.tsv	1245	source_regex	tests/test_character_knowledge_489.py:355 2 assert+compare assert|machine;compare|machine KEEP_MACHINE_ID KEEP_MACHINE_ID lit='source_id' fn=test_secret_office_exclusion_does_not_hide_unrelated_world_
-K1	evidence/1889-c6-member-disposition.tsv	1251	source_regex	tests/test_character_knowledge_489.py:399 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:' fn=test_secret_office_exclusion_snapshots_people_b
-K1	evidence/1889-c6-member-disposition.tsv	1252	source_regex	tests/test_character_knowledge_489.py:400 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='source_id' fn=test_secret_office_exclusion_snapshots_people_befor
-K1	evidence/1889-c6-member-disposition.tsv	1255	source_regex	tests/test_character_knowledge_489.py:417 1 compare compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:' fn=test_disclosed_secret_source_keeps_its_public_projection tests/test_c
-K1	evidence/1889-c6-member-disposition.tsv	2345	source_regex	tests/test_decree_dossiers_571.py:1701 2 assert+compare assert|machine;compare|machine KEEP_MACHINE_ID KEEP_MACHINE_ID lit='dossier:' fn=test_secret_order_commitment_origin_maps_to_its_own_dossier tes
-K1	evidence/1889-c6-member-disposition.tsv	4649	source_regex	tests/test_gazette_author_1862.py:330 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:9' fn=test_author_archives_own_title_and_same_run_advanc
-K1	evidence/1889-c6-member-disposition.tsv	8960	source_regex	tests/test_secret_order_isolation_883.py:151 1 assert assert|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='chat_message:' fn=test_883_audience_chat_path_does_not_leave_secret_in_shared_sources
-K1	evidence/1889-c6-member-disposition.tsv	8962	source_regex	tests/test_secret_order_isolation_883.py:154 2 assert+compare assert|machine;compare|machine KEEP_MACHINE_ID KEEP_MACHINE_ID lit='secret_order_brief:' fn=test_883_audience_chat_path_does_not_leave_sec
-K1	evidence/1889-c6-member-disposition.tsv	8982	source_regex	tests/test_secret_order_isolation_883.py:198 1 assert assert|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='chat_message:' fn=test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_so
-K1	evidence/1889-c6-member-disposition.tsv	8983	source_regex	tests/test_secret_order_isolation_883.py:201 2 assert+compare assert|machine;compare|machine KEEP_MACHINE_ID KEEP_MACHINE_ID lit='secret_order_brief:' fn=test_883_audience_chat_paraphrase_does_not_lea
-K1	evidence/1889-c6-member-disposition.tsv	9011	source_regex	tests/test_secret_order_isolation_883.py:379 1 assert assert|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='chat_message:' fn=test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_orig
-K1	evidence/1889-c6-member-disposition.tsv	9012	source_regex	tests/test_secret_order_isolation_883.py:382 2 assert+compare assert|machine;compare|machine KEEP_MACHINE_ID KEEP_MACHINE_ID lit='secret_order_brief:' fn=test_883_zero_overlap_semantic_rewrite_withhol
-K1	evidence/1889-c6-member-disposition.tsv	9019	source_regex	tests/test_secret_order_isolation_883.py:421 2 assert+compare assert|machine;compare|machine KEEP_MACHINE_ID KEEP_MACHINE_ID lit='secret_order_brief:' fn=test_883_thematic_public_audience_survives_sec
-K1	evidence/1889-c6-member-disposition.tsv	9062	source_regex	tests/test_secret_order_isolation_883.py:82 1 assert assert|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:' fn=test_883_two_turn_probe_secret_never_enters_shared_archives tests/tes
-K1	evidence/1889-c6-member-disposition.tsv	9406	source_regex	tests/test_secret_order_update.py:101 1 compare compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='source_id' fn=test_update_by_id_persists_assignee_brief_after_restore tests/test_secret_ord
-K1	evidence/1889-seven-class-enum-raw.tsv	8	source_regex	K1 artifacts/c4-purpose-inventory.txt 224 - secret_order:18927：已落实为新建 commit 的结构化 title，非未识别 caller
-K1	evidence/1889-seven-class-enum-raw.tsv	49	legacy_blob_api	K1 docs/1889-k1-k2-members.tsv 1176 K1 ReignStateStore._decode_agno_runs ming_sim/entities/reign_state/store.py:964 referenced kind=store; refs=3 n/a 3  keep refs=3; sample=ming_sim/entities/reign_sta
-K1	evidence/1889-seven-class-enum-raw.tsv	60	source_regex	K1 evidence/1830-w4merge-boundary-followup.md 87 | fact：作者事实公开筛无条件允许 | 1 passed 2.05s | 1 failed 1.65s，消费来源含 secret_order:9 / 密令案卷 | 上述聚焦绿 |
-K1	evidence/1889-seven-class-enum-raw.tsv	61	source_regex	K1 evidence/1830-w4merge-boundary-followup.md 88 | event：作者经历公开筛无条件允许 | 1 passed 2.29s | 1 failed 1.62s，经历输入含 secret_order_brief:1 | 聚焦绿 |
-K1	evidence/1889-seven-class-enum-raw.tsv	111	legacy_blob_ref	K1 evidence/1889-c6-member-disposition.tsv 391 tests/test_audience_restore_505.py:610 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='legacy' fn=test_legac
-K1	evidence/1889-seven-class-enum-raw.tsv	112	legacy_blob_ref	K1 evidence/1889-c6-member-disposition.tsv 392 tests/test_audience_restore_505.py:613 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='legacy' fn=test_legac
-K1	evidence/1889-seven-class-enum-raw.tsv	113	legacy_blob_ref	K1 evidence/1889-c6-member-disposition.tsv 393 tests/test_audience_restore_505.py:619 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='r1' fn=test_legacy_ag
-K1	evidence/1889-seven-class-enum-raw.tsv	155	source_regex	K1 evidence/1889-c6-member-disposition.tsv 1207 tests/test_character_knowledge_489.py:152 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:' fn
-K1	evidence/1889-seven-class-enum-raw.tsv	156	source_regex	K1 evidence/1889-c6-member-disposition.tsv 1230 tests/test_character_knowledge_489.py:287 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:' fn
-K1	evidence/1889-seven-class-enum-raw.tsv	158	source_regex	K1 evidence/1889-c6-member-disposition.tsv 1251 tests/test_character_knowledge_489.py:399 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:' fn
-K1	evidence/1889-seven-class-enum-raw.tsv	160	source_regex	K1 evidence/1889-c6-member-disposition.tsv 1255 tests/test_character_knowledge_489.py:417 1 compare compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:' fn=test_disclosed_secret
-K1	evidence/1889-seven-class-enum-raw.tsv	162	source_regex	K1 evidence/1889-c6-member-disposition.tsv 4649 tests/test_gazette_author_1862.py:330 2 assert+compare assert|machine;compare|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:9' fn=te
-K1	evidence/1889-seven-class-enum-raw.tsv	173	source_regex	K1 evidence/1889-c6-member-disposition.tsv 8962 tests/test_secret_order_isolation_883.py:154 2 assert+compare assert|machine;compare|machine KEEP_MACHINE_ID KEEP_MACHINE_ID lit='secret_order_brief:' f
-K1	evidence/1889-seven-class-enum-raw.tsv	175	source_regex	K1 evidence/1889-c6-member-disposition.tsv 8983 tests/test_secret_order_isolation_883.py:201 2 assert+compare assert|machine;compare|machine KEEP_MACHINE_ID KEEP_MACHINE_ID lit='secret_order_brief:' f
-K1	evidence/1889-seven-class-enum-raw.tsv	177	source_regex	K1 evidence/1889-c6-member-disposition.tsv 9012 tests/test_secret_order_isolation_883.py:382 2 assert+compare assert|machine;compare|machine KEEP_MACHINE_ID KEEP_MACHINE_ID lit='secret_order_brief:' f
-K1	evidence/1889-seven-class-enum-raw.tsv	178	source_regex	K1 evidence/1889-c6-member-disposition.tsv 9019 tests/test_secret_order_isolation_883.py:421 2 assert+compare assert|machine;compare|machine KEEP_MACHINE_ID KEEP_MACHINE_ID lit='secret_order_brief:' f
-K1	evidence/1889-seven-class-enum-raw.tsv	179	source_regex	K1 evidence/1889-c6-member-disposition.tsv 9062 tests/test_secret_order_isolation_883.py:82 1 assert assert|machine KEEP_INPUT_FIDELITY KEEP_INPUT_FIDELITY lit='secret_order:' fn=test_883_two_turn_pro
-K1	evidence/1889-seven-class-enum-raw.tsv	351	source_regex	K1 evidence/1889-six-class-enum.tsv 3303 c6_string_lock assert|machine tests/test_character_knowledge_489.py:129 6 assert|machine 0   0 "assert not any(item.get(""source_id"") == f""secret_order:{orde
-K1	evidence/1889-seven-class-enum-raw.tsv	352	source_regex	K1 evidence/1889-six-class-enum.tsv 3305 c6_string_lock assert|machine tests/test_character_knowledge_489.py:152 6 assert|machine 0   0 "assert f""secret_order:{order}"" not in source_ids :: secret_or
-K1	evidence/1889-seven-class-enum-raw.tsv	353	source_regex	K1 evidence/1889-six-class-enum.tsv 3319 c6_string_lock assert|machine tests/test_character_knowledge_489.py:287 6 assert|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}""
-K1	evidence/1889-seven-class-enum-raw.tsv	354	source_regex	K1 evidence/1889-six-class-enum.tsv 3327 c6_string_lock assert|machine tests/test_character_knowledge_489.py:355 6 assert|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}""
-K1	evidence/1889-seven-class-enum-raw.tsv	355	source_regex	K1 evidence/1889-six-class-enum.tsv 3331 c6_string_lock assert|machine tests/test_character_knowledge_489.py:399 6 assert|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}""
-K1	evidence/1889-seven-class-enum-raw.tsv	356	source_regex	K1 evidence/1889-six-class-enum.tsv 3332 c6_string_lock assert|machine tests/test_character_knowledge_489.py:400 6 assert|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}""
-K1	evidence/1889-seven-class-enum-raw.tsv	357	source_regex	K1 evidence/1889-six-class-enum.tsv 3431 c6_string_lock compare|machine tests/test_character_knowledge_489.py:152 6 compare|machine 0   0 "assert f""secret_order:{order}"" not in source_ids :: secret_
-K1	evidence/1889-seven-class-enum-raw.tsv	358	source_regex	K1 evidence/1889-six-class-enum.tsv 3564 c6_string_lock compare|machine tests/test_character_knowledge_489.py:129 6 compare|machine 0   0 "assert not any(item.get(""source_id"") == f""secret_order:{or
-K1	evidence/1889-seven-class-enum-raw.tsv	359	source_regex	K1 evidence/1889-six-class-enum.tsv 3576 c6_string_lock compare|machine tests/test_character_knowledge_489.py:287 6 compare|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}
-K1	evidence/1889-seven-class-enum-raw.tsv	360	source_regex	K1 evidence/1889-six-class-enum.tsv 3581 c6_string_lock compare|machine tests/test_character_knowledge_489.py:355 6 compare|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}
-K1	evidence/1889-seven-class-enum-raw.tsv	361	source_regex	K1 evidence/1889-six-class-enum.tsv 3584 c6_string_lock compare|machine tests/test_character_knowledge_489.py:399 6 compare|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}
-K1	evidence/1889-seven-class-enum-raw.tsv	362	source_regex	K1 evidence/1889-six-class-enum.tsv 3585 c6_string_lock compare|machine tests/test_character_knowledge_489.py:400 6 compare|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}
-K1	evidence/1889-seven-class-enum-raw.tsv	363	source_regex	K1 evidence/1889-six-class-enum.tsv 3587 c6_string_lock compare|machine tests/test_character_knowledge_489.py:417 6 compare|machine 0   0 "disclosed = next(item for item in items if item[""source_id""
-K1	evidence/1889-seven-class-enum-raw.tsv	364	source_regex	K1 evidence/1889-six-class-enum.tsv 5382 c6_string_lock assert|machine tests/test_decree_dossiers_571.py:1701 6 assert|machine 0   0 assert db.resolve_commitment_origin_ref( :: dossier:|secret_order:|
-K1	evidence/1889-seven-class-enum-raw.tsv	365	source_regex	K1 evidence/1889-six-class-enum.tsv 5555 c6_string_lock compare|machine tests/test_decree_dossiers_571.py:1701 6 compare|machine 0   0 assert db.resolve_commitment_origin_ref( :: dossier:|secret_order
-K1	evidence/1889-seven-class-enum-raw.tsv	366	source_regex	K1 evidence/1889-six-class-enum.tsv 9324 c6_string_lock assert|machine tests/test_gazette_author_1862.py:330 6 assert|machine 0   0 "assert all(str(row.get(""origin_ref"") or """") != ""secret_order:9
-K1	evidence/1889-seven-class-enum-raw.tsv	367	source_regex	K1 evidence/1889-six-class-enum.tsv 9408 c6_string_lock compare|machine tests/test_gazette_author_1862.py:330 6 compare|machine 0   0 "assert all(str(row.get(""origin_ref"") or """") != ""secret_order
-K1	evidence/1889-seven-class-enum-raw.tsv	370	source_regex	K1 evidence/1889-six-class-enum.tsv 16764 c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:82 6 assert|machine 0   0 assert not any( :: secret_order:|events||source_id
-K1	evidence/1889-seven-class-enum-raw.tsv	371	source_regex	K1 evidence/1889-six-class-enum.tsv 16771 c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:151 6 assert|machine 0   0 "assert {f""chat_message:{mid}"", f""secret_order_brief:{oid
-K1	evidence/1889-seven-class-enum-raw.tsv	372	source_regex	K1 evidence/1889-six-class-enum.tsv 16772 c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:154 6 assert|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(db
-K1	evidence/1889-seven-class-enum-raw.tsv	373	source_regex	K1 evidence/1889-six-class-enum.tsv 16776 c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:198 6 assert|machine 0   0 "assert {f""chat_message:{mid_origin}"", f""secret_order_bri
-K1	evidence/1889-seven-class-enum-raw.tsv	374	source_regex	K1 evidence/1889-six-class-enum.tsv 16777 c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:201 6 assert|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(db
-K1	evidence/1889-seven-class-enum-raw.tsv	375	source_regex	K1 evidence/1889-six-class-enum.tsv 16802 c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:379 6 assert|machine 0   0 "assert {f""chat_message:{mid}"", f""secret_order_brief:{oid
-K1	evidence/1889-seven-class-enum-raw.tsv	376	source_regex	K1 evidence/1889-six-class-enum.tsv 16803 c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:382 6 assert|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(db
-K1	evidence/1889-seven-class-enum-raw.tsv	377	source_regex	K1 evidence/1889-six-class-enum.tsv 16810 c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:421 6 assert|machine 0   0 "assert f""secret_order_brief:{oid}"" not in _view_source_id
-K1	evidence/1889-seven-class-enum-raw.tsv	383	source_regex	K1 evidence/1889-six-class-enum.tsv 16923 c6_string_lock compare|machine tests/test_secret_order_isolation_883.py:154 6 compare|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(
-K1	evidence/1889-seven-class-enum-raw.tsv	384	source_regex	K1 evidence/1889-six-class-enum.tsv 16926 c6_string_lock compare|machine tests/test_secret_order_isolation_883.py:201 6 compare|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(
-K1	evidence/1889-seven-class-enum-raw.tsv	385	source_regex	K1 evidence/1889-six-class-enum.tsv 16948 c6_string_lock compare|machine tests/test_secret_order_isolation_883.py:382 6 compare|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(
-K1	evidence/1889-seven-class-enum-raw.tsv	386	source_regex	K1 evidence/1889-six-class-enum.tsv 16955 c6_string_lock compare|machine tests/test_secret_order_isolation_883.py:421 6 compare|machine 0   0 "assert f""secret_order_brief:{oid}"" not in _view_source_
-K1	evidence/1889-seven-class-enum-raw.tsv	396	source_regex	K1 evidence/1889-six-class-enum.tsv 17677 c6_string_lock compare|machine tests/test_secret_order_update.py:101 6 compare|machine 0   0 "if item.get(""source_id"") == f""secret_order_brief:{oid}"" :: s
-K1	evidence/1889-seven-class-enum-raw.tsv	414	source_regex	K1 ming_sim/db.py 8294 _issued_secret_order: bool = False,
-K1	evidence/1889-seven-class-enum-raw.tsv	415	source_regex	K1 ming_sim/db.py 8344 _issued_secret_order: bool = False,
-K1	evidence/1889-seven-class-enum-raw.tsv	416	source_regex	K1 ming_sim/db.py 8650 _issued_secret_order: bool = False,
-K1	evidence/1889-seven-class-enum-raw.tsv	424	source_regex	K1 ming_sim/db.py 13502 source_id = f"secret_order_brief:{int(row['order_id'])}"
-K1	evidence/1889-seven-class-enum-raw.tsv	426	source_regex	K1 ming_sim/db.py 13550 # #883 CR R1 S2: bare ``secret_order:`` shared *sources* are no longer
-K1	evidence/1889-seven-class-enum-raw.tsv	427	source_regex	K1 ming_sim/db.py 13554 # by looking up secret_orders when source_id is ``secret_order:N`` —
-K1	evidence/1889-seven-class-enum-raw.tsv	428	source_regex	K1 ming_sim/db.py 13847 # ``secret_order_disclosure:`` (does not start with ``secret_order:``)
-K1	evidence/1889-seven-class-enum-raw.tsv	466	legacy_blob_ref	K1 ming_sim/entities/reign_state/store.py 1042 """Legacy ``agno_sessions.runs`` list for one session (empty if absent)."""
-K1	evidence/1889-seven-class-enum-raw.tsv	467	legacy_blob_ref	K1 ming_sim/llm_model.py 266 # sessions.runs blob. Matches ReignStateStore.agno_runs_length / truncate seam.
-K1	evidence/1889-seven-class-enum-raw.tsv	468	source_regex	K1 ming_sim/materials.py 1292 SECRET_ORDER_ORIGIN_PREFIX = "secret_order:"
-K1	evidence/1889-seven-class-enum-raw.tsv	482	legacy_blob_ref	K1 tests/test_audience_restore_505.py 542 """Seed sessions.runs blob; optional empty agno_runs table for mixed-state."""
-K1	evidence/1889-seven-class-enum-raw.tsv	483	legacy_blob_ref	K1 tests/test_audience_restore_505.py 606 """Old Agno 2 archives: sessions.runs blob path remains readable/writable."""
-K1	evidence/1889-seven-class-enum-raw.tsv	484	legacy_blob_ref	K1 tests/test_audience_restore_505.py 821 旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
-K1	evidence/1889-seven-class-enum-raw.tsv	485	legacy_blob_ref	K1 tests/test_audience_restore_505.py 827 # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
-K1	evidence/1889-seven-class-enum-raw.tsv	490	source_regex	K1 tests/test_character_knowledge_489.py 129 assert not any(item.get("source_id") == f"secret_order:{order}" for item in view["events"])
-K1	evidence/1889-seven-class-enum-raw.tsv	491	source_regex	K1 tests/test_character_knowledge_489.py 138 state, "密事记录", "SECRET_SOURCE_MARKER_490", source_id=f"secret_order:{order}"
-K1	evidence/1889-seven-class-enum-raw.tsv	492	source_regex	K1 tests/test_character_knowledge_489.py 152 assert f"secret_order:{order}" not in source_ids
-K1	evidence/1889-seven-class-enum-raw.tsv	493	source_regex	K1 tests/test_character_knowledge_489.py 282 state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-K1	evidence/1889-seven-class-enum-raw.tsv	494	source_regex	K1 tests/test_character_knowledge_489.py 287 assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
-K1	evidence/1889-seven-class-enum-raw.tsv	495	source_regex	K1 tests/test_character_knowledge_489.py 355 assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
-K1	evidence/1889-seven-class-enum-raw.tsv	496	source_regex	K1 tests/test_character_knowledge_489.py 393 state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-K1	evidence/1889-seven-class-enum-raw.tsv	497	source_regex	K1 tests/test_character_knowledge_489.py 399 assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
-K1	evidence/1889-seven-class-enum-raw.tsv	498	source_regex	K1 tests/test_character_knowledge_489.py 400 assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
-K1	evidence/1889-seven-class-enum-raw.tsv	499	source_regex	K1 tests/test_character_knowledge_489.py 412 state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-K1	evidence/1889-seven-class-enum-raw.tsv	500	source_regex	K1 tests/test_character_knowledge_489.py 417 disclosed = next(item for item in items if item["source_id"] == f"secret_order:{order}")
-K1	evidence/1889-seven-class-enum-raw.tsv	501	source_regex	K1 tests/test_character_knowledge_489.py 461 state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-K1	evidence/1889-seven-class-enum-raw.tsv	502	source_regex	K1 tests/test_character_knowledge_489.py 470 (f"secret_order:{order}",),
-K1	evidence/1889-seven-class-enum-raw.tsv	509	source_regex	K1 tests/test_decree_dossiers_571.py 1702 state, f"secret_order:{order_id}", origin_kind="decree",
-K1	evidence/1889-seven-class-enum-raw.tsv	514	source_regex	K1 tests/test_gazette_author_1862.py 103 "secret_order:9",
-K1	evidence/1889-seven-class-enum-raw.tsv	515	source_regex	K1 tests/test_gazette_author_1862.py 104 json.dumps({"kind": "secret_order", "origin_ref": "secret_order:9", "body": _SECRET_DECL}, ensure_ascii=False),
-K1	evidence/1889-seven-class-enum-raw.tsv	516	source_regex	K1 tests/test_gazette_author_1862.py 112 year=year, period=period, turn=turn, origin_ref="secret_order:9",
-K1	evidence/1889-seven-class-enum-raw.tsv	517	source_regex	K1 tests/test_gazette_author_1862.py 121 "VALUES (?, ?, ?, '国库', -3, 1, 'SECRET_LEDGER', '密令账', 'secret_order:9')",
-K1	evidence/1889-seven-class-enum-raw.tsv	518	source_regex	K1 tests/test_gazette_author_1862.py 127 {"kind": "secret_order", "origin_ref": "secret_order:9", "note": _SECRET_REJ},
-K1	evidence/1889-seven-class-enum-raw.tsv	522	source_regex	K1 tests/test_gazette_author_1862.py 242 ("secret_order:9", "密令到期承诺1862"),
-K1	evidence/1889-seven-class-enum-raw.tsv	523	source_regex	K1 tests/test_gazette_author_1862.py 330 assert all(str(row.get("origin_ref") or "") != "secret_order:9" for row in payload["landed"])
-K1	evidence/1889-seven-class-enum-raw.tsv	524	source_regex	K1 tests/test_month_chain_1847.py 1901 f"secret_order:{order_id}",
-K1	evidence/1889-seven-class-enum-raw.tsv	525	source_regex	K1 tests/test_month_chain_1847.py 1903 {"kind": "secret_order", "origin_ref": f"secret_order:{order_id}",
-K1	evidence/1889-seven-class-enum-raw.tsv	526	source_regex	K1 tests/test_month_chain_1847.py 1945 {"kind": "secret_order", "origin_ref": f"secret_order:{order_id}",
-K1	evidence/1889-seven-class-enum-raw.tsv	530	source_regex	K1 tests/test_secret_dossier_participants_1252.py 74 f"secret_order:{order_id}", dossier_before,
-K1	evidence/1889-seven-class-enum-raw.tsv	532	source_regex	K1 tests/test_secret_order_isolation_883.py 77 "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"
-K1	evidence/1889-seven-class-enum-raw.tsv	533	source_regex	K1 tests/test_secret_order_isolation_883.py 83 str(item.get("source_id") or "").startswith("secret_order:")
-K1	evidence/1889-seven-class-enum-raw.tsv	535	source_regex	K1 tests/test_secret_order_isolation_883.py 102 source_id="secret_order:force-shared",
-K1	evidence/1889-seven-class-enum-raw.tsv	536	source_regex	K1 tests/test_secret_order_isolation_883.py 108 "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"
-K1	evidence/1889-seven-class-enum-raw.tsv	538	source_regex	K1 tests/test_secret_order_isolation_883.py 151 assert {f"chat_message:{mid}", f"secret_order_brief:{oid}"}.isdisjoint(
-K1	evidence/1889-seven-class-enum-raw.tsv	539	source_regex	K1 tests/test_secret_order_isolation_883.py 154 assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
-K1	evidence/1889-seven-class-enum-raw.tsv	541	source_regex	K1 tests/test_secret_order_isolation_883.py 198 assert {f"chat_message:{mid_origin}", f"secret_order_brief:{oid}"}.isdisjoint(
-K1	evidence/1889-seven-class-enum-raw.tsv	542	source_regex	K1 tests/test_secret_order_isolation_883.py 201 assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
-K1	evidence/1889-seven-class-enum-raw.tsv	544	source_regex	K1 tests/test_secret_order_isolation_883.py 379 assert {f"chat_message:{mid}", f"secret_order_brief:{oid}"}.isdisjoint(
-K1	evidence/1889-seven-class-enum-raw.tsv	545	source_regex	K1 tests/test_secret_order_isolation_883.py 382 assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
-K1	evidence/1889-seven-class-enum-raw.tsv	546	source_regex	K1 tests/test_secret_order_isolation_883.py 421 assert f"secret_order_brief:{oid}" not in _view_source_ids(db, state, other.name)
-K1	evidence/1889-seven-class-enum-raw.tsv	577	source_regex	K1 tests/test_secret_order_update.py 101 if item.get("source_id") == f"secret_order_brief:{oid}"
-K1	evidence/1889-six-class-enum.tsv	791	legacy_blob_ref	c2_sql_framework execute@958 ming_sim/entities/reign_state/store.py:958 2 cls:ReignStateStore > fn:_agno_session_columns 1   1 "for row in self._conn.execute(""PRAGMA table_info(agno_sessions)"").fetc
-K1	evidence/1889-six-class-enum.tsv	793	legacy_blob_api	c2_sql_in_store execute@1045 ming_sim/entities/reign_state/store.py:1045 2 cls:ReignStateStore > fn:_agno_legacy_runs_blob 0 agno_sessions ? 1 "row = self._conn.execute( | ""SELECT runs FROM agno_sess
-K1	evidence/1889-six-class-enum.tsv	794	legacy_blob_api	c2_sql_in_store execute@1072 ming_sim/entities/reign_state/store.py:1072 2 cls:ReignStateStore > fn:_rewrite_session_legacy_runs_blob 0 agno_sessions ? 1 "self._conn.execute( | ""UPDATE agno_sessions
-K1	evidence/1889-six-class-enum.tsv	3303	source_regex	c6_string_lock assert|machine tests/test_character_knowledge_489.py:129 6 assert|machine 0   0 "assert not any(item.get(""source_id"") == f""secret_order:{order}"" for item in view[""events""]) :: sou
-K1	evidence/1889-six-class-enum.tsv	3305	source_regex	c6_string_lock assert|machine tests/test_character_knowledge_489.py:152 6 assert|machine 0   0 "assert f""secret_order:{order}"" not in source_ids :: secret_order:"
-K1	evidence/1889-six-class-enum.tsv	3319	source_regex	c6_string_lock assert|machine tests/test_character_knowledge_489.py:287 6 assert|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}"" for item in view[""public_events""]) ::
-K1	evidence/1889-six-class-enum.tsv	3327	source_regex	c6_string_lock assert|machine tests/test_character_knowledge_489.py:355 6 assert|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}"" for item in view[""events""]) :: source_
-K1	evidence/1889-six-class-enum.tsv	3331	source_regex	c6_string_lock assert|machine tests/test_character_knowledge_489.py:399 6 assert|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}"" for item in view[""events""]) :: source_
-K1	evidence/1889-six-class-enum.tsv	3332	source_regex	c6_string_lock assert|machine tests/test_character_knowledge_489.py:400 6 assert|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}"" for item in view[""public_events""]) ::
-K1	evidence/1889-six-class-enum.tsv	3431	source_regex	c6_string_lock compare|machine tests/test_character_knowledge_489.py:152 6 compare|machine 0   0 "assert f""secret_order:{order}"" not in source_ids :: secret_order:"
-K1	evidence/1889-six-class-enum.tsv	3564	source_regex	c6_string_lock compare|machine tests/test_character_knowledge_489.py:129 6 compare|machine 0   0 "assert not any(item.get(""source_id"") == f""secret_order:{order}"" for item in view[""events""]) :: s
-K1	evidence/1889-six-class-enum.tsv	3576	source_regex	c6_string_lock compare|machine tests/test_character_knowledge_489.py:287 6 compare|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}"" for item in view[""public_events""]) :
-K1	evidence/1889-six-class-enum.tsv	3581	source_regex	c6_string_lock compare|machine tests/test_character_knowledge_489.py:355 6 compare|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}"" for item in view[""events""]) :: sourc
-K1	evidence/1889-six-class-enum.tsv	3584	source_regex	c6_string_lock compare|machine tests/test_character_knowledge_489.py:399 6 compare|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}"" for item in view[""events""]) :: sourc
-K1	evidence/1889-six-class-enum.tsv	3585	source_regex	c6_string_lock compare|machine tests/test_character_knowledge_489.py:400 6 compare|machine 0   0 "assert not any(item[""source_id""] == f""secret_order:{order}"" for item in view[""public_events""]) :
-K1	evidence/1889-six-class-enum.tsv	3587	source_regex	c6_string_lock compare|machine tests/test_character_knowledge_489.py:417 6 compare|machine 0   0 "disclosed = next(item for item in items if item[""source_id""] == f""secret_order:{order}"") :: source
-K1	evidence/1889-six-class-enum.tsv	5382	source_regex	c6_string_lock assert|machine tests/test_decree_dossiers_571.py:1701 6 assert|machine 0   0 assert db.resolve_commitment_origin_ref( :: dossier:|secret_order:|decree|id
-K1	evidence/1889-six-class-enum.tsv	5555	source_regex	c6_string_lock compare|machine tests/test_decree_dossiers_571.py:1701 6 compare|machine 0   0 assert db.resolve_commitment_origin_ref( :: dossier:|secret_order:|decree|id
-K1	evidence/1889-six-class-enum.tsv	9324	source_regex	c6_string_lock assert|machine tests/test_gazette_author_1862.py:330 6 assert|machine 0   0 "assert all(str(row.get(""origin_ref"") or """") != ""secret_order:9"" for row in payload[""landed""]) :: sec
-K1	evidence/1889-six-class-enum.tsv	9408	source_regex	c6_string_lock compare|machine tests/test_gazette_author_1862.py:330 6 compare|machine 0   0 "assert all(str(row.get(""origin_ref"") or """") != ""secret_order:9"" for row in payload[""landed""]) :: s
-K1	evidence/1889-six-class-enum.tsv	16764	source_regex	c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:82 6 assert|machine 0   0 assert not any( :: secret_order:|events||source_id
-K1	evidence/1889-six-class-enum.tsv	16771	source_regex	c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:151 6 assert|machine 0   0 "assert {f""chat_message:{mid}"", f""secret_order_brief:{oid}""}.isdisjoint( :: chat_message:|secret_o
-K1	evidence/1889-six-class-enum.tsv	16772	source_regex	c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:154 6 assert|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(db, state, assignee.name) :: secret_order_br
-K1	evidence/1889-six-class-enum.tsv	16776	source_regex	c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:198 6 assert|machine 0   0 "assert {f""chat_message:{mid_origin}"", f""secret_order_brief:{oid}""}.isdisjoint( :: chat_message:|s
-K1	evidence/1889-six-class-enum.tsv	16777	source_regex	c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:201 6 assert|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(db, state, assignee.name) :: secret_order_br
-K1	evidence/1889-six-class-enum.tsv	16802	source_regex	c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:379 6 assert|machine 0   0 "assert {f""chat_message:{mid}"", f""secret_order_brief:{oid}""}.isdisjoint( :: chat_message:|secret_o
-K1	evidence/1889-six-class-enum.tsv	16803	source_regex	c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:382 6 assert|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(db, state, assignee.name) :: secret_order_br
-K1	evidence/1889-six-class-enum.tsv	16810	source_regex	c6_string_lock assert|machine tests/test_secret_order_isolation_883.py:421 6 assert|machine 0   0 "assert f""secret_order_brief:{oid}"" not in _view_source_ids(db, state, other.name) :: secret_order_b
-K1	evidence/1889-six-class-enum.tsv	16923	source_regex	c6_string_lock compare|machine tests/test_secret_order_isolation_883.py:154 6 compare|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(db, state, assignee.name) :: secret_order_
-K1	evidence/1889-six-class-enum.tsv	16926	source_regex	c6_string_lock compare|machine tests/test_secret_order_isolation_883.py:201 6 compare|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(db, state, assignee.name) :: secret_order_
-K1	evidence/1889-six-class-enum.tsv	16948	source_regex	c6_string_lock compare|machine tests/test_secret_order_isolation_883.py:382 6 compare|machine 0   0 "assert f""secret_order_brief:{oid}"" in _view_source_ids(db, state, assignee.name) :: secret_order_
-K1	evidence/1889-six-class-enum.tsv	16955	source_regex	c6_string_lock compare|machine tests/test_secret_order_isolation_883.py:421 6 compare|machine 0   0 "assert f""secret_order_brief:{oid}"" not in _view_source_ids(db, state, other.name) :: secret_order
-K1	evidence/1889-six-class-enum.tsv	17677	source_regex	c6_string_lock compare|machine tests/test_secret_order_update.py:101 6 compare|machine 0   0 "if item.get(""source_id"") == f""secret_order_brief:{oid}"" :: source_id|secret_order_brief:"
-K1	ming_sim/agents.py	642	legacy_blob_ref	# <db>.emperor.db 的 agno_sessions 累积 runs 撑爆存档。agno_db 仅保留以兼容调用方。
-K1	ming_sim/db.py	8294	source_regex	_issued_secret_order: bool = False,
-K1	ming_sim/db.py	8344	source_regex	_issued_secret_order: bool = False,
-K1	ming_sim/db.py	8650	source_regex	_issued_secret_order: bool = False,
-K1	ming_sim/db.py	13502	source_regex	source_id = f"secret_order_brief:{int(row['order_id'])}"
-K1	ming_sim/db.py	13550	source_regex	# #883 CR R1 S2: bare ``secret_order:`` shared *sources* are no longer
-K1	ming_sim/db.py	13554	source_regex	# by looking up secret_orders when source_id is ``secret_order:N`` —
-K1	ming_sim/db.py	13847	source_regex	# ``secret_order_disclosure:`` (does not start with ``secret_order:``)
-K1	ming_sim/entities/reign_state/store.py	964	legacy_blob_api	Authority is Agno's ``merge_runs_table_with_legacy_blob``: legacy blob
-K1	ming_sim/entities/reign_state/store.py	1001	legacy_blob_api	def _decode_agno_runs(self, raw: Any) -> Tuple[List[Any], bool]:
-K1	ming_sim/entities/reign_state/store.py	1012	legacy_blob_api	def _encode_agno_runs(self, runs: List[Any], encoded_as_string: bool) -> str:
-K1	ming_sim/entities/reign_state/store.py	1041	legacy_blob_api	def _agno_legacy_runs_blob(self, session_id: str) -> Tuple[List[Any], bool]:
-K1	ming_sim/entities/reign_state/store.py	1042	legacy_blob_ref	"""Legacy ``agno_sessions.runs`` list for one session (empty if absent)."""
-K1	ming_sim/entities/reign_state/store.py	1051	legacy_blob_api	return self._decode_agno_runs(row["runs"])
-K1	ming_sim/entities/reign_state/store.py	1055	legacy_blob_api	from agno.db.utils import merge_runs_table_with_legacy_blob
-K1	ming_sim/entities/reign_state/store.py	1058	legacy_blob_api	legacy_runs, _encoded = self._agno_legacy_runs_blob(session_id)
-K1	ming_sim/entities/reign_state/store.py	1059	legacy_blob_api	merged = merge_runs_table_with_legacy_blob(
-K1	ming_sim/entities/reign_state/store.py	1066	legacy_blob_api	def _rewrite_session_legacy_runs_blob(
-K1	ming_sim/entities/reign_state/store.py	1071	legacy_blob_api	_old, encoded_as_string = self._agno_legacy_runs_blob(session_id)
-K1	ming_sim/entities/reign_state/store.py	1073	legacy_blob_ref	"UPDATE agno_sessions SET runs = ?, updated_at = strftime('%s','now') "
-K1	ming_sim/entities/reign_state/store.py	1075	legacy_blob_api	(self._encode_agno_runs(list(runs), encoded_as_string), session_id),
-K1	ming_sim/entities/reign_state/store.py	1082	legacy_blob_ref	prefix as the new legacy blob and drops table rows whose run_id is not
-K1	ming_sim/entities/reign_state/store.py	1115	legacy_blob_api	self._rewrite_session_legacy_runs_blob(session_id, kept)
-K1	ming_sim/llm_model.py	266	legacy_blob_ref	# sessions.runs blob. Matches ReignStateStore.agno_runs_length / truncate seam.
-K1	ming_sim/materials.py	1292	source_regex	SECRET_ORDER_ORIGIN_PREFIX = "secret_order:"
-K1	tests/test_audience_restore_505.py	518	legacy_blob_ref	"""Seed real Agno 3 schema (agno_sessions + agno_runs rows), not the v2 blob."""
-K1	tests/test_audience_restore_505.py	541	legacy_blob_ref	def _seed_agno_legacy_blob(db, session_id: str, run_ids, *, with_table: bool = False) -> None:
-K1	tests/test_audience_restore_505.py	542	legacy_blob_ref	"""Seed sessions.runs blob; optional empty agno_runs table for mixed-state."""
-K1	tests/test_audience_restore_505.py	605	legacy_blob_ref	def test_legacy_agno_sessions_runs_blob_still_counts_and_truncates(restore_env):
-K1	tests/test_audience_restore_505.py	606	legacy_blob_ref	"""Old Agno 2 archives: sessions.runs blob path remains readable/writable."""
-K1	tests/test_audience_restore_505.py	609	legacy_blob_ref	_seed_agno_legacy_blob(db, "legacy", ["r1", "r2", "r3"], with_table=False)
-K1	tests/test_audience_restore_505.py	614	legacy_blob_api	runs, _ = db.reign._decode_agno_runs(
-K1	tests/test_audience_restore_505.py	693	legacy_blob_ref	# 起轮时只有 legacy blob（baseline=2）；同轮 Agno 3 写入 table-only 新失败 run。
-K1	tests/test_audience_restore_505.py	694	legacy_blob_ref	_seed_agno_legacy_blob(db, "sess", ["legacy-0", "legacy-1"], with_table=True)
-K1	tests/test_audience_restore_505.py	715	legacy_blob_api	runs, _ = db.reign._decode_agno_runs(
-K1	tests/test_audience_restore_505.py	732	legacy_blob_ref	# Official v3 migration shape: runs copied into table, legacy blob retained.
-K1	tests/test_audience_restore_505.py	821	legacy_blob_ref	旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
-K1	tests/test_audience_restore_505.py	827	legacy_blob_ref	# 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
-K1	tests/test_character_knowledge_489.py	129	source_regex	assert not any(item.get("source_id") == f"secret_order:{order}" for item in view["events"])
-K1	tests/test_character_knowledge_489.py	138	source_regex	state, "密事记录", "SECRET_SOURCE_MARKER_490", source_id=f"secret_order:{order}"
-K1	tests/test_character_knowledge_489.py	152	source_regex	assert f"secret_order:{order}" not in source_ids
-K1	tests/test_character_knowledge_489.py	282	source_regex	state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-K1	tests/test_character_knowledge_489.py	287	source_regex	assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
-K1	tests/test_character_knowledge_489.py	355	source_regex	assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
-K1	tests/test_character_knowledge_489.py	393	source_regex	state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-K1	tests/test_character_knowledge_489.py	399	source_regex	assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
-K1	tests/test_character_knowledge_489.py	400	source_regex	assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
-K1	tests/test_character_knowledge_489.py	412	source_regex	state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-K1	tests/test_character_knowledge_489.py	417	source_regex	disclosed = next(item for item in items if item["source_id"] == f"secret_order:{order}")
-K1	tests/test_character_knowledge_489.py	461	source_regex	state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-K1	tests/test_character_knowledge_489.py	470	source_regex	(f"secret_order:{order}",),
-K1	tests/test_decree_dossiers_571.py	1702	source_regex	state, f"secret_order:{order_id}", origin_kind="decree",
-K1	tests/test_gazette_author_1862.py	103	source_regex	"secret_order:9",
-K1	tests/test_gazette_author_1862.py	104	source_regex	json.dumps({"kind": "secret_order", "origin_ref": "secret_order:9", "body": _SECRET_DECL}, ensure_ascii=False),
-K1	tests/test_gazette_author_1862.py	112	source_regex	year=year, period=period, turn=turn, origin_ref="secret_order:9",
-K1	tests/test_gazette_author_1862.py	121	source_regex	"VALUES (?, ?, ?, '国库', -3, 1, 'SECRET_LEDGER', '密令账', 'secret_order:9')",
-K1	tests/test_gazette_author_1862.py	127	source_regex	{"kind": "secret_order", "origin_ref": "secret_order:9", "note": _SECRET_REJ},
-K1	tests/test_gazette_author_1862.py	242	source_regex	("secret_order:9", "密令到期承诺1862"),
-K1	tests/test_gazette_author_1862.py	330	source_regex	assert all(str(row.get("origin_ref") or "") != "secret_order:9" for row in payload["landed"])
-K1	tests/test_month_chain_1847.py	1901	source_regex	f"secret_order:{order_id}",
-K1	tests/test_month_chain_1847.py	1903	source_regex	{"kind": "secret_order", "origin_ref": f"secret_order:{order_id}",
-K1	tests/test_month_chain_1847.py	1945	source_regex	{"kind": "secret_order", "origin_ref": f"secret_order:{order_id}",
-K1	tests/test_secret_dossier_participants_1252.py	74	source_regex	f"secret_order:{order_id}", dossier_before,
-K1	tests/test_secret_order_isolation_883.py	77	source_regex	"SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"
-K1	tests/test_secret_order_isolation_883.py	83	source_regex	str(item.get("source_id") or "").startswith("secret_order:")
-K1	tests/test_secret_order_isolation_883.py	102	source_regex	source_id="secret_order:force-shared",
-K1	tests/test_secret_order_isolation_883.py	108	source_regex	"SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"
-K1	tests/test_secret_order_isolation_883.py	151	source_regex	assert {f"chat_message:{mid}", f"secret_order_brief:{oid}"}.isdisjoint(
-K1	tests/test_secret_order_isolation_883.py	154	source_regex	assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
-K1	tests/test_secret_order_isolation_883.py	198	source_regex	assert {f"chat_message:{mid_origin}", f"secret_order_brief:{oid}"}.isdisjoint(
-K1	tests/test_secret_order_isolation_883.py	201	source_regex	assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
-K1	tests/test_secret_order_isolation_883.py	379	source_regex	assert {f"chat_message:{mid}", f"secret_order_brief:{oid}"}.isdisjoint(
-K1	tests/test_secret_order_isolation_883.py	382	source_regex	assert f"secret_order_brief:{oid}" in _view_source_ids(db, state, assignee.name)
-K1	tests/test_secret_order_isolation_883.py	421	source_regex	assert f"secret_order_brief:{oid}" not in _view_source_ids(db, state, other.name)
-K1	tests/test_secret_order_update.py	101	source_regex	if item.get("source_id") == f"secret_order_brief:{oid}"
-K3	evidence/1889-c6-group-review.tsv	103	diag_prose	tests/test_chat_stream_failpaths_393.py|KEEP_P4_ABSENCE tests/test_chat_stream_failpaths_393.py KEEP_P4_ABSENCE 492-493 2 4 HTTP detail must not leak Internal Server Error chrome
-K3	evidence/1889-c6-member-disposition.tsv	1407	diag_prose	tests/test_chat_stream_failpaths_393.py:492 2 assert+compare assert|other;compare|other KEEP_P4_ABSENCE HTTP detail must not leak Internal Server Error chrome tests/test_chat_stream_failpaths_393.py|K
-K3	evidence/1889-c6-member-disposition.tsv	1408	diag_prose	tests/test_chat_stream_failpaths_393.py:493 2 assert+compare assert|machine+other;compare|machine+other KEEP_P4_ABSENCE structured message absence tests/test_chat_stream_failpaths_393.py|KEEP_P4_ABSEN
-K3	evidence/1889-seven-class-enum-raw.tsv	602	diag_prose	K3 evidence/1889-c6-group-review.tsv 103 tests/test_chat_stream_failpaths_393.py|KEEP_P4_ABSENCE tests/test_chat_stream_failpaths_393.py KEEP_P4_ABSENCE 492-493 2 4 HTTP detail must not leak Internal
-K3	evidence/1889-seven-class-enum-raw.tsv	605	diag_prose	K3 evidence/1889-c6-member-disposition.tsv 1407 tests/test_chat_stream_failpaths_393.py:492 2 assert+compare assert|other;compare|other KEEP_P4_ABSENCE HTTP detail must not leak Internal Server Error
-K3	evidence/1889-seven-class-enum-raw.tsv	606	wrong_basis	K3 evidence/1889-c6-member-disposition.tsv 1408 tests/test_chat_stream_failpaths_393.py:493 2 assert+compare assert|machine+other;compare|machine+other KEEP_P4_ABSENCE structured message absence tests
-K3	evidence/1889-seven-class-enum-raw.tsv	645	diag_prose	K3 evidence/1889-six-class-enum.tsv 3649 c6_string_lock assert|other tests/test_chat_stream_failpaths_393.py:492 6 assert|other 0   0 "assert ""Internal Server Error"" not in response.text :: Internal
-K3	evidence/1889-seven-class-enum-raw.tsv	646	diag_prose	K3 evidence/1889-six-class-enum.tsv 3650 c6_string_lock assert|machine+other tests/test_chat_stream_failpaths_393.py:493 6 assert|machine+other 0   0 "assert ""Internal Server Error"" not in str(detai
-K3	evidence/1889-seven-class-enum-raw.tsv	648	diag_prose	K3 evidence/1889-six-class-enum.tsv 3729 c6_string_lock compare|other tests/test_chat_stream_failpaths_393.py:492 6 compare|other 0   0 "assert ""Internal Server Error"" not in response.text :: Intern
-K3	evidence/1889-seven-class-enum-raw.tsv	649	diag_prose	K3 evidence/1889-six-class-enum.tsv 3730 c6_string_lock compare|machine+other tests/test_chat_stream_failpaths_393.py:493 6 compare|machine+other 0   0 "assert ""Internal Server Error"" not in str(det
-K3	evidence/1889-seven-class-enum-raw.tsv	723	wrong_basis	K3 evidence/1889-six-class-fixer-receipt.md 163 | KEEP_P4_ABSENCE | 2 |
-K3	evidence/1889-seven-class-enum-raw.tsv	741	diag_prose	K3 tests/test_chat_stream_failpaths_393.py 492 assert "Internal Server Error" not in response.text
-K3	evidence/1889-seven-class-enum-raw.tsv	742	diag_prose	K3 tests/test_chat_stream_failpaths_393.py 493 assert "Internal Server Error" not in str(detail.get("message") or "")
-K3	evidence/1889-six-class-enum.tsv	3649	diag_prose	c6_string_lock assert|other tests/test_chat_stream_failpaths_393.py:492 6 assert|other 0   0 "assert ""Internal Server Error"" not in response.text :: Internal Server Error"
-K3	evidence/1889-six-class-enum.tsv	3650	diag_prose	c6_string_lock assert|machine+other tests/test_chat_stream_failpaths_393.py:493 6 assert|machine+other 0   0 "assert ""Internal Server Error"" not in str(detail.get(""message"") or """") :: Internal S
-K3	evidence/1889-six-class-enum.tsv	3729	diag_prose	c6_string_lock compare|other tests/test_chat_stream_failpaths_393.py:492 6 compare|other 0   0 "assert ""Internal Server Error"" not in response.text :: Internal Server Error"
-K3	evidence/1889-six-class-enum.tsv	3730	diag_prose	c6_string_lock compare|machine+other tests/test_chat_stream_failpaths_393.py:493 6 compare|machine+other 0   0 "assert ""Internal Server Error"" not in str(detail.get(""message"") or """") :: Internal
-K3	evidence/1889-six-class-fixer-receipt.md	163	wrong_basis	| KEEP_P4_ABSENCE | 2 |
-K3	tests/test_chat_stream_failpaths_393.py	492	diag_prose	assert "Internal Server Error" not in response.text
-K3	tests/test_chat_stream_failpaths_393.py	493	diag_prose	assert "Internal Server Error" not in str(detail.get("message") or "")
-K4	evidence/1889-seven-class-enum-raw.tsv	784	scale_api	K4 docs/1889-k1-k2-members.tsv 1049 K1 RegionStore.read_scale_tian_fu ming_sim/entities/region/store.py:146 referenced kind=store; refs=1 n/a 1  keep refs=1; sample=ming_sim/db.py
-K4	evidence/1889-seven-class-enum-raw.tsv	862	scale_api	K4 evidence/1889-six-class-enum.tsv 665 c2_sql_in_store execute@141 ming_sim/entities/region/store.py:141 2 cls:RegionStore > fn:read_scale_tian_fu 0 r,regions ?,RegionStore 1 return self._conn.execut
-K4	evidence/1889-seven-class-enum-raw.tsv	946	scalar_formula	K4 ming_sim/db.py 1414 新 tax_per_turn = 三税之和 + 田赋残差×ratio。ratio=0 即罢田赋（仅留三税基）。
-K4	evidence/1889-seven-class-enum-raw.tsv	947	scale_api	K4 ming_sim/db.py 1417 for row in RegionStore(self.conn).read_scale_tian_fu():
-K4	evidence/1889-seven-class-enum-raw.tsv	948	scale_api	K4 ming_sim/entities/region/store.py 140 def read_scale_tian_fu(self, params: Any = ()) -> Any:
-K4	evidence/1889-six-class-enum.tsv	664	scale_api	c2_sql_in_store execute@138 ming_sim/entities/region/store.py:138 2 cls:RegionStore > fn:read_settle_ming_province_substrate_ticks 0 regions RegionStore 1 "return self._conn.execute(""SELECT id, fisca
-K4	evidence/1889-six-class-enum.tsv	665	scale_api	c2_sql_in_store execute@141 ming_sim/entities/region/store.py:141 2 cls:RegionStore > fn:read_scale_tian_fu 0 r,regions ?,RegionStore 1 return self._conn.execute('SELECT id, tax_per_turn, fiscal FROM
-K4	ming_sim/db.py	1219	doc_scalar	#   田赋无独立字段（=tax_per_turn 减其余三税的残差），裁撤走 tax_per_turn 压低；
-K4	ming_sim/db.py	1239	scale_api	ratio=0 即彻底罢废（字段归零）；0<ratio<1 即按比例削减。田赋走 _scale_tian_fu。
-K4	ming_sim/db.py	1412	scale_api	def scale_tian_fu(self, ratio: float, commit: bool = True) -> int:
-K4	ming_sim/db.py	1414	scalar_formula	新 tax_per_turn = 三税之和 + 田赋残差×ratio。ratio=0 即罢田赋（仅留三税基）。
-K4	ming_sim/db.py	1417	scale_api	for row in RegionStore(self.conn).read_scale_tian_fu():
-K4	ming_sim/db.py	1442	doc_scalar	田赋走 tax_per_turn 压到仅留三税基；皇庄收入读 fiscal_config，删 config 即停。
-K4	ming_sim/db.py	1473	tianfu_stem_scalar	elif stem == "田赋":
-K4	ming_sim/db.py	1474	scale_api	self.scale_tian_fu(0.0, commit=commit)
-K4	ming_sim/entities/region/store.py	140	scale_api	def read_scale_tian_fu(self, params: Any = ()) -> Any:
-K4	ming_sim/issues.py	7116	tianfu_stem_scalar	if stem in db._DYNAMIC_REGION_FIELD or stem == "田赋":
-K4	ming_sim/issues.py	7118	tianfu_stem_scalar	if stem == "田赋":
-K4	ming_sim/issues.py	7119	scale_api	db.scale_tian_fu(ratio, commit=False)
+K1	ming_sim/db.py	8258	compat_orphan	_issued_secret_order: bool = False,
+K1	ming_sim/db.py	8308	compat_orphan	_issued_secret_order: bool = False,
+K1	ming_sim/db.py	8614	compat_orphan	_issued_secret_order: bool = False,
+K1	ming_sim/db.py	13801	compat_orphan	# ``secret_order_disclosure:`` (does not start with ``secret_order:``)
+K1	ming_sim/entities/reign_state/store.py	1001	legacy_blob_api|baseline_gone	[base 6b513b99f]     def _decode_agno_runs(self, raw: Any) -> Tuple[List[Any], bool]:
+K1	ming_sim/llm_model.py	266	compat_orphan	# sessions.runs blob. Matches ReignStateStore.agno_runs_length / truncate seam.
+K1	ming_sim/materials.py	1292	compat_orphan	"SECRET_ORDER_ORIGIN_PREFIX = ""secret_order:"""
+K1	tests/test_audience_restore_505.py	605	legacy_blob_test|baseline_gone	[base 6b513b99f] def test_legacy_agno_sessions_runs_blob_still_counts_and_truncates(restore_env):
+K1	tests/test_character_knowledge_489.py	129	compat_orphan	"assert not any(item.get(""source_id"") == f""secret_order:{order}"" for item in view[""events""])"
+K1	tests/test_decree_dossiers_571.py	1702	compat_orphan	"state, f""secret_order:{order_id}"", origin_kind=""decree"","
+K1	tests/test_gazette_author_1862.py	103	compat_orphan	"""secret_order:9"","
+K1	tests/test_gazette_author_1862.py	104	compat_orphan	"json.dumps({""kind"": ""secret_order"", ""origin_ref"": ""secret_order:9"", ""body"": _SECRET_DECL}, ensure_ascii=False),"
+K1	tests/test_gazette_author_1862.py	112	compat_orphan	"year=year, period=period, turn=turn, origin_ref=""secret_order:9"","
+K1	tests/test_gazette_author_1862.py	121	compat_orphan	"""VALUES (?, ?, ?, '国库', -3, 1, 'SECRET_LEDGER', '密令账', 'secret_order:9')"","
+K1	tests/test_gazette_author_1862.py	127	compat_orphan	"{""kind"": ""secret_order"", ""origin_ref"": ""secret_order:9"", ""note"": _SECRET_REJ},"
+K1	tests/test_gazette_author_1862.py	242	compat_orphan	"(""secret_order:9"", ""密令到期承诺1862""),"
+K1	tests/test_gazette_author_1862.py	330	compat_orphan	"assert all(str(row.get(""origin_ref"") or """") != ""secret_order:9"" for row in payload[""landed""])"
+K1	tests/test_month_chain_1847.py	1901	compat_orphan	"f""secret_order:{order_id}"","
+K1	tests/test_month_chain_1847.py	1903	compat_orphan	"{""kind"": ""secret_order"", ""origin_ref"": f""secret_order:{order_id}"","
+K1	tests/test_month_chain_1847.py	1945	compat_orphan	"{""kind"": ""secret_order"", ""origin_ref"": f""secret_order:{order_id}"","
+K1	tests/test_secret_dossier_participants_1252.py	74	compat_orphan	"f""secret_order:{order_id}"", dossier_before,"
+K1	tests/test_secret_order_isolation_883.py	77	compat_orphan	"""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"""
+K1	tests/test_secret_order_isolation_883.py	83	compat_orphan	"str(item.get(""source_id"") or """").startswith(""secret_order:"")"
+K1	tests/test_secret_order_isolation_883.py	102	compat_orphan	"source_id=""secret_order:force-shared"","
+K1	tests/test_secret_order_isolation_883.py	108	compat_orphan	"""SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"""
+K3	evidence/1889-c6-member-disposition.tsv	1407	prose_lock	tests/test_chat_stream_failpaths_393.py:492 2 assert+compare assert|other;compare|other DELETE_REVOKED_K3 1889 last-judge K3: free diagnostic prose negative is not a contract; revoked prior KEEP_P4_ABSENCE tests/test_cha
+K3	evidence/1889-seven-class-enumerate.py	78	prose_lock	"re.compile(r""KEEP_P4_ABSENCE""),"
+K3	evidence/1889-seven-class-enumerate.py	373	prose_lock	"if ""KEEP_P4_ABSENCE"" in text and cls == ""K3"":"
+K3	evidence/1889-seven-class-enumerate.py	374	prose_lock	"return ""DELETE_REVOKED_K3"", ""error KEEP_P4_ABSENCE label; free diagnostic prose is not contract"""
+K3	evidence/1889-seven-class-enumerate.py	478	prose_lock	"if ""KEEP_P4_ABSENCE"" in text:"
+K3	evidence/1889-seven-class-enumerate.py	484	prose_lock	"return ""DELETE_REVOKED_K3"", ""evidence residual of revoked KEEP_P4_ABSENCE / deleted prose lock"""
+K3	evidence/1889-six-class-fixer-receipt.md	163	prose_lock	| KEEP_P4_ABSENCE | 2 |
+K3	tests/test_army_card_status_1501.py	222	noncontract_assert	"assert seed_status in detail, f""army_detail 缺关宁 status\n{detail!r}"""
+K3	tests/test_chat_stream_failpaths_393.py	492	prose_lock|baseline_gone	"[base 6b513b99f]     assert ""Internal Server Error"" not in response.text"
+K3	tests/test_chat_stream_failpaths_393.py	493	prose_lock|baseline_gone	"[base 6b513b99f]     assert ""Internal Server Error"" not in str(detail.get(""message"") or """")"
+K3	tests/test_chat_stream_failpaths_393.py	1166	prose_lock	"assert provider not in detail[""message""]"
+K3	tests/test_cli_backend.py	785	prose_lock	"assert ""cli down"" not in ei.value.message"
+K3	tests/test_cli_runner_error_typed_1299.py	48	prose_lock	assert _RUNNER_BANNER not in exc.message
+K3	tests/test_cli_runner_error_typed_1299.py	86	prose_lock	assert _RUNNER_BANNER not in ei.value.message
+K3	tests/test_covert_levy_651.py	504	noncontract_assert	"settle_exposure_from_canonical_actions(db, state, {         ""economy_moves"": directed + pooled,         ""population_transfers"": [{""origin_ref"": origin, ""reason"": ""摊派""}],     }) == 0"
+K3	tests/test_effect_origin_558.py	88	noncontract_assert	"db.conn.execute(         ""SELECT origin_ref FROM economy_ledger WHERE category='父案卷支出'""     ).fetchone()[""origin_ref""] == origin"
+K3	tests/test_effect_origin_558.py	124	noncontract_assert	"db.conn.execute(         ""SELECT origin_ref FROM economy_ledger WHERE category='同月持续支出' ORDER BY id DESC LIMIT 1""     ).fetchone()[""origin_ref""] == origin"
+K3	tests/test_effect_origin_558.py	149	noncontract_assert	"[(r[""key""], r[""origin_ref""], r[""reason""]) for r in rows] == [         (""待裁月费_base"", origin, ""奉旨裁撤""),         (""待裁月费_rate"", origin, ""奉旨裁撤""),     ]"
+K3	tests/test_fiscal_substrate_bridge.py	2476	noncontract_assert	"applied == [{         ""account"": ""国库"", ""delta"": -5, ""reason"": ""测试补饷"",         ""origin_ref"": """", ""beyond_intent"": False, ""applied"": True,     }]"
+K3	tests/test_fiscal_substrate_bridge.py	2538	noncontract_assert	"applied == [{         ""account"": ""国库"", ""delta"": -3, ""reason"": ""测试纯省源补饷"",         ""origin_ref"": """", ""beyond_intent"": False, ""applied"": True,     }]"
+K3	tests/test_fiscal_substrate_bridge.py	2650	noncontract_assert	"applied == [{         ""account"": ""国库"", ""delta"": -3, ""reason"": ""测试小数欠饷不超扣"",         ""origin_ref"": """", ""beyond_intent"": False, ""applied"": True,     }]"
+K3	tests/test_pay_order_override_653.py	799	noncontract_assert	"[(e[""affected_class""], e[""value""], e[""origin_ref""]) for e in displaced] == [         (""军户"", pytest.approx(0.97), f""dossier:{did}""),     ]"
+K3	tests/test_pay_order_override_653.py	928	noncontract_assert	"[(e[""affected_class""], e[""value""], e[""origin_ref""])             for e in displaced] == [         (""官僚"", pytest.approx(1.93), f""dossier:{did}""),     ]"
+K3	tests/test_person_delta_adapter.py	173	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	178	noncontract_assert	"changes[0][""item""] == {""name"": name, ""origin_ref"": ""盘面自发"", ""动作"": ""易主"", ""new_power"": ""houjin"", ""reason"": ""漏方式""}"
+K3	tests/test_person_delta_adapter.py	239	noncontract_assert	"applied[""applied_person_changes""] == [         {             ""name"": ""毛文龙"",             ""origin_ref"": origin_ref, ""动作"": ""评定"",             ""loyalty"": 8,             ""old_loyalty"": before,             ""new_loyalty"": after,"
+K3	tests/test_person_delta_adapter.py	281	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	322	noncontract_assert	"applied[""applied_person_changes""] == [         {             ""name"": ""毛文龙"",             ""origin_ref"": ""盘面自发"", ""动作"": ""评定"",             ""loyalty"": delta,             ""old_loyalty"": start,             ""new_loyalty"": expecte"
+K3	tests/test_person_delta_adapter.py	512	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	550	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	556	noncontract_assert	"changes[0][""item""] == {             ""name"": name,             ""origin_ref"": ""盘面自发"", ""动作"": ""处置"",             ""status"": ""exiled"",             ""reason"": ""legacy should gate"",             ""legacy_gate"": True,         }"
+K3	tests/test_person_delta_adapter.py	933	noncontract_assert	"applied[""applied_person_changes""] == [             {                 ""origin_ref"": ""盘面自发"", ""动作"": ""调任"",                 ""name"": new_holder,                 ""old_status"": ""active"",                 ""old_office"": old_new[1],"
+K3	tests/test_person_delta_adapter.py	1100	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	1106	noncontract_assert	"changes[0][""item""] == {             ""name"": name,             ""origin_ref"": ""盘面自发"", ""动作"": ""任命"",             ""reason"": ""漏填官职"",         }"
+K3	tests/test_person_delta_adapter.py	1143	noncontract_assert	"applied[""applied_person_changes""] == [             {                 ""name"": name,                 ""origin_ref"": ""盘面自发"", ""动作"": ""处置"",                 ""status"": ""dismissed"",                 ""reason"": ""契约允许的说明"","
+K3	tests/test_person_delta_adapter.py	1201	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	1282	noncontract_assert	"changes[0] == {""name"": first, ""origin_ref"": ""盘面自发"", ""动作"": ""处置"", ""status"": ""dismissed"", ""reason"": ""先罢一人""}"
+K3	tests/test_person_delta_adapter.py	1283	noncontract_assert	"changes[1][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	1340	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	1396	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	1431	noncontract_assert	"applied[""applied_person_changes""] == [             {""name"": name, ""origin_ref"": ""盘面自发"", ""动作"": ""处置"", ""status"": ""dismissed"", ""reason"": ""削职听勘""}         ]"
+K3	tests/test_person_delta_adapter.py	1455	noncontract_assert	"applied[""applied_person_changes""] == [             {""name"": name, ""origin_ref"": ""盘面自发"", ""动作"": ""罢黜"", ""status"": ""dismissed"", ""reason"": ""廷议罢官""}         ]"
+K3	tests/test_person_delta_adapter.py	1505	noncontract_assert	"applied[""applied_person_changes""] == [             {""name"": name, ""origin_ref"": ""盘面自发"", ""动作"": ""处置"", ""status"": ""offstage"", ""reason"": """"}         ]"
+K3	tests/test_person_delta_adapter.py	1818	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	1841	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	1847	noncontract_assert	"changes[0][""item""] == {""name"": name, ""origin_ref"": ""盘面自发"", ""动作"": ""处置"", ""status"": ""dismissed""}"
+K3	tests/test_person_delta_adapter.py	2043	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	2048	noncontract_assert	"changes[0][""item""] == {""name"": ""孔有德"", ""origin_ref"": ""盘面自发"", ""动作"": ""行止""}"
+K3	tests/test_person_delta_adapter.py	2050	noncontract_assert	"changes[1][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	2055	noncontract_assert	"changes[1][""item""] == {""name"": name, ""origin_ref"": ""盘面自发"", ""动作"": ""行止"", ""transit_to"": ""liaodong""}"
+K3	tests/test_person_delta_adapter.py	2075	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_person_delta_adapter.py	2080	noncontract_assert	"changes[0][""item""] == {""name"": name, ""origin_ref"": ""盘面自发"", ""动作"": ""行止"", ""transit_to"": ""not_a_region""}"
+K3	tests/test_person_delta_adapter.py	2207	noncontract_assert	"applied[""applied_person_changes""] == [             {""name"": name, ""origin_ref"": ""盘面自发"", ""动作"": ""处置"", ""status"": ""dismissed"", ""reason"": ""legacy status""}         ]"
+K3	tests/test_population_transfers_649.py	61	noncontract_assert	"rec[""origin_ref""] == ""盘面自发"""
+K3	tests/test_section_fiscal_rejections.py	674	noncontract_assert	"(row[""value""], row[""origin_ref""]) == (before * 2, ""盘面自发"")"
+K3	tests/test_section_fiscal_rejections.py	675	noncontract_assert	"(history[""old_value""], history[""new_value""], history[""origin_ref""]) == (             before, before * 2, ""盘面自发"",         )"
+K3	tests/test_style_temperament_641.py	103	noncontract_assert	"applied[""applied_person_changes""] == [         {             ""name"": PERSON,             ""origin_ref"": ""盘面自发"",             ""动作"": ""性情"",             ""style"": NEW_STYLE,             ""old_style"": before,             ""new_sty"
+K3	tests/test_style_temperament_641.py	141	noncontract_assert	"change == {         ""name"": PERSON,         ""origin_ref"": ""盘面自发"",         ""动作"": ""性情"",         ""style"": PADDED_STYLE,         ""old_style"": before,         ""new_style"": PADDED_STYLE,         ""reason"": ""经事锤炼，固有层改写"",     }"
+K3	tests/test_style_temperament_641.py	240	noncontract_assert	"changes[0][""origin_ref""] == ""盘面自发"""
+K3	tests/test_surcharge_causal_chain_650.py	205	noncontract_assert	"db.conn.execute(         ""SELECT COUNT(*) FROM population_transfer_ledger WHERE reason='灾害' ""         ""AND amount=1 AND origin_ref=?"", (other[""origin_ref""],),     ).fetchone()[0] == 1"
+K4	ming_sim/db.py	1412	retired_api|baseline_gone	[base 6b513b99f]     def scale_tian_fu(self, ratio: float, commit: bool = True) -> int:
+K4	ming_sim/entities/region/store.py	140	retired_api|baseline_gone	[base 6b513b99f]     def read_scale_tian_fu(self, params: Any = ()) -> Any:
+K5	ming_sim/db.py	5201	forward_shell|baseline_gone	[prior 1f53dd887]     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
+K5	ming_sim/db.py	12187	forward_shell|baseline_gone	[prior 1f53dd887]     def clear_month_open_snapshot(self, turn: int) -> None:
 K5	ming_sim/entities/character_knowledge/store.py	160	dup_sql	set_secret_period_line :: UPDATE secret_orders SET
 K5	ming_sim/entities/character_knowledge/store.py	224	dup_sql	record_participation :: INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)
 K5	ming_sim/entities/character_knowledge/store.py	245	dup_sql	record_public_event :: INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)
-K5	ming_sim/entities/character_knowledge/store.py	428	dup_sql	secret_order_row :: SELECT * FROM secret_orders WHERE id = ?
 K5	ming_sim/entities/character_knowledge/store.py	438	dup_sql	update_secret_order_assignments :: UPDATE secret_orders SET
-K5	ming_sim/entities/character_knowledge/store.py	650	dup_sql	read_get_secret_order :: SELECT * FROM secret_orders WHERE id = ?
+K5	ming_sim/entities/character_knowledge/store.py	649	forward_shell|baseline_gone	[base 6b513b99f]     def read_get_secret_order(self, params: Any = ()) -> Any:
 K5	ming_sim/entities/dossier/store.py	465	dup_sql	list_dossiers :: SELECT * FROM decree_dossiers
 K5	ming_sim/entities/dossier/store.py	1799	dup_sql	snapshot_rows :: SELECT * FROM decree_dossiers
-K5	ming_sim/entities/dossier/store.py	1870	dup_sql	save_pending_promulgation_verdicts :: DELETE FROM pending_promulgation_verdicts WHERE turn=?
-K5	ming_sim/entities/dossier/store.py	1881	dup_sql	clear_pending_promulgation_verdicts :: DELETE FROM pending_promulgation_verdicts WHERE turn=?
-K5	ming_sim/entities/issue/store.py	70	dup_sql	row :: SELECT * FROM issues WHERE id=?
-K5	ming_sim/entities/issue/store.py	127	dup_sql	read_ack_due_commitment_issue :: SELECT * FROM issues WHERE id=?
-K5	ming_sim/entities/issue/store.py	281	dup_sql	write_mark_event_triggered_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'triggered', ?) ON CONFLICT(event_id)
-K5	ming_sim/entities/issue/store.py	284	dup_sql	write_mark_event_avoided_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'avoided', ?) ON CONFLICT(event_id) DO
-K5	ming_sim/entities/issue/store.py	287	dup_sql	write_mark_event_obsolete_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'obsolete', ?) ON CONFLICT(event_id) D
-K5	ming_sim/entities/issue/store.py	437	dup_sql	save_pending_decisions :: DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'
-K5	ming_sim/entities/issue/store.py	511	dup_sql	clear_pending_decisions :: DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'
-K5	ming_sim/entities/issue/store.py	580	dup_sql	save_rescript_drafts :: DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'
+K5	ming_sim/entities/issue/store.py	126	forward_shell|baseline_gone	[base 6b513b99f]     def read_ack_due_commitment_issue(self, params: Any = ()) -> Any:
+K5	ming_sim/entities/issue/store.py	278	dup_sql	write_mark_event_triggered_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'triggered', ?) ON CONFLICT(event_id)
+K5	ming_sim/entities/issue/store.py	281	dup_sql	write_mark_event_avoided_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'avoided', ?) ON CONFLICT(event_id) DO
+K5	ming_sim/entities/issue/store.py	284	dup_sql	write_mark_event_obsolete_owned :: INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) VALUES (?, ?, ?, ?, ?, 'obsolete', ?) ON CONFLICT(event_id) D
+K5	ming_sim/entities/issue/store.py	504	dup_sql	_delete_pending_decision_rows :: DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'
+K5	ming_sim/entities/issue/store.py	578	dup_sql	save_rescript_drafts :: DELETE FROM pending_decisions WHERE turn = ? AND kind = 'rescript_draft'
 K5	ming_sim/entities/person_log/store.py	56	dup_sql	edge_snapshot_rows :: SELECT * FROM relation_edge_events
 K5	ming_sim/entities/person_log/store.py	218	dup_sql	read_get_relation_edge_events_owned :: SELECT * FROM relation_edge_events
-K5	ming_sim/entities/region/store.py	156	dup_sql	read_due_order_displacement_entries :: SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_NewDebt','settle_宗禄欠_NewDebt')
-K5	ming_sim/entities/region/store.py	159	dup_sql	read_arrears_order_displacement_entries :: SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_Repaid','settle_宗禄欠_Repaid')
-K5	ming_sim/entities/reign_state/store.py	124	dup_sql	save :: INSERT INTO metrics (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value
-K5	ming_sim/entities/reign_state/store.py	163	dup_sql	upsert_metric :: INSERT INTO metrics (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value
-K5	ming_sim/entities/reign_state/store.py	185	dup_sql	write_clear_gated_legacies :: UPDATE legacies SET status='cleared' WHERE id=?
-K5	ming_sim/entities/reign_state/store.py	267	dup_sql	write_expire_legacies :: UPDATE legacies SET status='expired' WHERE id=?
-K5	ming_sim/entities/reign_state/store.py	802	dup_sql	chat_turn_ids_for_message_ids :: SELECT id FROM chat_turns WHERE user_message_id IN (
-K5	ming_sim/entities/reign_state/store.py	838	dup_sql	latest_chat_turn_id_for_message_ids :: SELECT id FROM chat_turns WHERE user_message_id IN (
+K5	ming_sim/entities/region/store.py	153	dup_sql	read_due_order_displacement_entries :: SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_NewDebt','settle_宗禄欠_NewDebt')
+K5	ming_sim/entities/region/store.py	156	dup_sql	read_arrears_order_displacement_entries :: SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_Repaid','settle_宗禄欠_Repaid')
+K5	ming_sim/entities/reign_state/store.py	188	dup_sql	write_clear_gated_legacies :: UPDATE legacies SET status='cleared' WHERE id=?
+K5	ming_sim/entities/reign_state/store.py	270	dup_sql	write_expire_legacies :: UPDATE legacies SET status='expired' WHERE id=?
+K5	ming_sim/entities/reign_state/store.py	805	dup_sql	chat_turn_ids_for_message_ids :: SELECT id FROM chat_turns WHERE user_message_id IN (
+K5	ming_sim/entities/reign_state/store.py	841	dup_sql	latest_chat_turn_id_for_message_ids :: SELECT id FROM chat_turns WHERE user_message_id IN (
 K5	ming_sim/entities/social_class/store.py	84	dup_sql	read_apply_bandit_absorptions :: SELECT population FROM classes WHERE name='流民' AND region_id=?
 K5	ming_sim/entities/social_class/store.py	93	dup_sql	read_apply_levy_driven_transfers :: SELECT population FROM classes WHERE name='农民' AND region_id=?
 K5	ming_sim/entities/staged_declaration/store.py	143	dup_sql	write :: UPDATE staged_declarations SET status='discarded' WHERE decree_ref=? AND status='staged'
 K5	ming_sim/entities/staged_declaration/store.py	242	dup_sql	mark_settled :: UPDATE staged_declarations SET status='settled' WHERE decree_ref=? AND status='staged'
-K7	evidence/1889-seven-class-enum-raw.tsv	1012	withdrawn_mech	K7 docs/1889-k1-k2-members.tsv 399 K1 AffairStore.declare_closed ming_sim/entities/affair/store.py:146 referenced kind=store; refs=4 n/a 4  keep refs=4; sample=ming_sim/entities/affair/store.py,tests/
-K7	evidence/1889-seven-class-enum-raw.tsv	1013	withdrawn_mech	K7 docs/1889-k1-k2-members.tsv 402 K1 AffairStore.close_from_declaration ming_sim/entities/affair/store.py:206 referenced kind=store; refs=1 n/a 1  keep refs=1; sample=ming_sim/issues.py
-K7	evidence/1889-seven-class-enum-raw.tsv	1015	withdrawn_mech	K7 evidence/1889-six-class-fixer-receipt.md 120 `close_from_declaration` / `declare_closed` / `ATTACH_RESULT_CLOSE` / `birth_close` / `attach=close` = **0**。余 `c5_affair_close` 1：`materials.py:416` AD
-K7	evidence/1889-seven-class-enum-raw.tsv	1016	withdrawn_mech	K7 evidence/1889-six-class-fixer-receipt.md 182 `AGENDA_FROZEN` / `关（codex` / `attach=close` / `close_from_declaration` / `birth_close` / `canonical target`（tests+web）= **0**。
-K7	evidence/1889-seven-class-enum-raw.tsv	1017	stale_doc	K7 ming_sim/entities/affair/store.py 81 """World-record home for affairs. Close only by explicit declaration."""
-K7	evidence/1889-seven-class-enum-raw.tsv	1018	withdrawn_mech	K7 scripts/1889_six_class_enumerate.py 334 r"close_from_declaration|declare_closed|ATTACH_RESULT_CLOSE|_ATTACH_CLOSE|"
-K7	evidence/1889-six-class-fixer-receipt.md	120	withdrawn_mech	`close_from_declaration` / `declare_closed` / `ATTACH_RESULT_CLOSE` / `birth_close` / `attach=close` = **0**。余 `c5_affair_close` 1：`materials.py:416` ADR 叙述 **KEEP**。
-K7	evidence/1889-six-class-fixer-receipt.md	182	withdrawn_mech	`AGENDA_FROZEN` / `关（codex` / `attach=close` / `close_from_declaration` / `birth_close` / `canonical target`（tests+web）= **0**。
-K7	ming_sim/entities/affair/store.py	81	stale_doc	"""World-record home for affairs. Close only by explicit declaration."""
-K8	ming_sim/db.py	6143	lenient_try_empty	try:
-K8	ming_sim/db.py	6165	lenient_try_empty	try:
-K8	ming_sim/db.py	6171	lenient_try_empty	try:
-K9	evidence/1889-seven-class-enum-raw.tsv	1297	guard_field	K9 CHANGELOG.md 692 - **事件 loader 覆盖默认结局负例**：新增配置负路径测试，锁定 `default_terminal_reason` 必须属于结局白名单。
-K9	evidence/1889-seven-class-enum-raw.tsv	1298	guard_field	K9 docs/test-cleanup-audit-1185.md 1617 | `test_load_event_rejects_default_terminal_reason_outside_labels` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
-K9	evidence/1889-seven-class-enum-raw.tsv	1299	commit_discrim	K9 ming_sim/cli/terminal.py 283 if callable(_commit) and not callable(_conn):
-K9	evidence/1889-seven-class-enum-raw.tsv	1300	commit_discrim	K9 ming_sim/cli/terminal.py 452 if callable(_commit) and not callable(_conn):
-K9	evidence/1889-seven-class-enum-raw.tsv	1301	commit_discrim	K9 ming_sim/cli/terminal.py 474 if callable(_commit) and not callable(_conn):
-K9	evidence/1889-seven-class-enum-raw.tsv	1302	guard_field	K9 ming_sim/content.py 294 default_terminal_reason = str(item.get("default_terminal_reason") or "")
-K9	evidence/1889-seven-class-enum-raw.tsv	1303	guard_field	K9 ming_sim/content.py 295 if default_terminal_reason and default_terminal_reason not in terminal_reason_labels:
-K9	evidence/1889-seven-class-enum-raw.tsv	1304	guard_field	K9 ming_sim/content.py 297 f"{filename}[{idx}] default_terminal_reason={default_terminal_reason!r} "
-K9	evidence/1889-seven-class-enum-raw.tsv	1305	commit_discrim	K9 ming_sim/month_chain.py 1849 if callable(_commit) and not callable(_conn):
-K9	evidence/1889-seven-class-enum-raw.tsv	1306	commit_discrim	K9 ming_sim/month_open_snapshot.py 53 if callable(_commit) and not callable(_conn):
-K9	evidence/1889-seven-class-enum-raw.tsv	1307	guard_field	K9 tests/test_event_trigger_gate.py 511 def test_load_event_rejects_default_terminal_reason_outside_labels(monkeypatch):
-K9	evidence/1889-seven-class-enum-raw.tsv	1308	guard_field	K9 tests/test_event_trigger_gate.py 512 """default_terminal_reason 必须来自 terminal_reason_labels 白名单。"""
-K9	evidence/1889-seven-class-enum-raw.tsv	1309	guard_field	K9 tests/test_event_trigger_gate.py 520 "default_terminal_reason": "已驳"}]
-K9	evidence/1889-seven-class-enum-raw.tsv	1310	commit_discrim	K9 web_app.py 2174 if callable(_commit) and not callable(_conn):
-K9	evidence/1889-seven-class-enum-raw.tsv	1311	commit_discrim	K9 web_app.py 2843 if callable(_commit) and not callable(_conn):
-K9	ming_sim/cli/terminal.py	283	commit_discrim	if callable(_commit) and not callable(_conn):
-K9	ming_sim/cli/terminal.py	452	commit_discrim	if callable(_commit) and not callable(_conn):
-K9	ming_sim/cli/terminal.py	474	commit_discrim	if callable(_commit) and not callable(_conn):
-K9	ming_sim/content.py	294	guard_field	default_terminal_reason = str(item.get("default_terminal_reason") or "")
-K9	ming_sim/content.py	295	guard_field	if default_terminal_reason and default_terminal_reason not in terminal_reason_labels:
-K9	ming_sim/content.py	297	guard_field	f"{filename}[{idx}] default_terminal_reason={default_terminal_reason!r} "
-K9	ming_sim/month_chain.py	1849	commit_discrim	if callable(_commit) and not callable(_conn):
-K9	ming_sim/month_open_snapshot.py	53	commit_discrim	if callable(_commit) and not callable(_conn):
-K9	tests/test_event_trigger_gate.py	511	guard_field	def test_load_event_rejects_default_terminal_reason_outside_labels(monkeypatch):
-K9	tests/test_event_trigger_gate.py	512	guard_field	"""default_terminal_reason 必须来自 terminal_reason_labels 白名单。"""
-K9	tests/test_event_trigger_gate.py	520	guard_field	"default_terminal_reason": "已驳"}]
-K9	web_app.py	2174	commit_discrim	if callable(_commit) and not callable(_conn):
-K9	web_app.py	2843	commit_discrim	if callable(_commit) and not callable(_conn):
+K7	ming_sim/entities/affair/store.py	81	stale_contract|baseline_gone	"[base 6b513b99f]     """"""World-record home for affairs. Close only by explicit declaration."""""""
+K8	ming_sim/db.py	6122	excluded_decode	"excluded_names = _load_list(row[""excluded_names""])"
+K8	ming_sim/db.py	6139	excluded_decode	"excluded_names = _load_list(row[""excluded_names""])"
+K8	ming_sim/db.py	6140	excluded_decode	"excluded_targets = _load_targets(row[""excluded_targets""])"
+K8	ming_sim/db.py	6146	lenient_wash|baseline_gone	[base 6b513b99f]                 excluded_names = []
+K8	ming_sim/db.py	6148	lenient_wash|baseline_gone	[base 6b513b99f]                 excluded_names = []
+K8	ming_sim/db.py	6168	lenient_wash|baseline_gone	[base 6b513b99f]                 excluded_names = []
+K8	ming_sim/db.py	6170	lenient_wash|baseline_gone	[base 6b513b99f]                 excluded_names = []
+K8	ming_sim/db.py	6174	lenient_wash|baseline_gone	[base 6b513b99f]                 excluded_targets = {}
+K8	ming_sim/db.py	6176	lenient_wash|baseline_gone	[base 6b513b99f]                 excluded_targets = {}
+K8	ming_sim/db.py	13520	excluded_decode	"return _load_list(order[""excluded_names""])"
+K8	ming_sim/db.py	13528	excluded_decode	"return _load_list(saying[""excluded_names""])"
+K8	ming_sim/db.py	13540	excluded_decode	"payload = _load_targets(row[""excluded_targets""] if row else None)"
+K8	ming_sim/db.py	13546	excluded_decode	"payload = _load_targets(row[""excluded_targets""] if row else None)"
+K8	ming_sim/entities/character_knowledge/store.py	43	excluded_decode	excluded_names TEXT NOT NULL DEFAULT '[]',
+K8	ming_sim/entities/character_knowledge/store.py	59	excluded_decode	excluded_names TEXT NOT NULL DEFAULT '[]',
+K8	ming_sim/entities/character_knowledge/store.py	60	excluded_decode	excluded_targets TEXT NOT NULL DEFAULT '{}',
+K8	ming_sim/entities/character_knowledge/store.py	95	excluded_decode	"""""""Decode an excluded_targets column: {""people"": [...], ""offices"": [...]}."""""""
+K8	ming_sim/entities/character_knowledge/store.py	111	excluded_decode	"""sim_note"", ""excluded_names"", ""dossier_progress_json"", ""excluded_targets"","
+K8	ming_sim/entities/character_knowledge/store.py	116	excluded_decode	"""source_id"", ""excluded_names"", ""excluded_targets"", ""created_at"","
+K8	ming_sim/entities/character_knowledge/store.py	211	excluded_decode	excluded_names: Optional[Iterable[str]] = None, commit: bool = True,
+K8	ming_sim/entities/character_knowledge/store.py	220	excluded_decode	_names(excluded_names), ensure_ascii=False)
+K8	ming_sim/entities/character_knowledge/store.py	225	excluded_decode	"""(turn,year,period,character_name,kind,title,body,source_id,excluded_names) """
+K8	ming_sim/entities/character_knowledge/store.py	239	excluded_decode	"source_id: str = """", excluded_names: Optional[Iterable[str]] = None,"
+K8	ming_sim/entities/character_knowledge/store.py	246	excluded_decode	"""(turn,year,period,character_name,kind,title,body,source_id,excluded_names) """
+K8	ming_sim/entities/character_knowledge/store.py	251	excluded_decode	json.dumps(_names(excluded_names), ensure_ascii=False),
+K8	ming_sim/entities/character_knowledge/store.py	261	excluded_decode	excluded_names: Optional[Iterable[str]] = None,
+K8	ming_sim/entities/character_knowledge/store.py	262	excluded_decode	excluded_targets: Optional[Mapping[str, Iterable[str]]] = None,
+K8	ming_sim/entities/character_knowledge/store.py	274	excluded_decode	"""excluded_names,excluded_targets) VALUES (?,?,?,?,?,?,?,?,?,?)"","
+K8	ming_sim/entities/character_knowledge/store.py	280	excluded_decode	safe_json_dumps(_names(excluded_names), ensure_ascii=False),
+K8	ming_sim/entities/character_knowledge/store.py	281	excluded_decode	safe_json_dumps(_targets(excluded_targets), ensure_ascii=False),
+K8	ming_sim/entities/character_knowledge/store.py	359	excluded_decode	"""SELECT turn, year, period, kind, title, body, source_id, excluded_names """
+K8	ming_sim/entities/character_knowledge/store.py	370	excluded_decode	"""participant_roster, excluded_names, excluded_targets """
+K8	ming_sim/entities/character_knowledge/store.py	379	excluded_decode	"""SELECT turn, year, period, kind, title, body, source_id, excluded_names """
+K8	ming_sim/entities/character_knowledge/store.py	447	excluded_decode	"""participant_roster, excluded_names, excluded_targets """
+K8	ming_sim/entities/character_knowledge/store.py	479	excluded_decode	"""""""(source_id, excluded_names) pairs from one character's own events."""""""
+K8	ming_sim/entities/character_knowledge/store.py	482	excluded_decode	"""excluded_names"": str(row[""excluded_names""] or ""[]"")}"
+K8	ming_sim/entities/character_knowledge/store.py	484	excluded_decode	"""SELECT source_id, excluded_names FROM character_knowledge_events """
+K8	ming_sim/entities/character_knowledge/store.py	493	excluded_decode	"""SELECT source_id, kind, participant_roster, excluded_names, excluded_targets """
+K8	ming_sim/entities/character_knowledge/store.py	503	excluded_decode	"""SELECT source_id, participant_roster, excluded_names, excluded_targets """
+K8	ming_sim/entities/character_knowledge/store.py	514	excluded_decode	"""participant_roster, excluded_names FROM character_knowledge_sources """
+K8	ming_sim/entities/character_knowledge/store.py	549	excluded_decode	"""SELECT excluded_names FROM character_knowledge_events """
+K8	ming_sim/entities/character_knowledge/store.py	554	excluded_decode	"return _load_list(row[""excluded_names""])"
+K8	ming_sim/entities/character_knowledge/store.py	556	excluded_decode	"""SELECT excluded_names FROM character_knowledge_sources WHERE source_id=?"","
+K8	ming_sim/entities/character_knowledge/store.py	559	excluded_decode	"return [] if row is None else _load_list(row[""excluded_names""])"
+K8	ming_sim/entities/character_knowledge/store.py	564	excluded_decode	"""SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?"","
+K8	ming_sim/entities/character_knowledge/store.py	569	excluded_decode	"payload = _load_targets(row[""excluded_targets""])"
+K8	ming_sim/entities/character_knowledge/store.py	604	excluded_decode	"item[""excluded_names""] = row[""excluded_names""] or ""[]"""
+K8	ming_sim/entities/character_knowledge/store.py	629	excluded_decode	return self._conn.execute('SELECT status, tags, minister_name, excluded_names, excluded_targets FROM secret_orders WHERE id=?', params).fetchone()
+K8	ming_sim/entities/character_knowledge/store.py	632	excluded_decode	return self._conn.execute('UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, deadline_span=?, excluded_names=?, excluded_targets=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', params)
+K8	ming_sim/entities/character_knowledge/store.py	635	excluded_decode	return self._conn.execute('UPDATE secret_orders SET title=?, content=?, tags=?, excluded_names=?, excluded_targets=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', params)
+K8	ming_sim/entities/character_knowledge/store.py	653	excluded_decode	return self._conn.execute('SELECT excluded_names FROM secret_orders WHERE id=?', params).fetchone()
+K8	ming_sim/entities/character_knowledge/store.py	656	excluded_decode	return self._conn.execute('SELECT excluded_targets FROM secret_orders WHERE id=?', params).fetchone()
+K8	ming_sim/entities/character_knowledge/store.py	671	excluded_decode	return self._conn.execute('SELECT id,excluded_names,excluded_targets FROM secret_orders', params).fetchall()
+K8	ming_sim/entities/character_knowledge/store.py	673	excluded_decode	def read_knowledge_exclusions_for_source_excluded_names(self, params: Any = ()) -> Any:
+K8	ming_sim/entities/character_knowledge/store.py	674	excluded_decode	return self._conn.execute('SELECT excluded_names FROM public_sayings WHERE id=?', params).fetchone()
+K8	ming_sim/entities/character_knowledge/store.py	676	excluded_decode	def read_knowledge_exclusion_targets_for_source_excluded_targets(self, params: Any = ()) -> Any:
+K8	ming_sim/entities/character_knowledge/store.py	677	excluded_decode	return self._conn.execute('SELECT excluded_targets FROM public_sayings WHERE id=?', params).fetchone()
+K8	ming_sim/entities/character_knowledge/store.py	680	excluded_decode	return self._conn.execute('INSERT INTO public_sayings (turn, year, period, body, involved_characters, affair_ref, source_id, excluded_names, excluded_targets) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', params)
+K8	ming_sim/entities/character_knowledge/store.py	686	excluded_decode	return self._conn.execute('SELECT id, turn, year, period, body, involved_characters, affair_ref, source_id, excluded_names, excluded_targets FROM public_sayings ORDER BY id', params).fetchall()
+K9	ming_sim/cli/terminal.py	283	commit_discrim|baseline_gone	[base 6b513b99f]             if callable(_commit) and not callable(_conn):
+K9	ming_sim/cli/terminal.py	452	commit_discrim|baseline_gone	[base 6b513b99f]                 if callable(_commit) and not callable(_conn):
+K9	ming_sim/cli/terminal.py	474	commit_discrim|baseline_gone	[base 6b513b99f]                     if callable(_commit) and not callable(_conn):
+K9	ming_sim/content.py	294	unauthorized_guard|baseline_gone	"[base 6b513b99f]         default_terminal_reason = str(item.get(""default_terminal_reason"") or """")"
+K9	ming_sim/content.py	295	unauthorized_guard|baseline_gone	[base 6b513b99f]         if default_terminal_reason and default_terminal_reason not in terminal_reason_labels:
+K9	ming_sim/content.py	297	unauthorized_guard|baseline_gone	"[base 6b513b99f]                 f""{filename}[{idx}] default_terminal_reason={default_terminal_reason!r} """
+K9	ming_sim/db.py	5201	resurrected_commit_shell|baseline_gone	[prior 1f53dd887]     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
+K9	ming_sim/db.py	12187	resurrected_commit_shell|baseline_gone	[prior 1f53dd887]     def clear_month_open_snapshot(self, turn: int) -> None:
+K9	ming_sim/month_chain.py	1849	commit_discrim|baseline_gone	[base 6b513b99f]         if callable(_commit) and not callable(_conn):
+K9	ming_sim/month_open_snapshot.py	53	commit_discrim|baseline_gone	[base 6b513b99f]     if callable(_commit) and not callable(_conn):
+K9	tests/test_chat_stream_failpaths_393.py	82	guard_commit	def append_chat_message(self, *a, **k):
+K9	tests/test_chat_stream_failpaths_393.py	247	guard_commit	def append_chat_message(self, *a, **k):
+K9	tests/test_chat_stream_failpaths_393.py	312	guard_commit	def append_chat_message(self, *a, **k):
+K9	tests/test_cli_play_turn.py	171	guard_commit	def append_chat_message(self, minister_name, turn, role, content):
+K9	tests/test_cli_play_turn.py	226	guard_commit	def append_chat_message(self, minister_name, turn, role, content):
+K9	tests/test_cli_play_turn.py	282	guard_commit	def append_chat_message(self, minister_name, turn, role, content):
+K9	tests/test_cli_play_turn.py	333	guard_commit	def append_chat_message(self, minister_name, turn, role, content):
+K9	tests/test_cli_play_turn.py	374	guard_commit	def append_chat_message(self, minister_name, turn, role, content):
+K9	tests/test_menu_lifecycle_drain_396.py	509	guard_commit	def append_chat_message(self, minister_name, turn, role, content):
+K9	tests/test_web_chat_serialization_393.py	123	guard_commit	def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
+K9	web_app.py	2174	commit_discrim|baseline_gone	[base 6b513b99f]             if callable(_commit) and not callable(_conn):
+K9	web_app.py	2843	commit_discrim|baseline_gone	[base 6b513b99f]             if callable(_commit) and not callable(_conn):

@@ -5198,23 +5198,6 @@ class GameDB:
         # #1843 reopen：无有效邸报则真空；旧 turn_logs 回落已删。
         return ""
 
-    def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
-        """召对聊天单条消息落库（chat_messages）。
-
-        #976 不变式：分类落定前，**任何**召对行（不分 role）不得进入共享
-        ``character_knowledge_sources``。此处只 insert + hold；投轨唯一出口是
-        ``release_held_audience_knowledge``（分类后 / 月末）。续聊读
-        ``chat_messages`` 本表，不依赖共享投影即时可见。
-
-        Empty ``minister_name`` is allowed for non-audience bookkeeping rows but
-        cannot be projected (release parks them as withheld — see N2).
-        """
-        message_id = self.chat_messages.insert(
-            minister_name=minister_name, turn=turn, role=role, content=content,
-        )
-        self.conn.commit()
-        return message_id
-
     def set_message_highlights(
         self, message_id: int, phrases: Sequence[Any],
     ) -> None:
@@ -12184,11 +12167,6 @@ class GameDB:
         self.conn.commit()
         return created
 
-    def clear_month_open_snapshot(self, turn: int) -> None:
-        """过期/清除本回合快照。atomic 内 commit 为 no-op，与 clear_resolve_context 同窗。"""
-        self.month_open_snapshots.delete(int(turn))
-        self.conn.commit()
-
     def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
         row = CharacterStore(self.conn).read_get_authority((int(authority_id),))
         if row is None:
@@ -12973,7 +12951,7 @@ class GameDB:
         inertia_delta: int = 0,
         commit: bool = True,
     ) -> sqlite3.Row | None:
-        row = IssueStore(self.conn).read_ack_due_commitment_issue((issue_id,))
+        row = IssueStore(self.conn).row(issue_id)
         if row is None or row["status"] != "active":
             return None
         # 崩坏能力由 effect_on_fail 是否非空判定：有崩坏效果=会崩坏（bar 能到 0、failed 终结）；
@@ -13030,7 +13008,7 @@ class GameDB:
         })
         if commit:
             self.conn.commit()
-        return IssueStore(self.conn).read_ack_due_commitment_issue((issue_id,))
+        return IssueStore(self.conn).row(issue_id)
 
     def close_issue(
         self,
@@ -13044,7 +13022,7 @@ class GameDB:
         """LLM 主动通知收尾。reason 必须是 'resolved' 或 'failed'。不看 bar 门槛。"""
         if reason not in ("resolved", "failed"):
             raise ValueError(f"close_issue reason 非法：{reason}")
-        row = IssueStore(self.conn).read_ack_due_commitment_issue((issue_id,))
+        row = IssueStore(self.conn).row(issue_id)
         if row is None or row["status"] != "active":
             return None
         # 不可崩坏局势（effect_on_fail 空：天灾/不可控灾害）没有「失败终结」态——LLM 误判 failed
@@ -13082,7 +13060,7 @@ class GameDB:
         })
         if commit:
             self.conn.commit()
-        return IssueStore(self.conn).read_ack_due_commitment_issue((issue_id,))
+        return IssueStore(self.conn).row(issue_id)
 
     # ── 帝国修正（legacies 表）：结案留下的长期百分比修正符，落账层放大/缩小增量 ────
     def insert_legacy(
@@ -13206,7 +13184,7 @@ class GameDB:
         applied_cost: Dict[str, object] | None = None,
         commit: bool = True,
     ) -> sqlite3.Row | None:
-        row = IssueStore(self.conn).read_ack_due_commitment_issue((issue_id,))
+        row = IssueStore(self.conn).row(issue_id)
         if row is None or row["status"] != "active":
             return None
         self.issues.update(issue_id, {
@@ -13226,7 +13204,7 @@ class GameDB:
         })
         if commit:
             self.conn.commit()
-        return IssueStore(self.conn).read_ack_due_commitment_issue((issue_id,))
+        return IssueStore(self.conn).row(issue_id)
 
     @staticmethod
     def coerce_beyond_intent_flag(value: object) -> int:
@@ -14502,7 +14480,7 @@ class GameDB:
 
     def get_secret_order(self, order_id: int) -> Optional[Dict[str, object]]:
         """单查一条密令（任意状态），给承办人查进度工具用。不存在返回 None。"""
-        r = CharacterKnowledgeStore(self.conn).read_get_secret_order((int(order_id),))
+        r = CharacterKnowledgeStore(self.conn).secret_order_row(int(order_id))
         if not r:
             return None
         return {

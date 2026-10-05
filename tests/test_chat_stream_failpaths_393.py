@@ -285,8 +285,13 @@ class _StreamCrashAgent:
 
 
 class _WorkerPathDB:
-    """Prologue succeeds (append_chat_message OK) but worker scene payload crashes
+    """Prologue succeeds (chat_messages.insert OK) but worker scene payload crashes
     AND fail_chat_turn also crashes → worker double-failure path."""
+
+    def __init__(self):
+        # Production call sites commit via db.conn.commit after Store insert;
+        # keep a real conn object so __getattr__ stub does not shadow it.
+        self.conn = SimpleNamespace(commit=lambda: None)
 
     def create_chat_turn(self, *a, **k):
         return 7

@@ -1302,7 +1302,7 @@ def _parse_revoke_decree_target(
     if tid <= 0:
         return None
     if kind == "issue":
-        row = IssueStore(db.conn).read_ack_due_commitment_issue((tid,))
+        row = IssueStore(db.conn).row(tid)
         if row is None:
             return None
         if str(row["kind"] or "").strip() != "initiative":

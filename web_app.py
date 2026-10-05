@@ -2165,8 +2165,11 @@ class WebGame:
         else:
             # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
             minister_message_id = int(
-                self.db.append_chat_message(minister_name, turn, "minister", answer)
+                self.db.chat_messages.insert(
+                    minister_name=minister_name, turn=turn, role="minister", content=answer,
+                )
             )
+            self.db.conn.commit()
         self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
         open_night = None
         if hasattr(self.db, "conn"):
@@ -2831,7 +2834,10 @@ class WebGame:
                 attach_to_hall=True,
             )
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+            message_id = self.db.chat_messages.insert(
+                minister_name=minister_name, turn=accepted_turn, role="user", content=text,
+            )
+            self.db.conn.commit()
             if chat_turn_id:
                 self.db.reign.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception as error:

@@ -277,7 +277,10 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
         if hasattr(db, "persist_minister_reply"):
             db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
         else:
-            mid = db.append_chat_message(minister_name, accepted_turn, "minister", answer)
+            mid = db.chat_messages.insert(
+                minister_name=minister_name, turn=accepted_turn, role="minister", content=answer,
+            )
+            db.conn.commit()
             db.reign.update_chat_turn_messages(chat_turn_id, minister_message_id=int(mid))
         # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
         session.schedule_pending_scene_translation(result)
@@ -442,9 +445,10 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                                 session.db, int(night["id"]), character.name,
                                 origin_chat_turn_id=chat_turn_id, commit=False,
                             )
-                user_message_id = session.db.append_chat_message(
-                    character.name, accepted_turn, "user", question,
+                user_message_id = session.db.chat_messages.insert(
+                    minister_name=character.name, turn=accepted_turn, role="user", content=question,
                 )
+                session.db.conn.commit()
                 if chat_turn_id:
                     session.db.reign.update_chat_turn_messages(
                         chat_turn_id, user_message_id=user_message_id,
@@ -462,9 +466,11 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                     )
                     minister_message_id = 0
                 else:
-                    minister_message_id = session.db.append_chat_message(
-                        character.name, accepted_turn, "minister", result.answer,
+                    minister_message_id = session.db.chat_messages.insert(
+                        minister_name=character.name, turn=accepted_turn,
+                        role="minister", content=result.answer,
                     )
+                    session.db.conn.commit()
                 if chat_turn_id:
                     if minister_message_id:
                         session.db.reign.update_chat_turn_messages(

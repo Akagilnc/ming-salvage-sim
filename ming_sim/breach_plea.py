@@ -135,7 +135,7 @@ def commitment_natural_due_turn(row: Any) -> int:
 
 
 def _issue_row(db: Any, commitment_ref: int) -> Any:
-    return IssueStore(db.conn).read_ack_due_commitment_issue((int(commitment_ref),))
+    return IssueStore(db.conn).row(int(commitment_ref))
 
 
 def list_active_commitments(db: Any) -> List[Any]:
