@@ -2084,5 +2084,3 @@ def settle_due_secret_orders(
     if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
     return results
-
-

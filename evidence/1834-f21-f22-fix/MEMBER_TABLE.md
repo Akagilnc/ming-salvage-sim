@@ -1,7 +1,7 @@
 # 1834 F21/F22 成员表（全仓枚举完整清单；非代表样本）
 
-权威：`ENUM_CMDS.txt` + `enum_cmds.sh` + `enum_out/` + `RECEIPT.md`。
-临时 AST 一次性脚本：`scripts/enum_f21_free_field_crops.py` / `scripts/enum_f22_full_defs_refs.py`（非永久分类层）。
+权威：`ENUM_CMDS.txt`（短 shell/stdlib 可执行命令）+ 本表 + `RECEIPT.md`。
+本轮已删除永久枚举脚本与全量 jsonl/md 副本（历史 commit 保留）；处置以本表为准。
 
 ---
 
@@ -9,7 +9,7 @@
 
 类定义：沿真实输入、写入、读取、物化、供料与前端显示追踪取值，删除自由字段上的裁字；判空用副本；机器键归一保留。追自由字段 candidate，禁止 AST 名滤自动 KEEP。
 
-枚举：all_crop_write_shapes=1721；freeish_name_candidates=132（完整见 `enum_out/f21_freeish_crop_candidates.md`）。
+枚举记录：freeish_name_candidates=132（完整处置见下表，非抽样）。
 
 ### FIX（本类成立；读写/物化/供料/前端同在类内）
 
@@ -166,9 +166,9 @@
 
 ## F22 退役旧接缝残留
 
-类定义：按现行职责与真实消费者清理已作废结构及专属参数、透传、类型和测试；保留在用共享能力与公开现役 API 与冻结失败记录。
-枚举：def_count=3652；zero_abs=54；zero_prod_test_only=70（完整候选 `enum_out/f22_zero_consumer_candidates.md` + 处置 `f22_zero_disposition.tsv`）。
-边界：全仓 Python 函数/类/dataclass 字段 + TS export/type；**不是** ChatTurnResult 单 dataclass / 具名 expanded set。
+类定义：按现行职责与真实消费者清理已作废结构及专属参数、透传、类型和测试；保留在用共享能力；冻结失败记录不改写。
+枚举记录：zero_abs=54；zero_prod_test_only=70（完整候选与处置见下表，非抽样）。
+边界：全仓定义 + 函数名/字符串/动态引用复验；**不是** ChatTurnResult 单 dataclass / 具名 expanded set；**不靠**「公开 API」命名笼统 KEEP。
 
 ### DELETE（本轮+已验 absent）
 
@@ -327,5 +327,4 @@
 
 覆盖核对：zero 候选=124；上表行数=124。
 
-处置原则：公开 HTTP `api_*` / GameDB 公开方法 / 实体 store / CliChat 流式面 / 探针脚本 → KEEP；零调用≠全删；但零消费者旧表（如 EN_VALUE_CN）追职责后该废则删。
-
+处置原则：逐条追职责与真实消费者（含字符串/动态调用）；零调用≠自动删；有退役职责证据（如 EN_VALUE_CN 旧表）则删；无退役证据的零调用表面 KEEP。装饰器注册的 HTTP 处理函数函数名零 Python 调用属常态，须对照路由注册而非仅看调用图。

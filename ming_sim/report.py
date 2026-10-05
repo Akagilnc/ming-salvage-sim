@@ -96,5 +96,3 @@ def metric_delta(before: Dict[str, int], after: Dict[str, int]) -> Dict[str, int
 
 def status_delta_from_delta(delta: Dict[str, int]) -> str:
     return format_metric_delta(delta).replace("数值变化：", "")
-
-

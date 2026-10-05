@@ -547,5 +547,3 @@ def apply_audience_turn_translation(
         minister_name=minister_name,
         source=source,
     )
-
-

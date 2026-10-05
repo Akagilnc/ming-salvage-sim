@@ -7,5 +7,5 @@ Reason (F17 shape, re-opened by seat review):
 - materialize current-green was not honestly established under that script
 
 Do not treat that JSON verdict_old_logic_restored=true as proof.
-Current authority for old-red/new-green: /tmp probe stdout captured in RECEIPT.md
-(real old functions from git show ebcd2d1a1 loaded into mapper / parse / apply entries).
+Current authority: mutation_real_entry.out (current_green preserve sites intact).
+Real-mutation method limit: verify live preserve sites only; do not restore old strip logic via temp scripts.

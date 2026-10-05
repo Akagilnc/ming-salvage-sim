@@ -1,31 +1,19 @@
-F21/F22 enum commands (ACTUAL executable; one-shot AST; no permanent classifier)
-DATE=2026-10-05T02:49:33Z
-HEAD_PRE_COMMIT=66b88fa77f5158c8f015d97480803e798283dd3e
+# 1834 F21/F22 — executable enum commands (short shell / stdlib only; no permanent scripts)
+# Run from repo root. Authority for dispositions: MEMBER_TABLE.md
 
-NOTE: Prior ChatTurnResult-matrix / natural-language CMD139/148/153 revoked.
-Authority = evidence/1834-f21-f22-fix/enum_cmds.sh + scripts below.
+BASELINE=ebcd2d1a1
+PRODUCTION=66b88fa77
 
-========== F21 CMD (executable) ==========
-CMD: export MING_ENUM_ROOT="$PWD" MING_ENUM_OUT="$PWD/evidence/1834-f21-f22-fix/enum_out"
-CMD: python3 evidence/1834-f21-f22-fix/scripts/enum_f21_free_field_crops.py
-HIT_SUMMARY all_crop_write_shapes=1721 freeish_name_candidates=132 py_files=118 ts_files=45
-ARTIFACTS: enum_out/f21_freeish_crop_candidates.md (.jsonl)  — NOT auto-KEEP; chase dataflow
-
-F21 DATAFLOW CONFIRM CMD:
+========== F21 CMD (dataflow preserve sites; not auto-KEEP) ==========
 CMD: rg -n --glob 'ming_sim/**/*.py' --glob 'web/src/**/*.{ts,tsx}' --glob '!web/src/**/*.{test,spec}.{ts,tsx}' '人读 station|Free prose highlight|spoken if spoken\.strip|fromPayload\.trim\(\) \? fromPayload|out\.append\(item\)|payload\["station"\] = station'
 
-========== F22 CMD (executable full-repo defs/refs) ==========
-CMD: export MING_ENUM_ROOT="$PWD" MING_ENUM_OUT="$PWD/evidence/1834-f21-f22-fix/enum_out"
-CMD: python3 evidence/1834-f21-f22-fix/scripts/enum_f22_full_defs_refs.py
-HIT_SUMMARY def_count=3652 zero_abs=54 zero_prod_test_only=70 corpus_files=422 py_files=118 ts_files=45
-ARTIFACTS:
-  enum_out/f22_all_defs.jsonl
-  enum_out/f22_zero_consumer_candidates.jsonl
-  enum_out/f22_zero_consumer_candidates.md
-  enum_out/f22_zero_disposition.tsv
-  enum_out/f22_enum_summary.json
+HIT_SUMMARY (recorded): freeish_name_candidates=132; FIX sites = station write/materialize + highlights + materials spoken/body + frontend trim-判空赋原文
+FULL_DISPOSITION: MEMBER_TABLE.md §F21
 
-F22 ABSENT_CHECK CMD (deleted symbols must be 0 in live code):
-CMD: for s in EN_VALUE_CN Suggestion ExtractionPendingStatus run_audience_turn_translation stage_referral_candidate stage_revoke_authority_candidate season_option_contract_prompt cluster_effect PromulgationHealEvidence release_previous_material_tree _open_night_court_break apply_llm_config splitReportItems appointed_minister registered_minister displaced_minister; do rg -n --glob '!evidence/**' --glob '!archive/**' --glob '!docs/**' "\b$s\b" ming_sim web_app.py web/src tests scripts main.py launcher.py spike_settle_tick.py | wc -l; done
+========== F22 CMD (deleted-symbol absent check; full-repo string/dynamic) ==========
+CMD: for s in EN_VALUE_CN Suggestion ExtractionPendingStatus PromulgationHealEvidence run_audience_turn_translation stage_referral_candidate stage_revoke_authority_candidate season_option_contract_prompt cluster_effect release_previous_material_tree _open_night_court_break apply_llm_config splitReportItems appointed_minister registered_minister displaced_minister status_delta build_period_report mean_aligned_stance dict_of_string_lists dict_of_strings historical_anchor_for_month parse_json_dict event_context first_character_name require_non_empty_text require_int_range require_bool has_player_visible_rejection contract_axes_direction parse_covert_exec_selections discover_character_write_sql_locations person_write_locations_by_disposition qualitative_character_attribute disaster_severity_band _merge_compliant_promulgation_items _promulgable_proposed_dossiers _dossier_ids_from_simulator_payload _open_affair_ids_from_payload _primary_source_only_army_pay_container_total _is_audience_chat_shared_channel heal_evidence; do c=$(rg -n --glob '!evidence/**' --glob '!archive/**' --glob '!docs/**' --glob '!**/*.md' "\\b$s\\b" ming_sim web_app.py web/src tests scripts main.py launcher.py spike_settle_tick.py 2>/dev/null | wc -l | tr -d ' '); echo "ABSENT_CHECK $s hits=$c"; done
 
-WRAPPER: bash evidence/1834-f21-f22-fix/enum_cmds.sh
+HIT_SUMMARY (recorded): all listed DELETE symbols hits=0
+FULL_DISPOSITION: MEMBER_TABLE.md §F22 (zero candidates kept with per-row semantic reasons; not name-based public-API KEEP)
+
+NOTE: Prior permanent AST scripts under evidence/.../scripts/ and full jsonl/md dumps under enum_out/ deleted this cleanup round (history retains). Do not reintroduce classifier layers.
