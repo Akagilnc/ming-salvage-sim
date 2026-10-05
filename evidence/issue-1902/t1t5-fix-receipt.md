@@ -3,6 +3,7 @@
 - 分支：`ak-roles/1902-t1t6-fixer-092109acf`
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5`
 - 上一轮 HEAD：`2f6ebc4f4`（T1/T5 回执戳）/ 代码 `4ba1218ce`
+- 本轮 FIX SHA：`b3087ac1a6c45727c66c22a3ba0d4940cbf52f21`
 - 判词真源：PI session 用户消息（T5 993 全同 reason 假清；T1 close 默认 force=True；T2/T3/T4/T6 不重开）
 - **不宣称已合并 / 总票完成**；未 stash/push/PR；未改治理文件
 
