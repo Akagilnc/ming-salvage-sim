@@ -339,13 +339,6 @@ class TurnPhase(str, Enum):
 FRONT_HALF_DONE_PHASES = (TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value)
 
 
-@dataclass
-class ChatResult:
-    action: str
-    next_minister: str = ""
-    refresh_ministers: List[str] = field(default_factory=list)
-
-
 # LLM 后端默认值 / 通道集合的单一真源——放 L0 叶子 models，llm_config 与 cli_backend 都从此处
 # import（两者皆 import models），彻底消除 llm_config↔cli_backend 的懒-import（#60）。旧址
 # （llm_config.CLI_DEFAULT_TIMEOUT_SECONDS/VALID_CHANNELS、cli_backend.CODEX/CLAUDE_DEFAULT_MODEL）

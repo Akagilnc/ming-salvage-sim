@@ -1,0 +1,49 @@
+F21/F22 enum commands (rg only; no auto-classifier; no permanent check_output harness)
+DATE=2026-10-05T02:30:12Z
+HEAD=4bc6994ca1bc7a2864624b078661ed1ff07a0345
+
+=== F21 CMD1 rewrite shapes (incl root launchers + frontend replace/slice/split/join) ===
+HIT_COUNT 2154
+
+=== F21 CMD2 strip/trim with args ===
+ming_sim/db.py:2812:            cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
+ming_sim/db.py:5858:                state, name, f"人物终态：{status}；{reason}".rstrip("；"),
+ming_sim/cli/terminal.py:579:            if len(parts) == 2 and parts[1].lstrip("#").isdigit():
+ming_sim/cli/terminal.py:580:                target_id = int(parts[1].lstrip("#"))
+ming_sim/rescript_draft.py:1643:        elif isinstance(issue_id, str) and issue_id.strip().lstrip("-").isdigit():
+ming_sim/llm_config.py:208:    base = base_url.rstrip("/")
+
+=== F21 CMD3 free-field-ish assign strip/trim ===
+HIT_COUNT 91
+
+=== F22 CMD1 named sample remnants (must be absent in prod) ===
+(no prod/test hits)
+
+=== F22 CMD2 complete_rescript_summon_scaffold_turn ===
+(no prod/test hits)
+
+=== F22 CMD3 ChatResult / refresh_ministers ===
+(no prod/test hits)
+
+=== F22 CMD4 shared keep consumer proof ===
+--- secret_order_can_land ---
+ming_sim/cli_backend.py:1920:def secret_order_can_land(secret: Optional[Dict[str, Any]]) -> bool:
+ming_sim/declaration_dispatch.py:1241:            from ming_sim.cli_backend import secret_order_can_land
+ming_sim/declaration_dispatch.py:1242:            if not secret_order_can_land(dict(secret)):
+--- secret_order_landing_gaps ---
+ming_sim/cli_backend.py:1904:def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
+ming_sim/cli_backend.py:1922:    return not secret_order_landing_gaps(secret)
+--- _canonical_minister_key ---
+ming_sim/action_materialize.py:93:    from ming_sim.session import _canonical_minister_key
+ming_sim/action_materialize.py:97:    person_name = _canonical_minister_key(
+ming_sim/action_materialize.py:1129:    from ming_sim.session import _canonical_minister_key
+ming_sim/action_materialize.py:1136:    key = _canonical_minister_key(content, want_name, db) if want_name else ""
+ming_sim/action_materialize.py:1144:            _canonical_minister_key(content, staged_name, db) if staged_name else staged_name
+--- _appointment_intent_is_current_office_noop ---
+ming_sim/session.py:371:def _appointment_intent_is_current_office_noop(
+ming_sim/declaration_dispatch.py:1576:                from ming_sim.session import _appointment_intent_is_current_office_noop
+ming_sim/declaration_dispatch.py:1577:                if _appointment_intent_is_current_office_noop(
+--- prepare_rescript_summon_scaffold ---
+ming_sim/audience_night.py:2339:def prepare_rescript_summon_scaffold(
+ming_sim/session.py:2154:            prepare_rescript_summon_scaffold,
+ming_sim/session.py:2173:            entry = prepare_rescript_summon_scaffold(

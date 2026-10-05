@@ -159,7 +159,6 @@ class ChatTurnResult:
     appointed_minister: str = ""   # 吏部本轮铨选新任的人物姓名（已可召见）
     registered_minister: str = ""  # 名册外史实/用户确认人物建档后可召见
     displaced_minister: str = ""   # 因新任腾缺被罢黜（dismissed）的原任者姓名
-    refresh_ministers: List[str] = field(default_factory=list)
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
     pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
