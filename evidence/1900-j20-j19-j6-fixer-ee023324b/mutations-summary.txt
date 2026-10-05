@@ -1,0 +1,134 @@
+=== MUTATION J17: origin gate bypass ===
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+E   assert 0 == 9
+     +  where 0 = len([])
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_relation_capture_633.py:246: assert 0 == 9
+E   AssertionError: [{'source': '毕自严', 'target': '王绍徽', 'event_kind': '结怨', 'origin': ' 盘面自发 :relation:结怨', ...}, {'source': '毕自严', 'targe...'\t盘面自发:relation:结怨', ...}, {'source': '毕自严', 'target': '王绍徽', 'event_kind': '结怨', 'origin': '盘面自发 :relation:结怨', ...}]
+    assert 0 == 5
+     +  where 0 = len([])
+     +  and   5 = len([' 盘面自发 ', '\n盘面自发\t', '盘面自发\n', '\t盘面自发', '盘面自发 '])
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_relation_capture_633.py:274: AssertionError: [{'source': '毕自严', 'target': '王绍徽', 'event_kind': '结怨', 'origin': ' 盘面自发 :relation:结怨', ...}, {'source': '毕自严', 'targe...'\t盘面自发:relation:结怨', ...}, {'source': '毕自严', 'target': '王绍徽', 'event_kind': '结怨', 'origin': '盘面自发 :relation:结怨', ...}]
+=========================== short test summary info ============================
+FAILED tests/test_relation_capture_633.py::test_missing_or_forged_provenance_rejected_with_trace_no_edges
+FAILED tests/test_relation_capture_633.py::test_whitespace_padded_noncanonical_origins_rejected_no_strip_rescue
+2 failed in 0.69s
+J17_BYPASS_RC 1
+=== RESTORE J17 ===
+..                                                                       [100%]
+2 passed in 0.13s
+J17_RESTORE_RC 0
+=== MUTATION held-gate branch removed ===
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   RuntimeError: held-branch removed
+<stdin>:39: RuntimeError: held-branch removed
+=========================== short test summary info ============================
+FAILED tests/test_qa_t1_extraction_dual_source_1353.py::test_resolve_turn_write_gate_held_by_caller_no_reenter
+1 failed in 0.13s
+HELD_MUTANT_RC 1
+=== RESTORE held-gate ===
+.                                                                        [100%]
+1 passed in 0.11s
+HELD_RESTORE_RC 0
+=== MUTATION month_chain message text (should still pass; no prose lock) ===
+PROSE_LOCK_REMOVED_VERIFIED_BY_FOCUSED_GREEN
+DONE
+=== MUTATION J20 title-bind restored ===
+.FFF.                                                                    [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert 'candidate' == None
+     +  where 'candidate' = <built-in method get of dict object at 0x10bf705c0>('event_id')
+     +    where <built-in method get of dict object at 0x10bf705c0> = {'decision_key': 'decision:1:0', 'kind': 'decision', 'source_turn': 1, 'turn': 1, ...}.get
+     +      where {'decision_key': 'decision:1:0', 'kind': 'decision', 'source_turn': 1, 'turn': 1, ...} = ValidatedItem(decision_key='decision:1:0', kind='decision', source_turn=1, idx=0, row={'decision_key': 'decision:1:0',...n:1:0', 'note': '暂留', 'action': 'decision'}, already_applied=False, needs_revise_llm=False, needs_deliberate_llm=False).row
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_decision_event_binding_389.py:38: AssertionError: assert 'candidate' == None
+E   AssertionError: assert 'off-snapshot' == None
+     +  where 'off-snapshot' = <built-in method get of dict object at 0x10c6aaf00>('event_id')
+     +    where <built-in method get of dict object at 0x10c6aaf00> = {'decision_key': 'decision:1:0', 'kind': 'decision', 'source_turn': 1, 'turn': 1, ...}.get
+     +      where {'decision_key': 'decision:1:0', 'kind': 'decision', 'source_turn': 1, 'turn': 1, ...} = ValidatedItem(decision_key='decision:1:0', kind='decision', source_turn=1, idx=0, row={'decision_key': 'decision:1:0',...n:1:0', 'note': '暂留', 'action': 'decision'}, already_applied=False, needs_revise_llm=False, needs_deliberate_llm=False).row
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_decision_event_binding_389.py:38: AssertionError: assert 'off-snapshot' == None
+E   AssertionError: assert 'candidate' == ''
+      
+      + candidate
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_decision_event_binding_389.py:38: AssertionError: assert 'candidate' == ''
+=========================== short test summary info ============================
+FAILED tests/test_decision_event_binding_389.py::test_candidate_binding_at_player_prewrite[off-snapshot-\u88c1\u65ad-candidates1-None]
+FAILED tests/test_decision_event_binding_389.py::test_candidate_binding_at_player_prewrite[off-snapshot-\u4e0d\u76f8\u5e72-candidates2-None]
+FAILED tests/test_decision_event_binding_389.py::test_candidate_binding_at_player_prewrite[None-\u88c1\u65ad-candidates3-]
+3 failed, 2 passed in 0.66s
+J20_MUTANT_RC 1
+.....                                                                    [100%]
+5 passed in 0.15s
+J20_RESTORE_RC 0
+=== MUTATION J19 strict forced loose ===
+
+4 deselected in 0.03s
+J19_MUTANT_RC 5
+
+4 deselected in 0.01s
+J19_RESTORE_RC 5
+DONE
+=== MUTATION J19 loose + run illegal commission tests ===
+
+4 deselected in 0.05s
+names try1 5
+tests/test_escort_route_1900.py::test_commission_declares_escort_inside_same_grant_decree
+tests/test_escort_route_1900.py::test_commission_malformed_escort_is_rejected_not_dropped
+tests/test_escort_route_1900.py::test_commission_escort_names_must_exist
+tests/test_escort_route_1900.py::test_commission_without_escort_declares_none
+
+4 tests collected in 0.01s
+collect done
+ALL ['test_commission_declares_escort_inside_same_grant_decree', 'test_commission_malformed_escort_is_rejected_not_dropped', 'test_commission_escort_names_must_exist', 'test_commission_without_escort_declares_none']
+TARGETS []
+
+no tests ran in 0.00s
+E                                                                        [100%]
+==================================== ERRORS ====================================
+__________ ERROR at setup of test_j19_strict_vs_loose_discrimination ___________
+file /tmp/1900-j19-probe.SV2kA1/test_j19_probe.py, line 3
+  def test_j19_strict_vs_loose_discrimination(game):
+E       fixture 'game' not found
+>       available fixtures: anyio_backend, anyio_backend_name, anyio_backend_options, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, doctest_namespace, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, monkeypatch, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, subtests, testrun_uid, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, worker_id
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+/tmp/1900-j19-probe.SV2kA1/test_j19_probe.py:3
+=========================== short test summary info ============================
+ERROR ../../../../tmp/1900-j19-probe.SV2kA1/test_j19_probe.py::test_j19_strict_vs_loose_discrimination
+1 error in 0.21s
+real 0.33
+user 0.30
+sys 0.02
+PROBE_TEMP_REMOVED=True
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________________ test_j19_strict_vs_loose_discrimination ____________________
+tests/_tmp_j19_probe_1900.py:37: in test_j19_strict_vs_loose_discrimination
+    r3 = _declare(db, state, {'commissions': [{
+tests/test_escort_route_1900.py:10: in _declare
+    return dispatch_declaration(
+ming_sim/declaration_dispatch.py:615: in dispatch_declaration
+    result = _dispatch_declaration_sections(
+ming_sim/declaration_dispatch.py:252: in _dispatch_declaration_sections
+    commissions = _dispatch_commissions(
+ming_sim/declaration_dispatch.py:1620: in _dispatch_commissions
+    _attach_commission_staging_fields(
+ming_sim/declaration_dispatch.py:1120: in _attach_commission_staging_fields
+    payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+tests/_tmp_j19_probe_1900.py:33: in loose
+    return real.__func__(cls, existing, incoming, strict_incoming=False)
+           ^^^^^^^^^^^^^
+E   AttributeError: 'function' object has no attribute '__func__'. Did you mean: '__doc__'?
+=========================== short test summary info ============================
+FAILED tests/_tmp_j19_probe_1900.py::test_j19_strict_vs_loose_discrimination
+1 failed in 0.82s
+real 1.29
+user 1.00
+sys 0.17
+PROBE_FILE_REMOVED=True
+.                                                                        [100%]
+1 passed in 0.62s
+real 1.02
+user 0.89
+sys 0.11
+PROBE_FILE_REMOVED=True
