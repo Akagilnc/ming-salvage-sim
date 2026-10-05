@@ -1,0 +1,7 @@
+### CMD1 constants+symbols
+CMD1_EXIT=1
+### CMD2 phrase hits (retired phrases; comments noting deletion OK)
+ming_sim/session.py:1166:        # - #1812 §5 / #1834 F18：旧「留下听着」「今日就到这里吧」不再代码裁断；
+ming_sim/constants.py:255:# #1812 待拍第5项 / #1834 F18：旧「留下听着」「今日就到这里吧」口令裁断已删；
+ming_sim/audience_night.py:1995:    旧「留下听着」「今日就到这里吧」口令裁断已删——走场景模型＋转译。
+CMD2_EXIT=0

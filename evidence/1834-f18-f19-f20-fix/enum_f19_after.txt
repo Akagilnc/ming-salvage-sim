@@ -1,0 +1,13 @@
+### CMD1 extract/assemble/helpers defs+calls (production+tests)
+ming_sim/cli_backend.py:1265:#         旧 _extract_secret_order 专属闭包已删（#1812 / #1834 F19）。
+CMD1_EXIT=0
+### CMD2 dedicated tests
+CMD2_EXIT=1
+### CMD3 keep shared (must remain)
+ming_sim/declaration_dispatch.py:1241:            from ming_sim.cli_backend import secret_order_can_land
+ming_sim/declaration_dispatch.py:1242:            if not secret_order_can_land(dict(secret)):
+ming_sim/cli_backend.py:1987:def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
+ming_sim/cli_backend.py:2003:def secret_order_can_land(secret: Optional[Dict[str, Any]]) -> bool:
+ming_sim/cli_backend.py:2005:    return not secret_order_landing_gaps(secret)
+ming_sim/cli_backend.py:2008:def compose_secret_order_landing_recovery(
+CMD3_EXIT=0

@@ -25,8 +25,14 @@ REVOKED (continued-ruling F16-R / F17-R):
 Current F3-R evidence = enum_f3r_*_all_candidates.txt (enumeration only)
   + f3r_semantic_batch{1,2,3}*.tsv (per-batch hand reads)
   + f3r_hand_member_table.tsv (merged hand disposition; F3-R class already cleared).
-Current F16 evidence = enum_f16_rewrite_shapes_rerun.txt
-  + enum_f16_freeprose_assign_strip.txt + enum_f16_freeprose_get_strip.txt
-  + f16_hand_verify_after_ruling.tsv + f16_hand_verify_after_ruling.METHOD.txt
+Current F16 evidence = f16_disposition_after_counterexample.tsv
+  + f16_disposition_after_counterexample.METHOD.txt
+  + f16_disposition_member_locs.tsv
+  (enumeration aid only: enum_f16_rewrite_shapes_broad.txt / enum_f16_broad_meta.txt;
+   NOT disposition authority)
+REVOKED F16 packaging (frozen failure records retained, not authority):
+  f16_hand_verify_after_ruling.tsv + METHOD → see *.REVOKED_PACKAGING_KEEP.txt
+  enum_f16_rewrite_shapes_rerun.txt / enum_f16_all_candidates.txt / …
+    → REVOKED_STUB pointing at f16_disposition_after_counterexample.*
 Current F17 = current-side real-entry observation only
   (mutation_temp_real_entry.json); no old-logic restore claim; no permanent proof scripts.

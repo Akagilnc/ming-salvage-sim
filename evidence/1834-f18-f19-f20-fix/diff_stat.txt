@@ -1,0 +1,9 @@
+ .../1834-f16-f3-f3r-f17-fix/F17_F3R_REVOCATION.txt |  12 +-
+ ming_sim/audience_night.py                         |  61 +--
+ ming_sim/cli/terminal.py                           |   7 -
+ ming_sim/cli_backend.py                            | 610 +--------------------
+ ming_sim/constants.py                              |   6 +-
+ ming_sim/session.py                                |  50 +-
+ tests/test_audience_translate_1837.py              |  18 -
+ tests/test_cli_backend.py                          | 140 -----
+ 8 files changed, 25 insertions(+), 879 deletions(-)

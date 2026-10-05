@@ -1,0 +1,21 @@
+ M evidence/1834-f16-f3-f3r-f17-fix/F17_F3R_REVOCATION.txt
+ M ming_sim/audience_night.py
+ M ming_sim/cli/terminal.py
+ M ming_sim/cli_backend.py
+ M ming_sim/constants.py
+ M ming_sim/session.py
+ M tests/test_audience_translate_1837.py
+ M tests/test_cli_backend.py
+?? evidence/1834-f18-f19-f20-fix/diff_check.txt
+?? evidence/1834-f18-f19-f20-fix/diff_stat.txt
+?? evidence/1834-f18-f19-f20-fix/enum_f18_after.txt
+?? evidence/1834-f18-f19-f20-fix/enum_f18_before.txt
+?? evidence/1834-f18-f19-f20-fix/enum_f18_cmd.sh
+?? evidence/1834-f18-f19-f20-fix/enum_f19_after.txt
+?? evidence/1834-f18-f19-f20-fix/enum_f19_before.txt
+?? evidence/1834-f18-f19-f20-fix/enum_f19_cmd.sh
+?? evidence/1834-f18-f19-f20-fix/enum_f20_after.txt
+?? evidence/1834-f18-f19-f20-fix/enum_f20_before.txt
+?? evidence/1834-f18-f19-f20-fix/enum_f20_cmd.sh
+?? evidence/1834-f18-f19-f20-fix/pytest_focus.txt
+?? evidence/1834-f18-f19-f20-fix/status_before_commit.txt

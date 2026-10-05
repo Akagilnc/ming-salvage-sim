@@ -1,0 +1,19 @@
+### CMD1 current-nav claims of F16 authority / revoked tables
+evidence/1834-f16-f3-f3r-f17-fix/F17_F3R_REVOCATION.txt:28:Current F16 evidence = f16_disposition_after_counterexample.tsv
+evidence/1834-f16-f3-f3r-f17-fix/F17_F3R_REVOCATION.txt:29:  + f16_disposition_after_counterexample.METHOD.txt
+evidence/1834-f16-f3-f3r-f17-fix/F17_F3R_REVOCATION.txt:34:  f16_hand_verify_after_ruling.tsv + METHOD → see *.REVOKED_PACKAGING_KEEP.txt
+evidence/1834-f16-f3-f3r-f17-fix/F17_F3R_REVOCATION.txt:36:    → REVOKED_STUB pointing at f16_disposition_after_counterexample.*
+evidence/1834-f16-f3-f3r-f17-fix/f16_hand_verify_after_ruling.tsv:1:REVOKED_STUB: see companion *.REVOKED_*.txt / f16_disposition_after_counterexample.*; not disposition authority.
+evidence/1834-f16-f3-f3r-f17-fix/f16_hand_member_table.tsv:1:REVOKED_STUB: see companion *.REVOKED_*.txt / f16_disposition_after_counterexample.*; not disposition authority.
+evidence/1834-f16-f3-f3r-f17-fix/f16_disposition_after_counterexample.METHOD.txt:15:3) Disposition authority = f16_disposition_after_counterexample.tsv (16 grouped rows)
+evidence/1834-f16-f3-f3r-f17-fix/f16_disposition_after_counterexample.METHOD.txt:31:   - f16_hand_verify_after_ruling.tsv → REVOKED_PACKAGING_KEEP
+evidence/1834-f16-f3-f3r-f17-fix/enum_f16_rewrite_shapes_rerun.txt:1:REVOKED_STUB: see companion *.REVOKED_*.txt / f16_disposition_after_counterexample.*; not disposition authority.
+evidence/1834-f16-f3-f3r-f17-fix/enum_f16_all_candidates.txt:1:REVOKED_STUB: see companion *.REVOKED_*.txt / f16_disposition_after_counterexample.*; not disposition authority.
+evidence/1834-f16-f3-f3r-f17-fix/f16_hand_verify_after_ruling.METHOD.txt:12:3) Disposition authority = f16_hand_verify_after_ruling.tsv
+evidence/1834-f16-f3-f3r-f17-fix/f16_hand_verify_after_ruling.REVOKED_PACKAGING_KEEP.txt:9:Superseded by `f16_disposition_after_counterexample.tsv` + METHOD.
+evidence/1834-f16-f3-f3r-f17-fix/enum_f16_ast_rewrite.tsv:1:REVOKED_STUB: see companion *.REVOKED_*.txt / f16_disposition_after_counterexample.*; not disposition authority.
+evidence/1834-f16-f3-f3r-f17-fix/f16_hand_member_table.REVOKED_TEMPLATE.txt:5:f16_hand_verify_after_ruling.tsv + METHOD.
+evidence/1834-f16-f3-f3r-f17-fix/report.md:73:- `enum_f16_rewrite_shapes_broad.txt` HIT_COUNT 见 `enum_f16_broad_meta.txt`；权威组表仍 16 组（`f16_disposition_after_counterexample.tsv`）。
+### CMD2 report cites of revocation nav
+38:| **F17-R** 撤回「旧生产逻辑装回」 | 同上 §3；`F17_F3R_REVOCATION.txt`；`mutation_temp_real_entry.json` | `verdict_old_logic_restored=false`；仅当前侧观察；无新旧并排、无新造永久证明 |
+73:- `enum_f16_rewrite_shapes_broad.txt` HIT_COUNT 见 `enum_f16_broad_meta.txt`；权威组表仍 16 组（`f16_disposition_after_counterexample.tsv`）。

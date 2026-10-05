@@ -350,24 +350,6 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
     assert rejection["reason"]
 
 
-def test_scene_stay_attend_uses_actual_protagonist_not_virtual_speaker(game, monkeypatch):
-    from ming_sim.audience_night import (
-        SCENE_CHAT_SPEAKER, list_ledger, set_night_protagonist, summon_enter,
-    )
-
-    db, state, content = game
-    person = _hong_name(db, content)
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    summon_enter(db, night_id, person)
-    set_night_protagonist(db, night_id, person, reason="test")
-    result = _sess(db, state, content, monkeypatch).scene_chat(
-        "留下听着", minister_name=SCENE_CHAT_SPEAKER,
-    )
-    assert result.court_action == "stay_attend"
-    assert list_ledger(db, night_id)[-1]["person_names"] == [person]
-
-
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
     """AC1：scene_chat 转译 → 一条组合暂存 → 应允收夜 → 任免与拨帑两类效果全。
 
