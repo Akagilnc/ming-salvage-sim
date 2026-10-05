@@ -207,9 +207,24 @@ def test_ineligible_secret_order_is_business_refusal(game, monkeypatch):
         "SELECT status FROM pending_actions WHERE id=?", (action_id,),
     ).fetchone()["status"] == "failed"
     reports = db.conn.execute(
-        "SELECT category FROM rejection_reports",
+        "SELECT category, source, item_json FROM rejection_reports",
     ).fetchall()
-    assert any(row["category"] == "ineligible_power" for row in reports)
+    refusal = next(row for row in reports if row["category"] == "ineligible_power")
+    assert refusal["source"] == "secret_order"
+    item = json.loads(refusal["item_json"])
+    assert item["kind"] == "secret_order"
+    assert item["pending_action_id"] == action_id
+    assert item["assignee"] == assignee
+    from ming_sim.month_chain import _gazette_feed, _month_fact_materials
+
+    assert not any(
+        row["category"] == "ineligible_power"
+        for row in _gazette_feed(db, state, {})["rejections"]
+    )
+    assert any(
+        row["category"] == "ineligible_power"
+        for row in _month_fact_materials(db, state, {}, include_secret_sources=True)["rejections"]
+    )
     turn = db.conn.execute(
         "SELECT extract_status, error_pack_path FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()

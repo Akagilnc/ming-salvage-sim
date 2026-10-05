@@ -17682,18 +17682,20 @@ class GameDB:
         from ming_sim.applier import Provenance, RejectedItem
 
         raw_item = getattr(exc, "item", None)
-        item = dict(raw_item) if isinstance(raw_item, dict) else {
+        item = dict(raw_item) if isinstance(raw_item, dict) else {}
+        item.update({
             "pending_action_id": int(pa["id"]),
             "kind": str(pa.get("kind") or ""),
             "action": str(pa.get("action") or ""),
-        }
+        })
         rejection_collector.record(
             "pending_actions",
             RejectedItem(
                 item=item,
                 reason=str(exc),
                 category=str(getattr(exc, "category", "") or "business_refusal"),
-                source=Provenance.player_decree,
+                source=(Provenance.secret_order if pa["kind"] == "secret_order"
+                        else Provenance.player_decree),
             ),
             int(pa.get("turn") or 0),
         )
