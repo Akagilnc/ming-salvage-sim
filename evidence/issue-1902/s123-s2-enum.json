@@ -1,245 +1,249 @@
-[
-  {
-    "file": "tests/test_cli_entry_1902.py",
-    "test": "test_adjudication_blank_on_ordinary_decision_reprompts",
-    "line": 142,
-    "orch": true,
-    "raises": false,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_cli_entry_1902.py",
-    "test": "test_cli_blank_pick_on_urgent_reaches_core_hold",
-    "line": 238,
-    "orch": true,
-    "raises": false,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_cli_entry_1902.py",
-    "test": "test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core",
-    "line": 262,
-    "orch": true,
-    "raises": true,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_cli_entry_1902.py",
-    "test": "test_cli_imperial_note_reaches_core_for_question",
-    "line": 313,
-    "orch": true,
-    "raises": false,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_execution_pressure_654.py",
-    "test": "test_mapper_rejects_contradictory_locality_scope_without_overwrite",
-    "line": 39,
-    "orch": false,
-    "raises": true,
-    "helpers": [
-      "map_rescript_option_or_choice"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_c1_validate_rejects_stale_capability_and_desk_outsider",
-    "line": 543,
-    "orch": true,
-    "raises": true,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_p6_mapper_deliberate_preserve_free_text",
-    "line": 612,
-    "orch": false,
-    "raises": true,
-    "helpers": [
-      "map_rescript_option_or_choice",
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_five_actions_domain_writes",
-    "line": 751,
-    "orch": false,
-    "raises": false,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_record_event_choice_failure_rolls_back_batch",
-    "line": 876,
-    "orch": false,
-    "raises": true,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_prewrite_failure_zero_db_writes",
-    "line": 966,
-    "orch": false,
-    "raises": true,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_abi_mapper_matrix_a1_a12",
-    "line": 987,
-    "orch": false,
-    "raises": true,
-    "helpers": [
-      "map_rescript_option_or_choice",
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_1682_late_grants_follow_policy_without_consuming_verdict_batch",
-    "line": 1228,
-    "orch": false,
-    "raises": true,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_follow_draft_ignores_client_field_overlay",
-    "line": 1832,
-    "orch": false,
-    "raises": false,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_midzhi_persists_decision_key_and_llm_label",
-    "line": 1854,
-    "orch": false,
-    "raises": true,
-    "helpers": [
-      "map_rescript_option_or_choice",
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_midzhi_verdict_no_party_satisfaction",
-    "line": 1873,
-    "orch": false,
-    "raises": false,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_default_hold_preserves_red_pen_note",
-    "line": 1998,
-    "orch": false,
-    "raises": false,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_appointment_name_target_id_conflict_batch_reject",
-    "line": 2009,
-    "orch": false,
-    "raises": true,
-    "helpers": [
-      "map_rescript_option_or_choice"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_punishment_name_target_id_conflict_zero_writes",
-    "line": 2021,
-    "orch": true,
-    "raises": true,
-    "helpers": [
-      "map_rescript_option_or_choice"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_657_applied_revise_refresh_resumes_without_hold",
-    "line": 2345,
-    "orch": true,
-    "raises": false,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_658_deliberate_backed_and_stalled_dossier_first",
-    "line": 2421,
-    "orch": false,
-    "raises": true,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_658_stage_rejects_bad_backing_zero_write",
-    "line": 2473,
-    "orch": false,
-    "raises": true,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_pihong_dossier_1490.py",
-    "test": "test_658_candidates_require_active_status",
-    "line": 2524,
-    "orch": false,
-    "raises": true,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_rescript_choices_563.py",
-    "test": "test_financial_decision_uses_stored_option_not_client_payload",
-    "line": 205,
-    "orch": false,
-    "raises": false,
-    "helpers": [
-      "validate_all"
-    ]
-  },
-  {
-    "file": "tests/test_structured_decree_contract_1624.py",
-    "test": "test_rescript_follow_draft_nails_drafted_roster",
-    "line": 278,
-    "orch": false,
-    "raises": false,
-    "helpers": [
-      "validate_all"
-    ]
-  }
-]
+{
+  "predicate": "S2: git ls-files tests/*.py; test_* whose body references validate_all|map_rescript_option_or_choice|map_rescript_option|RescriptAdjudication|StructuredDecreeCombinationError. orch = submit_hitl_choices|_post_resolve|ASGITransport|_adjudicate_cli_decisions|AsyncClient|TestClient|_real_submit_session|resolve_and_submit. EVERY row requires semantic classification; mapper/apply/prewrite NOT blanket-exempt.",
+  "count": 11,
+  "no_orch": 2,
+  "with_orch": 9,
+  "rows": [
+    {
+      "file": "tests/test_cli_entry_1902.py",
+      "test": "test_adjudication_blank_on_ordinary_decision_reprompts",
+      "line": 142,
+      "focus_hits": [
+        "validate_all"
+      ],
+      "orch": [
+        "_adjudicate_cli_decisions"
+      ],
+      "orch_bool": true,
+      "shape_hints": [],
+      "raises": false,
+      "contract": null,
+      "real_prod_entry": null,
+      "external_result": null,
+      "existing_tracer": null,
+      "duplicate": null,
+      "disposition": null,
+      "rationale": null
+    },
+    {
+      "file": "tests/test_cli_entry_1902.py",
+      "test": "test_cli_blank_pick_on_urgent_reaches_core_hold",
+      "line": 238,
+      "focus_hits": [
+        "validate_all"
+      ],
+      "orch": [
+        "_adjudicate_cli_decisions",
+        "_real_submit_session",
+        "submit_hitl_choices"
+      ],
+      "orch_bool": true,
+      "shape_hints": [],
+      "raises": false,
+      "contract": null,
+      "real_prod_entry": null,
+      "external_result": null,
+      "existing_tracer": null,
+      "duplicate": null,
+      "disposition": null,
+      "rationale": null
+    },
+    {
+      "file": "tests/test_cli_entry_1902.py",
+      "test": "test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core",
+      "line": 262,
+      "focus_hits": [
+        "validate_all"
+      ],
+      "orch": [
+        "_real_submit_session",
+        "submit_hitl_choices"
+      ],
+      "orch_bool": true,
+      "shape_hints": [],
+      "raises": true,
+      "contract": null,
+      "real_prod_entry": null,
+      "external_result": null,
+      "existing_tracer": null,
+      "duplicate": null,
+      "disposition": null,
+      "rationale": null
+    },
+    {
+      "file": "tests/test_cli_entry_1902.py",
+      "test": "test_cli_imperial_note_reaches_core_for_question",
+      "line": 313,
+      "focus_hits": [
+        "validate_all"
+      ],
+      "orch": [
+        "_adjudicate_cli_decisions",
+        "_real_submit_session"
+      ],
+      "orch_bool": true,
+      "shape_hints": [],
+      "raises": false,
+      "contract": null,
+      "real_prod_entry": null,
+      "external_result": null,
+      "existing_tracer": null,
+      "duplicate": null,
+      "disposition": null,
+      "rationale": null
+    },
+    {
+      "file": "tests/test_execution_pressure_654.py",
+      "test": "test_mapper_rejects_contradictory_locality_scope_without_overwrite",
+      "line": 39,
+      "focus_hits": [
+        "StructuredDecreeCombinationError"
+      ],
+      "orch": [
+        "_real_submit_session",
+        "submit_hitl_choices"
+      ],
+      "orch_bool": true,
+      "shape_hints": [],
+      "raises": true,
+      "contract": null,
+      "real_prod_entry": null,
+      "external_result": null,
+      "existing_tracer": null,
+      "duplicate": null,
+      "disposition": null,
+      "rationale": null
+    },
+    {
+      "file": "tests/test_execution_pressure_654.py",
+      "test": "test_validate_all_unknown_roster_name_zero_rows_before_insert",
+      "line": 469,
+      "focus_hits": [
+        "validate_all"
+      ],
+      "orch": [],
+      "orch_bool": false,
+      "shape_hints": [],
+      "raises": true,
+      "contract": null,
+      "real_prod_entry": null,
+      "external_result": null,
+      "existing_tracer": null,
+      "duplicate": null,
+      "disposition": null,
+      "rationale": null
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "test": "test_657_c1_validate_rejects_stale_capability_and_desk_outsider",
+      "line": 559,
+      "focus_hits": [
+        "validate_all"
+      ],
+      "orch": [
+        "_real_submit_session",
+        "submit_hitl_choices"
+      ],
+      "orch_bool": true,
+      "shape_hints": [],
+      "raises": true,
+      "contract": null,
+      "real_prod_entry": null,
+      "external_result": null,
+      "existing_tracer": null,
+      "duplicate": null,
+      "disposition": null,
+      "rationale": null
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "test": "test_657_abi_mapper_matrix_a1_a12",
+      "line": 978,
+      "focus_hits": [
+        "map_rescript_option",
+        "map_rescript_option_or_choice"
+      ],
+      "orch": [
+        "submit_hitl_choices"
+      ],
+      "orch_bool": true,
+      "shape_hints": [],
+      "raises": true,
+      "contract": null,
+      "real_prod_entry": null,
+      "external_result": null,
+      "existing_tracer": null,
+      "duplicate": null,
+      "disposition": null,
+      "rationale": null
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "test": "test_657_default_hold_preserves_red_pen_note",
+      "line": 2043,
+      "focus_hits": [
+        "validate_all"
+      ],
+      "orch": [
+        "_real_submit_session",
+        "submit_hitl_choices"
+      ],
+      "orch_bool": true,
+      "shape_hints": [
+        "mentions_batch"
+      ],
+      "raises": false,
+      "contract": null,
+      "real_prod_entry": null,
+      "external_result": null,
+      "existing_tracer": null,
+      "duplicate": null,
+      "disposition": null,
+      "rationale": null
+    },
+    {
+      "file": "tests/test_pihong_dossier_1490.py",
+      "test": "test_657_applied_revise_refresh_resumes_without_hold",
+      "line": 2426,
+      "focus_hits": [
+        "validate_all"
+      ],
+      "orch": [
+        "_post_resolve"
+      ],
+      "orch_bool": true,
+      "shape_hints": [
+        "mentions_batch"
+      ],
+      "raises": false,
+      "contract": null,
+      "real_prod_entry": null,
+      "external_result": null,
+      "existing_tracer": null,
+      "duplicate": null,
+      "disposition": null,
+      "rationale": null
+    },
+    {
+      "file": "tests/test_structured_decree_contract_1624.py",
+      "test": "test_shared_validate_rejects_region_id_and_category_holes",
+      "line": 118,
+      "focus_hits": [
+        "StructuredDecreeCombinationError"
+      ],
+      "orch": [],
+      "orch_bool": false,
+      "shape_hints": [
+        "raises_combo_error_without_submit"
+      ],
+      "raises": true,
+      "contract": null,
+      "real_prod_entry": null,
+      "external_result": null,
+      "existing_tracer": null,
+      "duplicate": null,
+      "disposition": null,
+      "rationale": null
+    }
+  ]
+}

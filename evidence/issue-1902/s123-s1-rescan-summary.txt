@@ -1,0 +1,9 @@
+S1_SUMMARY {'ZERO_PROD_REF': 169, 'KEEP_SHARED': 6, 'HAS_PROD_CONSUMER': 52, 'CANDIDATE_DEAD_ROOT': 1} emitted 228
+KEEP_SHARED	CliChat	ming_sim/cli_backend.py:2831	prod=1	test=18
+KEEP_SHARED	_fake_completion	ming_sim/cli_backend.py:2818	prod=1	test=1
+CANDIDATE_DEAD_ROOT	api_secret_orders	web_app.py:4969	prod=0	test=0
+KEEP_SHARED	extract_draft_intent	ming_sim/cli_backend.py:2186	prod=1	test=3
+KEEP_SHARED	resubmit_draft_admission_payload	ming_sim/cli_backend.py:2565	prod=1	test=21
+KEEP_SHARED	secret_order_can_land	ming_sim/cli_backend.py:1688	prod=1	test=0
+KEEP_SHARED	secret_order_landing_gaps	ming_sim/cli_backend.py:1672	prod=1	test=0
+HAS_PROD_CONSUMER	upsert_secret_order_brief	ming_sim/db.py:21535	prod=1	test=0

@@ -275,10 +275,11 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, tmp_path):
     assert dropped and dropped[0].get("heal_id") == "0:0"
 
 
-def test_rescript_follow_draft_nails_drafted_roster(game):
-    """真实批红 follow_draft：Owner 例未点将 → 主办来自票拟名单，成案钉进案卷。"""
-    import ming_sim.rescript_actions as ra
+def test_rescript_follow_draft_nails_drafted_roster(game, monkeypatch):
+    """真实批红 follow_draft：Owner 例未点将 → 主办来自票拟名单，成案钉进案卷。真 submit。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    from contextlib import nullcontext
+    from tests.test_cli_entry_1902 import _real_submit_session
 
     db, state, content = game
 
@@ -300,13 +301,13 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
         if r.get("kind") == "rescript_draft" and r.get("title") == "陕西告饥"
     )
     before = len(db.list_decree_dossiers())
-    batch = ra.validate_all([urgent], [{
+    session = _real_submit_session(monkeypatch, db, state, content)
+    session.submit_hitl_choices([{
         "decision_key": urgent["decision_key"],
         "action": "follow_draft",
         "draft_capability": opt["draft_capability"],
         "label": opt["label"],
-    }])
-    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
+    }], write_gate=nullcontext())
     after = db.list_decree_dossiers()
     assert len(after) > before
     created = after[-1]

@@ -1,0 +1,12 @@
+S2_FOCUS total=11 no_orch=2 orch=9
+ORCH	tests/test_cli_entry_1902.py:142	test_adjudication_blank_on_ordinary_decision_reprompts	hits=['validate_all']	hints=[]
+ORCH	tests/test_cli_entry_1902.py:238	test_cli_blank_pick_on_urgent_reaches_core_hold	hits=['validate_all']	hints=[]
+ORCH	tests/test_cli_entry_1902.py:262	test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core	hits=['validate_all']	hints=[]
+ORCH	tests/test_cli_entry_1902.py:313	test_cli_imperial_note_reaches_core_for_question	hits=['validate_all']	hints=[]
+ORCH	tests/test_execution_pressure_654.py:39	test_mapper_rejects_contradictory_locality_scope_without_overwrite	hits=['StructuredDecreeCombinationError']	hints=[]
+NO_ORCH	tests/test_execution_pressure_654.py:469	test_validate_all_unknown_roster_name_zero_rows_before_insert	hits=['validate_all']	hints=[]
+ORCH	tests/test_pihong_dossier_1490.py:559	test_657_c1_validate_rejects_stale_capability_and_desk_outsider	hits=['validate_all']	hints=[]
+ORCH	tests/test_pihong_dossier_1490.py:978	test_657_abi_mapper_matrix_a1_a12	hits=['map_rescript_option', 'map_rescript_option_or_choice']	hints=[]
+ORCH	tests/test_pihong_dossier_1490.py:2043	test_657_default_hold_preserves_red_pen_note	hits=['validate_all']	hints=['mentions_batch']
+ORCH	tests/test_pihong_dossier_1490.py:2426	test_657_applied_revise_refresh_resumes_without_hold	hits=['validate_all']	hints=['mentions_batch']
+NO_ORCH	tests/test_structured_decree_contract_1624.py:118	test_shared_validate_rejects_region_id_and_category_holes	hits=['StructuredDecreeCombinationError']	hints=['raises_combo_error_without_submit']

@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""S2 focused universe for #1902 S2 class: HITL/rescript/validate/mapper/prewrite/apply_dossier
+internal proofs — still full git-tracked tests, but symbols from class evidence + full direction text.
+Then human/semantic fields filled as stubs for fixer classification."""
+from __future__ import annotations
+import ast, json, os, re, subprocess
+from pathlib import Path
+
+ROOT = Path(os.environ.get("SCAN_ROOT", ".")).resolve()
+os.chdir(ROOT)
+tracked = subprocess.check_output(["git", "ls-files", "tests/*.py"], text=True).splitlines()
+
+# Symbols that indicate the "internal proof" family named by S2 / prior R3
+FOCUS = {
+    "validate_all",
+    "map_rescript_option_or_choice",
+    "map_rescript_option",
+    "RescriptAdjudication",
+    "StructuredDecreeCombinationError",
+}
+ORCH = {
+    "submit_hitl_choices",
+    "_post_resolve",
+    "ASGITransport",
+    "_adjudicate_cli_decisions",
+    "AsyncClient",
+    "TestClient",
+    "_real_submit_session",
+    "resolve_and_submit",
+}
+
+rows = []
+for path in tracked:
+    src = Path(path).read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(src, filename=path)
+    except Exception:
+        continue
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not node.name.startswith("test_"):
+            continue
+        seg = ast.get_source_segment(src, node) or ""
+        hits = sorted(s for s in FOCUS if s in seg)
+        if not hits:
+            continue
+        orch = sorted(s for s in ORCH if s in seg)
+        # detect if asserts only on mapper return / validate batch shape
+        shape_only_hints = []
+        if re.search(r"validate_all\s*\(", seg) and "submit_hitl_choices" not in seg and "_post_resolve" not in seg:
+            shape_only_hints.append("calls_validate_all_without_submit")
+        if "map_rescript_option_or_choice" in seg and "submit_hitl_choices" not in seg:
+            shape_only_hints.append("calls_mapper_without_submit")
+        if re.search(r"\bbatch\b", seg) and "validate_all" in seg:
+            shape_only_hints.append("mentions_batch")
+        if "StructuredDecreeCombinationError" in seg and "submit_hitl_choices" not in seg:
+            shape_only_hints.append("raises_combo_error_without_submit")
+        rows.append({
+            "file": path,
+            "test": node.name,
+            "line": node.lineno,
+            "focus_hits": hits,
+            "orch": orch,
+            "orch_bool": bool(orch),
+            "shape_hints": shape_only_hints,
+            "raises": "pytest.raises" in seg or "raises(" in seg,
+            # semantic slots — filled by fixer after reading
+            "contract": None,
+            "real_prod_entry": None,
+            "external_result": None,
+            "existing_tracer": None,
+            "duplicate": None,
+            "disposition": None,
+            "rationale": None,
+        })
+
+out = {
+    "predicate": (
+        "S2: git ls-files tests/*.py; test_* whose body references "
+        "validate_all|map_rescript_option_or_choice|map_rescript_option|"
+        "RescriptAdjudication|StructuredDecreeCombinationError. "
+        "orch = submit_hitl_choices|_post_resolve|ASGITransport|_adjudicate_cli_decisions|"
+        "AsyncClient|TestClient|_real_submit_session|resolve_and_submit. "
+        "EVERY row requires semantic classification; mapper/apply/prewrite NOT blanket-exempt."
+    ),
+    "count": len(rows),
+    "no_orch": sum(1 for r in rows if not r["orch_bool"]),
+    "with_orch": sum(1 for r in rows if r["orch_bool"]),
+    "rows": rows,
+}
+Path("/tmp/ming1902-s123-resc/s2-focus.json").write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+print(f"S2_FOCUS total={len(rows)} no_orch={out['no_orch']} orch={out['with_orch']}")
+for r in rows:
+    tag = "NO_ORCH" if not r["orch_bool"] else "ORCH"
+    print(f"{tag}\t{r['file']}:{r['line']}\t{r['test']}\thits={r['focus_hits']}\thints={r['shape_hints']}")

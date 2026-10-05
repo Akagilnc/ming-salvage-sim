@@ -1,1184 +1,4652 @@
-[
-  {
-    "name": "_is_active_secret_order_assignee",
-    "def": "ming_sim/db.py:21243",
-    "prod_refs": [],
-    "test_refs": [
-      "tests/test_secret_order_isolation_883.py:1439"
-    ],
-    "prod_count": 0,
-    "test_count": 1
-  },
-  {
-    "name": "_open_night_court_break",
-    "def": "web_app.py:2075",
-    "prod_refs": [],
-    "test_refs": [],
-    "prod_count": 0,
-    "test_count": 0
-  },
-  {
-    "name": "_target_active_officeholder",
-    "def": "ming_sim/session.py:419",
-    "prod_refs": [],
-    "test_refs": [],
-    "prod_count": 0,
-    "test_count": 0
-  },
-  {
-    "name": "api_secret_orders",
-    "def": "web_app.py:4990",
-    "prod_refs": [],
-    "test_refs": [],
-    "prod_count": 0,
-    "test_count": 0
-  },
-  {
-    "name": "compose_decree_validation_recovery",
-    "def": "ming_sim/cli_backend.py:1730",
-    "prod_refs": [],
-    "test_refs": [],
-    "prod_count": 0,
-    "test_count": 0
-  },
-  {
-    "name": "compose_secret_order_landing_recovery",
-    "def": "ming_sim/cli_backend.py:1817",
-    "prod_refs": [],
-    "test_refs": [],
-    "prod_count": 0,
-    "test_count": 0
-  },
-  {
-    "name": "_extract_secret_order",
-    "def": "ming_sim/cli_backend.py:3305",
-    "prod_refs": [
-      "ming_sim/cli_backend.py:1155"
-    ],
-    "test_refs": [
-      "tests/test_cli_backend.py:78",
-      "tests/test_cli_backend.py:84",
-      "tests/test_cli_backend.py:93",
-      "tests/test_cli_backend.py:845"
-    ],
-    "prod_count": 1,
-    "test_count": 4
-  },
-  {
-    "name": "_has_secret_order_period_line",
-    "def": "ming_sim/db.py:22206",
-    "prod_refs": [
-      "ming_sim/materials.py:760"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "_omit_secret_order_audience",
-    "def": "ming_sim/materials.py:1037",
-    "prod_refs": [
-      "ming_sim/materials.py:1694"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "_project_secret_order_bodies",
-    "def": "ming_sim/db.py:921",
-    "prod_refs": [
-      "ming_sim/db.py:22166"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "_restore_secret_order_brief_projection_in_tx",
-    "def": "ming_sim/db.py:10142",
-    "prod_refs": [
-      "ming_sim/db.py:10244"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "_secret_order_chat_turn_ids",
-    "def": "ming_sim/materials.py:1021",
-    "prod_refs": [
-      "ming_sim/materials.py:2324"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "_step_4a_secret_order_supply",
-    "def": "ming_sim/month_chain.py:1257",
-    "prod_refs": [
-      "ming_sim/month_chain.py:593"
-    ],
-    "test_refs": [
-      "tests/test_secret_order_payoff_1504.py:159",
-      "tests/test_secret_order_payoff_1504.py:1990",
-      "tests/test_secret_order_payoff_1504.py:2054"
-    ],
-    "prod_count": 1,
-    "test_count": 3
-  },
-  {
-    "name": "_write_secret_order_file",
-    "def": "ming_sim/materials.py:745",
-    "prod_refs": [
-      "ming_sim/materials.py:978"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "assemble_secret_order_content",
-    "def": "ming_sim/cli_backend.py:2983",
-    "prod_refs": [
-      "ming_sim/cli_backend.py:3408"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "build_secret_orders_supply_feed",
-    "def": "ming_sim/month_chain.py:1190",
-    "prod_refs": [
-      "ming_sim/month_chain.py:1232"
-    ],
-    "test_refs": [
-      "tests/test_month_chain_1847.py:719",
-      "tests/test_month_chain_1847.py:1240",
-      "tests/test_month_chain_1847.py:1932",
-      "tests/test_month_chain_1847.py:2034",
-      "tests/test_month_chain_1847.py:2126",
-      "tests/test_month_chain_1847.py:2268",
-      "tests/test_secret_order_payoff_1504.py:35",
-      "tests/test_secret_order_payoff_1504.py:1212",
-      "tests/test_secret_order_payoff_1504.py:1830",
-      "tests/test_secret_order_payoff_1504.py:2284",
-      "tests/test_secret_order_payoff_1504.py:2295",
-      "tests/test_secret_order_payoff_1504.py:2310",
-      "tests/test_secret_order_payoff_1504.py:2342",
-      "tests/test_secret_order_payoff_1504.py:2361",
-      "tests/test_secret_order_payoff_1504.py:2410"
-    ],
-    "prod_count": 1,
-    "test_count": 15
-  },
-  {
-    "name": "decide_secret_order_settlement",
-    "def": "ming_sim/covert_progress.py:588",
-    "prod_refs": [
-      "ming_sim/covert_progress.py:2065"
-    ],
-    "test_refs": [
-      "tests/test_secret_order_payoff_1504.py:25",
-      "tests/test_secret_order_payoff_1504.py:237",
-      "tests/test_secret_order_payoff_1504.py:242",
-      "tests/test_secret_order_payoff_1504.py:248"
-    ],
-    "prod_count": 1,
-    "test_count": 4
-  },
-  {
-    "name": "discard_failed_secret_order_intents",
-    "def": "ming_sim/db.py:18958",
-    "prod_refs": [
-      "ming_sim/decree.py:1177"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "extract_draft_intent_with_roster_heal",
-    "def": "ming_sim/cli_backend.py:2111",
-    "prod_refs": [
-      "ming_sim/cli_backend.py:2753"
-    ],
-    "test_refs": [
-      "tests/test_structured_decree_contract_1624.py:587"
-    ],
-    "prod_count": 1,
-    "test_count": 1
-  },
-  {
-    "name": "list_due_secret_orders_for_settlement",
-    "def": "ming_sim/covert_progress.py:2025",
-    "prod_refs": [
-      "ming_sim/covert_progress.py:2043"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "player_facing_secret_order_close_text",
-    "def": "ming_sim/covert_progress.py:619",
-    "prod_refs": [
-      "ming_sim/covert_progress.py:2072"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "run_secret_orders_supply",
-    "def": "ming_sim/month_chain.py:1218",
-    "prod_refs": [
-      "ming_sim/month_chain.py:1287"
-    ],
-    "test_refs": [
-      "tests/test_month_chain_1847.py:1202",
-      "tests/test_month_chain_1847.py:1280",
-      "tests/test_month_chain_1847.py:1363",
-      "tests/test_month_chain_1847.py:1433",
-      "tests/test_month_chain_1847.py:1489",
-      "tests/test_month_chain_1847.py:1627",
-      "tests/test_month_chain_1847.py:1847",
-      "tests/test_month_chain_1847.py:1918",
-      "tests/test_month_chain_1847.py:2169",
-      "tests/test_month_chain_1843.py:70",
-      "tests/test_month_chain_1843.py:671",
-      "tests/test_secret_order_payoff_1504.py:959",
-      "tests/test_secret_order_payoff_1504.py:1023",
-      "tests/test_secret_order_payoff_1504.py:1051",
-      "tests/test_secret_order_payoff_1504.py:1085",
-      "tests/test_secret_order_payoff_1504.py:2052"
-    ],
-    "prod_count": 1,
-    "test_count": 16
-  },
-  {
-    "name": "secret_order_landing_gaps",
-    "def": "ming_sim/cli_backend.py:1796",
-    "prod_refs": [
-      "ming_sim/cli_backend.py:1814"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "submit_secret_order_for_review",
-    "def": "ming_sim/db.py:22178",
-    "prod_refs": [
-      "ming_sim/db.py:18331"
-    ],
-    "test_refs": [
-      "tests/test_secret_order_payoff_1504.py:703",
-      "tests/test_secret_order_payoff_1504.py:762"
-    ],
-    "prod_count": 1,
-    "test_count": 2
-  },
-  {
-    "name": "upsert_secret_order_brief",
-    "def": "ming_sim/db.py:21575",
-    "prod_refs": [
-      "ming_sim/db.py:11406"
-    ],
-    "test_refs": [],
-    "prod_count": 1,
-    "test_count": 0
-  },
-  {
-    "name": "_secret_order_exclusion_targets",
-    "def": "ming_sim/db.py:213",
-    "prod_refs": [
-      "ming_sim/db.py:21775",
-      "ming_sim/db.py:21967"
-    ],
-    "test_refs": [],
-    "prod_count": 2,
-    "test_count": 0
-  },
-  {
-    "name": "_secret_order_kept_body",
-    "def": "ming_sim/db.py:875",
-    "prod_refs": [
-      "ming_sim/db.py:22188",
-      "ming_sim/db.py:22239"
-    ],
-    "test_refs": [],
-    "prod_count": 2,
-    "test_count": 0
-  },
-  {
-    "name": "_secret_order_period_recorded",
-    "def": "ming_sim/db.py:911",
-    "prod_refs": [
-      "ming_sim/db.py:22212",
-      "ming_sim/db.py:22229"
-    ],
-    "test_refs": [],
-    "prod_count": 2,
-    "test_count": 0
-  },
-  {
-    "name": "_secret_order_record_body",
-    "def": "ming_sim/db.py:881",
-    "prod_refs": [
-      "ming_sim/db.py:906",
-      "ming_sim/db.py:936"
-    ],
-    "test_refs": [],
-    "prod_count": 2,
-    "test_count": 0
-  },
-  {
-    "name": "_update_secret_order_sim_note_in_transaction",
-    "def": "ming_sim/db.py:22296",
-    "prod_refs": [
-      "ming_sim/db.py:22287",
-      "ming_sim/db.py:22291"
-    ],
-    "test_refs": [],
-    "prod_count": 2,
-    "test_count": 0
-  },
-  {
-    "name": "auto_submit_due_secret_orders",
-    "def": "ming_sim/db.py:22395",
-    "prod_refs": [
-      "ming_sim/decree.py:1142",
-      "ming_sim/decree.py:1225"
-    ],
-    "test_refs": [
-      "tests/test_state_reload.py:164",
-      "tests/test_state_reload.py:207",
-      "tests/test_state_reload.py:256",
-      "tests/test_pre_settle_transaction.py:3",
-      "tests/test_pre_settle_transaction.py:87",
-      "tests/test_pre_settle_transaction.py:125",
-      "tests/test_pre_settle_transaction.py:149",
-      "tests/test_pre_settle_transaction.py:152",
-      "tests/test_secret_order_payoff_1504.py:631"
-    ],
-    "prod_count": 2,
-    "test_count": 9
-  },
-  {
-    "name": "create_secret_order_supply_agent",
-    "def": "ming_sim/agents.py:950",
-    "prod_refs": [
-      "ming_sim/month_chain.py:1223",
-      "ming_sim/month_chain.py:1244"
-    ],
-    "test_refs": [
-      "tests/test_secret_order_payoff_1504.py:1047"
-    ],
-    "prod_count": 2,
-    "test_count": 1
-  },
-  {
-    "name": "project_secret_orders_for_player",
-    "def": "web_app.py:4967",
-    "prod_refs": [
-      "web_app.py:1984",
-      "web_app.py:4996"
-    ],
-    "test_refs": [],
-    "prod_count": 2,
-    "test_count": 0
-  },
-  {
-    "name": "rush_secret_order",
-    "def": "ming_sim/db.py:22320",
-    "prod_refs": [
-      "ming_sim/db.py:18318",
-      "ming_sim/urge_lever.py:5"
-    ],
-    "test_refs": [
-      "tests/test_secret_order_monthly_progress_566.py:220",
-      "tests/test_secret_order_payoff_1504.py:727",
-      "tests/test_secret_order_payoff_1504.py:766"
-    ],
-    "prod_count": 2,
-    "test_count": 3
-  },
-  {
-    "name": "secret_order_can_land",
-    "def": "ming_sim/cli_backend.py:1812",
-    "prod_refs": [
-      "ming_sim/declaration_dispatch.py:1240",
-      "ming_sim/declaration_dispatch.py:1241"
-    ],
-    "test_refs": [],
-    "prod_count": 2,
-    "test_count": 0
-  },
-  {
-    "name": "update_secret_order_progress",
-    "def": "ming_sim/db.py:22246",
-    "prod_refs": [
-      "ming_sim/db.py:18344",
-      "ming_sim/db.py:22007"
-    ],
-    "test_refs": [
-      "tests/test_decree_dossiers_571.py:1191",
-      "tests/test_decree_dossiers_571.py:1219",
-      "tests/test_secret_order_payoff_1504.py:395"
-    ],
-    "prod_count": 2,
-    "test_count": 3
-  },
-  {
-    "name": "_append_secret_order_line",
-    "def": "ming_sim/db.py:22216",
-    "prod_refs": [
-      "ming_sim/issues.py:8987",
-      "ming_sim/db.py:22259",
-      "ming_sim/db.py:22300"
-    ],
-    "test_refs": [],
-    "prod_count": 3,
-    "test_count": 0
-  },
-  {
-    "name": "_failed_secret_order_ids_for_turn",
-    "def": "web_app.py:5002",
-    "prod_refs": [
-      "web_app.py:5342",
-      "web_app.py:5482",
-      "web_app.py:5604"
-    ],
-    "test_refs": [
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:128",
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:200",
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:234",
-      "tests/test_month_open_snapshot_1234.py:341",
-      "tests/test_month_open_snapshot_1234.py:396",
-      "tests/test_month_open_snapshot_1234.py:450",
-      "tests/test_issue_decree_token_1277.py:66",
-      "tests/test_qa_b3_409_ux.py:184",
-      "tests/test_qa_b3_409_ux.py:216",
-      "tests/test_qa_b3_409_ux.py:271",
-      "tests/test_chat_stream_failpaths_393.py:473"
-    ],
-    "prod_count": 3,
-    "test_count": 11
-  },
-  {
-    "name": "_read_secret_order_body_before_write",
-    "def": "ming_sim/db.py:22143",
-    "prod_refs": [
-      "ming_sim/db.py:21945",
-      "ming_sim/db.py:22257",
-      "ming_sim/db.py:22284"
-    ],
-    "test_refs": [],
-    "prod_count": 3,
-    "test_count": 0
-  },
-  {
-    "name": "_snapshot_secret_order_people",
-    "def": "ming_sim/db.py:223",
-    "prod_refs": [
-      "ming_sim/db.py:293",
-      "ming_sim/db.py:21769",
-      "ming_sim/db.py:21966"
-    ],
-    "test_refs": [],
-    "prod_count": 3,
-    "test_count": 0
-  },
-  {
-    "name": "close_secret_order",
-    "def": "ming_sim/db.py:22062",
-    "prod_refs": [
-      "ming_sim/db.py:17210",
-      "ming_sim/db.py:22113",
-      "ming_sim/covert_progress.py:2073"
-    ],
-    "test_refs": [
-      "tests/test_decree_dossiers_571.py:1201",
-      "tests/test_decree_dossiers_571.py:1248",
-      "tests/test_secret_order_monthly_progress_566.py:165",
-      "tests/test_secret_order_monthly_progress_566.py:166",
-      "tests/test_secret_order_update.py:141"
-    ],
-    "prod_count": 3,
-    "test_count": 5
-  },
-  {
-    "name": "get_active_secret_orders_for_minister",
-    "def": "ming_sim/db.py:22058",
-    "prod_refs": [
-      "ming_sim/declaration_dispatch.py:1174",
-      "ming_sim/declaration_dispatch.py:1205",
-      "ming_sim/materials.py:753"
-    ],
-    "test_refs": [
-      "tests/test_material_directory_1830.py:282",
-      "tests/test_secret_order_monthly_progress_566.py:77",
-      "tests/test_secret_order_monthly_progress_566.py:91"
-    ],
-    "prod_count": 3,
-    "test_count": 3
-  },
-  {
-    "name": "list_failed_secret_order_actions",
-    "def": "ming_sim/db.py:17918",
-    "prod_refs": [
-      "web_app.py:1801",
-      "web_app.py:2153",
-      "web_app.py:2159"
-    ],
-    "test_refs": [
-      "tests/test_secret_order_isolation_883.py:1205"
-    ],
-    "prod_count": 3,
-    "test_count": 1
-  },
-  {
-    "name": "record_secret_order_disclosure",
-    "def": "ming_sim/issues.py:7370",
-    "prod_refs": [
-      "ming_sim/issues.py:9008",
-      "ming_sim/month_chain.py:1036",
-      "ming_sim/month_chain.py:1041"
-    ],
-    "test_refs": [],
-    "prod_count": 3,
-    "test_count": 0
-  },
-  {
-    "name": "update_secret_order_by_id",
-    "def": "ming_sim/db.py:21915",
-    "prod_refs": [
-      "ming_sim/db.py:18307",
-      "ming_sim/db.py:18308",
-      "ming_sim/db.py:21912"
-    ],
-    "test_refs": [
-      "tests/test_secret_order_isolation_883.py:1365",
-      "tests/test_secret_order_isolation_883.py:1471",
-      "tests/test_character_knowledge_489.py:541",
-      "tests/test_secret_order_monthly_progress_566.py:227",
-      "tests/test_secret_order_update.py:32",
-      "tests/test_secret_order_update.py:42",
-      "tests/test_secret_order_update.py:54",
-      "tests/test_secret_order_update.py:67",
-      "tests/test_secret_order_update.py:80",
-      "tests/test_secret_order_update.py:116",
-      "tests/test_secret_order_update.py:142"
-    ],
-    "prod_count": 3,
-    "test_count": 11
-  },
-  {
-    "name": "upsert_secret_order",
-    "def": "ming_sim/db.py:21886",
-    "prod_refs": [
-      "ming_sim/db.py:11406",
-      "ming_sim/db.py:21575",
-      "ming_sim/db.py:21931"
-    ],
-    "test_refs": [
-      "tests/test_secret_order_update.py:4",
-      "tests/test_secret_order_update.py:13",
-      "tests/test_secret_order_update.py:15",
-      "tests/test_secret_order_update.py:27",
-      "tests/test_secret_order_update.py:28"
-    ],
-    "prod_count": 3,
-    "test_count": 5
-  },
-  {
-    "name": "_write_secret_order_body",
-    "def": "ming_sim/db.py:22149",
-    "prod_refs": [
-      "ming_sim/db.py:22197",
-      "ming_sim/db.py:22241",
-      "ming_sim/db.py:22354",
-      "ming_sim/db.py:22368"
-    ],
-    "test_refs": [],
-    "prod_count": 4,
-    "test_count": 0
-  },
-  {
-    "name": "canonical_secret_order_exclusions",
-    "def": "ming_sim/db.py:282",
-    "prod_refs": [
-      "ming_sim/db.py:21762",
-      "ming_sim/db.py:21961",
-      "ming_sim/cli_backend.py:3428",
-      "ming_sim/cli_backend.py:3432"
-    ],
-    "test_refs": [
-      "tests/test_cli_backend.py:101",
-      "tests/test_cli_backend.py:109"
-    ],
-    "prod_count": 4,
-    "test_count": 2
-  },
-  {
-    "name": "settle_due_secret_orders",
-    "def": "ming_sim/covert_progress.py:2036",
-    "prod_refs": [
-      "ming_sim/month_chain.py:1410",
-      "ming_sim/month_chain.py:1413",
-      "ming_sim/month_chain.py:1431",
-      "ming_sim/month_chain.py:1465"
-    ],
-    "test_refs": [
-      "tests/test_secret_order_payoff_1504.py:5",
-      "tests/test_secret_order_payoff_1504.py:32",
-      "tests/test_secret_order_payoff_1504.py:360",
-      "tests/test_secret_order_payoff_1504.py:380",
-      "tests/test_secret_order_payoff_1504.py:408",
-      "tests/test_secret_order_payoff_1504.py:440",
-      "tests/test_secret_order_payoff_1504.py:470",
-      "tests/test_secret_order_payoff_1504.py:700",
-      "tests/test_secret_order_payoff_1504.py:712",
-      "tests/test_secret_order_payoff_1504.py:774",
-      "tests/test_secret_order_payoff_1504.py:1252",
-      "tests/test_secret_order_payoff_1504.py:1510",
-      "tests/test_secret_order_payoff_1504.py:2452",
-      "tests/test_secret_order_payoff_1504.py:2492",
-      "tests/test_secret_order_payoff_1504.py:2528",
-      "tests/test_secret_order_payoff_1504.py:2543",
-      "tests/test_secret_order_payoff_1504.py:2596",
-      "tests/test_secret_order_payoff_1504.py:2643",
-      "tests/test_secret_order_payoff_1504.py:2678",
-      "tests/test_secret_order_payoff_1504.py:2722",
-      "tests/test_secret_order_payoff_1504.py:2762"
-    ],
-    "prod_count": 4,
-    "test_count": 21
-  },
-  {
-    "name": "update_secret_order_sim_note",
-    "def": "ming_sim/db.py:22273",
-    "prod_refs": [
-      "ming_sim/issues.py:9000",
-      "ming_sim/db.py:22287",
-      "ming_sim/db.py:22291",
-      "ming_sim/db.py:22296"
-    ],
-    "test_refs": [
-      "tests/test_decree_dossiers_571.py:1271"
-    ],
-    "prod_count": 4,
-    "test_count": 1
-  },
-  {
-    "name": "_classify_secret_order_audience",
-    "def": "ming_sim/db.py:11385",
-    "prod_refs": [
-      "ming_sim/db.py:18323",
-      "ming_sim/db.py:18336",
-      "ming_sim/db.py:18349",
-      "ming_sim/db.py:21808",
-      "ming_sim/db.py:21987"
-    ],
-    "test_refs": [],
-    "prod_count": 5,
-    "test_count": 0
-  },
-  {
-    "name": "extract_draft_intent",
-    "def": "ming_sim/cli_backend.py:2345",
-    "prod_refs": [
-      "ming_sim/cli_backend.py:2111",
-      "ming_sim/cli_backend.py:2147",
-      "ming_sim/cli_backend.py:2626",
-      "ming_sim/cli_backend.py:2649",
-      "ming_sim/cli_backend.py:2753"
-    ],
-    "test_refs": [
-      "tests/test_decree_dossiers_571.py:1669",
-      "tests/test_pay_order_override_extraction_653.py:82",
-      "tests/test_structured_decree_contract_1624.py:587",
-      "tests/test_pihong_dossier_1490.py:2676"
-    ],
-    "prod_count": 5,
-    "test_count": 4
-  },
-  {
-    "name": "_failed_secret_order_ids",
-    "def": "ming_sim/cli/terminal.py:48",
-    "prod_refs": [
-      "ming_sim/cli/terminal.py:815",
-      "ming_sim/cli/terminal.py:845",
-      "web_app.py:5002",
-      "web_app.py:5342",
-      "web_app.py:5482",
-      "web_app.py:5604"
-    ],
-    "test_refs": [
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:128",
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:200",
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:234",
-      "tests/test_month_open_snapshot_1234.py:341",
-      "tests/test_month_open_snapshot_1234.py:396",
-      "tests/test_month_open_snapshot_1234.py:450",
-      "tests/test_issue_decree_token_1277.py:66",
-      "tests/test_qa_b3_409_ux.py:184",
-      "tests/test_qa_b3_409_ux.py:216",
-      "tests/test_qa_b3_409_ux.py:271",
-      "tests/test_chat_stream_failpaths_393.py:473"
-    ],
-    "prod_count": 6,
-    "test_count": 11
-  },
-  {
-    "name": "_load_secret_order_body_row",
-    "def": "ming_sim/db.py:22137",
-    "prod_refs": [
-      "ming_sim/db.py:22145",
-      "ming_sim/db.py:22159",
-      "ming_sim/db.py:22183",
-      "ming_sim/db.py:22209",
-      "ming_sim/db.py:22225",
-      "ming_sim/db.py:22343"
-    ],
-    "test_refs": [],
-    "prod_count": 6,
-    "test_count": 0
-  },
-  {
-    "name": "_new_secret_order_failure_payloads_for_turn",
-    "def": "web_app.py:5013",
-    "prod_refs": [
-      "web_app.py:5039",
-      "web_app.py:5046",
-      "web_app.py:5049",
-      "web_app.py:5371",
-      "web_app.py:5497",
-      "web_app.py:5628"
-    ],
-    "test_refs": [
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:129",
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:201",
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:235",
-      "tests/test_month_open_snapshot_1234.py:342",
-      "tests/test_month_open_snapshot_1234.py:397",
-      "tests/test_month_open_snapshot_1234.py:452",
-      "tests/test_issue_decree_token_1277.py:67",
-      "tests/test_qa_b3_409_ux.py:218",
-      "tests/test_qa_b3_409_ux.py:273",
-      "tests/test_chat_stream_failpaths_393.py:474"
-    ],
-    "prod_count": 6,
-    "test_count": 10
-  },
-  {
-    "name": "_secret_order_body_log",
-    "def": "ming_sim/db.py:889",
-    "prod_refs": [
-      "ming_sim/db.py:22147",
-      "ming_sim/db.py:22162",
-      "ming_sim/db.py:22189",
-      "ming_sim/db.py:22213",
-      "ming_sim/db.py:22228",
-      "ming_sim/db.py:22344"
-    ],
-    "test_refs": [],
-    "prod_count": 6,
-    "test_count": 0
-  },
-  {
-    "name": "get_secret_order",
-    "def": "ming_sim/db.py:22378",
-    "prod_refs": [
-      "ming_sim/declaration_dispatch.py:1983",
-      "ming_sim/issues.py:7382",
-      "ming_sim/issues.py:8989",
-      "ming_sim/db.py:18321",
-      "ming_sim/db.py:18334",
-      "ming_sim/db.py:18347"
-    ],
-    "test_refs": [
-      "tests/test_secret_order_isolation_883.py:924",
-      "tests/test_month_chain_1847.py:1641",
-      "tests/test_month_chain_1847.py:1665",
-      "tests/test_month_chain_1847.py:1689",
-      "tests/test_month_chain_1847.py:1926",
-      "tests/test_month_chain_1843.py:683",
-      "tests/test_month_chain_1843.py:690",
-      "tests/test_month_chain_1843.py:838",
-      "tests/test_decree_dossiers_571.py:474",
-      "tests/test_decree_dossiers_571.py:1228",
-      "tests/test_decree_dossiers_571.py:1255",
-      "tests/test_decree_dossiers_571.py:1256",
-      "tests/test_decree_dossiers_571.py:1276",
-      "tests/test_secret_order_section_rejections.py:56",
-      "tests/test_secret_order_section_rejections.py:74",
-      "tests/test_secret_order_section_rejections.py:91",
-      "tests/test_secret_order_section_rejections.py:96",
-      "tests/test_secret_order_section_rejections.py:102",
-      "tests/test_secret_order_payoff_1504.py:384",
-      "tests/test_secret_order_payoff_1504.py:396",
-      "tests/test_secret_order_payoff_1504.py:410",
-      "tests/test_secret_order_payoff_1504.py:444",
-      "tests/test_secret_order_payoff_1504.py:474",
-      "tests/test_secret_order_payoff_1504.py:538",
-      "tests/test_secret_order_payoff_1504.py:618",
-      "tests/test_secret_order_payoff_1504.py:632",
-      "tests/test_secret_order_payoff_1504.py:699",
-      "tests/test_secret_order_payoff_1504.py:705",
-      "tests/test_secret_order_payoff_1504.py:717",
-      "tests/test_secret_order_payoff_1504.py:728",
-      "tests/test_secret_order_payoff_1504.py:768",
-      "tests/test_secret_order_payoff_1504.py:1242",
-      "tests/test_secret_order_payoff_1504.py:1508",
-      "tests/test_secret_order_payoff_1504.py:2455",
-      "tests/test_secret_order_payoff_1504.py:2530",
-      "tests/test_secret_order_payoff_1504.py:2545",
-      "tests/test_secret_order_payoff_1504.py:2645"
-    ],
-    "prod_count": 6,
-    "test_count": 37
-  },
-  {
-    "name": "mark_secret_order_in_progress",
-    "def": "ming_sim/db.py:22305",
-    "prod_refs": [
-      "ming_sim/db.py:22202",
-      "ming_sim/db.py:22269",
-      "ming_sim/db.py:22303",
-      "ming_sim/db.py:22374",
-      "ming_sim/db.py:22410",
-      "ming_sim/covert_progress.py:1858",
-      "ming_sim/covert_progress.py:2005"
-    ],
-    "test_refs": [],
-    "prod_count": 7,
-    "test_count": 0
-  },
-  {
-    "name": "create_secret_order",
-    "def": "ming_sim/db.py:21692",
-    "prod_refs": [
-      "ming_sim/db.py:18277",
-      "ming_sim/db.py:21906",
-      "ming_sim/models.py:433",
-      "ming_sim/models.py:438",
-      "ming_sim/session.py:249",
-      "ming_sim/agents.py:950",
-      "ming_sim/month_chain.py:1223",
-      "ming_sim/month_chain.py:1244"
-    ],
-    "test_refs": [
-      "tests/test_secret_order_isolation_883.py:120",
-      "tests/test_month_chain_1847.py:1219",
-      "tests/test_month_chain_1847.py:1873",
-      "tests/test_month_chain_1847.py:1943",
-      "tests/test_month_chain_1847.py:2105",
-      "tests/dossier_test_helpers.py:25",
-      "tests/test_month_chain_1843.py:767",
-      "tests/test_person_delta_adapter.py:1954",
-      "tests/test_person_delta_adapter.py:1955",
-      "tests/test_person_delta_adapter.py:1964",
-      "tests/test_person_delta_adapter.py:1965",
-      "tests/test_person_delta_adapter.py:1982",
-      "tests/test_person_delta_adapter.py:2002",
-      "tests/test_person_delta_adapter.py:2003",
-      "tests/test_person_delta_adapter.py:2017",
-      "tests/test_person_delta_adapter.py:2035",
-      "tests/test_decree_dossiers_571.py:8",
-      "tests/test_decree_dossiers_571.py:462",
-      "tests/test_decree_dossiers_571.py:468",
-      "tests/test_decree_dossiers_571.py:1187",
-      "tests/test_decree_dossiers_571.py:1209",
-      "tests/test_decree_dossiers_571.py:1237",
-      "tests/test_decree_dossiers_571.py:1266",
-      "tests/test_decree_dossiers_571.py:1296",
-      "tests/test_decree_dossiers_571.py:1299",
-      "tests/test_decree_dossiers_571.py:1625",
-      "tests/test_decree_dossiers_571.py:1757",
-      "tests/test_secret_order_payoff_1504.py:72",
-      "tests/test_secret_order_payoff_1504.py:1047",
-      "tests/test_secret_order_payoff_1504.py:1128",
-      "tests/test_secret_order_payoff_1504.py:1163",
-      "tests/test_secret_order_payoff_1504.py:1914",
-      "tests/test_secret_order_payoff_1504.py:2094",
-      "tests/test_secret_order_payoff_1504.py:2138",
-      "tests/test_secret_order_payoff_1504.py:2179",
-      "tests/test_secret_order_payoff_1504.py:2218",
-      "tests/test_secret_order_payoff_1504.py:2247",
-      "tests/test_secret_order_payoff_1504.py:2604",
-      "tests/test_secret_order_payoff_1504.py:2608",
-      "tests/test_secret_order_payoff_1504.py:2630",
-      "tests/test_secret_order_payoff_1504.py:2701",
-      "tests/test_settlement_write_guard_393.py:29",
-      "tests/test_settlement_write_guard_393.py:30"
-    ],
-    "prod_count": 8,
-    "test_count": 43
-  },
-  {
-    "name": "secret_order_dossier_ids",
-    "def": "ming_sim/materials.py:1296",
-    "prod_refs": [
-      "ming_sim/month_translate.py:28",
-      "ming_sim/month_translate.py:34",
-      "ming_sim/materials.py:2302",
-      "ming_sim/month_chain.py:154",
-      "ming_sim/month_chain.py:157",
-      "ming_sim/month_chain.py:267",
-      "ming_sim/month_chain.py:272",
-      "ming_sim/month_chain.py:304",
-      "ming_sim/month_chain.py:307"
-    ],
-    "test_refs": [
-      "tests/test_secret_dossier_participants_1252.py:175"
-    ],
-    "prod_count": 9,
-    "test_count": 1
-  },
-  {
-    "name": "list_secret_orders",
-    "def": "ming_sim/db.py:22010",
-    "prod_refs": [
-      "ming_sim/db.py:22060",
-      "ming_sim/decree.py:750",
-      "ming_sim/covert_progress.py:662",
-      "ming_sim/covert_progress.py:1555",
-      "ming_sim/covert_progress.py:1782",
-      "ming_sim/covert_progress.py:2028",
-      "ming_sim/month_chain.py:1204",
-      "ming_sim/month_chain.py:1274",
-      "web_app.py:1984",
-      "web_app.py:4997"
-    ],
-    "test_refs": [
-      "tests/test_qa_c3_secret_order_path_1357_1376.py:114",
-      "tests/test_character_knowledge_489.py:409",
-      "tests/test_menu_lifecycle_drain_396.py:543",
-      "tests/test_dossier_links_559.py:117",
-      "tests/test_dossier_links_559.py:124",
-      "tests/test_dossier_links_559.py:136",
-      "tests/test_web_chat_serialization_393.py:180",
-      "tests/test_secret_order_monthly_progress_566.py:72",
-      "tests/test_secret_order_payoff_1504.py:800",
-      "tests/test_secret_order_payoff_1504.py:1673",
-      "tests/test_secret_order_payoff_1504.py:2611"
-    ],
-    "prod_count": 10,
-    "test_count": 11
-  },
-  {
-    "name": "_new_secret_order_failure_payloads",
-    "def": "ming_sim/cli/terminal.py:59",
-    "prod_refs": [
-      "ming_sim/cli/terminal.py:827",
-      "ming_sim/cli/terminal.py:831",
-      "ming_sim/cli/terminal.py:856",
-      "ming_sim/cli/terminal.py:860",
-      "web_app.py:5013",
-      "web_app.py:5039",
-      "web_app.py:5046",
-      "web_app.py:5049",
-      "web_app.py:5371",
-      "web_app.py:5497",
-      "web_app.py:5628"
-    ],
-    "test_refs": [
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:129",
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:201",
-      "tests/test_qa_c2_phase_settlement_mask_1374.py:235",
-      "tests/test_month_open_snapshot_1234.py:342",
-      "tests/test_month_open_snapshot_1234.py:397",
-      "tests/test_month_open_snapshot_1234.py:452",
-      "tests/test_issue_decree_token_1277.py:67",
-      "tests/test_qa_b3_409_ux.py:218",
-      "tests/test_qa_b3_409_ux.py:273",
-      "tests/test_chat_stream_failpaths_393.py:474"
-    ],
-    "prod_count": 11,
-    "test_count": 10
-  },
-  {
-    "name": "get_dossier_for_secret_order",
-    "def": "ming_sim/db.py:14661",
-    "prod_refs": [
-      "ming_sim/issues.py:7405",
-      "ming_sim/db.py:15014",
-      "ming_sim/db.py:18290",
-      "ming_sim/db.py:21994",
-      "ming_sim/db.py:22048",
-      "ming_sim/db.py:22072",
-      "ming_sim/db.py:22309",
-      "ming_sim/covert_progress.py:675",
-      "ming_sim/covert_progress.py:1556",
-      "ming_sim/covert_progress.py:1582",
-      "ming_sim/covert_progress.py:1800",
-      "ming_sim/covert_progress.py:2045",
-      "ming_sim/month_chain.py:1125"
-    ],
-    "test_refs": [
-      "tests/test_deformation_dual_rail_622.py:217",
-      "tests/test_deformation_dual_rail_622.py:238",
-      "tests/test_month_chain_1847.py:1234",
-      "tests/test_month_chain_1847.py:1334",
-      "tests/test_month_chain_1847.py:1396",
-      "tests/test_month_chain_1847.py:1397",
-      "tests/test_month_chain_1847.py:1466",
-      "tests/test_month_chain_1847.py:1589",
-      "tests/test_month_chain_1847.py:1817",
-      "tests/test_month_chain_1847.py:1889",
-      "tests/test_month_chain_1847.py:1958",
-      "tests/test_month_chain_1847.py:2120",
-      "tests/test_faction_denunciation_627.py:151",
-      "tests/test_faction_denunciation_627.py:497",
-      "tests/test_month_chain_1843.py:674",
-      "tests/test_month_chain_1843.py:782",
-      "tests/test_decree_dossiers_571.py:469",
-      "tests/test_decree_dossiers_571.py:475",
-      "tests/test_decree_dossiers_571.py:1188",
-      "tests/test_decree_dossiers_571.py:1194",
-      "tests/test_decree_dossiers_571.py:1197",
-      "tests/test_decree_dossiers_571.py:1202",
-      "tests/test_decree_dossiers_571.py:1229",
-      "tests/test_decree_dossiers_571.py:1240",
-      "tests/test_decree_dossiers_571.py:1257",
-      "tests/test_decree_dossiers_571.py:1277",
-      "tests/test_decree_dossiers_571.py:1302",
-      "tests/test_decree_dossiers_571.py:1629",
-      "tests/test_dossier_links_559.py:69",
-      "tests/test_dossier_links_559.py:87",
-      "tests/test_dossier_links_559.py:118",
-      "tests/test_gazette_author_1862.py:155",
-      "tests/test_secret_order_monthly_progress_566.py:29",
-      "tests/test_secret_dossier_participants_1252.py:32",
-      "tests/test_secret_dossier_participants_1252.py:65",
-      "tests/test_secret_dossier_participants_1252.py:113",
-      "tests/test_secret_dossier_participants_1252.py:184",
-      "tests/test_grant_reconciliation_567.py:78",
-      "tests/test_secret_order_payoff_1504.py:310",
-      "tests/test_secret_order_payoff_1504.py:321",
-      "tests/test_secret_order_payoff_1504.py:331",
-      "tests/test_secret_order_payoff_1504.py:367",
-      "tests/test_secret_order_payoff_1504.py:393",
-      "tests/test_secret_order_payoff_1504.py:424",
-      "tests/test_secret_order_payoff_1504.py:445",
-      "tests/test_secret_order_payoff_1504.py:455",
-      "tests/test_secret_order_payoff_1504.py:485",
-      "tests/test_secret_order_payoff_1504.py:539",
-      "tests/test_secret_order_payoff_1504.py:578",
-      "tests/test_secret_order_payoff_1504.py:636",
-      "tests/test_secret_order_payoff_1504.py:666",
-      "tests/test_secret_order_payoff_1504.py:697",
-      "tests/test_secret_order_payoff_1504.py:707",
-      "tests/test_secret_order_payoff_1504.py:730",
-      "tests/test_secret_order_payoff_1504.py:757",
-      "tests/test_secret_order_payoff_1504.py:801",
-      "tests/test_secret_order_payoff_1504.py:831",
-      "tests/test_secret_order_payoff_1504.py:876",
-      "tests/test_secret_order_payoff_1504.py:925",
-      "tests/test_secret_order_payoff_1504.py:932",
-      "tests/test_secret_order_payoff_1504.py:951",
-      "tests/test_secret_order_payoff_1504.py:1131",
-      "tests/test_secret_order_payoff_1504.py:1172",
-      "tests/test_secret_order_payoff_1504.py:1203",
-      "tests/test_secret_order_payoff_1504.py:1210",
-      "tests/test_secret_order_payoff_1504.py:1241",
-      "tests/test_secret_order_payoff_1504.py:1328",
-      "tests/test_secret_order_payoff_1504.py:1359",
-      "tests/test_secret_order_payoff_1504.py:1411",
-      "tests/test_secret_order_payoff_1504.py:1452",
-      "tests/test_secret_order_payoff_1504.py:1481",
-      "tests/test_secret_order_payoff_1504.py:1493",
-      "tests/test_secret_order_payoff_1504.py:1544",
-      "tests/test_secret_order_payoff_1504.py:1564",
-      "tests/test_secret_order_payoff_1504.py:1594",
-      "tests/test_secret_order_payoff_1504.py:1668",
-      "tests/test_secret_order_payoff_1504.py:1722",
-      "tests/test_secret_order_payoff_1504.py:1810",
-      "tests/test_secret_order_payoff_1504.py:1877",
-      "tests/test_secret_order_payoff_1504.py:1962",
-      "tests/test_secret_order_payoff_1504.py:2009",
-      "tests/test_secret_order_payoff_1504.py:2091",
-      "tests/test_secret_order_payoff_1504.py:2112",
-      "tests/test_secret_order_payoff_1504.py:2137",
-      "tests/test_secret_order_payoff_1504.py:2176",
-      "tests/test_secret_order_payoff_1504.py:2380",
-      "tests/test_secret_order_payoff_1504.py:2450",
-      "tests/test_secret_order_payoff_1504.py:2462",
-      "tests/test_secret_order_payoff_1504.py:2468",
-      "tests/test_secret_order_payoff_1504.py:2508",
-      "tests/test_secret_order_payoff_1504.py:2536",
-      "tests/test_secret_order_payoff_1504.py:2554",
-      "tests/test_secret_order_payoff_1504.py:2582",
-      "tests/test_secret_order_payoff_1504.py:2634",
-      "tests/test_secret_order_payoff_1504.py:2635",
-      "tests/test_secret_order_payoff_1504.py:2653",
-      "tests/test_secret_order_payoff_1504.py:2705",
-      "tests/test_secret_order_payoff_1504.py:2741",
-      "tests/test_dossier_reported_progress_619.py:131",
-      "tests/test_dossier_reported_progress_619.py:161"
-    ],
-    "prod_count": 13,
-    "test_count": 100
-  },
-  {
-    "name": "is_secret_order_origin",
-    "def": "ming_sim/materials.py:1309",
-    "prod_refs": [
-      "ming_sim/db.py:15007",
-      "ming_sim/db.py:15009",
-      "ming_sim/db.py:21537",
-      "ming_sim/db.py:21541",
-      "ming_sim/db.py:21623",
-      "ming_sim/db.py:21628",
-      "ming_sim/month_chain.py:70",
-      "ming_sim/month_chain.py:73",
-      "ming_sim/month_chain.py:81",
-      "ming_sim/month_chain.py:89",
-      "ming_sim/month_chain.py:93",
-      "ming_sim/month_chain.py:101",
-      "ming_sim/month_chain.py:127",
-      "ming_sim/month_chain.py:129",
-      "ming_sim/month_chain.py:154",
-      "ming_sim/month_chain.py:195",
-      "ming_sim/month_chain.py:267",
-      "ming_sim/month_chain.py:275"
-    ],
-    "test_refs": [],
-    "prod_count": 18,
-    "test_count": 0
-  },
-  {
-    "name": "secret_order_origin",
-    "def": "ming_sim/materials.py:1314",
-    "prod_refs": [
-      "ming_sim/db.py:15007",
-      "ming_sim/db.py:15009",
-      "ming_sim/db.py:21537",
-      "ming_sim/db.py:21541",
-      "ming_sim/db.py:21623",
-      "ming_sim/db.py:21628",
-      "ming_sim/materials.py:1309",
-      "ming_sim/covert_progress.py:21",
-      "ming_sim/covert_progress.py:2070",
-      "ming_sim/month_chain.py:70",
-      "ming_sim/month_chain.py:73",
-      "ming_sim/month_chain.py:81",
-      "ming_sim/month_chain.py:89",
-      "ming_sim/month_chain.py:93",
-      "ming_sim/month_chain.py:101",
-      "ming_sim/month_chain.py:127",
-      "ming_sim/month_chain.py:129",
-      "ming_sim/month_chain.py:154",
-      "ming_sim/month_chain.py:195",
-      "ming_sim/month_chain.py:267",
-      "ming_sim/month_chain.py:275"
-    ],
-    "test_refs": [],
-    "prod_count": 21,
-    "test_count": 0
-  }
-]
+{
+  "predicate": "S1: git ls-files *.py universe; prod FunctionDef/ClassDef; dead root if non-test Load/Attribute refs==0 AND (judge sample OR name pattern); KEEP_SHARED named; ZERO_PROD_REF also listed for audit",
+  "tracked_py": 362,
+  "def_names": 6999,
+  "members": [
+    {
+      "name": "ApplyContext",
+      "defs": [
+        {
+          "file": "ming_sim/applier.py",
+          "line": 273,
+          "kind": "class"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_applier_contract.py:100"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "ChatResult",
+      "defs": [
+        {
+          "file": "ming_sim/models.py",
+          "line": 339,
+          "kind": "class"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "CliChat",
+      "defs": [
+        {
+          "file": "ming_sim/cli_backend.py",
+          "line": 2831,
+          "kind": "class"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/llm_model.py:231"
+      ],
+      "test_refs": [
+        "tests/test_cli_backend.py:340",
+        "tests/test_cli_backend.py:558",
+        "tests/test_cli_backend.py:593",
+        "tests/test_cli_backend.py:959",
+        "tests/test_cli_backend.py:317",
+        "tests/test_cli_backend.py:628",
+        "tests/test_cli_backend.py:629",
+        "tests/test_cli_backend.py:630",
+        "tests/test_cli_backend.py:639",
+        "tests/test_cli_runner_error_typed_1299.py:34",
+        "tests/test_cli_runner_error_typed_1299.py:55",
+        "tests/test_cli_transport_1465.py:132",
+        "tests/test_llm_channel_config.py:697",
+        "tests/test_llm_channel_config.py:45",
+        "tests/test_llm_channel_config.py:27",
+        "tests/test_llm_channel_config.py:68",
+        "tests/test_llm_channel_config.py:245",
+        "tests/test_llm_channel_config.py:443"
+      ],
+      "prod_count": 1,
+      "test_count": 18,
+      "disposition_hint": "KEEP_SHARED",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "CourtContext",
+      "defs": [
+        {
+          "file": "ming_sim/models.py",
+          "line": 684,
+          "kind": "class"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "MaterialsRoot",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 159,
+          "kind": "class"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "__call__",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 182,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "__enter__",
+      "defs": [
+        {
+          "file": "ming_sim/applier.py",
+          "line": 108,
+          "kind": "func"
+        },
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 124,
+          "kind": "func"
+        },
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 224,
+          "kind": "func"
+        },
+        {
+          "file": "web_app.py",
+          "line": 3173,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "__exit__",
+      "defs": [
+        {
+          "file": "ming_sim/applier.py",
+          "line": 111,
+          "kind": "func"
+        },
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 128,
+          "kind": "func"
+        },
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 228,
+          "kind": "func"
+        },
+        {
+          "file": "web_app.py",
+          "line": 3177,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "__post_init__",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 413,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_append_secret_order_line",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22148,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:22232",
+        "ming_sim/db.py:22191"
+      ],
+      "test_refs": [],
+      "prod_count": 2,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_classify_secret_order_audience",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 11360,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:21768",
+        "ming_sim/db.py:21919",
+        "ming_sim/db.py:18298",
+        "ming_sim/db.py:18311",
+        "ming_sim/db.py:18324"
+      ],
+      "test_refs": [],
+      "prod_count": 5,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_collect_compliant_promulgation_items",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 163,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_dossier_ids_from_simulator_payload",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 704,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_failed_secret_order_ids",
+      "defs": [
+        {
+          "file": "ming_sim/cli/terminal.py",
+          "line": 48,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/cli/terminal.py:815",
+        "ming_sim/cli/terminal.py:845"
+      ],
+      "test_refs": [],
+      "prod_count": 2,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_failed_secret_order_ids_for_turn",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4981,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "web_app.py:5320",
+        "web_app.py:5460",
+        "web_app.py:5582"
+      ],
+      "test_refs": [],
+      "prod_count": 3,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_fake_completion",
+      "defs": [
+        {
+          "file": "ming_sim/cli_backend.py",
+          "line": 2818,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/cli_backend.py:2905"
+      ],
+      "test_refs": [
+        "tests/test_cli_runner_error_typed_1299.py:59"
+      ],
+      "prod_count": 1,
+      "test_count": 1,
+      "disposition_hint": "KEEP_SHARED",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_fiscal_container_value",
+      "defs": [
+        {
+          "file": "ming_sim/flows.py",
+          "line": 296,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_has_secret_order_period_line",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22138,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/materials.py:760"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_is_audience_chat_shared_channel",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 21214,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_load_secret_order_body_row",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22069,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:22077",
+        "ming_sim/db.py:22091",
+        "ming_sim/db.py:22115",
+        "ming_sim/db.py:22141",
+        "ming_sim/db.py:22157",
+        "ming_sim/db.py:22275"
+      ],
+      "test_refs": [],
+      "prod_count": 6,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_merge_compliant_promulgation_items",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 195,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_new_secret_order_failure_payloads",
+      "defs": [
+        {
+          "file": "ming_sim/cli/terminal.py",
+          "line": 59,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/cli/terminal.py:831",
+        "ming_sim/cli/terminal.py:860",
+        "ming_sim/cli/terminal.py:827",
+        "ming_sim/cli/terminal.py:856"
+      ],
+      "test_refs": [],
+      "prod_count": 4,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_new_secret_order_failure_payloads_for_turn",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4992,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "web_app.py:5028",
+        "web_app.py:5025",
+        "web_app.py:5349",
+        "web_app.py:5475",
+        "web_app.py:5606"
+      ],
+      "test_refs": [],
+      "prod_count": 5,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_omit_secret_order_audience",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 1037,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/materials.py:1694"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_open_affair_ids_from_payload",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 717,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_pending_writes_count",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 1231,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_menu_lifecycle_drain_396.py:669",
+        "tests/test_menu_lifecycle_drain_396.py:707",
+        "tests/test_qa_t1_extraction_dual_source_1353.py:306",
+        "tests/test_qa_t1_extraction_dual_source_1353.py:316",
+        "tests/test_qa_t1_extraction_dual_source_1353.py:319",
+        "tests/test_qa_t1_extraction_dual_source_1353.py:362",
+        "tests/test_web_audience_night_498.py:588",
+        "tests/test_web_chat_serialization_393.py:341"
+      ],
+      "prod_count": 0,
+      "test_count": 8,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_project_secret_order_bodies",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 921,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:22098"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_promulgable_proposed_dossiers",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 230,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_province_collection_rate",
+      "defs": [
+        {
+          "file": "ming_sim/flows.py",
+          "line": 70,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_province_transport_ratio",
+      "defs": [
+        {
+          "file": "ming_sim/flows.py",
+          "line": 65,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_read_secret_order_body_before_write",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22075,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:21877",
+        "ming_sim/db.py:22189",
+        "ming_sim/db.py:22216"
+      ],
+      "test_refs": [],
+      "prod_count": 3,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_require_active_minister",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5120,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_qa_s2_copy_prompts_1356_1402.py:149",
+        "tests/test_web_court_visibility.py:252",
+        "tests/test_web_court_visibility.py:230"
+      ],
+      "prod_count": 0,
+      "test_count": 3,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "_restore_secret_order_brief_projection_in_tx",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 10139,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:10241"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_secret_order_body_log",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 889,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:22094",
+        "ming_sim/db.py:22079",
+        "ming_sim/db.py:22121",
+        "ming_sim/db.py:22160",
+        "ming_sim/db.py:22145",
+        "ming_sim/db.py:22276"
+      ],
+      "test_refs": [],
+      "prod_count": 6,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_secret_order_chat_turn_ids",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 1021,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/materials.py:2324"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_secret_order_exclusion_targets",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 213,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:21735",
+        "ming_sim/db.py:21899"
+      ],
+      "test_refs": [],
+      "prod_count": 2,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_secret_order_kept_body",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 875,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:22120",
+        "ming_sim/db.py:22171"
+      ],
+      "test_refs": [],
+      "prod_count": 2,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_secret_order_period_recorded",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 911,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:22144",
+        "ming_sim/db.py:22161"
+      ],
+      "test_refs": [],
+      "prod_count": 2,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_secret_order_record_body",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 881,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:906",
+        "ming_sim/db.py:936"
+      ],
+      "test_refs": [],
+      "prod_count": 2,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_snapshot_secret_order_people",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 223,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:293",
+        "ming_sim/db.py:21729",
+        "ming_sim/db.py:21898"
+      ],
+      "test_refs": [],
+      "prod_count": 3,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_step_4a_secret_order_supply",
+      "defs": [
+        {
+          "file": "ming_sim/month_chain.py",
+          "line": 1257,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/month_chain.py:593"
+      ],
+      "test_refs": [
+        "tests/test_secret_order_payoff_1504.py:159",
+        "tests/test_secret_order_payoff_1504.py:2054"
+      ],
+      "prod_count": 1,
+      "test_count": 2,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_update_secret_order_sim_note_in_transaction",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22228,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:22223",
+        "ming_sim/db.py:22219"
+      ],
+      "test_refs": [],
+      "prod_count": 2,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_write_secret_order_body",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22081,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:22173",
+        "ming_sim/db.py:22129",
+        "ming_sim/db.py:22286",
+        "ming_sim/db.py:22300"
+      ],
+      "test_refs": [],
+      "prod_count": 4,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "_write_secret_order_file",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 745,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/materials.py:978"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "accrue_blood_debt",
+      "defs": [
+        {
+          "file": "ming_sim/centrifuge_ledger.py",
+          "line": 115,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_centrifuge_ledger_690.py:141",
+        "tests/test_centrifuge_ledger_690.py:166",
+        "tests/test_centrifuge_ledger_690.py:187",
+        "tests/test_centrifuge_ledger_690.py:215",
+        "tests/test_centrifuge_ledger_690.py:237",
+        "tests/test_centrifuge_ledger_690.py:296",
+        "tests/test_centrifuge_ledger_690.py:313",
+        "tests/test_centrifuge_ledger_690.py:417",
+        "tests/test_centrifuge_ledger_690.py:493",
+        "tests/test_centrifuge_ledger_690.py:505",
+        "tests/test_centrifuge_ledger_690.py:520",
+        "tests/test_centrifuge_ledger_690.py:544",
+        "tests/test_centrifuge_ledger_690.py:574",
+        "tests/test_centrifuge_ledger_690.py:661",
+        "tests/test_centrifuge_ledger_690.py:761",
+        "tests/test_centrifuge_ledger_690.py:109",
+        "tests/test_centrifuge_ledger_690.py:341",
+        "tests/test_centrifuge_ledger_690.py:385",
+        "tests/test_centrifuge_ledger_690.py:531",
+        "tests/test_centrifuge_ledger_690.py:562",
+        "tests/test_centrifuge_ledger_690.py:591",
+        "tests/test_centrifuge_ledger_690.py:636",
+        "tests/test_centrifuge_ledger_690.py:710",
+        "tests/test_centrifuge_ledger_690.py:857",
+        "tests/test_centrifuge_ledger_690.py:270"
+      ],
+      "prod_count": 0,
+      "test_count": 25,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "accrue_detection_wariness",
+      "defs": [
+        {
+          "file": "ming_sim/centrifuge_ledger.py",
+          "line": 161,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_centrifuge_ledger_690.py:443",
+        "tests/test_centrifuge_ledger_690.py:469"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "admin_page",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5989,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "ainvoke",
+      "defs": [
+        {
+          "file": "ming_sim/cli_backend.py",
+          "line": 2908,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "ainvoke_stream",
+      "defs": [
+        {
+          "file": "ming_sim/cli_backend.py",
+          "line": 2970,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_add_favorite",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5094,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_settlement_write_guard_393.py:141"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_admin_delete",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5976,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_settlement_write_guard_393.py:145"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_admin_table",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5944,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_admin_tables",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5939,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_admin_upsert",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5958,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_settlement_write_guard_393.py:144"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_advance_without_edict",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5312,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_month_open_snapshot_1234.py:399",
+        "tests/test_month_open_snapshot_1234.py:455",
+        "tests/test_no_edict_full_settlement_1274.py:183",
+        "tests/test_secret_order_monthly_progress_566.py:350",
+        "tests/test_settlement_write_guard_393.py:240",
+        "tests/test_settlement_write_guard_393.py:262",
+        "tests/test_settlement_write_guard_393.py:313"
+      ],
+      "prod_count": 0,
+      "test_count": 7,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_audience_chat_history",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5170,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_audience_chat_stream",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5284,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_web_chat_serialization_393.py:302"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_audience_scroll",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5133,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_create_save",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5694,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_settlement_write_guard_393.py:158"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_delete_directive",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5296,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_settlement_write_guard_393.py:150"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_delete_save",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5707,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_get_court_layout",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5916,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_court_layout_1290.py:51",
+        "tests/test_court_layout_1290.py:65"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_get_llm_config",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5724,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_cli_model_choices.py:157",
+        "tests/test_web_llm_runtime_config.py:750",
+        "tests/test_web_llm_runtime_config.py:860",
+        "tests/test_web_llm_runtime_config.py:901",
+        "tests/test_web_llm_runtime_config.py:922",
+        "tests/test_web_llm_runtime_config.py:996"
+      ],
+      "prod_count": 0,
+      "test_count": 6,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_get_portrait",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5930,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_history_turn",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5048,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_player_payload_1022.py:38"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_history_turns",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5041,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_issue_decree_stream",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5443,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_error_pack.py:146",
+        "tests/test_issue_decree_token_1277.py:79",
+        "tests/test_month_open_snapshot_1234.py:348",
+        "tests/test_player_payload_1022.py:107"
+      ],
+      "prod_count": 0,
+      "test_count": 4,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_list_saves",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5689,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_load_save",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5713,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_qa_b3_409_ux.py:277",
+        "tests/test_settlement_write_guard_393.py:159"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_memorials_read",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4932,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_settlement_write_guard_393.py:161"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_menu_continue",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4374,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_menu_delete_save",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4615,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_web_entry_1902.py:26"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_menu_exit",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4627,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_menu_continue_stream_1195.py:132",
+        "tests/test_menu_lifecycle_drain_396.py:79"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_menu_load_save",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4493,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_menu_new_game",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4270,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_menu_continue_stream_1195.py:196",
+        "tests/test_menu_lifecycle_drain_396.py:117",
+        "tests/test_menu_lifecycle_drain_396.py:732",
+        "tests/test_menu_lifecycle_drain_396.py:767",
+        "tests/test_menu_lifecycle_drain_396.py:179",
+        "tests/test_menu_lifecycle_drain_396.py:362"
+      ],
+      "prod_count": 0,
+      "test_count": 6,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_menu_save_llm",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4798,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_web_llm_runtime_config.py:541",
+        "tests/test_web_llm_runtime_config.py:584",
+        "tests/test_web_llm_runtime_config.py:642",
+        "tests/test_web_llm_runtime_config.py:673",
+        "tests/test_web_llm_runtime_config.py:701",
+        "tests/test_web_llm_runtime_config.py:939",
+        "tests/test_web_llm_runtime_config.py:621",
+        "tests/test_web_llm_runtime_config.py:1263"
+      ],
+      "prod_count": 0,
+      "test_count": 8,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_menu_shutdown",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4656,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_menu_lifecycle_drain_396.py:416",
+        "tests/test_menu_lifecycle_drain_396.py:391"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_menu_status",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4185,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_cli_model_choices.py:117",
+        "tests/test_cli_model_choices.py:130",
+        "tests/test_cli_model_choices.py:141",
+        "tests/test_web_llm_runtime_config.py:429",
+        "tests/test_web_llm_runtime_config.py:452",
+        "tests/test_web_llm_runtime_config.py:474",
+        "tests/test_web_llm_runtime_config.py:504",
+        "tests/test_web_llm_runtime_config.py:527",
+        "tests/test_web_llm_runtime_config.py:606",
+        "tests/test_web_llm_runtime_config.py:747",
+        "tests/test_web_llm_runtime_config.py:810",
+        "tests/test_web_llm_runtime_config.py:976"
+      ],
+      "prod_count": 0,
+      "test_count": 12,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_remove_favorite",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5105,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_settlement_write_guard_393.py:142"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_resolve_decisions_stream",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5566,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_player_payload_1022.py:109",
+        "tests/test_qa_b3_409_ux.py:155",
+        "tests/test_qa_c2_phase_settlement_mask_1374.py:68"
+      ],
+      "prod_count": 0,
+      "test_count": 3,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_retry_audience_reply",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5199,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_retry_mechanical_tail",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4921,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_retry_pending_translation",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5221,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_secret_orders",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4969,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "CANDIDATE_DEAD_ROOT",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "api_set_court_layout",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5922,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_court_layout_1290.py:61",
+        "tests/test_settlement_write_guard_393.py:347",
+        "tests/test_settlement_write_guard_393.py:143"
+      ],
+      "prod_count": 0,
+      "test_count": 3,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_set_llm_config",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5790,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_web_llm_runtime_config.py:213",
+        "tests/test_web_llm_runtime_config.py:237",
+        "tests/test_web_llm_runtime_config.py:262",
+        "tests/test_web_llm_runtime_config.py:290",
+        "tests/test_web_llm_runtime_config.py:356",
+        "tests/test_web_llm_runtime_config.py:377",
+        "tests/test_web_llm_runtime_config.py:777",
+        "tests/test_web_llm_runtime_config.py:1009",
+        "tests/test_web_llm_runtime_config.py:404"
+      ],
+      "prod_count": 0,
+      "test_count": 9,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_state",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4916,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_undo_audience_chat",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5208,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_settlement_write_guard_393.py:154"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "api_upload_portrait",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 5886,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "append_rescript_drafts",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 11055,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "army_detail",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 7817,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_army_card_status_1501.py:221",
+        "tests/test_player_army_projection_321.py:298"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "audit_night_direct_writes",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 669,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_audience_undo_506.py:180",
+        "tests/test_audience_undo_506.py:196",
+        "tests/test_on_scene_immediate_write_1839.py:197"
+      ],
+      "prod_count": 0,
+      "test_count": 3,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "auto_submit_due_secret_orders",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22327,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/decree.py:1225"
+      ],
+      "test_refs": [
+        "tests/test_secret_order_payoff_1504.py:631"
+      ],
+      "prod_count": 1,
+      "test_count": 1,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "axis_collision_stances",
+      "defs": [
+        {
+          "file": "ming_sim/value_matrix.py",
+          "line": 100,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_value_matrix_691.py:25"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "build_fiscal_fact_brief",
+      "defs": [
+        {
+          "file": "ming_sim/fiscal_fact_brief.py",
+          "line": 334,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_mutiny_actual_residence_659.py:111",
+        "tests/test_pay_order_override_653.py:681",
+        "tests/test_pay_order_override_653.py:692",
+        "tests/test_pay_order_override_653.py:693",
+        "tests/test_pay_order_override_653.py:1051",
+        "tests/test_pay_order_override_653.py:1090",
+        "tests/test_pay_order_override_653.py:1105",
+        "tests/test_pay_order_override_653.py:1131",
+        "tests/test_pay_order_override_653.py:1410",
+        "tests/test_pay_order_override_653.py:1456",
+        "tests/test_pay_order_override_653.py:1491",
+        "tests/test_pay_order_override_653.py:1515",
+        "tests/test_pay_order_override_653.py:1537",
+        "tests/test_pay_order_override_653.py:1562",
+        "tests/test_pay_order_override_653.py:1070",
+        "tests/test_pay_order_override_653.py:1078",
+        "tests/test_pay_order_override_653.py:762",
+        "tests/test_pay_order_override_653.py:887",
+        "tests/test_pay_order_override_653.py:945",
+        "tests/test_pay_order_override_653.py:969",
+        "tests/test_pay_order_override_653.py:1016",
+        "tests/test_pay_order_override_653.py:1040",
+        "tests/test_pay_order_override_653.py:1680",
+        "tests/test_pay_order_override_653.py:721",
+        "tests/test_pay_order_override_653.py:743",
+        "tests/test_pay_order_override_653.py:895",
+        "tests/test_pay_order_override_653.py:1693",
+        "tests/test_pay_order_override_653.py:772",
+        "tests/test_pay_order_override_653.py:1702"
+      ],
+      "prod_count": 0,
+      "test_count": 29,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "build_period_report",
+      "defs": [
+        {
+          "file": "ming_sim/report.py",
+          "line": 104,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "build_secret_covert_effect_briefs",
+      "defs": [
+        {
+          "file": "ming_sim/covert_progress.py",
+          "line": 653,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_secret_order_payoff_1504.py:494"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "build_secret_orders_supply_feed",
+      "defs": [
+        {
+          "file": "ming_sim/month_chain.py",
+          "line": 1190,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/month_chain.py:1232"
+      ],
+      "test_refs": [
+        "tests/test_month_chain_1847.py:719",
+        "tests/test_month_chain_1847.py:2034",
+        "tests/test_month_chain_1847.py:2268",
+        "tests/test_month_chain_1847.py:1240",
+        "tests/test_month_chain_1847.py:2126",
+        "tests/test_secret_order_payoff_1504.py:1212",
+        "tests/test_secret_order_payoff_1504.py:1830",
+        "tests/test_secret_order_payoff_1504.py:2295",
+        "tests/test_secret_order_payoff_1504.py:2342",
+        "tests/test_secret_order_payoff_1504.py:2410"
+      ],
+      "prod_count": 1,
+      "test_count": 10,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "building_detail",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 8916,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "canonical_secret_order_exclusions",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 282,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:21722",
+        "ming_sim/db.py:21893"
+      ],
+      "test_refs": [
+        "tests/test_cli_backend.py:64"
+      ],
+      "prod_count": 2,
+      "test_count": 1,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "clear_directive_needs_clarification",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 17671,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "clear_pending_decisions",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 11028,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_advance_paths_atomic.py:79",
+        "tests/test_advance_paths_atomic.py:148",
+        "tests/test_pihong_dossier_1490.py:309",
+        "tests/test_pihong_dossier_1490.py:371",
+        "tests/test_pihong_dossier_1490.py:396",
+        "tests/test_pihong_dossier_1490.py:446",
+        "tests/test_pihong_dossier_1490.py:496",
+        "tests/test_rescript_draft_656.py:190",
+        "tests/test_rescript_draft_656.py:1329"
+      ],
+      "prod_count": 0,
+      "test_count": 9,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "clear_resolve_context",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 19000,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_advance_paths_atomic.py:443",
+        "tests/test_pre_settle_transaction.py:367"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "close_secret_order",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 21994,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/covert_progress.py:2073",
+        "ming_sim/db.py:17185"
+      ],
+      "test_refs": [
+        "tests/test_decree_dossiers_571.py:1201",
+        "tests/test_decree_dossiers_571.py:1248",
+        "tests/test_secret_order_monthly_progress_566.py:165",
+        "tests/test_secret_order_monthly_progress_566.py:166",
+        "tests/test_secret_order_update.py:118"
+      ],
+      "prod_count": 2,
+      "test_count": 5,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "cluster_effect",
+      "defs": [
+        {
+          "file": "ming_sim/action_clusters.py",
+          "line": 256,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "complete_rescript_summon_scaffold_turn",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 9338,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "contract_axes_direction",
+      "defs": [
+        {
+          "file": "ming_sim/covert_progress.py",
+          "line": 579,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "count_active_initiatives",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 19583,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_structured_decree_contract_1624.py:411",
+        "tests/test_structured_decree_contract_1624.py:437"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "create_rescript_draft_agent",
+      "defs": [
+        {
+          "file": "ming_sim/agents.py",
+          "line": 796,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_llm_channel_config.py:312"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "create_secret_order",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 21652,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:18252"
+      ],
+      "test_refs": [
+        "tests/dossier_test_helpers.py:25",
+        "tests/test_month_chain_1843.py:767",
+        "tests/test_month_chain_1847.py:1219",
+        "tests/test_month_chain_1847.py:1873",
+        "tests/test_month_chain_1847.py:1943",
+        "tests/test_month_chain_1847.py:2105",
+        "tests/test_secret_order_payoff_1504.py:72",
+        "tests/test_secret_order_payoff_1504.py:1128",
+        "tests/test_secret_order_payoff_1504.py:1163",
+        "tests/test_secret_order_payoff_1504.py:1914",
+        "tests/test_secret_order_payoff_1504.py:2138",
+        "tests/test_secret_order_payoff_1504.py:2179",
+        "tests/test_secret_order_payoff_1504.py:2218",
+        "tests/test_secret_order_payoff_1504.py:2247",
+        "tests/test_secret_order_payoff_1504.py:2630",
+        "tests/test_secret_order_payoff_1504.py:2701",
+        "tests/test_secret_order_payoff_1504.py:2094",
+        "tests/test_secret_order_payoff_1504.py:2608"
+      ],
+      "prod_count": 1,
+      "test_count": 18,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "create_secret_order_supply_agent",
+      "defs": [
+        {
+          "file": "ming_sim/agents.py",
+          "line": 950,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/month_chain.py:1244"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "credit_events_as_edges",
+      "defs": [
+        {
+          "file": "ming_sim/relations.py",
+          "line": 197,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_relation_store_632.py:116"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "decide_secret_order_settlement",
+      "defs": [
+        {
+          "file": "ming_sim/covert_progress.py",
+          "line": 588,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/covert_progress.py:2065"
+      ],
+      "test_refs": [
+        "tests/test_secret_order_payoff_1504.py:237",
+        "tests/test_secret_order_payoff_1504.py:242",
+        "tests/test_secret_order_payoff_1504.py:248"
+      ],
+      "prod_count": 1,
+      "test_count": 3,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "delete_chat_messages",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 9152,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_character_knowledge_489.py:284"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "dependency_mismatch_handler",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4054,
+          "kind": "async"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "dict_of_string_lists",
+      "defs": [
+        {
+          "file": "ming_sim/content.py",
+          "line": 600,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "dict_of_strings",
+      "defs": [
+        {
+          "file": "ming_sim/content.py",
+          "line": 605,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "disaster_severity_band",
+      "defs": [
+        {
+          "file": "ming_sim/qualitative.py",
+          "line": 200,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "discard_failed_secret_order_intents",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 18933,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/decree.py:1177"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "discard_pending_directives",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 18916,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "discover_character_write_sql_locations",
+      "defs": [
+        {
+          "file": "ming_sim/person_write_inventory.py",
+          "line": 112,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "drop_pending_actions_for_minister",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 18861,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_audience_undo_506.py:629",
+        "tests/test_secret_order_isolation_883.py:1174"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "event_context",
+      "defs": [
+        {
+          "file": "ming_sim/context.py",
+          "line": 352,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "executable_decree_dossier_ids",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 15129,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "execution_side_read_fields",
+      "defs": [
+        {
+          "file": "ming_sim/decree.py",
+          "line": 258,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_execution_tenure_613.py:63",
+        "tests/test_secret_dossier_participants_1252.py:98"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "experiences",
+      "defs": [
+        {
+          "file": "ming_sim/entities/affair/store.py",
+          "line": 429,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "extract_draft_intent",
+      "defs": [
+        {
+          "file": "ming_sim/cli_backend.py",
+          "line": 2186,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/cli_backend.py:1988"
+      ],
+      "test_refs": [
+        "tests/test_decree_dossiers_571.py:1669",
+        "tests/test_pay_order_override_extraction_653.py:82",
+        "tests/test_pihong_dossier_1490.py:2788"
+      ],
+      "prod_count": 1,
+      "test_count": 3,
+      "disposition_hint": "KEEP_SHARED",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "faction_report",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 6746,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "first_character_name",
+      "defs": [
+        {
+          "file": "ming_sim/context.py",
+          "line": 367,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "flag_directive_needs_clarification",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 17830,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "format_fiscal_fact_brief_tsv",
+      "defs": [
+        {
+          "file": "ming_sim/fiscal_fact_brief.py",
+          "line": 583,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_pay_order_override_653.py:705",
+        "tests/test_pay_order_override_653.py:1692",
+        "tests/test_pay_order_override_653.py:709",
+        "tests/test_pay_order_override_653.py:1701"
+      ],
+      "prod_count": 0,
+      "test_count": 4,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "format_power_changes",
+      "defs": [
+        {
+          "file": "ming_sim/report.py",
+          "line": 72,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_power_section_rejections.py:151",
+        "tests/test_power_section_rejections.py:157",
+        "tests/test_power_section_rejections.py:159"
+      ],
+      "prod_count": 0,
+      "test_count": 3,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "generate_rescript_draft",
+      "defs": [
+        {
+          "file": "ming_sim/rescript_draft.py",
+          "line": 2149,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_pihong_dossier_1490.py:1326",
+        "tests/test_pihong_dossier_1490.py:2959",
+        "tests/test_pihong_dossier_1490.py:3098",
+        "tests/test_pihong_dossier_1490.py:3159",
+        "tests/test_rescript_draft_656.py:325",
+        "tests/test_rescript_draft_656.py:351",
+        "tests/test_rescript_draft_656.py:404",
+        "tests/test_rescript_draft_656.py:469",
+        "tests/test_rescript_draft_656.py:527",
+        "tests/test_rescript_draft_656.py:568",
+        "tests/test_rescript_draft_656.py:595",
+        "tests/test_rescript_draft_656.py:626",
+        "tests/test_rescript_draft_656.py:657",
+        "tests/test_rescript_draft_656.py:815",
+        "tests/test_rescript_draft_656.py:838",
+        "tests/test_rescript_draft_656.py:961",
+        "tests/test_rescript_heal_isolation_1801.py:131",
+        "tests/test_rescript_heal_isolation_1801.py:151",
+        "tests/test_rescript_heal_isolation_1801.py:188",
+        "tests/test_rescript_heal_isolation_1801.py:210",
+        "tests/test_rescript_heal_isolation_1801.py:227",
+        "tests/test_rescript_heal_isolation_1801.py:109",
+        "tests/test_rescript_option_field_heal_1746.py:307",
+        "tests/test_rescript_option_field_heal_1746.py:332",
+        "tests/test_rescript_option_field_heal_1746.py:354",
+        "tests/test_rescript_option_field_heal_1746.py:378",
+        "tests/test_rescript_option_field_heal_1746.py:409",
+        "tests/test_rescript_option_field_heal_1746.py:456",
+        "tests/test_rescript_option_field_heal_1746.py:537",
+        "tests/test_rescript_option_field_heal_1746.py:582"
+      ],
+      "prod_count": 0,
+      "test_count": 39,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "get_active_secret_orders_for_minister",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 21990,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/declaration_dispatch.py:1174",
+        "ming_sim/declaration_dispatch.py:1205",
+        "ming_sim/materials.py:753"
+      ],
+      "test_refs": [
+        "tests/test_secret_order_monthly_progress_566.py:77"
+      ],
+      "prod_count": 3,
+      "test_count": 1,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "get_dossier_for_secret_order",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 14636,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/covert_progress.py:1582",
+        "ming_sim/covert_progress.py:675",
+        "ming_sim/covert_progress.py:1556",
+        "ming_sim/covert_progress.py:1800",
+        "ming_sim/covert_progress.py:2045",
+        "ming_sim/db.py:22241",
+        "ming_sim/db.py:14989",
+        "ming_sim/db.py:21926",
+        "ming_sim/db.py:22004",
+        "ming_sim/db.py:18265",
+        "ming_sim/db.py:21980",
+        "ming_sim/issues.py:7405",
+        "ming_sim/month_chain.py:1125"
+      ],
+      "test_refs": [
+        "tests/test_decree_dossiers_571.py:469",
+        "tests/test_decree_dossiers_571.py:475",
+        "tests/test_decree_dossiers_571.py:1188",
+        "tests/test_decree_dossiers_571.py:1202",
+        "tests/test_decree_dossiers_571.py:1229",
+        "tests/test_decree_dossiers_571.py:1240",
+        "tests/test_decree_dossiers_571.py:1302",
+        "tests/test_decree_dossiers_571.py:1629",
+        "tests/test_decree_dossiers_571.py:1257",
+        "tests/test_decree_dossiers_571.py:1194",
+        "tests/test_decree_dossiers_571.py:1277",
+        "tests/test_decree_dossiers_571.py:1197",
+        "tests/test_deformation_dual_rail_622.py:217",
+        "tests/test_deformation_dual_rail_622.py:238",
+        "tests/test_dossier_links_559.py:69",
+        "tests/test_dossier_links_559.py:87",
+        "tests/test_dossier_links_559.py:118",
+        "tests/test_dossier_reported_progress_619.py:131",
+        "tests/test_dossier_reported_progress_619.py:161",
+        "tests/test_faction_denunciation_627.py:151",
+        "tests/test_faction_denunciation_627.py:497",
+        "tests/test_gazette_author_1862.py:155",
+        "tests/test_grant_reconciliation_567.py:78",
+        "tests/test_month_chain_1843.py:782",
+        "tests/test_month_chain_1843.py:674",
+        "tests/test_month_chain_1847.py:1234",
+        "tests/test_month_chain_1847.py:1334",
+        "tests/test_month_chain_1847.py:1396",
+        "tests/test_month_chain_1847.py:1397",
+        "tests/test_month_chain_1847.py:1466"
+      ],
+      "prod_count": 13,
+      "test_count": 100,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "get_faction_stance_summary",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22740,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_faction_brew_637.py:173",
+        "tests/test_faction_brew_637.py:188",
+        "tests/test_faction_brew_637.py:256",
+        "tests/test_faction_brew_637.py:267",
+        "tests/test_faction_brew_637.py:608",
+        "tests/test_faction_brew_637.py:210",
+        "tests/test_faction_brew_637.py:139",
+        "tests/test_faction_brew_637.py:140",
+        "tests/test_faction_brew_637.py:232",
+        "tests/test_faction_brew_637.py:277"
+      ],
+      "prod_count": 0,
+      "test_count": 10,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "get_message_highlights",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 9129,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_highlight_judge_544.py:230",
+        "tests/test_highlight_judge_544.py:275",
+        "tests/test_highlight_judge_544.py:315",
+        "tests/test_highlight_judge_544.py:363"
+      ],
+      "prod_count": 0,
+      "test_count": 4,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "get_night_protagonist",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 2151,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_audience_translation_1838.py:223",
+        "tests/test_audience_translation_1838.py:235",
+        "tests/test_audience_translation_1838.py:249",
+        "tests/test_audience_translation_1838.py:267",
+        "tests/test_audience_translation_1838.py:278",
+        "tests/test_audience_translation_1838.py:282",
+        "tests/test_audience_translation_1838.py:286",
+        "tests/test_audience_translation_1838.py:303",
+        "tests/test_audience_translation_1838.py:231"
+      ],
+      "prod_count": 0,
+      "test_count": 9,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "get_secret_order",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22310,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:18296",
+        "ming_sim/db.py:18309",
+        "ming_sim/db.py:18322",
+        "ming_sim/declaration_dispatch.py:1983",
+        "ming_sim/issues.py:7382",
+        "ming_sim/issues.py:8989"
+      ],
+      "test_refs": [
+        "tests/test_decree_dossiers_571.py:474",
+        "tests/test_decree_dossiers_571.py:1228",
+        "tests/test_decree_dossiers_571.py:1255",
+        "tests/test_decree_dossiers_571.py:1256",
+        "tests/test_decree_dossiers_571.py:1276",
+        "tests/test_month_chain_1843.py:683",
+        "tests/test_month_chain_1843.py:690",
+        "tests/test_month_chain_1843.py:838",
+        "tests/test_month_chain_1847.py:1641",
+        "tests/test_month_chain_1847.py:1665",
+        "tests/test_month_chain_1847.py:1689",
+        "tests/test_month_chain_1847.py:1926",
+        "tests/test_secret_order_isolation_883.py:924",
+        "tests/test_secret_order_payoff_1504.py:384",
+        "tests/test_secret_order_payoff_1504.py:410",
+        "tests/test_secret_order_payoff_1504.py:632",
+        "tests/test_secret_order_payoff_1504.py:705",
+        "tests/test_secret_order_payoff_1504.py:728",
+        "tests/test_secret_order_payoff_1504.py:768",
+        "tests/test_secret_order_payoff_1504.py:444",
+        "tests/test_secret_order_payoff_1504.py:474",
+        "tests/test_secret_order_payoff_1504.py:538",
+        "tests/test_secret_order_payoff_1504.py:618",
+        "tests/test_secret_order_payoff_1504.py:717",
+        "tests/test_secret_order_payoff_1504.py:1242",
+        "tests/test_secret_order_payoff_1504.py:1508",
+        "tests/test_secret_order_payoff_1504.py:2455",
+        "tests/test_secret_order_payoff_1504.py:2530",
+        "tests/test_secret_order_payoff_1504.py:2545",
+        "tests/test_secret_order_payoff_1504.py:2645"
+      ],
+      "prod_count": 6,
+      "test_count": 35,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "has_player_visible_rejection",
+      "defs": [
+        {
+          "file": "ming_sim/applier.py",
+          "line": 387,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "historical_anchor_for_month",
+      "defs": [
+        {
+          "file": "ming_sim/context.py",
+          "line": 75,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "hline",
+      "defs": [
+        {
+          "file": "scripts/make_steam_assets.py",
+          "line": 46,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "holder_kind",
+      "defs": [
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 110,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "is_sealed",
+      "defs": [
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 262,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_menu_lifecycle_drain_396.py:666",
+        "tests/test_new_game_write_path_1749.py:544"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "is_secret_order_origin",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 1309,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:14984",
+        "ming_sim/db.py:21501",
+        "ming_sim/db.py:21588",
+        "ming_sim/month_chain.py:73",
+        "ming_sim/month_chain.py:129",
+        "ming_sim/month_chain.py:89",
+        "ming_sim/month_chain.py:101",
+        "ming_sim/month_chain.py:195",
+        "ming_sim/month_chain.py:275"
+      ],
+      "test_refs": [],
+      "prod_count": 9,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "isatty",
+      "defs": [
+        {
+          "file": "launcher.py",
+          "line": 29,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_arrived_unsettled_summons",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 1489,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_audience_travel_gating_670.py:293",
+        "tests/test_audience_travel_gating_670.py:307",
+        "tests/test_audience_travel_gating_670.py:330",
+        "tests/test_audience_travel_gating_670.py:874",
+        "tests/test_audience_travel_gating_670.py:894",
+        "tests/test_audience_travel_gating_670.py:925",
+        "tests/test_audience_travel_gating_670.py:974",
+        "tests/test_audience_travel_gating_670.py:1269"
+      ],
+      "prod_count": 0,
+      "test_count": 8,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_dossier_actual_rail",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 20811,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_secret_order_payoff_1504.py:356"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_dossier_link_rejections",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 14945,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_dossier_links_559.py:138",
+        "tests/test_dossier_links_559.py:153",
+        "tests/test_dossier_links_559.py:192",
+        "tests/test_dossier_links_559.py:191"
+      ],
+      "prod_count": 0,
+      "test_count": 4,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_dossiers_for_directive",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 14625,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_execution_pressure_654.py:267",
+        "tests/test_execution_pressure_654.py:394",
+        "tests/test_execution_pressure_654.py:334",
+        "tests/test_execution_pressure_654.py:494",
+        "tests/test_execution_pressure_654.py:519",
+        "tests/test_execution_pressure_654.py:527",
+        "tests/test_execution_pressure_654.py:561",
+        "tests/test_execution_pressure_654.py:291",
+        "tests/test_execution_pressure_654.py:564"
+      ],
+      "prod_count": 0,
+      "test_count": 9,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_due_secret_orders_for_settlement",
+      "defs": [
+        {
+          "file": "ming_sim/covert_progress.py",
+          "line": 2025,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/covert_progress.py:2043"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "list_endorsed_dossier_candidates",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 14643,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_pihong_dossier_1490.py:2778"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_execution_liability_parties",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 16028,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_execution_joint_liability_565.py:270",
+        "tests/test_execution_joint_liability_565.py:313",
+        "tests/test_execution_joint_liability_565.py:362"
+      ],
+      "prod_count": 0,
+      "test_count": 3,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_failed_secret_order_actions",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 17893,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "web_app.py:2135",
+        "web_app.py:2141",
+        "web_app.py:1799"
+      ],
+      "test_refs": [
+        "tests/test_secret_order_isolation_883.py:1205"
+      ],
+      "prod_count": 3,
+      "test_count": 1,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "list_ministers",
+      "defs": [
+        {
+          "file": "ming_sim/session.py",
+          "line": 822,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_person_delta_adapter.py:1951",
+        "tests/test_web_court_visibility.py:360",
+        "tests/test_web_court_visibility.py:447",
+        "tests/test_web_court_visibility.py:471",
+        "tests/test_web_court_visibility.py:364"
+      ],
+      "prod_count": 0,
+      "test_count": 5,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_night_promulgated_directives",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 17699,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_night_timeline",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 454,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_audience_night_498.py:177"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_office_effects_for_dossier",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 19167,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_decree_dossiers_571.py:941"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_office_vacancies",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 4045,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_open_grant_reconciliations",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 12336,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_promulgated_directives",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 17735,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "list_secret_orders",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 21942,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/covert_progress.py:1555",
+        "ming_sim/covert_progress.py:2028",
+        "ming_sim/covert_progress.py:1782",
+        "ming_sim/covert_progress.py:662",
+        "ming_sim/db.py:21992",
+        "ming_sim/decree.py:750",
+        "ming_sim/month_chain.py:1274",
+        "ming_sim/month_chain.py:1204",
+        "scripts/secret_order_probe2.py:64",
+        "web_app.py:4976",
+        "web_app.py:1982"
+      ],
+      "test_refs": [
+        "tests/test_character_knowledge_489.py:409",
+        "tests/test_dossier_links_559.py:117",
+        "tests/test_dossier_links_559.py:124",
+        "tests/test_dossier_links_559.py:136",
+        "tests/test_qa_c3_secret_order_path_1357_1376.py:114",
+        "tests/test_secret_order_monthly_progress_566.py:72",
+        "tests/test_secret_order_payoff_1504.py:2611",
+        "tests/test_secret_order_payoff_1504.py:800",
+        "tests/test_secret_order_payoff_1504.py:1673"
+      ],
+      "prod_count": 11,
+      "test_count": 9,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "mark_chat_turn_failed",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 9674,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "mark_secret_order_in_progress",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22237,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/covert_progress.py:2005",
+        "ming_sim/covert_progress.py:1858",
+        "ming_sim/db.py:22235",
+        "ming_sim/db.py:22134",
+        "ming_sim/db.py:22306",
+        "ming_sim/db.py:22201",
+        "ming_sim/db.py:22342"
+      ],
+      "test_refs": [],
+      "prod_count": 7,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "matrix_snapshot",
+      "defs": [
+        {
+          "file": "ming_sim/value_matrix.py",
+          "line": 153,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_value_matrix_691.py:21",
+        "tests/test_value_matrix_691.py:74"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "mean_aligned_stance",
+      "defs": [
+        {
+          "file": "ming_sim/value_matrix.py",
+          "line": 136,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "minister_speaker_role",
+      "defs": [
+        {
+          "file": "ming_sim/action_materialize.py",
+          "line": 29,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "night_dossiers_ready",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 341,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "parse_covert_exec_selections",
+      "defs": [
+        {
+          "file": "ming_sim/covert_progress.py",
+          "line": 2096,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "parse_json_dict",
+      "defs": [
+        {
+          "file": "ming_sim/context.py",
+          "line": 169,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "person_write_locations_by_disposition",
+      "defs": [
+        {
+          "file": "ming_sim/person_write_inventory.py",
+          "line": 157,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "persons_entered_tonight",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 2222,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_cli_play_turn.py:589"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "persons_present_tonight",
+      "defs": [
+        {
+          "file": "ming_sim/audience_night.py",
+          "line": 2230,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_audience_continuous_507.py:149",
+        "tests/test_audience_continuous_507.py:146",
+        "tests/test_audience_undo_506.py:113",
+        "tests/test_audience_undo_506.py:127",
+        "tests/test_audience_undo_506.py:223",
+        "tests/test_audience_undo_506.py:235",
+        "tests/test_audience_undo_506.py:509",
+        "tests/test_audience_undo_506.py:526",
+        "tests/test_audience_undo_506.py:261",
+        "tests/test_cli_play_turn.py:588"
+      ],
+      "prod_count": 0,
+      "test_count": 10,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "player_facing_secret_order_close_text",
+      "defs": [
+        {
+          "file": "ming_sim/covert_progress.py",
+          "line": 619,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/covert_progress.py:2072"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "point_dossier",
+      "defs": [
+        {
+          "file": "ming_sim/entities/affair/store.py",
+          "line": 284,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "point_issue",
+      "defs": [
+        {
+          "file": "ming_sim/entities/affair/store.py",
+          "line": 316,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "pointing_at",
+      "defs": [
+        {
+          "file": "ming_sim/entities/textual_fact/store.py",
+          "line": 113,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "prepare_character_materials",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 1119,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_army_card_status_1501.py:233",
+        "tests/test_character_knowledge_489.py:1404",
+        "tests/test_character_knowledge_489.py:1482",
+        "tests/test_character_knowledge_489.py:74",
+        "tests/test_gazette_author_1862.py:435",
+        "tests/test_material_directory_1830.py:44",
+        "tests/test_material_directory_1830.py:67",
+        "tests/test_material_directory_1830.py:68",
+        "tests/test_material_directory_1830.py:102",
+        "tests/test_material_directory_1830.py:145",
+        "tests/test_material_directory_1830.py:175",
+        "tests/test_material_directory_1830.py:244",
+        "tests/test_material_directory_1830.py:271",
+        "tests/test_material_directory_1830.py:166",
+        "tests/test_material_directory_1830.py:284",
+        "tests/test_person_delta_adapter.py:1924",
+        "tests/test_player_army_projection_321.py:304",
+        "tests/test_public_projection_consistency_1830.py:105",
+        "tests/test_public_projection_consistency_1830.py:182",
+        "tests/test_public_projection_consistency_1830.py:194",
+        "tests/test_qa_1281_issue_audience_case_facts.py:52",
+        "tests/test_qa_1281_issue_audience_case_facts.py:55",
+        "tests/test_qa_1281_issue_audience_case_facts.py:78",
+        "tests/test_qa_1281_issue_audience_case_facts.py:105",
+        "tests/test_qa_1281_issue_audience_case_facts.py:108",
+        "tests/test_qa_1281_issue_audience_case_facts.py:218",
+        "tests/test_qa_1281_issue_audience_case_facts.py:135",
+        "tests/test_qa_1281_issue_audience_case_facts.py:155",
+        "tests/test_qa_1281_issue_audience_case_facts.py:178",
+        "tests/test_qa_1281_issue_audience_case_facts.py:201"
+      ],
+      "prod_count": 0,
+      "test_count": 31,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "project_secret_orders_for_player",
+      "defs": [
+        {
+          "file": "web_app.py",
+          "line": 4946,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "web_app.py:4975",
+        "web_app.py:1982"
+      ],
+      "test_refs": [],
+      "prod_count": 2,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "rebuild_centrifuge_cache",
+      "defs": [
+        {
+          "file": "ming_sim/centrifuge_ledger.py",
+          "line": 193,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_centrifuge_ledger_690.py:688",
+        "tests/test_centrifuge_ledger_690.py:789",
+        "tests/test_centrifuge_ledger_690.py:740"
+      ],
+      "prod_count": 0,
+      "test_count": 3,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "record_economy_moves",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 6512,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "record_monthly_supervision_facts",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 12636,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_supervision_625.py:192",
+        "tests/test_supervision_625.py:193",
+        "tests/test_supervision_625.py:440",
+        "tests/test_supervision_625.py:235",
+        "tests/test_supervision_625.py:294"
+      ],
+      "prod_count": 0,
+      "test_count": 5,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "record_secret_order_disclosure",
+      "defs": [
+        {
+          "file": "ming_sim/issues.py",
+          "line": 7370,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/issues.py:9008",
+        "ming_sim/month_chain.py:1041"
+      ],
+      "test_refs": [],
+      "prod_count": 2,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "reject_directive",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 19459,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_decree_dossiers_571.py:311"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "release_previous_material_tree",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 227,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "require_bool",
+      "defs": [
+        {
+          "file": "ming_sim/llm_contract.py",
+          "line": 41,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "require_int_range",
+      "defs": [
+        {
+          "file": "ming_sim/llm_contract.py",
+          "line": 24,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "require_non_empty_text",
+      "defs": [
+        {
+          "file": "ming_sim/llm_contract.py",
+          "line": 18,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "resubmit_draft_admission_payload",
+      "defs": [
+        {
+          "file": "ming_sim/cli_backend.py",
+          "line": 2565,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/session.py:1811"
+      ],
+      "test_refs": [
+        "tests/test_decree_dossiers_571.py:1003",
+        "tests/test_decree_dossiers_571.py:1074",
+        "tests/test_decree_dossiers_571.py:1118",
+        "tests/test_draft_admission_resubmit_1769.py:176",
+        "tests/test_manual_directive_institution_normalize_1279.py:50",
+        "tests/test_manual_directive_institution_normalize_1279.py:68",
+        "tests/test_manual_directive_institution_normalize_1279.py:200",
+        "tests/test_manual_directive_locality_1685.py:42",
+        "tests/test_pay_order_override_653.py:1618",
+        "tests/test_pay_order_override_extraction_653.py:26",
+        "tests/test_pay_order_override_extraction_653.py:64",
+        "tests/test_pihong_dossier_1490.py:2680",
+        "tests/test_pihong_dossier_1490.py:2812",
+        "tests/test_pihong_dossier_1490.py:2930",
+        "tests/test_qa_d1_decree_normalize_1274.py:42",
+        "tests/test_qa_d1_decree_normalize_1274.py:160",
+        "tests/test_qa_d1_decree_normalize_1274.py:83",
+        "tests/test_rescript_choices_563.py:57",
+        "tests/test_rescript_choices_563.py:43",
+        "tests/test_structured_decree_contract_1624.py:339",
+        "tests/test_structured_decree_contract_1624.py:421"
+      ],
+      "prod_count": 1,
+      "test_count": 21,
+      "disposition_hint": "KEEP_SHARED",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "revoke_pay_order_decree",
+      "defs": [
+        {
+          "file": "ming_sim/pay_order.py",
+          "line": 472,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_pay_order_override_653.py:352"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "run_agent_stream_text",
+      "defs": [
+        {
+          "file": "ming_sim/agents.py",
+          "line": 367,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_cli_backend.py:320",
+        "tests/test_cli_backend.py:367",
+        "tests/test_cli_backend.py:402"
+      ],
+      "prod_count": 0,
+      "test_count": 3,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "run_audience_turn_translation",
+      "defs": [
+        {
+          "file": "ming_sim/audience_translate.py",
+          "line": 551,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "run_exclusive",
+      "defs": [
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 520,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_audience_travel_gating_670.py:373",
+        "tests/test_audience_travel_gating_670.py:908",
+        "tests/test_pihong_dossier_1490.py:2992",
+        "tests/test_pihong_dossier_1490.py:1385",
+        "tests/test_session_write_queue_1353.py:367",
+        "tests/test_session_write_queue_1353.py:361"
+      ],
+      "prod_count": 0,
+      "test_count": 6,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "run_month_end_relation_brew",
+      "defs": [
+        {
+          "file": "ming_sim/relation_brew.py",
+          "line": 438,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_faction_brew_637.py:115",
+        "tests/test_faction_brew_637.py:132",
+        "tests/test_faction_brew_637.py:156",
+        "tests/test_faction_brew_637.py:171",
+        "tests/test_faction_brew_637.py:185",
+        "tests/test_faction_brew_637.py:206",
+        "tests/test_faction_brew_637.py:224",
+        "tests/test_faction_brew_637.py:242",
+        "tests/test_faction_brew_637.py:255",
+        "tests/test_faction_brew_637.py:265",
+        "tests/test_faction_brew_637.py:276",
+        "tests/test_faction_brew_637.py:327",
+        "tests/test_faction_brew_637.py:346",
+        "tests/test_faction_brew_637.py:363",
+        "tests/test_faction_brew_637.py:369",
+        "tests/test_faction_brew_637.py:471",
+        "tests/test_faction_brew_637.py:606",
+        "tests/test_faction_brew_637.py:293",
+        "tests/test_faction_brew_637.py:306",
+        "tests/test_relation_brew_636.py:102",
+        "tests/test_relation_brew_636.py:117",
+        "tests/test_relation_brew_636.py:129",
+        "tests/test_relation_brew_636.py:143",
+        "tests/test_relation_brew_636.py:150",
+        "tests/test_relation_brew_636.py:168",
+        "tests/test_relation_brew_636.py:177",
+        "tests/test_relation_brew_636.py:204",
+        "tests/test_relation_brew_636.py:221",
+        "tests/test_relation_brew_636.py:284",
+        "tests/test_relation_brew_636.py:313"
+      ],
+      "prod_count": 0,
+      "test_count": 43,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "run_secret_orders_supply",
+      "defs": [
+        {
+          "file": "ming_sim/month_chain.py",
+          "line": 1218,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/month_chain.py:1287"
+      ],
+      "test_refs": [
+        "tests/test_secret_order_payoff_1504.py:1051",
+        "tests/test_secret_order_payoff_1504.py:1085"
+      ],
+      "prod_count": 1,
+      "test_count": 2,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "rush_secret_order",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22252,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:18293"
+      ],
+      "test_refs": [
+        "tests/test_secret_order_monthly_progress_566.py:220",
+        "tests/test_secret_order_payoff_1504.py:727",
+        "tests/test_secret_order_payoff_1504.py:766"
+      ],
+      "prod_count": 1,
+      "test_count": 3,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "save_pending_promulgation_verdicts",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 16193,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_pihong_dossier_1490.py:1239",
+        "tests/test_pihong_dossier_1490.py:1260",
+        "tests/test_promulgation_judge_561.py:481",
+        "tests/test_promulgation_seam_560.py:41",
+        "tests/test_promulgation_seam_560.py:44"
+      ],
+      "prod_count": 0,
+      "test_count": 5,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "save_rescript_drafts",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 11037,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_cli_entry_1902.py:241",
+        "tests/test_execution_pressure_654.py:60",
+        "tests/test_pihong_dossier_1490.py:525",
+        "tests/test_pihong_dossier_1490.py:761",
+        "tests/test_pihong_dossier_1490.py:1214",
+        "tests/test_pihong_dossier_1490.py:2146",
+        "tests/test_pihong_dossier_1490.py:3173",
+        "tests/test_pihong_dossier_1490.py:800",
+        "tests/test_pihong_dossier_1490.py:1013",
+        "tests/test_pihong_dossier_1490.py:2987",
+        "tests/test_pihong_dossier_1490.py:1372",
+        "tests/test_rescript_choices_563.py:409",
+        "tests/test_rescript_draft_656.py:132",
+        "tests/test_rescript_draft_656.py:167",
+        "tests/test_rescript_draft_656.py:186",
+        "tests/test_rescript_draft_656.py:210",
+        "tests/test_rescript_draft_656.py:261",
+        "tests/test_rescript_draft_656.py:265",
+        "tests/test_rescript_draft_656.py:303",
+        "tests/test_rescript_draft_656.py:1095",
+        "tests/test_rescript_draft_656.py:1275",
+        "tests/test_rescript_draft_656.py:235",
+        "tests/test_rescript_draft_656.py:870",
+        "tests/test_structured_decree_contract_1624.py:290"
+      ],
+      "prod_count": 0,
+      "test_count": 24,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "season_option_contract_prompt",
+      "defs": [
+        {
+          "file": "ming_sim/action_clusters.py",
+          "line": 185,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "secret_order_can_land",
+      "defs": [
+        {
+          "file": "ming_sim/cli_backend.py",
+          "line": 1688,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/declaration_dispatch.py:1241"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "KEEP_SHARED",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "secret_order_dossier_ids",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 1296,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/materials.py:2302",
+        "ming_sim/month_chain.py:272",
+        "ming_sim/month_chain.py:307",
+        "ming_sim/month_chain.py:157",
+        "ming_sim/month_translate.py:34"
+      ],
+      "test_refs": [],
+      "prod_count": 5,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "secret_order_landing_gaps",
+      "defs": [
+        {
+          "file": "ming_sim/cli_backend.py",
+          "line": 1672,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/cli_backend.py:1690"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "KEEP_SHARED",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "secret_order_origin",
+      "defs": [
+        {
+          "file": "ming_sim/materials.py",
+          "line": 1314,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/covert_progress.py:2070"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "select_triage_actor",
+      "defs": [
+        {
+          "file": "ming_sim/rescript_draft.py",
+          "line": 1107,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_rescript_draft_656.py:81",
+        "tests/test_rescript_draft_656.py:88",
+        "tests/test_rescript_draft_656.py:103",
+        "tests/test_rescript_draft_656.py:122",
+        "tests/test_rescript_draft_656.py:96",
+        "tests/test_rescript_draft_656.py:110",
+        "tests/test_rescript_draft_656.py:117"
+      ],
+      "prod_count": 0,
+      "test_count": 7,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "settle_due_secret_orders",
+      "defs": [
+        {
+          "file": "ming_sim/covert_progress.py",
+          "line": 2036,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/month_chain.py:1465",
+        "ming_sim/month_chain.py:1413"
+      ],
+      "test_refs": [
+        "tests/test_secret_order_payoff_1504.py:380",
+        "tests/test_secret_order_payoff_1504.py:408",
+        "tests/test_secret_order_payoff_1504.py:440",
+        "tests/test_secret_order_payoff_1504.py:470",
+        "tests/test_secret_order_payoff_1504.py:700",
+        "tests/test_secret_order_payoff_1504.py:712",
+        "tests/test_secret_order_payoff_1504.py:774",
+        "tests/test_secret_order_payoff_1504.py:1252",
+        "tests/test_secret_order_payoff_1504.py:1510",
+        "tests/test_secret_order_payoff_1504.py:2452",
+        "tests/test_secret_order_payoff_1504.py:2492",
+        "tests/test_secret_order_payoff_1504.py:2528",
+        "tests/test_secret_order_payoff_1504.py:2543",
+        "tests/test_secret_order_payoff_1504.py:2596",
+        "tests/test_secret_order_payoff_1504.py:2643",
+        "tests/test_secret_order_payoff_1504.py:2678",
+        "tests/test_secret_order_payoff_1504.py:2722",
+        "tests/test_secret_order_payoff_1504.py:2762"
+      ],
+      "prod_count": 2,
+      "test_count": 18,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "settle_province_tick",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 3141,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_fiscal_substrate_bridge.py:623",
+        "tests/test_fiscal_substrate_bridge.py:2184",
+        "tests/test_fiscal_substrate_bridge.py:2293",
+        "tests/test_fiscal_substrate_bridge.py:2351",
+        "tests/test_fiscal_substrate_bridge.py:3697",
+        "tests/test_fiscal_substrate_bridge.py:3833",
+        "tests/test_fiscal_substrate_bridge.py:3890",
+        "tests/test_fiscal_substrate_bridge.py:4097",
+        "tests/test_fiscal_substrate_bridge.py:4117",
+        "tests/test_fiscal_substrate_bridge.py:4176",
+        "tests/test_fiscal_substrate_bridge.py:4148",
+        "tests/test_fiscal_substrate_bridge.py:4195",
+        "tests/test_fiscal_substrate_bridge.py:4202",
+        "tests/test_fiscal_substrate_bridge.py:4211",
+        "tests/test_pay_order_override_653.py:324",
+        "tests/test_pay_order_override_653.py:333",
+        "tests/test_pay_order_override_653.py:501",
+        "tests/test_pay_order_override_653.py:595",
+        "tests/test_pay_order_override_653.py:655",
+        "tests/test_pay_order_override_653.py:676",
+        "tests/test_pay_order_override_653.py:761",
+        "tests/test_pay_order_override_653.py:881",
+        "tests/test_pay_order_override_653.py:942",
+        "tests/test_pay_order_override_653.py:966",
+        "tests/test_pay_order_override_653.py:1014",
+        "tests/test_pay_order_override_653.py:1037",
+        "tests/test_pay_order_override_653.py:1146",
+        "tests/test_pay_order_override_653.py:1161",
+        "tests/test_pay_order_override_653.py:1657"
+      ],
+      "prod_count": 0,
+      "test_count": 29,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "stage_authorization_candidate",
+      "defs": [
+        {
+          "file": "ming_sim/action_materialize.py",
+          "line": 1616,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_execution_pressure_654.py:928",
+        "tests/test_execution_pressure_654.py:945",
+        "tests/test_execution_pressure_654.py:1035",
+        "tests/test_execution_pressure_654.py:1051"
+      ],
+      "prod_count": 0,
+      "test_count": 4,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "stage_grant_allocation_candidate",
+      "defs": [
+        {
+          "file": "ming_sim/action_materialize.py",
+          "line": 771,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_execution_pressure_654.py:973",
+        "tests/test_execution_pressure_654.py:991"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "stage_month_segment",
+      "defs": [
+        {
+          "file": "ming_sim/month_translate.py",
+          "line": 240,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_breach_plea_623.py:776",
+        "tests/test_month_translate_1840.py:141",
+        "tests/test_month_translate_1840.py:507",
+        "tests/test_month_translate_1840.py:367",
+        "tests/test_month_translate_1840.py:486"
+      ],
+      "prod_count": 0,
+      "test_count": 5,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "stage_referral_candidate",
+      "defs": [
+        {
+          "file": "ming_sim/action_materialize.py",
+          "line": 1703,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "stage_revoke_authority_candidate",
+      "defs": [
+        {
+          "file": "ming_sim/action_materialize.py",
+          "line": 1815,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "state_context",
+      "defs": [
+        {
+          "file": "ming_sim/context.py",
+          "line": 159,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "status_delta",
+      "defs": [
+        {
+          "file": "ming_sim/report.py",
+          "line": 96,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "submit_secret_order_for_review",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22110,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:18306"
+      ],
+      "test_refs": [
+        "tests/test_secret_order_payoff_1504.py:703",
+        "tests/test_secret_order_payoff_1504.py:762"
+      ],
+      "prod_count": 1,
+      "test_count": 2,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "treasury_ledger",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 9028,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "turn_army_summary",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 7904,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_fiscal_substrate_bridge.py:1438"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "turn_economy_summary",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 9002,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "turn_power_summary",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 7179,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [],
+      "prod_count": 0,
+      "test_count": 0,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "turn_region_summary",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 7315,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_pay_order_override_653.py:515"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "unread_memorial_count",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 12971,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_memorial_inbox_1726.py:45",
+        "tests/test_memorial_inbox_1726.py:98",
+        "tests/test_memorial_inbox_1726.py:112",
+        "tests/test_memorial_inbox_1726.py:115",
+        "tests/test_memorial_inbox_1726.py:126",
+        "tests/test_memorial_inbox_1726.py:215",
+        "tests/test_memorial_inbox_1726.py:136",
+        "tests/test_memorial_inbox_1726.py:141",
+        "tests/test_memorial_inbox_1726.py:207"
+      ],
+      "prod_count": 0,
+      "test_count": 9,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "update_secret_order_by_id",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 21846,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:18283"
+      ],
+      "test_refs": [
+        "tests/test_character_knowledge_489.py:541",
+        "tests/test_secret_order_isolation_883.py:1365",
+        "tests/test_secret_order_isolation_883.py:1477",
+        "tests/test_secret_order_monthly_progress_566.py:227",
+        "tests/test_secret_order_update.py:19",
+        "tests/test_secret_order_update.py:31",
+        "tests/test_secret_order_update.py:44",
+        "tests/test_secret_order_update.py:57",
+        "tests/test_secret_order_update.py:93",
+        "tests/test_secret_order_update.py:119"
+      ],
+      "prod_count": 1,
+      "test_count": 10,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "update_secret_order_progress",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22178,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:21939",
+        "ming_sim/db.py:18319",
+        "scripts/secret_order_probe2.py:51"
+      ],
+      "test_refs": [
+        "tests/test_decree_dossiers_571.py:1191",
+        "tests/test_decree_dossiers_571.py:1219",
+        "tests/test_secret_order_payoff_1504.py:395"
+      ],
+      "prod_count": 3,
+      "test_count": 3,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "update_secret_order_sim_note",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 22205,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/issues.py:9000"
+      ],
+      "test_refs": [
+        "tests/test_decree_dossiers_571.py:1271"
+      ],
+      "prod_count": 1,
+      "test_count": 1,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "upsert_pending_directive",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 17441,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_audience_night_498.py:298",
+        "tests/test_audience_night_498.py:305",
+        "tests/test_audience_night_498.py:345",
+        "tests/test_audience_night_498.py:278",
+        "tests/test_web_audience_night_498.py:591",
+        "tests/test_web_audience_night_498.py:750"
+      ],
+      "prod_count": 0,
+      "test_count": 6,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "upsert_secret_order_brief",
+      "defs": [
+        {
+          "file": "ming_sim/db.py",
+          "line": 21535,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [
+        "ming_sim/db.py:11381"
+      ],
+      "test_refs": [],
+      "prod_count": 1,
+      "test_count": 0,
+      "disposition_hint": "HAS_PROD_CONSUMER",
+      "sample_or_pattern": true
+    },
+    {
+      "name": "vacate",
+      "defs": [
+        {
+          "file": "ming_sim/session_write_queue.py",
+          "line": 336,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_session_write_queue_1353.py:140",
+        "tests/test_session_write_queue_1353.py:329"
+      ],
+      "prod_count": 0,
+      "test_count": 2,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "value_axes",
+      "defs": [
+        {
+          "file": "ming_sim/value_matrix.py",
+          "line": 46,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_value_matrix_691.py:54"
+      ],
+      "prod_count": 0,
+      "test_count": 1,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    },
+    {
+      "name": "write_decree",
+      "defs": [
+        {
+          "file": "ming_sim/session.py",
+          "line": 1724,
+          "kind": "func"
+        }
+      ],
+      "prod_refs": [],
+      "test_refs": [
+        "tests/test_advance_paths_atomic.py:459",
+        "tests/test_audience_night_498.py:282",
+        "tests/test_draft_admission_resubmit_1769.py:274",
+        "tests/test_pre_settle_transaction.py:411"
+      ],
+      "prod_count": 0,
+      "test_count": 4,
+      "disposition_hint": "ZERO_PROD_REF",
+      "sample_or_pattern": false
+    }
+  ]
+}

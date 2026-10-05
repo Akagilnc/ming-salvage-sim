@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""S3: isomorphic SSE unpack + numeric float casting duplicates vs authority."""
+from __future__ import annotations
+import ast, json, os, re, subprocess
+from pathlib import Path
+
+ROOT = Path(os.environ.get("SCAN_ROOT", ".")).resolve()
+os.chdir(ROOT)
+tracked = subprocess.check_output(["git", "ls-files", "*.py"], text=True).splitlines()
+
+AUTH_SSE = "tests/sse_helpers.py"
+AUTH_NUM = {"_slot_number"}  # in ming_sim/llm_config.py
+
+sse_inline = []
+sse_local_defs = []
+num_dupes = []
+
+EVENT_RE = re.compile(r"""startswith\(\s*['\"]event:\s*['\"]\s*\)""")
+DATA_RE = re.compile(r"""startswith\(\s*['\"]data:\s*['\"]\s*\)""")
+# float casting helpers
+FLOAT_HELPER_RE = re.compile(r"def\s+(_\w*(?:float|number|num|slot)\w*)\s*\(")
+
+for path in tracked:
+    src = Path(path).read_text(encoding="utf-8")
+    lines = src.splitlines()
+    # SSE inline
+    for i, line in enumerate(lines, 1):
+        if EVENT_RE.search(line) or (DATA_RE.search(line) and "event" in "\n".join(lines[max(0,i-5):i])):
+            if path == AUTH_SSE:
+                continue
+            sse_inline.append({"file": path, "line": i, "text": line.strip()[:120], "kind": "inline_startswith"})
+    try:
+        tree = ast.parse(src, filename=path)
+    except Exception:
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            seg = ast.get_source_segment(src, node) or ""
+            name = node.name
+            # local SSE parsers
+            if path != AUTH_SSE and (
+                ("startswith(\"event" in seg or "startswith('event" in seg) and
+                ("startswith(\"data" in seg or "startswith('data" in seg)
+            ):
+                if name.startswith("_") or "sse" in name.lower() or "parse" in name.lower() or "consume" in name.lower():
+                    sse_local_defs.append({
+                        "file": path, "line": node.lineno, "name": name,
+                        "uses_authority": "parse_sse_event_pairs" in seg or "parse_sse_events" in seg,
+                    })
+            # numeric helpers
+            if FLOAT_HELPER_RE.match(f"def {name}(") or name in ("_runtime_float", "_as_float", "_to_float", "_parse_float", "_coerce_float", "_slot_number", "_number"):
+                if path.startswith("tests/"):
+                    continue
+                body_has_float = "float(" in seg
+                if body_has_float or name == "_runtime_float":
+                    num_dupes.append({
+                        "file": path, "line": node.lineno, "name": name,
+                        "is_authority": name == "_slot_number" and path.endswith("llm_config.py"),
+                        "calls_slot_number": "_slot_number" in seg and name != "_slot_number",
+                        "snippet": seg[:200].replace("\n", " "),
+                    })
+
+# also search for duplicated float(value) with try/except TypeError pattern like _slot_number
+pattern_slot = re.compile(
+    r"try:\s*\n\s*return\s+\w*\(?\s*float\(",
+    re.M,
+)
+pattern_hits = []
+for path in tracked:
+    if path.startswith("tests/"):
+        continue
+    src = Path(path).read_text(encoding="utf-8")
+    if "float(" in src and ("TypeError" in src or "ValueError" in src):
+        # find function enclosing
+        try:
+            tree = ast.parse(src, filename=path)
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            seg = ast.get_source_segment(src, node) or ""
+            if "float(" in seg and ("TypeError" in seg or "ValueError" in seg):
+                if len(seg) < 400:  # small coerce helpers
+                    pattern_hits.append({
+                        "file": path, "line": node.lineno, "name": node.name,
+                        "len": len(seg),
+                        "is_slot": node.name == "_slot_number",
+                    })
+
+out = {
+    "predicate": (
+        "S3: tracked *.py; SSE isomorphic unpack = startswith event:/data: loops outside tests/sse_helpers.py; "
+        "numeric = small float-coerce helpers / _runtime_float / TypeError+float patterns. "
+        "Authority: tests/sse_helpers.parse_sse_event_pairs + ming_sim.llm_config._slot_number."
+    ),
+    "sse_inline": sse_inline,
+    "sse_local_defs": sse_local_defs,
+    "num_helpers": num_dupes,
+    "float_typeerror_small_funcs": pattern_hits,
+}
+Path("/tmp/ming1902-s123-resc/s3-raw.json").write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+print("=== SSE inline (non-authority) ===")
+for x in sse_inline:
+    print(f"{x['file']}:{x['line']}\t{x['text']}")
+print("=== SSE local defs ===")
+for x in sse_local_defs:
+    print(f"{x['file']}:{x['line']}\t{x['name']}\tauth={x['uses_authority']}")
+print("=== num helpers ===")
+for x in num_dupes:
+    print(f"{x['file']}:{x['line']}\t{x['name']}\tauth={x['is_authority']}\tcalls_slot={x['calls_slot_number']}")
+print("=== float+TypeError small funcs ===")
+for x in pattern_hits:
+    print(f"{x['file']}:{x['line']}\t{x['name']}\tlen={x['len']}\tslot={x['is_slot']}")

@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""S1 full-universe AST scan — temporary, not checked in."""
+from __future__ import annotations
+import ast, json, os, re, subprocess, sys
+from collections import defaultdict, Counter
+from pathlib import Path
+
+ROOT = Path(os.environ.get("SCAN_ROOT", ".")).resolve()
+os.chdir(ROOT)
+
+tracked = subprocess.check_output(["git", "ls-files", "*.py"], text=True).splitlines()
+
+def is_test_path(p: str) -> bool:
+    return p.startswith("tests/") or p.endswith("_test.py") or "/tests/" in p
+
+defs = {}
+refs = defaultdict(list)
+
+for path in tracked:
+    try:
+        src = Path(path).read_text(encoding="utf-8")
+        tree = ast.parse(src, filename=path)
+    except Exception as e:
+        print(f"WARN parse {path}: {e}", file=sys.stderr)
+        continue
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defs.setdefault(node.name, []).append({
+                "file": path, "line": node.lineno,
+                "kind": "async" if isinstance(node, ast.AsyncFunctionDef) else "func",
+            })
+        elif isinstance(node, ast.ClassDef):
+            defs.setdefault(node.name, []).append({
+                "file": path, "line": node.lineno, "kind": "class",
+            })
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            refs[node.id].append({"file": path, "line": node.lineno, "test": is_test_path(path)})
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            refs[node.attr].append({"file": path, "line": node.lineno, "test": is_test_path(path)})
+
+SAMPLE_ROOTS = {
+    "_extract_secret_order", "compose_decree_validation_recovery",
+    "compose_secret_order_landing_recovery", "_compose_inworld_fact_report",
+    "_secret_landing_gap_feature", "_DRAFT_PREFIXES", "_SECRET_PREFIXES",
+    "_matched_prefix", "_secret_prefix_needs_recent_context", "_SECRET_CONFIRM_ATOM_RE",
+    "_cli_prompt", "_cli_stream_safe_prefix", "_cli_recommendation_call",
+    "_CLI_RECOMMENDATION_TOOLS", "_CLI_RECOMMENDATION_SYSTEM",
+    "_target_active_officeholder", "_open_night_court_break",
+    "_is_active_secret_order_assignee", "api_secret_orders",
+}
+NAME_RE = re.compile(
+    r"(secret_order|draft_prefix|recommendation_call|validation_recovery|"
+    r"landing_recovery|inworld_fact|matched_prefix|stream_safe_prefix|"
+    r"open_night_court_break|target_active_officeholder|cli_prompt\b|"
+    r"SECRET_PREFIX|DRAFT_PREFIX|CLI_RECOMMENDATION)",
+    re.I,
+)
+KEEP_SHARED = {
+    "secret_order_can_land", "secret_order_landing_gaps", "CliChat",
+    "_fake_completion", "extract_draft_intent", "extract_draft_intent_payload",
+    "resubmit_draft_admission_payload", "heal_draft_admission",
+}
+
+members = []
+for name, locs in sorted(defs.items()):
+    prod_defs = [d for d in locs if not is_test_path(d["file"])]
+    if not prod_defs:
+        continue
+    all_r = refs.get(name, [])
+    prod_r = [r for r in all_r if not r["test"]]
+    test_r = [r for r in all_r if r["test"]]
+    def_keys = {(d["file"], d["line"]) for d in prod_defs}
+    prod_use = [r for r in prod_r if (r["file"], r["line"]) not in def_keys]
+    is_sample = name in SAMPLE_ROOTS or bool(NAME_RE.search(name))
+    keep = name in KEEP_SHARED
+    if keep:
+        disposition = "KEEP_SHARED"
+    elif len(prod_use) == 0 and is_sample:
+        disposition = "CANDIDATE_DEAD_ROOT"
+    elif len(prod_use) == 0:
+        disposition = "ZERO_PROD_REF"
+    else:
+        disposition = "HAS_PROD_CONSUMER"
+        if not is_sample and name not in KEEP_SHARED:
+            continue  # only emit interesting
+    members.append({
+        "name": name,
+        "defs": prod_defs,
+        "prod_refs": [f"{r['file']}:{r['line']}" for r in prod_use[:30]],
+        "test_refs": [f"{r['file']}:{r['line']}" for r in test_r[:30]],
+        "prod_count": len(prod_use),
+        "test_count": len(test_r),
+        "disposition_hint": disposition,
+        "sample_or_pattern": is_sample,
+    })
+
+out = {
+    "predicate": (
+        "S1: git ls-files *.py universe; prod FunctionDef/ClassDef; "
+        "dead root if non-test Load/Attribute refs==0 AND (judge sample OR name pattern); "
+        "KEEP_SHARED named; ZERO_PROD_REF also listed for audit"
+    ),
+    "tracked_py": len(tracked),
+    "def_names": len(defs),
+    "members": members,
+}
+Path("/tmp/ming1902-s123-resc/s1-raw.json").write_text(
+    json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8"
+)
+c = Counter(m["disposition_hint"] for m in members)
+print("S1_SUMMARY", dict(c), "emitted", len(members))
+for m in members:
+    if m["disposition_hint"] in ("CANDIDATE_DEAD_ROOT", "KEEP_SHARED", "ZERO_PROD_REF") or (
+        m["sample_or_pattern"] and m["disposition_hint"] == "HAS_PROD_CONSUMER"
+    ):
+        d0 = m["defs"][0]
+        print(f"{m['disposition_hint']}\t{m['name']}\t{d0['file']}:{d0['line']}\tprod={m['prod_count']}\ttest={m['test_count']}")

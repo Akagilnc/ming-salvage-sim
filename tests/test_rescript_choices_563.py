@@ -202,10 +202,11 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
 
 
 @pytest.mark.parametrize("amount", ["30", True, 30.75, 30])
-def test_financial_decision_uses_stored_option_not_client_payload(amount):
-    """Raw season options retain strict catalog types and remain server-authoritative."""
-    from ming_sim import rescript_actions as ra
+def test_financial_decision_uses_stored_option_not_client_payload(amount, game, monkeypatch):
+    """目录选项权威：坏 amount 在 parse 拒；合法 amount 经真 submit 落库用目录非客户端 overlay。"""
+    from contextlib import nullcontext
     from ming_sim.settlement_payload import parse_decision_blocks
+    from tests.test_cli_entry_1902 import _real_submit_session
 
     blocks = [
         {
@@ -232,28 +233,45 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount):
         # Parse/save boundary rejects the whole malformed typed decision.
         assert [decision["title"] for decision in decisions] == ["巡河"]
         return
-    desk = [{
-        "decision_key": f"decision:3:{idx}", "kind": "decision", "turn": 3,
-        "idx": idx, "status": "pending", "options": decision["options"],
-    } for idx, decision in enumerate(decisions)]
-    requests = [
-        {
-            "decision_key": "decision:3:0", "label": "发内帑三十万两",
-            "action_type": "punishment", "account": "国库", "amount": 999,
-        },
-        {"decision_key": "decision:3:1", "label": "遣员巡河"},
-    ]
 
-    batch = ra.validate_all(desk, requests)
-    assert len(batch.items) == 2
-    choice = batch.items[0].choice
-    assert choice["action_type"] == "punishment"  # persisted request identity
-    execution = batch.items[0].execution_option
-    assert execution is not None
-    assert execution["action_type"] == "grant_allocation"
-    assert execution["account"] == "内库"
-    assert execution["amount"] == 30
-    assert type(execution["amount"]) is int
+    db, state, content = game
+    db.save_pending_decisions(int(state.turn), [
+        {
+            "event_id": "", "title": d["title"], "context": d.get("context") or "",
+            "options": d["options"],
+        }
+        for d in decisions
+    ])
+    db.conn.commit()
+    desk = db.list_rescript_desk(int(state.turn))
+    by_title = {str(r.get("title") or ""): r for r in desk}
+    grant_key = by_title["发帑"]["decision_key"]
+    river_key = by_title["巡河"]["decision_key"]
+    before = len(db.list_decree_dossiers())
+    session = _real_submit_session(monkeypatch, db, state, content)
+    session.submit_hitl_choices(
+        [
+            {
+                "decision_key": grant_key, "label": "发内帑三十万两",
+                "action_type": "punishment", "account": "国库", "amount": 999,
+            },
+            {"decision_key": river_key, "label": "遣员巡河"},
+        ],
+        write_gate=nullcontext(),
+    )
+    grants = [
+        row for row in db.list_decree_dossiers()
+        if row.get("action_type") == "grant_allocation"
+    ]
+    assert len(grants) >= 1
+    assert len(db.list_decree_dossiers()) > before
+    payload = json.loads(str(grants[-1].get("payload_json") or "{}"))
+    assert str(payload.get("account") or grants[-1].get("account") or "") == "内库"
+    assert int(payload.get("amount") or 0) == 30
+    assert "punishment" not in {
+        str(grants[-1].get("action_type") or ""),
+        str(payload.get("action_type") or ""),
+    }
 
 
 def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
