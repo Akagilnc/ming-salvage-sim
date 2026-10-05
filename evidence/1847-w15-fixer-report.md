@@ -188,7 +188,7 @@ print("RETIRE_STRUCTURE_DONE")
 PY
 ```
 
-输出：`evidence/1847-w13-scans/retire-structure-w15-corr.out`  
+输出：`evidence/1847-w13-scans/retire-structure-w15-corr.out`
 （parent 有 `@app.post("/api/decree/issue")`；HEAD：`has_api_issue_decree False`，stream True；migrate/backfill False；seed inventory 保留）
 
 原 `mutation-probe-w15.out` 保留作撤回对照，**不作行为 PASS**。
@@ -219,5 +219,5 @@ PY
 
 ## Commit SHA
 
-生产删除：`986d9e3fc3e649c125d537d101e1642e4fd88ddb`  
+生产删除：`986d9e3fc3e649c125d537d101e1642e4fd88ddb`
 本轮自查纠正：b2fef28edf911d6a87d6cae2f9943d2fcbe28d71

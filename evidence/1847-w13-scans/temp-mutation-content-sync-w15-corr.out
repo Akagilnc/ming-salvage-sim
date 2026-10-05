@@ -15,9 +15,9 @@ game = (<ming_sim.db.GameDB object at 0x10bf647d0>, GameState(year=1627, period=
         content.powers["bandit_li_zicheng"].aliases = ["李自成部", "闯军"]
         db.conn.execute("DELETE FROM powers WHERE id='bandit_li_zicheng'")
         db.conn.commit()
-    
+
         db.init_schema()
-    
+
 >       aliases = db.conn.execute(
             "SELECT aliases FROM powers WHERE id='bandit_li_zicheng'"
         ).fetchone()["aliases"]
@@ -34,9 +34,9 @@ game = (<ming_sim.db.GameDB object at 0x108cea990>, GameState(year=1627, period=
         db.conn.execute("UPDATE characters SET power_id='ming' WHERE name='张献忠'")
         db.conn.execute("DELETE FROM powers WHERE id='bandit_zhang_xianzhong'")
         db.conn.commit()
-    
+
         db.init_schema()
-    
+
         assert db.conn.execute(
             "SELECT power_id FROM characters WHERE name='张献忠'"
         ).fetchone()["power_id"] == "ming"
