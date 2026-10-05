@@ -102,12 +102,6 @@ def test_normalize_person_changes_ignores_non_item_shapes():
     assert normalize_person_changes({"人物变更": {"name": "某氏"}}) == []
 
 
-def test_apply_score_extraction_reports_no_legacy_person_response_keys(game):
-    """ADR 0150「无恒空兼容键」：旧四键不再作为恒空响应键回显。"""
-    db, state, _ = game
-    applied = settle_delta(state, db, {}, SettlementContext())
-
-
 def test_apply_score_extraction_rejects_person_change_power_move_without_way(read_game):
     db, state, content = read_game
     name = active_ming_character(db, content)

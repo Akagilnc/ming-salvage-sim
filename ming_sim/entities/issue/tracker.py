@@ -406,8 +406,6 @@ def apply_issue_tracker_output(
             ))
             continue
         legacy_resolve_text = issues._issue_condition_text(ni.get("resolve_condition"))
-        if not legacy_resolve_text.strip() and isinstance(stop_condition_raw, str):
-            legacy_resolve_text = stop_condition
         legacy_resolve_commitment_shape = (
             issues.commitment_condition_role(legacy_resolve_text).get("condition_role")
             == "commitment_stop_condition"
@@ -459,10 +457,10 @@ def apply_issue_tracker_output(
                         + ", ".join(unsupported_ongoing_fields)
                     )
                 from ming_sim.staged_commitment import (
-                    capture_commitment_stages,
+                    stages_list_from_source,
                     stages_source_from_issue_item,
                 )
-                stages_for_commitment = capture_commitment_stages(
+                stages_for_commitment = stages_list_from_source(
                     stages_source_from_issue_item(ni),
                 )
                 has_stages = bool(stages_for_commitment)
@@ -488,8 +486,7 @@ def apply_issue_tracker_output(
             if origin_error:
                 entity_rejections.append(RejectedItem(item=ni, reason=origin_error["reason"], category=origin_error["category"], source=source))
                 continue
-        # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
-        # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
+        # 校验：国策缺效果时，CLI 后端可聚焦补全；模型给空即据实为空，不由代码捏造政治收益。
         if kind == "initiative" and not resolve_eff and not is_commitment:
             from ming_sim.cli_backend import cli_backend_active, enrich_initiative_effects
             if cli_backend_active(llm_config):
@@ -502,9 +499,6 @@ def apply_issue_tracker_output(
                 ongoing_eff = _eff_dict(enr.get("ongoing_effects"), "ongoing_effects") or ongoing_eff
                 fail_eff = _eff_dict(enr.get("effect_on_fail"), "effect_on_fail") or fail_eff
                 print(f"[issue/enrich] 国策「{title}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
-                # floor 在 try 外：即便 enrich 抛错或没补上，CLI 后端国策也绝不入空壳（codexB）。
-                if not resolve_eff:
-                    resolve_eff = {"metrics": {"民心": 1}}
         # 字段强转脏数据 → 拒整项（ADR 0008 决定 1：new_issue 即「项」，坏字段令该项无法洁净构造
         # → 拒留痕，非默认掩盖）。这些强转会因脏 LLM 数据抛：bar_value/severity 的 int()、
         # cancel_cost 的 dict("脏")、tags 的 list(5)、_compute_inertia 的 legacy `int(inertia)`
@@ -542,14 +536,7 @@ def apply_issue_tracker_output(
             continue
         raw_resolve = ni.get("resolve_condition")
         resolve_condition = issues._issue_condition_text(raw_resolve)
-        if not resolve_condition.strip() and isinstance(ni.get("stop_condition"), str):
-            resolve_condition = stop_condition
-            resolve_stored = (
-                ni.get("stop_condition")
-                if isinstance(ni.get("stop_condition"), str)
-                else stop_condition
-            )
-        elif isinstance(raw_resolve, str) and raw_resolve.strip():
+        if isinstance(raw_resolve, str) and raw_resolve.strip():
             resolve_stored = raw_resolve
         else:
             resolve_stored = resolve_condition
@@ -615,11 +602,11 @@ def apply_issue_tracker_output(
                 entity_rejections.append(RejectedItem(item=ni, reason=str(exc), category="invalid_enum", source=source))
                 continue
         from ming_sim.staged_commitment import (
-            capture_commitment_stages,
+            stages_list_from_source,
             stages_source_from_issue_item,
         )
         stages_norm = (
-            capture_commitment_stages(stages_source_from_issue_item(ni))
+            stages_list_from_source(stages_source_from_issue_item(ni))
             if is_commitment
             else []
         )

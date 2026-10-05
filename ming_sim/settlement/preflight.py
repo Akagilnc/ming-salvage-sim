@@ -40,9 +40,6 @@ from ming_sim.db import (
     POPULATION_UNIT_PERSONS,
     _LEVERAGE_FACTIONS,
     _approx_wanliang,
-    compute_loyalty_soft_adjust,
-    fold_loyalty_alias_delta,
-    latched_army_field_effect_permitted,
     normalize_office,
     resolve_office_type_preserving_title,
 )
@@ -383,7 +380,6 @@ def _strategic_event_result_preflight_error(
 
     归属已由转译 event_id 声明；本函数只验信封内容，不再从 reason 推断。
     """
-    legacy_mods = db.legacy_modifiers(state)
     region_valid_fields = set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS + FISCAL_SCORE_FIELDS)
     region_valid_fields.add("cannon")
     region_numeric_fields = set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + FISCAL_SCORE_FIELDS)
@@ -405,90 +401,6 @@ def _strategic_event_result_preflight_error(
             f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} "
             f"无真实世界状态变化：{value!r}"
         )
-
-    def _region_noop_error(region_id: str, row: sqlite3.Row, raw_field: object, value: object) -> str:
-        field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-        if field == "reason":
-            return ""
-        if field == "cannon":
-            delta = int(value)
-            cap = int(row["city_level"]) * 8
-            old_value = int(row["cannon"])
-            if max(0, min(cap, old_value + delta)) == old_value:
-                return _noop_error("region", region_id, raw_field, value)
-            return ""
-        if field in FISCAL_SCORE_FIELDS:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-            old_value = int(fiscal.get(field, 50))
-            delta = int(value)
-            net_pct = int(((legacy_mods.get("regions") or {})
-                           .get(region_id) or {}).get(field, 0) or 0)
-            if net_pct:
-                delta = db.apply_legacy_pct(delta, net_pct)
-            if max(0, min(100, old_value + delta)) == old_value:
-                return _noop_error("region", region_id, raw_field, value)
-            return ""
-        if field in REGION_SCORE_FIELDS:
-            old_value = int(row[field])
-            delta = int(value)
-            net_pct = int(((legacy_mods.get("regions") or {})
-                           .get(region_id) or {}).get(field, 0) or 0)
-            if net_pct:
-                delta = db.apply_legacy_pct(delta, net_pct)
-            if max(0, min(100, old_value + delta)) == old_value:
-                return _noop_error("region", region_id, raw_field, value)
-            return ""
-        if field in REGION_QUANTITY_FIELDS:
-            old_value = int(row[field])
-            if max(0, old_value + int(value)) == old_value:
-                return _noop_error("region", region_id, raw_field, value)
-            return ""
-        if field in REGION_TEXT_FIELDS:
-            return ""
-        return ""
-
-    def _army_noop_error(army_id: str, row: sqlite3.Row, raw_field: object, value: object) -> str:
-        field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-        if field == "reason":
-            return ""
-        # #319：latched 静默 no-op 与写缝同口径——战略信封预检须拒整封，不得半落兄弟结果。
-        # loyalty 不进此函数：caller 对 field=="loyalty" 先 continue，再走
-        # fold_loyalty_alias_delta + latched_army_field_effect_permitted +
-        # compute_loyalty_soft_adjust；勿在此再堆 loyalty 专属预测（死分支）。
-        if bool(row["is_mutinied"]):
-            if field == "manpower":
-                if not latched_army_field_effect_permitted(field, value):
-                    return _noop_error("army", army_id, raw_field, value)
-            else:
-                return _noop_error("army", army_id, raw_field, value)
-        if field == "cannon_equipment":
-            old_value = int(row[field])
-            if max(0, min(12, old_value + int(value))) == old_value:
-                return _noop_error("army", army_id, raw_field, value)
-            return ""
-        if field == "arrears":
-            old_value = int(row[field])
-            if max(0, old_value + int(value)) == old_value:
-                return _noop_error("army", army_id, raw_field, value)
-            return ""
-        if field in ARMY_SCORE_FIELDS:
-            old_value = int(row[field])
-            delta = int(value)
-            net_pct = int(((legacy_mods.get("armies") or {})
-                           .get(army_id) or {}).get(field, 0) or 0)
-            if net_pct:
-                delta = db.apply_legacy_pct(delta, net_pct)
-            if max(0, min(100, old_value + delta)) == old_value:
-                return _noop_error("army", army_id, raw_field, value)
-            return ""
-        if field in ARMY_QUANTITY_FIELDS:
-            old_value = int(row[field])
-            if max(0, old_value + int(value)) == old_value:
-                return _noop_error("army", army_id, raw_field, value)
-            return ""
-        if field in ARMY_TEXT_FIELDS:
-            return ""
-        return ""
 
     def _jisi_outcome_profile_error() -> str:
         if event_id != "jisi_lubian" or outcome_label not in {"挡于边墙", "入塞被遏"}:
@@ -513,9 +425,17 @@ def _strategic_event_result_preflight_error(
         return outcome_profile_error
 
     preview_state = copy.deepcopy(state)
+    region_items = list(
+        ordered_region_items if ordered_region_items is not None else region_deltas.items()
+    )
+    army_items = list(
+        ordered_army_items if ordered_army_items is not None else army_deltas.items()
+    )
+    region_results: List[Dict[str, object]] = []
+    army_results: List[Dict[str, object]] = []
     db.conn.execute("SAVEPOINT strategic_entity_result_preflight")
     try:
-        for region_id, raw_changes in (ordered_region_items if ordered_region_items is not None else region_deltas.items()):
+        for region_id, raw_changes in region_items:
             row = db.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
             if row is None:
                 return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
@@ -546,15 +466,19 @@ def _strategic_event_result_preflight_error(
                             f"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by "
                             f"必须是 powers.id 中的非空真实势力 id：{value!r}"
                         )
-                err = _region_noop_error(region_id, row, raw_field, value)
-                if err:
-                    return err
 
-            db.apply_region_deltas(
+            landed, refused = db.apply_region_deltas(
                 preview_state, preflight_event, None, "档房", {region_id: raw_changes}, commit=False,
             source=Provenance.system_simulation)
+            for result in refused:
+                if isinstance(result, RejectedItem):
+                    return (
+                        f"战略/外敌事件「{event_title or event_id}」地区战果拒收："
+                        f"{result.reason or result.category}"
+                    )
+            region_results.extend(landed)
 
-        for army_id, raw_changes in (ordered_army_items if ordered_army_items is not None else army_deltas.items()):
+        for army_id, raw_changes in army_items:
             row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
             if row is None:
                 return f"战略/外敌事件「{event_title or event_id}」战果引用未入库军队：{army_id}"
@@ -570,20 +494,9 @@ def _strategic_event_result_preflight_error(
                         or _int_delta_error("army", army_id, cannon_keys[0], raw_changes[cannon_keys[0]])
                         or _strict_int(raw_changes[cannon_keys[0]]) >= 0):
                     return f"战略/外敌事件「{event_title or event_id}」随军炮转移目标或负数拟转量非法：{army_id}"
-                if int(target["cannon_equipment"]) >= 12:
-                    return _noop_error("army", army_id, "cannon_transfer_to", target_id)
-                if bool(target["is_mutinied"]) and not latched_army_field_effect_permitted(
-                    "cannon_equipment", -_strict_int(raw_changes[cannon_keys[0]]),
-                ):
-                    return _noop_error("army", target_id, "cannon_transfer_to", target_id)
-            # #320：loyalty 规范键/别名与写核同语义——先逐叶类型/字段校验，净合计后再一次
-            # 软钳判 no-op；不得按 alias 分项拿旧值独立判 no-op。
-            first_loyalty_raw_field: object | None = None
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field in ("reason", "origin_ref"):
-                    continue
-                if field == "cannon_transfer_to":
+                if field in ("reason", "origin_ref", "cannon_transfer_to"):
                     continue
                 if field not in army_valid_fields:
                     return f"战略/外敌事件「{event_title or event_id}」战果引用非法军队字段：{raw_field}"
@@ -591,52 +504,32 @@ def _strategic_event_result_preflight_error(
                     err = _int_delta_error("army", army_id, raw_field, value)
                     if err:
                         return err
-                if field == "loyalty":
-                    if first_loyalty_raw_field is None:
-                        first_loyalty_raw_field = raw_field
-                    continue  # 净合计后统一 no-op 判定
-                err = _army_noop_error(army_id, row, raw_field, value)
-                if err:
-                    return err
-            loyalty_net = fold_loyalty_alias_delta(raw_changes)
-            if loyalty_net is not None:
-                net_pct = int(((legacy_mods.get("armies") or {})
-                               .get(army_id) or {}).get("loyalty", 0) or 0)
-                # #319+#320 同一写缝：post-mod 动态方向门 → ±15/cap 软调；任一步 no-op 则拒整封。
-                effect_delta = int(loyalty_net)
-                if net_pct:
-                    effect_delta = db.apply_legacy_pct(effect_delta, net_pct)
-                if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(
-                    "loyalty", loyalty_net, effect_delta=effect_delta
-                ):
-                    return _noop_error(
-                        "army",
-                        army_id,
-                        first_loyalty_raw_field if first_loyalty_raw_field is not None else "loyalty",
-                        loyalty_net,
-                    )
-                _new_loyalty, actual_delta = compute_loyalty_soft_adjust(
-                    int(row["loyalty"]),
-                    loyalty_net,
-                    net_pct=net_pct,
-                    mutiny_count=int(row["mutiny_count"] or 0),
-                    redemption_count=int(row["redemption_count"] or 0),
-                )
-                if actual_delta == 0:
-                    return _noop_error(
-                        "army",
-                        army_id,
-                        first_loyalty_raw_field if first_loyalty_raw_field is not None else "loyalty",
-                        loyalty_net,
-                    )
 
-            db.apply_army_deltas(
+            landed, refused = db.apply_army_deltas(
                 preview_state, preflight_event, None, "档房", {army_id: raw_changes}, commit=False,
             source=Provenance.system_simulation)
+            for result in refused:
+                if isinstance(result, RejectedItem):
+                    return (
+                        f"战略/外敌事件「{event_title or event_id}」军队战果拒收："
+                        f"{result.reason or result.category}"
+                    )
+            army_results.extend(landed)
 
     finally:
         db.conn.execute("ROLLBACK TO SAVEPOINT strategic_entity_result_preflight")
         db.conn.execute("RELEASE SAVEPOINT strategic_entity_result_preflight")
+
+    if region_items and not any(
+        _strategic_result_item_has_material_world_state(result) for result in region_results
+    ):
+        region_id, raw_changes = region_items[0]
+        return _noop_error("region", str(region_id), "region_delta", raw_changes)
+    if army_items and not any(
+        _strategic_result_item_has_material_world_state(result) for result in army_results
+    ):
+        army_id, raw_changes = army_items[0]
+        return _noop_error("army", str(army_id), "army_delta", raw_changes)
 
     power_items = ordered_power_items if ordered_power_items is not None else list(power_updates.items())
     if power_items:

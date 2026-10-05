@@ -145,24 +145,15 @@ def commitment_condition_role(resolve_condition: object, commitment_kind: object
     return {}
 
 
-def _legacy_commitment_stop_gate(resolve_condition: object) -> Dict[str, str]:
-    text = str(resolve_condition or "").strip()
-    match = re.fullmatch(r"(character\.[^.]+\.loyalty)\s*((?:>=|>)\s*\d+)", text)
-    if not match:
-        return {}
-    return {match.group(1): match.group(2).replace(" ", "")}
-
-
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     keys = row.keys() if hasattr(row, "keys") else []
     raw = row["stop_condition"] if "stop_condition" in keys else ""
-    if raw:
-        gate = json.loads(str(raw))
-        if not isinstance(gate, dict):
-            raise ValueError("持久化停止条件须为对象")
-        if gate:
-            return gate
-    return _legacy_commitment_stop_gate(row["resolve_condition"] if "resolve_condition" in keys else "")
+    if not raw:
+        return {}
+    gate = json.loads(str(raw))
+    if not isinstance(gate, dict):
+        raise ValueError("持久化停止条件须为对象")
+    return gate
 
 
 def _commitment_remaining_from_gate(

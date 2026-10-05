@@ -1,0 +1,33 @@
+=== S1 typed 段旧 dict/旧响应消费 ===
+ming_sim/covert_levy.py:46	sub	result['applied']	result["applied"]
+ming_sim/covert_progress.py:1810	get	result['rejected']	result.get("rejected")
+TOTAL=2
+=== S2 预检影子数量公式 / 独立 stages 捕获 ===
+ming_sim/staged_commitment.py:69:def stages_to_json(stages: object) -> str:
+ming_sim/action_materialize.py:1600:        stages_norm = json.loads(stages_to_json(stages))
+ming_sim/staged_commitment.py:69:def stages_to_json(stages: object) -> str:
+ming_sim/staged_commitment.py:115:    return json.loads(stages_to_json(stages))
+ming_sim/urge_lever.py:326:    stages_blob = stages_to_json(stages)
+ming_sim/db.py:16578:        stages_norm = json.loads(stages_to_json(
+ming_sim/db.py:19924:        stages_blob = stages_to_json([] if stages_json is None else stages_json)
+=== S3 旧停止条件兼容链 / 无效测 / 死夹具 ===
+ming_sim/issues.py:148:def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
+ming_sim/issues.py:213:    return any(".arrears" in str(key) for key in _commitment_stop_gate(row))
+ming_sim/issues.py:218:    for key in _commitment_stop_gate(row):
+tests/test_decree_commitment_creation_136.py:230:def test_legacy_resolve_condition_person_commitment_rejects_without_marker(read_game, monkeypatch):
+ming_sim/situation_drift.py:32:    _commitment_stop_gate,
+ming_sim/situation_drift.py:217:        commitment_stop_gate = _commitment_stop_gate(row)
+ming_sim/situation_drift.py:279:            stop_gate = _commitment_stop_gate(row)
+ming_sim/situation_drift.py:450:        stop_gate = _commitment_stop_gate(row) if is_commitment else {}
+ming_sim/entities/issue/commitment_display.py:23:        _commitment_stop_gate,
+ming_sim/entities/issue/commitment_display.py:29:    gate = _commitment_stop_gate(row)
+ming_sim/entities/issue/commitment_display.py:70:        _commitment_stop_gate,
+ming_sim/entities/issue/commitment_display.py:84:    stop_gate = _commitment_stop_gate(row)
+ming_sim/entities/issue/commitment_display.py:119:        _commitment_stop_gate,
+ming_sim/entities/issue/commitment_display.py:127:    if _commitment_stop_gate(row):
+ming_sim/entities/issue/tracker.py:408:        legacy_resolve_text = issues._issue_condition_text(ni.get("resolve_condition"))
+ming_sim/entities/issue/tracker.py:409:        legacy_resolve_commitment_shape = (
+ming_sim/entities/issue/tracker.py:410:            issues.commitment_condition_role(legacy_resolve_text).get("condition_role")
+ming_sim/entities/issue/tracker.py:418:                or legacy_resolve_commitment_shape
+tests/test_decree_commitment_settlement_229.py:237:def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
+=== S4 政治收益默认值 / 保活测 ===

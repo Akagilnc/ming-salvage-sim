@@ -154,7 +154,7 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             event_id, run.extracted, run.runtime_content,
         )
         if outcome_error:
-            issue_summary["rejected"].append(RejectedItem(item=new_issue, reason=outcome_error, category="missing_event_outcome", source=run.ctx.source))
+            issue_summary.rejected.append(RejectedItem(item=new_issue, reason=outcome_error, category="missing_event_outcome", source=run.ctx.source))
             new_issues.remove(new_issue)
             _extend_bucket(reject_bucket, _suppressed_rows(
                 run, event_id, str(new_issue.get("title") or ""),

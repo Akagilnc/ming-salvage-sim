@@ -1,0 +1,21 @@
+=== MUTATION PROBES ===
+S1_OLD_DICT_ACCESS_RED: TypeError: 'IssueSectionResult' object is not subscriptable
+S1_CURRENT_ATTR_GREEN: rejected_len=1
+S2_PROSE_STAGES_RED_VIA_STRICT: stages_json 须为 JSON 数组字符串，解析失败：'三年练兵五年成军'
+S2_STRUCTURED_STAGES_GREEN: [{'stage_idx': 0, 'due_turn': 10, 'criterion_text': '练成', 'origin_context': '练成'}]
+S2_SHADOW_SYMBOLS_GONE: True
+Traceback (most recent call last):
+  File "<stdin>", line 40, in <module>
+ImportError: cannot import name 'Provenance' from 'ming_sim.models' (/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/models.py)
+Traceback (most recent call last):
+  File "<stdin>", line 15, in <module>
+ImportError: cannot import name 'load_game_content' from 'ming_sim.content' (/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/ming_sim/content.py)
+origin dossier:1
+S3_LEGACY_RESOLVE_NO_LONGER_GATE: gate={}
+S3_TYPED_STOP_GATE_GREEN: gate={'character.毛文龙.loyalty': '>=65'}
+[issue/enrich] 国策「空回报国策变异」补效果 resolve=False ongoing=False
+S4_EMPTY_ENRICH_NO_FLOOR: effect={} enrich_called=True
+[issue/enrich] 国策「runtime空回报变异」补效果 resolve=False ongoing=False
+S4_SETTLE_DELTA_EMPTY_GREEN: effect={}
+S2_PROSE_STAGES_TRACKER: rejected=[('invalid_enum', "new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：stages_json 须为 JSON 数组字符串，解析失败：'三年练兵五年成军'")] new=[]
+ALL_MUTATION_PROBES_DONE

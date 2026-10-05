@@ -27,10 +27,8 @@ TODO_STATUS_CONSUMED = "consumed"
 def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     """Normalize structured stages payload → durable list.
 
-    Accepts list/tuple of dicts, or a JSON array string. Non-JSON free text
-    returns [] here — production capture goes through ``capture_commitment_stages``
-    (does not silently treat char-iterated strings as stage rows; that hole is
-    closed in ``stages_to_json``).
+    Accepts list/tuple of dicts, or a JSON array string. Production capture
+    goes through ``stages_to_json`` (strict serial; non-JSON strings raise).
     """
     if raw in (None, "", [], ()):
         return []
@@ -112,58 +110,9 @@ def stages_to_json(stages: object) -> str:
     raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
 
 
-# sentinel：显式 stages 字符串 json.loads 失败（与成功解析到的 None 区分）
-_CAPTURE_JSON_MISS = object()
-
-
-def capture_commitment_stages(
-    raw: object = None,
-) -> List[Dict[str, object]]:
-    """生产捕获：仅结构化 stages / JSON 数组 → 绝对 due 段表。
-
-    自由散文「三年X五年Y」年诺解析已拆除（F12：散文不得代判分段 due）。
-    - 显式 stages：JSON 数组或 list；坏形 ValueError（禁静默 []）
-    - 非 JSON 散文 stages 字符串：不发明段表（JSON-ish 起首坏串仍响亮拒绝）
-    """
-    if raw not in (None, "", [], (), {}):
-        if isinstance(raw, str):
-            text = raw
-            if text.strip() and text.strip() not in ("[]", "{}"):
-                try:
-                    data = json.loads(text)
-                except (TypeError, ValueError):
-                    data = _CAPTURE_JSON_MISS
-                if data is not _CAPTURE_JSON_MISS:
-                    if not isinstance(data, (list, tuple)):
-                        raise ValueError(
-                            f"stages 须为 JSON 数组，得 {type(data).__name__}"
-                        )
-                    if len(data) == 0:
-                        return []
-                    structured = normalize_commitment_stages(data)
-                    if not structured:
-                        raise ValueError(
-                            "stages 无有效段（每段须 due_turn>0 与 criterion_text）"
-                        )
-                    return structured
-                if text.lstrip()[:1] in "[{":
-                    raise ValueError(
-                        f"stages 须为 JSON 数组字符串，解析失败：{text!r}"
-                    )
-                # 非 JSON 散文：不从文案发明分段
-                return []
-        else:
-            if not isinstance(raw, (list, tuple)):
-                raise ValueError(
-                    f"stages 须为 JSON 数组，得 {type(raw).__name__}"
-                )
-            structured = normalize_commitment_stages(raw)
-            if not structured:
-                raise ValueError(
-                    "stages 无有效段（每段须 due_turn>0 与 criterion_text）"
-                )
-            return structured
-    return []
+def stages_list_from_source(stages: object) -> List[Dict[str, object]]:
+    """Strict serial capture: reuse ``stages_to_json``, never a parallel parser."""
+    return json.loads(stages_to_json(stages))
 
 
 def stages_source_from_issue_item(ni: Dict[str, object]) -> object:

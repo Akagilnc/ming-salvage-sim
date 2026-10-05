@@ -4,8 +4,6 @@ Numeric truth is asserted on budget rows and ledgers, never parsed from prose.
 """
 from __future__ import annotations
 
-import json
-
 from types import SimpleNamespace
 
 import web_app
@@ -89,77 +87,6 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
                 assert "note" not in item
                 assert "internal" not in item
                 assert "budget_key" not in item
-
-
-
-def _seed_province_pay_split_scenario(db) -> None:
-    """触发省源分账 reason 真路径（与 fiscal bridge 同源夹具，最小可复现）。"""
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
-            central_pay_share = 0, pay_source_region = '',
-            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
-        """
-    )
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
-            pay_source_region = 'shaanxi', province_pay_share = 1.0,
-            central_pay_share = 0.0, province_pay_arrears = 0,
-            central_pay_arrears = 0, arrears = 0,
-            station = '福建', manpower = 10000, salary_rate = 5
-        WHERE id = 'fujian_navy'
-        """
-    )
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
-            pay_source_region = 'shaanxi', province_pay_share = 0.65,
-            central_pay_share = 0.35, province_pay_arrears = 6.5,
-            central_pay_arrears = 3.5, arrears = 10,
-            station = '北直隶 / 客防', manpower = 10000, salary_rate = 10
-        WHERE id = 'shaanxi_army'
-        """
-    )
-    row = db.conn.execute(
-        "SELECT fiscal FROM regions WHERE id = 'shaanxi'"
-    ).fetchone()
-    fiscal = json.loads(str(row["fiscal"] or "{}"))
-    fiscal["settle"] = {
-        "st": {
-            "省库库银": 0,
-            "C_地方截留": 0,
-            "C_中饱": 0,
-            "C_漂没": 0,
-            "C_eff损耗": 0,
-            "民欠旧赋": 0,
-            "军饷欠": 999,
-            "官俸欠": 0,
-            "宗禄欠": 0,
-            "官民田": 0,
-            "隐田": 0,
-        },
-        "p": {
-            "正赋应征": 0,
-            "三饷应征": 0,
-            "火耗率": 0,
-            "逋赋率": 0,
-            "起运定额": 0,
-            "拨付gross": 8,
-            "中饱率": 0,
-            "漂没率": 0,
-            "Due": {"军饷": 999, "官俸": 0, "宗禄": 0, "赈济": 0},
-        },
-    }
-    db.conn.execute(
-        "UPDATE regions SET fiscal = ? WHERE id = 'shaanxi'",
-        (json.dumps(fiscal, ensure_ascii=False),),
-    )
-    db.conn.commit()
-
 
 
 

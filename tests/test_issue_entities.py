@@ -366,15 +366,6 @@ def test_apply_score_extraction_splits_bad_nested_entity(game):
     assert shape_rejections(applied)[0].item == {"entity_id": "shanxi", "raw_value": "not-a-dict"}
 
 
-def test_apply_score_extraction_accepts_flat_faction_scalar(game):
-    """faction_delta 支持旧扁平 int 格式 {"阉党": -10}（extractor prompt 明确允许、
-    _apply_faction_dict 主动消费）。validate 不得把它当二级非 dict 误拒；class 扁平 item
-    则由段适配器按 #564 契约逐项 invalid_enum 拒收，不升级成整批 shape 中止。"""
-    db, state, _ = game
-    # 不抛 = validate 未错杀合法 faction；非法 class item 由 adapter 逐项拒收。
-    settle_delta(state, db, {'faction_delta': {'阉党': -10}, 'class_delta': {'农民': 0}}, SettlementContext())
-
-
 def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):
     """ADR0015：power_updates 二级非 dict 逐 power 拒收。"""
     db, state, _ = game
@@ -471,53 +462,8 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before + 1
 
 
-def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
-    """CLI 后端国策 enrich 没补出 resolve（或抛错）时，floor 兜最小回报，绝不入空壳（codexB）。"""
-    import ming_sim.cli_backend as _cb
-    db, state, _ = game
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
-    apply_issue_tracker_output(db, state, {
-        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "空回报国策", "kind": "initiative"}],
-    }, source=Provenance.system_simulation)
-    row = db.conn.execute(
-        "SELECT effect_on_resolve FROM issues WHERE title='空回报国策'").fetchone()
-    assert row is not None                         # 国策入库了
-    import json as _j
-    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}   # floor 生效，非空壳
-
-
-def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypatch):
-    """runtime CLI 通道无 env 时，月末国策空回报也要走 CLI floor，不能落空壳。"""
-    import json as _j
-    from ming_sim.models import LLMConfig
-    import ming_sim.cli_backend as _cb
-
-    db, state, _ = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
-    cfg = LLMConfig(
-        api_key="cli-backend",
-        base_url="",
-        model="api-fallback",
-        channel="cli",
-        cli_runner="codex",
-        cli_model="gpt-5.5",
-        cli_timeout_seconds=240,
-    )
-
-    settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _decree_origin(db, state), 'title': 'runtime空回报国策', 'kind': 'initiative'}]}, SettlementContext(llm_config=cfg))
-
-    row = db.conn.execute(
-        "SELECT effect_on_resolve FROM issues WHERE title='runtime空回报国策'").fetchone()
-    assert row is not None
-    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
-
-
-def test_api_channel_initiative_does_not_use_backend_env_floor(game, monkeypatch):
-    """显式 API 通道下，即便 env 残留 CLI backend，也不能触发 CLI-only 国策补全/floor。"""
+def test_api_channel_initiative_does_not_use_backend_env_enrich(game, monkeypatch):
+    """显式 API 通道下，即便 env 残留 CLI backend，也不能触发 CLI-only 国策补全。"""
     import json as _j
     from ming_sim.models import LLMConfig
     import ming_sim.cli_backend as _cb

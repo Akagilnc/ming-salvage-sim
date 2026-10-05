@@ -37,11 +37,12 @@ class TestCommitmentTimedBarValue:
             _progress(3),
             _row(end_turn=0, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}}),
         ) is None
+        # 仅 resolve_condition 串不再冒充 typed stop_gate；有 end_turn+ongoing 仍走时限条。
         assert commitment_timed_bar_value(
             _progress(3),
             _row(end_turn=20, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}},
                  resolve_condition="character.毛文龙.loyalty >= 65"),
-        ) is None
+        ) == 20
         assert commitment_timed_bar_value(
             _progress(3, remaining_arrears=80),
             _row(end_turn=20, origin_turn=5,
