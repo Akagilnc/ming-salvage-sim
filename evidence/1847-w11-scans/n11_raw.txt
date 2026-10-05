@@ -1,0 +1,219 @@
+=== N11: population_unit / POPULATION_UNIT_WAN / scale_content_population ===
+ming_sim/flows.py:1533:    population_unit = db.population_unit
+ming_sim/flows.py:1682:            "population_unit": population_unit,
+ming_sim/displaced_population.py:60:            or db.population_unit != POPULATION_UNIT_PERSONS):
+ming_sim/displaced_population.py:159:    if db.population_unit != POPULATION_UNIT_PERSONS:
+tests/test_population_transfers_649.py:7:- 单位随存档 population_unit（新档人/sub-万精确，legacy 万口径、sub-万不可表达）；
+tests/test_population_transfers_649.py:19:from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN
+tests/test_population_transfers_649.py:54:    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
+tests/test_population_transfers_649.py:306:    assert db.population_unit == POPULATION_UNIT_WAN
+tests/test_population_transfers_649.py:314:    assert rec["population_unit"] == POPULATION_UNIT_WAN
+tests/test_population_transfers_649.py:328:    assert capped["population_unit"] == POPULATION_UNIT_WAN
+tests/test_population_transfers_649.py:340:    assert applied["population_transfers"][0]["population_unit"] == POPULATION_UNIT_PERSONS
+tests/test_population_unit_648.py:8:- F4：旧档双口径——新档 DB 持久标「人」，无标旧档判「万人」，不读 content 元信息；
+tests/test_population_unit_648.py:17:from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN
+tests/test_population_unit_648.py:50:    """构造无标旧档：fresh seed 后把人口回缩到万人口径并剥掉单位标。
+tests/test_population_unit_648.py:53:    population_unit 标（旧档不迁移、无流民行）。"""
+tests/test_population_unit_648.py:60:    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
+tests/test_population_unit_648.py:67:    """返回 (db, state)：无标万人口径旧档（含 load_state 同核）。"""
+tests/test_population_unit_648.py:131:def test_new_save_persistent_population_unit_marker(game):
+tests/test_population_unit_648.py:134:    assert db.population_unit == POPULATION_UNIT_PERSONS
+tests/test_population_unit_648.py:136:        "SELECT value FROM save_meta WHERE key='population_unit'"
+tests/test_population_unit_648.py:144:    """无标旧档一律判「万人」，seed 不重跑、快照读数不变（不混刻度、无流民行）。"""
+tests/test_population_unit_648.py:146:    assert db.population_unit == POPULATION_UNIT_WAN
+tests/test_population_unit_648.py:161:def test_population_unit_mutation_matrix(game, legacy_game):
+tests/test_population_unit_648.py:264:JIANZHOU_RESTORE_POP_WAN = 90           # 无标旧档接缝无损 ÷10⁴ 回万人
+tests/test_population_unit_648.py:297:    """无标旧档收复建州：content→档唯一接缝无损换回万人口径，不混刻度。"""
+tests/test_refugee_loop_652.py:620:def test_legacy_population_unit_skips_absorption_and_recovery(game, monkeypatch):
+tests/test_refugee_loop_652.py:622:    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
+tests/test_refugee_loop_652.py:624:    assert db.population_unit != POPULATION_UNIT_PERSONS
+tests/test_surcharge_causal_chain_650.py:405:    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
+ming_sim/constants.py:284:# 实际入池 = 加派基线(万两) × 本率 × (100 − 该省民心)/100，随存档 population_unit 换算、
+ming_sim/db.py:77:# 无标旧档一律判「万人」legacy——不得读 content 元信息判别（其不随档持久化）。
+ming_sim/db.py:79:POPULATION_UNIT_WAN = "万人"
+ming_sim/db.py:80:_POPULATION_UNIT_KEY = "population_unit"
+ming_sim/db.py:3142:    def population_unit(self) -> str:
+ming_sim/db.py:3143:        """本档人口存储单位口径（ADR 0088/#648）：新档「人」，无标旧档一律「万人」。
+ming_sim/db.py:3150:        return str(row[0]) if row else POPULATION_UNIT_WAN
+ming_sim/db.py:3152:    def _mark_population_unit_persons(self) -> None:
+ming_sim/db.py:3159:    def scale_content_population_to_save_unit(self, value: int) -> int:
+ming_sim/db.py:3162:        新档（人）原样；无标旧档（万人）÷10⁴——迁移后 content 人口值均为 10⁴ 整倍数，
+ming_sim/db.py:3166:        if self.population_unit == POPULATION_UNIT_PERSONS:
+ming_sim/db.py:3256:            # 旧档表已有行（万人口径）不重 seed、不落标 → population_unit 恒判「万人」legacy。
+ming_sim/db.py:3257:            self._mark_population_unit_persons()
+ming_sim/db.py:6187:        # 机面裸人数；无标旧档沿万人 legacy 原样，不加换算层。
+ming_sim/db.py:6188:        persons_unit = self.population_unit == POPULATION_UNIT_PERSONS
+ming_sim/db.py:6572:                    self.scale_content_population_to_save_unit(value)
+ming_sim/issues.py:3122:    新档（人）原样；无标旧档（万人）region_delta.population ÷10⁴（迁移后 content
+ming_sim/issues.py:3129:    if db.population_unit == POPULATION_UNIT_PERSONS:
+ming_sim/issues.py:3137:                scaled_fields["population"] = db.scale_content_population_to_save_unit(
+ming_sim/issues.py:6688:        if db.population_unit != POPULATION_UNIT_PERSONS:
+ming_sim/issues.py:6689:            _reject("missing_ref", "surcharge_decrees 仅适用于 population_unit='人' 的人口池档")
+ming_sim/issues.py:6772:    if db.population_unit != POPULATION_UNIT_PERSONS:
+ming_sim/issues.py:6776:                "reason": "bandit_absorptions 仅适用于 population_unit='人' 的人口池档",
+ming_sim/issues.py:6882:            "population_unit": db.population_unit,
+
+=== N11: ensure_column / ALTER TABLE staged / dossier_progress ===
+ming_sim/db.py:1061:            CREATE INDEX IF NOT EXISTS idx_office_change_records_dossier
+ming_sim/db.py:1427:            CREATE INDEX IF NOT EXISTS idx_pending_actions_source_turn
+ming_sim/db.py:1444:            CREATE INDEX IF NOT EXISTS idx_recommendation_events_recommender
+ming_sim/db.py:1460:            CREATE INDEX IF NOT EXISTS idx_chat_messages_minister
+ming_sim/db.py:1462:            CREATE INDEX IF NOT EXISTS idx_chat_messages_turn
+ming_sim/db.py:1491:            CREATE INDEX IF NOT EXISTS idx_chat_turns_minister_turn
+ming_sim/db.py:1493:            CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id
+ming_sim/db.py:1495:            CREATE INDEX IF NOT EXISTS idx_chat_turns_night
+ming_sim/db.py:1517:            CREATE INDEX IF NOT EXISTS idx_audience_nights_turn_status
+ming_sim/db.py:1543:            CREATE INDEX IF NOT EXISTS idx_story_ledger_night_seq
+ming_sim/db.py:1560:            CREATE INDEX IF NOT EXISTS idx_chat_turn_rollback_items_turn
+ming_sim/db.py:1586:            CREATE INDEX IF NOT EXISTS idx_secret_orders_minister
+ming_sim/db.py:1588:            CREATE INDEX IF NOT EXISTS idx_secret_orders_turn
+ming_sim/db.py:1590:            CREATE INDEX IF NOT EXISTS idx_secret_orders_status
+ming_sim/db.py:1646:            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_status
+ming_sim/db.py:1648:            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
+ming_sim/db.py:1663:            CREATE INDEX IF NOT EXISTS idx_decree_dossier_links_target
+ming_sim/db.py:1681:            CREATE INDEX IF NOT EXISTS idx_dossier_reconciliations_dossier
+ming_sim/db.py:1702:            CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
+ming_sim/db.py:1714:            CREATE INDEX IF NOT EXISTS idx_dossier_link_rejections_source
+ming_sim/db.py:1733:            CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier
+ming_sim/db.py:1749:            CREATE INDEX IF NOT EXISTS idx_dossier_reported_progress_dossier
+ming_sim/db.py:1766:            CREATE INDEX IF NOT EXISTS idx_supervision_presence_dossier
+ming_sim/db.py:1778:            CREATE INDEX IF NOT EXISTS idx_loophole_exposures_dossier
+ming_sim/db.py:1794:            CREATE INDEX IF NOT EXISTS idx_dossier_actual_progress_dossier
+ming_sim/db.py:1829:            CREATE INDEX IF NOT EXISTS idx_faction_denunciations_turn
+ming_sim/db.py:1831:            CREATE INDEX IF NOT EXISTS idx_faction_denunciations_target
+ming_sim/db.py:1849:            CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
+ming_sim/db.py:1876:            CREATE INDEX IF NOT EXISTS idx_authority_records_holder
+ming_sim/db.py:1898:            CREATE INDEX IF NOT EXISTS idx_economy_ledger_turn
+ming_sim/db.py:1913:            CREATE INDEX IF NOT EXISTS idx_fiscal_config_tombstones_origin
+ming_sim/db.py:1928:            CREATE INDEX IF NOT EXISTS idx_fiscal_config_creations_origin
+ming_sim/db.py:1944:            CREATE INDEX IF NOT EXISTS idx_fiscal_config_changes_origin
+ming_sim/db.py:1967:            CREATE INDEX IF NOT EXISTS idx_turn_directives_turn
+ming_sim/db.py:1970:            CREATE INDEX IF NOT EXISTS idx_region_logs_turn
+ming_sim/db.py:1973:            CREATE INDEX IF NOT EXISTS idx_army_logs_turn
+ming_sim/db.py:1976:            CREATE INDEX IF NOT EXISTS idx_building_logs_turn
+ming_sim/db.py:1979:            CREATE INDEX IF NOT EXISTS idx_power_logs_turn
+ming_sim/db.py:1982:            CREATE INDEX IF NOT EXISTS idx_person_logs_turn
+ming_sim/db.py:2043:            CREATE INDEX IF NOT EXISTS idx_next_audience_todos_status
+ming_sim/db.py:2077:            CREATE INDEX IF NOT EXISTS idx_legacies_active
+ming_sim/db.py:2080:            CREATE INDEX IF NOT EXISTS idx_issues_active
+ming_sim/db.py:2083:            CREATE INDEX IF NOT EXISTS idx_issue_advances_issue
+ming_sim/db.py:2097:            CREATE INDEX IF NOT EXISTS idx_classes_region
+ming_sim/db.py:2109:            CREATE INDEX IF NOT EXISTS idx_population_transfer_turn
+ming_sim/db.py:2126:            CREATE INDEX IF NOT EXISTS idx_character_knowledge_events_character
+ming_sim/db.py:2144:            CREATE INDEX IF NOT EXISTS idx_public_sayings_affair
+ming_sim/db.py:2161:            CREATE INDEX IF NOT EXISTS idx_character_knowledge_sources_turn
+ming_sim/db.py:2214:            CREATE INDEX IF NOT EXISTS idx_relation_edges_pair
+ming_sim/db.py:2217:            CREATE INDEX IF NOT EXISTS idx_relation_edges_person
+ming_sim/db.py:2220:            CREATE INDEX IF NOT EXISTS idx_relation_edge_events_affair
+ming_sim/db.py:2223:            CREATE INDEX IF NOT EXISTS idx_characters_affair
+ming_sim/db.py:2315:        # #1847/#1812：旧档 ensure_column 补列退役；新档列权威在上方 CREATE。
+ming_sim/db.py:2322:        self.conn.execute("DROP TABLE IF EXISTS dossier_progress_reports")
+ming_sim/db.py:2355:            "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "
+ming_sim/entities/staged_declaration/store.py:34:CREATE INDEX IF NOT EXISTS idx_staged_declarations_decree
+ming_sim/entities/staged_declaration/store.py:36:CREATE INDEX IF NOT EXISTS idx_staged_declarations_status
+ming_sim/entities/staged_declaration/store.py:75:                "ALTER TABLE staged_declarations ADD COLUMN visible_refs_json TEXT NOT NULL DEFAULT '{}'"
+ming_sim/entities/staged_declaration/store.py:78:            conn.execute("ALTER TABLE staged_declarations ADD COLUMN verdict_json TEXT")
+ming_sim/entities/staged_declaration/store.py:80:            conn.execute("ALTER TABLE staged_declarations ADD COLUMN questions_json TEXT")
+ming_sim/entities/staged_declaration/store.py:82:            conn.execute("ALTER TABLE staged_declarations ADD COLUMN forecast_text TEXT")
+
+=== N11: season-option / action_type old ===
+ming_sim/settlement_payload.py:9:from ming_sim.action_clusters import season_option_fields, validate_season_option
+ming_sim/settlement_payload.py:78:                action_type = validate_season_option(o)
+ming_sim/settlement_payload.py:88:            for key in season_option_fields(action_type):
+ming_sim/settlement_payload.py:90:                    option[key] = action_type if key == "action_type" else o[key]
+ming_sim/action_materialize.py:260:        if str(payload.get("dossier_action_type") or "").strip() != "pacification":
+ming_sim/action_materialize.py:272:        "dossier_action_type": "pacification",
+ming_sim/action_materialize.py:402:        if str(payload.get("dossier_action_type") or "").strip() != "punishment":
+ming_sim/action_materialize.py:420:        "dossier_action_type": "punishment",
+ming_sim/action_materialize.py:839:            if str(payload.get("dossier_action_type") or "").strip() != "grant_allocation":
+ming_sim/action_materialize.py:849:        "dossier_action_type": "grant_allocation",
+ming_sim/action_materialize.py:1268:    action = str(dossier.get("action_type") or "").strip()
+ming_sim/action_materialize.py:1425:            if str(payload.get("dossier_action_type") or "").strip() != "assignment":
+ming_sim/action_materialize.py:1436:        "dossier_action_type": "assignment",
+ming_sim/action_materialize.py:1551:            if str(payload.get("dossier_action_type") or "").strip() != "revoke_decree":
+ming_sim/action_materialize.py:1561:        "dossier_action_type": "revoke_decree",
+ming_sim/action_materialize.py:1644:                    GRANT_ACTIONS, "无", season_option=True,
+ming_sim/action_materialize.py:1650:                    season_option=True,
+ming_sim/action_materialize.py:1654:                    season_option=True,
+ming_sim/action_materialize.py:1659:                    quantity_unit="万两", season_option=True,
+ming_sim/action_materialize.py:1663:                    frozenset({"国库", "内库", "太仓"}), "", season_option=True,
+ming_sim/action_materialize.py:1667:                    season_option=True,
+ming_sim/action_materialize.py:1672:                    frozenset({"一次性", "每月"}), "", season_option=True,
+tests/test_dossier_reported_progress_619.py:26:        action_type="policy",
+tests/test_dossier_reported_progress_619.py:317:        action_type="authorization",
+tests/test_urge_lever_624.py:51:        action_type="policy",
+tests/test_settlement_write_guard_393.py:140:        "dossier_action_type": "policy",
+tests/test_settlement_write_guard_393.py:174:        "dossier_action_type": "policy",
+tests/test_pihong_dossier_1490.py:47:        state, action_type="special_decree", decree_text=title, target_kind="issue", target_id=key,
+tests/test_pihong_dossier_1490.py:60:    normal_id = int(db.create_decree_dossier(state, action_type='policy', decree_text='清核河工', target_kind='issue', target_id=f'river-{state.turn}'))
+tests/test_pihong_dossier_1490.py:101:    did = db.create_decree_dossier(state, action_type='policy', decree_text='试', target_kind='policy', target_id='t')
+tests/test_pihong_dossier_1490.py:162:        payload = {"dossier_action_type": "policy", "target_kind": "issue",
+tests/test_pihong_dossier_1490.py:166:            payload.update(dossier_action_type="authorization", scope="region:",
+tests/test_pihong_dossier_1490.py:169:            payload.update(dossier_action_type="grant_allocation", grant_action="赏赉",
+tests/test_pihong_dossier_1490.py:307:    bad = int(db.add_directive(state, None, '缺账拨帑', 'player-decree-test', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账', 'amount': 100}))
+tests/test_pihong_dossier_1490.py:308:    good = int(db.add_directive(state, None, '清丈', 'player-decree-test', dossier_payload={'dossier_action_type': 'assignment', 'target_kind': 'issue', 'target_id': 'route-清丈', 'transaction_category': '清丈', 'participant_roster': copy.deepcopy(_ROSTER)}))
+tests/test_pihong_dossier_1490.py:337:    session.update_directive(bad, '补账重拟', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账-retry', 'amount': 100, 'account': '国库'})
+tests/test_pihong_dossier_1490.py:359:    db.update_directive_text(dir_id, '着清核河工', dossier_payload={'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'river-works', 'mode': 'ordinary'})
+tests/test_pihong_dossier_1490.py:363:    assert payload.get('dossier_action_type') == 'policy'
+tests/test_pihong_dossier_1490.py:368:    cid = int(db.stage_directive_candidate(state.turn, name, payload={'text': '着清核河工原文', 'actor': name, 'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'river-works', 'mode': 'ordinary'}))
+tests/test_pihong_dossier_1490.py:375:    assert 'dossier_action_type' not in staged
+tests/test_rejection_wiring.py:73:        action_type="grant_allocation",
+tests/test_affairs_1831.py:55:        action_type="assignment",
+tests/test_affairs_1831.py:71:            action_type="assignment",
+tests/test_affairs_1831.py:111:            action_type="assignment",
+tests/test_effect_origin_558.py:13:        state, action_type="policy", decree_text="兴修水利",
+tests/test_family_tail_restore_570.py:93:        action_type="appointment",
+tests/test_family_tail_restore_570.py:133:        action_type="assignment",
+tests/test_recommendation_batch_snapshot_1583.py:54:        if row["action_type"] == "appointment"
+tests/test_grant_reconciliation_567.py:56:        action_type="grant_allocation",
+tests/test_grant_reconciliation_567.py:270:        action_type="grant_allocation",
+tests/test_family_tail_615.py:61:        action_type="authorization",
+tests/test_faction_brew_637.py:404:        action_type="authorization",
+tests/test_secret_dossier_participants_1252.py:46:    assert all(str(row.get("action_type") or "") != "secret_order" for row in visible)
+tests/test_secret_dossier_participants_1252.py:66:        state, action_type="assignment", decree_text="命修历。",
+tests/test_secret_dossier_participants_1252.py:97:        state, action_type="assignment", decree_text="命修历。",
+tests/test_secret_dossier_participants_1252.py:140:        state, action_type="policy", decree_text="公开案",
+tests/test_audience_translate_1837_reopen.py:60:        state, action_type="special_decree", decree_text="整饬边军",
+tests/test_audience_translate_1837_reopen.py:162:        "text": "禁绝摊派", "dossier_action_type": PROHIBITION_ACTION,
+tests/test_audience_translate_1837_reopen.py:169:            "dossier_action_type": PROHIBITION_ACTION,
+tests/test_audience_translate_1837_reopen.py:182:    assert payload["dossier_action_type"] == PROHIBITION_ACTION
+tests/test_audience_translate_1837_reopen.py:187:        "SELECT id, action_type, target_id FROM decree_dossiers WHERE pending_action_id=?",
+tests/test_audience_translate_1837_reopen.py:191:    assert dossier["action_type"] == PROHIBITION_ACTION
+tests/test_web_audience_night_498.py:32:    "dossier_action_type": "policy",
+tests/test_web_audience_night_498.py:605:                        "dossier_action_type": "policy",
+tests/test_web_audience_night_498.py:691:            "dossier_action_type": "policy", "target_kind": "issue",
+tests/test_web_audience_night_498.py:697:            "dossier_action_type": "policy", "target_kind": "issue",
+tests/test_web_audience_night_498.py:764:                        "dossier_action_type": "policy",
+tests/test_draft_admission_resubmit_1769.py:269:    assert first.get("dossier_action_type") == "pay_order_override"
+tests/test_draft_admission_resubmit_1769.py:281:    assert resubmit_calls[0]["bad_payload"].get("dossier_action_type") == "pay_order_override"
+tests/test_draft_admission_resubmit_1769.py:292:    assert dossier["action_type"] == "grant_allocation"
+tests/test_draft_admission_resubmit_1769.py:301:    assert projected.get("dossier_action_type", dossier["action_type"]) != "pay_order_override"
+tests/test_draft_admission_resubmit_1769.py:505:    assert first.get("dossier_action_type") == "pay_order_override"
+tests/test_draft_admission_resubmit_1769.py:514:    assert kept.get("dossier_action_type") == "pay_order_override"
+tests/test_draft_admission_resubmit_1769.py:540:            "dossier_action_type": "pay_order_override",
+tests/test_relation_capture_633.py:278:        action_type="assignment",
+tests/test_relation_capture_633.py:372:        action_type="assignment",
+tests/test_breach_plea_623.py:66:        action_type="policy",
+tests/test_breach_plea_623.py:219:        action_type="revoke_decree",
+tests/test_breach_plea_623.py:264:        action_type="revoke_decree",
+tests/test_breach_plea_623.py:303:        action_type="revoke_decree",
+tests/test_breach_plea_623.py:352:    assert payload["dossier_action_type"] == "revoke_decree"
+tests/test_breach_plea_623.py:460:        sess, {"id": did, "action_type": "revoke_decree", "payload": payload,
+tests/test_breach_plea_623.py:504:        state, action_type="revoke_decree", decree_text="撤回前旨",
+tests/test_breach_plea_623.py:555:        action_type="revoke_decree",
+tests/test_supervision_625.py:78:        action_type="policy",
+tests/test_supervision_625.py:94:        action_type="policy",
+tests/test_pay_order_override_653.py:32:        action_type="pay_order_override",
+tests/test_pay_order_override_653.py:320:        action_type="revoke_decree",
+tests/test_pay_order_override_653.py:358:        action_type="revoke_decree",
+tests/test_pay_order_override_653.py:403:        action_type="revoke_decree",
+tests/test_pay_order_override_653.py:588:        state, action_type="revoke_decree", decree_text="撤回前旨",
+tests/test_pay_order_override_653.py:624:        state, action_type="revoke_decree", decree_text="撤陕西旨",
+tests/test_pay_order_override_653.py:773:    """物化入口资格校验：案卷必须真实存在、action_type 合法且已过颁布门。"""
+tests/test_pay_order_override_653.py:988:    assert payload["dossier_action_type"] == "pay_order_override"
+tests/test_pay_order_override_653.py:998:    assert dossier["action_type"] == "pay_order_override"
+tests/test_credit_events_628.py:46:        action_type="policy",
+tests/test_enter_settlement_period_1235.py:309:            "dossier_action_type": "policy",
+tests/test_new_issues_section_rejections.py:19:    dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text="测试新立局势来源", target_kind="issue", target_id="validation")
+tests/test_decree_commitment_settlement_229.py:16:        state, action_type="policy", decree_text=f"测试承诺：{token}",
+tests/test_override_breach_costs_564.py:14:        state, action_type="policy", decree_text="清丈畿辅",

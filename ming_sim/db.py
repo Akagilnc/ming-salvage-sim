@@ -72,11 +72,9 @@ from ming_sim.token_stats import tlog
 
 logger = logging.getLogger(__name__)
 
-# ADR 0088 / #648：人口存储单位口径。content 静态人口量已全线「人」（与 armies.manpower
-# 同刻度）；存档口径判别持久化在 DB 内（save_meta 表），新档 seed 落「人」标，
-# 无标旧档一律判「万人」legacy——不得读 content 元信息判别（其不随档持久化）。
+# ADR 0088 / #648：人口存储单位口径。content 与存档统一「人」（与 armies.manpower
+# 同刻度）。#1847/#1812：无标→万人旧档兼容退役；新档仍落「人」标供接续。
 POPULATION_UNIT_PERSONS = "人"
-POPULATION_UNIT_WAN = "万人"
 _POPULATION_UNIT_KEY = "population_unit"
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -2312,14 +2310,13 @@ class GameDB:
             );
             """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
-        # #1847/#1812：旧档 ensure_column 补列退役；新档列权威在上方 CREATE。
-        # 保留新档/现役共享：父表物化、内容名册同步、退役表清理、实体 store、财政初始 seed。
+        # #1847/#1812：旧档 ensure_column／退役表 DROP／索引重建支链已清；
+        # 新档列与索引权威在上方 CREATE。保留新档/现役共享：父表物化、内容名册同步、实体 store、财政初始 seed。
         self._ensure_office_type_parents()
         self._ensure_event_parents()
         self._apply_region_city_levels()
         self._migrate_character_identity_seed()
         self._backfill_bandit_power_split()
-        self.conn.execute("DROP TABLE IF EXISTS dossier_progress_reports")
         # Read-side projection is registry-driven.  Only issue rows are shared
         # knowledge sources; #883 deliberately keeps secret orders out of it.
         self.conn.execute(
@@ -2328,7 +2325,6 @@ class GameDB:
             "SELECT origin_turn, 0, 0, 'assignment', title, stage_text, "
             "'issue:' || id, participant_roster FROM issues WHERE participant_roster <> '[]'"
         )
-        self._ensure_decree_dossier_locality_indexes()
         # 结局总结：每局结局触发时落一条（单 campaign 一库，turn 为主键，对齐 turn_reports）。
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS ending_summary (
@@ -2341,8 +2337,7 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # #648（ADR 0088）：存档级持久元数据；人口单位口径判别标落此。
-        # ADR 0088 与 09-28 口谕相抵处见证据报告 BLOCKER，本轮不自拆。
+        # #648：存档级持久元数据；新档人口单位标「人」落此。
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS save_meta (
@@ -2899,21 +2894,6 @@ class GameDB:
         return base_key
 
 
-    def _ensure_decree_dossier_locality_indexes(self) -> None:
-        """#654 / #1837：pending 幂等键＝(pending_action_id, region_id, action_type)；
-        directive 仍 (directive_id, region_id)；secret_order 不动。"""
-        self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_pending_action")
-        self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_directive")
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_pending_action "
-            "ON decree_dossiers(pending_action_id, region_id, action_type) "
-            "WHERE pending_action_id > 0"
-        )
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive "
-            "ON decree_dossiers(directive_id, region_id) WHERE directive_id > 0"
-        )
-
     # 城市等级 0-5（静态，史实分级；未列出的地区默认 0=游牧/孤岛/边荒）。
     # 用途：城防大炮上限(city_level×8) + 将来经济/内政。1627 实况，非现代省份概念。
     _CITY_LEVEL_TIERS = {
@@ -3140,14 +3120,8 @@ class GameDB:
 
     @property
     def population_unit(self) -> str:
-        """本档人口存储单位口径（ADR 0088/#648）：新档「人」，无标旧档一律「万人」。
-
-        判别只读存档 DB 内的持久标记（save_meta），不读 content 元信息（其不随档
-        持久化，0088 明文禁止）。旧档不迁移、读写按档口径走 legacy。"""
-        row = self.conn.execute(
-            "SELECT value FROM save_meta WHERE key = ?", (_POPULATION_UNIT_KEY,)
-        ).fetchone()
-        return str(row[0]) if row else POPULATION_UNIT_WAN
+        """本档人口存储单位口径：统一「人」（#1847 退役无标万人 legacy）。"""
+        return POPULATION_UNIT_PERSONS
 
     def _mark_population_unit_persons(self) -> None:
         """新档 classes 首次 seed 时落持久人口单位标「人」（commit 由 seed_static_data 末尾统一提交）。"""
@@ -3155,17 +3129,6 @@ class GameDB:
             "INSERT OR REPLACE INTO save_meta (key, value) VALUES (?, ?)",
             (_POPULATION_UNIT_KEY, POPULATION_UNIT_PERSONS),
         )
-
-    def scale_content_population_to_save_unit(self, value: int) -> int:
-        """content 静态人口量（事件 effect 等）已全线「人」；落本档前按存档口径换算。
-
-        新档（人）原样；无标旧档（万人）÷10⁴——迁移后 content 人口值均为 10⁴ 整倍数，
-        整除无损（F4 禁的是对旧档读写加通用有损换算层；此处是 content→档的唯一确定性
-        口径接缝，非通用层）。"""
-        value = int(value)
-        if self.population_unit == POPULATION_UNIT_PERSONS:
-            return value
-        return value // 10000
 
     def seed_static_data(self) -> None:
         self._ensure_office_type_parents()
@@ -3253,7 +3216,6 @@ class GameDB:
                 )
         if not self.table_has_rows("classes"):
             # ADR 0088/#648：classes 首次 seed = 新档 cutover 点，落持久人口单位标「人」。
-            # 旧档表已有行（万人口径）不重 seed、不落标 → population_unit 恒判「万人」legacy。
             self._mark_population_unit_persons()
             for cls in self.content.classes.values():
                 self.conn.execute(
@@ -6183,15 +6145,9 @@ class GameDB:
         held = ""
         if str(row["controlled_by"]) != "ming":
             held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
-        # ADR 0088/#648：人口展示按档口径——新档（人）玩家面投影「约N万口」（P4）；
-        # 机面裸人数；无标旧档沿万人 legacy 原样，不加换算层。
-        persons_unit = self.population_unit == POPULATION_UNIT_PERSONS
-
-        pop_qual = (
-            f"人口{population_wan_kou_label(row['population'])}" if persons_unit
-            else f"人口{row['population']}万人"
-        )
-        pop_raw = f"人口{row['population']}人" if persons_unit else f"人口{row['population']}万人"
+        # ADR 0088/#648：人口统一「人」——玩家面投影「约N万口」（P4）；机面裸人数。
+        pop_qual = f"人口{population_wan_kou_label(row['population'])}"
+        pop_raw = f"人口{row['population']}人"
         if qualitative:
             return (
                 f"{row['name']}（{row['kind']}）{held}：{pop_qual}，"
@@ -6566,12 +6522,8 @@ class GameDB:
                 continue
             old_val = row[raw_field]
             if raw_field in (REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS):
-                # #648（ADR 0088）：on_restore 是 content 静态真源→存档接缝，population
-                # 已全线「人」，落本档前按存档口径换算（新档原样；无标旧档无损÷10⁴）。
-                new_val: object = (
-                    self.scale_content_population_to_save_unit(value)
-                    if raw_field == "population" else int(value)
-                )
+                # #648：on_restore 是 content 静态真源→存档接缝；人口已统一「人」。
+                new_val: object = int(value)
             else:
                 new_val = str(value)
             if str(old_val) == str(new_val):
@@ -9790,23 +9742,20 @@ class GameDB:
         name = str(minister_name or "").strip()
         if not name:
             return None
-        try:
-            if turn is not None:
-                row = self.conn.execute(
-                    "SELECT id FROM chat_messages "
-                    "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
-                    "AND turn=? ORDER BY id DESC LIMIT 1",
-                    (name, int(turn)),
-                ).fetchone()
-            else:
-                row = self.conn.execute(
-                    "SELECT id FROM chat_messages "
-                    "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
-                    "ORDER BY id DESC LIMIT 1",
-                    (name,),
-                ).fetchone()
-        except sqlite3.OperationalError:
-            return None
+        if turn is not None:
+            row = self.conn.execute(
+                "SELECT id FROM chat_messages "
+                "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
+                "AND turn=? ORDER BY id DESC LIMIT 1",
+                (name, int(turn)),
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT id FROM chat_messages "
+                "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
+                "ORDER BY id DESC LIMIT 1",
+                (name,),
+            ).fetchone()
         return int(row["id"]) if row is not None else None
 
     def _parse_origin_chat_message_id(
@@ -9869,13 +9818,10 @@ class GameDB:
 
     def _brief_origin_chat_message_ids(self, order_id: int) -> List[int]:
         """Durable oral pins already registered on this order's brief (may be empty)."""
-        try:
-            row = self.conn.execute(
-                "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
-                (int(order_id),),
-            ).fetchone()
-        except sqlite3.OperationalError:
-            return []
+        row = self.conn.execute(
+            "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+            (int(order_id),),
+        ).fetchone()
         if row is None:
             return []
         try:
@@ -9915,14 +9861,11 @@ class GameDB:
         )
 
     def _current_open_night_id(self) -> int:
-        """当前开着（open/closing）的召对夜 id；无夜或旧档无表返回 0（#498）。"""
-        try:
-            row = self.conn.execute(
-                "SELECT id FROM audience_nights "
-                "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-        except sqlite3.OperationalError:
-            return 0
+        """当前开着（open/closing）的召对夜 id；无夜返回 0（#498）。"""
+        row = self.conn.execute(
+            "SELECT id FROM audience_nights "
+            "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
+        ).fetchone()
         return int(row["id"]) if row is not None else 0
 
     # ── #571 旨意案卷公共接口 ──────────────────────────────────────
@@ -19279,16 +19222,14 @@ class GameDB:
         seam that can see and park those durable descendants as ``withheld``.
         """
         out: Dict[int, bool] = {}
-        try:
-            brief_rows = self.conn.execute(
-                "SELECT origin_chat_message_ids FROM secret_order_briefs"
-            ).fetchall()
-            pending_rows = self.conn.execute(
-                "SELECT payload_json FROM pending_actions "
-                "WHERE kind='secret_order' AND status IN ('pending','failed')"
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return out
+        # #1847 N13：库失败不得冒充空保护集；交既有失败出口。
+        brief_rows = self.conn.execute(
+            "SELECT origin_chat_message_ids FROM secret_order_briefs"
+        ).fetchall()
+        pending_rows = self.conn.execute(
+            "SELECT payload_json FROM pending_actions "
+            "WHERE kind='secret_order' AND status IN ('pending','failed')"
+        ).fetchall()
         for row in brief_rows:
             raw = row["origin_chat_message_ids"] if row is not None else "[]"
             try:
@@ -19316,14 +19257,11 @@ class GameDB:
                 out.setdefault(mid, False)
         if out:
             placeholders = ",".join("?" for _ in out)
-            try:
-                turns = self.conn.execute(
-                    f"SELECT user_message_id, minister_message_id FROM chat_turns "
-                    f"WHERE user_message_id IN ({placeholders})",
-                    tuple(sorted(out)),
-                ).fetchall()
-            except sqlite3.OperationalError:
-                turns = []
+            turns = self.conn.execute(
+                f"SELECT user_message_id, minister_message_id FROM chat_turns "
+                f"WHERE user_message_id IN ({placeholders})",
+                tuple(sorted(out)),
+            ).fetchall()
             for turn in turns:
                 durable = any(
                     out.get(int(raw), False)
@@ -19362,13 +19300,10 @@ class GameDB:
                 self.conn.commit()
             return []
         placeholders = ",".join("?" for _ in pins)
-        try:
-            rows = self.conn.execute(
-                f"SELECT id FROM chat_messages WHERE id IN ({placeholders})",
-                pins,
-            ).fetchall()
-        except sqlite3.OperationalError:
-            rows = []
+        rows = self.conn.execute(
+            f"SELECT id FROM chat_messages WHERE id IN ({placeholders})",
+            pins,
+        ).fetchall()
         live_ids = [int(row["id"]) for row in rows]
         source_ids: List[str] = []
         for mid in live_ids:
@@ -19445,22 +19380,19 @@ class GameDB:
         explicit_exclude = set(self._coerce_positive_message_ids(exclude_message_ids))
         protection = self._secret_origin_message_protection()
         exclude = explicit_exclude | set(protection)
-        try:
-            if name_set:
-                placeholders = ",".join("?" for _ in name_set)
-                rows = self.conn.execute(
-                    f"SELECT id, minister_name, turn, content FROM chat_messages "
-                    f"WHERE knowledge_status='held' AND minister_name IN ({placeholders}) "
-                    f"ORDER BY id",
-                    tuple(sorted(name_set)),
-                ).fetchall()
-            else:
-                rows = self.conn.execute(
-                    "SELECT id, minister_name, turn, content FROM chat_messages "
-                    "WHERE knowledge_status='held' ORDER BY id",
-                ).fetchall()
-        except sqlite3.OperationalError:
-            return 0
+        if name_set:
+            placeholders = ",".join("?" for _ in name_set)
+            rows = self.conn.execute(
+                f"SELECT id, minister_name, turn, content FROM chat_messages "
+                f"WHERE knowledge_status='held' AND minister_name IN ({placeholders}) "
+                f"ORDER BY id",
+                tuple(sorted(name_set)),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id, minister_name, turn, content FROM chat_messages "
+                "WHERE knowledge_status='held' ORDER BY id",
+            ).fetchall()
         if not rows:
             return 0
         state = self.load_state()

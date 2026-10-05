@@ -1,0 +1,67 @@
+{
+  "probe_dir": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1847-w11-probes-73xnlxcw",
+  "N11_pop": {
+    "new_unit": "人",
+    "unmarked_unit": "人",
+    "beizhili_pop": 7200000,
+    "no_wan_fallback": true
+  },
+  "N11_season": {
+    "titles": [
+      "发帑"
+    ],
+    "option_keys": [
+      "hint",
+      "label"
+    ]
+  },
+  "N16": {
+    "remaining": [
+      "auto_1630_01_t0001_begin.db",
+      "auto_curr_1627_10_t0002_begin.db",
+      "auto_curr_1627_10_t0003_begin.db",
+      "auto_curr_1627_10_t0004_begin.db",
+      "auto_othercamp_1627_10_t0001_begin.db",
+      "manual_keep.db"
+    ],
+    "legacy_kept": true,
+    "manual_kept": true,
+    "other_kept": true,
+    "curr_t1_pruned": true
+  },
+  "N10_extract": {
+    "text": "authentication succeeded with api key ok",
+    "pass": true
+  },
+  "N10_cli": {
+    "text": "authentication succeeded with api key",
+    "attempts": 1,
+    "pass": true,
+    "external_stub": "tests.cli_process_doubles.install_fake_cli_runner"
+  },
+  "N13_closed": {
+    "raised": true,
+    "type": "ProgrammingError",
+    "pass": true
+  },
+  "N13_live_current": {
+    "released_count": 0,
+    "status": "held",
+    "pass": true
+  },
+  "N13_mutated_empty_protection_RED": {
+    "released_count": 1,
+    "status": "released",
+    "pass_as_red": true,
+    "disclaimer": "in-memory empty-protection mutation; not a verbatim reload of deleted old function body"
+  },
+  "N13_restored_green": {
+    "released_count": 0,
+    "status": "held",
+    "pass": true
+  },
+  "OWN_TEMP_CLEANED": true
+}
+real 0.88
+user 0.66
+sys 0.15

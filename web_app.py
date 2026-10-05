@@ -77,7 +77,6 @@ from ming_sim.llm_transport import (
     transport_attempts_public,
     transport_failure_unavailable,
 )
-from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import GameSession
 from ming_sim.session import (

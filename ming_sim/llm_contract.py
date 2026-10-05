@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.exceptions import LLMContractError
 
 
 def abort_llm_contract(stage: str, message: str, raw: Optional[str] = None) -> None:
@@ -13,23 +13,3 @@ def abort_llm_contract(stage: str, message: str, raw: Optional[str] = None) -> N
         detail += f"\n原始输出：{raw[:800]}"
     # raw_value 必须结构化携带：仅塞进 message 会在 heal 路径丢失原始响应（#1753）。
     raise LLMContractError(detail, raw_value=raw if raw is not None else None)
-
-
-
-
-
-def fail_if_llm_error(text: str, stage: str) -> None:
-    lowered = text.lower()
-    error_markers = (
-        "incorrect api key",
-        "invalid_api_key",
-        "error code: 401",
-        "unauthorized",
-        "authentication",
-        "api key",
-    )
-    if any(marker in lowered for marker in error_markers):
-        raise LLMUnavailable(
-            f"{stage} 失败：LLM 认证或接口错误。"
-            f"请更新 .env 里的 OPENAI_API_KEY/OPENAI_BASE_URL/OPENAI_MODEL 后重试。"
-        )

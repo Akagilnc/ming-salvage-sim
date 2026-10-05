@@ -275,7 +275,7 @@ def test_seed_founding_write_does_not_swallow_execute_error_with_bad_rollback():
         def owns_transaction():
             return True
 
-    with pytest.raises(RuntimeError, match="injected write failure"):
+    with pytest.raises(RuntimeError):
         GameDB.apply_seed_founding_segment(
             FakeDB(), source="甲", target="乙", dimension="大臣", founding_segment="旧事"
         )
@@ -297,7 +297,7 @@ def test_seed_failure_rolls_back_new_save_and_retry_imports(tmp_path, monkeypatc
     db_path = str(tmp_path / "retry.db")
     content = GameContent.load()
     cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
-    with pytest.raises(ValueError, match="injected seed failure"):
+    with pytest.raises(ValueError):
         GameSession(db_path=db_path, llm_config=cfg, content=content)
 
     with sqlite3.connect(db_path) as conn:

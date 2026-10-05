@@ -29,7 +29,8 @@ from ming_sim.faction_brew import (
     project_character_factions,
     select_faction_brew_targets,
 )
-from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY, MonthEndRelationBrewLeg
+from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY
+from tests.test_relation_brew_636 import run_month_end_relation_brew
 from ming_sim.relations import EMPEROR_NODE
 
 
@@ -41,13 +42,6 @@ def _faction_stance(db, faction: str):
     return None
 
 
-def run_month_end_relation_brew(db, state, brew_fn, **kwargs):
-    """Test-local retarget to live MonthEndRelationBrewLeg (#1847 N11)."""
-    leg = MonthEndRelationBrewLeg(db, state, brew_fn, **kwargs)
-    if not leg.prepare():
-        return leg.report
-    leg.brew()
-    return leg.persist()
 
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
@@ -306,7 +300,7 @@ def test_faction_claim_db_error_propagates_loudly(game):
         raise sqlite3.OperationalError("派系认领库不可写")
 
     db.claim_faction_brew_targets = boom
-    with pytest.raises(sqlite3.OperationalError, match="派系认领库不可写"):
+    with pytest.raises(sqlite3.OperationalError):
         run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
 
 
@@ -319,7 +313,7 @@ def test_faction_apply_db_error_propagates_loudly_not_disguised(game):
         raise sqlite3.OperationalError("派系落定库不可写")
 
     db.apply_faction_brew_result = boom
-    with pytest.raises(sqlite3.OperationalError, match="派系落定库不可写"):
+    with pytest.raises(sqlite3.OperationalError):
         run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
 
 

@@ -11,7 +11,7 @@
 这是探针的预期，不是缺陷。
 
 调用约定来自 wiki/concepts/codex-bot-conventions.md + cross-model-review.md：
-- agy：Agy 1.2.0 用 `--print=<prompt>`；auth race 靠 transport 可重试 typed（见 `_AGY_AUTH_MARKERS`），不另起 keychain 预热硬时限。
+- agy：Agy 1.2.0 用 `--print=<prompt>`；失败只看宿主退出码／原生异常，不扫正文词表。
 - codex：`codex exec -` 必须 stdin pipe，绝不 positional；始终 2>&1。
 """
 
@@ -356,10 +356,6 @@ def _cli_process_clock() -> float:
     return time.monotonic()
 
 
-# agy headless auth 是已知 race（见 wiki）：stdout/stderr 出现这些串即瞬断，可重试。
-_AGY_AUTH_MARKERS = ("Authentication required", "authentication timed out")
-
-
 @dataclass
 class _CliProcessOutcome:
     """子进程收尾事实（退出码 / stderr 诊断 / stdin 写错），由增量读循环回填。
@@ -658,7 +654,7 @@ def _cli_runner_command(
     """runner → (argv, stdin 文本, env)。各 runner 调用约定单真源；执行读法共用 helper。
 
     实测约定（docs/LLM_BACKEND_BENCH.md §9 / #1256 / #1274-qa-y1）：
-    - agy 1.2.0：`--print=<prompt>` 单参数；auth race 靠 transport 可重试 typed。
+    - agy 1.2.0：`--print=<prompt>` 单参数；失败只看退出码与原生异常。
     - codex：`exec -` 必须 stdin pipe（绝不 positional）；`--skip-git-repo-check`
       （沙箱 cwd 非 git）+ `--ephemeral`（并发不撞共享 session）；干净回话在 stdout。
     - claude：`-p --output-format text`，prompt 走 stdin；thinking 预算走 env。
@@ -781,13 +777,11 @@ def _iter_cli_runner_text(
     私有 for-attempt 循环。失败按 typed 分类抛，交上层统一重试或终结：
     - 静默超阈值 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
     - 空输出 → llm_empty_output（可重试）
-    - agy auth race → llm_connection_error（可重试；已知瞬断实证）
     - stdin 未送达 / 未知非零退出 → RuntimeError（确定性失败，一次不重试；禁从
-      stderr 散文抠状态）
+      正文／stderr 散文抠认证状态）
 
     静默预算只认 transport 策略 idle（= 设置页那一格的静默判死阈值，CLI 与 API 同权威）。
     """
-    from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
 
     kimi_agent_path: Optional[str] = None
@@ -842,14 +836,9 @@ def _iter_cli_runner_text(
             raise RuntimeError(
                 f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
             ) from outcome.stdin_error
-        if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
-            raise LLMUnavailable(
-                "LLM 连接失败。",
-                code="llm_connection_error",
-                provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
-            )
         # Codex / CLI：干净正文只在 stdout；stderr 是日志，不得冒充正文
         # （Python subprocess 分流；Codex non-interactive：progress→stderr，final→stdout）。
+        # #1847 N10：不扫正文词表猜认证失败；只信退出码与原生异常。
         text = stdout_text if stdout_text.strip() else final_text
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
         if returncode != 0:

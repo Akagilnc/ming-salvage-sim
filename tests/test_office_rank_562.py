@@ -1,10 +1,6 @@
 import json
 from pathlib import Path
 
-from ming_sim.office_rank import (
-    office_leverage_multiplier,
-    office_rank_band,
-)
 from ming_sim.models import Character
 
 
@@ -42,9 +38,6 @@ def test_rank_table_covers_every_office_type_and_pins_ming_direction():
     )
     assert {row["type"] for row in table["priority"]} | {table["fallback"]["type"]} == set(table["allowed_types"])
     assert all(1 <= row["rank_band"] <= 9 for row in [*table["priority"], table["fallback"]])
-    assert office_rank_band("兵部尚书") == 2
-    assert office_rank_band("翰林院编修") == 7
-    assert office_rank_band("待铨") == 9
 
 
 def test_white_body_high_appointment_is_marked_but_regular_first_office_is_not(game):
@@ -175,53 +168,12 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     assert disp_jump["break_rank"]["is_break_rank"] is True
 
 
-def test_title_stems_keep_distinct_ming_bands_inside_same_office_type():
-    """Owner #562: actual title/stem bands, not one representative band per type."""
-    assert office_rank_band("兵部尚书") == 2
-    assert office_rank_band("兵部侍郎") == 3
-    assert office_rank_band("兵部郎中") == 5
-    assert office_rank_band("兵部主事") == 6
-    assert office_rank_band("副总兵") == 3
-    assert office_rank_band("总兵") == 2
-    assert office_rank_band("监察御史") == 7
-    assert office_rank_band("少卿") == 4
-    assert office_rank_band("前礼部右少卿,罢居上海") == 4
-    # 边镇/地方/翰林 must not collapse to the category-wide priority.rank_band.
-    assert office_rank_band("参将") == 4
-    assert office_rank_band("千总") == 6
-    assert office_rank_band("把总") == 7
-    assert office_rank_band("经略") == 3
-    assert office_rank_band("知州") == 5
-    assert office_rank_band("兵备道") == 4
-    assert office_rank_band("县令") == 7
-    assert office_rank_band("侍读学士") == 5
-    assert office_rank_band("修撰") == 6
-    assert office_rank_band("皇后") == 1
 
 
-def test_cabinet_titles_keep_nominal_ming_rank_instead_of_political_importance():
-    """大学士是正五品；首辅/殿阁称谓不把政治权重冒充品秩。"""
-    for title in (
-        "大学士", "内阁大学士", "殿阁大学士", "东阁大学士", "文渊阁大学士",
-        "武英殿大学士", "建极殿大学士", "中极殿大学士", "文华殿大学士",
-        "内阁首辅", "内阁次辅", "辅臣", "阁臣",
-    ):
-        assert office_rank_band(title) == 5, title
 
 
-def test_concurrent_cabinet_office_uses_the_genuinely_higher_title():
-    assert office_rank_band("礼部尚书,东阁大学士") == 2
-    assert office_rank_band("兵部侍郎,文华殿大学士") == 3
-    # Decoration is not concurrency: the hall name cannot promote a 大学士 to band 1.
-    assert office_rank_band("文华殿大学士") == 5
 
 
-def test_qualified_titles_match_the_requested_axis_not_an_institutional_stem():
-    assert office_rank_band("锦衣卫百户") == 6
-    assert office_rank_band("翰林院检讨") == 8
-    assert office_rank_band("司礼监随堂太监") == 7
-    assert office_leverage_multiplier("翰林院编修") == 0.25
-    assert office_leverage_multiplier("司礼监随堂太监") == 0.25
 
 
 def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(game):
@@ -239,16 +191,8 @@ def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(gam
         assert payload["break_rank"]["is_break_rank"] is False
 
 
-def test_historical_military_commands_and_cabinet_fallback_use_nominal_bands():
-    assert office_rank_band("都指挥使") < office_rank_band("指挥使")
-    assert office_rank_band("不常见阁衔", "内阁") == 5
 
 
-def test_leverage_uses_min_modifiers_within_title_and_max_across_offices():
-    assert office_leverage_multiplier("候补总兵") == 0.25
-    assert office_leverage_multiplier("候用副总兵") == 0.25
-    assert office_leverage_multiplier("候补总兵,礼部侍郎") == 0.5
-    assert office_leverage_multiplier("陌生卫指挥") == 1.0
 
 
 def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):

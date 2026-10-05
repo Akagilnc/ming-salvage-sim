@@ -22,7 +22,7 @@ from ming_sim.content import GameContent
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.cli_backend import describe_effective_model
 from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
-from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
+from ming_sim.llm_contract import abort_llm_contract
 from ming_sim.llm_model import create_chat_model, extract_agent_text
 from ming_sim.llm_transport import (
     bind_transport_sdk_budget,
@@ -466,7 +466,6 @@ def run_agent_stream_text(
     streamed = "".join(pieces)
     if streamed.strip():
         text = streamed
-        fail_if_llm_error(text, "LLM 调用")
     elif final_output is not None:
         text = extract_agent_text(final_output)
         if not text.strip():

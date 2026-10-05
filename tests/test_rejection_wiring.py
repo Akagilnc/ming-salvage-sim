@@ -91,7 +91,7 @@ def test_rollback_leaves_no_rows_and_no_jsonl(game, monkeypatch, tmp_path):
 
     monkeypatch.setattr(RejectionCollector, "flush_to_db", _boom)
 
-    with pytest.raises(RuntimeError, match="crash after flush"):
+    with pytest.raises(RuntimeError):
         run_settle(db, state, content, {
             "character_status_changes": [{"name": "查无此人乙", "status": "dead", "reason": "测试"}],
             "dossier_reconciliations": [

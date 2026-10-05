@@ -1,0 +1,20 @@
+=== N10: auth body keywords ===
+tests/test_cli_backend.py:742:    "banner", ["Authentication required", "authentication timed out"],
+ming_sim/llm_config.py:343:    # 探针：MING_SIM_LLM_BACKEND=codex|claude 时走本地 CLI，无需 api key。
+ming_sim/cli_backend.py:1:"""本地 CLI LLM 后端：用已支持的本机 agent runner 调用 LLM，脱离 api key。
+ming_sim/cli_backend.py:3:探针目标：把游戏 LLM 后端从「api key 调远端」换成「本地自治 CLI agent」。
+ming_sim/cli_backend.py:14:- agy：Agy 1.2.0 用 `--print=<prompt>`；auth race 靠 transport 可重试 typed（见 `_AGY_AUTH_MARKERS`），不另起 keychain 预热硬时限。
+ming_sim/cli_backend.py:360:_AGY_AUTH_MARKERS = ("Authentication required", "authentication timed out")
+ming_sim/cli_backend.py:845:        if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
+ming_sim/llm_model.py:22:from ming_sim.llm_contract import fail_if_llm_error
+ming_sim/llm_model.py:303:    # fail_if_llm_error 标记集只覆盖 API 认证错，不再是唯一护栏。
+ming_sim/llm_model.py:330:    fail_if_llm_error(text, "LLM 调用")
+ming_sim/llm_model.py:360:            fail_if_llm_error(str(raw), "LLM 连通性检查")
+ming_sim/agents.py:25:from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
+ming_sim/agents.py:469:        fail_if_llm_error(text, "LLM 调用")
+ming_sim/session.py:1284:        from ming_sim.llm_model import extract_agent_text, fail_if_llm_error
+ming_sim/session.py:1325:                fail_if_llm_error(answer, "LLM 调用")
+ming_sim/llm_contract.py:21:def fail_if_llm_error(text: str, stage: str) -> None:
+ming_sim/llm_contract.py:24:        "incorrect api key",
+ming_sim/llm_contract.py:28:        "authentication",
+ming_sim/llm_contract.py:29:        "api key",

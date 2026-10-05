@@ -28,7 +28,6 @@ class FieldSpec:
     int_lo: int = 0  # symmetric lower bound; >0 marks positive integer
     int_hi: int = 10**9
     quantity_unit: Optional[str] = None
-    season_option: bool = False
     # Optional per-enum execution metadata lives on the canonical field row.
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
     # Field is populated only when another canonical field has one of these values.
@@ -127,60 +126,6 @@ def cluster_by_kind(kind: str) -> Optional[ActionCluster]:
         if c.kind == kind:
             return c
     return None
-
-
-def season_option_fields(kind: str) -> Tuple[str, ...]:
-    """Typed season-option keys projected from the canonical action row."""
-    cluster = cluster_by_kind(kind)
-    if cluster is None:
-        return ()
-    return ("action_type", *(f.name for f in cluster.fields if f.season_option))
-
-
-def _season_specs(kind: str) -> Tuple[FieldSpec, ...]:
-    cluster = cluster_by_kind(kind)
-    return tuple(f for f in cluster.fields if f.season_option) if cluster else ()
-
-
-def validate_season_option(option: Mapping[str, object]) -> str:
-    """Validate a typed season option and return its canonical action type."""
-    from ming_sim.strict_types import strict_int
-
-    has_action_type = "action_type" in option
-    action_type = str(option.get("action_type") or "").strip()
-    _ensure_catalog()
-    has_typed_fields = any(
-        spec.season_option and spec.name in option
-        for cluster in ACTION_CLUSTERS
-        for spec in cluster.fields
-    )
-    if has_action_type and not action_type:
-        raise ValueError("choice.action_type 不可空")
-    if not has_action_type and has_typed_fields:
-        raise ValueError("choice.action_type 不可空")
-    if action_type and not _season_specs(action_type):
-        raise ValueError(f"choice.action_type 非法：{action_type!r}")
-    for spec in _season_specs(action_type):
-        if spec.name not in option:
-            raise ValueError(f"choice.{spec.name} 不可空")
-        if spec.as_int and spec.default is None and option[spec.name] is None:
-            raise ValueError(f"choice.{spec.name} 不可空")
-        if not field_population_allowed(action_type, spec.name, option):
-            raise ValueError(f"choice.{spec.name} 不适用于当前选项")
-        value = option[spec.name]
-        if spec.allowed is None and not spec.as_int and (
-            not isinstance(value, str) or not value.strip()
-        ):
-            raise ValueError(f"choice.{spec.name} 不可空")
-        allowed = effective_field_allowed(spec, option)
-        if allowed is not None and value not in allowed:
-            raise ValueError(f"choice.{spec.name} 非法：{value!r}")
-        if spec.as_int:
-            number = strict_int(value, accept_numeric_strings=False)
-            if number < spec.int_lo or number > spec.int_hi:
-                raise ValueError(f"choice.{spec.name} 超出范围：{number!r}")
-    return action_type
-
 
 
 def cluster_fields_prompt(kind: str) -> str:

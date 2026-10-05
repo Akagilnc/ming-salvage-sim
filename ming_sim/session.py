@@ -79,13 +79,7 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
 
     if not _os.path.isdir(saves_dir):
         return
-    legacy_auto = _re.compile(rf"^{_re.escape(AUTO_SAVE_PREFIX)}\d{{4}}_\d{{2}}_t\d{{4}}_.+\.db$")
-    for f in _os.listdir(saves_dir):
-        if legacy_auto.match(f):
-            try:
-                _os.remove(_os.path.join(saves_dir, f))
-            except OSError:
-                pass
+    # #1847 N16：只按当前 campaign 保留策略清理；不跨归属扫除旧命名存档。
     campaign_id = (campaign_id or "").strip()
     if not campaign_id:
         return
@@ -1281,7 +1275,7 @@ class GameSession:
 
         """场景 agent 的 transport 流式核——零动作工具；材料只读工具不进 court_action。"""
 
-        from ming_sim.llm_model import extract_agent_text, fail_if_llm_error
+        from ming_sim.llm_model import extract_agent_text
         from ming_sim.llm_transport import (
             bind_transport_sdk_budget,
             empty_output_failure,
@@ -1321,8 +1315,6 @@ class GameSession:
                 extracted = extract_agent_text(run_output)
                 if not answer:
                     answer = extracted
-            else:
-                fail_if_llm_error(answer, "LLM 调用")
             if not answer:
                 raise transport_failure_unavailable(
                     empty_output_failure(), attempts=1, exhausted=False,

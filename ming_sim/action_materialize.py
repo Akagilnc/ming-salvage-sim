@@ -1641,35 +1641,32 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             fields=(
                 FieldSpec(
                     "grant_action", "恩赏拨帑",
-                    GRANT_ACTIONS, "无", season_option=True,
+                    GRANT_ACTIONS, "无",
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 # 政务拨款对象：赈灾地区 / 项目 / 协饷军队 / 恩赏人物
                 FieldSpec(
                     "target_id", "目标", None, "", max_len=80,
-                    season_option=True,
                 ),
                 FieldSpec(
                     "target_kind", "目标类型", TARGET_KINDS, "",
-                    season_option=True,
                     allowed_when=("grant_action", "协饷", XIEXIANG_TARGET_KINDS),
                 ),
                 FieldSpec(
                     "amount", "金额", None, None, as_int=True, int_lo=1,
-                    quantity_unit="万两", season_option=True,
+                    quantity_unit="万两",
                 ),
                 FieldSpec(
                     "account", "账户",
-                    frozenset({"国库", "内库", "太仓"}), "", season_option=True,
+                    frozenset({"国库", "内库", "太仓"}), "",
                 ),
                 FieldSpec(
                     "purpose", "用途", frozenset({"补饷"}), "",
-                    season_option=True,
                     populated_when=("grant_action", frozenset({"协饷"})),
                 ),
                 FieldSpec(
                     "cadence", "拨付节奏",
-                    frozenset({"一次性", "每月"}), "", season_option=True,
+                    frozenset({"一次性", "每月"}), "",
                 ),
                 FieldSpec(
                     "mode", "颁布方式",

@@ -32,7 +32,6 @@ from ming_sim.distance import DistanceMatrix
 from ming_sim.paths import bundled_path
 from ming_sim.db import (
     GameDB,
-    POPULATION_UNIT_PERSONS,
     _LEVERAGE_FACTIONS,
     _approx_wanliang,
     compute_loyalty_soft_adjust,
@@ -3117,33 +3116,11 @@ def _spawn_legacy_from_effect(
 def _content_population_effect_for_save(
     db: GameDB, effect: Dict[str, object]
 ) -> Dict[str, object]:
-    """#648（ADR 0088/F4）：content 静态人口量已全线「人」，落本档前按存档口径换算。
+    """#648：content 静态人口量已全线「人」；#1847 退役万人换算，原样落档。
 
-    新档（人）原样；无标旧档（万人）region_delta.population ÷10⁴（迁移后 content
-    人口值均为 10⁴ 整倍数，整除无损）。只换算 region_delta.*.population，其余段浅拷贝透传。
     只用于 content 事件真源（effect_on_trigger / event_to_issue 持久化）；LLM 产 delta
     已按本档口径写，不得经此换算。"""
-    region_delta = effect.get("region_delta")
-    if not isinstance(region_delta, dict) or not region_delta:
-        return effect
-    if db.population_unit == POPULATION_UNIT_PERSONS:
-        return effect
-    scaled: Dict[str, object] = {**effect}
-    scaled_region_delta: Dict[str, object] = {}
-    for rid, fields in region_delta.items():
-        if isinstance(fields, dict) and "population" in fields:
-            scaled_fields = {**fields}
-            try:
-                scaled_fields["population"] = db.scale_content_population_to_save_unit(
-                    fields["population"]
-                )
-            except (TypeError, ValueError):
-                pass  # 非整人口值交由下游 apply_region_deltas 既有拒收留痕，不在此静默改写
-            scaled_region_delta[rid] = scaled_fields
-        else:
-            scaled_region_delta[rid] = fields
-    scaled["region_delta"] = scaled_region_delta
-    return scaled
+    return effect
 
 
 def _apply_issue_entities(
@@ -6685,9 +6662,6 @@ def _apply_surcharge_decrees(
                 f"surcharge_decrees {region_id!r} 无 settle 财政基座，逐省累积账无处落",
             )
             continue
-        if db.population_unit != POPULATION_UNIT_PERSONS:
-            _reject("missing_ref", "surcharge_decrees 仅适用于 population_unit='人' 的人口池档")
-            continue
         if surcharge_population_pool_members(db, region_id) != {"农民", "流民"}:
             _reject("missing_ref", f"surcharge_decrees {region_id!r} 缺农民/流民省级人口池")
             continue
@@ -6768,15 +6742,6 @@ def _apply_bandit_absorptions(
     rejected: List[Dict[str, object]] = []
     power_changes: List[Dict[str, object]] = []
     items = absorptions if isinstance(absorptions, list) else []
-    # 仅 substrate 人口径新档开环；legacy 不误开（对齐 #649/#650）。
-    if db.population_unit != POPULATION_UNIT_PERSONS:
-        for item in items:
-            rejected.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": "bandit_absorptions 仅适用于 population_unit='人' 的人口池档",
-                "item": item if isinstance(item, dict) else {"raw_value": item},
-            })
-        return applied, rejected, power_changes
 
     for item in items:
         if not isinstance(item, dict):

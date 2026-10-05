@@ -1,0 +1,166 @@
+=== N13: OperationalError catch / empty set secret ===
+722:        except Exception as exc:
+746:    except Exception:
+764:    except Exception:
+965:        except Exception:
+968:            except Exception:
+4852:            except Exception as exc:
+6525:            return []
+6529:            return []
+7452:            except sqlite3.IntegrityError as exc:
+7868:            return []
+7870:            return []
+8013:            return {}
+8266:            return []
+8269:            return []
+8383:            return []
+8391:            return []
+8487:            return set()
+8500:        schema drift must not be swallowed via OperationalError→0.
+8539:            return [], False
+8547:            return [], False
+8556:            return []
+8586:            return [], False
+8592:            return [], False
+8942:            return []
+9429:        except Exception as exc:
+9483:            return []
+9808:        except sqlite3.OperationalError:
+9877:        except sqlite3.OperationalError:
+9878:            return []
+9880:            return []
+9884:            return []
+9886:            return []
+9924:        except sqlite3.OperationalError:
+10599:            return []
+10606:                return []
+10767:            return []
+10889:            return []
+10976:            return []
+11269:            return []
+11395:            return set()
+11399:            return set()
+11401:            return set()
+11665:            return []
+11667:            return []
+15703:            return []
+16255:                except Exception as exc:
+16359:                except Exception as exc:
+16379:        except Exception as exc:
+16803:            return set()
+16807:            return set()
+16816:                return set()
+16827:                    return set()
+16833:                        return set()
+16839:                return set()
+16888:                return set()
+16893:                return set()
+16899:        return set()
+16917:            return []
+17089:            except Exception as exc:
+17247:            return []
+17481:                    except Exception as exc:
+17491:        except Exception as exc:
+17975:            return {}
+17978:            return {}
+18522:            except Exception as exc:
+18838:            return []
+19105:                return []
+19125:                    return []
+19137:                    return []
+19138:            return []
+19146:                return []
+19147:        return []
+19290:        except sqlite3.OperationalError:
+19325:            except sqlite3.OperationalError:
+19363:            return []
+19370:        except sqlite3.OperationalError:
+19462:        except sqlite3.OperationalError:
+20691:        except Exception:
+20697:                except Exception:
+20726:        except Exception:
+20730:                except Exception:
+20853:        except Exception:
+20857:                except Exception:
+20905:        except Exception:
+20911:                except Exception:
+212:def _secret_order_exclusion_targets(
+222:def _snapshot_secret_order_people(
+281:def canonical_secret_order_exclusions(
+292:    people = _snapshot_secret_order_people(content, explicit_people, [])
+870:def _secret_order_kept_body(text: object) -> str:
+875:def _secret_order_record_body(record: Mapping[str, object]) -> str:
+883:def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
+900:            _secret_order_record_body(item)
+905:def _secret_order_period_recorded(
+915:def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str:
+930:            f"{marker}{_secret_order_record_body(record)}"
+1412:                kind TEXT NOT NULL,                       -- secret_order | office | directive
+1563:            CREATE TABLE IF NOT EXISTS secret_orders (
+1586:            CREATE INDEX IF NOT EXISTS idx_secret_orders_minister
+1587:                ON secret_orders(minister_name, status);
+1588:            CREATE INDEX IF NOT EXISTS idx_secret_orders_turn
+1589:                ON secret_orders(turn_issued, status);
+1590:            CREATE INDEX IF NOT EXISTS idx_secret_orders_status
+1591:                ON secret_orders(status);
+1605:                secret_order_id INTEGER,
+1634:                FOREIGN KEY(secret_order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
+1644:            CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_secret_order
+1645:                ON decree_dossiers(secret_order_id) WHERE secret_order_id IS NOT NULL;
+1737:            -- secret_orders.dossier_progress_json (#566/#883); no shared table+flag.
+2166:            CREATE TABLE IF NOT EXISTS secret_order_briefs (
+2176:                FOREIGN KEY(order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
+2904:        directive 仍 (directive_id, region_id)；secret_order 不动。"""
+5981:                    # 同 secret_order order_id 非整数先例）。float/bool 显式拒：
+7831:        ``release_held_audience_knowledge``（分类后 / 月末）。续聊读
+7977:        "secret_orders": "id",
+8027:        if table == "secret_orders":
+8031:                    "SELECT order_id, origin_chat_message_ids FROM secret_order_briefs"
+8836:    def _restore_secret_order_brief_projection_in_tx(
+8841:            "FROM secret_orders WHERE id=?", (int(order_id),),
+8848:            INSERT INTO secret_order_briefs
+8880:                    "secret_orders": 2,
+8883:                "secret_orders": 0,
+8927:                if table == "secret_orders":
+8931:                            "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+8938:                    self._restore_secret_order_brief_projection_in_tx(int(target_id), pins)
+9874:                "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+9889:    def _classify_secret_order_audience(
+9910:        self.upsert_secret_order_brief(
+10379:        if out.get("secret_order_id") is not None:
+10380:            out["secret_order_id"] = int(out["secret_order_id"])
+10471:            "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
+10493:            "UPDATE secret_orders SET dossier_progress_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+10561:        Secret-order dossiers stay on secret_orders.dossier_progress_json (#566).
+10575:        secret_order_id = dossier.get("secret_order_id")
+10576:        if secret_order_id:
+10578:                int(dossier_id), int(secret_order_id), int(turn), band, text,
+10600:        if dossier.get("secret_order_id"):
+10602:                "SELECT dossier_progress_json FROM secret_orders WHERE id=?",
+10603:                (int(dossier["secret_order_id"]),),
+10693:            JOIN secret_orders s ON s.id=d.secret_order_id
+10709:                "secret_order_id": int(row["secret_order_id"]),
+12146:        secret_order_id: Optional[int] = None,
+12153:        _issued_secret_order: bool = False,
+12172:            secret_order_id=secret_order_id,
+12179:            _issued_secret_order=_issued_secret_order,
+12196:        secret_order_id: Optional[int] = None,
+12203:        _issued_secret_order: bool = False,
+12227:        if secret_order_id is not None:
+12230:                "SELECT id FROM decree_dossiers WHERE secret_order_id=? "
+12232:                (int(secret_order_id),),
+12370:        if secret_order_id is None and int(directive_id or 0) > 0:
+12379:        elif secret_order_id is None and int(pending_action_id or 0) > 0:
+12412:                secret_order_id=secret_order_id,
+12419:                _issued_secret_order=_issued_secret_order,
+12516:        secret_order_id: Optional[int] = None,
+12523:        _issued_secret_order: bool = False,
+12610:            _issued_secret_order and action == "secret_order" and status == "promulgated"
+12625:        if secret_order_id is not None:
+12626:            lookup_sql, lookup_params = "secret_order_id = ?", (int(secret_order_id),)
+12735:        if action != "secret_order":
+12755:                 directive_id,secret_order_id,region_id,decree_text,payload_json,status,due_turn,
+12765:                None if secret_order_id is None else int(secret_order_id),
+12802:        if roster and action != "secret_order":
+12971:            if str(row["action_type"] or "") != "secret_order":
+12998:            if state is not None and str(row["action_type"] or "") != "secret_order":

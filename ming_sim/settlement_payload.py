@@ -6,7 +6,6 @@ import json
 import re
 from typing import TYPE_CHECKING, Dict, List
 
-from ming_sim.action_clusters import season_option_fields, validate_season_option
 from ming_sim.models import effect_dict_has_work
 
 if TYPE_CHECKING:
@@ -74,21 +73,11 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             label = str(o.get("label") or "")
             if not label:
                 continue
-            try:
-                action_type = validate_season_option(o)
-            except ValueError:
-                options = []
-                break
-            option: Dict[str, object] = {
+            # #1847 N11：请旨选项只保留 label/hint；旧 season-option 执行载荷退役。
+            options.append({
                 "label": label,
                 "hint": str(o.get("hint") or ""),
-            }
-            # Deterministic financial options carry their executable payload;
-            # label/hint remain presentation only.
-            for key in season_option_fields(action_type):
-                if key in o:
-                    option[key] = action_type if key == "action_type" else o[key]
-            options.append(option)
+            })
         try:
             bind_decision_options(options)
         except ValueError:

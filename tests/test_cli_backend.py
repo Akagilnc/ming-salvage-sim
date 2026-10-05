@@ -738,18 +738,11 @@ def test_run_agy_success_single_subprocess(monkeypatch):
     assert state["agy"] == 1
 
 
-@pytest.mark.parametrize(
-    "banner", ["Authentication required", "authentication timed out"],
-)
-def test_run_agy_auth_race_is_retryable_typed_without_private_loop(monkeypatch, banner):
-    """#1465 切片③：agy auth race 抛可重试 typed，**一次子进程**——
-    重试次数归 llm_transport，runner 内不得再自转 4 次。"""
-    from ming_sim.exceptions import LLMUnavailable
-
-    state = _agy_popen(monkeypatch, [(banner, 0)])
-    with pytest.raises(LLMUnavailable) as ei:
-        cb._run_agy("p")
-    assert ei.value.code == "llm_connection_error"
+def test_run_agy_success_body_with_auth_words_is_not_rejected(monkeypatch):
+    """#1847 N10：退出码 0 的成功正文即使含 authentication 字样也原样返回。"""
+    state = _agy_popen(monkeypatch, [("authentication succeeded with api key", 0)])
+    out, attempts = cb._run_agy("PROMPT")
+    assert out == "authentication succeeded with api key" and attempts == 1
     assert state["agy"] == 1
 
 
