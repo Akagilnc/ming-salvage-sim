@@ -607,8 +607,7 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
     def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
         assert chat_turn_id > 0  # 挂夜轮以 generating 起笔，回话须带 chat_turn_id
         return SimpleNamespace(
-            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
-            registered_minister="", displaced_minister="", court_action="",
+            answer="臣有本奏。", proposed_directive=None, court_action="",
             next_minister="", secret_order_id=0, pending_action_id=0,
             pending_action_failures=[],
         )

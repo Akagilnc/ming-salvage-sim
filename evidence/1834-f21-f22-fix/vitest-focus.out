@@ -3,7 +3,11 @@
 
 Not implemented: navigation to another Document
 
- Test Files  5 passed (5)
-      Tests  158 passed (158)
-   Start at  11:30:55
-   Duration  3.99s (transform 911ms, setup 0ms, import 1.36s, tests 3.37s, environment 3.05s)
+ Test Files  6 passed (6)
+      Tests  164 passed (164)
+   Start at  11:38:16
+   Duration  4.59s (transform 747ms, setup 0ms, import 1.60s, tests 3.43s, environment 6.89s)
+
+real 4.72
+user 7.69
+sys 1.24

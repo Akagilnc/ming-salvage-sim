@@ -485,12 +485,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         _print_pending_action_failures(getattr(result, "pending_action_failures", []) or [])
         if result.proposed_directive is not None:
             _confirm_pending_directive(session, result.proposed_directive, character.name)
-        if result.appointed_minister:
-            print(f"【吏部铨选】{result.appointed_minister}已补入朝堂名册，本回合起可召见。\n")
-        if result.registered_minister:
-            print(f"【人物补档】{result.registered_minister}已补入人物档，本回合起可召见。\n")
-        if result.displaced_minister:
-            print(f"【腾缺去职】{result.displaced_minister}原任官缺由新任接掌，已罢黜出朝堂名册。\n")
         if result.court_action == "dismiss":
             # 告退账已由 session.chat（court_action=dismiss 单缝）落地，此处不重复写。
             return "dismiss"

@@ -121,17 +121,6 @@ export const formatIssueEffect = formatEffectSummary;
 
 export const formatClosedEffect = formatEffectSummary;
 
-export const splitReportItems = (text: string, prefix: string) => {
-  const cleaned = text.replace(prefix, "").trim();
-  const totalMatch = cleaned.match(/(两京十三省账面[月]税合计[^。]+|建档兵力合计[^。]+)。?$/);
-  const itemsPart = totalMatch ? cleaned.slice(0, totalMatch.index).replace(/。$/, "") : cleaned.replace(/。$/, "");
-  return {
-    items: itemsPart.split("；").map((item) => item.replace(/^。+|。+$/g, "").trim()).filter(Boolean),
-    tail: totalMatch?.[1] || "",
-  };
-};
-
-
 // 玩家面板会收到英文 id（region_id/army_id/power_id）或编号；统一映射为中文名。
 export const labelMaps = {
   region: new Map<string, string>(),

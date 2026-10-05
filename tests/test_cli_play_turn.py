@@ -177,9 +177,6 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(monkeypatc
             return SimpleNamespace(
                 answer="臣领密旨，当令东厂暗中护送赈银。",
                 proposed_directive=None,
-                appointed_minister="",
-                registered_minister="",
-                displaced_minister="",
                 court_action="",
                 next_minister="",
             )
@@ -354,9 +351,6 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
             return SimpleNamespace(
                 answer="臣领密旨，当令东厂暗中护送赈银。",
                 proposed_directive=None,
-                appointed_minister="",
-                registered_minister="",
-                displaced_minister="",
                 court_action="",
                 next_minister="",
             )

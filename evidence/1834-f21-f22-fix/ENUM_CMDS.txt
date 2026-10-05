@@ -1,49 +1,176 @@
-F21/F22 enum commands (rg only; no auto-classifier; no permanent check_output harness)
-DATE=2026-10-05T02:30:12Z
-HEAD=4bc6994ca1bc7a2864624b078661ed1ff07a0345
+F21/F22 enum commands (actual shell; one-shot; no permanent classifier)
+DATE=2026-10-05T02:36:08Z
+HEAD_PRE_COMMIT=5b645e867006107bd0e479a87cd70fa77c50ce7f
 
-=== F21 CMD1 rewrite shapes (incl root launchers + frontend replace/slice/split/join) ===
+NOTE: HIT_COUNT 2154/91 reproduced by F21 CMD1_PRIOR / CMD3_PRIOR below.
+F21 CMD1_SCRIPTS expands same predicate with scripts/**/*.py (2230).
+F21 CMD2_ALL_ASSIGN is the non-name-evasion assign set used for semantic grouping.
+
+========== F21 CMD1_PRIOR (reproduce HIT_COUNT 2154) ==========
+CMD: rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'main.py' --glob 'launcher.py' --glob 'spike_settle_tick.py' --glob 'web/src/**/*.{ts,tsx}' --glob '!web/src/**/*.{test,spec}.{ts,tsx}' '\.strip\(|\.lstrip\(|\.rstrip\(|\.trim\(|\.trimStart\(|\.trimEnd\(|\.replace\(|re\.sub\(|\[:\s*\d+\s*\]|\.split\(|\.join\(|\.substring\(|\.slice\('
 HIT_COUNT 2154
 
-=== F21 CMD2 strip/trim with args ===
-ming_sim/db.py:2812:            cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
-ming_sim/db.py:5858:                state, name, f"人物终态：{status}；{reason}".rstrip("；"),
+========== F21 CMD1_SCRIPTS (full production+scripts; required) ==========
+CMD: rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'main.py' --glob 'launcher.py' --glob 'spike_settle_tick.py' --glob 'scripts/**/*.py' --glob 'web/src/**/*.{ts,tsx}' --glob '!web/src/**/*.{test,spec}.{ts,tsx}' '\.strip\(|\.lstrip\(|\.rstrip\(|\.trim\(|\.trimStart\(|\.trimEnd\(|\.replace\(|re\.sub\(|\[:\s*\d+\s*\]|\.split\(|\.join\(|\.substring\(|\.slice\('
+HIT_COUNT 2230
+SCRIPTS_DELTA_COUNT 76
+
+========== F21 CMD2_ALL_ASSIGN (no free-name evasion; semantic input) ==========
+CMD: rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'main.py' --glob 'launcher.py' --glob 'spike_settle_tick.py' --glob 'scripts/**/*.py' --glob 'web/src/**/*.{ts,tsx}' --glob '!web/src/**/*.{test,spec}.{ts,tsx}' '(=\s*.*\.(strip|lstrip|rstrip|trim|trimStart|trimEnd)\(|out\.append\([^)]*\.strip|return\s+.*\.(strip|trim)|\.map\(\s*\w+\s*=>\s*\w+\.trim|\.map\(\s*\([^)]*\)\s*=>\s*[^)]*\.trim)'
+HIT_COUNT 1155
+
+========== F21 CMD3_PRIOR (reproduce HIT_COUNT 91; name-filter ONLY as cross-check, not sole set) ==========
+CMD: rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'main.py' --glob 'launcher.py' --glob 'web/src/**/*.{ts,tsx}' --glob '!web/src/**/*.{test,spec}.{ts,tsx}' '(station|highlight|phrase|criterion|origin|reason|spoken|decree_text|content|answer|body|prose|label|hint|title|summary|context|description|message|text)\s*=\s*.*\.(strip|trim|lstrip|rstrip)\('
+HIT_COUNT 91
+
+========== F21 CMD3_SCRIPTS (same name-filter + scripts) ==========
+CMD: rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'main.py' --glob 'launcher.py' --glob 'spike_settle_tick.py' --glob 'scripts/**/*.py' --glob 'web/src/**/*.{ts,tsx}' --glob '!web/src/**/*.{test,spec}.{ts,tsx}' '(station|highlight|phrase|criterion|origin|reason|spoken|decree_text|content|answer|body|prose|label|hint|title|summary|context|description|message|text)\s*=\s*.*\.(strip|trim|lstrip|rstrip)\('
+HIT_COUNT 93
+
+--- FULL CMD3_SCRIPTS MEMBERS (all 93; also in MEMBER_TABLE) ---
+scripts/play_as_emperor.py:217:    text = raw.strip()
+scripts/play_as_emperor.py:226:    input_text = str(obj.get("input", "")).strip()
+web_app.py:3116:            text = str(cur).strip()
+ming_sim/value_matrix.py:51:    text = str(raw or "").strip()
+ming_sim/action_materialize.py:1035:        text = value.strip()
+ming_sim/action_materialize.py:1396:        origin = str(row["origin_ref"] or "").strip()
+ming_sim/action_materialize.py:1519:    matter_title = title_raw if title_raw.strip() else tid_raw
+ming_sim/action_materialize.py:1742:    matter_title = title_raw if title_raw.strip() else tid_raw
+ming_sim/action_clusters.py:299:    label = str(obj.get("动作类型") or "").strip()
+ming_sim/staged_commitment.py:41:        text = raw.strip()
+ming_sim/staged_commitment.py:99:        text = stages.strip()
+ming_sim/staged_commitment.py:250:            criterion = title if title.strip() else "依限奏报"
+ming_sim/office_rank.py:31:    text = str(office or "").strip()
+ming_sim/office_rank.py:34:    text = re.sub(r"^(?:前|原任|原)", "", text).strip()
+ming_sim/office_rank.py:69:    text = str(title or "").strip()
+ming_sim/office_rank.py:108:    raw_title = str(office or "").strip()
+ming_sim/office_rank.py:187:        current_title = str(row["office"] or "").strip()
+ming_sim/pay_order.py:310:    origin = str(origin_ref or "").strip()
+ming_sim/execution_pressure.py:52:    text = str(raw).strip()
+ming_sim/credit_events.py:65:    text = str(origin or "").strip()
+ming_sim/credit_events.py:98:        text = str(part or "").strip()
+ming_sim/rescript_actions.py:472:            label = str(req.get("label") or "").strip()
+ming_sim/rescript_actions.py:704:    decree_text = note_raw if note_raw.strip() else label_raw
+ming_sim/rescript_actions.py:1183:        decree_text=body if body.strip() else title,
+ming_sim/entities/affair/store.py:450:            origin = str(row["origin_ref"] or "").strip()
+ming_sim/entities/affair/store.py:542:    text = str(origin_ref or "").strip()
+ming_sim/entities/textual_fact/store.py:80:        origin = sanitize_sqlite_text(str(origin_ref or "").strip())
+ming_sim/matching.py:102:    text = str(raw).strip()
+ming_sim/matching.py:202:    text = str(raw).strip()
+ming_sim/rescript_draft.py:528:            text = str(val).strip()
+ming_sim/rescript_draft.py:1153:        text = match.group(1).strip()
+ming_sim/rescript_draft.py:1155:        text = raw.strip()
+ming_sim/covert_levy.py:52:    origin = str(origin_ref or "").strip()
+ming_sim/db.py:7383:            reason = raw_reason if raw_reason.strip() else str(getattr(event, "title", "") or "")
+ming_sim/db.py:7984:            reason = raw_reason if raw_reason.strip() else str(getattr(event, "title", "") or "")
+ming_sim/db.py:8810:            reason = raw_reason if raw_reason.strip() else str(getattr(event, "title", "") or "")
+ming_sim/db.py:16356:        office_title = str(payload.get("office") or "").strip()
+ming_sim/db.py:16569:            origin = str(issue_row["origin_ref"] or "").strip()
+ming_sim/db.py:16680:            title = str(payload.get("target_id") or "").strip()
+ming_sim/db.py:18527:            decree_text=decree_text if decree_text.strip() else None,
+ming_sim/db.py:19963:            text = payload_json.strip()
+ming_sim/db.py:19995:        text = str(raw).strip()
+ming_sim/db.py:20627:        text = str(value).strip().lower()
+ming_sim/db.py:21696:        origin = str(origin_minister_name or "").strip()
+ming_sim/appointment_tenure.py:46:    text = str(value or "").strip()
+ming_sim/breach_plea.py:81:    text = str(origin_ref or "").strip()
+ming_sim/breach_plea.py:95:    text = str(origin_context or "").strip()
+ming_sim/breach_plea.py:150:        origin = str(row["origin_ref"] or "").strip()
+ming_sim/settlement_payload.py:37:        label = str(option.get("label") or "").strip()
+ming_sim/settlement_payload.py:192:        title = str(item.get("title") or "").strip()
+ming_sim/settlement_payload.py:213:        title = str(out.get("title") or "").strip()
+ming_sim/supervision.py:185:    text = str(raw or "").strip()
+ming_sim/highlight_judge.py:26:    text = str(raw or "").strip()
+ming_sim/materials.py:96:    text = str(name or "").strip() or "未名"
+ming_sim/materials.py:326:        text = str(value or "").strip()
+ming_sim/materials.py:506:            opening_text = raw_latest if raw_latest.strip() else "见目录。"
+ming_sim/materials.py:591:        text = f"{body}（尚未入档）" if body.strip() else "尚未入档"
+ming_sim/materials.py:2289:        status_text = str(status or "").strip()
+ming_sim/audience_night.py:854:    origin = str(origin_ref or "").strip()
+ming_sim/audience_night.py:1391:    origin = str(origin_id or "").strip()
+ming_sim/audience_night.py:1592:    origin = str(origin_id or "").strip()
+ming_sim/audience_night.py:1994:    text = str(message or "").strip()
+ming_sim/audience_night.py:2019:    text = str(message or "").strip()
+ming_sim/audience_night.py:2318:    origin = str(origin or "").strip()
+ming_sim/audience_night.py:2358:    origin = str(origin_ref or "").strip()
+ming_sim/covert_progress.py:133:    text = str(raw or "").strip()
+ming_sim/covert_progress.py:159:        text = str(seed_guilt or "").strip()
+ming_sim/covert_progress.py:312:    text = str(raw or "").strip()
+ming_sim/covert_progress.py:428:        purpose_text = str(purpose or "").strip()
+ming_sim/covert_progress.py:435:                kind_text = str(target_kind or "").strip()
+ming_sim/covert_progress.py:436:                id_text = str(target_id or "").strip()
+ming_sim/covert_progress.py:441:    category_text = str(category or "").strip()
+ming_sim/covert_progress.py:444:    account_text = str(account or "").strip()
+ming_sim/covert_progress.py:449:    region_text = str(region or "").strip()
+ming_sim/covert_progress.py:452:    field_text = str(field or "").strip()
+ming_sim/covert_progress.py:458:    target_text = str(region_target or "").strip()
+ming_sim/covert_progress.py:461:    action_text = str(person_action or "").strip()
+ming_sim/covert_progress.py:800:    text = str(raw or "").strip()
+ming_sim/assets.py:27:            text = file.read().strip()
+ming_sim/due_review.py:49:    text = str(entry_kind or ENTRY_KIND_STAGED).strip()
+ming_sim/due_review.py:77:    text = str(origin_ref or "").strip()
+ming_sim/centrifuge_ledger.py:99:    text = str(value).strip()
+ming_sim/issues.py:232:    text = str(origin_ref or "").strip()
+ming_sim/issues.py:387:        cond_text = cond.strip()
+ming_sim/issues.py:506:    text = str(resolve_condition or "").strip()
+ming_sim/issues.py:516:    text = str(resolve_condition or "").strip()
+ming_sim/issues.py:544:        cond_text = str(cond or "").strip()
+ming_sim/issues.py:2768:        value_text = str(value or "").strip()
+ming_sim/issues.py:2843:        title = str(item.get("new_title") or item.get("title") or "").strip()
+ming_sim/issues.py:5221:        reason = str(cl.get("reason") or "").strip().lower()
+ming_sim/issues.py:6158:        title = str(item.get("new_title") or item.get("title") or "").strip()
+ming_sim/issues.py:7992:            explicit_title = str(item.get("new_title") or item.get("title") or "").strip()
+ming_sim/flows.py:1591:        reason = str(item.get("reason") or "").strip()
+
+========== F21 CMD_STRIP_ARGS ==========
+CMD: rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'main.py' --glob 'launcher.py' --glob 'spike_settle_tick.py' --glob 'scripts/**/*.py' --glob 'web/src/**/*.{ts,tsx}' --glob '!web/src/**/*.{test,spec}.{ts,tsx}' '\.strip\([^)]+\)|\.lstrip\([^)]+\)|\.rstrip\([^)]+\)|\.trim\([^)]+\)'
+scripts/jisi_army_dispatch_probe.py:54:            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+scripts/play_as_emperor.py:177:        base_url=base_url if base_url.endswith("/v1") else base_url.rstrip("/") + "/v1",
+scripts/military_flow_probe.py:63:            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+scripts/secret_order_probe2.py:22:        os.environ[k.strip()] = v.strip().strip('"').strip("'")
 ming_sim/cli/terminal.py:579:            if len(parts) == 2 and parts[1].lstrip("#").isdigit():
 ming_sim/cli/terminal.py:580:                target_id = int(parts[1].lstrip("#"))
 ming_sim/rescript_draft.py:1643:        elif isinstance(issue_id, str) and issue_id.strip().lstrip("-").isdigit():
 ming_sim/llm_config.py:208:    base = base_url.rstrip("/")
+ming_sim/db.py:2812:            cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
+ming_sim/db.py:5858:                state, name, f"人物终态：{status}；{reason}".rstrip("；"),
 
-=== F21 CMD3 free-field-ish assign strip/trim ===
-HIT_COUNT 91
+========== F22 CMD_DEFS: ChatTurnResult fields + consumer matrix ==========
+CMD: python3 one-shot matrix over class ChatTurnResult fields; rg FIELD ming_sim web_app.py web/src tests
+FIELD answer court_action next_minister proposed_directive secret_order_id pending_action_id pending_action_failures pending_audience_translation  # live
+FIELD appointed_minister registered_minister displaced_minister  # DELETED this round (zero prod assign; exclusive dead UI/payload)
 
-=== F22 CMD1 named sample remnants (must be absent in prod) ===
-(no prod/test hits)
+POST_DELETE verify:
+tests/test_faction_leverage_9.py:238:def test_displaced_minister_faction_leverage_recomputed(game):
+tests/test_faction_leverage_9.py:238:def test_displaced_minister_faction_leverage_recomputed(game):
 
-=== F22 CMD2 complete_rescript_summon_scaffold_turn ===
-(no prod/test hits)
+========== F22 CMD_FORMAT_ZERO: web format exports with trim/replace and zero external refs ==========
+CMD: enumerate export const in web/src/format.ts; rg NAME web/src excluding def; require .trim|.replace|.slice|.split in body
+ZERO_TEXT_TOOL was: web/src/format.ts:splitReportItems  (DELETED this round)
+EN_VALUE_CN zero refs but lookup map only (no free-text rewrite) — remaining optional dead map, not deleted this round
 
-=== F22 CMD3 ChatResult / refresh_ministers ===
-(no prod/test hits)
+========== F22 CMD_SYMBOL_MATRIX (definitions/refs/calls; not compose-only) ==========
+CMD: for each symbol in expanded set, rg -n 'SYM' ming_sim web_app.py web/src tests scripts main.py launcher.py
+DELETED_ALREADY: _target_active_officeholder night_dossiers_ready directive_confirmation_ambiguous DirectiveConfirmationAmbiguous complete_rescript_summon_scaffold_turn ChatResult refresh_ministers
+DELETED_THIS_ROUND: appointed_minister registered_minister displaced_minister splitReportItems
+KEEP_LIVE (calls>0): secret_order_can_land secret_order_landing_gaps _canonical_minister_key _appointment_intent_is_current_office_noop prepare_rescript_summon_scaffold rescript_summon_origin_consumed night_archive_metadata night_scroll_container _legacy_effect_has_work _legacy_commitment_stop_gate _legacy_person_report_section _target_catalog_for_kind require_fresh_cli_trace _compose_inworld_fact_report list_in_flight_chat_turns
 
-=== F22 CMD4 shared keep consumer proof ===
+--- KEEP consumer proof samples ---
 --- secret_order_can_land ---
 ming_sim/cli_backend.py:1920:def secret_order_can_land(secret: Optional[Dict[str, Any]]) -> bool:
 ming_sim/declaration_dispatch.py:1241:            from ming_sim.cli_backend import secret_order_can_land
 ming_sim/declaration_dispatch.py:1242:            if not secret_order_can_land(dict(secret)):
---- secret_order_landing_gaps ---
-ming_sim/cli_backend.py:1904:def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
-ming_sim/cli_backend.py:1922:    return not secret_order_landing_gaps(secret)
+--- prepare_rescript_summon_scaffold ---
+ming_sim/audience_night.py:2339:def prepare_rescript_summon_scaffold(
+ming_sim/session.py:2151:            prepare_rescript_summon_scaffold,
+ming_sim/session.py:2170:            entry = prepare_rescript_summon_scaffold(
 --- _canonical_minister_key ---
 ming_sim/action_materialize.py:93:    from ming_sim.session import _canonical_minister_key
 ming_sim/action_materialize.py:97:    person_name = _canonical_minister_key(
 ming_sim/action_materialize.py:1129:    from ming_sim.session import _canonical_minister_key
 ming_sim/action_materialize.py:1136:    key = _canonical_minister_key(content, want_name, db) if want_name else ""
-ming_sim/action_materialize.py:1144:            _canonical_minister_key(content, staged_name, db) if staged_name else staged_name
---- _appointment_intent_is_current_office_noop ---
-ming_sim/session.py:371:def _appointment_intent_is_current_office_noop(
-ming_sim/declaration_dispatch.py:1576:                from ming_sim.session import _appointment_intent_is_current_office_noop
-ming_sim/declaration_dispatch.py:1577:                if _appointment_intent_is_current_office_noop(
---- prepare_rescript_summon_scaffold ---
-ming_sim/audience_night.py:2339:def prepare_rescript_summon_scaffold(
-ming_sim/session.py:2154:            prepare_rescript_summon_scaffold,
-ming_sim/session.py:2173:            entry = prepare_rescript_summon_scaffold(
+--- night_archive_metadata ---
+ming_sim/audience_night.py:467:def night_archive_metadata(
+ming_sim/audience_night.py:502:        "audience_type": night_archive_metadata(ledgers, turns)["audience_type"],
+ming_sim/db.py:10803:        from ming_sim.audience_night import _json_list, night_archive_metadata
+ming_sim/db.py:10836:            metadata = night_archive_metadata(

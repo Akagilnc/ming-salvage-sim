@@ -687,7 +687,6 @@ export type ChatResponse = {
   can_undo_last_chat?: boolean;
   court_action?: string;
   next_minister?: string;
-  registered_minister?: string;
   proposed_directive?: ProposedDirective | null;
   secret_order_id?: number;
   // #670：成功记召机面控制码（SUMMON_FRESH / SUMMON_IN_TRANSIT）；禁止写入 setError/danger note。

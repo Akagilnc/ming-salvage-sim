@@ -1,60 +1,47 @@
-# 1834 F21/F22 修内司回执（纠正轮）
+# 1834 F21/F22 修内司回执（自审修正轮）
 
-HEAD_BASE（上轮交卷）: `4bc6994ca1bc7a2864624b078661ed1ff07a0345`
+HEAD_BASE: `5b645e867006107bd0e479a87cd70fa77c50ce7f`
 BRANCH: `ak-roles/1834-f21-f22-ebcd2d1a1`
 
-## 本轮纠正范围（对复核三点）
+## 本轮纠正（对复核）
 
-1. **枚举收窄** → 撤回「四样本/前缀形即全类」；扩大 F21 谓词（根 launcher + 前端 replace/slice/substring/split/join + 带参 strip）；F22 按定义/类型/字段/参数/消费者全仓扫后**语义**判退役接缝。成员表见 `MEMBER_TABLE.md`（非 3800 行原始 grep）。
-2. **伪变异** → 撤销 `mutation_temp_real_entry.py/.json`（见 `MUTATION_FAKE_REVOKED.txt`）。本轮用 `git show ebcd2d1a1` 完整旧函数装入真实入口；含物化入口当前绿。脚本只在 `/tmp`，不留永久证明测试。
-3. **证据堆叠** → 删除本目录原始 broad/assign 清单与易炸的 `enum_cmds.sh`；保留可审成员表、命令计数、撤销说明、历史冻结记录不改写。
+1. **ENUM_CMDS 无实际命令** → 重写 `ENUM_CMDS.txt`：每节含完整 `CMD:` shell、可复现 HIT_COUNT；2154/91 由 CMD1_PRIOR / CMD3_PRIOR 重现；scripts 扩谓词 CMD1_SCRIPTS=2230、CMD3_SCRIPTS=93；CMD2_ALL_ASSIGN=1155 作非名滤语义主集。
+2. **appointed/registered/displaced 出类 KEEP** → 按用户/末判授权清除已作废结构：无生产赋值、仅透传/空 kwargs 的专属旧能力 **DELETE**（字段、`_chat_payload` 参数/透传、`types.ts`、`terminal` 专属打印、测试空 kwargs）。
+3. **splitReportItems 非生产 KEEP** → 零调用且加工自由正文 → **DELETE**（F22 退役专属工具）。
+4. **枚举仍缩窄** → F22 用 ChatTurn 全字段矩阵 + format 零调用文本工具 + 扩展符号集（非仅 compose）；F21 含 scripts，名滤不作唯一候选集。成员表列齐 CMD3_SCRIPTS 93 条。
 
 ## 根因（不变）
 
-- **F21**：自由字段（人读 `station`、高亮短语）在 map/物化/读取链被 `str.strip` 改写；官方 strip 返回删边副本。
-- **F22**：退役零消费者结构残留；上轮仅删判词点名四样本，漏 `#1838` 废除的 generating scaffold 终态写点与死 `ChatResult`/`refresh_ministers`。
+- **F21**：人读 `station` / 高亮短语在 map/物化/读取链曾被 strip 改写。
+- **F22**：退役零消费者专属结构残留（含无赋值透传字段与死工具）。
 
-## 生产改动
+## 生产改动（本轮增量）
 
-| 类 | 本轮增量 |
+| 类 | 增量 |
 |---|---|
-| F21 | 上轮三站点修复保持；扩大枚举后无新增自由字段裁字落库成员 |
-| F22 | DELETE `complete_rescript_summon_scaffold_turn`；DELETE `models.ChatResult`；DELETE `ChatTurnResult.refresh_ministers` |
+| F21 | 无新增 FIX；三站点保持；93 条名滤候选全归组 KEEP（机器键/判空/外壳等） |
+| F22 | DELETE `appointed_minister`/`registered_minister`/`displaced_minister` 全链；DELETE `splitReportItems` |
 
 ## 真实入口旧红新绿
 
-命令（七 BIN false 前缀 + `/tmp/1834-f21-f22-corr/real_entry_mutation.py`，取证后不入库脚本）：
-
-```
-current_mapper_preserved=true
-current_hl_preserved=true
-current_materialize_preserved=true
-current_materialize_station="  山海关  "
-old_mapper_preserved=false  old_mapper_station=山海关
-old_hl_preserved=false      old_hl_read=["辽饷"]
-old_materialize_preserved=false  old_materialize_station=山海关
-old_map_src_chars=14279  old_parse_src_chars=420  old_apply_src_chars=1846
-MUTATION_OK current_green_old_red real_old_funcs_from_ebcd2d1a1
-```
-
-完整 stdout：`mutation_real_entry.out`。
-限制：装入的是 ebcd2d1a1 函数体到当前进程入口，不冒称真实模型验收；临时脚本不进仓。
-
-## 保留项（摘要；全表见 MEMBER_TABLE.md）
-
-- 机器键 / 判空副本 / 选项身份键 / origin_ref / station_region
-- 现役 `secret_order_can_land`、`prepare_rescript_summon_scaffold`、召对结果契约字段（含无赋值但无退役权威的 appointed/registered/displaced——**不泛删**）
-- 冻结 evidence 与上轮错误证明历史（撤销导航，不篡改旧文件正文）
+复用上轮真实方法（`git show ebcd2d1a1` 完整旧函数装入 mapper / parse / apply；伪变异仍撤销见 `MUTATION_FAKE_REVOKED.txt`）。stdout 见 `mutation_real_entry.out`（本轮复跑确认仍绿）。
 
 ## 聚焦测试
 
 七前缀：`MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false`
 
-- Python：`214 passed, 1 warning in 9.49s` → `pytest-focus.out`
-- Web：`Test Files 5 passed；Tests 158 passed；Duration 3.99s` → `vitest-focus.out`
+- Python：`258 passed, 1 warning in 9.06s`（real 9.56s）→ `pytest-focus.out`
+- Web：`Test Files 6 passed；Tests 164 passed；Duration 4.59s`（real 4.72s）→ `vitest-focus.out`
+
+## 准确剩余 scope（不冒充全清）
+
+- `web/src/format.ts` `EN_VALUE_CN`：零引用查找表，非自由正文加工；本轮不泛删。
+- F21 CMD1_SCRIPTS 2230 / CMD2 1155 中非自由字段搬运的机器键/协议/展示切片：已语义 KEEP，若后续发现新同形自由字段写点再开。
+- 冻结 evidence 内旧符号叙述：不改写。
+- 本票其它未结类 / 接线票（#1861/#1840/#1843 等）：不在本回执范围。
 
 ## Advisor
 
 - 未改治理/Soul/配置；未 stash/amend/push/PR/kill。
 - 未新建分类层或永久证明测试。
-- 自查二连：同类型（退役接缝 vs 泛删；strip 判空 vs 赋值改写）；引入（删 scaffold 写点不影响 TAG_ENTER 现役消费）。
+- 自查二连：同类型（专属零消费删 vs 现役共享留；名滤交叉 vs ALL_ASSIGN 主集）；引入（删透传不影响 answer/court_action 现役载荷）。

@@ -88,8 +88,7 @@ def _cli_session(db, state, content):
 
     def chat(_name, _question, *, chat_turn_id=0, explicit_secret_order=False):
         return SimpleNamespace(
-            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
-            registered_minister="", displaced_minister="", court_action="",
+            answer="臣有本奏。", proposed_directive=None, court_action="",
             next_minister="", secret_order_id=0, pending_action_id=0,
             pending_action_failures=[],
         )
