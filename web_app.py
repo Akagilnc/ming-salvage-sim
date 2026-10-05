@@ -2001,6 +2001,7 @@ class WebGame:
         directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None,
         decree_validation_failure: Optional[Dict[str, Any]] = None,
         secret_order_landing_recovery: Optional[Dict[str, Any]] = None,
+        persisted_message_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         character = None if minister_name == "殿上" else self.session._character(minister_name)
         # Durable chat_turn message ids first, then memory history.  Publishing
@@ -2008,24 +2009,26 @@ class WebGame:
         # reply while can_undo_last_chat_turn is still false (#976 hold path
         # lengthens append_chat_message; background stream + early assert flaked
         # and tore down the shared DB under the worker → SIGSEGV).
-        # #1902 F2：落回话 + 记回滚差异经会话层共核方法（与 CLI 同一段），此处不再
-        # 自建一份 persist。单一事务插入回话、链接 turn 并升为 active，失败须上抛，
-        # 禁 catch 后仍返回成功。转译由调用方在闸外安排（schedule_translation=False）。
+        # #1902 F2／T4：落回话经会话层共核；retry 共核已落库时传 persisted_message_id，
+        # 本入口只做呈现投影。转译由调用方在闸外安排（schedule_translation=False）。
         turn = int(self.state.turn if accepted_turn is None else accepted_turn)
-        minister_message_id = GameSession.complete_audience_chat_turn(
-            self.session,
-            AudienceChatTurn(
-                chat_turn_id=int(chat_turn_id or 0),
-                accepted_turn=turn,
-                night_id=0,
-                before_snapshot=before_snapshot or {},
-                user_message_id=0,
-            ),
-            minister_name,
-            answer,
-            None,
-            schedule_translation=False,
-        )
+        if persisted_message_id is not None:
+            minister_message_id = int(persisted_message_id or 0)
+        else:
+            minister_message_id = GameSession.complete_audience_chat_turn(
+                self.session,
+                AudienceChatTurn(
+                    chat_turn_id=int(chat_turn_id or 0),
+                    accepted_turn=turn,
+                    night_id=0,
+                    before_snapshot=before_snapshot or {},
+                    user_message_id=0,
+                ),
+                minister_name,
+                answer,
+                None,
+                schedule_translation=False,
+            )
         self.chat_history.setdefault(minister_name, []).append({"role": "minister", "content": answer})
         from ming_sim.audience_night import get_open_night
         open_night = get_open_night(self.db)
@@ -2181,111 +2184,76 @@ class WebGame:
                 detail="本夜收夜中，暂不能召对。",
             )
         gate = self._ticketed_write_gate(pending_ticket)
-        cleanup_gate = self._runtime_write_gate()
-        before_snapshot: Dict[str, Any] = {}
-        result = None
-        translation_scheduled = False
-        # #542 r6e：reopen 纳入既有 try/except；
-        # 失败复用 abandon + restore interrupted；drain 在 write_gate 外。
+        # #1902 T4：reopen→快照→生成→落回话／失败收口走会话共核；此处只做票据、写闸、投影。
         try:
+            with gate:
+                self._reject_if_settlement_phase()
+                # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
+                from ming_sim.audience_night import assert_night_accepts_player_input
+                assert_night_accepts_player_input(self.db, what="召对")
+                if self._audience_turn_in_flight(minister_name):
+                    raise HTTPException(
+                        status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
             try:
-                with gate:
-                    self._reject_if_settlement_phase()
-                    # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
-                    from ming_sim.audience_night import assert_night_accepts_player_input
-                    assert_night_accepts_player_input(self.db, what="召对")
-                    if self._audience_turn_in_flight(minister_name):
-                        raise HTTPException(
-                            status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
-                    # #505 finding3：reopen 是 CAS（interrupted→generating）。未赢（并发/双击重试
-                    # 已被别的调用翻走）→ 响亮 409，绝不 generate/persist 出第二条大臣回话。
-                    if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
-                        raise HTTPException(
-                            status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-                    # #505 finding1：与 chat 同 snapshot→record rollback 缝。
-                    before_snapshot = self.db.capture_chat_rollback_snapshot()
-                result = self.session.scene_chat(
-                    question, chat_turn_id=chat_turn_id,
-                    minister_name=minister_name,
+                _turn, result, minister_message_id = self.session.execute_interrupted_reply_retry(
+                    chat_turn_id=chat_turn_id,
+                    question=question,
+                    message_speaker=minister_name,
+                    accepted_turn=accepted_turn,
+                    user_message_id=int(target.get("user_message_id") or 0),
+                    scene_minister_name=minister_name,
                     stream_emit=lambda _delta, **_kwargs: None,
+                    schedule_translation=False,
+                    write_gate=gate,
                 )
-                proposed = None
-                if result.proposed_directive is not None:
-                    d = result.proposed_directive
-                    proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-                with gate:
-                    payload = self._chat_payload(
-                        minister_name, result.answer,
-                        court_action=result.court_action, next_minister=result.next_minister,
-                        proposed_directive=proposed, appointed_minister=result.appointed_minister,
-                        registered_minister=result.registered_minister,
-                        displaced_minister=result.displaced_minister,
-                        secret_order_id=result.secret_order_id,
-                        pending_action_id=getattr(result, "pending_action_id", 0),
-                        chat_turn_id=chat_turn_id,
-                        accepted_turn=accepted_turn,
-                        # #1902 F2：回滚差异由共核方法随落回话一起记，调用方不再另记一份。
-                        before_snapshot=before_snapshot,
-                        directive_confirmation_ambiguous=getattr(
-                            result, "directive_confirmation_ambiguous", None),
-                        decree_validation_failure=getattr(
-                            result, "decree_validation_failure", None),
-                        secret_order_landing_recovery=getattr(
-                            result, "secret_order_landing_recovery", None),
-                    )
-                # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
-                result._admitted_write_ticket = pending_ticket
-                self.session.schedule_pending_scene_translation(result)
-                translation_scheduled = True
-                answer_text = str(getattr(result, "answer", "") or "")
-                message_id = int(payload.get("minister_message_id") or 0)
-                # #1842：旧读心/抽取/判官退役；放行整轮票后高亮仍可跑。
-                if chat_turn_id and answer_text:
-                    self._complete_pending_write(pending_ticket)
-                    pending_ticket = None
-                if message_id and answer_text:
-                    # #544：重试非流式同折窗封顶（自领 turn 票，无裸写）
-                    self._trail_highlight_judge_after_reply(
-                        answer_text,
-                        message_id=message_id,
-                        chat_turn_id=chat_turn_id,
-                    )
-                    payload["history"] = self.chat_projection(minister_name)
-            except Exception as error:
-                # #505 finding1：重试再失败——先记本次 session.chat 落下的副作用 diff，再回滚它们
-                # （与 chat 失败尾声同缝），并截断本轮 agno、翻回 interrupted 保持可再重试；
-                # 但**绝不删问话/回话**（AC3/AC4 恢复路径永不删账），不静默 fail 掉最后一句。
-                # #542：running Future 的 cancel/join 必须在 write gate 外；锁内仅 rollback 短写。
-                # 内层守护对齐流式/非流 chat：二次失败记日志不吞原错；abandon / 终态写分 try，
-                # 终态写尽力而为——abandon 崩不得跳过 restore，否则 turn 卡 generating。
-                try:
-                    with cleanup_gate:
-                        GameSession.fail_audience_chat_turn(
-                            self.session,
-                            AudienceChatTurn(
-                                chat_turn_id=chat_turn_id,
-                                accepted_turn=accepted_turn,
-                                night_id=0,
-                                before_snapshot=before_snapshot,
-                                user_message_id=int(target.get("user_message_id") or 0),
-                            ),
-                            replied=result is not None,
-                            error=error,
-                            translation_dispatched=translation_scheduled,
-                            court_action=str(getattr(result, "court_action", "") or ""),
-                        )
-                except Exception:
-                    logger.exception(
-                        "retry cleanup: restore_interrupted failed chat_turn_id=%s",
-                        chat_turn_id,
-                    )
-                raise
+            except LookupError:
+                raise HTTPException(
+                    status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。",
+                ) from None
+            proposed = None
+            if result.proposed_directive is not None:
+                d = result.proposed_directive
+                proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+            payload = self._chat_payload(
+                minister_name, result.answer,
+                court_action=result.court_action, next_minister=result.next_minister,
+                proposed_directive=proposed, appointed_minister=result.appointed_minister,
+                registered_minister=result.registered_minister,
+                displaced_minister=result.displaced_minister,
+                secret_order_id=result.secret_order_id,
+                pending_action_id=getattr(result, "pending_action_id", 0),
+                chat_turn_id=chat_turn_id,
+                accepted_turn=accepted_turn,
+                before_snapshot=_turn.before_snapshot,
+                directive_confirmation_ambiguous=getattr(
+                    result, "directive_confirmation_ambiguous", None),
+                decree_validation_failure=getattr(
+                    result, "decree_validation_failure", None),
+                secret_order_landing_recovery=getattr(
+                    result, "secret_order_landing_recovery", None),
+                persisted_message_id=minister_message_id,
+            )
+            # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
+            result._admitted_write_ticket = pending_ticket
+            self.session.schedule_pending_scene_translation(result)
+            answer_text = str(getattr(result, "answer", "") or "")
+            message_id = int(payload.get("minister_message_id") or 0)
+            # #1842：旧读心/抽取/判官退役；放行整轮票后高亮仍可跑。
+            if chat_turn_id and answer_text:
+                self._complete_pending_write(pending_ticket)
+                pending_ticket = None
+            if message_id and answer_text:
+                # #544：重试非流式同折窗封顶（自领 turn 票，无裸写）
+                self._trail_highlight_judge_after_reply(
+                    answer_text,
+                    message_id=message_id,
+                    chat_turn_id=chat_turn_id,
+                )
+                payload["history"] = self.chat_projection(minister_name)
             # #1353：若无尾随仍须放行整轮票后再收夜。
             if pending_ticket is not None:
                 self._complete_pending_write(pending_ticket)
                 pending_ticket = None
-            # #526/#1842：回话已落库后收夜。非流式前台先返回；队列随后 FIFO 转译 join→封夜。
-            # #1902 N4：GameSession 恒有收夜调度；删缺方法降级替身。
             court_action = getattr(result, "court_action", "") or ""
             self.session.schedule_close_night_after_chat_if_needed(
                 court_action, write_gate=self._runtime_write_gate(),
@@ -5115,18 +5083,6 @@ _STATUS_LABEL_WEB = {
     "active": "在事", "offstage": "尚未登场", "dead": "已殁", "dismissed": "已罢黜",
     "imprisoned": "下狱", "exiled": "流放", "retired": "致仕",
 }
-
-
-def _require_active_minister(minister_name: str) -> None:
-    if minister_name not in get_game().content.characters:
-        raise HTTPException(status_code=404, detail=f"未找到人物：{minister_name}")
-    character = get_game().content.characters[minister_name]
-    # #1402：召见闸文案单一真源 = session.can_summon（含宗藩/非大明/非 active）。
-    # 旧副本多一个「已」字，offstage 产「已尚未登场」；后宫仍由 can_summon 放行
-    # （不拒 office_type=后宫，嫔妃 chat 复用本端点）。
-    ok, reason = get_game().session.can_summon(character)
-    if not ok:
-        raise HTTPException(status_code=409, detail=(reason or "").strip())
 
 
 @app.get("/api/audience/scroll")

@@ -855,8 +855,8 @@ class GameSession:
         raise ValueError(f"人物未建档：{clean_name}")
 
     def can_summon(self, character: Character) -> Tuple[bool, str]:
-        # 宗藩（就藩宗室）非朝堂命官，不可召见——与 web _require_active_minister / 各 roster 同口径
-        # （PR#121 隐藏宗藩）。can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
+        # 宗藩（就藩宗室）非朝堂命官，不可召见——与各 roster 同口径（PR#121 隐藏宗藩）。
+        # can_summon 是 summon_minister 工具链（session + web 流式两路）的共用闸，
         # 集中守此一处即覆盖两路，否则裁判可绕列表按名召宗藩（cmr R4 cross-section）。
         if is_vassal_prince(character):
             return (False, f"{character.name}为就藩宗室，非朝廷命官，无法召见。")
@@ -1342,6 +1342,78 @@ class GameSession:
         phase = "court_break" if court_action == "court_break" else "after_reply"
         self.db.mark_post_reply_failure(turn.chat_turn_id, phase, pack)
         return True
+
+    def execute_interrupted_reply_retry(
+        self,
+        *,
+        chat_turn_id: int,
+        question: str,
+        message_speaker: str,
+        accepted_turn: int,
+        user_message_id: int = 0,
+        scene_minister_name: str = "",
+        stream_emit: Optional[Callable[..., None]] = None,
+        schedule_translation: bool = True,
+        write_gate: Any = None,
+    ) -> Tuple[AudienceChatTurn, "ChatTurnResult", int]:
+        """中断回话恢复共核：reopen CAS → 快照 → scene_chat → 落回话／失败收口。
+
+        #1902 T4：Web／CLI 入口只做输入、呈现与宿主资源适配，生命周期编排只此一处。
+        reopen CAS 未赢 → 返回前抛 ``LookupError``（入口自行译成 409／提示）。
+        生成或落库失败 → ``fail_audience_chat_turn`` 后原错上抛。
+        返回 ``(turn, result, minister_message_id)``；``schedule_translation=False``
+        时转译由入口在闸外自行安排。
+        ``write_gate`` 可选：宿主短写闸（reopen／落库／失败收口）；LLM 生成在闸外。
+        """
+        import contextlib
+
+        gate_cm = write_gate if write_gate is not None else contextlib.nullcontext()
+        with gate_cm:
+            if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+                raise LookupError(f"chat_turn {chat_turn_id} reopen CAS lost")
+            turn = AudienceChatTurn(
+                chat_turn_id=int(chat_turn_id),
+                accepted_turn=int(accepted_turn),
+                night_id=0,
+                before_snapshot=self.db.capture_chat_rollback_snapshot(),
+                user_message_id=int(user_message_id or 0),
+            )
+        scene_name = str(scene_minister_name or message_speaker or "")
+        result: Optional[ChatTurnResult] = None
+        translation_dispatched = False
+        try:
+            result = self.scene_chat(
+                question,
+                chat_turn_id=chat_turn_id,
+                minister_name=scene_name,
+                stream_emit=stream_emit,
+            )
+            with gate_cm:
+                minister_message_id = self.complete_audience_chat_turn(
+                    turn,
+                    message_speaker,
+                    str(getattr(result, "answer", "") or ""),
+                    result if schedule_translation else None,
+                    schedule_translation=schedule_translation,
+                )
+            translation_dispatched = bool(schedule_translation and result is not None)
+            return turn, result, int(minister_message_id or 0)
+        except Exception as exc:
+            try:
+                with gate_cm:
+                    self.fail_audience_chat_turn(
+                        turn,
+                        replied=result is not None,
+                        error=exc,
+                        translation_dispatched=translation_dispatched,
+                        court_action=str(getattr(result, "court_action", "") or ""),
+                    )
+            except Exception:
+                logger.exception(
+                    "interrupted reply retry fail_audience_chat_turn failed chat_turn_id=%s",
+                    chat_turn_id,
+                )
+            raise
 
     def scene_chat(
         self, message: str, *, chat_turn_id: int = 0,
@@ -2659,7 +2731,7 @@ class GameSession:
     def auto_save(self, tag: str) -> Optional[str]:
         """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。
         文件名 auto_<campaign_id>_<year>_<period>_<turn>_<tag>.db；prune 只动同 campaign 的自动档，
-        不碰用户手动存档。失败静默（自动存档不应阻断游戏）。"""
+        不碰用户手动存档。失败可继续游戏，但须留真因日志（#1902 T3 / ADR 0005）。"""
         try:
             import os as _os
             saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
@@ -2676,7 +2748,8 @@ class GameSession:
             self.db.backup_to(target)
             prune_auto_saves(saves_dir, campaign_id)
             return target
-        except Exception:
+        except Exception as exc:
+            logger.warning("自动备份失败（旁路继续）：%s", exc)
             return None
 
     # #1902 F2：CLI 读档成功后把读档得到的新会话挂在这里，由 play_turn 取走交还

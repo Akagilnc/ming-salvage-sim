@@ -1,0 +1,208 @@
+{
+  "counts": {
+    "T1": 2,
+    "T2_raw": 6,
+    "T2_actionable": 0,
+    "T3": 3,
+    "T4_entry_owns": 0,
+    "T5_internal": 0,
+    "T6_live_refs": 0
+  },
+  "T1": [
+    {
+      "file": "ming_sim/cli_backend.py",
+      "line": 229,
+      "kind": "timeout_subprocess",
+      "text": "# 硬规9：禁 subprocess.run(timeout=…)——超时路径会 SIGKILL。登录 PATH 探测无期限杀。"
+    },
+    {
+      "file": "ming_sim/cli_backend.py",
+      "line": 352,
+      "kind": "timeout_subprocess",
+      "text": "# 硬规9：禁 timeout=（subprocess.run 超时会 SIGKILL）。keychain 暖探无期限杀。"
+    }
+  ],
+  "T2_actionable": [],
+  "T3": [
+    {
+      "file": "ming_sim/cli/terminal.py",
+      "line": 270,
+      "kind": "silent_broad",
+      "preview": "except Exception as exc:",
+      "only_debug": false
+    },
+    {
+      "file": "web_app.py",
+      "line": 36,
+      "kind": "silent_broad",
+      "preview": "except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动",
+      "only_debug": false
+    },
+    {
+      "file": "web_app.py",
+      "line": 405,
+      "kind": "silent_broad",
+      "preview": "except Exception as exc:  # noqa: BLE001",
+      "only_debug": false
+    }
+  ],
+  "T4": [],
+  "T5": [],
+  "T6": [],
+  "KEEP_NOTES": {
+    "T1": [
+      {
+        "file": "web_app.py",
+        "line": 4665,
+        "keep": "host_self_SIGTERM_not_cli_hardkill",
+        "text": "_os.kill(_os.getpid(), _signal.SIGTERM)"
+      }
+    ],
+    "T2": [
+      {
+        "file": "tests/test_cli_runner_error_typed_1299.py",
+        "line": 24,
+        "kind": "prose_or_banner",
+        "text": "\"OpenAI Codex v0.50.0\\n\"",
+        "is_test": true,
+        "keep": "typed_error_fixture_banner_text"
+      },
+      {
+        "file": "tests/test_cli_transport_1465.py",
+        "line": 177,
+        "kind": "prose_or_banner",
+        "text": "#1902 T2：禁再以 Authentication required 词面钉连接错误。",
+        "is_test": true,
+        "keep": "negative_or_fixture"
+      },
+      {
+        "file": "tests/test_cli_backend.py",
+        "line": 284,
+        "kind": "prose_or_banner",
+        "text": "captured = _capture_run(monkeypatch, _P(stdout=body, stderr=\"OpenAI Codex v0\\nlogs\"))",
+        "is_test": true,
+        "keep": "negative_or_fixture"
+      },
+      {
+        "file": "tests/test_cli_backend.py",
+        "line": 458,
+        "kind": "prose_or_banner",
+        "text": "_P(stdout=\"\", stderr=\"STDOUT_BODY\\nOpenAI Codex v0.125.0\\nlogs\"),",
+        "is_test": true,
+        "keep": "negative_or_fixture"
+      },
+      {
+        "file": "tests/test_cli_backend.py",
+        "line": 684,
+        "kind": "prose_or_banner",
+        "text": "state = _agy_popen(monkeypatch, [(\"Authentication required\", 0)])",
+        "is_test": true,
+        "keep": "negative_or_fixture"
+      },
+      {
+        "file": "tests/test_cli_backend.py",
+        "line": 686,
+        "kind": "prose_or_banner",
+        "text": "assert out == \"Authentication required\" and attempts == 1",
+        "is_test": true,
+        "keep": "negative_or_fixture"
+      }
+    ],
+    "T4": [
+      {
+        "file": "ming_sim/cli/terminal.py",
+        "line": 237,
+        "name": "_retry_interrupted_reply_cli",
+        "keep": "entry_calls_shared_core"
+      },
+      {
+        "file": "web_app.py",
+        "line": 2147,
+        "name": "retry_interrupted_reply",
+        "keep": "entry_calls_shared_core"
+      }
+    ],
+    "T5": [
+      {
+        "name": "test_provenance_enum_values",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_provenance_from_string",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_rejected_item_fields",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_rejection_collector_flush_before_record_leaves_db_empty",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_rejection_collector_flush_writes_rows",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_rejection_collector_flush_clears_buffer",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_rejection_collector_flush_stores_item_as_json",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_mirror_to_jsonl_writes_lines",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_mirror_to_jsonl_appends_on_multiple_calls",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_mirror_to_jsonl_empty_buffer_writes_nothing",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_flush_then_mirror_writes_jsonl",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_mirror_idempotent_after_flush",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_unflushed_rows_never_mirrored",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_reset_discards_pending_and_flushed",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_record_accepts_plain_string_source",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_record_rejects_unknown_source_string",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_collector_counts_deterministic_on_polluted_save",
+        "keep": "public_structured_or_real_behavior"
+      },
+      {
+        "name": "test_ddl_in_open_transaction_rolls_back",
+        "keep": "public_structured_or_real_behavior"
+      }
+    ],
+    "T6": [
+      {
+        "file": "tests/test_qa_s2_copy_prompts_1356_1402.py",
+        "line": 7,
+        "keep": "comment_history",
+        "text": "#1902 T6：旧 web _require_active_minister 包装及专属文案钉已随退役入口清退；"
+      }
+    ]
+  }
+}

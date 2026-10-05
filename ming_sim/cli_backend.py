@@ -226,14 +226,16 @@ def _login_shell_path() -> Optional[str]:
         # printenv 是外部命令，读到的是登录 shell 导出的 env PATH（恒冒号分隔）。
         # flag 分开传 -l -i -c：组合形式 -lic 在 fish 等 shell 报错（不支持组合单字符
         # 选项）；分开形式各 shell 通吃，仍由外层 try 兜底（gemini PR#115 high）。
+        # 硬规9：禁 subprocess.run(timeout=…)——超时路径会 SIGKILL。登录 PATH 探测无期限杀。
         proc = _RAW_RUN(
             [shell, "-l", "-i", "-c", 'printf "<<<CMRPATH>>>"; printenv PATH; printf "<<<ENDPATH>>>"'],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True,
         )
         m = re.search(r"<<<CMRPATH>>>(.*?)<<<ENDPATH>>>", proc.stdout or "", re.S)
         if m:
             discovered = m.group(1).strip()
-    except Exception:
+    except Exception as exc:
+        logger.warning("登录 shell PATH 探测失败：%s", exc)
         discovered = ""
     _DISCOVERED_LOGIN_PATH = discovered
     return discovered or None
@@ -340,19 +342,20 @@ def _trace(record: Dict[str, Any]) -> None:
             _trace_announced = True
         if announce:
             print(f"[cli_backend] LLM trace → {_TRACE_PATH}", flush=True)
-    except Exception as exc:  # trace 永不应中断游戏
-        _log(f"trace 写盘失败：{exc}")
+    except Exception as exc:  # trace 永不应中断游戏；旁路须留真因（ADR 0005）
+        logger.warning("trace 写盘失败：%s", exc)
 
 
 def _warm_keychain() -> None:
     """暖 macOS keychain 路径，缓解 agy headless auth 的 1s race（见 wiki）。"""
     try:
+        # 硬规9：禁 timeout=（subprocess.run 超时会 SIGKILL）。keychain 暖探无期限杀。
         subprocess.run(
             ["security", "find-generic-password", "-s", "Antigravity Safe Storage"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("keychain 暖探失败：%s", exc)
 
 
 # CLI 子进程读循环轮询步长（秒）：只决定「多快发现静默/退出」，不是任何超时预算。
@@ -362,10 +365,6 @@ _CLI_POLL_SECONDS = 0.05
 def _cli_process_clock() -> float:
     """CLI 增量读循环的取时点（受控推进用；生产恒 time.monotonic）。"""
     return time.monotonic()
-
-
-# agy headless auth 是已知 race（见 wiki）：stdout/stderr 出现这些串即瞬断，可重试。
-_AGY_AUTH_MARKERS = ("Authentication required", "authentication timed out")
 
 
 @dataclass
@@ -390,16 +389,21 @@ def _cli_idle_seconds() -> float:
 
 
 def _terminate_cli_process(proc: Any) -> None:
-    """收尾子进程：已退时 terminate 是 no-op；否则 terminate→kill 兜底，防泄漏。"""
+    """收尾子进程：已退时 terminate 是 no-op；否则只 SIGTERM，不 SIGKILL（硬规9）。
+
+    wait 短暂未退 → 如实记终止缺口，不另造监督层、不以 kill 兜底。
+    """
     try:
         proc.terminate()
+    except Exception as exc:
+        logger.warning("CLI 子进程 terminate 失败：%s", exc)
+        return
+    try:
         proc.wait(timeout=5)
-    except Exception:
-        try:
-            proc.kill()
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+    except Exception as exc:
+        logger.warning(
+            "CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）：%s", exc,
+        )
 
 
 def _iter_cli_process_lines(
@@ -414,7 +418,8 @@ def _iter_cli_process_lines(
     """CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。
 
     - 新字节即活动，刷新活动时刻；静默 ≥ idle 预算 → TransportIdleTimeout（可重试）
-      并 kill 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
+      并 terminate 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现；
+      不 SIGKILL，硬规9）。
     - idle 只认 transport 策略（`_cli_idle_seconds`）= 设置页那一格的静默判死阈值。
     - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀。
     - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
@@ -753,23 +758,20 @@ def _iter_cli_runner_text(
 
     **活动信号与 content 解耦**：新字节刷新空转时刻是 `_iter_cli_process_lines`
     的事（读到就刷新，跨多久都不杀）；本函数只在该次 attempt 判活之后才把文本交
-    出去。故纯文本 runner（agy/claude/pi）**不逐行外抛 stdout**——那会把
-    `Authentication required` 一类机器文本当大臣正文送进 delta，而失败分类要等
-    子进程排干才跑，玩家已经看见了。终失败按票面走系统层人话（ADR 0046 否决失败
-    戏内化）。codex `--json` 是结构化事件流（`_codex_event_text` 认字段、不读散
-    文，ADR 0142），可照旧边到边出。
+    出去。纯文本 runner（agy/claude/pi）**不逐行外抛 stdout**——子进程排干后
+    再按退出码／结构化契约分类；禁从自由输出词面判故障（ADR 0142）。codex
+    `--json` 是结构化事件流（`_codex_event_text` 认字段、不读散文），可照旧边到边出。
 
     次数只在 llm_transport（run_with_transport / run_transport_stream）；此处禁
     私有 for-attempt 循环。失败按 typed 分类抛，交上层统一重试或终结：
     - 静默超阈值 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
     - 空输出 → llm_empty_output（可重试）
-    - agy auth race → llm_connection_error（可重试；已知瞬断实证）
     - stdin 未送达 / 未知非零退出 → RuntimeError（确定性失败，一次不重试；禁从
       stderr 散文抠状态）
+    - 宿主未暴露结构化鉴权状态时如实按正文／退出码处理，不另造词表（宿主缺口）
 
     静默预算只认 transport 策略 idle（= 设置页那一格的静默判死阈值，CLI 与 API 同权威）。
     """
-    from ming_sim.exceptions import LLMUnavailable
     from ming_sim.llm_transport import empty_output_failure, transport_failure_unavailable
 
     if runner == "agy":
@@ -826,17 +828,9 @@ def _iter_cli_runner_text(
             raise RuntimeError(
                 f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
             ) from outcome.stdin_error
-        if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
-            raise LLMUnavailable(
-                "LLM 连接失败。",
-                code="llm_connection_error",
-                provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
-            )
         text = stdout_text.strip() or final_text.strip()
-        if runner == "codex" and not json_events and not text:
-            # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
-            text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
+        # 禁从 stdout/stderr 自由词面判鉴权／切分呈现横幅（#1902 T2 / ADR 0142）。
         if returncode != 0:
             raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
         if not text:
@@ -2734,14 +2728,14 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     try:
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="issue_enrich")
     except Exception as exc:  # 补全失败不阻断结算（trace 已在咽喉记下，含 error）
-        _log(f"国策效果补全失败：{exc}")
+        logger.warning("国策效果补全失败：%s", exc)
     obj = _loads_lenient(raw) or {}
     try:
         from ming_sim.simulation import _canonical_item_fields
         norm = _canonical_item_fields(obj) if obj else {}
     except Exception as exc:
-        # #1902 F1 / ADR 0005：规范化旁路可继续，但不得静默。
-        _log(f"国策效果字段规范化失败：{exc}")
+        # #1902 T3 / ADR 0005：规范化旁路可继续，但不得依赖调试开关才留痕。
+        logger.warning("国策效果字段规范化失败：%s", exc)
         norm = obj
     # isinstance 守门：norm 或其子段被 LLM 给成非 dict 时归 {}，不让 dict("乱填") 抛错
     # 越过上层 floor、把空壳国策放进库（CMR codexB）。

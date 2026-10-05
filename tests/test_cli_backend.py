@@ -448,14 +448,18 @@ def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
     assert 'model_reasoning_effort="medium"' not in joined
 
 
-def test_run_codex_stdout_empty_fallback(monkeypatch):
+def test_run_codex_stdout_empty_does_not_parse_stderr_banner(monkeypatch):
+    """#1902 T2：stdout 空时不得从 stderr 呈现横幅切分正文（ADR 0142）。"""
+    from ming_sim.exceptions import LLMUnavailable
+
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     _capture_run(
         monkeypatch,
         _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
     )
-    out, n = cb._dispatch_cli_runner("codex", "p")
-    assert out == "STDOUT_BODY"
+    with pytest.raises(LLMUnavailable) as ei:
+        cb._dispatch_cli_runner("codex", "p")
+    assert ei.value.code == "llm_empty_output"
 
 
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
@@ -675,18 +679,11 @@ def test_run_agy_success_single_subprocess(monkeypatch):
     assert state["warm"] >= 1  # 暖 keychain 是操作步骤，不是重试策略
 
 
-@pytest.mark.parametrize(
-    "banner", ["Authentication required", "authentication timed out"],
-)
-def test_run_agy_auth_race_is_retryable_typed_without_private_loop(monkeypatch, banner):
-    """#1465 切片③：agy auth race 抛可重试 typed，**一次子进程**——
-    重试次数归 llm_transport，runner 内不得再自转 4 次。"""
-    from ming_sim.exceptions import LLMUnavailable
-
-    state = _agy_popen(monkeypatch, [(banner, 0)])
-    with pytest.raises(LLMUnavailable) as ei:
-        cb._dispatch_cli_runner("agy", "p")
-    assert ei.value.code == "llm_connection_error"
+def test_run_agy_exit_zero_prose_is_not_connection_error(monkeypatch):
+    """#1902 T2：退出码 0 的自由词面不得判连接错误（ADR 0142）；宿主缺口如实当正文。"""
+    state = _agy_popen(monkeypatch, [("Authentication required", 0)])
+    out, attempts = cb._dispatch_cli_runner("agy", "p")
+    assert out == "Authentication required" and attempts == 1
     assert state["agy"] == 1
 
 

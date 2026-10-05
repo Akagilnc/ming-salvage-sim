@@ -196,66 +196,9 @@ def test_consort_excluded_from_court(read_game):
     assert visible_in_court(content.characters[consort], db) is False
 
 
-def _stub_game(monkeypatch, db, content):
-    """把 web_app.web_game 换成轻量 stub（复用真 db/content），供 _require_active_minister 端点守门测试。
-
-    #1402：端点改调 session.can_summon 取文案——stub 须挂真 GameSession.can_summon
-    （db + temporary_characters），不得再空壳 SimpleNamespace。
-    """
-    from ming_sim.session import GameSession
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.temporary_characters = {}
-    stub = SimpleNamespace(
-        session=sess,
-        content=content,
-        db=db,
-        character_power_id=lambda c: web_app._character_power_id(c, db),
-    )
-    monkeypatch.setattr(web_app, "web_game", stub)
-
-
-def test_vassal_prince_chat_rejected(game, monkeypatch):
-    """宗藩不仅被朝堂列表挡，/chat 端点（_require_active_minister）也须拒绝——否则可绕列表
-    按名经 API 直接召对（cmr R1 finding D）。即便 active+ming 也拒。"""
-    import pytest
-    from fastapi import HTTPException
-    db, state, content = game
-    name, _ch = _materialized_prince(db, state, content)
-    db.set_character_status(state, name, "active", "测试：在世")
-    assert db.get_character_status(name)[0] == "active"  # 物化后 setup 真生效：即便 active 也拒
-    _stub_game(monkeypatch, db, content)
-    with pytest.raises(HTTPException) as ei:
-        web_app._require_active_minister(name)
-    assert ei.value.status_code == 409
-
-
-def test_active_consort_chat_not_rejected(game, monkeypatch):
-    """后宫不在 _require_active_minister 的宗藩闸内——嫔妃 chat 复用本端点，active+ming 后宫
-    须能召对（finding D「别误伤后宫」反向锁）。"""
-    import pytest
-    db, state, content = game
-    consort = next(
-        (n for n, c in content.characters.items()
-         if getattr(c, "office_type", "") == "后宫" and getattr(c, "power_id", "ming") == "ming"),
-        None,
-    )
-    if consort is None:
-        pytest.skip("基底盘面无大明后宫人物")
-    # 物化进 DB 后 set_character_status 才真生效（选中的 content 后宫未必在 probe.db 旧档，
-    # 缺行时 set 是 no-op、status 只靠缺行默认 active 兜——gemini R4）。物化使「active 后宫过闸」可证。
-    db.add_character(state, content.characters[consort], source="测试物化")
-    db.set_character_status(state, consort, "active", "测试：在位")
-    assert db.get_character_status(consort)[0] == "active"
-    _stub_game(monkeypatch, db, content)
-    web_app._require_active_minister(consort)  # 不抛 = 通过（后宫未被宗藩闸误伤）
-
-
 def test_zongfan_cannot_be_summoned_via_can_summon(game):
     """summon_minister 工具链（session 召对 + web 流式两路）共用 session.can_summon 闸——宗藩须在此拒，
-    否则裁判可绕朝堂列表按名召宗室（cmr R4：_require_active_minister 只守 /chat 直连，summon 工具走
-    can_summon）。集中守 can_summon 一处覆盖两路；后宫不受此闸影响。"""
+    否则裁判可绕朝堂列表按名召宗室（cmr R4）。集中守 can_summon 一处覆盖两路；后宫不受此闸影响。"""
     import pytest
     from ming_sim.session import GameSession
     db, state, content = game

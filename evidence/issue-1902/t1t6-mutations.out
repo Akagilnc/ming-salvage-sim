@@ -1,0 +1,35 @@
+## mut_b_red.txt
+exit=1
+  pieces.append(line)
+            returncode = int(outcome.returncode or 0)
+            stderr = outcome.stderr or ""
+            stdout_text = "".join(pieces)
+            # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
+            # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
+            if outcome.stdin_error is not None:
+                raise RuntimeError(
+                    f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
+                ) from outcome.stdin_error
+            if runner == "agy" and any(m in (stdout_text + stderr) for m in ("Authentication required", "authentication timed out")):
+                from ming_sim.exceptions import LLMUnavailable
+>               raise LLMUnavailable(
+                    "LLM 连接失败。",
+                    code="llm_connection_error",
+                    provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
+                )
+E               ming_sim.exceptions.LLMUnavailable: LLM 连接失败。
+
+ming_sim/cli_backend.py:833: LLMUnavailable
+=========================== short test summary info ============================
+FAILED tests/test_cli_backend.py::test_run_agy_exit_zero_prose_is_not_connection_error
+1 failed in 0.66s
+
+## mut_b_green.txt
+exit=0
+.                                                                        [100%]
+1 passed in 0.61s
+
+## summary.txt
+A: kill calls restored then absent
+B: test_run_agy_exit_zero_prose_is_not_connection_error red then green
+C: auto_save PermissionError silent then logged

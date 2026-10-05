@@ -80,7 +80,7 @@ class _FakeGame:
             await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
         )
         self._write_gate = get_session_write_queue(self).write_gate
-        # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
+        # 召见资格真源 session.can_summon——假壳挂真方法，禁自造文案表
         self.session.can_summon = MethodType(GameSession.can_summon, self.session)
         self.favorites = set()
         self.chat_history = {}

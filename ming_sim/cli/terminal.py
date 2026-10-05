@@ -22,7 +22,6 @@ from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
 from ming_sim.session import (
-    AudienceChatTurn,
     GameSession,
     TurnPhase,
     _is_summonable_court_minister,
@@ -238,9 +237,8 @@ def _print_interrupted_reply_retry_hint(session: GameSession) -> None:
 def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Optional[str]:
     """#505 CLI：复用已持久问话重新生成回话（与 web retry 同核语义：不重记问话）。
 
-    #1902 F2：轮身份按建轮归属（殿上）取，问话/回话仍挂大臣名；建轮、reopen、回话
-    落库、终态化与转译编排全走会话层共核方法，入口只接玩家输入与呈现
-    （不再自带一份 reopen→scene→persist→回滚 编排）。
+    #1902 T4：生命周期走 ``GameSession.execute_interrupted_reply_retry``；本入口只取
+    待重试项、呈现回话、调度收夜。
 
     成功且 court_action 为 court_break 时返回 typed 'court_break'，供 minister_chat
     退出对话进入 play_turn 审阅；收夜失败仍返回 None，留在原对话。
@@ -256,50 +254,24 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     question = str(target["question"])
     # 回话挂回原问话的那位大臣（CLI 召对语义），不是建轮的殿上。
     message_speaker = str(target.get("message_speaker") or "") or minister_name
-    db = session.db
-    if not db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+    try:
+        _turn, result, _mid = session.execute_interrupted_reply_retry(
+            chat_turn_id=chat_turn_id,
+            question=question,
+            message_speaker=message_speaker,
+            accepted_turn=int(target.get("turn") or session.state.turn),
+            user_message_id=int(target.get("user_message_id") or 0),
+            scene_minister_name=SCENE_CHAT_SPEAKER,
+            schedule_translation=True,
+        )
+    except LookupError:
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return None
-    turn = AudienceChatTurn(
-        chat_turn_id=chat_turn_id,
-        accepted_turn=int(target.get("turn") or session.state.turn),
-        night_id=0,
-        before_snapshot={},
-        user_message_id=int(target.get("user_message_id") or 0),
-    )
-    result = None
-    translation_dispatched = False
-    try:
-        turn.before_snapshot = db.capture_chat_rollback_snapshot()
-        result = session.scene_chat(
-            question, chat_turn_id=chat_turn_id,
-            minister_name=SCENE_CHAT_SPEAKER,
-        )
-        # 收口（回话落库 + 记回滚差异 + 冲刷后台转译）走共核方法，与 Web 同一段。
-        GameSession.complete_audience_chat_turn(
-            session, turn, message_speaker, str(getattr(result, "answer", "") or ""), result,
-        )
-        translation_dispatched = True
-        print(f"\n{message_speaker}：{wrap(str(getattr(result, 'answer', '') or ''))}\n")
     except Exception as exc:
-        # 失败翻回 interrupted 保持可再重试（与 web 同语义）：终态化亦走共核方法。
-        # 调度在 complete 返回前抛时 translation_dispatched 仍为假：已落回话走转译待补。
-        try:
-            GameSession.fail_audience_chat_turn(
-                session, turn, replied=result is not None, error=exc,
-                translation_dispatched=translation_dispatched,
-                court_action=str(getattr(result, "court_action", "") or ""),
-            )
-        except Exception:
-            logger.exception(
-                "CLI retry rollback/forecast recovery failed chat_turn_id=%s", chat_turn_id,
-            )
         print(f"重试回话失败：{exc}\n")
         return None
+    print(f"\n{message_speaker}：{wrap(str(getattr(result, 'answer', '') or ''))}\n")
     # #1716/#1842：与 Web retry 同缝——回话已落库后消费 court_action 收夜。
-    # 前台先返回 court_break；既有队列随后 FIFO 转译 join→封夜（不挡回话返回）。
-    # 后台收夜失败留痕、夜可恢复；不得回滚已成回话。
-    # #1902 N4：GameSession 恒有收夜调度；删缺方法降级到同步收夜的替身。
     court_action = str(getattr(result, "court_action", "") or "")
     session.schedule_close_night_after_chat_if_needed(
         court_action, write_gate=_cli_write_gate(session),

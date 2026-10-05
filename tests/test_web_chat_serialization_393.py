@@ -89,7 +89,7 @@ class _FakeSession(HallAdmissionSessionMixin):
         from ming_sim.session import GameSession
         return GameSession.schedule_pending_scene_translation(self, result)
     def can_summon(self, character):
-        # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
+        # 召见资格真源 session.can_summon——假壳挂真方法，禁自造文案表
         from ming_sim.session import GameSession
         return GameSession.can_summon(self, character)
 
@@ -295,7 +295,6 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
             events.append("stream")
             yield {"type": "done", "payload": {"ok": True}}
 
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda minister_name: None)
     monkeypatch.setattr(web_app, "get_game", lambda: _BlockingGame())
 
     async def drive_first_event():

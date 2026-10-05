@@ -1,0 +1,169 @@
+{
+  "T1": {
+    "predicate": "生产代码中显式 .kill()/SIGKILL，或 subprocess.run/call/_RAW_RUN 带 timeout=（官方文档确认超时会 kill→POSIX SIGKILL）；以及 terminate→wait→kill 硬期限兜底。保留合法静默判定（idle check）与 terminate+报告缺口。",
+    "official_docs": "https://docs.python.org/3/library/subprocess.html — run(timeout) kills child; Popen.kill sends SIGKILL on POSIX",
+    "pre_fix_members": [
+      {
+        "member": "ming_sim/cli_backend.py::_terminate_cli_process proc.kill",
+        "disposition": "DELETE kill fallback; terminate+log gap"
+      },
+      {
+        "member": "ming_sim/cli_backend.py::_login_shell_path _RAW_RUN timeout=8",
+        "disposition": "DELETE timeout= (no hard-kill path)"
+      },
+      {
+        "member": "ming_sim/cli_backend.py::_warm_keychain subprocess.run timeout=5",
+        "disposition": "DELETE timeout="
+      },
+      {
+        "member": "web_app.py os.kill(getpid,SIGTERM)",
+        "disposition": "KEEP host self-exit SIGTERM, not CLI hard-kill"
+      },
+      {
+        "member": "cli_backend docstring SIGKILL prohibition",
+        "disposition": "KEEP documentation of hard rule"
+      },
+      {
+        "member": "worker.join(timeout=5)",
+        "disposition": "KEEP thread join wait, does not kill process"
+      }
+    ]
+  },
+  "T2": {
+    "predicate": "从自由输出词面判故障或切分呈现横幅的机制，及钉误判的测试；用原生退出码/结构化契约。",
+    "pre_fix_members": [
+      {
+        "member": "cli_backend._AGY_AUTH_MARKERS + match→llm_connection_error",
+        "disposition": "DELETE"
+      },
+      {
+        "member": "cli_backend OpenAI Codex v stderr split",
+        "disposition": "DELETE"
+      },
+      {
+        "member": "tests/test_cli_backend.py::test_run_agy_auth_race_*",
+        "disposition": "REPLACE with negative prose test"
+      },
+      {
+        "member": "tests/test_cli_backend.py::test_run_codex_stdout_empty_fallback",
+        "disposition": "REPLACE assert no banner parse"
+      },
+      {
+        "member": "tests/test_cli_transport_1465.py auth prose injection",
+        "disposition": "REWRITE to empty-output typed retry"
+      },
+      {
+        "member": "docs/raw/.../agg.py Codex split",
+        "disposition": "KEEP out-of-prod harness; not game entry"
+      },
+      {
+        "member": "typed error fixture banners in test_cli_runner_error_typed_1299",
+        "disposition": "KEEP provider_message fixture"
+      }
+    ]
+  },
+  "T3": {
+    "predicate": "代码故障响亮失败；确证安全旁路须留真因日志，不依赖 MING_SIM_LLM_DEBUG/_log 开关。",
+    "pre_fix_members": [
+      {
+        "member": "cli_backend._trace except → _log only",
+        "disposition": "FIX logger.warning"
+      },
+      {
+        "member": "cli_backend.enrich_initiative_effects canonicalize/_run except → _log",
+        "disposition": "FIX logger.warning"
+      },
+      {
+        "member": "session.auto_save except → silent return None",
+        "disposition": "FIX logger.warning"
+      },
+      {
+        "member": "cli_backend._login_shell_path/_warm_keychain bare except",
+        "disposition": "FIX logger.warning"
+      },
+      {
+        "member": "terminal retry print(exc)",
+        "disposition": "KEEP loud user-facing presentation"
+      },
+      {
+        "member": "web_app stdout reconfigure pass",
+        "disposition": "KEEP host startup adapt"
+      },
+      {
+        "member": "web_app verify smoke except→HTTPException",
+        "disposition": "KEEP loud HTTP failure"
+      }
+    ]
+  },
+  "T4": {
+    "predicate": "Web/CLI 入口各自编排 reopen→snapshot→scene_chat→complete/fail 恢复生命周期副本。",
+    "pre_fix_members": [
+      {
+        "member": "ming_sim/cli/terminal.py::_retry_interrupted_reply_cli",
+        "disposition": "REWRITE call GameSession.execute_interrupted_reply_retry"
+      },
+      {
+        "member": "web_app.WebGame.retry_interrupted_reply lifecycle block",
+        "disposition": "REWRITE call shared core; keep tickets/gates/projection"
+      },
+      {
+        "member": "GameSession.complete/fail/pending_retries (already shared)",
+        "disposition": "KEEP"
+      }
+    ]
+  },
+  "T5": {
+    "predicate": "纯内部形状/重复证明；虚假零剩余分类；保留公开结构化契约与真实落库行为测。",
+    "pre_fix_members": [
+      {
+        "member": "test_section_result_holds_applied_and_rejected",
+        "disposition": "DELETE INTERNAL_SHAPE"
+      },
+      {
+        "member": "test_section_result_merge",
+        "disposition": "DELETE; covered by declaration_dispatch real entry"
+      },
+      {
+        "member": "test_section_result_merge_empty",
+        "disposition": "DELETE"
+      },
+      {
+        "member": "test_apply_context_holds_all_fields",
+        "disposition": "DELETE INTERNAL_SHAPE"
+      },
+      {
+        "member": "Provenance/RejectedItem/RejectionCollector flush-mirror tests",
+        "disposition": "KEEP public structured / real DB behavior"
+      },
+      {
+        "member": "evidence s123-s2-classification INTERNAL_SHAPE=0 false claim",
+        "disposition": "CORRECTED in this receipt"
+      }
+    ]
+  },
+  "T6": {
+    "predicate": "授权内退役入口残根/独占证明；撤销底座时点豁免；保留有真实用途的共享能力。",
+    "pre_fix_members": [
+      {
+        "member": "web_app._require_active_minister",
+        "disposition": "DELETE retired zero-prod-call wrapper"
+      },
+      {
+        "member": "tests/test_web_court_visibility.py vassal/consort _require_* tests",
+        "disposition": "DELETE exclusive proofs"
+      },
+      {
+        "member": "tests/test_qa_s2_copy_prompts_*::test_require_active_minister_*",
+        "disposition": "DELETE exclusive proof"
+      },
+      {
+        "member": "monkeypatches of _require_active_minister in stream/serialization tests",
+        "disposition": "DELETE dead patches"
+      },
+      {
+        "member": "session.can_summon",
+        "disposition": "KEEP shared real capability"
+      }
+    ]
+  }
+}

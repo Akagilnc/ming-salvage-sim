@@ -255,6 +255,19 @@ class _RetrySession:
         from ming_sim.session import GameSession
         return GameSession.schedule_pending_scene_translation(self, result)
 
+    def execute_interrupted_reply_retry(self, **kwargs):
+        # #1902 T4：恢复生命周期共核；轻壳挂真方法，scene_chat／落库仍走本替身。
+        from ming_sim.session import GameSession
+        return GameSession.execute_interrupted_reply_retry(self, **kwargs)
+
+    def complete_audience_chat_turn(self, *args, **kwargs):
+        from ming_sim.session import GameSession
+        return GameSession.complete_audience_chat_turn(self, *args, **kwargs)
+
+    def fail_audience_chat_turn(self, *args, **kwargs):
+        from ming_sim.session import GameSession
+        return GameSession.fail_audience_chat_turn(self, *args, **kwargs)
+
     def schedule_close_night_after_chat_if_needed(self, court_action, *, write_gate=None):
         # #1902 N4：生产入口直调收夜调度；轻壳默认同形 no-op。
         return None
