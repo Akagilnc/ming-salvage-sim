@@ -8,7 +8,7 @@ game = (<ming_sim.db.GameDB object at 0x10c1d5950>, GameState(year=1627, period=
 
     def test_r4_named_characters_debut_in_historical_order(game):
         db, state, content = game
-    
+
         assert state.year == 1627
         expected = {
             "张缙彦": ("清涧知县", "地方", 1631, ""),
@@ -19,7 +19,7 @@ game = (<ming_sim.db.GameDB object at 0x10c1d5950>, GameState(year=1627, period=
             character = content.characters[name]
 >           assert (character.office, character.office_type) == (office, office_type)
 E           AssertionError: assert ('', '地方') == ('清涧知县', '地方')
-E             
+E
 E             At index 0 diff: '' != '清涧知县'
 E             Use -v to get more diff
 
@@ -33,7 +33,7 @@ game = (<ming_sim.db.GameDB object at 0x10c257430>, GameState(year=1627, period=
         _yuan_id, yuan = _appointment_dossier(db, state, "袁可立", "陕西巡抚")
 >       assert yuan["break_rank"]["basis"] == "historical_office"
 E       AssertionError: assert 'first_appoin...t_high_office' == 'historical_office'
-E         
+E
 E         - historical_office
 E         + first_appointment_high_office
 
