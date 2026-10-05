@@ -501,6 +501,81 @@ def test_lost_reopen_cas_rejects_without_second_reply(restore_env, monkeypatch):
     ).fetchone()["c"] == 0
 
 
+class _KeyErrorAfterCasRetrySession(_RetrySession):
+    """#1902 T4：CAS 已赢后 scene/snapshot 抛 KeyError（LookupError 子类）不得当 CAS 未赢。"""
+
+    def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        raise KeyError("scene ledger missing row")
+
+
+def test_retry_keyerror_after_cas_won_fails_closed_not_cas_bypass(restore_env):
+    """CAS 已赢后 KeyError 走 fail 收口翻回 interrupted，不得绕过 fail 当 409 CAS。"""
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    ct = _start_generating_turn(db, state, minister, "剿抚孰先？")
+    db.reconcile_interrupted_chat_turns()
+    rt = _retry_runtime(db, state, minister)
+    rt.session = _KeyErrorAfterCasRetrySession(db, state, minister)
+    with pytest.raises(KeyError, match="scene ledger missing row"):
+        rt.retry_interrupted_reply(minister, ct)
+    row = db.conn.execute(
+        "SELECT status, minister_message_id FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert row["status"] == "interrupted"
+    assert not row["minister_message_id"]
+
+
+def test_fail_audience_chat_turn_snapshot_failure_keeps_recovery_without_forged_diffs(
+    restore_env, monkeypatch,
+):
+    """after-snapshot 失败：不伪造 before==after 差异；既有恢复仍翻回 interrupted。"""
+    from ming_sim.session import AudienceChatTurn, GameSession
+
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    ct = _start_generating_turn(db, state, minister, "快照失败收口？")
+    db.reconcile_interrupted_chat_turns()
+    assert db.reopen_interrupted_chat_turn_for_retry(ct)
+    before = db.capture_chat_rollback_snapshot()
+    turn = AudienceChatTurn(
+        chat_turn_id=ct,
+        accepted_turn=int(state.turn),
+        night_id=0,
+        before_snapshot=before,
+        user_message_id=int(
+            db.conn.execute(
+                "SELECT user_message_id FROM chat_turns WHERE id=?", (ct,),
+            ).fetchone()["user_message_id"]
+            or 0
+        ),
+    )
+    recorded = []
+
+    def _boom():
+        raise RuntimeError("after snapshot unavailable")
+
+    def _spy_record(chat_turn_id, before_snap, after_snap):
+        recorded.append((chat_turn_id, before_snap, after_snap))
+
+    monkeypatch.setattr(db, "capture_chat_rollback_snapshot", _boom)
+    monkeypatch.setattr(db, "record_chat_turn_rollback_diffs", _spy_record)
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    assert GameSession.fail_audience_chat_turn(
+        session, turn, replied=False, error=RuntimeError("retry LLM failed"),
+    ) is False
+    assert recorded == []
+    row = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert row["status"] == "interrupted"
+
+
 # ── finding4：结算/亲裁相位不得重试召对（夜不跨月）─────────────────────────
 
 

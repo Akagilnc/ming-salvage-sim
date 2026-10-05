@@ -1,2 +1,8 @@
-....                                                                     [100%]
-4 passed in 0.71s
+PASS M1_cas_lost_returns_None: out=None
+PASS M2_web_retry_keyerror_fail_closed: raised=KeyError:'mut scene missing'; status=interrupted
+WARNING:ming_sim.session:fail_audience_chat_turn after-snapshot failed chat_turn_id=1: snap boom
+PASS M3_fail_snapshot_no_forged_diffs: recorded=0; status=interrupted
+WARNING:ming_sim.cli_backend:CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）：still alive
+PASS M4_terminate_no_kill: calls=['terminate', ('wait', 5)]
+PASS M5_canonicalize_loud_via_enrich: loud=True
+SUMMARY 5 / 5

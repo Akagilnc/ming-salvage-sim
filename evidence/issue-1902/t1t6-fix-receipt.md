@@ -1,8 +1,8 @@
-# #1902 修内司 T1–T6 回执（自验纠偏轮）
+# #1902 修内司 T1–T6 回执（自验纠偏轮 · 谓词全文重扫）
 
 - 分支：`ak-roles/1902-t1t6-fixer-092109acf`
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5`
-- 上一轮 HEAD：`9df958435`（初修）
+- 上一轮 HEAD：`0e044f154`
 - 本轮：独立新 commit（禁止 amend）
 - 判词真源：`06-1902-judge-092109acf.json` → `outcome.payloads[-1]`（T1–T6）
 - fix-packet：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a10a10-a917-76cc-966b-7ef94176ba78@fixer/fix-packet.md`
@@ -26,102 +26,95 @@ env \
 
 ---
 
-## 自验纠偏（相对 9df958435）
+## 自验纠偏（相对 0e044f154）
 
 | 问题 | 处置 |
 |---|---|
-| T3：`enrich_initiative_effects` 仍 catch canonicalize 返回原 obj | **删除 catch**；规范化响亮失败（ADR 0005）。LLM 补全失败仍为确证安全旁路+`logger.warning`。判词点名「296/318」对应旧 `_log` 受 `_VERBOSE` 门控——trace/login/keychain 已改 `logger.warning`，非规范化洗白。 |
-| T4：snapshot 在 try 外 → 遗留 generating | reopen 已赢即建 turn；snapshot 在同一 try；`fail_audience_chat_turn` 的 after-snapshot 失败留痕并继续翻回 interrupted。 |
-| T4：Web 投影/转译失败不走 fail 收口；ticketed gate 误用于票后清理 | 适配段外包 `fail_audience_chat_turn`，**cleanup 用 runtime gate**；收夜在放行 pending write 之后调共核调度。 |
-| T4：CLI/Web 收夜各编排 | CLI retry 收夜进 `execute_interrupted_reply_retry`；Web 因票据顺序 `schedule_close_night=False` 后调同一共核方法（宿主适配，非第二生命周期）。 |
-| T5：新增词面钉误判测试 | **删除** `test_run_agy_exit_zero_prose_is_not_connection_error`；复用既有 exit0 正文契约。 |
-| T5：applier 公开契约 | 余下标为 **PUBLIC_STRUCTURED（ADR 0008）**，非 INTERNAL_SHAPE、非 EXTERNAL_REAL_ENTRY；聚合复用 `test_declaration_dispatch_1835`。 |
-| 回执用 `python …rescan…` 占位 | 成员表改列完整 `rg` 谓词与命令（见下）；禁止点名三文件冒充全仓。 |
-
----
-
-## 类定义与枚举谓词（全文）
-
-| 类 | 谓词 |
-|---|---|
-| T1 | 显式/隐式强杀与硬期限兜底；保留合法静默判定；如实报告终止缺口；不另造监督层 |
-| T2 | 自由输出词面判故障、切分呈现横幅及钉误判测试；改用原生状态/结构化契约 |
-| T3 | 代码故障响亮失败；确证安全旁路留真因日志；不依赖调试开关；不给所有 catch 加统一框架 |
-| T4 | 合并恢复生命周期，删入口编排副本；保留输入/呈现/宿主资源适配；不新增通用编排框架 |
-| T5 | 处置纯内部与重复证明；复用真实行为测试；修正虚假零剩余；保留负向闸与公开结构化契约 |
-| T6 | 按当前消费者清退役残根/独占证明；撤销底座时点豁免；保留有真实用途的共享能力 |
+| 成员表 note 把 T5 收窄为 nail+internal-shape | **撤销**。T5 谓词恢复全文：全仓内部形状 + 重复证明；候选宇宙含 68 条 stale INTERNAL_SHAPE_CANDIDATE 语义复判 + applier 公开契约逐案。 |
+| T2 只枚举 Auth/Codex 字串 | 谓词扩至 prose→fault／banner-split／nail-misjudgment／结构化 `llm_connection_error`；全仓 Py+TS 机械枚举后逐项判。 |
+| T6 只点名 `_require_active_minister` | 谓词扩至授权内退役残根／独占子树／专属证明；对 S1 `KEEP_NEVER_WIRED` 133 名做消费者复审并**撤销底座时点豁免**作为 KEEP 理由。 |
+| T3 只扫 except+pass | AST 枚举一切 `pass/continue/return None\|{}\|[]\|""\|原名`；确证安全旁路补真因日志（web buffering、office_type LLM、mechanical_tail、VERSION、derive_draft_capability、FK migrate）。 |
+| T4 `except LookupError` 无条件绕过 fail | CAS 未赢改为 `reopen False → return None`；删除 LookupError 信号。KeyError/IndexError 走 fail 收口。 |
+| `fail_audience_chat_turn` 空 snapshot 伪造零差异 | after-snapshot 失败留真因、**跳过** `record_chat_turn_rollback_diffs`（不伪造 before==after），仍走 restore→interrupted。 |
+| Web 转译／失败收口 | 对照后：票后投影失败 fail 与 runtime cleanup 属宿主资源适配，与共核不重复生命周期；不强行加通用编排。 |
 
 成员表：`evidence/issue-1902/t1t6-member-tables.json`  
 复扫：`evidence/issue-1902/t1t6-rescan.json`
 
-### 可核复扫命令（完整谓词，非占位脚本）
+### 可核复扫命令（全文谓词）
 
 ```bash
-rg -n --glob '*.py' -g '!tests/**' '(\.kill\(|SIGKILL|subprocess\.run\([^)]*timeout\s*=)' ming_sim web_app.py
-rg -n --glob '*.py' '_AGY_AUTH_MARKERS|Authentication required|OpenAI Codex v' ming_sim web_app.py tests
-rg -n --glob '*.py' '_canonical_item_fields|规范化失败|norm = obj' ming_sim
-rg -n -U --glob '*.py' -g '!tests/**' -g '!scripts/**' \
-  'except Exception(?: as \w+)?:\n(?:\s+#.*\n)*\s+(pass|return None|return \{\}|return \[\]|return ""|continue)\b' \
-  ming_sim web_app.py
-rg -n 'reopen_interrupted_chat_turn_for_retry|execute_interrupted_reply_retry|schedule_close_night_after_chat_if_needed' \
-  ming_sim/cli/terminal.py web_app.py ming_sim/session.py
-rg -n 'SectionResult|ApplyContext|prose_is_not_connection|_require_active_minister' tests ming_sim web_app.py
+python3 /tmp/ming1902-t1t6-enum/enum_t1t6.py
+rg -n --glob '*.py' -g '!tests/**' '(\.kill\(|SIGKILL|subprocess\.run\([^)]*timeout\s*=|os\.kill\()' ming_sim web_app.py scripts
+rg -n --glob '*.{py,ts,tsx}' 'llm_connection_error|Authentication required|OpenAI Codex v|_AGY_AUTH|banner|prose_is_not_connection' ming_sim web_app.py tests web/src scripts
+# T3：AST except→pass|continue|return None|{}|[]|""|name（见 enum_t1t6.t3_scan_py）
+rg -n 'reopen_interrupted_chat_turn_for_retry|execute_interrupted_reply_retry|fail_audience_chat_turn|schedule_close_night_after_chat_if_needed' ming_sim web_app.py tests
+# T5：AST SectionResult(|ApplyContext( + attr/identity 且无 I/O/入口
+rg -n '_require_active_minister|手拟|manual_draft|KEEP_NEVER_WIRED|generate_rescript_draft' ming_sim web_app.py tests scripts evidence/issue-1902/s123-s1-disposition.md
 ```
 
-复扫计数（纠偏后）：`T1_actionable=0 T2_actionable=0 T3_canonical_whitewash=0 T4_entry_owns_reopen=0 T5_actionable_tests=0 T6_live_refs=0`。  
-生产 `SectionResult`/`ApplyContext` 有现役消费者 → **KEEP**（不以 AST 零引用整删）。
+候选宇宙（机械）→ 语义处置后 actionable：
+
+| 类 | 候选宇宙 | actionable |
+|---|---|---|
+| T1 | 7 | 0 |
+| T2 | 12 | 0 |
+| T3 | 313（全部分类，非零命中冒充） | 0 |
+| T4 | 88 | 0 |
+| T5 | 89 行（含 68 stale INTERNAL 复判 + applier + 清退记录） | INTERNAL=0 DUP=0 |
+| T6 | 3 符号审计 + 133 KEEP_NEVER_WIRED 复审 | 0 |
+
+**不能用零命中代替分类**：T3 `by_disposition` 见 rescan；T5 对 68 条 prior INTERNAL_SHAPE_CANDIDATE 逐案标 `KEEP_EXTERNAL_REAL_ENTRY_after_semantic_review`。
 
 ---
 
 ## 逐类结果
 
 ### T1
-维持：无 `kill`/timeout-subprocess 可执行路径；宿主自 SIGTERM KEEP。
+无可执行 `.kill`/timeout-subprocess；宿主自 SIGTERM KEEP；注释/文档禁 SIGKILL KEEP。终止缺口 `logger.warning` 如实报告。
 
 ### T2
-维持删除词表/横幅切分；**删除**钉误判测试；既有 `test_run_agy_success_single_subprocess` 覆盖 exit0 正文。
+生产无散文鉴权词表／横幅切分；`llm_connection_error` 为 transport 结构化码 KEEP；钉误判测已删；负向注释 KEEP。
 
 ### T3
-canonicalize **响亮**；LLM enrich / login PATH / keychain / trace / auto_save = 旁路+warning。嵌套 rollback `pass` 后仍 `raise` → KEEP。
+canonicalize 响亮；旁路补真因日志（本轮新增若干）；嵌套 rollback→raise、入项 clamp、解析跳过、typed reject、入口向玩家打印失败等 KEEP。313 条全部分类。
 
 ### T4
-共核：`execute_interrupted_reply_retry`（reopen→turn→snapshot→scene→complete/fail→可选收夜）。  
-Web：票据/投影/转译适配 + runtime cleanup；票后收夜。CLI：retry 收夜在共核内。
+共核 `execute_interrupted_reply_retry`：CAS→`None`；赢后失败→`fail_audience_chat_turn`。Web/CLI 读 `None` 译 409／提示。snapshot 失败不伪造差异。Web 票后投影 fail = 宿主适配 KEEP。
 
 ### T5
-INTERNAL_SHAPE 测已删；钉误判测已删；applier 余下 = PUBLIC_STRUCTURED。
+`SectionResult`/`ApplyContext` 纯内部形状测 = 0；applier 余下 = PUBLIC_STRUCTURED（ADR 0008）；68 条 stale INTERNAL 候选语义复判为外部行为 KEEP；急务两案按判词 **非** 重复。负向闸保留。
 
 ### T6
-`_require_active_minister` 仅历史注释；无活引用。
+`_require_active_minister` 定义已清、仅历史注释；133 名 KEEP_NEVER_WIRED 撤销底座时点豁免理由——TEST_ONLY 残仅注释、其余有现役消费者或非授权退役范围；`generate_rescript_draft` KEEP（现役共享能力）。不按 AST 零引用盲删。
 
 ---
 
 ## 聚焦测试
 
 ```
-296 passed in 6.50s
+298 passed in 7.63s
 ```
 
-文件集：`test_cli_backend` / `test_cli_transport_1465` / `test_cli_entry_1902` / `test_web_entry_1902` /
-`test_audience_restore_505` / `test_applier_contract` / `test_web_court_visibility` /
-`test_qa_s2_copy_prompts_1356_1402` / `test_cli_play_turn` / `test_web_chat_serialization_393` /
-`test_chat_stream_failpaths_393` / `test_settlement_write_guard_393` / `test_audience_background` /
-`test_cli_runner_error_typed_1299` / `test_declaration_dispatch_1835`
+命令与文件集见 `evidence/issue-1902/t1t6-focus-pytest.txt`（含七 BIN 前缀）。
 
-输出：`evidence/issue-1902/t1t6-focus-pytest.txt`
+新增红→绿：
+- `test_retry_keyerror_after_cas_won_fails_closed_not_cas_bypass`
+- `test_fail_audience_chat_turn_snapshot_failure_keeps_recovery_without_forged_diffs`
 
 ---
 
-## 变异真跑（真实入口；临时文件已删，未落永久证明测试）
+## 变异真跑（真实 Web retry / GameSession / CLI terminate / enrich 入口）
 
 `evidence/issue-1902/t1t6-mutations.out` + `t1t6-mutations.collected.txt`
 
 | 变异 | 入口 | 结果 |
 |---|---|---|
-| canonicalize→RuntimeError | `enrich_initiative_effects` | LOUD；printed='' |
-| LLM enrich 失败 | 同上 | 旁路空结构；warning 真因 |
-| terminate 后未退 | `_terminate_cli_process` | terminate+wait；无 kill；终止缺口 warning |
-| reopen 后 snapshot 失败 | `execute_interrupted_reply_retry` | status=`interrupted`（非 generating） |
+| CAS 未赢 | `GameSession.execute_interrupted_reply_retry` | `None` |
+| CAS 后 KeyError | `WebGame.retry_interrupted_reply` | KeyError 上抛；status=`interrupted` |
+| after-snapshot 失败 | `fail_audience_chat_turn` | 无伪造 diffs；interrupted |
+| terminate 未退 | `_terminate_cli_process` | terminate+wait；无 kill |
+| canonicalize RuntimeError | `enrich_initiative_effects` | LOUD |
 
 ---
 
@@ -130,9 +123,9 @@ INTERNAL_SHAPE 测已删；钉误判测已删；applier 余下 = PUBLIC_STRUCTUR
 - 未改 `CLAUDE.md` / `AGENTS.md` / `CONTEXT.md` / ADR。
 - 未新增永久扫描器、通用编排框架、第二运行配置、钉误判证明测试。
 - 未恢复手拟入口；未按 AST 零引用整删生产类型。
-- 净复杂度：去掉 canonicalize 洗白与钉误判测；恢复失败收口与 runtime cleanup 归位。
+- 自查二连 done：同类型（LookupError⊆LookupError；空 snapshot 伪造）+ 引入（CAS 信号改 None 后入口适配）。
 
 ## 剩余 / 阻断
 
-- 剩余：#1902 其它已结面；家族收尾/合并/关票不在授权内。
+- 剩余：#1902 其它已结面；家族收尾/合并/关票不在授权内；T3 `KEEP_narrow_exc_control_flow` 6 条为窄类型控制流 KEEP（非沉默代码故障）。
 - 阻断：无。

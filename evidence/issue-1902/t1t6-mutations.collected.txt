@@ -1,4 +1,5 @@
-('T3_canonical', 'LOUD', "printed=''")
-('T3_llm_bypass', ['effect_on_fail', 'effect_on_resolve', 'ongoing_effects'], 'log=True')
-('T1', [['terminate'], ['wait', 5]], 'has_kill=False', 'warn=True')
-('T4_snapshot', 'status=interrupted')
+M1_cas_lost_returns_None	True	out=None
+M2_web_retry_keyerror_fail_closed	True	raised=KeyError:'mut scene missing'; status=interrupted
+M3_fail_snapshot_no_forged_diffs	True	recorded=0; status=interrupted
+M4_terminate_no_kill	True	calls=['terminate', ('wait', 5)]
+M5_canonicalize_loud_via_enrich	True	loud=True

@@ -16,6 +16,7 @@ attempt 计数**从错误目录已有文件推导**（同 turn 既有目录数�
 from __future__ import annotations
 
 import json
+import logging
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,7 +71,9 @@ def _read_version() -> str:
     """读 VERSION 文件（bundled）；缺失 / 读失败回 'unknown'，绝不让写包失败。"""
     try:
         return Path(bundled_path("VERSION")).read_text(encoding="utf-8").strip()
-    except Exception:
+    except Exception as exc:
+        # 确证安全旁路：版本缺失不阻断错误包；须留真因（#1902 T3 / ADR 0005）。
+        logging.getLogger(__name__).warning("error_pack VERSION read failed: %s", exc)
         return "unknown"
 
 

@@ -1,497 +1,56 @@
 {
   "predicates": {
-    "T1": "production executable hard-kill: .kill(/SIGKILL/subprocess.run(... timeout=) under ming_sim|web_app.py; comment-only KEEP",
-    "T2": "production prose→fault: _AGY_AUTH_MARKERS or stdout/stderr Authentication/Codex-banner split→connection error; nail-misjudgment tests DELETE",
-    "T3": "code fault silent: canonicalize catch return original; auto_save/trace/_log-only without logger.warning; confirmed-safe bypass must log",
-    "T4": "entry-owned reopen+scene_chat+fail+close_night lifecycle outside GameSession.execute_interrupted_reply_retry",
-    "T5": "INTERNAL_SHAPE SectionResult/ApplyContext identity; nail-misjudgment prose tests; PUBLIC_STRUCTURED ADR0008 keep with explicit label",
-    "T6": "retired _require_active_minister live production/test refs (not base-time KEEP)"
+    "T1": "拆除显式及隐式强杀路径和硬期限兜底；保留合法静默判定，如实报告终止缺口，不另造监督层。全仓 ming_sim|web_app|scripts|web 的 .kill(/SIGKILL/subprocess.run(timeout=/Popen.kill/os.kill 可执行与注释均入表。",
+    "T2": "删除从自由输出词面判故障、切分呈现横幅的机制及钉误判测试；用已有原生状态或结构化契约。谓词覆盖 prose→fault / banner-split / nail-misjudgment，不以 Auth|Codex 字串穷尽类。",
+    "T3": "代码故障响亮失败；确证安全旁路保留真因日志（不依赖调试开关）。枚举一切 except 后 pass/continue/return None|empty|原对象/正常值，不只 except+pass。",
+    "T4": "合并恢复生命周期，删入口编排副本；保留输入/呈现/宿主资源适配。CAS 未赢用 reopen False→None 结构化返回，不用 LookupError（其子类 KeyError/IndexError 可来自 scene/snapshot/落库）。snapshot 失败不伪造差异。",
+    "T5": "按独立外部契约处置纯内部和重复证明；复用真实行为测试；修正虚假零剩余；保留负向闸与公开结构化契约。全文=内部形状+重复证明，不得收窄为 nail+SectionResult 点名。",
+    "T6": "按当前实际消费者清退授权内退役入口残根、独占子树和专属证明；撤销底座时点豁免；保留有真实用途的共享能力。不以点名包装穷尽类。"
   },
+  "candidate_universe_sizes": {
+    "T1": 7,
+    "T2": 12,
+    "T3": 313,
+    "T4": 88,
+    "T5_rows": 89,
+    "T5_stale_internal_candidates_reviewed": 68,
+    "T6_symbols": 3,
+    "T6_KEEP_NEVER_WIRED_names": 133
+  },
+  "actionable_counts": {
+    "T1": 0,
+    "T2": 0,
+    "T3": 0,
+    "T4": 0,
+    "T5_internal_shape_remaining": 0,
+    "T5_duplicate_actionable": 0,
+    "T6": 0
+  },
+  "T3_by_disposition": {
+    "KEEP_cancel_control_flow": 1,
+    "KEEP_collect_then_loud_raise": 1,
+    "KEEP_entry_presents_failure_to_player": 1,
+    "KEEP_input_clamp_or_item_reject": 177,
+    "KEEP_loud_to_client": 4,
+    "KEEP_narrow_exc_control_flow": 6,
+    "KEEP_nested_rollback_then_raise": 5,
+    "KEEP_optional_io_or_schema_absent": 17,
+    "KEEP_parse_skip_invalid_input": 30,
+    "KEEP_propagate_or_structured": 12,
+    "KEEP_safe_bypass_with_true_cause_log": 31,
+    "KEEP_script_probe_not_game_runtime": 8,
+    "KEEP_structured_failure_path": 3,
+    "KEEP_typed_domain_reject_or_cancel": 12,
+    "KEEP_typed_llm_fault_to_http": 5
+  },
+  "T3_actionable": [],
   "commands": [
-    "rg -n --glob '*.py' -g '!tests/**' '(\\.kill\\(|SIGKILL|subprocess\\.run\\([^)]*timeout\\s*=)' ming_sim web_app.py",
-    "rg -n --glob '*.py' '_AGY_AUTH_MARKERS|Authentication required|OpenAI Codex v' ming_sim web_app.py tests",
-    "rg -n --glob '*.py' '_canonical_item_fields|规范化失败|norm = obj' ming_sim",
-    "rg -n -U --glob '*.py' -g '!tests/**' -g '!scripts/**' 'except Exception(?: as \\w+)?:\\n(?:\\s+#.*\\n)*\\s+(pass|return None|return \\{\\}|return \\[\\]|return \"\"|continue)\\b' ming_sim web_app.py",
-    "rg -n 'reopen_interrupted_chat_turn_for_retry|execute_interrupted_reply_retry|schedule_close_night_after_chat_if_needed' ming_sim/cli/terminal.py web_app.py ming_sim/session.py",
-    "rg -n 'SectionResult|ApplyContext|prose_is_not_connection|_require_active_minister' tests ming_sim web_app.py"
-  ],
-  "T1": [
-    {
-      "line": "web_app.py:4700:            _os.kill(_os.getpid(), _signal.SIGTERM)",
-      "disposition": "KEEP_host_self_SIGTERM"
-    },
-    {
-      "line": "ming_sim/cli_backend.py:229:        # 硬规9：禁 subprocess.run(timeout=…)——超时路径会 SIGKILL。登录 PATH 探测无期限杀。",
-      "disposition": "KEEP_comment"
-    },
-    {
-      "line": "ming_sim/cli_backend.py:352:        # 硬规9：禁 timeout=（subprocess.run 超时会 SIGKILL）。keychain 暖探无期限杀。",
-      "disposition": "KEEP_comment"
-    },
-    {
-      "line": "ming_sim/cli_backend.py:392:    \"\"\"收尾子进程：已退时 terminate 是 no-op；否则只 SIGTERM，不 SIGKILL（硬规9）。",
-      "disposition": "KEEP_comment"
-    },
-    {
-      "line": "ming_sim/cli_backend.py:405:            \"CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）：%s\", exc,",
-      "disposition": "KEEP_comment"
-    },
-    {
-      "line": "ming_sim/cli_backend.py:422:      不 SIGKILL，硬规9）。",
-      "disposition": "KEEP_comment"
-    },
-    {
-      "line": "ming_sim/cli_backend.py:2789:        出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。\"\"\"",
-      "disposition": "KEEP_docstring"
-    }
-  ],
-  "T2": [
-    {
-      "line": "tests/test_cli_backend.py:284:    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=\"OpenAI Codex v0\\nlogs\"))",
-      "disposition": "KEEP_fixture_or_unrelated"
-    },
-    {
-      "line": "tests/test_cli_backend.py:458:        _P(stdout=\"\", stderr=\"STDOUT_BODY\\nOpenAI Codex v0.125.0\\nlogs\"),",
-      "disposition": "KEEP_fixture_or_unrelated"
-    },
-    {
-      "line": "tests/test_cli_transport_1465.py:177:    #1902 T2：禁再以 Authentication required 词面钉连接错误。",
-      "disposition": "KEEP_comment_negative"
-    },
-    {
-      "line": "tests/test_cli_runner_error_typed_1299.py:24:    \"OpenAI Codex v0.50.0\\n\"",
-      "disposition": "KEEP_fixture_or_unrelated"
-    }
-  ],
-  "T3_canonical": [
-    {
-      "line": "ming_sim/flows.py:1718:    from ming_sim.simulation import _canonical_item_fields",
-      "disposition": "KEEP_call_loud"
-    },
-    {
-      "line": "ming_sim/flows.py:1725:            fields = _canonical_item_fields(fields)",
-      "disposition": "KEEP_call_loud"
-    },
-    {
-      "line": "ming_sim/cli_backend.py:2734:    from ming_sim.simulation import _canonical_item_fields",
-      "disposition": "KEEP_call_loud"
-    },
-    {
-      "line": "ming_sim/cli_backend.py:2735:    norm = _canonical_item_fields(obj) if obj else {}",
-      "disposition": "KEEP_call_loud"
-    },
-    {
-      "line": "ming_sim/simulation.py:210:def _canonical_item_fields(value: object) -> object:",
-      "disposition": "KEEP_call_loud"
-    },
-    {
-      "line": "ming_sim/simulation.py:212:        return [_canonical_item_fields(item) for item in value]",
-      "disposition": "KEEP_call_loud"
-    },
-    {
-      "line": "ming_sim/simulation.py:216:        ITEM_FIELD_ALIASES.get(str(key).strip(), str(key).strip()): _canonical_item_fields(val)",
-      "disposition": "KEEP_call_loud"
-    }
-  ],
-  "T3_silent_broad": [
-    {
-      "line": "ming_sim/audience_night.py:959:        except Exception:",
-      "disposition": "KEEP_nested_rollback_then_raise"
-    },
-    {
-      "line": "ming_sim/audience_night.py:960:            pass",
-      "disposition": "KEEP_nested_rollback_then_raise"
-    },
-    {
-      "line": "ming_sim/settlement_payload.py:56:        except Exception:",
-      "disposition": "KEEP_parse_skip_invalid_block"
-    },
-    {
-      "line": "ming_sim/settlement_payload.py:57:            continue",
-      "disposition": "KEEP_parse_skip_invalid_block"
-    },
-    {
-      "line": "ming_sim/rescript_actions.py:249:            except Exception:",
-      "disposition": "KEEP_parse_skip_invalid_block"
-    },
-    {
-      "line": "ming_sim/rescript_actions.py:250:                continue",
-      "disposition": "KEEP_parse_skip_invalid_block"
-    },
-    {
-      "line": "ming_sim/db.py:22611:                except Exception:",
-      "disposition": "KEEP_nested_rollback_then_raise"
-    },
-    {
-      "line": "ming_sim/db.py:22612:                    pass",
-      "disposition": "KEEP_nested_rollback_then_raise"
-    },
-    {
-      "line": "ming_sim/db.py:22644:                except Exception:",
-      "disposition": "KEEP_nested_rollback_then_raise"
-    },
-    {
-      "line": "ming_sim/db.py:22645:                    pass",
-      "disposition": "KEEP_nested_rollback_then_raise"
-    },
-    {
-      "line": "ming_sim/db.py:22777:                except Exception:",
-      "disposition": "KEEP_nested_rollback_then_raise"
-    },
-    {
-      "line": "ming_sim/db.py:22778:                    pass",
-      "disposition": "KEEP_nested_rollback_then_raise"
-    },
-    {
-      "line": "ming_sim/db.py:22831:                except Exception:",
-      "disposition": "KEEP_nested_rollback_then_raise"
-    },
-    {
-      "line": "ming_sim/db.py:22832:                    pass",
-      "disposition": "KEEP_nested_rollback_then_raise"
-    }
-  ],
-  "T4": [
-    {
-      "line": "ming_sim/session.py:1046:    def schedule_close_night_after_chat_if_needed(",
-      "disposition": "SHARED_CORE"
-    },
-    {
-      "line": "ming_sim/session.py:1355:    def execute_interrupted_reply_retry(",
-      "disposition": "SHARED_CORE"
-    },
-    {
-      "line": "ming_sim/session.py:1379:        （Web：须先放行 pending write）；共核仍是 ``schedule_close_night_after_chat_if_needed``。",
-      "disposition": "SHARED_CORE"
-    },
-    {
-      "line": "ming_sim/session.py:1395:                if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):",
-      "disposition": "SHARED_CORE"
-    },
-    {
-      "line": "ming_sim/session.py:1422:                self.schedule_close_night_after_chat_if_needed(",
-      "disposition": "SHARED_CORE"
-    },
-    {
-      "line": "web_app.py:2204:                turn, result, minister_message_id = self.session.execute_interrupted_reply_retry(",
-      "disposition": "ENTRY_CALLS_CORE"
-    },
-    {
-      "line": "web_app.py:2268:                self.session.schedule_close_night_after_chat_if_needed(",
-      "disposition": "KEEP_web_after_ticket_adapter"
-    },
-    {
-      "line": "ming_sim/cli/terminal.py:240:    #1902 T4：生命周期走 ``GameSession.execute_interrupted_reply_retry``（含收夜调度）；",
-      "disposition": "KEEP"
-    },
-    {
-      "line": "ming_sim/cli/terminal.py:258:        _turn, result, _mid = session.execute_interrupted_reply_retry(",
-      "disposition": "ENTRY_CALLS_CORE"
-    },
-    {
-      "line": "ming_sim/cli/terminal.py:329:            session.schedule_close_night_after_chat_if_needed(",
-      "disposition": "CHECK"
-    }
-  ],
-  "T5_T6": [
-    {
-      "line": "ming_sim/applier.py:4:公开类型：Provenance / RejectedItem / SectionResult / ApplyContext / RejectionCollector。",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/applier.py:250:class SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/applier.py:260:    def merge(self, other: SectionResult) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/applier.py:261:        \"\"\"聚合两个 SectionResult（编排层按 section 顺序折叠）。\"\"\"",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/applier.py:262:        return SectionResult(",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/applier.py:273:class ApplyContext:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/audience_translation.py:307:            from ming_sim.applier import SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/audience_translation.py:309:            empty = SectionResult(applied=[], rejected=[])",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "tests/test_qa_s2_copy_prompts_1356_1402.py:7:#1902 T6：旧 web _require_active_minister 包装及专属文案钉已随退役入口清退；",
-      "disposition": "KEEP_history_comment"
-    },
-    {
-      "line": "tests/test_applier_contract.py:6:- 纯内部 SectionResult／ApplyContext 形状证明已清退。",
-      "disposition": "KEEP_doc_only"
-    },
-    {
-      "line": "tests/test_declaration_dispatch_1835.py:628:    不冒称 `SectionResult.applied`（那意味着已落库）。\"\"\"",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:25:对应 ``SectionResult.rejected``，不牵连同批其余合法项（ADR 0015 per-item",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:72:    SectionResult,",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:105:    冒称 ``SectionResult.applied``（其契约明定「已落库」）会让调用方误信已",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:127:    commissions: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:128:    promises: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:129:    endorsements: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:130:    textual_facts: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:131:    public_sayings: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:132:    on_scene_facts: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:133:    presence: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:134:    scene_facts: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:135:    edge_events: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:137:    registrations: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:138:    effects: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:139:    inquiries: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:140:    rushes: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:141:    travel_tones: SectionResult",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:175:    empty = SectionResult(applied=[], rejected=[])",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:424:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:435:        return SectionResult(applied=[], rejected=[])",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:437:        return SectionResult(applied=[], rejected=[RejectedItem(",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:442:        return SectionResult(applied=[], rejected=[RejectedItem(",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:480:        return SectionResult(applied=[], rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:531:        return SectionResult(applied=[], rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:562:    return SectionResult(applied=[report], rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:1087:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:1619:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:1640:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:1656:        return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:1745:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:1865:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:1871:        return SectionResult(applied=[], rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:1906:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:1917:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2003:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2015:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2024:        return SectionResult(applied=[], rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2069:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2076:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2206:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2298:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2331:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2357:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2402:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2408:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2463:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2503:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2551:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2557:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2621:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2636:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2697:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2703:    projected 值原样交回调用方——不冒称 :class:`~ming_sim.applier.SectionResult`",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2731:) -> SectionResult:",
-      "disposition": "ACTIONABLE_internal"
-    },
-    {
-      "line": "ming_sim/declaration_dispatch.py:2817:    return SectionResult(applied=applied, rejected=rejected)",
-      "disposition": "ACTIONABLE_internal"
-    }
-  ],
-  "counts": {
-    "T1_actionable": 0,
-    "T2_actionable": 0,
-    "T3_canonical_whitewash": 0,
-    "T3_silent_review": 0,
-    "T4_entry_owns_reopen": 0,
-    "T6_live_refs": 0,
-    "T5_actionable_tests": 0,
-    "T5_nail_or_internal_WAS_MISCOUNTED_PROD_TYPES": 64
-  },
-  "T5_applier_remaining": {
-    "classification": "PUBLIC_STRUCTURED (ADR 0008 Provenance/RejectedItem/RejectionCollector flush+mirror); NOT EXTERNAL_REAL_ENTRY; NOT INTERNAL_SHAPE",
-    "tests": [
-      "test_provenance_enum_values",
-      "test_provenance_from_string",
-      "test_rejected_item_fields",
-      "test_rejection_collector_flush_before_record_leaves_db_empty",
-      "test_rejection_collector_flush_writes_rows",
-      "test_rejection_collector_flush_clears_buffer",
-      "test_rejection_collector_flush_stores_item_as_json",
-      "test_mirror_to_jsonl_writes_lines",
-      "test_mirror_to_jsonl_appends_on_multiple_calls",
-      "test_mirror_to_jsonl_empty_buffer_writes_nothing",
-      "test_flush_then_mirror_writes_jsonl",
-      "test_mirror_idempotent_after_flush",
-      "test_unflushed_rows_never_mirrored",
-      "test_reset_discards_pending_and_flushed",
-      "test_record_accepts_plain_string_source",
-      "test_record_rejects_unknown_source_string",
-      "test_collector_counts_deterministic_on_polluted_save",
-      "test_ddl_in_open_transaction_rolls_back"
-    ],
-    "aggregation_reuse": "tests/test_declaration_dispatch_1835.py"
-  },
-  "T5_clarification": "T5 actionable = nail-misjudgment tests + pure internal-shape test proofs only. Production SectionResult/ApplyContext are shared types with consumers (KEEP), not AST-zero-ref delete targets."
+    "python3 /tmp/ming1902-t1t6-enum/enum_t1t6.py  # full mechanical enum Py/TS/scripts",
+    "rg -n --glob '*.py' -g '!tests/**' '(\\.kill\\(|SIGKILL|subprocess\\.run\\([^)]*timeout\\s*=|os\\.kill\\()' ming_sim web_app.py scripts",
+    "rg -n --glob '*.{py,ts,tsx}' 'llm_connection_error|Authentication required|OpenAI Codex v|_AGY_AUTH|banner|prose_is_not_connection' ming_sim web_app.py tests web/src scripts",
+    "AST except→pass|continue|return None|{}|[]|\"\"|name  (enum_t1t6.t3_scan_py) over ming_sim|web_app|scripts",
+    "rg -n 'reopen_interrupted_chat_turn_for_retry|execute_interrupted_reply_retry|fail_audience_chat_turn|schedule_close_night_after_chat_if_needed' ming_sim web_app.py tests",
+    "AST: SectionResult(|ApplyContext( + attr/identity asserts without I/O/entry across tests/",
+    "rg -n '_require_active_minister|手拟|manual_draft|KEEP_NEVER_WIRED|generate_rescript_draft' ming_sim web_app.py tests scripts evidence/issue-1902/s123-s1-disposition.md"
+  ]
 }

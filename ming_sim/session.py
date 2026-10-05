@@ -1287,8 +1287,9 @@ class GameSession:
                 translation_dispatched=translation_dispatched,
                 court_action=court_action,
             )
-        # 回滚差异的 after 快照失败不得阻断 interrupted 翻回（#1902 T4：
-        # reopen 已赢时遗留 generating 比丢差异更糟；旁路留真因）。
+        # after 快照失败不得伪造 before==after（洗白差异）；留真因后跳过 diff 记录，
+        # 仍走既有 restore_interrupted／fail_chat_turn 合法收口（#1902 T4）。
+        after_snapshot = None
         try:
             after_snapshot = self.db.capture_chat_rollback_snapshot()
         except Exception as snap_exc:
@@ -1296,10 +1297,10 @@ class GameSession:
                 "fail_audience_chat_turn after-snapshot failed chat_turn_id=%s: %s",
                 turn.chat_turn_id, snap_exc,
             )
-            after_snapshot = turn.before_snapshot or {}
-        self.db.record_chat_turn_rollback_diffs(
-            turn.chat_turn_id, turn.before_snapshot, after_snapshot,
-        )
+        if after_snapshot is not None:
+            self.db.record_chat_turn_rollback_diffs(
+                turn.chat_turn_id, turn.before_snapshot, after_snapshot,
+            )
         if not turn.user_message_id:
             user_row = self.db.conn.execute(
                 "SELECT user_message_id FROM chat_turns WHERE id = ?",
@@ -1366,14 +1367,16 @@ class GameSession:
         schedule_close_night: bool = True,
         write_gate: Any = None,
         close_night_write_gate: Any = None,
-    ) -> Tuple[AudienceChatTurn, "ChatTurnResult", int]:
+    ) -> Optional[Tuple[AudienceChatTurn, "ChatTurnResult", int]]:
         """中断回话恢复共核：reopen CAS → 快照 → scene_chat → 落回话／失败收口／收夜。
 
         #1902 T4：Web／CLI 入口只做输入、呈现与宿主资源适配，生命周期编排只此一处。
-        reopen CAS 未赢 → 返回前抛 ``LookupError``（入口自行译成 409／提示；未进 generating）。
+        reopen CAS 未赢 → 返回 ``None``（沿用 ``reopen_interrupted_chat_turn_for_retry``
+        的 False 语义；入口译成 409／提示；未进 generating）。不借用 LookupError——
+        KeyError／IndexError 亦为其子类，scene／snapshot／落库可抛，不得当 CAS 未赢。
         reopen 已赢后的任何失败（含快照）→ ``fail_audience_chat_turn`` 后原错上抛，
         不遗留 generating。
-        返回 ``(turn, result, minister_message_id)``；``schedule_translation=False``
+        成功返回 ``(turn, result, minister_message_id)``；``schedule_translation=False``
         时转译由入口在闸外自行安排（Web 票据挂票后再派）。
         ``schedule_close_night=False`` 时收夜由入口在宿主票／屏障交接后再调
         （Web：须先放行 pending write）；共核仍是 ``schedule_close_night_after_chat_if_needed``。
@@ -1390,18 +1393,19 @@ class GameSession:
         turn: Optional[AudienceChatTurn] = None
         result: Optional[ChatTurnResult] = None
         translation_dispatched = False
+        with gate_cm:
+            if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+                return None
+            # reopen 已赢即建 turn 句柄，保证后续任意失败（含快照）能走 fail 收口。
+            turn = AudienceChatTurn(
+                chat_turn_id=int(chat_turn_id),
+                accepted_turn=int(accepted_turn),
+                night_id=0,
+                before_snapshot={},
+                user_message_id=int(user_message_id or 0),
+            )
         try:
             with gate_cm:
-                if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
-                    raise LookupError(f"chat_turn {chat_turn_id} reopen CAS lost")
-                # reopen 已赢即建 turn 句柄，保证后续任意失败（含快照）能走 fail 收口。
-                turn = AudienceChatTurn(
-                    chat_turn_id=int(chat_turn_id),
-                    accepted_turn=int(accepted_turn),
-                    night_id=0,
-                    before_snapshot={},
-                    user_message_id=int(user_message_id or 0),
-                )
                 turn.before_snapshot = self.db.capture_chat_rollback_snapshot()
             result = self.scene_chat(
                 question,
@@ -1424,9 +1428,6 @@ class GameSession:
                     write_gate=close_gate,
                 )
             return turn, result, int(minister_message_id or 0)
-        except LookupError:
-            # CAS 未赢：轮仍 interrupted，无 generating 需收口。
-            raise
         except Exception as exc:
             if turn is not None:
                 try:

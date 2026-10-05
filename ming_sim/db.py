@@ -748,7 +748,9 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     否则返回 ''。结果按官名缓存，避免重复调用。"""
     try:
         from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
-    except Exception:
+    except Exception as exc:
+        # 确证安全旁路：无 CLI 后端时官名类型退空串；须留真因（#1902 T3 / ADR 0005）。
+        logger.warning("office_type LLM 后端导入失败，退空串：%s", exc)
         return ""
     if not cli_backend_active(llm_config):
         return ""
@@ -766,7 +768,8 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="office_infer")
         cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
         out = cand if cand in allowed_set else ""
-    except Exception:
+    except Exception as exc:
+        logger.warning("office_type LLM 推断失败，退空串 text=%r：%s", text, exc)
         out = ""
     _OFFICE_TYPE_LLM_CACHE[text] = out
     return out
@@ -3406,7 +3409,9 @@ class GameDB:
             fks = self.conn.execute(
                 "PRAGMA foreign_key_list(next_audience_todos)"
             ).fetchall()
-        except Exception:
+        except Exception as exc:
+            # 表不存在／PRAGMA 失败：迁移旁路跳过，留真因（#1902 T3）。
+            logger.warning("migrate next_audience_todos FK drop skipped: %s", exc)
             return
         if not fks:
             return

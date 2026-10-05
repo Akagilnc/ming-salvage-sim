@@ -255,7 +255,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     # 回话挂回原问话的那位大臣（CLI 召对语义），不是建轮的殿上。
     message_speaker = str(target.get("message_speaker") or "") or minister_name
     try:
-        _turn, result, _mid = session.execute_interrupted_reply_retry(
+        retry_outcome = session.execute_interrupted_reply_retry(
             chat_turn_id=chat_turn_id,
             question=question,
             message_speaker=message_speaker,
@@ -267,12 +267,13 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             write_gate=_cli_write_gate(session),
             close_night_write_gate=_cli_write_gate(session),
         )
-    except LookupError:
-        print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
-        return None
     except Exception as exc:
         print(f"重试回话失败：{exc}\n")
         return None
+    if retry_outcome is None:
+        print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
+        return None
+    _turn, result, _mid = retry_outcome
     print(f"\n{message_speaker}：{wrap(str(getattr(result, 'answer', '') or ''))}\n")
     if str(getattr(result, "court_action", "") or "") == "court_break":
         return "court_break"

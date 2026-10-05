@@ -33,8 +33,8 @@ try:
         sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
     if sys.stderr is not None:
         sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动
-    pass
+except Exception as exc:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动；旁路留真因
+    logging.getLogger(__name__).warning("web stdout/stderr line-buffering setup failed: %s", exc)
 
 from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -2200,23 +2200,23 @@ class WebGame:
                 if self._audience_turn_in_flight(minister_name):
                     raise HTTPException(
                         status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
-            try:
-                turn, result, minister_message_id = self.session.execute_interrupted_reply_retry(
-                    chat_turn_id=chat_turn_id,
-                    question=question,
-                    message_speaker=minister_name,
-                    accepted_turn=accepted_turn,
-                    user_message_id=int(target.get("user_message_id") or 0),
-                    scene_minister_name=minister_name,
-                    stream_emit=lambda _delta, **_kwargs: None,
-                    schedule_translation=False,
-                    schedule_close_night=False,
-                    write_gate=gate,
-                )
-            except LookupError:
+            retry_outcome = self.session.execute_interrupted_reply_retry(
+                chat_turn_id=chat_turn_id,
+                question=question,
+                message_speaker=minister_name,
+                accepted_turn=accepted_turn,
+                user_message_id=int(target.get("user_message_id") or 0),
+                scene_minister_name=minister_name,
+                stream_emit=lambda _delta, **_kwargs: None,
+                schedule_translation=False,
+                schedule_close_night=False,
+                write_gate=gate,
+            )
+            if retry_outcome is None:
                 raise HTTPException(
                     status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。",
-                ) from None
+                )
+            turn, result, minister_message_id = retry_outcome
             try:
                 proposed = None
                 if result.proposed_directive is not None:
