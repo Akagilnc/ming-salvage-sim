@@ -254,9 +254,8 @@ describe("#1845 ending summary stays background and becomes visible", () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(loadState).toHaveBeenCalledTimes(1);
+    // 史评正文不锁；忙态清除＝尾段落地的结构契约（节点在 pending 时已存在，不得再用 notNull 充数）。
     expect(summary()?.getAttribute("aria-busy")).toBeNull();
-    // 史评正文不锁；只验忙态结束后摘要节点仍在。
-    expect(summary()).not.toBeNull();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);

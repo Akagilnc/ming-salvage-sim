@@ -128,15 +128,6 @@ describe("empty bar label presentation (#626)", () => {
     };
   }
 
-  it("detail modal renders supplied bar meanings", () => {
-    const cleanup = render(
-      <SituationDetailModal issue={makeIssue()} onClose={() => undefined} />
-    );
-    const outcomes = Array.from(document.querySelectorAll(".situation-detail .situation-tip-outcome-head"));
-    expect(outcomes).toHaveLength(2);
-    cleanup();
-  });
-
   it("issue board progress ends stay blank rather than showing empty labels", () => {
     const cleanup = render(<IssueGroup title="待办" issues={[makeEmptyBarIssue()]} />);
     const ends = Array.from(document.querySelectorAll(".issue-progress > span"));

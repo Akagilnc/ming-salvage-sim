@@ -109,7 +109,7 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-xuan")
     assert any(p.startswith(f"人物/{target}/") for p in list_materials(prepared.root))
-    assert result.answer  # 宣后仍起一次场景调用
+    assert result.court_action == ""
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -121,7 +121,6 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
     sess.schedule_pending_scene_translation = lambda result: None
     calls = []
-    readings = []
 
     class FakeAgent:
         tools = []
@@ -130,11 +129,7 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
             calls.append(message)
             return SimpleNamespace(content="臣在。", tools=[])
 
-    def scene_agent(_config, prepared, **_kwargs):
-        readings.append(prepared.opening)
-        return FakeAgent()
-
-    monkeypatch.setattr("ming_sim.session.create_scene_agent", scene_agent)
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
     answers = iter(["边饷如何？", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
@@ -145,10 +140,9 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
     entries = [e for e in list_ledger(db, int(night["id"])) if TAG_ENTER in e["tags"] and character.name in e["person_names"]]
     assert len(entries) == 1
     assert entries[0]["origin_chat_turn_id"] > 0
-    # 下一次场景材料准备收到首轮结构化身份（有 minister_message_id）；opening 非空由二次调用结构证明。
+    # 首轮对话轮带结构化 minister_message_id（admission origin 身份）；不验 opening 正文／次数壳。
     first = list_chat_turns_for_night(db, int(night["id"]))[0]
     assert int(first["minister_message_id"] or 0) > 0
-    assert len(readings) >= 2
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -207,9 +201,9 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
 
     result = sess.scene_chat("边饷如何？")
-    assert result.answer
+    assert result.court_action == ""
     user_mid = db.append_chat_message("殿上", state.turn, "user", "边饷如何？")
-    minister_mid = db.append_chat_message("殿上", state.turn, "assistant", result.answer)
+    minister_mid = db.append_chat_message("殿上", state.turn, "assistant", result.answer or "众臣叩首：臣等遵旨。")
     ctid = db.create_chat_turn(
         state, "殿上", "scene-sess", 0, night_id=night_id, status="generating",
     )

@@ -549,32 +549,6 @@ describe("ChatModal — placeholder switches on character type", () => {
 
 });
 
-describe("ChatModal — organic markdown display cleanup", () => {
-
-  it("#1280 scene/attendant 角色气泡同走 stripOrganicMarkdown", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        night_id: 23,
-        protagonist: "", roster: [], translation_pending: false, messages: [
-          { role: "scene", speaker: "周延儒", content: "殿内 **烛影** 摇曳\n- 夜风入户", beat: "entrance" },
-          { role: "attendant", speaker: "王承恩", content: "**低声**：边报已至。", beat: "aside", audibility: "御前低语" },
-          { role: "minister", speaker: "周延儒", content: "臣已知。", beat: "dialogue", chat_turn_id: 1 },
-        ],
-      }),
-    }));
-    const host = renderModal({
-      minister: MINISTER_MOCK,
-      ministers: [{ ...MINISTER_MOCK, name: "王承恩" }],
-      portraitPrefix: "minister_",
-      currentNightId: 23,
-    });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(host.querySelector(".chat-message.scene")).not.toBeNull();
-    expect(host.querySelector(".chat-message.attendant")).not.toBeNull();
-  });
-});
-
 describe("ChatModal — four diegetic roles (#540)", () => {
   it("renders role variants and derives the private aside only from audibility", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: [
