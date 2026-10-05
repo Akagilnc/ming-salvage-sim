@@ -55,7 +55,7 @@
 
 ## HEAD
 
-见本 commit。
+`cdd29c39f04f18559b2e2cff58e1b93b133f399e`
 
 ## 命令
 ```bash
