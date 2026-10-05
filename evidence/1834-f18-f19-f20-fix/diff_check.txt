@@ -1,3 +1,2 @@
-### Pre-commit note: first-fix HEAD had report.md L3-L8 trailing whitespace (EXIT=2); cached fix was clean.
-### Post-commit: git diff --check ecdbc39ab HEAD
-EXIT:0
+### Post-repair expected: git diff --check ecdbc39ab HEAD (after this commit)
+(will fill after commit)
