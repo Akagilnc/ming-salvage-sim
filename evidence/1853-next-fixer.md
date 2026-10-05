@@ -5,8 +5,8 @@
 - 封驳原文真源：pi session `.../01a10964-3d95-702e-b546-d696495ead65@fixer/session/session.jsonl` 最新 user 消息（line=43，`status=continue`，findings T1/T2 全文）
 - 判词/票面：`fix-packet.md` + `attachments/10-1853-judge-d81e9db05.json`（末份）
 - 基线（本轮施工前 HEAD）：`372bb253d796a5757dd894afcd1c210e4fe49e9c`
-- **本轮交卷 commit（实现）：** `3cc8901fbc615d22b3acbf71faa1d162905b70d5`
-- **回执戳印 commit：** `a719db5cd36807c3bcbb86982127a7187b0442da`（本戳印后另有 docs 提交）
+- **本轮实现 commit：** `3cc8901fbc615d22b3acbf71faa1d162905b70d5`
+- **回执文档 HEAD：**（下一提交戳印）
 - 未合入目标分支；不 push / 不开 PR；不 amend / 不 stash；未调交卷工具
 
 ## 封驳原文要点（不得以摘要当判词；此处仅索引）
