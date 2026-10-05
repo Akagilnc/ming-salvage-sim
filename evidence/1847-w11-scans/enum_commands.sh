@@ -22,7 +22,9 @@ rg -n --glob '*.py' 'fail_if_llm_error|_AGY_AUTH_MARKERS|incorrect api key|authe
 echo '=== N14 illegal wording / helper-only / duplicate flow ==='
 rg -n --glob 'tests/**/*.py' 'pytest\.raises\([^\n]*match\s*=' tests || true
 rg -n --glob 'tests/**/*.py' 'expected_log|office_rank_band|office_leverage_multiplier|run_month_end_relation_brew|_run_relation_brew' tests || true
+rg -n --glob 'tests/**/*.py' 'CapturingLeg|leg\.report|MonthEndRelationBrewLeg\s*=' tests || true
 rg -n --glob 'tests/test_relation_brew_636.py' 'leg\.prepare\(|leg\.brew\(|leg\.persist\(' tests || true
+rg -n --glob 'tests/**/*brew*.py' 'report\[["'\''](selected|brewed|degraded)["'\'']\]' tests || true
 
 echo '=== N16 cross-campaign old-name purge ==='
 rg -n --glob '*.py' 'legacy_auto|prune_auto_saves|AUTO_SAVE_PREFIX' ming_sim tests || true

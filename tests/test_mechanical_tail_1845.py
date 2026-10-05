@@ -73,7 +73,7 @@ def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monke
             "period": kwargs.get("settled_period"),
             "turn": kwargs.get("closed_turn"),
         })
-        return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
+        return None  # production _run_relation_brew returns None
 
     monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", recording_brew)
     session = make_light_session(db, state, content)
@@ -115,7 +115,7 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
 
     def recording_brew(_session, **kwargs):
         calls.append(kwargs.get("closed_turn"))
-        return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
+        return None  # production _run_relation_brew returns None
 
     monkeypatch.setattr(
         "ming_sim.mechanical_tail._run_relation_brew", recording_brew,

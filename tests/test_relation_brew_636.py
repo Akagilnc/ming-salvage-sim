@@ -22,11 +22,10 @@ import pytest
 from openai import APIConnectionError, APITimeoutError
 
 from ming_sim.faction_brew import STANCE_KEY, VIEW_FACTION_STANCE
-from ming_sim.exceptions import LLMUnavailable
+from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
     RECENT_KEY,
-    MonthEndRelationBrewLeg,
     build_brew_input,
     merge_founding_segment,
     relation_dimension,
@@ -34,61 +33,37 @@ from ming_sim.relation_brew import (
 from ming_sim.relations import EMPEROR_NODE
 
 
-def run_month_end_relation_brew(db, state, brew_fn, **kwargs):
-    """Drive via live mechanical_tail._run_relation_brew (#1847 N14).
+def run_month_end_relation_brew(db, state, brew_fn):
+    """Drive production mechanical_tail._run_relation_brew (#1847 N14).
 
-    No parallel prepare→brew→persist test flow. Injects brew_fn at the same
-    seam production uses (_brew_fn_for_session); does not add a production consumer.
+    Only replaces the external brew input at ``_brew_fn_for_session``.
+    Uses a real SessionWriteQueue and the real MonthEndRelationBrewLeg.
+    Returns None; call sites assert DB results or production exception types.
+    Does not mock the leg, capture ``leg.report``, or wash degraded raises.
     """
     from ming_sim import mechanical_tail as mt
-    from ming_sim.exceptions import LLMContractError, LLMUnavailable
     from ming_sim.session_write_queue import SessionWriteQueue
-
-    captured: dict = {}
-
-    class _CapturingLeg(MonthEndRelationBrewLeg):
-        def __init__(self, db_, state_, _ignored_brew, **kw):
-            merged = dict(kw)
-            for key, value in kwargs.items():
-                merged.setdefault(key, value)
-            super().__init__(db_, state_, brew_fn, **merged)
-            captured["leg"] = self
 
     session = SimpleNamespace(db=db, state=state, llm_config=None, agno_db=None)
     queue = SessionWriteQueue()
     ticket = queue.claim(("test-relation-brew", int(state.turn), id(brew_fn)))
     assert ticket is not None
-
-    orig_brew = mt._brew_fn_for_session
-    orig_leg = mt.MonthEndRelationBrewLeg
+    orig = mt._brew_fn_for_session
     mt._brew_fn_for_session = lambda _s: brew_fn
-    mt.MonthEndRelationBrewLeg = _CapturingLeg
     try:
         try:
             mt._run_relation_brew(
                 session,
-                closed_turn=int(kwargs.get("settled_turn", state.turn)),
-                settled_year=int(kwargs.get("settled_year", state.year)),
-                settled_period=int(kwargs.get("settled_period", state.period)),
+                closed_turn=int(state.turn),
+                settled_year=int(state.year),
+                settled_period=int(state.period),
                 queue=queue,
                 ticket=ticket,
             )
-        except (LLMUnavailable, LLMContractError, ValueError):
-            # Production raises after persist when per-item brew degraded.
-            leg = captured.get("leg")
-            if leg is not None and leg.report.get("degraded"):
-                return leg.report
-            raise
         finally:
             queue.complete(ticket)
     finally:
-        mt._brew_fn_for_session = orig_brew
-        mt.MonthEndRelationBrewLeg = orig_leg
-
-    leg = captured.get("leg")
-    if leg is None:
-        return {"selected": 0, "brewed": [], "degraded": [], "skipped_events": 0}
-    return leg.report
+        mt._brew_fn_for_session = orig
 
 
 @pytest.mark.parametrize("error_type", [APITimeoutError, APIConnectionError])
@@ -155,9 +130,11 @@ def test_founding_segment_survives_consecutive_brews_byte_identical(game):
     brew_fn.outputs = [_script(foundings=["越次一召，擢杨嗣昌于五品郎中。"],
                                recent="杨嗣昌蒙知遇之恩。")]
 
-    report = run_month_end_relation_brew(db, state, brew_fn)
+    run_month_end_relation_brew(db, state, brew_fn)
     # 同批新事实：杨嗣昌党籍投影皇党（factions 表现存）→ 关系对＋皇党两个工作项。
-    assert report["selected"] == 2 and len(report["brewed"]) == 2
+    assert len(calls) == 2
+    assert db.get_relation_brew_pending() == []
+    assert db.get_faction_brew_pending() == []
 
     first = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
     assert first["dimension"] == "君臣"
@@ -204,9 +181,8 @@ def test_no_new_events_and_no_pending_month_bytes_unchanged_zero_brews(game):
     calls.clear()
     state.turn += 1
     state.period += 1
-    report = run_month_end_relation_brew(db, state, brew_fn)
+    run_month_end_relation_brew(db, state, brew_fn)
 
-    assert report["selected"] == 0
     assert calls == []
     after = db.get_relation_summary("毕自严", "王绍徽")
     assert after["recent_segment"] == before["recent_segment"]
@@ -222,9 +198,11 @@ def test_flip_brew_input_must_contain_new_edge_events(game):
     calls: list = []
     brew_fn = _brew_fn_factory(calls)
     brew_fn.outputs = [_script(recent="钱谦益蒙知遇。")]
-    run_month_end_month = run_month_end_relation_brew(db, state, brew_fn)
+    run_month_end_relation_brew(db, state, brew_fn)
     # 同批新事实：钱谦益党籍投影东林 → 关系对＋东林。
-    assert len(run_month_end_month["brewed"]) == 2
+    assert len(calls) == 2
+    assert db.get_relation_summary(EMPEROR_NODE, "钱谦益") is not None
+    assert any(row["faction"] == "东林" for row in db.get_faction_stance_summaries())
 
     # 语义翻转月：新辜负事件入账后重酿，酿制输入必含该新事件。
     flip_id = _add_edge(db, state, source=EMPEROR_NODE, target="钱谦益", kind="辜负",
@@ -254,19 +232,18 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
         context=failed_context, origin="audience:turn-1",
     )
 
-    # 真 LLM 单条失败（声明类型 LLMUnavailable）→ 降级留痕；程序错类不走此路。
+    # 真 LLM 单条失败（声明类型 LLMUnavailable）→ persist 降级留痕后上抛；程序错类不走此路。
     def failing_brew(payload_json: str) -> str:
         raise LLMUnavailable("酿制裁判接口不可用")
 
-    report = run_month_end_relation_brew(db, state, failing_brew)
-    # 同批新事实：温/周均皇党 → 关系对＋皇党，双双降级。
-    assert report["selected"] == 2 and report["degraded"]
-
-    # 保旧摘要（本就无摘要）、事件不丢、pending 持久在册。
+    with pytest.raises(LLMUnavailable):
+        run_month_end_relation_brew(db, state, failing_brew)
+    # 同批新事实：温/周均皇党 → 关系对＋皇党，双双降级留痕。
     assert db.get_relation_summary("温体仁", "周延儒") is None
     assert db.get_relation_edge_events(source="温体仁", target="周延儒")
     pending = db.get_relation_brew_pending()
     assert [(row["source"], row["target"]) for row in pending] == [("温体仁", "周延儒")]
+    assert [row["faction"] for row in db.get_faction_brew_pending()] == ["皇党"]
 
     # 次月无新事件，仍因 pending 被选中；成功后 pending 清除、摘要落定。
     # #642：失败月事件在次月 payload 双桶并集中恰一次，且落 new 不落 prior。
@@ -275,9 +252,9 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     calls: list = []
     brew_fn = _brew_fn_factory(calls)
     brew_fn.outputs = [_script(recent="温周结怨，朝堂侧目。")]
-    report = run_month_end_relation_brew(db, state, brew_fn)
+    run_month_end_relation_brew(db, state, brew_fn)
 
-    assert report["selected"] == 2 and len(report["brewed"]) == 2
+    assert len(calls) == 2
     relation_calls = [c for c in calls if "view" not in c]
     assert relation_calls and relation_calls[0]["has_pending_failure"] is True
     payload = relation_calls[0]
@@ -286,6 +263,7 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert len(new_hits) + len(prior_hits) == 1
     assert len(new_hits) == 1 and prior_hits == []
     assert db.get_relation_brew_pending() == []
+    assert db.get_faction_brew_pending() == []
     summary = db.get_relation_summary("温体仁", "周延儒")
     assert summary["recent_segment"] == "温周结怨，朝堂侧目。"
     assert summary["dimension"] == "大臣"
@@ -395,14 +373,17 @@ def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game
               context="越次一召。", origin="audience:turn-1")
 
     def fixture_brew(payload_json: str) -> str:
+        payload = json.loads(payload_json)
+        # 同批皇党派系项必须走派系契约，否则生产 persist 后按契约错上抛。
+        if payload.get("view") == VIEW_FACTION_STANCE:
+            return json.dumps({STANCE_KEY: "朝局如常。"}, ensure_ascii=False)
         return json.dumps(
             {FOUNDINGS_KEY: [], RECENT_KEY: fixture_text}, ensure_ascii=False
         )
 
-    # 经真实酿制持久化链路（run_month_end_relation_brew → apply_relation_brew_result）
+    # 经真实酿制持久化链路（_run_relation_brew → apply_relation_brew_result）
     # 写入→读回：字节原样，全链无截断无删改。
-    report = run_month_end_relation_brew(db, state, fixture_brew)
-    assert len(report["brewed"]) == 1
+    run_month_end_relation_brew(db, state, fixture_brew)
 
     stored = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")["recent_segment"]
     assert stored.encode("utf-8") == fixture
@@ -429,8 +410,7 @@ def test_brew_batch_runs_items_in_parallel_not_serialized(game):
             ensure_ascii=False,
         )
 
-    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
-    assert len(report["brewed"]) == 2
+    run_month_end_relation_brew(db, state, parallel_brew)
     assert len(set(threads)) == 2
     for source, target in pairs:
         assert db.get_relation_summary(source, target)["recent_segment"] == (
@@ -450,9 +430,8 @@ def test_historical_events_alone_do_not_select_in_later_month(game):
     brew_fn = _brew_fn_factory(calls)
     state.turn += 1
     state.period += 1
-    report = run_month_end_relation_brew(db, state, brew_fn)
+    run_month_end_relation_brew(db, state, brew_fn)
 
-    assert report["selected"] == 0
     assert calls == []
     assert db.get_relation_summary("毕自严", "王绍徽") is None
 
@@ -616,16 +595,16 @@ def test_parse_seam_value_error_degrades_single_item(game):
         # 合法 JSON 但 shape 违约：recent_segment 缺失 → parse_brew_output 抛 ValueError。
         return json.dumps({FOUNDINGS_KEY: []}, ensure_ascii=False)
 
-    report = run_month_end_relation_brew(db, state, malformed_brew)
-    # 同批新事实：温/周均皇党 → 关系对＋皇党，双双单条降级。
-    assert report["selected"] == 2 and report["degraded"]
-    assert report["brewed"] == []
+    # 生产：persist 单条降级后按 outcomes 上抛契约/程序声明类型。
+    with pytest.raises(ValueError):
+        run_month_end_relation_brew(db, state, malformed_brew)
     # 保旧摘要（本就无摘要）、事件不丢、pending 持久在册。
     assert db.get_relation_summary("温体仁", "周延儒") is None
     assert db.get_relation_edge_events(source="温体仁", target="周延儒")
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
         ("温体仁", "周延儒")
     ]
+    assert [row["faction"] for row in db.get_faction_brew_pending()] == ["皇党"]
 
 
 def test_relation_dimension_marks_emperor_edges():
@@ -656,13 +635,17 @@ def test_duplicate_json_objects_rejected_not_first_object_picked(game):
               context="所请被驳。", origin="audience:turn-2")
 
     def duplicated_brew(payload_json: str) -> str:
+        payload = json.loads(payload_json)
+        if payload.get("view") == VIEW_FACTION_STANCE:
+            # 派系腿成功，让关系腿的重复 JSON 成为 outcomes 首个上抛原因。
+            return json.dumps({STANCE_KEY: "朝局如常。"}, ensure_ascii=False)
         return (
             json.dumps(_script(recent="原文一"), ensure_ascii=False)
             + json.dumps(_script(recent="原文二"), ensure_ascii=False)
         )
 
-    report = run_month_end_relation_brew(db, state, duplicated_brew)
-    assert report["selected"] == 2 and report["degraded"] and report["brewed"] == []
+    with pytest.raises(LLMContractError):
+        run_month_end_relation_brew(db, state, duplicated_brew)
     second = db.get_relation_summary(EMPEROR_NODE, "杨嗣昌")
     # 拒收而非择取：旧摘要（含奠基段与近况段）字节不变。
     assert second["founding_segment"] == first["founding_segment"]
@@ -681,11 +664,14 @@ def test_unescaped_control_byte_rejected_not_stripped(game):
               context="越次一召，擢杨嗣昌于五品郎中。", origin="audience:turn-1")
 
     def control_byte_brew(payload_json: str) -> str:
+        payload = json.loads(payload_json)
+        if payload.get("view") == VIEW_FACTION_STANCE:
+            return json.dumps({STANCE_KEY: "朝局如常。"}, ensure_ascii=False)
         # 手拼 raw：内嵌未转义控制字节（json.dumps 会转义成 \u0001，不能用它）。
         return '{"' + FOUNDINGS_KEY + '": [], "' + RECENT_KEY + '": "甲\x01乙"}'
 
-    report = run_month_end_relation_brew(db, state, control_byte_brew)
-    assert report["selected"] == 2 and report["degraded"] and report["brewed"] == []
+    with pytest.raises(LLMContractError):
+        run_month_end_relation_brew(db, state, control_byte_brew)
     assert db.get_relation_summary(EMPEROR_NODE, "杨嗣昌") is None
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
         (EMPEROR_NODE, "杨嗣昌")
@@ -717,8 +703,7 @@ def test_batch_of_five_relations_all_enter_call_seam_concurrently(game):
             ensure_ascii=False,
         )
 
-    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
-    assert len(report["brewed"]) == 5
+    run_month_end_relation_brew(db, state, parallel_brew)
     assert len(set(threads)) == 5
     for source, target in pairs:
         assert db.get_relation_summary(source, target)["recent_segment"] == (

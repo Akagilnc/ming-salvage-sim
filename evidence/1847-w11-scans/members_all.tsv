@@ -91,9 +91,11 @@ N13	ming_sim/db.py	19356	release_held_audience_knowledge	secret_read_path	FIXED_
 N13	ming_sim/db.py	9819	_brief_origin_chat_message_ids	secret_read_path	FIXED_REMOVED_SWALLOW	N13 secret-path OperationalError must propagate
 N13	ming_sim/db.py	9731	_latest_held_user_chat_message_id	secret_read_path	FIXED_REMOVED_SWALLOW	N13 secret-path OperationalError must propagate
 N10	ming_sim/cli_backend.py	771	`Authentication required` 一类机器文本当大臣正文送进 delta，而失败分类要等	doc_mention	DOC_COMMENT_ONLY	no body-keyword auth guess; host status/exit only
-N14	tests/test_relation_brew_636.py	37	run_month_end_relation_brew	dup_flow_adapter	FIXED_WIRED_TO_MECHANICAL_TAIL	reuse mechanical_tail._run_relation_brew; no new prod consumer
-N14	tests/test_faction_brew_637.py	1	import run_month_end_relation_brew	faction_uses_same_adapter	FIXED_SHARED_ADAPTER_VIA_MECHANICAL_TAIL	same production entry; not a second test-only prepare/brew/persist
-N14	ming_sim/mechanical_tail.py	196	_run_relation_brew	production_entry	KEEP_PROD_ENTRY	judge-cited live entry
+N14	tests/test_relation_brew_636.py	36	run_month_end_relation_brew	prod_entry_driver	FIXED_BREW_FN_ONLY_NO_REPORT_WASH	only swap _brew_fn_for_session; real queue+leg; return None; no CapturingLeg/report wash
+N14	tests/test_relation_brew_636.py	0	_CapturingLeg+except wash+invented empty report	illegal_adapter	FIXED_REMOVED_ADAPTER_WASH	was washing LLMUnavailable/LLMContractError/ValueError into leg.report
+N14	tests/test_faction_brew_637.py	33	import run_month_end_relation_brew	shared_driver	FIXED_ASSERT_DB_OR_EXC_TYPE	same driver; asserts DB/exception type not internal report
+N14	tests/test_mechanical_tail_1845.py	76	recording_brew invented report dict	stub_return_shape	FIXED_RETURN_NONE	stub matches production _run_relation_brew -> None
+N14	ming_sim/mechanical_tail.py	196	_run_relation_brew	production_entry	KEEP_PROD_ENTRY	judge-cited live entry; returns None; raises after persist on degraded
 N16	ming_sim/session.py	68	AUTO_SAVE_PREFIX = "auto_"	auto_save	KEEP_ACTIVE	delete old-name purge; keep current campaign retention
 N16	ming_sim/session.py	75	def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SAVE_KEEP_TURNS) -> None:	prune_entry	KEEP_CURRENT_CAMPAIGN_POLICY	delete old-name purge; keep current campaign retention
 N16	ming_sim/session.py	88	if not (f.startswith(f"{AUTO_SAVE_PREFIX}{campaign_id}_") and f.endswith(".db")):	auto_save	KEEP_ACTIVE	delete old-name purge; keep current campaign retention

@@ -1,27 +1,27 @@
 === N11 old-archive compat / CREATE+ALTER / index rebuild ===
-ming_sim/constants.py:284:# 实际入池 = 加派基线(万两) × 本率 × (100 − 该省民心)/100，随存档 population_unit 换算、
-ming_sim/materials.py:1174:    """一行 = 路径、年月、已入档标题。无标题时只留路径，不另造标题。"""
 ming_sim/flows.py:1533:    population_unit = db.population_unit
 ming_sim/flows.py:1682:            "population_unit": population_unit,
+tests/test_population_unit_648.py:8:- F4：新档 DB 持久标「人」；无标万人 legacy 已退役（#1847）。
+tests/test_population_unit_648.py:37:# regions/classes ×10⁴ 抽样钉（旧 content 万人口径字面 × 10000，独立算术）
+tests/test_population_unit_648.py:109:def test_new_save_persistent_population_unit_marker(game):
+tests/test_population_unit_648.py:112:    assert db.population_unit == POPULATION_UNIT_PERSONS
+tests/test_population_unit_648.py:114:        "SELECT value FROM save_meta WHERE key='population_unit'"
+tests/test_population_transfers_649.py:292:    assert applied["population_transfers"][0]["population_unit"] == POPULATION_UNIT_PERSONS
+tests/test_deformation_dual_rail_622.py:260:    """定向补饷：beyond_intent 经 coerce 落 ledger 且 applied 回执回响；无标记仍为 0。"""
+tests/test_deformation_dual_rail_622.py:337:            "reason": "定向补饷无标记",
+tests/test_deformation_dual_rail_622.py:346:        ("定向补饷无标记",),
+tests/test_candidate_supply_1893.py:338:    整项被拒。此处钉「供到的标签 = 写口接受的标签」，且写口无标签集者供空集。
+tests/test_candidate_supply_1893.py:361:    # 写口无标签集者一律供空集，不逼模型自造标签。
+ming_sim/constants.py:284:# 实际入池 = 加派基线(万两) × 本率 × (100 − 该省民心)/100，随存档 population_unit 换算、
+ming_sim/issues.py:3119:    """#648：content 静态人口量已全线「人」；#1847 退役万人换算，原样落档。
+ming_sim/issues.py:6847:            "population_unit": db.population_unit,
+ming_sim/materials.py:1174:    """一行 = 路径、年月、已入档标题。无标题时只留路径，不另造标题。"""
 ming_sim/db.py:76:# 同刻度）。#1847/#1812：无标→万人旧档兼容退役；新档仍落「人」标供接续。
 ming_sim/db.py:78:_POPULATION_UNIT_KEY = "population_unit"
 ming_sim/db.py:3122:    def population_unit(self) -> str:
 ming_sim/db.py:3123:        """本档人口存储单位口径：统一「人」（#1847 退役无标万人 legacy）。"""
 ming_sim/db.py:3126:    def _mark_population_unit_persons(self) -> None:
 ming_sim/db.py:3219:            self._mark_population_unit_persons()
-ming_sim/issues.py:3119:    """#648：content 静态人口量已全线「人」；#1847 退役万人换算，原样落档。
-ming_sim/issues.py:6847:            "population_unit": db.population_unit,
-tests/test_deformation_dual_rail_622.py:260:    """定向补饷：beyond_intent 经 coerce 落 ledger 且 applied 回执回响；无标记仍为 0。"""
-tests/test_deformation_dual_rail_622.py:337:            "reason": "定向补饷无标记",
-tests/test_deformation_dual_rail_622.py:346:        ("定向补饷无标记",),
-tests/test_population_unit_648.py:8:- F4：新档 DB 持久标「人」；无标万人 legacy 已退役（#1847）。
-tests/test_population_unit_648.py:37:# regions/classes ×10⁴ 抽样钉（旧 content 万人口径字面 × 10000，独立算术）
-tests/test_population_unit_648.py:109:def test_new_save_persistent_population_unit_marker(game):
-tests/test_population_unit_648.py:112:    assert db.population_unit == POPULATION_UNIT_PERSONS
-tests/test_population_unit_648.py:114:        "SELECT value FROM save_meta WHERE key='population_unit'"
-tests/test_candidate_supply_1893.py:338:    整项被拒。此处钉「供到的标签 = 写口接受的标签」，且写口无标签集者供空集。
-tests/test_candidate_supply_1893.py:361:    # 写口无标签集者一律供空集，不逼模型自造标签。
-tests/test_population_transfers_649.py:292:    assert applied["population_transfers"][0]["population_unit"] == POPULATION_UNIT_PERSONS
 ming_sim/entities/affair/store.py:42:CREATE TABLE IF NOT EXISTS affairs (
 ming_sim/entities/affair/store.py:55:CREATE INDEX IF NOT EXISTS idx_affairs_open
 ming_sim/entities/textual_fact/store.py:14:CREATE TABLE IF NOT EXISTS textual_facts (
@@ -186,26 +186,28 @@ ming_sim/issues.py:2042:        except sqlite3.OperationalError as exc:
 ming_sim/cli_backend.py:771:    `Authentication required` 一类机器文本当大臣正文送进 delta，而失败分类要等
 === N14 illegal wording / helper-only / duplicate flow ===
 tests/test_faction_brew_637.py:33:from tests.test_relation_brew_636 import run_month_end_relation_brew
-tests/test_faction_brew_637.py:123:    report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
-tests/test_faction_brew_637.py:140:    report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
-tests/test_faction_brew_637.py:164:    report = run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
-tests/test_faction_brew_637.py:179:    report = run_month_end_relation_brew(db, state, brew_fn)
-tests/test_faction_brew_637.py:193:    report = run_month_end_relation_brew(db, state, brew_fn)
-tests/test_faction_brew_637.py:214:    report = run_month_end_relation_brew(db, state, failing_brew)
-tests/test_faction_brew_637.py:232:    report = run_month_end_relation_brew(db, state, brew_fn)
-tests/test_faction_brew_637.py:250:    report = run_month_end_relation_brew(db, state, brew_fn)
-tests/test_faction_brew_637.py:263:    run_month_end_relation_brew(db, state, brew_fn)
-tests/test_faction_brew_637.py:273:    report = run_month_end_relation_brew(db, state, brew_fn)
-tests/test_faction_brew_637.py:284:    report = run_month_end_relation_brew(db, state, brew_fn)
-tests/test_faction_brew_637.py:301:        run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
-tests/test_faction_brew_637.py:314:        run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
-tests/test_faction_brew_637.py:335:    report = run_month_end_relation_brew(db, state, parallel_brew)
-tests/test_faction_brew_637.py:354:    run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
-tests/test_faction_brew_637.py:371:    run_month_end_relation_brew(db, state, failing_then_ok)
+tests/test_faction_brew_637.py:123:    run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+tests/test_faction_brew_637.py:143:    run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+tests/test_faction_brew_637.py:164:    run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+tests/test_faction_brew_637.py:179:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:193:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:214:        run_month_end_relation_brew(db, state, failing_brew)
+tests/test_faction_brew_637.py:230:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:248:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:260:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:271:        run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:281:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_faction_brew_637.py:298:        run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
+tests/test_faction_brew_637.py:311:        run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
+tests/test_faction_brew_637.py:332:    run_month_end_relation_brew(db, state, parallel_brew)
+tests/test_faction_brew_637.py:353:    run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+tests/test_faction_brew_637.py:371:        run_month_end_relation_brew(db, state, failing_then_ok)
 tests/test_faction_brew_637.py:377:    run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
 tests/test_faction_brew_637.py:479:    run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
-tests/test_faction_brew_637.py:614:    report = run_month_end_relation_brew(db, state, failing_brew)
+tests/test_faction_brew_637.py:615:        run_month_end_relation_brew(db, state, failing_brew)
+tests/test_mechanical_tail_1845.py:76:        return None  # production _run_relation_brew returns None
 tests/test_mechanical_tail_1845.py:78:    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", recording_brew)
+tests/test_mechanical_tail_1845.py:118:        return None  # production _run_relation_brew returns None
 tests/test_mechanical_tail_1845.py:121:        "ming_sim.mechanical_tail._run_relation_brew", recording_brew,
 tests/test_mechanical_tail_1845.py:165:        "ming_sim.mechanical_tail._run_relation_brew", boom,
 tests/test_mechanical_tail_1845.py:260:        "ming_sim.mechanical_tail._run_relation_brew",
@@ -213,34 +215,35 @@ tests/test_mechanical_tail_1845.py:313:    monkeypatch.setattr("ming_sim.mechani
 tests/test_mechanical_tail_1845.py:347:    monkeypatch.setattr("ming_sim.mechanical_tail._run_relation_brew", lambda *_a, **_k: None)
 tests/test_mechanical_tail_1845.py:369:        "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
 tests/test_mechanical_tail_1845.py:553:        "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
-tests/test_relation_brew_636.py:37:def run_month_end_relation_brew(db, state, brew_fn, **kwargs):
-tests/test_relation_brew_636.py:38:    """Drive via live mechanical_tail._run_relation_brew (#1847 N14).
-tests/test_relation_brew_636.py:68:            mt._run_relation_brew(
-tests/test_relation_brew_636.py:158:    report = run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:173:    run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:186:    run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:200:    run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:207:    report = run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:225:    run_month_end_month = run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:234:    run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:261:    report = run_month_end_relation_brew(db, state, failing_brew)
-tests/test_relation_brew_636.py:278:    report = run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:341:    run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:370:    run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:402:    # 经真实酿制持久化链路（run_month_end_relation_brew → apply_relation_brew_result）
-tests/test_relation_brew_636.py:404:    report = run_month_end_relation_brew(db, state, fixture_brew)
-tests/test_relation_brew_636.py:432:    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
-tests/test_relation_brew_636.py:453:    report = run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:523:        run_month_end_relation_brew(db, state, _brew_fn_factory([]))
-tests/test_relation_brew_636.py:546:        run_month_end_relation_brew(db, state, _brew_fn_factory([]))
-tests/test_relation_brew_636.py:565:        run_month_end_relation_brew(db, state, failing_brew)
-tests/test_relation_brew_636.py:580:        run_month_end_relation_brew(db, state, buggy_brew)
-tests/test_relation_brew_636.py:600:        run_month_end_relation_brew(db, state, buggy_brew)
-tests/test_relation_brew_636.py:619:    report = run_month_end_relation_brew(db, state, malformed_brew)
-tests/test_relation_brew_636.py:649:    run_month_end_relation_brew(db, state, brew_fn)
-tests/test_relation_brew_636.py:664:    report = run_month_end_relation_brew(db, state, duplicated_brew)
-tests/test_relation_brew_636.py:687:    report = run_month_end_relation_brew(db, state, control_byte_brew)
-tests/test_relation_brew_636.py:720:    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
+tests/test_relation_brew_636.py:36:def run_month_end_relation_brew(db, state, brew_fn):
+tests/test_relation_brew_636.py:37:    """Drive production mechanical_tail._run_relation_brew (#1847 N14).
+tests/test_relation_brew_636.py:55:            mt._run_relation_brew(
+tests/test_relation_brew_636.py:133:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:150:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:163:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:177:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:184:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:201:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:212:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:240:        run_month_end_relation_brew(db, state, failing_brew)
+tests/test_relation_brew_636.py:255:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:319:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:348:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:384:    # 经真实酿制持久化链路（_run_relation_brew → apply_relation_brew_result）
+tests/test_relation_brew_636.py:386:    run_month_end_relation_brew(db, state, fixture_brew)
+tests/test_relation_brew_636.py:413:    run_month_end_relation_brew(db, state, parallel_brew)
+tests/test_relation_brew_636.py:433:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:502:        run_month_end_relation_brew(db, state, _brew_fn_factory([]))
+tests/test_relation_brew_636.py:525:        run_month_end_relation_brew(db, state, _brew_fn_factory([]))
+tests/test_relation_brew_636.py:544:        run_month_end_relation_brew(db, state, failing_brew)
+tests/test_relation_brew_636.py:559:        run_month_end_relation_brew(db, state, buggy_brew)
+tests/test_relation_brew_636.py:579:        run_month_end_relation_brew(db, state, buggy_brew)
+tests/test_relation_brew_636.py:600:        run_month_end_relation_brew(db, state, malformed_brew)
+tests/test_relation_brew_636.py:628:    run_month_end_relation_brew(db, state, brew_fn)
+tests/test_relation_brew_636.py:648:        run_month_end_relation_brew(db, state, duplicated_brew)
+tests/test_relation_brew_636.py:674:        run_month_end_relation_brew(db, state, control_byte_brew)
+tests/test_relation_brew_636.py:706:    run_month_end_relation_brew(db, state, parallel_brew)
+tests/test_relation_brew_636.py:42:    Does not mock the leg, capture ``leg.report``, or wash degraded raises.
 === N16 cross-campaign old-name purge ===
 ming_sim/session.py:68:AUTO_SAVE_PREFIX = "auto_"
 ming_sim/session.py:75:def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SAVE_KEEP_TURNS) -> None:
