@@ -1,2 +1,22 @@
-{"current_green": true, "station_preserve": true, "highlight_preserve": true}
-MUTATION_OK current_green preserve sites intact
+{
+  "method": "git show ebcd2d1a1 full function bodies loaded into real entries",
+  "old_map_src_chars": 14279,
+  "old_parse_src_chars": 420,
+  "old_apply_src_chars": 1846,
+  "current_mapper_preserved": true,
+  "current_hl_preserved": true,
+  "current_materialize_preserved": true,
+  "current_materialize_station": "  山海关  ",
+  "old_mapper_preserved": false,
+  "old_hl_preserved": false,
+  "old_materialize_preserved": false,
+  "old_mapper_station": "山海关",
+  "old_hl_read": [
+    "辽饷"
+  ],
+  "old_materialize_station": "山海关",
+  "verdict_old_logic_restored": true,
+  "current_green": true,
+  "old_red": true
+}
+MUTATION_OK current_green_old_red real_old_funcs_from_ebcd2d1a1

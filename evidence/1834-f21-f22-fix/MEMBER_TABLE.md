@@ -1,15 +1,15 @@
 # 1834 F21/F22 成员表（全仓枚举完整清单；非代表样本）
 
-权威：`ENUM_CMDS.txt`（短 shell/stdlib 可执行命令）+ 本表 + `RECEIPT.md`。
-本轮已删除永久枚举脚本与全量 jsonl/md 副本（历史 commit 保留）；处置以本表为准。
+权威：`ENUM_CMDS.txt`（F21 broad `rg` 形 + F22 一次性 inline AST；非固定保原文样本文字/具名已删列表）+ 本表 + `RECEIPT.md`。
+不恢复永久枚举脚本 / 700 行分类层 / 全量 jsonl 副本；处置以本表为准。
 
 ---
 
 ## F21 自由字段搬运链改写
 
-类定义：沿真实输入、写入、读取、物化、供料与前端显示追踪取值，删除自由字段上的裁字；判空用副本；机器键归一保留。追自由字段 candidate，禁止 AST 名滤自动 KEEP。
+类定义：沿真实输入、写入、读取、物化、供料与前端显示追踪取值，删除自由字段上的裁字；判空用副本；机器键归一保留。枚举入口=ENUM_CMDS F21 CMD1–3（strip 带参 / re.sub / replace / split / join / slice）；禁止自由文字哨兵或 AST 名滤自动 KEEP。
 
-枚举记录：freeish_name_candidates=132（完整处置见下表，非抽样）。
+枚举记录：broad 形见 ENUM_CMDS 复跑计数；下表 132 条为 assign/append 语义候选完整处置（非抽样）。
 
 ### FIX（本类成立；读写/物化/供料/前端同在类内）
 
@@ -167,7 +167,7 @@
 ## F22 退役旧接缝残留
 
 类定义：按现行职责与真实消费者清理已作废结构及专属参数、透传、类型和测试；保留在用共享能力；冻结失败记录不改写。
-枚举记录：zero_abs=54；zero_prod_test_only=70（完整候选与处置见下表，非抽样）。
+枚举记录（本轮 ENUM_CMDS inline AST）：def_count=3349；zero_abs=51；zero_prod_test_only=69。下表保留先前完整处置行（124）供审；计数差来自 inline 谓词厚度（无永久分类层），非本轮新增 DELETE。
 边界：全仓定义 + 函数名/字符串/动态引用复验；**不是** ChatTurnResult 单 dataclass / 具名 expanded set；**不靠**「公开 API」命名笼统 KEEP。
 
 ### DELETE（本轮+已验 absent）
@@ -254,47 +254,47 @@
 | absolute_zero | py_async | `api_admin_tables` | `web_app.py:6239` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
 | absolute_zero | py_async | `api_admin_table` | `web_app.py:6244` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
 | absolute_zero | py_async | `admin_page` | `web_app.py:6289` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
-| prod_zero_test_only | py_func | `stage_authorization_candidate` | `ming_sim/action_materialize.py:1622` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `create_rescript_draft_agent` | `ming_sim/agents.py:796` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `list_night_timeline` | `ming_sim/audience_night.py:447` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `audit_night_direct_writes` | `ming_sim/audience_night.py:662` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `list_arrived_unsettled_summons` | `ming_sim/audience_night.py:1492` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `get_night_protagonist` | `ming_sim/audience_night.py:2155` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `persons_entered_tonight` | `ming_sim/audience_night.py:2227` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_method | `CliChat.response_stream` | `ming_sim/cli_backend.py:3741` | KEEP | CliChat 公开流式适配表面 |
-| prod_zero_test_only | py_func | `build_secret_covert_effect_briefs` | `ming_sim/covert_progress.py:646` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_method | `GameDB.settle_province_tick` | `ming_sim/db.py:3144` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.turn_region_summary` | `ming_sim/db.py:7324` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.turn_army_summary` | `ming_sim/db.py:7919` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.get_message_highlights` | `ming_sim/db.py:9161` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.record_monthly_supervision_facts` | `ming_sim/db.py:12675` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.list_dossiers_for_directive` | `ming_sim/db.py:14662` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.list_endorsed_dossier_candidates` | `ming_sim/db.py:14680` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.list_dossier_link_rejections` | `ming_sim/db.py:14983` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.save_pending_promulgation_verdicts` | `ming_sim/db.py:16234` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.drop_pending_actions_for_minister` | `ming_sim/db.py:18910` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.list_office_effects_for_dossier` | `ming_sim/db.py:19216` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.reject_directive` | `ming_sim/db.py:19508` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB.count_active_initiatives` | `ming_sim/db.py:19632` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_method | `GameDB._is_active_secret_order_assignee` | `ming_sim/db.py:21320` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_method | `GameDB.get_faction_stance_summary` | `ming_sim/db.py:22889` | KEEP | GameDB 公开账本 API 表面；零调用≠删共享读面 |
-| prod_zero_test_only | py_func | `execution_side_read_fields` | `ming_sim/decree.py:233` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `build_fiscal_fact_brief` | `ming_sim/fiscal_fact_brief.py:334` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `format_fiscal_fact_brief_tsv` | `ming_sim/fiscal_fact_brief.py:583` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `stage_month_segment` | `ming_sim/month_translate.py:240` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `revoke_pay_order_decree` | `ming_sim/pay_order.py:472` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `run_month_end_relation_brew` | `ming_sim/relation_brew.py:438` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `format_region_changes` | `ming_sim/report.py:36` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `format_army_changes` | `ming_sim/report.py:52` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `format_power_changes` | `ming_sim/report.py:72` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `select_triage_actor` | `ming_sim/rescript_draft.py:1107` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `generate_rescript_draft` | `ming_sim/rescript_draft.py:2149` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_method | `SessionWriteQueue.is_sealed` | `ming_sim/session_write_queue.py:262` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_method | `SessionWriteQueue.run_exclusive` | `ming_sim/session_write_queue.py:520` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `value_axes` | `ming_sim/value_matrix.py:46` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `axis_collision_stances` | `ming_sim/value_matrix.py:100` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | py_func | `matrix_snapshot` | `ming_sim/value_matrix.py:137` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
-| prod_zero_test_only | ts_export | `IssueGroup` | `web/src/components/situation.tsx:200` | KEEP | 测试消费现役缝；生产可达其它路径或公开缝 |
+| prod_zero_test_only | py_func | `stage_authorization_candidate` | `ming_sim/action_materialize.py:1622` | KEEP | 测试消费者：`tests/test_execution_pressure_654.py`（直接 import/调用暂存授权候选）。现行职责=执行压力/授权暂存写缝观测面。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `create_rescript_draft_agent` | `ming_sim/agents.py:796` | KEEP | 测试消费者：`tests/test_llm_channel_config.py`（构造拟旨草稿 agent）。现行职责=LLM 通道配置下的草稿 agent 工厂。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `list_night_timeline` | `ming_sim/audience_night.py:447` | KEEP | 测试消费者：`tests/test_audience_night_498.py`。现行职责=夜审时间线条目读面。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `audit_night_direct_writes` | `ming_sim/audience_night.py:662` | KEEP | 测试消费者：`tests/test_audience_undo_506.py`、`tests/test_on_scene_immediate_write_1839.py`。现行职责=夜审直写审计。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `list_arrived_unsettled_summons` | `ming_sim/audience_night.py:1492` | KEEP | 测试消费者：`tests/test_audience_travel_gating_670.py`。现行职责=已到未结召见清单。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `get_night_protagonist` | `ming_sim/audience_night.py:2155` | KEEP | 测试消费者：`tests/test_audience_translation_1838.py`。现行职责=夜审主角读面。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `persons_entered_tonight` | `ming_sim/audience_night.py:2227` | KEEP | 测试消费者：`tests/test_month_loop_tracer_1468.py`、`tests/test_cli_play_turn.py`。现行职责=当夜入殿人物集。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_method | `CliChat.response_stream` | `ming_sim/cli_backend.py:3741` | KEEP | 测试消费者见同模块流式面；现行职责=CliChat 同步流式适配公开表面。KEEP≠已证全部现役热路径 |
+| prod_zero_test_only | py_func | `build_secret_covert_effect_briefs` | `ming_sim/covert_progress.py:646` | KEEP | 测试消费者：`tests/test_secret_order_payoff_1504.py`。现行职责=密令 covert 效果 brief 构造。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_method | `GameDB.settle_province_tick` | `ming_sim/db.py:3144` | KEEP | GameDB 省级 tick 公开账本写面；测试有消费但生产直呼零命中。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.turn_region_summary` | `ming_sim/db.py:7324` | KEEP | GameDB 地区回合摘要公开读面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.turn_army_summary` | `ming_sim/db.py:7919` | KEEP | GameDB 军队回合摘要公开读面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.get_message_highlights` | `ming_sim/db.py:9161` | KEEP | GameDB 高亮短语读面（配对 `_parse_highlights_json`）。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.record_monthly_supervision_facts` | `ming_sim/db.py:12675` | KEEP | GameDB 月度监察事实写入公开面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.list_dossiers_for_directive` | `ming_sim/db.py:14662` | KEEP | GameDB 旨意→dossier 列表公开读面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.list_endorsed_dossier_candidates` | `ming_sim/db.py:14680` | KEEP | GameDB 已批红候选公开读面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.list_dossier_link_rejections` | `ming_sim/db.py:14983` | KEEP | GameDB dossier 链接拒收公开读面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.save_pending_promulgation_verdicts` | `ming_sim/db.py:16234` | KEEP | GameDB 待颁布裁决暂存公开写面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.drop_pending_actions_for_minister` | `ming_sim/db.py:18910` | KEEP | GameDB 按大臣清 pending action 公开写面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.list_office_effects_for_dossier` | `ming_sim/db.py:19216` | KEEP | GameDB dossier 官职效果公开读面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.reject_directive` | `ming_sim/db.py:19508` | KEEP | GameDB 旨意拒收公开写面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB.count_active_initiatives` | `ming_sim/db.py:19632` | KEEP | GameDB 活跃倡议计数公开读面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_method | `GameDB._is_active_secret_order_assignee` | `ming_sim/db.py:21320` | KEEP | 测试消费者：`tests/test_secret_order_isolation_883.py`。现行职责=密令受命人活跃判定（隔离闸）。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_method | `GameDB.get_faction_stance_summary` | `ming_sim/db.py:22889` | KEEP | GameDB 派系立场摘要公开读面。KEEP≠已证全部现役 |
+| prod_zero_test_only | py_func | `execution_side_read_fields` | `ming_sim/decree.py:233` | KEEP | 测试消费者：`tests/test_execution_tenure_613.py`、`tests/test_secret_dossier_participants_1252.py`。现行职责=#613 执行侧读端字段投影。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `build_fiscal_fact_brief` | `ming_sim/fiscal_fact_brief.py:334` | KEEP | 测试消费者：`tests/test_pay_order_override_653.py`。现行职责=财政事实 brief 构造。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `format_fiscal_fact_brief_tsv` | `ming_sim/fiscal_fact_brief.py:583` | KEEP | 测试消费者：`tests/test_pay_order_override_653.py`。现行职责=brief→TSV 格式化。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `stage_month_segment` | `ming_sim/month_translate.py:240` | KEEP | 测试消费者：`tests/test_month_translate_1840.py`、`tests/test_breach_plea_623.py`。现行职责=月段声明暂存。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `revoke_pay_order_decree` | `ming_sim/pay_order.py:472` | KEEP | 测试消费者：`tests/test_pay_order_override_653.py`。现行职责=发饷旨意撤销写缝。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `run_month_end_relation_brew` | `ming_sim/relation_brew.py:438` | KEEP | 测试消费者：`tests/test_relation_brew_636.py`。现行职责=月末关系酿造入口。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `format_region_changes` | `ming_sim/report.py:36` | KEEP | 测试消费者：`tests/test_section4_rejections.py`。现行职责=地区变更报告格式化（拒收项安全）。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `format_army_changes` | `ming_sim/report.py:52` | KEEP | 测试消费者：`tests/test_section4_rejections.py`。现行职责=军队变更报告格式化。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `format_power_changes` | `ming_sim/report.py:72` | KEEP | 测试消费者：`tests/test_power_section_rejections.py`。现行职责=势力变更报告格式化。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `select_triage_actor` | `ming_sim/rescript_draft.py:1107` | KEEP | 测试消费者：`tests/test_rescript_draft_656.py`。现行职责=拟旨分诊演员选择。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `generate_rescript_draft` | `ming_sim/rescript_draft.py:2149` | KEEP | 测试消费者：`tests/test_pihong_dossier_1490.py`。现行职责=拟旨草稿生成入口。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_method | `SessionWriteQueue.is_sealed` | `ming_sim/session_write_queue.py:262` | KEEP | 测试消费者：`tests/test_new_game_write_path_1749.py`、`tests/test_menu_lifecycle_drain_396.py`。现行职责=写闸密封态查询。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_method | `SessionWriteQueue.run_exclusive` | `ming_sim/session_write_queue.py:520` | KEEP | 测试消费者：`tests/test_pihong_dossier_1490.py`、`tests/test_audience_travel_gating_670.py`。现行职责=会话写闸排他执行。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `value_axes` | `ming_sim/value_matrix.py:46` | KEEP | 测试消费者：`tests/test_value_matrix_691.py`。现行职责=价值轴枚举。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `axis_collision_stances` | `ming_sim/value_matrix.py:100` | KEEP | 测试消费者：`tests/test_value_matrix_691.py`。现行职责=轴碰撞立场计算。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | py_func | `matrix_snapshot` | `ming_sim/value_matrix.py:137` | KEEP | 测试消费者：`tests/test_value_matrix_691.py`。现行职责=价值矩阵快照。KEEP≠已证生产热路径全覆盖 |
+| prod_zero_test_only | ts_export | `IssueGroup` | `web/src/components/situation.tsx:200` | KEEP | 测试消费者：`web/src/components/situation.test.tsx`（render IssueGroup）。现行职责=局势面板分组 UI 导出。KEEP≠已证生产热路径全覆盖 |
 | prod_zero_test_only | py_async | `api_menu_new_game` | `web_app.py:4414` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
 | prod_zero_test_only | py_async | `api_menu_exit` | `web_app.py:4773` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
 | prod_zero_test_only | py_async | `api_menu_shutdown` | `web_app.py:4802` | KEEP | 公开 HTTP/ASGI 现役 API（装饰器注册，函数名零 Python 调用属常态） |
@@ -328,3 +328,4 @@
 覆盖核对：zero 候选=124；上表行数=124。
 
 处置原则：逐条追职责与真实消费者（含字符串/动态调用）；零调用≠自动删；有退役职责证据（如 EN_VALUE_CN 旧表）则删；无退役证据的零调用表面 KEEP。装饰器注册的 HTTP 处理函数函数名零 Python 调用属常态，须对照路由注册而非仅看调用图。
+**test-only KEEP 边界**：上表 prod_zero_test_only 已列具体测试 consumer 路径与现行职责；**KEEP 仅表示「无退役职责证据故不删」，并未证明这些符号全部是生产现役热路径**。

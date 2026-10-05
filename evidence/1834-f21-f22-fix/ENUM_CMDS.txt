@@ -1,19 +1,90 @@
-# 1834 F21/F22 — executable enum commands (short shell / stdlib only; no permanent scripts)
-# Run from repo root. Authority for dispositions: MEMBER_TABLE.md
+# 1834 F21/F22 — executable one-shot enum (stdlib/rg only; no permanent classifier)
+# Run from repo root. Dispositions: MEMBER_TABLE.md (not this file).
+# Prior natural-language / fixed preserve-sample / named-deleted-list-only CMDs revoked.
 
 BASELINE=ebcd2d1a1
-PRODUCTION=66b88fa77
 
-========== F21 CMD (dataflow preserve sites; not auto-KEEP) ==========
-CMD: rg -n --glob 'ming_sim/**/*.py' --glob 'web/src/**/*.{ts,tsx}' --glob '!web/src/**/*.{test,spec}.{ts,tsx}' '人读 station|Free prose highlight|spoken if spoken\.strip|fromPayload\.trim\(\) \? fromPayload|out\.append\(item\)|payload\["station"\] = station'
+========== F21 CMD1 broad rewrite shapes (full production+scripts+frontend) ==========
+# strip / lstrip / rstrip / trim* / replace / re.sub / slice / split / join / substring
+CMD:
+rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'main.py' --glob 'launcher.py' --glob 'spike_settle_tick.py' --glob 'scripts/**/*.py' --glob 'web/src/**/*.{ts,tsx}' --glob '!web/src/**/*.{test,spec}.{ts,tsx}' '\.strip\(|\.lstrip\(|\.rstrip\(|\.trim\(|\.trimStart\(|\.trimEnd\(|\.replace\(|re\.sub\(|\[:\s*\d+\s*\]|\.split\(|\.join\(|\.substring\(|\.slice\('
 
-HIT_SUMMARY (recorded): freeish_name_candidates=132; FIX sites = station write/materialize + highlights + materials spoken/body + frontend trim-判空赋原文
+HIT_COUNT (this round)=2205
 FULL_DISPOSITION: MEMBER_TABLE.md §F21
 
-========== F22 CMD (deleted-symbol absent check; full-repo string/dynamic) ==========
-CMD: for s in EN_VALUE_CN Suggestion ExtractionPendingStatus PromulgationHealEvidence run_audience_turn_translation stage_referral_candidate stage_revoke_authority_candidate season_option_contract_prompt cluster_effect release_previous_material_tree _open_night_court_break apply_llm_config splitReportItems appointed_minister registered_minister displaced_minister status_delta build_period_report mean_aligned_stance dict_of_string_lists dict_of_strings historical_anchor_for_month parse_json_dict event_context first_character_name require_non_empty_text require_int_range require_bool has_player_visible_rejection contract_axes_direction parse_covert_exec_selections discover_character_write_sql_locations person_write_locations_by_disposition qualitative_character_attribute disaster_severity_band _merge_compliant_promulgation_items _promulgable_proposed_dossiers _dossier_ids_from_simulator_payload _open_affair_ids_from_payload _primary_source_only_army_pay_container_total _is_audience_chat_shared_channel heal_evidence; do c=$(rg -n --glob '!evidence/**' --glob '!archive/**' --glob '!docs/**' --glob '!**/*.md' "\\b$s\\b" ming_sim web_app.py web/src tests scripts main.py launcher.py spike_settle_tick.py 2>/dev/null | wc -l | tr -d ' '); echo "ABSENT_CHECK $s hits=$c"; done
+========== F21 CMD2 strip/trim with args ==========
+CMD:
+rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'main.py' --glob 'launcher.py' --glob 'spike_settle_tick.py' --glob 'scripts/**/*.py' --glob 'web/src/**/*.{ts,tsx}' --glob '!web/src/**/*.{test,spec}.{ts,tsx}' '\.strip\([^)]+\)|\.lstrip\([^)]+\)|\.rstrip\([^)]+\)|\.trim\([^)]+\)'
 
-HIT_SUMMARY (recorded): all listed DELETE symbols hits=0
-FULL_DISPOSITION: MEMBER_TABLE.md §F22 (zero candidates kept with per-row semantic reasons; not name-based public-API KEEP)
+HIT_COUNT (this round)=10
+FULL_DISPOSITION: MEMBER_TABLE.md §F21
 
-NOTE: Prior permanent AST scripts under evidence/.../scripts/ and full jsonl/md dumps under enum_out/ deleted this cleanup round (history retains). Do not reintroduce classifier layers.
+========== F21 CMD3 assign/append/return strip-trim (semantic input; not sole KEEP set) ==========
+CMD:
+rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' --glob 'main.py' --glob 'launcher.py' --glob 'spike_settle_tick.py' --glob 'scripts/**/*.py' --glob 'web/src/**/*.{ts,tsx}' --glob '!web/src/**/*.{test,spec}.{ts,tsx}' '(=\s*.*\.(strip|lstrip|rstrip|trim|trimStart|trimEnd)\(|out\.append\([^)]*\.strip|return\s+.*\.(strip|trim)|\.map\(\s*\w+\s*=>\s*\w+\.trim|\.map\(\s*\([^)]*\)\s*=>\s*[^)]*\.trim)'
+
+HIT_COUNT (this round)=1146
+FULL_DISPOSITION: MEMBER_TABLE.md §F21 (FIX/KEEP by dataflow chase; not auto-KEEP)
+
+========== F22 CMD_AST one-shot defs + refs (inline ~50 lines; covers zero/test-only) ==========
+# Python FunctionDef/AsyncFunctionDef/ClassDef(+AnnAssign fields) + TS export/type/interface
+# Reference count over ming_sim/web_app/main/launcher/spike/scripts/web/src/tests
+# Emits zero_abs / zero_prod_test_only counts; members → MEMBER_TABLE.md §F22
+CMD:
+python3 - <<'PY'
+import ast, re, subprocess
+from pathlib import Path
+ROOT=Path('.').resolve(); SKIP={'.git','node_modules','__pycache__','dist','build','.venv','venv'}
+def ls(*g):
+    r=subprocess.check_output(['git','ls-files','-z','--',*g]); return [p.decode() for p in r.split(b'\0') if p]
+def ok(p): return not any(x in Path(p).parts for x in SKIP)
+def is_test(p): return p.startswith('tests/') or p.endswith(('.test.ts','.test.tsx','.spec.ts','.spec.tsx'))
+py=[p for p in ls('ming_sim','web_app.py','main.py','launcher.py','spike_settle_tick.py','scripts') if p.endswith('.py') and ok(p)]
+ts=[p for p in ls('web/src') if p.endswith(('.ts','.tsx')) and ok(p) and not is_test(p)]
+corpus={}
+for p in ls('ming_sim','web_app.py','main.py','launcher.py','spike_settle_tick.py','scripts','web/src','tests'):
+    if ok(p) and p.endswith(('.py','.ts','.tsx')): corpus[p]=(ROOT/p).read_text(encoding='utf-8',errors='replace')
+defs=[]
+for rel in py:
+    t=corpus[rel]
+    try: tree=ast.parse(t, filename=rel)
+    except SyntaxError: continue
+    for n in tree.body:
+        if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)):
+            defs.append((('py_async' if isinstance(n,ast.AsyncFunctionDef) else 'py_func'), n.name, n.name, rel, n.lineno))
+        elif isinstance(n,ast.ClassDef):
+            for it in n.body:
+                if isinstance(it,(ast.FunctionDef,ast.AsyncFunctionDef)):
+                    defs.append(('py_method', f'{n.name}.{it.name}', it.name, rel, it.lineno))
+                elif isinstance(it,ast.AnnAssign) and isinstance(it.target,ast.Name):
+                    defs.append(('py_field', f'{n.name}.{it.target.id}', it.target.id, rel, it.lineno))
+EXP=re.compile(r'^\s*export\s+(?:async\s+)?(?:function|const|class|type|interface|enum)\s+([A-Za-z_][A-Za-z0-9_]*)')
+for rel in ts:
+    for i,line in enumerate(corpus[rel].splitlines(),1):
+        m=EXP.match(line)
+        if m: defs.append(('ts_export' if 'type' not in line.split()[1:3] else 'ts_type', m.group(1), m.group(1), rel, i))
+wanted={s for _,_,s,_,_ in defs if len(s)>=2 and re.match(r'^[A-Za-z_][A-Za-z0-9_]*$',s)}
+hits={s:[] for s in wanted}; ident=re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
+for rel,text in corpus.items():
+    test=is_test(rel)
+    for i,line in enumerate(text.splitlines(),1):
+        for s in set(ident.findall(line)) & wanted:
+            hits[s].append((rel,i,test))
+zero_abs=[]; zero_tt=[]
+for kind,q,s,rel,ln in defs:
+    if s in {'__init__','__call__'} or len(s)<2: continue
+    live=[h for h in hits.get(s,[]) if not (h[0]==rel and h[1]==ln)]
+    prod=[h for h in live if not h[2]]; tests=[h for h in live if h[2]]
+    if not live: zero_abs.append((kind,q,f'{rel}:{ln}'))
+    elif not prod and tests: zero_tt.append((kind,q,f'{rel}:{ln}',tests[0][0]))
+print(f'def_count={len(defs)} zero_abs={len(zero_abs)} zero_prod_test_only={len(zero_tt)} py_files={len(py)} ts_files={len(ts)} corpus_files={len(corpus)}')
+print('ZERO_ABS_SAMPLE', '; '.join(f'{k}:{q}@{p}' for k,q,p in zero_abs[:8]))
+print('ZERO_TT_SAMPLE', '; '.join(f'{k}:{q}@{p}|{t}' for k,q,p,t in zero_tt[:8]))
+print('FULL_DISPOSITION=MEMBER_TABLE.md §F22')
+PY
+
+========== F22 ABSENT_CHECK (post-DELETE verify only; not the enum) ==========
+CMD:
+for s in EN_VALUE_CN Suggestion ExtractionPendingStatus PromulgationHealEvidence run_audience_turn_translation stage_referral_candidate stage_revoke_authority_candidate season_option_contract_prompt cluster_effect release_previous_material_tree _open_night_court_break apply_llm_config splitReportItems appointed_minister registered_minister displaced_minister status_delta build_period_report mean_aligned_stance dict_of_string_lists dict_of_strings historical_anchor_for_month parse_json_dict event_context first_character_name require_non_empty_text require_int_range require_bool has_player_visible_rejection contract_axes_direction parse_covert_exec_selections discover_character_write_sql_locations person_write_locations_by_disposition qualitative_character_attribute disaster_severity_band _merge_compliant_promulgation_items _promulgable_proposed_dossiers _dossier_ids_from_simulator_payload _open_affair_ids_from_payload _primary_source_only_army_pay_container_total _is_audience_chat_shared_channel heal_evidence; do c=$(rg -n --glob '!evidence/**' --glob '!archive/**' --glob '!docs/**' --glob '!**/*.md' "\\b$s\\b" ming_sim web_app.py web/src tests scripts main.py launcher.py spike_settle_tick.py 2>/dev/null | wc -l | tr -d ' '); echo "ABSENT_CHECK $s hits=$c"; done
+
+NOTE: Do not reintroduce evidence/.../scripts/ permanent classifier layers or full jsonl dumps.

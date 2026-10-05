@@ -7,5 +7,9 @@ Reason (F17 shape, re-opened by seat review):
 - materialize current-green was not honestly established under that script
 
 Do not treat that JSON verdict_old_logic_restored=true as proof.
-Current authority: mutation_real_entry.out (current_green preserve sites intact).
-Real-mutation method limit: verify live preserve sites only; do not restore old strip logic via temp scripts.
+Also revoked: later overwrite of mutation_real_entry.out that only asserted current_green preserve sites (rg/site intact ≠ real-entry old-red proof).
+
+Current authority: mutation_real_entry.out from /tmp one-shot that loads
+git show ebcd2d1a1 full bodies of map_rescript_option_or_choice /
+_parse_highlights_json / _apply_military_order_station_effect into those real entries;
+requires current_green=true AND old_red=true. Temp script not kept in repo.
