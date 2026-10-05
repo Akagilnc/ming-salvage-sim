@@ -4,7 +4,7 @@
 开工 BASE：`7ba04d2263793153383e5e2b95d9d58d54ac5456`。
 代码交卷：`a64094fd5336344d1932cf283fea4c2a9f430b65`（DRY + 庭列24 + 初轮11 + 三案/stub）；
 全仓 orphan 清退：`81560cb1b396b35339ca36693e7742bcb188e83b`（再删 23）。
-**本轮：仅修本报告小修 forward**——不改生产／测试代码；删 `parse_ref` 吞缺失、DELETED 改 BASE∖HEAD 顶层 defs 差集自动推导（不以庭列种子为发现条件）、嵌套段去永假代码并诚实声明「额外候选／非全协议完备」；本轮枚举写作 **worker 实测**（不得冒称主助手执行；主助手独立复跑另证）。
+**本轮：仅追加主助手独立复核证据（docs-only forward）**——不改生产／测试代码；不重复施工／测试。代码交卷仍停在 `a64094fd5`／`81560cb1b`；枚举命令体以既有回执 bash fence 为准。主助手独立复跑证据见文末「主助手独立复核」节（相对 `23d3c36881570a4538fc537921144ad0184bcc8a`）。
 
 法源：末份 `1891m-judge-7ba04d226.json` payload[4]、`1899c-judge-7ba04d226.json` payload[3]、`1891-1899-countersign-7ba04d226.json`（原卷直读，本回执不自撰顾问／判词摘要冒称原话）。
 Python：`/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python`。
@@ -38,7 +38,7 @@ BASE=7ba04d226
 
 advisor 原话完整文本若需核对，请读宿主原卷／该席位 transcript；**本回执不自撰摘要冒称原话**。仅保留其 VERDICT=PASS 与「非正式／非法庭审」边界。
 
-**本轮枚举执行者**：**worker 实测**（本小修 forward 内 inline 复跑）。主助手独立复跑稍后另有证据，**不得**把本轮 stdout／摘要写成主助手执行。
+**枚举执行者分层**：**worker 实测**（既有小修 forward 内 inline）与 **主助手独立复核**（文末专节；临时根 `/tmp/1891-dry-test-independent.ip7JIM`）分栏记账——**不得**把 worker stdout／摘要写成主助手执行。
 
 **删除成员发现**：`DELETED = BASE 顶层 defs ∖ HEAD 顶层 defs`（全仓 `*.py` 差集自动推导）。人读类别拆分（庭列 24／初轮 11／orphan 23／公有三案／stub）**仅附表元数据**，不是候选发现条件。实测差集基数 **62**＝附表 A 精确人读类别表成员数。
 **判据范围**：模块 `tree.body` 顶层 `FunctionDef|AsyncFunctionDef|ClassDef`。**不主张**递归砍光嵌套私有函数／方法；嵌套段＝**额外候选**，**非**全协议完备枚举。
@@ -649,7 +649,11 @@ Ruff 史（orphan 轮）：先 18 F401 → `--fix`；随后 `game` fixture impor
 | orphan 聚焦 | §6 | `112 passed` | `…/logs/focus-main.log` |
 | orphan Ruff | §6 | 18 F401 → fix；game F401 → noqa → passed | `…/logs/ruff*.log` |
 | diff --check | §7 | 先红后绿 @81560cb1b | transcript `fd3354ef-…` |
-| 本轮枚举（worker 实测） | 上文 inline | 差集 62；HEAD 存活 0；DRY norm equal | worker stdout（主助手独立复跑另证） |
+| 本轮枚举（worker 实测） | 上文 inline | 差集 62；HEAD 存活 0；DRY norm equal | worker stdout |
+| 主助手独立枚举 | 文末 §独立复核 | 同口径：62／存活0／norm equal | `/tmp/1891-dry-test-independent.ip7JIM/enum.log` |
+| 主助手独立聚焦 | 文末 command.txt 32 selectors | `246 passed, 1 skipped, 1 warning in 5.15s` | `…/focus.log`（墙钟 5.705s） |
+| 主助手独立 Ruff | `uv tool run --from ruff==0.11.2 … F401,F821` | All checks passed! | 主助手会话 |
+| 主助手 diff --check／status | `git diff --check`；`git status` | 均无输出 | 相对 `23d3c3688` |
 
 **不以符号缺席永久测试自证**——闭包依据为全层 AST 消费者表 + 旧三案红取证 + 现役 KEEP 案绿 + BASE 死链说明。
 
@@ -657,6 +661,75 @@ Ruff 史（orphan 轮）：先 18 F401 → `--fix`；随后 `game` fixture impor
 
 advisor PASS＝**自主顾问非正式意见**，**非法庭审**／非法源——旧记录保留，不得升格为正式庭审结论。diff 名单／advisor 意见均不得替代类别授权与枚举证据。原话以宿主原卷为准。
 
+## 主助手独立复核（事实证据；非施工／非庭审收敛）
+
+**执行者**：主助手（非 worker）。**性质**：对既有回执 bash fence 的独立复跑取证；**不重复施工／不另写测试／不改生产代码**。
+**代码结果交付边界**：目标＝事实证据回执 forward；**非**目标 merge，**非**庭审收敛。
+**复核 HEAD**：`23d3c36881570a4538fc537921144ad0184bcc8a`（开工 BASE 仍为 `7ba04d226`）。
+**临时根**：`/tmp/1891-dry-test-independent.ip7JIM/`（`enum.py`／`enum.log`／`command.txt`／`focus.log`／`user`／`pytest`）。
+
+### 累计改动边界（诚实）
+
+相对 `7ba04d226..23d3c3688`：累计改动超过 **400** 行，**主要**为纯删除 + 回执全 **62** 成员 + 可复跑一次性 AST 枚举；生产侧只收拢约 **~40** 行（`play_turn` DRY）。**不新增**机制／永久自证测试。
+
+### A) 独立 AST 枚举
+
+做法：从本回执既有 bash fence 抽取 inline enum，写入 `$TMPROOT/enum.py` 后直接运行（与 worker 命令体同口径；响亮解析）。
+
+```bash
+TMPROOT=/tmp/1891-dry-test-independent.ip7JIM
+$PY "$TMPROOT/enum.py" | tee "$TMPROOT/enum.log"
+```
+
+主助手实测摘要（数字以 `enum.log` 为准，不改写）：
+
+| 指标 | 值 |
+| --- | --- |
+| HEAD_PY／HEAD_AST／BASE_PY／BASE_AST | **351／351／351／351** |
+| DELETED_COUNT | **62** |
+| SUMMARY | `BASE_MISSING_TOP=0` `HEAD_STILL=0` `HEAD_SURVIVING_NONEMPTY=0` |
+| NESTED_PRIV_COUNT | **344** |
+| NESTED_SHARE_DELETED_NAME | **1**（`test_mechanical_tail_1845` 案内自有 `_reports` @395 → 嵌套专属闭包；**非**已删顶层存活消费者） |
+| ORPHAN／KEEP_FIXTURE／KEEP_CONSUMED／DYNAMIC | **0／9／679／0** |
+| DRY_BASE | `SKIP_IF 649` `ISSUE_IF 680` `RAW_EQUAL False` `NORMALIZED_SESSION_AST_EQUAL True` |
+| DRY HEAD | combined @**651** |
+
+### B) 独立聚焦 pytest（初轮 164 ∪ orphan 112 → 去重 32 selectors）
+
+将初轮 164 与 orphan 112 的 selectors **去重联合为 32**；真实命令全文存在 `$TMPROOT/command.txt`（下引为该文件原文，不改写）：
+
+```bash
+/Users/akagilnc/WorkSpace/Ming_LLM/.venv/bin/python -m pytest -p no:cacheprovider --basetemp=/tmp/1891-dry-test-independent.ip7JIM/pytest -q --tb=short tests/test_cli_play_turn.py tests/test_web_court_visibility.py::test_zongfan_cannot_be_summoned_via_can_summon tests/test_qa_s2_copy_prompts_1356_1402.py tests/test_fiscal_levy_effect.py tests/test_faction_brew_637.py tests/test_mutiny_actual_residence_659.py tests/test_promulgation_seam_560.py tests/test_pre_settle_transaction.py tests/test_secret_order_monthly_progress_566.py tests/test_month_loop_tracer_1468.py tests/test_audience_background.py tests/test_web_chat_serialization_393.py tests/test_structured_decree_contract_1624.py tests/test_supervision_625.py tests/test_rescript_draft_656.py tests/test_highlight_judge_544.py tests/test_chat_stream_failpaths_393.py tests/test_web_court_visibility.py tests/test_mutiny_third_strike_318.py tests/test_opening_gazette_delete_1356.py tests/test_adr0015_per_item_rejection.py tests/test_advance_paths_atomic.py tests/test_audience_presence_500.py tests/test_court_break_player_lock_1727.py tests/test_qa_b3_409_ux.py tests/test_qa_c2_phase_settlement_mask_1374.py tests/test_qa_h1_seed_data.py tests/test_enter_settlement_period_1235.py::test_web_entry_captures_before_await_close tests/test_relation_capture_633.py::test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges tests/test_refugee_loop_652.py::test_standalone_absorption_is_durable_to_second_connection tests/test_dossier_endorsements_612.py::test_endorsement_forms_persist_restore_and_judge_without_roster_join tests/test_transit_countdown_668.py::test_mid_countdown_save_reopen_continues_identically
+```
+
+安全 env（七项 BIN + 字节码关 + 新 user／basetemp；与 command 同轮）：
+
+```bash
+export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
+  MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false \
+  MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false \
+  MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 \
+  MING_SIM_USER_DATA_DIR=/tmp/1891-dry-test-independent.ip7JIM/user
+```
+
+结果：`focus.log` → **`246 passed, 1 skipped, 1 warning in 5.15s`**；主助手墙钟 **5.705s**。未跑全量／真实宿主／网络模型。不冒称 typecheck。
+
+### C) 独立 Ruff F401／F821
+
+主助手独立执行：
+
+```bash
+UV_TOOL_DIR=/tmp/1891-uv-tools UV_CACHE_DIR=/tmp/1891-uv-cache \
+  uv tool run --from ruff==0.11.2 ruff check --target-version py313 --select F401,F821 \
+  $(git diff --name-only --diff-filter=ACMR 7ba04d226..HEAD -- '*.py')
+```
+
+结果：**All checks passed!**
+
+### D) 工作树洁净
+
+相对复核 HEAD `23d3c36881570a4538fc537921144ad0184bcc8a`：`git diff --check` 与 `git status` **均无输出**（本 forward 提交前工作树仅追加本节后的 docs diff）。
+
 ## 提交约束声明
 
-本轮仅 forward `ak-roles:` **docs** 小修提交；不 amend／stash／reset／checkout 覆盖／rebase／squash／push／PR；不改生产／测试代码；不改宪法／Soul／宿主配置／席位表；不造通用机制或永久自证测试；`git diff --check` 绿。
+本轮仅 forward `ak-roles:` **docs**（追加主助手独立复核事实证据）；不 amend／stash／reset／checkout 覆盖／rebase／squash／push／PR；不改生产／测试代码；不改宪法／Soul／宿主配置／席位表；不造通用机制或永久自证测试；不重复施工／测试；`git diff --check` 绿。
