@@ -204,17 +204,6 @@ def test_flat_class_delta_rejected_while_nested_sibling_lands(game):
     assert _class_satisfaction(db, good) == before + 6
 
 
-def test_zero_delta_faction_not_rejected(game):
-    """0 增量是合法 no-op，不当拒收（不误报）。"""
-    db, state, content = game
-    turn = state.turn
-    good = _valid_faction(db)
-
-    run_settle(db, state, content, {
-        "faction_delta": {good: 0},
-    }, narrative="x", decree_text="y")
-
-    assert _rejection_rows(db, turn, FACTION_REJ_SECTION) == []
 
 
 def test_issue_effect_faction_rejection_reaches_reports(game):

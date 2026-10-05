@@ -29,8 +29,25 @@ from ming_sim.faction_brew import (
     project_character_factions,
     select_faction_brew_targets,
 )
-from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY, run_month_end_relation_brew
+from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY, MonthEndRelationBrewLeg
 from ming_sim.relations import EMPEROR_NODE
+
+
+def _faction_stance(db, faction: str):
+    """Read one faction stance via live plural API (#1847 N11: no singular TEST_ONLY reader)."""
+    for row in db.get_faction_stance_summaries():
+        if str(row.get("faction") or "") == faction:
+            return row
+    return None
+
+
+def run_month_end_relation_brew(db, state, brew_fn, **kwargs):
+    """Test-local retarget to live MonthEndRelationBrewLeg (#1847 N11)."""
+    leg = MonthEndRelationBrewLeg(db, state, brew_fn, **kwargs)
+    if not leg.prepare():
+        return leg.report
+    leg.brew()
+    return leg.persist()
 
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
@@ -136,8 +153,8 @@ def test_both_endpoints_different_factions_both_selected(game):
         entry["faction"] for entry in report["brewed"] if "faction" in entry
     )
     assert brewed_factions == ["皇党", "阉党"]
-    assert db.get_faction_stance_summary("皇党")["stance_segment"] == "朝局如常。"
-    assert db.get_faction_stance_summary("阉党")["stance_segment"] == "朝局如常。"
+    assert _faction_stance(db, "皇党")["stance_segment"] == "朝局如常。"
+    assert _faction_stance(db, "阉党")["stance_segment"] == "朝局如常。"
 
 
 def test_out_of_table_faction_and_unknown_person_never_projected(game):
@@ -170,7 +187,7 @@ def test_event_month_updates_stance_and_no_event_month_byte_identical(game):
     brew_fn = _dual_brew_fn_factory(calls, stance="东林因钱谦益蒙召对而势涨。")
     report = run_month_end_relation_brew(db, state, brew_fn)
 
-    summary = db.get_faction_stance_summary("东林")
+    summary = _faction_stance(db, "东林")
     assert summary["stance_segment"] == "东林因钱谦益蒙召对而势涨。"
     assert summary["last_event_id"] >= event_id
     assert (summary["last_brewed_year"], summary["last_brewed_period"]) == (
@@ -185,7 +202,7 @@ def test_event_month_updates_stance_and_no_event_month_byte_identical(game):
     report = run_month_end_relation_brew(db, state, brew_fn)
     assert report["selected"] == 0
     assert calls == []
-    after = db.get_faction_stance_summary("东林")
+    after = _faction_stance(db, "东林")
     assert after["stance_segment"] == before["stance_segment"]
     assert after["last_event_id"] == before["last_event_id"]
     assert (after["last_brewed_year"], after["last_brewed_period"]) == (
@@ -207,7 +224,7 @@ def test_failed_faction_brew_rebrews_once_via_existing_pending_seam(game):
     # 关系与派系工作项同批同命：双双降级留痕。
     assert report["selected"] == 2
     assert len(report["degraded"]) == 2
-    assert db.get_faction_stance_summary("皇党") is None
+    assert _faction_stance(db, "皇党") is None
     # durable pending 在册（同一 claim 机制，item_kind='派系' 身份）。
     pending = db.get_faction_brew_pending()
     assert [row["faction"] for row in pending] == ["皇党"]
@@ -229,7 +246,7 @@ def test_failed_faction_brew_rebrews_once_via_existing_pending_seam(game):
     assert faction_payloads[0]["has_pending_failure"] is True
     assert faction_payloads[0]["faction"] == "皇党"
     assert len(report["brewed"]) == 2
-    assert db.get_faction_stance_summary("皇党")["stance_segment"] == (
+    assert _faction_stance(db, "皇党")["stance_segment"] == (
         "皇党内因温周之隙而生嫌隙。"
     )
     assert db.get_faction_brew_pending() == []
@@ -253,7 +270,7 @@ def test_malformed_faction_output_degrades_and_keeps_old_summary_bytes(game):
     calls: list = []
     brew_fn = _dual_brew_fn_factory(calls, stance="皇党旧文。")
     run_month_end_relation_brew(db, state, brew_fn)
-    before = db.get_faction_stance_summary("皇党")
+    before = _faction_stance(db, "皇党")
 
     # 次月新涉派事件；派系腿产出缺 stance_segment（shape 违约）→ 单条降级。
     state.turn += 1
@@ -264,7 +281,7 @@ def test_malformed_faction_output_degrades_and_keeps_old_summary_bytes(game):
     brew_fn.stances = ['{"irrelevant": 1}']
     report = run_month_end_relation_brew(db, state, brew_fn)
     assert report["degraded"], "派系腿 shape 违约必须降级留痕"
-    after = db.get_faction_stance_summary("皇党")
+    after = _faction_stance(db, "皇党")
     assert after["stance_segment"] == before["stance_segment"]  # 保旧摘要字节
     assert [row["faction"] for row in db.get_faction_brew_pending()] == ["皇党"]
 
@@ -274,7 +291,7 @@ def test_malformed_faction_output_degrades_and_keeps_old_summary_bytes(game):
     calls.clear()
     brew_fn.stances = [{STANCE_KEY: "皇党因杨嗣昌被驳而渐离。"}]
     report = run_month_end_relation_brew(db, state, brew_fn)
-    assert db.get_faction_stance_summary("皇党")["stance_segment"] == "皇党因杨嗣昌被驳而渐离。"
+    assert _faction_stance(db, "皇党")["stance_segment"] == "皇党因杨嗣昌被驳而渐离。"
     assert db.get_faction_brew_pending() == []
 
 
@@ -605,7 +622,7 @@ def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_mo
         raise LLMUnavailable("酿制裁判接口不可用")
     report = run_month_end_relation_brew(db, state, failing_brew)
     assert any(row["faction"] == "皇党" for row in db.get_faction_brew_pending())
-    old_summary = db.get_faction_stance_summary("皇党")
+    old_summary = _faction_stance(db, "皇党")
     assert old_summary is None
     old_pending = db.get_faction_brew_pending()
     assert old_pending

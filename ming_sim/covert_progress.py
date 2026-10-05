@@ -564,14 +564,6 @@ def contract_target_units(contract: Mapping[str, object]) -> float:
     return target
 
 
-def contract_axes_direction(
-    contract: Mapping[str, object],
-) -> tuple[list[str], int]:
-    axes = normalize_axes(contract.get("axes"))
-    if not axes:
-        raise CovertContractError("typed contract 缺少价值轴")
-    return axes, normalize_direction(contract.get("direction"), default=1)
-
 
 def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[str, object]:
     actual = float(review_input.get("actual_units") or 0.0)
@@ -629,63 +621,8 @@ def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
     return row is not None
 
 
-def _current_game_turn(db: Any, turn: object = None) -> int:
-    if turn is not None:
-        return int(turn)
-    row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
-    if row is not None:
-        return int(row["turn"])
-    return 0
 
 
-def build_secret_covert_effect_briefs(
-    db: Any,
-    orders: Sequence[Mapping[str, object]] | None = None,
-    *,
-    turn: object = None,
-) -> List[Dict[str, object]]:
-    """internal 档房私密输入：typed 合同 + origin，不含密令正文（#883）。"""
-    rows = list(orders or [])
-    if not rows:
-        rows = list(db.list_secret_orders(status="active"))
-    current_turn = _current_game_turn(db, turn)
-    out: List[Dict[str, object]] = []
-    for order in rows:
-        if not isinstance(order, Mapping):
-            continue
-        if str(order.get("status") or "active") != "active":
-            continue
-        if _is_issuance_turn(order, current_turn):
-            continue
-        oid = int(order.get("id") or 0)
-        if oid <= 0:
-            continue
-        dossier = db.get_dossier_for_secret_order(oid)
-        if dossier is None:
-            continue
-        contract = require_covert_task_contract(dossier)
-        delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
-        unit = str(delivery.get("unit") or "")
-        fields = canonical_fields_for_delivery(unit=unit)
-        owner = "internal"
-        if fields == ["人物变更"]:
-            owner = "personnel_secret"
-        prior_units = float(db.sum_dossier_actual_progress_units(int(dossier["id"])))
-        target_units = contract_target_units(contract)
-        remaining_units = max(0.0, target_units - prior_units)
-        out.append({
-            "origin_ref": f"dossier:{int(dossier['id'])}",
-            "order_id": oid,
-            "kind": str(contract.get("kind") or ""),
-            "axes": list(contract.get("axes") or []),
-            "direction": int(contract.get("direction") or 1),
-            "delivery": copy.deepcopy(dict(delivery)),
-            "effect_owner": owner,
-            "canonical_fields": fields,
-            "prior_actual_units": prior_units,
-            "remaining_units": remaining_units,
-        })
-    return out
 
 
 def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:
@@ -1885,11 +1822,12 @@ def _apply_investigation_selection(
     rejected_reactions: List[Dict[str, object]] = []
     # 同月重入不重复施加投入：实况轨已有本月行即说明本月已核算过。lane 累加本身
     # 不带幂等键，若不在此拦一道，同一 turn 内被扫两次就会把力气算两遍。
-    existing = db.conn.execute(
-        "SELECT id, units FROM dossier_actual_progress "
-        "WHERE dossier_id=? AND turn=? LIMIT 1",
-        (did, int(turn)),
-    ).fetchone()
+    existing_rows = [
+        row
+        for row in db.list_dossier_actual_progress(did)
+        if int(row.get("turn") or 0) == int(turn)
+    ]
+    existing = existing_rows[0] if existing_rows else None
     declaration = _investigation_declaration(sel)
     invalid = str(declaration.get("invalid") or "").strip()
     if invalid:
@@ -2079,20 +2017,3 @@ def settle_due_secret_orders(
     if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
     return results
-
-
-def parse_covert_exec_selections(extracted: Mapping[str, object] | None) -> List[Dict[str, object]]:
-    if not extracted:
-        return []
-    raw = (
-        extracted.get("covert_exec_selections")
-        or extracted.get("密令执行态")
-        or []
-    )
-    if not isinstance(raw, list):
-        return []
-    out: List[Dict[str, object]] = []
-    for item in raw:
-        if isinstance(item, dict):
-            out.append(item)
-    return out

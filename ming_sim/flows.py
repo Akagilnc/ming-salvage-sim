@@ -62,14 +62,6 @@ def raise_fixed_period_flow_abort_if_needed(
     ) from exc
 
 
-def _province_transport_ratio(fiscal: dict, unrest: int) -> float:
-    """解运比（保留函数签名，返回1.0；实际损耗已并入 _province_efficiency）。"""
-    return 1.0
-
-
-def _province_collection_rate(gentry_resistance: int, unrest: int) -> float:
-    """实收率（保留函数签名，返回1.0；实际损耗已并入 _province_efficiency）。"""
-    return 1.0
 
 
 def _province_efficiency(fiscal: dict, gentry_resistance: int, unrest: int) -> float:
@@ -292,13 +284,6 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
         remittance_total += float((result.breakdown or {}).get("起运到京", 0.0) or 0.0)
     return remittance_total
 
-
-def _fiscal_container_value(db: GameDB, key: str) -> float:
-    row = db.conn.execute(
-        "SELECT value FROM fiscal_containers WHERE key = ?",
-        (key,),
-    ).fetchone()
-    return float(row["value"] or 0.0) if row is not None else 0.0
 
 
 def _fiscal_container_values_when_complete(

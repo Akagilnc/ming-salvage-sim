@@ -26,12 +26,21 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
     RECENT_KEY,
+    MonthEndRelationBrewLeg,
     build_brew_input,
     merge_founding_segment,
     relation_dimension,
-    run_month_end_relation_brew,
 )
 from ming_sim.relations import EMPEROR_NODE
+
+
+def run_month_end_relation_brew(db, state, brew_fn, **kwargs):
+    """Test-local retarget to live MonthEndRelationBrewLeg (#1847 N11)."""
+    leg = MonthEndRelationBrewLeg(db, state, brew_fn, **kwargs)
+    if not leg.prepare():
+        return leg.report
+    leg.brew()
+    return leg.persist()
 
 
 @pytest.mark.parametrize("error_type", [APITimeoutError, APIConnectionError])

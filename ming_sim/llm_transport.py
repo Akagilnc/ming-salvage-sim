@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import inspect
 import time
+import traceback
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -266,18 +267,21 @@ def _typed_status_from_run_error_event(event: Any) -> Optional[int]:
 
 
 def _exception_text_with_causes(error: BaseException) -> str:
-    """Existing provider_message / str(error) exit: include PEP 3134 cause chain.
+    """Compact cause-chain text for existing provider_message / trace.error exits.
 
-    Notes and bare ``__cause__`` memory are not this exit (PEP 678 / #1847 N13).
-    No new diagnostic fields — only the text already carried on ClassifiedFailure /
-    LLMUnavailable / trace.error.
+    ``traceback.format_exception`` (used by error_pack) includes frames — too heavy
+    for the single-string transport exits. ``format_exception_only`` does not walk
+    ``__cause__``. So join ``TracebackException`` message parts along the PEP 3134
+    cause chain (stdlib structure; no parallel diagnostic field / notes reliance).
     """
     parts: list[str] = []
-    cur: BaseException | None = error
+    cur: traceback.TracebackException | None = traceback.TracebackException.from_exception(
+        error, compact=True,
+    )
     seen: set[int] = set()
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
-        text = str(cur).strip() or type(cur).__name__
+        text = str(cur).strip() or getattr(cur, "exc_type_str", "") or "Exception"
         parts.append(text)
         cur = cur.__cause__
     return " | caused by: ".join(parts)

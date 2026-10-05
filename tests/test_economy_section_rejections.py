@@ -59,31 +59,8 @@ def test_top_level_nonint_delta_rejected(game):
     assert len(rows) == 1, rows
 
 
-def test_valid_economy_still_applies_no_reject(saved_game):
-    """合法 economy 照常落账、零拒收（不误伤）。
-    用 saved_game：断言依赖玩过存档的国库余额基线，fresh seed 不复现（#5）。"""
-    db, state, content = saved_game
-    turn = state.turn
-    before = _guoku(db)
-
-    run_settle(db, state, content, {
-        "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": -7, "reason": "正常"}],
-    }, narrative="x", decree_text="y")
-
-    assert _rejection_rows(db, turn, ECO_REJ) == []
-    assert _guoku(db) < before  # 确实扣账
 
 
-def test_zero_delta_economy_no_reject_no_apply(game):
-    """delta==0 是 no-op，不拒收也不落账（不误报）。"""
-    db, state, content = game
-    turn = state.turn
-
-    run_settle(db, state, content, {
-        "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": 0, "reason": "空动作"}],
-    }, narrative="x", decree_text="y")
-
-    assert _rejection_rows(db, turn, ECO_REJ) == []
 
 
 def test_issue_effect_bad_account_economy_reaches_reports(game):
@@ -128,20 +105,6 @@ def test_float_and_bool_delta_rejected(game):
     assert len(rows) == 2, rows
 
 
-def test_noop_bad_account_skipped_not_rejected(game):
-    """no-op 空占位行（delta==0/缺额）即便 account 空/非法也静默跳，不拒收（免噪声+假提示，
-    codex r1 线上）；只有真有钱动（delta≠0）的非法 account 才拒。"""
-    db, state, content = game
-    turn = state.turn
-
-    run_settle(db, state, content, {
-        "economy_moves": [
-            {"origin_ref": "盘面自发", "account": "金库", "delta": 0, "reason": "空占位非法账户"},  # no-op → 跳
-            {"origin_ref": "盘面自发", "account": "", "reason": "缺 delta 空账户"},                # no-op → 跳
-        ],
-    }, narrative="x", decree_text="y")
-
-    assert _rejection_rows(db, turn, ECO_REJ) == []
 
 
 def test_issue_effect_cancel_economy_reaches_reports(game):

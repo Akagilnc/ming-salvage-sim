@@ -1240,12 +1240,6 @@ class WebGame:
         self.session.begin_turn()
         return new_config
 
-    def apply_llm_config(self, *args, **kwargs) -> LLMConfig:
-        """同步:build → verify → commit。异步端点 api_set_llm_config 改为分步以 offload verify。"""
-        new_config = self.build_llm_config(*args, **kwargs)
-        _verify_llm_configs_or_raise(new_config)
-        return self.commit_llm_config(new_config)
-
     # ── 便捷属性 ──────────────────────────────────────────────────────────
     @property
     def db(self):

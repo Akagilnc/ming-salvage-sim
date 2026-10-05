@@ -1,0 +1,7 @@
+NOTE: temporary stub of create_scene_agent + _apply_scene_turn_translation proves CALL BOUNDARY only; does not prove real translation implementation.
+CURRENT_stay {'scene_calls': 1, 'translate_calls': 1, 'court_action': '', 'answer': '王绍徽叩答：臣在侧听候。', 'scene_prompt': ['留下听着'], 'translate_message': "ChatTurnResult(answer='王绍徽叩答：臣在侧听候。', court_action='', next_minister='', proposed_directive=None, appointed_minister='',"}
+CURRENT_close_phrase {'scene_calls': 1, 'translate_calls': 1, 'court_action': ''}
+MUTATED_stay {'scene_calls': 0, 'translate_calls': 0, 'court_action': 'stay_attend', 'answer': ''}
+N15_SCENE_CHAT_MUTATION PASS
+tmpdir_cleaned True
+DISCLAIMER: stub translate proves CALL BOUNDARY only, not real translate implementation.

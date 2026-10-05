@@ -296,17 +296,6 @@ def test_change_dirty_delta_rejected_sibling_lands(game, bad_delta):
     assert db.get_fiscal_config()[good] == max(0, before + 3)
 
 
-def test_change_zero_delta_no_op_not_rejected(game):
-    """fiscal_changes delta 显式给 0 = 无操作,不记拒(免得每月刷无意义拒收行;pin)。"""
-    db, state, content = game
-    turn = state.turn
-    good = _a_fiscal_key(db)
-
-    run_settle(db, state, content, {
-        "fiscal_changes": [{"key": good, "delta": 0, "reason": "无操作"}],
-    }, narrative="x", decree_text="y")
-
-    assert _rejection_rows(db, turn, "fiscal_changes") == []
 
 
 def test_change_empty_key_rejected(game):

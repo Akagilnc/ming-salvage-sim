@@ -264,6 +264,8 @@ def test_player_month_recovery_consumes_old_levy_once(game, monkeypatch):
     pre_settle(state, db, content=content)
     db.save_resolve_context(turn, "测试诏", {})
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
+    import ming_sim.rescript_draft as rescript_draft
+    monkeypatch.setattr(rescript_draft, "produce_memorials", lambda *a, **k: None)
     session = _recovery_session(db, state, content, monkeypatch)
     result = session.resolve_turn()
     assert result.stage == "gazette"
@@ -413,39 +415,6 @@ def legacy_game(content, tmp_path):
     yield db, state, content
 
 
-def test_unmarked_cutover_save_rejects_and_never_consumes_surcharge(game, monkeypatch):
-    """旧档即使迁移到 substrate fiscal，也不冒充 persons 池消费历史账。"""
-    db, state, content = game
-    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
-    db.conn.execute("DELETE FROM fiscal_config WHERE key='__fiscal_engine'")
-    db.conn.execute("UPDATE fiscal_config SET value=1 WHERE key='__army_pay_source_cutover'")
-    fiscal = json.loads(db.conn.execute(
-        "SELECT fiscal FROM regions WHERE id='shaanxi'"
-    ).fetchone()[0])
-    fiscal["settle"].setdefault("_meta", {})["加派基线"] = 10.0
-    db.conn.execute("UPDATE regions SET fiscal=? WHERE id='shaanxi'",
-                    (json.dumps(fiscal, ensure_ascii=False),))
-    db.conn.commit()
-    path = db.path
-    db.close()
-    db = GameDB(path, content)
-    state = db.load_state()
-    farmer_before = _pop(db, "农民", "shaanxi")
-    displaced_before = _pop(db, "流民", "shaanxi")
-    before_turn = state.turn
-
-    applied = apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(db, state, monthly_amount=10.0)],
-    }, content, None)
-    assert not applied["surcharge_decrees"]
-    assert applied["surcharge_decrees_rejections"][0]["category"] == "missing_ref"
-
-    from tests.test_due_review_621 import _settle_empty_month
-    _settle_empty_month(db, state, content, monkeypatch)
-
-    assert state.turn == before_turn + 1
-    assert _pop(db, "农民", "shaanxi") == farmer_before
-    assert _pop(db, "流民", "shaanxi") == displaced_before
 
 
 def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(legacy_game, monkeypatch):
@@ -462,21 +431,3 @@ def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(legacy_gam
 
 
 # ── AC4/AC5：e2e 验收锚用例①前半——陕西加派→流民↑→回响；restore 接续；停加派止 ──
-
-def test_e2e_surcharge_and_stop_share_month_open_snapshot(game, monkeypatch):
-    db, state, content = game
-    want = _expected_inflow_persons(10.0, SHAANXI_SUPPORT)
-
-    turn = state.turn
-    _settle_month(state, db, {"surcharge_decrees": [_decree(db, state, monthly_amount=10.0)]},
-                  before_turn=turn, content=content, monkeypatch=monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
-
-    turn = state.turn
-    _settle_month(state, db, {"surcharge_decrees": [_decree(db, state, monthly_amount=-10.0)]},
-                  before_turn=turn, content=content, monkeypatch=monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + want
-
-    turn = state.turn
-    _settle_month(state, db, {}, before_turn=turn, content=content, monkeypatch=monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + want

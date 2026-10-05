@@ -21,6 +21,16 @@ from ming_sim.session_write_queue import (
 )
 
 
+
+def _run_exclusive(q, fn):
+    """Test-local: live queue seam is claim+run+complete (#1847 N11)."""
+    ticket = q.claim()
+    assert ticket is not None
+    try:
+        return q.run(ticket, fn)
+    finally:
+        q.complete(ticket)
+
 def wait_pending_writes(game, *, timeout_s: float | None = None) -> None:
     """Fail-loud drain of SessionWriteQueue open tickets (teardown/body shared).
 
@@ -358,13 +368,13 @@ def test_run_exclusive_serializes_writes():
         fast_done.set()
 
     th = threading.Thread(
-        target=lambda: (q.run_exclusive(slow), slow_done.set()),
+        target=lambda: (_run_exclusive(q, slow), slow_done.set()),
         daemon=True,
     )
     th.start()
     in_critical.wait()
     th2 = threading.Thread(
-        target=lambda: q.run_exclusive(fast),
+        target=lambda: _run_exclusive(q, fast),
         daemon=True,
     )
     th2.start()

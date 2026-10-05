@@ -1,58 +1,107 @@
-symbol	qual	loc	disposition	behavior	prod_refs	test_refs	notes
-AMBIGUOUS_CLOSE_COMMANDS	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-CMD_AMBIGUOUS_CLOSE	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-CMD_STAY_ATTEND	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-STAY_ATTEND_COMMANDS	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-TAG_STAY_ATTEND	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_CLI_RECOMMENDATION_CALL	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_agno_legacy_runs_blob	ming_sim/db.py:9338	ming_sim/db.py:9338	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=ming_sim/db.py:9355
-_ambiguous_close_confirm_cue	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_annotate_legacy_person_rejections	ming_sim/issues.py:7668	ming_sim/issues.py:7668	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=ming_sim/issues.py:7703
-_assert_commission_grant_target_exists	ming_sim/declaration_dispatch.py:902	ming_sim/declaration_dispatch.py:902	KEEP_LIVE	has_prod_consumers	1	0	prod=1;test=0;P=ming_sim/declaration_dispatch.py:988
-_backfill_bandit_power_split	ming_sim/db.py:5076	ming_sim/db.py:5076	KEEP_ACTIVE_ENSURE	open_hook_INSERT_OR_IGNORE_only_old_compat_stripped	2	0	prod=2;test=0;P=ming_sim/db.py:2355,ming_sim/person_write_inventory.py:23
-_backfill_event_triggers_from_event_pool_issues	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_backfill_healed_participant_refs	ming_sim/cli_backend.py:1741	ming_sim/cli_backend.py:1741	KEEP_LIVE_SHARED	live_cli_backend_caller	1	0	prod=1;test=0;P=ming_sim/cli_backend.py:2520
-_backfill_person_core_character_static_fields	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_backfill_proposed_appointment_break_ranks	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_backfill_salary_rate	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_cli_prompt	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_cli_recommendation_call	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_cli_stream_safe_prefix	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_grant_target	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_humanize_legacy_effect	web_app.py:335	web_app.py:335	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=web_app.py:1617
-_humanize_legacy_gate	web_app.py:299	web_app.py:299	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	2	0	prod=2;test=0;P=web_app.py:1607,web_app.py:1609
-_income_amount_after_legacy_modifier	ming_sim/flows.py:343	ming_sim/flows.py:343	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	6	0	prod=6;test=0;P=ming_sim/flows.py:378,ming_sim/flows.py:379,ming_sim/flows.py:382
-_is_active_secret_order_assignee	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_is_audience_chat_shared_channel	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_legacy_effect_entity_name	web_app.py:323	web_app.py:323	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=web_app.py:349
-_legacy_effect_has_work	ming_sim/models.py:258	ming_sim/models.py:258	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=ming_sim/models.py:318
-_legacy_gate_subject	web_app.py:278	web_app.py:278	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=web_app.py:303
-_legacy_pct	web_app.py:331	web_app.py:331	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	2	0	prod=2;test=0;P=web_app.py:341,web_app.py:354
-_legacy_person_report_section	ming_sim/issues.py:6531	ming_sim/issues.py:6531	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=ming_sim/issues.py:7671
-_migrate_arrears_unit_to_silver	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_migrate_building_logs_to_durable_audit	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_migrate_character_identity_seed	ming_sim/db.py:5051	ming_sim/db.py:5051	KEEP_ACTIVE_ENSURE	open_hook_INSERT_OR_IGNORE_only_old_compat_stripped	2	0	prod=2;test=0;P=ming_sim/db.py:2354,ming_sim/person_write_inventory.py:17
-_migrate_character_location_aliases	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_migrate_legacy_reaction_severity	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_migrate_missing_fiscal_engine_from_pay_source_cutover	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_migrate_next_audience_todos_drop_issue_fk	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_migrate_offsets_to_float_precision	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_migrate_reaction_value	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_open_night_court_break	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-_recovery_effective_silver_wan	ming_sim/displaced_population.py:122	ming_sim/displaced_population.py:122	KEEP_LIVE	has_prod_consumers	1	0	prod=1;test=0;P=ming_sim/displaced_population.py:226
-_rewrite_session_legacy_runs_blob	ming_sim/db.py:9361	ming_sim/db.py:9361	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	1	0	prod=1;test=0;P=ming_sim/db.py:9416
-_spawn_legacy_from_effect	ming_sim/issues.py:3035	ming_sim/issues.py:3035	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	6	0	prod=6;test=0;P=ming_sim/issues.py:4382,ming_sim/issues.py:4405,ming_sim/issues.py:5159
-_summon_origin_tag	ming_sim/audience_night.py:1398	ming_sim/audience_night.py:1398	KEEP_LIVE	has_prod_consumers	3	0	prod=3;test=0;P=ming_sim/audience_night.py:1677,ming_sim/audience_night.py:1768,ming_sim/audience_night.py:1928
-apply_legacy_pct	ming_sim/db.py:19691	ming_sim/db.py:19691	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	15	5	prod=15;test=5;P=ming_sim/issues.py:3638,ming_sim/issues.py:3648,ming_sim/issues.py:3691;T=tests/test_fiscal_substrate_bridge.py:1317,tests/test_fiscal_substrate_bridge.py:1318
-apply_recovery_driven_transfers	ming_sim/displaced_population.py:146	ming_sim/displaced_population.py:146	KEEP_LIVE	has_prod_consumers	2	0	prod=2;test=0;P=ming_sim/month_chain.py:1916,ming_sim/month_chain.py:1917
-claim_post_reply_recovery	ming_sim/db.py:8962	ming_sim/db.py:8962	KEEP_LIVE	has_prod_consumers	1	0	prod=1;test=0;P=web_app.py:2254
-compose_decree_validation_recovery	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-decree_validation_failure	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
-insert_legacy	ming_sim/db.py:19569	ming_sim/db.py:19569	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	3	4	prod=3;test=4;P=ming_sim/issues.py:3099,ming_sim/issues.py:8930,ming_sim/db.py:19651;T=tests/test_db_broad_except_surface.py:83,tests/test_event_trigger_gate.py:2872
-legacy_modifiers	ming_sim/db.py:19643	ming_sim/db.py:19643	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	10	10	prod=10;test=10;P=ming_sim/issues.py:3597,ming_sim/db.py:6970,ming_sim/db.py:7012;T=tests/test_db_broad_except_surface.py:9,tests/test_db_broad_except_surface.py:81
-legacy_reasoning_strength	ming_sim/llm_config.py:307	ming_sim/llm_config.py:307	KEEP_DOMAIN_LEGACY	active_legacy_mechanic_not_retired_compat	4	0	prod=4;test=0;P=ming_sim/llm_config.py:188,ming_sim/llm_config.py:363,web_app.py:64
-legacy_remaining_months	ming_sim/db.py:19635	ming_sim/db.py:19635	KEEP_DOMAIN_LEGACY	active_legacy_mechanic	1	0	prod=1;test=0;P=web_app.py:1604
-reconcile_post_reply_recovery	ming_sim/db.py:8980	ming_sim/db.py:8980	KEEP_LIVE	has_prod_consumers	2	0	prod=2;test=0;P=web_app.py:839,web_app.py:1059
-release_post_reply_recovery	ming_sim/db.py:8972	ming_sim/db.py:8972	KEEP_LIVE	has_prod_consumers	1	0	prod=1;test=0;P=web_app.py:2270
-settle_summon_origin	ming_sim/audience_night.py:1589	ming_sim/audience_night.py:1589	KEEP_LIVE	has_prod_consumers	3	5	prod=3;test=5;P=ming_sim/audience_night.py:1563,ming_sim/audience_night.py:1632,ming_sim/audience_night.py:1652;T=tests/test_audience_travel_gating_670.py:232,tests/test_audience_travel_gating_670.py:233
-stay_attend_in_audience	-	ABSENT	CLEAR	deleted	0	0	prod=0;test=0
+symbol	qual	loc	disposition	behavior	prod_refs	test_refs	other_refs	keep_reason	notes
+AMBIGUOUS_CLOSE_COMMANDS	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+CMD_AMBIGUOUS_CLOSE	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+CMD_STAY_ATTEND	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+STAY_ATTEND_COMMANDS	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+TAG_STAY_ATTEND	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_CLI_RECOMMENDATION_CALL	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_ambiguous_close_confirm_cue	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_backfill_event_triggers_from_event_pool_issues	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_backfill_person_core_character_static_fields	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_backfill_proposed_appointment_break_ranks	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_backfill_salary_rate	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_cli_prompt	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_cli_recommendation_call	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_cli_stream_safe_prefix	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_is_active_secret_order_assignee	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_is_audience_chat_shared_channel	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_migrate_arrears_unit_to_silver	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_migrate_building_logs_to_durable_audit	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_migrate_character_location_aliases	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_migrate_legacy_reaction_severity	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_migrate_missing_fiscal_engine_from_pay_source_cutover	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_migrate_next_audience_todos_drop_issue_fk	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_migrate_offsets_to_float_precision	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_migrate_reaction_value	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_open_night_court_break	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+compose_decree_validation_recovery	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+decree_validation_failure	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+stay_attend_in_audience	-	ABSENT	CLEAR	deleted	0	0	0		rescan_hits=0
+_backfill_healed_participant_refs	_backfill_healed_participant_refs	ming_sim/cli_backend.py:1741	HAS_PROD_REFS	HAS_PROD_REFS	1	0	0		P=ming_sim/cli_backend.py:2520;T=;O=
+insert_legacy	GameDB.insert_legacy	ming_sim/db.py:18929	HAS_PROD_REFS	HAS_PROD_REFS	3	4	0		P=ming_sim/db.py:19011,ming_sim/issues.py:3099,ming_sim/issues.py:8927;T=tests/test_db_broad_except_surface.py:83,tests/test_event_trigger_gate.py:2731,tests/test_mutiny_noop_whitelist_319.py:203;O=
+legacy_remaining_months	GameDB.legacy_remaining_months	ming_sim/db.py:18995	HAS_PROD_REFS	HAS_PROD_REFS	1	0	0		P=web_app.py:1598;T=;O=
+legacy_modifiers	GameDB.legacy_modifiers	ming_sim/db.py:19003	HAS_PROD_REFS	HAS_PROD_REFS	10	10	0		P=ming_sim/db.py:6876,ming_sim/db.py:6918,ming_sim/db.py:7515;T=tests/test_db_broad_except_surface.py:9,tests/test_db_broad_except_surface.py:81,tests/test_db_broad_except_surface.py:85;O=
+apply_legacy_pct	GameDB.apply_legacy_pct	ming_sim/db.py:19051	HAS_PROD_REFS	HAS_PROD_REFS	15	5	0	decorator:staticmethod	P=ming_sim/db.py:186,ming_sim/db.py:6879,ming_sim/db.py:6921;T=tests/test_empire_modifier_income_only_341.py:3,tests/test_fiscal_substrate_bridge.py:1317,tests/test_fiscal_substrate_bridge.py:1318;O=
+_migrate_character_identity_seed	GameDB._migrate_character_identity_seed	ming_sim/db.py:5044	HAS_PROD_REFS	HAS_PROD_REFS	2	0	0		P=ming_sim/db.py:2353,ming_sim/person_write_inventory.py:16;T=;O=
+_backfill_bandit_power_split	GameDB._backfill_bandit_power_split	ming_sim/db.py:5069	HAS_PROD_REFS	HAS_PROD_REFS	2	0	0		P=ming_sim/db.py:2354,ming_sim/person_write_inventory.py:22;T=;O=
+_agno_legacy_runs_blob	GameDB._agno_legacy_runs_blob	ming_sim/db.py:9085	HAS_PROD_REFS	HAS_PROD_REFS	1	0	0		P=ming_sim/db.py:9102;T=;O=
+_rewrite_session_legacy_runs_blob	GameDB._rewrite_session_legacy_runs_blob	ming_sim/db.py:9108	HAS_PROD_REFS	HAS_PROD_REFS	1	0	0		P=ming_sim/db.py:9163;T=;O=
+_income_amount_after_legacy_modifier	_income_amount_after_legacy_modifier	ming_sim/flows.py:328	HAS_PROD_REFS	HAS_PROD_REFS	6	0	0		P=ming_sim/flows.py:363,ming_sim/flows.py:364,ming_sim/flows.py:367;T=;O=
+_spawn_legacy_from_effect	_spawn_legacy_from_effect	ming_sim/issues.py:3035	HAS_PROD_REFS	HAS_PROD_REFS	6	0	0		P=ming_sim/issues.py:4382,ming_sim/issues.py:4405,ming_sim/issues.py:5159;T=;O=
+_legacy_person_report_section	_legacy_person_report_section	ming_sim/issues.py:6528	HAS_PROD_REFS	HAS_PROD_REFS	1	0	0		P=ming_sim/issues.py:7668;T=;O=
+legacy_reasoning_strength	legacy_reasoning_strength	ming_sim/llm_config.py:307	HAS_PROD_REFS	HAS_PROD_REFS	4	0	0		P=ming_sim/llm_config.py:188,ming_sim/llm_config.py:363,web_app.py:64;T=;O=
+_legacy_effect_has_work	_legacy_effect_has_work	ming_sim/models.py:258	HAS_PROD_REFS	HAS_PROD_REFS	1	0	0		P=ming_sim/models.py:318;T=;O=
+_legacy_gate_subject	_legacy_gate_subject	web_app.py:278	HAS_PROD_REFS	HAS_PROD_REFS	1	0	0		P=web_app.py:303;T=;O=
+_humanize_legacy_gate	_humanize_legacy_gate	web_app.py:299	HAS_PROD_REFS	HAS_PROD_REFS	2	0	0		P=web_app.py:1601,web_app.py:1603;T=;O=
+_legacy_effect_entity_name	_legacy_effect_entity_name	web_app.py:323	HAS_PROD_REFS	HAS_PROD_REFS	1	0	0		P=web_app.py:349;T=;O=
+_legacy_pct	_legacy_pct	web_app.py:331	HAS_PROD_REFS	HAS_PROD_REFS	2	0	0		P=web_app.py:341,web_app.py:354;T=;O=
+_humanize_legacy_effect	_humanize_legacy_effect	web_app.py:335	HAS_PROD_REFS	HAS_PROD_REFS	1	0	0		P=web_app.py:1611;T=;O=
+ainvoke_stream	CliChat.ainvoke_stream	ming_sim/cli_backend.py:3739	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	method_interface_override	P=;T=;O=
+executable_decree_dossier_ids	GameDB.executable_decree_dossier_ids	ming_sim/db.py:14027	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	decorator:staticmethod	P=;T=;O=
+__post_init__	_PromulgationJudgeSession.__post_init__	ming_sim/decree.py:325	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	dunder_protocol	P=;T=;O=
+__call__	MaterialsRoot.__call__	ming_sim/materials.py:182	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	dunder_protocol	P=;T=;O=
+dependency_mismatch_handler	dependency_mismatch_handler	web_app.py:4221	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	decorator:app.exception_handler(DependencyMismatch)	P=;T=;O=
+api_menu_new_game	api_menu_new_game	web_app.py:4437	KEEP_INTERFACE	TEST_ONLY	0	6	0	"decorator:app.post(""/api/menu/new_game"")"	P=;T=tests/test_menu_continue_stream_1195.py:209,tests/test_menu_lifecycle_drain_396.py:115,tests/test_menu_lifecycle_drain_396.py:177;O=
+api_menu_continue	api_menu_continue	web_app.py:4541	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.post(""/api/menu/continue"")"	P=;T=;O=
+api_menu_load_save	api_menu_load_save	web_app.py:4660	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.post(""/api/menu/load_save/{name}"")"	P=;T=;O=
+api_menu_delete_save	api_menu_delete_save	web_app.py:4782	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.delete(""/api/menu/saves/{name}"")"	P=;T=;O=
+api_menu_exit	api_menu_exit	web_app.py:4796	KEEP_INTERFACE	TEST_ONLY	0	2	0	"decorator:app.post(""/api/menu/exit_to_menu"")"	P=;T=tests/test_menu_continue_stream_1195.py:145,tests/test_menu_lifecycle_drain_396.py:77;O=
+api_menu_shutdown	api_menu_shutdown	web_app.py:4825	KEEP_INTERFACE	TEST_ONLY	0	2	0	"decorator:app.post(""/api/menu/shutdown"")"	P=;T=tests/test_menu_lifecycle_drain_396.py:389,tests/test_menu_lifecycle_drain_396.py:414;O=
+api_menu_save_llm	api_menu_save_llm	web_app.py:4955	KEEP_INTERFACE	TEST_ONLY	0	9	0	"decorator:app.post(""/api/menu/llm"")"	P=;T=tests/test_web_llm_runtime_config.py:541,tests/test_web_llm_runtime_config.py:571,tests/test_web_llm_runtime_config.py:584;O=
+api_state	api_state	web_app.py:5061	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.get(""/api/game/state"")"	P=;T=tests/test_web_chat_serialization_393.py:342;O=
+api_retry_mechanical_tail	api_retry_mechanical_tail	web_app.py:5066	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.post(""/api/game/mechanical_tail/retry"")"	P=;T=;O=
+api_memorials_read	api_memorials_read	web_app.py:5077	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.post(""/api/memorials/read"")"	P=;T=tests/test_settlement_write_guard_393.py:220;O=
+api_secret_orders	api_secret_orders	web_app.py:5114	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.get(""/api/secret_orders"")"	P=;T=;O=
+api_history_turns	api_history_turns	web_app.py:5186	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.get(""/api/history/turns"")"	P=;T=tests/test_p4_guard_new_surfaces_547.py:248;O=
+api_history_turn	api_history_turn	web_app.py:5193	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.get(""/api/history/turn/{turn}"")"	P=;T=tests/test_player_payload_1022.py:38;O=
+api_map	api_map	web_app.py:5235	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.get(""/api/map"")"	P=;T=;O=
+api_buildings	api_buildings	web_app.py:5240	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.get(""/api/buildings"")"	P=;T=;O=
+api_add_favorite	api_add_favorite	web_app.py:5245	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.post(""/api/favorites/{minister_name}"")"	P=;T=tests/test_settlement_write_guard_393.py:199;O=
+api_remove_favorite	api_remove_favorite	web_app.py:5256	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.delete(""/api/favorites/{minister_name}"")"	P=;T=tests/test_settlement_write_guard_393.py:200;O=
+api_audience_scroll	api_audience_scroll	web_app.py:5284	KEEP_INTERFACE	TEST_ONLY	0	2	0	"decorator:app.get(""/api/audience/scroll"")"	P=;T=tests/test_p4_guard_new_surfaces_547.py:135,tests/test_p4_guard_new_surfaces_547.py:250;O=
+api_audience_chat_history	api_audience_chat_history	web_app.py:5321	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.get(""/api/audience/chat"")"	P=;T=;O=
+api_audience_chat	api_audience_chat	web_app.py:5349	KEEP_INTERFACE	TEST_ONLY	0	2	0	"decorator:app.post(""/api/audience/chat"")"	P=;T=tests/test_web_chat_serialization_393.py:315,tests/test_web_chat_serialization_393.py:352;O=
+api_retry_audience_reply	api_retry_audience_reply	web_app.py:5387	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.post(""/api/audience/reply/retry"")"	P=;T=;O=
+api_undo_audience_chat	api_undo_audience_chat	web_app.py:5396	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.post(""/api/audience/chat/undo"")"	P=;T=tests/test_settlement_write_guard_393.py:213;O=
+api_retry_pending_translation	api_retry_pending_translation	web_app.py:5409	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.post(""/api/audience/translation/retry"")"	P=;T=;O=
+api_audience_chat_stream	api_audience_chat_stream	web_app.py:5468	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.post(""/api/audience/chat/stream"")"	P=;T=tests/test_web_chat_serialization_393.py:295;O=
+api_update_directive	api_update_directive	web_app.py:5478	KEEP_INTERFACE	TEST_ONLY	0	3	0	"decorator:app.patch(""/api/directives/{directive_id}"")"	P=;T=tests/test_settlement_write_guard_393.py:160,tests/test_settlement_write_guard_393.py:188,tests/test_settlement_write_guard_393.py:208;O=
+api_delete_directive	api_delete_directive	web_app.py:5523	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.delete(""/api/directives/{directive_id}"")"	P=;T=tests/test_settlement_write_guard_393.py:209;O=
+api_advance_without_edict	api_advance_without_edict	web_app.py:5539	KEEP_INTERFACE	TEST_ONLY	0	7	0	"decorator:app.post(""/api/decree/advance_without_edict"")"	P=;T=tests/test_month_open_snapshot_1234.py:389,tests/test_month_open_snapshot_1234.py:445,tests/test_no_edict_full_settlement_1274.py:183;O=
+api_issue_decree	api_issue_decree	web_app.py:5665	KEEP_INTERFACE	TEST_ONLY	0	5	0	"decorator:app.post(""/api/decree/issue"")"	P=;T=tests/test_error_pack.py:138,tests/test_issue_decree_token_1277.py:94,tests/test_issue_decree_token_1277.py:100;O=
+api_issue_decree_stream	api_issue_decree_stream	web_app.py:5756	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.post(""/api/decree/issue/stream"")"	P=;T=tests/test_player_payload_1022.py:105;O=
+api_resolve_decisions_stream	api_resolve_decisions_stream	web_app.py:5879	KEEP_INTERFACE	TEST_ONLY	0	3	0	"decorator:app.post(""/api/decree/resolve_decisions/stream"")"	P=;T=tests/test_player_payload_1022.py:107,tests/test_qa_b3_409_ux.py:153,tests/test_qa_c2_phase_settlement_mask_1374.py:68;O=
+api_list_saves	api_list_saves	web_app.py:6002	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.get(""/api/saves"")"	P=;T=;O=
+api_create_save	api_create_save	web_app.py:6007	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.post(""/api/saves"")"	P=;T=tests/test_settlement_write_guard_393.py:217;O=
+api_delete_save	api_delete_save	web_app.py:6020	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.delete(""/api/saves/{name}"")"	P=;T=;O=
+api_load_save	api_load_save	web_app.py:6026	KEEP_INTERFACE	TEST_ONLY	0	2	0	"decorator:app.post(""/api/saves/{name}/load"")"	P=;T=tests/test_qa_b3_409_ux.py:290,tests/test_settlement_write_guard_393.py:218;O=
+api_get_llm_config	api_get_llm_config	web_app.py:6037	KEEP_INTERFACE	TEST_ONLY	0	6	0	"decorator:app.get(""/api/llm/config"")"	P=;T=tests/test_cli_model_choices.py:155,tests/test_web_llm_runtime_config.py:750,tests/test_web_llm_runtime_config.py:860;O=
+api_set_llm_config	api_set_llm_config	web_app.py:6101	KEEP_INTERFACE	TEST_ONLY	0	9	0	"decorator:app.post(""/api/llm/config"")"	P=;T=tests/test_web_llm_runtime_config.py:213,tests/test_web_llm_runtime_config.py:237,tests/test_web_llm_runtime_config.py:262;O=
+api_upload_portrait	api_upload_portrait	web_app.py:6197	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.post(""/api/consorts/{name}/portrait"")"	P=;T=;O=
+api_delete_portrait	api_delete_portrait	web_app.py:6224	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.delete(""/api/consorts/{name}/portrait"")"	P=;T=tests/test_settlement_write_guard_393.py:204;O=
+api_get_court_layout	api_get_court_layout	web_app.py:6239	KEEP_INTERFACE	TEST_ONLY	0	2	0	"decorator:app.get(""/api/court_layout"")"	P=;T=tests/test_court_layout_1290.py:51,tests/test_court_layout_1290.py:65;O=
+api_set_court_layout	api_set_court_layout	web_app.py:6245	KEEP_INTERFACE	TEST_ONLY	0	3	0	"decorator:app.post(""/api/court_layout"")"	P=;T=tests/test_court_layout_1290.py:61,tests/test_settlement_write_guard_393.py:201,tests/test_settlement_write_guard_393.py:406;O=
+api_get_portrait	api_get_portrait	web_app.py:6253	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.get(""/portraits/custom/{name}"")"	P=;T=;O=
+api_admin_tables	api_admin_tables	web_app.py:6262	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.get(""/api/admin/tables"")"	P=;T=;O=
+api_admin_table	api_admin_table	web_app.py:6267	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.get(""/api/admin/table/{table}"")"	P=;T=;O=
+api_admin_upsert	api_admin_upsert	web_app.py:6281	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.post(""/api/admin/table/{table}/upsert"")"	P=;T=tests/test_settlement_write_guard_393.py:202;O=
+api_admin_delete	api_admin_delete	web_app.py:6299	KEEP_INTERFACE	TEST_ONLY	0	1	0	"decorator:app.post(""/api/admin/table/{table}/delete"")"	P=;T=tests/test_settlement_write_guard_393.py:203;O=
+admin_page	admin_page	web_app.py:6312	KEEP_INTERFACE	DEAD_ZERO_REFS	0	0	0	"decorator:app.get(""/admin"")"	P=;T=;O=
+run_cli	run_cli	ming_sim/cli/terminal.py:760	OTHER_ONLY	OTHER_ONLY	0	0	2		P=;T=;O=main.py:13,main.py:68
+add_gate_llm_args	add_gate_llm_args	ming_sim/cli_backend.py:3797	OTHER_ONLY	OTHER_ONLY	0	1	8		P=;T=tests/test_cli_backend.py:1111;O=scripts/break_rank_judge_gate_562.py:33,scripts/break_rank_judge_gate_562.py:52,scripts/family_tail_acceptance_570.py:48
+gate_llm_config_from_args	gate_llm_config_from_args	ming_sim/cli_backend.py:3822	OTHER_ONLY	OTHER_ONLY	0	9	8		P=;T=tests/test_cli_backend.py:1039,tests/test_cli_backend.py:1054,tests/test_cli_backend.py:1066;O=scripts/break_rank_judge_gate_562.py:35,scripts/break_rank_judge_gate_562.py:72,scripts/family_tail_acceptance_570.py:50
+require_fresh_cli_trace	require_fresh_cli_trace	ming_sim/cli_backend.py:3879	OTHER_ONLY	OTHER_ONLY	0	0	8		P=;T=;O=scripts/break_rank_judge_gate_562.py:36,scripts/break_rank_judge_gate_562.py:147,scripts/family_tail_acceptance_570.py:51
+gate_evidence_config	gate_evidence_config	ming_sim/cli_backend.py:3898	OTHER_ONLY	OTHER_ONLY	0	3	8		P=;T=tests/test_cli_backend.py:1092,tests/test_cli_backend.py:1102,tests/test_llm_channel_config.py:893;O=scripts/break_rank_judge_gate_562.py:34,scripts/break_rank_judge_gate_562.py:172,scripts/family_tail_acceptance_570.py:49
+get_pending_promulgation_verdicts	GameDB.get_pending_promulgation_verdicts	ming_sim/db.py:15040	OTHER_ONLY	OTHER_ONLY	0	0	3		P=;T=;O=scripts/promulgation_gate_561.py:289,scripts/promulgation_gate_561.py:426,scripts/promulgation_gate_561.py:442
+apply_dossier_verdicts	GameDB.apply_dossier_verdicts	ming_sim/db.py:15894	OTHER_ONLY	OTHER_ONLY	0	53	1		P=;T=tests/dossier_test_helpers.py:107,tests/test_audience_night_498.py:364,tests/test_audience_travel_gating_670.py:952;O=scripts/family_tail_acceptance_570.py:326
+bake_distance_matrix	bake_distance_matrix	ming_sim/distance.py:43	OTHER_ONLY	OTHER_ONLY	0	4	2		P=;T=tests/test_distance_matrix.py:6,tests/test_distance_matrix.py:18,tests/test_distance_matrix.py:40;O=scripts/bake_distance_matrix.py:16,scripts/bake_distance_matrix.py:22

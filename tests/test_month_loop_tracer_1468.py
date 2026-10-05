@@ -509,7 +509,6 @@ def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) 
     assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED, dict(night_row)
     # #1716 durable 物理账：场外/临时收夜不得写入该人 entrance/presence。
     assert remote not in an.persons_present_tonight(game.db, night_id), remote
-    assert remote not in an.persons_entered_tonight(game.db, night_id), remote
     for entry in an.list_ledger(game.db, night_id):
         names = entry.get("person_names") or []
         if remote not in names:

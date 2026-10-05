@@ -50,10 +50,6 @@ def qualitative_character_axis(field: str, value: object) -> str:
     return qualitative_band(value, CHARACTER_QUALITATIVE_BANDS[field])
 
 
-def qualitative_character_attribute(field: str, value: object) -> str:
-    """Render one canonical 0122 character attribute band for a player."""
-    return qualitative_character_axis(field, value)
-
 def qualitative_bucket(
     value: object,
     cutoffs: tuple[int, ...],
@@ -200,10 +196,6 @@ def military_pressure_band(value: object) -> str:
     """Present region military_pressure / 流寇压力 without exposing the score."""
     return qualitative_band(value, MILITARY_PRESSURE_BANDS)
 
-
-def disaster_severity_band(value: object) -> str:
-    """Present issue/disaster severity without exposing the score."""
-    return qualitative_band(value, DISASTER_SEVERITY_BANDS)
 
 
 def population_wan_kou_label(persons: object) -> str:

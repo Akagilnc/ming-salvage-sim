@@ -505,6 +505,8 @@ def _module_of(tag: str) -> str:
 def test_hallucinated_and_emperor_endpoints_rejected_per_item_zero_edges(game):
     """幻觉名/错字/「皇帝」入大臣边端点：逐项拒收留痕，零写入。"""
     db, state, content = game
+    # Seed may mark 徐光启 active; force offstage so "未在朝名册" 项仍拒收。
+    db.set_character_status(state, "徐光启", "offstage", reason="relation_capture_endpoint_fixture")
     out = apply_score_extraction(
         db, state,
         {
@@ -688,6 +690,8 @@ def test_reinstatement_then_interaction_in_same_batch_still_lands(game):
     回归锚：任何只冻 pre roster/前移 resolver 的方案会误拒同批入场者的真实
     互动；B 案以人物变更 apply 后的 post-roster 并入并集保住该向。"""
     db, state, content = game
+    # Seed may already list 孙承宗 active; force offstage so同批起复前提成立。
+    db.set_character_status(state, "孙承宗", "offstage", reason="relation_capture_reinstatement_fixture")
     assert db.get_character_status("孙承宗")[0] != "active"
     out = apply_score_extraction(
         db, state,
@@ -768,18 +772,3 @@ def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     assert res[0]["category"] == "invalid_relation_event"
     assert "王绍徽" in res[0]["reason"]
     assert _edge_rows(db) == []  # 零边写入
-
-
-def test_missing_endpoint_qualification_set_fails_loud(game):
-    """负向：资格集必传——缺参即 TypeError 显式失败，绝不静默退化到
-    live/post 语义（无第二机制、无直调兼容后门）。"""
-    db, state, content = game
-    with pytest.raises(TypeError):
-        resolve_relation_edge_events_from_extraction(
-            db, state,
-            {"relation_edge_events": [{
-                "施动者": "毕自严", "受动者": "王绍徽", "类目": "结怨",
-                "语境": "缺资格集必须炸，不静默退化。", "来源引用": "盘面自发",
-            }]},
-        )
-    assert _edge_rows(db) == []  # 零边副作用

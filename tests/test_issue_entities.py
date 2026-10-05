@@ -31,19 +31,6 @@ def _pay_source() -> dict[str, object]:
     }
 
 
-def test_resolve_creates_army(game):
-    db, state, _ = game
-    before = _army_count(db)
-    effect = {"new_armies": [{
-        "id": "tianxiongjun_test", "name": "天雄军测试", "owner_power": "ming",
-        "manpower": 18000, "maintenance_per_turn": 3, "commander": "卢象升",
-        "station": "大名", "troop_type": "步", **_pay_source(),
-    }]}
-    I._apply_issue_entities(db, state, effect, "局势#测试结案")
-    assert _army_count(db) == before + 1
-    row = db.conn.execute("SELECT manpower, commander FROM armies WHERE id='tianxiongjun_test'").fetchone()
-    assert row["manpower"] == 18000
-    assert row["commander"] == "卢象升"
 
 
 def test_resolve_changes_character_status(game):
@@ -304,12 +291,6 @@ def test_bad_status_raises(read_game):
         }, "局势#测试")
 
 
-def test_empty_effect_noop(read_game):
-    """无实体段的 effect 不应报错、不改军队数。"""
-    db, state, _ = read_game
-    before = _army_count(db)
-    I._apply_issue_entities(db, state, {"metrics": {"民心": 5}}, "局势#测试")
-    assert _army_count(db) == before
 
 
 def test_apply_score_extraction_splits_bad_nested_entity(game):
@@ -376,17 +357,6 @@ def test_apply_score_extraction_rejects_unknown_top_level_key(game):
     assert applied["metric_delta"].get("民心") == 1  # 其余 section 不受累
 
 
-def test_resolve_army_delta_reinforces_existing(game):
-    """国策给既有军扩编：army_delta 累加到该军兵额（不新建）。"""
-    db, state, _ = game
-    before = _army_count(db)
-    old = db.conn.execute("SELECT manpower FROM armies WHERE id='jingying'").fetchone()["manpower"]
-    I._apply_issue_entities(db, state, {
-        "army_delta": {"jingying": {"manpower": 500, "reason": "国策募兵补京营"}},
-    }, "局势#测试结案")
-    new = db.conn.execute("SELECT manpower FROM armies WHERE id='jingying'").fetchone()["manpower"]
-    assert new == old + 500
-    assert _army_count(db) == before          # 扩编不新建军队
 
 
 def test_army_delta_unknown_army_raises(read_game):

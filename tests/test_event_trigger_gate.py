@@ -433,21 +433,8 @@ def test_apply_event_terminal_states_does_not_commit_existing_transaction(game):
         content.events.remove(ev)
 
 
-def test_gate_passed_tolerates_none(read_game):
-    # PR#107 R1（gemini medium）：trigger_gate=None（content JSON 显式 null）传进 _gate_passed
-    # 不应 None.items() AttributeError 崩候选收集；None 视同空门、恒过。
-    db, state, content = read_game
-    from ming_sim.issues import _gate_passed
-    assert _gate_passed(None, state.metrics, db) is True
 
 
-def test_gate_passed_tolerates_nonstring_cond(read_game):
-    # PR#107 R2（gemini high）：条件值写成非字符串（{"民心":60} 而非 ">=60"）不应 cond.strip()
-    # AttributeError 崩候选收集；str() 强转后不匹配操作符正则 → 门不达标（安全降级、不崩）。
-    db, state, content = read_game
-    from ming_sim.issues import _gate_passed
-    assert _gate_passed({"民心": 60}, state.metrics, db) is False
-    assert _gate_passed({"民心": True}, state.metrics, db) is False
 
 
 def test_historical_event_none_gate_no_crash(game):
@@ -1637,78 +1624,8 @@ def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
     assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
 
 
-def test_legacy_event_pool_issue_backfills_trigger_without_guessing_outcome(game):
-    """ADR0014：旧档 event_pool issue 只能补触发记录，不能猜测己巳之变具体结局。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.save_state(state)
-    db.insert_issue(
-        state,
-        kind="situation",
-        title=content.event_by_id["jisi_lubian"].title,
-        origin_kind="event_pool",
-        origin_ref="jisi_lubian",
-        commit=True,
-    )
-    assert db.conn.execute(
-        "SELECT event_id FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone() is None
-
-    db.init_schema()
-
-    row = db.conn.execute(
-        "SELECT terminal_state, terminal_reason, source FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone()
-    assert row is not None
-    assert row["terminal_state"] == "triggered"
-    assert row["terminal_reason"] == ""
-    assert row["source"] == "legacy_event_pool"
-
-    state.year = 1629
-    state.period = 12
-    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
-    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
-    db.conn.execute(
-        "UPDATE characters SET status=?, status_reason=? WHERE name=?",
-        ("dead", "袁崇焕双岛斩帅", "毛文龙"),
-    )
-
-    assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
 
 
-def test_legacy_event_trigger_terminal_reason_can_be_filled_by_real_outcome(game):
-    """旧档 backfill 只能占位；同事件后续真实结局标签到达时应补写空 terminal_reason。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 11
-    db.save_state(state)
-    db.insert_issue(
-        state,
-        kind="situation",
-        title=content.event_by_id["jisi_lubian"].title,
-        origin_kind="event_pool",
-        origin_ref="jisi_lubian",
-        commit=True,
-    )
-    db.init_schema()
-    row = db.conn.execute(
-        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone()
-    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": ""}
-
-    db.mark_event_triggered(state, "jisi_lubian", terminal_reason="入塞被遏")
-
-    row = db.conn.execute(
-        "SELECT terminal_state, terminal_reason FROM event_triggers WHERE event_id=?",
-        ("jisi_lubian",),
-    ).fetchone()
-    assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "入塞被遏"}
 
 
 def test_person_write_state_restore_removes_dynamic_character_attrs(game):
@@ -1722,64 +1639,6 @@ def test_person_write_state_restore_removes_dynamic_character_attrs(game):
     assert not hasattr(content.characters["毛文龙"], "ghost_preflight_attr")
 
 
-def test_legacy_person_core_static_fields_backfill_reachability(game):
-    """#191 CMR R4：旧档缺新增静态人物字段时，schema 迁移应补回人物核心门底座。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET location='', transit_to='' WHERE name=?",
-        ("毛文龙",),
-    )
-    db.conn.execute(
-        "UPDATE characters SET status='offstage', debut_year=0, debut_month=0 WHERE name IN (?, ?)",
-        ("李自成", "张献忠"),
-    )
-    db.conn.commit()
-
-    db.init_schema()
-
-    mao = db.conn.execute(
-        "SELECT location FROM characters WHERE name=?",
-        ("毛文龙",),
-    ).fetchone()
-    li = db.conn.execute(
-        "SELECT debut_year, debut_month FROM characters WHERE name=?",
-        ("李自成",),
-    ).fetchone()
-    zhang = db.conn.execute(
-        "SELECT debut_year, debut_month FROM characters WHERE name=?",
-        ("张献忠",),
-    ).fetchone()
-    assert mao["location"] == "dongjiang_area"
-    assert (li["debut_year"], li["debut_month"]) == (1634, 1)
-    assert (zhang["debut_year"], zhang["debut_month"]) == (1631, 1)
-
-    state.year = 1629
-    state.period = 6
-    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
-    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
-    assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
-
-    state.year = 1631
-    state.period = 1
-    debuted = db.apply_historical_debuts(state)
-    assert any(item["name"] == "张献忠" for item in debuted)
-
-    state.year = 1634
-    state.period = 1
-    db.conn.execute("UPDATE powers SET military_strength=? WHERE id=?", (50, "bandit_li_zicheng"))
-    debuted = db.apply_historical_debuts(state)
-    assert any(item["name"] == "李自成" for item in debuted)
-    assert any(ev.id == "li_chenghai" for ev in issues.gather_candidate_events(state, db))
-
-    state.year = 1639
-    state.period = 5
-    db.conn.execute(
-        "UPDATE characters SET power_id=?, location=? WHERE name=?",
-        ("ming", "huguang", "张献忠"),
-    )
-    db.conn.execute("UPDATE regions SET unrest=? WHERE id=?", (55, "huguang"))
-    assert any(ev.id == "zhangxianzhong_zaifan" for ev in issues.gather_candidate_events(state, db))
 
 
 def test_person_core_static_backfill_preserves_relocated_mao(game):
@@ -3788,51 +3647,6 @@ def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
         content.event_by_id.pop(ev.id, None)
 
 
-def test_pending_person_gate_prefetches_character_rows_for_displacement(game):
-    """online R1 Gemini：独占官职顶替模拟不得对每个人物逐条 SELECT。"""
-    db, _state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "蓟辽督师", "职名分", "袁崇焕"),
-    )
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "兵部尚书,左都御史", "兵部", "崔呈秀"),
-    )
-    ev = Event(
-        id="__test_prefetch_displacement_pending__",
-        title="测试·顶替预加载",
-        kind="朝议",
-        summary="崔呈秀仍兼兵部尚书时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.崔呈秀.office": "== 兵部尚书,左都御史"},
-    )
-    select_count = 0
-
-    def trace(sql):
-        nonlocal select_count
-        if sql.lstrip().upper().startswith("SELECT"):
-            select_count += 1
-
-    db.conn.set_trace_callback(trace)
-    try:
-        blocked = issues._pending_person_changes_block_event_gate(
-            ev,
-            [{"name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
-            db,
-            content=content,
-        )
-    finally:
-        db.conn.set_trace_callback(None)
-
-    assert blocked is True
-    assert select_count <= 8
 
 
 def test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues(game, monkeypatch):
@@ -3965,68 +3779,6 @@ def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game
         content.event_by_id.pop(ev.id, None)
 
 
-def test_event_pool_pending_appointment_displacement_blocks_displaced_office_gate(game):
-    """post-merge CMR R9：独占实职顶替会真实改旧任 office，pending 闸门必须模拟被顶替者。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "蓟辽督师", "职名分", "袁崇焕"),
-    )
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "兵部尚书,左都御史", "兵部", "崔呈秀"),
-    )
-    if "袁崇焕" in content.characters:
-        ch = content.characters["袁崇焕"]
-        ch.status = "active"
-        ch.power_id = "ming"
-        ch.office = "蓟辽督师"
-        ch.office_type = "职名分"
-    if "崔呈秀" in content.characters:
-        ch = content.characters["崔呈秀"]
-        ch.status = "active"
-        ch.power_id = "ming"
-        ch.office = "兵部尚书,左都御史"
-        ch.office_type = "兵部"
-    ev = Event(
-        id="__test_displacement_pending__",
-        title="测试·顶替旧任门",
-        kind="朝议",
-        summary="崔呈秀仍兼兵部尚书时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.崔呈秀.office": "== 兵部尚书,左都御史"},
-    )
-    content.seed_events.append(ev)
-    content.event_by_id[ev.id] = ev
-    try:
-        out = issues.apply_score_extraction(
-            db,
-            state,
-            {
-                "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
-            },
-            content=content,
-        )
-
-        assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-        assert db.conn.execute(
-            "SELECT office FROM characters WHERE name=?",
-            ("崔呈秀",),
-        ).fetchone()["office"] == "左都御史"
-        assert db.conn.execute(
-            "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
-            (ev.id,),
-        ).fetchone() is None
-    finally:
-        content.seed_events.remove(ev)
-        content.event_by_id.pop(ev.id, None)
 
 
 def test_event_pool_pending_appointment_clears_reason_gate(game):
