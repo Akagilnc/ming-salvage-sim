@@ -184,4 +184,3 @@
   [ok] docs/adr/0095-person-transit-deterministic-countdown.md:5 auto_trigger_seed_issues :: 人物移动的抵达从「叙事优先＋2 月硬兜底」改为**确定性倒数**：行止(启程)按 0094 矩阵记**剩余距离**＋速度系数（常速 1；**加急＝皇帝的修饰词**「星夜兼程」×1.5~2，落 #513 宣召/行止修饰位；M11 内加急无机制代价、风味归判官软判）；每月结算的确定性 tick 对所有在途人物统一 `剩余距
   [ok] docs/evidence/issue-1571/breach-liability-split.md:164 auto_trigger_seed_issues :: | backlash 触发（decree.py:2334） | 结算前半段事务内：`apply_fixed_period_flows`(2306) → … → `auto_trigger_seed_issues`(2320) → `trigger_supervision_countermeasures`(2322) →
   [ok] docs/adr/0011-design-dig/dig-3-resource-economy.md:49 auto_trigger_seed_issues :: - **批红积压 = 最虚**（4 条里唯一不蹭现有账本/#70 的，synth 自己flag 真工程洞：delta→memorial link 反查难、需阻尼防螺旋、与 auto_trigger_seed_issues 划界）→ 方向留，HOW 未解、可等。
-
