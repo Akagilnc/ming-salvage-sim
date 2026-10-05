@@ -1,19 +1,22 @@
-# T-R13 rework 全仓枚举命令（可复跑）
+# T-R13 rework 全仓枚举命令（可复跑）— r13b 恒空兼容键/has_work 闭包续扫
 
 ## C1 C0 EMPTY_EXTRACTION 是否仍含四旧键
 rg -n '"(appointments|character_status_changes|character_power_changes|office_changes)":' ming_sim/simulation.py
 
-## C2 专属拒收闸是否仍在
-rg -n '已退役，人物效果只接受|for field in \("appointments"' ming_sim/
+## C2 专属拒收闸 / 恒空兼容响应 / has_work 死键检测是否仍在
+rg -n '已退役，人物效果只接受|for field in \("appointments"|applied_appointments|_character_status_effect_has_work|_character_power_effect_has_work' ming_sim/
 
-## C3 生产侧旧键字面提及（消费者表原料）
+## C3 生产侧旧键字面提及（消费者表原料；须逐名定类，禁止 REVIEW 悬空）
 rg -n --glob '*.py' '\b(appointments|character_status_changes|character_power_changes|office_changes)\b' ming_sim/
 
-## C4 AST：tests+ming_sim dict 重复键 + 旧协议用例名/reason 候选
-# 见 /tmp 一次性脚本产物 → evidence/1843-r13-rework-rescan.json / class-a-members.tsv
+## C4 死键专属测试是否仍在
+rg -n 'test_military_effect_with_only_legacy_office_changes_warns|shadows_legacy_person' tests/
 
 ## C5 未知顶层键拒收真源仍在
 rg -n '未知 delta 顶层字段|key not in EMPTY_EXTRACTION' ming_sim/issues.py
+
+## C6 配对 has_office 仅认人物变更
+rg -n 'has_office|character_status_changes' ming_sim/issues.py | head -40
 
 ## 产出
 # evidence/1843-r13-rework-consumers.tsv

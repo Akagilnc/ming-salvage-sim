@@ -55,10 +55,6 @@ def test_normalize_person_changes_ignores_non_item_shapes():
     assert normalize_person_changes({"人物变更": ["bad", {"name": "毕自严"}]}) == [
         {"name": "毕自严"}
     ]
-    assert normalize_person_changes({"appointments": {"name": "某氏"}}) == []
-    assert normalize_person_changes(
-        {"office_changes": [{"name": "孙传庭", "new_office": "陕西总督"}]}
-    ) == []
 
 
 def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):

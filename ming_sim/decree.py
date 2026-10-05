@@ -1110,8 +1110,8 @@ def _collect_inline_rejections(
     一层 dict-of-list（issue_summary 的 new_issues/cancels 等）也要下探——new_issues
     正是实测最常被拒的段，跳过它聚合就失明（cmr S0 r1）。
     item_json 的取值（ship-pre r3/r4）：迁约 producer（S1-S3 已迁全部）在 wrapper 里
-    携原始 delta 项（'item' 键）→ 桥接解包存原件；仅未迁 legacy section
-    （office_changes/secret_order_* 等）无 'item' 键时才兜底存 wrapper 回显记录。
+    携原始 delta 项（'item' 键）→ 桥接解包存原件；仅未迁 section
+    （secret_order_* 等）无 'item' 键时才兜底存 wrapper 回显记录。
     """
     def _scan(section: str, items: list) -> None:
         for item in items:

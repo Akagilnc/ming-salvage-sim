@@ -932,8 +932,6 @@ def _unsupported_monthly_ongoing_fields(effect: Dict[str, object]) -> List[str]:
     for key in (
         "buildings",
         "new_armies",
-        "character_status_changes",
-        "character_power_changes",
         "power_renames",
         "legacy",
     ):
@@ -3278,7 +3276,7 @@ def _apply_issue_entities(
 
 
 # #45/#46（M1 状态可信链路）：国策结案实体后果强制配对守门。语义命中练军/募营/调将却无
-# new_armies/office_changes、或命月经费/俸/饷却无月度 economy 时响亮告警，堵「只推进度条、
+# new_armies/人物变更、或命月经费/俸/饷却无月度 economy 时响亮告警，堵「只推进度条、
 # 实体后果只活邸报」的半落库（#45 太学府月经费没立账、#46 天雄军没建军籍真踩坑）。
 # warn-only：列入结果供 surface、不阻断结算；检查国策自身 effect_on_resolve/ongoing_effects
 # 是否带应有实体（正解就该挂在这两处、enrich 也如此填），不跨引顶层、保持纯函数可测。
@@ -4293,18 +4291,14 @@ def _initiative_resolve_pairing_warnings(
     warns: List[str] = []
 
     # 练军/募营 须落 new_armies；调将 须落人物变更——分别判，不混为一谈（练军只挂调任仍缺军籍、
-    # 调将只挂建军仍缺主将调任，混判会互相消音，CMR codex）。office_changes 是 ADR 0009 死键、
-    # _apply_issue_entities 不读，不纳入 has_office（纳入会消音本该响的告警，CMR gemini）。
+    # 调将只挂建军仍缺主将调任，混判会互相消音，CMR codex）。
     needs_army = any(p in blob for p in _MILITARY_RAISE_PHRASES)
     needs_office = any(p in blob for p in _MILITARY_MOVE_PHRASES)
     if needs_army or needs_office:
-        # 形对：_apply_issue_entities 只落 list 的 new_armies/人物变更/character_status_changes、
-        # dict 的 army_delta；畸形容器（字符串/错类型）不算真配对，不该消音告警（PR#107 codex）。
+        # 形对：_apply_issue_entities 只落 list 的 new_armies/人物变更、dict 的 army_delta；
+        # 畸形容器（字符串/错类型）不算真配对，不该消音告警（PR#107 codex）。
         has_army = _nonempty_list(effect.get("new_armies")) or _nonempty_dict(effect.get("army_delta"))
-        has_office = (
-            _nonempty_list(effect.get("人物变更"))
-            or _nonempty_list(effect.get("character_status_changes"))
-        )
+        has_office = _nonempty_list(effect.get("人物变更"))
         if needs_army and not has_army:
             warns.append(
                 f"军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
@@ -5802,7 +5796,7 @@ def apply_office_appointment(
     commit: bool = True,
 ) -> Dict[str, object]:
     """朝臣任命/调任的【唯一落地核】：在册且未死 → 改 active + 授官 + 顶替去重 + 同步内存；
-    不在册 → apply_appointment 建新档。extractor 的 office_changes 与 CLI 自然语言任免 commit
+    不在册 → apply_appointment 建新档。「人物变更」调任/任命与 CLI 自然语言任免 commit
     共用此核，杜绝两份会漂的 copy（CMR R2 reground）。
     返回结果 dict（rejected / kind=transfer|appoint / displaced 等）。"""
     name = str(name or "").strip()
@@ -5825,7 +5819,7 @@ def apply_office_appointment(
         if cur_status == "dead":
             return {"name": name, "new_office": new_office, "rejected": True, "reason": "人物已故，不能重新启用"}
         # 宗藩（就藩宗室）非朝堂命官，不可授官（PR#121）。这是任命落地核——授官会把 office_type
-        # 从「宗藩」改成新官署、反解掉所有 roster 隐藏，故必须在此写侧拒（extractor office_changes
+        # 从「宗藩」改成新官署、反解掉所有 roster 隐藏，故必须在此写侧拒（「人物变更」任命
         # 与 CLI/pending 任免都经本核，集中守一处，cmr R5 cross-section）。宗藩在册数据保持不变。
         _appointee = content.characters.get(name)  # name 经 in_roster 必在册，.get 防御一致（R3 gemini）
         if _appointee is not None and is_vassal_prince(_appointee):
@@ -7318,8 +7312,7 @@ def apply_score_extraction(
 ) -> Dict[str, object]:
     """落地结算声明到 state 与 db。
 
-    content：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
-    缺省则跳过。
+    content：若传入则经「人物变更」任命路把诏书任命的新人建档入朝；缺省则跳过。
 
     落账只认有序声明路径：``ordered_deltas`` 缺省时按 extracted 字段原序派生，
     ``ordered_effect_event_ids`` 缺省为空（无声明归属＝独立效果）。
@@ -8805,14 +8798,6 @@ def _apply_score_extraction_body(
     ):
         db.conn.commit()
 
-    # ADR0009 legacy aliases are canonicalized above and written only through
-    # the canonical person-change applier.  Keep response keys for compatibility,
-    # but do not retain a second set of direct writers here.
-    applied_appointments: List[Dict[str, object]] = []
-    applied_status_changes: List[Dict[str, object]] = []
-    applied_power_changes: List[Dict[str, object]] = []
-    applied_office_changes: List[Dict[str, object]] = []
-
     # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
     applied_secret_orders: List[Dict[str, object]] = []
     for item in extracted.get("secret_order_updates") or []:
@@ -8994,11 +8979,7 @@ def _apply_score_extraction_body(
         "fiscal_changes": applied_fiscal,
         "fiscal_creates": applied_fiscal_creates,
         "fiscal_removes": applied_fiscal_removes,
-        "appointments": applied_appointments,
         "applied_person_changes": applied_person_changes,
-        "character_status_changes": applied_status_changes,
-        "character_power_changes": applied_power_changes,
-        "office_changes": applied_office_changes,
         "secret_order_updates": applied_secret_orders,
     }
     victory = _resolve_victory(db, state, extracted)
