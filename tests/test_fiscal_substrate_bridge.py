@@ -1411,8 +1411,6 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     )
 
 
-
-
 def test_budget_projection_preserves_persisted_fiscal_snapshots(fresh_game):
     from ming_sim.flows import compute_budget_lines
 
@@ -2018,48 +2016,6 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
     assert state.metrics["国库"] == before_balance
 
 
-@pytest.mark.parametrize("starting_schema_version", [6, 7])
-def test_fiscal_config_v8_migration_preserves_deleted_old_keys(
-    fresh_db, starting_schema_version
-):
-    path = fresh_db.path
-    content = fresh_db.content
-    new_loss_keys = (
-        "central_taicang_human_loss_rate",
-        "central_taicang_sink_loss_rate",
-        "central_jingyun_human_loss_rate",
-        "central_jingyun_sink_loss_rate",
-    )
-    fresh_db.conn.execute("DELETE FROM fiscal_config WHERE key = '官俸_base'")
-    fresh_db.conn.executemany(
-        "DELETE FROM fiscal_config WHERE key = ?",
-        [(key,) for key in new_loss_keys],
-    )
-    fresh_db.conn.execute(
-        "UPDATE fiscal_config SET value = ? WHERE key = '__schema_version'",
-        (starting_schema_version,),
-    )
-    fresh_db.conn.commit()
-
-    reopened = GameDB(path, content)
-    try:
-        deleted = reopened.conn.execute(
-            "SELECT 1 FROM fiscal_config WHERE key = '官俸_base'"
-        ).fetchone()
-        assert deleted is None
-        rows = reopened.conn.execute(
-            f"SELECT key FROM fiscal_config WHERE key IN ({','.join('?' for _ in new_loss_keys)})",
-            new_loss_keys,
-        ).fetchall()
-        assert {str(row["key"]) for row in rows} == set(new_loss_keys)
-        version = reopened.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = '__schema_version'"
-        ).fetchone()
-        assert int(version["value"]) == 8
-    finally:
-        reopened.conn.close()
-
-
 def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     _write_settle(
         fresh_db,
@@ -2149,7 +2105,6 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
         """
     ).fetchone()
     assert arrears_log is not None and arrears_log["delta"] == pytest.approx(10)
-
 
 
 def test_armies_provision_empty_mutiny_status_flag(fresh_db):
@@ -2696,10 +2651,6 @@ def test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff(fresh_d
     )
 
 
-
-
-
-
 def test_economy_pay_arrears_preserves_fractional_pay_source_tail(fresh_db):
     from ming_sim.flows import _apply_economy_list
 
@@ -2942,8 +2893,6 @@ def test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army(fresh_d
     assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
         _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
     )
-
-
 
 
 def test_new_ming_army_requires_valid_pay_source_under_cutover(fresh_db):
@@ -3481,7 +3430,6 @@ def test_south_southwest_settle_tick_golden_and_bridge_persist(fresh_db, region_
         assert after[k] == pytest.approx(v, abs=1e-6), f"{region_id} 桥落库 {k} ≠ new_st"
 
 
-
 def test_shaanxi_seed_is_relabelled_to_historical_shadow_scale(fresh_db):
     settle = _read_settle(fresh_db)
     p = settle["p"]
@@ -3513,7 +3461,6 @@ def test_shaanxi_seed_is_relabelled_to_historical_shadow_scale(fresh_db):
     assert isinstance(primary.get("registered_land_raw"), str) and primary["registered_land_raw"].strip()
     assert primary["regular_tax_raw"]["實徵麥石"] == pytest.approx(688647.2416)
     assert primary["regular_tax_raw"]["實徵米石"] == pytest.approx(1044943.1241)
-
 
 
 def test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues(fresh_db):
@@ -3830,7 +3777,6 @@ def test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due(fresh_db):
     assert res.new_st["宗禄欠"] == pytest.approx(0)
 
 
-
 def test_beizhili_huangzhuang_is_inner_treasury_not_transport_quota(fresh_db):
     settle = _read_settle(fresh_db, "beizhili")
     fiscal = json.loads(str(fresh_db.conn.execute(
@@ -4001,12 +3947,6 @@ def test_apply_fixed_period_flows_advances_shaanxi_substrate(fresh_game):
     assert after["省库库银"] == pytest.approx(0, abs=1e-3)
     assert after["C_地方截留"] == pytest.approx(0.7181, abs=1e-3)
     assert after["民欠旧赋"] == pytest.approx(3.2639, abs=1e-3)
-
-
-
-
-
-
 
 
 def test_substrate_corrupt_isolated_from_flows(fresh_game):
@@ -4555,8 +4495,6 @@ def test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic(fresh_
     after = _read_settle(db, "shaanxi")["st"]
     assert after["民欠旧赋"] == pytest.approx(before["民欠旧赋"])
     assert after["C_地方截留"] == pytest.approx(before["C_地方截留"])
-
-
 
 
 def test_all_ming_settle_substrates_advance_through_fixed_flows(fresh_game):

@@ -1,0 +1,94 @@
+path	line	snippet
+ming_sim/issues.py	3122	新档（人）原样；无标旧档（万人）region_delta.population ÷10⁴（迁移后 content
+ming_sim/issues.py	8894	一个函数覆盖新档（全补）/旧档（补缺）/达标档（不补/清残）。"""
+ming_sim/db.py	77	# 无标旧档一律判「万人」legacy——不得读 content 元信息判别（其不随档持久化）。
+ming_sim/db.py	2315	# #1847/#1812：旧档 ensure_column 补列退役；新档列权威在上方 CREATE。
+ming_sim/db.py	2374	#1847/#1812：只保留新档初始真源整体 seed；旧档 schema 差量升版支链已退役。
+ming_sim/db.py	3143	"""本档人口存储单位口径（ADR 0088/#648）：新档「人」，无标旧档一律「万人」。
+ming_sim/db.py	3146	持久化，0088 明文禁止）。旧档不迁移、读写按档口径走 legacy。"""
+ming_sim/db.py	3162	新档（人）原样；无标旧档（万人）÷10⁴——迁移后 content 人口值均为 10⁴ 整倍数，
+ming_sim/db.py	3163	整除无损（F4 禁的是对旧档读写加通用有损换算层；此处是 content→档的唯一确定性
+ming_sim/db.py	3256	# 旧档表已有行（万人口径）不重 seed、不落标 → population_unit 恒判「万人」legacy。
+ming_sim/db.py	3393	# #1847：不跑 office 自由措辞→status/transit 的旧档污染迁移（#1812 无历史包袱）。
+ming_sim/db.py	3395	# #9 / #1847：仅新档 seed 校准 offset；老档反推已退役。
+ming_sim/db.py	5011	#1847：老档反推 / offset 列刚 ADD / float v2 升版支链已退役。
+ming_sim/db.py	6187	# 机面裸人数；无标旧档沿万人 legacy 原样，不加换算层。
+ming_sim/db.py	6570	# 已全线「人」，落本档前按存档口径换算（新档原样；无标旧档无损÷10⁴）。
+ming_sim/db.py	9918	"""当前开着（open/closing）的召对夜 id；无夜或旧档无表返回 0（#498）。"""
+ming_sim/db.py	17335	# 不再回落载荷副本（#1847：旧档兼容回落已退役）。
+ming_sim/decree.py	778	# 不让旧档玩家来源静默退化成 system_simulation。
+ming_sim/appointment_tenure.py	45	"""执行侧读端：非法/空值按真除兜底，不抛（旧档与缺备档兼容）。"""
+ming_sim/session.py	647	# #638 S7：新开档判据必须在 load_state 建 game_state 行之前取（行在＝旧档，
+ming_sim/session.py	648	# 关系 seed 导入一律不触；验收条「只对新开档生效，旧档不受影响」的机械口径）。
+ming_sim/session.py	662	# commit，atomic 会统一推迟到 seed 校验及落库全部成功之后。旧档仍只载入。
+ming_sim/session.py	684	# 开局负面帝国修正：新档补全、旧档补缺、已达消除条件的不补/清残。不立 issue、不进推演。
+ming_sim/matching.py	18	# 单一真源：region_aliases / 旧档 location 归一 / 在京判断共用，禁止他处再抄一份。
+ming_sim/content.py	475	# fresh seed 曾不写两列致新档全 0，被 data/probe.db 老档 fixture 掩盖（CMR codexB）。
+ming_sim/army_pay.py	48	募兵入口（_coerce_new_salary_rate 默认 1.5）已堵；旧档 salary_rate 回填已退役，runtime
+ming_sim/army_pay.py	184	按当前态归一（含本 tick 0→1 升 3 与旧存档已 latched+count>=3），
+ming_sim/cli_backend.py	2566	# 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
+ming_sim/flows.py	1192	# 1) 零兵先清闩（防误转流寇） 2) 旧存档第三振正兵力在 advance 可解闩前转出
+ming_sim/flows.py	1368	**fail-loud 但隔离**：基座缺失（旧档无种子）或 settle_tick 抛 ValueError/守恒破时，tlog
+ming_sim/llm_config.py	81	# 未知键（含旧档残留）由 _api_runtime_slot 只读白名单字段，自然忽略。
+ming_sim/llm_config.py	134	"""#1465 transport 段：与 api/cli 平级；缺省填默认，旧档无段不炸。
+ming_sim/knowledge.py	623	# #883 deliberately has no old-save compatibility fallback.
+tests/conftest.py	166	会按 DB characters 表重建并**整体替换** content.characters。基底 data/probe.db 是旧档、
+tests/test_fiscal_substrate_bridge.py	38	不能用 conftest 的 game fixture——它拷贝 data/probe.db 旧档，INSERT OR IGNORE 不会带出
+tests/test_web_audience_night_498.py	677	"""Legacy saves with only turn_directives.status=pending remain operable at the
+tests/test_runtime_llm_config.py	24	"""#53 _slot_number:旧存档把 timeout_seconds 存成字符串时,load 归一回数值
+tests/test_runtime_llm_config.py	399	# #1472：max_tokens 不再写入；旧档残留也不再 preserve。
+tests/test_runtime_llm_config.py	414	# base_url/model + 旧档残留 max_tokens）不该被推成 channel=api。
+tests/test_runtime_llm_config.py	488	"""#1465 / #1792：transport 与 api/cli 平级；旧档无段填默认；保存通道时保留 transport。"""
+tests/test_decree_commitment_schema_136.py	244	-- #1831 起 CREATE 基线含 affair_id；本测只缺 commitment 列，不模拟缺 affair 旧档
+tests/test_audience_night_498.py	5	员额、AC8 顺势收夜顺序、AC9 崩溃续跑真实任免/候选、AC10 完成等待与超时、旧档迁移。
+tests/test_audience_night_498.py	451	# ── 开夜原子 + 旧档迁移 ──────────────────────────────────────────────
+tests/test_person_delta_adapter.py	1694	"""#1057 AC「seed 路同守卫」回归钉：旧档回填入口 seed_static_data（character_offices 空时
+tests/test_person_delta_adapter.py	1698	name = "旧档降金甲"
+tests/test_person_delta_adapter.py	1701	# 模拟旧档迁移态：characters 已有名分人物、character_offices 待回填（清空触发回填口）。
+tests/test_person_delta_adapter.py	1705	db.seed_static_data()  # 旧档回填入口（L2588 backfill）
+tests/test_person_delta_adapter.py	1861	"""物化一个 active+ming 宗藩王进测试 DB（probe.db 旧档无宗藩行），返回 name。"""
+tests/test_person_delta_adapter.py	2666	"""5b R1：老档迁移罢居地名（府名，非 region_id）不得写进 location（region_id 列）。
+tests/test_character_knowledge_489.py	1040	secret = "旧档中仅经手人可知的密令细节"
+tests/test_character_knowledge_489.py	1073	(state.turn + 9, state.year, state.period, "旧档密令摘要不得公开"),
+tests/test_web_court_visibility.py	79	probe.db 是旧档、没有宗藩行（朱常洵 等只在 characters.json），对缺行的
+tests/test_web_court_visibility.py	246	# 物化进 DB 后 set_character_status 才真生效（选中的 content 后宫未必在 probe.db 旧档，
+tests/test_population_unit_648.py	8	- F4：旧档双口径——新档 DB 持久标「人」，无标旧档判「万人」，不读 content 元信息；
+tests/test_population_unit_648.py	10	new-save prompt / old-save prompt），逐项钉新旧档期望口径，×10⁴ 漏乘或重乘必咬。
+tests/test_population_unit_648.py	50	"""构造无标旧档：fresh seed 后把人口回缩到万人口径并剥掉单位标。
+tests/test_population_unit_648.py	52	与真实旧档同构：DB 行为 pre-0088 content seed 出的万人值、save_meta 无
+tests/test_population_unit_648.py	53	population_unit 标（旧档不迁移、无流民行）。"""
+tests/test_population_unit_648.py	58	# 旧档不迁移：流民第八阶级行（0087 新档生效）也一并剥除，与真实 pre-0087 旧档同构
+tests/test_population_unit_648.py	67	"""返回 (db, state)：无标万人口径旧档（含 load_state 同核）。"""
+tests/test_population_unit_648.py	141	# ── 旧档双口径（F4）───────────────────────────────────────────────────────
+tests/test_population_unit_648.py	143	def test_legacy_save_defaults_to_wan_unit_and_keeps_snapshot(legacy_game):
+tests/test_population_unit_648.py	144	"""无标旧档一律判「万人」，seed 不重跑、快照读数不变（不混刻度、无流民行）。"""
+tests/test_population_unit_648.py	155	# 旧档不迁移：无流民行（0087 新档生效）
+tests/test_population_unit_648.py	159	# ── 五项 mutation 验收矩阵（AC4+AC8 合并，逐项钉新旧档期望口径）──────────────
+tests/test_population_unit_648.py	173	# ① classes seed：农民全国 11000万 → 110000000 人；旧档 11000 万人不动
+tests/test_population_unit_648.py	177	# ② regions seed：北直隶 720万 → 7200000 人；旧档 720 万人不动
+tests/test_population_unit_648.py	195	# ── prompt 契约（④ new-save / ⑤ old-save）＋ F2 机面/玩家面拆分 ────────────
+tests/test_population_unit_648.py	264	JIANZHOU_RESTORE_POP_WAN = 90           # 无标旧档接缝无损 ÷10⁴ 回万人
+tests/test_population_unit_648.py	296	def test_legacy_save_restore_jianzhou_converts_to_wan(game, legacy_game):
+tests/test_population_unit_648.py	297	"""无标旧档收复建州：content→档唯一接缝无损换回万人口径，不混刻度。"""
+tests/test_appointment_tenure_607.py	62	dossier = _promulgate_appointment(db, state, content, name, "旧档兜底官")
+tests/test_army_salary_44.py	71	（旧档 salary_rate 回填已退役）；runtime 易主漏网的同一 exploit。army_needed 对
+tests/test_event_trigger_gate.py	1645	"""#191 CMR R4：旧档静态补丁不能覆盖玩家已落库的调离规避状态。"""
+tests/test_event_trigger_gate.py	2037	"""CMR：旧存档已有同源 soft issue 经 schema migration 后，仍须补落核心事实。"""
+tests/test_event_trigger_gate.py	2045	title="旧存档残留：华北大疫起",
+tests/test_office_rank_562.py	257	name = "旧档实职"
+tests/test_relation_seed_638.py	7	- 旧档不受影响：game_state 行已存在的存档一律不触。
+tests/test_relation_seed_638.py	429	"""旧档不受影响：真实构造 GameSession 后，关系流水/摘要逐字段不变，且不调用模型。"""
+tests/test_relation_seed_638.py	446	lambda cfg: (_ for _ in ()).throw(AssertionError("读旧档不得验证 LLM")),
+tests/test_relation_seed_638.py	450	lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("读旧档不得调用 LLM")),
+tests/test_secret_order_payoff_1504.py	2072	# 旧档里已经写下的空指针线索，仍一次性归 seed_guilt lane，不落到边事件。
+tests/test_new_game_write_path_1749.py	282	"""主干：直接 new_game 与 exit→new_game；旧档 load_save 恢复。
+tests/test_new_game_write_path_1749.py	327	# 隔离：新局旨意不得进旧档（静默丢写假说）——归档后快照一次性断言，不与 C7 竞速
+tests/test_new_game_write_path_1749.py	417	# ── 旧档 c0/c1 经真实 load_save 恢复同条旨意与召对轮 ──
+tests/test_bandit_power_model_190.py	36	def test_old_save_schema_init_backfills_bandit_power_split(game):
+tests/test_bandit_power_model_190.py	37	"""旧档打开只跑 init_schema，也必须补 #190 的流寇分股静态盘面。"""
+tests/test_bandit_power_model_190.py	45	# Pre-#522 stock authority still present on old saves.
+tests/test_bandit_power_model_190.py	76	"""旧档补流寇股时，即使 content power aliases 仍是 list，也必须写成 TEXT 不崩。"""
+tests/test_bandit_power_model_190.py	91	"""旧档中已被玩家改归属的人物，schema backfill 不应强行迁回流寇股。"""
+tests/test_effect_origin_558.py	169	conn.execute("ALTER TABLE economy_ledger DROP COLUMN origin_ref")
+tests/test_identity_seed_488.py	51	"""旧档已有角色不能跳过后来批准的 roster identity seed。"""
+web/src/components/gameMenu.test.tsx	251	// 旧档持有 thinking_level=high、reasoning_strength 空。统一选择器以旧值迁移初始化，

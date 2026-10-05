@@ -1,0 +1,26 @@
+member	loc	disposition	reason	status
+ensure_column old-save ADD block (~150 calls)	ming_sim/db.py init_schema	DELETE_DONE	columns merged into CREATE; helper removed; indexes at CREATE	absent
+_FISCAL_MIGRATIONS / cur<json upgrade branch	ming_sim/db.py init_fiscal_config	DELETE_DONE	keep cur==0 full seed only; existing schema_version untouched	absent
+_calibrate_faction_offsets old reverse-inference / offset_col_added / float_v2 init migrate	ming_sim/db.py	DELETE_DONE	fresh seed calibrate kept; init_schema old reverse path removed	absent
+_faction_offsets_all_zero + _leverage_offset_col_added	ming_sim/db.py	DELETE_DONE	only served old reverse-inference	absent
+load_state ended/ending_status missing-col soft read	ming_sim/db.py	DELETE_DONE	columns now in CREATE; direct read	absent
+test_legacy_save_calibrates_offset_on_open + crash/marker old helpers	tests/test_faction_leverage_9.py	DELETE_DONE	exclusive old reverse-inference proofs	absent
+test_old_save_migration_night_id_index_order	tests/test_audience_night_498.py	DELETE_DONE	exclusive ensure_column+index old-open	absent
+test_undo_survives_db_created_before_undone_at_column	tests/test_audience_undo_506.py	DELETE_DONE	exclusive ensure_column undone_at backfill	absent
+test_fiscal_config_v8_migration_preserves_deleted_old_keys	tests/test_fiscal_substrate_bridge.py	DELETE_DONE	exclusive _FISCAL_MIGRATIONS upgrade	absent
+test_old_save_migrates_and_mutiny_progress_survives_reopen	tests/test_mutiny_progression_316.py	DELETE_DONE	exclusive old-save column migrate reopen	absent
+test_redemption_progress_migrates_and_survives_reopen	tests/test_mutiny_redemption_317.py	DELETE_DONE	exclusive old-save column migrate reopen	absent
+test_old_save_schema_is_upgraded_for_person_archive_fields	tests/test_person_archive_schema.py	DELETE_DONE	exclusive ensure-style schema upgrade	absent
+_purge/_drop_maintenance/opening_gazette fingerprint (w9)	ming_sim/db.py + content + tests	DELETE_DONE	prior round; still absent	absent
+N11-X1 seal guard + settle dual-branch (w9)	session_write_queue / db settle	DELETE_DONE	prior round; still absent	absent
+N13-R2 provider_message+cause (w9)	ming_sim/llm_transport.py	KEEP_FIXED	structured provider_message retained then cause appended	live
+seed_opening_gazette	ming_sim/db.py	KEEP_SHARED	new-game public knowledge events	live
+_migrate_character_identity_seed / _backfill_bandit_power_split	ming_sim/db.py	KEEP_CONTENT_SYNC	INSERT OR IGNORE content roster/powers; not format migrate	live
+sync_opening_legacies / issues opening legacy sync	ming_sim/session.py + issues.py	KEEP_CONTENT_SYNC	new-game fill + content-key sync on reopen; not schema migrate	live
+relation seed fresh_save gate	ming_sim/session.py	KEEP_SHARED	new-game vs reopen; current format, not old schema upgrade	live
+normalize_appointment_tenure default 真除	ming_sim/appointment_tenure.py	KEEP_SHARED	illegal/empty current path	live
+decree_text dual-read with payload.text	ming_sim/cli_backend.py	KEEP_SHARED	decree_text still written by create path	live
+settle_province_tick / is_sealed	db / session_write_queue	KEEP_TEST_OR_SHARED	w9 N11-X1 disposition unchanged	live
+llm_config unknown-key ignore / transport defaults	ming_sim/llm_config.py	KEEP_SHARED	config-file shape; not game-save migrate	live
+army_pay salary_rate runtime anchor	ming_sim/army_pay.py	KEEP_SHARED	runtime ming+rate<=0 anchor; old ADD backfill already gone	live
+population_unit / scale_content_population_to_save_unit / 万人 unlabeled default	ming_sim/db.py + ADR 0088	BLOCKER_ESCALATE	ADR 0088 requires unlabeled=万人; 09-28/ADR 0108 forbid old-save compat; two written laws conflict	live_unresolved

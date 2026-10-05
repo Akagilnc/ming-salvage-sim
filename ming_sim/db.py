@@ -981,7 +981,9 @@ class GameDB:
                 year INTEGER NOT NULL,
                 period INTEGER NOT NULL,
                 turn INTEGER NOT NULL,
-                turn_phase TEXT NOT NULL DEFAULT 'summoning'
+                turn_phase TEXT NOT NULL DEFAULT 'summoning',
+                ended INTEGER NOT NULL DEFAULT 0,
+                ending_status TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS metrics (
@@ -1024,7 +1026,12 @@ class GameDB:
                 transit_start_turn INTEGER NOT NULL DEFAULT 0,
                 identity INTEGER NOT NULL DEFAULT 50,
                 intrigue INTEGER NOT NULL DEFAULT 50,
-                seed_guilt TEXT NOT NULL DEFAULT ''
+                seed_guilt TEXT NOT NULL DEFAULT '',
+                portrait_id TEXT NOT NULL DEFAULT '',
+                court_role TEXT NOT NULL DEFAULT '',
+                summary TEXT NOT NULL DEFAULT '',
+                aliases TEXT NOT NULL DEFAULT '[]',
+                affair_id INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS character_offices (
@@ -1102,7 +1109,9 @@ class GameDB:
                 name TEXT PRIMARY KEY,
                 satisfaction INTEGER NOT NULL,
                 leverage INTEGER NOT NULL,
-                agenda TEXT NOT NULL
+                agenda TEXT NOT NULL,
+                edict_overdraw INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0),
+                leverage_offset REAL NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS powers (
@@ -1318,6 +1327,7 @@ class GameDB:
                 target_id TEXT,
                 dossier_id INTEGER,
                 origin_ref TEXT NOT NULL DEFAULT '',
+                beyond_intent INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(account) REFERENCES economy_accounts(account)
             );
@@ -1352,6 +1362,8 @@ class GameDB:
                 year INTEGER NOT NULL,
                 period INTEGER NOT NULL,
                 report TEXT NOT NULL,
+                attendant_message TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -1365,6 +1377,17 @@ class GameDB:
                 options_json TEXT NOT NULL DEFAULT '[]',
                 choice_json TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'pending',
+                rejection_reason TEXT NOT NULL DEFAULT '',
+                opposition TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL DEFAULT 'decision',
+                actor_name TEXT NOT NULL DEFAULT '',
+                actor_office TEXT NOT NULL DEFAULT '',
+                actor_faction TEXT NOT NULL DEFAULT '',
+                revision_round INTEGER NOT NULL DEFAULT 0,
+                prior_options_json TEXT NOT NULL DEFAULT '[]',
+                answered_turn INTEGER NOT NULL DEFAULT 0,
+                answer_order INTEGER NOT NULL DEFAULT 0,
+                presentation_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (turn, idx)
             );
@@ -1396,11 +1419,13 @@ class GameDB:
                 -- 按此列整轮作废，不再靠 chat_turn_rollback_items 回溯猜是哪轮写的。
                 -- 0 = 非召对来源（过月世界段 / 框架写入）。
                 source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+                night_id INTEGER NOT NULL DEFAULT 0,
+                night_approved INTEGER NOT NULL DEFAULT 0,
+                version INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            -- #1890：idx_pending_actions_source_turn 不写在本 CREATE 块——旧档
-            -- pending_actions 已存在时 CREATE TABLE IF NOT EXISTS 不重建、不补
-            -- source_chat_turn_id，索引会引用缺列失败。索引随下面的 ensure_column 建。
+            CREATE INDEX IF NOT EXISTS idx_pending_actions_source_turn
+                ON pending_actions(source_chat_turn_id, status, id);
 
             CREATE TABLE IF NOT EXISTS recommendation_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1448,9 +1473,7 @@ class GameDB:
                 agno_session_id TEXT NOT NULL DEFAULT '',
                 agno_runs_before INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'active',
-                -- #498：对话轮锚定夜容器；0=未挂夜（旧档/无夜路径）
-                -- night_id 列可能由 ensure_column 后补；索引不得写在本 CREATE 块
-                -- （旧档 chat_turns 已存在时 CREATE TABLE IF NOT EXISTS 不重建，索引会引用缺列失败）
+                -- #498：对话轮锚定夜容器；0=未挂夜
                 night_id INTEGER NOT NULL DEFAULT 0,
                 -- 与 story_ledger_entries.seq 共用夜内单调序（allocate_night_seq）
                 night_seq INTEGER NOT NULL DEFAULT 0,
@@ -1469,6 +1492,8 @@ class GameDB:
                 ON chat_turns(minister_name, turn, status, id);
             CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id
                 ON chat_turns(status, id);
+            CREATE INDEX IF NOT EXISTS idx_chat_turns_night
+                ON chat_turns(night_id, id);
 
             -- #498 召对夜一等容器 + 故事账本（ADR 0035）
             CREATE TABLE IF NOT EXISTS audience_nights (
@@ -1509,12 +1534,16 @@ class GameDB:
                 -- #501 时序键（ADR 0036 cmr R7）：口令账=自身 seq；抽取账=源对话轮原始时序，
                 -- 使补跑落回原时间位、不因补跑时刻错位。NULL 时读取端 COALESCE 回退 seq。
                 order_key REAL,
+                -- #657：召见垫位/消费 origin 领域身份；空串不参与 partial UNIQUE。
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(night_id, seq),
                 FOREIGN KEY(night_id) REFERENCES audience_nights(id)
             );
             CREATE INDEX IF NOT EXISTS idx_story_ledger_night_seq
                 ON story_ledger_entries(night_id, seq);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_origin_ref
+                ON story_ledger_entries(origin_ref) WHERE origin_ref != '';
 
             CREATE TABLE IF NOT EXISTS chat_turn_rollback_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1549,6 +1578,7 @@ class GameDB:
                 text_log_json TEXT NOT NULL DEFAULT '{}',
                 excluded_names TEXT NOT NULL DEFAULT '[]',
                 dossier_progress_json TEXT NOT NULL DEFAULT '[]',
+                excluded_targets TEXT NOT NULL DEFAULT '{}',
                 turn_closed INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1858,6 +1888,7 @@ class GameDB:
                 status TEXT NOT NULL DEFAULT 'draft',
                 notes TEXT NOT NULL DEFAULT '',
                 dossier_payload_json TEXT NOT NULL DEFAULT '{}',
+                source_pending_action_id INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(event_id) REFERENCES events(id),
@@ -1875,6 +1906,7 @@ class GameDB:
                 kind TEXT NOT NULL,
                 origin_ref TEXT NOT NULL,
                 reason TEXT NOT NULL DEFAULT '',
+                beyond_intent INTEGER NOT NULL DEFAULT 0,
                 removed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -1889,6 +1921,7 @@ class GameDB:
                 kind TEXT NOT NULL,
                 origin_ref TEXT NOT NULL,
                 reason TEXT NOT NULL DEFAULT '',
+                beyond_intent INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -1904,6 +1937,7 @@ class GameDB:
                 delta INTEGER NOT NULL,
                 origin_ref TEXT NOT NULL,
                 reason TEXT NOT NULL DEFAULT '',
+                beyond_intent INTEGER NOT NULL DEFAULT 0,
                 changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -1914,7 +1948,13 @@ class GameDB:
                 key   TEXT PRIMARY KEY,
                 value INTEGER NOT NULL,
                 kind  TEXT NOT NULL,
-                note  TEXT NOT NULL DEFAULT ''
+                note  TEXT NOT NULL DEFAULT '',
+                budget_role TEXT NOT NULL DEFAULT 'fixed',
+                account TEXT NOT NULL DEFAULT '',
+                direction TEXT NOT NULL DEFAULT '',
+                display TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 9999,
+                origin_ref TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS fiscal_containers (
@@ -2167,6 +2207,7 @@ class GameDB:
                 period INTEGER NOT NULL,
                 evidence INTEGER NOT NULL DEFAULT 0 CHECK (evidence IN (0, 1)),
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                affair_id INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(source, target, event_kind, context, origin)
             );
 
@@ -2175,6 +2216,12 @@ class GameDB:
 
             CREATE INDEX IF NOT EXISTS idx_relation_edges_person
             ON relation_edge_events(source, target, event_kind, id);
+
+            CREATE INDEX IF NOT EXISTS idx_relation_edge_events_affair
+            ON relation_edge_events(affair_id, id);
+
+            CREATE INDEX IF NOT EXISTS idx_characters_affair
+            ON characters(affair_id);
 
             -- #636 关系摘要层 S5：两段式摘要（奠基段机械只增不改＋近况段整段重酿，ID-9）。
             -- 零数值强度字段（P4/ADR 0083）；结构字段首发集＝有向关系对、维度标记、
@@ -2265,151 +2312,14 @@ class GameDB:
             );
             """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
-        # #637 S6：老档迁移——relation_brew_pending 泛化身份列（新档建表已含，此处幂等）。
-        self.ensure_column(
-            "relation_brew_pending", "item_kind", "TEXT NOT NULL DEFAULT '关系'"
-        )
-        # #690 / ADR 0011-2：逐派皇权透支账（廷杖侧第一刀；老档 ensure_column 迁移）
-        self.ensure_column(
-            "factions",
-            "edict_overdraw",
-            "INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0)",
-        )
+        # #1847/#1812：旧档 ensure_column 补列退役；新档列权威在上方 CREATE。
+        # 保留新档/现役共享：父表物化、内容名册同步、退役表清理、实体 store、财政初始 seed。
         self._ensure_office_type_parents()
         self._ensure_event_parents()
-        for column, definition in {
-            "military_strength": "INTEGER NOT NULL DEFAULT 50",
-            "cohesion": "INTEGER NOT NULL DEFAULT 50",
-            "supply": "INTEGER NOT NULL DEFAULT 50",
-            "last_action": "TEXT NOT NULL DEFAULT ''",
-            "kind": "TEXT NOT NULL DEFAULT '敌国'",
-            "aliases": "TEXT NOT NULL DEFAULT ''",
-        }.items():
-            self.ensure_column("powers", column, definition)
-        self.ensure_column("armies", "owner_power", "TEXT NOT NULL DEFAULT 'ming'")
-        self.ensure_column("armies", "station_region", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("armies", "province_pay_arrears", "REAL NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "central_pay_arrears", "REAL NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "consecutive_pay_shortfall_months", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "pay_source_region", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("armies", "province_pay_share", "REAL NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "central_pay_share", "REAL NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "is_tusi", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "self_funded_pay", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "mutiny_status", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("armies", "is_mutinied", "INTEGER NOT NULL DEFAULT 0 CHECK(is_mutinied IN (0, 1))")
-        self.ensure_column("armies", "mutiny_count", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "mutiny_probation", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "full_pay_streak", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "redemption_count", "INTEGER NOT NULL DEFAULT 0")
-        # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
-        self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
-        # #44 名义月饷率(两/兵·月)。仅列**首次 ADD** 时回填一次（gemini high：避免每次启动重扫/
-        # 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
-        # #1847/#1812：salary_rate 已在 CREATE；旧档首次 ADD 回填退役。新军走 _coerce_new_salary_rate / army_needed 锚点。
-        self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0")
-        # #173/#1847：maintenance_per_turn 旧档 DROP 迁移已退役（新档 CREATE 本无该列）。
-        self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
-        # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
-        self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("regions", "cannon", "INTEGER NOT NULL DEFAULT 0")
         self._apply_region_city_levels()
-        self.ensure_column("characters", "power_id", "TEXT NOT NULL DEFAULT 'ming'")
-        self.ensure_column("characters", "location", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("characters", "transit_to", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("characters", "transit_distance_remaining", "REAL")
-        self.ensure_column("characters", "transit_speed_factor", "REAL")
-        self.ensure_column("characters", "transit_start_turn", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("issues", "stop_condition", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("issues", "commitment_kind", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("issues", "stages_json", "TEXT NOT NULL DEFAULT '[]'")
-        # #624 / ADR 0078：next_audience_todos 引擎侧真伪底（方案 A）；老档迁移
-        self.ensure_column(
-            "next_audience_todos", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
-        self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("characters", "debut_year", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("characters", "debut_month", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("characters", "status", "TEXT NOT NULL DEFAULT 'active'")
-        self.ensure_column("characters", "status_reason", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("characters", "reason_code", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("characters", "status_changed_turn", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("characters", "portrait_id", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("characters", "court_role", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("characters", "summary", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("characters", "aliases", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("characters", "identity", "INTEGER NOT NULL DEFAULT 50")
-        self.ensure_column("characters", "seed_guilt", "TEXT NOT NULL DEFAULT ''")
         self._migrate_character_identity_seed()
         self._backfill_bandit_power_split()
-        self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
-        self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("pending_decisions", "event_id", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("pending_decisions", "rejection_reason", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("pending_decisions", "opposition", "TEXT NOT NULL DEFAULT ''")
-        # 同案头区分请旨／颁布三选与人物急务，署名及官职事实随原案保存。
-        self.ensure_column("pending_decisions", "kind", "TEXT NOT NULL DEFAULT 'decision'")
-        self.ensure_column("pending_decisions", "actor_name", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("pending_decisions", "actor_office", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("pending_decisions", "actor_faction", "TEXT NOT NULL DEFAULT ''")
-        # 次月同案改票保留轮次与上次拟批。
-        self.ensure_column(
-            "pending_decisions", "revision_round", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "pending_decisions", "prior_options_json", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("pending_decisions", "answered_turn", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("pending_decisions", "answer_order", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("pending_decisions", "presentation_order", "INTEGER NOT NULL DEFAULT 0")
-        # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
-        self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
-        # 结局：ended=1 时游戏终结；ending_status 为 context.ENDING_* 类型。
-        self.ensure_column("game_state", "ended", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("game_state", "ending_status", "TEXT NOT NULL DEFAULT ''")
-        # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）
-        self.ensure_column(
-            "decree_dossier_link_rejections", "pending_action_id", "INTEGER"
-        )
-        self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
-        # 密令期限：0=无硬期限；due_turn>0 且 ≤当前回合时，settle 尾部按实进度对账派生 done/failed（#1504）。
-        self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
-        if self.ensure_column(
-            "secret_orders", "deadline_span", "INTEGER NOT NULL DEFAULT 0"
-        ):
-            self.conn.execute(
-                "UPDATE secret_orders SET deadline_span="
-                "MAX(COALESCE(due_turn, 0)-COALESCE(turn_issued, 0), 0)"
-            )
-        self.ensure_column("secret_orders", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
-        # #566/#883: secret monthly reports stay private on the order itself.
-        # #619 adds a separate physical general track (dossier_reported_progress);
-        # the retired shared table name remains forbidden (no shared table+flag).
-        self.ensure_column(
-            "secret_orders", "dossier_progress_json", "TEXT NOT NULL DEFAULT '[]'")
         self.conn.execute("DROP TABLE IF EXISTS dossier_progress_reports")
-        # #489：character_knowledge_events 在早期存档中已存在但没有黑名单列；
-        # ensure_column 必须覆盖「表已存在」的迁移路径，不能只依赖 CREATE TABLE。
-        self.ensure_column(
-            "character_knowledge_events", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("issues", "participants", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("issues", "participant_roster", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("issues", "target_roster", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("secret_orders", "excluded_targets", "TEXT NOT NULL DEFAULT '{}'")
-        # #976: audience chat hold-and-release — held until classification release.
-        # held | released | withheld | private
-        self.ensure_column(
-            "chat_messages", "knowledge_status", "TEXT NOT NULL DEFAULT 'held'")
-        # #544 / ADR 0045：高亮判官短语清单随消息落库
-        self.ensure_column(
-            "chat_messages", "highlights_json", "TEXT NOT NULL DEFAULT '[]'")
-        # #976 message-level origin provenance on assignee briefs (durable bloodline).
-        self.ensure_column(
-            "secret_order_briefs", "origin_chat_message_ids", "TEXT NOT NULL DEFAULT '[]'")
         # Read-side projection is registry-driven.  Only issue rows are shared
         # knowledge sources; #883 deliberately keeps secret orders out of it.
         self.conn.execute(
@@ -2418,202 +2328,7 @@ class GameDB:
             "SELECT origin_turn, 0, 0, 'assignment', title, stage_text, "
             "'issue:' || id, participant_roster FROM issues WHERE participant_roster <> '[]'"
         )
-        # #1890 / ADR 0054：拟旨行（后生）单向指回交办暂存（先落）——撤回按此列
-        # 精确删本轮自产的 draft 行，不再靠 pending_actions 反查。
-        # 取代旧列 pending_actions.committed_directive_id（先落实体反指后生，违法方向）。
-        self.ensure_column(
-            "turn_directives", "source_pending_action_id", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "turn_directives", "dossier_payload_json", "TEXT NOT NULL DEFAULT '{}'")
-        self.ensure_column("character_offices", "dossier_id", "INTEGER")
-        self.ensure_column(
-            "character_offices", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
-        )
-        self.ensure_column(
-            "character_offices", "region_id", "TEXT NOT NULL DEFAULT ''"
-        )
-        self.ensure_column(
-            "office_change_records", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
-        )
-        # #1847：4a 改读段结果后 turn 列无消费者；幂等 DROP（SQLite 3.35+）。
-        office_change_cols = {
-            r["name"]
-            for r in self.conn.execute("PRAGMA table_info(office_change_records)").fetchall()
-        }
-        if "turn" in office_change_cols:
-            self.conn.execute("ALTER TABLE office_change_records DROP COLUMN turn")
-            self.conn.commit()
-        self.ensure_column(
-            "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "held_turn", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "decree_dossiers", "execution_note", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "closed_turn", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "decree_dossiers", "promulgation_blocked_layer", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "promulgation_reason", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossier_decisions", "blocked_layer", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossier_decisions", "legal_reason_code", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossier_decisions", "primary_opponents_json", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("decree_dossier_decisions", "gatekeeper_id", "TEXT")
-        self.ensure_column(
-            "decree_dossier_decisions", "criteria_snapshot_json", "TEXT NOT NULL DEFAULT '{}'")
-        self.ensure_column(
-            "decree_dossier_decisions", "affected_parties_json", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column(
-            "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "participant_roster", "TEXT NOT NULL DEFAULT '[]'"
-        )
-        # #654：属地列 + 复合唯一索引（旧单列索引 DROP 后重建）
-        self.ensure_column(
-            "decree_dossiers", "region_id", "TEXT NOT NULL DEFAULT ''"
-        )
         self._ensure_decree_dossier_locality_indexes()
-        # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
-        # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
-        self.ensure_column("chat_turns", "night_id", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("chat_turns", "night_seq", "INTEGER NOT NULL DEFAULT 0")
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_chat_turns_night "
-            "ON chat_turns(night_id, id)"
-        )
-        # #501 叙事抽取水位 + 抽取账溯源/在场效果/时序键（旧档补列，schema 升级非 fallback）。
-        self.ensure_column("chat_turns", "extract_status", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("chat_turns", "error_pack_path", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("chat_turns", "post_reply_recovery", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("chat_turns", "post_reply_error_pack_path", "TEXT NOT NULL DEFAULT ''")
-        # #506 轮级撤销：undo_chat_turn 写 undone_at；旧档 chat_turns 建于该列进 CREATE 之前
-        # 时缺列，undo 的 UPDATE 会 OperationalError（no such column: undone_at）→ 整撤回回滚。
-        self.ensure_column("chat_turns", "undone_at", "TEXT")
-        # #1838 C1b：本轮转译声明的御前主角（按源轮持久化；夜当前值在 audience_nights）。
-        self.ensure_column("chat_turns", "protagonist_name", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "audience_nights", "protagonist_name", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "story_ledger_entries", "source_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
-        # #506 轮级撤销：口令账（入殿/告退等，source_chat_turn_id==0）由某一轮 attach 创建时
-        # 绑该轮 chat_turn_id，供撤回按轮删（抽取账走 source_chat_turn_id，口令账走此列）。
-        # 0=非某轮所产的框架账（开夜/员额/收夜），撤回不删。
-        self.ensure_column(
-            "story_ledger_entries", "origin_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "story_ledger_entries", "presence_effect", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("story_ledger_entries", "order_key", "REAL")
-        # #657：召见垫位/消费 origin 领域身份；空串不参与 partial UNIQUE。
-        self.ensure_column(
-            "story_ledger_entries", "origin_ref", "TEXT NOT NULL DEFAULT ''")
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_origin_ref "
-            "ON story_ledger_entries(origin_ref) WHERE origin_ref != ''"
-        )
-        self.ensure_column(
-            "audience_nights", "next_event_seq", "INTEGER NOT NULL DEFAULT 0")
-        # #612 endorsement-bound is CLOSE_STEPS/close_commit_cursor — no parallel column.
-        # 本夜已应允暂存：收夜只交这些 id，不按 turn+kind 全回合批交（#498）
-        self.ensure_column(
-            "pending_actions", "night_id", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "pending_actions", "night_approved", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "pending_actions", "version", "INTEGER NOT NULL DEFAULT 1")
-        # #1890：交办暂存的来源轮。撤回本轮按此列整轮作废，不再回溯
-        # chat_turn_rollback_items 猜是哪轮写的（那道回溯链是本票要拆的旧同步）。
-        # 索引随本列建：CREATE 块里的索引会引用旧档缺列（同 chat_turns 注记）。
-        self.ensure_column(
-            "pending_actions", "source_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_pending_actions_source_turn "
-            "ON pending_actions(source_chat_turn_id, status, id)"
-        )
-        # fiscal_config 科目元数据列（数据驱动预算目录）：budget_role=fixed 的 base 项靠
-        # account/direction/display 由 flows.compute_budget_lines 动态生成预算行；
-        # dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式/皇庄专路，这三列留空。
-        self.ensure_column("fiscal_config", "budget_role", "TEXT NOT NULL DEFAULT 'fixed'")
-        self.ensure_column("fiscal_config", "account", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("fiscal_config", "direction", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("fiscal_config", "display", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("fiscal_config", "sort_order", "INTEGER NOT NULL DEFAULT 9999")
-        # economy_ledger 支出结构化标签：仅 extractor 抽出的 economy_moves 填这三列；
-        # flows 月固定支出与所有收入留 NULL。purpose 受控枚举见 constants.ECONOMY_PURPOSES。
-        self.ensure_column(
-            "decree_dossiers", "office_archive_keys", "TEXT NOT NULL DEFAULT '[]'"
-        )
-        self.ensure_column("economy_ledger", "purpose", "TEXT")
-        self.ensure_column("economy_ledger", "target_kind", "TEXT")
-        self.ensure_column("economy_ledger", "target_id", "TEXT")
-        self.ensure_column("economy_ledger", "dossier_id", "INTEGER")
-        self.ensure_column(
-            "economy_ledger", "origin_ref", "TEXT NOT NULL DEFAULT ''"
-        )
-        # #622：旨外恶果/受益标记——效果行同列注解（#558 origin 同一载体，非平行轨）。
-        self.ensure_column(
-            "economy_ledger", "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
-        )
-        # #1260：fiscal 三溯源表同款 beyond_intent（与 economy_ledger 同一迁移落点）。
-        for _fiscal_prov in (
-            "fiscal_config_creations",
-            "fiscal_config_changes",
-            "fiscal_config_tombstones",
-        ):
-            self.ensure_column(
-                _fiscal_prov, "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
-            )
-        # Rolling upgrades may already have the column while interrupted/older
-        # migrations left individual rows blank.  Re-scan idempotently; only a
-        # real dossier is authoritative and an existing origin is never replaced.
-        self.conn.execute(
-            """UPDATE economy_ledger
-               SET origin_ref='dossier:' || dossier_id
-               WHERE origin_ref=''
-                 AND dossier_id > 0
-                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.id=economy_ledger.dossier_id)"""
-        )
-        self.ensure_column("fiscal_config", "origin_ref", "TEXT NOT NULL DEFAULT ''")
-        for table in ("region_logs", "army_logs", "power_logs", "person_logs", "building_logs"):
-            self.ensure_column(table, "origin_ref", "TEXT NOT NULL DEFAULT ''")
-        # 开局负面帝国修正：clear_gate(机器消除条件)、legacy_key(对应 opening_legacies.key，开局修正去重用)
-        self.ensure_column("legacies", "clear_gate", "TEXT NOT NULL DEFAULT '{}'")
-        self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
-        # #9 派系势力 offset 锚点：leverage = clamp(offset + 在朝官职权重和)。开局校准时
-        # offset = 钦定基线 − 开局权重和（见 _calibrate_faction_offsets）。老档缺省 0，由该校准回填。
-        # #9 cmr R3：记下「本次 init 是否刚 ADD 该列」——老档反推 offset 只许在列刚迁移那一次跑，
-        # 之后每次 load 不再碰 offset（否则 leverage 被 clamp 后再 load，offset 被重锚成
-        # round(clamped − weight_sum)≠原值 → 基线永久腐蚀）。该 flag 传给 _calibrate_faction_offsets。
-        self._leverage_offset_col_added = self.ensure_column(
-            "factions", "leverage_offset", "REAL NOT NULL DEFAULT 0"
-        )
-        # #9 线上 R3（codex P2）crash-safety：单靠「列刚 ADD」内存 flag 不够——若上次进程崩在
-        # 『ensure_column 已 ADD 列、_calibrate_faction_offsets 未执行』之间，重启见列已存在 →
-        # ensure_column 返 False → flag False → 跳过校准 → offset 全留 0 → 下次 reconcile 把白名单
-        # leverage 重写成裸权重和(非锚定钦定基线)=平衡崩。故另立**持久校准标记**(metrics 表的
-        # __leverage_offsets_calibrated)：校准成功时由 _calibrate_faction_offsets 写入；开档时只要
-        # 标记缺失就补校准（与 flag 取或）。标记写入与 offset/leverage 写入同事务提交(见 1041 行的
-        # commit)——崩在校准中途则标记未落、下次开档重做，二者全有或全无(原子)。
-        self._leverage_offsets_calibrated = self._has_meta_flag("__leverage_offsets_calibrated")
-        # 拒收 provenance source（#144 / ADR 0008 决定 5）：崩溃恢复重放须用原始来源，否则玩家
-        # 来源(player_decree/hitl)的拒收被恢复路记成 system_simulation、静默不提示。老档缺省
-        # 'system_simulation'（旧档缺来源时的默认值）。
-        self.ensure_column("pending_resolve_context", "source", "TEXT NOT NULL DEFAULT 'system_simulation'")
-        # #671：抵京月王承恩独立递话（与官方 report 分栏；HITL 暂停→完成月同缝转存）
-        self.ensure_column(
-            "pending_resolve_context", "attendant_message", "TEXT NOT NULL DEFAULT ''",
-        )
-        self.ensure_column(
-            "turn_reports", "attendant_message", "TEXT NOT NULL DEFAULT ''",
-        )
-        # #1862：当期邸报作者自写的标题，随正文入档，供历月索引取用。
-        self.ensure_column(
-            "turn_reports", "title", "TEXT NOT NULL DEFAULT ''",
-        )
         # 结局总结：每局结局触发时落一条（单 campaign 一库，turn 为主键，对齐 turn_reports）。
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS ending_summary (
@@ -2626,8 +2341,8 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # #648（ADR 0088）：存档级持久元数据；人口单位口径判别标（population_unit）落此，
-        # 无标旧档一律判「万人」legacy，不读 content 元信息。
+        # #648（ADR 0088）：存档级持久元数据；人口单位口径判别标落此。
+        # ADR 0088 与 09-28 口谕相抵处见证据报告 BLOCKER，本轮不自拆。
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS save_meta (
@@ -2644,92 +2359,20 @@ class GameDB:
         from ming_sim.entities.affair import AffairStore
         from ming_sim.entities.staged_declaration import StagedDeclarationStore
         TextualFactStore.ensure_schema(self.conn)
-        self.ensure_column("textual_facts", "origin_ref", "TEXT NOT NULL DEFAULT ''")
         self.textual_facts = TextualFactStore(self.conn)
         StagedDeclarationStore.ensure_schema(self.conn)
         self.staged_declarations = StagedDeclarationStore(self.conn)
         AffairStore.ensure_schema(self.conn)
-        self.ensure_column("decree_dossiers", "affair_id", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("issues", "affair_id", "INTEGER NOT NULL DEFAULT 0")
-        # #1835/#1831：relation_edge_events 是整数 id 主键，直接复用 AffairStore
-        # 通用指针机制（_POINTER_TABLES）；characters 主键是 name（非整数 id），
-        # AffairStore.attach_pointer 现按表配置主键列（_POINTER_KEY_COLUMNS，
-        # characters → name）同样直接复用，不再单独实现一份「各自所属事务」
-        # 绑定逻辑。
-        self.ensure_column("relation_edge_events", "affair_id", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("characters", "affair_id", "INTEGER NOT NULL DEFAULT 0")
-        # decree_dossiers / issues 的 affair 索引真源只在建表脚本（CREATE INDEX
-        # IF NOT EXISTS 每次 init_schema 仍会补缺）；此处禁重复定义。
-        # relation_edge_events / characters 的 affair_id 仅 ensure_column 后置，
-        # 索引只能跟在加列之后。
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_relation_edge_events_affair "
-            "ON relation_edge_events(affair_id, id)"
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_characters_affair ON characters(affair_id)"
-        )
         self.affairs = AffairStore(self.conn)
         self.conn.commit()
-        # #9 R1 finding#1 [P1]：老档迁移校准须放在新档 seed 与现存档打开都经过的点。
-        # 现存档只 GameDB()（→ init_schema）+ load_state、不调 seed_static_data，故若校准仅在 seed 末尾，
-        # 老档的 offset 永远停在默认 0 → leverage=0+权重和（未锚定钦定基线、错值）。
-        # 因此：leverage_offset 列**本次刚 ADD**且 factions 表已有行（=老档，characters 此刻亦已持久化、
-        # 权重和可算）时，在此立即一次性反推校准（offset_col_added=True 走老档分支：offset=当前 DB
-        # leverage − 权重和）。#1847：不再跑 office 自由措辞→status 的旧档污染迁移。
-        # 校准后 flag 被消费置 False（见 _calibrate_faction_offsets），seed 路再调时直接 return、不重锚。
-        # fresh 新档此时 factions 表空（行在 seed_static_data 才 INSERT）→ 这里跳过，仍走 seed 末尾的
-        # fresh 校准（从 content.factions 取钦定基线）。
-        # #9 线上 R3 crash-safety：触发条件 = 列刚 ADD **或** 持久标记缺失（崩在加列/校准之间的老档）。
-        # #9 线上 R4（codex P2）：「标记缺失」有两源——(a) 真崩在『加列/校准』之间（offset 仍全 0，须
-        # 反推校准）；(b) 旧版 #9 代码已校准、当时尚无持久标记（offset 已非 0）。后者若被当崩溃态强制
-        # 重锚，会把已被 clamp 偏离基线的 leverage 烙进 offset、永久腐蚀基线。故按 offset 是否全 0 区分：
-        # 全 0=未校准（真崩溃/列刚 ADD）→ 反推校准；非全 0=已校准 → 只补持久标记、绝不重锚。
-        if self.table_has_rows("factions") and (
-            self._leverage_offset_col_added or not self._leverage_offsets_calibrated
-        ):
-            if self._leverage_offset_col_added or self._faction_offsets_all_zero():
-                self._calibrate_faction_offsets(
-                    is_fresh_factions_seed=False, offset_col_added=True
-                )
-            else:
-                # 已校准缺标记（旧版遗留）：只补持久标记，offset 维持原校准值、不重锚。
-                self._set_meta_flag("__leverage_offsets_calibrated")
-                self._leverage_offsets_calibrated = True
-                self._leverage_offset_col_added = False
-            self.conn.commit()
-        # #177 R1 finding#1（codex P2）：一次性 v2 迁移——旧版 #9 校准 round 了 offset（存整数），
-        # R4 只修新校准、已 marked 老档 early-return 照漂。本迁移把整数 offset 重算成精确 float
-        # （current_leverage − weight_sum），保持当前 leverage 不变、仅修存储精度防未来漂。
-        # 只对 leverage 与 round(offset+权重和) 一致的 faction 跑（未手动 clamp/改），防把 clamp
-        # 后的脏 leverage 烙进 offset（腐蚀基线）。幂等：v2 标记一旦落库就不再跑。
-        if (
-            self.table_has_rows("factions")
-            and getattr(self, "_leverage_offsets_calibrated", False)
-            and not self._has_meta_flag("__leverage_offsets_float_v2")
-        ):
-            self._set_meta_flag("__leverage_offsets_float_v2")
-            self.conn.commit()
         self.init_fiscal_config()
 
     def init_fiscal_config(self) -> None:
         """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
 
-        base/rate 单位为【月度】万两/%。科目目录与元数据全走 JSON 设定（铁律：设定走 JSON）；
-        新档加税源只改 JSON；若老档也要补新 key，必须登记对应 schema_version 的差量迁移。
-
-        ── 版本迁移策略（铁律：fiscal_config 只在建库时整体 seed 一次）──
-        每个库带 `__schema_version`。本函数按它与 JSON schema_version 比对，分三种走法：
-
-        - `cur == 0`（全新库，无版本行）：整体 seed JSON 全表 → 版本号置 JSON 版。仅此一次。
-        - `cur < json`（老档升版）：逐版跑 `_FISCAL_MIGRATIONS[cur+1 .. json]` 的差量动作。
-          新 schema 若要给老档补 key，必须在对应版本登记；未声明的 key 一律不碰
-          （玩家削减/裁撤全保留）。未登记版本不再按当前 JSON 全表补缺；新 schema 正常迁移
-          必须登记显式版本步。
-        - `cur >= json`：**啥都不做**。已是最新，玩家状态神圣。
-
-        ⇒ 玩家裁撤的科目读档后保持删除（不再被旧 INSERT OR IGNORE 复活）。
-           JSON 加新税种【必须】同步升 schema_version，否则老档拿不到（CLAUDE.md 已要求）。
+        base/rate 单位为【月度】万两/%。科目目录与元数据全走 JSON 设定（铁律：设定走 JSON）。
+        #1847/#1812：只保留新档初始真源整体 seed；旧档 schema 差量升版支链已退役。
+        已有 `__schema_version` 的库（含玩家改过的目录）一律不碰。
         """
         items = list(self.content.fiscal_items)
         if not items or "__schema_version" not in items[0]:
@@ -2747,51 +2390,20 @@ class GameDB:
 
         cols = "(key, value, kind, note, budget_role, account, direction, display, sort_order)"
 
-        def _seed_missing() -> None:
-            """未登记版本步不补当前 JSON 全表；新增 key 必须走显式版本迁移。"""
-            return None
-
-        def _seed_keys(keys: "tuple[str, ...]") -> None:
-            wanted = set(keys)
-            self.conn.executemany(
-                f"INSERT OR IGNORE INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [_meta(rec) for rec in rows if str(rec["key"]) in wanted],
-            )
-
-        # 每版迁移：从 N-1 → N，只动那版真正变的东西。键＝目标版本号 N。
-        # 将来要改某 key 默认 / 删某 key / 加新 key，就在这里登记一条 lambda，只动那一项，
-        # 别动其它——这样玩家改过的全保住。未登记版本只保留旧兼容兜底，不作为正常迁移路径。
-        _FISCAL_MIGRATIONS: "Dict[int, Any]" = {
-            8: lambda: _seed_keys((
-                "central_taicang_human_loss_rate",
-                "central_taicang_sink_loss_rate",
-                "central_jingyun_human_loss_rate",
-                "central_jingyun_sink_loss_rate",
-            )),
-        }
-
         cur_ver_row = self.conn.execute(
             "SELECT value FROM fiscal_config WHERE key = '__schema_version'"
         ).fetchone()
-        cur_ver = int(cur_ver_row["value"]) if cur_ver_row else 0
+        if cur_ver_row is not None:
+            return  # 已 seed 过：玩家状态神圣；不跑旧升版差量
 
-        if cur_ver >= schema_version:
-            return  # 已最新，玩家状态神圣，碰都不碰
-
-        if cur_ver == 0:
-            # 全新库：整体 seed 一次。
-            self.conn.executemany(
-                f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [_meta(rec) for rec in rows],
-            )
-        else:
-            # 老档升版：逐版跑差量；未登记的版本步只补缺 key。
-            for v in range(cur_ver + 1, schema_version + 1):
-                (_FISCAL_MIGRATIONS.get(v) or _seed_missing)()
-
+        # 全新库：整体 seed 一次。
+        self.conn.executemany(
+            f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [_meta(rec) for rec in rows],
+        )
         self.conn.execute(
             "INSERT INTO fiscal_config (key, value, kind, note) VALUES "
-            "('__schema_version', ?, 'meta', '财政默认值大版本号；老档升版逐版迁移，只动差量') "
+            "('__schema_version', ?, 'meta', '财政默认值大版本号；新档初始 seed') "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (schema_version,),
         )
@@ -3287,15 +2899,6 @@ class GameDB:
         return base_key
 
 
-    def ensure_column(self, table: str, column: str, definition: str) -> bool:
-        """确保 table.column 存在。返回 True=本次新增了该列（真·一次性迁移），
-        False=列已存在（后续 load 的常态）。多数 caller 忽略返回值即可。"""
-        columns = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
-        if column not in columns:
-            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-            return True
-        return False
-
     def _ensure_decree_dossier_locality_indexes(self) -> None:
         """#654 / #1837：pending 幂等键＝(pending_action_id, region_id, action_type)；
         directive 仍 (directive_id, region_id)；secret_order 不动。"""
@@ -3789,10 +3392,8 @@ class GameDB:
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
         # #1847：不跑 office 自由措辞→status/transit 的旧档污染迁移（#1812 无历史包袱）。
         # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT。
-        # cmr R3：传 offset 列「本次是否刚 ADD」——老档反推只在迁移那次跑，常规 load 不碰 offset。
-        self._calibrate_faction_offsets(
-            is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
-        )
+        # #9 / #1847：仅新档 seed 校准 offset；老档反推已退役。
+        self._calibrate_faction_offsets(is_fresh_factions_seed)
         self.conn.commit()
 
     def is_army_pay_source_cutover_enabled(self) -> bool:
@@ -5136,8 +4737,8 @@ class GameDB:
         state = GameState(
             year=int(row["year"]), period=int(row["period"]), turn=int(row["turn"]),
             turn_phase=str(row["turn_phase"] or "summoning"),
-            ended=bool(row["ended"]) if "ended" in row.keys() else False,
-            ending_status=str(row["ending_status"] or "") if "ending_status" in row.keys() else "",
+            ended=bool(row["ended"]),
+            ending_status=str(row["ending_status"] or ""),
         )
         if metrics:
             # 只接当前 GameState 默认 dict 里有的 key，避免旧 DB 残留废弃 metric 灌入。
@@ -5403,85 +5004,34 @@ class GameDB:
         for faction in _LEVERAGE_FACTIONS:
             self.recompute_faction_leverage(faction)
 
-    def _faction_offsets_all_zero(self) -> bool:
-        """白名单派系的 leverage_offset 是否全为 0。用于区分「列已存在但缺持久校准标记」的两态
-        （#9 线上 R4 codex P2）：全 0 = 校准从未跑过（真崩在『加列/校准』之间，或列刚 ADD 默认 0）
-        → 须反推校准；任一非 0 = 已校准过（旧版 #9 代码遗留、当时尚无持久标记）→ 只补标记、绝不
-        重锚（重锚会把 clamp 后偏离基线的 leverage 烙进 offset、永久腐蚀基线）。
-        安全性论证（线上 R4 双 reviewer concur 复核后修正）：leverage_offset = 钦定基线 − 开局权重和；
-        要全六派系恰为 0 需每派系『钦定基线==开局权重和』——实际 content 下各派系基线与开局权重和
-        有显著差（offset 均非 0），故「已校准却全 0」这一误判窗口对真实存档不可达。安全性据此
-        （已校准态不可能与『offset 全 0』共存），**不**依赖『全 0 ⇒ leverage 未 clamp 故重校准幂等』
-        的假设——该假设在玩过多回合、weight_sum 漂移触 clamp 后并不恒成立（codex R4 指出的缺口，
-        但其触发前提『全派系 offset 同时为 0』本身不可达，故不构成真实风险）。
+    def _calibrate_faction_offsets(self, is_fresh_factions_seed: bool) -> None:
+        """#9 新档 offset 校准：offset = 钦定 content leverage − 开局在朝官职权重和。
 
-        逐派系单参数查询（白名单仅 6 项）——不拼 IN(...) 动态占位串（线上 R5 sourcery opengrep
-        把 .format 拼 SQL 标为注入面；虽只拼 `?` 占位、值仍参数绑定无注入，此写法更干净地避开）。"""
-        for faction in _LEVERAGE_FACTIONS:
-            row = self.conn.execute(
-                "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-            ).fetchone()
-            if row is not None and float(row["leverage_offset"] or 0) != 0:
-                return False
-        return True
-
-    def _calibrate_faction_offsets(
-        self, is_fresh_factions_seed: bool, offset_col_added: bool = False
-    ) -> None:
-        """#9 offset 校准：offset = 基线 leverage − 当前在朝官职权重和。每个 DB 生命周期最多跑一次。
-        新档（is_fresh_factions_seed）：基线取**钦定 content.factions[f].leverage**（不读 DB——
-        污染清洗的 set_character_status 已用 offset=0 把 DB leverage 改脏，读 DB 会把脏值烙进 offset），
-        校准后立即 recompute 令 DB leverage 自洽（开局权重和稳定 → leverage 复现钦定基线、保开局平衡）。
-        老档且 offset 列**本次刚 ADD**（真·一次性迁移）：基线取**当前 DB leverage**（玩过后的真值），
-        offset 令首次 recompute 不跳变（幂等迁移）；不 recompute（避免把老档当前值改动）。
-        否则（列已存在的常规后续 load）：**直接 return、什么都不碰**——offset 已校准。
-        cmr R3：缺这一闸，老档每次 load 都重锚 offset；leverage 被 clamp 到 0/100 后再 load，
-        offset 会被重锚成 round(clamped − weight_sum)≠原值，基线永久腐蚀。
-        只校准白名单 faction；非白名单 offset 留 0、leverage 永不被 recompute 触碰。
-        不在此 commit——由 seed_static_data 末尾统一提交。
-        #9 线上 R3 crash-safety：校准成功后写持久标记 __leverage_offsets_calibrated；该标记已存在
-        （已校准过）则直接 return、绝不再碰 offset——比内存 flag 更强（跨进程/跨实例、崩溃可检测）。"""
-        # 持久标记已在（上一生命周期校准成功落库）且**列非本次刚 ADD**（offset 数据仍在）：绝不再碰
-        # offset——堵「已校准的 leverage 被 clamp 后再重锚成 round(clamped−weight) 腐蚀基线」。
-        # 注意须排除 offset_col_added：列若刚被 DROP+重 ADD（offset 数据已丢），即便 metrics 里残留
-        # 旧标记也必须重校准（数据真没了），否则 offset 全留 0、leverage 被重写成裸权重和。
-        if not offset_col_added and self._has_meta_flag("__leverage_offsets_calibrated"):
-            self._leverage_offset_col_added = False
+        仅新档 factions seed 路径调用。已校准（持久标记）则直接 return。
+        #1847：老档反推 / offset 列刚 ADD / float v2 升版支链已退役。
+        """
+        if self._has_meta_flag("__leverage_offsets_calibrated"):
             return
-        # 老档常规 load（列早已存在、offset 已校准）：绝不再碰 offset。
-        if not is_fresh_factions_seed and not offset_col_added:
+        if not is_fresh_factions_seed:
             return
-        # #9 R1 finding#3：一次性迁移 flag 用后即消费置 False（无论本次走老档反推还是 fresh 校准，
-        # 都已锚定完毕）。否则同实例第二次 seed_static_data 仍见 flag=True、再进老档迁移分支，把
-        # 已 clamp 的 leverage 重锚成 round(clamped − weight_sum)≠原值 → 基线腐蚀。
-        self._leverage_offset_col_added = False
         for faction in _LEVERAGE_FACTIONS:
             row = self.conn.execute(
                 "SELECT leverage FROM factions WHERE name=?", (faction,)
             ).fetchone()
             if row is None:
-                continue  # 该白名单派系不在本档 factions 表（数据缺失）→ 跳过
-            if is_fresh_factions_seed:
-                content_faction = self.content.factions.get(faction)
-                if content_faction is None:
-                    continue
-                baseline = int(content_faction.leverage)
-            else:
-                baseline = int(row["leverage"])
+                continue
+            content_faction = self.content.factions.get(faction)
+            if content_faction is None:
+                continue
+            baseline = int(content_faction.leverage)
             weight_sum = self._faction_office_weight_sum(faction)
             offset = baseline - weight_sum
             self.conn.execute(
                 "UPDATE factions SET leverage_offset=? WHERE name=?", (offset, faction)
             )
-            if is_fresh_factions_seed:
-                # 立即 recompute 令 DB leverage 与公式自洽（修污染清洗用 offset=0 写脏的中间值）。
-                self.recompute_faction_leverage(faction)
-        # 校准成功：落持久标记。与上面 offset/leverage 的写在同一事务（调用方统一 commit），
-        # 崩在校准中途则标记一并未落、下次开档重做（原子：offset+标记 全有或全无）。
+            self.recompute_faction_leverage(faction)
         self._set_meta_flag("__leverage_offsets_calibrated")
         self._leverage_offsets_calibrated = True
-        # #177 R1 finding#1（codex P2）：当前校准已存精确 float offset → 同时落 v2 标记，
-        # 使 init_schema 的 v2 迁移跳过（免对已正确存 float 的档重复扫）。
         self._set_meta_flag("__leverage_offsets_float_v2")
 
 

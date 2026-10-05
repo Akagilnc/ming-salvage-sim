@@ -164,8 +164,6 @@ def test_night_direct_write_whitelist_enumerates_authorized_items():
     assert {"textual_facts", "public_sayings", "story_ledger_entries"} <= set(fourth)
 
 
-
-
 # ── AC4：撤回删除该轮新入册人物——档案+入殿账一并消失，像没登场过 ────────────────
 
 
@@ -508,39 +506,6 @@ def test_attach_origin_bind_atomic_normal_path_binds_and_undo_deletes(game):
 
     assert not any(an.TAG_ENTER in (e["tags"] or []) and m in e["person_names"]
                    for e in an.list_ledger(db, night_id))
-
-
-# ── 旧档升级路径：chat_turns.undone_at 缺列 → open 补列 → undo 逆转 ─────────────
-# undone_at 进 CREATE TABLE 晚于该表初版；缺 ensure_column 时旧档 undo 的
-# UPDATE ... SET undone_at 会 OperationalError（no such column）→ 整撤回回滚。
-
-
-def test_undo_survives_db_created_before_undone_at_column(game):
-    db, state, content = game
-    m = _active_minister(db, content)
-    night_id, chat_id = _run_round(db, state, m)
-
-    # 模拟旧档：chat_turns 建于 undone_at 进 CREATE 之前（列不存在）。
-    db.conn.execute("ALTER TABLE chat_turns DROP COLUMN undone_at")
-    db.conn.commit()
-    assert "undone_at" not in {
-        r["name"] for r in db.conn.execute("PRAGMA table_info(chat_turns)").fetchall()
-    }
-
-    # 重开 → GameDB 升级迁移必须补回该列（ensure_column），而非留待 undo 时炸。
-    db2 = _reopen(db, content)
-    try:
-        assert "undone_at" in {
-            r["name"] for r in db2.conn.execute("PRAGMA table_info(chat_turns)").fetchall()
-        }
-        db2.undo_chat_turn(chat_id)
-        row = db2.conn.execute(
-            "SELECT status, undone_at FROM chat_turns WHERE id = ?", (int(chat_id),)
-        ).fetchone()
-        assert row["status"] == "undone"
-        assert row["undone_at"]
-    finally:
-        db2.close()
 
 
 def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
