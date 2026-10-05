@@ -125,9 +125,7 @@ class _FakeGame:
         return {"memorials": [], "unread_memorial_count": 0}
 
 
-def _invoke(coro):
-    return asyncio.run(coro)
-
+from tests.test_court_layout_1290 import _invoke
 
 # #1849 / ADR 0152：独立手拟新增口退役后，drafts 唯一仍会跑拟旨抽取的 Web 写端点是
 # PATCH /api/directives/{id}（改稿）；create 用例随入口一并删除。

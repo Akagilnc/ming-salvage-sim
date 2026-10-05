@@ -31,13 +31,7 @@ FROZEN_DTO_WHITELIST = {"source", "target", "summary", "recent_context", "update
 MARKER = "TD7哨兵-640-唯一标记QINGYUAN"
 
 
-def _add_edge(db, state, *, source, target, kind, context, origin):
-    return db.record_relation_edge_event(
-        source=source, target=target, event_kind=kind, context=context,
-        origin=origin, turn=int(state.turn),
-        year=int(state.year), period=int(state.period),
-    )
-
+from tests.test_relation_brew_636 import _add_edge
 
 @pytest.fixture
 def ledger(game):

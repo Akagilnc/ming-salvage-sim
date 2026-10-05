@@ -29,13 +29,7 @@ DISPLACED_SHAANXI = 150000
 
 
 
-def _pop(db: GameDB, name: str, region_id: str) -> int:
-    row = db.conn.execute(
-        "SELECT population FROM classes WHERE name=? AND region_id=?",
-        (name, region_id),
-    ).fetchone()
-    return int(row[0]) if row else 0
-
+from tests.test_population_transfers_649 import _pop
 
 def _strength(db: GameDB, power_id: str) -> int:
     return int(db.conn.execute(
@@ -59,12 +53,6 @@ def _recovery_grant(db, state, *, action="赈灾", amount=30, region_id="shaanxi
 
 
 
-
-def _reflux(transfers, *, dossier_id=None):
-    out = [t for t in transfers if t.get("reason") == "回流"]
-    if dossier_id is not None:
-        out = [t for t in out if t.get("origin_ref") == f"dossier:{dossier_id}"]
-    return out
 
 
 def _reset_shaanxi_pool(db):

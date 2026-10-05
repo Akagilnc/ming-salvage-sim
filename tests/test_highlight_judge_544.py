@@ -182,22 +182,3 @@ def test_highlights_survive_db_restore(game, content, tmp_path):
 
 
 # ── 通道时序（注入假判官，零真 LLM）────────────────────────────────────
-
-
-def _restore_highlight_seams(web_game) -> None:
-    """_web_game 默认桩掉高亮 trail/spawn（离线禁真 LLM）；本文件通道测须绑回生产缝。"""
-    import types
-    from web_app import WebGame
-
-    web_game._trail_highlight_judge_after_reply = types.MethodType(
-        WebGame._trail_highlight_judge_after_reply, web_game,
-    )
-    web_game._spawn_pending_write_thread = types.MethodType(
-        WebGame._spawn_pending_write_thread, web_game,
-    )
-
-
-def _drain(web_game) -> None:
-    from tests.test_audience_background import _wait_for_pending_writes_to_drain
-
-    _wait_for_pending_writes_to_drain(web_game)

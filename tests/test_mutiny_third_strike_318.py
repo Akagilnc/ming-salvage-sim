@@ -17,33 +17,9 @@ ARMY = "guanning"
 BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
 
 
-def _simulator_army_dicts(payload_armies):
-    """Normalize simulator armies payload (dict-rows or col/row matrix) to dict list."""
-    if isinstance(payload_armies, dict) and "rows" in payload_armies:
-        cols = payload_armies.get("cols") or payload_armies.get("columns") or []
-        return [dict(zip(cols, row)) for row in payload_armies["rows"]]
-    return list(payload_armies)
 
 
-def _find_simulator_army(rows, army_id: str = ARMY):
-    return next(
-        r
-        for r in rows
-        if "关宁" in str(r.get("name", "")) or str(r.get("id", "")) == army_id
-    )
-
-
-def _configure(db) -> None:
-    db.conn.execute("UPDATE armies SET manpower=0")
-    db.conn.execute(
-        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1,
-           pay_source_region='liaodong', province_pay_arrears=0, central_pay_arrears=0
-           WHERE id=?""",
-        (ARMY,),
-    )
-    db.conn.commit()
-
+from tests.test_mutiny_noop_whitelist_319 import _configure
 
 def _set(
     db,

@@ -33,13 +33,7 @@ LIAO_SEED_SHAANXI = 2929.20151 * 0.009 / 12.0  # 辽饷九厘基线（万两/月
 #   入池(人) = 加派基线(万两) × 折率 × (100 − 民心)/100
 
 
-def _pop(db: GameDB, name: str, region_id: str) -> int:
-    row = db.conn.execute(
-        "SELECT population FROM classes WHERE name=? AND region_id=?",
-        (name, region_id),
-    ).fetchone()
-    return int(row[0]) if row else 0
-
+from tests.test_population_transfers_649 import _pop
 
 def _settle_payload(db: GameDB, region_id: str) -> dict:
     row = db.conn.execute(

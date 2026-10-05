@@ -905,31 +905,6 @@ def test_oracle_independent_of_debt_mapping(monkeypatch):
 
 # ═══════════════ 拟旨 capture→成案（财政物化与下一次省 tick 分别由上方领域用例覆盖）═══
 
-def _pin_shortfall_board(db, region_id):
-    """省内池不足盘面钉死（拨付gross=0 → hub 京运补 due=0，p 原样进 tick）：
-    付款序决定新债落点，确定性可断言。"""
-    import json as _json
-
-    st = {
-        "省库库银": 0.0, "C_地方截留": 0.0, "C_中饱": 0.0, "C_漂没": 0.0,
-        "C_eff损耗": 0.0, "民欠旧赋": 0.0, "军饷欠": 20.0, "官俸欠": 0.0,
-        "宗禄欠": 0.0, "官民田": 100.0, "隐田": 50.0,
-    }
-    p = {
-        "正赋应征": 8.0, "三饷应征": 2.0, "火耗率": 0.1, "逋赋率": 0.0,
-        "起运定额": 0.0, "漂没率": 0.0, "中饱率": 0.0, "拨付gross": 0.0,
-        "Due": {"军饷": 18.0, "官俸": 3.0, "宗禄": 4.07, "赈济": 1.0},
-    }
-    row = db.conn.execute("SELECT fiscal FROM regions WHERE id=?", (region_id,)).fetchone()
-    fiscal = _json.loads(row["fiscal"])
-    fiscal["settle"]["st"] = st
-    fiscal["settle"]["p"] = p
-    db.conn.execute(
-        "UPDATE regions SET fiscal=? WHERE id=?",
-        (_json.dumps(fiscal, ensure_ascii=False), region_id),
-    )
-    db.conn.commit()
-
 
 def _capture_override_decree(game, monkeypatch, text, entries):
     """真实手工拟诏 capture seam（mock LLM 抽取）→ 草案落库 → 结束边界成案 staging。

@@ -11,16 +11,7 @@ from ming_sim.flows import apply_fixed_period_flows
 ARMY = "guanning"
 
 
-def _configure(db) -> None:
-    db.conn.execute("UPDATE armies SET manpower=0")
-    db.conn.execute(
-        """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
-           manpower=10000, salary_rate=1, province_pay_share=0, central_pay_share=1
-           WHERE id=?""",
-        (ARMY,),
-    )
-    db.conn.commit()
-
+from tests.test_mutiny_progression_316 import _configure
 
 def _set_arrears(db, arrears: float) -> None:
     central = arrears  # active hub source-split seed

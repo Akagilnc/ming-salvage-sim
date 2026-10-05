@@ -73,25 +73,6 @@ _TIER_IDS = [
 ]
 
 
-def _row(
-    *,
-    is_mutinied: int = 0,
-    loyalty: int = 70,
-    mutiny_probation: int = 0,
-    morale: int = 73,
-    arrears: float = 0.0,
-    **extra,
-):
-    base = {
-        "is_mutinied": is_mutinied,
-        "loyalty": loyalty,
-        "mutiny_probation": mutiny_probation,
-        "morale": morale,
-        "arrears": arrears,
-    }
-    base.update(extra)
-    return base
-
 
 @pytest.mark.parametrize(
     "is_mutinied,loyalty,probation,expected",
@@ -151,62 +132,8 @@ def _payload_by_id(db):
     return {p["id"]: p for p in db.army_payload()}
 
 
-def _web_runtime(db, state, content):
-    """轻壳 WebGame：走真实 state_payload / map_nodes（session 属性代理 db/state）。"""
-    runtime = object.__new__(web_app.WebGame)
-    runtime.session = SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        pending_count=lambda: 0,
-        pending_decisions=lambda: [],
-        victory=lambda: {"status": "ongoing", "summary": ""},
-        previous_summary="",
-        last_decree="",
-        last_report="",
-    )
-    runtime.directive_rows = lambda: []
-    runtime.issue_payloads = lambda: []
-    runtime.legacies_payload = lambda: []
-    runtime.closed_this_turn_payloads = lambda: []
-    runtime.ending_payload = lambda: None
-    runtime.budget_payload = lambda: {}
-    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
-    runtime.character_power_id = lambda c: "ming"
-    runtime._month_open_snapshot = lambda: None
-    runtime._display_metrics = lambda: dict(state.metrics)
-    # 真实 map_nodes（army_payload 片段挂到节点）
-    runtime.map_nodes = lambda: web_app.WebGame.map_nodes(runtime)
-    runtime._theater_label = lambda tid: web_app.WebGame._theater_label(runtime, tid)
-    return runtime
 
 
-def _find_army_in_map_nodes(nodes, army_id: str = ARMY):
-    for node in nodes:
-        for army in node.get("armies") or []:
-            if army.get("id") == army_id:
-                return army
-    raise AssertionError(f"map_nodes 未挂载军队 {army_id}")
-
-
-def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
-    assert _SIT_KEYS <= set(card.keys()), f"{label} 缺 situation 三键: {sorted(card)}"
-    assert _RAW_KEYS.isdisjoint(card.keys()), f"{label} 泄漏 raw 轴: {sorted(_RAW_KEYS & set(card.keys()))}"
-    assert _MUTINY_ORDINAL_KEYS.isdisjoint(card.keys()), (
-        f"{label} 泄漏 mutiny ordinal/五持久列: {sorted(_MUTINY_ORDINAL_KEYS & set(card.keys()))}"
-    )
-    assert card["mutiny_tier"] == sit["mutiny_tier"], f"{label}.mutiny_tier"
-    assert card["morale_text"] == sit["morale_text"], f"{label}.morale_text"
-    assert isinstance(card["mutiny_tier"], str)
-    assert isinstance(card["morale_text"], str)
-    assert isinstance(card["arrears_text"], str)
-
-
-def _assert_chain_embeds_situation(text: str, sit: dict, label: str) -> None:
-    assert sit["mutiny_tier"] in text, f"{label} 缺 mutiny_tier={sit['mutiny_tier']!r}\n{text}"
-    assert sit["morale_text"] in text, f"{label} 缺 morale_text={sit['morale_text']!r}\n{text}"
-    for token in _PERSISTENT_COL_TOKENS:
-        assert token not in text, f"{label} 泄漏五持久列名 {token!r}\n{text}"
 
 
 

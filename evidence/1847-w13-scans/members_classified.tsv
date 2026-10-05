@@ -1,21 +1,85 @@
 klass	kind	file	loc	symbol	disposition	keep_or_fix_basis
-旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	(pre)	fiscal_engine/_FISCAL_ENGINE_*/_mark_substrate_hub/__fiscal_engine	FIX_REMOVE	无标默认 legacy 的旧档财政选择器（w13 已删；本轮复扫 0）
-旧兼容及退役残余闭包	legacy_exec_branch	ming_sim/flows.py	(pre)	calc_province_fiscal+_helpers	FIX_REMOVE	仅服务旧预算分支（w13 已删；复扫 0）
-旧兼容及退役残余闭包	parallel_gate	ming_sim/flows.py,db.py,issues.py,displaced_population.py,pay_order.py	(pre)	is_substrate_hub_fiscal_engine_enabled 门	FIX_UNWRAP	卸门恒走 hub（w13；复扫 0）
-旧兼容及退役残余闭包	identity_wrapper	ming_sim/issues.py	(pre)	_content_population_effect_for_save	FIX_INLINE_DELETE	退役后恒等包装（w13；复扫 0）
-旧兼容及退役残余闭包	dedicated_legacy_test	tests/test_fiscal_substrate_bridge.py等	(pre)	dual-track/_disable_*/legacy reject	FIX_REMOVE_TEST	专属旧引擎案（w13；复扫 0）
-旧兼容及退役残余闭包	selector_or_marker	ming_sim/db.py	_ARMY_PAY_SOURCE_CUTOVER_KEY/is_/mark_	军饷分源 cutover 选择器	FIX_REMOVE	无标→False=旧档军饷流；与财政选择器同形旧档分流，不得以「本轮只修财政」收窄
-旧兼容及退役残余闭包	parallel_gate	ming_sim/db.py,flows.py	多处 is_army_pay_source_cutover_enabled	cutover-off 执行分支/shadow 隔离	FIX_UNWRAP	恒走现役分源脊；删 cutover-off owner 旁路与 shadow continue
-旧兼容及退役残余闭包	marker_rw	tests/test_mutiny_*/test_player_army_*/test_effect_origin_558.py	__army_pay_source_cutover 写入/parametrize(0,1)	夹具双态与写标	FIX_DROP_MARKER	删选择器后夹具不再写标；矩阵塌成单路径
-旧兼容及退役残余闭包	active_ledger_seed	ming_sim/db.py	_initialize_army_pay_source_spine	新档军饷脊 seed	KEEP_ACTIVE_LEDGER	现役新档 spine 初始化（非无标选择器）；保留接续
-旧兼容及退役残余闭包	active_ledger	ming_sim/flows.py,db.py	substrate hub 预算/入库/分源军饷	现役账本	KEEP_ACTIVE_LEDGER	现役 hub/分源账本与新档接续
-旧兼容及退役残余闭包	empire_modifiers	ming_sim/*/legacy_modifiers	帝国修正	现役内容修正	KEEP_EMPIRE_MODIFIERS	判词 conflicts：非仅凭名字可删的旧档兼容
-旧兼容及退役残余闭包	governance	docs/adr/0021-*.md	旧档例外条文	ADR	KEEP_ADR_UNTOUCHED	不改治理文件
-旧兼容及退役残余闭包	dedicated_legacy_test	tests/test_effect_origin_558.py	test_legacy_economy_ledger_origin_backfill_*	旧档 DROP 列+重开回填	FIX_REMOVE_TEST	ensure_column 旧档升版已退役；专属旧档迁移案随删
-旧兼容及退役残余闭包	identity_wrapper_candidate	tests/test_settlement_write_guard_393.py	105	directive_payload return row	KEEP_TEST_DOUBLE	测试替身 API 透传，非退役换算空壳；有调用职责
-重复或闲置测试流程	idle_duplicate_of_used	tests/test_audience_travel_gating_670.py	(pre)	_run_exclusive	FIX_DELETE	与 write_queue 同形闲置（w13；复扫 0）
-重复或闲置测试流程	idle_flow_helper	tests/test_junxin_monthly_tick_314.py等	(pre)	_run_months/_ledger_count/_pop	FIX_DELETE	闲置副本（w13；复扫 0）
-重复或闲置测试流程	idle_duplicate_of_used	tests/test_qa_c2_phase_settlement_mask_1374.py	27	_null_cm	FIX_DELETE	AST 同形于 month_open_snapshot 已用实现且本文件无调用
-重复或闲置测试流程	used_real_entry	tests/test_session_write_queue_1353.py	25/352	_run_exclusive	KEEP_USED	真实队列入口行为案
-重复或闲置测试流程	used_real_entry	tests/test_month_open_snapshot_1234.py	62	_null_cm	KEEP_USED	被本文件 monkeypatch 真实入口使用
-重复或闲置测试流程	idle_unused_helper	tests/*	enum_post 47 条机械命中	无引用 helper	KEEP_NOT_DUPLICATE_FLOW	语义审查：非「与已用流程 AST 同形的闲置副本」；本轮只删同形闲置，不按无引用数清扫 fixture/替身
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_presence_500.py	178	_session_double	FIX_DELETE	逐读：造 SimpleNamespace 会话替身；同文件无 Load、无 ImportFrom 消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_presence_500.py	193	_tool_registry	FIX_DELETE	逐读：造工具注册替身；同文件无调用、跨文件无导入
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_restore_505.py	861	_657_active_minister	FIX_DELETE	逐读：挑在朝大臣；定义后零引用
+重复或闲置测试流程	idle_unused_helper	tests/test_adr0015_per_item_rejection.py	7	_reports	FIX_DELETE	逐读：读 rejection_reports；同文件无调用；mechanical_tail 自有同名闭包非本定义
+重复或闲置测试流程	idle_unused_helper	tests/test_pay_order_override_653.py	908	_pin_shortfall_board	FIX_DELETE	逐读：钉短板 JSON；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_translation_1838.py	203	_drain_scene_owner	FIX_DELETE	逐读：排空 scene owner；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	171	_install_canned_minister	FIX_DELETE	逐读：安装罐装大臣；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	181	_month_ord_of	FIX_DELETE	逐读：月序换算；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	305	_play_one_month	FIX_DELETE	逐读：打一月流程；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	465	_setup_open_night_participant	FIX_DELETE	逐读：开夜参与人；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	499	_assert_court_break_closed	FIX_DELETE	逐读：断言退朝；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	281	_resolve_decisions_via_stream	FIX_DELETE	逐读：亲裁 SSE；仅被同文件闲置链使用→随删
+重复或闲置测试流程	idle_unused_helper	tests/test_month_loop_tracer_1468.py	212	_choices_from_decisions	FIX_DELETE	逐读：从 decisions 抽 choices；仅服务已删 resolve helper→随删
+重复或闲置测试流程	idle_unused_helper	tests/test_decree_dossiers_571.py	1891	_complete_session	FIX_DELETE	逐读：拼 GameSession；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_fiscal_levy_effect.py	65	_settled_land_by_region	FIX_DELETE	逐读：按区汇总田亩；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_background.py	162	_assert_next_accepted	FIX_DELETE	逐读：断言 SSE 下一包；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_audience_background.py	153	_wait_for_pending_writes_to_drain	FIX_DELETE	逐读：等写队列 idle；同文件无调用、跨文件无导入（highlight 旧 _drain 已先删）
+重复或闲置测试流程	idle_unused_helper	tests/test_economy_section_rejections.py	26	_guoku	FIX_DELETE	逐读：读国库余额；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_secret_order_monthly_progress_566.py	45	_canned_monthly_settlement	FIX_DELETE	逐读：罐装月末；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	76	_row	FIX_DELETE	逐读：军行 dict；零消费者（commitment_display 等同名自有定义）
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	154	_web_runtime	FIX_DELETE	逐读：Web 轻壳；零消费者（issue_decree_token 自有定义）
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	184	_find_army_in_map_nodes	FIX_DELETE	逐读：地图找军；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	192	_assert_structured_situation	FIX_DELETE	逐读：局势键断言；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_player_army_projection_321.py	205	_assert_chain_embeds_situation	FIX_DELETE	逐读：链嵌局势断言；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_issue_entities.py	22	_army_count	FIX_DELETE	逐读：军队计数；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_promulgation_seam_560.py	30	_stage_policy_dossier	FIX_DELETE	逐读：暂存政策案；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_execution_tenure_613.py	92	_clear_character_offices	FIX_DELETE	逐读：清官职行；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_actual_residence_659.py	26	_pin_split_arrears	FIX_DELETE	逐读：钉分源欠饷；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_actual_residence_659.py	41	_executing_dossier	FIX_DELETE	逐读：造执行中案；零消费者（credit_events 等同名自有定义）
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_actual_residence_659.py	70	_simulator_army_dicts	FIX_DELETE	逐读：解析模拟军列表；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_structured_decree_contract_1624.py	78	_month_end_ctx	FIX_DELETE	逐读：月末上下文 dict；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_structured_decree_contract_1624.py	120	_army_none_legal_item	FIX_DELETE	逐读：非法 army+none 样本；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_structured_decree_contract_1624.py	241	_executing_counts	FIX_DELETE	逐读：执行计数；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_structured_decree_contract_1624.py	79	_army_single_bad_item	FIX_DELETE	逐读：非法 army+single 样本；仅被已删 _army_none_legal_item 调用→随删
+重复或闲置测试流程	idle_unused_helper	tests/test_qa_h1_seed_data.py	32	_bajiu_names	FIX_DELETE	逐读：八旗名集；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_third_strike_318.py	20	_simulator_army_dicts	FIX_DELETE	逐读：与 659 同形闲置副本；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_mutiny_third_strike_318.py	28	_find_simulator_army	FIX_DELETE	逐读：找模拟军；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_transit_countdown_668.py	246	_assert_ledger_match	FIX_DELETE	逐读：账本比对断言；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_refugee_loop_652.py	63	_reflux	FIX_DELETE	逐读：过滤回流行；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_junxin_monthly_tick_314.py	32	_setup_army	FIX_DELETE	逐读：钉军行；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_army_card_status_1501.py	113	_web_runtime	FIX_DELETE	逐读：Web 轻壳闲置副本；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_cli_play_turn.py	29	_noop_atomic	FIX_DELETE	逐读：空 atomic CM；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_centrifuge_ledger_690.py	75	_set_identity	FIX_DELETE	逐读：写 identity；仅注释提及、无调用
+重复或闲置测试流程	idle_unused_helper	tests/test_enter_settlement_period_1235.py	52	_fake_settlement_llm	FIX_DELETE	逐读：假结算 LLM；零消费者（web_audience_night 自有定义并被其调用）
+重复或闲置测试流程	idle_unused_helper	tests/test_enter_settlement_period_1235.py	120	_terminal_sse	FIX_DELETE	逐读：解析终态 SSE；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_highlight_judge_544.py	187	_restore_highlight_seams	FIX_DELETE	逐读：恢复高亮缝；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_highlight_judge_544.py	200	_drain	FIX_DELETE	逐读：转调 wait drain；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_supervision_625.py	111	_insert_staged	FIX_DELETE	逐读：插入 staged；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_relation_capture_633.py	496	_module_of	FIX_DELETE	逐读：拆 tag 模块名；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_pre_settle_transaction.py	215	_drive_resolve_directives	FIX_DELETE	逐读：驱动 resolve_directives；零消费者
+重复或闲置测试流程	idle_unused_helper	tests/test_pihong_dossier_1490.py	76	_658_session	FIX_DELETE	逐读：SimpleNamespace 会话；零消费者
+重复或闲置测试流程	called_duplicate_flow	tests/test_army_maintenance_retire_173.py+_section4	_pay_source	FIX_REUSE_IMPORT	AST 同形已用；保留 tests.test_army_firearms._pay_source，他处 import 复用
+重复或闲置测试流程	called_duplicate_flow	tests/test_audience_translation_1838.py	_active_chat_turn	FIX_REUSE_IMPORT	AST 同形；保留 test_audience_translate_1837，1838 import
+重复或闲置测试流程	called_duplicate_flow	tests/test_faction_brew_637.py	_minister	FIX_REUSE_IMPORT	AST 同形；保留 test_authority_ledger_611，faction import
+重复或闲置测试流程	called_duplicate_flow	tests/test_enter_settlement+web_audience	_client+_active_minister	FIX_REUSE_IMPORT	AST 同形；保留 test_court_break_player_lock_1727，他处 import（不断开 court→relation 环）
+重复或闲置测试流程	called_duplicate_flow	tests/test_settlement_write_guard_393.py	_invoke	FIX_REUSE_IMPORT	AST 同形；保留 test_court_layout_1290
+重复或闲置测试流程	called_duplicate_flow	tests/test_decree_commitment_settlement_229.py	_promulgated_commitment_origin	FIX_REUSE_IMPORT	AST 同形；保留 test_decree_commitment_creation_136
+重复或闲置测试流程	called_duplicate_flow	tests/test_execution_joint_liability_565.py	_cost_events	FIX_REUSE_IMPORT	AST 同形；保留 test_due_review_621（dossier_test_helpers 另有非同形出口）
+重复或闲置测试流程	called_duplicate_flow	tests/test_qa_c2_*	_click_before	FIX_REUSE_IMPORT	AST 同形；保留 test_enter_settlement_period_1235
+重复或闲置测试流程	called_duplicate_flow	tests/test_new_issues_section_rejections.py	_hist_event	FIX_REUSE_IMPORT	AST 同形；保留 test_event_chain_cascade
+重复或闲置测试流程	called_duplicate_flow	tests/test_faction_brew+relation_*	_add_edge	FIX_REUSE_IMPORT	AST 同形；保留 test_relation_brew_636（faction 本已 import 该模块，避免环）
+重复或闲置测试流程	called_duplicate_flow	tests/test_supervision_625.py	_table_cols	FIX_REUSE_IMPORT	AST 同形；保留 test_faction_denunciation_627
+重复或闲置测试流程	called_duplicate_flow	tests/test_secret_*	_actor	FIX_REUSE_IMPORT	AST 同形；保留 test_grant_reconciliation_567
+重复或闲置测试流程	called_duplicate_flow	tests/test_mutiny_third_strike_318.py	_configure	FIX_REUSE_IMPORT	AST 同形；保留 test_mutiny_noop_whitelist_319（ARMY 同值 guanning）
+重复或闲置测试流程	called_duplicate_flow	tests/test_mutiny_redemption_317.py	_configure	FIX_REUSE_IMPORT	AST 同形；保留 test_mutiny_progression_316
+重复或闲置测试流程	called_duplicate_flow	tests/test_refugee+surcharge	_pop	FIX_REUSE_IMPORT	AST 同形；保留 test_population_transfers_649
+重复或闲置测试流程	called_duplicate_flow	tests/test_recommendation_edges_635.py	_pick_recommender	FIX_REUSE_IMPORT	AST 同形；保留 test_recommendation_batch_snapshot_1583
+重复或闲置测试流程	called_duplicate_flow	tests/test_audience_undo_506.py	_active_minister	FIX_REUSE_IMPORT	AST 同形；保留 test_audience_night_498
+重复或闲置测试流程	called_duplicate_flow	tests/test_month_call_recovery_1846.py	_forbid_extractor	FIX_REUSE_IMPORT	AST 同形；保留 test_month_chain_1843（1847 已同入口）
+重复或闲置测试流程	rescan	tests/**/*.py	enum_post_w14	idle+called_dup	CLEAR	复扫 B_hits=0（idle_unused_helper=0, called_duplicate_flow=0）
+旧兼容及退役残余闭包	compat_alias	ming_sim/action_materialize.py	635	IncompleteXiexangPayloadError.missing_fields	FIX_REMOVE_ALIAS	注释自称 compatibility alias；全仓无 missing_fields 读者；只留 field_failures/failed_fields
+旧兼容及退役残余闭包	dedicated_old_save_test	tests/test_bandit_power_model_190.py	36	test_old_save_schema_init_backfills_bandit_power_split	FIX_REMOVE_TEST	锁已退役的人物 power_id/leader 旧档改写；现 _backfill 仅 INSERT OR IGNORE；案已红
+旧兼容及退役残余闭包	content_sync_test	tests/test_bandit_power_model_190.py	(renamed)	test_bandit_power_content_sync_*	KEEP_ACTIVE_CONTENT_SYNC	保留内容名册同步行为案（list aliases / 不改写人物归属）；非旧档改写
+旧兼容及退役残余闭包	content_sync	ming_sim/db.py	4496/4521	_migrate_character_identity_seed/_backfill_bandit_power_split	KEEP_ACTIVE_CONTENT_SYNC	职责=INSERT OR IGNORE 内容名册；docstring 已写 Old rewrites retired；init_schema 现役共享 seed（非无标选引擎）
+旧兼容及退役残余闭包	identity_comment	ming_sim/models.py	745	monthly_amount	KEEP_ACTIVE_CLAMP	非恒等：max(0,int)；db 盘面展示多处调用；去掉「兼容旧调用点」措辞
+旧兼容及退役残余闭包	unmarked_default_read	ming_sim/appointment_tenure.py	44	normalize_appointment_tenure	KEEP_ACTIVE_READ_DEFAULT	缺/非法任别→真除；supervision/command_power_rank 现役读端；非旧档选择器。写端 appointment_tenure_from 仍严校验
+旧兼容及退役残余闭包	empire_opening	ming_sim/issues.py	8835	sync_opening_legacies	KEEP_EMPIRE_MODIFIERS	判词 conflicts：帝国修正非仅凭名字可删；新档全补/缺行补齐/达标清残是现役开局校准
+旧兼容及退役残余闭包	transport_heal	ming_sim/cli_backend.py	1730	_backfill_healed_participant_refs	KEEP_ACTIVE_TRANSPORT	会话组合路径参与人回填；现役 transport 愈合，非存档 schema 升版
+旧兼容及退役残余闭包	api_optional_token	web_app.py	670/5638/5645	expected_turn Optional None-skip	KEEP_ACTIVE_API	可选令牌；现役测试与部分入口可省略。非无标选旧引擎。生产 UI 常带 turn
+旧兼容及退役残余闭包	parallel_api	web_app.py	5663	POST /api/decree/issue 非流式	KEEP_ACTIVE_HTTP_ENTRY	标注「保留兼容」但 test_error_pack/chat_stream_failpaths/enter_settlement/tracer 仍作同步 JSON 真入口；stream 为 UI 主路。未另造机制；迁测删口属更大切片
+旧兼容及退役残余闭包	identity_wrapper	tests/test_settlement_write_guard_393.py	105	directive_payload return row	KEEP_TEST_DOUBLE	测试替身 API 透传；有调用职责
+旧兼容及退役残余闭包	governance_excluded	docs/adr/**	scan SKIP_PARTS	ADR/史料	KEEP_EXCLUDED	全仓可执行枚举故意排除 docs/archive/evidence；不改治理文
+旧兼容及退役残余闭包	comment_retired_note	ming_sim/db.py等	多处「旧档…已清/已退役」注释	KEEP_COMMENT	机械命中为已退役说明句，非活选择器；职责复查无执行分支
+旧兼容及退役残余闭包	rescan_functional	enum_post_w14	财政选择器/军饷 cutover/calc_province_fiscal/identity 生产包装	CLEAR_PRIOR	功能选择器命中 0；余机械多为注释/现役 KEEP 项

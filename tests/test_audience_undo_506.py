@@ -23,19 +23,7 @@ from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
 
 
-def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
-    skip = exclude or set()
-    for name, ch in content.characters.items():
-        if name in skip:
-            continue
-        if getattr(ch, "power_id", "ming") != "ming":
-            continue
-        if getattr(ch, "office_type", "") == "后宫":
-            continue
-        if db.get_character_status(name)[0] == "active":
-            return name
-    raise AssertionError("no active ming minister")
-
+from tests.test_audience_night_498 import _active_minister
 
 def _run_round(
     db: GameDB,

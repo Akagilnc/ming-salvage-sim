@@ -23,10 +23,6 @@ ECO_REJ = "economy_moves_rejections"
 _rejection_rows = partial(rejection_rows, columns="section, reason, category")
 
 
-def _guoku(db):
-    return db.conn.execute(
-        "SELECT COALESCE(SUM(delta),0) FROM economy_ledger WHERE account='国库'").fetchone()[0]
-
 
 def test_top_level_bad_account_rejected_good_lands(game):
     """顶层 economy_moves 账户非法 → invalid_enum 逐项拒收达 rejection_reports（applier 拒收），同信封合法项照落。"""

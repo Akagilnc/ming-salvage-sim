@@ -21,9 +21,7 @@ from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
 
 
-def _click_before(state) -> dict[str, int]:
-    return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
-
+from tests.test_enter_settlement_period_1235 import _click_before
 
 def _shell(db, state, content):
     """轻壳 WebGame：真 db/state + 真 write_gate。"""

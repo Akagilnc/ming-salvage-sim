@@ -62,13 +62,6 @@ def _emperor_decides(db, state, *event_labels):
         issues.apply_petition_event_outcome(state, db, event_id, label)
 
 
-def _settled_land_by_region(db):
-    land_by_region = {}
-    for region_id in _settled_region_ids(db):
-        settle = _settle_payload(db, region_id)
-        land_by_region[region_id] = max(0.0, float(settle["st"].get("官民田") or 0.0))
-    return land_by_region
-
 
 def _expected_land_share_levy(settle, national_monthly, total_land):
     land = max(0.0, float(settle["st"].get("官民田") or 0.0))

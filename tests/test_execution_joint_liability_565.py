@@ -36,12 +36,7 @@ def _executing_dossier(db, state, *, roster=None):
     return dossier_id
 
 
-def _cost_events(db, dossier_id, *, identity="连坐"):
-    return [dict(row) for row in db.conn.execute(
-        "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
-        (int(dossier_id), identity),
-    ).fetchall()]
-
+from tests.test_due_review_621 import _cost_events
 
 def _sat_events(db, dossier_id):
     return [

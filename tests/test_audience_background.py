@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import threading
-from tests.wait_utils import wait_until
 import types
 from types import SimpleNamespace
 
@@ -150,24 +149,6 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
     return game
 
 
-def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
-    """等本局唯一写队列进入 idle。"""
-    q = getattr(web_game, "_write_queue", None)
-    if q is not None and hasattr(q, "wait_idle"):
-        q.wait_idle()  # unlimited; CI job final line owns hang
-    else:
-        wait_until(lambda: int(getattr(web_game, "_pending_writes_count", 0) or 0) == 0)
-
-
-def _assert_next_accepted(stream) -> None:
-    accepted = next(stream)
-    assert isinstance(accepted, dict)
-    assert accepted["type"] == "accepted"
-    assert isinstance(accepted["campaign_id"], str)
-    assert isinstance(accepted["night_id"], int)
-    assert accepted["night_id"] > 0
-    assert isinstance(accepted["chat_turn_id"], int)
-    assert accepted["chat_turn_id"] > 0
 
 
 

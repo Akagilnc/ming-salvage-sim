@@ -856,12 +856,3 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
 # ---------------------------------------------------------------------------
 # #657 片3 S11–S15：同库三轮 + CAS + 空冲突
 # ---------------------------------------------------------------------------
-
-
-def _657_active_minister(db, content) -> str:
-    return next(
-        ch.name for ch in content.characters.values()
-        if db.get_character_status(ch.name)[0] == "active"
-        and db.resolve_power_id(ch) == "ming"
-        and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
-    )

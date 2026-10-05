@@ -743,5 +743,5 @@ def reign_period_label(year: int, month: int) -> str:
 
 
 def monthly_amount(amount: int) -> int:
-    # 全盘已按月度：base/maint/tax 都是月值，不再除 3。保留函数仅为兼容旧调用点（恒等）。
+    # 全盘已按月度：base/maint/tax 都是月值；本函数只做非负整钳，供盘面展示读端共用。
     return max(0, int(amount))

@@ -493,9 +493,6 @@ _CANNED = {
 }
 
 
-def _module_of(tag: str) -> str:
-    return tag.split("/", 1)[1]
-
 
 
 

@@ -1,94 +1,99 @@
 #!/usr/bin/env python3
-"""#1847 w13/w13-corr replay scanner — two open classes, full-repo predicates.
+"""#1847 w14 replay scanner — two open classes over VC executable code.
 
-Class A (旧兼容及退役残余闭包): selectors, unmarked-default legacy branches,
-R/W marker ends, parallel gates, post-retire identity wrappers, dedicated
-legacy/cutover-off tests. Not limited to fiscal point-names.
+Class A (旧兼容及退役残余闭包): general predicates for unmarked-default /
+compat / cutover / backfill / migration / identity-wrapper / dedicated tests.
+Not limited to fiscal/population point-names. Roots = all version-controlled
+executable sources (py/ts/tsx/js), excluding governance docs / frozen archive
+evidence / vendored trees.
 
-Class B (重复或闲置测试流程): unused module-level helpers that duplicate a
-used helper elsewhere (AST dump equal), or same-file unused flow helpers that
-are not pytest fixtures / not imported across files.
+Class B (重复或闲置测试流程): every tests/ module-level non-fixture helper;
+flag idle (no same-file load, no ImportFrom consumer) OR AST-identical to a
+used helper elsewhere (called duplicate flow).
 """
 from __future__ import annotations
 
 import ast
 import re
+import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SKIP = {".git", ".venv", "node_modules", "evidence", "__pycache__", "dist", "build"}
+SKIP_PARTS = {
+    ".git",
+    ".venv",
+    "node_modules",
+    "evidence",
+    "__pycache__",
+    "dist",
+    "build",
+    ".pytest_cache",
+    "archive",
+    "artifacts",
+    "docs",  # ADR/治理与史料不入机械候选；排除项在报告解释
+}
 
-# Full-repo roots (not just ming_sim/tests point names).
-SCAN_ROOTS = ("ming_sim", "tests", "web_app.py", "cli", "scripts")
+# Extensions treated as version-controlled executable sources.
+EXEC_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".mjs"}
 
 
-def iter_py_files():
-    for root_name in SCAN_ROOTS:
-        p = ROOT / root_name
-        if p.is_file() and p.suffix == ".py":
-            yield p
+def iter_exec_files():
+    """Full-repo VC executable enumeration via git ls-files (not a few dirs)."""
+    out = subprocess.check_output(
+        ["git", "-C", str(ROOT), "ls-files", "-z"],
+        text=False,
+    )
+    for raw in out.split(b"\0"):
+        if not raw:
             continue
-        if not p.is_dir():
+        rel = raw.decode("utf-8", errors="replace")
+        p = ROOT / rel
+        if p.suffix not in EXEC_SUFFIXES:
             continue
-        for f in p.rglob("*.py"):
-            if any(part in SKIP for part in f.parts):
-                continue
-            yield f
+        parts = Path(rel).parts
+        if any(part in SKIP_PARTS for part in parts):
+            continue
+        if not p.is_file():
+            continue
+        yield p
 
 
-# --- Class A mechanical candidates (then semantic disposition in members_classified.tsv) ---
+# --- Class A mechanical predicates (general; then semantic disposition in TSV) ---
 A_PATS = [
     (
-        r"def fiscal_engine\b|is_substrate_hub_fiscal_engine_enabled|"
-        r"_FISCAL_ENGINE_|_mark_substrate_hub_fiscal_engine|__fiscal_engine",
-        "fiscal_selector_or_marker",
-    ),
-    (
-        r"def is_army_pay_source_cutover_enabled\b|_mark_army_pay_source_cutover|"
-        r"_ARMY_PAY_SOURCE_CUTOVER_KEY|__army_pay_source_cutover|"
-        r"is_army_pay_source_cutover_enabled\(",
-        "army_pay_cutover_selector_or_gate",
-    ),
-    (r"calc_province_fiscal\s*\(", "legacy_exec_branch"),
-    (
-        r"_content_population_effect_for_save|"
-        r"def \w+\([^)]*\)\s*:\s*\n\s*return \w+\s*$",
-        "identity_wrapper_shape",
-    ),
-    (
-        r"test_legacy_fiscal|_disable_army_pay_source_cutover|"
-        r"fiscal_engine\(\)\s*==\s*['\"]legacy|keeps_legacy_calc|"
-        r"test_legacy_engine|VALUES\s*\(\s*['\"]__army_pay_source_cutover['\"].*0|"
-        r"existing saves stay on legacy",
-        "dedicated_legacy_or_cutover_off",
-    ),
-    (
-        r"scale_content_population_to_save_unit|POPULATION_UNIT_WAN|"
-        r"save_meta.*population_unit|population_unit\s*=\s*['\"]万",
-        "retired_population_unit_compat",
+        r"缺标|无标默认|unmarked|缺省兼容|兼容旧|旧客户端|旧档|旧存档|"
+        r"保留兼容|compatibility alias|compat(?:ibility)? alias|"
+        r"cutover|backfill|_migrate_|migration|migrate_legacy|"
+        r"ensure_column|ADD COLUMN|DROP COLUMN|"
+        r"existing saves stay on legacy|legacy=0|fiscal_engine|"
+        r"__fiscal_engine|__army_pay_source_cutover|population_unit|"
+        r"is_army_pay_source_cutover|is_substrate_hub_fiscal_engine|"
+        r"_mark_substrate|_mark_army_pay|_mark_population|"
+        r"test_legacy_|test_old_save|keeps_legacy|dual.track.*legacy",
+        "legacy_compat_or_migrate_marker",
     ),
 ]
 
 
 def scan_class_a():
     members = []
-    # Simple line patterns (skip multiline identity shape — handled via AST below)
-    line_pats = [(p, k) for p, k in A_PATS if "identity_wrapper_shape" not in k]
-    for f in iter_py_files():
+    for f in iter_exec_files():
         rel = str(f.relative_to(ROOT))
         try:
             src = f.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         for i, line in enumerate(src.splitlines(), 1):
-            for pat, kind in line_pats:
-                if re.search(pat, line):
+            for pat, kind in A_PATS:
+                if re.search(pat, line, flags=re.IGNORECASE):
                     members.append(
                         ("旧兼容及退役残余闭包", kind, rel, i, line.strip()[:160])
                     )
                     break
-        # AST: post-retire identity wrappers — function body is solely `return <arg>`
+        if f.suffix != ".py":
+            continue
+        # AST: post-retire identity wrappers — body is solely `return <arg>`
         try:
             tree = ast.parse(src)
         except SyntaxError:
@@ -103,8 +108,8 @@ def scan_class_a():
                 continue
             arg_names = [a.arg for a in node.args.args]
             if node.name.startswith("__") and node.name.endswith("__"):
-                continue  # protocol methods e.g. __enter__ return self
-            if ret.id in arg_names and len(arg_names) >= 1:
+                continue
+            if ret.id in arg_names and arg_names:
                 members.append(
                     (
                         "旧兼容及退役残余闭包",
@@ -139,15 +144,16 @@ def _dump(node: ast.AST) -> str:
     return ast.dump(node, include_attributes=False)
 
 
-def scan_class_b():
-    """Find unused non-fixture helpers; flag AST-identical duplicates of a used helper."""
-    defs = []  # (rel, name, lineno, dump, used_in_file)
-    imports_of = defaultdict(set)  # name -> set of importing files
+def _module_of(rel: str) -> str:
+    return rel[:-3].replace("/", ".")
 
+
+def scan_class_b():
+    """Enumerate all test helpers; idle OR AST-identical-to-used."""
     file_trees = []
-    for f in iter_py_files():
+    for f in iter_exec_files():
         rel = str(f.relative_to(ROOT))
-        if not rel.startswith("tests/"):
+        if not rel.startswith("tests/") or f.suffix != ".py":
             continue
         try:
             src = f.read_text(encoding="utf-8")
@@ -156,17 +162,22 @@ def scan_class_b():
             continue
         file_trees.append((rel, src, tree))
 
-    # Cross-file imports of names from tests.*
+    # ImportFrom consumers: module -> imported names -> importing files
+    imports_to = defaultdict(lambda: defaultdict(set))
     for rel, src, tree in file_trees:
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                if node.module.startswith("tests") or node.module.startswith("."):
-                    for alias in node.names:
-                        imports_of[alias.name].add(rel)
+            if not isinstance(node, ast.ImportFrom) or not node.module:
+                continue
+            mod = node.module
+            if node.level:
+                parts = rel.split("/")[:-1]
+                base = parts[: len(parts) - (node.level - 1)] if node.level else parts
+                mod = ".".join(base + ([node.module] if node.module else []))
+            for alias in node.names:
+                imports_to[mod][alias.name].add(rel)
 
-    members = []
-    used_dumps = defaultdict(list)  # dump -> [(rel, name)] used
-    unused = []  # (rel, name, lineno, dump)
+    used_dumps = defaultdict(list)
+    unused = []
 
     for rel, src, tree in file_trees:
         names_defined = {}
@@ -178,7 +189,6 @@ def scan_class_b():
                     continue
                 names_defined[node.name] = node
 
-        # call/name loads in this file
         called = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
@@ -190,16 +200,17 @@ def scan_class_b():
             elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
                 called.add(node.id)
 
+        mod = _module_of(rel)
         for name, node in names_defined.items():
             dump = _dump(node)
             used_here = name in called
-            imported = bool(imports_of.get(name))
+            imported = bool(imports_to.get(mod, {}).get(name))
             if used_here or imported:
                 used_dumps[dump].append((rel, name, node.lineno))
             else:
                 unused.append((rel, name, node.lineno, dump))
 
-    # Unused that duplicate a used helper elsewhere = real idle duplicate flow
+    members = []
     for rel, name, lineno, dump in unused:
         twin = used_dumps.get(dump) or []
         twin = [(r, n, ln) for r, n, ln in twin if not (r == rel and n == name)]
@@ -215,7 +226,6 @@ def scan_class_b():
                 )
             )
         else:
-            # Same-file unused non-fixture helper with no importers — idle flow candidate
             members.append(
                 (
                     "重复或闲置测试流程",
@@ -223,6 +233,26 @@ def scan_class_b():
                     rel,
                     lineno,
                     name,
+                )
+            )
+
+    # Called duplicates: used helpers whose AST equals another used helper
+    seen_pairs = set()
+    for dump, locs in used_dumps.items():
+        if len(locs) < 2:
+            continue
+        key = tuple(sorted((r, n, ln) for r, n, ln in locs))
+        if key in seen_pairs:
+            continue
+        seen_pairs.add(key)
+        for rel, name, lineno in locs[1:]:
+            members.append(
+                (
+                    "重复或闲置测试流程",
+                    "called_duplicate_flow",
+                    rel,
+                    lineno,
+                    f"{name} IDENTICAL_USED_ALSO_IN {locs[0][0]}:{locs[0][1]}",
                 )
             )
     return members

@@ -75,56 +75,7 @@ def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
         ).fetchone() is not None, f"参与人未建档：{name!r}"
 
 
-def _month_end_ctx() -> dict:
-    return {
-        "active_issues": [],
-        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
-        "army_targets": [
-            {"id": "xuanfu", "name": "宣府"},
-            {"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"},
-        ],
-    }
 
-
-def _army_single_bad_item() -> dict:
-    """复验残留样本：辽东欠饷 option 层 army+single（矩阵非法）。"""
-    return {
-        "title": "辽东欠饷",
-        "context": "九边欠饷数月，饥溃可待。",
-        "options": [
-            {
-                "label": "补发关宁军饷",
-                "hint": "边饷急",
-                "action_type": "grant_allocation",
-                "assignee_name": "",
-                "target_kind": "army",
-                "target_id": "guanning",
-                "locality_scope": "single",
-                "region_id": "",
-                "transaction_category": "",
-                "grant_kind": "army_pay",
-                "amount": 300,
-                "account": "国库",
-                "purpose": "补饷",
-                "participant_roster": [dict(item) for item in _OWNER_ROSTER],
-            },
-            {
-                **_OWNER_OPTION,
-                "label": "缓议加派",
-                "hint": "候报",
-            },
-        ],
-    }
-
-
-def _army_none_legal_item() -> dict:
-    """纠错轮合法：同军目标 + locality_scope=none。"""
-    item = _army_single_bad_item()
-    item["options"][0] = {
-        **item["options"][0],
-        "locality_scope": "none",
-    }
-    return item
 
 
 def test_shared_validate_rejects_region_id_and_category_holes():
@@ -237,19 +188,6 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     assert str(payload.get("execution_surface") or "").strip() == ""
     _assert_drafted_roster_nailed(game.db, matched[0])
 
-
-def _executing_counts(db, *, owner_name: str, region_id: str):
-    """Observe durable executing dossiers, not the retired simulator board."""
-    owner_open = db.conn.execute(
-        "SELECT COUNT(*) FROM decree_dossiers d, json_each(d.participant_roster) r "
-        "WHERE d.status='executing' AND json_extract(r.value, '$.tier')='主办' "
-        "AND json_extract(r.value, '$.character_id')=?", (owner_name,),
-    ).fetchone()[0]
-    province_open = db.conn.execute(
-        "SELECT COUNT(*) FROM decree_dossiers "
-        "WHERE status='executing' AND region_id=?", (region_id,),
-    ).fetchone()[0]
-    return owner_open, province_open
 
 
 

@@ -11,10 +11,7 @@ import pytest
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
-def _pick_recommender(content):
-    return next(c for c in content.characters.values()
-                if c.office_type not in ("后宫", "宗藩"))
-
+from tests.test_recommendation_batch_snapshot_1583 import _pick_recommender
 
 def _stage_recommendation(db, state, recommender_name, row, office, reason):
     return db.stage_pending_action(

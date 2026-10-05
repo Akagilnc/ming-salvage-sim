@@ -72,12 +72,6 @@ def _faction_of(db, name: str) -> str:
     return str(row["faction"])
 
 
-def _set_identity(db, name: str, identity: int) -> None:
-    db.conn.execute(
-        "UPDATE characters SET identity=? WHERE name=?", (int(identity), name)
-    )
-    db.conn.commit()
-
 
 def _direct_rows(db, *, idem_base: str | None = None) -> list[sqlite3.Row]:
     if idem_base is None:

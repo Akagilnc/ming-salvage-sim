@@ -25,10 +25,3 @@ def test_injected_promulgation_batch_cannot_silently_omit_a_dossier(read_game):
         validate_promulgation_verdicts(
             [{"dossier_id": 7, "decision": "promulgated"}], dossiers, db,
         )
-
-
-def _stage_policy_dossier(db, state):
-    return db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id=f"river-{state.turn}",
-    )

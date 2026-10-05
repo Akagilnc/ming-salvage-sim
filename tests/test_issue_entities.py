@@ -19,9 +19,6 @@ def _decree_origin(db, state) -> str:
     db.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
-def _army_count(db) -> int:
-    return db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
-
 
 def _pay_source() -> dict[str, object]:
     return {

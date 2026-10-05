@@ -144,24 +144,13 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         pass
 
 
-def _active_minister(game) -> str:
-    for name, ch in game.content.characters.items():
-        if getattr(ch, "power_id", "ming") != "ming":
-            continue
-        if getattr(ch, "office_type", "") == "后宫":
-            continue
-        if game.db.get_character_status(name)[0] == "active":
-            return name
-    raise AssertionError("no active ming minister")
-
+from tests.test_court_break_player_lock_1727 import _active_minister
 
 def _count(db, table: str) -> int:
     return int(db.conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"])
 
 
-def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=web_app.app), base_url="http://t")
-
+from tests.test_court_break_player_lock_1727 import _client
 
 def test_persisted_reply_before_translation_admission_has_no_retry_button(web_game):
     """A complete reply is not an exhausted translation until the job actually fails."""

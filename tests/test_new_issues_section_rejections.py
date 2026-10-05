@@ -92,23 +92,7 @@ def _ensure_event_candidate(db, state, eid):
         pytest.skip(f"{eid} 当前盘面不在 event_pool 候选集，无法覆盖 insert 异常传播路径")
 
 
-def _hist_event(eid, gate=None):
-    return Event(
-        id=eid,
-        title=f"测试事件 {eid}",
-        kind="测试",
-        summary="x",
-        urgency=50,
-        severity=50,
-        credibility=50,
-        interests=[],
-        audiences=[],
-        trigger_year=1,
-        trigger_month=1,
-        open_window=True,
-        trigger_gate=gate or {},
-    )
-
+from tests.test_event_chain_cascade import _hist_event
 
 def test_temp_events_replaces_same_id_and_restores_original(content):
     eid = "__temp_events_replace_existing__"

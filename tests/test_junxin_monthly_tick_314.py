@@ -29,19 +29,6 @@ def _silence_other_armies(db, keep=(KEG, ELITE)):
         f"UPDATE armies SET manpower=0 WHERE id NOT IN ({marks})", keep)
 
 
-def _setup_army(db, aid, *, loyalty=50, arrears=0.0, manpower=10000,
-                salary_rate=1.0, is_tusi=0, owner_power="ming"):
-    """needed = ceil(10000×1.0/10000) = 1 万两/月。"""
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET owner_power=?, is_tusi=?, self_funded_pay=0,
-            manpower=?, salary_rate=?, loyalty=?, arrears=?, morale=50
-        WHERE id=?
-        """,
-        (owner_power, is_tusi, manpower, salary_rate, loyalty, arrears, aid),
-    )
-
 
 def _loyalty_of(db, aid):
     return int(db.conn.execute(

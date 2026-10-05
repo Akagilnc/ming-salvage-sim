@@ -6,11 +6,7 @@ import pytest
 from tests.dossier_test_helpers import create_test_secret_order
 
 
-def _actor(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
-
+from tests.test_grant_reconciliation_567 import _actor
 
 def _order(db, state, title="护行辽饷", tags=None, deadline=4):
     order_id = create_test_secret_order(db,
@@ -41,19 +37,6 @@ def _production_session(db, state, content):
     session.auto_save = lambda *args, **kwargs: None
     return session
 
-
-def _canned_monthly_settlement(monkeypatch, extractor_calls):
-    """Keep the production settlement pipeline; replace only external LLM seams."""
-    from tests.month_chain_helpers import empty_rescript_response
-    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
-    from tests.settlement_seam_helpers import canned_full_settlement
-
-    def _track_world(*_a, **_k):
-        extractor_calls.append("world")
-        return "本月公开邸报"
-
-    canned_full_settlement(monkeypatch, narrative="本月公开邸报")
-    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _track_world)
 
 
 def _record_monthly_report(db, state, progress):

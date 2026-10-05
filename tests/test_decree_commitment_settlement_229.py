@@ -11,14 +11,7 @@ from ming_sim.issues import (
 from ming_sim.situation_drift import apply_situation_monthly_drift
 
 
-def _promulgated_commitment_origin(db, state, token: str) -> str:
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text=f"测试承诺：{token}",
-        target_kind="issue", target_id=token, payload={"token": token},
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    return f"dossier:{dossier_id}"
-
+from tests.test_decree_commitment_creation_136 import _promulgated_commitment_origin
 
 def _army_arrears(db, army_id: str) -> int:
     row = db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()

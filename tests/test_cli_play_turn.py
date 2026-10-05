@@ -25,10 +25,6 @@ def _cli_schedule_pending_noop(self, result):
     return None
 
 
-@contextmanager
-def _noop_atomic(_db):
-    yield
-
 
 class _Snap:
     deaths_this_turn = []

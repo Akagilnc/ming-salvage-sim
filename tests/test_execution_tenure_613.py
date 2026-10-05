@@ -88,10 +88,3 @@ def test_td8_same_office_four_tenures_live_assembly_chain(game):
     assert by_tenure['真除']['distortion_weight'] < by_tenure['兼署']['distortion_weight'] < by_tenure['署理']['distortion_weight']
     assert by_tenure['兼署']['command_power_rank'] != by_tenure['真除']['command_power_rank']
     assert by_tenure['兼署']['command_power_rank'] != by_tenure['署理']['command_power_rank']
-
-def _clear_character_offices(db, name):
-    """人物仍在 characters，但 character_offices 无行（缺档合法态）。"""
-    db.conn.execute('DELETE FROM character_offices WHERE character_name=?', (name,))
-    db.conn.commit()
-    assert db.conn.execute('SELECT 1 FROM character_offices WHERE character_name=?', (name,)).fetchone() is None
-    assert db.conn.execute('SELECT 1 FROM characters WHERE name=?', (name,)).fetchone() is not None

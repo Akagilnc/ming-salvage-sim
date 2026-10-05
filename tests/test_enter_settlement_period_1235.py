@@ -49,34 +49,6 @@ class _BoomExtractor:
         raise RuntimeError("抽取持续失败·真失败注入")
 
 
-def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
-    from tests.month_chain_helpers import empty_rescript_response
-    monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
-    monkeypatch.setattr(
-        decree_mod, "llm_promulgation_verdicts",
-        lambda dossiers, _state, **_kwargs: [
-            {"dossier_id": row["id"], "decision": "promulgated"}
-            for row in dossiers
-        ],
-    )
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_world_segment_text",
-        lambda *a, **k: "",
-    )
-    real_run_agent_text = agents_mod.run_agent_text
-
-    def _run_month_chain_text(agent, prompt, tag, **kwargs):
-        if tag == "decree-forecast":
-            return ""
-        if tag == "gazette":
-            return '{"title":"邸报","report":"本月边饷已清。"}'
-        return real_run_agent_text(agent, prompt, tag, **kwargs)
-
-    monkeypatch.setattr(
-        agents_mod, "run_agent_text", _run_month_chain_text,
-    )
-
 
 @pytest.fixture
 def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
@@ -96,34 +68,13 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         pass
 
 
-def _active_minister(game) -> str:
-    for name, ch in game.content.characters.items():
-        if getattr(ch, "power_id", "ming") != "ming":
-            continue
-        if getattr(ch, "office_type", "") == "后宫":
-            continue
-        if game.db.get_character_status(name)[0] == "active":
-            return name
-    raise AssertionError("no active ming minister")
+from tests.test_court_break_player_lock_1727 import _active_minister
 
-
-def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=web_app.app), base_url="http://t",
-    )
-
+from tests.test_court_break_player_lock_1727 import _client
 
 def _click_before(state) -> dict[str, int]:
     return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
 
-
-def _terminal_sse(response: httpx.Response) -> tuple[str, dict]:
-    blocks = [block for block in response.text.split("\n\n") if block.strip()]
-    assert blocks
-    lines = blocks[-1].splitlines()
-    event = next(line[7:] for line in lines if line.startswith("event: "))
-    data = next(line[6:] for line in lines if line.startswith("data: "))
-    return event, json.loads(data)
 
 
 def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事。"):

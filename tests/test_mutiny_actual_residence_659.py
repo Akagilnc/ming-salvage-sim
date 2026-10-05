@@ -23,13 +23,6 @@ LIUMIN_LIAODONG = 0
 LIUMIN_DONGJIANG = 0
 
 
-def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: float) -> None:
-    db.conn.execute(
-        "UPDATE armies SET province_pay_arrears=?, central_pay_arrears=?, arrears=? WHERE id=?",
-        (province, central, province + central, army_id),
-    )
-    db.conn.commit()
-
 
 def _pseudo_event(title: str = "调防") -> Event:
     return Event(
@@ -38,40 +31,6 @@ def _pseudo_event(title: str = "调防") -> Event:
     )
 
 
-def _executing_dossier(db, state, region_id: str) -> int:
-    did = db.create_decree_dossier(
-        state,
-        action_type="assignment",
-        decree_text=f"属地差务@{region_id}",
-        target_kind="issue",
-        target_id=f"errand-{region_id}",
-        payload={
-            "target_kind": "issue",
-            "target_id": f"errand-{region_id}",
-            "locality_scope": "none",
-            "assignee_id": "毕自严",
-            "transaction_category": "清丈",
-            "participant_roster": [
-                {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-            ],
-        },
-        participants=[
-            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-        ],
-    )
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='executing', region_id=? WHERE id=?",
-        (region_id, int(did)),
-    )
-    db.conn.commit()
-    return int(did)
-
-
-def _simulator_army_dicts(payload_armies):
-    if isinstance(payload_armies, dict) and "rows" in payload_armies:
-        cols = payload_armies.get("cols") or payload_armies.get("columns") or []
-        return [dict(zip(cols, row)) for row in payload_armies["rows"]]
-    return list(payload_armies)
 
 
 

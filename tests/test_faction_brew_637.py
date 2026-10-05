@@ -31,6 +31,7 @@ from ming_sim.faction_brew import (
 )
 from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY
 from tests.test_relation_brew_636 import run_month_end_relation_brew
+from tests.test_relation_brew_636 import _add_edge
 from ming_sim.relations import EMPEROR_NODE
 
 
@@ -40,13 +41,6 @@ def _faction_stance(db, faction: str):
         if str(row.get("faction") or "") == faction:
             return row
     return None
-
-def _add_edge(db, state, *, source, target, kind, context, origin):
-    return db.record_relation_edge_event(
-        source=source, target=target, event_kind=kind, context=context,
-        origin=origin, turn=int(state.turn),
-        year=int(state.year), period=int(state.period),
-    )
 
 
 def _dual_brew_fn_factory(calls, *, stance="朝局如常。"):
@@ -381,12 +375,7 @@ def test_zero_writes_to_factions_numeric_columns_across_all_seams(game):
 
 # ------------- #637 codex P2：new_events 必须保留 source/target 结构字段
 
-def _minister(db):
-    return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-        "ORDER BY name LIMIT 1"
-    ).fetchone()["name"])
-
+from tests.test_authority_ledger_611 import _minister
 
 def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):
     """真实 effect-eligible 案卷（同 #611 测试口径）作授权变更来源。"""

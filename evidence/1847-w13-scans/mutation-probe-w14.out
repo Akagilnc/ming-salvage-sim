@@ -1,0 +1,53 @@
+TMP /var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/1847-w13-mut-vmtff6sj
+OLD_BASE 80aea7cd3
+CURRENT_fresh_budget_income ['起运', '盐税', '商税', '建筑产出']
+[13:23:03.980] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠2（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠34/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠7/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠6/官俸欠1/宗禄欠0/民欠1（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠0/宗禄欠1/民欠1（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠16/民欠9（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠83/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠6（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠16/官俸欠1/宗禄欠4/民欠3（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠8（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠16/官俸欠0/宗禄欠8/民欠7（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[13:23:03.980] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+CURRENT_fresh_has_qiyun_budget True has_qiyun_flow True has_legacy_tax_line False
+CURRENT_fresh_gk_delta 38
+CURRENT_army_pay_selector_absent True
+CURRENT_fiscal_engine_absent True
+[13:23:03.990] [fiscal-substrate] beizhili 推进：实征5.4/起运5.4/火耗入截留0.9；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] dongjiang_area 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠43/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] fujian 推进：实征2.2/起运1.8/火耗入截留0.4；末态欠账 军饷欠9/官俸欠2/宗禄欠0/民欠2（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] guangdong 推进：实征2.9/起运2.8/火耗入截留0.5；末态欠账 军饷欠8/官俸欠2/宗禄欠0/民欠2（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] guangxi 推进：实征0.7/起运0.7/火耗入截留0.1；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] guizhou 推进：实征0.1/起运0.0/火耗入截留0.0；末态欠账 军饷欠0/官俸欠1/宗禄欠0/民欠0（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] henan 推进：实征12.9/起运12.9/火耗入截留2.3；末态欠账 军饷欠0/官俸欠1/宗禄欠25/民欠17（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] huguang 推进：实征39.5/起运18.5/火耗入截留5.5；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠22（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] jiangxi 推进：实征18.8/起运7.7/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠13（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] liaodong 推进：实征0.0/起运0.0/火耗入截留0.0；末态欠账 军饷欠86/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] nanzhili 推进：实征29.5/起运14.7/火耗入截留4.1；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠13（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] shaanxi 推进：实征4.0/起运2.2/火耗入截留0.7；末态欠账 军饷欠16/官俸欠2/宗禄欠8/民欠7（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] shandong 推进：实征14.1/起运8.2/火耗入截留2.3；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠15（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] shanxi 推进：实征13.3/起运9.7/火耗入截留2.3；末态欠账 军饷欠16/官俸欠0/宗禄欠16/民欠14（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠2/宗禄欠2/民欠2（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠1/宗禄欠0/民欠0（hub，待入国库）
+[13:23:03.990] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠11（hub，待入国库）
+CURRENT_unmarked_budget_income ['起运', '盐税', '商税', '建筑产出']
+CURRENT_unmarked_has_qiyun_budget True has_qiyun_flow True has_legacy_tax_line False
+MUTATED_selector_unmarked legacy hub_enabled False
+MUTATED_budget_income ['田赋辽饷盐商', '建筑产出']
+MUTATED_legacy_tax_line True MUTATED_has_qiyun False
+MUTATED_army_pay_selector_unmarked_enabled False
+RESTORED_army_pay_selector_absent True
+CURRENT_wrapper_absent True
+MUTATED_wrapper_identity True
+RESTORED_wrapper_absent True
+TMP_CLEANED True
+MUTATION_PROBE_DONE PASS

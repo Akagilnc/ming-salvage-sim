@@ -42,13 +42,7 @@ def _an_army(db):
     return row[0]
 
 
-def _pay_source():
-    return {
-        "pay_source_region": "shaanxi",
-        "province_pay_share": 1.0,
-        "central_pay_share": 0.0,
-    }
-
+from tests.test_army_firearms import _pay_source
 
 # ---- region_delta：查无此地 ----
 

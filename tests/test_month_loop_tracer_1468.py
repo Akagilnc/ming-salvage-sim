@@ -168,20 +168,11 @@ def _pick_active_minister(state: dict) -> str:
     raise AssertionError(f"no active ming minister in state ministers={state.get('ministers')!r}")
 
 
-def _install_canned_minister(game, monkeypatch) -> None:
-    agent = _CannedMinisterAgent()
-    stub_scene_agent(monkeypatch, agent)
-
 
 def _turn_of(state: dict) -> int:
     turn = state.get("turn") or {}
     return int(turn.get("turn") or 0)
 
-
-def _month_ord_of(state: dict) -> int:
-    """跨年安全月序：HTTP turn.year*12 + turn.period（禁只盯 turn 计数）。"""
-    turn = state.get("turn") or {}
-    return int(turn.get("year") or 0) * 12 + int(turn.get("period") or 0)
 
 
 def _get_state(client: TestClient) -> dict:
@@ -217,28 +208,6 @@ def _parse_sse(text: str) -> list[dict]:
             events.append(cur)
     return events
 
-
-def _choices_from_decisions(decisions: list) -> list[dict]:
-    """按契约从 d['options'] 取真实 option → {label, hint?, note?, dossier_*}。"""
-    choices: list[dict] = []
-    for d in decisions:
-        opts = d.get("options") or []
-        assert opts, f"decision missing options: {d!r}"
-        opt0 = opts[0]
-        if isinstance(opt0, dict):
-            choice: dict = {"label": str(opt0.get("label") or "准")}
-            if opt0.get("hint") is not None:
-                choice["hint"] = opt0.get("hint")
-            if opt0.get("note") is not None:
-                choice["note"] = opt0.get("note")
-            if "dossier_id" in opt0:
-                choice["dossier_id"] = opt0.get("dossier_id")
-            if "dossier_decision" in opt0:
-                choice["dossier_decision"] = opt0.get("dossier_decision")
-            choices.append(choice)
-        else:
-            choices.append({"label": str(opt0)})
-    return choices
 
 
 def _post_issue_stream(
@@ -287,97 +256,6 @@ def _post_issue_stream(
     )
 
 
-def _resolve_decisions_via_stream(
-    client: TestClient, decisions: list, *, step: str,
-) -> None:
-    """亲裁续跑：按 {label,hint?} 契约提交，消费 resolve SSE 到 done。"""
-    choices = _choices_from_decisions(decisions)
-    resolve = client.post(
-        "/api/decree/resolve_decisions/stream",
-        json={"choices": choices},
-    )
-    _assert_not_bare_500(resolve, step=step)
-    assert resolve.status_code == 200, f"{step} → {resolve.status_code}: {resolve.text}"
-    assert "event: error" not in resolve.text, f"{step} error SSE: {resolve.text}"
-    assert "event: done" in resolve.text, f"{step} missing done: {resolve.text}"
-
-
-def _play_one_month(
-    client: TestClient,
-    monkeypatch,
-    *,
-    minister: str,
-    month_label: str,
-) -> int:
-    """召对 → 拟旨 → 流式颁诏结算。返回推进后的 turn。"""
-    state = _get_state(client)
-    turn_before = _turn_of(state)
-    assert state["turn"]["phase"] not in (
-        "settling", "awaiting_decision",
-    ), f"{month_label}: unexpected phase before month play: {state['turn']!r}"
-
-    game = web_app.web_game
-    assert game is not None
-
-    chat = client.post(
-        "/api/audience/chat",
-        json={"message": f"边饷如何？本月{month_label}召对。"},
-    )
-    _assert_not_bare_500(chat, step=f"{month_label} chat")
-    assert chat.status_code == 200, (
-        f"{month_label} chat → {chat.status_code}: {chat.text}"
-    )
-    answer = str((chat.json() or {}).get("answer") or "")
-    assert answer, f"{month_label}: empty minister answer"
-
-    # 顺序 tracer 只验证真实入口和结构化月推进结果。
-    _wait_pending_writes(game)
-
-    # #1849：独立手拟新增 Web 口已退役；经现行 capture 核 + session 落草案
-    # （与召对拟旨同一条 turn_directives 写入）。本 tracer 被测的是月推进。
-    from tests.directive_seed_helpers import seed_manual_draft
-
-    draft_id = seed_manual_draft(
-        game.session, f"着户部清核辽饷（{month_label}）。",
-    )
-    assert draft_id > 0, f"{month_label}: seed_manual_draft returned {draft_id}"
-    assert game.db.list_directives(game.state), f"{month_label}: directive list empty after seed"
-
-    _wait_pending_writes(game)
-
-    body = _post_issue_stream(
-        client, expected_turn=turn_before, step=f"{month_label} issue/stream",
-    )
-    # 若 simulator canned 仍吐决策点，最短续跑：空批不得卡死主链。
-    if body.get("awaiting_decision"):
-        decisions = body.get("decisions") or []
-        assert decisions, (
-            f"{month_label}: awaiting_decision with empty decisions: {body!r}"
-        )
-        _resolve_decisions_via_stream(
-            client, decisions, step=f"{month_label} resolve_decisions",
-        )
-    _wait_pending_writes(game)
-    after = _get_state(client)
-    turn_after = _turn_of(after)
-    assert turn_after == turn_before + 1, (
-        f"{month_label}: turn {turn_before} → {turn_after}, expected +1; "
-        f"phase={after.get('turn')!r}"
-    )
-    # 闸/账双向等量：成功过月后 count == len(pending) == 0（漏账或残债均红）。
-    pending = _pending_payload(client)
-    pending_list = pending.get("pending") or []
-    count = int(pending.get("count") or 0)
-    assert count == len(pending_list) == 0, (
-        f"{month_label}: post-month pending not empty/eq: "
-        f"count={count} len={len(pending_list)} body={pending!r}"
-    )
-    # 夜应收：无跨月开夜
-    open_after = an.get_open_night(game.db)
-    assert open_after is None or str(open_after.get("status")) == an.NIGHT_STATUS_CLOSED, (
-        f"{month_label}: night still blocking after month advance: {open_after!r}"
-    )
-    return turn_after
 
 
 # ── 主 tracer：两整月（起点十一月 → 真跨年） ────────────────────────────
@@ -460,61 +338,3 @@ def test_issue_extraction_llm_dead_single_source_not_cta(tracer_client, monkeypa
 
 
 # ── #1716：已开夜场外 COURT_BREAK 不得被 SUMMON_* 短路 ──────────────────
-
-
-def _setup_open_night_participant(tracer_client, *, kind: str):
-    """new_game + 开夜 + 参与者。kind=offsite|temporary。
-
-    返回 (client, game, participant, night_id)。
-    """
-    client = tracer_client
-    new = client.post("/api/menu/new_game")
-    _assert_not_bare_500(new, step="#1716 new_game")
-    assert new.status_code == 200, new.text
-
-    game = web_app.web_game
-    assert game is not None
-    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-
-    if kind == "temporary":
-        participant = "临时行人甲"
-        # 公开门放行 temporary；stream admission 不得因 can_summon reason 阻断收夜。
-        temp = game.session._temporary_character(participant)
-        assert participant in game.session.temporary_characters
-        assert temp.name == participant
-    else:
-        assert kind == "offsite", kind
-        participant = "洪承畴"
-        assert participant in game.content.characters, participant
-        game.db.conn.execute(
-            "UPDATE characters SET location=?, transit_to='' WHERE name=?",
-            ("shaanxi", participant),
-        )
-        game.db.conn.commit()
-
-    return client, game, participant, night_id
-
-
-def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) -> None:
-    """外部可见契约：court_break、夜关闭、参与者无殿上 presence/entrance 账。"""
-    assert body.get("court_action") == "court_break", body
-    assert not body.get("admission"), body
-    _wait_pending_writes(game)
-    assert an.get_open_night(game.db) is None
-    night_row = game.db.conn.execute(
-        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
-    ).fetchone()
-    assert night_row is not None
-    assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED, dict(night_row)
-    # #1716 durable 物理账：场外/临时收夜不得写入该人 entrance/presence。
-    assert remote not in an.persons_present_tonight(game.db, night_id), remote
-    for entry in an.list_ledger(game.db, night_id):
-        names = entry.get("person_names") or []
-        if remote not in names:
-            continue
-        tags = entry.get("tags") or []
-        assert an.TAG_ENTER not in tags, entry
-        assert str(entry.get("presence_effect") or "") not in {
-            an.PRESENCE_ENTER, "enter",
-        }, entry

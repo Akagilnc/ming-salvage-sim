@@ -29,13 +29,6 @@ def _army_by_id(aid: str) -> dict:
     raise AssertionError(f"armies.json 缺 id={aid}")
 
 
-def _bajiu_names(characters: dict) -> set[str]:
-    return {
-        name
-        for name, ch in characters.items()
-        if "罢居" in (ch.office or "")
-    }
-
 
 def _deficit_seed():
     events = load_event_content("seed_events.json")
