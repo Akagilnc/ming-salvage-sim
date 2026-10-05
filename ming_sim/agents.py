@@ -793,31 +793,6 @@ def _rescript_option_instructions(
     ]
 
 
-def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """#656 / ADR 0093 前半：急务分拣＋票拟生成官（phase2 fan-out 第 N+1 路，N=extractor 模块数）。一次性，不持久化。"""
-    del agno_db
-    ctx = _ctx()
-    cfg = _llm_for_role(llm_config, "extractor")
-    return Agent(
-        name="急务票拟官",
-        id="rescript-drafter",
-        model=create_chat_model(
-            cfg,
-            temperature=0.4,
-            top_p=0.9,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=[
-            ctx.game_world_prompt,
-            ctx.rescript_draft_prompt,
-            # 初拟 payload 注入 character_targets（#1804）
-            *_rescript_option_instructions(character_targets_supplied=True),
-        ],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
 
 def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
     """#657 单行改票：输出唯一 shape {"options":[...]}；禁 monthly items[] 契约。"""

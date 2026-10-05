@@ -112,61 +112,6 @@ def _region_id(db) -> str:
     return str(row["id"])
 
 
-def test_pre_push_segment_translation_stages_declaration_without_world_writes(game):
-    from ming_sim.month_translate import stage_month_segment
-
-    db, state, _ = game
-    person = _character_name(db)
-    declaration = {
-        "textual_facts": [{
-            "subject_kind": "character", "subject_id": person, "body": "预推段事实",
-        }],
-    }
-    decree_payload = {
-        "appointment": {
-            "name": person, "office": "兵部尚书", "appoint_action": "任命",
-        },
-    }
-    calls = []
-
-    def translate(request, llm_config):
-        calls.append((request, llm_config))
-        return declaration
-
-    facts_before = db.textual_facts.readable_materials(
-        subject_kind="character", subject_id=person,
-    )
-    ledger_before = db.conn.execute("SELECT COUNT(*) c FROM story_ledger_entries").fetchone()["c"]
-    pending_before = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
-    staged_id = stage_month_segment(
-        db,
-        decree_ref="pre-push:1840",
-        segment="完整预推段",
-        turn=int(state.turn),
-        decree_payload=decree_payload,
-        translate_fn=translate,
-    )
-
-    assert staged_id > 0
-    assert len(calls) == 1
-    assert calls[0][0].decree_payload == decree_payload
-    staged = db.staged_declarations.staged_for("pre-push:1840")
-    assert len(staged) == 1
-    assert staged[0].declaration["textual_facts"] == declaration["textual_facts"]
-    assert db.textual_facts.readable_materials(
-        subject_kind="character", subject_id=person,
-    ) == facts_before
-    assert db.conn.execute("SELECT COUNT(*) c FROM story_ledger_entries").fetchone()["c"] == ledger_before
-    assert db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"] == pending_before
-
-    from ming_sim.declaration_dispatch import discard_staged_declaration
-
-    assert discard_staged_declaration(db, "pre-push:1840") == 1
-    assert db.staged_declarations.staged_for("pre-push:1840") == ()
-    assert db.textual_facts.readable_materials(
-        subject_kind="character", subject_id=person,
-    ) == facts_before
-
 
 def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_order(game):
     from ming_sim.month_translate import dispatch_month_segment
@@ -332,80 +277,6 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     ).fetchone()[0] == displaced_before + farmer_before
 
 
-def test_staged_month_declarations_settle_in_given_order_and_effects_are_idempotent(game):
-    from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
-    from ming_sim.month_translate import stage_month_segment
-
-    db, state, _ = game
-    person, army = _character_name(db), _army_id(db)
-    turn = int(state.turn)
-    army_before = db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (army,),
-    ).fetchone()[0]
-    declarations = iter((
-        {
-            "textual_facts": [{
-                "subject_kind": "character", "subject_id": person, "body": "早旨",
-            }],
-            "effects": {"army_delta": {
-                army: {"origin_ref": "盘面自发", "morale": 1},
-                "missing-army-order": {"morale": 1},
-            }},
-        },
-        {
-            "textual_facts": [{
-                "subject_kind": "character", "subject_id": person, "body": "晚旨",
-            }],
-            "effects": {"army_delta": {
-                army: {"origin_ref": "盘面自发", "morale": 2},
-            }},
-        },
-    ))
-    translate = lambda request, config: next(declarations)
-
-    for ref in ("decree:early", "decree:late"):
-        stage_month_segment(
-            db, decree_ref=ref, segment="推演段", turn=turn,
-            decree_payload={"decree_ref": ref},
-            translate_fn=translate,
-        )
-
-    assert db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (army,),
-    ).fetchone()[0] == army_before
-    results = settle_staged_declarations_in_decree_order(
-        db, state, ["decree:late", "decree:early"],
-    )
-
-    assert list(results) == ["decree:late", "decree:early"]
-    assert [fact.body for fact in db.textual_facts.readable_materials(
-        subject_kind="character", subject_id=person,
-    )] == ["晚旨", "早旨"]
-    assert db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (army,),
-    ).fetchone()[0] == army_before + 3
-    rejected = db.conn.execute(
-        "SELECT section, reason, category FROM rejection_reports WHERE turn=?",
-        (turn,),
-    ).fetchall()
-    assert [(row["section"], row["category"]) for row in rejected] == [
-        ("army_changes", "missing_ref"),
-    ]
-    assert rejected[0]["reason"]
-    early_effects = results["decree:early"].effects.applied[0]["army_changes"]
-    assert early_effects[-1]["rejected"] is True
-    assert early_effects[-1]["reason"]
-
-    assert settle_staged_declarations_in_decree_order(
-        db, state, ["decree:late", "decree:early"],
-    ) == {}
-    assert db.conn.execute(
-        "SELECT morale FROM armies WHERE id=?", (army,),
-    ).fetchone()[0] == army_before + 3
-    assert db.conn.execute(
-        "SELECT COUNT(*) c FROM rejection_reports WHERE turn=?", (turn,),
-    ).fetchone()["c"] == 1
-
 
 def test_world_segment_failure_rolls_back_only_current_segment(game):
     from ming_sim.month_translate import dispatch_month_segment
@@ -475,54 +346,6 @@ def test_world_segment_effects_use_frozen_visible_affairs(game):
     ).fetchone()[0] >= 1
 
 
-def test_unparseable_month_segment_does_not_stage_or_commit(game, monkeypatch):
-    from ming_sim.audience_translate import AudienceTranslateError
-    from ming_sim.month_translate import dispatch_month_segment, stage_month_segment
-
-    db, state, _ = game
-    monkeypatch.setattr("ming_sim.cli_backend._run_json_extractor_for_config",
-                        lambda *args, **kwargs: ("not-json", ""))
-    with pytest.raises(AudienceTranslateError):
-        stage_month_segment(db, decree_ref="bad-json", segment="推演段",
-                            turn=int(state.turn), decree_payload={})
-    assert db.staged_declarations.staged_for("bad-json") == ()
-    with pytest.raises(AudienceTranslateError):
-        dispatch_month_segment(db, state, segment="世界段")
-    assert db.staged_declarations.staged_for("bad-json") == ()
-
-    with pytest.raises(AudienceTranslateError):
-        dispatch_month_segment(db, state, segment="世界段",
-                               translate_fn=lambda request, config: None)
-
-
-def test_staged_month_effects_keep_input_reference_authority(game):
-    from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
-    from ming_sim.month_translate import stage_month_segment
-
-    db, state, _ = game
-    visible = db.affairs.open(name="预推可见", origin="旨意", year=state.year,
-                              period=state.period, turn=state.turn)
-    future_affair_id = visible.id + 1
-    before = state.metrics["国库"]
-    stage_month_segment(
-        db, decree_ref="frozen-refs", segment="预推段", turn=int(state.turn),
-        decree_payload={}, translate_fn=lambda request, config: {"effects": {"economy_moves": [
-            {"origin_ref": f"affair:{visible.id}", "account": "国库", "delta": -1,
-             "category": "过月支出", "reason": "可见事务"},
-            {"origin_ref": f"affair:{future_affair_id}", "account": "国库", "delta": -1,
-             "category": "过月支出", "reason": "预推后新开事务"},
-        ]}},
-    )
-    assert state.metrics["国库"] == before
-    hidden = db.affairs.open(name="暂存后新开", origin="世界段", year=state.year,
-                             period=state.period, turn=state.turn)
-    assert hidden.id == future_affair_id
-    result = settle_staged_declarations_in_decree_order(db, state, ["frozen-refs"])["frozen-refs"]
-    assert state.metrics["国库"] == before - 1
-    rejections = result.effects.applied[0]["economy_moves_rejections"]
-    assert len(rejections) == 1
-    assert rejections[0]["rejected"] is True
-    assert rejections[0]["item"]["origin_ref"] == f"affair:{hidden.id}"
 
 
 def test_world_segment_repeated_entity_effects_apply_in_order(game):

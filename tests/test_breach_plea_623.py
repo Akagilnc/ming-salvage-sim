@@ -732,61 +732,6 @@ def test_persist_leaves_execution_verdict_to_model(game):
     ).fetchone()["status"] == "dropped"
 
 
-def test_model_execution_verdict_lands_after_persist(game):
-    """撤令当月：执行格判官的判决经**真实转译→分派链**落地结案（不被 0056 抢先关案拒收）。
-
-    走 ``stage_month_segment`` → ``settle_staged_declarations_in_decree_order``
-    ——与逐旨预推同一入口，声明不是手工塞进 apply_score_extraction 的。
-    """
-    from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
-    from ming_sim.month_translate import stage_month_segment
-
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    did, holder = _executing_policy_dossier(db, state, token="verdict-after")
-    origin = f"dossier:{did}"
-    db.record_issue_economy_move(
-        state, "国库", -10, "投入", "半途投入", origin_ref=origin, commit=True,
-    )
-    db.record_dossier_progress(did, state.turn, "在办", "过半", commit=True)
-    cid, _ = _insert_commitment(
-        db, state, title="模型判决之诺", origin_ref=origin,
-        bar_value=45, end_turn=state.turn + 50,
-        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
-    )
-    todo_id = write_breach_plea_todo(
-        db, state, commitment_ref=cid,
-        breach_kind=BREACH_KIND_POLICY_REVERSAL,
-        reason="坚持撤·模型判", target_dossier_id=did, commit=True,
-    )
-    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
-    finalize_persist(db, state, todo, commit=True)
-    assert str(db.get_decree_dossier(did)["status"]) == "executing"
-
-    # 执行格判官的声明：在途清单给出原案卷 id，段文交代它半途而废
-    seen = {}
-
-    def translate(request, _llm_config):
-        seen["continuing"] = [int(row["id"]) for row in request.continuing_dossiers]
-        return {"effects": {"dossier_executions": [{
-            "dossier_id": did, "outcome": "failed", "note": "半途而废，案卷记为烂尾",
-        }]}}
-
-    assert stage_month_segment(
-        db, decree_ref="revoke:verdict-after", segment="此令撤在途中，案遂烂尾。",
-        turn=int(state.turn), decree_payload={"revoke_target_dossier_id": did},
-        translate_fn=translate,
-    ) > 0
-    assert did in seen["continuing"]
-
-    result = settle_staged_declarations_in_decree_order(db, state, ["revoke:verdict-after"])
-    applied = result["revoke:verdict-after"].effects.applied[0]["dossier_executions"]
-    assert applied and not applied[0].get("rejected"), applied
-    settled = db.get_decree_dossier(did)
-    assert str(settled["status"]) == "closed"
-    assert str(settled["execution_outcome"]) == "failed"
-
 
 def test_persist_remove_sponsor_no_0056(game):
     """0041③：撤人坚持不触发 0056；案卷终局仍归模型判决。"""

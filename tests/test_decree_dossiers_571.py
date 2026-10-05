@@ -282,69 +282,6 @@ def test_committing_each_directive_creates_independent_restoreable_dossier(game)
     assert len({row["id"] for row in dossiers[-2:]}) == 2
     assert all(row["pending_action_id"] in ids for row in dossiers[-2:])
 
-def test_pending_directive_only_enters_settlement_after_final_approval(game):
-    db, state, content = game
-    minister = _active_minister(db)
-    before = state.metrics["国库"]
-
-    rejected_candidate_id = db.stage_directive_candidate(
-        state.turn, minister, {
-            "text": "拟拨十两赈济", "actor": minister,
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue", "target_id": "relief-rejected",
-            "amount": 10, "account": "国库",
-            "execution_surface": "immediate",
-        },
-    )
-    db.commit_pending_actions(
-        state, content=content, action_ids=[rejected_candidate_id],
-        directive_status="pending",
-    )
-    rejected_directive_id = int(db.conn.execute(
-        "SELECT id FROM turn_directives WHERE source_pending_action_id=?",
-        (rejected_candidate_id,),
-    ).fetchone()["id"])
-
-    assert db.get_dossier_for_directive(rejected_directive_id) is None
-    assert db.list_decree_dossiers_for_simulation(state.turn) == []
-    db.reject_directive(rejected_directive_id)
-    assert db.get_dossier_for_directive(rejected_directive_id) is None
-    assert db.list_decree_dossiers_for_simulation(state.turn) == []
-    assert state.metrics["国库"] == before
-
-    approved_candidate_id = db.stage_directive_candidate(
-        state.turn, minister, {
-            "text": "准拨十两赈济", "actor": minister,
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue", "target_id": "relief-approved",
-            "amount": 10, "account": "国库",
-            "execution_surface": "immediate",
-        },
-    )
-    db.commit_pending_actions(
-        state, content=content, action_ids=[approved_candidate_id],
-        directive_status="pending",
-    )
-    approved_directive_id = int(db.conn.execute(
-        "SELECT id FROM turn_directives WHERE source_pending_action_id=?",
-        (approved_candidate_id,),
-    ).fetchone()["id"])
-    # #1769：confirm 只翻 pending→draft；成案走 ensure 批缝
-    db.confirm_directive(approved_directive_id, state)
-    assert str(db.get_directive(approved_directive_id)["status"]) == "draft"
-    assert db.get_dossier_for_directive(approved_directive_id) is None
-    assert db.ensure_dossiers_for_draft_directives(state) == []
-
-    dossier = db.get_dossier_for_directive(approved_directive_id)
-    assert dossier is not None
-    assert [row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)] == [
-        dossier["id"],
-    ]
-    db.apply_dossier_verdicts(
-        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-    )
-    assert state.metrics["国库"] == before - 10
-
 def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
     db, state, content = game
     minister = _active_minister(db)
@@ -908,41 +845,6 @@ def test_extractor_accepts_transformed_execution_outcome(game):
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "transformed"
-
-def test_appointment_alias_uses_canonical_dossier_identity(game):
-    db, state, content = game
-    target = next(
-        character for character in content.characters.values()
-        if character.aliases and character.name != character.aliases[0]
-        and db.conn.execute(
-            "SELECT 1 FROM characters WHERE name=? AND status='active'",
-            (character.name,),
-        ).fetchone()
-    )
-    alias = target.aliases[0]
-    pending_id = db.stage_pending_action(
-        state.turn, kind="office", action="任命",
-        minister_name=_active_minister(db), target_id=None,
-        payload={"text": "测试任免原文", "name": alias, "office": "兵部主事"},
-    )
-    db.commit_pending_actions(state, content=content)
-    dossier = next(
-        row for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == pending_id
-    )
-    assert dossier["target_id"] == target.name
-    assert dossier["executor_id"] == target.name
-    db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content,
-    )
-    assert [
-        row["dossier_id"]
-        for row in db.list_office_effects_for_dossier(dossier["id"])
-    ] == [dossier["id"]]
-    db.record_dossier_execution(
-        dossier["id"], "fulfilled", "任事已毕", state.turn,
-    )
-    assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
 
 # #1849 / ADR 0152 决定 1：Web 独立手拟新增口（POST /api/directives）已退役，
 # 拟旨落桌走 CLI 手拟同款 capture 核 + session.add_directive，覆盖面不减。

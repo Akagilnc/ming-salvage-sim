@@ -196,39 +196,3 @@ export function SituationDetailModal({ issue, onClose }: { issue: Issue; onClose
     document.body
   );
 }
-
-export function IssueGroup({ title, issues }: { title: string; issues: Issue[] }) {
-  if (!issues.length) return null;
-  return (
-    <div className="issue-group">
-      <h3>{title}</h3>
-      <div className="issue-list">
-        {issues.map((issue) => {
-          const progressText = commitmentProgressText(issue);
-          return (
-            <article className={`issue-line ${issueTone(issue.bar_value)}`} key={issue.id}>
-              <div className="issue-head">
-                <b>#{issue.id} {issue.title}</b>
-                <span>{issue.phase} · {issue.bar_value}</span>
-              </div>
-              <div className="issue-progress" aria-label={`${issue.title}进度 ${issue.bar_value}`}>
-                <span>{barLabel(issue.bar_bad_meaning)}</span>
-                <div>
-                  <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
-                </div>
-                <span>{barLabel(issue.bar_good_meaning)}</span>
-              </div>
-              {progressText ? <p className="issue-commitment-progress">{progressText}</p> : null}
-              <p>{issue.stage_text}</p>
-              {issue.tags.length ? (
-                <div className="issue-tags">
-                  {issue.tags.map((tag) => <small key={tag}>{tag}</small>)}
-                </div>
-              ) : null}
-            </article>
-          );
-        })}
-      </div>
-    </div>
-  );
-}

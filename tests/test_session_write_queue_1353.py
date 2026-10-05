@@ -338,45 +338,6 @@ def test_barrier_proceeds_after_worker_fail_vacate():
     assert order == ["fail_vacate", "barrier"], order
 
 
-def test_run_exclusive_serializes_writes():
-    """write_gate 并入队列：run_exclusive 互斥。"""
-    q = SessionWriteQueue()
-    hold = threading.Event()
-    in_critical = threading.Event()
-    order: list[str] = []
-    slow_done = threading.Event()
-    fast_done = threading.Event()
-
-    def slow() -> None:
-        in_critical.set()
-        hold.wait()
-        order.append("slow")
-
-    def fast() -> None:
-        order.append("fast")
-        fast_done.set()
-
-    th = threading.Thread(
-        target=lambda: (q.run_exclusive(slow), slow_done.set()),
-        daemon=True,
-    )
-    th.start()
-    in_critical.wait()
-    th2 = threading.Thread(
-        target=lambda: q.run_exclusive(fast),
-        daemon=True,
-    )
-    th2.start()
-    # fast 在 slow 持锁期间不得完成
-    assert not fast_done.is_set()
-    assert "fast" not in order
-    hold.set()
-    slow_done.wait()
-    fast_done.wait()
-    th.join()
-    th2.join()
-    assert order == ["slow", "fast"], order
-
 
 def test_write_turn_orders_cs_not_whole_leg_llm():
     """#1353 r10 / 66nU P5：wait_write_turn 只排写段——先票 LLM 中时后票可进材料读/写。

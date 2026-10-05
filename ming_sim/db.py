@@ -3141,29 +3141,6 @@ class GameDB:
             self.conn.commit()
         return touched
 
-    def settle_province_tick(
-        self, region_id: str, actions: Optional[List[Dict[str, Any]]] = None
-    ):
-        """省级月度财政 settle_tick 的 DB 桥（#66 slice2）：读 regions.fiscal['settle'] 的
-        开账 st + 月参 p → 跑 settle_tick → 写回 new_st。返回 FiscalTickResult。
-
-        **港口锁**（fiscal_tick.py §港口锁 / ADR 0008）：settle_tick 对坏输入(ValueError)/
-        守恒破(FiscalConservationError) 一律 raise，异常在下方 UPDATE **之前**抛出 → FAIL
-        tick 绝不持久化（毒态不钉进存档）。本方法只写 conn、不自带 commit——提交交调用方
-        事务边界（slice3 的 applier.atomic 全有或全无）控制；异常上抛由其回滚。
-
-        settle_tick 纯读 st（不就地改），故无需深拷贝；new_st 是全新 dict，覆盖回 settle.st。
-        官民田/隐田（清丈重分类）只写进 settle.st，不同步顶层 registered_land/hidden_land——
-        基座 dormant 期与旧 calc_province_fiscal 解耦，接入并轨在 slice3。
-        """
-        row = self.conn.execute(
-            "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
-        ).fetchone()
-        if row is None:
-            raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
-        fiscal = json.loads(str(row["fiscal"] or "{}"))
-        return self._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
-
     def _current_settle_turn(self) -> int:
         """#653 override 期限判定用的当前绝对 turn（game_state 单行真源；无行=0＝永不到期）。"""
         row = self.conn.execute(
@@ -8942,15 +8919,6 @@ class GameDB:
         )
         self.conn.commit()
 
-    def get_message_highlights(self, message_id: int) -> List[str]:
-        row = self.conn.execute(
-            "SELECT highlights_json FROM chat_messages WHERE id = ?",
-            (int(message_id),),
-        ).fetchone()
-        if row is None:
-            return []
-        return self._parse_highlights_json(row["highlights_json"])
-
     @staticmethod
     def _parse_highlights_json(raw: Any) -> List[str]:
         try:
@@ -12395,25 +12363,6 @@ class GameDB:
             self.conn.commit()
         return {"exposure_written": exposure_written, "turn": turn_i}
 
-    def record_monthly_supervision_facts(
-        self, turn: int, *, commit: bool = False,
-    ) -> Dict[str, object]:
-        """兼容组合：在场扫描 + 对账暴露派生（测试/restore 便捷口）。
-
-        生产 settle 节拍应分调两单职责函数（origin 前 / 对账后）。
-        """
-        presence = self.record_monthly_supervision_presence(turn, commit=False)
-        exposure = self.record_monthly_loophole_exposures_from_reconciliations(
-            turn, commit=False,
-        )
-        if commit:
-            self.conn.commit()
-        return {
-            "presence_written": int(presence.get("presence_written") or 0),
-            "exposure_written": int(exposure.get("exposure_written") or 0),
-            "turn": int(turn),
-        }
-
     def record_loophole_exposure(
         self,
         dossier_id: int,
@@ -14382,45 +14331,12 @@ class GameDB:
         ).fetchone()
         return None if row is None else self._dossier_row(row)
 
-    def list_dossiers_for_directive(
-        self, directive_id: int,
-    ) -> List[Dict[str, object]]:
-        """#654：directive 名下全部子差务，ORDER BY region_id, id。"""
-        rows = self.conn.execute(
-            "SELECT * FROM decree_dossiers WHERE directive_id=? "
-            "ORDER BY region_id, id",
-            (int(directive_id),),
-        ).fetchall()
-        return [self._dossier_row(r) for r in rows]
-
     def get_dossier_for_secret_order(self, secret_order_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
             "SELECT * FROM decree_dossiers WHERE secret_order_id=?",
             (int(secret_order_id),),
         ).fetchone()
         return None if row is None else self._dossier_row(row)
-
-    def list_endorsed_dossier_candidates(
-        self, current_turn: int,
-    ) -> List[Dict[str, object]]:
-        """Typed backing choices projected from durable named endorsements."""
-        rows = self.conn.execute(
-            """SELECT d.id AS dossier_id, e.endorser_id, d.decree_text AS subject
-               FROM decree_dossier_endorsements e
-               JOIN decree_dossiers d ON d.id=e.dossier_id
-               WHERE e.endorser_id<>'' AND d.created_turn<=?
-               ORDER BY d.id DESC, e.id DESC""",
-            (int(current_turn),),
-        ).fetchall()
-        result: List[Dict[str, object]] = []
-        for row in rows:
-            dossier_id = int(row["dossier_id"])
-            result.append({
-                "dossier_id": dossier_id,
-                "endorser_id": str(row["endorser_id"]),
-                "subject": str(row["subject"] or ""),
-            })
-        return result
 
     # Central yamen archive identity: offices.json allowed_types minus non-yamen
     # kinds. Never union characters.office_type (外臣/内臣/宗藩/未仕 would leak).
@@ -14700,22 +14616,6 @@ class GameDB:
         rows = self.conn.execute(
             f"SELECT * FROM decree_dossier_links WHERE {column}=? ORDER BY id",
             (strict_int(dossier_id, accept_numeric_strings=False),),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def list_dossier_link_rejections(
-        self, source_dossier_id: Optional[int] = None, *,
-        pending_action_id: Optional[int] = None,
-    ) -> List[Dict[str, object]]:
-        if (source_dossier_id is None) == (pending_action_id is None):
-            raise ValueError("须且只能按来源案卷或待确认动作查询拒收记录")
-        if pending_action_id is not None:
-            column, value = "pending_action_id", pending_action_id
-        else:
-            column, value = "source_dossier_id", source_dossier_id
-        rows = self.conn.execute(
-            f"SELECT * FROM decree_dossier_link_rejections WHERE {column}=? ORDER BY id",
-            (strict_int(value, accept_numeric_strings=False),),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -15943,22 +15843,6 @@ class GameDB:
                     commit=False,
                 )
         return True
-
-    def save_pending_promulgation_verdicts(
-        self, turn: int, verdicts: Iterable[Dict[str, object]],
-    ) -> None:
-        """Persist one complete turn-scoped batch before simulation starts."""
-        rows = list(verdicts)
-        with atomic(self):
-            self.conn.execute(
-                "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(turn),)
-            )
-            for verdict in rows:
-                self.conn.execute(
-                    "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
-                    (int(turn), strict_int(verdict.get("dossier_id")),
-                     safe_json_dumps(verdict, ensure_ascii=False)),
-                )
 
     def get_pending_promulgation_verdicts(
         self, turn: int,
@@ -18461,61 +18345,6 @@ class GameDB:
             self.conn.commit()
         return int(cur.rowcount or 0)
 
-    def drop_pending_actions_for_minister(
-        self, turn: int, minister_name: str, kind_filter_exclude: Optional[str] = None,
-        action_ids: Optional[Iterable[int]] = None,
-    ) -> int:
-        """对话确认皇帝拒绝:丢弃该召对对象本回合尚未落库的暂存动作(删 pending 行)。
-        返回删除条数。只动该大臣、只动 pending(已 committed 不动)。
-        action_ids 非空=进一步只删指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）。
-        kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
-        是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。
-        仍 inactive 的 office:<id> 传召 origin 随 pending 同步清（#672 颁前拒绝）。"""
-        owns_transaction = not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-            or self.conn.in_transaction
-        )
-        params: List[object] = [int(turn), str(minister_name)]
-        where = "turn=? AND minister_name=? AND status='pending'"
-        if action_ids is not None:
-            allowed_ids = [int(action_id) for action_id in action_ids]
-            if not allowed_ids:
-                return 0
-            placeholders = ",".join("?" for _ in allowed_ids)
-            where += f" AND id IN ({placeholders})"
-            params.extend(allowed_ids)
-        if kind_filter_exclude is not None:
-            where += " AND kind<>?"
-            params.append(str(kind_filter_exclude))
-        office_ids = [
-            int(row["id"])
-            for row in self.conn.execute(
-                f"SELECT id FROM pending_actions WHERE {where} AND kind='office'",
-                tuple(params),
-            ).fetchall()
-        ]
-        directive_ids = [
-            int(row["id"])
-            for row in self.conn.execute(
-                f"SELECT id FROM pending_actions WHERE {where} AND kind='directive'",
-                tuple(params),
-            ).fetchall()
-        ]
-        for pending_id in directive_ids:
-            self._discard_deleted_directive_forecast(pending_id)
-        cur = self.conn.execute(
-            f"DELETE FROM pending_actions WHERE {where}",
-            tuple(params),
-        )
-        if office_ids:
-            from ming_sim.audience_night import discard_inactive_office_summon
-            for pending_id in office_ids:
-                discard_inactive_office_summon(self, pending_id)
-        if owns_transaction:
-            self.conn.commit()
-        return cur.rowcount
-
     def discard_failed_secret_order_intents(self) -> int:
         """过回合前丢弃既有 failed secret-order intents（CONTEXT：未处理失败下达在过回合丢弃）。
 
@@ -18749,16 +18578,6 @@ class GameDB:
                 })
         projected.sort(key=lambda item: int(item["id"]))
         return projected
-
-    def list_office_effects_for_dossier(
-        self, dossier_id: int,
-    ) -> List[Dict[str, object]]:
-        return [
-            dict(row) for row in self.conn.execute(
-                "SELECT * FROM office_change_records WHERE dossier_id=? ORDER BY id",
-                (int(dossier_id),),
-            ).fetchall()
-        ]
 
     def add_directive(
         self,
@@ -19042,18 +18861,6 @@ class GameDB:
             mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
         return rejection_rows
 
-    def reject_directive(self, directive_id: int) -> None:
-        """皇帝驳回大臣拟旨：pending → rejected。"""
-        self.conn.execute(
-            """
-            UPDATE turn_directives
-            SET status = 'rejected', updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND status = 'pending'
-            """,
-            (directive_id,),
-        )
-        self.conn.commit()
-
     def count_pending_directives(self, state: GameState) -> int:
         """本回合待核定（pending）的大臣拟旨数。颁诏前须为 0。"""
         row = self.conn.execute(
@@ -19165,12 +18972,6 @@ class GameDB:
             "SELECT * FROM issues WHERE closed_turn = ? AND status IN ('resolved','failed','dropped') ORDER BY id",
             (int(closed_turn),),
         ).fetchall()
-
-    def count_active_initiatives(self) -> int:
-        row = self.conn.execute(
-            "SELECT COUNT(*) AS n FROM issues WHERE kind='initiative' AND status='active'"
-        ).fetchone()
-        return int(row["n"] or 0)
 
     def find_active_issue_by_origin(self, origin_kind: str, origin_ref: str) -> sqlite3.Row | None:
         return self.conn.execute(
@@ -20848,22 +20649,6 @@ class GameDB:
             source_id or str(record.get("source_id") or ""), excluded_names, commit=commit,
         )
 
-    def _is_active_secret_order_assignee(self, minister_name: str) -> bool:
-        """True when this minister holds an active/pending private secret brief."""
-        name = str(minister_name or "").strip()
-        if not name:
-            return False
-        try:
-            row = self.conn.execute(
-                "SELECT 1 FROM secret_order_briefs b "
-                "INNER JOIN secret_orders o ON o.id = b.order_id "
-                "WHERE b.minister_name=? AND o.status='active' LIMIT 1",
-                (name,),
-            ).fetchone()
-        except sqlite3.OperationalError:
-            return False
-        return row is not None
-
     def _delete_shared_knowledge_source_ids(
         self, source_ids: Iterable[str], *, commit: bool = True,
     ) -> None:
@@ -22412,13 +22197,6 @@ class GameDB:
             "SELECT * FROM faction_stance_summaries ORDER BY faction"
         ).fetchall()
         return [dict(row) for row in rows]
-
-    def get_faction_stance_summary(self, faction: str) -> Optional[Dict[str, Any]]:
-        row = self.conn.execute(
-            "SELECT * FROM faction_stance_summaries WHERE faction = ?",
-            (str(faction),),
-        ).fetchone()
-        return dict(row) if row is not None else None
 
     def claim_faction_brew_targets(self, *, year: int, period: int) -> int:
         """settled 年月涉派派系先作 durable claim（庭裁 r1 F2：复用既有认领机制）。

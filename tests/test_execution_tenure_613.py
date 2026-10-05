@@ -58,36 +58,6 @@ def test_held_authority_privileges_reduce_distortion_weight():
         assert eased < base, privilege
     assert execution_distortion_weight('署理', [{'privilege': '尚方剑密授'}]) < execution_distortion_weight('署理', [{'privilege': '便宜行事'}])
 
-def _live_exec_side(db, state, dossier):
-    """执行侧读端真链：execution_side_read_fields（#613）。"""
-    return decree_mod.execution_side_read_fields(db, state, dossier)
-
-
-def test_td8_same_office_four_tenures_live_assembly_chain(game):
-    db, state, _content = game
-    holder = _ministers(db, 1)[0]
-    office = str(db.conn.execute('SELECT office FROM characters WHERE name=?', (holder,)).fetchone()['office'])
-    observed = []
-    for tenure in VALID_TENURES:
-        _set_tenure(db, holder, tenure, office=office)
-        current_office = str(db.conn.execute('SELECT office FROM characters WHERE name=?', (holder,)).fetchone()['office'])
-        assert current_office == office
-        consumer = _executing_policy(db, state, holder, target_id=f'td8-same-office-{tenure}')
-        hit = _live_exec_side(db, state, consumer)
-        assert hit['appointment_tenure'] == tenure
-        assert hit['command_power_rank'] == command_power_rank(tenure)
-        assert hit['distortion_weight'] == execution_distortion_weight(tenure)
-        assert 'payload-auth' not in hit['authorization_ids']
-        assert 'payload-list' not in hit['authorization_ids']
-        observed.append(hit)
-    ranks = [row['command_power_rank'] for row in observed]
-    assert ranks == sorted(ranks, reverse=True)
-    weights = [row['distortion_weight'] for row in observed]
-    assert weights == sorted(weights)
-    by_tenure = {row['appointment_tenure']: row for row in observed}
-    assert by_tenure['真除']['distortion_weight'] < by_tenure['兼署']['distortion_weight'] < by_tenure['署理']['distortion_weight']
-    assert by_tenure['兼署']['command_power_rank'] != by_tenure['真除']['command_power_rank']
-    assert by_tenure['兼署']['command_power_rank'] != by_tenure['署理']['command_power_rank']
 
 def _clear_character_offices(db, name):
     """人物仍在 characters，但 character_offices 无行（缺档合法态）。"""

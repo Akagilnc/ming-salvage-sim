@@ -176,46 +176,6 @@ def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) 
 
 
 
-def resolve_executor_appointment_tenure(
-    db: GameDB, dossier: Mapping[str, object] | Dict[str, object],
-) -> str:
-    """#613：承办人现职任别——归属人单源后查 character_offices；缺档按真除。
-
-    身份选定与档案取值分离：resolve_dossier_owner_name（#613/#625 共调）
-    只定唯一承办人后查该人任别；缺行不得试下一候选换人（禁静默继承他人任别）。
-    与 court_roster COALESCE(...,'真除') 及 DELTA_SCHEMA 缺省真除同构。
-    """
-    name = resolve_dossier_owner_name(dossier)
-    if not name:
-        return DEFAULT_APPOINTMENT_TENURE
-    row = db.conn.execute(
-        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
-        (name,),
-    ).fetchone()
-    if row is None:
-        return DEFAULT_APPOINTMENT_TENURE
-    return normalize_appointment_tenure(row["appointment_tenure"])
-
-
-def execution_side_read_fields(
-    db: GameDB,
-    state: GameState,
-    dossier: Mapping[str, object] | Dict[str, object],
-) -> Dict[str, object]:
-    """#613 执行格/推演共用读端字段：任别 + #611 唯一授权投影 + 号令力权重。
-
-    authorization_ids 只来自 project_applicable_authorities，禁止 payload 旁路。
-    """
-    tenure = resolve_executor_appointment_tenure(db, dossier)
-    held_authorities = db.project_applicable_authorities(state.turn, dossier)
-    authorization_ids = [str(item["id"]) for item in held_authorities]
-    return {
-        "appointment_tenure": tenure,
-        "held_authorities": held_authorities,
-        "authorization_ids": authorization_ids,
-        "command_power_rank": command_power_rank(tenure),
-        "distortion_weight": execution_distortion_weight(tenure, held_authorities),
-    }
 
 
 def build_promulgation_judge_context(

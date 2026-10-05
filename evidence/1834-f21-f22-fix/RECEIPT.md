@@ -1,4 +1,4 @@
-# 1834 F22-R 修内司回执（absolute_zero / 专属旧结构删除）
+# 1834 F22-R² 修内司回执（test-only 无本定义生产消费者 → 删）
 
 BASELINE: `ebcd2d1a168e46da52ccf7f3f898406b9e29e54f`
 BRANCH: `ak-roles/1834-f21-f22-ebcd2d1a1`
@@ -6,26 +6,26 @@ BRANCH: `ak-roles/1834-f21-f22-ebcd2d1a1`
 
 ## 本轮范围
 
-- **只修 F22-R**。F21 庭核已通过，不重开。
-- 根因：成员表对「全仓只剩定义」用「零调用但无退役职责证据／公开 API 表面」循环 KEEP；与判词「没有消费者就是没有现行职责」抵触。
+- **只修 F22-R²**。F21 庭核已通过，不重开。
+- 根因：成员表对 `prod_zero_test_only` 用「共享现役能力／模块有生产兄弟消费者」循环 KEEP；与判词「兄弟在用 ≠ 该定义在用；测试运行 ≠ 生产消费者」抵触。
 
 ## 根因与全类枚举处置路径
 
-1. 读全局仓级法 + 本树 `ENUM_CMDS.txt` / `MEMBER_TABLE.md` + PI 会话末份 F22-R 判词。
-2. 全仓 inline AST 定义/引用扫描（stdlib+rg；无永久分类脚本）。
-3. **先删 absolute_zero**（排除 HTTP 装饰器路由、Protocol/dunder、scripts/spike）。
-4. **重扫**级联 dead helpers → 再删（`person_write_inventory` 整模块、`list_night_promulgated_directives`、`_authorization_*` 等）。
-5. **test-only**：仅旧结构专属测试支撑者删结构+专属测试；共享现役能力（财政桥、写闸、拟旨、HTTP 等）KEEP。
-6. 重写 `MEMBER_TABLE.md` §F22；更新 `ENUM_CMDS.txt` ABSENT_CHECK；聚焦测试。
+1. 读 MEMBER_TABLE / ENUM_CMDS / 本庭 F22-R² 判词。
+2. 对表内每个 test-only 成员核 **该定义本身** 的生产引用（ming_sim/web_app/web/src；不含 tests）。
+3. 无本定义生产消费者／动态注册／庭核排除 → DELETE 定义 + 专属测试；不误删仍被现役定义调用的共享 helper。
+4. 级联复扫 absolute_zero helpers（generate_rescript_draft heal 链、audit 白名单、fiscal_fact_brief 整模块等）再删。
+5. 重写 MEMBER_TABLE §F22：每个 KEEP 给本定义消费者具体 path 或明确排除（HTTP `@app.*` / scripts path / dunder）。
+6. 聚焦测试（七 BIN=/usr/bin/false）；不全量。
 
-## 枚举计数（F22-R 实跑）
+## 枚举计数（F22-R² 实跑）
 
 | CMD | 结果 |
 |---|---|
-| F22 inline AST recount | def_count=3306；zero_abs=21（含 HTTP/scripts 排除项）；zero_prod_test_only=63；py_files=117；ts_files=45；corpus_files=421 |
-| ABSENT_CHECK 点名样本 | `_collect_compliant_promulgation_items` / `apply_audience_turn_translation` / `mark_chat_turn_failed` / `stage_authorization_candidate` / `format_region_changes` / `person_write_inventory` / `status_delta_from_delta` → hits=0 |
+| F22 inline AST recount | def_count=2794；zero_abs=20（HTTP+scripts hline+`__post_init__`）；zero_prod_test_only=29（全 HTTP）；py_files=116；ts_files=45；corpus_files=417 |
+| ABSENT_CHECK 点名 | `settle_province_tick` / `get_message_highlights` / `list_dossiers_for_directive` / `generate_rescript_draft` / `value_axes` / `axis_collision_stances` / `matrix_snapshot` / `fiscal_fact_brief` / `IssueGroup` / `run_month_end_relation_brew` / `stage_month_segment` / `is_sealed` / `run_exclusive` 等 → hits=0 |
 
-成员表：`MEMBER_TABLE.md`（F21 保留；F22 DELETE 表 + 仍存候选完整处置）。
+成员表：`MEMBER_TABLE.md`（F21 保留；F22 DELETE 表 + KEEP 均带本定义消费者 path）。
 
 ## 聚焦测试（七 BIN=/usr/bin/false；完整命令）
 
@@ -55,10 +55,10 @@ export MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false \
   tests/test_section4_rejections.py \
   tests/test_power_section_rejections.py \
   tests/test_pay_order_override_653.py \
-  -q -p no:cacheprovider --basetemp=/tmp/1834-f22-r/pytest-focus --tb=line
+  -q -p no:cacheprovider --basetemp=/tmp/1834-f22-r2/pytest-focus --tb=line
 ```
 
-结果：`470 passed, 1 skipped, 1 warning in 11.69s`（real 12.20s）→ `pytest-focus.out`
+结果：`429 passed, 1 skipped, 1 warning in 10.33s` → `pytest-focus.out`
 
 ```
 cd web && ./node_modules/.bin/vitest run --environment jsdom \
@@ -69,18 +69,16 @@ cd web && ./node_modules/.bin/vitest run --environment jsdom \
   src/staleGuard.test.tsx
 ```
 
-结果：`Test Files 5 passed；Tests 158 passed；Duration 4.03s`（real 4.22s）→ `vitest-focus.out`
+结果：`Test Files 5 passed；Tests 154 passed；Duration 3.80s` → `vitest-focus.out`
 
+## 保留例外（每条有本定义依据）
 
-## 保留例外
-
-- 装饰器注册 HTTP 路由（函数名零 Python 调用属常态）
-- Protocol / dunder
-- scripts / spike 本地定义；及仅被 scripts 消费的 `require_fresh_cli_trace`
-- 共享现役能力的 prod_zero_test_only（如 `settle_province_tick`、`SessionWriteQueue.*`、`generate_rescript_draft`、value_matrix 兄弟读口等）— 理由=真实现役架构职责，非「公开 API」空话
+- 装饰器注册 HTTP 路由（`web_app.py` `@app.*` 行）
+- Protocol / dunder（如 `_PromulgationJudgeSession.__post_init__`）
+- scripts / spike 本地定义（`hline`）；及本定义被 scripts 消费的 `require_fresh_cli_trace` / `get_pending_promulgation_verdicts`
 
 ## Advisor
 
 - 未改治理/Soul/配置；未 stash/amend/push/PR/kill/全量。
 - 未新增永久分类层或永久证明测试。
-- 自查二连：同类型（循环 KEEP vs 零消费者即删；专属测试 vs 共享能力）；引入（删定义-only 不误伤 HTTP/共享管线）。
+- 自查二连：同类型（兄弟现役 ≠ 本定义消费者；专属测试随删）；引入（不误伤 HTTP/scripts/现役 normalize_*/dispatch_month_segment/MonthEndRelationBrewLeg/set_message_highlights 等）。

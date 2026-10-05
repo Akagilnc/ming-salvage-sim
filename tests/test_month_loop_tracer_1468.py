@@ -492,28 +492,3 @@ def _setup_open_night_participant(tracer_client, *, kind: str):
         game.db.conn.commit()
 
     return client, game, participant, night_id
-
-
-def _assert_court_break_closed(game, body: dict, night_id: int, *, remote: str) -> None:
-    """外部可见契约：court_break、夜关闭、参与者无殿上 presence/entrance 账。"""
-    assert body.get("court_action") == "court_break", body
-    assert not body.get("admission"), body
-    _wait_pending_writes(game)
-    assert an.get_open_night(game.db) is None
-    night_row = game.db.conn.execute(
-        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
-    ).fetchone()
-    assert night_row is not None
-    assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED, dict(night_row)
-    # #1716 durable 物理账：场外/临时收夜不得写入该人 entrance/presence。
-    assert remote not in an.persons_present_tonight(game.db, night_id), remote
-    assert remote not in an.persons_entered_tonight(game.db, night_id), remote
-    for entry in an.list_ledger(game.db, night_id):
-        names = entry.get("person_names") or []
-        if remote not in names:
-            continue
-        tags = entry.get("tags") or []
-        assert an.TAG_ENTER not in tags, entry
-        assert str(entry.get("presence_effect") or "") not in {
-            an.PRESENCE_ENTER, "enter",
-        }, entry

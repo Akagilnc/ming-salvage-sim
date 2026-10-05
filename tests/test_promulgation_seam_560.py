@@ -32,17 +32,3 @@ def _stage_policy_dossier(db, state):
         state, action_type="policy", decree_text="清核河工",
         target_kind="issue", target_id=f"river-{state.turn}",
     )
-
-
-def test_turn_batch_replacement_rolls_back_atomically_on_partial_bad_row(game):
-    db, state, _content = game
-    dossier_id = _stage_policy_dossier(db, state)
-    original = [{"dossier_id": dossier_id, "decision": "promulgated"}]
-    db.save_pending_promulgation_verdicts(state.turn, original)
-
-    with pytest.raises((TypeError, ValueError)):
-        db.save_pending_promulgation_verdicts(state.turn, [
-            original[0], {"dossier_id": "not-an-int", "decision": "rejected"},
-        ])
-
-    assert db.get_pending_promulgation_verdicts(state.turn) == original

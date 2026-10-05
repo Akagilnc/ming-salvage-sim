@@ -4,10 +4,6 @@
 Not implemented: navigation to another Document
 
  Test Files  5 passed (5)
-      Tests  158 passed (158)
-   Start at  12:07:52
-   Duration  4.03s (transform 1.04s, setup 0ms, import 1.54s, tests 3.37s, environment 3.06s)
-
-real 4.22
-user 6.79
-sys 0.92
+      Tests  154 passed (154)
+   Start at  12:18:49
+   Duration  3.80s (transform 1.11s, setup 0ms, import 1.49s, tests 3.33s, environment 2.18s)

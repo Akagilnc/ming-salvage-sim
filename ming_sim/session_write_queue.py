@@ -255,10 +255,6 @@ class SessionWriteQueue:
         with self._cond:
             self._sealed = False
 
-    def is_sealed(self) -> bool:
-        with self._cond:
-            return bool(self._sealed)
-
     def has_open_barrier(self) -> bool:
         """True while a month-advance/close barrier ticket is still open."""
         with self._cond:
@@ -512,16 +508,6 @@ class SessionWriteQueue:
         """
         with self.ticketed_gate(ticket):
             return fn()
-
-    def run_exclusive(self, fn: Callable[[], T]) -> T:
-        """Claim + write-turn + write_gate + complete — one-shot exclusive write."""
-        ticket = self.claim()
-        if ticket is None:
-            raise RuntimeError("write queue sealed")
-        try:
-            return self.run(ticket, fn)
-        finally:
-            self.complete(ticket)
 
 
 # Lazy-install path is fixture/partial-wiring only (GameSession/WebGame eager).

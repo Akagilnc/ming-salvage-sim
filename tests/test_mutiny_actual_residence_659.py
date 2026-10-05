@@ -13,7 +13,6 @@ import os
 import shutil
 
 from ming_sim.db import GameDB
-from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import Event
 
@@ -88,41 +87,6 @@ def _simulator_army_dicts(payload_armies):
 
 
 
-
-def test_redeploy_moves_fact_region_keeps_pay_source(game):
-    """真实调防写核：下一投影 region 跟随 station_region；pay_source_region 不变。"""
-    db, state, _content = game
-    before = db.conn.execute(
-        "SELECT station_region, pay_source_region FROM armies WHERE id='dongjiang'"
-    ).fetchone()
-    assert before["station_region"] == "dongjiang_area"
-    pay_src = str(before["pay_source_region"])
-    _pin_split_arrears(db, "dongjiang", province=40.0, central=10.0)
-
-    changes = db.apply_army_deltas(
-        state, _pseudo_event("东江调防登莱"), None, "兵部",
-        {
-            "dongjiang": {
-                "station": "山东 / 登州",
-                "station_region": "shandong",
-                "reason": "移镇登莱",
-            },
-        },
-    )
-    assert not any(c.get("rejected") for c in changes if isinstance(c, dict))
-    row = db.conn.execute(
-        "SELECT station, station_region, pay_source_region FROM armies WHERE id='dongjiang'"
-    ).fetchone()
-    assert row["station"] == "山东 / 登州"
-    assert row["station_region"] == "shandong"
-    assert row["pay_source_region"] == pay_src == "liaodong"
-
-    entries = build_fiscal_fact_brief(db)
-    d_regions = {
-        e["region"] for e in entries
-        if e["subject_id"] == "dongjiang" and e["metric"] == "分源欠饷月数"
-    }
-    assert d_regions == {"shandong"}
 
 
 def test_station_region_rejects_unknown_region_id(game):

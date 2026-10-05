@@ -21,7 +21,6 @@ from ming_sim.covert_progress import (
     CovertContractError,
     apply_investigation_spoliation,
     build_covert_task_contract,
-    build_secret_covert_effect_briefs,
     decide_secret_order_settlement,
     investigation_clue_records,
     live_investigation_fact_keys,
@@ -473,47 +472,6 @@ def test_gap_after_months_failed(game):
     assert row["actual_units"] < row["target_units"]
     assert db.get_secret_order(oid)["status"] == "failed"
 
-
-def test_n_month_deadline_yields_exactly_n_ticks(game):
-    """N 月期限恰 N 次实进度 tick（发令月排除）。"""
-    db, state, content = game
-    name = _minister(db)
-    _set_axes(db, name, loyalty=90, identity=30)
-    n = 3
-    oid = _issue(db, state, name, "恰三月", "验窗口", months=n, target=n)
-    issued = int(state.turn)
-    did = int(db.get_dossier_for_secret_order(oid)["id"])
-    out0 = apply_monthly_covert_actual_progress(
-        db, state,
-        selections=[{"order_id": oid, "fidelity": "忠实"}],
-        commit=True,
-    )
-    assert not any(r.get("order_id") == oid and not r.get("skipped") and r.get("units") is not None
-                   and not r.get("rejected") for r in out0 if r.get("order_id") == oid and "units" in r)
-    assert db.sum_dossier_actual_progress_units(did) == 0.0
-    assert all(int(b.get("order_id") or 0) != oid for b in build_secret_covert_effect_briefs(db, turn=state.turn))
-
-    ticks = 0
-    for _ in range(n):
-        state.turn += 1
-        db.save_state(state)
-        _originate_work(db, state, content, did)
-        out = apply_monthly_covert_actual_progress(
-            db, state,
-            selections=[{"order_id": oid, "fidelity": "打折"}],
-            commit=True,
-        )
-        row = next(r for r in out if r.get("order_id") == oid)
-        assert row.get("units") == 0.5
-        ticks += 1
-    assert ticks == n
-    assert len(db.list_dossier_actual_progress(did)) == n
-    assert db.sum_dossier_actual_progress_units(did) == pytest.approx(0.5 * n)
-    due = int(db.conn.execute(
-        "SELECT due_turn FROM secret_orders WHERE id=?", (oid,)
-    ).fetchone()["due_turn"])
-    assert due == issued + n
-    assert state.turn == due
 
 
 @pytest.mark.parametrize(
