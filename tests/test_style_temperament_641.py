@@ -1,11 +1,11 @@
-"""#641 人物固有层 `性情` 写核 + 召对人物上下文接关系账。
+"""#641 人物固有层 `性情` 写核。
 
 验收锚（owner A / 大理寺 continue / #1897 F3）：
 1. apply_score_extraction 后 person_logs 结构化落性情（不锁 style 散文）
 2. 同事务后段故障 → 无性情日志；提交后 reload 可读性情日志
-3. 查无人物、空/非字符串 style 结构化拒收
-4. 关系账经 project_relation_ledger(viewer=name) 结构身份；character_context_with_db 真入口可调
-5. relation_edge_events 落边不写性情日志；性情写不写边
+3. 查无人物、空/非字符串 style 结构化拒收（闸类负向保留）
+4. relation_edge_events 落边不写性情日志；性情写不写边
+不另造 character_context 空心壳：不得以无关消费者断言冒充供料契约。
 """
 
 from __future__ import annotations
@@ -13,10 +13,8 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as issues
-from ming_sim.context import character_context_with_db
 from ming_sim.decree import reload_state_from_db
 from ming_sim.situation_drift import apply_situation_monthly_drift
-from ming_sim.relation_read import project_relation_ledger
 
 
 PERSON = "毛文龙"
@@ -169,45 +167,6 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
     assert changes[0]["rejected"] is True
     assert changes[0]["category"] == category
     assert changes[0]["item"] == item
-
-
-def test_character_context_with_db_exposes_viewer_relation_ledger(game):
-    """真入口 character_context_with_db 必须可调用；外部契约是关系账结构化身份，不锁供料正文。"""
-    db, state, content = game
-    person = content.characters[PERSON]
-    other = next(
-        c for c in content.characters.values()
-        if c.name != person.name
-        and c.office_type not in ("后宫", "宗藩", "未仕")
-        and db.get_character_status(c.name)[0] == "active"
-        and getattr(c, "power_id", "ming") == "ming"
-    )
-
-    issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item()]},
-        content=content,
-    )
-
-    db.record_relation_edge_event(
-        source=person.name,
-        target=other.name,
-        event_kind="协作",
-        context="两人在朝上声气相通。",
-        origin="audience:turn-1",
-        turn=int(state.turn),
-        year=int(state.year),
-        period=int(state.period),
-    )
-
-    # 所称消费者必须真调用（防空心化）；不对其自由正文做类型／非空／等值换形。
-    character_context_with_db(person, db)
-
-    expected_own = project_relation_ledger(db, viewer=person.name)
-    assert [(d["source"], d["target"]) for d in expected_own] == [(person.name, other.name)]
-    assert expected_own[0]["source"] == person.name
-    assert expected_own[0]["target"] == other.name
 
 
 def test_relation_edge_events_do_not_mutate_style(game):

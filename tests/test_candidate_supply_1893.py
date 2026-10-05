@@ -78,8 +78,8 @@ def test_eligible_candidate_event_reaches_world_supply(game, tmp_path, content):
         payload = _read_candidates(prepared)
         assert ev.id in {item["id"] for item in payload["events"]}
         item = next(i for i in payload["events"] if i["id"] == ev.id)
-        # 结构化事实：软判锚（历史结果 + 成因）在，不代模型算战果。
-        assert item["summary"] == ev.summary
+        # 结构化事实：候选 id 入供且不代模型算战果；不锁 summary 自由正文。
+        assert item["id"] == ev.id
         assert "effect_on_trigger" not in item
     finally:
         _drop_event(content, ev)
@@ -213,7 +213,7 @@ def test_translate_request_carries_current_candidate_facts(game, content):
         request = captured["request"]
         facts = {item["id"]: item for item in request.candidates["events"]}
         assert ev.id in facts, "合格候选未随转译请求送到（供料→转译断链）"
-        assert facts[ev.id]["summary"] == ev.summary
+        assert facts[ev.id]["id"] == ev.id
         assert "impeachment_surge" in request.candidates
     finally:
         _drop_event(content, ev)
