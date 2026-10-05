@@ -1,21 +1,11 @@
-=== R1 FINAL: batch symbols in prod extract chain ===
-/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/ming_sim/cli_backend.py:2005:    #1902 R1：批抽 draft_combo_flags 路径已无生产消费者，删。
-/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/ming_sim/cli_backend.py:2041:    #1902 R1：批抽 draft_failures / drafts 合并已无生产消费者，删。
-/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/ming_sim/cli_backend.py:2132:    #1902 R1：批抽 draft_failures / drafts 承接已无生产消费者，删。
-/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5/ming_sim/structured_decree.py:31:    #1902 R1：批抽 draft_failures 已随无消费者批次模式清退。
-
-=== R1 FINAL: result.get drafts in cli_backend extract helpers ===
-(zero)
-
-=== R3 FINAL: validate_all calls in test_cli_entry_1902 ===
-40:    """submit_hitl_choices 唯一编排的录音替身（真核由 session 负责）。"""
-50:    def submit_hitl_choices(self, choices, *, write_gate):
-145:    核内 validate_all 对缺 action 的 decision 行既不默认 hold 也拒收（"decision 选项
-203:# ── 经真核的 tracer：入口产出的 choices 必须被生产 submit_hitl_choices 收下 ──
-204:# #1902：这组用例此前把 GameSession.submit_hitl_choices 换成测试自写的
-210:    """真 GameSession 壳 + 真 submit_hitl_choices；只中和外部 LLM 缝。
-239:    """急务回车 → 经真 submit_hitl_choices 机械 hold，案卷落 decided（外部可见）。"""
-256:    # （不在此案重复正向断言 validate_all helper；核侧空 pick 契约见 ordinary 拒收案。）
-265:    #1902 R3：复用同文件真实 GameSession 提交夹具，不绕道 helper-only validate_all。
-278:        session.submit_hitl_choices(
-316:    资格判定只在核内（``rescript_actions.validate_all`` 的 note-only 通道，与 Web
+=== R1 batch field residual (prod) ===
+ming_sim/cli_backend.py:2005:    #1902 R1：批抽 draft_combo_flags 路径已无生产消费者，删。
+ming_sim/cli_backend.py:2041:    #1902 R1：批抽 draft_failures / drafts 合并已无生产消费者，删。
+ming_sim/cli_backend.py:2132:    #1902 R1：批抽 draft_failures / drafts 承接已无生产消费者，删。
+ming_sim/structured_decree.py:31:    #1902 R1：批抽 draft_failures 已随无消费者批次模式清退。
+=== R2 DIAG_LOCK raises.match remaining ===
+tests/test_override_breach_costs_564.py:453:    with pytest.raises(RuntimeError, match="later"):
+tests/test_state_reload.py:345:    with pytest.raises(RuntimeError, match="orig") as ei:
+tests/test_audience_translate_1837.py:201:        with pytest.raises(RuntimeError, match="translation unavailable"):
+=== R3 HELPER_ONLY_NEG count (from enum) ===
+12

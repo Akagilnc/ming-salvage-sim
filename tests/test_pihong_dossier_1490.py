@@ -540,34 +540,74 @@ def _dossier_payload(row):
         return {}
     return loaded if isinstance(loaded, dict) else {}
 
-def test_657_c1_validate_rejects_stale_capability_and_desk_outsider(game):
-    """C1.5 stale capability；desk 外键整批拒。"""
-    from ming_sim import rescript_actions as ra
-    db, state, _content = game
-    urgent, opts = _plant_urgent_desk(db, state)
-    key = urgent['decision_key']
-    with pytest.raises(ValueError):
-        ra.validate_all([urgent], [{'decision_key': key, 'action': 'follow_draft', 'draft_capability': 'not-a-real-cap', 'label': opts[0]['label']}])
-    with pytest.raises(ValueError):
-        ra.validate_all([urgent], [{'decision_key': 'rescript_draft:999:0', 'action': 'hold', 'label': '留中'}])
+def test_657_c1_validate_rejects_stale_capability_and_desk_outsider(game, monkeypatch):
+    """C1.5 stale capability；desk 外键整批拒。
 
-def test_657_c1_decided_mismatch_rejects_and_cas0(game):
-    """C1.3/C1.4：decided 不匹配 / 空 choice → 整批拒。"""
-    from ming_sim import rescript_actions as ra
-    db, state, _content = game
+    #1902 R3：复用 CLI 既有 _real_submit_session 真编排夹具承载拒收，
+    不绕道 helper-only validate_all。
+    """
+    from contextlib import nullcontext
+    from tests.test_cli_entry_1902 import _real_submit_session
+
+    db, state, content = game
     urgent, opts = _plant_urgent_desk(db, state)
     key = urgent['decision_key']
-    batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])
-    ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=_content)
-    row = db.list_rescript_drafts()
-    hit = next((r for r in row if r['title'] == '陕西告饥'))
+    session = _real_submit_session(monkeypatch, db, state, content)
+    with pytest.raises(ValueError):
+        session.submit_hitl_choices(
+            [{'decision_key': key, 'action': 'follow_draft',
+              'draft_capability': 'not-a-real-cap', 'label': opts[0]['label']}],
+            write_gate=nullcontext(),
+        )
+    with pytest.raises(ValueError):
+        session.submit_hitl_choices(
+            [{'decision_key': 'rescript_draft:999:0', 'action': 'hold', 'label': '留中'}],
+            write_gate=nullcontext(),
+        )
+    stored = next(r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥')
+    assert stored['status'] == 'pending'
+
+def test_657_c1_decided_mismatch_rejects_and_cas0(game, monkeypatch):
+    """C1.3/C1.4：decided 不匹配 / 空 choice → 整批拒。
+
+    #1902 R3：复用 _real_submit_session 先落 decided，再真 submit 拒二次异票。
+    """
+    from contextlib import nullcontext
+    from tests.test_cli_entry_1902 import _real_submit_session
+
+    db, state, content = game
+    urgent, opts = _plant_urgent_desk(db, state)
+    key = urgent['decision_key']
+    session = _real_submit_session(monkeypatch, db, state, content)
+    session.submit_hitl_choices(
+        [{'decision_key': key, 'action': 'hold', 'label': '留中'}],
+        write_gate=nullcontext(),
+    )
+    hit = next((r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥'))
     assert hit['status'] == 'decided'
-    decided_row = {**urgent, 'status': 'decided', 'choice': hit['choice']}
+    # 相位可能已推进；异票拒收仍须经真 submit
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    db.save_resolve_context(
+        int(state.turn), "测试诏书", {"simulator_payload": None},
+    )
     with pytest.raises(ValueError):
-        ra.validate_all([decided_row], [{'decision_key': key, 'action': 'hold', 'label': '另留'}])
-    empty_decided = {**urgent, 'status': 'decided', 'choice': None}
+        session.submit_hitl_choices(
+            [{'decision_key': key, 'action': 'hold', 'label': '另留'}],
+            write_gate=nullcontext(),
+        )
+    # DB choice_json NOT NULL：用 JSON null 模拟 decided 空 choice 形
+    db.conn.execute(
+        "UPDATE pending_decisions SET choice_json=? "
+        "WHERE kind='rescript_draft' AND title=?",
+        ('null', '陕西告饥'),
+    )
+    db.conn.commit()
     with pytest.raises(ValueError):
-        ra.validate_all([empty_decided], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])
+        session.submit_hitl_choices(
+            [{'decision_key': key, 'action': 'hold', 'label': '留中'}],
+            write_gate=nullcontext(),
+        )
 
 def test_657_p6_mapper_deliberate_preserve_free_text(game):
     """#657 Class3 P6：label/note/title/body 原文落库；title>80 响亮拒绝。"""
@@ -625,52 +665,67 @@ def test_657_p6_mapper_deliberate_preserve_free_text(game):
         with pytest.raises(ValueError):
             normalize_rescript_layer_a_option(bad)
 
-def test_657_default_hold_missing_and_empty_action(game):
-    """#657 Class2 V1–V5：缺行/keyed 无 action/keyed 空 action → hold；
-    decided 精确重放过、不匹配拒；revise 锚 + 空 action 不重新 default。"""
-    from ming_sim import rescript_actions as ra
+def test_657_default_hold_missing_and_empty_action(game, monkeypatch):
+    """#657 Class2 V1–V5：keyed 无 action → hold；decided 异票拒；revise 空 action 拒。
+
+    #1902 R3：复用 _real_submit_session 真编排。正向 HTTP hold 另见
+    test_657_http_default_hold_keyed_empty_action_and_betray（不平行删）。
+    """
+    from contextlib import nullcontext
+    from tests.test_cli_entry_1902 import _real_submit_session
+
     db, state, content = game
     urgent, _ = _plant_urgent_desk(db, state, actor_name='杨嗣昌')
     key = urgent['decision_key']
-    batch = ra.validate_all([urgent], [], default_hold_missing=True)
-    assert key in batch.default_hold_keys
-    assert batch.items[0].choice.get('action') == 'hold'
-    batch2 = ra.validate_all([urgent], [{'decision_key': key}], default_hold_missing=True)
-    assert key in batch2.default_hold_keys
-    assert batch2.items[0].choice.get('action') == 'hold'
-    batch3 = ra.validate_all([urgent], [{'decision_key': key, 'action': ''}], default_hold_missing=True)
-    assert key in batch3.default_hold_keys
-    assert batch3.items[0].choice.get('action') == 'hold'
-    ra.apply_rescript_batch(db, state, batch2, ra.PrewriteResults(), content=content)
+    session = _real_submit_session(monkeypatch, db, state, content)
+    session.submit_hitl_choices([{'decision_key': key}], write_gate=nullcontext())
     hit = next((r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥'))
     assert hit['status'] == 'decided'
     assert (hit['choice'] or {}).get('action') == 'hold'
-    edges = db.conn.execute('SELECT event_kind FROM relation_edge_events WHERE target=? AND event_kind=?', ('杨嗣昌', '辜负')).fetchall()
+    edges = db.conn.execute(
+        'SELECT event_kind FROM relation_edge_events WHERE target=? AND event_kind=?',
+        ('杨嗣昌', '辜负'),
+    ).fetchall()
     assert edges, 'default hold 须写辜负信用事件'
-    stored = dict(hit['choice'] or {})
-    stored.setdefault('decision_key', key)
-    decided_desk = {**urgent, 'status': 'decided', 'choice': stored}
-    batch4 = ra.validate_all([decided_desk], [stored], default_hold_missing=True)
-    assert batch4.items[0].already_applied
-    assert key not in batch4.default_hold_keys
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    db.save_resolve_context(int(state.turn), "测试诏书", {"simulator_payload": None})
     with pytest.raises(ValueError):
-        ra.validate_all([decided_desk], [{'decision_key': key}], default_hold_missing=True)
+        session.submit_hitl_choices(
+            [{'decision_key': key}], write_gate=nullcontext(),
+        )
     with pytest.raises(ValueError):
-        ra.validate_all([decided_desk], [{'decision_key': key, 'action': 'hold', 'label': '另留'}], default_hold_missing=True)
+        session.submit_hitl_choices(
+            [{'decision_key': key, 'action': 'hold', 'label': '另留'}],
+            write_gate=nullcontext(),
+        )
+    assert next(r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥')['status'] == 'decided'
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
     urgent2, opts2 = _plant_urgent_desk(db, state, actor_name='杨嗣昌')
     key2 = urgent2['decision_key']
-    revise_choice = ra.canonical_choice({'decision_key': key2, 'action': 'return_revise', 'label': '发回改票', 'applied_from_revision_round': 0})
-    db.conn.execute("UPDATE pending_decisions SET choice_json=?, revision_round=1, prior_options_json=? WHERE turn=? AND idx=? AND kind='rescript_draft'", (json.dumps(revise_choice, ensure_ascii=False), json.dumps([opts2], ensure_ascii=False), int(urgent2['source_turn'] if urgent2.get('source_turn') is not None else urgent2['turn']), int(urgent2['idx'])))
+    from ming_sim import rescript_actions as ra
+    revise_choice = ra.canonical_choice({
+        'decision_key': key2, 'action': 'return_revise', 'label': '发回改票',
+        'applied_from_revision_round': 0,
+    })
+    db.conn.execute(
+        "UPDATE pending_decisions SET choice_json=?, revision_round=1, prior_options_json=? "
+        "WHERE turn=? AND idx=? AND kind='rescript_draft'",
+        (json.dumps(revise_choice, ensure_ascii=False),
+         json.dumps([opts2], ensure_ascii=False),
+         int(urgent2['source_turn'] if urgent2.get('source_turn') is not None else urgent2['turn']),
+         int(urgent2['idx'])),
+    )
     db.conn.commit()
-    desk2 = db.list_rescript_desk(int(state.turn))
-    row2 = next((r for r in desk2 if r['decision_key'] == key2))
-    assert row2['status'] == 'pending'
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    db.save_resolve_context(int(state.turn), "测试诏书", {"simulator_payload": None})
     with pytest.raises(ValueError):
-        ra.validate_all([row2], [{'decision_key': key2, 'action': ''}], default_hold_missing=True)
-    batch5 = ra.validate_all([row2], [revise_choice], default_hold_missing=True)
-    assert batch5.items[0].already_applied
-    assert key2 not in batch5.default_hold_keys
+        session.submit_hitl_choices(
+            [{'decision_key': key2, 'action': ''}], write_gate=nullcontext(),
+        )
+    row2 = next(r for r in db.list_rescript_desk(int(state.turn)) if r['decision_key'] == key2)
+    assert row2['status'] == 'pending'
 
 def test_657_http_default_hold_keyed_empty_action_and_betray(web_game, monkeypatch):
     """#657 Class2 V6 必跑：真 HTTP keyed 仅 decision_key → 持久 hold + 辜负。"""

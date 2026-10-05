@@ -1,70 +1,22 @@
-=== validate_all call sites in tests ===
-tests/test_cli_entry_1902.py::test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core L262 calls@[274] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_657_c1_validate_rejects_stale_capability_and_desk_outsider L543 calls@[550, 552] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_657_c1_decided_mismatch_rejects_and_cas0 L554 calls@[560, 567, 570] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_657_p6_mapper_deliberate_preserve_free_text L572 calls@[592] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_657_default_hold_missing_and_empty_action L628 calls@[635, 638, 641, 653, 671, 657, 659, 670] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_657_five_actions_domain_writes L696 calls@[703, 715, 727, 738, 749] kind=HELPER_OTHER
-tests/test_pihong_dossier_1490.py::test_657_record_event_choice_failure_rolls_back_batch L821 calls@[838] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_657_prewrite_failure_zero_db_writes L911 calls@[917] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_657_abi_mapper_matrix_a1_a12 L932 calls@[1160, 1168, 972] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_1682_late_grants_follow_policy_without_consuming_verdict_batch L1173 calls@[1184, 1201] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_657_follow_draft_ignores_client_field_overlay L1777 calls@[1785] kind=HELPER_OTHER
-tests/test_pihong_dossier_1490.py::test_657_midzhi_persists_decision_key_and_llm_label L1799 calls@[1807] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_657_midzhi_verdict_no_party_satisfaction L1818 calls@[1825] kind=HELPER_OTHER
-tests/test_pihong_dossier_1490.py::test_657_default_hold_preserves_red_pen_note L1943 calls@[1949] kind=HELPER_OTHER
-tests/test_pihong_dossier_1490.py::test_657_applied_revise_refresh_resumes_without_hold L2290 calls@[2300] kind=HELPER_OTHER
-tests/test_pihong_dossier_1490.py::_658_plant_stalled_deliberation L2332 calls@[2337] kind=HELPER_OTHER
-tests/test_pihong_dossier_1490.py::test_658_deliberate_backed_and_stalled_dossier_first L2366 calls@[2375, 2411] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_658_stage_rejects_bad_backing_zero_write L2418 calls@[2440] kind=NEG_HELPER
-tests/test_pihong_dossier_1490.py::test_658_candidates_require_active_status L2469 calls@[2480] kind=NEG_HELPER
-tests/test_rescript_choices_563.py::test_financial_decision_uses_stored_option_not_client_payload L205 calls@[247] kind=HELPER_OTHER
-tests/test_rescript_choices_563.py::test_657_capability_revalidate_on_follow L371 calls@[396, 403] kind=NEG_HELPER
-tests/test_structured_decree_contract_1624.py::test_rescript_follow_draft_nails_drafted_roster L278 calls@[303] kind=HELPER_OTHER
+by class: Counter({'HELPER_ONLY_NEG': 11, 'HELPER_ONLY_OTHER': 6, 'HELPER_PLUS_ORCH': 2, 'HELPER_WITH_ORCH': 1})
 
-=== rescript_actions direct imports in tests with raises ===
-tests/test_cli_entry_1902.py:145: 核内 validate_all 对缺 action 的 decision 行既不默认 hold 也拒收（"decision 选项
-tests/test_cli_entry_1902.py:256: # （不在此案重复正向断言 validate_all helper；核侧空 pick 契约见 ordinary 拒收案。）
-tests/test_cli_entry_1902.py:274: ra.validate_all([desk_row], [{"decision_key": desk_row["decision_key"]}])
-tests/test_cli_entry_1902.py:307: 资格判定只在核内（``rescript_actions.validate_all`` 的 note-only 通道，与 Web
-tests/test_execution_pressure_654.py:450: def test_validate_all_unknown_roster_name_zero_rows_before_insert(env):
-tests/test_pihong_dossier_1490.py:550: ra.validate_all([urgent], [{'decision_key': key, 'action': 'follow_draft', 'draft_capability': 'not-a-real-cap', 'label': opts[0]['label']}]
-tests/test_pihong_dossier_1490.py:552: ra.validate_all([urgent], [{'decision_key': 'rescript_draft:999:0', 'action': 'hold', 'label': '留中'}])
-tests/test_pihong_dossier_1490.py:560: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])
-tests/test_pihong_dossier_1490.py:567: ra.validate_all([decided_row], [{'decision_key': key, 'action': 'hold', 'label': '另留'}])
-tests/test_pihong_dossier_1490.py:570: ra.validate_all([empty_decided], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])
-tests/test_pihong_dossier_1490.py:592: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
-tests/test_pihong_dossier_1490.py:635: batch = ra.validate_all([urgent], [], default_hold_missing=True)
-tests/test_pihong_dossier_1490.py:638: batch2 = ra.validate_all([urgent], [{'decision_key': key}], default_hold_missing=True)
-tests/test_pihong_dossier_1490.py:641: batch3 = ra.validate_all([urgent], [{'decision_key': key, 'action': ''}], default_hold_missing=True)
-tests/test_pihong_dossier_1490.py:653: batch4 = ra.validate_all([decided_desk], [stored], default_hold_missing=True)
-tests/test_pihong_dossier_1490.py:657: ra.validate_all([decided_desk], [{'decision_key': key}], default_hold_missing=True)
-tests/test_pihong_dossier_1490.py:659: ra.validate_all([decided_desk], [{'decision_key': key, 'action': 'hold', 'label': '另留'}], default_hold_missing=True)
-tests/test_pihong_dossier_1490.py:670: ra.validate_all([row2], [{'decision_key': key2, 'action': ''}], default_hold_missing=True)
-tests/test_pihong_dossier_1490.py:671: batch5 = ra.validate_all([row2], [revise_choice], default_hold_missing=True)
-tests/test_pihong_dossier_1490.py:703: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'hold', 'label': '留中'}])
-tests/test_pihong_dossier_1490.py:715: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt
-tests/test_pihong_dossier_1490.py:727: batch = ra.validate_all([urgent], [midzhi_choice])
-tests/test_pihong_dossier_1490.py:738: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
-tests/test_pihong_dossier_1490.py:749: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'summon', 'label': '召见', 'summon_target': '杨嗣昌'}])
-tests/test_pihong_dossier_1490.py:838: batch = ra.validate_all(desk, [{'decision_key': u_key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['
-tests/test_pihong_dossier_1490.py:917: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
-tests/test_pihong_dossier_1490.py:972: batch = ra.validate_all([row], [choice])
-tests/test_pihong_dossier_1490.py:1160: batch = ra.validate_all([next((r for r in desk if r['decision_key'] == key))], [choice])
-tests/test_pihong_dossier_1490.py:1168: batch2 = ra.validate_all([decided_desk], [stored])
-tests/test_pihong_dossier_1490.py:1184: batch = ra.validate_all(desk, choices)
-tests/test_pihong_dossier_1490.py:1201: failed_batch = ra.validate_all(failed_rows, failed_choices)
-tests/test_pihong_dossier_1490.py:1785: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt
-tests/test_pihong_dossier_1490.py:1807: batch = ra.validate_all([urgent], [choice])
-tests/test_pihong_dossier_1490.py:1825: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'midzhi', 'label': '中旨赈陕', 'action_type': 'assignment', 'target_kind': 'r
-tests/test_pihong_dossier_1490.py:1949: batch = ra.validate_all([urgent], [{'decision_key': key, 'note': '着再议。'}], default_hold_missing=True)
-tests/test_pihong_dossier_1490.py:2300: batch = ra.validate_all(desk, [{'decision_key': key, 'action': 'return_revise', 'label': '发回改票', 'draft_capability': opt['draft_capability']
-tests/test_pihong_dossier_1490.py:2337: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
-tests/test_pihong_dossier_1490.py:2375: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
-tests/test_pihong_dossier_1490.py:2411: batch3 = ra.validate_all([urgent3], [{'decision_key': key3, 'action': 'deliberate', 'label': '下部议'}])
-tests/test_pihong_dossier_1490.py:2440: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
-tests/test_pihong_dossier_1490.py:2480: batch = ra.validate_all([urgent], [{'decision_key': key, 'action': 'deliberate', 'label': '下部议'}])
-tests/test_rescript_choices_563.py:247: batch = ra.validate_all(desk, requests)
-tests/test_rescript_choices_563.py:396: batch = ra.validate_all(desk, [{
-tests/test_rescript_choices_563.py:403: ra.validate_all(desk, [{
-tests/test_structured_decree_contract_1624.py:303: batch = ra.validate_all([urgent], [{
+tests/test_execution_pressure_654.py::test_mapper_rejects_contradictory_locality_scope_without_overwrite L39 [HELPER_ONLY_NEG] helpers=['map_rescript_option_or_choice'] orch=[]
+tests/test_pihong_dossier_1490.py::test_657_p6_mapper_deliberate_preserve_free_text L612 [HELPER_ONLY_NEG] helpers=['apply_rescript_batch', 'canonical_choice', 'map_rescript_option_or_choice', 'validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_657_default_hold_missing_and_empty_action L668 [HELPER_PLUS_ORCH] helpers=['canonical_choice'] orch=['submit_hitl_choices']
+tests/test_pihong_dossier_1490.py::test_657_five_actions_domain_writes L751 [HELPER_ONLY_OTHER] helpers=['apply_rescript_batch', 'validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_657_record_event_choice_failure_rolls_back_batch L876 [HELPER_ONLY_NEG] helpers=['apply_rescript_batch', 'validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_657_prewrite_failure_zero_db_writes L966 [HELPER_ONLY_NEG] helpers=['run_prewrite_llms', 'validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_657_abi_mapper_matrix_a1_a12 L987 [HELPER_ONLY_NEG] helpers=['apply_rescript_batch', 'map_rescript_option_or_choice', 'validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_1682_late_grants_follow_policy_without_consuming_verdict_batch L1228 [HELPER_ONLY_NEG] helpers=['apply_rescript_batch', 'validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_657_follow_draft_ignores_client_field_overlay L1832 [HELPER_ONLY_OTHER] helpers=['apply_rescript_batch', 'validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_657_midzhi_persists_decision_key_and_llm_label L1854 [HELPER_ONLY_NEG] helpers=['apply_rescript_batch', 'map_rescript_option_or_choice', 'validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_657_midzhi_verdict_no_party_satisfaction L1873 [HELPER_ONLY_OTHER] helpers=['apply_rescript_batch', 'validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_657_default_hold_preserves_red_pen_note L1998 [HELPER_ONLY_OTHER] helpers=['validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_657_appointment_name_target_id_conflict_batch_reject L2009 [HELPER_ONLY_NEG] helpers=['map_rescript_option_or_choice'] orch=[]
+tests/test_pihong_dossier_1490.py::test_657_punishment_name_target_id_conflict_zero_writes L2021 [HELPER_PLUS_ORCH] helpers=['map_rescript_option_or_choice'] orch=['_post_resolve']
+tests/test_pihong_dossier_1490.py::test_657_applied_revise_refresh_resumes_without_hold L2345 [HELPER_WITH_ORCH] helpers=['apply_rescript_batch', 'validate_all'] orch=['_post_resolve']
+tests/test_pihong_dossier_1490.py::test_658_deliberate_backed_and_stalled_dossier_first L2421 [HELPER_ONLY_NEG] helpers=['apply_rescript_batch', 'validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_658_stage_rejects_bad_backing_zero_write L2473 [HELPER_ONLY_NEG] helpers=['apply_rescript_batch', 'validate_all'] orch=[]
+tests/test_pihong_dossier_1490.py::test_658_candidates_require_active_status L2524 [HELPER_ONLY_NEG] helpers=['apply_rescript_batch', 'validate_all'] orch=[]
+tests/test_rescript_choices_563.py::test_financial_decision_uses_stored_option_not_client_payload L205 [HELPER_ONLY_OTHER] helpers=['validate_all'] orch=[]
+tests/test_structured_decree_contract_1624.py::test_rescript_follow_draft_nails_drafted_roster L278 [HELPER_ONLY_OTHER] helpers=['apply_rescript_batch', 'validate_all'] orch=[]

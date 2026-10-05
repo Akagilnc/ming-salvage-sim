@@ -368,13 +368,18 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
     assert decisions == []
 
 
-def test_657_capability_revalidate_on_follow(game):
-    """服务端回验：请求 capability 必须等于对当前 option 结构化字段重算值。"""
+def test_657_capability_revalidate_on_follow(game, monkeypatch):
+    """服务端回验：请求 capability 必须等于对当前 option 结构化字段重算值。
+
+    #1902 R3：复用 _real_submit_session 真编排承载旧 cap 整批拒；
+    正确 cap 与 derive 对齐属结构化契约（成功落库由 HTTP follow 案覆盖）。
+    """
+    from contextlib import nullcontext
     from ming_sim.decree_vocabulary import derive_draft_capability
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    from ming_sim import rescript_actions as ra
+    from tests.test_cli_entry_1902 import _real_submit_session
 
-    db, state, _content = game
+    db, state, content = game
     opt = normalize_rescript_layer_a_option({
         "label": "发帑赈济", "hint": "所安者饥民",
         "action_type": "assignment", "assignee_name": "",
@@ -392,15 +397,11 @@ def test_657_capability_revalidate_on_follow(game):
     db.conn.commit()
     desk = db.list_rescript_desk(int(state.turn))
     key = desk[0]["decision_key"]
-    # 正确 cap 通过
-    batch = ra.validate_all(desk, [{
-        "decision_key": key, "action": "follow_draft",
-        "draft_capability": opt["draft_capability"], "label": opt["label"],
-    }])
-    assert batch.items[0].choice["draft_capability"] == opt["draft_capability"]
-    # 旧 cap（改票后）拒
+    session = _real_submit_session(monkeypatch, db, state, content)
     with pytest.raises(ValueError):
-        ra.validate_all(desk, [{
+        session.submit_hitl_choices([{
             "decision_key": key, "action": "follow_draft",
             "draft_capability": "old-round-cap", "label": opt["label"],
-        }])
+        }], write_gate=nullcontext())
+    pending = next(r for r in db.list_rescript_drafts() if r["title"] == "急")
+    assert pending["status"] == "pending"

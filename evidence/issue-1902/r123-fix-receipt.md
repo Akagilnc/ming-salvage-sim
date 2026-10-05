@@ -1,19 +1,18 @@
-# #1902 修内司 R1–R3 回执
+# #1902 修内司 R1–R3 回执（谓词纠偏续修）
 
 - 分支：`ak-roles/1902-r123-fixer-f21f118da`
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5`
 - 底座 HEAD（开工）：`f21f118da251bc2fa971255bb6f47bfa704a8de6`
-- 本轮代码+回执提交：`ece7bfdfb551d49a73d3fe9e766c5f667f7a5e10`
-- 回执盖章链：`1a0e6c54d` → 本文件最终以 `git rev-parse HEAD` 为准（交卷时查询）
 - 判词真源：附件 `04-1902-judge-f21f118da.json` → `outcome.payloads[-1]`（status=continue；findings R1/R2/R3）
 - 派单：`~/.ak-roles/books/Ming_LLM/unbound/runs/01a10975-803c-7cac-80e8-e2ad1c6ae22c@fixer/fix-packet.md`
-- 枚举原始输出：
+- 官方生态：变异用现成 [pytest monkeypatch](https://docs.pytest.org/en/stable/how-to/monkeypatch.html) 临时插件；不另造注入机制、不落永久扫描器/生产钩子
+- 枚举输出：
   - `evidence/issue-1902/r123-r1-enum.out`
   - `evidence/issue-1902/r123-r2-enum.out`
   - `evidence/issue-1902/r123-r3-enum.out`
-  - 复扫：`evidence/issue-1902/r123-r2-rescan.out`、`evidence/issue-1902/r123-final-rescan.out`
+  - 复扫：`evidence/issue-1902/r123-final-rescan.out`
 - 聚焦测试：`evidence/issue-1902/r123-focus-pytest.txt`
-- 临时变异：`evidence/issue-1902/r123-mutations.out`（及 `/tmp/ming1902-r123/`）
+- 临时变异：`evidence/issue-1902/r123-mutations.out`（及自产 `/tmp/ming1902-r123v2/`，交卷前清理）
 - **不宣称已合并 / 总票完成**
 
 七 BIN 前缀（显式展开）：
@@ -34,6 +33,18 @@ env \
 
 ---
 
+## 自查纠偏（相对上轮收窄谓词）
+
+上轮回执把 R2 收窄为「仅 `pytest.raises(..., match=)`」、R3 收窄为「仅 `validate_all` 且同文件已有 fixture」、R1 局限已知字段。本轮按判词类定义全文重扫：
+
+| 类 | 上轮收窄 | 本轮谓词 |
+|---|---|---|
+| R1 | 已知批次字段名 | 全部抽取入口 CALL + 实际 return 键 + 下游 SUB/ATTR/KW 消费 `drafts`/`draft_failures`/`draft_combo_flags`/`baseline_draft_failures`/`draft_count` |
+| R2 | 仅 `match=` | Python：`raises.match` + reason/message/caplog 子串断言；Web：`toThrow`/`toMatch`/`toContain`/`toHaveTextContent`；逐成员分 INJECT_OR_SOURCE / SOURCE_PASSTHROUGH / STRUCTURED_* / DIAG_LOCK |
+| R3 | 仅 validate_all + 同文件 fixture | 全仓 test_* 含 helper（validate_all/map_*/apply_*/prewrite/canonical）且 `pytest.raises`、无 orch 调用 → HELPER_ONLY_NEG；按生产入口/编排关系分类 |
+
+---
+
 ## 末判三类完整定义（逐字自 payloads[-1].fix.classes）
 
 1. **R1：无现役消费者的抽取模式与承接**  
@@ -48,13 +59,13 @@ env \
    direction：复用现有真实提交夹具承载必要负向契约，删除helper-only平行证明；不得删除拒收行为或mock替代被测编排。  
    law：硬规13；《测试对行为负责》。
 
-边界（同 payload fix.boundary）：不新增护栏、兼容层、永久扫描器或平行测试；不恢复退役手拟入口；不索全量。授权外取舍上呈。
+边界：不新增护栏、兼容层、永久扫描器或平行测试；不恢复退役手拟入口；不索全量。
 
 ---
 
-## 扫描命令（可重放；heredoc AST，未入库永久扫描器）
+## 扫描命令（可重放；临时 AST，未入库永久扫描器）
 
-### R1 — 生产调用链 + 返回形状 + 批次字段消费
+### R1
 
 ```bash
 ROOT=/Users/akagilnc/WorkSpace/Ming_LLM-1902-w5
@@ -63,28 +74,29 @@ rg -n --glob '*.py' --glob '!tests/**' \
   -e 'resubmit_draft_admission_payload' \
   -e 'extract_draft_intent_with_roster_heal' \
   -e 'extract_draft_intent' \
-  -e 'draft_combo_flags' -e 'draft_failures' \
+  -e 'draft_combo_flags' -e 'draft_failures' -e 'baseline_draft_failures' \
   "$ROOT/ming_sim" "$ROOT/web_app.py"
-# AST：见 evidence/issue-1902/r123-r1-enum.out（extract 返回键 / Call 图 / batch readers）
+# AST 全枚举（Call / Return keys / SUB|ATTR|KW batch）→ evidence/issue-1902/r123-r1-enum.out
+# 结果：CALL 10；BATCH 下游读写 0；仅注释残留（见 r123-final-rescan.out）
 ```
 
-**生产链事实（AST）**：唯一非测试调用链  
-`session.py:resubmit_draft_admission_payload` → `extract_draft_intent_with_roster_heal` → `extract_draft_intent` → `_finalize_extract_with_combo(..., needs_combo=...)`。  
-`extract_draft_intent` 字面返回键从不含 `drafts`（仅单旨 / 合法「无」/ push）。
-
-### R2 — 全仓 `pytest.raises(..., match=)` AST 枚举
+### R2
 
 ```bash
-# 产出 → evidence/issue-1902/r123-r2-enum.out
-# TOTAL match= : 80（修理前）
-# 分类谓词：注入哨兵 / 实际异常来源 → KEEP；生产诊断词面 / reason 子串 → 移除措辞依赖
+# AST 全仓 tests/**/*.py：pytest.raises(match=) + assert reason/message/caplog 字符串
+# + web/**/*.test.*：toThrow/toMatch/toContain/toHaveTextContent
+# → evidence/issue-1902/r123-r2-enum.out
+# 分类计数（本轮实测）：
+#   STRUCTURED_OR_OTHER 140 | WEB_OTHER 131 | INJECT_OR_SOURCE 68
+#   SOURCE_PASSTHROUGH 21 | STRUCTURED_DOMAIN 14 | DIAG_LOCK 0（误报「王绍徽」归 SOURCE_PASSTHROUGH）
 ```
 
-### R3 — helper-only `validate_all` 负向 vs 真实提交夹具
+### R3
 
 ```bash
-# 产出 → evidence/issue-1902/r123-r3-enum.out
-# 谓词：pytest.raises + 仅调 validate_all，且同文件已有 _real_submit_session / submit_hitl_choices 真编排夹具
+# AST 全仓 test_*：若调用 HELPERS={validate_all,map_*,apply_*,prewrite,canonical}
+# 且 pytest.raises，且无 ORCH={submit_hitl_choices,_adjudicate_cli_decisions,_post_resolve,...}
+# → HELPER_ONLY_NEG；产出 evidence/issue-1902/r123-r3-enum.out
 ```
 
 ---
@@ -96,67 +108,73 @@ rg -n --glob '*.py' --glob '!tests/**' \
 | 成员 | 处置 | 保留/删除依据 |
 |---|---|---|
 | `extract_draft_intent` 单旨 / 合法「无」/ push / `acting_appointment`→「无」 | **保留** | 现役生产返回形状；resubmit 消费者 |
-| `_finalize_extract_with_combo(..., needs_combo=)` 单旨组合闸 | **保留** | 必要组合 heal；生产调用 L2706 |
+| `_finalize_extract_with_combo(..., needs_combo=)` 单旨组合闸 | **保留** | 必要组合 heal；生产调用 |
 | `extract_draft_intent_with_roster_heal` + roster 名册校验/纠错 | **保留** | 必要名册 heal；resubmit 唯一生产调用 |
 | `_affair_declaration_from_draft_obj` / `_stamp_split_birth_key` | **保留** | 真实事务声明承接 |
-| `draft_combo_flags` 批次校验分支（原 2063–2088） | **删** | 无生产传入；extract 不产 `drafts` |
-| `_finalize_extract_with_combo` 的 `draft_combo_flags` 形参 | **删** | 批次专属字段 |
-| `_merge_combo_correction_preserving_roster` 的 `draft_failures` + drafts 合并环 | **删** | 批次纠错承接不可达 |
-| `_revalidate_merged_combo_result` 的 batch collect-all 路径 | **删** | 仅服务 draft_failures |
-| heal 内 `baseline_draft_failures` 冻结/回传 | **删** | 批次专属；单旨只留 `baseline_failed_fields` |
-| `StructuredDecreeCombinationError.draft_failures` | **删** | 批次专属运输字段 |
-| `_person_ids_from_extract_result` / `_count_failed_person_slots` / `_backfill_healed_participant_refs` / `_apply_validated_roster_to_extract_result` / `_ground_relative_pay_order_deadlines` / `has_roster_field` 的 drafts 遍历 | **删** | 下游消费批次形状；现役只读顶层 |
-| 批抽专用测试（draft_combo_flags / extract+drafts） | **无成员** | 修理前 AST 扫 tests：0 命中 |
-| `rescript_draft` / DB `list_rescript_drafts` 等「急务草稿」 | **保留（类外）** | 非抽取批抽 `result["drafts"]`；批红急务实体 |
+| `draft_combo_flags` / `draft_failures` / drafts 合并环 / batch revalidate / baseline_draft_failures / StructuredDecreeCombinationError.draft_failures / drafts 遍历 helpers | **已删**（上轮+本轮复扫 0 功能符号） | 无生产传入；extract 不产 `drafts` |
+| 批抽专用测试 | **无成员** | 测试侧无 `extract+drafts` 专用案 |
+| `rescript_draft` / DB `list_rescript_drafts` | **保留（类外）** | 非抽取批抽 `result["drafts"]` |
 
-**复扫**：`r123-final-rescan.out` — 功能符号 0；仅注释标记。
+生产链：`session.resubmit_draft_admission_payload` → `extract_draft_intent_with_roster_heal` → `extract_draft_intent` → `_finalize_extract_with_combo`。
 
 ### R2 — 非契约诊断文本证明
 
-谓词：证明依赖生产诊断词面（`match=` 锁措辞 / reason 子串），而非拒收·原子性·结构化终态·注入/真实异常来源。
-
-#### 修（移除措辞依赖，保留契约）
+#### 修（移除措辞依赖；补回结构化 category/source/原子性）
 
 | 成员 | 处置 | 依据 |
 |---|---|---|
-| `test_decree_dossiers_571.py` L69/82 `match=参与人物不存在/委派人不存在` | **修** | 改 `pytest.raises(ValueError)` + 空表/名册不变 |
-| 同文件 L105/117 `match=委派人须为…` | **修** | 同上 + 空表/长度不变 |
-| 同文件 L155/159 `match=机械档不同` | **修** | 同上 + roster 终态 |
-| 同文件 L1503 `any("account" in reason)` | **修** | 改 `assert rej`（拒收行存在） |
-| 同文件 L1610 `canonical target`/`target` 子串 | **修** | 改 `assert reasons` |
-| 同文件 L1914 `assignee` 子串 | **修** | 改 `assert reasons` |
-| 同文件 L2043/2060/2078/2100 `match=打回判决缺少/typed 判据快照` | **修** | 去 match；补 `decisions==[]` + `status==proposed` |
-| `test_error_pack.py:45` `match=atomic` | **修** | 去 match；断言未写出 `manifest.json` |
-| `test_pay_order_override_extraction_653.py:80` `match=entries` | **修** | 去 match；保留 `ValueError` 拒收 |
+| `test_decree_dossiers_571` 多处 `match=参与人物/委派人/机械档/打回判决/typed` | **修**（上轮） | `pytest.raises(ValueError)` + 空表/roster/decisions 终态 |
+| 同文件 `any("account" in reason)` / `canonical target` / `assignee` 子串 | **修→再修** | 上轮仅 `assert rej/reasons` **丢失 category/source**；本轮改为断言 `category==locality_fanout_failed`、`source==player_decree`、`item_json.directive_id` + draft 原子性 |
+| `test_error_pack.py` `match=atomic` | **修**（上轮） | 去 match；断言未写出 manifest |
+| `test_pay_order_override_extraction_653` `match=entries` | **修**（上轮） | 去 match；保留 ValueError 拒收 |
 
-#### 保留（实际异常来源 / 注入哨兵 — 非本类）
+#### 保留（逐类，非统称「其余都是来源」）
 
-全仓其余 `match=`（枚举见 `r123-r2-enum.out` / 复扫 `r123-r2-rescan.out`）均为测试注入的精确异常串（`boom`/`inject`/`模拟 …`/`dossier close failed`/`派系认领库不可写` 等）或同类来源契约 → **KEEP**。不得按 `match=` 操作符整删。
+| 分类 | 代表成员 | 合法保留依据 |
+|---|---|---|
+| INJECT_OR_SOURCE（68× raises.match） | `match="boom"/inject/模拟…/dossier close failed/派系…不可写/association boom/…` | 测试注入精确异常串；钉实际异常来源透传 |
+| SOURCE_PASSTHROUGH | `LLM 不可用` in note；`幻觉甲/丙` in reason；`王绍徽` in reason；web `settleStream` toThrow 用注入 `httpErrorLabel`/`detail` | 实际输入/异常来源原文透传，非生产诊断锁词 |
+| STRUCTURED_DOMAIN | effect_origin `reason==奉旨裁撤`；scroll speaker；`请奏` 原文 | 结构化领域字段或输入原文，非诊断措辞 |
+| STRUCTURED_OR_OTHER / WEB_OTHER | 字段缺席、`status`/`pending`、非诊断 UI | 非 R2 诊断词面 |
+| 闸类负向本体 | 各 `raises(ValueError)` 无 match | 真实拒收+终态 |
 
-闸类负向拒收本体、结构化终态断言 → **KEEP**。
+生产诊断词面 `raises.match` DIAG_LOCK：**0**（复扫残留 `later`/`orig`/`translation unavailable` 属注入/来源短哨兵）。
 
 ### R3 — 绕过真实编排的负向证明
 
+#### 修（helper-only 平行 → 真编排）
+
 | 成员 | 处置 | 依据 |
 |---|---|---|
-| `test_cli_entry_1902.py::test_cli_blank_pick_on_ordinary_decision_is_rejected_by_core`（原仅 `ra.validate_all`） | **修** | 改走 `_real_submit_session` + `session.submit_hitl_choices`；断言 `ValueError` + `status==pending` |
-| 同文件 `_real_submit_session` / urgent hold / note 拒收等真编排案 | **保留** | 已有真实提交夹具 |
-| `test_pihong_dossier_1490.py` 等直接测 `ra.validate_all` 的闸/领域案 | **保留** | 被测对象即核 API（Web 同走）；非 CLI 编排平行证明；硬规13④闸类负向不可删 |
-| `test_adjudication_blank_on_ordinary_decision_reprompts`（入口录音替身） | **保留** | 保护入口输入接缝，与核内拒收独立（末判完整性 C3 已驳「重复」） |
+| `test_cli_entry_1902::…ordinary…rejected_by_core` | **修**（上轮） | `_real_submit_session` + `submit_hitl_choices` |
+| `test_657_c1_validate_rejects_stale_capability_and_desk_outsider` | **修** | 复用 `_real_submit_session`；拒收后 `status==pending` |
+| `test_657_c1_decided_mismatch_rejects_and_cas0` | **修** | 真 submit 落 hold 后再拒异票/空 choice |
+| `test_657_default_hold_missing_and_empty_action` | **修** | 真 submit 承载 hold+异票+revise 空 action；HTTP 正向平行案保留 |
+| `test_657_capability_revalidate_on_follow` | **修** | 真 submit 拒旧 cap；derive 结构化对齐保留 |
+
+#### 保留（按生产入口/编排关系分类；不以「核 API」之名免责）
+
+| 成员 | 生产关系 | 保留依据 |
+|---|---|---|
+| `test_cli_blank_pick_on_urgent…` / note-only 真编排案 | CLI → submit | 已有真实提交夹具 |
+| `test_657_http_default_hold_*` / `_post_resolve` HTTP 负向 | Web ASGI → submit | 真实 HTTP 入口 |
+| `test_1682_phase2_surfaces_ambiguous_*` | `make_light_session`+submit | 真编排歧义拒 |
+| mapper 闸：`map_rescript_option_or_choice` 拒（p6 title>80、appointment name≠target、execution_pressure locality、abi matrix） | 生产：`submit`→`validate`→**同一 mapper** | 被测接缝=mapper 单一边界；硬规13④；非与入口案同契约的第二份平行证明 |
+| apply/prewrite 领域：`record_event_choice_failure`、`prewrite_failure`、`1682_late_grants`、`midzhi`、`658_deliberate*`、`658_candidates*` | 生产：`session` 在 validate 后调 **同一** `apply_rescript_batch`/`run_prewrite_llms` | 被测=领域写/prewrite 闸与回滚；raises 落在 apply/prewrite/注入，非入口平行 |
+| `test_658_stage_rejects_bad_backing_*` | `stage_punishment_candidate` 首写闸；validate 仅种 deliberate 前置 | 被测=stage 接缝；非 validate_all 平行入口证明 |
+| `test_adjudication_blank_on_ordinary…` 入口录音 | 入口输入接缝 | 与核内拒收独立（末判完整性 C3） |
 
 ---
 
 ## 根因 / 修法
 
-- **R1**：N5 清退后 extract 只产单旨，但 heal/finalize/structured_decree 仍携批次 `drafts`/`draft_failures`/`draft_combo_flags` 死路径。按生产调用与返回形状删净批次承接，保留单旨组合+名册 heal+事务声明。
-- **R2**：拒收案以诊断正则/子串当契约；亲验改述 ValueError 后结构化终态仍成立、旧 match 却红。去措辞依赖，钉拒收/原子性/终态。
-- **R3**：核侧空 pick 负向只调 `validate_all`，禁用 `submit_hitl_choices` 仍绿。复用同文件真实提交夹具承载拒收，不删拒收、不 mock 被测编排。
+- **R1**：批抽承接已清；本轮宽谓词复扫生产 BATCH 读写 **0**。
+- **R2**：上轮去措辞后 `assert rej` 过弱，丢失 `category`/`source`/directive 归属；本轮补结构化契约。宽扫后无生产诊断 `match=` 残留。
+- **R3**：上轮只改 CLI ordinary；宽扫后将 pihong/rescript_choices 中 validate_all 平行拒收改走 `_real_submit_session`。变异改为**禁用 submit 行为**（恒接受）使真实负向 DID NOT RAISE，而非改名 AttributeError。
 
 ---
 
 ## 聚焦测试
-
-命令（实测）：
 
 ```bash
 env MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false \
@@ -168,41 +186,45 @@ env MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false \
     tests/test_pay_order_override_extraction_653.py \
     tests/test_draft_admission_resubmit_1769.py \
     tests/test_structured_decree_contract_1624.py \
-    tests/test_cli_backend.py
+    tests/test_cli_backend.py \
+    tests/test_pihong_dossier_1490.py::test_657_c1_validate_rejects_stale_capability_and_desk_outsider \
+    tests/test_pihong_dossier_1490.py::test_657_c1_decided_mismatch_rejects_and_cas0 \
+    tests/test_pihong_dossier_1490.py::test_657_default_hold_missing_and_empty_action \
+    tests/test_pihong_dossier_1490.py::test_657_http_default_hold_keyed_empty_action_and_betray \
+    tests/test_rescript_choices_563.py::test_657_capability_revalidate_on_follow
 ```
 
-结果：`265 passed in 8.44s`（`/usr/bin/time -p`：real 9.43 / user 5.09 / sys 2.55）。原文：`r123-focus-pytest.txt`。
+结果：`270 passed in 7.34s`（`/usr/bin/time -p`：real 7.95 / user 5.37 / sys 2.05）。未跑全量。
 
 ---
 
 ## 临时变异证据（不落永久证明测试）
 
-原文：`evidence/issue-1902/r123-mutations.out`。
+方法：临时 pytest 插件 + 进程内改回；参照 monkeypatch 官方 API。
 
 | 类 | 变异 | 结果 |
 |---|---|---|
-| R1 | `draft_combo_flags` / `draft_failures` kw → TypeError；抽空 `_finalize` 组合校验 | RED（1624 combo roster 案）→ 恢复 GREEN |
-| R2 | `strict_types.py` 将「打回判决缺少…」改述为「判决字段不齐（改述）」 | 相关拒收案仍 GREEN（措辞无关）→ 恢复 GREEN |
-| R3 | 改名 `GameSession.submit_hitl_choices` | ordinary 拒收 + urgent hold 均 RED → 恢复 GREEN |
+| R3 | `GameSession.submit_hitl_choices` **恒接受**（禁用拒收行为，非改名） | ordinary / stale-cap / old-cap 均 **DID NOT RAISE** RED → 恢复 GREEN |
+| R2 | `locality_fanout_failed` → `locality_fanout_CORRUPTED` | 结构化 category 断言 RED → 恢复 GREEN |
+| R1 | （上轮）batch kw TypeError / 抽空 finalize | 已在既有 commits；本轮复扫 0 功能残留 |
 
-变异后确认无残留：`NO_LEFTOVERS_OK`。
+原文：`evidence/issue-1902/r123-mutations.out`。
 
 ---
 
 ## 测试最小必要成本
 
-- 未新增平行测试文件；R2/R3 均改既有案。
-- 聚焦 7 文件 265 案，约 9s；未跑全量。
-- 临时变异仅在 `/tmp` + 进程内改回，不入库。
+- 未新增平行测试文件；R2/R3 改既有案。
+- 聚焦约 270 案，~8s；未跑全量。
+- 临时枚举/变异仅 `/tmp/ming1902-r123v2`，交卷清理；不碰他席 `/tmp/ming1902-*`。
 
 ---
 
 ## 合法性 / 复杂度复检
 
-- 未改 `CLAUDE.md` / `AGENTS.md` / `CONTEXT.md` / ADR（治理法源不动）。
+- 未改 `CLAUDE.md` / `AGENTS.md` / `CONTEXT.md` / ADR。
 - 未新增护栏、兼容层、永久扫描器、错误码、生产测试钩子。
-- 净删：`cli_backend.py` 批次死路径大幅收缩（diff 约 −120 行量级）；测试去措辞/改真编排，无加机制。
-- 优先删简复用：R3 复用既有 `_real_submit_session`；R1 不另造单旨 API。
+- 优先复用 `_real_submit_session` / HTTP 夹具；不 mock 被测编排。
 
 ---
 
@@ -214,13 +236,4 @@ git status -sb
 git log -3 --oneline
 ```
 
-实测：
-
-```text
-BRANCH: ak-roles/1902-r123-fixer-f21f118da
-BASE:   f21f118da251bc2fa971255bb6f47bfa704a8de6
-FIX:    ece7bfdfb551d49a73d3fe9e766c5f667f7a5e10
-STAMP:  1a0e6c54d25e0013e565fb5d21be6222153b80d3
-NOTE:   delivery HEAD = git rev-parse after this docs correction commit
-status: working tree clean after docs correction
-```
+（交卷提交后以 `git rev-parse HEAD` 为准；不为回执自引用 SHA 反复盖章提交。）

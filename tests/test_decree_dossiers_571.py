@@ -1491,7 +1491,7 @@ def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
     )
 
     # #654 路3：成案失败记 rejection、保持 draft，不向外抛
-    # #1902 R2：钉结构化拒收终态；不锁诊断 reason 词面。
+    # #1902 R2：钉 category/source/原子性结构化终态；不锁诊断 reason 词面。
     db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
     status = db.conn.execute(
@@ -1499,9 +1499,15 @@ def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
     ).fetchone()["status"]
     assert status == "draft"
     rej = db.conn.execute(
-        "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
+        "SELECT category, source, item_json FROM rejection_reports "
+        "WHERE section='directive_locality'",
     ).fetchall()
     assert rej
+    assert all(r["category"] == "locality_fanout_failed" for r in rej)
+    assert all(r["source"] == "player_decree" for r in rej)
+    assert any(
+        json.loads(r["item_json"]).get("directive_id") == directive_id for r in rej
+    )
 
 def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
     db, state, _content = game
@@ -1596,7 +1602,7 @@ def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
         },
     )
     # #654 路3：缺 canonical target → rejection，不抛穿
-    # #1902 R2：钉结构化拒收终态；不锁诊断 reason 词面。
+    # #1902 R2：钉 category/source/原子性结构化终态；不锁诊断 reason 词面。
     db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
     status = db.conn.execute(
@@ -1604,9 +1610,15 @@ def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
     ).fetchone()["status"]
     assert status == "draft"
     reasons = db.conn.execute(
-        "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
+        "SELECT category, source, item_json FROM rejection_reports "
+        "WHERE section='directive_locality'",
     ).fetchall()
     assert reasons
+    assert all(r["category"] == "locality_fanout_failed" for r in reasons)
+    assert all(r["source"] == "player_decree" for r in reasons)
+    assert any(
+        json.loads(r["item_json"]).get("directive_id") == directive_id for r in reasons
+    )
 
 def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
     db, state, _content = game
@@ -1898,7 +1910,7 @@ def test_secret_authorization_rejects_missing_assignee_without_grant(game):
         state, None, "残缺密授权", "player_decree", dossier_payload=payload,
     )
     # #654 路3：缺 assignee → rejection 保持 draft，不抛穿
-    # #1902 R2：钉结构化拒收终态；不锁诊断 reason 词面。
+    # #1902 R2：钉 category/source/原子性结构化终态；不锁诊断 reason 词面。
     db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
     status = db.conn.execute(
@@ -1906,9 +1918,15 @@ def test_secret_authorization_rejects_missing_assignee_without_grant(game):
     ).fetchone()["status"]
     assert status == "draft"
     reasons = db.conn.execute(
-        "SELECT reason FROM rejection_reports WHERE section='directive_locality'",
+        "SELECT category, source, item_json FROM rejection_reports "
+        "WHERE section='directive_locality'",
     ).fetchall()
     assert reasons
+    assert all(r["category"] == "locality_fanout_failed" for r in reasons)
+    assert all(r["source"] == "player_decree" for r in reasons)
+    assert any(
+        json.loads(r["item_json"]).get("directive_id") == directive_id for r in reasons
+    )
 
 def test_in_transit_allocation_requires_execution_verdict(game):
     db, state, _content = game

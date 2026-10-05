@@ -1,63 +1,11 @@
-=== extract_draft_intent return / assign shapes ===
-L2698: single_result keys=['draft_action', 'draft_text', 'target_candidate', 'dossier_action_type', 'target_kind', 'target_id', 'participant_roster']
-L2706: return Call _finalize_extract_with_combo
-L2522: return Name projected
-L2583: return Dict keys=['draft_action', 'draft_text', 'target_candidate']
-L2632: return Name push_out
-L2636: return Dict keys=['draft_action', 'draft_text', 'target_candidate']
-
-=== production Call sites (non-tests) ===
-ming_sim/cli_backend.py:2706: _finalize_extract_with_combo(
-ming_sim/cli_backend.py:2173: _finalize_extract_with_combo(
-ming_sim/cli_backend.py:2887: extract_draft_intent_with_roster_heal(
-ming_sim/cli_backend.py:2265: extract_draft_intent(
-ming_sim/cli_backend.py:2336: _merge_combo_correction_preserving_roster(
-ming_sim/cli_backend.py:2342: _revalidate_merged_combo_result(
-ming_sim/cli_backend.py:2298: _merge_combo_correction_preserving_roster(
-ming_sim/cli_backend.py:2305: _revalidate_merged_combo_result(
-ming_sim/session.py:1844: resubmit_draft_admission_payload(
-
-=== batch-shape readers in cli_backend.py ===
-cli_backend.py:1346: for draft in result.get("drafts") or []:
-cli_backend.py:1518: for draft in result.get("drafts") or []:
-cli_backend.py:1679: base_drafts = baseline.get("drafts")
-cli_backend.py:1680: corr_drafts = correction.get("drafts")
-cli_backend.py:1957: drafts = out.get("drafts")
-cli_backend.py:2031: drafts = result.get("drafts")
-cli_backend.py:2057: draft_combo_flags: Optional[List[bool]] = None,
-cli_backend.py:2061: needs_combo / draft_combo_flags 为调用方局部布尔，不写入结果字典。
-cli_backend.py:2063: if draft_combo_flags is not None:
-cli_backend.py:2064: drafts = result.get("drafts") or []
-cli_backend.py:2066: draft_failures: Dict[int, frozenset] = {}
-cli_backend.py:2068: for idx, flag in enumerate(draft_combo_flags):
-cli_backend.py:2077: draft_failures[idx] = frozenset(exc.failed_fields)
-cli_backend.py:2085: draft_failures=draft_failures,
-cli_backend.py:2118: draft_failures: Optional[Dict[int, frozenset]] = None,
-cli_backend.py:2130: base_drafts = baseline.get("drafts")
-cli_backend.py:2131: corr_drafts = corrected.get("drafts")
-cli_backend.py:2135: failures = dict(draft_failures or {})
-cli_backend.py:2160: draft_failures: Optional[Dict[int, frozenset]] = None,
-cli_backend.py:2167: drafts = result.get("drafts")
-cli_backend.py:2168: if isinstance(drafts, list) and draft_failures:
-cli_backend.py:2170: for idx, fields in draft_failures.items():
-cli_backend.py:2173: _finalize_extract_with_combo(result, draft_combo_flags=flags)
-cli_backend.py:2259: baseline_draft_failures: Dict[int, frozenset] = {}
-cli_backend.py:2283: raw_draft_failures = getattr(exc, "draft_failures", None) or {}
-cli_backend.py:2284: baseline_draft_failures = {
-cli_backend.py:2286: for idx, fields in dict(raw_draft_failures).items()
-cli_backend.py:2302: draft_failures=baseline_draft_failures,
-cli_backend.py:2308: draft_failures=baseline_draft_failures,
-cli_backend.py:2316: draft_failures=getattr(
-cli_backend.py:2317: merged_exc, "draft_failures", None
-cli_backend.py:2340: draft_failures=baseline_draft_failures,
-cli_backend.py:2345: draft_failures=baseline_draft_failures,
-cli_backend.py:2357: for d in (result.get("drafts") or [])
-
-=== structured_decree draft_failures ===
-structured_decree.py:30: draft_failures：批抽 idx → 可修字段边界；
-structured_decree.py:41: draft_failures: Optional[Dict[int, frozenset[str]]] = None,
-structured_decree.py:55: self.draft_failures = dict(draft_failures or {})
-
-=== tests touching extract batch shape ===
-
-=== REAL_EXTRACT_KEYS / keys asserted in tests ===
+=== R1 prod CALL/BATCH ===
+ming_sim/session.py:1844	CALL	resubmit_draft_admission_payload
+ming_sim/cli_backend.py:2557	CALL	_affair_declaration_from_draft_obj
+ming_sim/cli_backend.py:2572	CALL	_finalize_extract_with_combo
+ming_sim/cli_backend.py:2493	CALL	_affair_declaration_from_draft_obj
+ming_sim/cli_backend.py:2753	CALL	extract_draft_intent_with_roster_heal
+ming_sim/cli_backend.py:2147	CALL	extract_draft_intent
+ming_sim/cli_backend.py:2208	CALL	_merge_combo_correction_preserving_roster
+ming_sim/cli_backend.py:2213	CALL	_revalidate_merged_combo_result
+ming_sim/cli_backend.py:2175	CALL	_merge_combo_correction_preserving_roster
+ming_sim/cli_backend.py:2181	CALL	_revalidate_merged_combo_result
