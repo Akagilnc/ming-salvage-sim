@@ -3,6 +3,7 @@
 - 工作树：`/Users/akagilnc/WorkSpace/Ming_LLM-1847-w5`
 - 分支：`ak-roles/1847-fixer-w8-n11-n13-n14-n15`
 - 底座 HEAD（动手前）：`da4e0ce79095e3f62fa3914478f2b99f717c5344`（w9）
+- delivery commit：`e89e925ea953d048b3137835bdd58a1c58ef2646`
 - 判词真源：`evidence/1847-w9-verdict.json`（N11-R2 / N11-X1 / N13-R2；本轮按续令纠正 w9 误上呈）
 - 环境前缀：七个 `MING_SIM_*_BIN=/usr/bin/false`
 - 禁止项遵守：未 stash / amend / rewrite / push / PR / SIGKILL / 全量 / 真模型；未改宪法、Soul、席位、宿主配置
