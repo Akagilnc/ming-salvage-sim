@@ -57,10 +57,7 @@ from ming_sim.models import (
 # --- 单项加载器（保留原签名，便于复用与单测）---
 
 def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
-    from ming_sim.person_archive_contract import (
-        PERSON_OUSTED_STATUSES,
-        wash_ousted_current_office,
-    )
+    from ming_sim.person_archive_contract import PERSON_OUSTED_STATUSES
 
     data = require_dict(load_json_asset("characters.json"), "characters.json")
     factions: Dict[str, Faction] = {}
@@ -123,12 +120,10 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         status = str(item.get("status") or "active")
         office_type = str_field(item, "office_type", f"characters.json.characters[{idx}]")
         status_reason = str(item.get("status_reason") or "").strip()
-        # ADR 0009：在事者 office 必非空；离事者职名分必清、身名分可留（contract 真源）。
+        # ADR 0009：在事者 office 必非空。离事者现职以 characters.json 为名分真源
+        # （允许空 office 合法读取）；不在装载时二次洗职，也不解析 status_reason。
         if status in PERSON_OUSTED_STATUSES:
             office = str(item.get("office") or "").strip()
-            office, status_reason = wash_ousted_current_office(
-                status, office, office_type, status_reason,
-            )
         else:
             office = str_field(item, "office", f"characters.json.characters[{idx}]")
         characters[name] = Character(

@@ -139,6 +139,6 @@ def test_fresh_seed_station_region_and_class_slices(game):
     assert _pop(db, "流民", "liaodong") == LIUMIN_LIAODONG
     assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
     assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
-    # 旧档 ensure_column 路径：新列存在且默认空串合法
+    # station_region 在新档 CREATE 中存在且默认可为空串
     cols = {r[1] for r in db.conn.execute("PRAGMA table_info(armies)").fetchall()}
     assert "station_region" in cols

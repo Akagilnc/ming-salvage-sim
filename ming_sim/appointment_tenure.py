@@ -20,7 +20,7 @@ def appointment_tenure_from(payload: dict[str, object]) -> str:
 
 
 def normalize_appointment_tenure(value: object) -> str:
-    """执行侧读端：非法/空值按真除兜底，不抛（旧档与缺备档兼容）。"""
+    """执行侧读端：非法/空值按真除兜底，不抛（缺备档与空任别合法读取）。"""
     text = str(value or "").strip()
     if text in APPOINTMENT_TENURES:
         return text

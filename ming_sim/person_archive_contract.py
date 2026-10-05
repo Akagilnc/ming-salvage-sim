@@ -120,8 +120,7 @@ def current_title_kind(office: object = "", office_type: object = "") -> str:
 
     口径与既有事件闸／声明入口同源：空职、显式「身名分」、PERSON_IDENTITY_TITLES
     （及 normalize_title_kind 能认作身名分的职衔字）→ 身名分；其余非空现职 → 职名分。
-    未仕／宗藩／后宫／外臣等身份桶的洗档归 wash_ousted_current_office，禁止经本函数
-    扩 transition 语义。
+    未仕／宗藩／后宫／外臣等身份桶现职以静态名册为真源；禁止经本函数扩 transition 语义。
     """
     office_text = str(office or "").strip()
     kind = str(office_type or "").strip()
@@ -134,36 +133,6 @@ def current_title_kind(office: object = "", office_type: object = "") -> str:
         return "身名分"
     return "职名分"
 
-
-def wash_ousted_current_office(
-    status: object,
-    office: object,
-    office_type: object = "",
-    status_reason: object = "",
-) -> tuple[str, str]:
-    """离事者职名分必清；身名分与既有身份桶保留。历史来历写入 status_reason（若尚空）。
-
-    供 GameContent.load 与 GameDB.seed_static_data 共用，避免只改静态名册子集。
-    身份桶真源复用 models.WEISHI_OFFICE_TYPE / VASSAL_PRINCE_OFFICE_TYPE 与既有
-    「后宫」「外臣」字面（同 seed 洗档旧集），不经 current_title_kind 扩 transition。
-    """
-    # 延迟导入：避免 contract↔models 环依赖；常量真源仍在 models。
-    from ming_sim.models import VASSAL_PRINCE_OFFICE_TYPE, WEISHI_OFFICE_TYPE
-
-    status_key = str(status or "").strip() or "active"
-    office_text = str(office or "").strip()
-    reason_text = str(status_reason or "").strip()
-    if status_key not in PERSON_OUSTED_STATUSES or not office_text:
-        return office_text, reason_text
-    kind = str(office_type or "").strip()
-    if (
-        current_title_kind(office_text, office_type) != "职名分"
-        or kind in {WEISHI_OFFICE_TYPE, VASSAL_PRINCE_OFFICE_TYPE, "后宫", "外臣"}
-    ):
-        return office_text, reason_text
-    if not reason_text:
-        reason_text = office_text
-    return "", reason_text
 
 
 def resolve_person_transition(

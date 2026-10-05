@@ -1,0 +1,1141 @@
+{
+  "total": 162,
+  "create_already": [
+    {
+      "table": "relation_brew_pending",
+      "column": "item_kind",
+      "definition": "TEXT NOT NULL DEFAULT '关系'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "powers",
+      "column": "military_strength",
+      "definition": "INTEGER NOT NULL DEFAULT 50",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "powers",
+      "column": "cohesion",
+      "definition": "INTEGER NOT NULL DEFAULT 50",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "powers",
+      "column": "supply",
+      "definition": "INTEGER NOT NULL DEFAULT 50",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "powers",
+      "column": "last_action",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "powers",
+      "column": "kind",
+      "definition": "TEXT NOT NULL DEFAULT '敌国'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "powers",
+      "column": "aliases",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "owner_power",
+      "definition": "TEXT NOT NULL DEFAULT 'ming'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "station_region",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "province_pay_arrears",
+      "definition": "REAL NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "central_pay_arrears",
+      "definition": "REAL NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "consecutive_pay_shortfall_months",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "pay_source_region",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "province_pay_share",
+      "definition": "REAL NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "central_pay_share",
+      "definition": "REAL NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "is_tusi",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "self_funded_pay",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "mutiny_status",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "is_mutinied",
+      "definition": "INTEGER NOT NULL DEFAULT 0 CHECK(is_mutinied IN (0, 1))",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "mutiny_count",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "mutiny_probation",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "full_pay_streak",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "redemption_count",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "firearm_equipment",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "cannon_equipment",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "armies",
+      "column": "salary_rate",
+      "definition": "REAL NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "regions",
+      "column": "controlled_by",
+      "definition": "TEXT NOT NULL DEFAULT 'ming'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "regions",
+      "column": "city_level",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "regions",
+      "column": "cannon",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "power_id",
+      "definition": "TEXT NOT NULL DEFAULT 'ming'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "location",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "transit_to",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "transit_distance_remaining",
+      "definition": "REAL",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "transit_speed_factor",
+      "definition": "REAL",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "transit_start_turn",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "issues",
+      "column": "resolve_condition",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "issues",
+      "column": "fail_condition",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "issues",
+      "column": "end_turn",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "issues",
+      "column": "stop_condition",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "issues",
+      "column": "commitment_kind",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "issues",
+      "column": "stages_json",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "next_audience_todos",
+      "column": "payload_json",
+      "definition": "TEXT NOT NULL DEFAULT '{}'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "birth_year",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "historical_death_year",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "historical_death_month",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "debut_year",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "debut_month",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "status",
+      "definition": "TEXT NOT NULL DEFAULT 'active'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "status_reason",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "reason_code",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "status_changed_turn",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "identity",
+      "definition": "INTEGER NOT NULL DEFAULT 50",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "characters",
+      "column": "seed_guilt",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "event_triggers",
+      "column": "terminal_state",
+      "definition": "TEXT NOT NULL DEFAULT 'triggered'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "event_triggers",
+      "column": "terminal_reason",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "event_triggers",
+      "column": "choice_json",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "pending_decisions",
+      "column": "event_id",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "game_state",
+      "column": "turn_phase",
+      "definition": "TEXT NOT NULL DEFAULT 'summoning'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossier_link_rejections",
+      "column": "pending_action_id",
+      "definition": "INTEGER",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "secret_orders",
+      "column": "sim_note",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "secret_orders",
+      "column": "due_turn",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "secret_orders",
+      "column": "deadline_span",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "secret_orders",
+      "column": "excluded_names",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "secret_orders",
+      "column": "dossier_progress_json",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "character_knowledge_events",
+      "column": "excluded_names",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "issues",
+      "column": "participants",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "issues",
+      "column": "participant_roster",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "issues",
+      "column": "target_roster",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "chat_messages",
+      "column": "knowledge_status",
+      "definition": "TEXT NOT NULL DEFAULT 'held'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "chat_messages",
+      "column": "highlights_json",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "secret_order_briefs",
+      "column": "origin_chat_message_ids",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "turn_directives",
+      "column": "dossier_payload_json",
+      "definition": "TEXT NOT NULL DEFAULT '{}'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "character_offices",
+      "column": "dossier_id",
+      "definition": "INTEGER",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "character_offices",
+      "column": "appointment_tenure",
+      "definition": "TEXT NOT NULL DEFAULT '真除'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "character_offices",
+      "column": "region_id",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "office_change_records",
+      "column": "appointment_tenure",
+      "definition": "TEXT NOT NULL DEFAULT '真除'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "execution_outcome",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "held_turn",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "execution_note",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "closed_turn",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "promulgation_blocked_layer",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "promulgation_reason",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossier_decisions",
+      "column": "blocked_layer",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossier_decisions",
+      "column": "legal_reason_code",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossier_decisions",
+      "column": "primary_opponents_json",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossier_decisions",
+      "column": "gatekeeper_id",
+      "definition": "TEXT",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossier_decisions",
+      "column": "criteria_snapshot_json",
+      "definition": "TEXT NOT NULL DEFAULT '{}'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossier_decisions",
+      "column": "affected_parties_json",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossier_decisions",
+      "column": "midzhi_unpromulgatable",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "executor_kind",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "executor_id",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "participant_roster",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "region_id",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "chat_turns",
+      "column": "night_id",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "chat_turns",
+      "column": "night_seq",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "chat_turns",
+      "column": "extract_status",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "chat_turns",
+      "column": "error_pack_path",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "chat_turns",
+      "column": "post_reply_recovery",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "chat_turns",
+      "column": "post_reply_error_pack_path",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "chat_turns",
+      "column": "undone_at",
+      "definition": "TEXT",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "chat_turns",
+      "column": "protagonist_name",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "audience_nights",
+      "column": "protagonist_name",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "story_ledger_entries",
+      "column": "source_chat_turn_id",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "story_ledger_entries",
+      "column": "origin_chat_turn_id",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "story_ledger_entries",
+      "column": "presence_effect",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "story_ledger_entries",
+      "column": "order_key",
+      "definition": "REAL",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "audience_nights",
+      "column": "next_event_seq",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "pending_actions",
+      "column": "source_chat_turn_id",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "office_archive_keys",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "economy_ledger",
+      "column": "purpose",
+      "definition": "TEXT",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "economy_ledger",
+      "column": "target_kind",
+      "definition": "TEXT",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "economy_ledger",
+      "column": "target_id",
+      "definition": "TEXT",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "economy_ledger",
+      "column": "dossier_id",
+      "definition": "INTEGER",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "economy_ledger",
+      "column": "origin_ref",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "region_logs",
+      "column": "origin_ref",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "army_logs",
+      "column": "origin_ref",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "power_logs",
+      "column": "origin_ref",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "person_logs",
+      "column": "origin_ref",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "building_logs",
+      "column": "origin_ref",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "legacies",
+      "column": "clear_gate",
+      "definition": "TEXT NOT NULL DEFAULT '{}'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "legacies",
+      "column": "legacy_key",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "pending_resolve_context",
+      "column": "source",
+      "definition": "TEXT NOT NULL DEFAULT 'system_simulation'",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "pending_resolve_context",
+      "column": "attendant_message",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "textual_facts",
+      "column": "origin_ref",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "decree_dossiers",
+      "column": "affair_id",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    },
+    {
+      "table": "issues",
+      "column": "affair_id",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": true,
+      "result": false
+    }
+  ],
+  "true_add": [
+    {
+      "table": "factions",
+      "column": "edict_overdraw",
+      "definition": "INTEGER NOT NULL DEFAULT 0 CHECK (edict_overdraw >= 0)",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "characters",
+      "column": "portrait_id",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "characters",
+      "column": "court_role",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "characters",
+      "column": "summary",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "characters",
+      "column": "aliases",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "pending_decisions",
+      "column": "rejection_reason",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "pending_decisions",
+      "column": "opposition",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "pending_decisions",
+      "column": "kind",
+      "definition": "TEXT NOT NULL DEFAULT 'decision'",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "pending_decisions",
+      "column": "actor_name",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "pending_decisions",
+      "column": "actor_office",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "pending_decisions",
+      "column": "actor_faction",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "pending_decisions",
+      "column": "revision_round",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "pending_decisions",
+      "column": "prior_options_json",
+      "definition": "TEXT NOT NULL DEFAULT '[]'",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "game_state",
+      "column": "ended",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "game_state",
+      "column": "ending_status",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "secret_orders",
+      "column": "excluded_targets",
+      "definition": "TEXT NOT NULL DEFAULT '{}'",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "turn_directives",
+      "column": "source_pending_action_id",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "story_ledger_entries",
+      "column": "origin_ref",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "pending_actions",
+      "column": "night_id",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "pending_actions",
+      "column": "night_approved",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "pending_actions",
+      "column": "version",
+      "definition": "INTEGER NOT NULL DEFAULT 1",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "fiscal_config",
+      "column": "budget_role",
+      "definition": "TEXT NOT NULL DEFAULT 'fixed'",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "fiscal_config",
+      "column": "account",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "fiscal_config",
+      "column": "direction",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "fiscal_config",
+      "column": "display",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "fiscal_config",
+      "column": "sort_order",
+      "definition": "INTEGER NOT NULL DEFAULT 9999",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "economy_ledger",
+      "column": "beyond_intent",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "fiscal_config_creations",
+      "column": "beyond_intent",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "fiscal_config_changes",
+      "column": "beyond_intent",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "fiscal_config_tombstones",
+      "column": "beyond_intent",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "fiscal_config",
+      "column": "origin_ref",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "factions",
+      "column": "leverage_offset",
+      "definition": "REAL NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "turn_reports",
+      "column": "attendant_message",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "turn_reports",
+      "column": "title",
+      "definition": "TEXT NOT NULL DEFAULT ''",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "relation_edge_events",
+      "column": "affair_id",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    },
+    {
+      "table": "characters",
+      "column": "affair_id",
+      "definition": "INTEGER NOT NULL DEFAULT 0",
+      "existed_before": false,
+      "result": true
+    }
+  ]
+}
