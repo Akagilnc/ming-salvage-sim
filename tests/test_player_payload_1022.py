@@ -101,6 +101,8 @@ class _SettlementGame:
 
 
 async def _serialized_terminal_event(route_name: str) -> tuple[str, dict]:
+    from tests.sse_helpers import parse_sse_event_pairs
+
     if route_name == "issue":
         response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
     else:
@@ -111,9 +113,9 @@ async def _serialized_terminal_event(route_name: str) -> tuple[str, dict]:
         chunk.decode() if isinstance(chunk, bytes) else chunk
         async for chunk in response.body_iterator
     ]
-    serialized = "".join(chunks)
-    event_line, data_line = serialized.strip().splitlines()
-    return event_line.removeprefix("event: "), json.loads(data_line.removeprefix("data: "))
+    pairs = parse_sse_event_pairs("".join(chunks))
+    assert pairs, "expected at least one SSE terminal event"
+    return pairs[-1]
 
 
 @pytest.mark.parametrize(

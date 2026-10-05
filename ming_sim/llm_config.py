@@ -293,14 +293,6 @@ def cli_model_from_env(runner: str, fallback: str = "") -> str:
     return fallback
 
 
-def _runtime_float(value: object, default: float) -> float:
-    """runtime json 数值槽的宽容取值（缺/空/坏值回默认，不抛）。"""
-    try:
-        return float(value) if value not in (None, "") else default
-    except (TypeError, ValueError):
-        return default
-
-
 def _api_runtime_value(runtime: Dict[str, object], key: str, fallback: str) -> str:
     """运行档 API 槽取该字段（按字符串读）；档里没有才回落入口入参/env。
 
@@ -360,9 +352,11 @@ def llm_config_from_runtime(
     model = _api_runtime_value(runtime, "model", model)
     api_key = _api_runtime_value(runtime, "api_key", api_key)
     # 超时是数值槽：档内有值就用档值（两端同一口径），否则回落入口/env 入参。
-    timeout_seconds = _runtime_float(
+    # #1902 S3：与 load 路径共用 _slot_number，不另维平行浮点取值。
+    timeout_seconds = _slot_number(
         runtime.get("timeout_seconds"),
-        _runtime_float(timeout_seconds, API_DEFAULT_TIMEOUT_SECONDS),
+        float,
+        _slot_number(timeout_seconds, float, API_DEFAULT_TIMEOUT_SECONDS),
     )
     # 思考档的 env 回落也归本函数一处（#1902 J3）：此前只有 Web 入口自己读
     # OPENAI_THINKING_LEVEL，CLI 入口传空串 → 同一份空运行档 + 同一个环境值经两端
@@ -393,7 +387,7 @@ def llm_config_from_runtime(
         or runtime.get("reasoning_strength", "")
     ) or legacy_reasoning
     # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
-    cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
+    cli_timeout = _slot_number(cli_slot.get("timeout_seconds"), float, CLI_DEFAULT_TIMEOUT_SECONDS)
     if channel == "cli":
         api_key = ""  # CLI 通道不要 API key；占位符在 create_chat_model 构造 CliChat 时注入
     elif not is_real_api_key(api_key):

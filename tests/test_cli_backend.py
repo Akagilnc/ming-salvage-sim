@@ -52,51 +52,6 @@ def _cli_codex_cfg() -> LLMConfig:
     )
 
 
-def _so_json(**fields) -> str:
-    base = {
-        "标题": "密查",
-        "内容": "TASK_BODY",
-        "承办人": "",
-        "期限月数": 0,
-        "标签": [],
-    }
-    base.update(fields)
-    return json.dumps(base, ensure_ascii=False)
-
-
-
-def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
-    canned = json.dumps({
-        "标题": "密查",
-        "内容": "查账",
-        "承办人": "毕自严",
-        "排除对象": {"人物": ["魏忠贤"], "机构": ["司礼监"]},
-    }, ensure_ascii=False)
-    def fake_json_extractor(prompt, llm_config=None, tag="", *, policy=None):
-        return canned, 1
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)
-    result = cb._extract_secret_order("密查账目", "臣领旨", "毕自严")
-    assert result["excluded_names"] == ["魏忠贤"]
-    assert result["excluded_offices"] == ["司礼监"]
-    assert result["excluded_targets"] == {"people": ["魏忠贤"], "offices": ["司礼监"]}
-
-
-def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatch):
-    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
-    assert len(long_title) > 20
-    canned = _so_json(标题=long_title, 内容="查明事实并回奏。", 承办人="毕自严", 标签=["辽饷"])
-
-    def fake_json_extractor(prompt, llm_config=None, tag="", *, policy=None):
-        return canned, 1
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)
-    result = cb._extract_secret_order(
-        f"密令如下：{long_title}\n查明事实并回奏。", "臣领密旨", "毕自严",
-    )
-    assert result["title"] == long_title
-    assert len(result["title"]) == len(long_title)
-
-
 def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     from ming_sim.db import canonical_secret_order_exclusions
 
@@ -834,16 +789,6 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
     got = dbmod.infer_office_type_from_office("绝无此名的杜撰怪衔甲", llm_config=_cli_codex_cfg())
     assert got == "边镇"
     assert len(recs) == 1 and "绝无此名的杜撰怪衔甲" in recs[0]["prompt"]
-
-
-def test_secret_extract_traces_exactly_once(monkeypatch):
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    canned = '{"标题":"密查","内容":"查关宁军饷","承办人":"骆养性","期限月数":3,"标签":["关宁"]}'
-    _patch_runner(monkeypatch, "agy", lambda prompt, **kw: (canned, 1))
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
-    assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"
 
 
 # ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──

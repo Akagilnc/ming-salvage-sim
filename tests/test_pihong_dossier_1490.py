@@ -1995,44 +1995,78 @@ def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):
     with pytest.raises(ValueError):
         ra.clear_return_revise_choice_anchors(db, None)
 
-def test_657_default_hold_preserves_red_pen_note(game):
-    """⑤ 默认 hold 保留朱笔 note。"""
-    from ming_sim import rescript_actions as ra
-    db, state, _content = game
+def test_657_default_hold_preserves_red_pen_note(game, monkeypatch):
+    """⑤ 默认 hold 保留朱笔 note。
+
+    #1902 S2：复用 _real_submit_session 真编排；不锁 validate_all 内部 batch 形状。
+    """
+    from contextlib import nullcontext
+    from tests.test_cli_entry_1902 import _real_submit_session
+
+    db, state, content = game
     urgent, _ = _plant_urgent_desk(db, state)
     key = urgent['decision_key']
-    batch = ra.validate_all([urgent], [{'decision_key': key, 'note': '着再议。'}], default_hold_missing=True)
-    assert key in batch.default_hold_keys
-    assert batch.items[0].choice.get('action') == 'hold'
-    assert batch.items[0].choice.get('note') == '着再议。'
+    session = _real_submit_session(monkeypatch, db, state, content)
+    session.submit_hitl_choices(
+        [{'decision_key': key, 'note': '着再议。'}],
+        write_gate=nullcontext(),
+    )
+    hit = next(r for r in db.list_rescript_drafts() if r['title'] == '陕西告饥')
+    assert hit['status'] == 'decided'
+    assert (hit['choice'] or {}).get('action') == 'hold'
+    assert (hit['choice'] or {}).get('note') == '着再议。'
 
-def test_657_appointment_name_target_id_conflict_batch_reject(game):
-    """⑥ appointment/dismiss name≠target_id 在 mapper 单一边界整批拒绝。"""
-    from ming_sim import rescript_actions as ra
-    db, state, content = game
-    rows = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2").fetchall()
+def test_657_appointment_name_target_id_conflict_batch_reject(web_game, monkeypatch):
+    """⑥ appointment name≠target_id → 真 submit/HTTP 整批拒，零人物写。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = (web_game.db, web_game.state)
+    rows = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2"
+    ).fetchall()
     assert len(rows) >= 2
     n1, n2 = (str(rows[0]['name']), str(rows[1]['name']))
-    with pytest.raises(ValueError):
-        ra.map_rescript_option_or_choice({'action_type': 'appointment', 'appoint_action': '任命', 'office': '兵部尚书', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '授官'}, db=db, content=content, state=state)
-    with pytest.raises(ValueError):
-        ra.map_rescript_option_or_choice({'action_type': 'appointment', 'appoint_action': '罢免', 'office': '', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '罢'}, db=db, content=content, state=state)
+    opt_base = normalize_rescript_layer_a_option({
+        'label': '授官', 'hint': 'h', 'action_type': 'appointment',
+        'assignee_name': '', 'target_kind': 'character', 'target_id': n1,
+        'name': n1, 'appoint_action': '任命', 'office': '兵部尚书',
+        'locality_scope': 'none', 'region_id': '', 'transaction_category': '',
+    })
+    _657_plant_awaiting_web(web_game, drafts=[{
+        'title': '任免冲突', 'context': 'c',
+        'options': [opt_base, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}],
+        'actor_name': n1, 'actor_office': 'o', 'actor_faction': 'f',
+    }])
+    desk = db.list_rescript_desk(int(state.turn))
+    key = desk[0]['decision_key']
+    before_status = db.get_character_status(n1)[0]
+    before_dossiers = db.conn.execute('SELECT COUNT(*) AS c FROM decree_dossiers').fetchone()['c']
+    body = [{
+        'decision_key': key, 'action': 'midzhi', 'label': '授官',
+        'action_type': 'appointment', 'appoint_action': '任命', 'office': '兵部尚书',
+        'name': n1, 'target_kind': 'character', 'target_id': n2, 'locality_scope': 'none',
+    }]
+    r = asyncio.run(_post_resolve(body))
+    assert r.status_code == 200
+    assert 'event: error' in r.text, r.text
+    assert 'event: done' not in r.text
+    assert db.get_character_status(n1)[0] == before_status
+    after_dossiers = db.conn.execute('SELECT COUNT(*) AS c FROM decree_dossiers').fetchone()['c']
+    assert after_dossiers == before_dossiers
+    assert web_game.state.turn_phase != TurnPhase.ISSUED.value
+    hit = next((row for row in db.list_rescript_drafts() if row['title'] == '任免冲突'))
+    assert hit['status'] == 'pending'
+    assert hit.get('choice') in (None, {})
 
 def test_657_punishment_name_target_id_conflict_zero_writes(web_game, monkeypatch):
     """punishment name≠target_id → 整批拒；真 HTTP 零 dossier/character 写。"""
-    from ming_sim import rescript_actions as ra
     from ming_sim.models import TurnPhase
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     db, state = (web_game.db, web_game.state)
     rows = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2").fetchall()
     assert len(rows) >= 2
     n1, n2 = (str(rows[0]['name']), str(rows[1]['name']))
-    with pytest.raises(ValueError):
-        ra.map_rescript_option_or_choice({'action_type': 'punishment', 'punish_action': '廷杖', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '责', 'locality_scope': 'none'}, db=db, content=web_game.content, state=state)
-    ok = ra.map_rescript_option_or_choice({'action_type': 'punishment', 'punish_action': '廷杖', 'name': n1, 'target_kind': 'character', 'target_id': n1, 'label': '责', 'locality_scope': 'none'}, db=db, content=web_game.content, state=state)
-    assert ok['name'] == n1 and ok['target_id'] == n1
-    ok_one = ra.map_rescript_option_or_choice({'action_type': 'punishment', 'punish_action': '廷杖', 'target_kind': 'character', 'target_id': n1, 'label': '责', 'locality_scope': 'none'}, db=db, content=web_game.content, state=state)
-    assert ok_one['name'] == n1 and ok_one['target_id'] == n1
     opt_base = normalize_rescript_layer_a_option({'label': '责', 'hint': 'h', 'action_type': 'punishment', 'assignee_name': '', 'target_kind': 'character', 'target_id': n1, 'name': n1, 'punish_action': '廷杖', 'locality_scope': 'none', 'region_id': '', 'transaction_category': ''})
     _657_plant_awaiting_web(web_game, drafts=[{'title': '惩处冲突', 'context': 'c', 'options': [opt_base, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}], 'actor_name': n1, 'actor_office': 'o', 'actor_faction': 'f'}])
     desk = db.list_rescript_desk(int(state.turn))
@@ -2042,6 +2076,8 @@ def test_657_punishment_name_target_id_conflict_zero_writes(web_game, monkeypatc
     body = [{'decision_key': key, 'action': 'midzhi', 'label': '责', 'action_type': 'punishment', 'punish_action': '廷杖', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'locality_scope': 'none'}]
     r = asyncio.run(_post_resolve(body))
     assert r.status_code == 200
+    assert 'event: error' in r.text, r.text
+    assert 'event: done' not in r.text
     assert db.get_character_status(n1)[0] == before_status
     after_dossiers = db.conn.execute('SELECT COUNT(*) AS c FROM decree_dossiers').fetchone()['c']
     assert after_dossiers == before_dossiers

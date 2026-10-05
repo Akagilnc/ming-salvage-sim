@@ -1,0 +1,100 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__________ test_657_appointment_name_target_id_conflict_batch_reject ___________
+
+web_game = <web_app.WebGame object at 0x10b83b380>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b971d00>
+
+    def test_657_appointment_name_target_id_conflict_batch_reject(web_game, monkeypatch):
+        """⑥ appointment name≠target_id → 真 submit/HTTP 整批拒，零人物写。"""
+        from ming_sim.models import TurnPhase
+        from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+    
+        db, state = (web_game.db, web_game.state)
+        rows = db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2"
+        ).fetchall()
+        assert len(rows) >= 2
+        n1, n2 = (str(rows[0]['name']), str(rows[1]['name']))
+        opt_base = normalize_rescript_layer_a_option({
+            'label': '授官', 'hint': 'h', 'action_type': 'appointment',
+            'assignee_name': '', 'target_kind': 'character', 'target_id': n1,
+            'name': n1, 'appoint_action': '任命', 'office': '兵部尚书',
+            'locality_scope': 'none', 'region_id': '', 'transaction_category': '',
+        })
+        _657_plant_awaiting_web(web_game, drafts=[{
+            'title': '任免冲突', 'context': 'c',
+            'options': [opt_base, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}],
+            'actor_name': n1, 'actor_office': 'o', 'actor_faction': 'f',
+        }])
+        desk = db.list_rescript_desk(int(state.turn))
+        key = desk[0]['decision_key']
+        before_status = db.get_character_status(n1)[0]
+        before_dossiers = db.conn.execute('SELECT COUNT(*) AS c FROM decree_dossiers').fetchone()['c']
+        body = [{
+            'decision_key': key, 'action': 'midzhi', 'label': '授官',
+            'action_type': 'appointment', 'appoint_action': '任命', 'office': '兵部尚书',
+            'name': n1, 'target_kind': 'character', 'target_id': n2, 'locality_scope': 'none',
+        }]
+        r = asyncio.run(_post_resolve(body))
+        assert r.status_code == 200
+>       assert 'event: error' in r.text, r.text
+E       AssertionError: event: done
+E         data: {"decree": "", "report": {"ok": true, "choices": [{"decision_key": "rescript_draft:1:0", "action": "midzhi", "label": "授官", "action_type": "appointment", "appoint_action": "任命", "office": "兵部尚书", "name": "乔允升", "target_kind": "character", "target_id": "何腾蛟", "locality_scope": "none"}]}, "pending_action_failures": [], "advanced": false}
+E         
+E         
+E       assert 'event: error' in 'event: done\ndata: {"decree": "", "report": {"ok": true, "choices": [{"decision_key": "rescript_draft:1:0", "action":...": "character", "target_id": "何腾蛟", "locality_scope": "none"}]}, "pending_action_failures": [], "advanced": false}\n\n'
+E        +  where 'event: done\ndata: {"decree": "", "report": {"ok": true, "choices": [{"decision_key": "rescript_draft:1:0", "action":...": "character", "target_id": "何腾蛟", "locality_scope": "none"}]}, "pending_action_failures": [], "advanced": false}\n\n' = <Response [200 OK]>.text
+
+tests/test_pihong_dossier_1490.py:2052: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+[10:46:15.416] [载入] 1/4 静态盘面 seed 0.0s
+[10:46:15.423] [载入] 2/4 官职同步 + agno 0.0s
+[10:46:15.426] [载入] 3/4 状态载入 0.0s
+[10:46:15.426] [载入] 关系 seed 导入：22/22 笔奠基边事件，1 份初始摘要
+[10:46:15.428] [载入] 4/4 开局修正 0.0s
+[10:46:15.434] [接档] begin_turn 读档+历史 tick+人物同步+奏报 0.0s
+___________ test_657_punishment_name_target_id_conflict_zero_writes ____________
+
+web_game = <web_app.WebGame object at 0x10a082350>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bb2baf0>
+
+    def test_657_punishment_name_target_id_conflict_zero_writes(web_game, monkeypatch):
+        """punishment name≠target_id → 整批拒；真 HTTP 零 dossier/character 写。"""
+        from ming_sim.models import TurnPhase
+        from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+        db, state = (web_game.db, web_game.state)
+        rows = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2").fetchall()
+        assert len(rows) >= 2
+        n1, n2 = (str(rows[0]['name']), str(rows[1]['name']))
+        opt_base = normalize_rescript_layer_a_option({'label': '责', 'hint': 'h', 'action_type': 'punishment', 'assignee_name': '', 'target_kind': 'character', 'target_id': n1, 'name': n1, 'punish_action': '廷杖', 'locality_scope': 'none', 'region_id': '', 'transaction_category': ''})
+        _657_plant_awaiting_web(web_game, drafts=[{'title': '惩处冲突', 'context': 'c', 'options': [opt_base, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}], 'actor_name': n1, 'actor_office': 'o', 'actor_faction': 'f'}])
+        desk = db.list_rescript_desk(int(state.turn))
+        key = desk[0]['decision_key']
+        before_status = db.get_character_status(n1)[0]
+        before_dossiers = db.conn.execute('SELECT COUNT(*) AS c FROM decree_dossiers').fetchone()['c']
+        body = [{'decision_key': key, 'action': 'midzhi', 'label': '责', 'action_type': 'punishment', 'punish_action': '廷杖', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'locality_scope': 'none'}]
+        r = asyncio.run(_post_resolve(body))
+        assert r.status_code == 200
+>       assert 'event: error' in r.text, r.text
+E       AssertionError: event: done
+E         data: {"decree": "", "report": {"ok": true, "choices": [{"decision_key": "rescript_draft:1:0", "action": "midzhi", "label": "责", "action_type": "punishment", "punish_action": "廷杖", "name": "乔允升", "target_kind": "character", "target_id": "何腾蛟", "locality_scope": "none"}]}, "pending_action_failures": [], "advanced": false}
+E         
+E         
+E       assert 'event: error' in 'event: done\ndata: {"decree": "", "report": {"ok": true, "choices": [{"decision_key": "rescript_draft:1:0", "action":...": "character", "target_id": "何腾蛟", "locality_scope": "none"}]}, "pending_action_failures": [], "advanced": false}\n\n'
+E        +  where 'event: done\ndata: {"decree": "", "report": {"ok": true, "choices": [{"decision_key": "rescript_draft:1:0", "action":...": "character", "target_id": "何腾蛟", "locality_scope": "none"}]}, "pending_action_failures": [], "advanced": false}\n\n' = <Response [200 OK]>.text
+
+tests/test_pihong_dossier_1490.py:2079: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+[10:46:15.641] [载入] 1/4 静态盘面 seed 0.0s
+[10:46:15.643] [载入] 2/4 官职同步 + agno 0.0s
+[10:46:15.645] [载入] 3/4 状态载入 0.0s
+[10:46:15.645] [载入] 关系 seed 导入：22/22 笔奠基边事件，1 份初始摘要
+[10:46:15.646] [载入] 4/4 开局修正 0.0s
+[10:46:15.649] [接档] begin_turn 读档+历史 tick+人物同步+奏报 0.0s
+=========================== short test summary info ============================
+FAILED tests/test_pihong_dossier_1490.py::test_657_appointment_name_target_id_conflict_batch_reject
+FAILED tests/test_pihong_dossier_1490.py::test_657_punishment_name_target_id_conflict_zero_writes
+2 failed in 0.65s
+..                                                                       [100%]
+2 passed in 0.92s

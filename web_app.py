@@ -563,7 +563,7 @@ def _settlement_sse_error_data(
 
 # #1902：数值槽宽容取值与「是否真 key」判定都只在 llm_config 一处实现，
 # web 侧这两个名字保留为薄转发（多处读档投影沿用），不再各写一份规则。
-from ming_sim.llm_config import _runtime_float  # noqa: E402  （读档投影沿用名）
+from ming_sim.llm_config import _slot_number  # noqa: E402  （#1902 S3：数值槽单源）
 
 _has_real_api_key = is_real_api_key
 
@@ -652,8 +652,6 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
     if debut_year > current_year or (debut_year == current_year and debut_month > current_period):
         return False
     return _character_power_id(character, db) == "ming"
-
-
 
 
 def _safe_save_name(name: str) -> str:
@@ -2072,22 +2070,6 @@ class WebGame:
             raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
 
 
-    def _open_night_court_break(self, message: str) -> bool:
-        """#1716：已开夜的收夜口令不得被场外记召短路。
-
-        场外 SUMMON_* 早退会吞掉「退朝/散夜」，夜停 open、chat 无落、拟诏台真空。
-        封闭集 COURT_BREAK 且本夜已开 → 放行既有 command verdict / close_night 缝。
-        """
-        from ming_sim.audience_night import (
-            CMD_CLOSE_NIGHT,
-            get_open_night,
-            recognize_audience_command,
-        )
-
-        if recognize_audience_command(message) != CMD_CLOSE_NIGHT:
-            return False
-        return get_open_night(self.db) is not None
-
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。"""
         return self.db.get_interrupted_reply_retries(minister_name)
@@ -2385,7 +2367,6 @@ class WebGame:
         return payload
 
 
-
     def _trail_highlight_judge_after_reply(
         self,
         minister_reply: str,
@@ -2536,7 +2517,6 @@ class WebGame:
             "audience-startup-extraction-catchup",
             ticket_key=("startup",),
         )
-
 
 
     def pending_translation_retries(
@@ -2927,7 +2907,6 @@ class WebGame:
             # #1353 r11：只以 end 收束——失败路径先 error 再 end，禁 error 单终态截断。
             if item.get("type") == "end":
                 break
-
 
 
 def sse_event(event: str, data: Dict[str, Any]) -> str:
@@ -5214,7 +5193,6 @@ async def api_audience_chat_history() -> Dict[str, Any]:
     }
 
 
-
 # #1902：非流式 POST /api/audience/chat 退役——说话只有流式一条入口（/api/audience/chat/stream）；前端自 #1842 起零调用此路，两条同源入口会把同一编排复制两份。GET /api/audience/chat（召对历史读面）不受影响。
 
 @app.post("/api/audience/reply/retry")
@@ -5799,7 +5777,9 @@ async def api_get_llm_config() -> Dict[str, Any]:
             "advanced_thinking_level": "",
             "cli_runner": str(saved_cli.get("runner") or ""),
             "cli_model": str(saved_cli.get("model") or ""),
-            "cli_timeout_seconds": _runtime_float(saved_cli.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS),
+            "cli_timeout_seconds": _slot_number(
+                saved_cli.get("timeout_seconds"), float, CLI_DEFAULT_TIMEOUT_SECONDS,
+            ),
             # #1794：persisted 头表；load_runtime_llm 已归一，扁平单读。
             "default_headers": dict(saved.get("default_headers") or {}),
         },

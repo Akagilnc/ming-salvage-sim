@@ -1436,7 +1436,13 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     ).fetchone()[0] == 1, "未撤销密令的 brief 不应受级联影响"
     assert msg_u == 0 and msg_m == 0
     assert msg_b == 1, "early B public message wrongly deleted"
-    assert not db._is_active_secret_order_assignee(a.name)
+    # 外部可见：承办人 a 已无 active 密令（不经已清退的私有 helper）。
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_orders o "
+        "INNER JOIN secret_order_briefs b ON b.order_id = o.id "
+        "WHERE b.minister_name=? AND o.status='active'",
+        (a.name,),
+    ).fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("rollback_entry", ["undo_chat_turn", "fail_chat_turn"])

@@ -1,0 +1,72 @@
+tests/test_army_card_status_1501.py:70	local_def	def _assert_ming_register(db, text: str) -> None:
+tests/test_army_card_status_1501.py:82	local_def	def _assert_text_keeps_statuses(text: str, statuses: list[str], label: str) -> None:
+tests/test_audience_scroll_539.py:19	local_def	def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(game, monkeypatch):
+tests/test_audience_scroll_539.py:60	local_def	def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game, monkeypatch):
+tests/test_audience_undo_506.py:167	local_def	def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
+tests/test_chat_stream_failpaths_393.py:33	local_def	def _assert_write_path_free(runtime) -> None:
+tests/test_chat_stream_failpaths_393.py:629	local_def	def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game):
+tests/test_cli_backend.py:373	local_def	def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
+tests/test_cli_backend.py:601	local_def	def test_clichat_invoke_passes_fixture_content_and_completion(monkeypatch):
+tests/test_cli_backend.py:796	local_def	def test_run_backend_for_config_passes_reasoning_strength_to_codex(monkeypatch):
+tests/test_cli_model_choices.py:135	local_def	def test_menu_status_cli_model_saved_passes_explicit(monkeypatch):
+tests/test_cli_runner_error_typed_1299.py:98	local_def	def test_extract_agent_text_normal_reply_passes():
+tests/test_court_break_player_lock_1727.py:77	local_def	def _parse_sse_chunk(buf: str) -> list[dict]:
+tests/test_deformation_dual_rail_622.py:493	local_def	def _assert_receipt(receipt: dict, *, expect_origin: str, expect_beyond: bool, applied: bool):
+tests/test_deformation_dual_rail_622.py:499	local_def	def _assert_ledger_matches(rows, *, expect_origin: str, expect_beyond: bool):
+tests/test_draft_admission_resubmit_1769.py:199	local_def	def _assert_error_pack_from(game, turn: int, marker: str) -> None:
+tests/test_event_trigger_gate.py:436	local_def	def test_gate_passed_tolerates_none(read_game):
+tests/test_event_trigger_gate.py:444	local_def	def test_gate_passed_tolerates_nonstring_cond(read_game):
+tests/test_event_trigger_gate.py:782	local_def	def test_character_text_gate_key_passes_content_validation():
+tests/test_event_trigger_gate.py:4266	local_def	def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game):
+tests/test_execution_tenure_613.py:66	local_def	def test_td8_same_office_four_tenures_live_assembly_chain(game):
+tests/test_fiscal_substrate_bridge.py:207	local_def	def _assert_hub_conservation_oracle(
+tests/test_fiscal_substrate_bridge.py:260	local_def	def _assert_hub_oracle_mutation_fails(
+tests/test_fiscal_substrate_bridge.py:1255	local_def	def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses(fresh_game):
+tests/test_fiscal_tick.py:25	local_def	def _assert_end(st, p, actions, expect):
+tests/test_llm_channel_config.py:227	local_def	def test_create_chat_model_passes_default_headers_at_transport_boundary(monkeypatch):
+tests/test_llm_channel_config.py:544	local_def	def test_verify_llm_available_api_empty_content_passes(monkeypatch):
+tests/test_llm_channel_config.py:564	local_def	def test_verify_llm_available_api_empty_content_none_passes(monkeypatch):
+tests/test_manual_directive_locality_1685.py:24	local_def	def test_manual_directive_region_assembly_writes_single_and_advances(
+tests/test_month_chain_1847.py:1932	local_def	def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effects(game):
+tests/test_month_chain_1847.py:2098	local_def	def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypatch):
+tests/test_month_loop_tracer_1468.py:84	local_def	def _assert_not_bare_500(resp, *, step: str) -> None:
+tests/test_new_game_dependency_mismatch_1721.py:83	local_def	def test_continue_stale_agno_sse_carries_typed_dependency_facts(tmp_path, stale_agno_site):
+tests/test_new_game_write_path_1749.py:199	local_def	def _assert_player_write_accepted(chat: dict) -> None:
+tests/test_new_game_write_path_1749.py:238	local_def	def _assert_chat_persisted(snap: dict, *, chat_turn_id: int, night_id: int,
+tests/test_office_rank_562.py:393	local_def	def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
+tests/test_override_breach_costs_564.py:288	local_def	def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
+tests/test_p4_guard_new_surfaces_547.py:27	local_def	def _assert_no_character_axis_keys(payload, *, where: str) -> None:
+tests/test_pay_order_override_653.py:727	local_def	def test_fact_brief_levy_derives_regular_assessment_like_settle_tick(game):
+tests/test_person_delta_adapter.py:271	local_def	def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, category):
+tests/test_person_delta_adapter.py:306	local_def	def test_apply_score_extraction_clamps_loyalty_assessment_delta(game, start, delta, expected):
+tests/test_person_delta_adapter.py:345	local_def	def test_apply_score_extraction_loyalty_assessment_does_not_commit_inside_batch(game):
+tests/test_person_delta_adapter.py:450	local_def	def test_apply_score_extraction_one_time_grant_and_assessment_do_not_create_commitment_issue(game):
+tests/test_person_delta_adapter.py:2889	local_def	def test_s3_reappointment_derives_zhaoxue_from_dismissed(game):
+tests/test_person_delta_adapter.py:3319	local_def	def test_orphan_bandit_power_can_be_suppressed_when_dead_leader_amnesty_is_rejected(game):
+tests/test_pihong_dossier_1490.py:1546	local_def	def test_1589_pure_decision_keyless_rejected_then_keyed_same_choice_passes(web_game):
+tests/test_player_army_projection_321.py:213	local_def	def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:
+tests/test_player_army_projection_321.py:226	local_def	def _assert_chain_embeds_situation(text: str, sit: dict, label: str) -> None:
+tests/test_player_payload_1022.py:123	local_def	def test_settlement_sse_routes_serialize_only_player_narrative(
+tests/test_population_unit_648.py:113	local_def	def test_new_save_classes_seed_persons_scale(game):
+tests/test_promulgation_judge_561.py:309	local_def	def test_promulgated_true_path_clean_verdict_passes(game):
+tests/test_promulgation_seam_560.py:10	local_def	def test_default_promulgation_stub_passes_every_dossier_without_collaborators():
+tests/test_qa_b3_409_ux.py:151	local_def	async def _consume_resolve_sse() -> list[tuple[str, object]]:
+tests/test_qa_b3_409_ux.py:168	inline_unpack	if line.startswith("event: "):
+tests/test_qa_b3_409_ux.py:170	inline_unpack	elif line.startswith("data: "):
+tests/test_qa_c2_phase_settlement_mask_1374.py:67	local_def	async def _drain_resolve_sse(choices):
+tests/test_qa_t1_extraction_dual_source_1353.py:210	local_def	def test_close_after_chat_passes_write_gate_like_auto_close(
+tests/test_relation_capture_633.py:753	local_def	def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
+tests/test_relation_read_640.py:199	local_def	def test_td7_local_marker_negative_assertion(ledger):
+tests/test_release_bundle_assets.py:105	local_def	def test_spec_datas_ship_dist_assets_into_dist_and_never_repack_public(tmp_path, monkeypatch):
+tests/test_rescript_option_field_heal_1746.py:131	local_def	def _assert_call_history(calls: list[dict]) -> None:
+tests/test_rescript_option_field_heal_1746.py:202	local_def	def test_run_agent_text_without_prior_passes_plain_prompt():
+tests/test_secret_order_isolation_883.py:858	local_def	def _assert_oral_decree_withheld_not_shared(db, state, *, mid_sec, secret_q, speakers, content):
+tests/test_state_reload.py:267	local_def	def test_reload_passes_llm_config_to_content_rebuild(game, monkeypatch):
+tests/test_structured_decree_contract_1624.py:56	local_def	def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
+tests/test_style_temperament_641.py:289	local_def	def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
+tests/test_transit_countdown_668.py:174	local_def	def _assert_transit_frame_equal(got, expected):
+tests/test_transit_countdown_668.py:246	local_def	def _assert_ledger_match(db, name: str, expected):
+tests/test_web_audience_night_498.py:393	local_def	def _parse_sse(text: str) -> list[dict]:
+tests/test_web_chat_serialization_393.py:286	local_def	def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
+tests/test_web_llm_runtime_config.py:383	local_def	def test_api_set_llm_config_verify_failure_skips_commit_and_passes_through_httpexception(monkeypatch):
+tests/test_web_llm_runtime_config.py:1041	local_def	def _assert_hud(payload: dict) -> None:

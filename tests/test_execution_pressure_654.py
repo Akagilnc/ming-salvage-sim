@@ -36,25 +36,48 @@ def test_normalize_locality_scope_rejects_unknown():
         normalize_locality_scope("全省")
 
 
-def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
+def test_mapper_rejects_contradictory_locality_scope_without_overwrite(game, monkeypatch):
     """#1624：禁止按 target_kind 覆盖 locality 掩盖错误目标；显式矛盾 fail-loud。
 
-    契约落在 StructuredDecreeCombinationError.field_failures/failed_fields
-    （权威结构化失败事实）；不得盯异常措辞。
+    #1902 S2：经真 submit_hitl_choices 拒收并保持 pending；结构化失败事实仍可读，
+    不绕道 helper-only map_rescript。
     """
-    from ming_sim.rescript_actions import map_rescript_option_or_choice
+    from contextlib import nullcontext
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
     from ming_sim.structured_decree import StructuredDecreeCombinationError
+    from tests.test_cli_entry_1902 import _real_submit_session
 
+    db, state, content = game
+    holder = "毕自严"
+    opt = normalize_rescript_layer_a_option({
+        "label": "赈抚", "hint": "h", "action_type": "authorization",
+        "name": holder, "assignee_name": "",
+        "target_kind": "issue", "target_id": "relief",
+        "locality_scope": "none", "region_id": "", "transaction_category": "",
+    })
+    db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
+    db.save_rescript_drafts(int(state.turn), [{
+        "title": "属地矛盾", "context": "c",
+        "options": [opt, {"label": "备", "hint": "h", "draft_capability": "z"}],
+        "actor_name": holder, "actor_office": "户部尚书", "actor_faction": "东林",
+    }])
+    db.conn.commit()
+    session = _real_submit_session(monkeypatch, db, state, content)
+    desk = db.list_rescript_desk(int(state.turn))
+    key = desk[0]["decision_key"]
     with pytest.raises(StructuredDecreeCombinationError) as ei_issue_single:
-        map_rescript_option_or_choice({
-            "action_type": "authorization",
+        session.submit_hitl_choices([{
+            "decision_key": key,
+            "action": "midzhi",
             "label": "赈抚",
+            "action_type": "authorization",
+            "name": holder,
             "target_kind": "issue",
             "target_id": "relief",
             "locality_scope": "single",
-            "holder_id": "毕自严",
             "privilege": "便宜行事",
-        })
+        }], write_gate=nullcontext())
     assert "locality_scope" in ei_issue_single.value.failed_fields
     assert "target_kind" in ei_issue_single.value.failed_fields
     ff_issue = {
@@ -62,17 +85,22 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
     }
     assert ff_issue["locality_scope"]["current"] == "single"
     assert ff_issue["target_kind"]["current"] == "issue"
+    hit = next(r for r in db.list_rescript_drafts() if r["title"] == "属地矛盾")
+    assert hit["status"] == "pending"
+    assert state.turn_phase == TurnPhase.AWAITING_DECISION.value
 
     with pytest.raises(StructuredDecreeCombinationError) as ei_region_none:
-        map_rescript_option_or_choice({
-            "action_type": "authorization",
+        session.submit_hitl_choices([{
+            "decision_key": key,
+            "action": "midzhi",
             "label": "陕赈",
+            "action_type": "authorization",
+            "name": holder,
             "target_kind": "region",
             "target_id": "shaanxi",
             "locality_scope": "none",
-            "holder_id": "毕自严",
             "privilege": "便宜行事",
-        })
+        }], write_gate=nullcontext())
     assert ei_region_none.value.failed_fields == frozenset({"locality_scope"})
     ff_region = {
         str(f["field"]): f for f in ei_region_none.value.field_failures
@@ -80,33 +108,24 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
     assert ff_region["locality_scope"]["current"] == "none"
     assert ff_region["locality_scope"]["expected"] == ["single"]
 
-    # 合法组合：issue+none / region+single 原样通过
-    qa_shape = map_rescript_option_or_choice({
-        "action_type": "authorization",
-        "label": "赈抚",
-        "target_kind": "issue",
-        "target_id": "relief",
-        "locality_scope": "none",
-        "holder_id": "毕自严",
-        "privilege": "便宜行事",
-    })
-    assert qa_shape["locality_scope"] == "none"
-    assert resolve_dossier_region_ids(
-        None,
-        payload=qa_shape,
-    ) == [""]
-
-    region_shape = map_rescript_option_or_choice({
-        "action_type": "authorization",
+    # 合法 midzhi：经真 submit 落 decided；属地结果落在 choice 上。
+    session.submit_hitl_choices([{
+        "decision_key": key,
+        "action": "midzhi",
         "label": "陕赈",
+        "action_type": "authorization",
+        "name": holder,
         "target_kind": "region",
         "target_id": "shaanxi",
         "locality_scope": "single",
-        "holder_id": "毕自严",
         "privilege": "便宜行事",
-    })
-    assert region_shape["locality_scope"] == "single"
-    assert region_shape["region_id"] == "shaanxi"
+    }], write_gate=nullcontext())
+    landed = next(r for r in db.list_rescript_drafts() if r["title"] == "属地矛盾")
+    assert landed["status"] == "decided"
+    choice = landed.get("choice") or {}
+    assert choice.get("action") == "midzhi"
+    assert choice.get("locality_scope") == "single"
+    assert choice.get("region_id") == "shaanxi" or choice.get("target_id") == "shaanxi"
 
 
 # ── locality oracle 组合矩阵 ───────────────────────────────────────
