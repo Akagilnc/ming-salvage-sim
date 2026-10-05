@@ -1,0 +1,13 @@
+
+ RUN  v4.1.9 /Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/web
+
+Not implemented: navigation to another Document
+
+ Test Files  5 passed (5)
+      Tests  158 passed (158)
+   Start at  11:24:09
+   Duration  3.98s (transform 1.01s, setup 0ms, import 1.40s, tests 3.36s, environment 3.07s)
+
+real 4.18
+user 6.57
+sys 0.99

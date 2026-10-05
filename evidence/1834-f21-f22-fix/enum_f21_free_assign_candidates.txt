@@ -1,0 +1,49 @@
+web/src/useChatActions.ts:151:    if (!message.trim()) {
+web/src/useSettlementFlow.ts:307:    if (report.trim() || String(attendantMessage || "").trim()) {
+web/src/format.ts:125:  const cleaned = text.replace(prefix, "").trim();
+web/src/components/decisionModal.tsx:87:      : !!(pick.label || (pick.note || "").trim());
+web/src/components/cheatConsole.tsx:29:    if (!text.trim()) return;
+web/src/components/situation.tsx:24:  if (text.trim()) return text;
+web_app.py:3123:            text = str(cur).strip()
+ming_sim/session.py:288:    office = str(office or "").strip()
+web/src/components/drawers.tsx:63:    const parts = (office || "").split(",").map((s) => s.trim());
+ming_sim/execution_pressure.py:52:    text = str(raw).strip()
+ming_sim/value_matrix.py:51:    text = str(raw or "").strip()
+ming_sim/action_materialize.py:1079:        name = str(body or "").strip()
+ming_sim/action_materialize.py:1132:    want_office = str(office or "").strip()
+ming_sim/appointment_tenure.py:46:    text = str(value or "").strip()
+ming_sim/office_rank.py:31:    text = str(office or "").strip()
+ming_sim/office_rank.py:69:    text = str(title or "").strip()
+ming_sim/office_rank.py:108:    raw_title = str(office or "").strip()
+ming_sim/office_rank.py:187:        current_title = str(row["office"] or "").strip()
+ming_sim/breach_plea.py:95:    text = str(origin_context or "").strip()
+ming_sim/breach_plea.py:1069:    current_office = str(char["office"] or "").strip()
+ming_sim/highlight_judge.py:26:    text = str(raw or "").strip()
+ming_sim/credit_events.py:65:    text = str(origin or "").strip()
+ming_sim/credit_events.py:98:        text = str(part or "").strip()
+ming_sim/materials.py:96:    text = str(name or "").strip() or "未名"
+ming_sim/materials.py:326:        text = str(value or "").strip()
+ming_sim/supervision.py:185:    text = str(raw or "").strip()
+ming_sim/issues.py:506:    text = str(resolve_condition or "").strip()
+ming_sim/issues.py:516:    text = str(resolve_condition or "").strip()
+ming_sim/issues.py:3619:    return frozenset(str(label).strip() for label in raw if str(label).strip())
+ming_sim/issues.py:6395:            current_office = str(row["office"] or "").strip()
+ming_sim/rescript_draft.py:528:            text = str(val).strip()
+ming_sim/covert_progress.py:133:    text = str(raw or "").strip()
+ming_sim/covert_progress.py:159:        text = str(seed_guilt or "").strip()
+ming_sim/covert_progress.py:312:    text = str(raw or "").strip()
+ming_sim/covert_progress.py:800:    text = str(raw or "").strip()
+ming_sim/matching.py:102:    text = str(raw).strip()
+ming_sim/matching.py:202:    text = str(raw).strip()
+ming_sim/db.py:13502:            title_c = str(crow["title"] if crow is not None else "").strip()
+ming_sim/db.py:16302:        dest = str(station or "").strip()
+ming_sim/db.py:20013:        text = str(raw).strip()
+ming_sim/db.py:20645:        text = str(value).strip().lower()
+ming_sim/content.py:246:    return bool(sm and (sm.group(1) == "in=" or not re.match(r"^-?\d+$", sm.group(2).strip())))
+ming_sim/content.py:302:            cond = str(mv).strip()
+ming_sim/centrifuge_ledger.py:99:    text = str(value).strip()
+ming_sim/llm_transport.py:408:    pmsg = str(content or "").strip() or "stream error"
+ming_sim/due_review.py:49:    text = str(entry_kind or ENTRY_KIND_STAGED).strip()
+ming_sim/assets.py:51:    return text.strip()
+ming_sim/audience_night.py:2001:    text = str(message or "").strip()
+ming_sim/audience_night.py:2026:    text = str(message or "").strip()

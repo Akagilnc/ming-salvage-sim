@@ -773,8 +773,9 @@ def map_rescript_option_or_choice(
             raise ValueError("military_order 缺 assignee_name")
         payload["assignee_id"] = assignee_name
         payload["name"] = assignee_name
-        station = str(src.get("station") or "").strip()
-        if station:
+        # 人读 station：保原文；判空只用局部副本（#1834 F21 / ADR 0142）。
+        station = str(src.get("station") or "")
+        if station.strip():
             payload["station"] = station
         else:
             due = 0

@@ -2148,7 +2148,6 @@ class WebGame:
         pending_action_id: int = 0,
         chat_turn_id: int = 0,
         accepted_turn: Optional[int] = None,
-        directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         character = None if minister_name == "殿上" else self.session._character(minister_name)
         # Durable chat_turn message ids first, then memory history.  Publishing
@@ -2200,8 +2199,6 @@ class WebGame:
             "displaced_minister": displaced_minister,
             "secret_order_id": secret_order_id or 0,
             "pending_action_id": pending_action_id or 0,
-            # #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问；无则 None。
-            "directive_confirmation_ambiguous": directive_confirmation_ambiguous or None,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             # #1716：done 载荷同步 pending_directive_count——onDone 直接落 UI，不单靠 refresh 竞态。
@@ -2386,8 +2383,6 @@ class WebGame:
                         pending_action_id=getattr(result, "pending_action_id", 0),
                         chat_turn_id=chat_turn_id,
                         accepted_turn=accepted_turn,
-                        directive_confirmation_ambiguous=getattr(
-                            result, "directive_confirmation_ambiguous", None),
                     )
                     # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
@@ -2521,8 +2516,6 @@ class WebGame:
                     pending_action_id=int(getattr(result, "pending_action_id", 0) or 0),
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
-                    directive_confirmation_ambiguous=getattr(
-                        result, "directive_confirmation_ambiguous", None),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         # #1842：回话落定后起后台转译（ADR 0155 / 0036）。

@@ -338,13 +338,6 @@ def get_open_night(db: Any) -> Optional[Dict[str, Any]]:
     return _hydrate_night(_row_dict(row)) if row is not None else None
 
 
-def night_dossiers_ready(night: Optional[Dict[str, Any]]) -> bool:
-    """#1842：草稿案卷前提已提交（可明发/终局）；取代旧 endorsement-bound 水位。"""
-    if not night:
-        return False
-    return int(night.get("close_commit_cursor") or 0) >= CLOSE_STEP_TRANSFER_CANDIDATES
-
-
 def assert_night_accepts_player_input(
     db: Any,
     night_id: Optional[int] = None,

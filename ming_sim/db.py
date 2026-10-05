@@ -9180,8 +9180,9 @@ class GameDB:
             return []
         out: List[str] = []
         for item in data:
+            # Free prose highlight phrases: preserve raw; strip only emptiness (#1834 F21).
             if isinstance(item, str) and item.strip():
-                out.append(item.strip())
+                out.append(item)
         return out
 
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
@@ -16298,10 +16299,11 @@ class GameDB:
 
         #659：只改人读驻地/结构化驻地；不触 pay_source_region。仅 station 无 region
         时只改人读字段，region 保持原值（禁止从 station 文本反推）。
+        人读 station 保原文；结构化 station_region 仍可机器键归一（#1834 F21）。
         """
-        dest = str(station or "").strip()
+        dest = str(station or "")
         dest_region = str(station_region or "").strip()
-        if not dest and not dest_region:
+        if not dest.strip() and not dest_region:
             return
         if not army_id:
             raise ValueError("军令调驻缺少军队 target")

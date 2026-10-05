@@ -163,8 +163,6 @@ class ChatTurnResult:
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
     pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
-    # #502 AC5：多道并存时口头准驳含糊 → 结构化含糊态（含候选集），驱动大臣当场追问哪一道。
-    directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
     # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
     # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
     pending_audience_translation: Optional[Dict[str, Any]] = None
@@ -400,29 +398,6 @@ def _appointment_intent_is_current_office_noop(
     desired_parts = {p for p in desired.split(",") if p}
     current_parts = {p for p in current.split(",") if p}
     return bool(desired_parts) and desired_parts.issubset(current_parts)
-
-
-def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool:
-    """目标当前是否为在职且有实职的名册人（有可罢之职）。
-
-    R2「免去暂存任命」形——被任者尚未落库、非 active，无职可罢，撤掉暂存任命即净空；
-    而在职改任者（active + 有 office）被再革职时，撤暂存任命后仍须落真罢免（不能吞）。"""
-    conn = getattr(db, "conn", None)
-    clean = str(name or "").strip()
-    if conn is None or not clean:
-        return False
-    key = _canonical_minister_key(content, clean, db)
-    try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?", (key,)
-        ).fetchone()
-    except sqlite3.Error:
-        return False
-    if row is None:
-        return False
-    return str(row["status"] or "") == "active" and bool(str(row["office"] or "").strip())
-
-
 
 
 def canonical_new_appointment_person_fields(
