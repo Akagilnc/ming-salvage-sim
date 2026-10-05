@@ -5,7 +5,7 @@
 - 封驳原文真源：pi session `.../01a10964-3d95-702e-b546-d696495ead65@fixer/session/session.jsonl` 最新 user 消息（line=43，`status=continue`，findings T1/T2 全文）
 - 判词/票面：`fix-packet.md` + `attachments/10-1853-judge-d81e9db05.json`（末份）
 - 基线（本轮施工前 HEAD）：`372bb253d796a5757dd894afcd1c210e4fe49e9c`
-- **本轮交卷 commit：**（见 git log；下文提交后回填）
+- **本轮交卷 commit：** 
 - 未合入目标分支；不 push / 不开 PR；不 amend / 不 stash；未调交卷工具
 
 ## 封驳原文要点（不得以摘要当判词；此处仅索引）
