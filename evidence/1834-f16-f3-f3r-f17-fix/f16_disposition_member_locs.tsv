@@ -5,14 +5,14 @@ CLI_recommendation_envelope_cut	ming_sim/cli_backend.py:_cli_stream_safe_prefix	
 CLI_recommendation_envelope_cut	ming_sim/cli_backend.py:_CLI_RECOMMENDATION_CALL	DELETED this pass
 CLI_recommendation_envelope_cut	ming_sim/cli_backend.py:_CLI_RECOMMENDATION_PREFIX	DELETED this pass
 CLI_LLM_final_text	ming_sim/cli_backend.py:843	        stdout_text = "".join(pieces)
-CLI_LLM_final_text	ming_sim/cli_backend.py:850	        if runner == "agy" and any(m in (stdout_text + stderr) for m in _AGY_AUTH_MARKERS):
+DELETED_body_vocab_auth_F26	ming_sim/cli_backend.py:850	DELETED: _AGY_AUTH_MARKERS success-body auth attribution (#1834 F26)
 CLI_LLM_final_text	ming_sim/cli_backend.py:854	                provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
 CLI_LLM_final_text	ming_sim/cli_backend.py:858	        if stdout_text.strip():
 CLI_LLM_final_text	ming_sim/cli_backend.py:859	            text = stdout_text
 CLI_LLM_final_text	ming_sim/cli_backend.py:860	        elif final_text.strip():
 CLI_LLM_final_text	ming_sim/cli_backend.py:861	            text = final_text
 CLI_LLM_final_text	ming_sim/cli_backend.py:864	        if runner == "codex" and not json_events and not text.strip():
-CLI_LLM_final_text	ming_sim/cli_backend.py:867	            text = (stdout_text + stderr).split("OpenAI Codex v")[0]
+DELETED_stderr_banner_guess_F27	ming_sim/cli_backend.py:867	DELETED: (stdout+stderr).split("OpenAI Codex v") guess-body (#1834 F27)
 CLI_LLM_final_text	ming_sim/cli_backend.py:871	        if not text.strip():
 CLI_LLM_final_text	ming_sim/cli_backend.py:877	            yield text
 CLI_LLM_final_text	ming_sim/cli_backend.py:878	        elif not pieces and final_text.strip():
@@ -242,7 +242,7 @@ machine_key_enum_normalize	ming_sim/credit_events.py:67	    base = text.split("|
 machine_key_enum_normalize	ming_sim/credit_events.py:78	    m = _DOSSIER_REF_RE.match(str(ref or "").strip())
 machine_key_enum_normalize	ming_sim/credit_events.py:83	    m = _ISSUE_REF_RE.match(str(ref or "").strip())
 machine_key_enum_normalize	ming_sim/credit_events.py:89	    tail = ":".join(str(p) for p in parts if str(p))
-machine_key_enum_normalize	ming_sim/credit_events.py:98	        text = str(part or "").strip()
+free_prose_haul_FIX	ming_sim/credit_events.py:98	REVOKED_machine_key KEEP; was strip-return free context haul. NOW: emptiness on copy, return raw (#1834 F21-R / judge C3). current=_narrative_context L95 if text.strip(): return text
 machine_key_enum_normalize	ming_sim/credit_events.py:113	    base = str(origin or "").strip()
 machine_key_enum_normalize	ming_sim/credit_events.py:116	    bare = base.split("|", 1)[0]
 machine_key_enum_normalize	ming_sim/credit_events.py:139	    person = str(person or "").strip()

@@ -53,7 +53,7 @@
 | `ming_sim/covert_progress.py:312` | assign | text | KEEP | 机器键/判空副本/外壳/匹配键/路径键；非自由正文落库改写 |
 | `ming_sim/covert_progress.py:792` | assign | text | KEEP | 机器键/判空副本/外壳/匹配键/路径键；非自由正文落库改写 |
 | `ming_sim/credit_events.py:65` | assign | text | KEEP | 机器键/判空副本/外壳/匹配键/路径键；非自由正文落库改写 |
-| `ming_sim/credit_events.py:98` | assign | text | KEEP | 机器键/判空副本/外壳/匹配键/路径键；非自由正文落库改写 |
+| `ming_sim/credit_events.py:98` / `_narrative_context` | assign→return | text | FIX | 自由语境共享搬运：判空用副本，返回原文（#1834 F21-R 纠正误 KEEP machine_key） |
 | `ming_sim/db.py:6155` | append | <append> | KEEP | 机器键/判空副本/外壳/匹配键/路径键；非自由正文落库改写 |
 | `ming_sim/db.py:7380` | assign | reason | KEEP | 机器键/判空副本/外壳/匹配键/路径键；非自由正文落库改写 |
 | `ming_sim/db.py:7882` | append | <append> | KEEP | 机器键/判空副本/外壳/匹配键/路径键；非自由正文落库改写 |
