@@ -86,6 +86,8 @@ class _FakeSession(HallAdmissionSessionMixin):
             "_recognize_audience_command_verdict",
             "summon_character",
             "schedule_pending_scene_translation",
+            "close_night_after_chat_if_needed",
+            "schedule_close_night_after_chat_if_needed",
         ):
             if hasattr(GameSession, _name):
                 setattr(self, _name, _types.MethodType(getattr(GameSession, _name), self))

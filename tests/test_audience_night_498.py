@@ -622,6 +622,9 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
         chat=chat, scene_chat=scene_chat,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
+        # #1853：入口直调核心 schedule；轻壳缺绑不得靠 getattr 回退。
+        schedule_close_night_after_chat_if_needed=lambda *_a, **_k: None,
+        close_night_after_chat_if_needed=lambda *_a, **_k: None,
     )
     answers = iter(["朕问卿边事如何？", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))

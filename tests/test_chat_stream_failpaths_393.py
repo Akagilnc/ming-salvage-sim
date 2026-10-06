@@ -420,7 +420,6 @@ def test_worker_postprocess_exception_emits_error_end(monkeypatch):
     runtime, minister = _base_runtime(db, monkeypatch)
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session.close_night_after_chat_if_needed = None
 
     runtime._scene_chat_stream_payload = (  # type: ignore[method-assign]
         lambda *a, **k: {

@@ -249,21 +249,9 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     # 前台先返回 court_break；既有队列随后 FIFO 转译 join→封夜（不挡回话返回）。
     # 后台收夜失败留痕、夜可恢复；不得回滚已成回话。
     court_action = str(getattr(result, "court_action", "") or "")
-    schedule = getattr(session, "schedule_close_night_after_chat_if_needed", None)
-    if schedule is not None:
-        schedule(court_action, write_gate=_cli_write_gate(session))
-    else:
-        close_after = getattr(session, "close_night_after_chat_if_needed", None)
-        if close_after is not None:
-            from ming_sim.audience_night import AudienceNightError
-            try:
-                close_after(
-                    court_action,
-                    write_gate=_cli_write_gate(session),
-                )
-            except (AudienceNightError, LLMUnavailable) as err:
-                print(f"\n收夜未成：{err}\n")
-                return None
+    session.schedule_close_night_after_chat_if_needed(
+        court_action, write_gate=_cli_write_gate(session),
+    )
     if court_action == "court_break":
         return "court_break"
     return None
@@ -315,26 +303,9 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         if cmd == "court_break":
             # #526/#1842：高置信收夜口令 → 前台先返回；队列随后 FIFO 转译 join→封夜。
             # 后台失败留痕、夜可恢复；不假成功静默吞错（ADR 0005）。
-            from ming_sim.audience_night import AudienceNightError, auto_close_open_night
-            schedule = getattr(session, "schedule_close_night_after_chat_if_needed", None)
-            if schedule is not None:
-                schedule("court_break", write_gate=_cli_write_gate(session))
-            else:
-                close_fn = getattr(session, "close_night_after_chat_if_needed", None)
-                try:
-                    if close_fn is not None:
-                        close_fn("court_break", write_gate=_cli_write_gate(session))
-                    else:
-                        auto_close_open_night(
-                            session.db, session.state,
-                            content=getattr(session, "content", None),
-                            write_gate=_cli_write_gate(session),
-                            llm_config=getattr(session, "llm_config", None),
-                        )
-                except (AudienceNightError, LLMUnavailable) as err:
-                    # #1353 fold-in r8：欠账耗尽/收夜失败留本回合，可重按退朝；CLI 不退出。
-                    print(f"\n收夜未成：{err}\n")
-                    continue
+            session.schedule_close_night_after_chat_if_needed(
+                "court_break", write_gate=_cli_write_gate(session),
+            )
             return "court_break"
         if cmd and cmd.startswith("summon:"):
             target_name = cmd.split(":", 1)[1]

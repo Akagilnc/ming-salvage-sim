@@ -2402,20 +2402,9 @@ class WebGame:
                 pending_ticket = None
             # #526/#1842：回话已落库后收夜。非流式前台先返回；队列随后 FIFO 转译 join→封夜。
             court_action = getattr(result, "court_action", "") or ""
-            schedule = getattr(
-                self.session, "schedule_close_night_after_chat_if_needed", None,
+            self.session.schedule_close_night_after_chat_if_needed(
+                court_action, write_gate=self._runtime_write_gate(),
             )
-            if schedule is not None:
-                schedule(court_action, write_gate=self._runtime_write_gate())
-            else:
-                close_after = getattr(
-                    self.session, "close_night_after_chat_if_needed", None,
-                )
-                if close_after is not None:
-                    close_after(
-                        court_action,
-                        write_gate=self._runtime_write_gate(),
-                    )
             return payload
         finally:
             self._complete_pending_write(pending_ticket)
@@ -2925,15 +2914,14 @@ class WebGame:
                     # #526/#1353：尾随票已清后收夜。整轮票已 complete 时 ticketed gate 会
                     # TicketCancelled——收夜短写改走裸 runtime write_gate（腿已终态，无越屏障窗）。
                     # #1727：预领屏障票交给 close 复用（barrier），禁再领第二张。
-                    close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
-                    if close_after is not None:
-                        # barrier_ticket 由 close.barrier / 早退 complete；
-                        # worker finally 再幂等 complete 一次兜底。
-                        close_after(
-                            court_action,
-                            write_gate=bare_write_gate,
-                            barrier_ticket=close_barrier_ticket,
-                        )
+                    # barrier_ticket 由 close.barrier / 早退 complete；
+                    # worker finally 再幂等 complete 一次兜底。
+                    # 流式 worker 同步 close（与前台 schedule 后台职责不同）。
+                    self.session.close_night_after_chat_if_needed(
+                        court_action,
+                        write_gate=bare_write_gate,
+                        barrier_ticket=close_barrier_ticket,
+                    )
 
                     ev_queue.put({"type": "end"})
                 except Exception as error:  # noqa: BLE001
