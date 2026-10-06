@@ -16,7 +16,12 @@ from ming_sim.entities.issue.store import IssueStore
 import json
 from typing import Any, Dict, List
 
-from ming_sim.applier import load_stored_json, load_stored_list, load_stored_object
+from ming_sim.applier import (
+    StoredDocumentError,
+    load_stored_json,
+    load_stored_list,
+    load_stored_object,
+)
 from ming_sim.strict_types import strict_int
 
 ENTRY_KIND_STAGED = "staged_commitment"
@@ -103,18 +108,28 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
 
 
 def load_commitment_stages(raw: object) -> List[Dict[str, object]]:
-    """Durable stages never discard a corrupt member as absent."""
+    """Durable stages never discard a corrupt member as absent.
+
+    Member/shape faults are StoredDocumentError (read seam), not product ValueError.
+    """
     data = load_stored_list(raw, label="stages_json")
     for item in data:
         if not isinstance(item, dict):
-            raise ValueError("stages_json 成员必须为对象")
-        if strict_int(item.get("due_turn")) <= 0:
-            raise ValueError("stages_json due_turn 必须为正整数")
-        if strict_int(item.get("stage_idx")) < 0:
-            raise ValueError("stages_json stage_idx 必须为非负整数")
+            raise StoredDocumentError("stages_json 成员必须为对象")
+        try:
+            due_turn = strict_int(item.get("due_turn"))
+            stage_idx = strict_int(item.get("stage_idx"))
+        except (TypeError, ValueError) as exc:
+            raise StoredDocumentError(
+                "stages_json due_turn/stage_idx 必须为整数",
+            ) from exc
+        if due_turn <= 0:
+            raise StoredDocumentError("stages_json due_turn 必须为正整数")
+        if stage_idx < 0:
+            raise StoredDocumentError("stages_json stage_idx 必须为非负整数")
         for field in ("criterion_text", "origin_context"):
             if not isinstance(item.get(field), str) or not item[field].strip():
-                raise ValueError(f"stages_json {field} 必须为非空文字")
+                raise StoredDocumentError(f"stages_json {field} 必须为非空文字")
     return sorted(data, key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
 
 

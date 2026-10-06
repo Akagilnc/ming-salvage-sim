@@ -13931,14 +13931,21 @@ class GameDB:
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
         prior_targets = load_stored_object(row["excluded_targets"], label='excluded_targets')
-        if not isinstance(prior_targets, dict):
-            raise ValueError("excluded_targets 不是对象")
         legacy_people = load_stored_list(row["excluded_names"], label='excluded_names')
-        if not isinstance(legacy_people, list):
-            raise ValueError("excluded_names 不是名单")
+        # 持久成员形状：people/offices 须为名单；坏形是读缝故障，不得 TypeError 洗成 pending failed。
+        people_raw = prior_targets.get("people", [])
+        offices_raw = prior_targets.get("offices", [])
+        if people_raw is None:
+            people_raw = []
+        if offices_raw is None:
+            offices_raw = []
+        if not isinstance(people_raw, list) or not isinstance(offices_raw, list):
+            raise StoredDocumentError(
+                "excluded_targets people/offices 必须为名单",
+            )
         people, offices = canonical_secret_order_exclusions(
-            self.content, [*legacy_people, *prior_targets.get("people", [])],
-            prior_targets.get("offices", []),
+            self.content, [*legacy_people, *people_raw],
+            offices_raw,
             f"{title}\n{content}",
         )
         excluded_names = _snapshot_secret_order_people(self.content, people, offices)

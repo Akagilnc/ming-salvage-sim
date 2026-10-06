@@ -60,7 +60,10 @@ def load_stored_json(raw: object, *, label: str, blank: object = None) -> object
     if raw is None:
         return blank
     if isinstance(raw, (bytes, bytearray)):
-        raw = raw.decode("utf-8")
+        try:
+            raw = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise StoredDocumentError(f"{label} 损坏") from exc
     if not isinstance(raw, str):
         raise StoredDocumentError(f"{label} 损坏")
     if not raw.strip():

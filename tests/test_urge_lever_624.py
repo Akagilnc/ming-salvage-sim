@@ -621,12 +621,13 @@ def test_payload_json_corrupt_read_is_loud(game):
     区分度在**各自的 payload 形状**（不可解析 / 可解析但非 object），末尾再用
     None / {} / "" 三个合法输入作正向对照；报错措辞不是契约（#1889）。
     """
+    from ming_sim.applier import StoredDocumentError
     from ming_sim.db import GameDB
-    with pytest.raises(ValueError):
+    with pytest.raises(StoredDocumentError):
         GameDB.parse_engine_payload_json(
             "{not-json", surface="test.payload_json",
         )
-    with pytest.raises(ValueError):
+    with pytest.raises(StoredDocumentError):
         GameDB.parse_engine_payload_json(
             "[1,2]", surface="test.payload_json",
         )

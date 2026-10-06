@@ -32,7 +32,7 @@ from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
-    normalize_commitment_stages,
+    load_commitment_stages,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
 def commitment_natural_due_turn(row: Any) -> int:
     """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。"""
     stages_raw = row["stages_json"]
-    stages = normalize_commitment_stages(stages_raw)
+    stages = load_commitment_stages(stages_raw)
     if stages:
         return max(int(s["due_turn"]) for s in stages)
     try:
@@ -452,7 +452,7 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     row = IssueStore(db.conn).row(int(commitment_ref))
     if row is None:
         return FOUNDATION_JUST_STARTED
-    stages = normalize_commitment_stages(row["stages_json"])
+    stages = load_commitment_stages(row["stages_json"])
     n_stages = len(stages)
     bar = int(row["bar_value"] or 0)
     stages_passed = _stages_passed_from_records(db, int(commitment_ref), n_stages)
