@@ -17,13 +17,14 @@
 - ``copy_sqlite_file``：「用存档覆盖主库」那一步的唯一实现，两端共用。
 
 **共同候选生命周期**（``open_candidate_session``）：GameSession 构造、自有队列归属、
-begin_turn、崩溃对账、失败时在**候选自有队列**上关闭——Web/CLI 共用，禁入口再各写
-一份或把候选挂回正持 barrier 的旧队列（父子屏障自等待）。
+begin_turn、崩溃对账、宿主 ``prepare``（呈现/同步补跑等发布前准备）、失败时在**候选
+自有队列**上关闭并把活残留挂到**实际传出的异常**——Web/CLI 共用。禁入口再各写一份
+关闭逻辑，或把候选挂回正持 barrier 的旧队列（父子屏障自等待）。
 
-**各端自有回调**（呈现/宿主资源，经 ``SaveSlotHost.rebuild`` / ``dispose_residual``）：
+**各端自有**（经 ``prepare`` / ``SaveSlotHost.rebuild`` 发布 / ``dispose_residual``）：
 
-- 发布与收藏/聊天缓存等呈现准备：``WebGame._rebuild_session`` / ``cli._cli_rebuild_session``；
-- 失败候选宿主残留登记：``WebGame._dispose_rebuild_residual`` / ``_CliSaveSlotHost.dispose_residual``。
+- 发布前准备回调：Web 聊天缓存与收藏、CLI 启动转译补跑；
+- 发布赋值与失败候选宿主残留登记。
 
 换库的时序与失败恢复顺序只有 ``replace_database`` 一份；本模块不认识任何入口类型，
 也不知道 HTTP。
@@ -141,13 +142,17 @@ def open_candidate_session(
     llm_config: Any,
     *,
     content: Any = None,
+    prepare: Callable[[Any], Any] | None = None,
 ) -> Any:
-    """换库候选共同生命周期：构造 → 自有队列 → begin_turn → 召对崩溃对账。
+    """换库候选共同生命周期：构造 → 自有队列 → begin_turn → 对账 → 可选 prepare。
 
-    完整初始化成功才返回候选；任一步失败则在**候选自己的写队列**上关闭（不得挂到
-    正执行 replace barrier 的旧队列，否则 close→barrier 与父票互相等待）。
-    关闭仍失败时把活残留挂到异常的 ``residual_session``，供宿主 dispose 回调登记。
-    发布与呈现准备仍由入口 rebuild 回调完成。
+    ``prepare(candidate)`` 在**发布前**跑（宿主呈现/同步补跑），仍在失败关闭保护区内：
+    任一步失败都在候选自有队列上关闭，不得挂到正执行 replace barrier 的旧队列。
+
+    返回值：无 ``prepare`` 时为候选；有 ``prepare`` 时为 ``(candidate, prepare的返回值)``。
+    关闭仍失败时，把活残留挂到**实际向外抛出的那只异常**的 ``residual_session``
+    （关闭异常），并以 ``from`` 保留初始化/准备故障链，供宿主 dispose 在换文件前接到。
+    发布赋值仍由入口 rebuild 在本函数成功返回后完成。
     """
     from ming_sim.session import GameSession
     from ming_sim.session_write_queue import get_session_write_queue
@@ -162,22 +167,27 @@ def open_candidate_session(
         get_session_write_queue(candidate)
         candidate.begin_turn()
         candidate.reconcile_crashed_audience_turns()
+        if prepare is not None:
+            prepared = prepare(candidate)
+            return candidate, prepared
         return candidate
     except Exception as exc:
         residual = candidate or getattr(exc, "residual_session", None)
-        if residual is not None:
+        if residual is None:
+            raise
+        try:
+            residual.close()
+        except Exception as close_exc:
+            logger.exception(
+                "open_candidate_session: rejected candidate close failed path=%s",
+                db_path,
+            )
+            # 活残留必须挂在实际传出的异常上；bare raise 会抛 close_exc 而非 originating。
             try:
-                residual.close()
+                setattr(close_exc, "residual_session", residual)
             except Exception:
-                logger.exception(
-                    "open_candidate_session: rejected candidate close failed path=%s",
-                    db_path,
-                )
-                try:
-                    setattr(exc, "residual_session", residual)
-                except Exception:
-                    pass
-                raise
+                pass
+            raise close_exc from exc
         raise
 
 

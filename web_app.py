@@ -935,7 +935,7 @@ class WebGame:
         )
 
     def _rebuild_session(self, llm_config: LLMConfig) -> None:
-        """发布换库候选：共同生命周期在 save_slots；此处只办呈现与宿主残留。"""
+        """发布换库候选：共同生命周期在 save_slots；此处只映射呈现准备与发布。"""
         from ming_sim.save_slots import open_candidate_session
 
         # #1749：先处置上一失败候选；仍活则拒绝新候选，禁覆盖仍活资源。
@@ -943,9 +943,25 @@ class WebGame:
             raise RuntimeError(
                 f"previous rebuild residual still live path={self.db_path}"
             )
+
+        def _prepare_web_presentation(candidate: GameSession):
+            # 发布前准备：仍在共核失败关闭保护区内（读历史/收藏失败须关候选）。
+            chat_history = {name: [] for name in candidate.content.characters}
+            for name, msgs in candidate.db.load_all_chat_history().items():
+                chat_history.setdefault(name, []).extend(msgs)
+            default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
+            fav_raw = candidate.db.kv_get("favorites")
+            favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
+            if not fav_raw:
+                candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
+            return chat_history, favorites
+
         try:
-            candidate = open_candidate_session(self.db_path, llm_config)
+            candidate, (chat_history, favorites) = open_candidate_session(
+                self.db_path, llm_config, prepare=_prepare_web_presentation,
+            )
         except Exception as rebuild_exc:
+            # residual 挂在实际传出的异常上（含 close 失败那只）。
             residual = getattr(rebuild_exc, "residual_session", None)
             if residual is not None:
                 wrapper = SimpleNamespace(
@@ -957,16 +973,6 @@ class WebGame:
                 _handback_failed_runtime(wrapper, self.db_path)
                 self._rebuild_residual_runtime = wrapper
             raise
-
-        # 宿主呈现准备：聊天缓存与收藏（共核不管网页态）。
-        chat_history = {name: [] for name in candidate.content.characters}
-        for name, msgs in candidate.db.load_all_chat_history().items():
-            chat_history.setdefault(name, []).extend(msgs)
-        default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
-        fav_raw = candidate.db.kv_get("favorites")
-        favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
-        if not fav_raw:
-            candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
 
         # 发布：挂候选自有队列，不沿用已 seal 的旧队列。
         q = get_session_write_queue(candidate)

@@ -467,30 +467,35 @@ def _cli_reconcile_crashed_turns(session: GameSession) -> None:
 
 
 def _cli_rebuild_session(runtime: "_CliRuntime", llm_config) -> GameSession:
-    """发布换库候选：共同生命周期在 save_slots；此处只办 CLI 同步补跑与发布。
+    """发布换库候选：共同生命周期在 save_slots；此处只映射同步补跑与发布。
 
-    候选完整初始化后才发布（#1902 J1）；活槽 ``runtime.session`` 在此期间仍指着
-    已被共享核关闭的旧会话。失败关闭走候选自有队列（见 ``open_candidate_session``），
-    不得挂回正持 barrier 的旧队列。
+    候选完整初始化且 prepare 成功后才发布（#1902 J1）；活槽 ``runtime.session``
+    在此期间仍指着已被共享核关闭的旧会话。失败关闭与 residual 交接走共核
+    （见 ``open_candidate_session``），不得挂回正持 barrier 的旧队列。
     """
     from ming_sim.content import GameContent
     from ming_sim.save_slots import open_candidate_session
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    def _prepare_cli_startup(candidate: GameSession) -> None:
+        # 发布前同步补跑：仍在共核失败关闭保护区内。
+        q = get_session_write_queue(candidate)
+        candidate.run_startup_translation_catch_up(
+            write_gate=q.write_gate, write_queue=q,
+        )
 
     try:
-        candidate = open_candidate_session(
-            runtime.db_path, llm_config, content=GameContent.load(),
+        candidate, _ = open_candidate_session(
+            runtime.db_path,
+            llm_config,
+            content=GameContent.load(),
+            prepare=_prepare_cli_startup,
         )
     except Exception as exc:
         residual = getattr(exc, "residual_session", None)
         if residual is not None:
             runtime._rebuild_residual_runtime = residual
         raise
-    # CLI 无后台票：同步跑启动转译补跑（Web 由宿主 spawn）。
-    from ming_sim.session_write_queue import get_session_write_queue
-    q = get_session_write_queue(candidate)
-    candidate.run_startup_translation_catch_up(
-        write_gate=q.write_gate, write_queue=q,
-    )
     runtime.session = candidate
     return candidate
 
