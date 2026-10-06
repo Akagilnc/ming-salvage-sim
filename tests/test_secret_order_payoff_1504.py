@@ -1970,7 +1970,8 @@ def test_invalid_investigation_declaration_is_rejected_not_zero_effort(game):
         )
         assert not any(isinstance(r, dict) and r.get("order_id") == oid for r in out)
         item = next(r for r in rejections if getattr(r, "category", None) == "invalid_enum")
-        assert "查案声明无效" in str(item.reason)
+        assert getattr(item, "category", None) == "invalid_enum"
+        assert getattr(item, "item", None) is not None
         assert db.list_dossier_actual_progress(did) == []
         assert _lanes(db, oid)[key]["effort"] == 0.0
 

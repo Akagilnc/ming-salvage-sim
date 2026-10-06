@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import RejectedItem, SectionResult
+from ming_sim.applier import SectionResult
 
 
 def apply(run) -> SectionResult:
@@ -15,18 +15,9 @@ def apply(run) -> SectionResult:
     from ming_sim.entities.metric.apply import declare_metric_pairs
 
     totals, refused = declare_metric_pairs(
-        run.state, list(run.current_ordered.get("metric_delta") or []), db=run.db,
+        run.state,
+        list(run.current_ordered.get("metric_delta") or []),
+        db=run.db,
+        source=run.ctx.source,
     )
-    source = run.ctx.source
-    return SectionResult(
-        applied=list(totals.items()),
-        rejected=[
-            RejectedItem(
-                item={"metric": key, "value": raw},
-                reason=reason,
-                category=category,
-                source=source,
-            )
-            for key, raw, reason, category in refused
-        ],
-    )
+    return SectionResult(applied=list(totals.items()), rejected=refused)

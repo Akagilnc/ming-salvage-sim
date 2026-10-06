@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Tuple
 
+from ming_sim.applier import Provenance, RejectedItem
 from ming_sim.models import GameState
 from ming_sim.strict_types import strict_int
 
@@ -51,18 +52,32 @@ def declare_metric_pairs(
     state: GameState,
     pairs: List[Tuple[object, object]],
     db=None,
-) -> Tuple[Dict[str, int], List[Tuple[object, object, str, str]]]:
-    """声明有序对：合法指标落账，未知键与非整数值逐项拒收。"""
+    *,
+    source: Provenance,
+    item_base: Optional[Mapping[str, object]] = None,
+) -> Tuple[Dict[str, int], List[RejectedItem]]:
+    """声明有序对：合法指标落账，未知键与非整数值在产生处收成 canonical RejectedItem。"""
     totals: Dict[str, int] = {}
-    refused: List[Tuple[object, object, str, str]] = []
+    refused: List[RejectedItem] = []
+    base = dict(item_base or {})
     for key, val in pairs:
         if key not in ISSUE_METRIC_KEYS:
-            refused.append((key, val, f"未知指标：{key!r}", "invalid_enum"))
+            refused.append(RejectedItem(
+                item={**base, "field": key, "raw_value": val},
+                reason=f"未知指标：{key!r}",
+                category="invalid_enum",
+                source=source,
+            ))
             continue
         try:
             strict_int(val)
         except (TypeError, ValueError):
-            refused.append((key, val, f"「{key}」值非整数：{val!r}", "invalid_enum"))
+            refused.append(RejectedItem(
+                item={**base, "field": key, "raw_value": val},
+                reason=f"「{key}」值非整数：{val!r}",
+                category="invalid_enum",
+                source=source,
+            ))
             continue
         for metric, delta in apply_metric_dict(state, {key: val}, db=db).items():
             totals[metric] = totals.get(metric, 0) + delta

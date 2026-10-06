@@ -108,11 +108,11 @@ def apply_issue_tracker_output(
         if metric_delta_raw is None:
             metric_delta_raw = {}
         if isinstance(metric_delta_raw, dict):
-            applied_metrics, refused_metrics = declare_metric_pairs(state, list(metric_delta_raw.items()), db=db)
-            entity_rejections.extend(RejectedItem(
-                item={"issue_id": issue_id, "field": key, "raw_value": value},
-                reason=why, category=category, source=source,
-            ) for key, value, why, category in refused_metrics)
+            applied_metrics, refused_metrics = declare_metric_pairs(
+                state, list(metric_delta_raw.items()), db=db,
+                source=source, item_base={"issue_id": issue_id},
+            )
+            entity_rejections.extend(refused_metrics)
         else:
             applied_metrics = {}
             entity_rejections.append(RejectedItem(

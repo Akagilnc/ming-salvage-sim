@@ -917,7 +917,11 @@ def _strategic_result_item_has_material_world_state(item: Dict[str, object]) -> 
 _NESTED_DICT_FIELDS = frozenset({"region_delta", "army_delta", "power_updates"})
 
 
-def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, str]]]:
+def sanitize_delta_shape(
+    extracted: dict,
+    *,
+    source: Provenance = Provenance.unknown,
+) -> tuple[dict, list[tuple[str, RejectedItem]]]:
     """Return (cleaned_delta, validate-layer rejections) per ADR 0015 (r4 终态)。
 
     分层终态（#649 票面 r3/r4）：顶层非 dict（连 section 都拆不出）仍 fail loud 整份
@@ -925,6 +929,9 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
     ADR 0015 待施工纠正面，#649 纠正）；section/list/entity shape 缺陷逐项移除并
     返回拒收记录。Flat faction integers remain legal; flat class items reach the
     class adapter and are rejected per item as ``invalid_enum`` under the #564 contract.
+
+    拒收在产生处即为 canonical :class:`~ming_sim.applier.RejectedItem`；section 名作为
+    框架上下文与项配对返回，不塞进项级四字段。
     """
     from ming_sim.simulation import (  # 懒 import 避 issues↔simulation 循环
         DECLARATION_EFFECT_FIELDS,
@@ -933,16 +940,24 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
     if not isinstance(extracted, dict):
         raise ValueError(f"delta 必须是 object(dict)，实得 {type(extracted).__name__}")
     cleaned = dict(extracted)
-    rejections: list[tuple[str, dict, str]] = []
+    rejections: list[tuple[str, RejectedItem]] = []
+
+    def _shape_reject(section: str, item: dict, reason: str) -> None:
+        rejections.append((
+            section,
+            RejectedItem(item=item, reason=reason, category="invalid_shape", source=source),
+        ))
+
     for key, value in list(extracted.items()):
         if key not in DECLARATION_EFFECT_FIELDS:
             # ADR 0015 r4：未知顶层 key＝可拆 section，拒该段留痕、其余段照落，不整份退。
             # #1835 S3：退役 `_module_rejections` 不再特免，与普通未知字段同形拒收。
             cleaned.pop(key, None)
-            rejections.append(
-                (key, {"raw_value": value},
-                 f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)。"
-                 "apply 不会消费它＝静默无效，按段拒收留痕（ADR 0015），请改用合法 key。")
+            _shape_reject(
+                key,
+                {"raw_value": value},
+                f"未知 delta 顶层字段「{key}」(canonicalize 后)；疑拼写错(如 地区变更↔地区变化)。"
+                "apply 不会消费它＝静默无效，按段拒收留痕（ADR 0015），请改用合法 key。",
             )
             continue
         if value is None:
@@ -951,24 +966,32 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
         if isinstance(expected, dict):
             if not isinstance(value, dict):
                 cleaned[key] = {}
-                rejections.append((key, {"raw_value": value}, f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}"))
+                _shape_reject(key, {"raw_value": value}, f"delta 字段 {key} 必须是 object(dict)，实得 {type(value).__name__}")
                 continue
             if key in _NESTED_DICT_FIELDS:
                 section_clean = dict(value)
                 for ent, sub in value.items():
                     if not isinstance(sub, dict):
                         section_clean.pop(ent, None)
-                        rejections.append((key, {"entity_id": str(ent), "raw_value": sub}, f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}"))
+                        _shape_reject(
+                            key,
+                            {"entity_id": str(ent), "raw_value": sub},
+                            f"delta 字段 {key}.{ent} 必须是 object(dict)，实得 {type(sub).__name__}",
+                        )
                 cleaned[key] = section_clean
         elif isinstance(expected, list):
             if not isinstance(value, list):
                 cleaned[key] = []
-                rejections.append((key, {"raw_value": value}, f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}"))
+                _shape_reject(key, {"raw_value": value}, f"delta 字段 {key} 必须是 array(list)，实得 {type(value).__name__}")
                 continue
             section_clean = []
             for i, item in enumerate(value):
                 if not isinstance(item, dict):
-                    rejections.append((key, {"raw_value": item}, f"delta 字段 {key}[{i}] 必须是 object(dict)，实得 {type(item).__name__}"))
+                    _shape_reject(
+                        key,
+                        {"raw_value": item},
+                        f"delta 字段 {key}[{i}] 必须是 object(dict)，实得 {type(item).__name__}",
+                    )
                 else:
                     section_clean.append(item)
             cleaned[key] = section_clean

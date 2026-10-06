@@ -20,9 +20,6 @@ _ISSUE_ENTITY_FIELDS = {
     "region_delta": dict, "army_delta": dict, "new_armies": list,
     "power_renames": list, "人物变更": list,
 }
-_RETIRED_NESTED_PERSON_KEYS = (
-    "character_status_changes", "character_power_changes", "office_changes", "appointments",
-)
 
 
 
@@ -172,7 +169,7 @@ def _apply_issue_entities(
     from ming_sim.entities.faction.apply import _apply_faction_dict
 
     tolerated: List[RejectedItem] = []
-    unknown = effect.keys() - (_ISSUE_ENTITY_FIELDS.keys() | set(_RETIRED_NESTED_PERSON_KEYS) | {"metrics", "economy", "factions", "buildings", "legacy"})
+    unknown = effect.keys() - (_ISSUE_ENTITY_FIELDS.keys() | {"metrics", "economy", "factions", "buildings", "legacy"})
     for key in unknown:
         tolerated.append(RejectedItem(item={"field": key, "raw_value": effect[key]}, reason="局势效果字段不可执行", category="invalid_shape", source=source))
     building_rows, building_rejections = _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, label, origin_ref=origin_ref, source=source)
@@ -183,10 +180,8 @@ def _apply_issue_entities(
     tolerated.extend(legacy_rejections)
     metrics = {} if effect.get("metrics") is None else effect["metrics"]
     if isinstance(metrics, dict):
-        _, refused = declare_metric_pairs(state, list(metrics.items()), db=db)
-        tolerated.extend(RejectedItem(item={"field": key, "raw_value": value}, reason=reason,
-                                      category=category, source=source)
-                         for key, value, reason, category in refused)
+        _, refused = declare_metric_pairs(state, list(metrics.items()), db=db, source=source)
+        tolerated.extend(refused)
     else:
         tolerated.append(RejectedItem(item={"field": "metrics", "raw_value": metrics}, reason="指标效果须为对象", category="invalid_shape", source=source))
     tolerated.extend(_apply_economy_list(db, state, [] if effect.get("economy") is None else effect["economy"], origin_ref=origin_ref, source=source)[1])
@@ -249,25 +244,6 @@ def _apply_issue_entities(
                 last_action=str(item.get("last_action") or ""),
                 commit=False,
             )
-    for retired_key in _RETIRED_NESTED_PERSON_KEYS:
-        raw_retired = effect.get(retired_key)
-        if raw_retired is None or raw_retired == [] or raw_retired == {}:
-            continue
-        entries = raw_retired if isinstance(raw_retired, list) else [raw_retired]
-        for entry in entries:
-            if isinstance(entry, dict):
-                entity_id = entry.get("entity_id") or entry.get("id") or entry.get("character_id") or entry.get("name")
-                item = {"raw_value": entry}
-                if entity_id not in (None, ""):
-                    item["entity_id"] = entity_id
-            else:
-                item = {"raw_value": entry}
-            tolerated.append(RejectedItem(
-                item=item,
-                reason=f"局势嵌套效果 {retired_key} 已退役，不可执行",
-                category="invalid_shape",
-                source=source,
-            ))
     raw_person_changes = effect.get("人物变更")
     person_items = []
     if isinstance(raw_person_changes, list):

@@ -486,7 +486,9 @@ def _dispatch_effects(
         has_effect = True
         # 归属是效果 envelope 的声明，不属于 delta 的字段。
         event_id = str(item.get("event_id") or "").strip()
-        clean, invalid = sanitize_delta_shape({k: v for k, v in item.items() if k != "event_id"})
+        clean, invalid = sanitize_delta_shape(
+            {k: v for k, v in item.items() if k != "event_id"}, source=source,
+        )
         shape_rejections.extend(invalid)
         clean_items.append((item, event_id, clean))
     if not has_effect:
@@ -2387,8 +2389,9 @@ def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None
     """`characters` 主键是 name（非整数 id）；AffairStore.attach_pointer 现按表
     配置主键列（`characters` → `name`），语义（未绑可绑一次、同一事务幂等、
     绑别的事务响亮拒绝）与其它指针表完全一致，直接复用、不再单独实现
-    （#1831）。只在人物变更 / 入册已经真实落库之后调用——绑定失败不撤销已经
-    发生的落库（那会谎报「没发生」），调用方把异常信息原样带回结果，不吞。"""
+    （#1831）。只在人物变更 / 入册已经进入同一原子块之后调用——绑定失败时由
+    调用方的 :func:`_item_savepoint_scope` 连同人物变更一起回滚，不留半写；
+    调用方把异常信息原样带回结果，不吞。"""
     db.affairs.attach_pointer("characters", name, affair_id)
 
 

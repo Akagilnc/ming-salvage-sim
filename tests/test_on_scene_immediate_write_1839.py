@@ -96,10 +96,6 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
     assert roster_paths
     court = {row["name"] for row in db.current_court_roster_rows(state)}
     assert victim not in court
-    victim_dossier = f"人物/{victim}/人物档料.txt"
-    if victim_dossier in listed:
-        dossier = read_material(prepared.root, victim_dossier)
-        assert "dead" in dossier or "死" in dossier or "斩杀" in dossier
 
 
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):

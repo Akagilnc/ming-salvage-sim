@@ -71,7 +71,8 @@ class SettlementRun:
     effect_sequence: Optional[EffectSequence] = None
     commit_now: bool = True
     # 前置闸产物：sanitize / 同批事务声明 identity 冲突。
-    shape_rejections: List[Tuple[str, dict, str]] = field(default_factory=list)
+    # section 名是框架上下文，与项级 RejectedItem 配对；不塞进四字段。
+    shape_rejections: List[Tuple[str, RejectedItem]] = field(default_factory=list)
     # 人物规范化后的唯一流切成 pre/post（人物段共用；issue 路读人物态依赖它）。
     declared_person_event_by_item: Dict[int, str] = field(default_factory=dict)
     strategic_event_pool_ids: Set[str] = field(default_factory=set)
@@ -147,7 +148,7 @@ def _preflight(
     ordered_deltas: Dict[str, List[Tuple[str, object]]],
     ordered_effect_event_ids: Dict[str, List[str]],
     effect_sequence: Optional[EffectSequence],
-    prior_shape_rejections: Optional[List[Tuple[str, dict, str]]],
+    prior_shape_rejections: Optional[List[Tuple[str, RejectedItem]]],
 ) -> SettlementRun:
     """前置闸：形状净化 + 同批事务声明 birth_key 盖章 + 人物规范化 + 战略门闩。
 
@@ -163,7 +164,7 @@ def _preflight(
     from ming_sim.settlement.preflight import _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS, _derive_ordered_deltas, _event_pool_ids_for_strategic_foreign_nodes, _event_result_delta_event_ids, _split_strategic_person_result_changes, sanitize_delta_shape
     from ming_sim.models import Event
 
-    clean, validate_rejections = sanitize_delta_shape(extracted)
+    clean, validate_rejections = sanitize_delta_shape(extracted, source=ctx.source)
     validate_rejections.extend(prior_shape_rejections or [])
     if ordered_deltas is None:  # type: ignore[comparison-overlap]
         ordered_deltas = _derive_ordered_deltas(clean)
@@ -232,7 +233,19 @@ def _preflight(
             for raw_item in raw_items:
                 stamped, conflict_reason = stamp_batch_new_declaration(raw_item)
                 if conflict_reason is not None:
-                    validate_rejections.append((field_name, raw_item, conflict_reason))
+                    item_payload = (
+                        {k: v for k, v in raw_item.items() if k != "_effect_event_id"}
+                        if isinstance(raw_item, dict) else {"raw_value": raw_item}
+                    )
+                    validate_rejections.append((
+                        field_name,
+                        RejectedItem(
+                            item=item_payload,
+                            reason=conflict_reason or f"拒收（{field_name} 未注明原因）",
+                            category="invalid_shape",
+                            source=ctx.source,
+                        ),
+                    ))
                     rejected_origin_ids.add(id(raw_item))
                     continue
                 stamped_by_origin[id(raw_item)] = stamped
@@ -458,20 +471,11 @@ def _resolve_victory(run) -> Optional[Dict[str, object]]:
 
 def _build_outcome(run) -> SettlementOutcome:
     """把各段已交回的结果摆上 typed 结果。不再拆写口行。"""
-    src = run.ctx.source
     shape_sections: List[str] = []
     shape: List[RejectedItem] = []
-    for section, item, reason in run.shape_rejections:
+    for section, rejected in run.shape_rejections:
         shape_sections.append(section)
-        shape.append(RejectedItem(
-            item=(
-                {k: v for k, v in item.items() if k != "_effect_event_id"}
-                if isinstance(item, dict) else {"raw_value": item}
-            ),
-            reason=reason or f"拒收（{section} 未注明原因）",
-            category="invalid_shape",
-            source=src,
-        ))
+        shape.append(rejected)
 
     def placed(name: str) -> SectionResult:
         return run.outcomes.get(name) or _empty()
@@ -522,7 +526,7 @@ def settle_delta(
     ordered_deltas: Optional[Dict[str, List[Tuple[str, object]]]] = None,
     ordered_effect_event_ids: Optional[Dict[str, List[str]]] = None,
     effect_sequence: Optional[EffectSequence] = None,
-    prior_shape_rejections: Optional[List[Tuple[str, dict, str]]] = None,
+    prior_shape_rejections: Optional[List[Tuple[str, RejectedItem]]] = None,
 ) -> SettlementOutcome:
     """把一份声明效果落账，返回 typed 结果。
 
