@@ -61,8 +61,6 @@ PERSON_IDENTITY_TITLES = ("听用候铨", "降臣", "归附", "待选", "诸生"
 
 PERSON_ALLEGIANCE_CHANGE_WAYS = ("主动投敌", "被俘而降", "主动归附")
 
-PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS = ("不明",)
-
 PERSON_REASON_CODE_ALIASES = {
     "守制": "丁忧",
     "丁艰": "丁忧",

@@ -722,20 +722,6 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
     )
 
 
-def test_substrate_hub_dual_track_sanity_keeps_legacy_calc_as_reference(fresh_game):
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    legacy_treasury, legacy_inner, legacy_lines = flows_mod.calc_province_fiscal(state, db)
-
-    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
-
-    assert isinstance(legacy_treasury, int)
-    assert isinstance(legacy_inner, int)
-    assert isinstance(legacy_lines, list)
-    assert any(flow.get("category") == "边饷hub" for flow in flow_rows)
-    assert any(flow.get("category") == "中央军饷" for flow in flow_rows)
-    db.assert_army_pay_source_container_conservation()
 
 def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
     import ming_sim.flows as flows_mod
@@ -4210,27 +4196,6 @@ def test_resolve_directives_nested_cutover_bad_state_uses_settlement_abort_error
     assert _read_settle(db)["p"] == []
 
 
-def test_fixed_flow_loader_accepts_already_decoded_fiscal_dict():
-    import ming_sim.flows as flows_mod
-
-    fiscal = {"settle": {"st": {}, "p": {}}, "tax": 1}
-
-    assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", fiscal) == fiscal
-
-@pytest.mark.parametrize("bad_scalar", [float("nan"), float("inf"), 10 ** 309])
-def test_fixed_flow_loader_rejects_non_finite_numeric_values(bad_scalar):
-    import ming_sim.flows as flows_mod
-
-    fiscal = {"settle": {"st": {}, "p": {}}, "liao_xiang": bad_scalar}
-
-    assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", fiscal) is None
-
-@pytest.mark.parametrize("payload", [[], 0, False])
-def test_fixed_flow_loader_rejects_decoded_non_dict_payloads(payload):
-    import ming_sim.flows as flows_mod
-
-
-    assert flows_mod._load_region_fiscal_for_fixed_flow("shaanxi", payload) is None
 
 def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh_game):
     import ming_sim.flows as flows_mod

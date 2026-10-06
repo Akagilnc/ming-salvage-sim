@@ -1,0 +1,4 @@
+focused pytest (7x MING_SIM_*_BIN=/usr/bin/false, PYTHONDONTWRITEBYTECODE=1)
+tests: relation_capture_633, execution_pressure_654, event_trigger_gate, army_maintenance_retire_173,
+       fiscal_substrate_bridge, population_transfers_649, army_pay_source_prompt_contract
+result: 401 passed in 19.95s

@@ -2561,9 +2561,9 @@ class GameDB:
             self.conn.commit()
         return base_key
 
-    # dynamic 税科目 → regions.fiscal 子字段映射。dynamic 税实收走 calc_province_fiscal
-    # 读 region.fiscal（不读 fiscal_config 的 base），故对这些 key 做裁撤/调额必须同步改
-    # 各省 fiscal 字段才真生效——否则只动目录不动钱（账目与叙事脱节）。
+    # dynamic 税科目 → regions.fiscal 子字段映射。盐/商等旁路与省级 settle 读 region.fiscal
+    # （不读 fiscal_config 的 base），故对这些 key 做裁撤/调额必须同步改各省 fiscal
+    # 字段才真生效——否则只动目录不动钱（账目与叙事脱节）。
     #   田赋无独立字段（=tax_per_turn 减其余三税的残差），裁撤走 tax_per_turn 压低；
     #   皇庄收入真读 fiscal_config.皇庄_base，裁撤/调额改 config 即生效，不在本表。
     _DYNAMIC_REGION_FIELD = {
@@ -2621,8 +2621,7 @@ class GameDB:
         事务边界（slice3 的 applier.atomic 全有或全无）控制；异常上抛由其回滚。
 
         settle_tick 纯读 st（不就地改），故无需深拷贝；new_st 是全新 dict，覆盖回 settle.st。
-        官民田/隐田（清丈重分类）只写进 settle.st，不同步顶层 registered_land/hidden_land——
-        基座 dormant 期与旧 calc_province_fiscal 解耦，接入并轨在 slice3。
+        官民田/隐田（清丈重分类）只写进 settle.st，不同步顶层 registered_land/hidden_land。
         """
         row = self.conn.execute(
             "SELECT fiscal FROM regions WHERE id = ?", (region_id,)
@@ -3644,9 +3643,6 @@ class GameDB:
                 primary_source_due,
             )
         return total
-
-    def _primary_source_only_army_pay_container_total(self) -> float:
-        return self._standalone_army_pay_container_total()
 
     def _has_complete_province_pay_containers(self) -> bool:
         rows = self.conn.execute(
@@ -6606,7 +6602,8 @@ class GameDB:
                 })
                 continue
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
-            consumed_pay_source_fields: frozenset[str] = frozenset()
+            # owner_power / 饷源字段唯一写口＝_apply_army_pay_source_delta →
+            # transition_army_owner_power；主环对 _ARMY_PAY_SOURCE_DELTA_FIELDS 直接跳过。
             self._apply_army_pay_source_delta(
                 state, event, edict_id, actor, row, raw_changes, reason, changes,
                 origin_ref=origin_ref, require_origin=require_origin,
@@ -6621,29 +6618,6 @@ class GameDB:
                 if field in ("reason", "origin_ref"):
                     continue
                 if field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
-                    continue
-                if field in consumed_pay_source_fields:
-                    continue
-                # #318：owner_power 须经唯一 adapter，禁止 text 直写旁路
-                # （同 owner no-op / 未在上方预消费的残余路径）
-                if field == "owner_power":
-                    current_row = self.conn.execute(
-                        "SELECT * FROM armies WHERE id = ?", (army_id,)
-                    ).fetchone()
-                    if current_row is None:
-                        continue
-                    changes.extend(self.transition_army_owner_power(
-                        state,
-                        current_row,
-                        str(value or "").strip(),
-                        reason=reason,
-                        actor=actor,
-                        event_id=event.id,
-                        edict_id=edict_id,
-                        origin_ref=origin_ref,
-                        require_origin=require_origin,
-                        raw_item={"army_id": army_id, "changes": raw_changes},
-                    ))
                     continue
                 if field not in _ARMY_VALID_SET:
                     # ADR 0008 决定 1:LLM 引用非法军队字段 = 逐项拒收留痕(invalid_enum),

@@ -28,13 +28,8 @@ from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.token_stats import tlog
 
 
-# ── 省级财政计算 ──────────────────────────────────────────────────────────────
+# ── 固定财政 / substrate hub ──────────────────────────────────────────────────
 
-# 皇庄增量租率：没收藩王庄田转皇庄后，每万亩每月增加内库收入（万两）
-# 基准皇庄收入走 fiscal_config.皇庄_base；此常数只用于增量计算
-_HUANG_TIAN_RENT_PER_WAN_MU = 0.57  # ≈ 20万两/月 ÷ 35万亩
-
-_FIXED_FLOW_NUMERIC_FIELDS = ("huang_tian", "liao_xiang", "salt_tax", "commerce_tax", "corruption")
 _CENTRAL_TAICANG_HUMAN_LOSS_RATE = "central_taicang_human_loss_rate"
 _CENTRAL_TAICANG_SINK_LOSS_RATE = "central_taicang_sink_loss_rate"
 _CENTRAL_JINGYUN_HUMAN_LOSS_RATE = "central_jingyun_human_loss_rate"
@@ -60,160 +55,6 @@ def raise_fixed_period_flow_abort_if_needed(
         stage="fixed_fiscal",
         error_pack_path=pack_path,
     ) from exc
-
-
-def _province_transport_ratio(fiscal: dict, unrest: int) -> float:
-    """解运比（保留函数签名，返回1.0；实际损耗已并入 _province_efficiency）。"""
-    return 1.0
-
-
-def _province_collection_rate(gentry_resistance: int, unrest: int) -> float:
-    """实收率（保留函数签名，返回1.0；实际损耗已并入 _province_efficiency）。"""
-    return 1.0
-
-
-def _province_efficiency(fiscal: dict, gentry_resistance: int, unrest: int) -> float:
-    """综合到账率：士绅阻力 + 腐败度 + 民变三因子决定税银实际到账比例。
-    上限 1.0（现代化/彻底改革后可接近满额），下限 0.05（完全失控）。
-    开局典型值：富省~0.25，贫乱省~0.15。
-    改革路径：清查士绅→gentry↓，整治贪腐→corruption↓，赈灾→unrest↓，效率可升至0.60+。
-    """
-    corruption = fiscal.get("corruption", 50)
-    rate = (1.0
-            - gentry_resistance / 100 * 0.55
-            - corruption        / 100 * 0.45
-            - max(0, unrest - 20) / 100 * 0.30)
-    return max(0.05, min(1.00, rate))
-
-
-def _fixed_flow_scalars_are_numeric(region_id: str, fiscal: dict) -> bool:
-    for key in _FIXED_FLOW_NUMERIC_FIELDS:
-        if key not in fiscal:
-            continue
-        value = fiscal[key]
-        try:
-            finite_number = (
-                not isinstance(value, bool)
-                and isinstance(value, (int, float))
-                and math.isfinite(float(value))
-            )
-        except OverflowError:
-            finite_number = False
-        if not finite_number:
-            tlog(f"[province-fiscal] {region_id} fiscal.{key} 非数字，本{TURN_UNIT}固定税收出列")
-            return False
-    return True
-
-
-def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Optional[dict]:
-    """固定财政旧路径的宽容 fiscal 读取。
-
-    Shadow substrate 自己有 fail-loud+隔离日志；固定税收不能因为一个省的 fiscal JSON
-    坏态掀翻整月 pre_settle，也不能把坏 payload 当空 fiscal 继续造钱。坏省当月
-    固定税收出列，并让后续 substrate bridge 再记录精确隔离原因。
-    """
-    if isinstance(raw_fiscal, dict):
-        return raw_fiscal if _fixed_flow_scalars_are_numeric(region_id, raw_fiscal) else None
-    if raw_fiscal is None or raw_fiscal == "":
-        raw_fiscal = "{}"
-    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
-        tlog(f"[province-fiscal] {region_id} fiscal 非字典，本{TURN_UNIT}固定税收出列")
-        return None
-    try:
-        fiscal = json.loads(raw_fiscal)
-    except (TypeError, ValueError) as exc:
-        tlog(f"[province-fiscal] {region_id} fiscal 解析失败，本{TURN_UNIT}固定税收出列：{type(exc).__name__}: {exc}")
-        return None
-    if not isinstance(fiscal, dict):
-        tlog(f"[province-fiscal] {region_id} fiscal 非字典，本{TURN_UNIT}固定税收出列")
-        return None
-    if not _fixed_flow_scalars_are_numeric(region_id, fiscal):
-        return None
-    return fiscal
-
-
-def calc_province_fiscal(
-    state: GameState,
-    db: GameDB,
-) -> Tuple[int, int, List[Dict]]:
-    """按省计算月度财政收入。
-
-    tax_per_turn 是省级校准月税基准（含田赋+辽饷+盐税+商税合计）。
-    fiscal JSON 里的税种细分用于拆比例；动态系数（tr/cr）乘在总量上。
-    皇庄地租单独走内库，基准来自 fiscal.huang_tian × 租率。
-
-    返回 (国库月收合计, 内库月收合计, 明细列表)。
-    """
-    rows = db.conn.execute(
-        "SELECT id, name, unrest, gentry_resistance, tax_per_turn, fiscal FROM regions"
-    ).fetchall()
-    if not rows:
-        raise SystemExit("calc_province_fiscal: regions 表无数据，中止。")
-
-    wei = state.metrics.get("皇威", 58)
-
-    guo_ku_total = 0
-    nei_ku_total = 0
-    details: List[Dict] = []
-
-    for row in rows:
-        region_id    = str(row["id"])
-        name         = str(row["name"])
-        unrest       = int(row["unrest"])
-        gentry       = int(row["gentry_resistance"])
-        tax_base     = int(row["tax_per_turn"])   # 省级月税基准（万两）
-        fiscal = _load_region_fiscal_for_fixed_flow(region_id, row["fiscal"])
-        if fiscal is None:
-            details.append({
-                "region_id": region_id, "name": name, "田赋": 0, "辽饷": 0,
-                "盐税": 0, "商税": 0, "皇庄": 0, "province_total": 0,
-                "efficiency": 0, "isolated": True,
-            })
-            continue
-
-        huang_tian   = fiscal.get("huang_tian", 0)
-        liao_xiang   = fiscal.get("liao_xiang", 0)
-        salt_tax     = fiscal.get("salt_tax", 0)
-        commerce_tax = fiscal.get("commerce_tax", 0)
-
-        # 综合到账率（单一系数，上限1.0，改革后可接近满额）
-        eff = _province_efficiency(fiscal, gentry, unrest)
-
-        # 辽饷受皇威额外折扣（皇威低→地方截留多）
-        liao_eff = eff * (0.5 + wei / 200)
-        liao_eff = max(0.10, min(1.00, liao_eff))
-
-        # 全部税种统一乘综合到账率
-        liao     = round(liao_xiang   * liao_eff)
-        salt     = round(salt_tax     * eff)
-        commerce = round(commerce_tax * eff)
-        tian_fu_base = max(0, tax_base - liao_xiang - salt_tax - commerce_tax)
-        tian_fu  = round(tian_fu_base * eff)
-
-        # 皇庄 → 内库
-        # 基准由 fiscal_config.皇庄_base 统一覆盖（已校准）；
-        # huang_tian 字段用于记录没收藩王庄田后的增量：
-        #   增量月收 = 新增万亩 × _HUANG_TIAN_RENT_PER_WAN_MU
-        # 只有北直隶有 huang_tian > 0，增量=0（开局无新增），后续没收时才>基准
-        huang_income = 0  # 开局皇庄收入走 fiscal_config，此处不重复计算
-
-        province_guo = tian_fu + liao + salt + commerce
-        guo_ku_total += province_guo
-        nei_ku_total += huang_income
-
-        details.append({
-            "region_id":       region_id,
-            "name":            name,
-            "田赋":            tian_fu,
-            "辽饷":            liao,
-            "盐税":            salt,
-            "商税":            commerce,
-            "皇庄":            huang_income,
-            "province_total":  province_guo,
-            "efficiency":      round(eff, 3),
-        })
-
-    return guo_ku_total, nei_ku_total, details
 
 
 def _as_finite_nonnegative_float(label: str, value: object) -> float:
@@ -291,14 +132,6 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
         result = settle_tick(copy.deepcopy(settle["st"]), copy.deepcopy(settle["p"]), [])
         remittance_total += float((result.breakdown or {}).get("起运到京", 0.0) or 0.0)
     return remittance_total
-
-
-def _fiscal_container_value(db: GameDB, key: str) -> float:
-    row = db.conn.execute(
-        "SELECT value FROM fiscal_containers WHERE key = ?",
-        (key,),
-    ).fetchone()
-    return float(row["value"] or 0.0) if row is not None else 0.0
 
 
 def _fiscal_container_values_when_complete(
@@ -436,9 +269,10 @@ def _add_fiscal_container(db: GameDB, key: str, delta: float, note: str) -> None
 
 # 固定月度收支科目目录现走数据驱动：db.iter_budget_items() 从 fiscal_config 读
 # budget_role=fixed 的 base 项（account/direction/display）。加新税源只改 content/fiscal_config.json。
-# 税收/皇庄走 calc_province_fiscal（动态）；军饷预算只列京运补与中央份额拟拨，
-# 不预演结算分配或损耗。compute_budget_lines 是预算展示同源，flows 落账 /
-# UI budget_payload / db.treasury_budget_summary 三处共用。
+# 省级起运/盐商/太仓亏空等动态收入走 substrate hub；皇庄走 fiscal_config 基准；
+# 军饷预算只列京运补与中央份额拟拨，不预演结算分配或损耗。
+# compute_budget_lines 是预算展示同源，flows 落账 / UI budget_payload /
+# db.treasury_budget_summary 三处共用。
 
 
 def compute_budget_lines(
@@ -447,7 +281,7 @@ def compute_budget_lines(
     """唯一定额预算源。返回 {"国库":{"income":[行],"expense":[行]},"内库":{...}}；
     每行至少含 {name,amount,note}，可另带 budget_key 等工程元数据（军饷行固定 budget_key=army_pay，
     供落账/摘要按 key 认科目；消费方不得依赖 name 措辞）。
-    税收/皇庄＝calc_province_fiscal 动态值；
+    省级起运/盐商/太仓＝substrate hub 投影；皇庄＝fiscal_config 基准；
     军饷预算分列京运补与中央份额拟拨，不预演分配或损耗；
     建筑＝按 condition 折产/维护；
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
@@ -455,7 +289,6 @@ def compute_budget_lines(
     hub_income_lines, hub_expense_lines = _substrate_hub_budget_income_lines(
         db, state, project_missing=project_substrate_hub
     )
-    nk_huang = 0
     # #1366 军饷预算只陈列结算前拟拨事实：京运补与中央份额分开，
     # 均不受当月国库能力或未来转运损耗影响。
     rows = db.conn.execute(
@@ -495,10 +328,10 @@ def compute_budget_lines(
     budget["国库"]["income"].extend(hub_income_lines)
     budget["国库"]["expense"].extend(army_pay_lines)
     budget["国库"]["expense"].extend(hub_expense_lines)
-    # 皇庄＝fiscal_config 基准（开局校准月额）＋ calc_province_fiscal 的没收藩田增量（开局 0）。
+    # 皇庄＝fiscal_config 基准（开局校准月额）。
     huang_base = round(int(cfg.get("皇庄_base", 20)) * cfg.get("皇庄_rate", 100) / 100)
     budget["内库"]["income"].append(
-        {"name": "皇庄", "amount": int(huang_base + nk_huang), "note": "皇庄月地租（基准+没收藩田增量）"}
+        {"name": "皇庄", "amount": int(huang_base), "note": "皇庄月地租（fiscal_config 基准）"}
     )
     for item in db.iter_budget_items():
         base_key = str(item["key"])

@@ -284,7 +284,7 @@ POPULATION_TRANSFER_REASONS: dict[str, frozenset[tuple[str, str]]] = {
 POPULATION_TRANSFER_FIELDS = frozenset({"source", "target", "amount", "reason", "origin_ref"})
 
 # 0089 明渠：加派→流民月折算率（人/(万两·月)，民心归零基准；确定性口径，#650 AC2）。
-# 实际入池 = 加派基线(万两) × 本率 × (100 − 该省民心)/100，随存档 population_unit 换算、
+# 实际入池 = 加派基线(万两) × 本率 × (100 − 该省民心)/100，单位「人」、
 # 钳到农民余额（代码只 clamp 不判胜负，P6/0087 applier 机械转移）。
 LEVY_DISPLACEMENT_RATE = 2000.0
 

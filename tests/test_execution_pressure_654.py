@@ -190,11 +190,6 @@ def test_region_zero_hit_fail_loud(env):
 
 # ── schema + create_decree_dossiers fan-out ────────────────────────
 
-def test_region_id_column_present_for_dossier_write_path(env):
-    """案卷写口需要 region_id 列；唯一/幂等行为由 test_national_creates_one_row_idempotent 等行为案承担，不锁索引名。"""
-    db, _, _ = env
-    cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)")}
-    assert "region_id" in cols
 
 def test_national_creates_one_row_idempotent(env):
     """#1778 决定 4：全国政令成一份案卷（region_id 空），重交不增行。"""

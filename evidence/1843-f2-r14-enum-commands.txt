@@ -1,0 +1,27 @@
+# F2-R14 enumeration commands (predicates cover full class defs; samples≠whitelist)
+# Env: MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
+#
+# Cat1 旧结算及专属支持闭包退役不完整
+#   boundary: 删除实际旧路专属闭包及失效返工；不删现役 hub 共享读取/当前存储/初始化
+#   1) AST defs+call graph over ming_sim/**/*.py + tests/**/*.py for seeds:
+#      calc_province_fiscal,_province_*,_load_region_fiscal_for_fixed_flow,_fixed_flow_scalars*,
+#      _fiscal_container_value,_primary_source_only_army_pay_container_total,
+#      PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS,_HUANG_TIAN*,_FIXED_FLOW_NUMERIC*,consumed_pay_source_fields
+#   2) Close exclusive callees of dead roots (prod_calls==0 except self-tree)
+#   3) Unreachable branch: owner_power in _ARMY_PAY_SOURCE_DELTA_FIELDS ⇒ main-loop owner_power handler dead
+#   4) rg dedicated tests calling those symbols
+#
+# Cat2 非契约措辞锁定、内部结构和重复测试未清净
+#   boundary: 清非契约断言/纯盯文/内部重复；保留拒收类别、坏项零写入、合法项继续；不新造错误码/钩子/平行证明
+#   1) AST assert "…人名…" in reason / any(人名 in r["reason"])
+#   2) test fns that only read content/*.json and assert fixed prose (no db/apply/resolve)
+#   3) PRAGMA table_info column-presence-only tests with sibling behavior coverage
+#
+# Cat3 现行操作说明仍指挥已退役机制
+#   boundary: 普通文档/配置说明/代码注释；ADR→#1881；CLAUDE→#1856；不改治理法、不恢复旧实现
+#   rg calc_province_fiscal|FISCAL_SCHEMA_VERSION|legacy万人|旧档保留 legacy|fiscal_engine|legacy翻译.*不明
+#   over docs/** content/** ming_sim/** README.md CONTEXT.md TODOS.md EXCLUDING docs/adr CLAUDE Agents
+#
+# Cat4 无本票依据的别票证据整理
+#   git diff 10e64fbef..HEAD -- docs/evidence/issue-1901-w4-1838-merge.md
+#   restore trailing markdown hard-breaks only; no repo-wide whitespace sweep
