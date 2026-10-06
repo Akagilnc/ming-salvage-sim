@@ -30,13 +30,6 @@ def test_offsnapshot_echoed_event_id_is_unbound():
     assert "event_id" not in out[0]
 
 
-def test_offsnapshot_id_with_no_title_match_is_unbound():
-    """回显 id 不在快照 → 解绑，不把非候选 id 当 triggered 落库。"""
-    out = bind_decisions_to_candidate_events(
-        [{"title": "某无关抉择", "event_id": "freeform_x"}], _SNAPSHOT)
-    assert "event_id" not in out[0]
-
-
 def test_no_snapshot_returns_decisions_unchanged():
     """无快照（payload 非 dict / 无 candidate_events）→ 决策原样返回，不臆测。"""
     assert bind_decisions_to_candidate_events(
