@@ -702,7 +702,15 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
     )
     thread.start()
 
-    wait_until(lambda: runtime._write_queue.is_sealed())
+    # seal 后 claim 返回 None；探测时若尚未 seal 则 complete 掉误领票据，不为测试补 is_sealed API。
+    def _queue_rejects_new_claims() -> bool:
+        ticket = runtime._write_queue.claim(("__seal_probe__",))
+        if ticket is None:
+            return True
+        runtime._write_queue.complete(ticket)
+        return False
+
+    wait_until(_queue_rejects_new_claims)
     assert runtime._mark_pending_write() is None
     # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
     assert runtime._pending_writes_count <= 1

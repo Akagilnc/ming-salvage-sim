@@ -329,15 +329,6 @@ def get_open_night(db: Any) -> Optional[Dict[str, Any]]:
         (NIGHT_STATUS_OPEN, NIGHT_STATUS_CLOSING),
     ).fetchone()
     return _hydrate_night(_row_dict(row)) if row is not None else None
-
-
-def night_dossiers_ready(night: Optional[Dict[str, Any]]) -> bool:
-    """#1842：草稿案卷前提已提交（可明发/终局）；取代旧 endorsement-bound 水位。"""
-    if not night:
-        return False
-    return int(night.get("close_commit_cursor") or 0) >= CLOSE_STEP_TRANSFER_CANDIDATES
-
-
 def assert_night_accepts_player_input(
     db: Any,
     night_id: Optional[int] = None,
@@ -442,28 +433,6 @@ def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
         (int(night_id),),
     ).fetchall()
     return [_row_dict(r) for r in rows]
-
-
-def list_night_timeline(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    """账本 + 对话轮按 night_seq/seq 合流（AC4 时序对齐真源）。"""
-    events: List[Dict[str, Any]] = []
-    for e in list_ledger(db, night_id):
-        # 抽取账用 order_key（源轮时序）排序；口令/框架账回退 seq。
-        events.append({
-            "kind": "ledger",
-            "seq": _entry_order_key(e),
-            "payload": e,
-        })
-    for t in list_chat_turns_for_night(db, night_id):
-        events.append({
-            "kind": "chat_turn",
-            "seq": float(int(t.get("night_seq") or 0)),
-            "payload": t,
-        })
-    events.sort(key=lambda x: (float(x["seq"]), 0 if x["kind"] == "ledger" else 1, int(x["payload"].get("id") or 0)))
-    return events
-
-
 def night_archive_metadata(
     ledgers: List[Dict[str, Any]], turns: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -650,68 +619,6 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
 
     events.sort(key=lambda item: (item[0], item[1]))
     return [item[2] for item in events]
-
-
-def _night_direct_write_allowed_tables() -> frozenset:
-    allowed: set[str] = set()
-    for tables in NIGHT_DIRECT_WRITE_WHITELIST.values():
-        allowed |= set(tables)
-    return frozenset(allowed)
-
-
-def audit_night_direct_writes(db: Any, night_id: int) -> set[str]:
-    """审计一夜内对真实盘面的直写全部落在可枚举白名单内（ADR 0038 防坑不变式，#506 AC3）。
-
-    撤回逆转干净的前提 = 夜内对真实盘面的直写只落白名单（①密令落地；②转译声明的
-    当场实况——#1839 第四类，含原入册/边事件），其余结构化后果全走待确认暂存、收夜
-    才提交。经该夜各未撤/未失败轮的前像撤销日志（chat_turn_rollback_items 记录本轮
-    触碰过的业务表）核真：任一真实盘面表被直写、却不属白名单授权 → 越权夜内直写，
-    写错误包并响亮咬住（此类直写撤回逆转不净，是设计洞）。
-
-    返回观测到的白名单操作名集（合法夜用于确认授权项确经白名单落地）。
-    """
-    allowed = _night_direct_write_allowed_tables()
-    rows = db.conn.execute(
-        """
-        SELECT DISTINCT i.target_table
-        FROM chat_turn_rollback_items i
-        JOIN chat_turns t ON t.id = i.chat_turn_id
-        WHERE t.night_id = ? AND t.status NOT IN ('undone', 'failed', 'consumed')
-        """,
-        (int(night_id),),
-    ).fetchall()
-    observed_ops: set[str] = set()
-    violations: List[str] = []
-    for row in rows:
-        table = str(row["target_table"] if hasattr(row, "keys") else row[0])
-        if table not in _REAL_BOARD_TABLES:
-            continue  # 暂存/候选层非真实盘面直写，不审
-        if table not in allowed:
-            violations.append(table)
-            continue
-        for op, tables in NIGHT_DIRECT_WRITE_WHITELIST.items():
-            if table in tables:
-                observed_ops.add(op)
-    if violations:
-        tables_sorted = sorted(set(violations))
-        message = (
-            f"越权夜内直写：{('、'.join(tables_sorted))} 不在夜内直写白名单"
-            f"（授权表：{sorted(allowed)}）——须走待确认暂存或过设计审扩白名单。"
-        )
-        pack = write_audience_error_pack(
-            kind="unwhitelisted_night_write",
-            message=message,
-            detail={"night_id": int(night_id), "tables": tables_sorted},
-        )
-        raise AudienceNightError(
-            message,
-            code="unwhitelisted_night_write",
-            error_pack_path=pack,
-            detail={"night_id": int(night_id), "tables": tables_sorted},
-        )
-    return observed_ops
-
-
 def _allocate_seq(db: Any, night_id: int) -> int:
     return int(db.allocate_night_seq(int(night_id)))
 
@@ -1455,45 +1362,6 @@ def list_waiting_audience_summons(db: Any) -> List[Dict[str, Any]]:
             "location": location,
         })
     return _one_per_person(waiting)
-
-
-def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
-    """Project in-transit summons whose original non-capital journey has completed.
-
-    waiting（抵京候见）不进续程 payload；inactive 由 retire 结清，不投续程。
-    每人每阶段只向读端供一份续赴京事实；多 origin ledger 行不合并。
-    """
-    from ming_sim.matching import is_capital_location
-
-    arrived: List[Dict[str, Any]] = []
-    for item in list_unsettled_summons(db):
-        if item["kind"] != "in_transit":
-            continue
-        row = db.conn.execute(
-            "SELECT location, transit_to, status FROM characters WHERE name=?",
-            (item["person_name"],),
-        ).fetchone()
-        if row is None or str(row["transit_to"] or "").strip():
-            continue
-        status = str(row["status"] or "active").strip() or "active"
-        if status != "active":
-            continue
-        destination = str(row["location"] or "").strip()
-        if not destination:
-            continue
-        # kind=in_transit 已排除 capital waiting；此处再挡一层同地续程。
-        if is_capital_location(destination):
-            continue
-        arrived.append({
-            "person_name": item["person_name"],
-            "original_destination": destination,
-            "origin_id": item["origin_id"],
-            "source_entry_id": item["entry_id"],
-            "required_fact": "抵原地后续赴京",
-        })
-    return _one_per_person(arrived)
-
-
 def settle_applied_arrived_summons(
     db: Any, applied: Dict[str, Any],
 ) -> List[str]:
@@ -2114,19 +1982,6 @@ def set_night_protagonist(
     if owns:
         db.conn.commit()
     return name
-
-
-def get_night_protagonist(db: Any, night_id: int) -> str:
-    """读本夜当前御前主角；未声明则空串。"""
-    row = db.conn.execute(
-        "SELECT protagonist_name FROM audience_nights WHERE id=?",
-        (int(night_id),),
-    ).fetchone()
-    if row is None:
-        return ""
-    return str(row["protagonist_name"] or "")
-
-
 def reproject_night_protagonist(db: Any, night_id: int) -> str:
     """按存活源轮时序重投影夜当前主角；调用方负责事务提交。"""
     row = db.conn.execute(
@@ -2166,8 +2021,9 @@ def audience_scene_recap(
         nid = int(open_n["id"])
     bodies: List[str] = []
     for entry in audible_entries_for(db, int(nid), name):
-        body = str(entry.get("body") or "").strip()
-        if body:
+        # Free prose body: preserve raw; strip only emptiness (#1834 F16).
+        body = str(entry.get("body") or "")
+        if body.strip():
             bodies.append(body)
     if not bodies:
         return ""
@@ -2180,19 +2036,6 @@ def _is_command_entry(entry: Dict[str, Any]) -> bool:
     只在口令账上机器承重——抽取账开放 tags 不得驱动机器态（ADR 0035：在场等机器承重态输入
     不解析自由文本；否则 LLM 写「入殿」旁路死账、写「收夜」旁路收夜账幂等）。"""
     return int(entry.get("source_chat_turn_id") or 0) == 0
-
-
-def _command_entry_has_tag_enter(entry: Dict[str, Any]) -> bool:
-    """在场进=口令账（宣入/常在员额）的确定性 TAG_ENTER；抽取账进只认机器 `presence_effect`。"""
-    return _is_command_entry(entry) and TAG_ENTER in (entry.get("tags") or [])
-
-
-def persons_entered_tonight(db: Any, night_id: int) -> set[str]:
-    names: set[str] = set()
-    for entry in list_ledger(db, night_id):
-        if _command_entry_has_tag_enter(entry):
-            names.update(entry.get("person_names") or [])
-    return names
 
 
 def persons_present_tonight(db: Any, night_id: int) -> set[str]:

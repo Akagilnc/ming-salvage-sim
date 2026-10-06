@@ -255,9 +255,6 @@ class SessionWriteQueue:
         with self._cond:
             self._sealed = False
 
-    def is_sealed(self) -> bool:
-        with self._cond:
-            return bool(self._sealed)
 
     def has_open_barrier(self) -> bool:
         """True while a month-advance/close barrier ticket is still open."""

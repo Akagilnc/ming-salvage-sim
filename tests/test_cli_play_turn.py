@@ -373,9 +373,8 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     ).fetchone()
     assert night_row is not None
     assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED
-    # 场外收夜：该人不得入殿 presence/entrance。
+    # 场外收夜：该人不得入殿 presence（既有账本态，不另造 entrance 查口）。
     assert character.name not in an.persons_present_tonight(db, night_id)
-    assert character.name not in an.persons_entered_tonight(db, night_id)
 
 def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypatch, capsys):
     session = _Sess(RuntimeError("unused"))
