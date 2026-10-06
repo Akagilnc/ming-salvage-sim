@@ -1,5 +1,6 @@
 # #1902 修内司对照终判 01a11209 交卷
 
+- FIX SHA：`aa58a82c29aadef0a26d235adc25d16304f8e17c`
 - 终判真源：`~/.ak-roles/books/Ming_LLM/1902/runs/01a11209-c090-7524-9191-3436b624c3af@judge/current.json` submission.latest.accepted
 - 未结类：**仅 T1、T2、T4、T6**（T3 不送修；T5 处方撤销）
 - 工作树相对家族曾用 01a107df 误派，本回执按终判复核全量修改
