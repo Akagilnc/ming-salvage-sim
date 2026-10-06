@@ -1,0 +1,366 @@
+./tests/test_dossier_reported_progress_619.py:109:        "SELECT COUNT(*) AS n FROM secret_orders WHERE dossier_progress_json != '[]'"
+./tests/test_dossier_reported_progress_619.py:144:        "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
+./tests/test_urge_lever_624.py:612:        SELECT COUNT(*) AS c FROM pending_actions
+./tests/test_qa_t1_extraction_dual_source_1353.py:90:        "SELECT status, extract_status, minister_message_id FROM chat_turns WHERE id=?",
+./tests/test_qa_t1_extraction_dual_source_1353.py:588:        "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?", ("殿上",)
+./tests/test_audience_restore_505.py:163:            "SELECT status FROM chat_turns WHERE id=?", (ct,)
+./tests/test_audience_restore_505.py:178:        "SELECT COUNT(*) c FROM chat_messages WHERE role='user'"
+./tests/test_audience_restore_505.py:186:            "SELECT COUNT(*) c FROM chat_messages WHERE role='user'"
+./tests/test_audience_restore_505.py:295:        "SELECT content FROM chat_messages WHERE role='user'"
+./tests/test_audience_restore_505.py:299:        "SELECT content FROM chat_messages WHERE role='minister'"
+./tests/test_audience_restore_505.py:304:        "SELECT status, minister_message_id FROM chat_turns WHERE id=?", (ct,)
+./tests/test_audience_restore_505.py:336:        "SELECT content FROM chat_messages WHERE role='minister'"
+./tests/test_audience_restore_505.py:402:        "SELECT status, night_approved FROM pending_actions WHERE id=?", (pending_id,),
+./tests/test_audience_restore_505.py:429:        "SELECT status, minister_message_id FROM chat_turns WHERE id=?", (ct,)
+./tests/test_audience_restore_505.py:434:        "SELECT error_pack_path FROM chat_turns WHERE id=?", (ct,),
+./tests/test_audience_restore_505.py:441:            "SELECT content FROM chat_messages WHERE role='user'"
+./tests/test_audience_restore_505.py:455:            "SELECT content FROM chat_messages WHERE role='user'"
+./tests/test_audience_restore_505.py:476:        "SELECT COUNT(*) c FROM chat_messages WHERE role='minister'"
+./tests/test_audience_restore_505.py:496:        "SELECT COUNT(*) c FROM chat_messages WHERE role='minister'"
+./tests/test_audience_restore_505.py:597:        "SELECT status FROM chat_turns WHERE id=?", (ct,)
+./tests/test_audience_restore_505.py:717:        "SELECT status FROM chat_turns WHERE id=?", (ct,)
+./tests/test_audience_restore_505.py:783:            "SELECT status FROM chat_turns WHERE id=?", (ct,)
+./tests/test_audience_restore_505.py:828:        "SELECT agno_session_id, agno_runs_before, status FROM chat_turns WHERE id=?",
+./tests/test_audience_restore_505.py:851:        "SELECT status FROM chat_turns WHERE id=?", (ct,)
+./tests/test_audience_restore_505.py:921:        "SELECT COUNT(*) AS c FROM chat_turns WHERE agno_session_id=?",
+./tests/test_audience_restore_505.py:952:        "SELECT COUNT(*) AS c FROM chat_turns WHERE agno_session_id=?",
+./tests/test_pihong_dossier_1490.py:801:        row = probe.conn.execute('SELECT status, turn, night_id, night_approved FROM pending_actions WHERE id=?', (pending_id,)).fetchone()
+./tests/test_pihong_dossier_1490.py:2507:        pending = int(db.conn.execute("SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'").fetchone()['c'])
+./tests/test_pihong_dossier_1490.py:2524:    staged = json.loads(db.conn.execute('SELECT payload_json FROM pending_actions WHERE id=?', (int(pid),)).fetchone()['payload_json'])
+./tests/test_pihong_dossier_1490.py:2527:    staged2 = json.loads(db.conn.execute('SELECT payload_json FROM pending_actions WHERE id=?', (int(pid),)).fetchone()['payload_json'])
+./tests/test_pihong_dossier_1490.py:2799:    staged = json.loads(db.conn.execute('SELECT payload_json FROM pending_actions WHERE id=?', (cid,)).fetchone()['payload_json'])
+./tests/test_secret_order_isolation_883.py:127:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:139:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:203:        "SELECT knowledge_status FROM chat_messages "
+./tests/test_secret_order_isolation_883.py:256:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_public,)
+./tests/test_secret_order_isolation_883.py:269:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_public,)
+./tests/test_secret_order_isolation_883.py:275:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_ack,)
+./tests/test_secret_order_isolation_883.py:298:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:307:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:328:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:335:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:390:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:401:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:422:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:439:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:484:            "SELECT id, knowledge_status FROM chat_messages WHERE id IN (?,?,?,?)",
+./tests/test_secret_order_isolation_883.py:514:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_old,)
+./tests/test_secret_order_isolation_883.py:531:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_old,)
+./tests/test_secret_order_isolation_883.py:538:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_secret,)
+./tests/test_secret_order_isolation_883.py:606:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:616:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:720:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+./tests/test_secret_order_isolation_883.py:758:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_pub,)
+./tests/test_secret_order_isolation_883.py:761:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_sec,)
+./tests/test_secret_order_isolation_883.py:764:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_ans,)
+./tests/test_secret_order_isolation_883.py:817:        "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
+./tests/test_secret_order_isolation_883.py:832:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_sec,)
+./tests/test_secret_order_isolation_883.py:835:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_confirm,)
+./tests/test_secret_order_isolation_883.py:857:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_sec,)
+./tests/test_secret_order_isolation_883.py:907:        "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
+./tests/test_secret_order_isolation_883.py:929:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_confirm,)
+./tests/test_secret_order_isolation_883.py:962:        "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
+./tests/test_secret_order_isolation_883.py:980:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_confirm,)
+./tests/test_secret_order_isolation_883.py:1021:            "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
+./tests/test_secret_order_isolation_883.py:1075:            "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
+./tests/test_secret_order_isolation_883.py:1089:            "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_pub,)
+./tests/test_secret_order_isolation_883.py:1112:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,),
+./tests/test_secret_order_isolation_883.py:1408:        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+./tests/test_secret_order_isolation_883.py:1412:        "SELECT COUNT(*) FROM secret_orders WHERE id=?", (oid,),
+./tests/test_secret_order_isolation_883.py:1418:        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_u,),
+./tests/test_secret_order_isolation_883.py:1421:        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_m,),
+./tests/test_secret_order_isolation_883.py:1424:        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_b_pub,),
+./tests/test_secret_order_isolation_883.py:1478:        "SELECT title, content FROM secret_orders WHERE id=?", (order_id,),
+./tests/test_secret_order_isolation_883.py:1542:            "SELECT status FROM secret_orders WHERE id=?", (oid,),
+./tests/test_decree_dossiers_571.py:462:    assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 0
+./tests/test_decree_dossiers_571.py:2110:        "SELECT status FROM pending_actions WHERE id=?", (candidate_id,)
+./tests/test_decree_dossiers_571.py:2133:        "SELECT status FROM pending_actions WHERE id=?", (candidate_id,)
+./tests/test_staged_assignment_identity_1890.py:50:        "SELECT payload_json FROM pending_actions WHERE id=?", (int(action_id),),
+./tests/test_staged_assignment_identity_1890.py:68:        "SELECT status FROM chat_turns WHERE id=?", (int(ctid),),
+./tests/test_staged_assignment_identity_1890.py:99:            "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+./tests/test_staged_assignment_identity_1890.py:132:        "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+./tests/test_staged_assignment_identity_1890.py:148:        "SELECT source_chat_turn_id FROM pending_actions "
+./tests/test_staged_assignment_identity_1890.py:194:            "SELECT id, status FROM pending_actions WHERE id IN "
+./tests/test_staged_assignment_identity_1890.py:201:        "SELECT status FROM pending_actions WHERE id=?", (earlier_action,),
+./tests/test_staged_assignment_identity_1890.py:205:        "SELECT COUNT(*) c FROM chat_turns WHERE id=? AND status='undone'", (ctid,),
+./tests/test_staged_assignment_identity_1890.py:208:        "SELECT COUNT(*) c FROM chat_turns WHERE id=? AND status='active'",
+./tests/test_staged_assignment_identity_1890.py:230:        "SELECT status FROM pending_actions WHERE id=?", (action_id,),
+./tests/test_staged_assignment_identity_1890.py:277:        "SELECT status, source_chat_turn_id, payload_json FROM pending_actions WHERE id=?",
+./tests/test_staged_assignment_identity_1890.py:286:        "SELECT status, source_chat_turn_id, payload_json FROM pending_actions WHERE id=?",
+./tests/test_staged_assignment_identity_1890.py:310:        "SELECT id FROM pending_actions WHERE source_chat_turn_id=? "
+./tests/test_staged_assignment_identity_1890.py:318:        "SELECT version FROM pending_actions WHERE id=?", (action_id,),
+./tests/test_staged_assignment_identity_1890.py:373:        "SELECT id, title FROM secret_orders ORDER BY id DESC LIMIT 1"
+./tests/test_staged_assignment_identity_1890.py:386:        "SELECT COUNT(*) c FROM secret_orders WHERE id=?", (order_id,),
+./tests/test_staged_assignment_identity_1890.py:394:        "SELECT status FROM pending_actions WHERE id=?", (action_id,),
+./tests/test_staged_assignment_identity_1890.py:398:        "SELECT status FROM pending_actions WHERE id=?", (action_id,),
+./tests/test_staged_assignment_identity_1890.py:421:            "SELECT id FROM pending_actions WHERE source_chat_turn_id=?", (ctid,),
+./tests/test_staged_assignment_identity_1890.py:430:            "SELECT 1 FROM pending_actions WHERE id=?", (action_id,),
+./tests/test_staged_assignment_identity_1890.py:433:        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+./tests/test_staged_assignment_identity_1890.py:448:            "SELECT id FROM pending_actions WHERE source_chat_turn_id=?", (ctid,),
+./tests/test_staged_assignment_identity_1890.py:463:            "SELECT 1 FROM pending_actions WHERE id=?", (action_id,),
+./tests/test_staged_assignment_identity_1890.py:466:        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+./tests/test_staged_assignment_identity_1890.py:494:        "SELECT id FROM pending_actions WHERE source_chat_turn_id=? ORDER BY id LIMIT 1",
+./tests/test_staged_assignment_identity_1890.py:656:        "SELECT COUNT(*) c FROM pending_actions WHERE kind='directive'",
+./tests/test_breach_plea_623.py:375:        "SELECT payload_json FROM pending_actions WHERE id=?", (row_id,),
+./tests/test_breach_plea_623.py:396:        "SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'",
+./tests/test_breach_plea_623.py:410:        "SELECT COUNT(*) AS c FROM pending_actions WHERE status='pending'",
+./tests/test_breach_plea_623.py:455:        "SELECT payload_json FROM pending_actions WHERE id=?",
+./tests/test_scene_llm_1836.py:152:        "SELECT content FROM chat_messages WHERE id=?", (first["minister_message_id"],)
+./tests/test_month_chain_1843.py:855:        "SELECT knowledge_status FROM chat_messages WHERE id=?", (message_id,),
+./tests/test_web_audience_night_498.py:356:            "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+./tests/test_web_audience_night_498.py:597:                    "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "generating"
+./tests/test_web_audience_night_498.py:629:        "SELECT COUNT(*) AS c FROM chat_messages WHERE minister_name=? AND role='minister'",
+./tests/test_web_audience_night_498.py:632:        "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "active"
+./tests/test_web_audience_night_498.py:755:                    "SELECT status FROM chat_turns WHERE night_id=?",
+./tests/test_person_delta_adapter.py:2002:    row = db.conn.execute("SELECT minister_name FROM secret_orders WHERE id=?", (oid,)).fetchone()
+./tests/test_month_loop_tracer_1468.py:504:        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
+./tests/test_decree_forecast_1861.py:400:        "SELECT night_approved, version FROM pending_actions WHERE id=?", (pending_id,),
+./tests/test_decree_forecast_1861.py:403:        "SELECT post_reply_recovery, post_reply_error_pack_path FROM chat_turns",
+./tests/test_audience_night_498.py:197:    row = db.conn.execute("SELECT * FROM chat_turns WHERE id=?", (chat_id,)).fetchone()
+./tests/test_audience_night_498.py:202:    done = db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (chat_id,)).fetchone()
+./tests/test_audience_night_498.py:214:        "SELECT time_of_day, location FROM audience_nights WHERE id=?", (night_id,)
+./tests/test_audience_night_498.py:285:            "SELECT status FROM pending_actions WHERE id=?", (pid,)).fetchone()["status"] == "pending"
+./tests/test_audience_night_498.py:301:    assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "pending"
+./tests/test_audience_night_498.py:307:    row = db.conn.execute("SELECT night_id, night_approved FROM pending_actions WHERE id=?", (d_id,)).fetchone()
+./tests/test_audience_night_498.py:313:    assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "committed"
+./tests/test_audience_night_498.py:385:        "SELECT status FROM pending_actions WHERE id=?", (dir_id,),
+./tests/test_audience_night_498.py:434:        "SELECT status FROM pending_actions WHERE id=?", (approved,)).fetchone()["status"] == "committed"
+./tests/test_audience_night_498.py:436:        "SELECT status FROM pending_actions WHERE id=?", (unapproved,)).fetchone()["status"] == "pending"
+./tests/test_audience_night_498.py:473:        "SELECT status FROM pending_actions WHERE id=?", (pa_id,)).fetchone()["status"] == "pending"
+./tests/test_audience_night_498.py:483:        "SELECT status FROM pending_actions WHERE id=?", (pa_id,)).fetchone()["status"] == "committed"
+./tests/test_audience_night_498.py:515:    n_nights = db.conn.execute("SELECT COUNT(*) AS c FROM audience_nights").fetchone()["c"]
+./tests/test_audience_night_498.py:568:        "SELECT night_id, night_seq, status FROM chat_turns WHERE id=?", (cid,),
+./tests/test_declaration_dispatch_1835.py:64:        "SELECT payload_json FROM pending_actions WHERE id=?",
+./tests/test_declaration_dispatch_1835.py:71:        "SELECT night_approved FROM pending_actions WHERE id=?", (pre_staged_id,),
+./tests/test_declaration_dispatch_1835.py:87:    before = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
+./tests/test_declaration_dispatch_1835.py:104:    after = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
+./tests/test_declaration_dispatch_1835.py:108:        "SELECT payload_json FROM pending_actions WHERE id=?",
+./tests/test_declaration_dispatch_1835.py:132:    before = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
+./tests/test_declaration_dispatch_1835.py:152:    after = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
+./tests/test_declaration_dispatch_1835.py:156:            "SELECT kind FROM pending_actions WHERE status='pending' ORDER BY id"
+./tests/test_declaration_dispatch_1835.py:162:            "SELECT payload_json FROM pending_actions WHERE id=?",
+./tests/test_declaration_dispatch_1835.py:285:        "SELECT id FROM pending_actions WHERE id=?", (staged_id,),
+./tests/test_declaration_dispatch_1835.py:314:        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
+./tests/test_audience_translation_1838.py:124:        "SELECT extract_status FROM chat_turns WHERE id=?",
+./tests/test_audience_translation_1838.py:238:        "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
+./tests/test_audience_translation_1838.py:251:        "SELECT protagonist_name FROM chat_turns WHERE id=?", (ctid,),
+./tests/test_audience_translation_1838.py:269:        "SELECT protagonist_name FROM chat_turns WHERE id=?", (t1,),
+./tests/test_audience_translation_1838.py:417:        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+./tests/test_audience_commit_failure_1853.py:41:                "SELECT id FROM chat_messages ORDER BY id DESC LIMIT 1",
+./tests/test_audience_commit_failure_1853.py:90:        "SELECT status, source_chat_turn_id FROM pending_actions WHERE id=?",
+./tests/test_audience_commit_failure_1853.py:97:        "SELECT extract_status, error_pack_path FROM chat_turns WHERE id=?", (ctid,),
+./tests/test_audience_commit_failure_1853.py:120:        "SELECT extract_status FROM chat_turns WHERE id=?", (ctid,),
+./tests/test_audience_commit_failure_1853.py:136:        "SELECT payload_json FROM pending_actions WHERE id=?", (action_id,),
+./tests/test_audience_commit_failure_1853.py:160:        "SELECT status FROM pending_actions WHERE id=?", (action_id,),
+./tests/test_audience_commit_failure_1853.py:168:        "SELECT extract_status, error_pack_path FROM chat_turns WHERE id=?", (ctid,),
+./tests/test_audience_commit_failure_1853.py:207:        "SELECT status FROM pending_actions WHERE id=?", (action_id,),
+./tests/test_audience_commit_failure_1853.py:214:        "SELECT extract_status, error_pack_path FROM chat_turns WHERE id=?", (ctid,),
+./tests/test_audience_commit_failure_1853.py:248:            "SELECT id, status FROM pending_actions WHERE id IN (?,?,?)",
+./tests/test_audience_travel_gating_670.py:60:    return int(db.conn.execute("SELECT COUNT(*) AS n FROM chat_messages").fetchone()["n"])
+./tests/test_audience_travel_gating_670.py:64:    return int(db.conn.execute("SELECT COUNT(*) AS n FROM chat_turns").fetchone()["n"])
+./tests/test_audience_travel_gating_670.py:783:        db.conn.execute("SELECT COUNT(*) AS n FROM audience_nights").fetchone()["n"]
+./tests/test_audience_travel_gating_670.py:796:        db.conn.execute("SELECT COUNT(*) AS n FROM audience_nights").fetchone()["n"]
+./tests/test_character_knowledge_489.py:38:    row = db.conn.execute("SELECT excluded_names FROM secret_orders WHERE id=?", (order,)).fetchone()
+./tests/test_character_knowledge_489.py:433:        "SELECT excluded_names, excluded_targets FROM secret_orders WHERE id=?", (order,)
+./tests/test_character_knowledge_489.py:456:    row = db.conn.execute("SELECT excluded_names FROM secret_orders WHERE id=?", (order,)).fetchone()
+./tests/test_character_knowledge_489.py:543:        "SELECT excluded_names FROM secret_orders WHERE id=?", (order,)
+./tests/test_character_knowledge_489.py:1401:        "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,),
+./tests/test_character_knowledge_489.py:1438:        "SELECT excluded_targets FROM secret_orders WHERE id=?", (order_id,),
+./tests/test_court_break_player_lock_1727.py:160:        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
+./tests/test_new_game_write_path_1749.py:49:            "SELECT id FROM audience_nights ORDER BY id"
+./tests/test_new_game_write_path_1749.py:52:            "SELECT id, night_id, minister_message_id, status FROM chat_turns ORDER BY id"
+./tests/test_new_game_write_path_1749.py:59:                    "SELECT id, role FROM chat_messages WHERE id=?",
+./tests/test_audience_background.py:247:    turns_before = db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0]
+./tests/test_audience_background.py:248:    msgs_before = db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0]
+./tests/test_audience_background.py:253:    assert db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0] == turns_before
+./tests/test_audience_background.py:254:    assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == msgs_before
+./tests/test_on_scene_immediate_write_1839.py:208:        "SELECT status FROM chat_turns WHERE id=?", (chat_id,),
+./tests/test_on_scene_immediate_write_1839.py:322:        "SELECT COUNT(*) c FROM pending_actions"
+./tests/test_on_scene_immediate_write_1839.py:339:        "SELECT COUNT(*) c FROM pending_actions"
+./tests/test_on_scene_immediate_write_1839.py:344:        "SELECT kind, night_approved, payload_json FROM pending_actions WHERE id=?",
+./tests/test_audience_undo_506.py:251:    assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 1
+./tests/test_audience_undo_506.py:257:        assert db2.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 0
+./tests/test_audience_undo_506.py:324:    assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 1
+./tests/test_audience_undo_506.py:327:        "SELECT status FROM chat_turns WHERE id = ?", (chat_id,)
+./tests/test_audience_undo_506.py:348:        "SELECT night_approved FROM pending_actions WHERE id = ?", (action_id,)
+./tests/test_audience_undo_506.py:356:        "SELECT night_approved FROM pending_actions WHERE id = ?", (action_id,)
+./tests/test_audience_undo_506.py:362:        "SELECT status, night_approved FROM pending_actions WHERE id = ?", (action_id,)
+./tests/test_audience_undo_506.py:389:        "SELECT 1 FROM pending_actions WHERE id = ?", (action_id,)
+./tests/test_audience_undo_506.py:395:        "SELECT status, payload_json FROM pending_actions WHERE id = ?", (action_id,)
+./tests/test_audience_undo_506.py:419:    order_id = int(db.conn.execute("SELECT id FROM secret_orders").fetchone()["id"])
+./tests/test_audience_undo_506.py:434:        "SELECT COUNT(*) FROM secret_orders WHERE id = ?", (order_id,)
+./tests/test_audience_undo_506.py:570:            "SELECT status, undone_at FROM chat_turns WHERE id = ?", (int(chat_id),)
+./tests/test_audience_translate_1837.py:122:        "COALESCE((SELECT MAX(night_seq) + 1 FROM chat_turns WHERE night_id=?), 1))",
+./tests/test_audience_translate_1837.py:169:                "SELECT payload_json FROM pending_actions WHERE id=?", (aid,),
+./tests/test_audience_translate_1837.py:174:                "SELECT payload_json, night_approved FROM pending_actions WHERE id=?", (aid,),
+./tests/test_audience_translate_1837.py:295:        "SELECT payload_json FROM pending_actions WHERE status='pending' ORDER BY id"
+./tests/test_audience_translate_1837.py:443:                "SELECT id FROM pending_actions WHERE status='pending' ORDER BY id"
+./tests/test_audience_translate_1837.py:476:            "SELECT id, kind, night_approved FROM pending_actions "
+./tests/test_audience_translate_1837.py:486:                "SELECT status FROM pending_actions WHERE id=?", (int(p["id"]),),
+./tests/test_audience_translate_1837.py:551:                "SELECT id FROM audience_nights WHERE status='open' ORDER BY id DESC LIMIT 1"
+./tests/test_audience_translate_1837.py:572:        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
+./tests/test_audience_translate_1837.py:587:        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
+./tests/test_audience_translate_1837.py:597:        "SELECT status FROM pending_actions WHERE id=?", (staged_id,),
+./tests/test_audience_translate_1837.py:647:            "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
+./tests/test_audience_translate_1837.py:651:            "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
+./tests/test_audience_translate_1837.py:713:        "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
+./tests/test_audience_translate_1837.py:739:        "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
+./tests/test_audience_translate_1837.py:784:        "SELECT payload_json FROM pending_actions WHERE status='pending'"
+./tests/test_audience_translate_1837.py:836:        "SELECT id FROM pending_actions WHERE payload_json LIKE ? ORDER BY id DESC LIMIT 1",
+./tests/test_audience_translate_1837.py:842:        "SELECT COUNT(*) n FROM pending_actions WHERE id=? AND status='pending'",
+./tests/test_audience_translate_1837.py:852:        "SELECT status FROM pending_actions WHERE id=?", (created_id,),
+./tests/test_audience_translate_1837.py:855:        "SELECT COUNT(*) n FROM pending_actions WHERE id=? AND status='pending'",
+./tests/test_audience_translate_1837.py:867:        "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
+./tests/test_audience_translate_1837.py:883:        "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
+./tests/test_audience_translate_1837.py:887:        "SELECT night_approved FROM pending_actions WHERE id=?", (approve_id,),
+./tests/test_audience_translate_1837.py:898:        "SELECT payload_json, kind, action, status FROM pending_actions WHERE id=?",
+./tests/test_audience_translate_1837.py:916:        "SELECT COUNT(*) n FROM pending_actions WHERE id=?", (reject_id,),
+./tests/test_audience_translate_1837.py:920:        "SELECT payload_json, kind, action, status FROM pending_actions WHERE id=?",
+./tests/test_audience_translate_1837.py:953:            "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+./tests/test_audience_translate_1837.py:1001:            "SELECT payload_json FROM pending_actions WHERE id=?",
+./tests/test_audience_translate_1837.py:1040:        "SELECT night_approved FROM pending_actions WHERE id=?", (staged_id,),
+./tests/test_secret_order_payoff_1504.py:303:    before = db.conn.execute("SELECT COUNT(*) AS n FROM secret_orders").fetchone()["n"]
+./tests/test_secret_order_payoff_1504.py:436:        "SELECT due_turn, deadline_span FROM secret_orders WHERE id=?", (oid,)
+./tests/test_secret_order_payoff_1504.py:466:        "SELECT due_turn FROM secret_orders WHERE id=?", (oid,)
+./tests/test_secret_order_payoff_1504.py:513:        "SELECT due_turn FROM secret_orders WHERE id=?", (oid,)
+./tests/test_secret_order_payoff_1504.py:626:        "SELECT due_turn FROM secret_orders WHERE id=?", (oid,)
+./tests/test_secret_order_payoff_1504.py:771:        "SELECT deadline_span FROM secret_orders WHERE id=?", (oid,),
+./tests/test_secret_order_monthly_progress_566.py:200:            "SELECT id,status,result FROM secret_orders WHERE id IN (?, ?)",
+./tests/test_secret_order_monthly_progress_566.py:222:        "SELECT deadline_span FROM secret_orders WHERE id=?", (order_id,),
+./tests/test_gazette_author_1862.py:150:    order_id = int(db.conn.execute("SELECT id FROM secret_orders ORDER BY id DESC LIMIT 1").fetchone()[0])
+./tests/test_grant_reconciliation_567.py:209:        "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
+./web_app.py:1962:            "SELECT status, minister_message_id, extract_status FROM chat_turns WHERE id = ?",
+./web_app.py:2002:            "SELECT user_message_id FROM chat_turns WHERE id = ?", (chat_turn_id,),
+./tests/test_state_reload.py:178:        "SELECT status FROM pending_actions WHERE turn=? AND kind='office'",
+./tests/test_executor_routing_721.py:44:    pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
+./tests/test_executor_routing_721.py:51:    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
+./tests/test_executor_routing_721.py:222:        "SELECT payload_json FROM pending_actions WHERE id=?", (bare_id,),
+./tests/test_executor_routing_721.py:265:    pending_before = db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0]
+./tests/test_executor_routing_721.py:272:    assert db.conn.execute("SELECT COUNT(*) FROM pending_actions").fetchone()[0] == pending_before
+./tests/test_pre_settle_transaction.py:96:        "SELECT status FROM secret_orders WHERE id=2").fetchone()[0] == "active"
+./tests/test_pre_settle_transaction.py:109:        row = other.execute("SELECT status, result FROM secret_orders WHERE id=2").fetchone()
+./tests/test_pre_settle_transaction.py:392:        "SELECT status FROM pending_actions WHERE turn=?", (state.turn,)).fetchall()]
+./ming_sim/action_materialize.py:103:                "SELECT payload_json FROM pending_actions WHERE id=?",
+./ming_sim/action_materialize.py:196:                "SELECT payload_json FROM pending_actions WHERE id=?", (resolved,),
+./tests/test_audience_translate_1837_reopen.py:175:        "SELECT payload_json, night_approved, kind, action FROM pending_actions WHERE id=?",
+./tests/test_audience_translate_1837_reopen.py:224:        "SELECT status FROM pending_actions WHERE id=?", (staged_id,)
+./tests/test_audience_translate_1837_reopen.py:270:        "SELECT kind, action, payload_json FROM pending_actions WHERE id=?",
+./tests/test_audience_translate_1837_reopen.py:432:        "SELECT kind, action, target_id, payload_json FROM pending_actions WHERE id=?",
+./tests/test_audience_translate_1837_reopen.py:449:        "SELECT payload_json FROM pending_actions WHERE id=? AND status='committed'",
+./tests/test_cli_play_turn.py:527:        "SELECT status, minister_message_id FROM chat_turns WHERE id=?", (ct,),
+./tests/test_cli_play_turn.py:537:        "SELECT status FROM audience_nights WHERE id=?", (night_id,),
+./tests/test_secret_order_update.py:20:    row = db.conn.execute("SELECT title, content FROM secret_orders WHERE id=?", (oid1,)).fetchone()
+./tests/test_secret_order_update.py:44:    row_old = db.conn.execute("SELECT title, content FROM secret_orders WHERE id=?", (old,)).fetchone()
+./tests/test_secret_order_update.py:45:    row_new = db.conn.execute("SELECT title, content FROM secret_orders WHERE id=?", (new,)).fetchone()
+./tests/test_secret_order_update.py:55:    row = db.conn.execute("SELECT tags FROM secret_orders WHERE id=?", (oid,)).fetchone()
+./tests/test_secret_order_update.py:70:        "SELECT title, content FROM secret_orders WHERE id=?", (oid,)
+./tests/test_secret_order_update.py:119:        "SELECT title, content FROM secret_orders WHERE id=?", (oid,)
+./tests/test_secret_order_update.py:132:    order = db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()
+./tests/test_secret_order_update.py:144:    row = db.conn.execute("SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()
+./tests/test_highlight_judge_544.py:118:        "SELECT id FROM chat_messages WHERE role='user' ORDER BY id DESC LIMIT 1"
+./tests/test_execution_pressure_654.py:645:        "SELECT * FROM pending_actions WHERE id=?", (pa_id,),
+./tests/test_execution_pressure_654.py:654:        "SELECT status FROM pending_actions WHERE id=?", (pa_id,),
+./tests/test_execution_pressure_654.py:811:        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+./tests/test_execution_pressure_654.py:986:        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+./tests/test_execution_pressure_654.py:1003:        "SELECT payload_json FROM pending_actions WHERE id=?", (pending2,),
+./tests/test_execution_pressure_654.py:1033:        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+./tests/test_execution_pressure_654.py:1052:        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+./tests/test_execution_pressure_654.py:1093:        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+./tests/test_execution_pressure_654.py:1110:        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+./tests/test_chat_stream_failpaths_393.py:737:        "SELECT status FROM chat_turns WHERE id=?", (failed_turn,),
+./tests/test_chat_stream_failpaths_393.py:756:        "SELECT status FROM chat_turns WHERE id=?", (new_turn,),
+./tests/test_month_translate_1840.py:140:    pending_before = db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"]
+./tests/test_month_translate_1840.py:160:    assert db.conn.execute("SELECT COUNT(*) c FROM pending_actions").fetchone()["c"] == pending_before
+./tests/test_dossier_endorsements_612.py:25:        "SELECT turn FROM chat_turns WHERE id=?", (int(chat_turn_id),),
+./tests/test_dossier_endorsements_612.py:41:    row = db.conn.execute("SELECT night_seq FROM chat_turns WHERE id=?", (chat_turn_id,)).fetchone()
+./ming_sim/audience_translate.py:107:            "SELECT night_seq FROM chat_turns WHERE id=?", (cutoff_id,),
+./ming_sim/audience_translate.py:140:                "SELECT content FROM chat_messages WHERE id=?", (int(mid),),
+./ming_sim/audience_translate.py:228:        "SELECT id, title FROM secret_orders WHERE status='active' ORDER BY id"
+./ming_sim/decree_forecast.py:174:        "SELECT * FROM pending_actions WHERE id=?", (int(pending_action_id),),
+./ming_sim/decree_forecast.py:275:            "SELECT version FROM pending_actions WHERE id=?",
+./ming_sim/decree_forecast.py:515:            "SELECT night_id FROM pending_actions WHERE id=?", (int(action_id),),
+./ming_sim/declaration_dispatch.py:248:            "SELECT id FROM pending_actions WHERE turn=? AND status='pending'",
+./ming_sim/declaration_dispatch.py:1131:                "SELECT 1 FROM chat_turns earlier JOIN chat_turns current "
+./ming_sim/declaration_dispatch.py:1209:                "SELECT user_message_id FROM chat_turns "
+./ming_sim/declaration_dispatch.py:1242:                "SELECT minister_name, user_message_id FROM chat_turns "
+./ming_sim/declaration_dispatch.py:1680:            "SELECT id, night_id, status, payload_json FROM pending_actions "
+./ming_sim/declaration_dispatch.py:2098:            "SELECT night_id, kind, action, minister_name, night_approved, payload_json FROM pending_actions "
+./ming_sim/declaration_dispatch.py:2490:        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,),
+./ming_sim/audience_translation.py:285:                "SELECT status, minister_message_id FROM chat_turns WHERE id=?",
+./ming_sim/audience_translation.py:358:                    "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+./ming_sim/audience_translation.py:546:            "SELECT user_message_id FROM chat_turns WHERE id=?", (ctid,),
+./ming_sim/audience_translation.py:554:            "SELECT content FROM chat_messages WHERE id=?",
+./ming_sim/materials.py:1010:    nights = db.conn.execute("SELECT id FROM audience_nights ORDER BY id").fetchall()
+./ming_sim/materials.py:1024:            f"SELECT id FROM chat_turns WHERE user_message_id IN ({placeholders}) "
+./ming_sim/materials.py:1998:                "SELECT content FROM chat_messages WHERE id=?", (int(mid),),
+./ming_sim/db.py:9135:            "SELECT highlights_json FROM chat_messages WHERE id = ?",
+./ming_sim/db.py:9177:            "SELECT minister_name, role, content FROM chat_messages ORDER BY id"
+./ming_sim/db.py:9194:                "SELECT id FROM audience_nights WHERE status='open' ORDER BY id DESC LIMIT 1"
+./ming_sim/db.py:9198:            "SELECT id, user_message_id, minister_message_id FROM chat_turns "
+./ming_sim/db.py:9211:                f"SELECT id, role, content, highlights_json FROM chat_messages "
+./ming_sim/db.py:9246:            "SELECT id, minister_name, status, user_message_id, minister_message_id FROM chat_turns "
+./ming_sim/db.py:9330:            "SELECT next_event_seq FROM audience_nights WHERE id = ?",
+./ming_sim/db.py:9392:            f"SELECT * FROM chat_turns WHERE {where} ORDER BY id ASC",
+./ming_sim/db.py:9430:                        "SELECT content FROM chat_messages WHERE id = ?", (int(uid),)
+./ming_sim/db.py:9561:            "SELECT * FROM chat_turns WHERE id = ?", (int(chat_turn_id),)
+./ming_sim/db.py:9685:            "SELECT * FROM chat_turns WHERE id = ?",
+./ming_sim/db.py:9832:            "SELECT * FROM chat_turns WHERE id = ?",
+./ming_sim/db.py:9972:            SELECT * FROM chat_turns
+./ming_sim/db.py:10041:            "SELECT extract_status FROM chat_turns WHERE id = ?",
+./ming_sim/db.py:10099:            "SELECT id FROM chat_turns WHERE status IN ('active', 'interrupted') ORDER BY id DESC LIMIT 1"
+./ming_sim/db.py:10223:                        "SELECT version FROM pending_actions WHERE id=? AND kind='directive'",
+./ming_sim/db.py:10251:            "SELECT id FROM pending_actions WHERE id IN (" + placeholders + ") "
+./ming_sim/db.py:10260:            "SELECT * FROM chat_turns WHERE id = ?",
+./ming_sim/db.py:10276:                "SELECT status FROM audience_nights WHERE id = ?", (night_id,),
+./ming_sim/db.py:10337:                "SELECT id FROM pending_actions WHERE source_chat_turn_id = ? ORDER BY id",
+./ming_sim/db.py:10355:                "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+./ming_sim/db.py:10802:            f"SELECT night_id,minister_name FROM chat_turns "
+./ming_sim/db.py:11270:                    "SELECT id FROM chat_messages "
+./ming_sim/db.py:11277:                    "SELECT id FROM chat_messages "
+./ming_sim/db.py:11417:                "SELECT id FROM audience_nights "
+./ming_sim/db.py:11967:            "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
+./ming_sim/db.py:12098:                "SELECT dossier_progress_json FROM secret_orders WHERE id=?",
+./ming_sim/db.py:14214:                "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
+./ming_sim/db.py:14414:            if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
+./ming_sim/db.py:17204:                    "SELECT status,result FROM secret_orders WHERE id=?",
+./ming_sim/db.py:17322:            "SELECT payload_json, status FROM pending_actions WHERE id=?",
+./ming_sim/db.py:17357:            "SELECT 1 FROM chat_turns WHERE id=?", (source_cid,),
+./ming_sim/db.py:17479:            "SELECT id FROM pending_actions "
+./ming_sim/db.py:17489:                "SELECT payload_json FROM pending_actions WHERE id=?", (int(row["id"]),),
+./ming_sim/db.py:17537:            "SELECT id,payload_json,status FROM pending_actions "
+./ming_sim/db.py:17570:            "SELECT id,payload_json,status,version FROM pending_actions "
+./ming_sim/db.py:17715:            "SELECT kind, version FROM pending_actions WHERE id=?",
+./ming_sim/db.py:17727:                "SELECT version FROM pending_actions WHERE id=? AND kind='directive'",
+./ming_sim/db.py:17824:            "SELECT id, payload_json FROM pending_actions "
+./ming_sim/db.py:17983:            "SELECT id, payload_json FROM pending_actions "
+./ming_sim/db.py:18810:            "SELECT id, kind, version FROM pending_actions "
+./ming_sim/db.py:18851:            "SELECT source_chat_turn_id, status FROM pending_actions WHERE id=?",
+./ming_sim/db.py:18867:            "SELECT id, kind, version FROM pending_actions "
+./ming_sim/db.py:18940:                f"SELECT id FROM pending_actions WHERE {where} AND kind='office'",
+./ming_sim/db.py:18947:                f"SELECT id FROM pending_actions WHERE {where} AND kind='directive'",
+./ming_sim/db.py:18971:            "SELECT id FROM pending_actions WHERE turn=? AND kind='directive' AND status='pending'",
+./ming_sim/db.py:21152:                "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,)
+./ming_sim/db.py:21189:                "SELECT excluded_targets FROM secret_orders WHERE id=?",
+./ming_sim/db.py:21341:                "SELECT payload_json FROM pending_actions "
+./ming_sim/db.py:21375:                    f"SELECT user_message_id, minister_message_id FROM chat_turns "
+./ming_sim/db.py:21421:                f"SELECT id FROM chat_messages WHERE id IN ({placeholders})",
+./ming_sim/db.py:21506:                    f"SELECT id, minister_name, turn, content FROM chat_messages "
+./ming_sim/db.py:21513:                    "SELECT id, minister_name, turn, content FROM chat_messages "
+./ming_sim/db.py:21795:            "SELECT COUNT(*) FROM secret_orders WHERE status='active'"
+./ming_sim/db.py:21828:                SELECT id FROM chat_turns
+./ming_sim/db.py:21944:            "SELECT id FROM secret_orders WHERE minister_name=? AND status='active' ORDER BY id DESC LIMIT 1",
+./ming_sim/db.py:21983:            "SELECT status, tags, minister_name, excluded_names, excluded_targets FROM secret_orders WHERE id=?", (int(order_id),)
+./ming_sim/db.py:22066:            f"SELECT * FROM secret_orders {where} ORDER BY id DESC",
+./ming_sim/db.py:22180:        sql = "SELECT * FROM secret_orders WHERE id = ?"
+./ming_sim/db.py:22371:            "SELECT id, title, status, result, due_turn FROM secret_orders WHERE id = ?",
+./ming_sim/db.py:22431:            "SELECT * FROM secret_orders WHERE id = ?", (int(order_id),)
+./ming_sim/db.py:22450:            SELECT id, title, result FROM secret_orders
+./ming_sim/month_chain.py:138:        "SELECT kind FROM pending_actions WHERE id=?", (int(raw),),
+./ming_sim/audience_night.py:338:        "SELECT * FROM audience_nights "
+./ming_sim/audience_night.py:381:        "SELECT * FROM audience_nights WHERE id = ?",
+./ming_sim/audience_night.py:450:        "SELECT * FROM chat_turns WHERE night_id = ? "
+./ming_sim/audience_night.py:567:                "SELECT content,created_at,highlights_json FROM chat_messages WHERE id=?",
+./ming_sim/audience_night.py:767:        "SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 "
+./ming_sim/audience_night.py:1115:        "SELECT DISTINCT n.id FROM audience_nights n "
+./ming_sim/audience_night.py:2171:        "SELECT protagonist_name FROM audience_nights WHERE id=?",
+./ming_sim/audience_night.py:2182:        "SELECT protagonist_name FROM chat_turns WHERE night_id=? "

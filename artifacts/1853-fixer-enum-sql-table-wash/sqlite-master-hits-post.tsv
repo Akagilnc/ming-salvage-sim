@@ -1,0 +1,4 @@
+path	line	table	snippet
+ming_sim/db.py	9289	?	"SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+ming_sim/db.py	21088	?	"SELECT name FROM sqlite_master WHERE type IN ('table', 'view') "
+ming_sim/month_chain.py	206	rejection_reports	"SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",

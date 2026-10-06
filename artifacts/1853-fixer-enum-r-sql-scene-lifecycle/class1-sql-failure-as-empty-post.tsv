@@ -1,0 +1,23 @@
+cat	file	line	exc	rets	raises	logs
+EXCLUDED	ming_sim/applier.py	184	BaseException		True	False
+EXCLUDED	ming_sim/audience_night.py	900	Exception		True	False
+SWALLOW_OTHER	ming_sim/audience_night.py	933	Exception		False	False
+EXCLUDED	ming_sim/audience_translation.py	316	Exception		True	False
+EXCLUDED	ming_sim/db.py	962	Exception		True	True
+EXCLUDED	ming_sim/db.py	8619	IntegrityError		True	False
+SWALLOW_OTHER	ming_sim/db.py	17633	Exception		False	False
+EXCLUDED	ming_sim/db.py	19431	Exception		True	False
+EXCLUDED	ming_sim/db.py	19440	Exception		True	False
+EXCLUDED	ming_sim/db.py	22115	BaseException		True	False
+EXCLUDED	ming_sim/db.py	22701	Exception		True	False
+EXCLUDED	ming_sim/db.py	22751	Exception		True	False
+EXCLUDED	ming_sim/db.py	22883	Exception		True	False
+EXCLUDED	ming_sim/db.py	22923	Exception		True	False
+EXCLUDED	ming_sim/declaration_dispatch.py	830	BaseException		True	False
+SWALLOW_OTHER	ming_sim/issues.py	5910	Exception	call:_office_appointment_failure	False	False
+EXCLUDED	ming_sim/issues.py	7563	Exception		True	False
+EXCLUDED	ming_sim/issues.py	8044	Exception		True	False
+EXCLUDED	ming_sim/issues.py	8096	Exception		True	False
+EXCLUDED	ming_sim/session.py	338	Exception		True	False
+EXCLUDED	web_app.py	3985	Exception	False	False	True
+EXCLUDED	web_app.py	4223	OSError,Error	''	False	True

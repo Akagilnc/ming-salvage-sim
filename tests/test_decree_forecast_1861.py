@@ -398,6 +398,12 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
     assert int(db.conn.execute(
         "SELECT night_approved, version FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["night_approved"]) == 1
+    phases = db.conn.execute(
+        "SELECT post_reply_recovery, post_reply_error_pack_path FROM chat_turns",
+    ).fetchall()
+    assert phases
+    assert all(str(row["post_reply_recovery"] or "") == "" for row in phases)
+    assert all(str(row["post_reply_error_pack_path"] or "") == "" for row in phases)
 
 
 def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):

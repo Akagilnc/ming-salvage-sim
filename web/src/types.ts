@@ -461,7 +461,6 @@ export type GameState = {
   pending_directive_count?: number;  // 对话式拟旨暂存数（pending_actions kind=directive）
   pending_secret_order_count?: number;  // #1376：staged 密令候选数（确认闸门仍在；投影可见）
   pending_non_directive_action_count?: number;  // 可见的非拟旨 pending_actions（不含隐藏新密令候选）
-  failed_secret_order_count?: number;
   pending_decisions?: PendingDecision[];
   /** #657：awaiting + resolve_context + 空 pending desk → 续跑 phase2（空 POST 既有 stream） */
   resume_phase2?: boolean;
@@ -619,14 +618,6 @@ export type SecretOrder = {
 
 export type ProposedDirective = { id: number; text: string; status: string; notes: string };
 
-export type PendingActionFailure = {
-  id: number;
-  kind: string;
-  action: string;
-  minister_name?: string;
-  message: string;
-};
-
 /** #505：崩溃后待重试的中断回话（系统层恢复，非内容选项）。 */
 export type ReplyRetry = {
   chat_turn_id: number;
@@ -693,7 +684,6 @@ export type ApiErrorDetail = {
   provider_message?: string;
   status_code?: number | null;
   turn?: number;
-  pending_action_failures?: PendingActionFailure[];
 };
 
 export type AppView = "menu" | "game";

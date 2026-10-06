@@ -1,0 +1,543 @@
+file	line	class	note	attrs	snippet
+web_app.py	286	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		names = [getattr(content.regions.get(item), "name", item) for item in ids]
+web_app.py	290	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		names = [getattr(content.armies.get(item), "name", item) for item in ids]
+web_app.py	325	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return str(getattr(content.regions.get(entity_id), "name", entity_id))
+web_app.py	327	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return str(getattr(content.armies.get(entity_id), "name", entity_id))
+web_app.py	493	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		message = f"{prefix}{exc.message if hasattr(exc, 'message') else str(exc)}"
+web_app.py	495	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"code": getattr(exc, "code", "llm_error"),
+web_app.py	497	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"provider_message": getattr(exc, "provider_message", str(exc)),
+web_app.py	498	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"status_code": getattr(exc, "status_code", None),
+web_app.py	501	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		attempts = getattr(exc, "transport_attempts", None)
+web_app.py	505	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		stage = getattr(exc, "stage", None)
+web_app.py	515	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"stage": str(getattr(exc, "stage", "") or ""),
+web_app.py	516	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"error_pack_path": getattr(exc, "error_pack_path", None),
+web_app.py	517	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"turn": getattr(exc, "turn", None),
+web_app.py	547	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"error_pack_path": getattr(exc, "error_pack_path", None) or "",
+web_app.py	548	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"stage": getattr(exc, "stage", "") or "",
+web_app.py	709	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(character, "faction", "") == "流寇":
+web_app.py	713	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		debut_year = int(getattr(character, "debut_year", 0) or 0)
+web_app.py	714	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		debut_month = int(getattr(character, "debut_month", 0) or 0)
+web_app.py	830	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	session	session = getattr(self, "session", None)
+web_app.py	831	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		residual = getattr(init_exc, "residual_session", None)
+web_app.py	891	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_rebuild_residual_runtime	residual = getattr(self, "_rebuild_residual_runtime", None)
+web_app.py	894	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	db_path	path = _path_norm_of_game(residual, getattr(self, "db_path", "") or "")
+web_app.py	913	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		session = getattr(residual, "session", residual)
+web_app.py	914	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		close_fn = getattr(session, "close", None)
+web_app.py	915	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if callable(close_fn):
+web_app.py	1023	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_write_queue	q = getattr(self, "_write_queue", None)
+web_app.py	1038	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(candidate.db, "conn"):
+web_app.py	1042	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		residual = candidate or getattr(rebuild_exc, "residual_session", None)
+web_app.py	1051	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		_write_queue=getattr(residual, "_write_queue", None),
+web_app.py	1052	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		_write_gate=getattr(residual, "_write_gate", None),
+web_app.py	1325	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		regions = getattr(self.content, "regions", None) or {}
+web_app.py	1330	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		region = regions.get(region_id) if hasattr(regions, "get") else None
+web_app.py	1331	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = getattr(region, "name", None) if region is not None else None
+web_app.py	1369	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(row, "keys") and "authority" in row.keys()
+web_app.py	1739	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_settlement_entry_inflight	int(getattr(self, "_settlement_entry_inflight", 0) or 0) > 0
+web_app.py	2186	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+web_app.py	2216	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		# #1853 J8：夜查询走必备 GameDB.conn；禁 hasattr(conn) 降级成非夜投影空集。
+web_app.py	2337	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		pending_action_id=getattr(result, "pending_action_id", 0),
+web_app.py	2340	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		directive_confirmation_ambiguous=getattr(
+web_app.py	2342	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		decree_validation_failure=getattr(
+web_app.py	2344	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		secret_order_landing_recovery=getattr(
+web_app.py	2353	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		answer_text = str(getattr(result, "answer", "") or "")
+web_app.py	2379	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		court_action=getattr(result, "court_action", ""),
+web_app.py	2405	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		court_action = getattr(result, "court_action", "") or ""
+web_app.py	2406	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		schedule = getattr(
+web_app.py	2412	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		close_after = getattr(
+web_app.py	2455	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		answer = str(getattr(result, "answer", "") or "")
+web_app.py	2469	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		court_action=getattr(result, "court_action", "") or "",
+web_app.py	2470	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		next_minister=getattr(result, "next_minister", "") or "",
+web_app.py	2472	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		appointed_minister=getattr(result, "appointed_minister", "") or "",
+web_app.py	2473	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		registered_minister=getattr(result, "registered_minister", "") or "",
+web_app.py	2474	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		displaced_minister=getattr(result, "displaced_minister", "") or "",
+web_app.py	2475	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		secret_order_id=int(getattr(result, "secret_order_id", 0) or 0),
+web_app.py	2476	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		pending_action_id=int(getattr(result, "pending_action_id", 0) or 0),
+web_app.py	2479	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		directive_confirmation_ambiguous=getattr(
+web_app.py	2481	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		decree_validation_failure=getattr(
+web_app.py	2483	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		secret_order_landing_recovery=getattr(
+web_app.py	2490	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		attempts = getattr(result, "transport_attempts", None)
+web_app.py	2534	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		llm_config=getattr(self.session, "llm_config", None),
+web_app.py	2609	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		llm_config=getattr(self.session, "llm_config", None),
+web_app.py	2685	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		llm_config=getattr(self.session, "llm_config", None),
+web_app.py	2714	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+web_app.py	2749	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+web_app.py	2761	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(err, "code", "") == "night_closing":
+web_app.py	2929	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
+web_app.py	3092	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		db = getattr(game, "db", None)
+web_app.py	3093	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		state = getattr(game, "state", None)
+web_app.py	3102	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		lock = getattr(game, "_settlement_entry_lock", None)
+web_app.py	3113	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		n = int(getattr(game, "_settlement_entry_inflight", 0) or 0)
+web_app.py	3121	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		n = int(getattr(game, "_settlement_entry_inflight", 0) or 0)
+web_app.py	3129	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return int(getattr(game, "_settlement_entry_inflight", 0) or 0)
+web_app.py	3144	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		db = getattr(game, "db", None)
+web_app.py	3145	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		state = getattr(game, "state", None)
+web_app.py	3157	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if not blocking and int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 1:
+web_app.py	3179	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		db = getattr(game, "db", None)
+web_app.py	3184	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		session = getattr(game, "session", None)
+web_app.py	3188	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		content=getattr(game, "content", None),
+web_app.py	3189	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		llm_config=getattr(session, "llm_config", None) if session is not None else None,
+web_app.py	3195	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(game, "_runtime_write_gate"):
+web_app.py	3202	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		state = getattr(game, "state", None)
+web_app.py	3203	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		phase = getattr(state, "turn_phase", None)
+web_app.py	3305	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		entry_busy = int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 0
+web_app.py	3390	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		sess = getattr(game, "session", None)
+web_app.py	3404	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		db = getattr(game, "db", None)
+web_app.py	3405	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		state = getattr(game, "state", None)
+web_app.py	3599	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		raw = path or (getattr(game, "db_path", "") or "")
+web_app.py	3990	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		session = getattr(game, "session", None)
+web_app.py	3993	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if int(getattr(session, "_close_epoch", 0) or 0) > 0:
+web_app.py	3995	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		db = getattr(session, "db", None)
+web_app.py	4003	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		agno = getattr(session, "agno_db", None)
+web_app.py	4006	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		engine = getattr(agno, "db_engine", None)
+web_app.py	4701	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		candidate, getattr(candidate, "db_path", "") or bound_path,
+web_app.py	4707	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		candidate, getattr(candidate, "db_path", "") or bound_path,
+web_app.py	4712	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(candidate, "db_path", "") or bound_path
+web_app.py	5219	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		characters = getattr(getattr(game, "content", None), "characters", {})
+web_app.py	5413	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(game, "content", None) is not None else {}),
+web_app.py	5532	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		current_turn = int(getattr(game.state, "turn", 0) or 0)
+web_app.py	5575	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		advanced = bool(getattr(result, "advanced", True))
+web_app.py	5641	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		advanced = bool(getattr(result, "advanced", True))
+ming_sim/action_materialize.py	40	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	content = getattr(db, "content", None)
+ming_sim/action_materialize.py	41	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		roster = getattr(content, "characters", None) if content is not None else None
+ming_sim/action_materialize.py	54	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		office = str(getattr(ch, "office", "") or "").strip() if ch is not None else ""
+ming_sim/action_materialize.py	56	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str(getattr(ch, "office_type", "") or "").strip() if ch is not None else ""
+ming_sim/action_materialize.py	98	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(session, "content", None), str(person_name or "").strip(), session.db,
+ming_sim/action_materialize.py	625	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	content = getattr(db, "content", None)
+ming_sim/action_materialize.py	626	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		armies = getattr(content, "armies", None) if content is not None else None
+ming_sim/action_materialize.py	841	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		field = str(getattr(exc, "field", "") or "").strip() or "amount"
+ming_sim/credit_events.py	589	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/llm_transport.py	194	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		status = _coerce_status(getattr(cause, "status_code", None))
+ming_sim/llm_transport.py	257	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		status = _coerce_status(getattr(event, "status_code", None))
+ming_sim/llm_transport.py	260	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		extra = getattr(event, "additional_data", None)
+ming_sim/llm_transport.py	303	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		status_i = _coerce_status(getattr(error, "status_code", None))
+ming_sim/llm_transport.py	462	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(event, "content", None), status_code=status,
+ming_sim/llm_transport.py	479	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
+ming_sim/llm_transport.py	481	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		rdelta = getattr(event, "reasoning_content", None)
+ming_sim/llm_transport.py	523	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		prev_timeout = getattr(model, "timeout", None)
+ming_sim/llm_transport.py	524	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		prev_retries = getattr(model, "max_retries", None)
+ming_sim/llm_transport.py	525	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		had_client = hasattr(model, "client")
+ming_sim/llm_transport.py	526	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		had_async = hasattr(model, "async_client")
+ming_sim/llm_transport.py	529	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(model, "timeout"):
+ming_sim/llm_transport.py	531	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(model, "max_retries"):
+ming_sim/llm_transport.py	539	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		method = getattr(model, name, None)
+ming_sim/llm_transport.py	540	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if callable(method):
+ming_sim/llm_transport.py	547	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(model, "timeout"):
+ming_sim/llm_transport.py	549	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(model, "max_retries"):
+ming_sim/llm_transport.py	672	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		close = getattr(stream, "close", None)
+ming_sim/llm_transport.py	673	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if callable(close):
+ming_sim/knowledge.py	55	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	content = getattr(db, "content", None)
+ming_sim/knowledge.py	56	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		event_by_id = getattr(content, "event_by_id", None) or {}
+ming_sim/knowledge.py	60	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		raw = getattr(ev, "audiences", None)
+ming_sim/knowledge.py	469	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(character_name or getattr(character, "name", "") or "")
+ming_sim/knowledge.py	474	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str((current["office"] if current is not None else getattr(character, "office", "")) or ""),
+ming_sim/knowledge.py	475	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str((current["office_type"] if current is not None else getattr(character, "office_type", "")) or ""),
+ming_sim/token_stats.py	66	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+ming_sim/token_stats.py	67	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		completion = int(getattr(usage, "completion_tokens", 0) or 0)
+ming_sim/token_stats.py	68	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		total = int(getattr(usage, "total_tokens", prompt + completion) or 0)
+ming_sim/token_stats.py	69	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		prompt_details = getattr(usage, "prompt_tokens_details", None)
+ming_sim/token_stats.py	70	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		cached = int(getattr(prompt_details, "cached_tokens", 0) or 0) if prompt_details else 0
+ming_sim/token_stats.py	71	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		cache_creation = int(getattr(prompt_details, "cache_creation_input_tokens", 0) or 0) if prompt_details else 0
+ming_sim/token_stats.py	72	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		completion_details = getattr(usage, "completion_tokens_details", None)
+ming_sim/token_stats.py	73	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		reasoning = int(getattr(completion_details, "reasoning_tokens", 0) or 0) if completion_details else 0
+ming_sim/token_stats.py	98	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		prompt = int(getattr(metrics, "input_tokens", 0) or 0)
+ming_sim/token_stats.py	99	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		completion = int(getattr(metrics, "output_tokens", 0) or 0)
+ming_sim/token_stats.py	100	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		total = int(getattr(metrics, "total_tokens", prompt + completion) or 0)
+ming_sim/token_stats.py	101	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		cached = int(getattr(metrics, "cache_read_tokens", 0) or 0)
+ming_sim/token_stats.py	102	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		cache_creation = int(getattr(metrics, "cache_write_tokens", 0) or 0)
+ming_sim/token_stats.py	103	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		reasoning = int(getattr(metrics, "reasoning_tokens", 0) or 0)
+ming_sim/token_stats.py	128	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		client = getattr(self_client_holder, "_client", None)
+ming_sim/token_stats.py	131	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		base = getattr(client, "base_url", "")
+ming_sim/token_stats.py	189	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
+ming_sim/token_stats.py	190	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		_record_usage(model_id, getattr(resp, "usage", None), caller_tag)
+ming_sim/token_stats.py	202	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
+ming_sim/token_stats.py	203	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		_record_usage(model_id, getattr(resp, "usage", None), caller_tag)
+ming_sim/session_write_queue.py	551	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		q = getattr(owner, "_write_queue", None)
+ming_sim/session_write_queue.py	554	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		session = getattr(owner, "session", None)
+ming_sim/session_write_queue.py	556	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		q = getattr(session, "_write_queue", None)
+ming_sim/session_write_queue.py	564	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		q = getattr(owner, "_write_queue", None)
+ming_sim/session_write_queue.py	567	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		session = getattr(owner, "session", None)
+ming_sim/session_write_queue.py	569	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		q = getattr(session, "_write_queue", None)
+ming_sim/session_write_queue.py	601	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		session = getattr(owner, "session", None)
+ming_sim/session_write_queue.py	602	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if session is None and hasattr(owner, "close") and hasattr(owner, "db"):
+ming_sim/session_write_queue.py	609	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		close_resources = getattr(session, "_close_resources", None)
+ming_sim/session_write_queue.py	610	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if callable(close_resources):
+ming_sim/session_write_queue.py	620	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		close_resources = getattr(session, "_close_resources", None)
+ming_sim/session_write_queue.py	621	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if callable(close_resources):
+ming_sim/month_chain.py	30	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if owner is None or getattr(owner, "db", None) is not db:
+ming_sim/month_chain.py	72	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		origin = str(getattr(fact, "origin_ref", "") or "")
+ming_sim/month_chain.py	518	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		step=str(getattr(exc, "stage", None) or "month_chain"),
+ming_sim/month_chain.py	705	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	reload_state_from_db(db, state, content=getattr(db, "content", None))
+ming_sim/month_chain.py	712	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		original = str(getattr(exc, "message", None) or exc)
+ming_sim/month_chain.py	863	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		previous = getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
+ming_sim/month_chain.py	917	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		effects = getattr(result, "effects", None)
+ming_sim/month_chain.py	918	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		applied = getattr(effects, "applied", []) if effects is not None else []
+ming_sim/audience_night.py	41	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if isinstance(character, Mapping) or hasattr(character, "keys"):
+ming_sim/audience_night.py	46	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return getattr(character, field, "")
+ming_sim/audience_night.py	692	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		table = str(row["target_table"] if hasattr(row, "keys") else row[0])
+ming_sim/audience_night.py	2405	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(sqlite3, "SQLITE_CONSTRAINT_UNIQUE", None),
+ming_sim/audience_night.py	2406	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(sqlite3, "SQLITE_CONSTRAINT", None),
+ming_sim/audience_night.py	2409	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		err_code = getattr(exc, "sqlite_errorcode", None)
+ming_sim/flows.py	59	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn=int(getattr(state, "turn", 0)),
+ming_sim/flows.py	1361	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(db, attr):
+ming_sim/cli_backend.py	468	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		read1 = getattr(stream, "read1", None)
+ming_sim/cli_backend.py	469	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		raw = read1(4096) if callable(read1) else stream.read(4096)
+ming_sim/cli_backend.py	1030	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return (getattr(llm_config, "channel", "") or "").strip().lower()
+ming_sim/cli_backend.py	1042	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+ming_sim/cli_backend.py	1045	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		model = (getattr(llm_config, "cli_model", "") or "").strip()
+ming_sim/cli_backend.py	1046	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		reasoning_strength = str(getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
+ming_sim/cli_backend.py	1174	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+ming_sim/cli_backend.py	1180	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return str(getattr(llm_config, "model", "") or "?")
+ming_sim/cli_backend.py	1185	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		model = (str(getattr(llm_config, "cli_model", "") or "").strip()) or cli_model_from_env(runner)
+ming_sim/cli_backend.py	1214	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		role = getattr(m, "role", "user")
+ming_sim/cli_backend.py	1215	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		content = getattr(m, "content", "")
+ming_sim/cli_backend.py	1304	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		characters = getattr(content, "characters", None) if content is not None else None
+ming_sim/cli_backend.py	1313	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(ch, "name", None) or key or "").strip()
+ming_sim/cli_backend.py	1318	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		for a in (getattr(ch, "aliases", None) or [])
+ming_sim/cli_backend.py	1344	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		armies = getattr(content, "armies", None) if content is not None else None
+ming_sim/cli_backend.py	1351	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		army_id = str(getattr(army, "id", None) or key or "").strip()
+ming_sim/cli_backend.py	1354	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(army, "name", None) or army_id).strip()
+ming_sim/cli_backend.py	1495	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		chars = getattr(content, "characters", None) or {}
+ming_sim/cli_backend.py	1497	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		for raw in getattr(ch, "aliases", None) or []:
+ming_sim/cli_backend.py	1507	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		chars = getattr(content, "characters", None) or {} if content is not None else {}
+ming_sim/cli_backend.py	1513	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		for raw in getattr(ch, "aliases", None) or []:
+ming_sim/cli_backend.py	2132	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		regions = getattr(content, "regions", None) if content is not None else None
+ming_sim/cli_backend.py	2135	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		rid = str(getattr(region, "id", None) or key or "").strip()
+ming_sim/cli_backend.py	2136	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(region, "name", None) or "").strip()
+ming_sim/cli_backend.py	2490	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		partial = getattr(exc, "partial_result", None)
+ming_sim/cli_backend.py	2494	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		baseline_failed_fields = frozenset(getattr(exc, "failed_fields", None) or ())
+ming_sim/cli_backend.py	2495	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		raw_draft_failures = getattr(exc, "draft_failures", None) or {}
+ming_sim/cli_backend.py	2528	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		draft_failures=getattr(
+ming_sim/cli_backend.py	3448	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		regions_content = getattr(content, "regions", None) if content is not None else None
+ming_sim/cli_backend.py	4396	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	materials_dir	materials = str(getattr(self, "materials_dir", "") or "").strip() or None
+ming_sim/cli_backend.py	4400	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	id	model=str(getattr(self, "id", "") or ""),
+ming_sim/cli_backend.py	4402	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	reasoning_strength	str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None
+ming_sim/cli_backend.py	4421	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	materials_dir	materials = str(getattr(self, "materials_dir", "") or "").strip() or None
+ming_sim/cli_backend.py	4453	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	materials_dir	"materials_dir": str(getattr(self, "materials_dir", "") or ""),
+ming_sim/cli_backend.py	4498	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	materials_dir	materials = str(getattr(self, "materials_dir", "") or "").strip() or None
+ming_sim/cli_backend.py	4507	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	id	model=str(getattr(self, "id", "") or ""),
+ming_sim/cli_backend.py	4508	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	reasoning_strength	reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
+ming_sim/cli_backend.py	4618	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		channel = str(getattr(args, "channel", "") or "cli").strip().lower() or "cli"
+ming_sim/cli_backend.py	4619	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		model = str(getattr(args, "model", "") or "").strip()
+ming_sim/cli_backend.py	4624	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str(getattr(args, "api_key", "") or "").strip()
+ming_sim/cli_backend.py	4629	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str(getattr(args, "base_url", "") or "").strip()
+ming_sim/cli_backend.py	4648	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		runner = str(getattr(args, "runner", "") or "").strip().lower()
+ming_sim/cli_backend.py	4685	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		channel = str(getattr(cfg, "channel", "") or getattr(args, "channel", "") or "").strip().lower()
+ming_sim/cli_backend.py	4689	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(cfg, "cli_runner", "") or getattr(args, "runner", "") or ""
+ming_sim/cli_backend.py	4692	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(cfg, "cli_model", "")
+ming_sim/cli_backend.py	4693	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		or getattr(cfg, "model", "")
+ming_sim/cli_backend.py	4694	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		or getattr(args, "model", "")
+ming_sim/cli_backend.py	4701	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"reasoning_strength": str(getattr(cfg, "reasoning_strength", "") or ""),
+ming_sim/due_review.py	331	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/due_review.py	578	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/highlight_judge.py	82	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if not raw and hasattr(output, "content"):
+ming_sim/highlight_judge.py	83	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		raw = str(getattr(output, "content") or "")
+ming_sim/covert_progress.py	1588	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/qualitative.py	39	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		field, getattr(character, field)
+ming_sim/qualitative.py	43	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		projected["党派认同"] = identity_band(getattr(character, "identity"))
+ming_sim/qualitative.py	44	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		projected["阴谋"] = f"阴谋{intrigue_band(getattr(character, 'intrigue', None))}"
+ming_sim/llm_model.py	57	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		code = getattr(error, "code", None) or type(error).__name__
+ming_sim/llm_model.py	59	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		status_code = getattr(error, "status_code", None)
+ming_sim/llm_model.py	60	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		response = getattr(error, "response", None)
+ming_sim/llm_model.py	129	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		reasoning_strength = (getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
+ming_sim/llm_model.py	201	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		channel = (getattr(llm_config, "channel", "") or "").strip().lower()
+ming_sim/llm_model.py	204	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		backend = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+ming_sim/llm_model.py	215	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		cli_model = (getattr(llm_config, "cli_model", "") or "").strip()
+ming_sim/llm_model.py	231	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		kwargs["reasoning_strength"] = (getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
+ming_sim/llm_model.py	281	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		status = getattr(run_output, "status", None)
+ming_sim/llm_model.py	284	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		raw = getattr(status, "value", status)
+ming_sim/llm_model.py	295	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		content = getattr(run_output, "content", missing)
+ming_sim/llm_model.py	336	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(error, "stage", None):
+ming_sim/llm_model.py	356	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		channel = (getattr(llm_config, "channel", "") or "").strip().lower()
+ming_sim/llm_model.py	378	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		model = getattr(agent, "model", None)
+ming_sim/llm_model.py	390	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		content = getattr(run_output, "content", None)
+ming_sim/error_pack.py	172	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0))
+ming_sim/error_pack.py	211	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	path	"db_path": getattr(db, "path", None),
+ming_sim/error_pack.py	213	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"year": getattr(state, "year", None),
+ming_sim/error_pack.py	214	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"period": getattr(state, "period", None),
+ming_sim/agents.py	70	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		to_dict = getattr(obj, "to_dict", None)
+ming_sim/agents.py	71	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if callable(to_dict):
+ming_sim/agents.py	73	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		model_dump = getattr(obj, "model_dump", None)
+ming_sim/agents.py	74	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if callable(model_dump):
+ming_sim/agents.py	78	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		raw = getattr(obj, "__dict__", None)
+ming_sim/agents.py	94	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		msgs = getattr(output, "messages", None)
+ming_sim/agents.py	98	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		msgs = getattr(last, "messages", None)
+ming_sim/agents.py	110	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"role": getattr(m, "role", "?"),
+ming_sim/agents.py	111	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"content": "" if getattr(m, "content", None) is None else getattr(m, "content"),
+ming_sim/agents.py	114	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		rval = getattr(m, fname, None)
+ming_sim/agents.py	118	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		tcalls = getattr(m, "tool_calls", None)
+ming_sim/agents.py	122	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		run_metrics = getattr(run_src, "metrics", None)
+ming_sim/agents.py	124	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		run_metrics = getattr(run_src, "usage", None)
+ming_sim/agents.py	128	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		mpd = getattr(run_src, "model_provider_data", None)
+ming_sim/agents.py	134	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		pdata = getattr(m, "provider_data", None)
+ming_sim/agents.py	145	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"run_reasoning_content": getattr(run_src, "reasoning_content", None),
+ming_sim/agents.py	194	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(agent, "add_history_to_context", False)
+ming_sim/agents.py	195	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		and getattr(agent, "cache_session", False)
+ming_sim/agents.py	196	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		and getattr(agent, "db", None) is not None
+ming_sim/agents.py	199	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		session_id = str(getattr(agent, "session_id", "") or "")
+ming_sim/agents.py	202	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if not hasattr(game_db, "truncate_agno_session_runs"):
+ming_sim/agents.py	204	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if not hasattr(game_db, "agno_runs_length"):
+ming_sim/agents.py	219	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(agent, "_cached_session"):
+ming_sim/agents.py	221	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(agent, "_cached_session_db"):
+ming_sim/agents.py	267	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		model = getattr(agent, "model", None)
+ming_sim/agents.py	351	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		explicit = getattr(agent, "supports_stream", None)
+ming_sim/agents.py	354	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		run = getattr(agent, "run", None)
+ming_sim/agents.py	405	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		tool = getattr(event, "tool", None)
+ming_sim/agents.py	406	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		tname = getattr(tool, "tool_name", "?") if tool else "?"
+ming_sim/agents.py	407	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		targs = getattr(tool, "tool_args", {}) if tool else {}
+ming_sim/agents.py	414	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		tool_res = getattr(event, "tool", None)
+ming_sim/agents.py	415	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		tres = str(getattr(tool_res, "result", "") or "")[:200] if tool_res else ""
+ming_sim/agents.py	419	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		rdelta = getattr(event, "reasoning_content", None)
+ming_sim/agents.py	439	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		(hasattr(event, "is_final") and getattr(event, "is_final", False))
+ming_sim/agents.py	448	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		delta = getattr(event, "content", None)
+ming_sim/agents.py	491	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		metrics = getattr(final_output, "metrics", None)
+ming_sim/agents.py	492	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		model_id = getattr(getattr(agent, "model", None), "id", None) or "stream"
+ming_sim/agents.py	680	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		root = getattr(prepared, "root", "")
+ming_sim/agents.py	681	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(model, "materials_dir"):
+ming_sim/agents.py	689	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str(getattr(prepared, "opening", "") or ""),
+ming_sim/agents.py	715	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		root = getattr(prepared, "root", "")
+ming_sim/agents.py	716	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(model, "materials_dir"):
+ming_sim/agents.py	730	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str(getattr(prepared, "opening", "") or ""),
+ming_sim/agents.py	754	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		root = getattr(prepared, "root", "")
+ming_sim/agents.py	755	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(model, "materials_dir"):
+ming_sim/agents.py	762	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str(getattr(prepared, "opening", "") or ""),
+ming_sim/agents.py	964	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		root = getattr(prepared, "root", "") if prepared is not None else ""
+ming_sim/agents.py	965	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(model, "materials_dir"):
+ming_sim/agents.py	1009	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str(getattr(prepared, "opening", "") or ""),
+ming_sim/paths.py	23	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return getattr(sys, "frozen", False)
+ming_sim/paths.py	31	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return Path(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)))
+ming_sim/session.py	205	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(character, "office_type", None) == "后宫":
+ming_sim/session.py	209	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		pid = power_id if power_id is not None else getattr(character, "power_id", None)
+ming_sim/session.py	385	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		# #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
+ming_sim/session.py	413	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		# #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
+ming_sim/session.py	702	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	agno_db	agno = getattr(self, "agno_db", None)
+ming_sim/session.py	704	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		close_fn = getattr(agno, "close", None)
+ming_sim/session.py	705	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if callable(close_fn):
+ming_sim/session.py	714	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	db	db = getattr(self, "db", None)
+ming_sim/session.py	795	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		keys = getattr(row, "keys", None)
+ming_sim/session.py	796	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return callable(keys) and key in keys()
+ming_sim/session.py	877	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(character, "office_type", None) == "后宫":
+ming_sim/session.py	951	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	state	active_state = state or getattr(self, "state", None)
+ming_sim/session.py	1026	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_write_gate	gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
+ming_sim/session.py	1039	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	content=getattr(self, "content", None),
+ming_sim/session.py	1040	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	llm_config	llm_config=getattr(self, "llm_config", None),
+ming_sim/session.py	1071	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_write_gate	gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
+ming_sim/session.py	1196	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	content=getattr(self, "content", None),
+ming_sim/session.py	1197	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	llm_config	llm_config=getattr(self, "llm_config", None),
+ming_sim/session.py	1198	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_write_gate	write_gate=getattr(self, "_write_gate", None),
+ming_sim/session.py	1208	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	chars = getattr(getattr(self, "content", None), "characters", None) or {}
+ming_sim/session.py	1251	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	llm_config	llm_config = getattr(self, "llm_config", None)
+ming_sim/session.py	1279	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
+ming_sim/session.py	1301	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	llm_config	llm_config = getattr(self, "llm_config", None)
+ming_sim/session.py	1305	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	agno_db	agno_db=getattr(self, "agno_db", None),
+ming_sim/session.py	1306	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	content=getattr(self, "content", None),
+ming_sim/session.py	1333	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	llm_config	llm_cfg = getattr(self, "llm_config", None)
+ming_sim/session.py	1341	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if name == "RunContent" or getattr(event, "event", None) == "RunContent":
+ming_sim/session.py	1342	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		piece = str(getattr(event, "content", "") or "")
+ming_sim/session.py	1353	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		run_output, f"场景召对/{getattr(agent, 'name', '殿上')}", agent=agent,
+ming_sim/session.py	1381	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
+ming_sim/session.py	1423	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		pending = getattr(result, "pending_audience_translation", None)
+ming_sim/session.py	1442	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	llm_config	llm_config=getattr(self, "llm_config", None),
+ming_sim/session.py	1443	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_write_gate	write_gate=getattr(self, "_write_gate", None),
+ming_sim/session.py	1445	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		admitted_ticket=getattr(result, "_admitted_write_ticket", None),
+ming_sim/session.py	1615	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	llm_config	llm_config = getattr(self, "llm_config", None)
+ming_sim/session.py	1616	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	content = getattr(self, "content", None)
+ming_sim/session.py	1769	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	llm_config	llm_config=getattr(self, "llm_config", None),
+ming_sim/session.py	1791	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	content=getattr(self, "content", None),
+ming_sim/session.py	1792	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	llm_config	llm_config=getattr(self, "llm_config", None),
+ming_sim/session.py	1865	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	content=getattr(self, "content", None),
+ming_sim/session.py	1866	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	llm_config	llm_config=getattr(self, "llm_config", None),
+ming_sim/session.py	1903	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	self.state, content=getattr(self, "content", None),
+ming_sim/session.py	1945	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_decree_draft_fingerprint	and current_fingerprint != getattr(self, "_decree_draft_fingerprint", ())):
+ming_sim/session.py	2071	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if raw in (getattr(ch, "aliases", None) or []):
+ming_sim/session.py	2135	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		characters = getattr(self.content, "characters", {}) or {}
+ming_sim/session.py	2137	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str(getattr(characters.get(name), "faction", "") or "").strip()
+ming_sim/session.py	2516	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	agno_db	agno = getattr(self, "agno_db", None)
+ming_sim/session.py	2518	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		close_fn = getattr(agno, "close", None)
+ming_sim/session.py	2519	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if callable(close_fn):
+ming_sim/session.py	2525	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_close_epoch	self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
+ming_sim/session.py	2531	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_close_epoch	self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
+ming_sim/pay_order.py	327	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	fiscal_engine	engine = getattr(db, "fiscal_engine", None)
+ming_sim/pay_order.py	328	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if callable(engine) and engine() == "legacy":
+ming_sim/staged_commitment.py	268	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/cli/terminal.py	186	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		# #1853 J8：必备 session.db 重试查询直调；禁 getattr(..., None) 当正常无提示。
+ming_sim/cli/terminal.py	225	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		answer = str(getattr(result, "answer", "") or "")
+ming_sim/cli/terminal.py	251	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		court_action = str(getattr(result, "court_action", "") or "")
+ming_sim/cli/terminal.py	252	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		schedule = getattr(session, "schedule_close_night_after_chat_if_needed", None)
+ming_sim/cli/terminal.py	256	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		close_after = getattr(session, "close_night_after_chat_if_needed", None)
+ming_sim/cli/terminal.py	319	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		schedule = getattr(session, "schedule_close_night_after_chat_if_needed", None)
+ming_sim/cli/terminal.py	323	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		close_fn = getattr(session, "close_night_after_chat_if_needed", None)
+ming_sim/cli/terminal.py	330	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		content=getattr(session, "content", None),
+ming_sim/cli/terminal.py	332	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		llm_config=getattr(session, "llm_config", None),
+ming_sim/cli/terminal.py	501	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(session, "content", None) is not None else {}),
+ming_sim/cli/terminal.py	532	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(session, "content", None) is not None else {}),
+ming_sim/cli/terminal.py	623	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(session.state, "ended", False):
+ming_sim/cli/terminal.py	625	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
+ming_sim/cli/terminal.py	646	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(session.state, "ended", False):
+ming_sim/cli/terminal.py	648	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
+ming_sim/models.py	467	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return character is not None and getattr(character, "office_type", None) == WEISHI_OFFICE_TYPE
+ming_sim/applier.py	70	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_runtime_commit_callbacks	callbacks = list(getattr(self, "_runtime_commit_callbacks", []))
+ming_sim/applier.py	87	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_runtime_rollback_callbacks	callbacks = list(getattr(self, "_runtime_rollback_callbacks", []))
+ming_sim/applier.py	143	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		bool(getattr(conn, "_commit_suspended", False))
+ming_sim/applier.py	144	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		or int(getattr(conn, "_atomic_depth", 0) or 0) > 0
+ming_sim/applier.py	178	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		depth = getattr(conn, "_atomic_depth", 0) + 1
+ming_sim/applier.py	208	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(conn, "_atomic_rollback_only", False):
+ming_sim/applier.py	424	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		commit_callbacks = getattr(db.conn, "_runtime_commit_callbacks", None)
+ming_sim/applier.py	430	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
+ming_sim/rescript_actions.py	735	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		current_turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/rescript_actions.py	1032	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		payload, content=content, current_turn=int(getattr(state, "turn", 0) or 0),
+ming_sim/rescript_actions.py	1085	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	resolve_power_id	resolve = getattr(db, "resolve_power_id", None)
+ming_sim/rescript_actions.py	1087	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		characters = getattr(content, "characters", {}) or {}
+ming_sim/declaration_dispatch.py	191	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		for rejected_item in getattr(result, name).rejected:
+ming_sim/declaration_dispatch.py	713	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	with atomic_and_reload(db, state, content=getattr(db, "content", None)):
+ming_sim/declaration_dispatch.py	824	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
+ming_sim/declaration_dispatch.py	1300	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	roster, db=db, content=getattr(db, "content", None),
+ming_sim/declaration_dispatch.py	1446	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	getattr(db, "content", None), appointment_fields["name"], db,
+ming_sim/declaration_dispatch.py	1574	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	content=getattr(db, "content", None),
+ming_sim/declaration_dispatch.py	2232	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		failed = frozenset(str(field) for field in (getattr(exc, "failed_fields", ()) or ()))
+ming_sim/materials.py	74	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		index = list(getattr(prepared, "index_lines", ()) or ())
+ming_sim/materials.py	115	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	path	db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
+ming_sim/materials.py	151	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	path	db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
+ming_sim/materials.py	293	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(character, "name", "")
+ming_sim/materials.py	329	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		value = root() if callable(root) else root
+ming_sim/materials.py	368	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(character, "name", "") or "")
+ming_sim/materials.py	380	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return str(audience_scene_recap(db, getattr(character, "name", "")) or "")
+ming_sim/materials.py	711	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(character, "name", "") or "")
+ming_sim/materials.py	712	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		office = str(getattr(character, "office", "") or "")
+ming_sim/materials.py	740	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(character, "name", "") or "")
+ming_sim/materials.py	771	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		brief = build_recommendation_brief(db, state, str(getattr(character, "name", "") or ""))
+ming_sim/materials.py	783	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(character, "name", "") or "")
+ming_sim/materials.py	881	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(character, "name", "") or "")
+ming_sim/materials.py	901	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		knowledge.get("office_type") or getattr(character, "office_type", "") or ""
+ming_sim/materials.py	920	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(character, "name", "") or "")
+ming_sim/materials.py	1093	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(character, "name", "") or "")
+ming_sim/materials.py	1106	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(character, "name", "") or "")
+ming_sim/materials.py	1322	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+ming_sim/materials.py	1325	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"trigger_class": str(getattr(ev, "trigger_class", "") or ""),
+ming_sim/materials.py	1326	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"category": str(getattr(ev, "category", "") or ""),
+ming_sim/materials.py	1327	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"urgency": int(getattr(ev, "urgency", 0) or 0),
+ming_sim/materials.py	1328	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"severity": int(getattr(ev, "severity", 0) or 0),
+ming_sim/materials.py	1329	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"person_core_subjects": list(getattr(ev, "person_core_subjects", []) or []),
+ming_sim/materials.py	1330	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"precondition": str(getattr(ev, "precondition", "") or ""),
+ming_sim/materials.py	1331	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"resolve_condition": str(getattr(ev, "resolve_condition", "") or ""),
+ming_sim/materials.py	1332	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"fail_condition": str(getattr(ev, "fail_condition", "") or ""),
+ming_sim/materials.py	1334	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"region_hint": str(getattr(ev, "region_hint", "") or ""),
+ming_sim/materials.py	1525	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"verdict_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+ming_sim/materials.py	2072	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		name = str(getattr(character, "name", "") or "")
+ming_sim/materials.py	2199	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	content = getattr(db, "content", None)
+ming_sim/materials.py	2200	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		characters = getattr(content, "characters", None) or {}
+ming_sim/mechanical_tail.py	124	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"metrics": dict(getattr(closed_state, "metrics", {}) or {}),
+ming_sim/mechanical_tail.py	160	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		llm_config = getattr(session, "llm_config", None)
+ming_sim/mechanical_tail.py	161	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		agno_db = getattr(session, "agno_db", None)
+ming_sim/mechanical_tail.py	238	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		metrics=dict(getattr(state, "metrics", {}) or {}),
+ming_sim/mechanical_tail.py	239	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		ended=bool(getattr(state, "ended", False)),
+ming_sim/mechanical_tail.py	248	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		llm_config=getattr(session, "llm_config", None),
+ming_sim/mechanical_tail.py	249	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		agno_db=getattr(session, "agno_db", None),
+ming_sim/mechanical_tail.py	331	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		done, where="mechanical tail", key=getattr(ticket, "key", None),
+ming_sim/mechanical_tail.py	398	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		for turn in _resolve_context_turns(db, int(getattr(state, "turn", 0) or 0)):
+ming_sim/mechanical_tail.py	423	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if not bool(getattr(state, "ended", False)):
+ming_sim/mechanical_tail.py	425	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		current = int(getattr(state, "turn", 0) or 0)
+ming_sim/mechanical_tail.py	440	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		current = int(getattr(session.state, "turn", 0) or 0)
+ming_sim/month_translate.py	59	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		"verdict_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+ming_sim/decree.py	934	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		setattr(state, field_name, getattr(fresh, field_name))
+ming_sim/decree.py	945	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	llm_config	_sync_offices_from_db_impl(content, db, getattr(db, "llm_config", None))
+ming_sim/decree_forecast.py	46	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		db = getattr(owner, "db", None)
+ming_sim/decree_forecast.py	63	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		status = getattr(exc, "status_code", None)
+ming_sim/decree_forecast.py	121	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		release_material_tree(getattr(prepared, "root", None))
+ming_sim/decree_forecast.py	190	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		state, pending, content=getattr(session, "content", None),
+ming_sim/decree_forecast.py	301	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		agno_db=getattr(session, "agno_db", None),
+ming_sim/decree_forecast.py	455	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		done, where="decree forecast", key=getattr(ticket, "key", None),
+ming_sim/decree_forecast.py	462	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		cfg = getattr(session, "llm_config", None)
+ming_sim/decree_forecast.py	463	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return cfg is not None and hasattr(cfg, "advanced_model") and hasattr(cfg, "model")
+ming_sim/decree_forecast.py	508	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		session = owner_or_db if hasattr(owner_or_db, "db") else _owner_for(owner_or_db)
+ming_sim/decree_forecast.py	528	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		promises = getattr(result, "promises", None)
+ming_sim/decree_forecast.py	529	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		applied = getattr(promises, "applied", None) or []
+ming_sim/registry.py	50	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(chat_model, "materials_dir"):
+ming_sim/registry.py	52	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		scene_prompt = str(getattr(content, "scene_agent_prompt", "") or "").strip()
+ming_sim/registry.py	60	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		_minister_game_world_prompt(content.game_world_prompt) if getattr(content, "game_world_prompt", "") else "",
+ming_sim/breach_plea.py	357	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/breach_plea.py	833	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/breach_plea.py	959	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/breach_plea.py	1002	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/relations.py	316	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/issues.py	524	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		keys = row.keys() if hasattr(row, "keys") else []
+ming_sim/issues.py	598	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		keys = row.keys() if hasattr(row, "keys") else []
+ming_sim/issues.py	638	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		keys = row.keys() if hasattr(row, "keys") else []
+ming_sim/issues.py	676	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		keys = row.keys() if hasattr(row, "keys") else []
+ming_sim/issues.py	1076	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		allowed = getattr(ev, "terminal_reason_labels", []) or []
+ming_sim/issues.py	1091	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		allowed = "/".join(getattr(ev, "terminal_reason_labels", []) or [])
+ming_sim/issues.py	1506	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+ming_sim/issues.py	1583	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(ev, "id", "")
+ming_sim/issues.py	1757	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if not getattr(ev, "id", "") or ev.id in terminal_records:
+ming_sim/issues.py	1827	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		for name in getattr(ev, "person_core_subjects", []) or []:
+ming_sim/issues.py	1838	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		subjects = [str(name) for name in (getattr(ev, "person_core_subjects", []) or []) if str(name)]
+ming_sim/issues.py	2234	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
+ming_sim/issues.py	2240	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
+ming_sim/issues.py	2284	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+ming_sim/issues.py	2597	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		callbacks = getattr(conn, "_runtime_rollback_callbacks", None)
+ming_sim/issues.py	3436	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(ev, "event_type", "situation") != "situation"
+ming_sim/issues.py	3437	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		and getattr(ev, "trigger_class", "") == "strategic_foreign"
+ming_sim/issues.py	3610	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		raw = getattr(ev, "terminal_reason_labels", None) or []
+ming_sim/issues.py	4168	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_batch_authorized_open_affair_ids	previous_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+ming_sim/issues.py	4169	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_batch_frozen_open_affair_ids	previous_frozen = getattr(db, "_batch_frozen_open_affair_ids", None)
+ming_sim/issues.py	4195	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if event is None or getattr(event, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+ming_sim/issues.py	4222	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(event, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
+ming_sim/issues.py	4710	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(ev, "auto_trigger", False):
+ming_sim/issues.py	5829	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		previous_tenure = getattr(db.conn, "_appointment_tenure", "真除")
+ming_sim/issues.py	5857	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		category = getattr(exc, "category", None)
+ming_sim/issues.py	6461	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		content_power_id = str(getattr(content.characters[name], "power_id", "") or "").strip()
+ming_sim/issues.py	7484	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_batch_authorized_open_affair_ids	_prev_batch_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+ming_sim/issues.py	7485	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_batch_frozen_open_affair_ids	_prev_batch_frozen = getattr(db, "_batch_frozen_open_affair_ids", None)
+ming_sim/issues.py	7917	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if getattr(runtime_content.event_by_id.get(event_id), "category", "")
+ming_sim/urge_lever.py	241	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		int(getattr(state, "turn", 0) or 0),
+ming_sim/urge_lever.py	321	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/urge_lever.py	420	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		turn = int(getattr(state, "turn", 0) or 0)
+ming_sim/rescript_draft.py	1033	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		field = str(getattr(exc, "field", "") or "").strip()
+ming_sim/rescript_draft.py	1036	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		current = getattr(exc, "current", None)
+ming_sim/rescript_draft.py	1041	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		expected = getattr(exc, "expected", None)
+ming_sim/rescript_draft.py	1042	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if expected is None and not hasattr(exc, "expected"):
+ming_sim/db.py	240	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		canonical = next((character.name for character in getattr(content, "characters", {}).values()
+ming_sim/db.py	295	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		office_types = {str(character.office_type).strip() for character in getattr(content, "characters", {}).values()
+ming_sim/db.py	297	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		office_titles = {str(character.office).strip() for character in getattr(content, "characters", {}).values()
+ming_sim/db.py	2732	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_leverage_offsets_calibrated	and getattr(self, "_leverage_offsets_calibrated", False)
+ming_sim/db.py	3712	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		int(getattr(self.conn, "_materializing_dossier_id", 0) or 0) or None,
+ming_sim/db.py	3713	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str(getattr(self.conn, "_appointment_tenure", "真除") or "真除"),
+ming_sim/db.py	3718	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(self.conn, "_materializing_dossier_id", 0) or 0
+ming_sim/db.py	3730	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str(getattr(self.conn, "_appointment_tenure", "真除") or "真除"),
+ming_sim/db.py	3875	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	if getattr(self, "content", None) is not None else None
+ming_sim/db.py	3877	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		seat = str(getattr(ch, "office_region", "") or "").strip() if ch else ""
+ming_sim/db.py	4041	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_leverage_offset_col_added	is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
+ming_sim/db.py	5185	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_current_month_central_pay_shortfalls	central_shortfalls = getattr(self, "_current_month_central_pay_shortfalls", {})
+ming_sim/db.py	5186	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_current_month_pay_opening_arrears	opening_arrears = getattr(self, "_current_month_pay_opening_arrears", {})
+ming_sim/db.py	5206	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_current_month_central_pay_dues	central_dues = getattr(self, "_current_month_central_pay_dues", {})
+ming_sim/db.py	5676	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	content	if not getattr(self, "content", None):
+ming_sim/db.py	5721	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		regions = getattr(self.content, "regions", None) or {}
+ming_sim/db.py	5737	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		regions = getattr(self.content, "regions", None) or {}
+ming_sim/db.py	6169	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		return (row["power_id"] if row else None) or getattr(character, "power_id", "ming") or "ming"
+ming_sim/db.py	6460	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		region_id=str(getattr(character, "office_region", "") or ""),
+ming_sim/db.py	6494	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(character, "power_id", "ming") or "ming",
+ming_sim/db.py	6495	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(character, "location", "") or "",
+ming_sim/db.py	6496	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(character, "transit_to", "") or "",
+ming_sim/db.py	6497	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		getattr(character, "summary", "") or "",
+ming_sim/db.py	6508	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		power_id = getattr(character, "power_id", "ming") or "ming"
+ming_sim/db.py	6623	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		front_half_done = str(getattr(state, "turn_phase", "") or "") in FRONT_HALF_DONE_PHASES
+ming_sim/db.py	6968	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_batch_authorized_open_affair_ids	authorized = getattr(self, "_batch_authorized_open_affair_ids", None)
+ming_sim/db.py	13795	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		regions_content = getattr(self.content, "regions", None) if self.content else None
+ming_sim/db.py	14020	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_batch_frozen_open_affair_ids	frozen = getattr(self, "_batch_frozen_open_affair_ids", None)
+ming_sim/db.py	14034	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_batch_authorized_open_affair_ids	working = getattr(self, "_batch_authorized_open_affair_ids", None)
+ming_sim/db.py	14047	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_batch_frozen_open_affair_ids	getattr(self, "_batch_frozen_open_affair_ids", None)
+ming_sim/db.py	14049	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过	_batch_authorized_open_affair_ids	else getattr(self, "_batch_authorized_open_affair_ids", None)
+ming_sim/db.py	15555	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		previous_materializing = getattr(
+ming_sim/db.py	15576	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		nights = getattr(self.conn, "_deferred_office_summon_nights", None)
+ming_sim/db.py	15674	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		previous_materializing = getattr(self.conn, "_materializing_dossier_id", 0)
+ming_sim/db.py	17142	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		previous_summon_nights = getattr(self.conn, "_deferred_office_summon_nights", None)
+ming_sim/db.py	17143	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		previous_reco_prevalidated = getattr(
+ming_sim/db.py	17168	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		summon_nights = set(getattr(self.conn, "_deferred_office_summon_nights", set()) or set())
+ming_sim/db.py	17184	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if hasattr(self.conn, "_deferred_office_summon_nights"):
+ming_sim/db.py	17203	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		materializing = int(getattr(self.conn, "_materializing_dossier_id", 0) or 0)
+ming_sim/db.py	17604	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		rejection = getattr(exc, "dossier_link_rejection", None)
+ming_sim/db.py	17689	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		raw_item = getattr(exc, "item", None)
+ming_sim/db.py	17700	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		category=str(getattr(exc, "category", "") or "business_refusal"),
+ming_sim/db.py	18709	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		if not getattr(self.conn, "_recommendation_snapshots_prevalidated", False):
+ming_sim/db.py	19016	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		# getattr(.,"value",.) 让枚举取 .value、普通字符串原样、None/空回落 system_simulation。
+ming_sim/db.py	19017	NOT_CAPABILITY_SHIM	非必备能力缺失即跳过		str(getattr(source, "value", source) or "system_simulation"),

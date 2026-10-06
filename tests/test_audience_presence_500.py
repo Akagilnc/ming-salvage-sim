@@ -90,7 +90,6 @@ def _cli_session(db, state, content):
         return SimpleNamespace(
             answer="臣有本奏。", proposed_directive=None, court_action="",
             next_minister="", secret_order_id=0, pending_action_id=0,
-            pending_action_failures=[],
         )
 
     def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
@@ -102,6 +101,9 @@ def _cli_session(db, state, content):
         chat=chat, scene_chat=scene_chat,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
+        # #1853：入口直调核心 schedule；轻壳缺绑不得靠 getattr 回退。
+        schedule_close_night_after_chat_if_needed=lambda *_a, **_k: None,
+        close_night_after_chat_if_needed=lambda *_a, **_k: None,
     )
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List, Optional
+from typing import Optional
 
 from ming_sim.constants import (
     COURT_BREAK_COMMANDS,
@@ -23,7 +23,6 @@ from ming_sim.session import (
     GameSession,
     TurnPhase,
     _is_summonable_court_minister,
-    _pending_action_failure_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,46 +39,6 @@ _STATUS_LABEL = {
 # 皇帝当场对拟旨草稿的回应
 _CONFIRM_WORDS = {"", "可", "准", "准奏", "yes", "y", "确认", "入档"}
 _REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
-
-
-def _failed_secret_order_ids(session: GameSession, turn: int) -> set[int]:
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "list_pending_actions"):
-        return set()
-    return {
-        int(action.get("id") or 0)
-        for action in db.list_pending_actions(int(turn), status="failed")
-        if action.get("kind") == "secret_order"
-    }
-
-
-def _new_secret_order_failure_payloads(
-    session: GameSession, turn: int, before_ids: set[int],
-) -> List[dict]:
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "list_pending_actions"):
-        return []
-    failures: List[dict] = []
-    for action in db.list_pending_actions(int(turn), status="failed"):
-        if action.get("kind") != "secret_order":
-            continue
-        action_id = int(action.get("id") or 0)
-        if action_id in before_ids:
-            continue
-        failures.append(_pending_action_failure_payload(action))
-    return failures
-
-
-def _print_pending_action_failures(failures: List[dict]) -> None:
-    for failure in failures:
-        message = str(failure.get("message") or "密令落库失败。")
-        raw_failure_id = failure.get("id")
-        try:
-            failure_id = int(raw_failure_id) if raw_failure_id is not None else None
-        except (TypeError, ValueError):
-            failure_id = None
-        suffix = f" #{failure_id}" if failure_id is not None else ""
-        print(f"【密令落库失败{suffix}】{wrap(message)}\n")
 
 
 def _print_header(session: GameSession) -> None:
@@ -154,8 +113,6 @@ def choose_minister(session: GameSession) -> Optional[Character]:
 
 def _record_audience_exit(session: GameSession, name: str) -> None:
     """CLI「退下」控制口令：落空正文告退账（#1838 reopen：无旁白调用）。"""
-    if not hasattr(session.db, "conn"):
-        return
     from ming_sim.audience_night import dismiss_from_audience
     dismiss_from_audience(session.db, name)
 
@@ -219,10 +176,8 @@ def _confirm_pending_directive(session: GameSession, draft, minister_name: str) 
 
 def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str) -> None:
     """#505：CLI 系统层恢复提示——崩溃后问话保留，可输入「重试回话」重新生成。"""
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "get_interrupted_reply_retries"):
-        return
-    retries = db.get_interrupted_reply_retries(minister_name) or []
+    # #1853 J8：必备 session.db 重试查询直调；禁 getattr(..., None) 当正常无提示。
+    retries = session.db.get_interrupted_reply_retries(minister_name) or []
     if not retries:
         return
     last = retries[-1]
@@ -241,10 +196,8 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     成功且 court_action 为 court_break 时返回 typed 'court_break'，供 minister_chat
     退出对话进入 play_turn 审阅；收夜失败仍返回 None，留在原对话。
     """
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "get_interrupted_reply_retries"):
-        print("当前会话不支持回话重试。\n")
-        return
+    # #1853 J8-R：必备 GameDB 重试/落库接口直调；禁替身能力存在性分支。
+    db = session.db
     retries = db.get_interrupted_reply_retries(minister_name) or []
     if not retries:
         print(f"{minister_name}没有待重试的中断回话。\n")
@@ -253,10 +206,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     chat_turn_id = int(target["chat_turn_id"])
     question = str(target["question"])
     accepted_turn = int(target.get("turn") or session.state.turn)
-    before_snapshot = (
-        db.capture_chat_rollback_snapshot()
-        if hasattr(db, "capture_chat_rollback_snapshot") else {}
-    )
+    before_snapshot = db.capture_chat_rollback_snapshot()
     if not db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
@@ -266,29 +216,22 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             minister_name=minister_name,
         )
         answer = str(getattr(result, "answer", "") or "")
-        if hasattr(db, "persist_minister_reply"):
-            db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
-        else:
-            mid = db.append_chat_message(minister_name, accepted_turn, "minister", answer)
-            db.update_chat_turn_messages(chat_turn_id, minister_message_id=int(mid))
+        db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
         # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
         session.schedule_pending_scene_translation(result)
-        if hasattr(db, "record_chat_turn_rollback_diffs") and before_snapshot is not None:
-            db.record_chat_turn_rollback_diffs(
-                chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
-            )
+        db.record_chat_turn_rollback_diffs(
+            chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
+        )
         print(f"\n{minister_name}：{wrap(answer)}\n")
     except Exception as exc:
         # 失败翻回 interrupted 保持可再重试（与 web restore_interrupted_after_failed_retry 同语义）。
         try:
-            if hasattr(db, "record_chat_turn_rollback_diffs") and before_snapshot is not None:
-                db.record_chat_turn_rollback_diffs(
-                    chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
-                )
-            if hasattr(db, "restore_interrupted_after_failed_retry"):
-                restored_ids = db.restore_interrupted_after_failed_retry(chat_turn_id)
-                from ming_sim.decree_forecast import schedule_restored_decree_forecasts
-                schedule_restored_decree_forecasts(session, restored_ids)
+            db.record_chat_turn_rollback_diffs(
+                chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
+            )
+            restored_ids = db.restore_interrupted_after_failed_retry(chat_turn_id)
+            from ming_sim.decree_forecast import schedule_restored_decree_forecasts
+            schedule_restored_decree_forecasts(session, restored_ids)
         except Exception:
             logger.exception(
                 "CLI retry rollback/forecast recovery failed chat_turn_id=%s", chat_turn_id,
@@ -299,21 +242,9 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     # 前台先返回 court_break；既有队列随后 FIFO 转译 join→封夜（不挡回话返回）。
     # 后台收夜失败留痕、夜可恢复；不得回滚已成回话。
     court_action = str(getattr(result, "court_action", "") or "")
-    schedule = getattr(session, "schedule_close_night_after_chat_if_needed", None)
-    if schedule is not None:
-        schedule(court_action, write_gate=_cli_write_gate(session))
-    else:
-        close_after = getattr(session, "close_night_after_chat_if_needed", None)
-        if close_after is not None:
-            from ming_sim.audience_night import AudienceNightError
-            try:
-                close_after(
-                    court_action,
-                    write_gate=_cli_write_gate(session),
-                )
-            except (AudienceNightError, LLMUnavailable) as err:
-                print(f"\n收夜未成：{err}\n")
-                return None
+    session.schedule_close_night_after_chat_if_needed(
+        court_action, write_gate=_cli_write_gate(session),
+    )
     if court_action == "court_break":
         return "court_break"
     return None
@@ -365,26 +296,9 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         if cmd == "court_break":
             # #526/#1842：高置信收夜口令 → 前台先返回；队列随后 FIFO 转译 join→封夜。
             # 后台失败留痕、夜可恢复；不假成功静默吞错（ADR 0005）。
-            from ming_sim.audience_night import AudienceNightError, auto_close_open_night
-            schedule = getattr(session, "schedule_close_night_after_chat_if_needed", None)
-            if schedule is not None:
-                schedule("court_break", write_gate=_cli_write_gate(session))
-            else:
-                close_fn = getattr(session, "close_night_after_chat_if_needed", None)
-                try:
-                    if close_fn is not None:
-                        close_fn("court_break", write_gate=_cli_write_gate(session))
-                    else:
-                        auto_close_open_night(
-                            session.db, session.state,
-                            content=getattr(session, "content", None),
-                            write_gate=_cli_write_gate(session),
-                            llm_config=getattr(session, "llm_config", None),
-                        )
-                except (AudienceNightError, LLMUnavailable) as err:
-                    # #1353 fold-in r8：欠账耗尽/收夜失败留本回合，可重按退朝；CLI 不退出。
-                    print(f"\n收夜未成：{err}\n")
-                    continue
+            session.schedule_close_night_after_chat_if_needed(
+                "court_break", write_gate=_cli_write_gate(session),
+            )
             return "court_break"
         if cmd and cmd.startswith("summon:"):
             target_name = cmd.split(":", 1)[1]
@@ -397,47 +311,41 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         chat_turn_id = 0
         rollback_snapshot = None
         result = None
-        lifecycle_supported = all(hasattr(session.db, name) for name in (
-            "capture_chat_rollback_snapshot", "create_chat_turn",
-            "update_chat_turn_messages", "record_chat_turn_rollback_diffs", "fail_chat_turn",
-        ))
         try:
             # #1849 reopen：CLI 也不再分密令/场外 route；前缀原文随问话进 scene 转译。
             if persistent_chat:
-                if lifecycle_supported:
-                    rollback_snapshot = session.db.capture_chat_rollback_snapshot()
-                    # #1838 reopen：CLI 选臣 = 确保开夜 + 建轮；入殿走「宣 X」同入口。
-                    from ming_sim.audience_night import ensure_open_night_for_audience
-                    night_was_open = get_open_night(session.db) is not None
-                    night = get_open_night(session.db) or ensure_open_night_for_audience(
-                        session.db, session.state,
+                rollback_snapshot = session.db.capture_chat_rollback_snapshot()
+                # #1838 reopen：CLI 选臣 = 确保开夜 + 建轮；入殿走「宣 X」同入口。
+                from ming_sim.audience_night import ensure_open_night_for_audience
+                night_was_open = get_open_night(session.db) is not None
+                night = get_open_night(session.db) or ensure_open_night_for_audience(
+                    session.db, session.state,
+                )
+                if not night_was_open:
+                    from ming_sim.decree_forecast import schedule_held_decree_forecasts
+                    schedule_held_decree_forecasts(session)
+                from ming_sim.applier import atomic
+                from ming_sim.audience_night import ensure_summon_enter
+                with atomic(session.db):
+                    chat_turn_id = session.db.create_chat_turn(
+                        session.state,
+                        "殿上",
+                        "cli:殿上",
+                        0,
+                        night_id=int(night["id"]),
+                        status="generating",
                     )
-                    if not night_was_open:
-                        from ming_sim.decree_forecast import schedule_held_decree_forecasts
-                        schedule_held_decree_forecasts(session)
-                    from ming_sim.applier import atomic
-                    from ming_sim.audience_night import ensure_summon_enter
-                    with atomic(session.db):
-                        chat_turn_id = session.db.create_chat_turn(
-                            session.state,
-                            "殿上",
-                            "cli:殿上",
-                            0,
-                            night_id=int(night["id"]),
-                            status="generating",
+                    if question == f"宣{character.name}":
+                        ensure_summon_enter(
+                            session.db, int(night["id"]), character.name,
+                            origin_chat_turn_id=chat_turn_id, commit=False,
                         )
-                        if question == f"宣{character.name}":
-                            ensure_summon_enter(
-                                session.db, int(night["id"]), character.name,
-                                origin_chat_turn_id=chat_turn_id, commit=False,
-                            )
                 user_message_id = session.db.append_chat_message(
                     character.name, accepted_turn, "user", question,
                 )
-                if chat_turn_id:
-                    session.db.update_chat_turn_messages(
-                        chat_turn_id, user_message_id=user_message_id,
-                    )
+                session.db.update_chat_turn_messages(
+                    chat_turn_id, user_message_id=user_message_id,
+                )
             # #1842：殿上走 scene_chat；显式密令仍走 session.chat（与 Web 同核）。
             # 殿上不派旧判官/尾随抽取——转译一次承接。
             result = session.scene_chat(
@@ -445,24 +353,13 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                 minister_name="殿上",
             )
             if persistent_chat:
-                if chat_turn_id and hasattr(session.db, "persist_minister_reply"):
-                    session.db.persist_minister_reply(
-                        character.name, accepted_turn, result.answer, chat_turn_id,
-                    )
-                    minister_message_id = 0
-                else:
-                    minister_message_id = session.db.append_chat_message(
-                        character.name, accepted_turn, "minister", result.answer,
-                    )
-                if chat_turn_id:
-                    if minister_message_id:
-                        session.db.update_chat_turn_messages(
-                            chat_turn_id, minister_message_id=minister_message_id,
-                        )
-                    session.db.record_chat_turn_rollback_diffs(
-                        chat_turn_id, rollback_snapshot or {},
-                        session.db.capture_chat_rollback_snapshot(),
-                    )
+                session.db.persist_minister_reply(
+                    character.name, accepted_turn, result.answer, chat_turn_id,
+                )
+                session.db.record_chat_turn_rollback_diffs(
+                    chat_turn_id, rollback_snapshot or {},
+                    session.db.capture_chat_rollback_snapshot(),
+                )
                 # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
                 session.schedule_pending_scene_translation(result)
         except BaseException as original_error:
@@ -482,7 +379,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             raise
         print(wrap(result.answer))
         print()
-        _print_pending_action_failures(getattr(result, "pending_action_failures", []) or [])
         if result.proposed_directive is not None:
             _confirm_pending_directive(session, result.proposed_directive, character.name)
         if result.court_action == "dismiss":
@@ -628,7 +524,6 @@ def play_turn(session: GameSession) -> None:
             continue
         if action == "skip":
             turn_before = int(session.state.turn)
-            failed_before = _failed_secret_order_ids(session, turn_before)
             try:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
@@ -638,14 +533,9 @@ def play_turn(session: GameSession) -> None:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
                 # #1700：空 simulator 的 LLMContractError 同形，不落到 run_cli「程序中止」。
+                # #1853 J5：真异常经本 except 原样上抛呈现；终态业务拒收不再另造失败载荷。
                 print(f"\n{error}")
-                _print_pending_action_failures(
-                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
-                )
                 continue
-            _print_pending_action_failures(
-                _new_secret_order_failure_payloads(session, turn_before, failed_before)
-            )
             if result is not None:
                 print(report)
                 if getattr(session.state, "ended", False):
@@ -661,7 +551,6 @@ def play_turn(session: GameSession) -> None:
             continue
         if action == "issue":
             turn_before = int(session.state.turn)
-            failed_before = _failed_secret_order_ids(session, turn_before)
             try:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
@@ -670,14 +559,9 @@ def play_turn(session: GameSession) -> None:
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）/ 契约失败（#1700）：打印指引后留在
                 # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。
+                # #1853 J5：真异常经本 except 原样上抛呈现；终态业务拒收不再另造失败载荷。
                 print(f"\n{error}")
-                _print_pending_action_failures(
-                    _new_secret_order_failure_payloads(session, turn_before, failed_before)
-                )
                 continue
-            _print_pending_action_failures(
-                _new_secret_order_failure_payloads(session, turn_before, failed_before)
-            )
             if result is not None:
                 print(report)
                 if getattr(session.state, "ended", False):

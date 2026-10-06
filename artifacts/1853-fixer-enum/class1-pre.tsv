@@ -1,0 +1,26 @@
+file	line	class	kind	obj	attr	default	snippet
+ming_sim/action_materialize.py	40	IN_CLASS_J8R2	getattr	db	content	None	content = getattr(db, "content", None)
+ming_sim/action_materialize.py	625	IN_CLASS_J8R2	getattr	db	content	None	content = getattr(db, "content", None)
+ming_sim/agents.py	202	IN_CLASS_J8R2	hasattr	game_db	truncate_agno_session_runs		if not hasattr(game_db, "truncate_agno_session_runs"):
+ming_sim/agents.py	204	IN_CLASS_J8R2	hasattr	game_db	agno_runs_length		if not hasattr(game_db, "agno_runs_length"):
+ming_sim/declaration_dispatch.py	713	IN_CLASS_J8R2	getattr	db	content	None	with atomic_and_reload(db, state, content=getattr(db, "content", None)):
+ming_sim/declaration_dispatch.py	1300	IN_CLASS_J8R2	getattr	db	content	None	roster, db=db, content=getattr(db, "content", None),
+ming_sim/declaration_dispatch.py	1446	IN_CLASS_J8R2	getattr	db	content	None	getattr(db, "content", None), appointment_fields["name"], db,
+ming_sim/declaration_dispatch.py	1574	IN_CLASS_J8R2	getattr	db	content	None	content=getattr(db, "content", None),
+ming_sim/decree.py	945	IN_CLASS_J8R2	getattr	db	llm_config	None	_sync_offices_from_db_impl(content, db, getattr(db, "llm_config", None))
+ming_sim/error_pack.py	211	KEEP_error_pack_diag	getattr	db	path	None	"db_path": getattr(db, "path", None),
+ming_sim/flows.py	1361	KEEP_runtime_scratch	hasattr	db	<scratch_loop>		if hasattr(db, attr):
+ming_sim/issues.py	4168	NOT_GAMEDB_API	getattr	db	_batch_authorized_open_affair_ids	None	previous_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+ming_sim/issues.py	4169	NOT_GAMEDB_API	getattr	db	_batch_frozen_open_affair_ids	None	previous_frozen = getattr(db, "_batch_frozen_open_affair_ids", None)
+ming_sim/issues.py	7484	NOT_GAMEDB_API	getattr	db	_batch_authorized_open_affair_ids	None	_prev_batch_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+ming_sim/issues.py	7485	NOT_GAMEDB_API	getattr	db	_batch_frozen_open_affair_ids	None	_prev_batch_frozen = getattr(db, "_batch_frozen_open_affair_ids", None)
+ming_sim/knowledge.py	55	IN_CLASS_J8R2	getattr	db	content	None	content = getattr(db, "content", None)
+ming_sim/materials.py	115	IN_CLASS_J8R2	getattr	db	path	""	db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
+ming_sim/materials.py	151	IN_CLASS_J8R2	getattr	db	path	""	db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
+ming_sim/materials.py	2199	IN_CLASS_J8R2	getattr	db	content	None	content = getattr(db, "content", None)
+ming_sim/month_chain.py	705	IN_CLASS_J8R2	getattr	db	content	None	reload_state_from_db(db, state, content=getattr(db, "content", None))
+ming_sim/pay_order.py	327	IN_CLASS_J8R2	getattr	db	fiscal_engine	None	engine = getattr(db, "fiscal_engine", None)
+ming_sim/rescript_actions.py	1085	IN_CLASS_J8R2	getattr	db	resolve_power_id	None	resolve = getattr(db, "resolve_power_id", None)
+web_app.py	1038	IN_CLASS_J8R2	hasattr	candidate.db	conn		if hasattr(candidate.db, "conn"):
+ming_sim/db.py	3875	IN_CLASS_J8R2	getattr	self	content	None	if getattr(self, "content", None) is not None else None
+ming_sim/db.py	5676	IN_CLASS_J8R2	getattr	self	content	None	if not getattr(self, "content", None):

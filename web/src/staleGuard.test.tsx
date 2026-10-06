@@ -346,55 +346,6 @@ describe("召对陈旧守卫 — 离开实时观察/错误分支（sendChat catc
   });
 });
 
-function DecisionsFailureFixture({
-  outcome,
-}: {
-  outcome: {
-    decisions: Array<{ title: string }>;
-    pending_action_failures?: string[];
-  };
-}) {
-  const [failures, setFailures] = React.useState<string[]>([]);
-  const [decisions, setDecisions] = React.useState<Array<{ title: string }>>([]);
-  const [busy, setBusy] = React.useState("月末结算");
-  const issue = async () => {
-    setFailures(outcome.pending_action_failures || []);
-    setDecisions(outcome.decisions || []);
-    setBusy("");
-  };
-  return (
-    <div>
-      <div data-testid="failures">{failures.join("|")}</div>
-      <div data-testid="decisions">{decisions.map((d) => d.title).join("|")}</div>
-      <div data-testid="busy">{busy}</div>
-      <button data-testid="issue" onClick={issue}>
-        颁诏
-      </button>
-    </div>
-  );
-}
-
-describe("结算决策暂停 — 密令失败提示", () => {
-  it("decisions 响应同时保留 pending action failures 和待裁决策", async () => {
-    const host = render(
-      <DecisionsFailureFixture
-        outcome={{
-          decisions: [{ title: "辽东战守" }],
-          pending_action_failures: ["密令未能正式落库"],
-        }}
-      />,
-    );
-
-    await act(async () => {
-      (host.querySelector("[data-testid=issue]") as HTMLButtonElement).click();
-    });
-
-    expect(host.querySelector("[data-testid=failures]")?.textContent).toBe("密令未能正式落库");
-    expect(host.querySelector("[data-testid=decisions]")?.textContent).toBe("辽东战守");
-    expect(host.querySelector("[data-testid=busy]")?.textContent).toBe("");
-  });
-});
-
 function SurfaceFailuresFixture({ loadState }: { loadState: () => Promise<void> }) {
   const [selected, setSelected] = React.useState("甲");
   const selectedRef = React.useRef("甲");

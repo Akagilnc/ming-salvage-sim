@@ -62,6 +62,19 @@ class OfficeAppointmentRejection(ValueError):
         self.category = category
 
 
+class PendingActionRefusal(Exception):
+    """一项暂存的业务拒收：只终态该项，不带走整批，也不是系统故障。
+
+    不继承 ValueError。提交口只认本类、任免拒收类和案卷关联拒收属性；
+    其余异常一律上抛。category 是机读契约，message 不得被调用方解析。
+    """
+
+    def __init__(self, message: str, *, category: str, item: dict | None = None) -> None:
+        super().__init__(message)
+        self.category = category
+        self.item = item
+
+
 class SettlementAbort(Exception):
     """结算中止可重试（ADR 0008 决定 3/6）。
 

@@ -453,9 +453,11 @@ class _GapBSession(HallAdmissionSessionMixin):
     def _character(self, name):
         return self.content.characters[name]
 
-
     def pending_count(self):
         return 0
+
+    def list_directives(self, include_pending=False):
+        return []
 
     def scene_chat(self, message, *, chat_turn_id=0, stream_emit=None, minister_name="", on_protagonist_changed=None):
         # #1849 reopen：殿上入口不绑单人 character；轻壳取任一假 agent。
@@ -470,9 +472,16 @@ class _GapBSession(HallAdmissionSessionMixin):
                 if stream_emit is not None:
                     stream_emit(str(content))
         return ChatTurnResult(answer="".join(parts))
+
     def schedule_pending_scene_translation(self, result):
-        # #1842：WebGame persist 尾必调；轻壳无 pending 时 no-op。
         return None
+
+
+_FAKE_NIGHT = {
+    "id": 1, "turn": 1, "year": 1628, "period": 1,
+    "time_of_day": "夜", "location": "乾清宫", "status": "open",
+    "close_commit_cursor": 0, "next_event_seq": 0, "protagonist_name": "",
+}
 
 
 class _GapBDB:
@@ -480,7 +489,8 @@ class _GapBDB:
         self.messages: list[dict] = []
         self._next_id = 1
         self._inflight: list[dict] = []
-        # 故意不设 conn：生产路径 hasattr(db,"conn") 为假时走轻壳分支
+        # 故意不设 conn：本夹具走 _atomic_connless_test_shell_compat；
+        # 开夜/夜查询由 _patch_gap_b_night 接管（#1853 后生产无缺 conn 轻壳）。
 
     def agno_runs_length(self, _session_id):
         return 0
@@ -505,7 +515,6 @@ class _GapBDB:
         return None
 
     def persist_minister_reply(self, minister_name, turn, content, chat_turn_id, **_kw):
-        # 同事务回话；stub 只记账 message id
         mid = self.append_chat_message(minister_name, turn, "minister", content)
         for row in self._inflight:
             if int(row["id"]) == int(chat_turn_id or 0):
@@ -529,16 +538,16 @@ class _GapBDB:
             or not row.get("minister_message_id")
         ]
 
-    def load_all_chat_history(self):
-        out = {}
-        for m in self.messages:
-            out.setdefault(m["minister"], []).append({"role": m["role"], "content": m["content"]})
-        return out
-
     def kv_get(self, _k):
         return ""
 
     def list_secret_orders(self):
+        return []
+
+    def get_interrupted_reply_retries(self, *_a, **_k):
+        return []
+
+    def get_post_reply_retries(self, *_a, **_k):
         return []
 
     def build_chat_projection(self, minister_name: str):
@@ -548,11 +557,30 @@ class _GapBDB:
             if m["minister"] == minister_name
         ]
 
+    def list_chat_history(self, minister_name):
+        return self.build_chat_projection(minister_name)
+
     def list_pending_actions(self, turn, *a, **k):
         return []
 
     def set_message_highlights(self, message_id, phrases):
         return None
+
+    def kv_get(self, _k):
+        return ""
+
+    def list_secret_orders(self):
+        return []
+
+    def build_chat_projection(self, minister_name: str, night_id: int = 0):
+        return [
+            {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
+            for m in self.messages
+            if m["minister"] == minister_name
+        ]
+
+    def get_interrupted_reply_retries(self, minister_name):
+        return []
 
     def load_all_chat_history(self):
         result: dict = {}
@@ -562,11 +590,24 @@ class _GapBDB:
         return result
 
 
+def _patch_gap_b_night(monkeypatch):
+    import ming_sim.audience_night as an
+    monkeypatch.setattr(an, "get_open_night", lambda _db: dict(_FAKE_NIGHT))
+    monkeypatch.setattr(
+        an, "ensure_open_night_for_audience", lambda _db, _state: dict(_FAKE_NIGHT),
+    )
+    monkeypatch.setattr(
+        an, "assert_night_accepts_player_input",
+        lambda _db, *a, **k: dict(_FAKE_NIGHT),
+    )
+
+
 @pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
-def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
+def test_drain_waits_for_queued_chat_stream_not_just_gate_holder(monkeypatch):
     """#396 Gap B: drain 不能只等当前持锁 worker——已排队（阻塞在 gate.acquire()）的旧召对请求
     也须先跑完写库，drain 才关 session。否则 drain 抢到下一轮 acquire 直接关连接，排队请求要么
     永不跑、要么写 closed database。"""
+    _patch_gap_b_night(monkeypatch)
     allow_finish_a = threading.Event()
     allow_finish_b = threading.Event()
     closed: list[int] = []
@@ -595,6 +636,9 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
     # #1849 reopen：召对只剩殿上；同入口并发第二流被拒，drain 仍须等在飞 A 写完。
     stream_a = runtime.chat_stream("殿上", "请奏A")
     first_a = next(stream_a)
+    # 现役流式先发 accepted 水位，再出 delta。
+    if first_a.get("type") == "accepted":
+        first_a = next(stream_a)
     assert first_a.get("type") == "delta"
     assert "content" in first_a
 
@@ -637,6 +681,36 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
         for m in db.messages
     )
 
+
+
+def test_drain_rejects_late_pending_write_before_gate_acquire():
+    """#402 R3（Sourcery）：drain 开始后，迟到的旧 game 写入不得再登记进关闭队列。"""
+    runtime = object.__new__(web_app.WebGame)
+    runtime._write_queue = SessionWriteQueue()
+    runtime._write_gate = runtime._write_queue.write_gate
+    runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
+    runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
+    runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
+    closed: list[int] = []
+    runtime.session = SimpleNamespace(close=lambda: closed.append(1))
+
+    runtime._write_gate.acquire()
+    done = threading.Event()
+    thread = threading.Thread(
+        target=lambda: (web_app._drain_and_close_session(runtime), done.set()),
+        daemon=True,
+    )
+    thread.start()
+
+    wait_until(lambda: runtime._write_queue.is_sealed())
+    assert runtime._mark_pending_write() is None
+    # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
+    assert runtime._pending_writes_count <= 1
+
+    runtime._write_gate.release()
+
+    done.wait()
+    assert closed == [1]
 
 
 def test_spawn_pending_write_thread_start_failure_releases_ownership():

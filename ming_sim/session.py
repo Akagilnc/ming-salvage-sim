@@ -158,7 +158,6 @@ class ChatTurnResult:
     proposed_directive: Optional[DirectiveView] = None
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
-    pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
     # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
     # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
     pending_audience_translation: Optional[Dict[str, Any]] = None

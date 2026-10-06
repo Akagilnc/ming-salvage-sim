@@ -1,0 +1,850 @@
+membership	reason	loc	text
+NOT_CLASS	非DB能力存在性	launcher.py:148	_log(f"启动：frozen={getattr(sys,'frozen',False)} platform={sys.platform} py={sys.version.split()[0]}")
+NOT_CLASS	非DB能力存在性	scripts/play_as_emperor.py:243	raw = response.content if hasattr(response, "content") else str(response)
+NOT_CLASS	非DB能力存在性	scripts/agy_turn_probe.py:61	while getattr(result, "awaiting", False):
+NOT_CLASS	非DB对象可选字段/形	scripts/agy_turn_probe.py:76	report_text = result.report if hasattr(result, "report") else str(result)
+NOT_CLASS	非DB能力存在性	ming_sim/paths.py:23	return getattr(sys, "frozen", False)
+NOT_CLASS	非DB能力存在性	ming_sim/paths.py:31	return Path(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)))
+NOT_CLASS	非DB能力存在性	web_app.py:286	names = [getattr(content.regions.get(item), "name", item) for item in ids]
+NOT_CLASS	非DB能力存在性	web_app.py:290	names = [getattr(content.armies.get(item), "name", item) for item in ids]
+NOT_CLASS	非DB能力存在性	web_app.py:325	return str(getattr(content.regions.get(entity_id), "name", entity_id))
+NOT_CLASS	非DB能力存在性	web_app.py:327	return str(getattr(content.armies.get(entity_id), "name", entity_id))
+NOT_CLASS	非DB对象可选字段/形	web_app.py:493	message = f"{prefix}{exc.message if hasattr(exc, 'message') else str(exc)}"
+NOT_CLASS	非DB能力存在性	web_app.py:495	"code": getattr(exc, "code", "llm_error"),
+NOT_CLASS	非DB能力存在性	web_app.py:497	"provider_message": getattr(exc, "provider_message", str(exc)),
+NOT_CLASS	非DB能力存在性	web_app.py:498	"status_code": getattr(exc, "status_code", None),
+NOT_CLASS	非DB能力存在性	web_app.py:501	attempts = getattr(exc, "transport_attempts", None)
+NOT_CLASS	非DB能力存在性	web_app.py:505	stage = getattr(exc, "stage", None)
+NOT_CLASS	非DB能力存在性	web_app.py:515	"stage": str(getattr(exc, "stage", "") or ""),
+NOT_CLASS	非DB能力存在性	web_app.py:516	"error_pack_path": getattr(exc, "error_pack_path", None),
+NOT_CLASS	非DB能力存在性	web_app.py:517	"turn": getattr(exc, "turn", None),
+NOT_CLASS	非DB能力存在性	web_app.py:547	"error_pack_path": getattr(exc, "error_pack_path", None) or "",
+NOT_CLASS	非DB能力存在性	web_app.py:548	"stage": getattr(exc, "stage", "") or "",
+NOT_CLASS	非DB能力存在性	web_app.py:709	if getattr(character, "faction", "") == "流寇":
+NOT_CLASS	非DB能力存在性	web_app.py:713	debut_year = int(getattr(character, "debut_year", 0) or 0)
+NOT_CLASS	非DB能力存在性	web_app.py:714	debut_month = int(getattr(character, "debut_month", 0) or 0)
+NOT_CLASS	非DB能力存在性	web_app.py:830	session = getattr(self, "session", None)
+NOT_CLASS	非DB能力存在性	web_app.py:831	residual = getattr(init_exc, "residual_session", None)
+NOT_CLASS	非DB能力存在性	web_app.py:891	residual = getattr(self, "_rebuild_residual_runtime", None)
+NOT_CLASS	非DB能力存在性	web_app.py:894	path = _path_norm_of_game(residual, getattr(self, "db_path", "") or "")
+NOT_CLASS	非DB能力存在性	web_app.py:913	session = getattr(residual, "session", residual)
+NOT_CLASS	非DB能力存在性	web_app.py:914	close_fn = getattr(session, "close", None)
+NOT_CLASS	callable 一般探测	web_app.py:915	if callable(close_fn):
+NOT_CLASS	非DB能力存在性	web_app.py:1023	q = getattr(self, "_write_queue", None)
+NOT_CLASS	菜单/重建/restorable 初始化探测（J8-R保留）	web_app.py:1038	if hasattr(candidate.db, "conn"):
+NOT_CLASS	非DB能力存在性	web_app.py:1042	residual = candidate or getattr(rebuild_exc, "residual_session", None)
+NOT_CLASS	非DB能力存在性	web_app.py:1051	_write_queue=getattr(residual, "_write_queue", None),
+NOT_CLASS	非DB能力存在性	web_app.py:1052	_write_gate=getattr(residual, "_write_gate", None),
+NOT_CLASS	非DB能力存在性	web_app.py:1325	regions = getattr(self.content, "regions", None) or {}
+NOT_CLASS	非DB对象可选字段/形	web_app.py:1330	region = regions.get(region_id) if hasattr(regions, "get") else None
+NOT_CLASS	非DB能力存在性	web_app.py:1331	name = getattr(region, "name", None) if region is not None else None
+NOT_CLASS	非DB对象可选字段/形	web_app.py:1369	if hasattr(row, "keys") and "authority" in row.keys()
+NOT_CLASS	非DB能力存在性	web_app.py:1739	int(getattr(self, "_settlement_entry_inflight", 0) or 0) > 0
+NOT_CLASS	非DB能力存在性	web_app.py:2186	if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+NOT_CLASS	非DB能力存在性	web_app.py:2216	# #1853 J8：夜查询走必备 GameDB.conn；禁 hasattr(conn) 降级成非夜投影空集。
+NOT_CLASS	非DB能力存在性	web_app.py:2337	pending_action_id=getattr(result, "pending_action_id", 0),
+NOT_CLASS	非DB能力存在性	web_app.py:2340	directive_confirmation_ambiguous=getattr(
+NOT_CLASS	非DB能力存在性	web_app.py:2342	decree_validation_failure=getattr(
+NOT_CLASS	非DB能力存在性	web_app.py:2344	secret_order_landing_recovery=getattr(
+NOT_CLASS	非DB能力存在性	web_app.py:2353	answer_text = str(getattr(result, "answer", "") or "")
+NOT_CLASS	非DB能力存在性	web_app.py:2379	court_action=getattr(result, "court_action", ""),
+NOT_CLASS	非DB能力存在性	web_app.py:2405	court_action = getattr(result, "court_action", "") or ""
+NOT_CLASS	非DB能力存在性	web_app.py:2406	schedule = getattr(
+NOT_CLASS	非DB能力存在性	web_app.py:2412	close_after = getattr(
+NOT_CLASS	非DB能力存在性	web_app.py:2455	answer = str(getattr(result, "answer", "") or "")
+NOT_CLASS	非DB能力存在性	web_app.py:2469	court_action=getattr(result, "court_action", "") or "",
+NOT_CLASS	非DB能力存在性	web_app.py:2470	next_minister=getattr(result, "next_minister", "") or "",
+NOT_CLASS	非DB能力存在性	web_app.py:2472	appointed_minister=getattr(result, "appointed_minister", "") or "",
+NOT_CLASS	非DB能力存在性	web_app.py:2473	registered_minister=getattr(result, "registered_minister", "") or "",
+NOT_CLASS	非DB能力存在性	web_app.py:2474	displaced_minister=getattr(result, "displaced_minister", "") or "",
+NOT_CLASS	非DB能力存在性	web_app.py:2475	secret_order_id=int(getattr(result, "secret_order_id", 0) or 0),
+NOT_CLASS	非DB能力存在性	web_app.py:2476	pending_action_id=int(getattr(result, "pending_action_id", 0) or 0),
+NOT_CLASS	非DB能力存在性	web_app.py:2479	directive_confirmation_ambiguous=getattr(
+NOT_CLASS	非DB能力存在性	web_app.py:2481	decree_validation_failure=getattr(
+NOT_CLASS	非DB能力存在性	web_app.py:2483	secret_order_landing_recovery=getattr(
+NOT_CLASS	非DB能力存在性	web_app.py:2490	attempts = getattr(result, "transport_attempts", None)
+NOT_CLASS	非DB能力存在性	web_app.py:2534	llm_config=getattr(self.session, "llm_config", None),
+NOT_CLASS	非DB能力存在性	web_app.py:2609	llm_config=getattr(self.session, "llm_config", None),
+NOT_CLASS	非DB能力存在性	web_app.py:2685	llm_config=getattr(self.session, "llm_config", None),
+NOT_CLASS	非DB能力存在性	web_app.py:2714	if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+NOT_CLASS	非DB能力存在性	web_app.py:2749	if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+NOT_CLASS	非DB能力存在性	web_app.py:2761	if getattr(err, "code", "") == "night_closing":
+NOT_CLASS	非DB能力存在性	web_app.py:2929	close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
+NOT_CLASS	非DB能力存在性	web_app.py:3092	db = getattr(game, "db", None)
+NOT_CLASS	非DB能力存在性	web_app.py:3093	state = getattr(game, "state", None)
+NOT_CLASS	结算月开快照初始化清理（J8-R保留）	web_app.py:3094	if db is None or state is None or not hasattr(db, "capture_month_open_snapshot"):
+NOT_CLASS	非DB能力存在性	web_app.py:3102	lock = getattr(game, "_settlement_entry_lock", None)
+NOT_CLASS	非DB能力存在性	web_app.py:3113	n = int(getattr(game, "_settlement_entry_inflight", 0) or 0)
+NOT_CLASS	非DB能力存在性	web_app.py:3121	n = int(getattr(game, "_settlement_entry_inflight", 0) or 0)
+NOT_CLASS	非DB能力存在性	web_app.py:3129	return int(getattr(game, "_settlement_entry_inflight", 0) or 0)
+NOT_CLASS	非DB能力存在性	web_app.py:3144	db = getattr(game, "db", None)
+NOT_CLASS	非DB能力存在性	web_app.py:3145	state = getattr(game, "state", None)
+NOT_CLASS	结算月开快照初始化清理（J8-R保留）	web_app.py:3146	if db is None or state is None or not hasattr(db, "clear_month_open_snapshot"):
+NOT_CLASS	非DB能力存在性	web_app.py:3157	if not blocking and int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 1:
+NOT_CLASS	非DB能力存在性	web_app.py:3179	db = getattr(game, "db", None)
+NOT_CLASS	过月 close_night 无 db 跳过——结算编排初始化清理面	web_app.py:3180	if db is None or not hasattr(db, "conn"):
+NOT_CLASS	非DB能力存在性	web_app.py:3184	session = getattr(game, "session", None)
+NOT_CLASS	非DB能力存在性	web_app.py:3188	content=getattr(game, "content", None),
+NOT_CLASS	非DB能力存在性	web_app.py:3189	llm_config=getattr(session, "llm_config", None) if session is not None else None,
+NOT_CLASS	非DB能力存在性	web_app.py:3195	if hasattr(game, "_runtime_write_gate"):
+NOT_CLASS	非DB能力存在性	web_app.py:3202	state = getattr(game, "state", None)
+NOT_CLASS	非DB能力存在性	web_app.py:3203	phase = getattr(state, "turn_phase", None)
+NOT_CLASS	非DB能力存在性	web_app.py:3305	entry_busy = int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 0
+NOT_CLASS	非DB能力存在性	web_app.py:3390	sess = getattr(game, "session", None)
+NOT_CLASS	非DB能力存在性	web_app.py:3404	db = getattr(game, "db", None)
+NOT_CLASS	非DB能力存在性	web_app.py:3405	state = getattr(game, "state", None)
+NOT_CLASS	结算月开快照初始化清理（J8-R保留）	web_app.py:3406	if db is not None and state is not None and hasattr(db, "clear_month_open_snapshot"):
+NOT_CLASS	非DB能力存在性	web_app.py:3599	raw = path or (getattr(game, "db_path", "") or "")
+NOT_CLASS	非DB能力存在性	web_app.py:3990	session = getattr(game, "session", None)
+NOT_CLASS	非DB能力存在性	web_app.py:3993	if int(getattr(session, "_close_epoch", 0) or 0) > 0:
+NOT_CLASS	非DB能力存在性	web_app.py:3995	db = getattr(session, "db", None)
+NOT_CLASS	菜单/重建/restorable 初始化探测（J8-R保留）	web_app.py:3996	conn = getattr(db, "conn", None) if db is not None else None
+NOT_CLASS	非DB能力存在性	web_app.py:4004	agno = getattr(session, "agno_db", None)
+NOT_CLASS	非DB能力存在性	web_app.py:4007	engine = getattr(agno, "db_engine", None)
+NOT_CLASS	非DB能力存在性	web_app.py:4702	candidate, getattr(candidate, "db_path", "") or bound_path,
+NOT_CLASS	非DB能力存在性	web_app.py:4708	candidate, getattr(candidate, "db_path", "") or bound_path,
+NOT_CLASS	非DB能力存在性	web_app.py:4713	getattr(candidate, "db_path", "") or bound_path
+NOT_CLASS	非DB能力存在性	web_app.py:5220	characters = getattr(getattr(game, "content", None), "characters", {})
+NOT_CLASS	非DB能力存在性	web_app.py:5414	if getattr(game, "content", None) is not None else {}),
+NOT_CLASS	非DB能力存在性	web_app.py:5533	current_turn = int(getattr(game.state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	web_app.py:5576	advanced = bool(getattr(result, "advanced", True))
+NOT_CLASS	非DB能力存在性	web_app.py:5642	advanced = bool(getattr(result, "advanced", True))
+NOT_CLASS	非DB能力存在性	ming_sim/audience_translation.py:160	not bool(getattr(db.conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/audience_translation.py:161	and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB能力存在性	ming_sim/action_materialize.py:40	content = getattr(db, "content", None)
+NOT_CLASS	非DB能力存在性	ming_sim/action_materialize.py:41	roster = getattr(content, "characters", None) if content is not None else None
+NOT_CLASS	非DB能力存在性	ming_sim/action_materialize.py:54	office = str(getattr(ch, "office", "") or "").strip() if ch is not None else ""
+NOT_CLASS	非DB能力存在性	ming_sim/action_materialize.py:56	str(getattr(ch, "office_type", "") or "").strip() if ch is not None else ""
+NOT_CLASS	非DB能力存在性	ming_sim/action_materialize.py:98	getattr(session, "content", None), str(person_name or "").strip(), session.db,
+NOT_CLASS	非DB能力存在性	ming_sim/action_materialize.py:625	content = getattr(db, "content", None)
+NOT_CLASS	非DB能力存在性	ming_sim/action_materialize.py:626	armies = getattr(content, "armies", None) if content is not None else None
+NOT_CLASS	非DB能力存在性	ming_sim/action_materialize.py:841	field = str(getattr(exc, "field", "") or "").strip() or "amount"
+NOT_CLASS	非DB能力存在性	ming_sim/pay_order.py:327	engine = getattr(db, "fiscal_engine", None)
+NOT_CLASS	callable 一般探测	ming_sim/pay_order.py:328	if callable(engine) and engine() == "legacy":
+NOT_CLASS	非DB能力存在性	ming_sim/models.py:467	return character is not None and getattr(character, "office_type", None) == WEISHI_OFFICE_TYPE
+NOT_CLASS	非DB能力存在性	ming_sim/credit_events.py:589	turn = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/decree_forecast.py:46	db = getattr(owner, "db", None)
+NOT_CLASS	非DB能力存在性	ming_sim/decree_forecast.py:63	status = getattr(exc, "status_code", None)
+NOT_CLASS	非DB能力存在性	ming_sim/decree_forecast.py:121	release_material_tree(getattr(prepared, "root", None))
+NOT_CLASS	非DB能力存在性	ming_sim/decree_forecast.py:190	state, pending, content=getattr(session, "content", None),
+NOT_CLASS	非DB能力存在性	ming_sim/decree_forecast.py:301	agno_db=getattr(session, "agno_db", None),
+NOT_CLASS	非DB能力存在性	ming_sim/decree_forecast.py:455	done, where="decree forecast", key=getattr(ticket, "key", None),
+NOT_CLASS	非DB能力存在性	ming_sim/decree_forecast.py:462	cfg = getattr(session, "llm_config", None)
+NOT_CLASS	非DB能力存在性	ming_sim/decree_forecast.py:463	return cfg is not None and hasattr(cfg, "advanced_model") and hasattr(cfg, "model")
+NOT_CLASS	owner vs db 形参分流	ming_sim/decree_forecast.py:508	session = owner_or_db if hasattr(owner_or_db, "db") else _owner_for(owner_or_db)
+NOT_CLASS	非DB能力存在性	ming_sim/decree_forecast.py:528	promises = getattr(result, "promises", None)
+NOT_CLASS	非DB能力存在性	ming_sim/decree_forecast.py:529	applied = getattr(promises, "applied", None) or []
+NOT_CLASS	非DB能力存在性	ming_sim/staged_commitment.py:268	turn = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/month_translate.py:59	"verdict_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+TEST_annotate	测试夹具/断言	tests/test_person_archive_contract_index.py:18	if getattr(c, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_person_archive_contract_index.py:154	getattr(ch, "status_reason", ""), getattr(ch, "reason_code", ""),
+NOT_CLASS	非DB能力存在性	ming_sim/qualitative.py:39	field, getattr(character, field)
+NOT_CLASS	非DB能力存在性	ming_sim/qualitative.py:43	projected["党派认同"] = identity_band(getattr(character, "identity"))
+NOT_CLASS	非DB能力存在性	ming_sim/qualitative.py:44	projected["阴谋"] = f"阴谋{intrigue_band(getattr(character, 'intrigue', None))}"
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:70	to_dict = getattr(obj, "to_dict", None)
+NOT_CLASS	callable 一般探测	ming_sim/agents.py:71	if callable(to_dict):
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:73	model_dump = getattr(obj, "model_dump", None)
+NOT_CLASS	callable 一般探测	ming_sim/agents.py:74	if callable(model_dump):
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:78	raw = getattr(obj, "__dict__", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:94	msgs = getattr(output, "messages", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:98	msgs = getattr(last, "messages", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:110	"role": getattr(m, "role", "?"),
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:111	"content": "" if getattr(m, "content", None) is None else getattr(m, "content"),
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:114	rval = getattr(m, fname, None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:118	tcalls = getattr(m, "tool_calls", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:122	run_metrics = getattr(run_src, "metrics", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:124	run_metrics = getattr(run_src, "usage", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:128	mpd = getattr(run_src, "model_provider_data", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:134	pdata = getattr(m, "provider_data", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:145	"run_reasoning_content": getattr(run_src, "reasoning_content", None),
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:194	getattr(agent, "add_history_to_context", False)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:195	and getattr(agent, "cache_session", False)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:196	and getattr(agent, "db", None) is not None
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:199	session_id = str(getattr(agent, "session_id", "") or "")
+NOT_CLASS	非召对失败重试接缝（agno/flows/内部/CLI后端/机械月末/谏议）	ming_sim/agents.py:202	if not hasattr(game_db, "truncate_agno_session_runs"):
+NOT_CLASS	非召对失败重试接缝（agno/flows/内部/CLI后端/机械月末/谏议）	ming_sim/agents.py:204	if not hasattr(game_db, "agno_runs_length"):
+NOT_CLASS	非DB对象可选字段/形	ming_sim/agents.py:219	if hasattr(agent, "_cached_session"):
+NOT_CLASS	非DB对象可选字段/形	ming_sim/agents.py:221	if hasattr(agent, "_cached_session_db"):
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:267	model = getattr(agent, "model", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:351	explicit = getattr(agent, "supports_stream", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:354	run = getattr(agent, "run", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:405	tool = getattr(event, "tool", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:406	tname = getattr(tool, "tool_name", "?") if tool else "?"
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:407	targs = getattr(tool, "tool_args", {}) if tool else {}
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:414	tool_res = getattr(event, "tool", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:415	tres = str(getattr(tool_res, "result", "") or "")[:200] if tool_res else ""
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:419	rdelta = getattr(event, "reasoning_content", None)
+NOT_CLASS	非DB对象可选字段/形	ming_sim/agents.py:439	(hasattr(event, "is_final") and getattr(event, "is_final", False))
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:448	delta = getattr(event, "content", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:491	metrics = getattr(final_output, "metrics", None)
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:492	model_id = getattr(getattr(agent, "model", None), "id", None) or "stream"
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:680	root = getattr(prepared, "root", "")
+NOT_CLASS	非DB对象可选字段/形	ming_sim/agents.py:681	if hasattr(model, "materials_dir"):
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:689	str(getattr(prepared, "opening", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:715	root = getattr(prepared, "root", "")
+NOT_CLASS	非DB对象可选字段/形	ming_sim/agents.py:716	if hasattr(model, "materials_dir"):
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:730	str(getattr(prepared, "opening", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:754	root = getattr(prepared, "root", "")
+NOT_CLASS	非DB对象可选字段/形	ming_sim/agents.py:755	if hasattr(model, "materials_dir"):
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:762	str(getattr(prepared, "opening", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:964	root = getattr(prepared, "root", "") if prepared is not None else ""
+NOT_CLASS	非DB对象可选字段/形	ming_sim/agents.py:965	if hasattr(model, "materials_dir"):
+NOT_CLASS	非DB能力存在性	ming_sim/agents.py:1009	str(getattr(prepared, "opening", "") or ""),
+NOT_CLASS	非召对失败重试接缝（agno/flows/内部/CLI后端/机械月末/谏议）	ming_sim/mechanical_tail.py:96	if hasattr(db, "list_turn_reports"):
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:125	"metrics": dict(getattr(closed_state, "metrics", {}) or {}),
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:161	llm_config = getattr(session, "llm_config", None)
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:162	agno_db = getattr(session, "agno_db", None)
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:239	metrics=dict(getattr(state, "metrics", {}) or {}),
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:240	ended=bool(getattr(state, "ended", False)),
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:249	llm_config=getattr(session, "llm_config", None),
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:250	agno_db=getattr(session, "agno_db", None),
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:332	done, where="mechanical tail", key=getattr(ticket, "key", None),
+NOT_CLASS	非召对失败重试接缝（agno/flows/内部/CLI后端/机械月末/谏议）	ming_sim/mechanical_tail.py:373	conn = getattr(db, "conn", None)
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:401	for turn in _resolve_context_turns(db, int(getattr(state, "turn", 0) or 0)):
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:426	if not bool(getattr(state, "ended", False)):
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:428	current = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/mechanical_tail.py:443	current = int(getattr(session.state, "turn", 0) or 0)
+TEST_annotate	测试夹具/断言	tests/test_declaration_dispatch_1835.py:122	person = "洪承畴" if "洪承畴" in getattr(content, "characters", {}) else minister
+NOT_CLASS	非DB能力存在性	ming_sim/rescript_actions.py:735	current_turn = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/rescript_actions.py:1032	payload, content=content, current_turn=int(getattr(state, "turn", 0) or 0),
+NOT_CLASS	非DB能力存在性	ming_sim/rescript_actions.py:1085	resolve = getattr(db, "resolve_power_id", None)
+NOT_CLASS	非DB能力存在性	ming_sim/rescript_actions.py:1087	characters = getattr(content, "characters", {}) or {}
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:240	canonical = next((character.name for character in getattr(content, "characters", {}).values()
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:295	office_types = {str(character.office_type).strip() for character in getattr(content, "characters", {}).values()
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:297	office_titles = {str(character.office).strip() for character in getattr(content, "characters", {}).values()
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:528	getter = getattr(db, "get_decree_dossier", None)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:2733	and getattr(self, "_leverage_offsets_calibrated", False)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:3713	int(getattr(self.conn, "_materializing_dossier_id", 0) or 0) or None,
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:3714	str(getattr(self.conn, "_appointment_tenure", "真除") or "真除"),
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:3719	getattr(self.conn, "_materializing_dossier_id", 0) or 0
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:3731	str(getattr(self.conn, "_appointment_tenure", "真除") or "真除"),
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:3876	if getattr(self, "content", None) is not None else None
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:3878	seat = str(getattr(ch, "office_region", "") or "").strip() if ch else ""
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:4042	is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:5186	central_shortfalls = getattr(self, "_current_month_central_pay_shortfalls", {})
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:5187	opening_arrears = getattr(self, "_current_month_pay_opening_arrears", {})
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:5207	central_dues = getattr(self, "_current_month_central_pay_dues", {})
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:5677	if not getattr(self, "content", None):
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:5722	regions = getattr(self.content, "regions", None) or {}
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:5738	regions = getattr(self.content, "regions", None) or {}
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:6170	return (row["power_id"] if row else None) or getattr(character, "power_id", "ming") or "ming"
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:6461	region_id=str(getattr(character, "office_region", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:6495	getattr(character, "power_id", "ming") or "ming",
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:6496	getattr(character, "location", "") or "",
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:6497	getattr(character, "transit_to", "") or "",
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:6498	getattr(character, "summary", "") or "",
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:6509	power_id = getattr(character, "power_id", "ming") or "ming"
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:6624	front_half_done = str(getattr(state, "turn_phase", "") or "") in FRONT_HALF_DONE_PHASES
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:6969	authorized = getattr(self, "_batch_authorized_open_affair_ids", None)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:9357	not bool(getattr(self.conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:9358	and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:9642	not bool(getattr(self.conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:9643	and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:11850	if commit and not bool(getattr(self.conn, "_commit_suspended", False)) and int(
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:11851	getattr(self.conn, "_atomic_depth", 0) or 0
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:13799	regions_content = getattr(self.content, "regions", None) if self.content else None
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:14024	frozen = getattr(self, "_batch_frozen_open_affair_ids", None)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:14038	working = getattr(self, "_batch_authorized_open_affair_ids", None)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:14051	getattr(self, "_batch_frozen_open_affair_ids", None)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:14053	else getattr(self, "_batch_authorized_open_affair_ids", None)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:14757	if not name or not hasattr(self, "conn") or not self._table_exists("character_offices"):
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:15549	previous_materializing = getattr(
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:15570	nights = getattr(self.conn, "_deferred_office_summon_nights", None)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:15668	previous_materializing = getattr(self.conn, "_materializing_dossier_id", 0)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17135	previous_summon_nights = getattr(self.conn, "_deferred_office_summon_nights", None)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17136	previous_reco_prevalidated = getattr(
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17161	summon_nights = set(getattr(self.conn, "_deferred_office_summon_nights", set()) or set())
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17177	if hasattr(self.conn, "_deferred_office_summon_nights"):
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17195	materializing = int(getattr(self.conn, "_materializing_dossier_id", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17260	not bool(getattr(self.conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17261	and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17310	not bool(getattr(self.conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17311	and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17388	not bool(getattr(self.conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17389	and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17422	not bool(getattr(self.conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17423	and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17552	not bool(getattr(self.conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17553	and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17607	rejection = getattr(exc, "dossier_link_rejection", None)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17692	raw_item = getattr(exc, "item", None)
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:17703	category=str(getattr(exc, "category", "") or "business_refusal"),
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:18712	if not getattr(self.conn, "_recommendation_snapshots_prevalidated", False):
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:19019	# getattr(.,"value",.) 让枚举取 .value、普通字符串原样、None/空回落 system_simulation。
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:19020	str(getattr(source, "value", source) or "system_simulation"),
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:20768	if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:20842	if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:21708	if not bool(getattr(self.conn, "_commit_suspended", False)) and int(
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:21709	getattr(self.conn, "_atomic_depth", 0) or 0
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:22165	if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+NOT_CLASS	非DB能力存在性	ming_sim/db.py:23010	if getattr(self.conn, "_commit_suspended", False):
+NOT_CLASS	非DB能力存在性	ming_sim/urge_lever.py:241	int(getattr(state, "turn", 0) or 0),
+NOT_CLASS	非DB能力存在性	ming_sim/urge_lever.py:321	turn = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/urge_lever.py:420	turn = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:57	code = getattr(error, "code", None) or type(error).__name__
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:59	status_code = getattr(error, "status_code", None)
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:60	response = getattr(error, "response", None)
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:129	reasoning_strength = (getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:201	channel = (getattr(llm_config, "channel", "") or "").strip().lower()
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:204	backend = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:215	cli_model = (getattr(llm_config, "cli_model", "") or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:231	kwargs["reasoning_strength"] = (getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:281	status = getattr(run_output, "status", None)
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:284	raw = getattr(status, "value", status)
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:295	content = getattr(run_output, "content", missing)
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:336	if getattr(error, "stage", None):
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:356	channel = (getattr(llm_config, "channel", "") or "").strip().lower()
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:378	model = getattr(agent, "model", None)
+NOT_CLASS	非DB能力存在性	ming_sim/llm_model.py:390	content = getattr(run_output, "content", None)
+NOT_CLASS	非DB对象可选字段/形	ming_sim/issues.py:524	keys = row.keys() if hasattr(row, "keys") else []
+NOT_CLASS	非DB对象可选字段/形	ming_sim/issues.py:598	keys = row.keys() if hasattr(row, "keys") else []
+NOT_CLASS	非DB对象可选字段/形	ming_sim/issues.py:638	keys = row.keys() if hasattr(row, "keys") else []
+NOT_CLASS	非DB对象可选字段/形	ming_sim/issues.py:676	keys = row.keys() if hasattr(row, "keys") else []
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:1076	allowed = getattr(ev, "terminal_reason_labels", []) or []
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:1091	allowed = "/".join(getattr(ev, "terminal_reason_labels", []) or [])
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:1506	if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:1583	if getattr(ev, "id", "")
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:1757	if not getattr(ev, "id", "") or ev.id in terminal_records:
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:1827	for name in getattr(ev, "person_core_subjects", []) or []:
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:1838	subjects = [str(name) for name in (getattr(ev, "person_core_subjects", []) or []) if str(name)]
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:2234	if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:2240	if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:2284	if getattr(ev, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:2597	callbacks = getattr(conn, "_runtime_rollback_callbacks", None)
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:3436	getattr(ev, "event_type", "situation") != "situation"
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:3437	and getattr(ev, "trigger_class", "") == "strategic_foreign"
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:3610	raw = getattr(ev, "terminal_reason_labels", None) or []
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:4168	previous_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:4169	previous_frozen = getattr(db, "_batch_frozen_open_affair_ids", None)
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:4195	if event is None or getattr(event, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:4222	if getattr(event, "category", "") == FISCAL_LEVY_EVENT_CATEGORY:
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:4710	if getattr(ev, "auto_trigger", False):
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:5829	previous_tenure = getattr(db.conn, "_appointment_tenure", "真除")
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:5857	category = getattr(exc, "category", None)
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:6461	content_power_id = str(getattr(content.characters[name], "power_id", "") or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:7484	_prev_batch_authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:7485	_prev_batch_frozen = getattr(db, "_batch_frozen_open_affair_ids", None)
+NOT_CLASS	非DB能力存在性	ming_sim/issues.py:7917	if getattr(runtime_content.event_by_id.get(event_id), "category", "")
+NOT_CLASS	非DB能力存在性	ming_sim/rescript_draft.py:1033	field = str(getattr(exc, "field", "") or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/rescript_draft.py:1036	current = getattr(exc, "current", None)
+NOT_CLASS	非DB能力存在性	ming_sim/rescript_draft.py:1041	expected = getattr(exc, "expected", None)
+NOT_CLASS	非DB对象可选字段/形	ming_sim/rescript_draft.py:1042	if expected is None and not hasattr(exc, "expected"):
+NOT_CLASS	非DB能力存在性	ming_sim/error_pack.py:172	turn = int(getattr(state, "turn", 0))
+NOT_CLASS	非DB能力存在性	ming_sim/error_pack.py:211	"db_path": getattr(db, "path", None),
+NOT_CLASS	非DB能力存在性	ming_sim/error_pack.py:213	"year": getattr(state, "year", None),
+NOT_CLASS	非DB能力存在性	ming_sim/error_pack.py:214	"period": getattr(state, "period", None),
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:186	# #1853 J8：必备 session.db 重试查询直调；禁 getattr(..., None) 当正常无提示。
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:225	answer = str(getattr(result, "answer", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:251	court_action = str(getattr(result, "court_action", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:252	schedule = getattr(session, "schedule_close_night_after_chat_if_needed", None)
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:256	close_after = getattr(session, "close_night_after_chat_if_needed", None)
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:319	schedule = getattr(session, "schedule_close_night_after_chat_if_needed", None)
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:323	close_fn = getattr(session, "close_night_after_chat_if_needed", None)
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:330	content=getattr(session, "content", None),
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:332	llm_config=getattr(session, "llm_config", None),
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:501	if getattr(session, "content", None) is not None else {}),
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:532	if getattr(session, "content", None) is not None else {}),
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:623	if getattr(session.state, "ended", False):
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:625	if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:646	if getattr(session.state, "ended", False):
+NOT_CLASS	非DB能力存在性	ming_sim/cli/terminal.py:648	if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
+TEST_annotate	测试夹具/断言	tests/test_web_audience_night_498.py:147	if getattr(ch, "power_id", "ming") != "ming":
+TEST_annotate	测试夹具/断言	tests/test_web_audience_night_498.py:149	if getattr(ch, "office_type", "") == "后宫":
+TEST_annotate	测试夹具/断言	tests/test_web_audience_night_498.py:506	await _wait_for(lambda: getattr(game, "_pending_writes_count", 0) > 0)
+NOT_CLASS	非DB能力存在性	ming_sim/declaration_dispatch.py:191	for rejected_item in getattr(result, name).rejected:
+NOT_CLASS	非DB能力存在性	ming_sim/declaration_dispatch.py:713	with atomic_and_reload(db, state, content=getattr(db, "content", None)):
+NOT_CLASS	非DB能力存在性	ming_sim/declaration_dispatch.py:824	rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
+NOT_CLASS	非DB能力存在性	ming_sim/declaration_dispatch.py:1300	roster, db=db, content=getattr(db, "content", None),
+NOT_CLASS	非DB能力存在性	ming_sim/declaration_dispatch.py:1446	getattr(db, "content", None), appointment_fields["name"], db,
+NOT_CLASS	非DB能力存在性	ming_sim/declaration_dispatch.py:1574	content=getattr(db, "content", None),
+NOT_CLASS	非DB能力存在性	ming_sim/declaration_dispatch.py:2232	failed = frozenset(str(field) for field in (getattr(exc, "failed_fields", ()) or ()))
+NOT_CLASS	非DB能力存在性	ming_sim/applier.py:70	callbacks = list(getattr(self, "_runtime_commit_callbacks", []))
+NOT_CLASS	非DB能力存在性	ming_sim/applier.py:87	callbacks = list(getattr(self, "_runtime_rollback_callbacks", []))
+NOT_CLASS	非DB能力存在性	ming_sim/applier.py:143	bool(getattr(conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/applier.py:144	or int(getattr(conn, "_atomic_depth", 0) or 0) > 0
+NOT_CLASS	非DB能力存在性	ming_sim/applier.py:178	depth = getattr(conn, "_atomic_depth", 0) + 1
+NOT_CLASS	非DB能力存在性	ming_sim/applier.py:208	if getattr(conn, "_atomic_rollback_only", False):
+NOT_CLASS	非DB能力存在性	ming_sim/applier.py:419	if getattr(db.conn, "_atomic_depth", 0) == 0:
+NOT_CLASS	非DB能力存在性	ming_sim/applier.py:424	commit_callbacks = getattr(db.conn, "_runtime_commit_callbacks", None)
+NOT_CLASS	非DB能力存在性	ming_sim/applier.py:430	rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
+TEST_annotate	测试夹具/断言	tests/test_audience_restore_505.py:38	if getattr(ch, "power_id", "ming") != "ming":
+TEST_annotate	测试夹具/断言	tests/test_audience_restore_505.py:40	if getattr(ch, "office_type", "") == "后宫":
+TEST_annotate	测试夹具/断言	tests/test_audience_restore_505.py:398	restored = getattr(db, rollback_method)(chat_turn_id)
+TEST_annotate	测试夹具/断言	tests/test_audience_restore_505.py:866	and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:205	if getattr(character, "office_type", None) == "后宫":
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:209	pid = power_id if power_id is not None else getattr(character, "power_id", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:385	# #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:413	# #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:702	agno = getattr(self, "agno_db", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:704	close_fn = getattr(agno, "close", None)
+NOT_CLASS	callable 一般探测	ming_sim/session.py:705	if callable(close_fn):
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:714	db = getattr(self, "db", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:795	keys = getattr(row, "keys", None)
+NOT_CLASS	callable 一般探测	ming_sim/session.py:796	return callable(keys) and key in keys()
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:877	if getattr(character, "office_type", None) == "后宫":
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:951	active_state = state or getattr(self, "state", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1026	gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1039	content=getattr(self, "content", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1040	llm_config=getattr(self, "llm_config", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1071	gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1196	content=getattr(self, "content", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1197	llm_config=getattr(self, "llm_config", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1198	write_gate=getattr(self, "_write_gate", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1208	chars = getattr(getattr(self, "content", None), "characters", None) or {}
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1242	not bool(getattr(self.db.conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1243	and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1253	llm_config = getattr(self, "llm_config", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1281	with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1303	llm_config = getattr(self, "llm_config", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1307	agno_db=getattr(self, "agno_db", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1308	content=getattr(self, "content", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1335	llm_cfg = getattr(self, "llm_config", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1343	if name == "RunContent" or getattr(event, "event", None) == "RunContent":
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1344	piece = str(getattr(event, "content", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1355	run_output, f"场景召对/{getattr(agent, 'name', '殿上')}", agent=agent,
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1383	with bind_transport_sdk_budget(getattr(agent, "model", None), policy):
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1425	pending = getattr(result, "pending_audience_translation", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1444	llm_config=getattr(self, "llm_config", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1445	write_gate=getattr(self, "_write_gate", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1447	admitted_ticket=getattr(result, "_admitted_write_ticket", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1617	llm_config = getattr(self, "llm_config", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1618	content = getattr(self, "content", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1771	llm_config=getattr(self, "llm_config", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1793	content=getattr(self, "content", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1794	llm_config=getattr(self, "llm_config", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1867	content=getattr(self, "content", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1868	llm_config=getattr(self, "llm_config", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1905	self.state, content=getattr(self, "content", None),
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:1947	and current_fingerprint != getattr(self, "_decree_draft_fingerprint", ())):
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:2073	if raw in (getattr(ch, "aliases", None) or []):
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:2137	characters = getattr(self.content, "characters", {}) or {}
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:2139	str(getattr(characters.get(name), "faction", "") or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:2518	agno = getattr(self, "agno_db", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:2520	close_fn = getattr(agno, "close", None)
+NOT_CLASS	callable 一般探测	ming_sim/session.py:2521	if callable(close_fn):
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:2527	self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
+NOT_CLASS	非DB能力存在性	ming_sim/session.py:2533	self._close_epoch = int(getattr(self, "_close_epoch", 0) or 0) + 1
+NOT_CLASS	非DB能力存在性	ming_sim/llm_transport.py:194	status = _coerce_status(getattr(cause, "status_code", None))
+NOT_CLASS	非DB能力存在性	ming_sim/llm_transport.py:257	status = _coerce_status(getattr(event, "status_code", None))
+NOT_CLASS	非DB能力存在性	ming_sim/llm_transport.py:260	extra = getattr(event, "additional_data", None)
+NOT_CLASS	非DB能力存在性	ming_sim/llm_transport.py:303	status_i = _coerce_status(getattr(error, "status_code", None))
+NOT_CLASS	非DB能力存在性	ming_sim/llm_transport.py:462	getattr(event, "content", None), status_code=status,
+NOT_CLASS	非DB能力存在性	ming_sim/llm_transport.py:479	if getattr(event, "event", "") == "RunContent" and getattr(event, "content", None):
+NOT_CLASS	非DB能力存在性	ming_sim/llm_transport.py:481	rdelta = getattr(event, "reasoning_content", None)
+NOT_CLASS	非DB能力存在性	ming_sim/llm_transport.py:523	prev_timeout = getattr(model, "timeout", None)
+NOT_CLASS	非DB能力存在性	ming_sim/llm_transport.py:524	prev_retries = getattr(model, "max_retries", None)
+NOT_CLASS	非DB对象可选字段/形	ming_sim/llm_transport.py:525	had_client = hasattr(model, "client")
+NOT_CLASS	非DB对象可选字段/形	ming_sim/llm_transport.py:526	had_async = hasattr(model, "async_client")
+NOT_CLASS	非DB对象可选字段/形	ming_sim/llm_transport.py:529	if hasattr(model, "timeout"):
+NOT_CLASS	非DB对象可选字段/形	ming_sim/llm_transport.py:531	if hasattr(model, "max_retries"):
+NOT_CLASS	非DB能力存在性	ming_sim/llm_transport.py:539	method = getattr(model, name, None)
+NOT_CLASS	callable 一般探测	ming_sim/llm_transport.py:540	if callable(method):
+NOT_CLASS	非DB对象可选字段/形	ming_sim/llm_transport.py:547	if hasattr(model, "timeout"):
+NOT_CLASS	非DB对象可选字段/形	ming_sim/llm_transport.py:549	if hasattr(model, "max_retries"):
+NOT_CLASS	非DB能力存在性	ming_sim/llm_transport.py:672	close = getattr(stream, "close", None)
+NOT_CLASS	callable 一般探测	ming_sim/llm_transport.py:673	if callable(close):
+TEST_annotate	测试夹具/断言	tests/test_cli_backend.py:91	ch for ch in content.characters.values() if getattr(ch, "aliases", None)
+NOT_CLASS	callable 一般探测	tests/test_cli_backend.py:267	spec = proc(cmd, **kw) if callable(proc) else proc
+TEST_annotate	测试夹具/断言	tests/test_cli_backend.py:493	out, n = getattr(cb, runner)("p", **kwargs)
+TEST_annotate	测试夹具/断言	tests/test_cli_backend.py:687	getattr(cb, runner)("p")
+TEST_annotate	测试夹具/断言	tests/test_cli_backend.py:895	getattr(cb, runner)("p")
+TEST_annotate	测试夹具/断言	tests/test_cli_backend.py:1190	getattr(cb, runner)("p")
+TEST_annotate	测试夹具/断言	tests/test_qa_s2_copy_prompts_1356_1402.py:101	runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+TEST_annotate	测试夹具/断言	tests/test_qa_s2_copy_prompts_1356_1402.py:123	if getattr(c, "office_type", "") not in ("宗藩", "后宫")
+TEST_annotate	测试夹具/断言	tests/test_qa_s2_copy_prompts_1356_1402.py:124	and getattr(c, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/conftest.py:68	owners = getattr(db, "_test_session_owners", None)
+TEST_annotate	测试夹具/断言	tests/conftest.py:72	queue = getattr(owner, "_write_queue", None)
+TEST_annotate	测试夹具/断言	tests/conftest.py:76	if queue is not None and getattr(existing, "_write_queue", None) is queue:
+TEST_annotate	测试夹具/断言	tests/conftest.py:115	owners = list(getattr(db, "_test_session_owners", ()) or ())
+TEST_annotate	测试夹具/断言	tests/conftest.py:273	if getattr(ch, "power_id", "ming") != "ming":
+TEST_annotate	测试夹具/断言	tests/conftest.py:275	if getattr(ch, "office_type", "") == "后宫":
+TEST_annotate	测试夹具/断言	tests/conftest.py:459	self.name = getattr(inner, "name", "scene")
+TEST_annotate	测试夹具/断言	tests/conftest.py:462	out = self._inner.run(*a, **k) if hasattr(self._inner, "run") else self._inner
+NOT_CLASS	非DB对象可选字段/形	tests/conftest.py:465	if hasattr(out, "__iter__") and not hasattr(out, "content"):
+TEST_annotate	测试夹具/断言	tests/conftest.py:469	text = str(getattr(out, "content", "") or "")
+TEST_annotate	测试夹具/断言	tests/conftest.py:474	done.tools = list(getattr(out, "tools", None) or [])
+TEST_annotate	测试夹具/断言	tests/conftest.py:502	pending = getattr(result, "pending_audience_translation", None)
+TEST_annotate	测试夹具/断言	tests/conftest.py:508	answer = str(getattr(result, "answer", "") or "")
+TEST_annotate	测试夹具/断言	tests/conftest.py:542	if getattr(db, "conn", None) is None:
+TEST_annotate	测试夹具/断言	tests/test_secret_order_isolation_883.py:1475	getattr(db, rollback_entry)(chat_turn_id)
+NOT_CLASS	非召对失败重试接缝（agno/flows/内部/CLI后端/机械月末/谏议）	ming_sim/recommendations.py:15	conn = getattr(db, "conn", None)
+NOT_CLASS	非召对失败重试接缝（agno/flows/内部/CLI后端/机械月末/谏议）	ming_sim/recommendations.py:82	conn = getattr(db, "conn", None)
+NOT_CLASS	非DB能力存在性	ming_sim/knowledge.py:55	content = getattr(db, "content", None)
+NOT_CLASS	非DB能力存在性	ming_sim/knowledge.py:56	event_by_id = getattr(content, "event_by_id", None) or {}
+NOT_CLASS	非DB能力存在性	ming_sim/knowledge.py:60	raw = getattr(ev, "audiences", None)
+NOT_CLASS	非DB能力存在性	ming_sim/knowledge.py:469	name = str(character_name or getattr(character, "name", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/knowledge.py:474	str((current["office"] if current is not None else getattr(character, "office", "")) or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/knowledge.py:475	str((current["office_type"] if current is not None else getattr(character, "office_type", "")) or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:468	read1 = getattr(stream, "read1", None)
+NOT_CLASS	callable 一般探测	ming_sim/cli_backend.py:469	raw = read1(4096) if callable(read1) else stream.read(4096)
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1030	return (getattr(llm_config, "channel", "") or "").strip().lower()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1042	runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1045	model = (getattr(llm_config, "cli_model", "") or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1046	reasoning_strength = str(getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1174	runner = (getattr(llm_config, "cli_runner", "") or cli_backend_from_env() or "agy").strip().lower()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1180	return str(getattr(llm_config, "model", "") or "?")
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1185	model = (str(getattr(llm_config, "cli_model", "") or "").strip()) or cli_model_from_env(runner)
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1214	role = getattr(m, "role", "user")
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1215	content = getattr(m, "content", "")
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1304	characters = getattr(content, "characters", None) if content is not None else None
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1313	name = str(getattr(ch, "name", None) or key or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1318	for a in (getattr(ch, "aliases", None) or [])
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1344	armies = getattr(content, "armies", None) if content is not None else None
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1351	army_id = str(getattr(army, "id", None) or key or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1354	name = str(getattr(army, "name", None) or army_id).strip()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1495	chars = getattr(content, "characters", None) or {}
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1497	for raw in getattr(ch, "aliases", None) or []:
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1507	chars = getattr(content, "characters", None) or {} if content is not None else {}
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:1513	for raw in getattr(ch, "aliases", None) or []:
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:2132	regions = getattr(content, "regions", None) if content is not None else None
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:2135	rid = str(getattr(region, "id", None) or key or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:2136	name = str(getattr(region, "name", None) or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:2391	store = getattr(db, "affairs", None)
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:2392	list_open = getattr(store, "list_open", None)
+NOT_CLASS	callable 一般探测	ming_sim/cli_backend.py:2393	if not callable(list_open):
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:2494	partial = getattr(exc, "partial_result", None)
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:2498	baseline_failed_fields = frozenset(getattr(exc, "failed_fields", None) or ())
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:2499	raw_draft_failures = getattr(exc, "draft_failures", None) or {}
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:2532	draft_failures=getattr(
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:3452	regions_content = getattr(content, "regions", None) if content is not None else None
+NOT_CLASS	非召对失败重试接缝（agno/flows/内部/CLI后端/机械月末/谏议）	ming_sim/cli_backend.py:3453	conn = getattr(db, "conn", None) if db is not None else None
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4400	materials = str(getattr(self, "materials_dir", "") or "").strip() or None
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4404	model=str(getattr(self, "id", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4406	str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4425	materials = str(getattr(self, "materials_dir", "") or "").strip() or None
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4457	"materials_dir": str(getattr(self, "materials_dir", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4502	materials = str(getattr(self, "materials_dir", "") or "").strip() or None
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4511	model=str(getattr(self, "id", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4512	reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4622	channel = str(getattr(args, "channel", "") or "cli").strip().lower() or "cli"
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4623	model = str(getattr(args, "model", "") or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4628	str(getattr(args, "api_key", "") or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4633	str(getattr(args, "base_url", "") or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4652	runner = str(getattr(args, "runner", "") or "").strip().lower()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4689	channel = str(getattr(cfg, "channel", "") or getattr(args, "channel", "") or "").strip().lower()
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4693	getattr(cfg, "cli_runner", "") or getattr(args, "runner", "") or ""
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4696	getattr(cfg, "cli_model", "")
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4697	or getattr(cfg, "model", "")
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4698	or getattr(args, "model", "")
+NOT_CLASS	非DB能力存在性	ming_sim/cli_backend.py:4705	"reasoning_strength": str(getattr(cfg, "reasoning_strength", "") or ""),
+NOT_CLASS	非DB对象可选字段/形	ming_sim/highlight_judge.py:82	if not raw and hasattr(output, "content"):
+NOT_CLASS	非DB能力存在性	ming_sim/highlight_judge.py:83	raw = str(getattr(output, "content") or "")
+TEST_annotate	测试夹具/断言	tests/test_fiscal_substrate_bridge.py:4641	content = getattr(db, "content", None)
+NOT_CLASS	callable 一般探测	tests/cli_process_doubles.py:84	if callable(item):
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:66	prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:67	completion = int(getattr(usage, "completion_tokens", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:68	total = int(getattr(usage, "total_tokens", prompt + completion) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:69	prompt_details = getattr(usage, "prompt_tokens_details", None)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:70	cached = int(getattr(prompt_details, "cached_tokens", 0) or 0) if prompt_details else 0
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:71	cache_creation = int(getattr(prompt_details, "cache_creation_input_tokens", 0) or 0) if prompt_details else 0
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:72	completion_details = getattr(usage, "completion_tokens_details", None)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:73	reasoning = int(getattr(completion_details, "reasoning_tokens", 0) or 0) if completion_details else 0
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:98	prompt = int(getattr(metrics, "input_tokens", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:99	completion = int(getattr(metrics, "output_tokens", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:100	total = int(getattr(metrics, "total_tokens", prompt + completion) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:101	cached = int(getattr(metrics, "cache_read_tokens", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:102	cache_creation = int(getattr(metrics, "cache_write_tokens", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:103	reasoning = int(getattr(metrics, "reasoning_tokens", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:128	client = getattr(self_client_holder, "_client", None)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:131	base = getattr(client, "base_url", "")
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:189	model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:190	_record_usage(model_id, getattr(resp, "usage", None), caller_tag)
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:202	model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
+NOT_CLASS	非DB能力存在性	ming_sim/token_stats.py:203	_record_usage(model_id, getattr(resp, "usage", None), caller_tag)
+TEST_annotate	测试夹具/断言	tests/test_new_issues_section_rejections.py:34	if getattr(existing, "id", None) == ev.id:
+TEST_annotate	测试夹具/断言	tests/test_new_issues_section_rejections.py:74	if getattr(ev, "event_type", "") != "situation":
+TEST_annotate	测试夹具/断言	tests/test_new_issues_section_rejections.py:76	if getattr(ev, "auto_trigger", False):
+TEST_annotate	测试夹具/断言	tests/test_new_issues_section_rejections.py:85	if getattr(ev, "trigger_year", 0) > 0:
+TEST_annotate	测试夹具/断言	tests/test_settlement_write_guard_393.py:49	return getattr(character, "power_id", "ming") or "ming"
+TEST_annotate	测试夹具/断言	tests/test_audience_presence_500.py:112	and getattr(c, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_audience_presence_500.py:113	and getattr(c, "office_type", "") != "后宫"
+NOT_CLASS	非DB能力存在性	ming_sim/due_review.py:331	turn = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/due_review.py:578	turn = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:74	index = list(getattr(prepared, "index_lines", ()) or ())
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:115	db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:151	db_path = Path(str(getattr(db, "path", "") or ".")).resolve()
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:293	getattr(character, "name", "")
+NOT_CLASS	callable 一般探测	ming_sim/materials.py:329	value = root() if callable(root) else root
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:368	name = str(getattr(character, "name", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:380	return str(audience_scene_recap(db, getattr(character, "name", "")) or "")
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:385	store = getattr(db, "affairs", None)
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:386	if store is None or not hasattr(store, "affair_id_for_issue"):
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:423	store = getattr(db, "affairs", None)
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:424	if store is None or not hasattr(store, "get"):
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:492	textual_facts = getattr(db, "textual_facts", None)
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:719	name = str(getattr(character, "name", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:720	office = str(getattr(character, "office", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:748	name = str(getattr(character, "name", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:779	brief = build_recommendation_brief(db, state, str(getattr(character, "name", "") or ""))
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:789	store = getattr(db, "textual_facts", None)
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:790	readable = getattr(store, "readable_materials", None)
+NOT_CLASS	callable 一般探测	ming_sim/materials.py:791	if not callable(readable):
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:794	name = str(getattr(character, "name", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:892	name = str(getattr(character, "name", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:912	knowledge.get("office_type") or getattr(character, "office_type", "") or ""
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:931	name = str(getattr(character, "name", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1104	name = str(getattr(character, "name", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1117	name = str(getattr(character, "name", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1231	store = getattr(db, "textual_facts", None)
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1335	"terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1338	"trigger_class": str(getattr(ev, "trigger_class", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1339	"category": str(getattr(ev, "category", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1340	"urgency": int(getattr(ev, "urgency", 0) or 0),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1341	"severity": int(getattr(ev, "severity", 0) or 0),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1342	"person_core_subjects": list(getattr(ev, "person_core_subjects", []) or []),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1343	"precondition": str(getattr(ev, "precondition", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1344	"resolve_condition": str(getattr(ev, "resolve_condition", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1345	"fail_condition": str(getattr(ev, "fail_condition", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1347	"region_hint": str(getattr(ev, "region_hint", "") or ""),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1437	store = getattr(db, "affairs", None)
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1438	if store is None or not hasattr(store, "list_open"):
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1440	textual_facts = getattr(db, "textual_facts", None)
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1543	"verdict_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:1651	textual_facts = getattr(db, "textual_facts", None)
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:2090	name = str(getattr(character, "name", "") or "")
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:2130	getattr(db, "textual_facts", None),
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:2217	content = getattr(db, "content", None)
+NOT_CLASS	非DB能力存在性	ming_sim/materials.py:2218	characters = getattr(content, "characters", None) or {}
+NOT_CLASS	非DB能力存在性	ming_sim/session_write_queue.py:551	q = getattr(owner, "_write_queue", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session_write_queue.py:554	session = getattr(owner, "session", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session_write_queue.py:556	q = getattr(session, "_write_queue", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session_write_queue.py:564	q = getattr(owner, "_write_queue", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session_write_queue.py:567	session = getattr(owner, "session", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session_write_queue.py:569	q = getattr(session, "_write_queue", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session_write_queue.py:601	session = getattr(owner, "session", None)
+NOT_CLASS	非DB能力存在性	ming_sim/session_write_queue.py:602	if session is None and hasattr(owner, "close") and hasattr(owner, "db"):
+NOT_CLASS	非DB能力存在性	ming_sim/session_write_queue.py:609	close_resources = getattr(session, "_close_resources", None)
+NOT_CLASS	callable 一般探测	ming_sim/session_write_queue.py:610	if callable(close_resources):
+NOT_CLASS	非DB能力存在性	ming_sim/session_write_queue.py:620	close_resources = getattr(session, "_close_resources", None)
+NOT_CLASS	callable 一般探测	ming_sim/session_write_queue.py:621	if callable(close_resources):
+NOT_CLASS	非DB能力存在性	ming_sim/covert_progress.py:1529	if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+NOT_CLASS	非DB能力存在性	ming_sim/covert_progress.py:1587	turn = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/covert_progress.py:1870	if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+NOT_CLASS	非DB能力存在性	ming_sim/covert_progress.py:2091	if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+TEST_annotate	测试夹具/断言	tests/legacy_staging_helpers.py:16	if getattr(ch, "power_id", "ming") != "ming":
+TEST_annotate	测试夹具/断言	tests/legacy_staging_helpers.py:18	if getattr(ch, "office_type", "") == "后宫":
+TEST_annotate	测试夹具/断言	tests/legacy_staging_helpers.py:20	if db.get_character_status(getattr(ch, "name", name))[0] == "active":
+TEST_annotate	测试夹具/断言	tests/legacy_staging_helpers.py:21	return getattr(ch, "name", name)
+TEST_annotate	测试夹具/断言	tests/test_on_scene_immediate_write_1839.py:284	section = getattr(result, name)
+TEST_annotate	测试夹具/断言	tests/test_gazette_author_1862.py:281	return getattr(self.fact, key)
+NOT_CLASS	非DB能力存在性	ming_sim/relations.py:316	turn = int(getattr(state, "turn", 0) or 0)
+TEST_annotate	测试夹具/断言	tests/test_pihong_dossier_1490.py:74	if hasattr(monkeypatch_or_module, "setattr"):
+TEST_annotate	测试夹具/断言	tests/test_pihong_dossier_1490.py:162	if getattr(it, "needs_revise_llm", False) or str(
+TEST_annotate	测试夹具/断言	tests/test_pihong_dossier_1490.py:756	path = getattr(game_or_path, 'db_path', None)
+TEST_annotate	测试夹具/断言	tests/test_pihong_dossier_1490.py:759	db = getattr(game_or_path, 'db', None)
+TEST_annotate	测试夹具/断言	tests/test_pihong_dossier_1490.py:760	return str(getattr(db, 'path', None) or getattr(db, 'db_path', None) or '')
+TEST_annotate	测试夹具/断言	tests/test_pihong_dossier_1490.py:1071	if mname in getattr(content, 'characters', {}):
+TEST_annotate	测试夹具/断言	tests/test_pihong_dossier_1490.py:1688	name = str(getattr(inputs, "person_name", "") or "") or "臣"
+TEST_annotate	测试夹具/断言	tests/test_pihong_dossier_1490.py:2170	if int(getattr(game, '_settlement_entry_inflight', 0) or 0) >= 2:
+TEST_annotate	测试夹具/断言	tests/test_relation_brew_636.py:72	stances = getattr(_brew, "stances", None)
+TEST_annotate	测试夹具/断言	tests/test_relation_brew_636.py:77	outputs = getattr(_brew, "outputs", None)
+TEST_annotate	测试夹具/断言	tests/test_rejection_wiring.py:411	if getattr(ch, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_rejection_wiring.py:412	and getattr(ch, "office_type", "") != "后宫"
+TEST_annotate	测试夹具/断言	tests/test_qa_c2_phase_settlement_mask_1374.py:56	runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+NOT_CLASS	非DB能力存在性	ming_sim/flows.py:54	if getattr(db.conn, "_commit_suspended", False):
+NOT_CLASS	非DB能力存在性	ming_sim/flows.py:59	turn=int(getattr(state, "turn", 0)),
+NOT_CLASS	非DB能力存在性	ming_sim/flows.py:1029	if not getattr(db.conn, "_commit_suspended", False):
+NOT_CLASS	非DB能力存在性	ming_sim/flows.py:1361	if hasattr(db, attr):
+NOT_CLASS	非DB能力存在性	ming_sim/month_chain.py:30	if owner is None or getattr(owner, "db", None) is not db:
+NOT_CLASS	非DB能力存在性	ming_sim/month_chain.py:72	origin = str(getattr(fact, "origin_ref", "") or "")
+NOT_CLASS	过月结算供料/快照职责；非召对失败呈现/重试接缝（按调用职责，非凭文件名）	ming_sim/month_chain.py:135	if not raw.isdigit() or not hasattr(db, "conn"):
+NOT_CLASS	过月结算供料/快照职责；非召对失败呈现/重试接缝（按调用职责，非凭文件名）	ming_sim/month_chain.py:160	if hasattr(db, "conn"):
+NOT_CLASS	过月结算供料/快照职责；非召对失败呈现/重试接缝（按调用职责，非凭文件名）	ming_sim/month_chain.py:187	if hasattr(db, "conn"):
+NOT_CLASS	过月结算供料/快照职责；非召对失败呈现/重试接缝（按调用职责，非凭文件名）	ming_sim/month_chain.py:207	if hasattr(db, "conn"):
+NOT_CLASS	过月结算供料/快照职责；非召对失败呈现/重试接缝（按调用职责，非凭文件名）	ming_sim/month_chain.py:234	if hasattr(db, "list_pending_decisions"):
+NOT_CLASS	过月结算供料/快照职责；非召对失败呈现/重试接缝（按调用职责，非凭文件名）	ming_sim/month_chain.py:246	if hasattr(db, "get_month_open_snapshot"):
+NOT_CLASS	非DB能力存在性	ming_sim/month_chain.py:524	step=str(getattr(exc, "stage", None) or "month_chain"),
+NOT_CLASS	非DB能力存在性	ming_sim/month_chain.py:711	and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB能力存在性	ming_sim/month_chain.py:714	reload_state_from_db(db, state, content=getattr(db, "content", None))
+NOT_CLASS	非DB能力存在性	ming_sim/month_chain.py:721	original = str(getattr(exc, "message", None) or exc)
+NOT_CLASS	非DB能力存在性	ming_sim/month_chain.py:872	previous = getattr(db.conn, "_recommendation_snapshots_prevalidated", False)
+NOT_CLASS	非DB能力存在性	ming_sim/month_chain.py:926	effects = getattr(result, "effects", None)
+NOT_CLASS	非DB能力存在性	ming_sim/month_chain.py:927	applied = getattr(effects, "applied", []) if effects is not None else []
+NOT_CLASS	过月结算供料/快照职责；非召对失败呈现/重试接缝（按调用职责，非凭文件名）	ming_sim/month_chain.py:1056	dossier = db.get_decree_dossier(dossier_id) if dossier_id and hasattr(db, "get_decree_dossier") else None
+NOT_CLASS	非DB对象可选字段/形	ming_sim/audience_night.py:41	if isinstance(character, Mapping) or hasattr(character, "keys"):
+NOT_CLASS	非DB能力存在性	ming_sim/audience_night.py:46	return getattr(character, field, "")
+NOT_CLASS	非DB能力存在性	ming_sim/audience_night.py:274	#1853 J8-R：必备 GameDB.conn 直调，禁 getattr(conn, None) 替身。
+NOT_CLASS	非DB能力存在性	ming_sim/audience_night.py:278	not bool(getattr(conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/audience_night.py:279	and int(getattr(conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB对象可选字段/形	ming_sim/audience_night.py:697	table = str(row["target_table"] if hasattr(row, "keys") else row[0])
+NOT_CLASS	非DB能力存在性	ming_sim/audience_night.py:1712	not bool(getattr(db.conn, "_commit_suspended", False))
+NOT_CLASS	非DB能力存在性	ming_sim/audience_night.py:1713	and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+NOT_CLASS	非DB能力存在性	ming_sim/audience_night.py:2406	getattr(sqlite3, "SQLITE_CONSTRAINT_UNIQUE", None),
+NOT_CLASS	非DB能力存在性	ming_sim/audience_night.py:2407	getattr(sqlite3, "SQLITE_CONSTRAINT", None),
+NOT_CLASS	非DB能力存在性	ming_sim/audience_night.py:2410	err_code = getattr(exc, "sqlite_errorcode", None)
+TEST_annotate	测试夹具/断言	tests/directive_seed_helpers.py:29	if getattr(session, "content", None) is not None else {}),
+TEST_annotate	测试夹具/断言	tests/test_audience_night_498.py:46	if getattr(ch, "power_id", "ming") != "ming":
+TEST_annotate	测试夹具/断言	tests/test_audience_night_498.py:48	if getattr(ch, "office_type", "") == "后宫":
+TEST_annotate	测试夹具/断言	tests/test_audience_night_498.py:604	and getattr(c, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_audience_night_498.py:605	and getattr(c, "office_type", "") != "后宫")
+NOT_CLASS	非DB能力存在性	ming_sim/decree.py:927	if getattr(db.conn, "_atomic_depth", 0) > 0:
+NOT_CLASS	非DB能力存在性	ming_sim/decree.py:934	setattr(state, field_name, getattr(fresh, field_name))
+NOT_CLASS	非DB能力存在性	ming_sim/decree.py:945	_sync_offices_from_db_impl(content, db, getattr(db, "llm_config", None))
+NOT_CLASS	非DB能力存在性	ming_sim/decree.py:989	if getattr(db.conn, "_atomic_depth", 0) == 0:
+NOT_CLASS	非DB能力存在性	ming_sim/decree.py:1100	"open_affairs": db.affairs.input_brief(getattr(db, "textual_facts", None)),
+NOT_CLASS	非DB对象可选字段/形	tests/test_yuan_arrival_185.py:22	has_transit_to = hasattr(content.characters[name], "transit_to")
+TEST_annotate	测试夹具/断言	tests/test_yuan_arrival_185.py:23	old_transit_to = getattr(content.characters[name], "transit_to", "")
+TEST_annotate	测试夹具/断言	tests/test_yuan_arrival_185.py:40	assert getattr(content.characters[name], "transit_to", "") == DEST
+TEST_annotate	测试夹具/断言	tests/test_yuan_arrival_185.py:110	assert getattr(content.characters[name], "transit_to", "") == "", (
+NOT_CLASS	非DB对象可选字段/形	tests/test_yuan_arrival_185.py:119	elif hasattr(content.characters[name], "transit_to"):
+NOT_CLASS	非DB对象可选字段/形	tests/test_yuan_arrival_185.py:128	has_transit_to = hasattr(content.characters[name], "transit_to")
+TEST_annotate	测试夹具/断言	tests/test_yuan_arrival_185.py:129	old_transit_to = getattr(content.characters[name], "transit_to", "")
+NOT_CLASS	非DB对象可选字段/形	tests/test_yuan_arrival_185.py:174	elif hasattr(content.characters[name], "transit_to"):
+TEST_annotate	测试夹具/断言	tests/test_character_knowledge_489.py:1426	if c.name != clerk.name and getattr(c, "office_type", "") not in {"", "后宫"}
+TEST_annotate	测试夹具/断言	tests/test_web_chat_serialization_393.py:78	content = getattr(event, "content", None)
+TEST_annotate	测试夹具/断言	tests/test_web_chat_serialization_393.py:164	return getattr(character, "power_id", "ming") or "ming"
+TEST_annotate	测试夹具/断言	tests/test_audience_translation_1838.py:183	lambda out: str(getattr(out, "content", "") or ""),
+TEST_annotate	测试夹具/断言	tests/test_month_chain_1847.py:653	captured["prepared_root"] = str(getattr(prepared, "root", "") or "")
+TEST_annotate	测试夹具/断言	tests/test_month_chain_1847.py:654	captured["prepared_opening"] = str(getattr(prepared, "opening", "") or "")
+TEST_annotate	测试夹具/断言	tests/test_qa_d1_decree_normalize_1274.py:142	if getattr(r, "path", None) == "/api/decree"
+TEST_annotate	测试夹具/断言	tests/test_qa_d1_decree_normalize_1274.py:143	and "PATCH" in (getattr(r, "methods", None) or set())
+TEST_annotate	测试夹具/断言	tests/test_qa_d1_decree_normalize_1274.py:149	if getattr(r, "path", None) == "/api/directives"
+TEST_annotate	测试夹具/断言	tests/test_qa_d1_decree_normalize_1274.py:150	and "POST" in (getattr(r, "methods", None) or set())
+TEST_annotate	测试夹具/断言	tests/test_qa_d1_decree_normalize_1274.py:157	if getattr(r, "path", None) == "/api/directives/{directive_id}"
+TEST_annotate	测试夹具/断言	tests/test_qa_d1_decree_normalize_1274.py:158	and method in (getattr(r, "methods", None) or set())
+TEST_annotate	测试夹具/断言	tests/test_qa_1281_issue_audience_case_facts.py:191	return getattr(real_conn, name)
+TEST_annotate	测试夹具/断言	tests/test_style_temperament_641.py:256	and getattr(c, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_style_temperament_641.py:298	and getattr(c, "power_id", "ming") == "ming"
+NOT_CLASS	非DB对象可选字段/形	tests/test_mechanical_tail_1845.py:89	if hasattr(executor, "fn"):
+NOT_CLASS	非DB对象可选字段/形	tests/test_mechanical_tail_1845.py:125	if hasattr(executor, "fn"):
+NOT_CLASS	非DB对象可选字段/形	tests/test_mechanical_tail_1845.py:173	if hasattr(executor, "fn"):
+NOT_CLASS	非DB对象可选字段/形	tests/test_mechanical_tail_1845.py:211	if hasattr(executor, "fn"):
+NOT_CLASS	非DB对象可选字段/形	tests/test_mechanical_tail_1845.py:225	if hasattr(retry_executor, "fn"):
+NOT_CLASS	非DB对象可选字段/形	tests/test_mechanical_tail_1845.py:421	if hasattr(executor, "fn"):
+NOT_CLASS	非DB能力存在性	ming_sim/registry.py:50	if hasattr(chat_model, "materials_dir"):
+NOT_CLASS	非DB能力存在性	ming_sim/registry.py:52	scene_prompt = str(getattr(content, "scene_agent_prompt", "") or "").strip()
+NOT_CLASS	非DB能力存在性	ming_sim/registry.py:60	_minister_game_world_prompt(content.game_world_prompt) if getattr(content, "game_world_prompt", "") else "",
+TEST_annotate	测试夹具/断言	tests/test_decree_dossiers_571.py:1143	paths = {getattr(r, "path", None) for r in web_app.app.routes}
+TEST_annotate	测试夹具/断言	tests/test_decree_dossiers_571.py:1145	getattr(r, "path", None) == "/api/decree"
+TEST_annotate	测试夹具/断言	tests/test_decree_dossiers_571.py:1146	and "PATCH" in (getattr(r, "methods", None) or set())
+TEST_annotate	测试夹具/断言	tests/test_llm_channel_config.py:338	assert getattr(model, "top_p", None) is None
+TEST_annotate	测试夹具/断言	tests/test_llm_channel_config.py:372	assert getattr(model, "reasoning_effort", None) in ("", None)
+NOT_CLASS	非DB能力存在性	ming_sim/breach_plea.py:357	turn = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/breach_plea.py:833	turn = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/breach_plea.py:959	turn = int(getattr(state, "turn", 0) or 0)
+NOT_CLASS	非DB能力存在性	ming_sim/breach_plea.py:1002	turn = int(getattr(state, "turn", 0) or 0)
+TEST_annotate	测试夹具/断言	tests/test_month_chain_1843.py:724	materials_dir = getattr(agent.model, "materials_dir", "")
+TEST_annotate	测试夹具/断言	tests/test_qa_c3_secret_order_path_1357_1376.py:25	if getattr(ch, "power_id", "ming") != "ming":
+TEST_annotate	测试夹具/断言	tests/test_qa_c3_secret_order_path_1357_1376.py:27	if getattr(ch, "office_type", "") in ("后宫", "宗藩"):
+TEST_annotate	测试夹具/断言	tests/test_qa_c3_secret_order_path_1357_1376.py:29	if db.get_character_status(getattr(ch, "name", name))[0] == "active":
+TEST_annotate	测试夹具/断言	tests/test_qa_c3_secret_order_path_1357_1376.py:30	return getattr(ch, "name", name)
+TEST_annotate	测试夹具/断言	tests/test_qa_c3_secret_order_path_1357_1376.py:57	runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:898	if getattr(ch, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:899	and getattr(ch, "office_type", "") != "后宫"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:1002	if getattr(ch, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:1003	and getattr(ch, "office_type", "") != "后宫"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:1255	and getattr(ch, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:1256	and getattr(ch, "office_type", "") != "后宫"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:1390	if getattr(ch, "power_id", "") not in {"", "ming"}
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:1900	(n for n, c in content.characters.items() if getattr(c, "office_type", "") == "宗藩"),
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:1922	if getattr(c, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:1923	and getattr(c, "office_type", "") not in ("后宫", "宗藩")
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:1992	if getattr(c, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:2047	if getattr(c, "power_id", "ming") != "ming"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:2289	and getattr(ch, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:2290	and getattr(ch, "office_type", "") != "后宫"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:2646	assert getattr(content.characters[old], "transit_to", "") == "", "内存 transit_to 也须清"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:2758	assert getattr(ch, "reason_code", None) == "获罪削籍", "重载未同步 reason_code"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:2759	assert getattr(ch, "status_reason", None) == "忤逆案削籍", "重载未同步 status_reason"
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:2879	_saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:2903	_saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:2928	_saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
+TEST_annotate	测试夹具/断言	tests/test_person_delta_adapter.py:3512	_saved = (_ch.status, _ch.office, _ch.office_type, getattr(_ch, "status_reason", ""), getattr(_ch, "reason_code", ""))
+TEST_annotate	测试夹具/断言	tests/test_menu_lifecycle_drain_396.py:467	content = getattr(event, "content", None)
+TEST_annotate	测试夹具/断言	tests/test_court_break_player_lock_1727.py:61	if getattr(ch, "power_id", "ming") != "ming":
+TEST_annotate	测试夹具/断言	tests/test_court_break_player_lock_1727.py:63	if getattr(ch, "office_type", "") == "后宫":
+TEST_annotate	测试夹具/断言	tests/test_audience_background.py:90	if hasattr(GameSession, _name):
+TEST_annotate	测试夹具/断言	tests/test_audience_background.py:91	setattr(self, _name, _types.MethodType(getattr(GameSession, _name), self))
+TEST_annotate	测试夹具/断言	tests/test_audience_background.py:155	q = getattr(web_game, "_write_queue", None)
+NOT_CLASS	非DB对象可选字段/形	tests/test_audience_background.py:156	if q is not None and hasattr(q, "wait_idle"):
+TEST_annotate	测试夹具/断言	tests/test_audience_background.py:159	wait_until(lambda: int(getattr(web_game, "_pending_writes_count", 0) or 0) == 0)
+TEST_annotate	测试夹具/断言	tests/test_audience_background.py:192	assert getattr(error.value, "status_code", None) == 409
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:553	if str(getattr(ch, "location", "") or "") in {"京师", "beijing"}
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:993	"location": getattr(before_char, "location", ""),
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:994	"transit_to": getattr(before_char, "transit_to", ""),
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:995	"transit_distance_remaining": getattr(
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:998	"transit_speed_factor": getattr(before_char, "transit_speed_factor", None),
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:999	"transit_start_turn": getattr(before_char, "transit_start_turn", 0),
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1031	"location": getattr(after_char, "location", ""),
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1032	"transit_to": getattr(after_char, "transit_to", ""),
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1033	"transit_distance_remaining": getattr(
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1036	"transit_speed_factor": getattr(after_char, "transit_speed_factor", None),
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1037	"transit_start_turn": getattr(after_char, "transit_start_turn", 0),
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1089	assert getattr(mirror, "transit_to", "") == "shaanxi"
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1090	assert getattr(mirror, "location", "") == "beizhili"
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1292	and str(getattr(ch, "office", "") or "").strip()
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1339	assert (getattr(mirror, "location", ""), getattr(mirror, "transit_to", "") or "") == (
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1366	assert (getattr(solo, "location", ""), getattr(solo, "transit_to", "") or "") == (
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1396	assert (getattr(first, "location", ""), getattr(first, "transit_to", "") or "") == (
+TEST_annotate	测试夹具/断言	tests/test_audience_travel_gating_670.py:1399	assert (getattr(second, "location", ""), getattr(second, "transit_to", "") or "") == (
+TEST_annotate	测试夹具/断言	tests/test_audience_undo_506.py:31	if getattr(ch, "power_id", "ming") != "ming":
+TEST_annotate	测试夹具/断言	tests/test_audience_undo_506.py:33	if getattr(ch, "office_type", "") == "后宫":
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:18	if getattr(ch, "power_id", "ming") != "ming":
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:21	if getattr(ch, "office_type", "") in ("后宫", "宗藩", "未仕"):
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:39	if getattr(c, "power_id", "ming") != "ming"
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:40	and getattr(c, "office_type", "") != "后宫"),
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:84	(n for n, c in content.characters.items() if getattr(c, "office_type", "") == "宗藩"),
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:114	if getattr(c, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:115	and getattr(c, "office_type", "") not in ("后宫", "宗藩", "流寇", "未仕")
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:116	and int(getattr(c, "debut_year", 0) or 0) == 0),
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:150	(n for n, c in content.characters.items() if getattr(c, "faction", "") == "流寇"),
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:190	if getattr(c, "office_type", "") == "后宫"),
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:241	if getattr(c, "office_type", "") == "后宫" and getattr(c, "power_id", "ming") == "ming"),
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:275	if c.office_type == "后宫" and getattr(c, "power_id", "ming") == "ming"), None)
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:320	if getattr(c, "power_id", "ming") != "ming"
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:328	assert getattr(content.characters[name], "power_id", "ming") != "ming"  # 内存仍旧势力
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:353	if getattr(c, "power_id", "ming") != "ming"
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:376	if getattr(c, "power_id", "ming") != "ming"
+TEST_annotate	测试夹具/断言	tests/test_web_court_visibility.py:437	assert int(getattr(ch, "debut_year", 0) or 0) == 0
+TEST_annotate	测试夹具/断言	tests/test_secret_order_payoff_1504.py:1019	captured["root"] = getattr(prepared, "root", None)
+TEST_annotate	测试夹具/断言	tests/test_month_open_snapshot_1234.py:52	runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+TEST_annotate	测试夹具/断言	tests/test_audience_translate_1837.py:87	if "洪承畴" in getattr(content, "characters", {}):
+TEST_annotate	测试夹具/断言	tests/test_audience_translate_1837.py:681	getattr(r, "category", "") == "hallucinated_id"
+TEST_annotate	测试夹具/断言	tests/test_audience_translate_1837.py:703	getattr(r, "category", "") == "hallucinated_id"
+TEST_annotate	测试夹具/断言	tests/test_audience_draft_grant_once_1777.py:76	getattr(ch, "name", key)
+TEST_annotate	测试夹具/断言	tests/test_audience_draft_grant_once_1777.py:78	if getattr(ch, "office_type", "") == "户部"
+TEST_annotate	测试夹具/断言	tests/test_audience_draft_grant_once_1777.py:79	and getattr(ch, "power_id", "ming") == "ming"
+TEST_annotate	测试夹具/断言	tests/test_audience_draft_grant_once_1777.py:80	and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
+TEST_annotate	测试夹具/断言	tests/test_audience_draft_grant_once_1777.py:81	and getattr(ch, "name", key) != "郭允厚"
+TEST_annotate	测试夹具/断言	tests/test_audience_draft_grant_once_1777.py:85	if getattr(game.session, "llm_config", None) is not None:
+TEST_annotate	测试夹具/断言	tests/test_person_transit_write_667.py:30	before_memory = tuple(getattr(character, field, 0) for field in fields)
+TEST_annotate	测试夹具/断言	tests/test_person_transit_write_667.py:51	assert tuple(getattr(character, field, 0) for field in fields) == before_memory
+TEST_annotate	测试夹具/断言	tests/test_person_transit_write_667.py:145	getattr(character, "transit_start_turn", 0),
+TEST_annotate	测试夹具/断言	tests/test_player_army_projection_321.py:195	runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+TEST_annotate	测试夹具/断言	tests/test_faction_brew_637.py:53	scripted = getattr(_brew, "stances", None)
+TEST_annotate	测试夹具/断言	tests/test_faction_brew_637.py:64	script = _brew.outputs.pop(0) if getattr(_brew, "outputs", None) else {
+TEST_annotate	测试夹具/断言	tests/test_chat_stream_failpaths_393.py:120	reg = getattr(sess, "registry", None)
+NOT_CLASS	非DB对象可选字段/形	tests/test_chat_stream_failpaths_393.py:121	if reg is not None and hasattr(reg, "get"):
+NOT_CLASS	非DB对象可选字段/形	tests/test_chat_stream_failpaths_393.py:138	if hasattr(run, "__iter__") and not isinstance(run, (str, bytes)):
+TEST_annotate	测试夹具/断言	tests/test_chat_stream_failpaths_393.py:142	parts.append(str(getattr(ev, "content", "") or ""))
+TEST_annotate	测试夹具/断言	tests/test_chat_stream_failpaths_393.py:144	return ChatTurnResult(answer=str(getattr(run, "content", "") or ""))
+TEST_annotate	测试夹具/断言	tests/test_hitl_quota_delete_1467.py:18	paths = {getattr(route, "path", None) for route in web_app.app.routes}
+TEST_annotate	测试夹具/断言	tests/test_opening_gazette_delete_1356.py:152	runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+TEST_annotate	测试夹具/断言	tests/test_rescript_option_field_heal_1746.py:128	m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
+TEST_annotate	测试夹具/断言	tests/test_rescript_option_field_heal_1746.py:135	m.get("content") if isinstance(m, dict) else getattr(m, "content", None)
+TEST_annotate	测试夹具/断言	tests/test_verify_llm_clocks_884.py:82	assert getattr(err, "stage", None) == "smoke-main"
+TEST_annotate	测试夹具/断言	tests/test_verify_llm_clocks_884.py:114	assert getattr(err, "stage", None) == "smoke-main"
+TEST_annotate	测试夹具/断言	tests/test_verify_llm_clocks_884.py:133	seen["timeout"] = getattr(self.model, "timeout", None)
+TEST_annotate	测试夹具/断言	tests/test_verify_llm_clocks_884.py:134	seen["max_retries"] = getattr(self.model, "max_retries", None)
+TEST_annotate	测试夹具/断言	tests/test_audience_commit_failure_1853.py:178	if getattr(character, "power_id", "ming") != "ming":
+TEST_annotate	测试夹具/断言	tests/test_structured_decree_contract_1624.py:543	and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+TEST_annotate	测试夹具/断言	tests/test_structured_decree_contract_1624.py:546	and str(getattr(ch, "office", "") or "").strip()
+TEST_annotate	测试夹具/断言	tests/test_structured_decree_contract_1624.py:641	and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+TEST_annotate	测试夹具/断言	tests/test_structured_decree_contract_1624.py:644	and str(getattr(ch, "office", "") or "").strip()
+TEST_annotate	测试夹具/断言	tests/test_structured_decree_contract_1624.py:779	failures = dict(getattr(ei.value, "draft_failures", None) or {})
+TEST_annotate	测试夹具/断言	tests/test_month_call_recovery_1846.py:545	if not failed["done"] and not getattr(db.conn, "_commit_suspended", False):
+NOT_CLASS	非DB对象可选字段/形	tests/test_event_trigger_gate.py:1479	if hasattr(character, "_test_runtime_ghost_attr"):
+NOT_CLASS	非DB对象可选字段/形	tests/test_event_trigger_gate.py:1488	assert not hasattr(character, "_test_runtime_ghost_attr")
+NOT_CLASS	非DB对象可选字段/形	tests/test_event_trigger_gate.py:1722	assert not hasattr(content.characters["毛文龙"], "ghost_preflight_attr")
+TEST_annotate	测试夹具/断言	tests/test_event_trigger_gate.py:2344	if getattr(ev, "category", "") == FISCAL_LEVY_EVENT_CATEGORY
+TEST_annotate	测试夹具/断言	tests/test_enter_settlement_period_1235.py:99	if getattr(ch, "power_id", "ming") != "ming":
+TEST_annotate	测试夹具/断言	tests/test_enter_settlement_period_1235.py:101	if getattr(ch, "office_type", "") == "后宫":
+TEST_annotate	测试夹具/断言	tests/test_enter_settlement_period_1235.py:161	runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+TEST_annotate	测试夹具/断言	tests/test_enter_settlement_period_1235.py:385	runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+TEST_annotate	测试夹具/断言	tests/test_memorial_inbox_1726.py:183	runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+TEST_annotate	测试夹具/断言	tests/test_audience_translate_1837_reopen.py:28	if "洪承畴" in getattr(content, "characters", {}):
+TEST_annotate	测试夹具/断言	tests/test_army_card_status_1501.py:133	runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+TEST_annotate	测试夹具/断言	tests/test_cli_play_turn.py:68	msgs = getattr(self, "messages", None)
+TEST_annotate	测试夹具/断言	tests/test_cli_play_turn.py:553	assert getattr(session, "_write_gate", None) is gate
+TEST_annotate	测试夹具/断言	tests/test_draft_admission_resubmit_1769.py:115	if getattr(game.session, "llm_config", None) is not None:
+TEST_annotate	测试夹具/断言	tests/test_qa_c2_settlement_display_lifecycle_1343.py:53	runtime.public_character = lambda c: {"name": getattr(c, "name", "")}

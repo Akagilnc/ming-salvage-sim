@@ -688,7 +688,7 @@ def test_unhandleable_commission_rejected_as_fact_no_forced_ask(game):
 
 
 def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch):
-    """转译调用失败 ≠ 成功空声明：不进分派、真因经 pending_action_failures 回场。"""
+    """转译调用失败 ≠ 成功空声明：不进分派、真因经 story_extract pending 水位回场。"""
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     before = db.conn.execute(
@@ -709,15 +709,11 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
     ctid = int(db.create_chat_turn(state, "殿上", "test-sess", 0, night_id=None))
     # 开夜由 scene_chat 内部 ensure
     result = sess.scene_chat("边饷如何？", chat_turn_id=ctid)
-    # FakeAgent.run → SimpleNamespace(content="臣在。") 原样进 result.answer
-    assert result.answer == "臣在。"
     fut = persist_and_schedule_scene(sess, db, result)
     assert fut is not None
-    try:
+    with pytest.raises(RuntimeError, match="simulated translate transport failure"):
         fut.result(timeout=30)
-        raise AssertionError("expected translation failure")
-    except Exception:
-        pass
+    assert result.answer == "臣在。"
     after = db.conn.execute(
         "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
     ).fetchone()["c"]
@@ -744,10 +740,6 @@ def test_translate_empty_success_still_dispatches_without_failure(game, monkeypa
     )
     result = sess.scene_chat("边事如何？")
     assert result.answer == "臣在。"
-    assert not any(
-        f.get("category") == "translate_failed"
-        for f in (result.pending_action_failures or [])
-    )
 
 
 def test_appointment_without_text_is_rejected_not_templated(game):

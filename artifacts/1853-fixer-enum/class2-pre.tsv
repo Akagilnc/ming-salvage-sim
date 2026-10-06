@@ -1,0 +1,49 @@
+file	line	label	snippet
+tests/conftest.py	526	lightweight_or_noop_atomic	def _atomic_connless_test_shell_compat():
+tests/test_chat_stream_failpaths_393.py	66	reimpl_create_chat_turn	def create_chat_turn(self, *a, **k):
+tests/test_chat_stream_failpaths_393.py	69	reimpl_capture_rollback	def capture_chat_rollback_snapshot(self):
+tests/test_chat_stream_failpaths_393.py	75	reimpl_append_chat	def append_chat_message(self, *a, **k):
+tests/test_chat_stream_failpaths_393.py	81	reimpl_fail_chat_turn	def fail_chat_turn(self, chat_turn_id):
+tests/test_chat_stream_failpaths_393.py	224	reimpl_create_chat_turn	def create_chat_turn(self, *a, **k):
+tests/test_chat_stream_failpaths_393.py	227	reimpl_capture_rollback	def capture_chat_rollback_snapshot(self):
+tests/test_chat_stream_failpaths_393.py	233	reimpl_append_chat	def append_chat_message(self, *a, **k):
+tests/test_chat_stream_failpaths_393.py	239	reimpl_fail_chat_turn	def fail_chat_turn(self, chat_turn_id):
+tests/test_chat_stream_failpaths_393.py	277	reimpl_create_chat_turn	def create_chat_turn(self, *a, **k):
+tests/test_chat_stream_failpaths_393.py	280	reimpl_capture_rollback	def capture_chat_rollback_snapshot(self):
+tests/test_chat_stream_failpaths_393.py	286	reimpl_append_chat	def append_chat_message(self, *a, **k):
+tests/test_chat_stream_failpaths_393.py	292	reimpl_fail_chat_turn	def fail_chat_turn(self, chat_turn_id):
+tests/test_cli_play_turn.py	32	lightweight_or_noop_atomic	def _noop_atomic(_db):
+tests/test_cli_play_turn.py	36	db_stub_class	class _CliChatDbStub:
+tests/test_cli_play_turn.py	49	reimpl_capture_rollback	def capture_chat_rollback_snapshot(self):
+tests/test_cli_play_turn.py	52	reimpl_create_chat_turn	def create_chat_turn(self, *_a, **_k):
+tests/test_cli_play_turn.py	63	reimpl_persist_reply	def persist_minister_reply(self, minister_name, turn, content, chat_turn_id, **_kw):
+tests/test_cli_play_turn.py	66	reimpl_fail_chat_turn	def fail_chat_turn(self, chat_turn_id):
+tests/test_cli_play_turn.py	70	copy_rollback_logic	self.messages = msgs[:-1]
+tests/test_cli_play_turn.py	73	reimpl_append_chat	def append_chat_message(self, minister_name, turn, role, content):
+tests/test_cli_play_turn.py	84	lightweight_or_noop_atomic	monkeypatch.setattr("ming_sim.applier.atomic", _noop_atomic)
+tests/test_cli_play_turn.py	181	db_stub_class	class Db:
+tests/test_cli_play_turn.py	212	db_stub_class	class Db(_CliChatDbStub):
+tests/test_cli_play_turn.py	254	db_stub_class	class Db(_CliChatDbStub):
+tests/test_cli_play_turn.py	294	db_stub_class	class Db(_CliChatDbStub):
+tests/test_cli_play_turn.py	334	db_stub_class	class Db(_CliChatDbStub):
+tests/test_cli_play_turn.py	335	reimpl_fail_chat_turn	def fail_chat_turn(self, chat_turn_id):
+tests/test_cli_play_turn.py	362	db_stub_class	class Db(_CliChatDbStub):
+tests/test_cli_play_turn.py	367	reimpl_persist_reply	def persist_minister_reply(self, minister_name, turn, content, chat_turn_id, **_kw):
+tests/test_cli_play_turn.py	370	reimpl_fail_chat_turn	def fail_chat_turn(self, chat_turn_id):
+tests/test_menu_lifecycle_drain_396.py	486	lightweight_or_noop_atomic	# conn=None：配合 _atomic_connless_test_shell_compat；夜查询由测试补丁现役接口。
+tests/test_menu_lifecycle_drain_396.py	492	reimpl_capture_rollback	def capture_chat_rollback_snapshot(self):
+tests/test_menu_lifecycle_drain_396.py	495	reimpl_create_chat_turn	def create_chat_turn(self, *_a, **_k):
+tests/test_menu_lifecycle_drain_396.py	501	reimpl_append_chat	def append_chat_message(self, minister_name, turn, role, content):
+tests/test_menu_lifecycle_drain_396.py	511	reimpl_persist_reply	def persist_minister_reply(self, minister_name, turn, content, chat_turn_id, **_kw):
+tests/test_menu_lifecycle_drain_396.py	526	reimpl_fail_chat_turn	def fail_chat_turn(self, *_a, **_k):
+tests/test_menu_lifecycle_drain_396.py	569	lightweight_or_noop_atomic	@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
+tests/test_web_chat_serialization_393.py	104	lightweight_or_noop_atomic	# conn=None：配合 _atomic_connless_test_shell_compat；夜查询由测试补丁现役接口。
+tests/test_web_chat_serialization_393.py	110	reimpl_capture_rollback	def capture_chat_rollback_snapshot(self):
+tests/test_web_chat_serialization_393.py	113	reimpl_create_chat_turn	def create_chat_turn(self, state, minister_name, agno_session_id, agno_runs_before, **_kw):
+tests/test_web_chat_serialization_393.py	116	reimpl_append_chat	def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
+tests/test_web_chat_serialization_393.py	127	reimpl_persist_reply	def persist_minister_reply(
+tests/test_web_chat_serialization_393.py	133	reimpl_fail_chat_turn	def fail_chat_turn(self, *_a, **_k):
+tests/test_web_chat_serialization_393.py	229	lightweight_or_noop_atomic	@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
+tests/test_web_chat_serialization_393.py	293	lightweight_or_noop_atomic	@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
+tests/test_web_chat_serialization_393.py	294	lightweight_or_noop_atomic	def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature(monkeypatch):
+tests/test_web_chat_serialization_393.py	294	retired_lightweight_test	def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature(monkeypatch):
