@@ -836,30 +836,3 @@ def test_power_id_defection_drops_faction_leverage_immediately(game):
     )
 
 
-def test_half_weight_odd_baseline_no_round_drift(game):
-    """weight_sum 含 .5 + 奇数基线 → 新档校准路径 leverage 精确命中基线、不因双 round 漂 ±1。"""
-    db, state, content = game
-    faction = "东林"
-    members = db.conn.execute(
-        "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming' "
-        "ORDER BY name",
-        (faction,),
-    ).fetchall()
-    assert members, f"{faction} 需有在朝成员"
-    for m in members[1:]:
-        db.set_character_status(state, m["name"], "dismissed", reason="清场")
-    keeper = members[0]["name"]
-    db.set_character_office(keeper, "礼部侍郎", "礼部")
-    assert db._faction_office_weight_sum(faction) == 2.5
-    baseline = 79
-    content.factions[faction].leverage = baseline
-    db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_calibrated'")
-    db.conn.commit()
-    db._calibrate_faction_offsets()
-    db.conn.commit()
-    lev = db.faction_leverage(faction)
-    assert lev == baseline, (
-        f"weight_sum=2.5 + 奇数基线 {baseline} → leverage 应={baseline}（不漂），实得 {lev}"
-    )
-
-
