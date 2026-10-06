@@ -56,6 +56,7 @@ _WORLD_WITH_TWO_QUESTIONS = (
 )
 
 
+
 def _decision_block(title: str, *labels: str) -> str:
     options = ",".join(
         f'{{"label":"{label}","hint":"h-{label}"}}' for label in labels
@@ -591,46 +592,6 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_continued") is True
     assert chain.get("world_questions") in (None, [], ())
-
-
-def test_cross_month_pending_draft_opens_rescript_desk(game, monkeypatch):
-    """本月零请旨时，既有跨月急务仍走同一案头，不得直接交邸报。"""
-    db, state, content = game
-    closed_turn = int(state.turn)
-    prior = closed_turn - 1
-    db.conn.execute(
-        "INSERT INTO pending_decisions "
-        "(turn, idx, event_id, title, context, options_json, choice_json, "
-        " status, kind, actor_name, actor_office, actor_faction, "
-        " revision_round, prior_options_json) "
-        "VALUES (?, 0, 'urgent:old:0', '旧急务甲', '跨月待批', ?, '', "
-        " 'pending', 'rescript_draft', '首辅', '内阁首辅', '东林', 0, '[]')",
-        (
-            prior,
-            json.dumps([
-                {"label": "发帑", "hint": "饥民"},
-                {"label": "留中", "hint": "待查"},
-            ], ensure_ascii=False),
-        ),
-    )
-    db.conn.commit()
-    _forbid_extractor(monkeypatch)
-    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
-    session = make_light_session(db, state, content)
-
-    result = session.resolve_turn(allow_empty_decree=True)
-
-    assert result.awaiting is True
-    assert result.stage == "rescript"
-    assert result.advanced is False
-    assert int(state.turn) == closed_turn
-    assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
-    titles = [row["title"] for row in session.pending_decisions()]
-    assert titles == ["旧急务甲"]
-    assert session.pending_decisions()[0]["kind"] == "rescript_draft"
 
 
 def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkeypatch):
@@ -2286,3 +2247,5 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
         and str(row.get("category") or "") == "披露原子探针"
         for row in (feed.get("landed") or [])
     )
+
+

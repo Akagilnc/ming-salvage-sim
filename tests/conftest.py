@@ -24,22 +24,6 @@ from ming_sim.db import GameDB
 _SEED_DB = os.path.join(os.path.dirname(__file__), "..", "data", "probe.db")
 
 
-def seed_rescript_rows(db, turn, rows, *, replace=True):
-    """消费端的已存奏疏输入；不调用已退役的票拟生成/写口。"""
-    if replace:
-        db.conn.execute("DELETE FROM pending_decisions WHERE turn=? AND kind='rescript_draft'", (turn,))
-    idx = db.conn.execute("SELECT COALESCE(MAX(idx)+1,0) FROM pending_decisions WHERE turn=?", (turn,)).fetchone()[0]
-    for row in rows:
-        db.conn.execute(
-            """INSERT INTO pending_decisions
-               (turn,idx,event_id,title,context,options_json,choice_json,status,kind,actor_name,actor_office,actor_faction)
-               VALUES (?,?,?,?,?,?,'','pending','rescript_draft',?,?,?)""",
-            (turn, idx, row.get("event_id") or f"urgent:{turn}:{idx}",
-             row.get("title", ""), row.get("context", ""), json.dumps(row.get("options", []), ensure_ascii=False),
-             row.get("actor_name", ""), row.get("actor_office", ""), row.get("actor_faction", "")),
-        )
-        idx += 1
-
 
 def clear_pending_rows(db, turn):
     """重置测试输入，不模拟月链对已答事实的处理。"""

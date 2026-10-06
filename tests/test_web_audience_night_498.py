@@ -87,7 +87,6 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
             for row in dossiers
         ],
     )
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
     monkeypatch.setattr(
         "ming_sim.month_chain.run_world_segment_text", lambda *a, **k: narrative,
     )

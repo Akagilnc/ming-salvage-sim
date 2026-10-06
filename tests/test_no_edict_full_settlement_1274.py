@@ -134,10 +134,6 @@ def test_with_edict_resolve_turn_still_full_settlement(game, monkeypatch):
         simulator_calls=sim_calls,
     )
     # 免 LLM 拟诏
-    monkeypatch.setattr(
-        "ming_sim.session.write_decree_with_agno",
-        lambda *a, **k: "着户部清核辽饷。",
-    )
 
     result = _session(db, state, content).resolve_turn()
     assert result.awaiting is False

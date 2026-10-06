@@ -38,7 +38,6 @@ def _production_session(db, state, content):
     session.registry = session.llm_config = session.agno_db = None
     session.deaths_this_turn, session.debuts_this_turn = [], []
     session.last_decree = session.last_report = ""
-    session._decree_draft_fingerprint = ()
     session.auto_save = lambda *args, **kwargs: None
     return session
 
@@ -314,12 +313,6 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
         raise RuntimeError("post-fiscal failure 566")
 
     monkeypatch.setattr(decree, "apply_fixed_period_flows", fail_after_real_flows)
-    monkeypatch.setattr(
-        session_mod, "write_decree_with_agno",
-        lambda _config, _agno, _state, directives, db=None: "\n".join(
-            str(item["text"]) for item in directives
-        ),
-    )
     session = _production_session(db, state, content)
 
     if entry == "web":

@@ -502,20 +502,6 @@ def create_promulgation_judge_agent(
     )
 
 
-def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    # 一次性 agent：add_history_to_context=False，无需持久化 → 不传 db，免得每次往
-    # <db>.emperor.db 的 agno_sessions 累积 runs 撑爆存档。agno_db 仅保留以兼容调用方。
-    del agno_db
-    return Agent(
-        name="诏书润色官",
-        id="decree-writer",
-        model=create_chat_model(llm_config, temperature=0.3, top_p=0.9),
-        instructions=[_ctx().game_world_prompt, _ctx().decree_writer_prompt],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
 def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
     """#544 / ADR 0045：大臣奏对高亮判官——生成完成后的独立机器面短调用。"""
     return Agent(
@@ -640,88 +626,6 @@ def create_gazette_author_agent(llm_config: LLMConfig, prepared: Any) -> Agent:
     )
 
 
-def _rescript_option_instructions(
-    *,
-    character_targets_supplied: bool = False,
-) -> list[str]:
-    """月末票拟/改票：层 A 完整受理 + 目标/属地/承办子契约；禁入口手抄。
-
-    character_targets_supplied 与本批 payload 是否注入 character_targets 对齐：
-    初拟供目录 → True；改票不供 → False（不下 character_targets 子句）。
-    """
-    from ming_sim.rescript_draft import rescript_layer_a_prompt_contract
-    from ming_sim.structured_decree import structured_decree_prompt_contract
-    return [
-        rescript_layer_a_prompt_contract(
-            character_targets_supplied=character_targets_supplied,
-        ),
-        structured_decree_prompt_contract(),
-    ]
-
-
-def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """#657 单行改票：输出唯一 shape {"options":[...]}；禁 monthly items[] 契约。"""
-    del agno_db
-    ctx = _ctx()
-    cfg = _llm_for_role(llm_config, "extractor")
-    instructions = [
-        ctx.game_world_prompt,
-        (
-            "你是批红改票官。根据给定急务行与批语，输出改票 options。\n"
-            "只输出一个 JSON 对象，shape 必须是 "
-            '{"options":[{...},...]}' "——禁止 items 数组、禁止草稿列表外壳。\n"
-            "每个 option 须满足运行时注入的层 A 受理契约与结构化旨意子契约；"
-            "军队目标的 target_id 只可从同批 army_targets 中选择。"
-        ),
-        # 改票 payload 不供 character_targets：契约不下该目录子句（#1804 P6）
-        *_rescript_option_instructions(character_targets_supplied=False),
-    ]
-    return Agent(
-        name="批红改票官",
-        id="rescript-reviser",
-        model=create_chat_model(
-            cfg,
-            temperature=0.3,
-            top_p=0.9,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=instructions,
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
-def create_rescript_deliberate_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """#658 廷议站台：{title, body, stance, supporter_ids} 整串严格 JSON。"""
-    del agno_db
-    ctx = _ctx()
-    cfg = _llm_for_role(llm_config, "extractor")
-    instructions = [
-        ctx.game_world_prompt,
-        (
-            "你是廷议站台官。根据急务、批语、关系账与派系态势，判定谁肯当面站台。\n"
-            "只输出一个 JSON 对象，shape 必须是 "
-            '{"title":"...","body":"...","stance":"...","supporter_ids":["..."]}' "。\n"
-            "title/body/stance 均须非空字符串；supporter_ids 为候选名单中的人物 id 数组，"
-            "可空（无人站台＝议而不决）；禁止从散文抠人名以外的第二名单；"
-            "禁止数组外壳、禁止围栏外 prose。"
-        ),
-    ]
-    return Agent(
-        name="廷议站台官",
-        id="rescript-deliberator",
-        model=create_chat_model(
-            cfg,
-            temperature=0.4,
-            top_p=0.9,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=instructions,
-        add_history_to_context=False,
-        markdown=False,
-    )
 
 
 def create_ending_summary_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:

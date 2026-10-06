@@ -126,7 +126,6 @@ def _player_month(db, state, content, monkeypatch, dossier_id, *, effects=None):
     )
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "世界段" if effects else "")
     monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": effects or {}})
-    monkeypatch.setattr("ming_sim.session.write_decree_with_agno", lambda *a, **k: "诏")
     session = make_light_session(db, state, content)
     session._write_gate = threading.Lock()
     before = int(state.turn)

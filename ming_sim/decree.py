@@ -16,7 +16,6 @@ from agno.db.sqlite import SqliteDb
 
 from ming_sim.agents import (
     _dump_llm_messages,
-    create_decree_writer_agent,
     create_promulgation_judge_agent,
     parse_agent_json,
     run_agent_text,
@@ -575,57 +574,6 @@ def _rescript_decisions(
             ],
         })
     return decisions
-
-
-def write_decree_with_agno(
-    llm_config: LLMConfig,
-    agno_db: SqliteDb,
-    state: GameState,
-    directives: List[sqlite3.Row],
-    db: Optional[GameDB] = None,
-) -> str:
-    if not directives:
-        raise LLMContractError("无草案不能拟诏。")
-    # 已办结密令的 result 作为实质证据清单注入——皇帝下旨拿人/定罪时可引为依据。
-    closed_evidence: List[Dict[str, object]] = []
-    if db is not None:
-        try:
-            for o in db.list_secret_orders(status="done"):
-                if o.get("result"):
-                    closed_evidence.append({
-                        "id": int(o["id"]), "title": o["title"],
-                        "assignee": o["minister_name"], "evidence": o["result"],
-                    })
-        except Exception:
-            closed_evidence = []
-    # #1769：跨月未成案 draft 在既有 directives 投影上标 admission_status（输入侧；
-    # 不新建通知；不另抽 helper）。
-    current_turn = int(state.turn)
-    directive_feed: List[Dict[str, object]] = []
-    for row in directives:
-        item: Dict[str, object] = {"text": str(row["text"] or "")}
-        if int(row["turn"]) < current_turn:
-            item["admission_status"] = "上月未入档"
-        directive_feed.append(item)
-    payload = {
-        "turn": {"year": state.year, "period": state.period, "turn": state.turn},
-        "directives": directive_feed,
-        "closed_secret_orders": closed_evidence,
-        "instruction": "合并成一份正式诏书正文。closed_secret_orders 是已办结密令查得的实证，"
-                       "若草案据某密令查办之事拿人定罪，可在诏书里引该实证为据，使罪名落到实处。",
-    }
-    try:
-        agent = create_decree_writer_agent(llm_config, agno_db)
-        run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-        _dump_llm_messages(run_output, "拟诏", agent=agent)
-        text = extract_agent_text(run_output)
-    except LLMUnavailable:
-        raise
-    except Exception as error:
-        raise llm_unavailable_from_error(error, "拟诏") from error
-    if not text.strip():
-        raise LLMContractError("拟诏输出为空。")
-    return text
 
 
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:

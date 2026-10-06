@@ -1,22 +1,18 @@
-"""#657 批红案头 C1 ＋ 六动作领域写（唯一新模块）。
+"""批红案头：普通 decision / 0055 案卷三选 + 共享 option 映射。
 
-公开 API（不得再拆第二模块）：
-  canonical_choice / validate_request_keys / validate_all / run_prewrite_llms /
-  apply_rescript_batch / clear_return_revise_choice_anchors
+公开 API：
+  canonical_choice / validate_request_keys / validate_all /
+  apply_rescript_batch / map_rescript_option_or_choice
 
-边界：
-- validate_all / run_prewrite_llms：内存零 DB 写；prewrite 在 write_gate 外
-- apply_rescript_batch：单 DB 事务纯代码；由 ① 持 gate 时调用
-- 清锚：月份推进事务内调用 clear_return_revise_choice_anchors
-- 禁模块内持 write_gate；禁 resolve_context 承载本批 choices
+旧急务六动作、return_revise/deliberate 预写与清锚已随失供协议退役。
+禁模块内持 write_gate；禁 resolve_context 承载本批 choices。
 """
 
 from __future__ import annotations
 
-import concurrent.futures
 import json
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.action_materialize import (
     GRANT_HONORIFICS,
@@ -33,18 +29,12 @@ from ming_sim.decree_vocabulary import (
     PARTICIPANT_ROSTER_KEY,
     RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES,
     TARGET_KINDS,
-    derive_draft_capability,
 )
 from ming_sim.settlement_payload import (
     bind_decision_options,
     decision_has_rescript_capability,
     parse_rescript_capability_pair,
 )
-
-# 急务六动作（层 B）
-RESCRIPT_DESK_ACTIONS = frozenset({
-    "follow_draft", "return_revise", "midzhi", "deliberate", "hold", "summon",
-})
 
 _DecisionKey = str  # "{kind}:{source_turn}:{idx}"
 
@@ -55,7 +45,7 @@ def _parse_decision_key(key: object) -> Tuple[str, int, int]:
     if len(parts) != 3:
         raise ValueError(f"非法 decision_key：{raw!r}")
     kind, turn_s, idx_s = parts
-    if kind not in {"rescript_draft", "decision"}:
+    if kind != "decision":
         raise ValueError(f"非法 decision_key.kind：{kind!r}")
     try:
         return kind, int(turn_s), int(idx_s)
@@ -68,11 +58,7 @@ def _stable_json(obj: object) -> str:
 
 
 def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, object]:
-    """验收探针的首选项投影唯一真源。
-
-    - 急务 ``rescript_draft``：首 option → ``follow_draft`` + ``draft_capability``
-    - 普通 decision：首 option 原样（补 decision_key）
-    """
+    """验收探针的首选项投影：普通 decision 首 option 原样（补 decision_key）。"""
     options = decision.get("options") or []
     first = options[0] if options else {}
     if not isinstance(first, dict):
@@ -87,16 +73,6 @@ def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, o
             dk = f"{kind}:{int(turn)}:{int(idx)}"
     if dk:
         item.setdefault("decision_key", dk)
-    kind = str(decision.get("kind") or "").strip()
-    if kind == "rescript_draft":
-        item["action"] = "follow_draft"
-        cap = str(item.get("draft_capability") or "").strip()
-        if not cap:
-            # derive_draft_capability 为纯函数，缺字段回填默认后哈希，不上抛业务异常
-            cap = derive_draft_capability(item)
-        item["draft_capability"] = cap
-        if not str(item.get("label") or "").strip():
-            item["label"] = "依拟"
     return item
 
 
@@ -191,43 +167,6 @@ def _choices_equal(a: object, b: object) -> bool:
     return _stable_json(ca) == _stable_json(cb)
 
 
-def _is_applied_revise_anchor(row: Mapping[str, object], choice: Mapping[str, object]) -> bool:
-    """行上 choice 显示本轮 return_revise 已应用（round 已 +1、prior 已 append）。"""
-    if str(choice.get("action") or "") != "return_revise":
-        return False
-    if str(row.get("status") or "") != "pending":
-        return False
-    applied_from = choice.get("applied_from_revision_round")
-    try:
-        applied_from_i = int(applied_from) if applied_from is not None else -1
-    except (TypeError, ValueError):
-        return False
-    # 应用后 revision_round 应为 applied_from + 1
-    return int(row.get("revision_round") or 0) == applied_from_i + 1
-
-
-def row_is_applied_return_revise(row: Mapping[str, object]) -> bool:
-    """已应用改票锚。刷新投影、空 POST、月链待裁共用这一行事实。"""
-    choice = row.get("choice")
-    if not isinstance(choice, dict):
-        return False
-    return _is_applied_revise_anchor(row, choice)
-
-
-def _option_by_capability(row: Mapping[str, object]) -> Dict[str, Dict[str, object]]:
-    out: Dict[str, Dict[str, object]] = {}
-    for opt in row.get("options") or []:
-        if not isinstance(opt, dict):
-            continue
-        cap = str(opt.get("draft_capability") or "").strip()
-        if not cap:
-            # 允许服务端即时派生
-            try:
-                cap = derive_draft_capability(opt)
-            except Exception:
-                continue
-        out[cap] = opt
-    return out
 
 
 @dataclass
@@ -239,36 +178,29 @@ class ValidatedItem:
     row: Dict[str, object]
     choice: Dict[str, object]
     already_applied: bool = False
-    needs_revise_llm: bool = False
-    needs_deliberate_llm: bool = False
 
 
 @dataclass
 class ValidatedBatch:
     items: List[ValidatedItem] = field(default_factory=list)
-    # 新鲜批 P 内急务缺 action → 落印时机械 hold 的 keys
-    default_hold_keys: List[str] = field(default_factory=list)
 
 
 @dataclass
 class PrewriteResults:
-    revise_by_key: Dict[str, List[Dict[str, object]]] = field(default_factory=dict)
-    deliberate_by_key: Dict[str, Dict[str, object]] = field(default_factory=dict)
+    """旧 revise/deliberate 预写容器；现役为空壳，保留 apply 签名。"""
 
 
 @dataclass
 class ApplyResult:
     applied_keys: List[str] = field(default_factory=list)
     skipped_keys: List[str] = field(default_factory=list)
-    summon_keys: List[str] = field(default_factory=list)
-    revise_keys: List[str] = field(default_factory=list)
 
 
 def validate_request_keys(
     desk_rows: Sequence[Mapping[str, object]],
     request_choices: object,
 ) -> Tuple[Dict[str, Dict[str, object]], Dict[str, Dict[str, object]]]:
-    """①-a 请求索引校验（内存，零写库；validate_all 与 ready-replay 短路唯一共用权威）。
+    """①-a 请求索引校验（内存，零写库）。
 
     - 键∈desk；无重复；choice 缺 decision_key 或引用 desk 外键→整批拒
     - 仅校验 envelope/key membership，不比较/采纳 choice 内容
@@ -315,18 +247,14 @@ def validate_all(
     request_choices: object,
     *,
     default_hold_missing: bool = True,
-    can_summon: Optional[Callable[[str], Tuple[bool, str]]] = None,
+    can_summon: Optional[object] = None,
 ) -> ValidatedBatch:
-    """① Validate-all（内存，零写库）。
+    """Validate-all（内存，零写库）。
 
-    - 键∈desk；无重复
-    - applied-revise 锚先于 capability∈当前 options
-    - decided 精确匹配→已应用；decided 不匹配/空→整批拒
-    - desk 外/非法→整批拒
-    - 新鲜批 P 内急务缺 action → 仅落印时机械 hold（记入 default_hold_keys）
-    - summon：非空 target；若提供 can_summon 则必须过资格（失败整批拒）。
-      成功时第二返回值若非空则视为 canonical name 写回 choice（仍零 DB 写）。
+    现役只受理 kind=decision：普通 HITL 与 0055 案卷三选。
+    default_hold_missing / can_summon 保留签名兼容，急务缺省 hold/召见已退役。
     """
+    del default_hold_missing, can_summon
     desk_by_key, choice_map = validate_request_keys(desk_rows, request_choices)
     choice_map = {key: canonical_choice(raw) for key, raw in choice_map.items()}
     for key, choice in choice_map.items():
@@ -345,81 +273,32 @@ def validate_all(
         status = str(row.get("status") or "pending")
         stored_choice = row.get("choice")
         req = choice_map.get(key)
+        kind = str(row.get("kind") or "decision")
+        source_turn = int(
+            row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0
+        )
+        idx = int(row.get("idx") or 0)
 
-        # decided 行
+        if kind != "decision":
+            raise ValueError(f"已退役案头 kind：{kind!r} key={key}")
+
         if status == "decided":
             if req is None:
                 raise ValueError(f"decided 行缺请求 choice：{key}")
             if _choice_empty(stored_choice) or not _choices_equal(stored_choice, req):
                 raise ValueError(f"decided 行 choice 不匹配：{key}")
             batch.items.append(ValidatedItem(
-                decision_key=key,
-                kind=str(row.get("kind") or "decision"),
-                source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                idx=int(row.get("idx") or 0),
-                row=row,
-                choice=req,
-                already_applied=True,
-            ))
-            continue
-
-        # pending 行
-        kind = str(row.get("kind") or "decision")
-
-        # 已应用 return_revise 锚：先于空 action 默认 hold（§B.3 重试批不重新默认）。
-        # 请求缺这一行（刷新后的空 POST）沿用行上锚，不留中、不重跑改票。
-        if (
-            not _choice_empty(stored_choice)
-            and isinstance(stored_choice, dict)
-            and _is_applied_revise_anchor(row, stored_choice)
-        ):
-            if req is None or _choices_equal(stored_choice, req):
-                batch.items.append(ValidatedItem(
-                    decision_key=key,
-                    kind=kind,
-                    source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                    idx=int(row.get("idx") or 0),
-                    row=row,
-                    choice=req if req is not None else canonical_choice(stored_choice),
-                    already_applied=True,
-                ))
-                continue
-            raise ValueError(f"已应用 revise 锚与请求不一致：{key}")
-
-        action = str((req or {}).get("action") or "").strip() if req is not None else ""
-
-        # 急务缺行 / 有行但 action 缺或空 → 统一机械 hold（服务端单真源）
-        if kind == "rescript_draft" and default_hold_missing and (req is None or not action):
-            hold_raw: Dict[str, object] = {
-                "decision_key": key,
-                "action": "hold",
-                "label": "留中",
-                "hint": "",
-            }
-            # 默认 hold 仍保留朱笔 note（与显式 hold 钮同形）
-            if isinstance(req, dict) and req.get("note") is not None:
-                hold_raw["note"] = req.get("note")
-            hold_choice = canonical_choice(hold_raw)
-            batch.default_hold_keys.append(key)
-            batch.items.append(ValidatedItem(
-                decision_key=key,
-                kind=kind,
-                source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                idx=int(row.get("idx") or 0),
-                row=row,
-                choice=hold_choice,
+                decision_key=key, kind=kind, source_turn=source_turn, idx=idx,
+                row=row, choice=req, already_applied=True,
             ))
             continue
 
         if req is None:
-            # decision 行缺请求：非急务，不默认 hold
             raise ValueError(f"pending 行缺请求 choice：{key}")
 
-        # dossier 批红 decision 行（#1490）：dossier: 前缀 AND 能力对合取（#1494-F）——
-        # 普通 event_id + 幻觉能力对不得入批红轨，与 bind/phase2/submit_decisions 同判。
+        # dossier 批红 decision 行（#1490 / 0055 法定三选）
         if (
-            kind == "decision"
-            and str(row.get("event_id") or "").startswith("dossier:")
+            str(row.get("event_id") or "").startswith("dossier:")
             and decision_has_rescript_capability(row)
         ):
             options = [o for o in (row.get("options") or []) if isinstance(o, dict)]
@@ -442,216 +321,54 @@ def validate_all(
                 "note": req.get("note"),
             })
             batch.items.append(ValidatedItem(
-                decision_key=key,
-                kind=kind,
-                source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                idx=int(row.get("idx") or 0),
-                row=row,
-                choice=rebuilt,
+                decision_key=key, kind=kind, source_turn=source_turn, idx=idx,
+                row=row, choice=rebuilt,
             ))
             continue
 
-        # 普通 decision：票拟按 label 命中。请旨另许仅有亲笔 note 的答复，
-        # 不把批语改写成某条票拟。
-        if kind == "decision":
-            from ming_sim.month_chain import (
-                _DECREE_QUESTION_PREFIX, _LEVY_PETITION_PREFIX, _WORLD_QUESTION_PREFIX,
+        # 普通 decision：票拟按 label 命中。请旨另许仅有亲笔 note 的答复。
+        from ming_sim.month_chain import (
+            _DECREE_QUESTION_PREFIX, _LEVY_PETITION_PREFIX, _WORLD_QUESTION_PREFIX,
+        )
+
+        event_id = str(row.get("event_id") or "")
+        label = str(req.get("label") or "")
+        note = str(req.get("note") or "")
+        if (
+            not label.strip()
+            and note.strip()
+            and (
+                event_id.startswith(_DECREE_QUESTION_PREFIX)
+                or event_id.startswith(_WORLD_QUESTION_PREFIX)
+                or event_id.startswith(_LEVY_PETITION_PREFIX)
             )
-
-            event_id = str(row.get("event_id") or "")
-            label = str(req.get("label") or "")
-            note = str(req.get("note") or "")
-            if (
-                not label.strip()
-                and note.strip()
-                and (
-                    event_id.startswith(_DECREE_QUESTION_PREFIX)
-                    or event_id.startswith(_WORLD_QUESTION_PREFIX)
-                    # #1891：请饷／议停请旨同属请旨——只批朱笔不点拟批即留中：
-                    # 本次奏疏已答、事件不置终局，由大臣日后自决是否再上疏。
-                    or event_id.startswith(_LEVY_PETITION_PREFIX)
-                )
-            ):
-                batch.items.append(ValidatedItem(
-                    decision_key=key,
-                    kind=kind,
-                    source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                    idx=int(row.get("idx") or 0),
-                    row=row,
-                    choice=req,
-                ))
-                continue
-            labels = bind_decision_options(row.get("options") or [])
-            if label not in labels:
-                raise ValueError(f"decision 选项不在当前 options：{key}")
-            # 请旨选项只供拟批；亲笔批语由续推与单一转译写口解释。
+        ):
             batch.items.append(ValidatedItem(
-                decision_key=key,
-                kind=kind,
-                source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                idx=int(row.get("idx") or 0),
-                row=row,
-                choice=req,
-            ))
-            continue
-
-        # 急务六动作
-        if action not in RESCRIPT_DESK_ACTIONS:
-            raise ValueError(f"非法急务动作：{action!r}")
-
-        if action == "follow_draft":
-            cap = str(req.get("draft_capability") or "").strip()
-            by_cap = _option_by_capability(row)
-            if not cap or cap not in by_cap:
-                raise ValueError(f"stale 或缺失 draft_capability：{key}")
-            opt = by_cap[cap]
-            # choice 存请求形（C1.1 同 body 重放 already_applied）；option 字段在 apply 再合并
-            stored_raw = {
-                **req,
-                "decision_key": key,
-                "action": "follow_draft",
-                "draft_capability": cap,
-            }
-            if not str(stored_raw.get("label") or "").strip():
-                stored_raw["label"] = str(opt.get("label") or "")
-            stored = canonical_choice(stored_raw)
-            batch.items.append(ValidatedItem(
-                decision_key=key, kind=kind,
-                source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                idx=int(row.get("idx") or 0),
-                row=row, choice=stored,
-            ))
-            continue
-
-        if action == "midzhi":
-            # 字段从 choice 显式
-            at = str(req.get("action_type") or "").strip()
-            # #1778：值域＝库级全集（ADR 0040 形状检查），无七类准入闭集
-            if at not in DOSSIER_ACTION_TYPES:
-                raise ValueError(f"midzhi.action_type 非库级全集：{at!r}")
-            batch.items.append(ValidatedItem(
-                decision_key=key, kind=kind,
-                source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                idx=int(row.get("idx") or 0),
+                decision_key=key, kind=kind, source_turn=source_turn, idx=idx,
                 row=row, choice=req,
             ))
             continue
+        labels = bind_decision_options(row.get("options") or [])
+        if label not in labels:
+            raise ValueError(f"decision 选项不在当前 options：{key}")
+        batch.items.append(ValidatedItem(
+            decision_key=key, kind=kind, source_turn=source_turn, idx=idx,
+            row=row, choice=req,
+        ))
 
-        if action == "return_revise":
-            # 锚：applied_from_revision_round + 旧 capability（可选）
-            round_now = int(row.get("revision_round") or 0)
-            req.setdefault("applied_from_revision_round", round_now)
-            if int(req.get("applied_from_revision_round") or -1) != round_now:
-                # 若非已应用路径，请求锚须对应当前 round
-                if not (_choices_equal(stored_choice, req) and _is_applied_revise_anchor(row, req)):
-                    # 允许未带 cap 的改票请求；强制对齐 round
-                    req["applied_from_revision_round"] = round_now
-            batch.items.append(ValidatedItem(
-                decision_key=key, kind=kind,
-                source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                idx=int(row.get("idx") or 0),
-                row=row, choice=req,
-                needs_revise_llm=True,
-            ))
-            continue
-
-        if action == "deliberate":
-            batch.items.append(ValidatedItem(
-                decision_key=key, kind=kind,
-                source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                idx=int(row.get("idx") or 0),
-                row=row, choice=req,
-                needs_deliberate_llm=True,
-            ))
-            continue
-
-        if action == "hold":
-            batch.items.append(ValidatedItem(
-                decision_key=key, kind=kind,
-                source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                idx=int(row.get("idx") or 0),
-                row=row, choice=req,
-            ))
-            continue
-
-        if action == "summon":
-            target = str(req.get("summon_target") or "").strip()
-            if not target:
-                raise ValueError(f"summon 缺 summon_target：{key}")
-            if can_summon is not None:
-                ok, detail = can_summon(target)
-                if not ok:
-                    raise ValueError(detail or f"不可召见：{target}")
-                # 成功且 detail 非空 → canonical name 写回（session 薄包装约定）
-                if str(detail or "").strip():
-                    req = dict(req)
-                    req["summon_target"] = str(detail).strip()
-            batch.items.append(ValidatedItem(
-                decision_key=key, kind=kind,
-                source_turn=int(row.get("source_turn") if row.get("source_turn") is not None else row.get("turn") or 0),
-                idx=int(row.get("idx") or 0),
-                row=row, choice=req,
-            ))
-            continue
-
-        raise ValueError(f"未处理动作：{action}")
-
-    # 请求中不得有 desk 外键（已在上面检查）；返回
     return batch
 
 
 def run_prewrite_llms(
     batch: ValidatedBatch,
     *,
-    revise_runner: Optional[Callable[[ValidatedItem], List[Dict[str, object]]]] = None,
-    deliberate_runner: Optional[Callable[[ValidatedItem], Dict[str, object]]] = None,
+    revise_runner: Optional[object] = None,
+    deliberate_runner: Optional[object] = None,
     max_workers: int = 8,
 ) -> PrewriteResults:
-    """写前并行 LLM（事务外·gate 外）。任一失败整批中止零写。
-
-    已应用行不重跑。不建 registry/结果表/长期池。
-    """
-    revise_items = [it for it in batch.items if it.needs_revise_llm and not it.already_applied]
-    deliberate_items = [it for it in batch.items if it.needs_deliberate_llm and not it.already_applied]
-    results = PrewriteResults()
-    if not revise_items and not deliberate_items:
-        return results
-
-    errors: List[Exception] = []
-
-    def _run_revise(it: ValidatedItem) -> Tuple[str, List[Dict[str, object]]]:
-        if revise_runner is None:
-            raise RuntimeError("return_revise 需要 revise_runner")
-        return it.decision_key, list(revise_runner(it))
-
-    def _run_deliberate(it: ValidatedItem) -> Tuple[str, Dict[str, object]]:
-        if deliberate_runner is None:
-            raise RuntimeError("deliberate 需要 deliberate_runner")
-        out = deliberate_runner(it)
-        if not isinstance(out, dict):
-            raise ValueError("deliberate LLM 输出须为 object")
-        return it.decision_key, out
-
-    # 一次短生命周期 pool：全部 start → wait → join
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futs = []
-        for it in revise_items:
-            futs.append(("revise", pool.submit(_run_revise, it)))
-        for it in deliberate_items:
-            futs.append(("deliberate", pool.submit(_run_deliberate, it)))
-        for kind, fut in futs:
-            try:
-                key, payload = fut.result()
-            except Exception as exc:  # noqa: BLE001 — 任一普通腿失败整批中止
-                errors.append(exc)
-                continue
-            if kind == "revise":
-                results.revise_by_key[key] = payload  # type: ignore[assignment]
-            else:
-                results.deliberate_by_key[key] = payload  # type: ignore[assignment]
-    if errors:
-        raise RuntimeError(f"prewrite LLM 失败（整批中止零写）：{errors[0]}") from errors[0]
-    return results
+    """旧急务 revise/deliberate 预写已退役；保留空壳签名。"""
+    del batch, revise_runner, deliberate_runner, max_workers
+    return PrewriteResults()
 
 
 def map_rescript_option_or_choice(
@@ -1041,161 +758,6 @@ def _create_from_mapped(
     ))
 
 
-def _apply_hold(db: Any, state: Any, item: ValidatedItem) -> None:
-    """留中：write_credit_event(辜负) + 惯性结算既有缝（本步只记账信用）。"""
-    actor = str(item.row.get("actor_name") or "").strip()
-    if not actor:
-        # 无上疏者则只落 choice，不强制信用边
-        return
-    origin = f"rescript_hold:{item.decision_key}"
-    write_credit_event(
-        db, state,
-        person=actor,
-        event_kind=KIND_BETRAY,
-        context=str(item.row.get("title") or item.choice.get("label") or "留中"),
-        origin=origin,
-    )
-
-
-def list_deliberation_candidate_ids(db: Any, content: Any) -> List[str]:
-    """廷议站台候选 = 在朝可召大臣，按 canonical 人物 id 稳定排序（#658）。
-
-    空集合合法（等同无人站台）。不另加品级/派系/关系/人数过滤。
-    """
-    from ming_sim.session import _is_summonable_court_minister
-
-    if content is None:
-        raise ValueError("deliberate 需要 content 以解析可召候选")
-    resolve = getattr(db, "resolve_power_id", None)
-    names: List[str] = []
-    characters = getattr(content, "characters", {}) or {}
-    for name, ch in characters.items():
-        if not _is_summonable_court_minister(ch, resolve_power_id=resolve):
-            continue
-        # 与 can_summon 同口径：DB 权威 status 须 active（罢/狱/流/致仕/故/未登场均排除）
-        status, _ = db.get_character_status(str(name))
-        if status != "active":
-            continue
-        names.append(str(name))
-    return sorted(names)
-
-
-def _normalize_deliberate_will(
-    will: Mapping[str, object],
-    *,
-    item: ValidatedItem,
-    candidate_ids: Sequence[str],
-) -> Dict[str, object]:
-    """校验 deliberate prewrite shape；非法 supporter 整批响亮失败。"""
-    if not isinstance(will, Mapping):
-        raise ValueError(f"deliberate 缺 prewrite 意愿：{item.decision_key}")
-    title = str(will.get("title") or item.row.get("title") or "廷议")
-    body = str(will.get("body") or will.get("stance") or will.get("text") or "")
-    if not body.strip():
-        raise ValueError("deliberate LLM 意愿正文为空")
-    raw_supporters = will.get("supporter_ids", [])
-    if raw_supporters is None:
-        raw_supporters = []
-    if not isinstance(raw_supporters, list):
-        raise ValueError("deliberate supporter_ids 须为数组")
-    candidate_set = {str(x) for x in candidate_ids}
-    supporters: List[str] = []
-    seen: set[str] = set()
-    for raw in raw_supporters:
-        if not isinstance(raw, str):
-            raise ValueError(f"非法站台身份（非字符串）：{raw!r}")
-        name = raw.strip()
-        if not name:
-            raise ValueError("非法站台身份：空串")
-        if name not in candidate_set:
-            raise ValueError(f"非法站台身份：{name}")
-        if name in seen:
-            continue
-        seen.add(name)
-        supporters.append(name)
-    return {
-        "title": title,
-        "body": body,
-        "stance": str(will.get("stance") or ""),
-        "supporter_ids": supporters,
-    }
-
-
-def _apply_deliberate(
-    db: Any,
-    state: Any,
-    item: ValidatedItem,
-    prewrite: PrewriteResults,
-    *,
-    content: Any = None,
-) -> None:
-    """#658 廷议 dossier-first：唯一 durable 主体＝proposed 案卷。
-
-    - 有站台 → deliberation_state=backed + 当面站台背书（decision_key provenance）
-    - 无人 → stalled + 一条 origin_ref=dossier:<id> 惯性 issue
-    - 删除 rescript_deliberate:<key> 平行真源
-    """
-    existing = db.find_deliberation_dossier_by_decision_key(item.decision_key)
-    if existing is not None:
-        return
-    candidates = list_deliberation_candidate_ids(db, content)
-    will = _normalize_deliberate_will(
-        prewrite.deliberate_by_key.get(item.decision_key),  # type: ignore[arg-type]
-        item=item,
-        candidate_ids=candidates,
-    )
-    supporters = list(will["supporter_ids"])
-    deliberation_state = "backed" if supporters else "stalled"
-    title = str(will["title"])
-    body = str(will["body"])
-    payload = {
-        "dossier_action_type": "policy",
-        "mode": "ordinary",
-        "decision_key": item.decision_key,
-        "deliberation_state": deliberation_state,
-        "title": title,
-        "body": body,  # P6 原文
-        "target_kind": "policy",
-        "target_id": f"deliberation:{item.decision_key}",
-        "locality_scope": "none",
-    }
-    dossier_id = int(db.create_decree_dossier(
-        state,
-        action_type="policy",
-        decree_text=body if body.strip() else title,
-        target_kind="policy",
-        target_id=f"deliberation:{item.decision_key}",
-        payload=payload,
-        status="proposed",
-        commit=False,
-    ))
-    for name in supporters:
-        db.add_dossier_endorsement(
-            dossier_id,
-            form="当面站台",
-            endorser_id=name,
-            imperial=False,
-            decision_key=item.decision_key,
-            source_chat_turn_id=0,
-            commit=False,
-        )
-    if deliberation_state == "stalled":
-        origin = f"dossier:{dossier_id}"
-        already = db.conn.execute(
-            "SELECT id FROM issues WHERE origin_ref=? LIMIT 1", (origin,),
-        ).fetchone()
-        if already is None:
-            db.insert_issue(
-                state,
-                kind="situation",
-                title=title,
-                origin_kind="deliberation",
-                origin_ref=origin,
-                stage_text=body,
-                commit=False,
-            )
-
-
 def apply_imperial_deliberation_push(
     db: Any,
     state: Any,
@@ -1264,46 +826,6 @@ def apply_imperial_deliberation_push(
     return did
 
 
-def _apply_return_revise(
-    db: Any,
-    item: ValidatedItem,
-    prewrite: PrewriteResults,
-) -> None:
-    new_options = prewrite.revise_by_key.get(item.decision_key)
-    if not isinstance(new_options, list) or not new_options:
-        raise ValueError(f"return_revise 缺 prewrite 新 options：{item.decision_key}")
-    # 改票 options 必经层 A 单真源（与 validate_rescript_draft_items 同缝）
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    stamped: List[Dict[str, object]] = []
-    for opt in new_options:
-        stamped.append(normalize_rescript_layer_a_option(opt))
-    old_round = int(item.row.get("revision_round") or 0)
-    old_options = item.row.get("options") or []
-    prior = list(item.row.get("prior_options_json") or [])
-    if not isinstance(prior, list):
-        prior = []
-    prior = list(prior) + [old_options]
-    # CAS 含旧 revision_round
-    cur = db.conn.execute(
-        "UPDATE pending_decisions SET revision_round = ?, options_json = ?, "
-        "prior_options_json = ?, choice_json = ?, status = 'pending' "
-        "WHERE turn = ? AND idx = ? AND kind = ? AND revision_round = ? "
-        "AND status = 'pending'",
-        (
-            old_round + 1,
-            json.dumps(stamped, ensure_ascii=False),
-            json.dumps(prior, ensure_ascii=False),
-            json.dumps(item.choice, ensure_ascii=False),
-            item.source_turn,
-            item.idx,
-            item.kind,
-            old_round,
-        ),
-    )
-    if cur.rowcount != 1:
-        raise ValueError(f"return_revise CAS 失败：{item.decision_key}")
-
-
 def _cas_decided(db: Any, item: ValidatedItem) -> None:
     choice_json = json.dumps(item.choice, ensure_ascii=False)
     # 行级 CAS：pending → decided，且 choice 仍空或可被本事务首写
@@ -1325,196 +847,46 @@ def apply_rescript_batch(
     *,
     content: Any = None,
 ) -> ApplyResult:
-    """单 DB 事务纯代码：choice_json + 行级 CAS + 五动作/summon→decided。
-
-    summon 本步只 CAS→decided+choice；不写成功正文 ledger。
-    任一条失败 → 回滚（含 choice）。禁 save/clear 触碰 rescript_draft。
-    禁任何 resolve_context 键承载本批 choices。
-    """
-    # #1778 决定 3：本批成案缝已无拒收产源（职司兜底连同 duty_route_unmapped 已删）；
-    # 契约/名单错一律 ValueError 穿透 atomic 整批回滚（§B.1），不再另挂空 collector。
+    """单 DB 事务：decision 行 choice + decided（普通 HITL / 0055 三选）。"""
+    del prewrite
     result = ApplyResult()
     with atomic_and_reload(db, state, content=content):
         for item in batch.items:
             if item.already_applied:
                 result.skipped_keys.append(item.decision_key)
-                if str(item.choice.get("action") or "") == "summon":
-                    result.summon_keys.append(item.decision_key)
-                if str(item.choice.get("action") or "") == "return_revise":
-                    result.revise_keys.append(item.decision_key)
                 continue
-
-            action = str(item.choice.get("action") or "").strip()
-            kind = item.kind
-
-            if kind == "decision":
-                # decision 行：写 choice + decided（#1490 / 普通 HITL）
-                # 事件账失败必须穿透 atomic → 整批回滚（§B.1）；禁 swallow。
-                _cas_decided(db, item)
-                event_id = str(item.row.get("event_id") or "").strip()
-                # 请旨身份前缀真源 = month_chain；此处局部导入以免与月链形成模块环。
-                from ming_sim.month_chain import (
-                    _DECREE_QUESTION_PREFIX, _LEVY_PETITION_PREFIX, _WORLD_QUESTION_PREFIX,
+            if item.kind != "decision":
+                raise ValueError(f"已退役案头 kind：{item.kind!r}")
+            _cas_decided(db, item)
+            event_id = str(item.row.get("event_id") or "").strip()
+            from ming_sim.month_chain import (
+                _DECREE_QUESTION_PREFIX, _LEVY_PETITION_PREFIX, _WORLD_QUESTION_PREFIX,
+            )
+            if event_id.startswith(_LEVY_PETITION_PREFIX):
+                db.record_event_petition_answer(
+                    state, event_id[len(_LEVY_PETITION_PREFIX):], item.choice,
+                    {
+                        "title": str(item.row.get("title") or ""),
+                        "context": str(item.row.get("context") or ""),
+                        "options": [
+                            str(opt.get("label") or "")
+                            for opt in (item.row.get("options") or []) if isinstance(opt, dict)
+                        ],
+                    },
+                    commit=False,
                 )
-                # #1891：请饷／议停请旨——案头身份剥前缀还原真实事件。答复只按
-                # 事实落账（亲笔批语原样持久化），不置终局、不猜结局：结局由既有
-                # 世界段续推经 #1815 转译理解后，落事件账唯一写口。
-                if event_id.startswith(_LEVY_PETITION_PREFIX):
-                    db.record_event_petition_answer(
-                        state, event_id[len(_LEVY_PETITION_PREFIX):], item.choice,
-                        {
-                            "title": str(item.row.get("title") or ""),
-                            "context": str(item.row.get("context") or ""),
-                            "options": [
-                                str(opt.get("label") or "")
-                                for opt in (item.row.get("options") or []) if isinstance(opt, dict)
-                            ],
-                        },
-                        commit=False,
-                    )
-                    result.applied_keys.append(item.decision_key)
-                    continue
-                # 请旨身份不是 events 表事件；与 dossier: 同属案头身份前缀，不得进 event_triggers。
-                # 三饷只走上述 levy-petition 交接；普通请旨不反推事件身份。
-                if (
-                    event_id
-                    and not event_id.startswith("dossier:")
-                    and not event_id.startswith(_WORLD_QUESTION_PREFIX)
-                    and not event_id.startswith(_DECREE_QUESTION_PREFIX)
-                ):
-                    db.record_event_decision_choice(
-                        state, event_id, item.choice, commit=False,
-                    )
                 result.applied_keys.append(item.decision_key)
                 continue
-
-            # 急务
-            if action == "return_revise":
-                _apply_return_revise(db, item, prewrite)
-                result.applied_keys.append(item.decision_key)
-                result.revise_keys.append(item.decision_key)
-                continue
-
-            if action == "follow_draft":
-                # §C.4/A12/C.7：机械载荷只从 capability 命中的权威 option 映射；
-                # 禁止客户端 choice 字段 overlay（同 cap 两套 payload）。
-                by_cap = _option_by_capability(item.row)
-                cap = str(item.choice.get("draft_capability") or "").strip()
-                opt = by_cap.get(cap)
-                if not opt:
-                    raise ValueError(
-                        f"follow_draft 缺匹配 option：{item.decision_key}"
-                    )
-                map_src = dict(opt)
-                map_src["action"] = "follow_draft"
-                # provenance only；不参与机械字段 overlay
-                map_src["decision_key"] = item.decision_key
-                mapped = map_rescript_option_or_choice(
-                    map_src, mode="ordinary", db=db, content=content, state=state,
+            if (
+                event_id
+                and not event_id.startswith("dossier:")
+                and not event_id.startswith(_WORLD_QUESTION_PREFIX)
+                and not event_id.startswith(_DECREE_QUESTION_PREFIX)
+            ):
+                db.record_event_decision_choice(
+                    state, event_id, item.choice, commit=False,
                 )
-                created = _create_from_mapped(
-                    db, state, content, mapped, status="proposed", mode="ordinary",
-                )
-                if not created:
-                    raise ValueError(
-                        f"follow_draft 成案零行：{item.decision_key}"
-                    )
-                _cas_decided(db, item)
-                result.applied_keys.append(item.decision_key)
-                continue
-
-            if action == "midzhi":
-                # choice 显式字段 + 行 decision_key 身份（§C.7/C.8）
-                midzhi_src = dict(item.choice)
-                midzhi_src["decision_key"] = item.decision_key
-                mapped = map_rescript_option_or_choice(
-                    midzhi_src, mode="midzhi", db=db, content=content, state=state,
-                )
-                created = _create_from_mapped(
-                    db, state, content, mapped, status="proposed", mode="midzhi",
-                )
-                if not created:
-                    raise ValueError(
-                        f"midzhi 成案零行：{item.decision_key}"
-                    )
-                _cas_decided(db, item)
-                result.applied_keys.append(item.decision_key)
-                continue
-
-            if action == "deliberate":
-                _apply_deliberate(
-                    db, state, item, prewrite, content=content,
-                )
-                _cas_decided(db, item)
-                result.applied_keys.append(item.decision_key)
-                continue
-
-            if action == "hold":
-                _apply_hold(db, state, item)
-                _cas_decided(db, item)
-                result.applied_keys.append(item.decision_key)
-                continue
-
-            if action == "summon":
-                # 资格已在 validate_all（含 can_summon）完成；此处只 CAS。
-                target = str(item.choice.get("summon_target") or "").strip()
-                if not target:
-                    raise ValueError("summon_target 为空")
-                _cas_decided(db, item)
-                result.applied_keys.append(item.decision_key)
-                result.summon_keys.append(item.decision_key)
-                continue
-
-            raise ValueError(f"未知动作：{action}")
+            result.applied_keys.append(item.decision_key)
     return result
 
 
-def clear_return_revise_choice_anchors(
-    db: Any,
-    applied_revise_keys: Optional[Sequence[str]] = None,
-) -> None:
-    """清已应用 return_revise 行 choice 锚（唯一清锚动作；无 consumed_epoch）。
-
-    - 传 keys：只清本批键（兼容旧调用）
-    - keys is None：按行事实扫描全部已应用 revise 锚（月推进单缝）
-    须在推进事务内、next_period 前调用，与回合推进同生共死。
-    """
-    if applied_revise_keys is not None:
-        for key in applied_revise_keys:
-            kind, turn, idx = _parse_decision_key(key)
-            db.conn.execute(
-                "UPDATE pending_decisions SET choice_json = '{}' "
-                "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
-                (turn, idx, kind),
-            )
-        return
-    rows = db.conn.execute(
-        "SELECT turn, idx, kind, status, choice_json, revision_round "
-        "FROM pending_decisions "
-        "WHERE status = 'pending' AND kind = 'rescript_draft' "
-        "AND choice_json IS NOT NULL AND TRIM(choice_json) NOT IN ('', '{}')"
-    ).fetchall()
-    for r in rows:
-        raw = r["choice_json"] or "{}"
-        try:
-            choice = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"return_revise 清锚 choice_json 损坏："
-                f"turn={r['turn']} idx={r['idx']}"
-            ) from exc
-        if not isinstance(choice, dict):
-            raise ValueError(
-                f"return_revise 清锚 choice 非 object："
-                f"turn={r['turn']} idx={r['idx']} type={type(choice).__name__}"
-            )
-        row = {
-            "status": r["status"],
-            "revision_round": r["revision_round"],
-        }
-        if _is_applied_revise_anchor(row, choice):
-            db.conn.execute(
-                "UPDATE pending_decisions SET choice_json = '{}' "
-                "WHERE turn = ? AND idx = ? AND kind = ? AND status = 'pending'",
-                (int(r["turn"]), int(r["idx"]), str(r["kind"])),
-            )

@@ -59,10 +59,6 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
         ],
     )
     monkeypatch.setattr(
-        session_mod, "write_decree_with_agno",
-        lambda *a, **k: "奉天承运，诏曰：着户部清核辽饷。",
-    )
-    monkeypatch.setattr(
         "ming_sim.month_chain.run_world_segment_text",
         lambda *a, **k: "本月邸报：边饷已清，流寇未息。",
     )

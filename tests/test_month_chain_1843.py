@@ -18,9 +18,8 @@ from tests.dossier_test_helpers import create_test_secret_order
 
 
 def _forbid_extractor(monkeypatch):
-    monkeypatch.setattr(
-        "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
-    )
+    """旧 write_decree 前置已撤；保留调用点 no-op。"""
+    del monkeypatch
 
 
 def _stage_edict(db, state, minister, text, category, delta, affair_id):

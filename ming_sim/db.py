@@ -2370,7 +2370,7 @@ class GameDB:
         self.ensure_column("pending_decisions", "rejection_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "opposition", "TEXT NOT NULL DEFAULT ''")
         # #656 / ADR 0093 前半：kind 扩列（最小扩展，ensure_column 先例同款）。
-        # 'decision'=既有 simulator 决策块行为一字不变；'rescript_draft'=急务票拟行
+        # 'decision'=案头 HITL 行；旧 rescript_draft 急务 kind 已退役
         # （phase2 产生、跨月留存待 #657 六动作裁决）。actor 三列＝分拣/票拟 actor 身份
         # 投影随行落库（票面 F3.2：任免后 actor 变更可机械断言）。
         self.ensure_column("pending_decisions", "kind", "TEXT NOT NULL DEFAULT 'decision'")
@@ -10635,26 +10635,11 @@ class GameDB:
     def save_pending_decisions(self, turn: int, decisions: List[Dict[str, object]]) -> None:
         """覆写本回合待裁 decision 行。已答行留在原 idx，新待裁接在其后。
 
-        #656 A6/F2 不变式：只清只写 kind='decision'（与 clear_pending_decisions/
-        save_rescript_drafts 同款按 kind 收窄）——'rescript_draft' 票拟行跨月留存，
-        不被 decision 盘面覆写连带清除。
         #1891：已答奏疏（status='decided'）是原疏与批语的持久事实，案头替换只换
         仍待裁的行，不删已答行、不改其 idx（decision_key 因此不变）。
+        旧 rescript_draft 跨月搬运已随失供急务协议退役。
         """
         turn = int(turn)
-        # 两种 kind 共用 (turn, idx) 主键。先把保留的 draft 搬到负数暂存区，
-        # 删掉仍待裁的 decision 后，新行从已答行最大 idx 之后接续；draft 的内容与
-        # event_id 均不改，decision 数量增减也不会与旧 draft idx 相撞。
-        self.conn.execute(
-            "UPDATE pending_decisions SET idx = -idx - 1 "
-            "WHERE turn = ? AND kind = 'rescript_draft'",
-            (turn,),
-        )
-        draft_rows = self.conn.execute(
-            "SELECT idx FROM pending_decisions "
-            "WHERE turn = ? AND kind = 'rescript_draft' ORDER BY idx DESC",
-            (turn,),
-        ).fetchall()
         self.conn.execute(
             "DELETE FROM pending_decisions "
             "WHERE turn = ? AND kind = 'decision' AND status != 'decided'",
@@ -10683,22 +10668,12 @@ class GameDB:
                 ),
             )
             next_idx += 1
-        for row in draft_rows:
-            self.conn.execute(
-                "UPDATE pending_decisions SET idx = ? WHERE turn = ? AND idx = ?",
-                (next_idx, turn, int(row["idx"])),
-            )
-            next_idx += 1
         self.conn.commit()
 
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
         """读本回合决策点（按 idx）——HITL envelope 唯一读取缝。
 
-        #656 A6：谓词收窄到 kind='decision'——persist-then-abort 后落库的
-        rescript_draft 票拟行不再混进亲裁/刷新/all-decided/submit 消费面
-        （急务只经 list_rescript_drafts 读，批红面归 #657）；调用方不再重复过滤。
-        options 反序列化；choice 为已选则带出。
-        #657：补 revision_round / prior_options_json 投影。
+        谓词收窄到 kind='decision'。options 反序列化；choice 为已选则带出。
         """
         rows = self.conn.execute(
             "SELECT idx, event_id, title, context, rejection_reason, "
@@ -10751,59 +10726,8 @@ class GameDB:
         return out
 
 
-    def list_rescript_drafts(self) -> List[Dict[str, object]]:
-        """#656：全部急务票拟行（kind='rescript_draft'），跨月留存待 #657 批红面消费。
-
-        #657：补 choice / revision_round / prior_options_json 投影（list 面保留）。
-        """
-        rows = self.conn.execute(
-            "SELECT turn, idx, event_id, title, context, options_json, choice_json, status, "
-            "actor_name, actor_office, actor_faction, revision_round, prior_options_json "
-            "FROM pending_decisions WHERE kind = 'rescript_draft' ORDER BY turn, idx"
-        ).fetchall()
-        out: List[Dict[str, object]] = []
-        for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（draft turn={r['turn']} idx={r['idx']}）：{exc}")
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
-            out.append({
-                "turn": int(r["turn"]),
-                "idx": int(r["idx"]),
-                "event_id": r["event_id"],
-                "title": r["title"],
-                "context": r["context"],
-                "options": options if isinstance(options, list) else [],
-                "choice": choice,
-                "status": r["status"],
-                "actor_name": r["actor_name"],
-                "actor_office": r["actor_office"],
-                "actor_faction": r["actor_faction"],
-                "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
-            })
-        return out
-
     def list_rescript_desk(self, turn: int) -> List[Dict[str, object]]:
-        """#657 批红案头唯一合并读出口。
-
-        序：全部 pending 急务（跨月）ORDER BY turn, idx → 本月 pending decision ORDER BY idx。
-        投影含 decision_key="{kind}:{source_turn}:{idx}"、options、choice、revision_round、
-        status、actor；**不**持久窗 id/集合摘要/窗版本。
-        list_rescript_drafts / list_pending_decisions 调用面保留；本方法是批红合并出口。
-        """
+        """批红案头：本月 pending decision（含 0055 案卷三选）。"""
         turn = int(turn)
         rows = self.conn.execute(
             """
@@ -10813,13 +10737,8 @@ class GameDB:
                    revision_round, prior_options_json
             FROM pending_decisions
             WHERE status = 'pending'
-              AND (
-                    kind = 'rescript_draft'
-                    OR (kind = 'decision' AND turn = ?)
-                  )
-            ORDER BY
-              CASE kind WHEN 'rescript_draft' THEN 0 ELSE 1 END,
-              turn, idx
+              AND kind = 'decision' AND turn = ?
+            ORDER BY turn, idx
             """,
             (turn,),
         ).fetchall()
@@ -10887,7 +10806,7 @@ class GameDB:
                 turn_i, idx_i = int(turn_s), int(idx_s)
             except (TypeError, ValueError):
                 continue
-            if kind not in {"rescript_draft", "decision"}:
+            if kind != "decision":
                 continue
             r = self.conn.execute(
                 """

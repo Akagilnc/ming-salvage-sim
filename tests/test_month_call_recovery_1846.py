@@ -22,9 +22,8 @@ from tests.month_chain_helpers import make_light_session
 
 
 def _forbid_extractor(monkeypatch):
-    monkeypatch.setattr(
-        "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
-    )
+    """旧 write_decree 前置已撤；保留调用点 no-op。"""
+    del monkeypatch
 
 
 def _stage_settled_ready_edict(db, state, minister, *, delta=-3):

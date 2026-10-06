@@ -1876,14 +1876,7 @@ def _materialize_rescript_desk(
         ))
     if decisions:
         db.save_pending_decisions(turn, decisions)
-    # 已应用 return_revise 仍 pending，但是本批已办，不是新待裁。
-    # 清锚仍只走推进事务里的 clear_return_revise_choice_anchors。
-    from ming_sim.rescript_actions import row_is_applied_return_revise
-
-    desk = [
-        row for row in db.list_rescript_desk(turn)
-        if not row_is_applied_return_revise(row)
-    ]
+    desk = list(db.list_rescript_desk(turn))
     if not desk:
         return None
     chain["stage"] = "rescript"
@@ -2089,8 +2082,6 @@ def _advance_after_gazette(
     from ming_sim.decree import (
         TIMEOUT_TURN, _carry_pending_clarification_actions, atomic_and_reload,
     )
-    from ming_sim.rescript_actions import clear_return_revise_choice_anchors
-
     settled_year, settled_period = int(state.year), int(state.period)
     ending_outcome: Optional[Dict[str, object]] = None
     with atomic_and_reload(db, state, content=content):
@@ -2120,7 +2111,6 @@ def _advance_after_gazette(
         )
         chain = _load_chain(db, turn)
         db.mark_directives_issued(state)
-        clear_return_revise_choice_anchors(db, None)
         # #652：刚结束的月份的执行判定和实付已落定；下月任何吸收前回流。
         from ming_sim.displaced_population import apply_recovery_driven_transfers
         apply_recovery_driven_transfers(db, state, commit=False)

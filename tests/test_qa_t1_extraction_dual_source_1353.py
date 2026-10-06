@@ -655,7 +655,6 @@ def test_resolve_turn_write_gate_held_by_caller_no_reenter(game, tmp_path, monke
     sess._write_gate = gate
     sess.agno_db = None
     sess.last_decree = ""
-    sess._decree_draft_fingerprint = ()
     sess.deaths_this_turn = []
 
     try:

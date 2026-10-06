@@ -1,10 +1,10 @@
-from tests.conftest import seed_rescript_rows
 import json
 
 import pytest
 
 import ming_sim.cli_backend as cli_backend
 from tests.dossier_test_helpers import rejected_verdict
+
 
 
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
@@ -17,13 +17,11 @@ def _make_midzhi_dossier(db, state, *, target_id="river-works"):
         payload={"mode": "midzhi"},
     )
 
-
 def _rejected_verdict(dossier_id):
     # Preserve suite-specific gatekeeper/band/reason differences via builder knobs.
     return rejected_verdict(
         dossier_id, "强盛", gatekeeper_id="韩爌", reason="科臣封驳",
     )
-
 
 @pytest.mark.parametrize(
     ("emperor_text", "extracted_mode", "expected"),
@@ -42,7 +40,6 @@ def test_manual_mode_uses_typed_extractor_judgment(
     )
     assert cli_backend.capture_manual_directive_payload(emperor_text)["mode"] == expected
 
-
 def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(monkeypatch):
     extracted = json.dumps({
         "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
@@ -58,7 +55,6 @@ def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(
 
     assert payload["mode"] == "midzhi"
 
-
 def test_predeclared_midzhi_promulgation_persists_stigma(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
@@ -68,7 +64,6 @@ def test_predeclared_midzhi_promulgation_persists_stigma(game):
         "source_action": "promulgated",
     }]
 
-
 def test_missing_dossier_mode_defaults_to_ordinary(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
@@ -77,7 +72,6 @@ def test_missing_dossier_mode_defaults_to_ordinary(game):
     )
 
     assert db.get_decree_dossier(dossier_id)["mode"] == "ordinary"
-
 
 @pytest.mark.parametrize(
     ("caller_mode", "minister_text", "expected"),
@@ -101,7 +95,6 @@ def test_declared_staging_uses_typed_mode_not_minister_text(
     dossiers = db.list_decree_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["mode"] == expected
-
 
 def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
     db, state, _content = game
@@ -129,7 +122,6 @@ def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
     dossiers = db.list_decree_dossiers()
     assert len(dossiers) == 1
     assert dossiers[0]["mode"] == "ordinary"
-
 
 def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
     db, state, _content = game
@@ -159,7 +151,6 @@ def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
         "source_action": "rejected",
     }]
 
-
 def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
@@ -176,7 +167,6 @@ def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
          "source_action": "rejected"},
     ]
 
-
 def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
@@ -191,34 +181,6 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
         "source_action": "force_promulgated",
     }]
 
-
-# ---------------------------------------------------------------------------
-# #657 片2：canonical / capability 回验
-# ---------------------------------------------------------------------------
-
-def test_657_canonical_choice_stable_key_order():
-    from ming_sim.rescript_actions import canonical_choice
-    a = canonical_choice({
-        "decision_key": "rescript_draft:1:0",
-        "action": "follow_draft",
-        "draft_capability": "abc",
-        "label": "甲",
-        "hint": "h",
-        "note": "批",
-    })
-    b = canonical_choice({
-        "hint": "h",
-        "label": "甲",
-        "action": "follow_draft",
-        "decision_key": "rescript_draft:1:0",
-        "draft_capability": "abc",
-        "note": "批",
-    })
-    assert a == b
-    assert a["decision_key"] == "rescript_draft:1:0"
-    assert a["action"] == "follow_draft"
-
-
 @pytest.mark.parametrize("labels", [["", "乙"], ["甲", "甲"]])
 def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
     from ming_sim.settlement_payload import parse_decision_blocks
@@ -231,40 +193,3 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
     decisions = parse_decision_blocks(raw)
     assert decisions == []
 
-
-def test_657_capability_revalidate_on_follow(game):
-    """服务端回验：请求 capability 必须等于对当前 option 结构化字段重算值。"""
-    from ming_sim.decree_vocabulary import derive_draft_capability
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    from ming_sim import rescript_actions as ra
-
-    db, state, _content = game
-    opt = normalize_rescript_layer_a_option({
-        "label": "发帑赈济", "hint": "所安者饥民",
-        "action_type": "assignment", "assignee_name": "",
-        "target_kind": "region", "target_id": "shaanxi",
-        "locality_scope": "single", "region_id": "shaanxi",
-        "transaction_category": "督赈",
-    })
-    assert opt["draft_capability"] == derive_draft_capability(opt)
-    seed_rescript_rows(db, int(state.turn), [{
-        "title": "急", "context": "c",
-        "options": [opt, {"label": "备", "hint": "b",
-                           "draft_capability": derive_draft_capability({"label": "备"})}],
-        "actor_name": "A", "actor_office": "o", "actor_faction": "f",
-    }])
-    db.conn.commit()
-    desk = db.list_rescript_desk(int(state.turn))
-    key = desk[0]["decision_key"]
-    # 正确 cap 通过
-    batch = ra.validate_all(desk, [{
-        "decision_key": key, "action": "follow_draft",
-        "draft_capability": opt["draft_capability"], "label": opt["label"],
-    }])
-    assert batch.items[0].choice["draft_capability"] == opt["draft_capability"]
-    # 旧 cap（改票后）拒
-    with pytest.raises(ValueError):
-        ra.validate_all(desk, [{
-            "decision_key": key, "action": "follow_draft",
-            "draft_capability": "old-round-cap", "label": opt["label"],
-        }])
