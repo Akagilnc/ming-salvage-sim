@@ -175,7 +175,7 @@ def parse_faction_stance_output(raw: str, stage: str = "派系态势酿制") -> 
     """酿制输出契约：{"stance_segment": "..."}。
 
     与 parse_brew_output 同一严格解析边界（庭裁 Z1 同型）：raw 必须本身就是唯一、
-    完整、合法的 JSON object——不做任何 fence 剥离/控制字节清洗/首对象截取等修补；
+    完整、合法的 JSON object——不做任何 fence 剥离/外围截取/首对象截取等修补；
     畸形产出一律契约错拒收（LLMContractError/ValueError），沿单条降级保旧摘要与
     pending；绝不把改写/择取后的散文当模型产出落库（ADR 0142 零删改）。零长度
     管辖：stance_segment 原样存储，不截断不 clamp。"""
