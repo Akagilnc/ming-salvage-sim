@@ -20,17 +20,10 @@ issue 盘面事实，不新建 issue。event_id 绑定走 bind_decisions_to_cand
 
 from __future__ import annotations
 
-import copy
 import json
 import re
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError
-
-from ming_sim.agents import run_agent_text
-from ming_sim.assets import strip_json_fence
-from ming_sim.llm_model import llm_unavailable_from_error
 from ming_sim.db import GameDB
 from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES,
@@ -39,11 +32,9 @@ from ming_sim.decree_vocabulary import (
     _DRAFT_CAPABILITY_KEYS,
     derive_draft_capability,
 )
-from ming_sim.error_pack import error_packs_root
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.exceptions import LLMContractError
 from ming_sim.participant_roster import PARTICIPANT_LEAD_TIER, PARTICIPANT_TIERS
 from ming_sim.structured_decree import StructuredDecreeCombinationError
-from ming_sim.token_stats import tlog
 
 # #1746：单 option 契约失败（缺/错/组合/接地/形）→ 同一会话补交（不含首抽）；耗尽只剔该 option。
 # decision: missing-field-heal-by-resume-not-drop / per-option-drop-after-heal-exhausted
@@ -1065,15 +1056,6 @@ def normalize_rescript_layer_a_option(
     # derive 需要 action_type 等必填已齐；编码已在上环收束，不再经 ValueError 整批
     out["draft_capability"] = derive_draft_capability(out)
     return out
-
-
-def _assert_utf8(s: str, field: str) -> None:
-    try:
-        s.encode("utf-8")
-    except UnicodeEncodeError as exc:  # noqa: BLE001
-        raise ValueError(
-            f"票拟字段含 SQLite 不可编码字符（整批 shape 错，F2.5）：{field} {exc}"
-        ) from exc
 
 
 def _parse_rescript_json_strict(raw: str) -> Dict[str, Any]:

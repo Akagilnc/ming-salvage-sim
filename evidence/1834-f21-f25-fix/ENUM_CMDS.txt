@@ -1,0 +1,3 @@
+# F21: free field assign-strip write/supply; strip() or default on summary/display/role
+# F22: AST Load zero-consumer cascade from deleted run_agent_stream_text / validate_rescript_draft_items
+# F25: rg 缺亲裁能力|不能代为批红 tests/

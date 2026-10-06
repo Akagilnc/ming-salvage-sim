@@ -803,7 +803,9 @@ def _commitment_fiscal_create_duplicate_reason(
     db: GameDB,
 ) -> str:
     account = str(create.get("account") or "").strip()
-    display = str(create.get("display") or "").strip() or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
+    # Free prose display: preserve raw; emptiness on copy (#1834 F21).
+    display_raw = str(create.get("display") or "")
+    display = display_raw if display_raw.strip() else (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
     create_tokens = _recurring_funding_label_tokens(
         display,
         create.get("key"),
@@ -6915,10 +6917,13 @@ def _apply_dossier_participant_items(
                 raise ValueError("追加参与层级必须为主办/协办/知情")
             if not delegator_id:
                 raise ValueError("追加参与人必须注明委派人")
+            # Free prose role（职分文字）：preserve raw; emptiness on local copy (#1834 F21).
+            role_raw = str(item.get("role") or "")
+            role = role_raw if role_raw.strip() else ""
             added = db.append_decree_dossier_participants(dossier_id, [{
                 "character_id": character_id,
                 "tier": tier,
-                "role": str(item.get("role") or "").strip(),
+                "role": role,
                 "delegator_id": delegator_id,
             }], state=state, commit=False)
             if not added:
@@ -6927,7 +6932,7 @@ def _apply_dossier_participant_items(
                 if not any(
                     row.get("character_id") == character_id
                     and row.get("tier") == tier
-                    and row.get("role") == str(item.get("role") or "").strip()
+                    and row.get("role") == role
                     and row.get("delegator_id") == delegator_id
                     for row in existing.get("participant_roster", [])
                 ):
@@ -8747,7 +8752,9 @@ def _apply_score_extraction_body(
             init_value = init_raw
         # display 缺省=归一 stem（与落库同源——raw key 去 _base 会把「关税_rate」
         # 显示成「关税_rate」,cmr S3 r11;DELTA_SCHEMA 契约「缺省=key 去后缀」）。
-        display = str(create.get("display") or "").strip() or (db._stem_of(key) or key)
+        # Free prose display: preserve raw; emptiness on copy (#1834 F21).
+        display_raw = str(create.get("display") or "")
+        display = display_raw if display_raw.strip() else (db._stem_of(key) or key)
         origin_ref = str(create.get("origin_ref") or "").strip()
         origin_error = db.effect_origin_rejection(origin_ref)
         if origin_error:
@@ -8779,9 +8786,11 @@ def _apply_score_extraction_body(
                 create, commitment_economy_carriers
             )
             if residual_account:
+                # Free prose display: preserve raw; emptiness on copy (#1834 F21).
+                residual_raw = str(create.get("display") or "")
                 residual_display = (
-                    str(create.get("display") or "").strip()
-                    or (db._stem_of(key) or key) or "无名月支"
+                    residual_raw if residual_raw.strip()
+                    else ((db._stem_of(key) or key) or "无名月支")
                 )
                 tlog(
                     f"[commitment-dedup] ADR0027 残留观测：同批{residual_account}已有 decree 承诺月支，"

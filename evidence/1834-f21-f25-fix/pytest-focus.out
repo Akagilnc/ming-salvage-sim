@@ -1,0 +1,15 @@
+................................................FF...................... [ 19%]
+........................................................................ [ 39%]
+........................................................................ [ 59%]
+........................................................................ [ 78%]
+........................................................................ [ 98%]
+......                                                                   [100%]
+=================================== FAILURES ===================================
+E   ImportError: cannot import name 'write_locality_scope_for_target_kind' from 'ming_sim.action_materialize' (/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/ming_sim/action_materialize.py)
+/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/ming_sim/declaration_dispatch.py:937: ImportError: cannot import name 'write_locality_scope_for_target_kind' from 'ming_sim.action_materialize' (/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/ming_sim/action_materialize.py)
+E   ImportError: cannot import name 'write_locality_scope_for_target_kind' from 'ming_sim.action_materialize' (/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/ming_sim/action_materialize.py)
+/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/ming_sim/declaration_dispatch.py:937: ImportError: cannot import name 'write_locality_scope_for_target_kind' from 'ming_sim.action_materialize' (/Users/akagilnc/WorkSpace/Ming_LLM-1834-w5/ming_sim/action_materialize.py)
+=========================== short test summary info ============================
+FAILED tests/test_declaration_dispatch_1835.py::test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row
+FAILED tests/test_declaration_dispatch_1835.py::test_commission_with_appointment_and_grant_is_one_combined_payload_one_row
+2 failed, 364 passed in 6.88s

@@ -43,28 +43,6 @@ def _layer_a_opt(label: str = "拟", hint: str = "h", **kw) -> dict:
 def _two_opts(a: str = "甲", ha: str = "h1", b: str = "乙", hb: str = "h2", **kw) -> list:
     return [_layer_a_opt(label=a, hint=ha, **kw), _layer_a_opt(label=b, hint=hb, **kw)]
 
-def _retire_existing_actors(db) -> None:
-    db.conn.execute(
-        "UPDATE characters SET status='retired' WHERE status='active' AND power_id='ming' "
-        "AND (office LIKE '%首辅%' OR office LIKE '%掌印%')"
-    )
-
-def _add_character(db, name: str, office: str, faction: str, office_type: str = "内阁") -> None:
-    template = db.conn.execute("SELECT * FROM characters LIMIT 1").fetchone()
-    columns = [r[1] for r in db.conn.execute("PRAGMA table_info(characters)").fetchall()]
-    values = [template[c] for c in columns]
-    values[columns.index("name")] = name
-    values[columns.index("office")] = office
-    values[columns.index("office_type")] = office_type
-    values[columns.index("faction")] = faction
-    values[columns.index("status")] = "active"
-    values[columns.index("power_id")] = "ming"
-    db.conn.execute(
-        f"INSERT INTO characters ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
-        values,
-    )
-    db.conn.commit()
-
 # ---------------------------------------------------------------------------
 # F3.1 分拣人唯一规则
 # ---------------------------------------------------------------------------
@@ -228,19 +206,6 @@ def test_repeated_overwrite_keeps_stable_synthetic_ids(game):
 # ---------------------------------------------------------------------------
 # shape 校验＋权威快照绑定（F2.2/F2.3/F2.5）
 # ---------------------------------------------------------------------------
-
-def _valid_item(i: int) -> dict:
-    return {
-        "title": f"条目{i}", "context": f"导语{i}",
-        "options": _two_opts("甲拟", "所安者饥民", "乙拟", "所拂者小农"),
-    }
-
-def _legal_item() -> dict:
-    return {
-        "title": "陕西告饥",
-        "context": "秦地赤旱千里。",
-        "options": _two_opts("发帑赈济", "所安者饥民", "缓征加赈", "先赈后征"),
-    }
 
 # ---------------------------------------------------------------------------
 # F1.3/F2.5 崩溃恢复：不重跑票拟步（持久层读回）＋restore 往返无损

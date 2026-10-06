@@ -1879,12 +1879,15 @@ def compose_unknown_participant_inworld_report(
 
     产文失败 → typed LLMUnavailable（#1299/#1310/#1452
     失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
-    speaker_role：大臣口吻时接 minister_speaker_role 客观档料（0033）；不在此复制档料。
+    speaker_role：大臣口吻时接客观档料（0033）；不在此复制档料。
     """
     cleaned = _normalize_unknown_participant_names(names)
     if voice == "minister":
-        role = str(speaker_role or "").strip()
-        if not role:
+        # Free prose speaker_role → prompt 供料：preserve raw; emptiness on copy (#1834 F21).
+        role_raw = str(speaker_role or "")
+        if role_raw.strip():
+            role = role_raw
+        else:
             name = str(speaker_name or "").strip()
             role = f"大臣{name}" if name else "大臣"
     else:

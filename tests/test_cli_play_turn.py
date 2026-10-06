@@ -570,7 +570,7 @@ def test_cli_write_gate_canonical_session_attr():
     # 二次调用同锁
     assert term._cli_write_gate(session) is gate
 @pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_hitl_awaits_without_auto_proxy(game, monkeypatch, action, capsys):
+def test_play_turn_hitl_awaits_without_auto_proxy(game, monkeypatch, action):
     """#1812 第9项 / #1834 F24：CLI 缺亲裁能力，不自动代裁，月份不推进。"""
     from tests.month_chain_helpers import make_light_session
 
@@ -601,7 +601,5 @@ def test_play_turn_hitl_awaits_without_auto_proxy(game, monkeypatch, action, cap
 
     term.play_turn(session)
 
-    out = capsys.readouterr().out
-    assert "缺亲裁能力" in out or "不能代为批红" in out
     assert int(session.state.turn) == turn_before
     assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value

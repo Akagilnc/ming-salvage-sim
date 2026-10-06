@@ -12,17 +12,17 @@ import os
 import re
 import time
 from dataclasses import asdict, is_dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 
 from ming_sim.assets import strip_json_fence
 from ming_sim.content import GameContent
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.exceptions import LLMContractError
 from ming_sim.cli_backend import describe_effective_model
 from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
-from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
+from ming_sim.llm_contract import abort_llm_contract
 from ming_sim.llm_model import create_chat_model, extract_agent_text
 from ming_sim.llm_transport import (
     bind_transport_sdk_budget,
@@ -34,11 +34,10 @@ from ming_sim.llm_transport import (
     run_with_transport,
     transport_failure_unavailable,
 )
-from ming_sim.models import GameState, LLMConfig
-from ming_sim.token_stats import record_stream_metrics, tlog
+from ming_sim.models import LLMConfig
+from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None
-_THINKING_STREAM_CHAR_LIMIT = max(0, int(os.environ.get("MING_SIM_THINKING_STREAM_LIMIT", "600") or "0"))
 _MINIMAX_SHORT_THINKING_PROMPT = (
     "【MiniMax 推演思考约束】\n"
     "若启用 thinking/reasoning，请极短思考：只列必要因果链，不复述题目、盘面、系统规则或历史常识；"
