@@ -625,41 +625,58 @@ class CharacterKnowledgeStore:
         # 同月、同一业务身份只留一条。催办/核议与月度奏报 origin base 不同，同月并存。
         # 既存成员 id/turn 与读缝 coerce→durable_int 同一契约：损坏沿系统边界上抛，
         # 不得靠 Python int() 截断/收 bool 正常消费（#1889 R5）。
-        # 缺键保留旧算法默认 0；键在场则 blank=None（与 coerce_progress_row 同）。
+        # 查重/id 分配的 get 默认 0 只是中间匹配；排序与既存 id 最终消费与旧算法/
+        # coerce 一样要求键在场（缺 turn 不是合法 absence；turn=0 仍合法）。
         incoming = report_origin_base(origin)
         incoming_turn = int(turn)
 
-        def _member_turn(item: object) -> int:
+        def _as_member(item: object) -> Mapping:
             if not isinstance(item, Mapping):
                 raise StoredDocumentError("dossier_progress 成员须为对象")
-            if "turn" not in item:
-                return 0
-            return durable_int(
-                item["turn"], label="dossier_progress.turn", blank=None,
-            )
+            return item
 
-        def _member_id(item: object, *, required: bool) -> int:
-            if not isinstance(item, Mapping):
-                raise StoredDocumentError("dossier_progress 成员须为对象")
-            if "id" not in item:
-                if required:
-                    raise StoredDocumentError("dossier_progress.id 损坏")
+        def _turn_for_dedupe(item: object) -> int:
+            """查重中间默认：缺键当 0（旧 get）；键在场走 durable_int。"""
+            m = _as_member(item)
+            if "turn" not in m:
                 return 0
-            return durable_int(
-                item["id"], label="dossier_progress.id", blank=None,
-            )
+            return durable_int(m["turn"], label="dossier_progress.turn", blank=None)
+
+        def _id_for_allocate(item: object) -> int:
+            """id 分配中间默认：缺键当 0（旧 get）；键在场走 durable_int。"""
+            m = _as_member(item)
+            if "id" not in m:
+                return 0
+            return durable_int(m["id"], label="dossier_progress.id", blank=None)
+
+        def _required_turn(item: object) -> int:
+            """最终消费（排序）：键必在场，与 coerce item['turn'] / 旧 int(item['turn']) 同。"""
+            m = _as_member(item)
+            try:
+                raw = m["turn"]
+            except KeyError as exc:
+                raise StoredDocumentError("dossier_progress.turn 损坏") from exc
+            return durable_int(raw, label="dossier_progress.turn", blank=None)
+
+        def _required_id(item: object) -> int:
+            """最终消费（既存 id / 排序）：键必在场。"""
+            m = _as_member(item)
+            try:
+                raw = m["id"]
+            except KeyError as exc:
+                raise StoredDocumentError("dossier_progress.id 损坏") from exc
+            return durable_int(raw, label="dossier_progress.id", blank=None)
 
         try:
             existing = next((
                 item for item in reports
                 if not item.get("is_terminal")
-                and _member_turn(item) == incoming_turn
+                and _turn_for_dedupe(item) == incoming_turn
                 and report_origin_base(item.get("origin")) == incoming
             ), None)
             if existing is None or is_terminal:
                 report_id = max(
-                    (_member_id(item, required=False) for item in reports),
-                    default=0,
+                    (_id_for_allocate(item) for item in reports), default=0,
                 ) + 1
                 existing = {
                     "id": report_id, "dossier_id": int(dossier_id),
@@ -669,14 +686,12 @@ class CharacterKnowledgeStore:
                 }
                 reports.append(existing)
             else:
-                report_id = _member_id(existing, required=True)
+                report_id = _required_id(existing)
                 existing.update(
                     progress_band=band, memorial_text=text, origin=origin,
                 )
             reports.sort(
-                key=lambda item: (
-                    _member_turn(item), _member_id(item, required=True),
-                ),
+                key=lambda item: (_required_turn(item), _required_id(item)),
             )
         except StoredDocumentError:
             raise
