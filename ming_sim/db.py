@@ -6749,20 +6749,33 @@ class GameDB:
     def _coerce_dossier_progress_row(
         cls, item: Mapping[str, object], *, dossier_id: int,
     ) -> Dict[str, object]:
-        is_terminal = bool(item.get("is_terminal"))
-        # Empty origin defaults live only in _normalize_dossier_report_origin.
-        origin = cls._normalize_dossier_report_origin(
-            item.get("origin"), is_terminal=is_terminal,
-        )
-        return {
-            "id": int(item["id"]),
-            "dossier_id": int(item.get("dossier_id") or dossier_id),
-            "turn": int(item["turn"]),
-            "progress_band": str(item["progress_band"]),
-            "memorial_text": str(item["memorial_text"]),
-            "is_terminal": is_terminal,
-            "origin": origin,
-        }
+        # 既存 progress 成员装配：损坏是读缝，不得 AttributeError/ValueError 洗成 pending failed。
+        try:
+            if not isinstance(item, Mapping):
+                raise StoredDocumentError("dossier_progress 成员须为对象")
+            is_terminal = bool(item.get("is_terminal"))
+            # Empty origin defaults live only in _normalize_dossier_report_origin.
+            origin = cls._normalize_dossier_report_origin(
+                item.get("origin"), is_terminal=is_terminal,
+            )
+            return {
+                "id": durable_int(item["id"], label="dossier_progress.id"),
+                "dossier_id": durable_int(
+                    item.get("dossier_id") if item.get("dossier_id") is not None else dossier_id,
+                    label="dossier_progress.dossier_id",
+                ),
+                "turn": durable_int(item["turn"], label="dossier_progress.turn"),
+                "progress_band": str(item["progress_band"]),
+                "memorial_text": str(item["memorial_text"]),
+                "is_terminal": is_terminal,
+                "origin": origin,
+            }
+        except StoredDocumentError:
+            raise
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            raise StoredDocumentError(
+                f"dossier_progress 损坏：{exc}",
+            ) from exc
 
     def _record_secret_dossier_progress(
         self,
@@ -13991,19 +14004,34 @@ class GameDB:
         minister_name: Optional[str] = None,
     ) -> List[Dict[str, object]]:
         rows = self.character_knowledge.secret_order_rows(status, minister_name)
-        return [
-            {
-                "id": int(r["id"]),
-                "turn_issued": int(r["turn_issued"]),
-                "due_turn": int(r["due_turn"] or 0),
-                "deadline_span": int(r["deadline_span"] or 0),
-                "year_issued": int(r["year_issued"]),
-                "period_issued": int(r["period_issued"]),
+        out: List[Dict[str, object]] = []
+        for r in rows:
+            oid = durable_int(r["id"], label="secret_orders.id")
+            dossier = self.dossiers.get_for_secret_order(oid)
+            out.append({
+                "id": oid,
+                "turn_issued": durable_int(
+                    r["turn_issued"], label="secret_orders.turn_issued",
+                ),
+                "due_turn": durable_int(
+                    r["due_turn"], label="secret_orders.due_turn",
+                ),
+                "deadline_span": durable_int(
+                    r["deadline_span"], label="secret_orders.deadline_span",
+                ),
+                "year_issued": durable_int(
+                    r["year_issued"], label="secret_orders.year_issued",
+                ),
+                "period_issued": durable_int(
+                    r["period_issued"], label="secret_orders.period_issued",
+                ),
                 "minister_name": r["minister_name"],
                 "title": r["title"],
                 "content": r["content"],
                 "tags": load_stored_list(r["tags"], label='tags'),
-                "importance": int(r["importance"]),
+                "importance": durable_int(
+                    r["importance"], label="secret_orders.importance",
+                ),
                 "status": r["status"],
                 "result": r["result"] or "",
                 "sim_note": r["sim_note"] or "",
@@ -14012,15 +14040,17 @@ class GameDB:
                 # the personnel extractor and future dossier inquiry.
                 "dossier_progress": (
                     self.list_dossier_progress(int(dossier["id"]))
-                    if (dossier := self.dossiers.get_for_secret_order(int(r["id"])))
-                    else []
+                    if dossier is not None else []
                 ),
-                "excluded_names": load_stored_list(r["excluded_names"], label='excluded_names'),
-                "excluded_targets": load_stored_object(r["excluded_targets"], label='excluded_targets'),
+                "excluded_names": load_stored_list(
+                    r["excluded_names"], label='excluded_names',
+                ),
+                "excluded_targets": load_stored_object(
+                    r["excluded_targets"], label='excluded_targets',
+                ),
                 "turn_closed": r["turn_closed"],
-            }
-            for r in rows
-        ]
+            })
+        return out
 
     def get_active_secret_orders_for_minister(self, minister_name: str) -> List[Dict[str, object]]:
         """返回该大臣名下未结案密令（active）。done/failed 已结案不再返回。"""
@@ -14287,12 +14317,17 @@ class GameDB:
         if not r:
             return None
         return {
-            "id": int(r["id"]), "minister_name": r["minister_name"],
+            "id": durable_int(r["id"], label="secret_orders.id"),
+            "minister_name": r["minister_name"],
             "title": r["title"], "content": r["content"],
             "status": r["status"], "result": r["result"] or "",
             "sim_note": r["sim_note"] or "",
-            "turn_issued": int(r["turn_issued"]),
-            "due_turn": int(r["due_turn"] or 0),
+            "turn_issued": durable_int(
+                r["turn_issued"], label="secret_orders.turn_issued",
+            ),
+            "due_turn": durable_int(
+                r["due_turn"], label="secret_orders.due_turn",
+            ),
             "turn_closed": r["turn_closed"],
         }
 

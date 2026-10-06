@@ -512,7 +512,11 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
             return None
         if delivery.get("effect_sign") not in (-1, 1):
             return None
-        if list(delivery.get("canonical_fields") or []):
+        # 既存 delivery.canonical_fields 非名单：契约无效，禁 list(非序列) TypeError 上抛洗业务 failed。
+        fields = delivery.get("canonical_fields") or []
+        if not isinstance(fields, (list, tuple)):
+            return None
+        if list(fields):
             return None
         if str(delivery.get("investigation_target") or "").strip() != inv_target:
             return None
@@ -525,7 +529,10 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
         return None
     if delivery.get("effect_sign") not in (-1, 1):
         return None
-    if list(delivery.get("canonical_fields") or []) != canonical_fields_for_delivery(unit=unit):
+    fields = delivery.get("canonical_fields") or []
+    if not isinstance(fields, (list, tuple)):
+        return None
+    if list(fields) != canonical_fields_for_delivery(unit=unit):
         return None
     if float(delivery.get("target_units")) != target:
         return None
