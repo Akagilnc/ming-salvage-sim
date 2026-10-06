@@ -74,7 +74,10 @@ describe("commitment progress display", () => {
 
   it("uses a styled fallback when a commitment has progress but no text", () => {
     const cleanup = render(<IssueGroup title="待办" issues={[makeCommitmentWithoutProgressText()]} />);
-    expect(document.querySelector(".issue-commitment-progress")).not.toBeNull();
+    const node = document.querySelector(".issue-commitment-progress");
+    expect(node).not.toBeNull();
+    // 固定 UI fallback（P7 界面话语，非 LLM 正文）；空格变异须报红（#1897 T1）。
+    expect(node!.textContent).toContain("未知进度");
     cleanup();
   });
 
@@ -195,9 +198,11 @@ describe("#1726 StateModal 奏疏收件箱", () => {
 
     const doc = document.querySelector(".state-document");
     expect(doc).toBeTruthy();
+    // 奏疏面不借局势布局；不以 issue.title 散文作负向哨兵（#1897 T1）。
     expect(doc!.querySelector(".situation-panel")).toBeNull();
     expect(doc!.querySelector(".situation-row")).toBeNull();
-    expect(doc!.textContent).not.toContain(makeIssue().title);
+    expect(doc!.querySelector(".issue-row")).toBeNull();
+    expect(doc!.querySelector(".issue-board")).toBeNull();
     expect(doc!.textContent).toContain("杨嗣昌");
     expect(doc!.querySelector("pre.memorial-text")).not.toBeNull();
     expect(doc!.textContent).not.toContain("progress:7");

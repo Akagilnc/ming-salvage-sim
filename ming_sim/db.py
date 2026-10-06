@@ -18079,8 +18079,9 @@ class GameDB:
                             *rejection, pending_action_id=int(pa["id"]),
                         )
                     tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-                    if rejection_collector is not None:
-                        rejection_collector.note_commit_rejection(int(pa["id"]), exc)
+                    self._record_pending_domain_rejection(
+                        rejection_collector, state, pa, payload, exc,
+                    )
                     ok = False
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
@@ -18185,8 +18186,9 @@ class GameDB:
                         f"[pending_actions] 落库失败 id={pa['id']} "
                         f"{pa['kind']}/{pa['action']}：{exc}"
                     )
-                    if rejection_collector is not None:
-                        rejection_collector.note_commit_rejection(int(pa["id"]), exc)
+                    self._record_pending_domain_rejection(
+                        rejection_collector, state, pa, payload, exc,
+                    )
                     self.conn.execute(
                         "UPDATE pending_actions SET status='failed' WHERE id=?",
                         (int(pa["id"]),),
@@ -18200,6 +18202,42 @@ class GameDB:
             tlog(f"[pending_actions] 落库异常 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
             raise
         return result
+
+    def _record_pending_domain_rejection(
+        self,
+        rejection_collector: Any,
+        state: GameState,
+        pa: Mapping[str, object],
+        payload: Mapping[str, object],
+        exc: BaseException,
+    ) -> None:
+        """领域坏项进既有 rejection_reports；内存 sideband 只供同步应允读回原因。
+
+        真故障不经此路（调用方已 re-raise）。失败 status 不能代替法定拒收留痕。
+        """
+        if rejection_collector is None:
+            return
+        from ming_sim.applier import Provenance, RejectedItem
+        rejection_collector.note_commit_rejection(int(pa["id"]), exc)
+        category = str(getattr(exc, "category", "") or "invalid_state")
+        item = {
+            "id": int(pa["id"]),
+            "kind": str(pa.get("kind") or ""),
+            "action": str(pa.get("action") or ""),
+            "target_id": pa.get("target_id"),
+            "minister_name": str(pa.get("minister_name") or ""),
+            "payload": dict(payload) if isinstance(payload, Mapping) else {},
+        }
+        rejection_collector.record(
+            f"pending_{item['kind'] or 'action'}",
+            RejectedItem(
+                item=item,
+                reason=str(exc),
+                category=category,
+                source=Provenance.player_decree,
+            ),
+            int(state.turn),
+        )
 
     def _apply_pending_action(
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
@@ -20668,43 +20706,63 @@ class GameDB:
         units: float,
         fidelity_state: str,
         floor_state: str,
-        note: str = "",
+        note: Optional[str] = None,
         commit: bool = True,
     ) -> Dict[str, object]:
         """#1504 实况轨月度进度（0073）。禁与 dossier_progress_json 混写。
 
         同一 (dossier, turn) 的 note 与推演实况正文共用。冲突更新改单位与执行态。
-        本次 note 去掉空白后仍有字，即为同月更正，替换已存正文；空白则只动数值，
-        留下已存正文。
+        note is None＝本次数值写未提供正文字段，保留已存正文；note 为 str（含空白）
+        ＝显式承接，原文原样写入，不以空白形状仲裁旧／新（P6 / #1897 N2）。
         """
         did = int(dossier_id)
         origin = f"dossier:{did}"
-        self.conn.execute(
-            """
-            INSERT INTO dossier_actual_progress
-                (dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(dossier_id, turn) DO UPDATE SET
-                units=excluded.units,
-                fidelity_state=excluded.fidelity_state,
-                floor_state=excluded.floor_state,
-                note=CASE
-                    WHEN TRIM(COALESCE(excluded.note, '')) <> ''
-                    THEN excluded.note
-                    ELSE dossier_actual_progress.note
-                END,
-                origin_ref=excluded.origin_ref
-            """,
-            (
-                did,
-                int(turn),
-                float(units),
-                str(fidelity_state),
-                str(floor_state),
-                str(note or ""),
-                origin,
-            ),
-        )
+        note_provided = note is not None
+        note_value = str(note) if note_provided else ""
+        if note_provided:
+            self.conn.execute(
+                """
+                INSERT INTO dossier_actual_progress
+                    (dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dossier_id, turn) DO UPDATE SET
+                    units=excluded.units,
+                    fidelity_state=excluded.fidelity_state,
+                    floor_state=excluded.floor_state,
+                    note=excluded.note,
+                    origin_ref=excluded.origin_ref
+                """,
+                (
+                    did,
+                    int(turn),
+                    float(units),
+                    str(fidelity_state),
+                    str(floor_state),
+                    note_value,
+                    origin,
+                ),
+            )
+        else:
+            self.conn.execute(
+                """
+                INSERT INTO dossier_actual_progress
+                    (dossier_id, turn, units, fidelity_state, floor_state, note, origin_ref)
+                VALUES (?, ?, ?, ?, ?, '', ?)
+                ON CONFLICT(dossier_id, turn) DO UPDATE SET
+                    units=excluded.units,
+                    fidelity_state=excluded.fidelity_state,
+                    floor_state=excluded.floor_state,
+                    origin_ref=excluded.origin_ref
+                """,
+                (
+                    did,
+                    int(turn),
+                    float(units),
+                    str(fidelity_state),
+                    str(floor_state),
+                    origin,
+                ),
+            )
         if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
             self.conn.commit()
         row = self.conn.execute(
@@ -20717,7 +20775,7 @@ class GameDB:
             "units": float(units),
             "fidelity_state": str(fidelity_state),
             "floor_state": str(floor_state),
-            "note": str(note or ""),
+            "note": note_value,
             "origin_ref": origin,
         }
 
@@ -22190,12 +22248,11 @@ class GameDB:
     ) -> None:
         """调用方持有事务时把实况原文写入当月实况轨，并同步案卷在办。
 
-        只写 note，不改 units。数值写口见 record_dossier_actual_progress：
-        空白 note 留下这里的原文，非空 note 按同月更正替换。
+        只写 note，不改 units。显式传入的正文（含空白）原样写入，不以
+        strip/TRIM 仲裁旧／新（P6 / #1897 N2）。数值写口见
+        record_dossier_actual_progress：note is None 才保留已存正文。
         """
         raw = str(sim_note or "")
-        if not raw.strip():
-            return
         row = self.conn.execute(
             "SELECT id FROM secret_orders WHERE id=? AND status='active'",
             (int(order_id),),

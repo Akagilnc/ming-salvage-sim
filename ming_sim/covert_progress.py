@@ -1875,10 +1875,10 @@ def apply_monthly_covert_actual_progress(
         else:
             raw_note = None
         if raw_note is None or isinstance(raw_note, (Mapping, list)):
-            # #1897：没有推演者给出的正文就不写说明。机器拼的执行态句子会占住同一 note。
-            note = ""
+            # #1897：没有推演者给出的正文字段 → note=None，数值写口保留已存正文。
+            note: Optional[str] = None
         else:
-            # 仅空白也是原文，原样写入，禁 strip 判空改成 ""。
+            # 字段已提供（含空白）原样写入，不以 strip 改成 "" 或丢弃。
             note = str(raw_note)
         row = db.record_dossier_actual_progress(
             did,

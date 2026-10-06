@@ -2320,13 +2320,14 @@ def prepare_scene_materials(
 
 
 def actual_progress_notes(db: Any, dossier_id: int) -> list[dict[str, object]]:
-    """实况轨原文读投影。空白说明不算正文。不另存一份。"""
+    """实况轨原文读投影。未提供正文的空串不算一行；显式正文（含空白）原样。"""
     if not hasattr(db, "list_dossier_actual_progress"):
         return []
     notes: list[dict[str, object]] = []
     for row in db.list_dossier_actual_progress(int(dossier_id)):
         note = str(row.get("note") or "")
-        if not note.strip():
+        # 仅缺省空串视为无正文；不以 strip 丢弃显式空白（P6 / #1897 N2）。
+        if note == "":
             continue
         notes.append({"turn": int(row.get("turn") or 0), "note": note})
     return notes

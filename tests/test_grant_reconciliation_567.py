@@ -196,18 +196,45 @@ def test_per_route_storage_restore_and_escort_split(game):
     assert db.list_dossier_progress(escorted_grant) == []
     progress = db.list_dossier_progress(escort_dossier_id)
     assert len(progress) == 1
+    assert int(progress[0].get("turn") or 0) == int(turn)
+    assert str(progress[0].get("progress_band") or "") == "在途核验"
 
-    # restore 逐路无损
+    def _recon_struct(rows):
+        return [
+            {
+                "turn": int(r.get("turn") or 0),
+                "escorted": bool(r.get("escorted")),
+                "escort_source_dossier_id": r.get("escort_source_dossier_id"),
+                "arrived_amount": r.get("arrived_amount"),
+            }
+            for r in rows
+        ]
+
+    def _progress_struct(rows):
+        return [
+            {
+                "turn": int(r.get("turn") or 0),
+                "progress_band": str(r.get("progress_band") or ""),
+                "is_terminal": bool(r.get("is_terminal")),
+            }
+            for r in rows
+        ]
+
+    # restore：结构化水位／路由身份；不整对象锁 memorial_text 正文（#1897 T1）。
     path = db.path
     db.close()
     reopened = GameDB(path, content=content)
-    assert reopened.list_dossier_reconciliations(bare) == bare_rows
-    assert reopened.list_dossier_reconciliations(escorted_grant) == escort_rows
-    assert reopened.list_dossier_progress(escort_dossier_id) == progress
+    assert _recon_struct(reopened.list_dossier_reconciliations(bare)) == _recon_struct(bare_rows)
+    assert _recon_struct(reopened.list_dossier_reconciliations(escorted_grant)) == _recon_struct(escort_rows)
+    restored_progress = reopened.list_dossier_progress(escort_dossier_id)
+    assert _progress_struct(restored_progress) == _progress_struct(progress)
     stored = reopened.conn.execute(
         "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
-    assert json.loads(stored["dossier_progress_json"]) == progress
+    stored_rows = json.loads(stored["dossier_progress_json"] or "[]")
+    assert len(stored_rows) == 1
+    assert str(stored_rows[0].get("progress_band") or "") == "在途核验"
+    assert int(stored_rows[0].get("turn") or 0) == int(turn)
     reopened.close()
 
 

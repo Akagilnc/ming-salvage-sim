@@ -521,19 +521,6 @@ def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game, 
     assert any(item.get("source_id") == source_id for item in allowed_view["public_events"])
     assert not any(item.get("source_id") == source_id for item in excluded_view["public_events"])
 
-def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
-    db, state, content = game
-    reader = next(iter(content.characters.values()))
-    body = "甲" * 454
-    db.register_character_knowledge_source(
-        state, [{"character_id": reader.name}], "audience", "长奏报", body,
-        source_id="test:long-source",
-    )
-    row = db.conn.execute(
-        "SELECT source_id FROM character_knowledge_sources WHERE source_id='test:long-source'"
-    ).fetchone()
-    assert row is not None
-
 def test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure(game):
     db, state, _content = game
     order = create_test_secret_order(db, state, "毕自严", "密查", "查账", [])

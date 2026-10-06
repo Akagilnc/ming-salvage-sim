@@ -547,3 +547,23 @@ member_table_rows=168
 生产 ming_sim/：无改动
 未 push／未开 PR／未关票
 ```
+
+
+---
+
+## #1897 本轮 T1 纠偏（相对 241a121dc）
+
+枚举边界：底座 `10e64fbef` → 当前工作树全部改写 Python／Web 测试（不限末轮 168 行表）。
+
+| 成员 | 处置 |
+|---|---|
+| `test_relation_edges_survive_restore` | 去掉 founding/recent 正文等值，只锁水位／dimension |
+| `test_per_route_storage_restore_and_escort_split` | 去掉整对象与 memorial_text 等值，只锁 turn/band/escort 结构 |
+| `test_long_knowledge_bodies_survive_storage_without_brief_card_cap` | 整案删除（存在性壳） |
+| `test_883_shared_archive_bypass_positive_and_negative` | 整案删除（存在性壳） |
+| `test_gazette_author_1862` 材料路径 strip 非空 | 改为路径身份 |
+| `test_month_chain_1843` index/board strip | 改为类型／目录结构 |
+| `test_secret_order_payoff_1504` read_material strip/正文等值 | 改为路径集合结构 |
+| `web/src/mindreadingDelivery.test.tsx` pending 正文 | 改为槽位占用布尔 + 固定 busy UI |
+| `web/src/components/situation.test.tsx` fallback | 恢复固定 UI「未知进度」；去 issue.title 散文负向哨兵 |
+

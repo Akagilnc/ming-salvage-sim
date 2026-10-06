@@ -547,31 +547,6 @@ def test_976_release_stamps_original_message_date(game):
     )
 
 
-def test_883_shared_archive_bypass_positive_and_negative(game):
-    """复审员旁路：结构保证——密令简报不自动入档；纯公开文可入（有/无 brief 皆然）。"""
-    db, state, content = game
-    assignee = _active_ministers(db, content)[0]
-    secret_marker = "旁路密令正负883"
-    public_marker = "旁路公开正负883"
-
-    # 负向结构：密令只在 brief；纯公开入档；brief 正文不自动流入共享档。
-    create_test_secret_order(db, state, assignee.name, "旁路密查", secret_marker, [])
-    first_report = "公开句；本月漕运如常。"
-    db.save_turn_report(state, first_report)
-    assert db.conn.execute(
-        "SELECT turn FROM turn_reports WHERE turn=?", (state.turn,)
-    ).fetchone() is not None
-
-    # 正向：无未公开密令简报时，纯公开正文可落共享档。
-    db.conn.execute("DELETE FROM secret_order_briefs")
-    db.conn.execute("DELETE FROM secret_orders")
-    db.conn.commit()
-    db.save_turn_report(state, public_marker)
-    assert db.conn.execute(
-        "SELECT turn FROM turn_reports WHERE turn=?", (state.turn,)
-    ).fetchone() is not None
-
-
 def test_976_held_user_chat_released_when_never_classified_as_secret(game):
     """纯公开皇帝回话：hold 至月末 release，不因 hold 永久丢 参与即知。"""
     db, state, content = game

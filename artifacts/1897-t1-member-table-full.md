@@ -212,7 +212,7 @@
 
 | 成员 | 处置 | 依据 |
 |---|---|---|
-| `test_relation_edges_survive_restore` | 合法保留 | 结构化字段；拒收／失败形态 |
+| `test_relation_edges_survive_restore` | 已修：去 founding/recent 正文等值 | 只锁 last_event_id／dimension／brew 水位 |
 
 ## `tests/test_scene_llm_1836.py`
 
@@ -227,7 +227,7 @@
 
 | 成员 | 处置 | 依据 |
 |---|---|---|
-| `test_883_shared_archive_bypass_positive_and_negative` | 合法保留 | 改写后无 hollow 谓词主导；保留既有结构断言 |
+| `test_883_shared_archive_bypass_positive_and_negative` | 整案删除 | 仅 turn_reports 行存在，无独立旁路隔离契约 |
 
 ## `tests/test_six_sciences_seed_608.py`
 
