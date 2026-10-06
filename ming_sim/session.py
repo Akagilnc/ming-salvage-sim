@@ -1846,10 +1846,7 @@ class GameSession:
     def prepare_rescript_prewrite(
         self, choices: List[Dict[str, object]],
     ) -> Dict[str, object]:
-        """批红 PREWRITE（gate 外）：validate_all；失败零写。
-
-        旧急务六动作 revise/deliberate 预写已随失供协议退役。
-        """
+        """批红 PREWRITE（gate 外）：validate_all；失败零写。"""
         from ming_sim import rescript_actions as ra
 
         self._assert_awaiting_decision_submit()
@@ -1867,65 +1864,26 @@ class GameSession:
             desk.extend(self.db.get_rescript_desk_rows_by_keys(missing_keys))
 
         batch = ra.validate_all(desk, req)
-        return {
-            "batch": batch,
-            "prewrite": ra.PrewriteResults(),
-            "desk": desk,
-            "choices": req,
-        }
+        return {"batch": batch, "desk": desk, "choices": req}
 
     def commit_rescript_phase1(self, prewrite_state: Dict[str, object]) -> Dict[str, object]:
         """① 短写（调用方已持 write_gate）：C1 apply。"""
         from ming_sim import rescript_actions as ra
 
         batch: ra.ValidatedBatch = prewrite_state["batch"]  # type: ignore[assignment]
-        prewrite: ra.PrewriteResults = prewrite_state["prewrite"]  # type: ignore[assignment]
         apply = ra.apply_rescript_batch(
-            self.db, self.state, batch, prewrite, content=self.content,
+            self.db, self.state, batch, content=self.content,
         )
-        return {
-            "apply": apply,
-            "summons": [],
-            "batch": batch,
-        }
-
-    def join_rescript_summons(
-        self, phase1_state: Dict[str, object],
-    ) -> Dict[str, object]:
-        """透传 phase1 summons（现役空集；旧 ready_replay 分流已核销）。"""
-        return {"joined": list(phase1_state.get("summons") or [])}
+        return {"apply": apply, "batch": batch}
 
     def finish_rescript_phase2(
         self,
         phase1_state: Dict[str, object],
-        join_state: Dict[str, object],
         *,
         cheat_directive: str = "",
     ) -> str:
-        """③ 短写（调用方已持 write_gate）：召见消费门闩 + phase2。
-
-        #1838 reopen：已消费 ≔ origin_ref + TAG_ENTER；不再读取旁白正文。
-        旧 ready_replay 分流已删；join 列表空则门闩无待核项。
-        """
-        from ming_sim.audience_night import rescript_summon_origin_consumed
-
-        unconsumed: List[str] = []
-        for item in join_state.get("joined") or []:
-            origin = str(item.get("origin_ref") or "")
-            row = self.db.conn.execute(
-                "SELECT tags FROM story_ledger_entries WHERE origin_ref = ?",
-                (origin,),
-            ).fetchone()
-            entry = {"tags": str(row["tags"] or "[]")} if row is not None else None
-            if not rescript_summon_origin_consumed(entry):
-                unconsumed.append(
-                    f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
-                )
-        if unconsumed:
-            raise ValueError(
-                "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
-            )
-
+        """③ 短写（调用方已持 write_gate）：phase2。旧急务召见空供给协议已撤。"""
+        del phase1_state
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)
             if ctx0 is not None:
@@ -1946,19 +1904,15 @@ class GameSession:
         write_gate: Any,
         cheat_directive: str = "",
     ) -> str:
-        """keyed 批红唯一编排出口。
-
-        PRE 锁外 → ① 持 write_gate → ② 无锁 join → ③ 再持同一 write_gate。
-        """
+        """keyed 批红唯一编排出口：PRE 锁外 → 持 gate apply → 再持 gate phase2。"""
         if write_gate is None:
             raise ValueError("resolve_rescript_decisions 须注入既有 write_gate")
         pre = self.prepare_rescript_prewrite(choices)
         with write_gate:
             p1 = self.commit_rescript_phase1(pre)
-        joined = self.join_rescript_summons(p1)
         with write_gate:
             return self.finish_rescript_phase2(
-                p1, joined, cheat_directive=cheat_directive,
+                p1, cheat_directive=cheat_directive,
             )
 
     def submit_hitl_choices(

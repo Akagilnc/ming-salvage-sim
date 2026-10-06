@@ -673,4 +673,3 @@ def test_runtime_llm_cli_save_preserves_api_default_headers(tmp_path, monkeypatc
     assert saved["channel"] == "cli"
     assert saved["api"]["default_headers"] == {"X-Session": "keep-me"}
     assert saved["api"]["api_key"] == "sk-api"
-

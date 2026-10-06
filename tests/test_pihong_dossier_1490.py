@@ -147,8 +147,6 @@ def _658_plant_stalled_deliberation(db, state, content, *, title="议而不决")
     return (stalled, key)
 
 
-
-
 def test_missing_dossier_fields_stay_pending_then_full_retry_decides(web_game, monkeypatch):
     """失败形（#1490 QA）：缺 dossier_id → error 且 pending；带齐字段 → decided。
     经 ASGI 真 HTTP POST /api/decree/resolve_decisions/stream；真实 WebGame，
@@ -349,17 +347,6 @@ def test_ordinary_event_with_hallucinated_capability_submits(web_game, monkeypat
     assert not stored.get('dossier_decision')
 
 
-def _roster(*names, tier='主办'):
-    return [{'character_id': n, 'tier': tier, 'role': '', 'delegator_id': None} for n in names]
-
-
-def _layer_a_option(**overrides):
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    base = {'label': '发帑赈济', 'hint': '所安者饥民', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'title': '陕西赈济', 'deadline_months': 3, 'participant_roster': [dict(item) for item in _ROSTER]}
-    base.update(overrides)
-    return normalize_rescript_layer_a_option(base)
-
-
 def _dossier_payload(row):
     if not isinstance(row, dict):
         return {}
@@ -382,8 +369,6 @@ def _summonable_name(db, content):
     raise AssertionError("fixture 须有可召大臣")
 
 
-
-
 def _657_db_path_of(game_or_path) -> str:
     if isinstance(game_or_path, str):
         return game_or_path
@@ -392,38 +377,6 @@ def _657_db_path_of(game_or_path) -> str:
         return str(path)
     db = getattr(game_or_path, 'db', None)
     return str(getattr(db, 'path', None) or getattr(db, 'db_path', None) or '')
-
-
-def test_1620_layer_a_money_grant_requires_positive_amount():
-    """#1620：层 A shape 独掌 grant——正 amount/honorific/私库 + 非法 action/非积分 amount。"""
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-    base = {'label': '赏银', 'hint': '赏功', 'action_type': 'grant_allocation', 'assignee_name': '', 'target_kind': 'character', 'target_id': '张瑞图', 'locality_scope': 'none', 'region_id': '', 'transaction_category': '', 'grant_action': '赏赉', 'name': '张瑞图'}
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option(base)
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({**base, 'amount': 0})
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({**base, 'amount': 10, 'account': '私库'})
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({**base, 'amount': 10, 'grant_action': '无'})
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({**base, 'amount': 10, 'grant_action': '未知赏'})
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({**base, 'amount': True})
-    with pytest.raises(ValueError):
-        normalize_rescript_layer_a_option({**base, 'amount': 1.5})
-    ok = normalize_rescript_layer_a_option({**base, 'amount': 10})
-    assert int(ok['amount']) == 10
-    assert str(ok.get('account') or '') == ''
-    taicang = normalize_rescript_layer_a_option({**base, 'amount': 10, 'account': '太仓'})
-    guoku = normalize_rescript_layer_a_option({**base, 'amount': 10, 'account': '国库'})
-    assert str(taicang.get('account') or '') == '国库'
-    assert str(guoku.get('account') or '') == '国库'
-    assert taicang['draft_capability'] == guoku['draft_capability']
-    assert taicang['draft_capability'] != ok['draft_capability']
-    honor = normalize_rescript_layer_a_option({**base, 'grant_action': '加衔', 'label': '加衔'})
-    assert honor.get('grant_action') == '加衔'
-    assert 'amount' not in honor
 
 
 def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
@@ -441,19 +394,6 @@ def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     with pytest.raises(ValueError):
         session.submit_hitl_choices(choice, write_gate=nullcontext())
     assert db.list_pending_decisions(int(state.turn))[0]['status'] == 'pending'
-
-
-def test_657_appointment_name_target_id_conflict_batch_reject(game):
-    """⑥ appointment/dismiss name≠target_id 在 mapper 单一边界整批拒绝。"""
-    from ming_sim import rescript_actions as ra
-    db, state, content = game
-    rows = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2").fetchall()
-    assert len(rows) >= 2
-    n1, n2 = (str(rows[0]['name']), str(rows[1]['name']))
-    with pytest.raises(ValueError):
-        ra.map_rescript_option_or_choice({'action_type': 'appointment', 'appoint_action': '任命', 'office': '兵部尚书', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '授官'}, db=db, content=content, state=state)
-    with pytest.raises(ValueError):
-        ra.map_rescript_option_or_choice({'action_type': 'appointment', 'appoint_action': '罢免', 'office': '', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'label': '罢'}, db=db, content=content, state=state)
 
 
 def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
@@ -523,6 +463,7 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
         cli_backend.capture_manual_directive_payload('混载旨文', None, db=db, content=content)
     assert len(db.list_decree_dossiers()) == before_dossiers
     assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs
+
 
 def _657_plant_awaiting_web(web_game, *, decisions=None):
     """web_game 上种植 decision + resolve_context，相位 AWAITING_DECISION。"""
@@ -730,4 +671,3 @@ def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch)
     assert r1.status_code == 200, r1.text
     assert 'event: error' in (r1.text or '')
     assert phase2_calls == []
-

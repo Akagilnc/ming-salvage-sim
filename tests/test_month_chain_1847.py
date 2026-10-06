@@ -2247,5 +2247,3 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
         and str(row.get("category") or "") == "披露原子探针"
         for row in (feed.get("landed") or [])
     )
-
-

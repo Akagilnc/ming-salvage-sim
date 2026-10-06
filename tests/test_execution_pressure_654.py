@@ -56,11 +56,11 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
     契约落在 StructuredDecreeCombinationError.field_failures/failed_fields
     （权威结构化失败事实）；不得盯异常措辞。
     """
-    from ming_sim.rescript_actions import map_rescript_option_or_choice
+    from ming_sim.structured_decree import validate_structured_decree_combination
     from ming_sim.structured_decree import StructuredDecreeCombinationError
 
     with pytest.raises(StructuredDecreeCombinationError) as ei_issue_single:
-        map_rescript_option_or_choice({
+        validate_structured_decree_combination({
             "action_type": "authorization",
             "label": "赈抚",
             "target_kind": "issue",
@@ -78,7 +78,7 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
     assert ff_issue["target_kind"]["current"] == "issue"
 
     with pytest.raises(StructuredDecreeCombinationError) as ei_region_none:
-        map_rescript_option_or_choice({
+        validate_structured_decree_combination({
             "action_type": "authorization",
             "label": "陕赈",
             "target_kind": "region",
@@ -94,8 +94,8 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
     assert ff_region["locality_scope"]["current"] == "none"
     assert ff_region["locality_scope"]["expected"] == ["single"]
 
-    # 合法组合：issue+none / region+single 原样通过
-    qa_shape = map_rescript_option_or_choice({
+    # 合法组合：issue+none / region+single 通过（validate 无返回，不抛即过）
+    qa = {
         "action_type": "authorization",
         "label": "赈抚",
         "target_kind": "issue",
@@ -103,14 +103,11 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
         "locality_scope": "none",
         "holder_id": "毕自严",
         "privilege": "便宜行事",
-    })
-    assert qa_shape["locality_scope"] == "none"
-    assert resolve_dossier_region_ids(
-        None,
-        payload=qa_shape,
-    ) == [""]
+    }
+    validate_structured_decree_combination(qa)
+    assert resolve_dossier_region_ids(None, payload=qa) == [""]
 
-    region_shape = map_rescript_option_or_choice({
+    region = {
         "action_type": "authorization",
         "label": "陕赈",
         "target_kind": "region",
@@ -118,9 +115,8 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
         "locality_scope": "single",
         "holder_id": "毕自严",
         "privilege": "便宜行事",
-    })
-    assert region_shape["locality_scope"] == "single"
-    assert region_shape["region_id"] == "shaanxi"
+    }
+    validate_structured_decree_combination(region)
 
 
 # ── locality oracle 组合矩阵 ───────────────────────────────────────

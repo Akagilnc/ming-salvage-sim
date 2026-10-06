@@ -437,5 +437,3 @@ def test_batch_combo_correction_real_wrapper(game, monkeypatch, mode):
     # 失败图必须含 draft1；禁 OR partial 条数的放松断言
     assert 1 in failures, f"expected draft1 in draft_failures, got {failures!r}"
     assert n["c"] >= 2
-
-

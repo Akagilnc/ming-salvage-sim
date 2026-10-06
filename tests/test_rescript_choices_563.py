@@ -192,4 +192,3 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
     raw = f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
     decisions = parse_decision_blocks(raw)
     assert decisions == []
-

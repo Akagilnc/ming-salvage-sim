@@ -375,54 +375,6 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     cleanupDossier();
   });
 
-  it("#657 同页两类 + 六动作可点 + 留中默认", () => {
-    const mixed: PendingDecision[] = [
-      {
-        idx: 0,
-        kind: "rescript_draft",
-        decision_key: "rescript_draft:1:0",
-        title: "陕西告饥",
-        context: "秦地赤旱",
-        actor_name: "杨嗣昌",
-        options: [
-          {
-            label: "发帑赈济", hint: "所安者饥民",
-            draft_capability: "cap1", action_type: "assignment",
-            target_kind: "region", target_id: "shaanxi",
-            locality_scope: "single", region_id: "shaanxi",
-            transaction_category: "督赈",
-          },
-          { label: "缓征", hint: "h", draft_capability: "cap2" },
-        ],
-      },
-      {
-        idx: 1,
-        kind: "decision",
-        decision_key: "decision:1:1",
-        title: "打回件",
-        context: "科臣封驳",
-        options: [
-          { label: "准", hint: "" },
-          { label: "驳", hint: "" },
-        ],
-      },
-    ];
-    const onResolve = vi.fn();
-    const cleanup = render(<DecisionModal decisions={mixed} onResolve={onResolve} />);
-    const confirmBtn = () => document.querySelector<HTMLButtonElement>(".decision-confirm")!;
-    // 急务六钮
-    const six = document.querySelector("[data-testid='rescript-six-actions']");
-    expect(six).toBeTruthy();
-    const actions = Array.from(document.querySelectorAll("[data-action]")).map(
-      (el) => el.getAttribute("data-action"),
-    );
-    expect(actions).toEqual([
-      "follow_draft", "return_revise", "midzhi", "deliberate", "hold", "summon",
-    ]);
-    // 显式留中可点并落印推进
-    act(() => {
-      (document.querySelector('[data-action="hold"]') as HTMLButtonElement).click();
-    });
     expect(confirmBtn().disabled).toBe(false);
     act(() => confirmBtn().click());
     // 第二疏 decision
@@ -458,33 +410,6 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     cleanupDefault();
   });
 
-  it("#657 跨月 draft idx=2 首行可点，submit 携带 decision_key（禁 idx===position 拒收）", () => {
-    const crossMonth: PendingDecision[] = [
-      {
-        idx: 2,
-        kind: "rescript_draft",
-        source_turn: 3,
-        decision_key: "rescript_draft:3:2",
-        title: "跨月急务",
-        context: "上月遗留",
-        options: [
-          {
-            label: "发帑", hint: "h",
-            draft_capability: "cap-x", action_type: "assignment",
-            target_kind: "region", target_id: "shaanxi",
-            locality_scope: "single", region_id: "shaanxi",
-            transaction_category: "督赈",
-          },
-          { label: "缓", hint: "h", draft_capability: "cap-y" },
-        ],
-      },
-    ];
-    expect(pendingDecisionsFrom(crossMonth)).toEqual(crossMonth);
-    const onResolve = vi.fn();
-    const cleanup = render(<DecisionModal decisions={crossMonth} onResolve={onResolve} />);
-    act(() => {
-      (document.querySelector('[data-action="hold"]') as HTMLButtonElement).click();
-    });
     act(() => {
       document.querySelector<HTMLButtonElement>(".decision-confirm")!.click();
     });
@@ -494,45 +419,6 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     cleanup();
   });
 
-  it("#657 midzhi projects non-assignment §C.4 closed-set keys from selected option", () => {
-    const decisions = [
-      {
-        idx: 0,
-        kind: "rescript_draft",
-        decision_key: "rescript_draft:1:0",
-        title: "中旨非 assignment",
-        context: "c",
-        actor_name: "杨嗣昌",
-        options: [
-          {
-            label: "加衔恩赏",
-            hint: "荣誉",
-            draft_capability: "cap-grant",
-            action_type: "grant_allocation",
-            grant_action: "加衔",
-            target_kind: "character",
-            target_id: "杨嗣昌",
-            name: "杨嗣昌",
-            locality_scope: "none",
-            office: "太子太保",
-            // #1778：C.4 名单须随中旨投影进 choice
-            participant_roster: [
-              { character_id: "毕自严", tier: "主办", role: "总核", delegator_id: null },
-            ],
-          },
-          { label: "备", hint: "h", draft_capability: "cap2" },
-        ],
-      },
-    ];
-    const onResolve = vi.fn();
-    const cleanup = render(<DecisionModal decisions={decisions} onResolve={onResolve} />);
-    // 先点选非 assignment option，再点中旨——投影须用选中项闭集键
-    act(() => {
-      const opt = Array.from(document.querySelectorAll(".decision-option")).find(
-        (b) => b.textContent?.includes("加衔恩赏"),
-      ) as HTMLButtonElement | undefined;
-      opt?.click();
-    });
     act(() => {
       (document.querySelector('[data-action="midzhi"]') as HTMLButtonElement).click();
     });

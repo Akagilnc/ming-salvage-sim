@@ -240,4 +240,3 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
     assert turns_after
     assert int(turns_after[-1]["id"]) == ctid
     assert int(turns_after[-1].get("minister_message_id") or 0) == minister_mid
-

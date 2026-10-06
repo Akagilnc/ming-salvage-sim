@@ -33,6 +33,7 @@ from web_app import FRONT_HALF_DONE_PHASES
 # ── 真实开局 / 重开 helpers ──────────────────────────────────────────
 
 
+
 def _active_minister(db, content) -> str:
     for name, ch in content.characters.items():
         if getattr(ch, "power_id", "ming") != "ming":
@@ -92,9 +93,6 @@ def _reopen(path, content):
     return _open_db(path, content, first=False)
 
 
-# ── AC1/AC4 账本逐条一致、恢复路径未删任何账 ──────────────────────────
-
-
 def test_reopen_reconcile_preserves_ledger_exactly(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content
@@ -114,10 +112,6 @@ def test_reopen_reconcile_preserves_ledger_exactly(restore_env):
         assert ledger_after == ledger_before
     finally:
         db2.close()
-    # keep db handle count sane for fixture teardown
-
-
-# ── AC3 半途回话丢弃 + 问话保留、不阻塞、可重试 ──────────────────────
 
 
 def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
@@ -190,9 +184,6 @@ def test_reconcile_does_not_delete_question_row(restore_env):
         db2.close()
 
 
-# ── AC2 纯奏对零账目段寸步不丢 ───────────────────────────────────────
-
-
 def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
     """完成轮不产任何账目（纯奏对），重开后逐字稿仍在——锚点=最后持久化对话轮，非最后账。"""
     env = restore_env
@@ -217,9 +208,6 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
         assert "臣愚见如此。" in [m["content"] for m in proj if m["role"] == "minister"]
     finally:
         db2.close()
-
-
-# ── AC3 重试重新生成回话、记录无重复句 ───────────────────────────────
 
 
 class _RetrySession:
@@ -254,6 +242,7 @@ class _RetrySession:
         # #1842：WebGame persist 尾必调；轻壳无 pending 时与生产同形 no-op。
         from ming_sim.session import GameSession
         return GameSession.schedule_pending_scene_translation(self, result)
+
 
 def _retry_runtime(db, state, minister, *, session=None):
     """Web retry 入口唯一装配壳。session 默认轻量 _RetrySession；可注入生产 chat session。"""
@@ -309,8 +298,6 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(minister)] == [later]
 
 
-
-
 def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env):
     db, state, content = restore_env.db, restore_env.state, restore_env.content
     minister = _active_minister(db, content)
@@ -337,7 +324,6 @@ def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env
     )] == ["臣遵旨。"]
 
 
-
 def test_retry_without_interrupted_turn_is_rejected(restore_env):
     """负向：无待重试轮时重试响亮拒绝，不静默造轮。"""
     env = restore_env
@@ -346,9 +332,6 @@ def test_retry_without_interrupted_turn_is_rejected(restore_env):
     rt = _retry_runtime(db, state, minister)
     with pytest.raises(HTTPException):
         rt.retry_interrupted_reply(minister)
-
-
-# ── finding1：重试失败尾声——副作用回滚、问话保留、可再重试（与 chat 失败尾声同缝）────
 
 
 class _FailingRetrySession(_RetrySession):
@@ -457,9 +440,6 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     ] == ["剿抚孰先？"]
 
 
-# ── finding3：reopen CAS——未赢的并发/双击重试不落第二条大臣回话 ─────────────
-
-
 def test_lost_reopen_cas_rejects_without_second_reply(restore_env, monkeypatch):
     env = restore_env
     db, state, content = env.db, env.state, env.content
@@ -477,9 +457,6 @@ def test_lost_reopen_cas_rejects_without_second_reply(restore_env, monkeypatch):
     ).fetchone()["c"] == 0
 
 
-# ── finding4：结算/亲裁相位不得重试召对（夜不跨月）─────────────────────────
-
-
 def test_retry_rejected_in_settlement_phase(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content
@@ -495,9 +472,6 @@ def test_retry_rejected_in_settlement_phase(restore_env):
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM chat_messages WHERE role='minister'"
     ).fetchone()["c"] == 0
-
-
-# ── finding5：reconcile 截断在飞轮的 Agno runs 到本轮起点（retry 上下文不双倍）──
 
 
 def _ensure_agno_runs_table(db) -> None:
@@ -787,9 +761,6 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
         db2.close()
 
 
-# ── finding2：load_save / 换档重建走 __init__ 同序重开对账 ───────────────────
-
-
 @pytest.fixture
 def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """真实 WebGame（新档、temp DB/saves）；构造即不连 LLM，仅 runtime 配置中和。
@@ -853,11 +824,6 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
     assert [r["question"] for r in game.db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
 
 
-# ---------------------------------------------------------------------------
-# #657 片3 S11–S15：同库三轮 + CAS + 空冲突
-# ---------------------------------------------------------------------------
-
-
 def _657_active_minister(db, content) -> str:
     return next(
         ch.name for ch in content.characters.values()
@@ -865,89 +831,3 @@ def _657_active_minister(db, content) -> str:
         and db.resolve_power_id(ch) == "ming"
         and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
     )
-
-
-def test_657_rescript_summon_writes_enter_fact_and_is_idempotent(game):
-    """#1838 reopen：批红召见只落入殿事实账；已消费=origin+TAG_ENTER；幂等复用。"""
-    from ming_sim.audience_night import (
-        TAG_ENTER,
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_consumed,
-        rescript_summon_origin_ref,
-        _ledger_by_origin_ref,
-    )
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 50, 0)
-
-    sc = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    assert sc["consumed"] is True
-    entry = _ledger_by_origin_ref(db, origin)
-    assert entry is not None
-    assert rescript_summon_origin_consumed(entry)
-    assert TAG_ENTER in entry["tags"]
-    assert str(entry.get("body") or "") == ""
-    assert int(sc["entry_id"]) == int(entry["id"])
-
-    again = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    assert again["consumed"] is True
-    assert int(again["entry_id"]) == int(sc["entry_id"])
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
-        (origin,),
-    ).fetchone()["c"] == 1
-
-
-def test_657_rescript_summon_no_chat_turn_scaffold(game):
-    """#1838 reopen：不再建 generating 对话轮等待旁白。"""
-    from ming_sim.audience_night import (
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_ref,
-    )
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 51, 0)
-    sc = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    assert int(sc.get("chat_turn_id") or 0) == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE agno_session_id=?",
-        (f"rescript-summon:{origin}",),
-    ).fetchone()["c"] == 0
-
-
-def test_657_rescript_summon_atomic_on_enter_failure(game, monkeypatch):
-    """prepare 中途入殿失败 → 零孤儿 origin 行。"""
-    from ming_sim.audience_night import (
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_ref,
-    )
-    import ming_sim.audience_night as an
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 52, 0)
-
-    def _boom(*a, **k):
-        raise RuntimeError("inject summon_enter fail")
-
-    monkeypatch.setattr(an, "summon_enter", _boom)
-    with pytest.raises(RuntimeError, match="inject summon_enter fail"):
-        prepare_rescript_summon_scaffold(
-            db, state, person_name=minister, origin_ref=origin,
-        )
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
-        (origin,),
-    ).fetchone()["c"] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE agno_session_id=?",
-        (f"rescript-summon:{origin}",),
-    ).fetchone()["c"] == 0
