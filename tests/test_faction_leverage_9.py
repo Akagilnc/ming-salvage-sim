@@ -776,37 +776,6 @@ def _make_legacy_save_without_offset_col(content, tmp_path):
     return path
 
 
-def test_legacy_save_calibrates_offset_on_open(game, tmp_path):
-    """#9 R1 finding#1 [P1]：老档经 GameDB() 打开（仅 init_schema，不 seed_static_data）
-    时，leverage_offset 列刚 ADD 后必须立即一次性校准（offset = 当前 DB leverage − 权重和），
-    使 leverage == clamp(offset+权重和) == 钦定基线，而非 0+权重和（未锚定基线的错值）。"""
-    from ming_sim.db import GameDB
-
-    _, _, content = game
-    path = _make_legacy_save_without_offset_col(content, tmp_path)
-    # 直接打开现存档：只 GameDB()（init_schema 内迁移校准），不 seed_static_data。
-    db = GameDB(path, content)
-    try:
-        db.load_state()
-        faction = "阉党"
-        baseline = int(content.factions[faction].leverage)
-        weight_sum = db._faction_office_weight_sum(faction)
-        offset = db.conn.execute(
-            "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-        ).fetchone()["leverage_offset"]
-        lev = db.faction_leverage(faction)
-        # offset 应被校准成 round(baseline − 权重和)，而非默认 0。
-        assert offset == baseline - weight_sum, (
-            f"老档应一次性校准 offset：得 {offset}，期望 {baseline - weight_sum}"
-        )
-        # leverage 应锚定钦定基线，而非 0+权重和。
-        assert lev == max(0, min(100, round(offset + weight_sum))) == baseline, (
-            f"老档 leverage 应=钦定基线 {baseline}，得 {lev}（offset={offset} 权重={weight_sum}）"
-        )
-    finally:
-        db.close()
-
-
 def _make_legacy_save_col_added_uncalibrated(content, tmp_path):
     """构造「列已加但未校准」的老档（崩溃断点态）：有 factions+characters 行、leverage 为玩过后的
     真值、leverage_offset 列**已存在**（非本次刚 ADD、值全 0），但**校准从未完成**——持久校准标记
@@ -837,51 +806,6 @@ def _make_legacy_save_col_added_uncalibrated(content, tmp_path):
     seed_db.conn.commit()
     seed_db.close()
     return path
-
-
-def test_col_added_uncalibrated_save_recalibrates_on_open(game, tmp_path):
-    """#9 线上 R3（codex P2）crash-safety：老档「列已加但 offset 未校准（留 0）」态——上次崩在
-    『加列 / 校准』之间。修前：重启见列已存在 → ensure_column 返 False → flag False → 跳过校准 →
-    offset 全留 0 → 下次 reconcile 把白名单 leverage 重写成裸权重和（非锚定钦定基线）= 平衡崩。
-    修后（同事务 加列+老档校准 原子）：列存在但未校准 时仍补校准，offset 非全 0、leverage 复现 DB
-    基线。先红验（修前列已存在→跳校准→offset 留 0、leverage 被改成裸权重和）。"""
-    from ming_sim.db import GameDB, _LEVERAGE_FACTIONS
-
-    _, _, content = game
-    path = _make_legacy_save_col_added_uncalibrated(content, tmp_path)
-    # 基线 = 钦定 content.factions[f].leverage（helper 把 DB leverage 设回了它）。直接取，
-    # 不另开 probe——probe 的 init_schema 会先把校准跑掉，遮蔽待测的 db 开档路径。
-    baselines = {
-        f: int(content.factions[f].leverage)
-        for f in _LEVERAGE_FACTIONS
-        if content.factions.get(f) is not None
-    }
-    assert baselines, "前置：白名单派系应在 content.factions"
-
-    # 正常开档（仅 init_schema，不 seed_static_data）——这一步的 init_schema
-    # 须凭「列已存在但标记缺失」检测出未校准、补校准。
-    db = GameDB(path, content)
-    try:
-        db.load_state()
-        any_nonzero = False
-        for f, baseline in baselines.items():
-            offset = db.conn.execute(
-                "SELECT leverage_offset FROM factions WHERE name=?", (f,)
-            ).fetchone()["leverage_offset"]
-            weight_sum = db._faction_office_weight_sum(f)
-            lev = db.faction_leverage(f)
-            if offset != 0:
-                any_nonzero = True
-            # offset 应被补校准成 round(baseline − 权重和)，leverage 复现 DB 基线。
-            assert offset == baseline - weight_sum, (
-                f"{f}：列已加未校准的老档应被补校准 offset，得 {offset} 期望 {baseline - weight_sum}"
-            )
-            assert lev == max(0, min(100, round(offset + weight_sum))) == baseline, (
-                f"{f}：leverage 应复现 DB 基线 {baseline}，得 {lev}（offset={offset} 权重={weight_sum}）"
-            )
-        assert any_nonzero, "至少一个白名单派系 offset 应非 0（证明确实补了校准、非全留 0）"
-    finally:
-        db.close()
 
 
 def _make_legacy_save_calibrated_no_marker(content, tmp_path):
@@ -916,40 +840,6 @@ def _make_legacy_save_calibrated_no_marker(content, tmp_path):
     seed_db.conn.commit()
     seed_db.close()
     return path, offsets
-
-
-def test_calibrated_save_without_marker_not_re_anchored(game, tmp_path):
-    """#9 线上 R4（codex P2）：DB 已有 leverage_offset 且 offset 已正确校准（非 0），但缺持久标记
-    __leverage_offsets_calibrated（旧版 #9 代码已校准、未写标记）。若此后 leverage 被 clamp 偏离基线，
-    重启不得把『缺标记』误判成崩溃态、强制重锚 offset=clamp 值−权重和（永久腐蚀基线）。
-    修前：marker 缺 → 强制 offset_col_added=True → 重锚 → offset 被改成 round(0−权重和)≠原值（红）。
-    修后：offset 非全 0 → 判为已校准 → 只补持久标记、绝不动 offset。"""
-    from ming_sim.db import GameDB
-
-    _, _, content = game
-    path, expected_offsets = _make_legacy_save_calibrated_no_marker(content, tmp_path)
-    assert expected_offsets, "前置：白名单派系应在 content.factions 且已校准出 offset"
-    assert any(v != 0 for v in expected_offsets.values()), (
-        "前置：至少一个派系 offset 应非 0（才构成『已校准』态、与崩溃态区分）"
-    )
-    # 正常开档（仅 init_schema，不 seed_static_data）。
-    db = GameDB(path, content)
-    try:
-        db.load_state()
-        for faction, exp in expected_offsets.items():
-            got = db.conn.execute(
-                "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-            ).fetchone()["leverage_offset"]
-            assert got == exp, (
-                f"{faction}：已校准缺标记的老档（clamp 后）不得重锚 offset，"
-                f"期望保持 {exp}，得 {got}"
-            )
-        # 持久标记应已补落（下次开档走 marker 早返、彻底不再碰 offset）。
-        assert db._has_meta_flag("__leverage_offsets_calibrated"), (
-            "已校准缺标记的老档应补落持久标记 __leverage_offsets_calibrated"
-        )
-    finally:
-        db.close()
 
 
 def test_rollback_snapshot_restores_leverage_offset(game):
@@ -1071,56 +961,3 @@ def test_half_weight_odd_baseline_no_round_drift(game):
     )
 
 
-def test_old_integer_offset_migrated_to_float(game):
-    """#177 R1 finding#1（codex P2）：旧版 #9 校准 round 了 offset（存整数如 76 而非 76.5），
-    R4 只修新校准、已 marked 老档 early-return 照漂。v2 迁移把整数 offset 重算成精确 float，
-    保持当前 leverage 不变（漂移已发生不可逆，仅防未来再漂）。"""
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    faction = "东林"
-    members = db.conn.execute(
-        "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming' "
-        "ORDER BY name",
-        (faction,),
-    ).fetchall()
-    assert members, f"{faction} 需有在朝成员"
-    for m in members[1:]:
-        db.set_character_status(state, m["name"], "dismissed", reason="清场")
-    keeper = members[0]["name"]
-    db.set_character_office(keeper, "礼部侍郎", "礼部")
-    assert db._faction_office_weight_sum(faction) == 2.5
-
-    # 模拟旧版整数 offset（round(79−2.5)=round(76.5)=76）+ 对应的漂移 leverage（round(76+2.5)=78）
-    old_offset = 76
-    drifted_lev = 78
-    db.conn.execute(
-        "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
-        (drifted_lev, old_offset, faction),
-    )
-    # 旧标记在、v2 标记不在（旧版代码遗留）
-    db._set_meta_flag("__leverage_offsets_calibrated")
-    db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_float_v2'")
-    db.conn.commit()
-
-    reopened = GameDB(db.path, content)
-    try:
-        assert reopened._has_meta_flag("__leverage_offsets_float_v2"), (
-            "v2 迁移标记应已落库（老档重开应触发 v2 迁移）"
-        )
-        offset = reopened.conn.execute(
-            "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-        ).fetchone()["leverage_offset"]
-        lev = reopened.faction_leverage(faction)
-        # offset 重算成精确 float（78−2.5=75.5），不再因整数 round 漂
-        assert offset == 75.5, f"旧整数 offset 76 应被迁移成精确 float 75.5（得 {offset}）"
-        # leverage 保持不变（漂移已发生不可逆）
-        assert lev == drifted_lev, f"迁移后 leverage 应保持 {drifted_lev}（得 {lev}）"
-        # 验证不再漂：recompute 后 leverage 仍 == drifted_lev
-        reopened.recompute_faction_leverage(faction)
-        reopened.conn.commit()
-        assert reopened.faction_leverage(faction) == drifted_lev, (
-            f"float offset 迁移后 recompute 不应再漂（得 {reopened.faction_leverage(faction)}）"
-        )
-    finally:
-        reopened.close()

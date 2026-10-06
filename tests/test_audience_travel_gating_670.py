@@ -674,8 +674,8 @@ def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch
     assert unsettled[0]["origin_id"] == "web:atomic-ok"
 
 
-def test_legacy_capital_aliases_admit_in_capital_and_migrate_on_reopen(game):
-    """#670：旧档 京师/北京/beijing/北直隶 按 beizhili 在京；重开写回 canonical。"""
+def test_capital_aliases_admit_in_capital(game):
+    """#670：京师/北京/beijing/北直隶 精确身份匹配按 beizhili 在京。"""
     db, state, content = game
     sess = _session(game)
     for alias in ("京师", "北京", "beijing", "北直隶"):
@@ -689,24 +689,6 @@ def test_legacy_capital_aliases_admit_in_capital_and_migrate_on_reopen(game):
         )
         assert consumed.allowed is True
         assert an.list_unsettled_summons(db) == []
-
-    _set_place(game, "毕自严", location="京师")
-    path = db.path
-    db.close()
-    restored = GameDB(path, content)
-    try:
-        row = restored.conn.execute(
-            "SELECT location FROM characters WHERE name=?", ("毕自严",)
-        ).fetchone()
-        assert row["location"] == "beizhili"
-        assert content.characters["毕自严"].location == "beizhili"
-        rsess = GameSession.__new__(GameSession)
-        rsess.db, rsess.content, rsess.temporary_characters = restored, content, {}
-        assert rsess.admit_audience(content.characters["毕自严"]).result is (
-            AudienceAdmission.IN_CAPITAL
-        )
-    finally:
-        restored.close()
 
 
 def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
@@ -925,62 +907,6 @@ def test_waiting_active_departure_external_rollback_reverts_transit_and_settle(g
     assert _travel_row(db, person.name) == before_travel
     assert an.list_unsettled_summons(db) == before_unsettled
     assert before_unsettled[0]["entry_id"] == entry_id
-
-
-def test_non_capital_location_aliases_migrate_on_reopen(game):
-    """#654 G / #670 merge B：非京精确别名重开时写回 canonical region_id。"""
-    db, _state, content = game
-    samples = {
-        "洪承畴": ("南京", "nanzhili"),
-        "孙传庭": ("江南", "nanzhili"),
-        "曹文诏": ("西安", "shaanxi"),
-        "卢象升": ("荆楚", "huguang"),
-        "袁崇焕": ("闽地", "fujian"),
-        "祖大寿": ("粤地", "guangdong"),
-        "赵率教": ("桂地", "guangxi"),
-    }
-    for name, (alias, _canonical) in samples.items():
-        _set_place(game, name, location=alias)
-
-    path = db.path
-    db.close()
-    restored = GameDB(path, content)
-    try:
-        for name, (_alias, canonical) in samples.items():
-            row = restored.conn.execute(
-                "SELECT location FROM characters WHERE name=?", (name,)
-            ).fetchone()
-            assert row["location"] == canonical, name
-            assert content.characters[name].location == canonical, name
-    finally:
-        restored.close()
-
-
-def test_shuntian_zhili_aliases_migrate_on_reopen(game):
-    """#654 G / #670 merge B：顺天/直隶 匹配为在京，重开写回 beizhili。"""
-    from ming_sim.matching import is_capital_location
-
-    # 匹配/在京判断仍认顺天/直隶（REGION_SPECIAL_ALIASES 保留）。
-    assert is_capital_location("顺天") is True
-    assert is_capital_location("直隶") is True
-
-    db, _state, content = game
-    samples = {"洪承畴": "顺天", "孙传庭": "直隶"}
-    for name, alias in samples.items():
-        _set_place(game, name, location=alias)
-
-    path = db.path
-    db.close()
-    restored = GameDB(path, content)
-    try:
-        for name, _alias in samples.items():
-            row = restored.conn.execute(
-                "SELECT location FROM characters WHERE name=?", (name,)
-            ).fetchone()
-            assert row["location"] == "beizhili", name
-            assert content.characters[name].location == "beizhili", name
-    finally:
-        restored.close()
 
 
 def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game):

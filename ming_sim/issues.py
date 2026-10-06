@@ -43,7 +43,6 @@ from ming_sim.relations import EMPEROR_NODE
 from ming_sim.decree_vocabulary import (
     dossier_action_policy,
     format_public_progress_disclosure,
-    terminal_report_facade,
 )
 from ming_sim.exceptions import OfficeAppointmentRejection, SettlementAbort
 from ming_sim.displaced_population import (
@@ -8028,19 +8027,7 @@ def _apply_score_extraction_body(
             db.merge_grant_reconciliation_into_execution_note(
                 dossier_id, commit=False,
             )
-            # #619/#622：表报终值旁路——仅 degraded/transformed 挂奏报行；
-            # 变形案载承办人假象（不得回填判官真值）；progress_band 定性中文。
-            if outcome in {"degraded", "transformed"}:
-                prior = list(db.list_dossier_progress(int(dossier_id)))
-                band, memorial = terminal_report_facade(
-                    outcome, prior_reports=prior,
-                )
-                db.record_dossier_progress(
-                    dossier_id, state.turn, band, memorial,
-                    is_terminal=True,
-                    origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-                    commit=False,
-                )
+            # 执行格真值只落 record_dossier_execution；不代人物拼终值奏报。
             # 连坐挂载点＝本适配器落终值笔；禁对 execution_outcome 列事后扫描。
             # 触发过滤由 apply 内 _JOINT_LIABILITY_TRIGGERS 单一真源承担。
             db.apply_execution_joint_liability(

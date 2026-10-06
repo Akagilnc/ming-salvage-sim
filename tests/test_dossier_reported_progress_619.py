@@ -198,7 +198,8 @@ def test_origin_namespace_minimum_closed_set_and_open_append(game):
         )
 
 
-def test_production_terminal_sidepath_records_degraded_transformed_only(game):
+def test_production_execution_does_not_auto_write_character_memorial(game):
+    """执行格落终值不代写人物奏报；显式 record_dossier_progress 仍可用。"""
     db, state, content = game
     degraded_id = _executing_assignment(db, state, target="deg-619")
     transformed_id = _executing_assignment(db, state, text="变形案", target="xf-619")
@@ -216,29 +217,25 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
         content=content,
     )
 
-    deg = db.list_dossier_progress(degraded_id)
-    xf = db.list_dossier_progress(transformed_id)
-    assert len(deg) == 1 and deg[0]["is_terminal"] is True
-    assert deg[0]["origin"] == DOSSIER_REPORT_VERDICT
-    # #622：progress_band 定性中文，禁英文枚举；变形案 memorial 为承办人假象。
-    assert deg[0]["progress_band"] not in {
-        "degraded", "transformed", "fulfilled", "failed", "executing",
-    }
-    assert "变形" not in deg[0]["progress_band"]
-    assert deg[0]["memorial_text"]  # 非空定性陈词
-    assert len(xf) == 1 and xf[0]["origin"] == DOSSIER_REPORT_VERDICT
-    assert xf[0]["progress_band"] not in {
-        "degraded", "transformed", "fulfilled", "failed", "executing",
-    }
-    assert "变形" not in xf[0]["progress_band"]
+    assert db.list_dossier_progress(degraded_id) == []
+    assert db.list_dossier_progress(transformed_id) == []
     assert db.list_dossier_progress(fulfilled_id) == []
     assert db.list_dossier_progress(failed_id) == []
 
-    # Execution-slot / joint-liability semantics untouched: outcomes still land.
+    # Execution-slot semantics untouched: outcomes still land.
     assert db.get_decree_dossier(degraded_id)["execution_outcome"] == "degraded"
     assert db.get_decree_dossier(transformed_id)["execution_outcome"] == "transformed"
     assert db.get_decree_dossier(fulfilled_id)["execution_outcome"] == "fulfilled"
     assert db.get_decree_dossier(failed_id)["execution_outcome"] == "failed"
+
+    # Explicit memorial write path remains.
+    db.record_dossier_progress(
+        degraded_id, state.turn, "将结", "臣另有专折陈之。",
+        is_terminal=True, origin=DOSSIER_REPORT_VERDICT,
+    )
+    rows = db.list_dossier_progress(degraded_id)
+    assert len(rows) == 1
+    assert rows[0]["memorial_text"] == "臣另有专折陈之。"
 
 
 def test_fake_progress_report_does_not_change_world_state(game):

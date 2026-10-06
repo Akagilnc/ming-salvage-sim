@@ -294,8 +294,6 @@ def _assert_hub_oracle_mutation_fails(
         )
 
 
-
-
 def _province_pay_due(db, region_id):
     rows = db.conn.execute(
         """
@@ -661,8 +659,6 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
     assert _province_container_total(db) + db.get_central_army_pay_arrears_container() == pytest.approx(
         army_total + db._standalone_army_pay_container_total()
     )
-
-
 
 
 def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
@@ -1895,29 +1891,11 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
     assert state.metrics["国库"] == before_balance
 
 
-
-
-@pytest.mark.parametrize("starting_schema_version", [6, 7])
-def test_fiscal_config_v8_migration_preserves_deleted_old_keys(
-    fresh_db, starting_schema_version
-):
+def test_fiscal_config_reopen_preserves_player_deleted_keys(fresh_db):
+    """现役能力：玩家裁撤科目后重开不复活；不做旧版升档迁移。"""
     path = fresh_db.path
     content = fresh_db.content
-    new_loss_keys = (
-        "central_taicang_human_loss_rate",
-        "central_taicang_sink_loss_rate",
-        "central_jingyun_human_loss_rate",
-        "central_jingyun_sink_loss_rate",
-    )
     fresh_db.conn.execute("DELETE FROM fiscal_config WHERE key = '官俸_base'")
-    fresh_db.conn.executemany(
-        "DELETE FROM fiscal_config WHERE key = ?",
-        [(key,) for key in new_loss_keys],
-    )
-    fresh_db.conn.execute(
-        "UPDATE fiscal_config SET value = ? WHERE key = '__schema_version'",
-        (starting_schema_version,),
-    )
     fresh_db.conn.commit()
 
     reopened = GameDB(path, content)
@@ -1926,15 +1904,6 @@ def test_fiscal_config_v8_migration_preserves_deleted_old_keys(
             "SELECT 1 FROM fiscal_config WHERE key = '官俸_base'"
         ).fetchone()
         assert deleted is None
-        rows = reopened.conn.execute(
-            f"SELECT key FROM fiscal_config WHERE key IN ({','.join('?' for _ in new_loss_keys)})",
-            new_loss_keys,
-        ).fetchall()
-        assert {str(row["key"]) for row in rows} == set(new_loss_keys)
-        version = reopened.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = '__schema_version'"
-        ).fetchone()
-        assert int(version["value"]) == 8
     finally:
         reopened.conn.close()
 
@@ -2028,7 +1997,6 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
         """
     ).fetchone()
     assert arrears_log is not None and arrears_log["delta"] == pytest.approx(10)
-
 
 
 def test_zero_due_province_army_morale_short_circuits(fresh_db):
@@ -3860,18 +3828,6 @@ def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
     assert _read_settle(db, "henan")["st"]["省库库银"] != 40, "明控且有 settle 的省应 tick"
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game, monkeypatch, tmp_path):
     import ming_sim.error_pack as error_pack_mod
     import ming_sim.flows as flows_mod
@@ -4184,18 +4140,6 @@ def test_resolve_directives_nested_cutover_bad_state_uses_settlement_abort_error
     assert _read_settle(db)["p"] == []
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh_game):
     import ming_sim.flows as flows_mod
 
@@ -4230,8 +4174,6 @@ def test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic(fresh_
     after = _read_settle(db, "shaanxi")["st"]
     assert after["民欠旧赋"] == pytest.approx(before["民欠旧赋"])
     assert after["C_地方截留"] == pytest.approx(before["C_地方截留"])
-
-
 
 
 def test_all_ming_settle_substrates_advance_through_fixed_flows(fresh_game):
