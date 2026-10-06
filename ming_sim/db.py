@@ -32,7 +32,7 @@ from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Seq
 
 from ming_sim.applier import (
     StoredDocumentError, atomic, connection_owns_transaction,
-    load_stored_json, load_stored_list, load_stored_object,
+    durable_int, load_stored_json, load_stored_list, load_stored_object,
     safe_json_dumps, sanitize_sqlite_text,
 )
 from ming_sim.appointment_tenure import appointment_tenure_from
@@ -6285,12 +6285,16 @@ class GameDB:
         rows = self.character_knowledge.secret_brief_pins(int(order_id))
         if not rows:
             return []
-        parsed = load_stored_list(rows[0]["origin_chat_message_ids"], label="origin_chat_message_ids")
-        from ming_sim.strict_types import strict_int
-
-        pins = [strict_int(pin) for pin in parsed]
-        if any(pin <= 0 for pin in pins):
-            raise ValueError("origin_chat_message_ids 必须为正整数")
+        parsed = load_stored_list(
+            rows[0]["origin_chat_message_ids"], label="origin_chat_message_ids",
+        )
+        # 既存 brief pins：成员损坏是读缝，不得 ValueError 洗成 pending failed。
+        pins: List[int] = []
+        for pin in parsed:
+            value = durable_int(pin, label="origin_chat_message_ids")
+            if value <= 0:
+                raise StoredDocumentError("origin_chat_message_ids 必须为正整数")
+            pins.append(value)
         return list(dict.fromkeys(pins))
 
     def _classify_secret_order_audience(
@@ -14126,7 +14130,9 @@ class GameDB:
         row = CharacterKnowledgeStore(self.conn).read_submit_secret_order_for_review((int(order_id),))
         if not row or row["status"] != "active":
             return False
-        current_turn = self._current_game_turn(int(row["turn_issued"] or 0))
+        current_turn = self._current_game_turn(
+            durable_int(row["turn_issued"], label="secret_orders.turn_issued"),
+        )
         claim_text = str(claim or "")
         with atomic(self):
             CharacterKnowledgeStore(self.conn).write_submit_secret_order_for_review(
@@ -14248,7 +14254,7 @@ class GameDB:
         except (TypeError, ValueError):
             months = 1
         target_turn = int(state.turn) + months
-        old_due = int(row["due_turn"] or 0)
+        old_due = durable_int(row["due_turn"], label="secret_orders.due_turn")
         raw_reason = str(reason or "")
         # 催办理由自由正文原样；仅真正空串才回落缺省，禁 strip 判空。
         why = raw_reason or "奉旨加急"

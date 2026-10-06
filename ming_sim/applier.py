@@ -49,6 +49,22 @@ class StoredDocumentError(Exception):
     """
 
 
+def durable_int(raw: object, *, label: str, blank: int = 0) -> int:
+    """Read one integer from a durable column.
+
+    None/empty uses ``blank``. A present non-integer is StoredDocumentError
+    (read seam), not a model/product ValueError.
+    """
+    if raw is None or raw == "":
+        return int(blank)
+    if isinstance(raw, bool):
+        raise StoredDocumentError(f"{label} 损坏")
+    try:
+        return int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise StoredDocumentError(f"{label} 损坏") from exc
+
+
 def load_stored_json(raw: object, *, label: str, blank: object = None) -> object:
     """Read one durable JSON document.
 
