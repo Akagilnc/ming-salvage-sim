@@ -401,9 +401,7 @@ def test_cli_retry_finds_hall_owned_interrupted_turn(game, monkeypatch):
     assert retries[0]["message_speaker"] == minister
 
     session.scene_chat = lambda *a, **k: SimpleNamespace(  # type: ignore[method-assign]
-        answer="回话正文", court_action="", proposed_directive=None,
-        appointed_minister="", registered_minister="", displaced_minister="",
-        pending_action_failures=[], next_minister="",
+        answer="回话正文", court_action="",
     )
     session.schedule_pending_scene_translation = lambda result: None  # type: ignore[method-assign]
 

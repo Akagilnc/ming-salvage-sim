@@ -191,12 +191,7 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(game, monk
         seen["chat_turn_id"] = chat_turn_id
         return SimpleNamespace(
             answer="臣领密旨，当令东厂暗中护送赈银。",
-            proposed_directive=None,
-            appointed_minister="",
-            registered_minister="",
-            displaced_minister="",
             court_action="",
-            next_minister="",
         )
 
     session.scene_chat = _scene_chat  # type: ignore[method-assign]
@@ -303,12 +298,7 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(game, m
     def _scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         return SimpleNamespace(
             answer="臣领密旨，当令东厂暗中护送赈银。",
-            proposed_directive=None,
-            appointed_minister="",
-            registered_minister="",
-            displaced_minister="",
             court_action="",
-            next_minister="",
         )
 
     def _boom_persist(*_a, **_kw):

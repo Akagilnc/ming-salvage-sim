@@ -25,6 +25,10 @@ from ming_sim.structured_decree import (
     transport_keys_to_canonical,
     validate_structured_decree_combination,
 )
+from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
+
+# #529：draft 抽取不产 acting_appointment；#1902 T4 常量归领域核，不经传输层。
+DRAFT_ACTION_TYPES = DIRECTIVE_ACTION_TYPES - {"acting_appointment"}
 
 logger = logging.getLogger(__name__)
 
@@ -1234,7 +1238,7 @@ def extract_draft_intent(
     if dossier_action == "acting_appointment":
         # #529：署理交回既有人事候选链，不经草案 acting_appointment。
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
-    if dossier_action not in _transport().DRAFT_ACTION_TYPES:
+    if dossier_action not in DRAFT_ACTION_TYPES:
         raise ValueError(f"动作类型非法：{dossier_action!r}")
     _tk_raw = _projected.get("target_kind") if dossier_action == "grant_allocation" else obj.get("目标类型")
     target_kind = (

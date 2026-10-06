@@ -1625,7 +1625,7 @@ class GameSession:
 
         """场景 agent 的 transport 流式核——零动作工具；材料只读工具不进 court_action。"""
 
-        from ming_sim.llm_model import extract_agent_text, fail_if_llm_error
+        from ming_sim.llm_model import extract_agent_text
         from ming_sim.llm_transport import (
             bind_transport_sdk_budget,
             empty_output_failure,
@@ -1665,8 +1665,7 @@ class GameSession:
                 extracted = extract_agent_text(run_output)
                 if not answer:
                     answer = extracted
-            else:
-                fail_if_llm_error(answer, "LLM 调用")
+            # #1902 T2：无 RunOutput 时仍以已拼正文为准；不从词面判认证故障。
             if not answer:
                 raise transport_failure_unavailable(
                     empty_output_failure(), attempts=1, exhausted=False,

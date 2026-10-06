@@ -44,20 +44,8 @@ from pydantic import BaseModel
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
-from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
-from ming_sim.structured_decree import (
-    StructuredDecreeCombinationError,
-    apply_assembled_to_payload,
-    assemble_structured_decree,
-    combination_correction_feedback,
-    expand_combo_failed_fields,
-    structured_decree_prompt_contract,
-    validate_structured_decree_combination,
-)
-
-# #529 owns interim-office capture/materialization.  Keep the #471 dossier
-# vocabulary compatible, but do not let manual/draft extraction create it yet.
-DRAFT_ACTION_TYPES = DIRECTIVE_ACTION_TYPES - {"acting_appointment"}
+# #1902 T4：领域动作集合与 structured_decree 导入已归 draft_intent / decree_vocabulary；
+# 传输层不再定义 DRAFT_ACTION_TYPES 或挂领域规则。
 
 # agy 是自治编程 agent：给它仓库目录当 workspace，它会跑去翻源码/DB 研究问题，
 # 行动计划（英文）泄进角色对话 + 元游戏泄漏。给它一个空目录当 cwd，无可探。

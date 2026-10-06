@@ -85,7 +85,6 @@ from ming_sim.llm_transport import (
     transport_attempts_public,
     transport_failure_unavailable,
 )
-from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import AudienceChatTurn, GameSession
 from ming_sim.session import (
@@ -1512,13 +1511,18 @@ class WebGame:
             if leg.clear_narrative
         }
         for row in self.db.list_active_legacies(self.state):
+            # #1902 T3 / ADR 0005：JSON 数据坏 → 空对象继续；未知代码故障响亮上抛并留痕。
             try:
                 eff = json.loads(str(row["modifiers"] or "{}"))
-            except Exception:
+            except json.JSONDecodeError:
+                eff = {}
+            if not isinstance(eff, dict):
                 eff = {}
             try:
                 clear_gate = json.loads(str(row["clear_gate"] or "{}"))
-            except Exception:
+            except json.JSONDecodeError:
+                clear_gate = {}
+            if not isinstance(clear_gate, dict):
                 clear_gate = {}
             remaining_months = self.db.legacy_remaining_months(row, self.state)
             clear_condition = opening_clear_text.get(str(row["legacy_key"] or ""), "")

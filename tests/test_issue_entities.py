@@ -433,9 +433,9 @@ def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
     #1902：触发改由运行配置（channel=cli）声明，不再设 MING_SIM_LLM_BACKEND。
     """
     from ming_sim.models import LLMConfig
-    import ming_sim.cli_backend as _cb
+    import ming_sim.draft_intent as _di
     db, state, _ = game
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
+    monkeypatch.setattr(_di, "enrich_initiative_effects",
                         lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
     I.apply_issue_tracker_output(db, state, {
         "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "空回报国策", "kind": "initiative"}],
@@ -453,11 +453,11 @@ def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypa
     """runtime CLI 通道无 env 时，月末国策空回报也要走 CLI floor，不能落空壳。"""
     import json as _j
     from ming_sim.models import LLMConfig
-    import ming_sim.cli_backend as _cb
+    import ming_sim.draft_intent as _di
 
     db, state, _ = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
+    monkeypatch.setattr(_di, "enrich_initiative_effects",
                         lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
     cfg = LLMConfig(
         api_key="cli-backend",
@@ -483,12 +483,12 @@ def test_api_channel_initiative_does_not_use_backend_env_floor(game, monkeypatch
     """显式 API 通道下，即便 env 残留 CLI backend，也不能触发 CLI-only 国策补全/floor。"""
     import json as _j
     from ming_sim.models import LLMConfig
-    import ming_sim.cli_backend as _cb
+    import ming_sim.draft_intent as _di
 
     db, state, _ = game
     called = []
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
+    monkeypatch.setattr(_di, "enrich_initiative_effects",
                         lambda *a, **k: called.append((a, k)) or {
                             "effect_on_resolve": {},
                             "ongoing_effects": {},

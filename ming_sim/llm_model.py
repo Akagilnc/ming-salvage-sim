@@ -19,7 +19,7 @@ from ming_sim.llm_config import (
     provider_extra_body,
     supports_openai_reasoning_effort,
 )
-from ming_sim.llm_contract import fail_if_llm_error
+
 from ming_sim.models import LLMConfig
 from ming_sim.token_stats import install_token_stats_patch
 
@@ -299,7 +299,7 @@ def extract_agent_text(run_output: object) -> str:
     else:
         text = str(content)
     # #1299/#1310：治本在缝——ERROR status 翻 typed，错误串永不得进 content 当叙事。
-    # fail_if_llm_error 标记集只覆盖 API 认证错，不再是唯一护栏。
+    # #1902 T2：禁再从自由正文词面判认证故障（ADR 0142）；只认 typed status / transport。
     # #1465 ④ / P7 / ADR 0046：玩家可见走系统层人话，禁固定戏内话术；
     # 机器横幅只进 provider_message（与 map_run_error_event 同权威）。
     if _run_output_status_is_error(run_output):
@@ -326,7 +326,6 @@ def extract_agent_text(run_output: object) -> str:
             attempts=1,
             exhausted=False,
         )
-    fail_if_llm_error(text, "LLM 调用")
     return text
 
 
@@ -355,8 +354,8 @@ def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") ->
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
     if channel == "cli":  # #1902：通道只由运行配置声明（env 选宿主已退役）
         try:
-            raw, _ = _run_backend_for_config("输出 ok", llm_config, tag="verify")
-            fail_if_llm_error(str(raw), "LLM 连通性检查")
+            # #1902 T2：连通检查只认调用是否成功；不从返回正文抠认证词面。
+            _run_backend_for_config("输出 ok", llm_config, tag="verify")
         except LLMUnavailable as error:
             _stamp_verify_stage(error, stage)
             raise

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.exceptions import LLMContractError
 
 
 def abort_llm_contract(stage: str, message: str, raw: Optional[str] = None) -> None:
@@ -44,18 +44,5 @@ def require_bool(value: object, stage: str, field: str, raw: Optional[str] = Non
     return value
 
 
-def fail_if_llm_error(text: str, stage: str) -> None:
-    lowered = text.lower()
-    error_markers = (
-        "incorrect api key",
-        "invalid_api_key",
-        "error code: 401",
-        "unauthorized",
-        "authentication",
-        "api key",
-    )
-    if any(marker in lowered for marker in error_markers):
-        raise LLMUnavailable(
-            f"{stage} 失败：LLM 认证或接口错误。"
-            f"请更新 .env 里的 OPENAI_API_KEY/OPENAI_BASE_URL/OPENAI_MODEL 后重试。"
-        )
+# #1902 T2 / ADR 0142：fail_if_llm_error 词面分类器已删。
+# 认证/接口故障只认 typed status、退出码与 transport 结构化失败，不得从自由正文抠。

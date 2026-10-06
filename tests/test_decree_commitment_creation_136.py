@@ -1107,13 +1107,13 @@ def test_empty_json_stop_condition_allows_advance_to_resolved(game):
 
 
 def test_commitment_skips_cli_resolve_effect_enrich(game, monkeypatch):
-    import ming_sim.cli_backend as _cb
+    import ming_sim.draft_intent as _di
 
     db, state, content = game
     calls = []
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(
-        _cb,
+        _di,
         "enrich_initiative_effects",
         lambda *args, **kwargs: calls.append((args, kwargs))
         or {"effect_on_resolve": {"metrics": {"民心": 9}}, "ongoing_effects": {}, "effect_on_fail": {}},

@@ -741,10 +741,15 @@ def test_translate_empty_success_still_dispatches_without_failure(game, monkeypa
     )
     result = sess.scene_chat("边事如何？")
     assert result.answer == "臣在。"
-    assert not any(
-        f.get("category") == "translate_failed"
-        for f in (result.pending_action_failures or [])
-    )
+    # #1902 T6：空成功转译不经 result.pending_action_failures；落库后无失败墓碑即可。
+    fut = persist_and_schedule_scene(sess, db, result)
+    if fut is not None:
+        fut.result(timeout=30)
+    assert get_session_write_queue(sess).wait_idle()
+    failed = db.conn.execute(
+        "SELECT COUNT(*) n FROM pending_actions WHERE status='failed'"
+    ).fetchone()["n"]
+    assert failed == 0
 
 
 def test_appointment_without_text_is_rejected_not_templated(game):
@@ -813,7 +818,7 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
         },
     )
     r = sess.scene_chat("拟赈灾", chat_turn_id=ctid_create)
-    assert r.pending_action_id == 0  # #1842：前台不等后台转译
+    # #1902 T6：ChatTurnResult 不再挂 pending_action_id；前台不等后台转译由落库后查证。
     persist_and_schedule_scene(sess, db, r)
     sess._write_queue.barrier(lambda: None)
     created = db.conn.execute(
