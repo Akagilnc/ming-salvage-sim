@@ -44,10 +44,11 @@ def test_inertia_ongoing_non_dict_no_crash(game):
 
     db, state, _content = game
     iid = db.insert_issue(state, kind="situation", title="畸形ongoing测试", bar_value=50, inertia=1)
+    from ming_sim.applier import StoredDocumentError
     for bad in ('"oops"', "5", "true", "[1,2]"):
         db.conn.execute("UPDATE issues SET ongoing_effects=? WHERE id=?", (bad, iid))
         db.conn.commit()
-        with pytest.raises(ValueError):
+        with pytest.raises(StoredDocumentError):
             apply_situation_monthly_drift(db, state)
 
 def test_loads_effect_dict_coerces_non_dict():
@@ -56,13 +57,14 @@ def test_loads_effect_dict_coerces_non_dict():
     禁吞成 {} 洗绿脏库（#1812 无历史包袱；权威=load_stored_object）。
     """
     import pytest
+    from ming_sim.applier import StoredDocumentError
     from ming_sim.models import loads_effect_dict
     assert loads_effect_dict('{"metrics": {"民心": 1}}') == {"metrics": {"民心": 1}}
     assert loads_effect_dict({"already": "parsed"}) == {"already": "parsed"}
     assert loads_effect_dict('') == {}
     assert loads_effect_dict(None) == {}
     for bad in ('"oops"', '5', 'true', '[1,2]', 'null', '不是合法json', 5, [1, 2], True):
-        with pytest.raises(ValueError):
+        with pytest.raises(StoredDocumentError):
             loads_effect_dict(bad)
 
 def test_apply_economy_list_skips_non_dict_items(game):

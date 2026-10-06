@@ -28,8 +28,15 @@ TODO_STATUS_CONSUMED = "consumed"
 # rolled 写口仍由 mark_next_audience_todo_status 接受（P3 契约）；常量待 #623 超额滚存启用再导出。
 
 def _loads_stages_array(text: str) -> list:
-    """Present stages JSON text. Bad JSON or a non-array raises; never []."""
-    data = load_stored_json(text, label="stages_json")
+    """Product-write stages text. Bad JSON or a non-array raises ValueError; never [].
+
+    Write-side shape check uses json.loads + ValueError so declaration dispatch
+    can isolate invalid_shape. Durable DB reads use load_stored_* (StoredDocumentError).
+    """
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("stages_json 损坏") from exc
     if not isinstance(data, (list, tuple)):
         raise ValueError(
             f"stages_json 须为 JSON 数组，得 {type(data).__name__}"

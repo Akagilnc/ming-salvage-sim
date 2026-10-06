@@ -31,8 +31,9 @@ import sqlite3
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
 from ming_sim.applier import (
-    atomic, connection_owns_transaction, load_stored_json, load_stored_list,
-    load_stored_object, safe_json_dumps, sanitize_sqlite_text,
+    StoredDocumentError, atomic, connection_owns_transaction,
+    load_stored_json, load_stored_list, load_stored_object,
+    safe_json_dumps, sanitize_sqlite_text,
 )
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SQL_IN
@@ -1653,10 +1654,9 @@ class GameDB:
         total = 0.0
         rows = RegionStore(self.conn).read_province_army_pay_container_total()
         for row in rows:
-            try:
-                fiscal = load_stored_object(row["fiscal"], label='fiscal')
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"region {row['id']} fiscal JSON 非法，无法校验军饷容器守恒") from exc
+            fiscal = load_stored_object(
+                row["fiscal"], label=f"region {row['id']} fiscal",
+            )
             settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
             if settle is None:
                 continue
@@ -1757,12 +1757,10 @@ class GameDB:
             raise ValueError(f"army {army_id} pay_source_region 未入库：{pay_source_region}")
         if str(row["controlled_by"] or "") != "ming":
             raise ValueError(f"army {army_id} pay_source_region 非明控省：{pay_source_region}")
-        try:
-            fiscal = load_stored_object(row["fiscal"], label='fiscal')
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"army {army_id} pay_source_region 财政基座 JSON 非法：{pay_source_region}"
-            ) from exc
+        fiscal = load_stored_object(
+            row["fiscal"],
+            label=f"army {army_id} pay_source_region {pay_source_region} fiscal",
+        )
         settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
@@ -9835,7 +9833,7 @@ class GameDB:
             raw_value = row["verdict_json"]
             try:
                 value = load_stored_object(raw_value, label="待应用颁布判决")
-            except ValueError as exc:
+            except StoredDocumentError as exc:
                 raise LLMContractError(
                     f"待应用颁布判决读取失败：{exc}", raw_value=raw_value,
                 ) from exc
@@ -11202,8 +11200,14 @@ class GameDB:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
                         restore_office_memory()
                         # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
-                        from ming_sim.applier import RejectionCollectorRequired
+                        from ming_sim.applier import (
+                            RejectionCollectorRequired,
+                            StoredDocumentError,
+                        )
                         if isinstance(exc, RejectionCollectorRequired):
+                            raise
+                        # 持久写（sqlite）与持久读损坏：系统接缝，不得洗成 pending failed。
+                        if isinstance(exc, (sqlite3.Error, StoredDocumentError)):
                             raise
                         rejection = getattr(exc, "dossier_link_rejection", None)
                         if rejection is not None:
@@ -11306,8 +11310,14 @@ class GameDB:
                         # #654 r3-C.2 路1：directive apply 坏项——回滚后标 failed，不崩结算
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
                         # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
-                        from ming_sim.applier import RejectionCollectorRequired
+                        from ming_sim.applier import (
+                            RejectionCollectorRequired,
+                            StoredDocumentError,
+                        )
                         if isinstance(exc, RejectionCollectorRequired):
+                            raise
+                        # 持久写／持久读损坏沿既有上抛，不得洗成 pending failed。
+                        if isinstance(exc, (sqlite3.Error, StoredDocumentError)):
                             raise
                         self.dossiers.set_pending_status(int(pa["id"]), "failed")
                         tlog(
@@ -12450,7 +12460,7 @@ class GameDB:
         """
         try:
             return dict(load_stored_object(raw, label=surface))
-        except ValueError as exc:
+        except StoredDocumentError as exc:
             tlog(f"[{surface}] {exc}")
             raise
 

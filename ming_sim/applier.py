@@ -40,11 +40,20 @@ def safe_json_dumps(value: Any, **kwargs: Any) -> str:
     return json.dumps(sanitize_sqlite_text(value), **kwargs)
 
 
+class StoredDocumentError(Exception):
+    """Present durable JSON is corrupt or wrong-shaped.
+
+    Load-seam fault for already-persisted documents. Not a model/product
+    validation error: callers that isolate LLM ValueError must not catch this.
+    Blank/missing documents still resolve to ``blank`` and do not raise.
+    """
+
+
 def load_stored_json(raw: object, *, label: str, blank: object = None) -> object:
     """Read one durable JSON document.
 
     Blank or missing text is the absent document (`blank`). A present value
-    that is not JSON raises; it is not rewritten as an empty document.
+    that is not JSON raises StoredDocumentError; it is not rewritten empty.
     """
     if isinstance(raw, (dict, list)):
         return raw
@@ -53,20 +62,20 @@ def load_stored_json(raw: object, *, label: str, blank: object = None) -> object
     if isinstance(raw, (bytes, bytearray)):
         raw = raw.decode("utf-8")
     if not isinstance(raw, str):
-        raise ValueError(f"{label} 损坏")
+        raise StoredDocumentError(f"{label} 损坏")
     if not raw.strip():
         return blank
     try:
         return json.loads(raw)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{label} 损坏") from exc
+        raise StoredDocumentError(f"{label} 损坏") from exc
 
 
 def load_stored_object(raw: object, *, label: str) -> dict:
     """Durable JSON object. Blank is {}. A present non-object raises."""
     value = load_stored_json(raw, label=label, blank={})
     if not isinstance(value, dict):
-        raise ValueError(f"{label} 必须为对象")
+        raise StoredDocumentError(f"{label} 必须为对象")
     return value
 
 
@@ -74,7 +83,7 @@ def load_stored_list(raw: object, *, label: str) -> list:
     """Durable JSON list. Blank is []. A present non-list raises."""
     value = load_stored_json(raw, label=label, blank=[])
     if not isinstance(value, list):
-        raise ValueError(f"{label} 必须为名单")
+        raise StoredDocumentError(f"{label} 必须为名单")
     return value
 
 

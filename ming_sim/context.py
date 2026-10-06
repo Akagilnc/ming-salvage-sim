@@ -168,11 +168,11 @@ def state_context(state: GameState) -> str:
 
 
 def parse_json_dict(raw: str) -> Dict[str, int]:
-    from ming_sim.applier import load_stored_object
+    from ming_sim.applier import StoredDocumentError, load_stored_object
 
     try:
         data = load_stored_object(raw, label="数值变化 JSON")
-    except ValueError as error:
+    except StoredDocumentError as error:
         raise LLMContractError(f"数据库中的数值变化 JSON 已损坏：{raw[:200]}") from error
     parsed: Dict[str, int] = {}
     for key, value in data.items():

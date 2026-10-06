@@ -1568,9 +1568,10 @@ class GameSession:
                 continue
             # 接缝分流（ADR0005 / #1889 R5）：持久载荷损坏是读故障，不得 skip 成空补交。
             # 沿本方法既有错误包 + SettlementAbort 归属（与 LLM/写回系统故障同形）。
+            from ming_sim.applier import StoredDocumentError
             try:
                 bad_payload = self.db.read_directive_dossier_payload(row)
-            except ValueError as exc:
+            except (StoredDocumentError, ValueError) as exc:
                 pack_path = write_error_pack(
                     self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
                 )

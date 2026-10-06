@@ -1087,17 +1087,19 @@ def test_fiscal_fact_brief_missing_settle_key_exits_dynamic_membership(game):
 ])
 def test_fiscal_fact_brief_present_but_malformed_fails_loud(game, bad_fiscal):
     """F2①：fiscal/settle key 已存在但容器或 st/p 畸形仍响亮失败。"""
+    from ming_sim.applier import StoredDocumentError
     db, _state, _content = game
     db.conn.execute("UPDATE regions SET fiscal=? WHERE id='henan'", (bad_fiscal,))
-    with pytest.raises(ValueError):
+    with pytest.raises((ValueError, StoredDocumentError)):
         build_fiscal_fact_brief(db)
 
 
 def test_fiscal_fact_brief_bad_json_fails_loud(game):
     """F2①：坏 fiscal JSON 仍响亮失败（ADR 0005）。"""
+    from ming_sim.applier import StoredDocumentError
     db, _state, _content = game
     db.conn.execute("UPDATE regions SET fiscal='{bad json' WHERE id='henan'")
-    with pytest.raises(ValueError):
+    with pytest.raises(StoredDocumentError):
         build_fiscal_fact_brief(db)
 
 

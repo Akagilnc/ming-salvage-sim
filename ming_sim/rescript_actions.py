@@ -15,7 +15,7 @@ from __future__ import annotations
 from ming_sim.entities.army.store import ArmyStore
 from ming_sim.entities.character.store import CharacterStore
 from ming_sim.entities.issue.store import IssueStore
-from ming_sim.applier import load_stored_object
+from ming_sim.applier import StoredDocumentError, load_stored_object
 
 import concurrent.futures
 import json
@@ -1507,8 +1507,8 @@ def clear_return_revise_choice_anchors(
         raw = r["choice_json"]
         try:
             choice = load_stored_object(raw, label="choice_json")
-        except ValueError as exc:
-            raise ValueError(
+        except StoredDocumentError as exc:
+            raise StoredDocumentError(
                 f"return_revise 清锚 choice_json 损坏："
                 f"turn={r['turn']} idx={r['idx']}"
             ) from exc

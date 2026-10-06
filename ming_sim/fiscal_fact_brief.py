@@ -83,12 +83,9 @@ def _ming_settle_bases(db: Any) -> List[Tuple[str, Dict[str, Any], Dict[str, Any
     rows = RegionStore(db.conn).read_settle_ming_province_substrate_ticks()
     for row in rows:
         region_id = str(row["id"])
-        try:
-            fiscal = load_stored_object(row["fiscal"], label='fiscal')
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"fiscal_fact_brief：region {region_id} fiscal JSON 非法：{exc}"
-            ) from exc
+        fiscal = load_stored_object(
+            row["fiscal"], label=f"fiscal_fact_brief region {region_id} fiscal",
+        )
         if not isinstance(fiscal, dict):
             raise ValueError(f"fiscal_fact_brief：region {region_id} fiscal 非字典")
         if "settle" not in fiscal:

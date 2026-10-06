@@ -297,12 +297,12 @@ class ResolveContextStore:
             return None
 
         def _load(text: str, label: str) -> object:
-            from ming_sim.applier import load_stored_object
+            from ming_sim.applier import StoredDocumentError, load_stored_object
 
             try:
                 return load_stored_object(text, label=label)
-            except ValueError as exc:
-                raise ValueError(
+            except StoredDocumentError as exc:
+                raise StoredDocumentError(
                     f"过月上下文 {label} 损坏，本月无法恢复（turn={turn}）：{exc}"
                 ) from exc
 
