@@ -1,5 +1,9 @@
 # #1900 修内司回执 — J6 N2 rescan (a7646b02e)
 
+## 分支 / commit
+- 分支：`ak-roles/1900-j6-n2-rescan-a7646b02e`
+- commitSha：`80f05b1c1384c8fd1f38c9298b05b38cad2ed25c`
+
 ## 授权
 - 仅未结 J6 apply；判词 `1900-judge-a7646b02e.json`
 - 不猜新设计；不改宿主配置席位；不 stash/amend/rewrite/push/PR
