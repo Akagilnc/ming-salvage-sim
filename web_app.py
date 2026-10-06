@@ -2432,11 +2432,11 @@ class WebGame:
         pending_ticket: Optional[WriteTicket] = None,
         owns_pending: bool = False,
     ) -> None:
-        """重开补跑（ADR 0036 / #1842）：已持久化回话但转译未承接 → 补跑转译，不回滚对话。
+        """Web 宿主适配：持票据闸调用会话共核启动补跑（#1902 T4）。
 
-        `catch_up_pending_translations` 单轮失败标待补、不锁档；本入口再捕意外故障，
-        **永不进启动致命路径**。在后台线程跑，不阻塞存档加载。写经已领票据 seam（禁裸 gate）。
-        #1353：spawn 路票据由 spawner finally 归还；本函数不归还交接票（complete 幂等保直接调用钉）。
+        生命周期真源 ``GameSession.run_startup_translation_catch_up``；本方法只办
+        票据写闸与 complete 收口。spawn 路票据由 spawner finally 归还；直接调用
+        钉仍依赖此处 complete（幂等）。
         """
         del owns_pending
         try:
@@ -2444,39 +2444,25 @@ class WebGame:
                 return
             if pending_ticket.cancelled or pending_ticket._done:
                 return
-            catch_up_pending_translations(
-                db=self.db,
-                state=self.state,
-                llm_config=getattr(self.session, "llm_config", None),
-                write_gate=self._ticketed_write_gate(pending_ticket),
-                write_queue=self._runtime_write_queue(),
-            )
-        except TicketCancelled:
-            return
-        except Exception as exc:
-            # catch_up 契约单轮不抛；到此=意外故障。铁律：不锁档、不进启动致命路径——
-            # 但**留痕不静默**（窄捕 + log，账仍待补候下轮 drain/重试）。
-            tlog(f"[audience-translation] 启动补跑意外故障（不锁档、已忽略）：{exc}")
+            try:
+                self.session.run_startup_translation_catch_up(
+                    write_gate=self._ticketed_write_gate(pending_ticket),
+                    write_queue=self._runtime_write_queue(),
+                )
+            except TicketCancelled:
+                return
         finally:
-            # 直接调用钉（test_startup_catchup_uses_ticketed_gate_not_bare）仍依赖此处收口；
-            # spawn 路 spawner 也会 complete——complete 幂等，双路径皆安全。
             if pending_ticket is not None:
                 self._complete_pending_write(pending_ticket)
 
     def _spawn_startup_extraction_catch_up(self) -> None:
-        """存档（重）加载后在后台发起一次抽取补跑（重开崩溃窗口丢的站台/进出账补落）。
+        """Web 宿主适配：后台线程发起启动补跑（不阻塞存档加载）。
 
-        #1353 r7：无待补时不领票——空 catch-up 占票会与同 session 的 barrier/
-        `_pending_writes_count` 钉竞态（全量 xdist 下 residual ticket）。有待补才
-        claim+spawn；key=("startup",) 与 turn/pending 区分。
-        #1353 r10：预检 list_unextracted 短持 runtime gate（共享 conn 禁裸读）。
+        待补判定走会话共核 ``list_startup_translation_catch_up``；有待补才领票 spawn。
+        #1353：空 catch-up 不占票；预检短持 runtime gate（共享 conn 禁裸读）。
         """
-        if not hasattr(self.db, "conn"):
-            return
-        if not hasattr(self.db, "list_unextracted_replies"):
-            return
         with self._runtime_write_gate():
-            pending = self.db.list_unextracted_replies() or []
+            pending = self.session.list_startup_translation_catch_up()
         if not pending:
             return
         self._spawn_pending_write_thread(

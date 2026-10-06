@@ -1102,6 +1102,41 @@ class GameSession:
         self.db.reconcile_interrupted_chat_turns()
         self.db.reconcile_post_reply_recovery()
 
+    def list_startup_translation_catch_up(self) -> List[Any]:
+        """启动恢复：是否仍有未承接转译的已持久回话（#1902 T4 共核取数）。"""
+        if not hasattr(self.db, "conn"):
+            return []
+        list_fn = getattr(self.db, "list_unextracted_replies", None)
+        if list_fn is None:
+            return []
+        return list(list_fn() or [])
+
+    def run_startup_translation_catch_up(
+        self, *,
+        write_gate: Any = None,
+        write_queue: Any = None,
+    ) -> None:
+        """启动恢复共核：补跑已持久回话的待承接转译（ADR 0036 / #1842）。
+
+        #1902 T4：生命周期归会话核；Web 票据／后台线程、CLI 同步调用只是宿主适配。
+        单轮失败由 catch_up 标待补、不锁档；意外故障留痕后继续（不进启动致命路径）。
+        """
+        from ming_sim.audience_translation import catch_up_pending_translations
+        from ming_sim.token_stats import tlog
+
+        if not self.list_startup_translation_catch_up():
+            return
+        try:
+            catch_up_pending_translations(
+                db=self.db,
+                state=self.state,
+                llm_config=getattr(self, "llm_config", None),
+                write_gate=write_gate,
+                write_queue=write_queue,
+            )
+        except Exception as exc:
+            tlog(f"[audience-translation] 启动补跑意外故障（不锁档、已忽略）：{exc}")
+
     def begin_audience_chat_turn(
         self, message: str, *, message_speaker: str = "",
         agno_session_id: str = "", runs_before: int = 0, ensure_summon: str = "",

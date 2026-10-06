@@ -454,8 +454,16 @@ class _CliSaveSlotHost:
 
 
 def _cli_reconcile_crashed_turns(session: GameSession) -> None:
-    """CLI 适配：转调会话共核启动恢复（#1902 T4）。"""
+    """CLI 适配：转调会话共核启动恢复（对账 + 转译补跑，#1902 T4）。
+
+    CLI 无 Web 票据／后台线程，同步跑共核即可；写闸取既有 CLI 队列闸。
+    """
     session.reconcile_crashed_audience_turns()
+    from ming_sim.session_write_queue import get_session_write_queue
+    q = get_session_write_queue(session)
+    session.run_startup_translation_catch_up(
+        write_gate=q.write_gate, write_queue=q,
+    )
 
 
 def _cli_rebuild_session(runtime: "_CliRuntime", llm_config) -> GameSession:
