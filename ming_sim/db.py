@@ -5171,10 +5171,6 @@ class GameDB:
         ).fetchone()
         return row is not None
 
-    def table_has_rows(self, table: str) -> bool:
-        row = self.conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
-        return row is not None
-
     def list_supervision_history(
         self, dossier_id: int, *, as_of_turn: Optional[int] = None,
     ) -> List[Dict[str, object]]:
@@ -7328,106 +7324,6 @@ class GameDB:
                 loophole_exposures=exposures,
             ),
         }
-
-    def compose_supervision_report_origin(
-        self, dossier_id: int, turn: int,
-    ) -> str:
-        """按当月在场稽核派系关系给 #619 origin 打私货/同派标记（扩 origin，不加列）。"""
-        from ming_sim.supervision import (
-            ORIGIN_MARK_PRIVATE_GOODS,
-            ORIGIN_MARK_SAME_FACTION_BLIND,
-            compose_report_origin,
-        )
-
-        base = DOSSIER_REPORT_ORIGIN_MONTHLY
-        history = self.list_supervision_history(
-            int(dossier_id), as_of_turn=int(turn),
-        )
-        # 只看本 turn 在场行
-        marks: List[str] = []
-        for row in history:
-            if int(row.get("turn") or 0) != int(turn):
-                continue
-            if not row.get("present"):
-                continue
-            rel = str(row.get("faction_relation") or "")
-            if rel == "same":
-                marks.append(ORIGIN_MARK_SAME_FACTION_BLIND)
-            elif rel == "enemy":
-                marks.append(ORIGIN_MARK_PRIVATE_GOODS)
-        return compose_report_origin(base, marks)
-
-    def trigger_supervision_countermeasures(
-        self, state: GameState, *, commit: bool = False,
-    ) -> List[Dict[str, object]]:
-        """孤直稽核连续在场满 12 月 → 涌现缝立反制 issue（邸报前 auto_trigger 同缝）。
-
-        禁 0099/0091 新机制；禁占 #623 entry_kind；明升暗调形态走既有 issue 载体，
-        人事落地仍经 office_changes applier（本硬门只立局势）。
-        """
-        from ming_sim.supervision import (
-            COUNTERMEASURE_ORIGIN_KIND,
-            COUNTERMEASURE_PRESENCE_MONTHS,
-            countermeasure_origin_ref,
-            is_upright_integrity,
-            pick_countermeasure_kind,
-            character_faction_integrity,
-            derive_consecutive_months,
-        )
-
-        # 全库在场行按 (auditor, dossier) 聚合
-        rows = self.dossiers.presence_turns_by_auditor(min_months=0)
-        grouped: Dict[Tuple[str, int], List[int]] = {}
-        for row in rows:
-            key = (str(row["auditor_name"]), int(row["dossier_id"]))
-            grouped.setdefault(key, []).append(int(row["turn"]))
-
-        triggered: List[Dict[str, object]] = []
-        for (auditor, dossier_id), turns in grouped.items():
-            months = derive_consecutive_months(turns)
-            if months < COUNTERMEASURE_PRESENCE_MONTHS:
-                continue
-            _fac, integrity = character_faction_integrity(self, auditor)
-            if not is_upright_integrity(integrity):
-                continue
-            origin_ref = countermeasure_origin_ref(auditor, dossier_id)
-            existing = self.issues.read_find_any_issue_by_origin(
-                (COUNTERMEASURE_ORIGIN_KIND, origin_ref),
-            )
-            if existing is not None:
-                continue
-            kind = pick_countermeasure_kind(auditor, dossier_id)
-            title = f"针对{auditor}的{kind}"
-            # 玩家可见 stage 禁系统词：崇祯朝口语，不写钝化/陋规化
-            stage_text = f"{auditor}连月按核不贷，官场反噬已起，{kind}之议渐露。"
-            issue_id = self.insert_issue(
-                state,
-                kind="situation",
-                title=title,
-                origin_kind=COUNTERMEASURE_ORIGIN_KIND,
-                origin_ref=origin_ref,
-                stage_text=stage_text,
-                tags=["supervision_countermeasure", kind, auditor],
-                participants=[auditor],
-                bar_value=35,
-                bar_good_meaning="反噬平息",
-                bar_bad_meaning="反噬坐大",
-                inertia=1,
-                severity=55,
-                faction_hint=str(_fac or ""),
-                commit=False,
-            )
-            triggered.append({
-                "issue_id": int(issue_id),
-                "auditor_name": auditor,
-                "dossier_id": int(dossier_id),
-                "countermeasure_kind": kind,
-                "origin_ref": origin_ref,
-                "consecutive_months": months,
-            })
-        if commit and triggered:
-            self.conn.commit()
-        return triggered
 
     # ── #1726 奏疏收件箱（玩家面）──────────────────────────────────────
     # 两类：dossier_reported_progress（案卷进度）+ faction_denunciations（派系检举）。
@@ -12181,13 +12077,7 @@ class GameDB:
         """
         owns = self.owns_transaction()
         structured = dict(payload or {})
-        if not structured:
-            structured = {
-                "dossier_action_type": "special_decree",
-                "target_kind": "policy",
-                "target_id": f"legacy-directive:{directive_id}",
-                "locality_scope": "none",
-            }
+        # 空载荷不合成 legacy-directive；走既有 canonical normalize/声明端装配。
         # #658：互斥权威——push 与 ordinary 并存响亮拒绝；push 在 normalize 前短路
         kind = classify_directive_structured_kind(structured)
         target_did = (

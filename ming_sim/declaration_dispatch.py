@@ -1477,8 +1477,7 @@ def _dispatch_commissions(
                 if body is None:
                     _reject(rejected, item, "交办声明缺正文或正文须为字符串", "invalid_shape", source)
                     continue
-                # 收夜成案需要 ordinary triad；纯正文走 special_decree 最小结构
-                # （与 _ensure_directive_dossier 无结构回退同形，声明侧一次给齐）。
+                # 收夜成案需要 ordinary triad；纯正文由声明端一次给齐 special_decree 最小结构。
                 # target_id 按本批已落条数区分，避免同回合多条纯正文互撞。
                 if push_id is not None:
                     payload = {"text": body, "target_dossier_id": push_id, "mode": mode}
