@@ -1486,83 +1486,28 @@ def test_military_directive_projects_normalized_due_turn_to_dossier(game):
     assert payload["due_turn"] == state.turn + 4
     assert dossier["due_turn"] == state.turn + 4
 
-@pytest.mark.parametrize("draft_count", (1, 2))
-def test_draft_extraction_does_not_capture_acting_appointment(monkeypatch, draft_count):
+def test_draft_extraction_does_not_capture_acting_appointment(monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
     acting = {
+        "拟旨意图": "拟旨",
         "正文": "命洪承畴暂署兵部尚书",
         "动作类型": "acting_appointment",
         "目标类型": "office",
         "目标ID": "兵部尚书",
     }
-    second_acting = {
-        "正文": "命卢象升暂署五军都督府都督同知",
-        "动作类型": "acting_appointment",
-        "目标类型": "office",
-        "目标ID": "五军都督府都督同知",
-    }
-    raw = (
-        {"拟旨意图": "拟旨", **acting}
-        if draft_count == 1 else {"成品旨稿": [acting, second_acting]}
-    )
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
-        lambda *_args, **_kwargs: (json.dumps(raw, ensure_ascii=False), {}),
+        lambda *_args, **_kwargs: (json.dumps(acting, ensure_ascii=False), {}),
     )
 
     result = cli_backend.extract_draft_intent(
-        "命洪承畴暂署兵部尚书", "臣已拟妥", draft_count=draft_count,
+        "命洪承畴暂署兵部尚书", "臣已拟妥",
     )
 
-    # 单/多旨等价：不捕获 acting_appointment 为草案
+    # 单道：不捕获 acting_appointment 为草案
     assert result["draft_action"] == "无"
     assert result.get("dossier_action_type") != "acting_appointment"
-    if draft_count != 1:
-        assert result["drafts"] == []
-
-def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
-    import ming_sim.cli_backend as cli_backend
-
-    raw = json.dumps({
-        "成品旨稿": [
-            {
-                "正文": "拨国库银一万两赈陕",
-                "动作类型": "grant_allocation",
-                "目标类型": "region",
-                "目标": "shaanxi",
-                "金额": 10000,
-                "账户": "国库",
-                "执行面": "in_transit",
-                "颁布方式": "ordinary",
-            },
-            {
-                "正文": "命洪承畴三月出师",
-                "动作类型": "military_order",
-                "目标类型": "army",
-                "目标ID": "guanning",
-                "承办人": "洪承畴",
-                "期限月数": 3,
-                "颁布方式": "中旨直发",
-            },
-        ],
-    }, ensure_ascii=False)
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda *_args, **_kwargs: (raw, {}),
-    )
-    result = cli_backend.extract_draft_intent(
-        "分别拟旨拨款、出师", "臣已拟妥", draft_count=2,
-    )
-    assert result["drafts"][0]["amount"] == 10000
-    assert result["drafts"][0]["dossier_action_type"] == "grant_allocation"
-    assert result["drafts"][0]["mode"] == "ordinary"
-    # #1624：grant 经 cluster 投影保留 in_transit；military 不携带执行面。
-    assert result["drafts"][0].get("execution_surface") == "in_transit"
-    assert result["drafts"][1]["deadline_months"] == 3
-    assert result["drafts"][1]["dossier_action_type"] == "military_order"
-    assert result["drafts"][1]["mode"] == "midzhi"
-    assert str(result["drafts"][1].get("execution_surface") or "").strip() == ""
 
 def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
     from ming_sim.issues import apply_score_extraction

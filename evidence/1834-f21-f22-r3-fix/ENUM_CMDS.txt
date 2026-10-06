@@ -1,0 +1,16 @@
+#1834 F21/F22 r3（修内司 apply）机械枚举
+谓词覆盖判词类定义全文，不收窄到具名样本。
+
+## F21
+类：共享搬运/供料接缝对自由正文 strip 后传输或写入；嵌入反馈外壳后的模型供料同属此类。
+判空与传输值分离；不得增加补偿副本/下游补写/解析器/永久证明测试。
+CMD1: rg -n 'correction_block|correction_feedback|initial_correction|原旨正文|decree_text|\.strip\(\)' ming_sim/cli_backend.py ming_sim/session.py ming_sim/decree.py --type py
+CMD2: AST assign .strip free-haul names over ming_sim/cli_backend.py
+成员：evidence/.../f21_members.tsv + MEMBER_TABLE.md
+复扫：correction_block 无 .strip() 传输；probe 原旨 trailing spaces 保真。
+
+## F22
+类：被替代旧模式参数/分支/独占辅助及专属测试；共享校验/名册纠错多道专属按依赖闭包。
+保留现役单道抽取、草稿修改、补交、必要负向契约。非「无生产调用一律删除」。
+CMD: rg -n 'draft_count|has_pending_draft|existing_draft_text|existing_candidates|harvest_participants|MissingExecutionLeadError|_participant_fields_from_draft_obj|_extract_result_has_execution_lead|_missing_execution_lead_feedback|draft_combo_flags|draft_failures|成品旨稿|test_batch_draft|test_multi_pay_order|test_batch_combo|require_execution_lead' ming_sim tests web_app.py --type py
+成员：f22_rg.txt — 仅 require_execution_lead_or_raise 现役路由 KEEP；旧模式零命中。
