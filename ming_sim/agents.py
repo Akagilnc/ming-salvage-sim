@@ -9,7 +9,6 @@ from __future__ import annotations
 import inspect
 import json
 import os
-import re
 import time
 from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, List, Optional, Sequence
@@ -364,13 +363,14 @@ def _agent_run_accepts_stream(agent: object) -> bool:
 
 
 def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
+    """Decode agent JSON. Structural fence/outer/first-object only; never rewrite string bodies."""
     text = strip_json_fence(raw)
     # 试 1：原文直解
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         data = None
-    # 试 2：截 {...} 最外层再解
+    # 试 2：截 {...} 最外层再解（外围结构，不改正文）
     if data is None:
         start = text.find("{")
         end = text.rfind("}")
@@ -381,14 +381,7 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
             data = json.loads(snippet)
         except json.JSONDecodeError:
             data = None
-        # 试 3：净化 control char（\r\v\f\x00-\x1f 等）后再解
-        if data is None:
-            cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", snippet)
-            try:
-                data = json.loads(cleaned)
-            except json.JSONDecodeError:
-                data = None
-        # 试 4：截取首个合法平衡的 {...} 子串（防 LLM 重发拼接）
+        # 试 3：截取首个合法平衡的 {...} 子串（防 LLM 重发拼接；不擦洗字符串正文）
         if data is None:
             depth = 0
             in_str = False
@@ -415,7 +408,6 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
                         break
             if best_end > 0:
                 first_block = snippet[: best_end + 1]
-                first_block = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", first_block)
                 try:
                     data = json.loads(first_block)
                 except json.JSONDecodeError as error:
