@@ -7,7 +7,7 @@ canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2：
       全国=省级求和派生；satisfaction 基线30 陕西20 河南25 / leverage 5 / agenda 冻结句）；
 - F4：现役人口口径一律「人」；新档仍可落 DB 持久标作元数据，判别不再分支；
 - AC4+AC8 合并：五项 mutation 验收矩阵（classes seed / regions seed / events effect /
-  new-save prompt / old-save prompt），逐项钉新旧档期望口径，×10⁴ 漏乘或重乘必咬。
+  new-save prompt），逐项钉现役「人」口径，×10⁴ 漏乘或重乘必咬。
 """
 
 from __future__ import annotations

@@ -1094,7 +1094,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # apply_region_deltas / apply_army_deltas 在每笔增量落账时按维度净 pct 放大/缩小。
     # 因此上面的固定收支（田赋/军饷/建筑产出）已自动被修正，无需独立 tick，否则会重复计。
 
-    # ── #66 省级财政基座（settle_tick）shadow 推进 ──
+    # ── #66 省级财政基座（settle_tick）推进 ──
     try:
         remittance_total = _advance_province_fiscal_substrate(
             db,

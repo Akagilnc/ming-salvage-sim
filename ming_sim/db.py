@@ -98,7 +98,7 @@ def _army_owner_transition_pay_kwargs(normalized: Mapping[str, object]) -> Dict[
     """从规范化 delta 组装 transition_army_owner_power 饷源/自养 kwargs。
 
     键出现 → 实值；未出现 → _SENTINEL（adapter 回落行内 / 缺饷源 fail-loud）。
-    cutover-on `_apply_army_pay_source_delta` 与 cutover-off owner 分支共用，防再分叉。
+    `_apply_army_pay_source_delta` 与 owner adapter 共用，防再分叉。
     """
     return {
         key: (normalized[key] if key in normalized else _SENTINEL)
@@ -2307,18 +2307,9 @@ class GameDB:
         # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
         self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
-        # #44 名义月饷率(两/兵·月)。仅列**首次 ADD** 时回填一次（gemini high：避免每次启动重扫/
-        # 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
-        if self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0"):
-            self._backfill_salary_rate()
-        # #173：维护费列退役迁移——**必须在每个打开路径跑**。现存档只走 GameDB.__init__→
-        # init_schema、不走 seed_static_data；若只挂 seed，现存档（probe.db: maintenance INTEGER
-        # NOT NULL 无 default）永不删列 → 删列后建新军 INSERT（已不含该列）崩（cmr drop R1 codex high）。
-        # 现存档此刻维护费列在：先确保 arrears 换算读完维护费（幂等 version gate），再 drop；新档此时
-        # armies 空（CREATE TABLE 已无该列）→ 两步皆 no-op，seed 路再正常建。
-        if self.table_has_rows("armies"):
-            self._migrate_arrears_unit_to_silver(is_fresh_armies_seed=False)
-        self._drop_maintenance_column()
+        # #44 名义月饷率(两/兵·月)。新档 CREATE 已含；旧缺列仅 ensure，不跑历史回填迁移。
+        # army_needed 对 rate<=0 有 runtime 锚点兜底。
+        self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0")
         self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
         # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
         self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
@@ -3187,10 +3178,9 @@ class GameDB:
     ) -> List[ProvinceFiscalTickOutcome]:
         """一次扫描 Ming 省 fiscal payload 并推进已有 settle 基座。
 
-        动态 shadow spine 用这个批量桥，避免 selector 先解析、单省 bridge 再 SELECT/解析。
-        合法但无 settle 的 Ming 省按旧语义出列；坏 JSON/容器/settle st/p 与 settle_tick
-        ValueError/守恒错误作为 outcome.error 返回，供 shadow 调用方隔离 tlog。其它异常继续上抛，
-        保持桥接 bug fail-loud。
+        批量桥推进已有 settle 基座。合法但无 settle 的 Ming 省出列；坏 JSON/容器/settle
+        st/p 与 settle_tick ValueError/守恒错误作为 outcome.error 返回，由调用方 fail-loud。
+        其它异常继续上抛。
         """
         from .fiscal_tick import FiscalConservationError
 
@@ -3477,48 +3467,6 @@ class GameDB:
         """按史实分级写各 region 的 city_level（静态，故每次加载校准即可；未列出者保持默认 0）。"""
         for rid, level in self._CITY_LEVEL_TIERS.items():
             self.conn.execute("UPDATE regions SET city_level=? WHERE id=?", (int(level), rid))
-
-    def _backfill_salary_rate(self) -> None:
-        """#44 旧档迁移（仅 salary_rate 列**首次 ADD** 时跑一次，见调用点 gate——线上 gemini high：
-        避免每次启动重扫；与 army_needed 的 rate<=0 锚定互为兜底，迁移负责持久化合理率供显示/欠饷，
-        army_needed 负责 runtime 漏网的 charge 防白嫖）。ensure_column 给 salary_rate 默认 0，但
-        army_needed 判 rate<=0 → 锚定后才算，旧存档明军若不回填则显示/欠饷口径错（cmr r1 codex high）。
-        回填 salary_rate<=0 的明军：
-          ① static 军（在 content 且率>0）→ content.armies[id].salary_rate；
-          ② 动态旧军（不在 content）且维护费列仍在 → 从 maintenance_per_turn 反推率
-             = maint×10000/manpower（保旧档应发量级/欠饷连续，线上 codex P2）；
-          ③ 维护费列已删（新档/已删档）或值不可用 → 边军史实锚点 SALARY_RATE_ANCHOR。
-        #173 cmr drop R4（codex medium）：backfill 在 _drop_maintenance_column 之前跑，**直接升级
-        老档**（salary_rate 首次 ADD 时维护费列仍在）须保留②反推保真——drop 后旧 pay 源无可恢复，
-        若一律落锚点会把 5000 兵 maint=20 的军重定价成 ceil(5000×1.5/10000)=1、20→1 腐蚀旧档预算。
-        故用 column-exists gate：列在走②反推，列不在（新档 CREATE 已无该列）走③锚点（SELECT 不读
-        维护费、不崩）。该回填仅 salary_rate 列首次 ADD 时跑一次。只补 <=0 的、不覆盖已设正值（幂等）。"""
-        has_maint = "maintenance_per_turn" in {
-            r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()
-        }
-        # 两条完整字面 SQL 二选一（不 f-string 拼列名）：列在时多取 manpower/维护费供②反推。两 query 都
-        # 无外部输入、纯字面常量（Sourcery R1 security：消除 raw-query 字符串拼接的 SQLi 告警面）。
-        if has_maint:
-            rows = self.conn.execute(
-                "SELECT id, manpower, maintenance_per_turn FROM armies "
-                "WHERE owner_power='ming' AND salary_rate <= 0"
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate <= 0"
-            ).fetchall()
-        for r in rows:
-            aid = str(r["id"])
-            army = self.content.armies.get(aid)
-            if army is not None and army.salary_rate > 0:
-                rate = float(army.salary_rate)                       # ① content 史实率
-            elif has_maint:                                          # ② 直接升级老档：从维护费反推
-                manpower = int(r["manpower"] or 0)
-                maint = float(r["maintenance_per_turn"] or 0)
-                rate = (maint * 10000 / manpower) if (manpower > 0 and maint > 0) else SALARY_RATE_ANCHOR
-            else:                                                    # ③ 列已删/值不可用：锚点
-                rate = SALARY_RATE_ANCHOR
-            self.conn.execute("UPDATE armies SET salary_rate=? WHERE id=?", (rate, aid))
 
     def apply_region_cannon(self, state: "GameState", region_id: str, delta: int) -> int:
         """改某地城防大炮门数(城头红夷炮)。上限 = city_level×8；clamp [0, cap]。返回新值。
@@ -3992,10 +3940,7 @@ class GameDB:
                         building.status,
                     ),
                 )
-        self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
         self._initialize_army_pay_source_spine(is_fresh_armies_seed)
-        # #173：维护费列退役 drop 已上移至 init_schema（每个打开路径都跑，含现存档的纯
-        # init_schema 路径，见 cmr drop R1）；此处新档 seed INSERT 后该列本就不存在，无需再 drop。
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
         # 新档罢居/在途 office 污染清洗：init_schema 路径在空表上 no-op（构造在 seed 前），
         # 故 seed 后须再跑一次才对新档生效（决定9/L94 一次性清洗；幂等，老档由 init_schema
@@ -4009,17 +3954,6 @@ class GameDB:
         )
         self.conn.commit()
 
-
-    def is_army_pay_source_cutover_enabled(self) -> bool:
-        """现役军饷分源 spine 恒开；#1812 清退无标回落 legacy 的双轨。"""
-        return True
-
-    def fiscal_engine(self) -> str:
-        """现役财政引擎恒为 substrate_hub；#1812 清退无标回落 legacy 的双轨。"""
-        return "substrate_hub"
-
-    def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
-        return True
 
     def _mark_army_pay_source_cutover_enabled(self) -> None:
         self.conn.execute(
@@ -5214,52 +5148,7 @@ class GameDB:
         if not isinstance(st, dict):
             raise ValueError("settle.st 非法")
         st["军饷欠"] = standalone_arrears + row_arrears_total
-
-    def _drop_maintenance_column(self) -> None:
-        """#173：物理移除退役的 armies.maintenance_per_turn 列（月饷由 army_needed 按兵力派生）。
-        幂等：列存在才 DROP（SQLite 3.35+ 支持 ALTER TABLE DROP COLUMN，本仓 3.53）。调用点保证排在
-        所有读维护费的迁移之后（见 init_schema：salary_rate backfill + arrears 换算之后）：老档此刻列
-        仍在、迁移已读完，drop 安全；新档/已删档无此列，PRAGMA 查不到 → no-op。"""
-        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()}
-        if "maintenance_per_turn" in cols:
-            self.conn.execute("ALTER TABLE armies DROP COLUMN maintenance_per_turn")
-            self.conn.commit()  # DDL 显式提交，保证 drop 跨打开/环境持久（Gemini PR R3；init_schema
                                 # 末尾另有 commit 兜底，此处显式化事务边界、不依赖后续步骤的提交时机）
-
-    def _migrate_arrears_unit_to_silver(self, is_fresh_armies_seed: bool) -> None:
-        """一次性迁移：armies.arrears 从 0-100 抽象分换成累计欠饷万两。
-        旧档按 arrears * maintenance_per_turn / 25 估算（粗略：旧分数 ≈ 4 倍欠饷月数）。
-
-        区分新老档：
-        - 新档（is_fresh_armies_seed=True）：armies 由本版 seed_armies 刚刚写入，arrears
-          已经是万两。直接打 version=1，跳过换算。
-        - 老档（is_fresh_armies_seed=False）：armies 表早已存在数据；若 fiscal_config 中
-          无 __arrears_unit_version 标记，说明从未跑过本迁移 → 走换算逻辑。
-        """
-        ARREARS_UNIT_VERSION = 1
-        row = self.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = '__arrears_unit_version'"
-        ).fetchone()
-        cur = int(row["value"]) if row else 0
-        if cur >= ARREARS_UNIT_VERSION:
-            return
-        if not is_fresh_armies_seed:
-            # 真老档：换算分数 → 万两。#173：换算读 maintenance_per_turn，仅在列仍在时跑（调用点排在
-            # _drop_maintenance_column 之前，老档此刻列必在；加 column-exists gate 是防御未来顺序变化/
-            # 已删档误入此路——列没了则跳过换算、只打 version，arrears 保持原值）。
-            cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(armies)").fetchall()}
-            if "maintenance_per_turn" in cols:
-                self.conn.execute(
-                    "UPDATE armies SET arrears = CAST(arrears * maintenance_per_turn / 25.0 AS INTEGER) "
-                    "WHERE maintenance_per_turn > 0"
-                )
-        # 无论新老档，都把 version 打上，下次启动直接跳过
-        self.conn.execute(
-            "INSERT INTO fiscal_config (key, value, kind, note) VALUES "
-            "('__arrears_unit_version', ?, 'meta', 'arrears 单位由 0-100 分迁至累计欠饷万两的版本号') "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note",
-            (ARREARS_UNIT_VERSION,),
-        )
 
     def _backfill_person_core_character_static_fields(self) -> None:
         mao = self.content.characters.get("毛文龙")
