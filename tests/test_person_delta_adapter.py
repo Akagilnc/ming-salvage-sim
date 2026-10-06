@@ -80,7 +80,6 @@ def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
     )
     assert "person_changes" not in applied
     assert "world_advance" not in applied
-    assert "pairing_warnings" not in applied
 
 
 

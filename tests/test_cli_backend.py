@@ -576,35 +576,17 @@ def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
 
 # ── trace throat ──
 
-@pytest.mark.parametrize(
-    "prompt,expect_tag",
-    [
-        ("你扮演被皇帝召见的大臣，回话……", "minister"),
-        ("本月结算抽取，输出 delta……", "extractor"),
-        ("simulator_payload: 当前盘面 TSV……", "simulator"),
-        ("请拟一道诏书，颁行天下", "decree"),
-        ("只输出合法 JSON，无多余字", "sanitizer"),
-        ("今日天气如何", "other"),
-        # 优先级：minister 先于 decree。
-        ("你扮演被皇帝召见的大臣，臣请拟诏书一道……", "minister"),
-    ],
-    ids=[
-        "minister", "extractor", "simulator",
-        "decree", "sanitizer", "other",
-        "minister_over_decree",
-    ],
-)
-def test_run_backend_infers_trace_tag_from_prompt(monkeypatch, prompt, expect_tag):
-    """公共咽喉 _run_backend_for_config：tag 空时从 prompt 推断 trace.tag（不直测 helper）。"""
+def test_run_backend_empty_tag_is_other_not_prompt_guess(monkeypatch):
+    """公共咽喉 _run_backend_for_config：tag 空时记 other，不从自由 prompt 猜分类。"""
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
     monkeypatch.setattr(
         cb, "_run_codex",
         lambda prompt, model=None, **kwargs: ("ok", 1),
     )
-    cb._run_backend_for_config(prompt, _cli_codex_cfg())  # no explicit tag
+    cb._run_backend_for_config("你扮演被皇帝召见的大臣，回话……", _cli_codex_cfg())
     assert len(recs) == 1
-    assert recs[0]["tag"] == expect_tag
+    assert recs[0]["tag"] == "other"
 
 def test_run_backend_for_config_traces_every_call(monkeypatch):
     recs = []
