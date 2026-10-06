@@ -11192,32 +11192,43 @@ class GameDB:
 
                 self.conn.execute(f"SAVEPOINT {savepoint}")
                 try:
-                    ok = self._apply_pending_action(
-                        state, pa, payload, content=content,
-                        rejection_collector=rejection_collector)
-                    if ok:
-                        self.dossiers.set_pending_status(int(pa["id"]), "committed")
-                    else:
+                    # 接缝分流（ADR0005 / #1889 R5）：apply 业务/模型坏项可隔离标 failed；
+                    # committed 状态写是持久主写，故障不得洗成 pending failed。
+                    try:
+                        ok = self._apply_pending_action(
+                            state, pa, payload, content=content,
+                            rejection_collector=rejection_collector)
+                    except Exception as exc:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
                         restore_office_memory()
-                        # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
-                        # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
+                        # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
+                        from ming_sim.applier import RejectionCollectorRequired
+                        if isinstance(exc, RejectionCollectorRequired):
+                            raise
+                        rejection = getattr(exc, "dossier_link_rejection", None)
+                        if rejection is not None:
+                            self.dossiers.record_link_rejection(
+                                *rejection, pending_action_id=int(pa["id"]),
+                            )
+                        tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
+                        ok = False
                         self.dossiers.set_pending_status(int(pa["id"]), "failed")
-                except Exception as exc:
-                    self.conn.execute(f"ROLLBACK TO {savepoint}")
-                    restore_office_memory()
-                    # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
-                    from ming_sim.applier import RejectionCollectorRequired
-                    if isinstance(exc, RejectionCollectorRequired):
-                        raise
-                    rejection = getattr(exc, "dossier_link_rejection", None)
-                    if rejection is not None:
-                        self.dossiers.record_link_rejection(
-                            *rejection, pending_action_id=int(pa["id"]),
-                        )
-                    tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-                    ok = False
-                    self.dossiers.set_pending_status(int(pa["id"]), "failed")
+                    else:
+                        if ok:
+                            try:
+                                self.dossiers.set_pending_status(
+                                    int(pa["id"]), "committed",
+                                )
+                            except Exception:
+                                self.conn.execute(f"ROLLBACK TO {savepoint}")
+                                restore_office_memory()
+                                raise
+                        else:
+                            self.conn.execute(f"ROLLBACK TO {savepoint}")
+                            restore_office_memory()
+                            # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
+                            # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
+                            self.dossiers.set_pending_status(int(pa["id"]), "failed")
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
                 if rejection_collector is not None:
@@ -11283,31 +11294,47 @@ class GameDB:
                 savepoint = f"pending_action_directive_{int(pa['id'])}"
                 self.conn.execute(f"SAVEPOINT {savepoint}")
                 try:
+                    # 接缝分流（ADR0005 / #1889 R5）：apply 坏项可标 failed；
+                    # committed 状态写故障沿既有上抛，不得洗成 pending failed。
                     payload_for_apply = dict(payload)
                     payload_for_apply["_directive_status"] = directive_status
-                    ok = self._apply_pending_action(
-                        state, pa, payload_for_apply, content=content,
-                        rejection_collector=rejection_collector)
-                    if ok:
-                        self.dossiers.set_pending_status(int(pa["id"]), "committed")
-                        result = {"id": pa["id"], "kind": pa["kind"],
-                                  "action": pa["action"], "target_id": pa["target_id"]}
-                    else:
+                    try:
+                        ok = self._apply_pending_action(
+                            state, pa, payload_for_apply, content=content,
+                            rejection_collector=rejection_collector)
+                    except Exception as exc:
+                        # #654 r3-C.2 路1：directive apply 坏项——回滚后标 failed，不崩结算
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
+                        # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
+                        from ming_sim.applier import RejectionCollectorRequired
+                        if isinstance(exc, RejectionCollectorRequired):
+                            raise
                         self.dossiers.set_pending_status(int(pa["id"]), "failed")
-                except Exception as exc:
-                    # #654 r3-C.2 路1：directive 特路与通用分支同款——回滚后标 failed，不崩结算
-                    self.conn.execute(f"ROLLBACK TO {savepoint}")
-                    # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
-                    from ming_sim.applier import RejectionCollectorRequired
-                    if isinstance(exc, RejectionCollectorRequired):
-                        raise
-                    self.dossiers.set_pending_status(int(pa["id"]), "failed")
-                    tlog(
-                        f"[pending_actions] 落库失败标 failed id={pa['id']} "
-                        f"{pa['kind']}/{pa['action']}：{exc}"
-                    )
-                    result = None
+                        tlog(
+                            f"[pending_actions] 落库失败标 failed id={pa['id']} "
+                            f"{pa['kind']}/{pa['action']}：{exc}"
+                        )
+                        result = None
+                        ok = False
+                    else:
+                        if ok:
+                            try:
+                                self.dossiers.set_pending_status(
+                                    int(pa["id"]), "committed",
+                                )
+                            except Exception:
+                                self.conn.execute(f"ROLLBACK TO {savepoint}")
+                                raise
+                            result = {
+                                "id": pa["id"], "kind": pa["kind"],
+                                "action": pa["action"],
+                                "target_id": pa["target_id"],
+                            }
+                        else:
+                            self.conn.execute(f"ROLLBACK TO {savepoint}")
+                            self.dossiers.set_pending_status(
+                                int(pa["id"]), "failed",
+                            )
                 finally:
                     self.conn.execute(f"RELEASE {savepoint}")
                 if rejection_collector is not None:
@@ -12201,12 +12228,16 @@ class GameDB:
                     # 已有案卷：幂等跳过（补交重跑 ensure 时不重复建）
                     if self.dossiers.get_for_directive(did) is not None:
                         continue
+                    # 接缝分流（ADR0005 / #1889 R5）：持久载荷解码在产物 try 外——
+                    # 损坏/非 JSON 是读接缝系统故障，不得洗成 locality_fanout_failed。
+                    # 合法空对象 {} 仍进入成案，由产物 ValueError 隔离留痕。
+                    payload = self.read_directive_dossier_payload(row)
                     sp = f"ensure_directive_{did}"
                     self.conn.execute(f"SAVEPOINT {sp}")
                     try:
                         self._ensure_directive_dossier(
                             state, did, str(row["text"]),
-                            self.read_directive_dossier_payload(row), commit=False,
+                            payload, commit=False,
                         )
                     except ValueError as exc:
                         # 产物/契约错：逐项隔离留痕，保持 draft（#1769 补交/耗尽入口）

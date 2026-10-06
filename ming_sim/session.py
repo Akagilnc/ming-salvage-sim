@@ -1566,10 +1566,20 @@ class GameSession:
             row = IssueStore(self.db.conn).directive(did)
             if row is None or str(row["status"] or "") != "draft":
                 continue
+            # 接缝分流（ADR0005 / #1889 R5）：持久载荷损坏是读故障，不得 skip 成空补交。
+            # 沿本方法既有错误包 + SettlementAbort 归属（与 LLM/写回系统故障同形）。
             try:
                 bad_payload = self.db.read_directive_dossier_payload(row)
-            except ValueError:
-                continue
+            except ValueError as exc:
+                pack_path = write_error_pack(
+                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="directive_admission_resubmit",
+                    error_pack_path=pack_path,
+                ) from exc
             reason = str(item.get("reason") or "")
             prior = carried.get(did)
             if prior is not None:

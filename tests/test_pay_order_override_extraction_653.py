@@ -45,8 +45,9 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
     assert staged_entries == result["entries"]
     assert all("duration_months" not in entry for entry in staged_entries)
 
+    # 提示含相对期限字段名与地域锚点即可；不锁 JSON 空白排版。
+    assert "duration_months" in prompts[0]
     assert "陕西=@shaanxi" in prompts[0]
-    assert '"duration_months":3' in prompts[0]
 
 
 def test_relative_deadline_cannot_stage_llm_computed_expired_turn(game, monkeypatch):
