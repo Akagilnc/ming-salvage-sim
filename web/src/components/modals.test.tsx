@@ -1741,11 +1741,11 @@ describe("ReportModal — narrative settlement bulletin", () => {
       report: "**辽东军情**\n- 军前缺饷",
     });
 
-    // #1902 L2：结构可达 + 无实账页铬字；不锁生成邸报正文片段。
+    // #1902 L2：仅卷轴结构可达；删整 body 报文禁词（合法报文可含任意字）。
+    expect(document.querySelector(".gazette-shell")).not.toBeNull();
     expect(document.querySelector(".gazette-document")).not.toBeNull();
     expect(document.querySelector("pre.memorial-text")).not.toBeNull();
-    expect(document.body.textContent).not.toContain("实账");
-    expect(document.body.textContent).not.toContain("账目明细");
+    expect(document.querySelector(".gazette-dismiss")).not.toBeNull();
   });
 
   it("#1387 底部有朕知道了主按钮可达关闭，不靠右上小 X", () => {
