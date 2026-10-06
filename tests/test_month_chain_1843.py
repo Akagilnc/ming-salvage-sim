@@ -344,7 +344,7 @@ def test_finish_rescript_phase2_stays_settling_until_advanced(game, monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
     session = make_light_session(db, state, content)
     session.state.turn_phase = TurnPhase.SETTLING.value
-    session.finish_rescript_phase2({"apply": None, "batch": None})
+    session.finish_rescript_phase2()
     assert int(session.state.turn) == closed_turn
     assert session.state.turn_phase == TurnPhase.SETTLING.value
 

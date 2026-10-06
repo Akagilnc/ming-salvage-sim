@@ -16,7 +16,6 @@ from ming_sim.decree import ResolveResult
 from tests.conftest import clear_pending_rows
 import asyncio
 import json
-import threading
 import httpx
 import pytest
 import ming_sim.agents as agents_mod
@@ -66,20 +65,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         game.session.close()
     except Exception:
         pass
-
-
-def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
-    """只中和 phase2 LLM 边界；保留 resolve_decisions_phase2 真结算/推月。"""
-    import ming_sim.mechanical_tail as mechanical_tail
-
-    # 机械尾关系酿制改为空操作，避免 sk-test 配置触发真实模型调用。
-    _noop_brew = lambda *a, **k: None
-    if hasattr(monkeypatch_or_module, "setattr"):
-        monkeypatch_or_module.setattr(
-            mechanical_tail, "_run_relation_brew", _noop_brew,
-        )
-    else:
-        mechanical_tail._run_relation_brew = _noop_brew
 
 
 def _client() -> httpx.AsyncClient:

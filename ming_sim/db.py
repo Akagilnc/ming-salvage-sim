@@ -10678,7 +10678,7 @@ class GameDB:
         rows = self.conn.execute(
             "SELECT idx, event_id, title, context, rejection_reason, "
             "opposition, options_json, choice_json, status, kind, actor_name, actor_office, "
-            "actor_faction, turn, revision_round, prior_options_json "
+            "actor_faction, turn "
             "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
             (int(turn),),
         ).fetchall()
@@ -10695,11 +10695,6 @@ class GameDB:
             except Exception as exc:
                 tlog(f"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}")  # #14 surface
                 choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
             source_turn = int(r["turn"])
             idx = int(r["idx"])
             kind = str(r["kind"] or "decision")
@@ -10720,8 +10715,6 @@ class GameDB:
                 "actor_name": r["actor_name"],
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
-                "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
             })
         return out
 
@@ -10733,8 +10726,7 @@ class GameDB:
             """
             SELECT turn, idx, event_id, title, context, rejection_reason,
                    opposition, options_json, choice_json, status, kind,
-                   actor_name, actor_office, actor_faction,
-                   revision_round, prior_options_json
+                   actor_name, actor_office, actor_faction
             FROM pending_decisions
             WHERE status = 'pending'
               AND kind = 'decision' AND turn = ?
@@ -10762,11 +10754,6 @@ class GameDB:
         except Exception as exc:
             tlog(f"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}")
             choice = None
-        try:
-            prior = json.loads(r["prior_options_json"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-            prior = []
         return {
             "decision_key": f"{kind}:{source_turn}:{idx}",
             "kind": kind,
@@ -10784,8 +10771,6 @@ class GameDB:
             "actor_name": r["actor_name"],
             "actor_office": r["actor_office"],
             "actor_faction": r["actor_faction"],
-            "revision_round": int(r["revision_round"] or 0),
-            "prior_options_json": prior if isinstance(prior, list) else [],
         }
 
     def get_rescript_desk_rows_by_keys(
@@ -10812,8 +10797,7 @@ class GameDB:
                 """
                 SELECT turn, idx, event_id, title, context, rejection_reason,
                        opposition, options_json, choice_json, status, kind,
-                       actor_name, actor_office, actor_faction,
-                       revision_round, prior_options_json
+                       actor_name, actor_office, actor_faction
                 FROM pending_decisions
                 WHERE turn = ? AND idx = ? AND kind = ?
                 """,

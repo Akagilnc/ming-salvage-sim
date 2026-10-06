@@ -824,10 +824,3 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
     assert [r["question"] for r in game.db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
 
 
-def _657_active_minister(db, content) -> str:
-    return next(
-        ch.name for ch in content.characters.values()
-        if db.get_character_status(ch.name)[0] == "active"
-        and db.resolve_power_id(ch) == "ming"
-        and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
-    )

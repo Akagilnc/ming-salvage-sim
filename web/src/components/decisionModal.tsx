@@ -67,29 +67,86 @@ export function DecisionModal({
     const page = pageRef.current;
     if (!page) return;
 
-    const onKey = (event: KeyboardEvent) => {
-      if (locked) return;
+    const focusableSelector = [
+      "button:not([disabled])",
+      "textarea:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "a[href]",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",");
+    const focusables = () => Array.from(page.querySelectorAll<HTMLElement>(focusableSelector));
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    const keepFocusInPage = (event: KeyboardEvent) => {
       if (isCheatConsoleTarget(event.target)) return;
-      if (event.key === "Enter" && !event.shiftKey) {
+      if (event.ctrlKey && (event.key === "~" || event.key === "`")) {
         event.preventDefault();
-        next();
+        event.stopImmediatePropagation();
+        (focusables()[0] || page).focus();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const elements = focusables();
+      if (!elements.length) {
+        event.preventDefault();
+        page.focus();
+        return;
+      }
+
+      const activeIndex = elements.indexOf(document.activeElement as HTMLElement);
+      if (activeIndex === -1) {
+        event.preventDefault();
+        elements[event.shiftKey ? elements.length - 1 : 0].focus();
+      } else if (event.shiftKey && activeIndex === 0) {
+        event.preventDefault();
+        elements[elements.length - 1].focus();
+      } else if (!event.shiftKey && activeIndex === elements.length - 1) {
+        event.preventDefault();
+        elements[0].focus();
       }
     };
-    page.addEventListener("keydown", onKey);
-    return () => page.removeEventListener("keydown", onKey);
-  });
 
+    const keepFocusInPageOnFocus = (event: FocusEvent) => {
+      if (event.target instanceof Node && page.contains(event.target)) return;
+      if (isCheatConsoleTarget(event.target)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      (focusables()[0] || page).focus();
+    };
+
+    document.addEventListener("keydown", keepFocusInPage, true);
+    document.addEventListener("focusin", keepFocusInPageOnFocus, true);
+    return () => {
+      document.removeEventListener("keydown", keepFocusInPage, true);
+      document.removeEventListener("focusin", keepFocusInPageOnFocus, true);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [decisions.length]);
+
+  React.useEffect(() => {
+    const page = pageRef.current;
+    if (!page) return;
+    const firstFocusable = page.querySelector<HTMLElement>(
+      "button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])",
+    );
+    if (isCheatConsoleTarget(document.activeElement)) return;
+    (firstFocusable || page).focus();
+  }, [cursor, decisions.length]);
+
+  if (decisions.length === 0) return null;
   if (!cur) return null;
 
   const kickerKind = requiresListedChoice ? "案卷" : "请旨";
 
   return (
     <section
-      className="decision-modal"
+      ref={pageRef}
+      className="decision-page"
       role="dialog"
       aria-modal="true"
       aria-labelledby="decision-page-title"
-      ref={pageRef}
+      tabIndex={-1}
     >
       <article className="decision-document">
         <div className="decision-head">

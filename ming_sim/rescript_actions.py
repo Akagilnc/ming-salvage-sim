@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.decree import atomic_and_reload
-from ming_sim.decree_vocabulary import PARTICIPANT_ROSTER_KEY
 from ming_sim.settlement_payload import (
     bind_decision_options,
     decision_has_rescript_capability,
@@ -60,11 +59,10 @@ def project_preferred_hitl_choice(decision: Mapping[str, object]) -> Dict[str, o
 
 
 def canonical_choice(raw: object) -> Dict[str, object]:
-    """确定性规范化 choice：键序固定、缺省填协议默认、decision_key/action/capability 必在。"""
+    """确定性规范化 choice：decision/0055 案头字段；旧急务专属键不接收。"""
     if not isinstance(raw, dict):
         raise ValueError("choice 须为 object")
     out: Dict[str, object] = {}
-    # 保留并规范化已知键
     decision_key = str(raw.get("decision_key") or "").strip()
     if decision_key:
         _parse_decision_key(decision_key)
@@ -72,40 +70,16 @@ def canonical_choice(raw: object) -> Dict[str, object]:
     action = str(raw.get("action") or raw.get("dossier_decision") or "").strip()
     if action:
         out["action"] = action
-    # capability
-    cap = str(raw.get("draft_capability") or "").strip()
-    if cap:
-        out["draft_capability"] = cap
-    # 通用展示/批红字段（标识/自由文本串；stop_condition 走唯一保真缝，禁 str(dict)）
-    from ming_sim.rescript_draft import normalize_stop_condition
-    for key in (
-        "label", "hint", "note",
-        "action_type", "assignee_name", "name",
-        "target_kind", "target_id", "transaction_category",
-        "locality_scope", "region_id", "title", "commitment_kind",
-        "station", "office",
-        "grant_action", "account", "cadence", "execution_surface", "purpose",
-        "appoint_action", "appointment_tenure", "punish_action",
-        "privilege", "summon_target",
-        "holder_id", "assignee_id", "assignee",
-    ):
+    for key in ("label", "hint", "note"):
         if key in raw and raw[key] is not None:
             out[key] = str(raw[key]) if not isinstance(raw[key], (int, float, bool)) else raw[key]
             if isinstance(out[key], bool):
                 out[key] = str(out[key])
-    if "stop_condition" in raw and raw["stop_condition"] is not None:
-        out["stop_condition"] = normalize_stop_condition(raw["stop_condition"])
-    for key in ("end_turn", "deadline_months", "due_turn", "amount",
-                "dossier_id", "applied_from_revision_round", "revision_round"):
-        if key in raw and raw[key] is not None and raw[key] != "":
-            try:
-                out[key] = int(raw[key])  # type: ignore[arg-type]
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"choice.{key} 非法：{raw[key]!r}") from exc
-    # #1778 决定 3：参与名单是结构化列表，原样保留（str() 会把它压成字面量）
-    if isinstance(raw.get(PARTICIPANT_ROSTER_KEY), list):
-        out[PARTICIPANT_ROSTER_KEY] = raw[PARTICIPANT_ROSTER_KEY]
-    # dossier 批红能力对原样保留
+    if "dossier_id" in raw and raw["dossier_id"] is not None and raw["dossier_id"] != "":
+        try:
+            out["dossier_id"] = int(raw["dossier_id"])  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"choice.dossier_id 非法：{raw['dossier_id']!r}") from exc
     if "dossier_decision" in raw and raw["dossier_decision"] is not None:
         out["dossier_decision"] = str(raw["dossier_decision"])
     if "dossier_id" in raw and "dossier_id" not in out:
@@ -114,7 +88,6 @@ def canonical_choice(raw: object) -> Dict[str, object]:
             out["dossier_id"] = pair[0]
             out["dossier_decision"] = pair[1]
             out.setdefault("action", pair[1])
-    # 缺省 label
     out.setdefault("label", str(raw.get("label") or ""))
     out.setdefault("hint", str(raw.get("hint") or ""))
     return out

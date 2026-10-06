@@ -1845,8 +1845,8 @@ class GameSession:
 
     def prepare_rescript_prewrite(
         self, choices: List[Dict[str, object]],
-    ) -> Dict[str, object]:
-        """批红 PREWRITE（gate 外）：validate_all；失败零写。"""
+    ):
+        """批红 PREWRITE（gate 外）：validate_all；失败零写。返回 ValidatedBatch。"""
         from ming_sim import rescript_actions as ra
 
         self._assert_awaiting_decision_submit()
@@ -1862,28 +1862,18 @@ class GameSession:
         ]
         if missing_keys:
             desk.extend(self.db.get_rescript_desk_rows_by_keys(missing_keys))
+        return ra.validate_all(desk, req)
 
-        batch = ra.validate_all(desk, req)
-        return {"batch": batch, "desk": desk, "choices": req}
-
-    def commit_rescript_phase1(self, prewrite_state: Dict[str, object]) -> Dict[str, object]:
+    def commit_rescript_phase1(self, batch) -> None:
         """① 短写（调用方已持 write_gate）：C1 apply。"""
         from ming_sim import rescript_actions as ra
 
-        batch: ra.ValidatedBatch = prewrite_state["batch"]  # type: ignore[assignment]
-        apply = ra.apply_rescript_batch(
+        ra.apply_rescript_batch(
             self.db, self.state, batch, content=self.content,
         )
-        return {"apply": apply, "batch": batch}
 
-    def finish_rescript_phase2(
-        self,
-        phase1_state: Dict[str, object],
-        *,
-        cheat_directive: str = "",
-    ) -> str:
-        """③ 短写（调用方已持 write_gate）：phase2。旧急务召见空供给协议已撤。"""
-        del phase1_state
+    def finish_rescript_phase2(self, *, cheat_directive: str = "") -> str:
+        """③ 短写（调用方已持 write_gate）：phase2。"""
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)
             if ctx0 is not None:
@@ -1907,13 +1897,11 @@ class GameSession:
         """keyed 批红唯一编排出口：PRE 锁外 → 持 gate apply → 再持 gate phase2。"""
         if write_gate is None:
             raise ValueError("resolve_rescript_decisions 须注入既有 write_gate")
-        pre = self.prepare_rescript_prewrite(choices)
+        batch = self.prepare_rescript_prewrite(choices)
         with write_gate:
-            p1 = self.commit_rescript_phase1(pre)
+            self.commit_rescript_phase1(batch)
         with write_gate:
-            return self.finish_rescript_phase2(
-                p1, cheat_directive=cheat_directive,
-            )
+            return self.finish_rescript_phase2(cheat_directive=cheat_directive)
 
     def submit_hitl_choices(
         self,

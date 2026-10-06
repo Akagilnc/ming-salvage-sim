@@ -374,4 +374,7 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
     cleanupDossier();
   });
+
+
+
 });
