@@ -170,10 +170,8 @@ def apply_issue_tracker_output(
     consumed_surge_candidates: set[tuple[str, str]] = set()
     for ni in tracker_output.get("new_issues", []) or []:
         if not isinstance(ni, dict):
-            # 非 dict 项（new_issues:[null]/标量）：ni.get 会抛 AttributeError。真实 settle 路
-            # validate_delta_shape 已在 apply 前拦非 dict list 项，此为 defense-in-depth（直接调
-            # apply_issue_tracker_output / 绕过 validate 时生效）——逐项拒收，不让坏项带走整批
-            # （ADR 0008 决定 1，同 close_issues 非 dict 守卫，cmr ni r1 Claude）。
+            # 非 dict 项：sanitize_delta_shape 已在前置闸按 ADR 0015 逐项拒收并剔除；
+            # 此处再守一道，直调 tracker / 绕过前置闸时同样不崩整月（ADR 0008 决定 1，同 close_issues）。
             entity_rejections.append(RejectedItem(item={"raw_value": ni}, reason=f"new_issues 条目非对象（应为 dict）：{ni!r}", category="invalid_enum", source=source))
             continue
         raw_title = ni.get("title")

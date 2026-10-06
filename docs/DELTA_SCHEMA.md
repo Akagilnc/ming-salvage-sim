@@ -458,7 +458,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | `method` | str（中文键 `查法`） | 本月查法，原样落账为案卷事实。 |
 | `tip_off` | `{source}`（中文键 `通风报信`） | 真实通风报信声明：确有人经关系网把话递到被查者手里。被查者知情的**唯一**来源；关系边存在 ≠ 话递到了。开案本身不算知情。 |
 | `spoliation` | `{effect, fact_key, knowledge_source?}` | 被查者知情后的毁证选择；`effect` ∈ `harder`/`gone`。未知情不承接。`knowledge_source` 可省：知情按**案卷已落的真实传话记录**跨月承接（见下），无须每月重复声明。 |
-| `suppression` | `{form}`（中文键 `压案`） | 被查者知情后的压案声明（行贿说项之类），落账为事实。**未知情不落账**（引擎不替一个不知情的人记下他"压了案"），并在 `rejected_reactions` 留痕。 |
+| `suppression` | `{form}`（中文键 `压案`） | 被查者知情后的压案声明（行贿说项之类），落账为事实。**未知情不落账**（引擎不替一个不知情的人记下他"压了案"），并以 canonical `RejectedItem` 走拒收通道留痕（与合法实入可并存）。 |
 | `note` | str | 密奏正文（可谎）。奏报不入实况轨：谎奏不造罪、不抹证。 |
 
 - **知情的跨月承接**：知情是持续事实——真递到过一次的话，此后各月照样成立。核的是**同一人**：此人既出现在本案 `investigation_tips` 里，又与目标有关系边。别人递过话，不能把未递话的关系人算成来源。毁证与压案**共用**这一判定（`_resolve_investigation_knowledge`）。
