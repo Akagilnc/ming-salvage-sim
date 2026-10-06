@@ -533,12 +533,6 @@ class _GapBDB:
             or not row.get("minister_message_id")
         ]
 
-    def load_all_chat_history(self):
-        out = {}
-        for m in self.messages:
-            out.setdefault(m["minister"], []).append({"role": m["role"], "content": m["content"]})
-        return out
-
     def kv_get(self, _k):
         return ""
 

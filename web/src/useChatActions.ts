@@ -321,7 +321,7 @@ export function useChatActions({
   ) => {
     // #505：系统层重试——复用已持久问话，不造重复句。
     // #1853 J2：夜卷是回话失败唯一投影；recovery_phase 由夜卷钮传入。
-    if (busy || !Number.isInteger(chatTurnId) || chatTurnId <= 0) return;
+    if (busy) return;
     const phase = recoveryPhase;
     const initiatingPanelName = selectedMinisterRef.current;
     setBusy(phase ? "恢复本轮后续处理" : "重新生成回话");
