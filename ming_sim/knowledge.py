@@ -497,16 +497,10 @@ def _issue_audience_case_events(
         db.issues.active_rows() if hasattr(db, "issues") else []
     )
     for issue in active_issues:
-        try:
-            source_id = f"issue:{int(issue['id'])}"
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        source_id = f"issue:{int(issue['id'])}"
         if source_id in known:
             continue
-        try:
-            stage = _prose(issue["stage_text"])
-        except (KeyError, IndexError, TypeError):
-            stage = ""
+        stage = _prose(issue["stage_text"])
         if not str(stage).strip() or not _reader_in_issue_audience(db, issue, character_name):
             continue
         if not knowledge_row_visible_to(
@@ -515,10 +509,8 @@ def _issue_audience_case_events(
             character_name,
         ):
             continue
-        try:
-            origin_turn = int(issue["origin_turn"] or state.turn)
-        except (KeyError, IndexError, TypeError, ValueError):
-            origin_turn = int(state.turn)
+        # origin_turn 合法 0/空走 state.turn；列本身现役必有，不按缺列吞空。
+        origin_turn = int(issue["origin_turn"] or state.turn)
         synthesized.append({
             "turn": origin_turn,
             "year": int(state.year) if origin_turn == int(state.turn) else 0,
