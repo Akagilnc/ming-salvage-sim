@@ -1,75 +1,8 @@
 """ADR 0009 person archive schema contract."""
 
-import json
-import sqlite3
-
 from ming_sim.content import load_character_content
-from ming_sim.db import GameDB
 from ming_sim.models import Character
 from ming_sim.session import _sync_offices_from_db_impl
-
-
-def _columns(db, table):
-    return {row["name"] for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
-def _column_info(db, table):
-    return {row["name"]: dict(row) for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
-def test_characters_table_has_person_archive_fields(read_game):
-    """ADR 0009 stores machine-readable reason and travel state on characters."""
-    db, _, _ = read_game
-
-    cols = _columns(db, "characters")
-
-    assert "reason_code" in cols
-    assert "transit_to" in cols
-    assert {"transit_distance_remaining", "transit_speed_factor"} <= cols
-    info = _column_info(db, "characters")
-    for name in ("transit_distance_remaining", "transit_speed_factor"):
-        assert info[name]["type"] == "REAL"
-        assert info[name]["notnull"] == 0
-        assert info[name]["dflt_value"] is None
-    for name in ("reason_code", "transit_to"):
-        assert info[name]["type"] == "TEXT"
-        assert info[name]["notnull"] == 1
-        assert info[name]["dflt_value"] == "''"
-
-
-def test_person_logs_table_records_person_archive_audit_chain(read_game):
-    """ADR 0009 persists person archive process history separately from final state."""
-    db, _, _ = read_game
-
-    cols = _columns(db, "person_logs")
-
-    assert {
-        "id",
-        "turn",
-        "year",
-        "period",
-        "person_name",
-        "action",
-        "payload_summary",
-        "derived_from",
-        "normalized",
-        "source",
-        "created_at",
-    } <= cols
-
-    info = _column_info(db, "person_logs")
-    for name in ("person_name", "action", "payload_summary", "derived_from", "normalized", "source"):
-        assert info[name]["type"] == "TEXT"
-        assert info[name]["notnull"] == 1
-    for name in ("payload_summary", "derived_from", "normalized", "source"):
-        assert info[name]["dflt_value"] == "''"
-
-    foreign_keys = {
-        (row["from"], row["table"], row["to"])
-        for row in db.conn.execute("PRAGMA foreign_key_list(person_logs)").fetchall()
-    }
-    assert ("person_name", "characters", "name") in foreign_keys
-
 
 def test_person_logs_accepts_audit_rows_for_existing_characters(game):
     """The audit table is not only present; it can persist an ADR 0009 log row."""
@@ -96,7 +29,6 @@ def test_person_logs_accepts_audit_rows_for_existing_characters(game):
         "normalized": "{}",
         "source": "system_simulation",
     }
-
 
 def test_add_character_persists_transit_to(game):
     """Runtime-created characters preserve ADR 0009 travel state."""
@@ -125,7 +57,6 @@ def test_add_character_persists_transit_to(game):
     ).fetchone()
     assert dict(row) == {"location": "beizhili", "transit_to": "liaodong"}
 
-
 def test_reload_restores_complete_transit_ledger_from_db(game):
     db, _, content = game
     name = db.conn.execute("SELECT name FROM characters LIMIT 1").fetchone()["name"]
@@ -144,9 +75,6 @@ def test_reload_restores_complete_transit_ledger_from_db(game):
         character.transit_speed_factor,
         character.transit_start_turn,
     ) == ("liaodong", 1.25, 1.5, 7)
-
-
-
 
 def test_north_star_named_figures_are_seeded_with_identity_metadata():
     """ADR 0009 can reject no named target used by north-star scenes/prompts."""

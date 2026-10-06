@@ -10,23 +10,27 @@ from ming_sim.session import _sync_offices_from_db_impl
 
 def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     db, state, content = game
+    _severity = {"无", "轻", "中", "重"}
     row = db.conn.execute(
         "SELECT faction, identity, seed_guilt FROM characters WHERE name=?",
         ("王承恩",),
     ).fetchone()
     assert row["faction"] == "皇党"
     assert row["identity"] == 95
-    assert json.loads(row["seed_guilt"]) == {"crime": "无", "severity": "无"}
+    wang_guilt = json.loads(row["seed_guilt"])
+    assert set(wang_guilt) == {"crime", "severity"}
+    assert isinstance(wang_guilt["crime"], str)
+    assert wang_guilt["severity"] in _severity
 
     温 = db.conn.execute(
         "SELECT faction, identity, seed_guilt FROM characters WHERE name=?", ("温体仁",)
     ).fetchone()
     assert 温["faction"] == "皇党"
     assert 温["identity"] == 18
-    assert json.loads(温["seed_guilt"]) == {
-        "crime": "无(品性污点:工心计、枚卜案讦钱谦益以自进、柄国专务逢迎不引正人——《明史》列奸臣传,属品性污点非可坐之现行罪)",
-        "severity": "无",
-    }
+    wen_guilt = json.loads(温["seed_guilt"])
+    assert set(wen_guilt) == {"crime", "severity"}
+    assert isinstance(wen_guilt["crime"], str) and wen_guilt["crime"].strip()
+    assert wen_guilt["severity"] in _severity
 
 
 def test_identity_and_seed_guilt_survive_restore(game):

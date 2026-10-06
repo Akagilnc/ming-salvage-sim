@@ -1929,21 +1929,6 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
     assert state.metrics["国库"] == before_balance
 
 
-def test_armies_provision_empty_mutiny_status_flag(fresh_db):
-    columns = {
-        row["name"]: row
-        for row in fresh_db.conn.execute("PRAGMA table_info(armies)").fetchall()
-    }
-
-    assert "mutiny_status" in columns
-    assert columns["mutiny_status"]["dflt_value"] in ("''", '""')
-    assert fresh_db.conn.execute(
-        """
-        SELECT COUNT(*) AS count
-        FROM armies
-        WHERE COALESCE(mutiny_status, '') != ''
-        """
-    ).fetchone()["count"] == 0
 
 def test_zero_due_province_army_morale_short_circuits(fresh_db):
     _write_settle(

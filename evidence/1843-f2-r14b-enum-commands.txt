@@ -1,0 +1,5 @@
+# F2-R14b residual enum (inspector continue)
+# Cat1: hand-built incomplete schema + GameDB open expecting column migration/idempotent add
+#   rg CREATE TABLE + legacy.db/old.db/gets_*columns/migrate in tests/**
+# Cat2: seed_guilt crime prose exact locks; PRAGMA table_info column/type/default-only with behavior peers
+# Cat3: ordinary docs directing score_extractor / quarterly base÷3 / 兼容旧档; exclude CLAUDE adr

@@ -1,0 +1,5 @@
+member
+docs/modules/economy.md quarterly→monthly fiscal_config; drop score_extractor feed
+docs/modules/buildings.md score_extractor→month_chain/declaration_dispatch
+docs/DELTA_SCHEMA.md 任别 兼容旧档 phrasing
+docs/结算流程_代码地图.md section B + table mark retired extractor

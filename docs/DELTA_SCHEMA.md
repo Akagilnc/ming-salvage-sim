@@ -434,7 +434,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | `评定` | `loyalty` | — | 人物忠诚软判增量（integer，非新值），用于安抚/离心等叙事裁判后的结构化数值变化 |
 | `性情` | `style`(非空 str) | — | 人物固有层完整替换；关系变化禁止写入 style，改走关系边事件 |
 
-`任别` 只收 `真除` / `署理` / `兼署` / `加衔`；缺省按 `真除`，用于兼容旧档且不重判历史任命。非法值逐项拒收留痕。
+`任别` 只收 `真除` / `署理` / `兼署` / `加衔`；缺省按 `真除`。非法值逐项拒收留痕。
 
 状态白名单（DB 全集 7 态）：`active` / `offstage` / `dismissed` / `imprisoned` / `exiled` / `retired` / `dead`。其中 **`处置.status` 只可直迁 6 态**（不含 `active`，由 `任命` 级联或 applier 起复派生达成；直接 `处置(status=active)` 被拒 `invalid_transition`，见 `issues.py` `disposition_statuses`）。死人没有 status 出边；追谥、追赠等身后事不进 `人物变更`。
 

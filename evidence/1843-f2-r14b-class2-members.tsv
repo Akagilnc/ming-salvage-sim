@@ -1,0 +1,10 @@
+member
+test_named_characters_seed_484.py crime prose → severity/shape contract
+test_identity_seed_488.py 温体仁 crime prose → severity/shape
+test_person_archive_schema.py two PRAGMA schema-only DELETE
+test_decree_commitment_schema_136.py test_issues_schema_has_commitment_deadline_columns DELETE
+test_army_firearms.py test_armies_table_has_firearm_columns DELETE
+test_region_citydefense.py test_regions_have_city_level_and_cannon DELETE
+test_rescript_draft_656.py test_657_s1_schema_columns_and_no_banned_fields DELETE
+test_fiscal_substrate_bridge.py test_armies_provision_empty_mutiny_status_flag DELETE
+test_named_characters_seed_484.py debut offstage office lock align name-division

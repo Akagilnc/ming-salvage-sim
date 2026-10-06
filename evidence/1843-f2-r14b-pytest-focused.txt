@@ -1,0 +1,2 @@
+focused residual: named_characters, identity_seed, person_archive, decree_commitment, army_firearms, region_citydefense, rescript_draft, fiscal_substrate
+231 passed, 1 skipped in 14.53s

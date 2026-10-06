@@ -32,7 +32,7 @@
 
 皇帝只能通过圣旨命人修、建、查、拨款、停办或追责。**建筑的新建/扩建/废止全部走局势（issue），没有独立的 building_delta/new_buildings 顶层字段。**
 
-- 皇帝下旨建火炮厂/修边堡/设织造局 → `score_extractor` 立一条 `initiative` 局势。
+- 皇帝下旨建火炮厂/修边堡/设织造局 → 月链世界段转译为局势（`new_issues` / initiative 类）或直接建筑物化声明，经 `declaration_dispatch` 落账；**不再经已退役的 `score_extractor` 五模块**。
 - 局势 bar 跑完结案 → 该 issue 的 `effect_on_resolve`（或失败时 `effect_on_fail`）里的 `buildings` 段落地建筑。
 - `buildings` 段是数组，每项 `action` ∈ `create`（新建）/`modify`（改既有数值）/`remove`（拆毁）。落地由 `issues._apply_issue_buildings` 处理。
 

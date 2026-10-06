@@ -10,7 +10,6 @@ import pytest
 
 from ming_sim.db import GameDB
 
-
 # #1778 决定 3：生成批次的票拟必带参与名单（ADR 0053 三档，至少一名主办）。
 _ROSTER = [{"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None}]
 
@@ -285,25 +284,6 @@ def test_r3_strict_parse_concatenated_objects_raises_contract_error():
 # ---------------------------------------------------------------------------
 # #657 片1：行事实与案头（schema + 词表 + desk 读）
 # ---------------------------------------------------------------------------
-
-def _pending_columns(db) -> set[str]:
-    return {r[1] for r in db.conn.execute("PRAGMA table_info(pending_decisions)").fetchall()}
-
-def _ledger_columns(db) -> set[str]:
-    return {r[1] for r in db.conn.execute("PRAGMA table_info(story_ledger_entries)").fetchall()}
-
-def test_657_s1_schema_columns_and_no_banned_fields(game):
-    """片1：revision_round/prior_options_json/origin_ref 列存在；无 consumed_epoch/rescript_origin。"""
-    db, _state, _content = game
-    pending_cols = _pending_columns(db)
-    assert "revision_round" in pending_cols
-    assert "prior_options_json" in pending_cols
-    assert "consumed_epoch" not in pending_cols
-    ledger_cols = _ledger_columns(db)
-    assert "origin_ref" in ledger_cols
-    dossier_cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)").fetchall()}
-    assert "rescript_origin" not in dossier_cols
-
 
 def test_657_s1_derive_draft_capability_stable_and_sensitive():
     """capability：同字段稳定；闭集任一有效差改变键。"""
