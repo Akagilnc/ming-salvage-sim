@@ -142,12 +142,11 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
         db.apply_dossier_promulgation(
             state, dossier_id, "promulgated", content=content,
         )
-    except Exception:
-        # Code/schema faults fail loud with their true type (ADR 0005 / #1853);
-        # person writes restore before re-raise.
-        pass
-    else:
         raise AssertionError("dossier materialization failure did not propagate")
+    except RuntimeError as exc:
+        # Injected code fault must surface as RuntimeError through the real
+        # promulgation entry (ADR 0005 / #1853); not washed to ValueError/rejected.
+        assert "simulated post-office-write failure" in str(exc)
 
     assert dict(db.conn.execute(
         "SELECT * FROM character_offices WHERE character_name=?", (name,)
