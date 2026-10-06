@@ -180,6 +180,16 @@ class PostReplyRecoveryError(Exception):
         self.code = code
 
 
+class TranslationRetryError(Exception):
+    """指定源轮转译恢复失败：结构化码供入口映射 HTTP。"""
+
+    def __init__(self, detail: str, *, code: str = "not_found") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        # code: invalid | not_found | settling
+        self.code = code
+
+
 @dataclass(frozen=True)
 class AudienceChatUndoResult:
     """撤回业务结果；呈现字段（history/directives 投影）由入口补。"""
@@ -1273,6 +1283,17 @@ class GameSession:
             self.schedule_pending_scene_translation(result)
         return minister_message_id
 
+    def _open_night_hall_turn_ids(self) -> "set[int]":
+        """本夜殿上轮 id 集——中断回话与尾随失败共用的夜域筛选单源（#1902 M1）。"""
+        from ming_sim.audience_night import get_open_night
+
+        night = get_open_night(self.db)
+        if night is None:
+            return set()
+        return {
+            int(row["id"]) for row in self.db.list_hall_chat_turns(int(night["id"]))
+        }
+
     def pending_audience_reply_retries(self) -> List[Dict[str, Any]]:
         """本夜召对轮里待重试的中断回话（问话已落、回话未落）——两端共核取数。
 
@@ -1284,14 +1305,9 @@ class GameSession:
         取数与归属判定的落差只此一处：按建轮归属在本夜轮里取，并给回话带回原问话的
         归属（``message_speaker``），供重试时把回话挂回同一位大臣。入口只读。
         """
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER
 
-        night = get_open_night(self.db)
-        if night is None:
-            return []
-        hall_ids = {
-            int(row["id"]) for row in self.db.list_hall_chat_turns(int(night["id"]))
-        }
+        hall_ids = self._open_night_hall_turn_ids()
         if not hall_ids:
             return []
         retries = [
@@ -1310,17 +1326,12 @@ class GameSession:
     def pending_post_reply_retries(self) -> List[Dict[str, Any]]:
         """本夜殿上已落回话的尾随失败——两端共核取数（#1902 L1）。
 
-        与 ``pending_audience_reply_retries`` 同形：按本夜殿上轮筛
-        ``get_post_reply_retries(殿上)``；入口不再自筛夜/相位。
+        与 ``pending_audience_reply_retries`` 同形：共用 ``_open_night_hall_turn_ids``
+        夜域筛选；状态源仍是 ``get_post_reply_retries``，不与中断回话合并语义。
         """
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER
 
-        night = get_open_night(self.db)
-        if night is None:
-            return []
-        hall_ids = {
-            int(row["id"]) for row in self.db.list_hall_chat_turns(int(night["id"]))
-        }
+        hall_ids = self._open_night_hall_turn_ids()
         if not hall_ids:
             return []
         return sorted(
@@ -1345,6 +1356,73 @@ class GameSession:
             ],
             key=lambda item: int(item["chat_turn_id"]),
         )
+
+    def list_pending_translation_retries(
+        self,
+        *,
+        night_id: Optional[int] = None,
+        chat_turn_id: Optional[int] = None,
+        write_queue: Any = None,
+    ) -> List[Dict[str, Any]]:
+        """转译待补投影；真源 audience_translation.list_pending_translations。"""
+        if not hasattr(self.db, "conn"):
+            return []
+        from ming_sim.audience_translation import list_pending_translations
+
+        return list_pending_translations(
+            self.db, night_id=night_id, chat_turn_id=chat_turn_id,
+            write_queue=write_queue,
+        )
+
+    def retry_pending_translation(
+        self,
+        chat_turn_id: int,
+        *,
+        write_gate: Any = None,
+        write_queue: Any = None,
+    ) -> Dict[str, Any]:
+        """指定源轮转译恢复共核（#1902 M1）：待补资格 → 相位准入 → catch_up → 水位。
+
+        入口只做 HTTP／票据／写闸／呈现映射；不在 Web 自办恢复编排。
+        """
+        ctid = int(chat_turn_id or 0)
+        if ctid <= 0:
+            raise TranslationRetryError("chat_turn_id 无效", code="invalid")
+        from ming_sim.audience_translation import catch_up_pending_translations
+
+        pending_before = self.list_pending_translation_retries(
+            chat_turn_id=ctid, write_queue=write_queue,
+        )
+        if not pending_before:
+            raise TranslationRetryError(
+                f"chat_turn_id={ctid} 没有待补转译。", code="not_found",
+            )
+        if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
+            raise TranslationRetryError(
+                "月末结算/亲裁进行中，暂不能召对。", code="settling",
+            )
+        summary = catch_up_pending_translations(
+            self.db, self.state,
+            chat_turn_id=ctid,
+            llm_config=getattr(self, "llm_config", None),
+            write_gate=write_gate,
+            write_queue=write_queue,
+        )
+        still = self.list_pending_translation_retries(
+            chat_turn_id=ctid, write_queue=write_queue,
+        )
+        status = (
+            self.db.get_story_extract_status(ctid)
+            if hasattr(self.db, "get_story_extract_status")
+            else ("pending" if still else "done")
+        )
+        return {
+            "chat_turn_id": ctid,
+            "extract_status": status,
+            "retryable": bool(still),
+            "kind": "translation_pending" if still else "translation_done",
+            "summary": summary,
+        }
 
     def resume_post_reply_recovery(
         self,
@@ -3015,10 +3093,6 @@ class GameSession:
         except Exception as exc:
             logger.warning("自动备份失败（旁路继续）：%s", exc)
             return None
-
-    # #1902 F2：CLI 读档成功后把读档得到的新会话挂在这里，由 play_turn 取走交还
-    # run_cli（活会话换了）。非 CLI 入口不用此槽。
-    pending_loaded_session: Optional["GameSession"] = None
 
     def save_to(self, name: str) -> Dict[str, object]:
         """手动存档到 ``saves/<name>.db``（#1902：两端共用；入口只管取名与呈现）。

@@ -2017,10 +2017,6 @@ class WebGame:
             raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
 
 
-    def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
-        """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。"""
-        return self.db.get_interrupted_reply_retries(minister_name)
-
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#1902 L1：中断 + 尾随失败取数在会话共核；入口只转发。
 
@@ -2403,61 +2399,27 @@ class WebGame:
     def pending_translation_retries(
         self, *, night_id: Optional[int] = None, chat_turn_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """#1842：转译待补的结构化系统提示态（源轮可查 + 可重试），不做页面。"""
-        if not hasattr(self.db, "conn"):
-            return []
-        from ming_sim.audience_translation import list_pending_translations
-
-        return list_pending_translations(
-            self.db, night_id=night_id, chat_turn_id=chat_turn_id,
+        """#1842：转译待补投影；会话共核持真源，入口只注入写队列。"""
+        return self.session.list_pending_translation_retries(
+            night_id=night_id, chat_turn_id=chat_turn_id,
             write_queue=self._runtime_write_queue(),
         )
 
     def retry_pending_translation(self, chat_turn_id: int) -> Dict[str, Any]:
-        """#1842：只补对应源轮的转译重试入口；复用 catch_up_pending_translations 按轮收窄。
+        """#1842/#1902 M1：指定源轮转译恢复；业务在会话共核，此处只映射 HTTP。"""
+        from ming_sim.session import TranslationRetryError
 
-        不复用已退役故事抽取。成功 → extract_status=done；仍失败 → 保持 pending 可再试。
-        """
-        ctid = int(chat_turn_id or 0)
-        if ctid <= 0:
-            raise HTTPException(status_code=400, detail="chat_turn_id 无效")
-        from ming_sim.audience_translation import (
-            catch_up_pending_translations,
-            list_pending_translations,
-        )
-
-        pending_before = list_pending_translations(
-            self.db, chat_turn_id=ctid, write_queue=self._runtime_write_queue(),
-        )
-        if not pending_before:
-            raise HTTPException(
-                status_code=404,
-                detail=f"chat_turn_id={ctid} 没有待补转译。",
+        try:
+            return self.session.retry_pending_translation(
+                int(chat_turn_id),
+                write_gate=self._runtime_write_gate(),
+                write_queue=self._runtime_write_queue(),
             )
-        self._reject_if_settlement_phase()
-        write_gate = self._runtime_write_gate()
-        summary = catch_up_pending_translations(
-            self.db, self.state,
-            chat_turn_id=ctid,
-            llm_config=getattr(self.session, "llm_config", None),
-            write_gate=write_gate,
-            write_queue=self._runtime_write_queue(),
-        )
-        still = list_pending_translations(
-            self.db, chat_turn_id=ctid, write_queue=self._runtime_write_queue(),
-        )
-        status = (
-            self.db.get_story_extract_status(ctid)
-            if hasattr(self.db, "get_story_extract_status")
-            else ("pending" if still else "done")
-        )
-        return {
-            "chat_turn_id": ctid,
-            "extract_status": status,
-            "retryable": bool(still),
-            "kind": "translation_pending" if still else "translation_done",
-            "summary": summary,
-        }
+        except TranslationRetryError as exc:
+            status = {"invalid": 400, "not_found": 404, "settling": 409}.get(
+                exc.code, 409,
+            )
+            raise HTTPException(status_code=status, detail=exc.detail) from None
 
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
         # #1849 reopen：召对只剩殿上一个入口；按大臣/密令/场外路由整条删除。

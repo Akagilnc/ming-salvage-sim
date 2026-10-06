@@ -1564,9 +1564,10 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     await act(async () => {
       await vi.waitFor(async () => {
         await Promise.resolve();
-        const reportPre = Array.from(hostBlank.querySelectorAll("pre.memorial-text"))
-          .find((el) => el.textContent === "一、人事除目");
-        expect(reportPre).toBeTruthy();
+        // 完成信号：固定界面标题「月末邸报奏报」落地（非生成正文哨兵）
+        const reportTitle = Array.from(hostBlank.querySelectorAll("h3.extraction-section-title"))
+          .find((el) => el.textContent === "月末邸报奏报");
+        expect(reportTitle).toBeTruthy();
       });
     });
     expect(hostBlank.querySelector("[data-testid=history-attendant]")).toBeNull();

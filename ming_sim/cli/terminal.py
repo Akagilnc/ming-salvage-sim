@@ -557,12 +557,11 @@ def _cli_load(session: GameSession, name: str) -> Optional[GameSession]:
     return loaded
 
 
-def review_directives(session: GameSession) -> str:
-    """诏书草案审阅界面。返回 'issue' | 'back' | 'skip' | 'loaded'。
+def review_directives(session: GameSession):
+    """诏书草案审阅界面。返回 'issue' | 'back' | 'skip'，或读档后的新 GameSession。
 
-    #1902 F2：读档成功时把读档后的新会话挂到 ``session.pending_loaded_session``
-    （会话层的「换了活会话」槽），并返回 'loaded' 让调用方退出本回合交互——
-    旧回合的相位与候选全部作废。入口签名保持单参（测试与既有调用方不变）。
+    #1902 M2：读档成功直接以返回值交还新会话，不经共核私有交接槽。
+    旧回合的相位与候选全部作废。
     """
     session.enter_review()
     while True:
@@ -603,9 +602,8 @@ def review_directives(session: GameSession) -> str:
             label = raw.split(maxsplit=1)[1] if " " in raw else ""
             loaded = _cli_load(session, label)
             if loaded is not None:
-                # 活会话换了：把新会话挂到旧会话的槽上，由 play_turn 取走。
-                session.pending_loaded_session = loaded
-                return "loaded"
+                # 活会话换了：直接返回新会话，由 play_turn 交还 run_cli。
+                return loaded
             continue
         if lowered in COURT_BREAK_COMMANDS:
             if drafts or pending or staged_directives:
@@ -754,10 +752,10 @@ def play_turn(session: GameSession) -> Optional[GameSession]:
 
         if action == "back":
             continue
-        if action == "loaded":
+        if isinstance(action, GameSession):
             # 读档已热替换主库并重建会话 → 本回合交互上下文全部作废，把新会话交还
             # run_cli 后退出（它会重印引导、进入新局的第一回合）。
-            return getattr(session, "pending_loaded_session", None)
+            return action
         if action == "skip":
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)

@@ -719,7 +719,8 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     ).fetchone()
     assert fail_row is not None
     assert str(fail_row["status"]) == "interrupted"
-    assert web_game.interrupted_reply_retries("殿上")[-1]["chat_turn_id"] == failed_turn
+    # 现役恢复面：会话共核 pending 取数（#1902 M2，退役 Web interrupted_reply_retries 包装）
+    assert web_game.reply_retries("殿上")[-1]["chat_turn_id"] == failed_turn
 
     # 实际重发：换可成功 agent（#1842：经 create_scene_agent 工厂缝）
     ok_agent = _CountingFailAgent(fail_times=0, error_factory=_conn_err)

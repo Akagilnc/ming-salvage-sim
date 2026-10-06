@@ -300,6 +300,11 @@ class _RetrySession:
     def close_night_after_chat_if_needed(self, court_action, *, write_gate=None, barrier_ticket=None):
         return None
 
+    def _open_night_hall_turn_ids(self):
+        # #1902 M1：夜域筛选单源；轻壳挂真方法。
+        from ming_sim.session import GameSession
+        return GameSession._open_night_hall_turn_ids(self)
+
     def pending_audience_reply_retries(self):
         # #1902 L1：殿上中断取数共核。
         from ming_sim.session import GameSession
