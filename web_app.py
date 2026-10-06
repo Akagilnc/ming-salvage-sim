@@ -1511,18 +1511,35 @@ class WebGame:
             if leg.clear_narrative
         }
         for row in self.db.list_active_legacies(self.state):
-            # #1902 T3 / ADR 0005：JSON 数据坏 → 空对象继续；未知代码故障响亮上抛并留痕。
+            # #1902 T3 / ADR 0005：JSON 数据坏 → 空对象继续但留真因；未知代码故障响亮上抛。
+            legacy_id = int(row["id"]) if row.get("id") is not None else None
             try:
                 eff = json.loads(str(row["modifiers"] or "{}"))
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "legacies_payload modifiers JSON 坏（legacy_id=%s）：%s",
+                    legacy_id, exc,
+                )
                 eff = {}
             if not isinstance(eff, dict):
+                logger.warning(
+                    "legacies_payload modifiers 非对象（legacy_id=%s type=%s）",
+                    legacy_id, type(eff).__name__,
+                )
                 eff = {}
             try:
                 clear_gate = json.loads(str(row["clear_gate"] or "{}"))
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "legacies_payload clear_gate JSON 坏（legacy_id=%s）：%s",
+                    legacy_id, exc,
+                )
                 clear_gate = {}
             if not isinstance(clear_gate, dict):
+                logger.warning(
+                    "legacies_payload clear_gate 非对象（legacy_id=%s type=%s）",
+                    legacy_id, type(clear_gate).__name__,
+                )
                 clear_gate = {}
             remaining_months = self.db.legacy_remaining_months(row, self.state)
             clear_condition = opening_clear_text.get(str(row["legacy_key"] or ""), "")

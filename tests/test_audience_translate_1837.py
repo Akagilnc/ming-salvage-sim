@@ -724,7 +724,10 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
 
 
 def test_translate_empty_success_still_dispatches_without_failure(game, monkeypatch):
-    """成功空声明仍可分派（零写），与调用失败可区分。"""
+    """成功空声明仍可分派（零写），与调用失败可区分。
+
+    #1902 T5：经 _scene_turn 真建轮+落回话+调度；外部水位 done、pending 零增量。
+    """
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
 
@@ -739,17 +742,16 @@ def test_translate_empty_success_still_dispatches_without_failure(game, monkeypa
         db, state, content, monkeypatch,
         translate_fn=offline_empty_audience_translate,
     )
-    result = sess.scene_chat("边事如何？")
+    before = db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
+    ).fetchone()["c"]
+    result, ctid = _scene_turn(sess, db, state, "边事如何？")
     assert result.answer == "臣在。"
-    # #1902 T6：空成功转译不经 result.pending_action_failures；落库后无失败墓碑即可。
-    fut = persist_and_schedule_scene(sess, db, result)
-    if fut is not None:
-        fut.result(timeout=30)
-    assert get_session_write_queue(sess).wait_idle()
-    failed = db.conn.execute(
-        "SELECT COUNT(*) n FROM pending_actions WHERE status='failed'"
-    ).fetchone()["n"]
-    assert failed == 0
+    after = db.conn.execute(
+        "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
+    ).fetchone()["c"]
+    assert after == before  # 空成功零写，不得造 pending
+    assert db.get_story_extract_status(ctid) == "done"  # 与失败 pending 可区分
 
 
 def test_appointment_without_text_is_rejected_not_templated(game):
