@@ -1,0 +1,4 @@
+F21: title_c no strip; _narrative_context prior fix retained
+F22: credit_events_as_edges/credit_event_to_edge/format_metric_delta zero hits
+F28: purpose/reason wordlist shortcuts removed; structured delta paths retained
+pytest-focus: 52 passed in 2.67s

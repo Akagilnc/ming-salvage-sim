@@ -1,4 +1,4 @@
-"""关系账 S1：有向边事件的契约、校验和 0079 读侧适配。
+"""关系账 S1：有向边事件的契约与校验。
 
 本模块只负责边事件流水，不负责摘要酿制，也不改 0079 的写端。
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any, Iterable
+from typing import Any
 
 EMPEROR_NODE = "皇帝"
 
@@ -153,51 +153,6 @@ def bind_origin_round(origin: Any, turn: int) -> tuple[str, int]:
         return text, int(match.group(1))
     round_no = int(turn)
     return f"{text}|round:{round_no}", round_no
-
-
-def credit_event_to_edge(record: Mapping[str, Any]) -> dict[str, Any]:
-    kind = validate_edge_kind(record.get("event_kind") or record.get("kind"))
-    if kind not in CREDIT_EDGE_KINDS:
-        raise ValueError(f"非 0079 信用事件类目: {kind!r}")
-    person = str(
-        record.get("person")
-        or record.get("person_name")
-        or record.get("subject")
-        or record.get("character")
-        or ""
-    ).strip()
-    if not person:
-        raise ValueError("信用事件缺少当事人")
-    # Free prose context: preserve raw; emptiness on local copy (#1834 F16).
-    context = str(record.get("context") or record.get("sentence") or "")
-    if not context.strip():
-        raise ValueError("信用事件语境不能为空")
-    direction = CREDIT_DIRECTION[kind]
-    source, target = (
-        (EMPEROR_NODE, person)
-        if direction == "emperor_to_person"
-        else (person, EMPEROR_NODE)
-    )
-    turn = int(record.get("turn") or record.get("source_turn") or 0)
-    bound_origin, origin_round = bind_origin_round(
-        record.get("origin") or record.get("source_id"), turn
-    )
-    return {
-        "source": source,
-        "target": target,
-        "event_kind": kind,
-        "context": context,
-        "origin": bound_origin,
-        "origin_round": origin_round,
-        "turn": turn,
-        "year": int(record.get("year") or 0),
-        "period": int(record.get("period") or 0),
-        "evidence": False,
-    }
-
-
-def credit_events_as_edges(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return [credit_event_to_edge(record) for record in records]
 
 
 # ── #633 结算口（ADR 0082）：邸报大臣互动 → 边事件当场落库 ──────────────

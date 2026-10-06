@@ -11,7 +11,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from ming_sim.constants import ECONOMY_ACCOUNTS, TURN_UNIT
-from ming_sim.assets import format_money, format_money_delta, load_json_asset
+from ming_sim.assets import format_money, load_json_asset
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError
@@ -143,19 +143,6 @@ def state_context(state: GameState) -> str:
             parts.append(f"{key}{value}")
     return "，".join(parts)
 
-
-
-def format_metric_delta(delta: Dict[str, int]) -> str:
-    if not delta:
-        return "核心数值无明显变化"
-    parts = []
-    for key, value in delta.items():
-        if key in ECONOMY_ACCOUNTS:
-            parts.append(f"{key}{format_money_delta(value)}")
-        else:
-            sign = "+" if value > 0 else ""
-            parts.append(f"{key}{sign}{value}")
-    return "数值变化：" + "；".join(parts)
 
 
 def _identity_bucket(value: object) -> str:
