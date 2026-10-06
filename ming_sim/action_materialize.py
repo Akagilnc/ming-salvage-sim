@@ -25,20 +25,7 @@ from ming_sim.action_clusters import (
 )
 
 
-
-
-
-
-
-
-
-
-
-
 # ── handlers（委派既有 stage，不另造落库）────────────────────────────
-
-
-
 
 
 def _persist_appointment_summon(
