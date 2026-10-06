@@ -2369,19 +2369,9 @@ class GameDB:
         self.ensure_column("pending_decisions", "event_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "rejection_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "opposition", "TEXT NOT NULL DEFAULT ''")
-        # #656 / ADR 0093 前半：kind 扩列（最小扩展，ensure_column 先例同款）。
-        # 'decision'=案头 HITL 行；旧 rescript_draft 急务 kind 已退役
-        # （phase2 产生、跨月留存待 #657 六动作裁决）。actor 三列＝分拣/票拟 actor 身份
-        # 投影随行落库（票面 F3.2：任免后 actor 变更可机械断言）。
+        # kind 扩列：现役 decision 案头。旧 rescript_draft actor/改票轮次列已退役，
+        # 不再 ensure 为新档创建；既有存档多余列不动、不加 DROP 迁移。
         self.ensure_column("pending_decisions", "kind", "TEXT NOT NULL DEFAULT 'decision'")
-        self.ensure_column("pending_decisions", "actor_name", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("pending_decisions", "actor_office", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("pending_decisions", "actor_faction", "TEXT NOT NULL DEFAULT ''")
-        # #657：改票轮次与 append-only 全史；默认 0 / '[]' 兼容旧行。
-        self.ensure_column(
-            "pending_decisions", "revision_round", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "pending_decisions", "prior_options_json", "TEXT NOT NULL DEFAULT '[]'")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -10677,8 +10667,7 @@ class GameDB:
         """
         rows = self.conn.execute(
             "SELECT idx, event_id, title, context, rejection_reason, "
-            "opposition, options_json, choice_json, status, kind, actor_name, actor_office, "
-            "actor_faction, turn "
+            "opposition, options_json, choice_json, status, kind, turn "
             "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
             (int(turn),),
         ).fetchall()
@@ -10712,9 +10701,6 @@ class GameDB:
                 "choice": choice,
                 "status": r["status"],
                 "kind": kind,
-                "actor_name": r["actor_name"],
-                "actor_office": r["actor_office"],
-                "actor_faction": r["actor_faction"],
             })
         return out
 
@@ -10725,8 +10711,7 @@ class GameDB:
         rows = self.conn.execute(
             """
             SELECT turn, idx, event_id, title, context, rejection_reason,
-                   opposition, options_json, choice_json, status, kind,
-                   actor_name, actor_office, actor_faction
+                   opposition, options_json, choice_json, status, kind
             FROM pending_decisions
             WHERE status = 'pending'
               AND kind = 'decision' AND turn = ?
@@ -10768,9 +10753,6 @@ class GameDB:
             "options": options,
             "choice": choice,
             "status": r["status"],
-            "actor_name": r["actor_name"],
-            "actor_office": r["actor_office"],
-            "actor_faction": r["actor_faction"],
         }
 
     def get_rescript_desk_rows_by_keys(
@@ -10796,8 +10778,7 @@ class GameDB:
             r = self.conn.execute(
                 """
                 SELECT turn, idx, event_id, title, context, rejection_reason,
-                       opposition, options_json, choice_json, status, kind,
-                       actor_name, actor_office, actor_faction
+                       opposition, options_json, choice_json, status, kind
                 FROM pending_decisions
                 WHERE turn = ? AND idx = ? AND kind = ?
                 """,

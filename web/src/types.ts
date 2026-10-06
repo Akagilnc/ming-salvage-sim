@@ -326,9 +326,6 @@ export type PendingDecision = {
   decision_key?: string;
   source_turn?: number;
   turn?: number;
-  actor_name?: string;
-  actor_office?: string;
-  actor_faction?: string;
 };
 
 /** #1855：重开落点三值 —— 后端状态口真源；前端契约单定义。 */

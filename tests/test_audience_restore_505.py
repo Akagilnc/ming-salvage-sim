@@ -822,5 +822,3 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
     assert [r["question"] for r in game.db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
-
-
