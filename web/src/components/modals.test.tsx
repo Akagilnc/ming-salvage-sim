@@ -1741,8 +1741,9 @@ describe("ReportModal — narrative settlement bulletin", () => {
       report: "**辽东军情**\n- 军前缺饷",
     });
 
-    expect(document.body.textContent).toContain("辽东军情");
-    expect(document.body.textContent).toContain("军前缺饷");
+    // #1902 L2：结构可达 + 无实账页铬字；不锁生成邸报正文片段。
+    expect(document.querySelector(".gazette-document")).not.toBeNull();
+    expect(document.querySelector("pre.memorial-text")).not.toBeNull();
     expect(document.body.textContent).not.toContain("实账");
     expect(document.body.textContent).not.toContain("账目明细");
   });

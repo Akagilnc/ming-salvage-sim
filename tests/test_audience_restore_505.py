@@ -65,23 +65,48 @@ def restore_env(content, tmp_path):
 
 
 def _start_generating_turn(db, state, minister, question):
-    """生产 seam 造在飞 generating 轮：问话已落库并链接，回话未落（= 生成半途被 kill）。"""
+    """生产 seam 造在飞 generating 轮：问话已落库并链接，回话未落（= 生成半途被 kill）。
+
+    #1902 L1：建轮归属恒为殿上（与 begin_audience_chat_turn 同）；问话可挂具名大臣。
+    """
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+
     _night_id, ct = open_hall_turn(
-        db, state, minister, agno_session_id="sess", agno_runs_before=0,
+        db, state, SCENE_CHAT_SPEAKER, agno_session_id="sess", agno_runs_before=0,
     )
-    mid = db.append_chat_message(minister, state.turn, "user", question)
+    name = str(minister or "").strip()
+    if name and name != SCENE_CHAT_SPEAKER:
+        an.ensure_summon_enter(
+            db, _night_id, name,
+            method=an.METHOD_XUANRU, origin_chat_turn_id=ct,
+        )
+    mid = db.append_chat_message(
+        name or SCENE_CHAT_SPEAKER, state.turn, "user", question,
+    )
     db.update_chat_turn_messages(ct, user_message_id=mid)
     return ct
 
 
 def _land_full_turn(db, state, minister, question, answer):
-    """生产 seam 造完成轮：问话 + 回话都落库、链接（generating→active）。"""
+    """生产 seam 造完成轮：问话 + 回话都落库、链接（generating→active）。
+
+    #1902 L1：建轮归属恒为殿上。
+    """
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+
     _night_id, ct = open_hall_turn(
-        db, state, minister, agno_session_id="sess", agno_runs_before=0,
+        db, state, SCENE_CHAT_SPEAKER, agno_session_id="sess", agno_runs_before=0,
     )
-    uid = db.append_chat_message(minister, state.turn, "user", question)
+    name = str(minister or "").strip()
+    if name and name != SCENE_CHAT_SPEAKER:
+        an.ensure_summon_enter(
+            db, _night_id, name,
+            method=an.METHOD_XUANRU, origin_chat_turn_id=ct,
+        )
+    speaker = name or SCENE_CHAT_SPEAKER
+    uid = db.append_chat_message(speaker, state.turn, "user", question)
     db.update_chat_turn_messages(ct, user_message_id=uid)
-    mid = db.append_chat_message(minister, state.turn, "minister", answer)
+    mid = db.append_chat_message(speaker, state.turn, "minister", answer)
     db.update_chat_turn_messages(ct, minister_message_id=mid)
     db.conn.execute("UPDATE chat_turns SET extract_status='done' WHERE id=?", (ct,))
     db.conn.commit()
@@ -137,10 +162,10 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
         assert an.list_in_flight_chat_turns(db2, night["id"]) == []
         assert any(int(r["chat_turn_id"]) == ct for r in interrupted)
         # 问话原句保留（不删）——恢复路径永不删记录。
-        proj = db2.build_chat_projection(minister)
+        proj = db2.build_chat_projection(an.SCENE_CHAT_SPEAKER)
         assert [m["content"] for m in proj if m["role"] == "user"] == ["杨卿何以教朕？"]
         # 待重试面板取数：带问话原文。
-        retries = db2.get_interrupted_reply_retries(minister)
+        retries = db2.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)
         assert [r["question"] for r in retries] == ["杨卿何以教朕？"]
     finally:
         db2.close()
@@ -212,7 +237,7 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
     db2, _state2 = _reopen(env.path, content)
     try:
         db2.reconcile_interrupted_chat_turns()
-        proj = db2.build_chat_projection(minister)
+        proj = db2.build_chat_projection(an.SCENE_CHAT_SPEAKER)
         assert "四轮问对之一" in [m["content"] for m in proj if m["role"] == "user"]
         assert "臣愚见如此。" in [m["content"] for m in proj if m["role"] == "minister"]
     finally:
@@ -276,8 +301,25 @@ class _RetrySession:
         return None
 
     def pending_audience_reply_retries(self):
-        # #1902 N3：殿上中断集合共核；非殿上轻壳返回空。
-        return []
+        # #1902 L1：殿上中断取数共核。
+        from ming_sim.session import GameSession
+        return GameSession.pending_audience_reply_retries(self)
+
+    def pending_post_reply_retries(self):
+        from ming_sim.session import GameSession
+        return GameSession.pending_post_reply_retries(self)
+
+    def pending_audience_recovery_retries(self):
+        from ming_sim.session import GameSession
+        return GameSession.pending_audience_recovery_retries(self)
+
+    def resume_post_reply_recovery(self, *args, **kwargs):
+        from ming_sim.session import GameSession
+        return GameSession.resume_post_reply_recovery(self, *args, **kwargs)
+
+    def _chat_message_speaker(self, message_id: int) -> str:
+        from ming_sim.session import GameSession
+        return GameSession._chat_message_speaker(self, message_id)
 
 def _retry_runtime(db, state, minister, *, session=None):
     """Web retry 入口唯一装配壳。session 默认轻量 _RetrySession；可注入生产 chat session。"""
@@ -330,7 +372,7 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert row["status"] == "active"
     assert row["minister_message_id"]
     # 重试后该轮不再挂在待重试面板。
-    assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(minister)] == [later]
+    assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)] == [later]
 
 
 
@@ -459,7 +501,7 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     ).fetchone()["error_pack_path"])
     assert (pack / "traceback.txt").is_file()
     assert (pack / "save_backup.db").is_file()
-    assert [r["question"] for r in db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
+    assert [r["question"] for r in db.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)] == ["剿抚孰先？"]
     assert [
         r["content"] for r in db.conn.execute(
             "SELECT content FROM chat_messages WHERE role='user'"
@@ -874,7 +916,7 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
     assert game.db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
-    assert [r["question"] for r in game.db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
+    assert [r["question"] for r in game.db.get_interrupted_reply_retries(an.SCENE_CHAT_SPEAKER)] == ["剿抚孰先？"]
 
 
 # ---------------------------------------------------------------------------

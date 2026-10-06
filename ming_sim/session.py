@@ -170,6 +170,16 @@ class AudienceChatUndoError(Exception):
         self.code = code
 
 
+class PostReplyRecoveryError(Exception):
+    """已落回话尾随恢复失败：结构化码供入口映射。"""
+
+    def __init__(self, detail: str, *, code: str = "conflict") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        # code: conflict（入口映射 409）
+        self.code = code
+
+
 @dataclass(frozen=True)
 class AudienceChatUndoResult:
     """撤回业务结果；呈现字段（history/directives 投影）由入口补。"""
@@ -1296,6 +1306,87 @@ class GameSession:
             ) or SCENE_CHAT_SPEAKER
             out.append(item)
         return sorted(out, key=lambda item: int(item["chat_turn_id"]))
+
+    def pending_post_reply_retries(self) -> List[Dict[str, Any]]:
+        """本夜殿上已落回话的尾随失败——两端共核取数（#1902 L1）。
+
+        与 ``pending_audience_reply_retries`` 同形：按本夜殿上轮筛
+        ``get_post_reply_retries(殿上)``；入口不再自筛夜/相位。
+        """
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+
+        night = get_open_night(self.db)
+        if night is None:
+            return []
+        hall_ids = {
+            int(row["id"]) for row in self.db.list_hall_chat_turns(int(night["id"]))
+        }
+        if not hall_ids:
+            return []
+        return sorted(
+            [
+                dict(row)
+                for row in self.db.get_post_reply_retries(SCENE_CHAT_SPEAKER)
+                if int(row["chat_turn_id"]) in hall_ids
+            ],
+            key=lambda item: int(item["chat_turn_id"]),
+        )
+
+    def pending_audience_recovery_retries(self) -> List[Dict[str, Any]]:
+        """中断回话 + 已落回话尾随失败，本夜共核合并取数（#1902 L1）。
+
+        Web 恢复面板读此；CLI「重试回话」仍只读 ``pending_audience_reply_retries``
+        （不新增 CLI 尾随玩法）。
+        """
+        return sorted(
+            [
+                *self.pending_audience_reply_retries(),
+                *self.pending_post_reply_retries(),
+            ],
+            key=lambda item: int(item["chat_turn_id"]),
+        )
+
+    def resume_post_reply_recovery(
+        self,
+        target: Dict[str, Any],
+        *,
+        write_gate: Any = None,
+        after_reply: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        """已落回话尾随恢复共核（#1902 L1）：claim → 相位编排 → clear；失败 release。
+
+        ``court_break`` → ``close_night_after_chat_if_needed``。
+        ``after_reply`` → 入口呈现钩（高亮等），共核不持呈现／票据。
+        ``write_gate`` 为宿主短写闸；未传则无闸上下文。
+        claim 未赢 → ``PostReplyRecoveryError(conflict)``，入口映射 409。
+        """
+        import contextlib
+
+        chat_turn_id = int(target["chat_turn_id"])
+        phase = str(target.get("recovery_phase") or "")
+        gate_cm = write_gate if write_gate is not None else contextlib.nullcontext()
+        with gate_cm:
+            if not self.db.claim_post_reply_recovery(chat_turn_id, phase):
+                raise PostReplyRecoveryError(
+                    "本轮后续处理已在恢复，请稍候。", code="conflict",
+                )
+        try:
+            if phase == "court_break":
+                self.close_night_after_chat_if_needed(
+                    "court_break", write_gate=write_gate,
+                )
+            elif after_reply is not None:
+                after_reply(target)
+            with gate_cm:
+                self.db.clear_post_reply_failure(chat_turn_id)
+        except BaseException:
+            with gate_cm:
+                self.db.release_post_reply_recovery(chat_turn_id, phase)
+            raise
+        return {
+            "answer": str(target.get("answer") or ""),
+            "chat_turn_id": chat_turn_id,
+        }
 
     def _chat_message_speaker(self, message_id: int) -> str:
         """chat_messages 某行的归属大臣名；无此行时返回空串。"""

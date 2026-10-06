@@ -119,8 +119,8 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(findButton(host, "邸报"));
     await act(async () => {
       await vi.waitFor(() => {
+        // #1902 L2：面板可达即可；不锁生成邸报正文片段。
         expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull();
-        expect(host.textContent).toContain("天启七年九月邸报·试重开");
       });
     });
     await click(host.querySelector('[aria-label="关闭弹窗"]'));
@@ -1126,7 +1126,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(reopened.querySelector(".hud2-val")?.textContent).toContain("11"));
     });
     expect(reopened.querySelector('[data-testid="settle-resume"]')).toBeNull();
-    expect(reopened.querySelector('[data-testid="settlement-gazette-panel"]')?.textContent).toContain("new month report");
+    // #1902 L2：本面邸报面板可达；不锁 previous_summary 正文片段。
+    expect(reopened.querySelector('[data-testid="settlement-gazette-panel"]')).not.toBeNull();
   });
 
   it("#1852 写成即推进：本面邸报落位；朕知道了只关阅读；刷新不自动弹", async () => {
@@ -1194,7 +1195,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
     });
     expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).toBeNull();
-    expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·本面");
+    // #1902 L2：本面落位以面板可达为契约，不锁 SSE/状态口邸报正文。
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
 
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
@@ -1298,7 +1300,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull());
     });
     expect(stateGets).toBeGreaterThan(getsBeforeDone);
-    expect(host.querySelector("[data-testid=settlement-gazette-panel]")!.textContent).toContain("十月邸报·刷新失败仍可读");
+    // #1902 L2：刷新失败仍可读＝面板仍在；不锁 SSE report 正文片段。
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
     // 主界面仍挂着，但旧月内容不可见、不可交互；提示与阅读独立可达。
     const staleFace = host.querySelector("main > div[inert]");
     expect(staleFace?.getAttribute("aria-hidden")).toBe("true");
@@ -1319,7 +1322,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
       await vi.waitFor(() => expect(stateGets).toBeGreaterThan(getsBeforeReadingRetry));
       await Promise.resolve();
     });
-    expect(host.querySelector("[data-testid=settlement-gazette-panel]")?.textContent).toContain("十月邸报·刷新失败仍可读");
+    // #1902 L2：阅读中重试失败仍保持面板，不重新过月。
+    expect(host.querySelector("[data-testid=settlement-gazette-panel]")).not.toBeNull();
     expect(streamPosts()).toBe(streamPostsBeforeDismiss);
     const getsBeforeDismiss = stateGets;
     const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>

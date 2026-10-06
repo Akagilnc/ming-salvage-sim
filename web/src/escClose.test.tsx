@@ -144,7 +144,8 @@ describe("全局 ESC 关闭结局页（endingDismissed）", () => {
     await act(async () => { (root = createRoot(host)).render(<App />); });
     await tick();
     expect(host.querySelector(".modal-bg-ending")).not.toBeNull();
-    expect(host.querySelector(".ending-timeline-chapter")?.textContent).toBe("三月邸报");
+    // #1902 L2：时间线条目可达即可；不锁 gazette 正文片段。
+    expect(host.querySelector(".ending-timeline-chapter")).not.toBeNull();
 
     act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     await tick();

@@ -2022,52 +2022,32 @@ class WebGame:
         return self.db.get_interrupted_reply_retries(minister_name)
 
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        if minister_name == SCENE_CHAT_SPEAKER:
-            # #1902 N3：中断回话身份/筛选走会话共核；本入口只叠 Web 的 post_reply 适配。
-            interrupted = self.session.pending_audience_reply_retries()
-            night = get_open_night(self.db)
-            if night is None:
-                return sorted(interrupted, key=lambda item: int(item["chat_turn_id"]))
-            ids = {int(row["id"]) for row in self.db.list_hall_chat_turns(int(night["id"]))}
-            post_reply = [
-                retry for retry in self.db.get_post_reply_retries(SCENE_CHAT_SPEAKER)
-                if int(retry["chat_turn_id"]) in ids
-            ]
-            return sorted(
-                [*interrupted, *post_reply],
-                key=lambda item: int(item["chat_turn_id"]),
-            )
-        # 非殿上请求：保留按大臣名取中断 + post_reply 的 Web 适配。
-        interrupted = self.interrupted_reply_retries(minister_name)
-        post_reply = self.db.get_post_reply_retries(minister_name)
-        return sorted([*interrupted, *post_reply], key=lambda item: int(item["chat_turn_id"]))
+        """#1902 L1：中断 + 尾随失败取数在会话共核；入口只转发。
+
+        请求名仅供 HTTP 面；殿上夜筛与相位选择不在 Web 自办。
+        """
+        del minister_name
+        return self.session.pending_audience_recovery_retries()
 
     def _resume_post_reply(self, minister_name: str, target: Dict[str, Any]) -> Dict[str, Any]:
-        """只续已落回话的尾随阶段；绝不再次运行召对模型或插入回话。"""
-        chat_turn_id = int(target["chat_turn_id"])
-        phase = str(target["recovery_phase"])
-        with self._runtime_write_gate():
-            if not self.db.claim_post_reply_recovery(chat_turn_id, phase):
-                raise HTTPException(status_code=409, detail="本轮后续处理已在恢复，请稍候。")
+        """#1902 L1：尾随恢复编排在会话共核；此处只映射 HTTP／呈现／高亮钩。"""
+        from ming_sim.session import PostReplyRecoveryError
+
         try:
-            if phase == "court_break":
-                self.session.close_night_after_chat_if_needed(
-                    "court_break", write_gate=self._runtime_write_gate(),
-                )
-            else:
-                self._trail_highlight_judge_after_reply(
-                    str(target["answer"]), message_id=int(target["minister_message_id"]),
-                    chat_turn_id=chat_turn_id,
-                )
-            with self._runtime_write_gate():
-                self.db.clear_post_reply_failure(chat_turn_id)
-        except BaseException:
-            with self._runtime_write_gate():
-                self.db.release_post_reply_recovery(chat_turn_id, phase)
-            raise
+            core = self.session.resume_post_reply_recovery(
+                target,
+                write_gate=self._runtime_write_gate(),
+                after_reply=lambda item: self._trail_highlight_judge_after_reply(
+                    str(item.get("answer") or ""),
+                    message_id=int(item.get("minister_message_id") or 0),
+                    chat_turn_id=int(item.get("chat_turn_id") or 0),
+                ),
+            )
+        except PostReplyRecoveryError as exc:
+            status = 404 if exc.code == "not_found" else 409
+            raise HTTPException(status_code=status, detail=exc.detail) from None
         return {
-            "answer": str(target["answer"]), "chat_turn_id": chat_turn_id,
+            "answer": str(core["answer"]), "chat_turn_id": int(core["chat_turn_id"]),
             "history": self.chat_projection(minister_name),
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
