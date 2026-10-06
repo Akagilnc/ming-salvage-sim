@@ -525,7 +525,13 @@ def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypat
 
 
 def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
-    """startup catch-up 须经票据写缝：非阻塞 acquire 拒收（裸 Lock 会放行）。"""
+    """startup catch-up 须经票据写缝：非阻塞 acquire 拒收（裸 Lock 会放行）。
+
+    #1902 T4：生产经 session.run_startup_translation_catch_up → audience_translation；
+    本案在现役共核接缝观察 write_gate，不 patch 已退役的 web_app 顶层符号。
+    """
+    import ming_sim.audience_translation as audience_translation
+
     game = web_game
     seen = {}
 
@@ -538,7 +544,13 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
         except RuntimeError:
             seen["ticketed_contract"] = True
 
-    monkeypatch.setattr(web_app, "catch_up_pending_translations", fake_catch_up)
+    monkeypatch.setattr(
+        audience_translation, "catch_up_pending_translations", fake_catch_up,
+    )
+    # 共核预检：有待补才进入 catch_up（空列表会在 session 层直接返回）。
+    monkeypatch.setattr(
+        game.session, "list_startup_translation_catch_up", lambda: [{"id": 1}],
+    )
     ticket = game._mark_pending_write(key=("startup",))
     assert ticket is not None
     game._run_startup_extraction_catch_up(pending_ticket=ticket)

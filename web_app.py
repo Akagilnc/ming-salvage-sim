@@ -97,7 +97,6 @@ from ming_sim.highlight_judge import (
     DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
     run_highlight_judge,
 )
-from ming_sim.audience_translation import catch_up_pending_translations
 from ming_sim.session_write_queue import (
     SessionWriteQueue,
     TicketCancelled,
