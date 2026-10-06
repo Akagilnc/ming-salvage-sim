@@ -11,7 +11,11 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Mapping, Optional
 
-from ming_sim.applier import load_stored_object, load_stored_list
+from ming_sim.applier import (
+    StoredDocumentError,
+    load_stored_list,
+    load_stored_object,
+)
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.strict_types import strict_int
@@ -364,34 +368,47 @@ def hydrate_dossier_row(row: Any) -> dict[str, Any]:
     Columns come from ``SELECT *`` over a wide table, so the hydrated shape is
     genuinely dynamic; the typed contract is the fail-loud parsing below, not a
     closed key set.
+
+    Existing-row field/member faults are StoredDocumentError (durable read seam),
+    not product ValueError — callers that isolate LLM bad items must not wash them.
     """
-    out: dict[str, Any] = dict(row)
-    out["id"] = int(out["id"])
-    out["region_id"] = str(out.get("region_id") or "")
-    for key in (
-        "source_chat_turn_id", "pending_action_id", "directive_id",
-        "due_turn", "created_turn", "created_year", "created_period",
-        "held_turn", "affair_id",
-    ):
-        out[key] = int(out.get(key) or 0)
-    if out.get("secret_order_id") is not None:
-        out["secret_order_id"] = int(out["secret_order_id"])
-    out["rescript_pending"] = bool(out.get("rescript_pending"))
-    payload = load_stored_object(out.get("payload_json"), label="payload_json")
-    out["payload"] = payload
-    out["mode"] = normalize_dossier_mode(
-        payload["mode"] if "mode" in payload else "ordinary"
-    )
-    stigma = load_stored_list(out.get("stigma_json"), label="stigma_json")
-    out["stigma"] = stigma
-    roster = load_participant_roster(out.get("participant_roster"))
-    out["participant_roster"] = roster
-    extension = load_stored_object(out.get("extension_json"), label="extension_json")
-    signal = extension.get("execution_signal")
-    if signal is not None and not isinstance(signal, dict):
-        raise ValueError(f"案卷#{out['id']} execution_signal 非对象")
-    out["execution_signal"] = signal
-    return out
+    try:
+        out: dict[str, Any] = dict(row)
+        out["id"] = int(out["id"])
+        out["region_id"] = str(out.get("region_id") or "")
+        for key in (
+            "source_chat_turn_id", "pending_action_id", "directive_id",
+            "due_turn", "created_turn", "created_year", "created_period",
+            "held_turn", "affair_id",
+        ):
+            out[key] = int(out.get(key) or 0)
+        if out.get("secret_order_id") is not None:
+            out["secret_order_id"] = int(out["secret_order_id"])
+        out["rescript_pending"] = bool(out.get("rescript_pending"))
+        payload = load_stored_object(out.get("payload_json"), label="payload_json")
+        out["payload"] = payload
+        out["mode"] = normalize_dossier_mode(
+            payload["mode"] if "mode" in payload else "ordinary"
+        )
+        stigma = load_stored_list(out.get("stigma_json"), label="stigma_json")
+        out["stigma"] = stigma
+        roster = load_participant_roster(out.get("participant_roster"))
+        out["participant_roster"] = roster
+        extension = load_stored_object(out.get("extension_json"), label="extension_json")
+        signal = extension.get("execution_signal")
+        if signal is not None and not isinstance(signal, dict):
+            raise ValueError(f"案卷#{out['id']} execution_signal 非对象")
+        out["execution_signal"] = signal
+        return out
+    except StoredDocumentError:
+        raise
+    except (TypeError, ValueError, OverflowError) as exc:
+        try:
+            did = int(row["id"])  # type: ignore[index]
+            label = f"案卷#{did}"
+        except Exception:
+            label = "案卷"
+        raise StoredDocumentError(f"{label} 持久行损坏：{exc}") from exc
 
 
 class DossierStore:

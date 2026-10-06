@@ -107,30 +107,43 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     return out
 
 
-def load_commitment_stages(raw: object) -> List[Dict[str, object]]:
-    """Durable stages never discard a corrupt member as absent.
+def _commitment_stages_members(data: List[object]) -> List[Dict[str, object]]:
+    """Single member-shape authority for stages lists.
 
-    Member/shape faults are StoredDocumentError (read seam), not product ValueError.
+    Raises ValueError on bad members/fields. Callers choose the seam:
+    durable load wraps as StoredDocumentError; product write keeps ValueError.
     """
-    data = load_stored_list(raw, label="stages_json")
     for item in data:
         if not isinstance(item, dict):
-            raise StoredDocumentError("stages_json 成员必须为对象")
+            raise ValueError("stages_json 成员必须为对象")
         try:
             due_turn = strict_int(item.get("due_turn"))
             stage_idx = strict_int(item.get("stage_idx"))
         except (TypeError, ValueError) as exc:
-            raise StoredDocumentError(
-                "stages_json due_turn/stage_idx 必须为整数",
-            ) from exc
+            raise ValueError("stages_json due_turn/stage_idx 必须为整数") from exc
         if due_turn <= 0:
-            raise StoredDocumentError("stages_json due_turn 必须为正整数")
+            raise ValueError("stages_json due_turn 必须为正整数")
         if stage_idx < 0:
-            raise StoredDocumentError("stages_json stage_idx 必须为非负整数")
+            raise ValueError("stages_json stage_idx 必须为非负整数")
         for field in ("criterion_text", "origin_context"):
             if not isinstance(item.get(field), str) or not item[field].strip():
-                raise StoredDocumentError(f"stages_json {field} 必须为非空文字")
-    return sorted(data, key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
+                raise ValueError(f"stages_json {field} 必须为非空文字")
+    return sorted(
+        data,  # type: ignore[arg-type]
+        key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])),
+    )
+
+
+def load_commitment_stages(raw: object) -> List[Dict[str, object]]:
+    """Durable stages never discard a corrupt member as absent.
+
+    Top-level and member/shape faults are StoredDocumentError (read seam).
+    """
+    data = load_stored_list(raw, label="stages_json")
+    try:
+        return _commitment_stages_members(data)
+    except ValueError as exc:
+        raise StoredDocumentError(str(exc)) from exc
 
 
 def stages_to_json(stages: object) -> str:
@@ -138,6 +151,7 @@ def stages_to_json(stages: object) -> str:
 
     Designed string surface: JSON array string is parsed, not char-iterated.
     Invalid non-empty strings raise ValueError (never silently store ``[]``).
+    Product-write seam keeps ValueError so declaration can isolate invalid_shape.
     ``None`` / empty / ``[]`` → ``"[]"``.
     """
     if stages is None:
@@ -154,7 +168,10 @@ def stages_to_json(stages: object) -> str:
             raise ValueError(
                 "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
             )
-        return json.dumps(load_commitment_stages(normalized), ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(
+            _commitment_stages_members(normalized),
+            ensure_ascii=False, separators=(",", ":"),
+        )
     if isinstance(stages, (list, tuple)):
         if not stages:
             return "[]"
@@ -164,7 +181,10 @@ def stages_to_json(stages: object) -> str:
             raise ValueError(
                 "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
             )
-        return json.dumps(load_commitment_stages(normalized), ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(
+            _commitment_stages_members(normalized),
+            ensure_ascii=False, separators=(",", ":"),
+        )
     raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
 
 
