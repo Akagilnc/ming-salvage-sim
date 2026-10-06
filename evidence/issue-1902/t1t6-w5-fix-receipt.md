@@ -3,6 +3,7 @@
 - 工作树：`Ming_LLM-1902-w5`
 - 判词：`01a107df-d9e2-73fc-ad6d-32b8504c7aad@judge` submission.latest.accepted
 - 基线 HEAD：`62059d00b`（上轮 stamp）
+- FIX SHA：`27e877bcb368e6739de6cec6360c09add5e33ae2`
 - **不宣称合并/关票**；未 stash/push/PR/amend；未改治理文件与宿主席位
 
 七 BIN 前缀全程显式展开（见 focus 日志）。
