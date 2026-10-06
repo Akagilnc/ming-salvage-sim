@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 import threading
 import time
 import uuid
@@ -388,13 +387,10 @@ def _appointment_intent_is_current_office_noop(
     if not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    try:
-        row = db.conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?",
-            (canonical,),
-        ).fetchone()
-    except sqlite3.Error:
-        return False
+    row = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name = ?",
+        (canonical,),
+    ).fetchone()
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -403,29 +399,6 @@ def _appointment_intent_is_current_office_noop(
     desired_parts = {p for p in desired.split(",") if p}
     current_parts = {p for p in current.split(",") if p}
     return bool(desired_parts) and desired_parts.issubset(current_parts)
-
-
-def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool:
-    """目标当前是否为在职且有实职的名册人（有可罢之职）。
-
-    R2「免去暂存任命」形——被任者尚未落库、非 active，无职可罢，撤掉暂存任命即净空；
-    而在职改任者（active + 有 office）被再革职时，撤暂存任命后仍须落真罢免（不能吞）。"""
-    # #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
-    clean = str(name or "").strip()
-    if not clean:
-        return False
-    key = _canonical_minister_key(content, clean, db)
-    try:
-        row = db.conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?", (key,)
-        ).fetchone()
-    except sqlite3.Error:
-        return False
-    if row is None:
-        return False
-    return str(row["status"] or "") == "active" and bool(str(row["office"] or "").strip())
-
-
 
 
 def canonical_new_appointment_person_fields(
@@ -976,25 +949,13 @@ class GameSession:
 
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
-        """#526：同步识别收夜/留侍/含糊口令。纯封闭集匹配，无 Future/宽降级。"""
+        """同步识别显式退朝口令。纯封闭集匹配，无 Future/宽降级。"""
         from ming_sim.audience_night import (
             normalize_audience_command_verdict,
             recognize_audience_command,
         )
 
         return normalize_audience_command_verdict(recognize_audience_command(message))
-
-
-    @staticmethod
-    def _ensure_close_night_confirm_cue(answer: str) -> str:
-        """含糊收夜：大臣戏内确认（不出戏），不直接收夜。"""
-        text = (answer or "").strip()
-        ask = "陛下是要退朝么？"
-        if ask in text:
-            return text or ask
-        if not text:
-            return ask
-        return text + "\n" + ask
 
     def close_night_after_chat_if_needed(
         self,
@@ -1120,10 +1081,7 @@ class GameSession:
         - stream_emit 非空：同核走 transport 流式（SSE delta / 重试 / 失败路径）
         """
         from ming_sim.audience_night import (
-            CMD_AMBIGUOUS_CLOSE,
             CMD_CLOSE_NIGHT,
-            CMD_NONE,
-            CMD_STAY_ATTEND,
             SCENE_CHAT_SPEAKER,
             close_night,
             ensure_open_night_for_audience,
@@ -1148,58 +1106,27 @@ class GameSession:
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
 
-        # 收夜 / 留侍口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
-        # - 退朝：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收
-        # - 留侍：复用 stay_attend_in_audience 权威写缝（锚=minister_name 或夜主角）
-        # - 含糊收夜：回确认 cue，不收夜
+        # 显式退朝口令：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收。
+        # 留侍／含糊收夜词表已退役——走普通场景演绎与转译。
         audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
-        if audience_command_verdict and audience_command_verdict != CMD_NONE:
+        if audience_command_verdict == CMD_CLOSE_NIGHT:
             ctid = int(chat_turn_id or 0)
-            if audience_command_verdict == CMD_AMBIGUOUS_CLOSE:
-                if ctid > 0:
-                    self._mark_control_turn_translation_done(ctid)
-                result.answer = GameSession._ensure_close_night_confirm_cue("")
-                return result
-            if audience_command_verdict == CMD_STAY_ATTEND:
-                from ming_sim.audience_night import (
-                    get_night_protagonist,
-                    stay_attend_in_audience,
-                )
-                named = str(minister_name or "").strip()
-                anchor = (
-                    named if named and named != SCENE_CHAT_SPEAKER
-                    else get_night_protagonist(self.db, night_id)
-                )
-                if anchor:
-                    stay_id = stay_attend_in_audience(
-                        self.db, anchor,
-                        night_id=night_id,
-                        origin_chat_turn_id=ctid,
-                    )
-                else:
-                    stay_id = None
-                if ctid > 0:
-                    self._mark_control_turn_translation_done(ctid)
-                if stay_id is not None:
-                    result.court_action = "stay_attend"
-                return result
-            if audience_command_verdict == CMD_CLOSE_NIGHT:
-                # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
-                # ctid==0 的当场收夜分支随同步转译一并删除。
-                if ctid > 0:
-                    self._mark_control_turn_translation_done(ctid)
-                    result.court_action = "court_break"
-                    return result
-                close_night(
-                    self.db, self.state,
-                    content=getattr(self, "content", None),
-                    llm_config=getattr(self, "llm_config", None),
-                    write_gate=getattr(self, "_write_gate", None),
-                    write_queue=self._write_queue,
-                )
+            # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
+            # ctid==0 的当场收夜分支随同步转译一并删除。
+            if ctid > 0:
+                self._mark_control_turn_translation_done(ctid)
                 result.court_action = "court_break"
                 return result
+            close_night(
+                self.db, self.state,
+                content=getattr(self, "content", None),
+                llm_config=getattr(self, "llm_config", None),
+                write_gate=getattr(self, "_write_gate", None),
+                write_queue=self._write_queue,
+            )
+            result.court_action = "court_break"
+            return result
 
         # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
         xuan_fragment = recognize_xuan_command(message_text)
