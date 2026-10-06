@@ -103,7 +103,7 @@ def _army_owner_transition_pay_kwargs(normalized: Mapping[str, object]) -> Dict[
     """从规范化 delta 组装 transition_army_owner_power 饷源/自养 kwargs。
 
     键出现 → 实值；未出现 → _SENTINEL（adapter 回落行内 / 缺饷源 fail-loud）。
-    cutover-on `_apply_army_pay_source_delta` 与 cutover-off owner 分支共用，防再分叉。
+    供 `_apply_army_pay_source_delta` 组装 transition 饷源参数。
     """
     return {
         key: (normalized[key] if key in normalized else _SENTINEL)
@@ -309,9 +309,6 @@ class ProvinceFiscalTickOutcome(NamedTuple):
     error: Optional[BaseException]
 
 
-_ARMY_PAY_SOURCE_CUTOVER_KEY = "__army_pay_source_cutover"
-_FISCAL_ENGINE_KEY = "__fiscal_engine"
-_FISCAL_ENGINE_SUBSTRATE_HUB = 1
 _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY = "central_army_pay_arrears"
 _STRUCTURAL_FISCAL_MINIMUMS = {
     "central_taicang_sink_loss_rate": 1,
@@ -2726,7 +2723,6 @@ class GameDB:
             self._set_meta_flag("__leverage_offsets_rank_rules_562")
             self.conn.commit()
         self.init_fiscal_config()
-        self._migrate_missing_fiscal_engine_from_pay_source_cutover()
         # #1356：旧档精确 DELETE 已知 seed 全文（不动真实结算产物）
         self._purge_fixed_opening_gazette_seed()
 
@@ -2809,23 +2805,10 @@ class GameDB:
         self.conn.commit()
 
     def init_fiscal_config(self) -> None:
-        """从 content/fiscal_config.json（self.content.fiscal_items）seed 财政科目目录。
+        """从 content/fiscal_config.json seed 财政科目目录（仅新档整体 seed 一次）。
 
-        base/rate 单位为【月度】万两/%。科目目录与元数据全走 JSON 设定（铁律：设定走 JSON）；
-        新档加税源只改 JSON；若老档也要补新 key，必须登记对应 schema_version 的差量迁移。
-
-        ── 版本迁移策略（铁律：fiscal_config 只在建库时整体 seed 一次）──
-        每个库带 `__schema_version`。本函数按它与 JSON schema_version 比对，分三种走法：
-
-        - `cur == 0`（全新库，无版本行）：整体 seed JSON 全表 → 版本号置 JSON 版。仅此一次。
-        - `cur < json`（老档升版）：逐版跑 `_FISCAL_MIGRATIONS[cur+1 .. json]` 的差量动作。
-          新 schema 若要给老档补 key，必须在对应版本登记；未声明的 key 一律不碰
-          （玩家削减/裁撤全保留）。未登记版本不再按当前 JSON 全表补缺；新 schema 正常迁移
-          必须登记显式版本步。
-        - `cur >= json`：**啥都不做**。已是最新，玩家状态神圣。
-
-        ⇒ 玩家裁撤的科目读档后保持删除（不再被旧 INSERT OR IGNORE 复活）。
-           JSON 加新税种【必须】同步升 schema_version，否则老档拿不到（CLAUDE.md 已要求）。
+        #1812/#1835：无旧档差量回填。已有 `__schema_version` 的库不改科目、不补 key；
+        新档 cur==0 时整体 INSERT 一次并落版本号。
         """
         items = list(self.content.fiscal_items)
         if not items or "__schema_version" not in items[0]:
@@ -2842,52 +2825,20 @@ class GameDB:
             )
 
         cols = "(key, value, kind, note, budget_role, account, direction, display, sort_order)"
-
-        def _seed_missing() -> None:
-            """未登记版本步不补当前 JSON 全表；新增 key 必须走显式版本迁移。"""
-            return None
-
-        def _seed_keys(keys: "tuple[str, ...]") -> None:
-            wanted = set(keys)
-            self.conn.executemany(
-                f"INSERT OR IGNORE INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [_meta(rec) for rec in rows if str(rec["key"]) in wanted],
-            )
-
-        # 每版迁移：从 N-1 → N，只动那版真正变的东西。键＝目标版本号 N。
-        # 将来要改某 key 默认 / 删某 key / 加新 key，就在这里登记一条 lambda，只动那一项，
-        # 别动其它——这样玩家改过的全保住。未登记版本只保留旧兼容兜底，不作为正常迁移路径。
-        _FISCAL_MIGRATIONS: "Dict[int, Any]" = {
-            8: lambda: _seed_keys((
-                "central_taicang_human_loss_rate",
-                "central_taicang_sink_loss_rate",
-                "central_jingyun_human_loss_rate",
-                "central_jingyun_sink_loss_rate",
-            )),
-        }
-
         cur_ver_row = self.conn.execute(
             "SELECT value FROM fiscal_config WHERE key = '__schema_version'"
         ).fetchone()
         cur_ver = int(cur_ver_row["value"]) if cur_ver_row else 0
+        if cur_ver != 0:
+            return  # 已有档：不回填、不迁移
 
-        if cur_ver >= schema_version:
-            return  # 已最新，玩家状态神圣，碰都不碰
-
-        if cur_ver == 0:
-            # 全新库：整体 seed 一次。
-            self.conn.executemany(
-                f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [_meta(rec) for rec in rows],
-            )
-        else:
-            # 老档升版：逐版跑差量；未登记的版本步只补缺 key。
-            for v in range(cur_ver + 1, schema_version + 1):
-                (_FISCAL_MIGRATIONS.get(v) or _seed_missing)()
-
+        self.conn.executemany(
+            f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [_meta(rec) for rec in rows],
+        )
         self.conn.execute(
             "INSERT INTO fiscal_config (key, value, kind, note) VALUES "
-            "('__schema_version', ?, 'meta', '财政默认值大版本号；老档升版逐版迁移，只动差量') "
+            "('__schema_version', ?, 'meta', '财政默认值大版本号；仅新档 seed') "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (schema_version,),
         )
@@ -3155,10 +3106,10 @@ class GameDB:
     ) -> List[ProvinceFiscalTickOutcome]:
         """一次扫描 Ming 省 fiscal payload 并推进已有 settle 基座。
 
-        动态 shadow spine 用这个批量桥，避免 selector 先解析、单省 bridge 再 SELECT/解析。
+        省级 batch 桥，避免 selector 先解析、单省 bridge 再 SELECT/解析。
         合法但无 settle 的 Ming 省按旧语义出列；坏 JSON/容器/settle st/p 与 settle_tick
-        ValueError/守恒错误以原异常对象作为 outcome.error 返回，供 shadow 调用方隔离 tlog。
-        这是 shadow 支线的局部隔离契约，不是声明数据拒收；其它异常继续上抛。
+        ValueError/守恒错误以原异常对象作为 outcome.error 返回，供调用方 tlog。
+        局部 outcome.error 契约，不是声明数据拒收；其它异常继续上抛。
         """
         from .fiscal_tick import FiscalConservationError
 
@@ -3991,43 +3942,8 @@ class GameDB:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def is_army_pay_source_cutover_enabled(self) -> bool:
-        """现役唯一军饷路径：逐军省欠＋中央欠（#1812/#1835 旧标量旁路退出）。"""
-        return True
-
-    def fiscal_engine(self) -> str:
-        """现役唯一财政引擎：substrate_hub（#1812/#1835 旧档 legacy 支路退出）。"""
-        return "substrate_hub"
-
-    def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
-        return True
-
-    def _migrate_missing_fiscal_engine_from_pay_source_cutover(self) -> None:
-        """旧 cutover→fiscal_engine 回填迁移已退役（现役恒 hub）。"""
-        return
-
-    def _mark_army_pay_source_cutover_enabled(self) -> None:
-        self.conn.execute(
-            """
-            INSERT INTO fiscal_config (key, value, kind, note)
-            VALUES (?, 1, 'meta', 'army pay source per-source accumulator cutover')
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value, kind=excluded.kind, note=excluded.note
-            """,
-            (_ARMY_PAY_SOURCE_CUTOVER_KEY,),
-        )
-
-    def _mark_substrate_hub_fiscal_engine_enabled(self) -> None:
-        self.conn.execute(
-            """
-            INSERT INTO fiscal_config (key, value, kind, note)
-            VALUES (?, ?, 'meta', 'fiscal_engine=substrate_hub; legacy=0 substrate_hub=1')
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value, kind=excluded.kind, note=excluded.note
-            """,
-            (_FISCAL_ENGINE_KEY, _FISCAL_ENGINE_SUBSTRATE_HUB),
-        )
-
     def _initialize_army_pay_source_spine(self, is_fresh_armies_seed: bool) -> None:
-        """Army pay source spine cutover for #287 S1（现役唯一路径）。"""
+        """Army pay source spine seed for #287 S1（现役唯一路径）。"""
         if not is_fresh_armies_seed:
             return
         rows = self.conn.execute(
@@ -4106,8 +4022,6 @@ class GameDB:
                     1 if is_tusi else 0, 1 if self_funded else 0, army_id,
                 ),
             )
-        self._mark_army_pay_source_cutover_enabled()
-        self._mark_substrate_hub_fiscal_engine_enabled()
         self._reconcile_all_army_pay_source_regions()
         self._reconcile_central_army_pay_arrears_container()
         self.assert_army_pay_source_container_conservation()
@@ -4206,24 +4120,23 @@ class GameDB:
                 "army "
                 f"{exempt_bad['id']} 自养/非明军双累加器必须为 0"
             )
-        if self.is_substrate_hub_fiscal_engine_enabled():
-            province_source_rows = self.conn.execute(
-                """
-                SELECT id, pay_source_region
-                FROM armies
-                WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-                  AND (
-                    ABS(COALESCE(province_pay_share, 0)) > 1e-9 OR
-                    ABS(COALESCE(province_pay_arrears, 0)) > 1e-9
-                  )
-                ORDER BY id
-                """
-            ).fetchall()
-            for province_source in province_source_rows:
-                self._require_valid_pay_source_region(
-                    str(province_source["id"]),
-                    str(province_source["pay_source_region"] or ""),
-                )
+        province_source_rows = self.conn.execute(
+            """
+            SELECT id, pay_source_region
+            FROM armies
+            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
+              AND (
+                ABS(COALESCE(province_pay_share, 0)) > 1e-9 OR
+                ABS(COALESCE(province_pay_arrears, 0)) > 1e-9
+              )
+            ORDER BY id
+            """
+        ).fetchall()
+        for province_source in province_source_rows:
+            self._require_valid_pay_source_region(
+                str(province_source["id"]),
+                str(province_source["pay_source_region"] or ""),
+            )
         derived_bad = self.conn.execute(
             """
             SELECT id, arrears, province_pay_arrears, central_pay_arrears
@@ -7596,7 +7509,6 @@ class GameDB:
             if reason_raw is None or not str(reason_raw).strip():
                 reason_raw = event.title
             reason = "" if reason_raw is None else str(reason_raw)
-            consumed_pay_source_fields: frozenset[str] = frozenset()
             self._apply_army_pay_source_delta(
                 state, event, edict_id, actor, row, raw_changes, reason, changes, rejections,
                 origin_ref=origin_ref, require_origin=require_origin, source=source,
@@ -7611,8 +7523,6 @@ class GameDB:
                 if field in ("reason", "origin_ref"):
                     continue
                 if field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
-                    continue
-                if field in consumed_pay_source_fields:
                     continue
                 # #318：cutover 关闭时 owner_power 仍须经唯一 adapter，禁止 text 直写旁路
                 # （同 owner no-op / 未在上方预消费的残余路径）

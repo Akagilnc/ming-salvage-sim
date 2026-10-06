@@ -257,23 +257,16 @@ def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
     db, state, content = game
     row = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()
     army_id = row["id"]
-    # 现役 cutover：分源欠饷种子（省 3 + 中央 2），不关 cutover 去测旧 scalar no-op。
+    # 现役分源欠饷种子（省 3 + 中央 2）。
     db.conn.execute(
         "UPDATE armies SET manpower=0, arrears=5, province_pay_arrears=3, central_pay_arrears=2 WHERE id=?",
         (army_id,),
-    )
-    db.conn.execute(
-        "INSERT OR REPLACE INTO fiscal_config (key,value,kind,note) VALUES "
-        "('__army_pay_source_cutover',1,'meta','active hub cutover')"
     )
 
     legacy_noop = settle_delta(state, db, {'army_delta': {army_id: {'manpower': 0}}}, SettlementContext(content=content))
     assert view(legacy_noop, "army_changes") == []
     assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 5
 
-    db.conn.execute(
-        "UPDATE fiscal_config SET value=1 WHERE key='__army_pay_source_cutover'"
-    )
     db.conn.execute("UPDATE armies SET owner_power='houjin' WHERE id=?", (army_id,))
     non_ming_noop = settle_delta(state, db, {'army_delta': {army_id: {'manpower': 0}}}, SettlementContext(content=content))
     assert view(non_ming_noop, "army_changes") == []
