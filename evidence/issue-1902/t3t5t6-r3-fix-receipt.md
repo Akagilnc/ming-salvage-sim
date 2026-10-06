@@ -1,6 +1,7 @@
 # #1902 修内司 T3/T5/T6 续修回执 r3
 
 - 基线：e6c660a99
+- FIX SHA：`e75c512824034f1baa32ba7b8aaf373d0ef06764`
 - 判词：inspector 复裁 continue（T3 无痕 JSON；T5 空转译空跑；T6 旧流式入口）
 - **不宣称合并/关票**
 
