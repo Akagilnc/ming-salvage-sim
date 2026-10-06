@@ -314,6 +314,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     before = _rollback_snapshot(db, state, pending_ids)
     observed = {"fiscal_written": False, "metrics_written": False}
     original_flows = decree.apply_fixed_period_flows
+    fiscal_fault = RuntimeError("post-fiscal failure 566")
 
     def fail_after_real_flows(flow_db, flow_state):
         ledger_before = _rows(flow_db, "economy_ledger")
@@ -322,7 +323,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
         observed["fiscal_written"] = _rows(flow_db, "economy_ledger") != ledger_before
         observed["metrics_written"] = dict(flow_state.metrics) != metrics_before
         assert observed == {"fiscal_written": True, "metrics_written": True}
-        raise RuntimeError("post-fiscal failure 566")
+        raise fiscal_fault
 
     monkeypatch.setattr(decree, "apply_fixed_period_flows", fail_after_real_flows)
     monkeypatch.setattr(
@@ -357,9 +358,13 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
         with pytest.raises(web_app.HTTPException) as exc_info:
             invoke()
         assert exc_info.value.status_code == 500
+        detail = exc_info.value.detail
+        assert isinstance(detail, dict)
+        assert detail.get("message") == str(fiscal_fault)
     else:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError) as ei:
             invoke()
+        assert ei.value is fiscal_fault
 
     assert observed == {"fiscal_written": True, "metrics_written": True}
     after = _rollback_snapshot(db, state, pending_ids)

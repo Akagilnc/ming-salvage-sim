@@ -553,7 +553,8 @@ def test_drain_rejects_late_pending_write_before_gate_acquire(monkeypatch):
 
 @pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_spawn_pending_write_thread_start_failure_releases_ownership(monkeypatch):
-    """回归（coderabbit #1087 / Gap B）：chat_stream 尾随高亮 Thread.start 失败须释放 pending。"""
+    """回归（coderabbit #1087 / Gap B）：chat_stream 尾随高亮 Thread.start 失败须释放 pending，
+    并经真实入口冒出结构化 error→end（诊断绑定原故障）。"""
     allow_finish = threading.Event()
     allow_finish.set()
     char = minister_double("大臣甲")
@@ -574,6 +575,7 @@ def test_spawn_pending_write_thread_start_failure_releases_ownership(monkeypatch
     runtime.can_undo_last_chat = lambda _name: False
 
     orig_thread = web_app.threading.Thread
+    start_error = RuntimeError("线程池耗尽（模拟 start 失败）")
 
     class _FailHighlightThread:
         def __init__(self, *a, **k):
@@ -582,7 +584,7 @@ def test_spawn_pending_write_thread_start_failure_releases_ownership(monkeypatch
 
         def start(self):
             if "highlight" in str(self.name):
-                raise RuntimeError("线程池耗尽（模拟 start 失败）")
+                raise start_error
             return self._real.start()
 
         def join(self, *a, **k):
@@ -592,6 +594,12 @@ def test_spawn_pending_write_thread_start_failure_releases_ownership(monkeypatch
 
     events = list(runtime.chat_stream("殿上", "请奏"))
     assert events
+    types = [e.get("type") for e in events]
+    assert "error" in types, types
+    err_idx = types.index("error")
+    assert types[err_idx + 1] == "end", types
+    err = next(e for e in events if e.get("type") == "error")
+    assert err.get("message") == str(start_error)
     wait_until(lambda: runtime._write_queue.inflight_count() == 0)
 
 

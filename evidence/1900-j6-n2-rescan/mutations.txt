@@ -1,0 +1,50 @@
+=== MUT1 swallow Thread.start expect RED rc=1 (1.12s) ===
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   AssertionError: ['delta', 'done', 'end']
+    assert 'error' in ['delta', 'done', 'end']
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_menu_lifecycle_drain_396.py:598: AssertionError: ['delta', 'done', 'end']
+=========================== short test summary info ============================
+FAILED tests/test_menu_lifecycle_drain_396.py::test_spawn_pending_write_thread_start_failure_releases_ownership
+1 failed in 0.65s
+
+=== MUT1 restore expect GREEN rc=0 (1.02s) ===
+.                                                                        [100%]
+1 passed in 0.58s
+
+=== MUT2 unrelated HTTP diag expect RED rc=1 (1.18s) ===
+，待入国库）
+[01:20:42.956] [fiscal-substrate] sichuan 推进：实征2.0/起运1.9/火耗入截留0.3；末态欠账 军饷欠0/官俸欠1/宗禄欠1/民欠1（hub，待入国库）
+[01:20:42.956] [fiscal-substrate] yunnan 推进：实征0.2/起运0.1/火耗入截留0.0；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠0（hub，待入国库）
+[01:20:42.956] [fiscal-substrate] zhejiang 推进：实征21.2/起运7.0/火耗入截留2.8；末态欠账 军饷欠0/官俸欠0/宗禄欠0/民欠5（hub，待入国库）
+[01:20:42.959] [month_open_snapshot] 真失败退出核账展示态 turn=1 phase=summoning
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_secret_order_monthly_progress_566.py:363: AssertionError: assert 'UNRELATED_DIAG_MUTATION' == 'post-fiscal failure 566'
+=========================== short test summary info ============================
+FAILED tests/test_secret_order_monthly_progress_566.py::test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write[web]
+1 failed, 1 passed in 0.72s
+
+=== MUT2 restore expect GREEN rc=0 (1.26s) ===
+..                                                                       [100%]
+2 passed in 0.79s
+
+=== MUT3 synonym production msg expect GREEN rc=0 (1.15s) ===
+.                                                                        [100%]
+1 passed in 0.71s
+
+=== MUT4 unrelated store expect RED rc=1 (1.17s) ===
+ate_run=lambda fn: queue.run(ticket, fn),
+    )
+  File "/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_mechanical_tail_1845.py", line 547, in _capture_ending
+    return orig_ending(db_, closed_state, outcome, **kw)
+  File "/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/ming_sim/mechanical_tail.py", line 91, in generate_ending_summary_for_tail
+    raise LLMUnavailable("结局总评缺少模型配置", stage="ending_summary")
+ming_sim.exceptions.LLMUnavailable: 结局总评缺少模型配置
+/Users/akagilnc/WorkSpace/Ming_LLM-1900-w5/tests/test_mechanical_tail_1845.py:578: AssertionError: assert 'UNRELATED_TAIL_ERROR' == '结局总评缺少模型配置'
+=========================== short test summary info ============================
+FAILED tests/test_mechanical_tail_1845.py::test_mechanical_tail_missing_llm_config_surfaces_retry
+1 failed in 0.69s
+
+=== MUT4 restore expect GREEN rc=0 (1.16s) ===
+.                                                                        [100%]
+1 passed in 0.72s
+

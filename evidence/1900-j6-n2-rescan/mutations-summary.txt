@@ -1,0 +1,8 @@
+mut1_swallow_start: OK expect RED rc=1
+mut1_restore: OK expect GREEN rc=0
+mut2_unrelated_http: OK expect RED rc=1
+mut2_restore: OK expect GREEN rc=0
+mut3_synonym: OK expect GREEN rc=0
+mut4_unrelated_store: OK expect RED rc=1
+mut4_restore: OK expect GREEN rc=0
+all_ok=True
