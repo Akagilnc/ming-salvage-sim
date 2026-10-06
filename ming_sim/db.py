@@ -14572,14 +14572,15 @@ class GameDB:
             except (AttributeError, ValueError):
                 target_id = 0
             relation = str(item.get("relation_type") or "") if isinstance(item, dict) else ""
-            note = str(item.get("note") or "").strip() if isinstance(item, dict) else ""
+            # Free prose link note: preserve raw; strip only emptiness (#1834 F16).
+            note = str(item.get("note") or "") if isinstance(item, dict) else ""
             if self.get_decree_dossier(target_id) is None:
                 rejection = (target_id, relation, note, "关联指向不存在案卷")
             elif target_id >= source_id:
                 rejection = (target_id, relation, note, "案卷关联只允许新案卷指向旧案卷")
             elif relation not in DOSSIER_LINK_TYPES:
                 rejection = (target_id, relation, note, "案卷关联类型非法")
-            elif not note:
+            elif not note.strip():
                 rejection = (target_id, relation, note, "案卷关联说明不能为空")
             if rejection is not None:
                 break
@@ -17590,8 +17591,6 @@ class GameDB:
                     state, pa, content=content,
                 )
                 classification = prepared["classification"]
-                if classification == "needs_clarification":
-                    continue
                 if classification == "invalid":
                     cm = atomic(self) if owns_transaction else contextlib.nullcontext()
                     with cm:
@@ -17723,10 +17722,11 @@ class GameDB:
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
-                title = str(payload.get("title") or "").strip()
+                # Free prose secret title: preserve raw; strip only emptiness (#1834 F16).
+                title = str(payload.get("title") or "")
                 content_text = str(payload.get("content") or "")
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
-                if not title or not content_text.strip() or not assignee:
+                if not title.strip() or not content_text.strip() or not assignee:
                     return False
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
