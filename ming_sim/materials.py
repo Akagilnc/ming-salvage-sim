@@ -471,10 +471,7 @@ def _own_affair_lines(
 
     handling_ids: set[int] = set()
     for issue in (db.issues.active_rows() if hasattr(db, "issues") else []):
-        try:
-            issue_id = int(issue["id"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         linked_affair_id = _issue_linked_affair_id(db, issue_id)
         if not linked_affair_id:
             continue
@@ -651,10 +648,7 @@ def _opening_affair_lines(
     seen: set[str] = set()
     active = db.issues.active_rows() if hasattr(db, "issues") else []
     for issue in active:
-        try:
-            issue_id = int(issue["id"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            continue
+        issue_id = int(issue["id"])
         if _issue_linked_affair_id(db, issue_id):
             continue  # represented via its affair's own entry, if any.
         dir_key = f"issue-{issue_id}"
