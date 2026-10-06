@@ -1,12 +1,9 @@
 """#173：物理移除退役的 armies.maintenance_per_turn 列。月饷由 army_needed(按兵力派生)唯一承载。
 
-本文件验删列后的契约——维护费彻底不再是字段：
-  · schema 无该列；
+本文件验现役契约——维护费不再是字段：
   · 建军唯一必填=manpower（维护费键给了也当未知键忽略；inf 等极值不崩建军）；
   · army_delta 写维护费/军费 → 别名已删 → 当非法字段逐项拒收（同信封合法字段照落）；
-  · 月饷纯由兵力派生（army_needed），与已删的维护费无关；
-  · extractor 写端 prompt 不再教军队维护费。
-（PR2「写端脱钩」时维护费列尚在的脏值/严格度语义已随列删除一并退场。）
+  · 月饷纯由兵力派生（army_needed），与维护费无关。
 """
 
 import pytest
@@ -24,12 +21,6 @@ def _pay_source():
         "province_pay_share": 1.0,
         "central_pay_share": 0.0,
     }
-
-
-# ── schema：列已物理删除（真实迁移／重开；无孤立 PRAGMA 缺席自证）──
-
-
-
 
 
 # ── 建军：manpower 唯一必填，维护费不再是字段 ──────────────────────────

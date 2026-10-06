@@ -117,7 +117,7 @@ def test_new_save_persistent_population_unit_marker(game):
 
 
 
-# ── prompt 契约（④ new-save / ⑤ old-save）＋ F2 机面/玩家面拆分 ────────────
+# ── prompt 契约（new-save）＋ F2 机面/玩家面拆分 ──────────────────────────
 
 
 

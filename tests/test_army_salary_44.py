@@ -67,7 +67,7 @@ def test_army_needed_non_ming_no_pay(read_game):
 def test_defected_army_to_ming_owes_salary_not_free(read_game):
     """#44 ship-pre cmr R1（codex high）：原非明军经 owner_power 翻成 ming（倒戈/招安，军务 extractor
     prompt 明确要求写归属）后，salary_rate<=0（非明军 content 默认 0）不得让 army_needed 返 0 =
-    零饷白嫖军——这正是 #44 已经募兵入口（_coerce_new_salary_rate 默认 1.5）+ 迁移入口
+    零饷白嫖军——这正是 #44 已经募兵入口（_coerce_new_salary_rate 默认 1.5）
     堵住、但经 runtime 易主漏网的同一 exploit。army_needed 对
     ming + manpower>0 + rate<=0 锚定 1.5 → 应发>0。"""
     db, state, _ = read_game
@@ -85,23 +85,6 @@ def test_defected_army_to_ming_owes_salary_not_free(read_game):
         f"倒戈成 ming 的大军(rate<=0)须按锚点 1.5 欠饷、非零饷白嫖（army_needed={needed}）"
     )
     assert needed > 0
-
-
-def _insert_dynamic_ming_army(db, aid, name, manpower):
-    """构造旧档动态明军（id 不在 content）：salary_rate 留 0（旧档 default）模拟未迁移态。
-    #173：维护费列已删，不再传 maintenance。"""
-    db.conn.execute(
-        "INSERT INTO armies (id, name, station, theater, commander, controller, troop_type, "
-        "manpower, supply, morale, training, equipment, arrears, mobility, "
-        "loyalty, salary_rate, status, owner_power) "
-        "VALUES (?, ?, '某地', 'jingji', '某将', 'ming', '步', ?, 80, 70, 60, 50, 0, 50, 70, 0, '驻防', 'ming')",
-        (aid, name, manpower),
-    )
-
-
-
-
-
 
 
 

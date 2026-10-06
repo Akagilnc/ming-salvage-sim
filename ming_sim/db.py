@@ -5148,7 +5148,6 @@ class GameDB:
         if not isinstance(st, dict):
             raise ValueError("settle.st 非法")
         st["军饷欠"] = standalone_arrears + row_arrears_total
-                                # 末尾另有 commit 兜底，此处显式化事务边界、不依赖后续步骤的提交时机）
 
     def _backfill_person_core_character_static_fields(self) -> None:
         mao = self.content.characters.get("毛文龙")
