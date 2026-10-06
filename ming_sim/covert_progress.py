@@ -1956,6 +1956,8 @@ def _apply_investigation_selection(
         else:
             # 未知情不替其压案：不落这项事实，也不改任何实证（P6 人物决定归人物，
             # 但引擎不替一个不知情的人记下他"压了案"）。拒收走 canonical 通道。
+            # 项级事实准入拒收：不得用 invalid_enum——月链将该类别当作整份 4a
+            # 声明无效并回滚同批合法实入（#1835 S1；整项缺 effort 等仍用 invalid_enum）。
             reaction_rejections.append(RejectedItem(
                 item={
                     "order_id": oid,
@@ -1963,7 +1965,7 @@ def _apply_investigation_selection(
                     "form": str(suppression.get("form") or ""),
                 },
                 reason="无真实关系网知情来源，不承接压案声明",
-                category="invalid_enum",
+                category="missing_ref",
                 source=source,
             ))
     if acts:
