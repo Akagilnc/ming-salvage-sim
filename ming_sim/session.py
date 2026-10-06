@@ -160,6 +160,26 @@ class AudienceChatTurn:
     user_message_id: int
 
 
+class AudienceChatUndoError(Exception):
+    """撤回资格失败：结构化码供入口映射，不靠正文子串判别。"""
+
+    def __init__(self, detail: str, *, code: str = "conflict") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        # code: conflict | not_found（入口映射 409 / 404）
+        self.code = code
+
+
+@dataclass(frozen=True)
+class AudienceChatUndoResult:
+    """撤回业务结果；呈现字段（history/directives 投影）由入口补。"""
+
+    minister_name: str
+    night_id: int
+    undone_chat_turn_id: int
+    campaign_id: str = ""
+
+
 @dataclass
 class ChatTurnResult:
     """场景召对一轮结果（#1902 T6：只保留现役产者字段）。
@@ -1382,6 +1402,132 @@ class GameSession:
         phase = "court_break" if court_action == "court_break" else "after_reply"
         self.db.mark_post_reply_failure(turn.chat_turn_id, phase, pack)
         return True
+
+    def can_undo_last_audience_chat(self, minister_name: str) -> bool:
+        """撤回资格共核（#1902 J3）：相位 + 全局末轮完整回话。入口只读。"""
+        if self.state.turn_phase not in (
+            TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value,
+        ):
+            return False
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+
+        if minister_name == SCENE_CHAT_SPEAKER:
+            night = get_open_night(self.db)
+            if night:
+                turns = self.db.list_hall_chat_turns(int(night["id"]))
+                active = next(
+                    (row for row in reversed(turns) if row["status"] == "active"),
+                    None,
+                )
+                return bool(
+                    active
+                    and active["user_message_id"]
+                    and active["minister_message_id"]
+                    and self.db.is_global_last_active_chat_turn(int(active["id"]))
+                )
+        return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
+
+    def undo_last_audience_chat(
+        self,
+        minister_name: str,
+        *,
+        gate_held: bool = False,
+        write_queue: Any = None,
+    ) -> AudienceChatUndoResult:
+        """撤回最近一轮完整召对的业务编排共核（#1902 J3 / #1816）。
+
+        资格判定、取消在飞票据／转译、DB 逆转、作废旧草案、重排恢复预推、
+        刷新运行时均在此。入口只做 HTTP 异常映射与呈现投影。
+        不新增取消机制或领域规则；复用既有 write_queue / translation / DB 原语。
+        """
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+        from ming_sim.audience_translation import cancel_turn_translation
+        from ming_sim.session_write_queue import get_session_write_queue
+
+        target = str(minister_name or "").strip()
+        if target == SCENE_CHAT_SPEAKER:
+            night = get_open_night(self.db)
+            if night:
+                turns = self.db.list_hall_chat_turns(int(night["id"]))
+                active = next(
+                    (row for row in reversed(turns) if row["status"] == "active"),
+                    None,
+                )
+                if active:
+                    owner = str(active["minister_name"])
+                    if owner != target:
+                        owner_last = self.db.get_last_active_chat_turn(
+                            owner, self.state.turn,
+                        )
+                        if not owner_last or int(owner_last["id"]) != int(active["id"]):
+                            raise AudienceChatUndoError(
+                                "只能撤回全局最后一轮召对。", code="conflict",
+                            )
+                        # 殿上投影指向真实 owner 轮：业务按 owner 撤，调用方再投殿上呈现。
+                        return self.undo_last_audience_chat(
+                            owner, gate_held=gate_held, write_queue=write_queue,
+                        )
+
+        if self.state.turn_phase not in (
+            TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value,
+        ):
+            raise AudienceChatUndoError(
+                "本回合已经进入颁诏结算，不能撤回召对。", code="conflict",
+            )
+        row = self.db.get_last_active_chat_turn(target, self.state.turn)
+        if row is None:
+            raise AudienceChatUndoError(
+                "本回合没有可撤回的召对。", code="not_found",
+            )
+        if not self.db.is_global_last_active_chat_turn(int(row["id"])):
+            raise AudienceChatUndoError(
+                "只能撤回全局最后一轮召对。", code="conflict",
+            )
+        if not row.get("user_message_id") or not row.get("minister_message_id"):
+            raise AudienceChatUndoError(
+                "该召对尚未完整完成，不能撤回。", code="conflict",
+            )
+
+        queue = write_queue if write_queue is not None else get_session_write_queue(self)
+        turn_id = int(row["id"])
+        # #1353 / ADR 0038：撤回轮取消其在飞票据（空放行、不复活写库）。
+        # #1842 / ADR 0155：同步终结该轮在飞转译 Future。
+        queue.cancel_key(("turn", turn_id))
+        cancel_turn_translation(
+            turn_id, write_queue=queue, gate_held=gate_held,
+        )
+        try:
+            undone = self.db.undo_chat_turn(turn_id)
+        except ValueError as exc:
+            raise AudienceChatUndoError(str(exc), code="conflict") from exc
+
+        self.note_chat_rollback(
+            deleted_committed_draft_ids=undone.get("deleted_committed_draft_ids"),
+        )
+        restored_ids = [
+            int(item) for item in (undone.get("restored_pending_action_ids") or [])
+        ]
+        if restored_ids:
+            from ming_sim.decree_forecast import (
+                bind_forecast_owner, schedule_pending_decree_forecast,
+            )
+            bind_forecast_owner(self)
+            open_night_row = get_open_night(self.db)
+            if open_night_row is not None:
+                for pending_id in restored_ids:
+                    schedule_pending_decree_forecast(
+                        self, pending_id, night_id=int(open_night_row["id"]),
+                    )
+        self.refresh_runtime_after_chat_rollback()
+        campaign_id = ""
+        if hasattr(self.db, "kv_get"):
+            campaign_id = str(self.db.kv_get("campaign_id") or "")
+        return AudienceChatUndoResult(
+            minister_name=target,
+            night_id=int(row.get("night_id") or 0),
+            undone_chat_turn_id=int(undone["id"]),
+            campaign_id=campaign_id,
+        )
 
     def execute_interrupted_reply_retry(
         self,

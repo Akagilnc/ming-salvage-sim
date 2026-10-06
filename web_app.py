@@ -1848,17 +1848,8 @@ class WebGame:
         return f"scene-night-pending-turn-{int(self.state.turn)}"
 
     def can_undo_last_chat(self, minister_name: str) -> bool:
-        if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
-            return False
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        if minister_name == SCENE_CHAT_SPEAKER:
-            night = get_open_night(self.db)
-            if night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
-                active = next((row for row in reversed(turns) if row["status"] == "active"), None)
-                return bool(active and active["user_message_id"] and active["minister_message_id"]
-                            and self.db.is_global_last_active_chat_turn(int(active["id"])))
-        return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
+        """#1902 J3：资格在会话共核；Web 只转发。"""
+        return bool(self.session.can_undo_last_audience_chat(minister_name))
 
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
         """同夜场景共用一个 agent session：前轮回话未落定时不准开下一轮。
@@ -1922,82 +1913,39 @@ class WebGame:
             self.chat_history.setdefault(name, []).extend(msgs)
 
     def undo_last_chat(self, minister_name: str, *, gate_held: bool = False) -> Dict[str, Any]:
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-        if minister_name == SCENE_CHAT_SPEAKER:
-            night = get_open_night(self.db)
-            if night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
-                active = next((row for row in reversed(turns) if row["status"] == "active"), None)
-                if active:
-                    owner = str(active["minister_name"])
-                    if owner != minister_name:
-                        owner_last = self.db.get_last_active_chat_turn(owner, self.state.turn)
-                        if not owner_last or int(owner_last["id"]) != int(active["id"]):
-                            raise HTTPException(status_code=409, detail="只能撤回全局最后一轮召对。")
-                        result = self.undo_last_chat(owner, gate_held=gate_held)
-                        result["history"] = self.chat_projection(minister_name)
-                        result["can_undo_last_chat"] = self.can_undo_last_chat(minister_name)
-                        return result
-        if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
-            raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
-        row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
-        if row is None:
-            raise HTTPException(status_code=404, detail="本回合没有可撤回的召对。")
-        if not self.db.is_global_last_active_chat_turn(int(row["id"])):
-            raise HTTPException(status_code=409, detail="只能撤回全局最后一轮召对。")
-        if not row.get("user_message_id") or not row.get("minister_message_id"):
-            raise HTTPException(status_code=409, detail="该召对尚未完整完成，不能撤回。")
-        # #1353 / ADR 0038：撤回轮取消其在飞票据（空放行、不复活写库）。
-        # #1842 / ADR 0155：同步终结该轮在飞转译 Future；落账临界区另复查源轮存活。
-        # ADR 0005：取消路径意外异常响亮上抛，禁 except Exception: pass。
-        turn_id = int(row["id"])
-        self._runtime_write_queue().cancel_key(("turn", turn_id))
-        from ming_sim.audience_translation import cancel_turn_translation
-        cancel_turn_translation(
-            turn_id,
-            write_queue=self._runtime_write_queue(),
-            gate_held=gate_held,
-        )
+        """#1902 J3：撤回业务在会话共核；此处只映射 HTTP 与呈现。"""
+        from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+        from ming_sim.session import AudienceChatUndoError
+
+        requested = minister_name
         try:
-            undone = self.db.undo_chat_turn(turn_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from None
-        # P1-2：撤回若删了已 commit 的对话草案，作废已生成的诏书正文（last_decree），
-        # 不让玩家原样颁出含被撤回指令的陈旧诏书。
-        self.session.note_chat_rollback(
-            deleted_committed_draft_ids=undone.get("deleted_committed_draft_ids"))
-        restored_ids = [
-            int(item) for item in (undone.get("restored_pending_action_ids") or [])
-        ]
-        if restored_ids:
-            from ming_sim.audience_night import get_open_night
-            from ming_sim.decree_forecast import (
-                bind_forecast_owner, schedule_pending_decree_forecast,
+            core = self.session.undo_last_audience_chat(
+                minister_name,
+                gate_held=gate_held,
+                write_queue=self._runtime_write_queue(),
             )
-            bind_forecast_owner(self.session)
-            open_night_row = get_open_night(self.db)
-            if open_night_row is not None:
-                for pending_id in restored_ids:
-                    schedule_pending_decree_forecast(
-                        self.session, pending_id, night_id=int(open_night_row["id"]),
-                    )
-        self.session.refresh_runtime_after_chat_rollback()
+        except AudienceChatUndoError as exc:
+            status = 404 if exc.code == "not_found" else 409
+            raise HTTPException(status_code=status, detail=exc.detail) from None
+
+        # Web 呈现缓存：历史投影依赖 chat_history。
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
             self.chat_history.setdefault(name, []).extend(msgs)
-        character = None if minister_name == "殿上" else self.session._character(minister_name)
+        # 殿上入口撤回真实 owner 轮时，history/can_undo 仍按殿上投影（旧行为）。
+        present_as = requested if requested == SCENE_CHAT_SPEAKER else core.minister_name
         return {
-            "minister": minister_name,
-            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
-            "night_id": int(row.get("night_id") or 0),
-            "undone_chat_turn_id": int(undone["id"]),
+            "minister": core.minister_name,
+            "campaign_id": core.campaign_id,
+            "night_id": int(core.night_id),
+            "undone_chat_turn_id": int(core.undone_chat_turn_id),
             # #499 同一 turn-identified 投影：撤回后剩余轮的读心仍按轮归位
-            "history": self.chat_projection(minister_name),
+            "history": self.chat_projection(present_as),
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
             "secret_orders": project_secret_orders_for_player(self.db.list_secret_orders()),
-            "can_undo_last_chat": self.can_undo_last_chat(minister_name),
+            "can_undo_last_chat": self.can_undo_last_chat(present_as),
         }
 
     def _chat_payload(

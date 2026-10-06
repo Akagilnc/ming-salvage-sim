@@ -161,18 +161,23 @@ def replace_database(
 
     ``runtime`` 须提供 ``session`` / ``db_path``；换库成功后其 ``session`` 已指向
     新建的候选会话。失败则还原替换前的数据库与 runtime，并照原异常上抛。
+
+    #1902 J2：旧关闭未完成且文件尚未替换时，**不得**无条件删库/复制备份/重建。
+    文件恢复只在 close 已完成或破坏性替换已发生之后，按既有 close／restorable 接缝处置。
     """
     backup_fd, backup_path = tempfile.mkstemp(prefix="ming-hot-replace-", suffix=".db")
     os.close(backup_fd)
     old_session = runtime.session
     old_config = old_session.llm_config
     backup_complete = False
+    old_closed = False
+    files_replaced = False
     queue = host.write_queue(runtime)
     entry_lock = host.entry_lock(runtime)
     queue.seal()
 
     def _replace() -> None:
-        nonlocal backup_complete
+        nonlocal backup_complete, old_closed, files_replaced
         gate = queue.write_gate
         gate.acquire()
         entry_lock.acquire()
@@ -186,10 +191,13 @@ def replace_database(
             runtime.db.backup_to(backup_path)
             backup_complete = True
             old_session.close(write_gate_already_held=True)
+            old_closed = True
             destructive_replace()
+            files_replaced = True
             host.rebuild(runtime, old_config)
         except Exception as replace_exc:
-            if not backup_complete:
+            # 备份前失败、或 close 未完成且文件未动：原样上抛，不碰主库文件。
+            if not backup_complete or (not old_closed and not files_replaced):
                 raise
             try:
                 # 恢复重建前必须处置失败候选；仍活则禁止改文件/二次 rebuild。
