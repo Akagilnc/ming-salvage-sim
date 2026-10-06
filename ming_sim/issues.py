@@ -5921,7 +5921,9 @@ def apply_office_appointment(
                 )
             )
             if new_office_type == "后宫":
-                raise ValueError("后宫任命已退役")
+                raise OfficeAppointmentRejection(
+                    "后宫任命已退役", category="invalid_enum",
+                )
             # Resolved seat is the sole identity for write / displace / projection.
             # Local same-office omit-region reuses character_offices; central strips.
             seat = _resolve_appointment_seat(
@@ -5966,9 +5968,13 @@ def apply_office_appointment(
             ch.office = new_office
             ch.office_type = new_office_type
             ch.office_region = seat
-        except Exception as exc:
+        except OfficeAppointmentRejection as exc:
+            # Typed LLM/input refusal → rejected item (ADR 0005 / #1853).
             _restore_person_write_state(db, content, snapshot, commit=commit)
             return _office_appointment_failure(name, new_office, exc)
+        except Exception:
+            _restore_person_write_state(db, content, snapshot, commit=commit)
+            raise
         return {
             "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
             "kind": "transfer", "reason": reason,
@@ -5985,8 +5991,8 @@ def apply_office_appointment(
     # office_type 必须透传：apply_appointment→add_character 靠它走 person-title 守卫（名分不建
     # offices 父行、不写 character_offices）。漏传则 infer 兜成「待铨」→ 名分人物被当普通官职、
     # 建脏 character_offices 行（#1058 接缝回归；transfer 分支已带 new_office_type，此处对称补齐）。
-    # 建档抛错(DB 锁/唯一约束/注册失败)不得上抛崩月末结算致半落库(P1 铁律);
-    # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
+    # Typed seat/input refusals → rejected item; schema/code faults restore then
+    # re-raise (ADR 0005 / #1853).
     snapshot = _snapshot_person_write_state(db, content)
     try:
         new_office, new_office_type, appointment_tenure, raw_seat = (
@@ -6001,7 +6007,9 @@ def apply_office_appointment(
             )
         )
         if new_office_type == "后宫":
-            raise ValueError("后宫任命已退役")
+            raise OfficeAppointmentRejection(
+                "后宫任命已退役", category="invalid_enum",
+            )
         seat = _resolve_appointment_seat(
             db,
             name=name,
@@ -6032,12 +6040,15 @@ def apply_office_appointment(
             )
             return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
                     **({"displaced": displaced_parts} if displaced_parts else {})}
-    except Exception as exc:
+    except OfficeAppointmentRejection as exc:
         _restore_person_write_state(db, content, snapshot, commit=commit)
         return _office_appointment_failure(
             name, new_office, exc, kind="appoint",
             reason_suffix=f"；原 status={cur_status or '不在册'}",
         )
+    except Exception:
+        _restore_person_write_state(db, content, snapshot, commit=commit)
+        raise
     # apply_appointment 返回假值（查重拒/approved false/字段空——现均改库前早退）：防御性还原快照、
     # 与 except 路对称，确保此分支在任何 apply_appointment 行为下都不留半落库（P1 第一铁律，线上 gemini R3）。
     _restore_person_write_state(db, content, snapshot, commit=commit)

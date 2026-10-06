@@ -14712,9 +14712,11 @@ class GameDB:
                 )
             return seat
         # No typed region this call — only continue an existing same-office seat.
+        # character_offices is required schema (init_schema); missing table
+        # surfaces as SQL error (ADR 0005 / #1853).
         person = str(name or "").strip()
         title = normalize_office(str(office or ""))
-        if person and title and self._table_exists("character_offices"):
+        if person and title:
             row = self.conn.execute(
                 "SELECT office_title, region_id FROM character_offices "
                 "WHERE character_name=?",
@@ -14738,8 +14740,9 @@ class GameDB:
     def character_office_region(self, character_name: object) -> str:
         """Jurisdiction of the character's current appointment (一次任职)."""
         name = str(character_name or "").strip()
-        if not name or not self._table_exists("character_offices"):
+        if not name:
             return ""
+        # Required schema: missing table surfaces as SQL error.
         row = self.conn.execute(
             "SELECT region_id FROM character_offices WHERE character_name=?",
             (name,),
