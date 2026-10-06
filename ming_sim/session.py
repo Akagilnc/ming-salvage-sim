@@ -1404,27 +1404,14 @@ class GameSession:
         return True
 
     def can_undo_last_audience_chat(self, minister_name: str) -> bool:
-        """撤回资格共核（#1902 J3）：相位 + 全局末轮完整回话。入口只读。"""
+        """撤回资格共核（#1902 J3）：相位 + 全局末轮完整回话。入口只读。
+
+        #1902 K1：建轮归属恒为「殿上」（或具名大臣个人轮）；不按旧跨身份 owner 转交。
+        """
         if self.state.turn_phase not in (
             TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value,
         ):
             return False
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-
-        if minister_name == SCENE_CHAT_SPEAKER:
-            night = get_open_night(self.db)
-            if night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
-                active = next(
-                    (row for row in reversed(turns) if row["status"] == "active"),
-                    None,
-                )
-                return bool(
-                    active
-                    and active["user_message_id"]
-                    and active["minister_message_id"]
-                    and self.db.is_global_last_active_chat_turn(int(active["id"]))
-                )
         return self.db.can_undo_last_chat_turn(minister_name, self.state.turn)
 
     def undo_last_audience_chat(
@@ -1439,35 +1426,15 @@ class GameSession:
         资格判定、取消在飞票据／转译、DB 逆转、作废旧草案、重排恢复预推、
         刷新运行时均在此。入口只做 HTTP 异常映射与呈现投影。
         不新增取消机制或领域规则；复用既有 write_queue / translation / DB 原语。
+
+        #1902 K1：殿上轮读写契约固定 minister_name=「殿上」；删除不可达的
+        旧 owner 跨身份转交／递归兼容分支。
         """
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
+        from ming_sim.audience_night import get_open_night
         from ming_sim.audience_translation import cancel_turn_translation
         from ming_sim.session_write_queue import get_session_write_queue
 
         target = str(minister_name or "").strip()
-        if target == SCENE_CHAT_SPEAKER:
-            night = get_open_night(self.db)
-            if night:
-                turns = self.db.list_hall_chat_turns(int(night["id"]))
-                active = next(
-                    (row for row in reversed(turns) if row["status"] == "active"),
-                    None,
-                )
-                if active:
-                    owner = str(active["minister_name"])
-                    if owner != target:
-                        owner_last = self.db.get_last_active_chat_turn(
-                            owner, self.state.turn,
-                        )
-                        if not owner_last or int(owner_last["id"]) != int(active["id"]):
-                            raise AudienceChatUndoError(
-                                "只能撤回全局最后一轮召对。", code="conflict",
-                            )
-                        # 殿上投影指向真实 owner 轮：业务按 owner 撤，调用方再投殿上呈现。
-                        return self.undo_last_audience_chat(
-                            owner, gate_held=gate_held, write_queue=write_queue,
-                        )
-
         if self.state.turn_phase not in (
             TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value,
         ):

@@ -1913,11 +1913,12 @@ class WebGame:
             self.chat_history.setdefault(name, []).extend(msgs)
 
     def undo_last_chat(self, minister_name: str, *, gate_held: bool = False) -> Dict[str, Any]:
-        """#1902 J3：撤回业务在会话共核；此处只映射 HTTP 与呈现。"""
-        from ming_sim.audience_night import SCENE_CHAT_SPEAKER
+        """#1902 J3：撤回业务在会话共核；此处只映射 HTTP 与呈现。
+
+        #1902 K1：不保留殿上→具名大臣转交的呈现分流；轮归属即请求名。
+        """
         from ming_sim.session import AudienceChatUndoError
 
-        requested = minister_name
         try:
             core = self.session.undo_last_audience_chat(
                 minister_name,
@@ -1932,20 +1933,19 @@ class WebGame:
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
             self.chat_history.setdefault(name, []).extend(msgs)
-        # 殿上入口撤回真实 owner 轮时，history/can_undo 仍按殿上投影（旧行为）。
-        present_as = requested if requested == SCENE_CHAT_SPEAKER else core.minister_name
+        present = core.minister_name
         return {
-            "minister": core.minister_name,
+            "minister": present,
             "campaign_id": core.campaign_id,
             "night_id": int(core.night_id),
             "undone_chat_turn_id": int(core.undone_chat_turn_id),
             # #499 同一 turn-identified 投影：撤回后剩余轮的读心仍按轮归位
-            "history": self.chat_projection(present_as),
+            "history": self.chat_projection(present),
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
             "secret_orders": project_secret_orders_for_player(self.db.list_secret_orders()),
-            "can_undo_last_chat": self.can_undo_last_chat(present_as),
+            "can_undo_last_chat": self.can_undo_last_chat(present),
         }
 
     def _chat_payload(
