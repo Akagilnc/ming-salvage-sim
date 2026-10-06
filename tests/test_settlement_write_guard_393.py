@@ -57,14 +57,6 @@ class _RecordingDB:
     def set_character_status(self, *a, **k):
         self.writes.append("set_character_status")
 
-    def admin_upsert(self, *a, **k):
-        self.writes.append("admin_upsert")
-        return {"key": "x", "value": "1"}
-
-    def admin_delete(self, *a, **k):
-        self.writes.append("admin_delete")
-        return 1
-
 
 class _FakeGame:
     def __init__(self, turn_phase: str):
@@ -199,8 +191,6 @@ def _endpoint_cases():
         ("favorite_add", lambda: web_app.api_add_favorite("某大臣")),
         ("favorite_remove", lambda: web_app.api_remove_favorite("某大臣")),
         ("court_layout", lambda: web_app.api_set_court_layout({"layout": "{}"})),
-        ("admin_upsert", lambda: web_app.api_admin_upsert("metrics", {"key": "国库", "value": "1"})),
-        ("admin_delete", lambda: web_app.api_admin_delete("metrics", {"pk_value": "国库"})),
         ("portrait_delete", lambda: web_app.api_delete_portrait("某大臣")),
         # 会话层写端点（cmr Gate2 Finding1 残面：也须走 _write_gate，否则 _refuse_if_settling
         # 的相位检查守不住 pre_settle 窗口）。守门先于 session 调用触发，故 fake session 无需实现这些方法。

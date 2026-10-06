@@ -1,0 +1,41 @@
+=== F21 CMD strip-with-args ===
+ming_sim/llm_config.py:208:    base = base_url.rstrip("/")
+ming_sim/cli/terminal.py:561:            if len(parts) == 2 and parts[1].lstrip("#").isdigit():
+ming_sim/cli/terminal.py:562:                target_id = int(parts[1].lstrip("#"))
+ming_sim/db.py:2812:            cleaned = office.replace("（在途）", "").replace("(在途)", "").strip().rstrip(",，")
+
+=== F21 judge samples after ===
+ming_sim/declaration_dispatch.py:1017:purpose = str(grant.get("purpose") or "")
+ming_sim/db.py:5820:note = f"人物终态：{status}；{reason}" if str(reason or "") else f"人物终态：{status}"
+ming_sim/cli_backend.py:2572:# Free prose title/body supply: preserve raw; emptiness on copy (#1834 F21).
+ming_sim/cli_backend.py:2584:f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
+=== F22 ABSENT named ===
+validate_rescript_draft_items hits=0
+_apply_option_heal hits=0
+execution_distortion_weight hits=0
+run_agent_stream_text hits=0
+stage_grant_allocation_candidate hits=0
+=== F23 admin/manual ===
+ADMIN_TABLES hits=0
+api_admin hits=0
+/admin hits=0
+_ADMIN_HTML hits=0
+admin_upsert hits=0
+admin_page hits=0
+CLI add path:
+(none)
+=== F24 auto proxy ===
+_submit_first_cli_decisions hits=0
+project_preferred_hitl_choice hits=0
+自动取首选项 hits=0
+submit_hitl_choices hits=43
+  tests/test_pihong_dossier_1490.py:1664:        session.submit_hitl_choices(choice, write_gate=nullcontext())
+  ming_sim/session.py:2326:    def submit_hitl_choices(
+  ming_sim/session.py:2346:            raise ValueError("submit_hitl_choices 须注入既有 write_gate")
+  ming_sim/session.py:2379:        submit_hitl_choices（keyed，调用方注入既有 write_gate），desk 空亦无例外。
+  ming_sim/session.py:2384:                "submit_decisions 仅续跑空 choices；已裁批须经 submit_hitl_choices/"
+  tests/test_fiscal_levy_effect.py:1369:    session.submit_hitl_choices(
+  tests/test_fiscal_levy_effect.py:1459:    session.submit_hitl_choices(
+  tests/test_fiscal_levy_effect.py:1538:    session.submit_hitl_choices(
+  tests/test_fiscal_levy_effect.py:1555:    # submit_hitl_choices note 夹具 → presented.emperor_note 原样
+  tests/test_player_payload_1022.py:72:    def submit_hitl_choices(self, *_args, write_gate=None, **_kwargs):

@@ -49,12 +49,6 @@ from ming_sim.issues import (
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import imperial_authority_band, power_band, qualitative_character_axis
-from ming_sim.appointment_tenure import (
-    DEFAULT_APPOINTMENT_TENURE,
-    command_power_rank,
-    execution_distortion_weight,
-    normalize_appointment_tenure,
-)
 from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.decree_vocabulary import (
     dossier_action_policy,

@@ -517,8 +517,9 @@ def review_directives(session: GameSession) -> str:
                 print(f"{idx}. #{d.id}")
                 print(f"   {wrap(d.text)}")
         elif not pending and not staged_directives:
-            print("（暂无指令。back 继续召见，或 add 新增。）")
-        print("\n操作：issue 结束回合 | back 继续召见 | add 新增 | edit N 改 | del N 删 | exit 退出")
+            print("（暂无指令。back 继续召见。）")
+        # #1812 第6项：手写拟诏台已删；旨意只从召对来。del 仍可清已有草案。
+        print("\n操作：issue 结束回合 | back 继续召见 | del N 删 | exit 退出")
         raw = input("诏书草案> ").strip()
         if not raw:
             continue
@@ -545,58 +546,22 @@ def review_directives(session: GameSession) -> str:
                 # 恢复态：上月结算未完成（崩溃/中止后），跳过拟诏直接续跑结算——
                 # resolve_turn 的恢复分流自己决定重放/重新推演/回放决策点
                 # （ship-pre r3：write_decree 在此态必拒，不开此口 CLI 永远够不到恢复入口）。
+                # #1812 第9项：未完成转译恢复保留。
                 print("\n检测到上月结算未完成，续跑结算……")
                 return "issue"
             return "issue"
+        if lowered in {"add", "新增", "edit", "改", "修改"} or raw == "新增":
+            print("CLI 已无手写拟诏入口；旨意只从召对来。")
+            continue
         # 变更器统一接 ValueError（FRONT_HALF_DONE 冻结期的指引消息）：打印后留在
         # 审阅循环，不崩出进程（ship-pre r2，与 write_decree 既有 try 同款）。
         try:
-            if lowered == "add" or raw == "新增":
-                # Free prose directive: preserve raw; emptiness on local copy (#1834 F16).
-                text = input("指令内容：")
-                if text.strip():
-                    from ming_sim.cli_backend import capture_manual_directive_payload
-                    dv = session.add_directive(
-                        text,
-                        dossier_payload=capture_manual_directive_payload(
-                            text, session.llm_config,
-                            **({"db": session.db, "content": session.content}
-                               if getattr(session, "content", None) is not None else {}),
-                        ),
-                    )
-                    print(f"已新增草案 #{dv.id}。")
-                else:
-                    print("指令为空，已取消。")
-                continue
             parts = raw.split(maxsplit=1)
             verb = parts[0].lower()
             if len(parts) == 2 and parts[1].lstrip("#").isdigit():
                 target_id = int(parts[1].lstrip("#"))
                 if verb in {"edit", "改", "修改"}:
-                    if not any(d.id == target_id for d in drafts):
-                        print("没有这条草案。")
-                        continue
-                    # Free prose directive: preserve raw; emptiness on local copy (#1834 F16).
-                    new_text = input("新的指令内容：")
-                    if new_text.strip():
-                        from ming_sim.cli_backend import capture_manual_directive_payload
-                        row = next(
-                            r for r in session.db.list_directives(
-                                session.state, statuses=("draft",),
-                            ) if int(r["id"]) == target_id
-                        )
-                        existing_payload = session.db.read_directive_dossier_payload(row)
-                        session.update_directive(
-                            target_id,
-                            new_text,
-                            dossier_payload=capture_manual_directive_payload(
-                                new_text, session.llm_config,
-                                existing_mode=existing_payload.get("mode"),
-                                **({"db": session.db, "content": session.content}
-                                   if getattr(session, "content", None) is not None else {}),
-                            ),
-                        )
-                        print("已修改。")
+                    print("CLI 已无手写改旨入口；旨意只从召对来。")
                     continue
                 if verb in {"del", "delete", "删", "删除"}:
                     if any(d.id == target_id for d in drafts):
@@ -613,25 +578,18 @@ def review_directives(session: GameSession) -> str:
         print("未识别操作。")
 
 
-def _submit_first_cli_decisions(session: GameSession, result) -> str:
-    """CLI 暂无亲裁 UI：所有结算入口共用同一首选项续跑策略。
-
-    #657：经 session.submit_hitl_choices 唯一编排；注入既有 `_cli_write_gate`。
-    首选项投影走 ``project_preferred_hitl_choice`` 唯一真源（急务=follow_draft+capability）。
-    """
-    if result is None or not result.awaiting:
-        return "" if result is None else result.report
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
-
-    print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
-    # result.decisions 已是合并 desk；若空则回读 session.pending_decisions
+def _report_cli_hitl_gap(session: GameSession, result) -> str:
+    """CLI 缺亲裁能力：如实报告，不自动代裁（#1812 第9项 / #1834 F24）。"""
+    if result is None:
+        return ""
+    if not result.awaiting:
+        return result.report
     decisions = list(result.decisions or []) or list(session.pending_decisions())
-    choices = []
+    print("\n【月末重大抉择】CLI 暂无亲裁能力，不能代为批红；请使用网页版提交亲裁。")
     for decision in decisions:
-        item = project_preferred_hitl_choice(decision)
-        print(f"  · {decision.get('title')} → {item.get('label', '（无）')}")
-        choices.append(item)
-    return session.submit_hitl_choices(choices, write_gate=_cli_write_gate(session))
+        title = decision.get("title") if isinstance(decision, dict) else decision
+        print(f"  · 待裁：{title}")
+    return result.report
 
 
 def play_turn(session: GameSession) -> None:
@@ -675,7 +633,7 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.advance_without_decree()
-                report = _submit_first_cli_decisions(session, result)
+                report = _report_cli_hitl_gap(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
@@ -692,6 +650,9 @@ def play_turn(session: GameSession) -> None:
                 print(report)
                 if getattr(session.state, "ended", False):
                     return
+                if getattr(result, "awaiting", False):
+                    # #1812 第9项：缺亲裁能力已报告，停在 awaiting，不重入审阅循环。
+                    return
                 if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
                     session.end_turn()
                     return
@@ -705,7 +666,7 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.resolve_turn()
-                report = _submit_first_cli_decisions(session, result)
+                report = _report_cli_hitl_gap(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）/ 契约失败（#1700）：打印指引后留在
                 # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。
@@ -720,6 +681,9 @@ def play_turn(session: GameSession) -> None:
             if result is not None:
                 print(report)
                 if getattr(session.state, "ended", False):
+                    return
+                if getattr(result, "awaiting", False):
+                    # #1812 第9项：缺亲裁能力已报告，停在 awaiting，不重入审阅循环。
                     return
                 if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
                     session.end_turn()

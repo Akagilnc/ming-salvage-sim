@@ -112,7 +112,7 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
+    monkeypatch.setattr(term, "_report_cli_hitl_gap", lambda *_a: "")
 
     term.play_turn(sess)
 
@@ -569,11 +569,9 @@ def test_cli_write_gate_canonical_session_attr():
     assert getattr(session, "_write_gate", None) is gate
     # 二次调用同锁
     assert term._cli_write_gate(session) is gate
-
-
 @pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
-    """#1843/PR #1876: HITL 续跑实际推进月份后，play_turn 必须调用 end_turn 并结束本回合。"""
+def test_play_turn_hitl_awaits_without_auto_proxy(game, monkeypatch, action, capsys):
+    """#1812 第9项 / #1834 F24：CLI 缺亲裁能力，不自动代裁，月份不推进。"""
     from tests.month_chain_helpers import make_light_session
 
     db, state, content = game
@@ -593,19 +591,17 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
 
     session = make_light_session(db, state, content)
 
-    # 中和外部 LLM 边界，推演主链与亲裁续跑全走真实逻辑
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr("ming_sim.month_translate.translate_month_segment", lambda *a, **k: {"effects": {}})
 
-    # 单次操作迭代器：未正确 end_turn + return 时若重入交互循环，next 会抛 StopIteration
-    actions = iter([action])
+    actions = iter([action, "SHOULD_NOT_REENTER"])
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
 
     term.play_turn(session)
 
-    # 验证月份已真实推进，且 end_turn 已被调用将 turn_phase 重置为 summoning
-    assert int(session.state.turn) == turn_before + 1
-    assert session.current_phase() == TurnPhase.SUMMONING
-    assert db.load_state().turn_phase == TurnPhase.SUMMONING.value
+    out = capsys.readouterr().out
+    assert "缺亲裁能力" in out or "不能代为批红" in out
+    assert int(session.state.turn) == turn_before
+    assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value

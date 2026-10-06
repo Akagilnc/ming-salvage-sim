@@ -947,45 +947,6 @@ def test_manual_directive_capture_reaches_structured_dossier(
     else:
         assert "authorization_id" not in json.loads(dossier["payload_json"])
 
-@pytest.mark.parametrize("bad_roster", [
-    ["韩阁老"],
-    [{"tier": "主办"}],
-    {"character_id": "韩阁老", "tier": "主办"},
-])
-def test_manual_directive_capture_rejects_malformed_roster(
-    game, monkeypatch, bad_roster,
-):
-    import ming_sim.cli_backend as cli_backend
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    response = {
-        "拟旨意图": "拟旨", "动作类型": "assignment",
-        "目标类型": "issue", "目标ID": "granary-audit",
-        # #1624：组合契约先过；本测专咬参与人，补事务类别以免挡在组合闸
-        "事务类别": "钱粮", "施行范围": "无",
-        "参与人": bad_roster,
-    }
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
-    )
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    session.content = content
-
-    import ming_sim.cli.terminal as terminal
-
-    answers = iter(["add", "手工旨意", "back"])
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-    assert terminal.review_directives(session) == "back"
-
-    assert db.list_pending_actions(state.turn) == []
-    assert db.list_directives(state) == []
-    assert db.list_decree_dossiers() == []
-
 @pytest.mark.parametrize("tier", [None, "", "旁听"])
 def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_writes(
     game, monkeypatch, tier,
@@ -1052,34 +1013,6 @@ def test_final_decree_edit_path_removed_no_bypass(game):
     assert db.get_dossier_for_directive(directive_id) is None
     assert db.list_directives(state)[0]["text"] == "拨十两赈济"
 
-def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
-    game, monkeypatch, capsys,
-):
-    import ming_sim.cli.terminal as terminal
-    from ming_sim.session import GameSession
-
-    db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "着修河工", "手动新增",
-        dossier_payload={
-            "dossier_action_type": "policy",
-            "target_kind": "issue", "target_id": "river-works",
-        },
-    )
-    db.ensure_dossiers_for_draft_directives(state)
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.enter_review = lambda: None
-    session.back_to_summoning = lambda: None
-    answers = iter([f"edit {directive_id}", f"del {directive_id}", "back"])
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-
-    assert session.list_directives() == []
-    assert terminal.review_directives(session) == "back"
-    assert db.get_dossier_for_directive(directive_id) is not None
-    assert db.list_directives(state)[0]["text"] == "着修河工"
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
     from ming_sim.session import GameSession
@@ -1098,69 +1031,6 @@ def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
     session.advance_without_decree()
 
     assert called == ["resolve"]
-
-def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
-    import ming_sim.cli.terminal as terminal
-    import ming_sim.cli_backend as cli_backend
-    from ming_sim.session import GameSession
-
-    db, state, content = game
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    directive = session.add_directive(
-        "拨十两赈济",
-        dossier_payload={
-            "dossier_action_type": "grant_allocation",
-            "target_kind": "issue",
-            "target_id": "relief",
-            "amount": 10,
-            "account": "国库",
-            "execution_surface": "immediate",
-            "mode": "midzhi",
-        },
-    )
-    revised_text = "改拨二十五两赈济"
-    response = {
-        "拟旨意图": "拟旨",
-        "动作类型": "grant_allocation",
-        "目标类型": "issue",
-        "目标": "relief",
-        "金额": 25,
-        "账户": "国库",
-        "执行面": "immediate",
-        "颁布方式": "ordinary",
-    }
-    prompts = []
-
-    def prompt_faithful_backend(prompt, *_args, **_kwargs):
-        prompts.append(prompt)
-        return (json.dumps(response, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
-    monkeypatch.setattr(session, "write_decree", lambda: revised_text)
-    answers = iter([f"edit {directive.id}", revised_text, "issue", "yes"])
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-    before = state.metrics["国库"]
-
-    assert terminal.review_directives(session) == "issue"
-    assert len(prompts) == 1
-    assert revised_text in prompts[0]
-
-    db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(directive.id)
-    payload = json.loads(dossier["payload_json"])
-    assert dossier["decree_text"] == revised_text
-    assert dossier["action_type"] == "grant_allocation"
-    assert (payload["amount"], payload["account"], payload["mode"]) == (
-        25, "国库", "ordinary",
-    )
-    db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content,
-    )
-    assert state.metrics["国库"] == before - 25
-    assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -25
 
 def test_secret_order_progress_persists_executing_until_terminal(game):
     from ming_sim.db import GameDB

@@ -1013,8 +1013,9 @@ def _commission_grant_payload(
         "locality_scope": write_locality_scope_for_target_kind(target_kind),
         "mode": "ordinary",
     }
-    purpose = str(grant.get("purpose") or "").strip()
-    if purpose:
+    # Free prose purpose: preserve raw; emptiness on local copy (#1834 F21).
+    purpose = str(grant.get("purpose") or "")
+    if purpose.strip():
         payload["purpose"] = purpose
     return payload
 
@@ -1024,8 +1025,8 @@ def _attach_commission_staging_fields(
 ) -> None:
     """透传既有 staging 字段：assignee / participant_roster / due_turn。
 
-    字段可在交办顶层，或挂在 grant 对象内（与 stage_grant_allocation_candidate
-    kwargs 同口径）。期限单源＝due_turn；deadline_months / end_turn 仅作换算输入。
+    字段可在交办顶层，或挂在 grant 对象内。期限单源＝due_turn；
+    deadline_months / end_turn 仅作换算输入。
     """
     grant = item.get("grant") if isinstance(item.get("grant"), Mapping) else {}
     lead = str(

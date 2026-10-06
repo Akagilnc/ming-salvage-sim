@@ -1,0 +1,580 @@
+EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE [ 15%]
+EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE [ 31%]
+EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE [ 47%]
+EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE [ 63%]
+EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE [ 78%]
+EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE [ 94%]
+EEEEEEEEEEEEEEEEEEEEEEEE                                                 [100%]
+==================================== ERRORS ====================================
+___________ ERROR at setup of test_issue_refusal_stays_in_loop[exc0] ___________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___________ ERROR at setup of test_issue_refusal_stays_in_loop[exc1] ___________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___________ ERROR at setup of test_issue_refusal_stays_in_loop[exc2] ___________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___________ ERROR at setup of test_issue_refusal_stays_in_loop[exc3] ___________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________ ERROR at setup of test_cli_does_not_end_unadvanced_turn[issue] ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________ ERROR at setup of test_cli_does_not_end_unadvanced_turn[skip] _________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_review_issue_reaches_staged_directive_default_approval _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_terminal_minister_chat_persists_messages_before_session_chat _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_terminal_minister_chat_removes_user_message_when_session_chat_fails _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_terminal_minister_chat_removes_user_message_when_session_chat_interrupted _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_terminal_minister_chat_preserves_chat_error_when_rollback_fails _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_terminal_minister_chat_reply_persist_failure_keeps_user_message _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_terminal_failure_printer_preserves_zero_id _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_play_turn_reports_default_approval_secret_order_failure[skip] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_play_turn_reports_default_approval_secret_order_failure[issue] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_play_turn_skip_settlement_abort_stays_in_player_loop[exc0] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_play_turn_skip_settlement_abort_stays_in_player_loop[exc1] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_play_turn_reports_secret_order_failure_when_settlement_aborts _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_________ ERROR at setup of test_cli_write_gate_canonical_session_attr _________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_play_turn_hitl_advancement_ends_turn[skip] _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_play_turn_hitl_advancement_ends_turn[issue] ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_all_characters_get_an_experience_file_not_just_current_court _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_character_army_region_textual_facts_reach_world_directory _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_prepare_rebuilds_from_world_record_after_restore ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_world_materials_isolate_invocations_and_databases ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_world_materials_include_textual_facts_once_and_gazette_not_duplicated _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_world_materials_carry_eligible_person_event_candidates _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_world_materials_carry_due_fiscal_levy_petitions ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__________ ERROR at setup of test_prepare_writes_typed_tree_and_index __________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_same_requested_root_creates_independent_material_invocations _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_material_tree_contains_only_structurally_related_world_details _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_matter_carriers_follow_the_real_knowledge_projection __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_prepare_fails_loud_when_dossier_read_breaks ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_________ ERROR at setup of test_read_material_stays_inside_directory __________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gazettes _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_surge_candidate_offered_by_world_segment_is_declared_and_lands _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_translate_request_carries_current_candidate_facts ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_translate_request_omits_ineligible_candidate ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_selected_event_lands_once_via_existing_new_issues_write _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_not_selected_candidate_leaves_no_terminal_state ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_non_strategic_candidate_effects_land_without_event_id_binding _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_supplied_outcome_labels_match_writer_whitelist _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_impeachment_surge_lands_only_when_faction_actually_impeaches _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_impeachment_surge_candidate_survives_restore ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_pending_round_approval_endorsed_before_close_or_after_month_join[before_close] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_pending_round_approval_endorsed_before_close_or_after_month_join[after_close] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_pending_round_approval_endorsed_before_close_or_after_month_join[undo] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_translation_entry_preserves_unknown_rejection_and_source_cutoff _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_summons_translation_does_not_apply_monthly_effects_at_night _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_appointment_and_relief_through_scene_chat_then_close_and_settle _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_emperor_准_via_scene_chat_approves_no_reply_stays_unapproved _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_scene_chat_cli_and_api_same_translation_shape _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_unhandleable_commission_rejected_as_fact_no_forced_ask _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_translate_call_failure_is_not_empty_success_dispatch __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_translate_empty_success_still_dispatches_without_failure _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_appointment_without_text_is_rejected_not_templated ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_translation_pending_create_approve_reject_undo_via_real_chat_turn _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_pure_office_dossier_uses_payload_text_not_template ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_appointment_region_id_stages_into_pending_payload ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_scene_chat_translation_can_approve_staged_action ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_scene_chat_one_call_returns_multi_person_script ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_xuan_lands_enter_then_present_on_next_prepare _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_cli_selection_uses_scene_turn_as_admission_origin ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________ ERROR at setup of test_remote_xuan_feeds_summon_facts_to_scene ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_retire_via_scene_chat_closes_night_and_keeps_last_turn _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_player_month_entry_settles_prepushed_edicts_then_world_once _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_questions_hold_rescript_and_gazette_is_required_before_advance _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_player_recovery_uses_resolve_context_decree_not_ready_delta _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_finish_rescript_phase2_stays_settling_until_advanced __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_world_segment_persists_declaration_ending_with_commit _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_player_entry_recovers_ending_after_interrupted_segment _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_staged_ending_is_available_inside_its_settlement_transaction _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_failed_declaration_commit_reloads_memory_from_db ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_held_dossier_settlement_failure_retry_and_reentry_isolation _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________ ERROR at setup of test_advance_uses_staged_declaration_ending _________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_advance_reloads_memory_after_transaction_rollback ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_missing_world_model_stops_before_world_commit _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_month_drift_settles_due_secret_and_records_inertia_rejection _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________ ERROR at setup of test_world_segment_reads_material_directory _________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_month_chain_lands_specialized_facts_before_due_and_gazette _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_edict_that_drops_unrest_below_gate_does_not_trigger_world_event _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_edict_that_raises_unrest_over_gate_triggers_after_the_edict _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_parse_highlight_judge_bad_output_is_empty _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__________ ERROR at setup of test_parse_highlight_judge_valid_phrases __________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_highlight_judge_timeout_and_exception_degrade_silently _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_run_highlight_judge_success_returns_phrases ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_build_chat_projection_includes_minister_highlights ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_read_night_scroll_includes_minister_highlights _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____________ ERROR at setup of test_highlights_survive_db_restore _____________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_stub_declaration_lands_on_existing_staging_and_new_records_without_missing_items _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_commission_with_appointment_and_grant_is_one_combined_payload_one_row _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_item _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_unknown_top_level_section_is_rejected_durably_without_dropping_sibling _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_promise_refuse_withdraws_staged_action_and_missing_action_id_is_rejected _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_promise_referencing_action_id_belonging_to_another_night_is_rejected _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_on_scene_person_status_change_lands_and_rejects_nonexistent_person _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_too _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_presence_lands_with_declared_body_verbatim_no_synthesized_text _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_presence_rejects_nonexistent_person_without_polluting_ledger _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_presence_with_no_night_context_is_rejected_as_missing_ref _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_and_ghost_person _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_differently _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__________ ERROR at setup of test_edge_event_attaches_declared_affair __________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_edge_event_conflicting_affair_pointer_is_rejected_first_binding_kept _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_protagonist_lands_and_rejects_nonexistent_person ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_registration_adds_new_person_to_roster_and_rejects_existing_name _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_________ ERROR at setup of test_registration_attaches_declared_affair _________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_staged_declaration_discard_and_idempotent_settle_in_decree_order _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_typed_secret_exclusions_canonicalize_roster_alias_and_office _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___________ ERROR at setup of test_enrich_army_parsed_and_normalized ___________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____________ ERROR at setup of test_enrich_building_region_floor ______________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_enrich_backend_error_returns_empty_effects _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___________ ERROR at setup of test_enrich_nondict_subfields_guarded ____________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__________ ERROR at setup of test_enrich_trace_records_actual_backend __________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______________________ ERROR at setup of test_backend_env ______________________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__________________ ERROR at setup of test_backend_env_claude ___________________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_run_backend_dispatch[claude-_run_claude-CLAUDE_OUT] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_run_backend_dispatch[None-_run_agy-AGY_DEFAULT_OUT] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_run_backend_dispatch[codex-_run_codex-CODEX_OUT] ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________________ ERROR at setup of test_run_claude_stdout_only _________________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_materials_dir_reaches_popen_cwd_and_readonly_argv ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_codex_materials_dir_reaches_popen_cwd_and_readonly_argv _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_agy_materials_mode_uses_material_cwd_and_print_argument _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______________ ERROR at setup of test_run_codex_flags_and_stdout _______________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_clichat_codex_response_stream_passes_reasoning_strength _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_codex_final_text_handles_item_completed_shape _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_runner_accepts_config_model[_run_codex-kwargs0-gpt-configured] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_runner_accepts_config_model[_run_claude-kwargs1-claude-configured] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___________ ERROR at setup of test_run_codex_reasoning_env_optional ____________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_run_codex_maps_reasoning_strength_to_native_effort ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____________ ERROR at setup of test_run_codex_stdout_empty_fallback ____________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_claude_maps_reasoning_strength_to_thinking_tokens _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_claude_off_reasoning_uses_explicit_minimum_tokens _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_________ ERROR at setup of test_resolve_cli_bin_found_on_current_path _________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_resolve_cli_bin_found_via_extra_dirs_when_gui_path_bare _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_resolve_cli_bin_login_shell_path_last_resort ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_resolve_cli_bin_falls_back_and_miss_not_cached _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________________ ERROR at setup of test_resolve_cli_bin_caches _________________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_login_shell_path_extracts_from_sentinels_despite_noise _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________ ERROR at setup of test_login_shell_path_single_dir_not_dropped ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_login_shell_path_uses_printenv_not_dollar_path _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_resolve_cli_bin_absolutizes_relative_result ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_runner_execs_resolved_abspath[_run_codex-/Users/x/.local/bin/codex] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_runner_execs_resolved_abspath[_run_claude-/opt/homebrew/bin/claude] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_runner_execs_resolved_abspath[_run_agy-/Users/x/.local/bin/agy] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_clichat_invoke_builds_prompt_and_completion_structure _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_clichat_invoke_json_constraint_and_no_constraint ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_clichat_invoke_error_traced_and_reraised ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______________ ERROR at setup of test_clichat_call_cli_dispatch _______________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________ ERROR at setup of test_clichat_call_cli_unknown_backend_raises ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___________ ERROR at setup of test_run_agy_success_single_subprocess ___________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_agy_auth_race_is_retryable_typed_without_private_loop[Authentication required] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_agy_auth_race_is_retryable_typed_without_private_loop[authentication timed out] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_run_agy_nonzero_exit_is_terminal_and_runs_once _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_runner_fail_loud_on_bad_exit[_run_codex-<lambda>] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_runner_fail_loud_on_bad_exit[_run_claude-<lambda>] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_run_runner_empty_output_is_retryable_typed _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_run_backend_infers_trace_tag_from_prompt[minister] ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_run_backend_infers_trace_tag_from_prompt[extractor] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_run_backend_infers_trace_tag_from_prompt[simulator] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_run_backend_infers_trace_tag_from_prompt[decree] ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_run_backend_infers_trace_tag_from_prompt[sanitizer] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_run_backend_infers_trace_tag_from_prompt[other] ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_backend_infers_trace_tag_from_prompt[minister_over_decree] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_run_backend_for_config_traces_every_call ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_backend_for_config_passes_reasoning_strength_to_codex _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_run_backend_for_config_traces_on_backend_error _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__________ ERROR at setup of test_office_inference_llm_call_is_traced __________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_public_cli_support_restores_existing_runners ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_material_runner_uses_cwd_and_read_only_tool_surface[cursor] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_material_runner_uses_cwd_and_read_only_tool_surface[kimi] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_material_runner_uses_cwd_and_read_only_tool_surface[grok] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_material_runner_uses_cwd_and_read_only_tool_surface[pi] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______________ ERROR at setup of test_run_cursor_flags_and_stdout ______________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_run_kimi_prompt_flag_no_yolo_stdout_only ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____________ ERROR at setup of test_run_grok_flags_effort_and_plain ____________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___________ ERROR at setup of test_run_pi_flags_thinking_and_stdout ____________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_backend_dispatch_new_runners[cursor-_run_cursor-CURSOR_OUT] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_backend_dispatch_new_runners[kimi-_run_kimi-KIMI_OUT] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_backend_dispatch_new_runners[grok-_run_grok-GROK_OUT] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_run_backend_dispatch_new_runners[pi-_run_pi-PI_OUT] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_run_backend_for_config_dispatches_new_runners[cursor] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_run_backend_for_config_dispatches_new_runners[kimi] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_run_backend_for_config_dispatches_new_runners[grok] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_run_backend_for_config_dispatches_new_runners[pi] ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_clichat_call_cli_dispatches_new_runners[cursor] ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_clichat_call_cli_dispatches_new_runners[kimi] _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_clichat_call_cli_dispatches_new_runners[grok] _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_clichat_call_cli_dispatches_new_runners[pi] ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_describe_effective_model_includes_new_runners[cursor] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_describe_effective_model_includes_new_runners[kimi] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_describe_effective_model_includes_new_runners[grok] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_describe_effective_model_includes_new_runners[pi] ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_new_runner_fail_loud_on_bad_exit[_run_cursor] _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_new_runner_fail_loud_on_bad_exit[_run_kimi] ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_new_runner_fail_loud_on_bad_exit[_run_grok] ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_new_runner_fail_loud_on_bad_exit[_run_pi] _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______________ ERROR at setup of test_gate_llm_config_cli_channel ______________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_gate_llm_config_api_from_args_not_persisted_shape ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____________ ERROR at setup of test_gate_llm_config_api_from_env ______________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__________ ERROR at setup of test_gate_llm_config_cli_requires_runner __________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_gate_llm_config_api_requires_key_and_url ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________ ERROR at setup of test_gate_evidence_config_honest_cli_and_api ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________ ERROR at setup of test_add_gate_llm_args_uses_gate_cli_runners ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_command_power_four_tier_strict_order_and_jianshu_not_collapsed _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________ ERROR at setup of test_save_and_list_rescript_drafts_roundtrip ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_rescript_draft_idx_continues_after_decision_rows ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_clear_pending_decisions_keeps_rescript_drafts _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_save_pending_decisions_keeps_rescript_drafts ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_save_rescript_drafts_overwrites_not_duplicates _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_repeated_overwrite_keeps_stable_synthetic_ids _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_persist_then_abort_draft_never_enters_hitl_envelope __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_r3_strict_parse_control_char_raises_contract_error ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_r3_strict_parse_concatenated_objects_raises_contract_error _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_657_s1_schema_columns_and_no_banned_fields _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_657_s1_rescript_emitted_set_subset_of_dossier _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_657_s1_derive_draft_capability_stable_and_sensitive __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_657_s1_option_shape_stamps_draft_capability ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_1620_layer_a_reward_with_army_target_stays_reward ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_1620_layer_a_army_pay_rejects_bad_typed_shape[conflict-reward] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_1620_layer_a_army_pay_rejects_bad_typed_shape[unknown-kind] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_1620_layer_a_army_pay_rejects_bad_typed_shape[zh-synonym] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_1620_layer_a_army_pay_rejects_bad_typed_shape[non-grant-kind] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_1620_layer_a_army_pay_rejects_bad_typed_shape[empty-purpose] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_1620_layer_a_army_pay_rejects_bad_typed_shape[drop-purpose] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_1620_layer_a_army_pay_rejects_bad_typed_shape[empty-account] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_1620_layer_a_army_pay_rejects_bad_typed_shape[drop-account] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_1620_layer_a_army_pay_rejects_bad_typed_shape[region-target] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_1620_internal_canonical_xiexang_renormalizes_without_kind _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_657_s1_list_rescript_desk_merges_cross_month_and_decisions _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__________ ERROR at setup of test_normalize_locality_scope[None-none] __________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____________ ERROR at setup of test_normalize_locality_scope[-none] ____________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_________ ERROR at setup of test_normalize_locality_scope[\u65e0-none] _________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_normalize_locality_scope[\u5168\u56fd-national] ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_____ ERROR at setup of test_normalize_locality_scope[\u5355\u7701-single] _____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_normalize_locality_scope[national-national] ______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_normalize_locality_scope_rejects_unknown ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_mapper_rejects_contradictory_locality_scope_without_overwrite _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_national_policy_is_one_dossier_not_per_province ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+____ ERROR at setup of test_special_decree_without_national_is_single_empty ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__________________ ERROR at setup of test_region_single_by_id __________________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_region_outside_province_set_yields_empty_locality ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_oracle_contradictions_fail_loud[payload0] _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_oracle_contradictions_fail_loud[payload1] _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_oracle_contradictions_fail_loud[payload2] _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_oracle_contradictions_fail_loud[payload3] _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_oracle_contradictions_fail_loud[payload4] _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______________ ERROR at setup of test_region_zero_hit_fail_loud _______________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+________ ERROR at setup of test_region_id_column_and_composite_indexes _________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_create_decree_dossier_int_abi_single_row ________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_________ ERROR at setup of test_ensure_directive_dossier_returns_list _________
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+______ ERROR at setup of test_normalize_payload_locality_and_target_kind _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_______ ERROR at setup of test_cli_backend_invalid_target_kind_fail_loud _______
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_path1_conversational_draft_bad_roster_marks_failed ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_locality_matrix_8x3_and_unknown[policy-national-empty] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_locality_matrix_8x3_and_unknown[issue-national-empty] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_locality_matrix_8x3_and_unknown[account-national-empty] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_locality_matrix_8x3_and_unknown[policy-single-fail] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_locality_matrix_8x3_and_unknown[issue-single-fail] ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_locality_matrix_8x3_and_unknown[policy-none-empty] ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_locality_matrix_8x3_and_unknown[issue-none-empty] ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_locality_matrix_8x3_and_unknown[account-none-empty] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_locality_matrix_8x3_and_unknown[character-national-fail] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_locality_matrix_8x3_and_unknown[office-national-fail] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_locality_matrix_8x3_and_unknown[army-national-fail] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_locality_matrix_8x3_and_unknown[character-single-fail] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_locality_matrix_8x3_and_unknown[office-single-fail] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_locality_matrix_8x3_and_unknown[army-single-fail] ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_locality_matrix_8x3_and_unknown[character-none-empty] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_locality_matrix_8x3_and_unknown[office-none-empty] ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_locality_matrix_8x3_and_unknown[army-none-empty] ____
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_locality_matrix_8x3_and_unknown[region-national-fail] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_locality_matrix_8x3_and_unknown[region-none-fail] ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+___ ERROR at setup of test_locality_matrix_8x3_and_unknown[region-single-R1] ___
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_locality_matrix_8x3_and_unknown[dossier-none-empty] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_locality_matrix_8x3_and_unknown[dossier-single-fail] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+_ ERROR at setup of test_locality_matrix_8x3_and_unknown[dossier-national-fail] _
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/1834-f21-f24/pytest2'
+__ ERROR at setup of test_locality_matrix_8x3_and_unknown[dossier-None-empty] __
+E   FileNotFoundError: [Errno 2] No such file or directory: '/t

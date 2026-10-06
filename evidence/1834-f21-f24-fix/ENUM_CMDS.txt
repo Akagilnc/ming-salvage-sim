@@ -1,0 +1,16 @@
+# 1834 F21-F24 enum commands (stdlib/rg/AST Load only)
+
+## F21
+rg -n --glob 'ming_sim/**/*.py' --glob 'web_app.py' '\.strip\([^)]+\)|\.lstrip\([^)]+\)|\.rstrip\([^)]+\)'
+# assign free-ish strip → write/supply：declaration_dispatch purpose / db rstrip； / cli_backend title body
+
+## F22
+# AST Name/Attribute Load only over ming_sim+web_app+tests+scripts；不计注释/docstring
+# named retired: validate_rescript_draft_items _apply_option_heal execution_distortion_weight run_agent_stream_text stage_grant_allocation_candidate
+# KEEP exclusions: for_role alias _llm_for_role; prepare_character_materials; HTTP decorators non-admin; scripts-only helpers with script consumers
+
+## F23
+rg -n 'ADMIN_TABLES|api_admin|/admin|admin_upsert|admin_page|lowered == "add"|指令内容' ming_sim web_app.py tests scripts
+
+## F24
+rg -n '_submit_first_cli_decisions|project_preferred_hitl_choice|自动取首选项|submit_hitl_choices' ming_sim scripts tests

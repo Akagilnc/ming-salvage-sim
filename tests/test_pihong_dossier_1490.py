@@ -1648,29 +1648,6 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
     assert TAG_ENTER in tags
     assert str(rows[0]["body"] or "") == ""
 
-
-# ---------------------------------------------------------------------------
-# #657 大理寺六类：扩展既有 tracer，不另造夹具族
-# ---------------------------------------------------------------------------
-
-def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
-    """② 共享首选项投影：急务=follow_draft+capability；普通 decision 不变。"""
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
-    opt = _layer_a_option()
-    urgent = {'kind': 'rescript_draft', 'decision_key': 'rescript_draft:1:0', 'title': '急', 'idx': 0, 'options': [opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}]}
-    pref = project_preferred_hitl_choice(urgent)
-    assert pref['action'] == 'follow_draft'
-    assert pref['draft_capability'] == opt['draft_capability']
-    assert pref['decision_key'] == 'rescript_draft:1:0'
-    assert pref['label'] == opt['label']
-    ordinary = {'kind': 'decision', 'decision_key': 'decision:1:0', 'idx': 0, 'options': [{'label': '甲', 'hint': 'h1', 'dossier_id': 3, 'dossier_decision': 'hold'}, {'label': '乙', 'hint': 'h2'}]}
-    pref2 = project_preferred_hitl_choice(ordinary)
-    assert pref2.get('action') in (None, '')
-    assert pref2['label'] == '甲'
-    assert pref2['dossier_id'] == 3
-    assert pref2['dossier_decision'] == 'hold'
-    assert 'follow_draft' not in str(pref2.get('action') or '')
-
 def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     """批红真入口拒绝同名选项，且拒绝前不得落亲裁。"""
     from contextlib import nullcontext

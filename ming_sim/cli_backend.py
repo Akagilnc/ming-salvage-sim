@@ -2569,15 +2569,16 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
                 continue
             # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
             # 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
+            # Free prose title/body supply: preserve raw; emptiness on copy (#1834 F21).
             title = str(
                 payload.get("title")
                 or payload.get("target_id")
                 or issue["title"]
                 or ""
-            ).strip()
+            )
             body = str(
                 payload.get("text") or row.get("decree_text") or ""
-            ).strip()
+            )
             # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"

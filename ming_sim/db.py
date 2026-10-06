@@ -5816,8 +5816,10 @@ class GameDB:
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
         if status in _OUSTED_STATES:
+            # Free prose status reason: preserve raw separators (#1834 F21).
+            note = f"人物终态：{status}；{reason}" if str(reason or "") else f"人物终态：{status}"
             self.interrupt_dossiers_for_character(
-                state, name, f"人物终态：{status}；{reason}".rstrip("；"),
+                state, name, note,
                 commit=False,
             )
         if commit:
@@ -21813,84 +21815,6 @@ class GameDB:
             )
         return submitted
 
-    # ── 调试用通用 CRUD（仅限白名单核心表）──────────────────────
-    # 表名 → 主键列。只暴露核心几张，防误删元数据/日志表。
-    ADMIN_TABLES: Dict[str, str] = {
-        "game_state": "id",        # 局势
-        "metrics": "key",          # 国家修正（国库/内库/民心/皇威）
-        "regions": "id",           # 地区
-        "armies": "id",            # 军队
-        "characters": "name",      # 人物
-        "buildings": "id",         # 建筑
-    }
-
-    def admin_check_table(self, table: str) -> str:
-        pk = self.ADMIN_TABLES.get(table)
-        if pk is None:
-            raise ValueError(f"表 {table!r} 不在调试白名单")
-        return pk
-
-    def admin_columns(self, table: str) -> List[Dict[str, object]]:
-        """PRAGMA 取列定义：name/type/notnull/pk/default。"""
-        self.admin_check_table(table)
-        cur = self.conn.execute(f"PRAGMA table_info({table})")
-        return [
-            {
-                "name": r["name"],
-                "type": r["type"],
-                "notnull": bool(r["notnull"]),
-                "pk": bool(r["pk"]),
-                "default": r["dflt_value"],
-            }
-            for r in cur.fetchall()
-        ]
-
-    def admin_rows(self, table: str) -> List[Dict[str, object]]:
-        pk = self.admin_check_table(table)
-        cur = self.conn.execute(f"SELECT * FROM {table} ORDER BY {pk}")
-        return [dict(r) for r in cur.fetchall()]
-
-    def _admin_valid_cols(self, table: str) -> set:
-        return {c["name"] for c in self.admin_columns(table)}
-
-    def admin_upsert(self, table: str, values: Dict[str, object]) -> Dict[str, object]:
-        """按主键原位 upsert，返回落库后的行。只接受表内有的列。"""
-        pk = self.admin_check_table(table)
-        valid = self._admin_valid_cols(table)
-        data = {k: v for k, v in values.items() if k in valid}
-        if pk not in data or data[pk] in (None, ""):
-            raise ValueError(f"缺主键 {pk}")
-        cols = list(data.keys())
-        placeholders = ",".join("?" for _ in cols)
-        collist = ",".join(cols)
-        update_cols = [column for column in cols if column != pk]
-        conflict_action = (
-            "DO UPDATE SET "
-            + ",".join(f"{column}=excluded.{column}" for column in update_cols)
-            if update_cols else "DO NOTHING"
-        )
-        self.conn.execute(
-            f"INSERT INTO {table} ({collist}) VALUES ({placeholders}) "
-            f"ON CONFLICT({pk}) {conflict_action}",
-            [data[c] for c in cols],
-        )
-        # 国库/内库同时落在 economy_accounts.balance，load_state 会用后者盖回 metrics。
-        # 只改 metrics 表会在下回合被覆盖，故此处同步 economy_accounts。
-        if table == "metrics" and data.get("key") in ("国库", "内库") and "value" in data:
-            self.conn.execute(
-                "UPDATE economy_accounts SET balance = ? WHERE account = ?",
-                (int(data["value"]), data["key"]),
-            )
-        self.conn.commit()
-        row = self.conn.execute(f"SELECT * FROM {table} WHERE {pk}=?", (data[pk],)).fetchone()
-        return dict(row) if row else {}
-
-    def admin_delete(self, table: str, pk_value: object) -> int:
-        """按主键删行，返回受影响行数。"""
-        pk = self.admin_check_table(table)
-        cur = self.conn.execute(f"DELETE FROM {table} WHERE {pk}=?", (pk_value,))
-        self.conn.commit()
-        return cur.rowcount
 
     def record_relation_edge_event(
         self,

@@ -90,7 +90,7 @@ def record_stream_metrics(model_id: str, metrics: object, caller_tag: str = "?")
     """记录 agno 流式 RunOutput.metrics（RunMetrics）的 token 用量。
 
     流式调用 openai response 是 stream 对象，无 .usage，monkeypatch 抓不到——
-    故 run_agent_stream_text 在终结事件显式调本函数补记。RunMetrics 字段名与
+    故流式入口在终结事件显式调本函数补记。RunMetrics 字段名与
     OpenAI usage 不同：input_tokens/output_tokens/cache_read_tokens/...
     """
     if metrics is None:

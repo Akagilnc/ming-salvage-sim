@@ -16,7 +16,6 @@ from agno.agent import Agent
 from agno.models.message import Message
 from pydantic import BaseModel
 
-from ming_sim.agents import run_agent_stream_text
 import ming_sim.cli_backend as cb
 from ming_sim.models import LLMConfig
 
@@ -239,38 +238,6 @@ def test_run_codex_flags_and_stdout(monkeypatch):
     assert "-c" not in captured["cmd"]
 
 
-def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
-    """codex --json 只给终包（无 delta 事件）时，流式 runner 仍出完整终文。"""
-    from tests.cli_process_doubles import FakeCliRunnerScript
-
-    final = "STREAM_FINAL_BODY"
-    script = FakeCliRunnerScript([{
-        "stdout": (
-            json.dumps({"type": "item.started", "item": {"type": "reasoning"}}) + "\n",
-            json.dumps(
-                {"type": "item.completed", "item": {"type": "agent_message", "text": final}}
-            ) + "\n",
-        ),
-        "returncode": 0,
-    }])
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    monkeypatch.setattr(cb.subprocess, "Popen", script.popen)
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-
-    chunks = []
-    agent = Agent(
-        name="stream-test", id="stream-test",
-        model=cb.CliChat(id="gpt-test", backend="codex"),
-        instructions=["only body"], markdown=False,
-    )
-    text = run_agent_stream_text(agent, "PROMPT_STREAM", "simulator", on_text=chunks.append)
-    assert text == final
-    assert chunks == [final]
-    cmd = script.commands[0]
-    assert "--json" in cmd and cmd[-1] == "-"
-    assert "PROMPT_STREAM" in "".join(script.processes[0].stdin.written)
-
-
 def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     seen = {}
 
@@ -288,73 +255,6 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     assert [c.content for c in chunks if c.content] == ["STREAM_CHUNK"]
     assert seen["reasoning_strength"] == "low"
     assert seen["runner"] == "codex" and seen["json_events"] is True
-
-
-def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
-    class _Ev:
-        def __init__(self, content=None, is_final=False):
-            self.content = content
-            self.is_final = is_final
-
-    class _FakeStreamAgent:
-        model = SimpleNamespace(id="hermes-test")
-
-        def run(self, prompt, stream=False, stream_events=False):
-            assert stream and stream_events
-            yield _Ev(content="A")
-            yield _Ev(content="B")
-            yield _Ev(content="C")
-            yield _Ev(content=None, is_final=True)
-
-        def get_last_run_output(self):
-            return None
-
-    chunks = []
-    text = run_agent_stream_text(
-        _FakeStreamAgent(), "PROMPT", "simulator", on_text=chunks.append
-    )
-    assert text == "ABC"
-    assert chunks == ["A", "B", "C"]
-
-
-def test_luna_shaped_stream_keeps_content_when_reasoning_deltas_interleave(monkeypatch):
-    """#1452：推理模型流式 delta 可能夹 reasoning 分片；正文 content 不得被丢。
-
-    钉 agents.run_agent_stream_text 路径；本票 web 面 RunErrorEvent 闸由
-    tests/test_chat_stream_failpaths_393.py 真实入口覆盖，不在此重复。
-    """
-    class _Delta:
-        def __init__(self, content=None, reasoning_content=None, is_final=False):
-            self.content = content
-            self.reasoning_content = reasoning_content
-            self.is_final = is_final
-
-    class _FakeLunaAgent:
-        model = SimpleNamespace(id="gpt-5.6-luna")
-
-        def run(self, prompt, stream=False, stream_events=False):
-            assert stream and stream_events
-            yield _Delta(reasoning_content="先核辽饷账目…")
-            yield _Delta(content="辽")
-            yield _Delta(reasoning_content="再陈缺口。")
-            yield _Delta(content="饷缺口甚大。")
-            yield _Delta(content="辽饷缺口甚大。", is_final=True)
-
-        def get_last_run_output(self):
-            return None
-
-    texts: list[str] = []
-    thinks: list[str] = []
-    out = run_agent_stream_text(
-        _FakeLunaAgent(),
-        "PROMPT",
-        "minister",
-        on_text=texts.append,
-        on_thinking=thinks.append,
-    )
-    assert out == "辽饷缺口甚大。"
-    assert texts == ["辽", "饷缺口甚大。"]
-    assert any("辽饷" in t or "账" in t for t in thinks)
 
 
 def test_codex_final_text_handles_item_completed_shape():
