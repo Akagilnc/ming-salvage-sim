@@ -5,20 +5,16 @@ canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2：
 - F2：机面 TSV 裸人 / 玩家面 LLM 输入投影「约N万口」（正向 prompt，零删改）；
 - F3：流民冻结 seed 表（陕西15万/河南5万/内地其余省0；#659 辽东/东江边镇切片0；
       全国=省级求和派生；satisfaction 基线30 陕西20 河南25 / leverage 5 / agenda 冻结句）；
-- F4：旧档双口径——新档 DB 持久标「人」，无标旧档判「万人」，不读 content 元信息；
-- AC4+AC8 合并：五项 mutation 验收矩阵（classes seed / regions seed / events effect /
-  new-save prompt / old-save prompt），逐项钉新旧档期望口径，×10⁴ 漏乘或重乘必咬。
+- F4/#1835 C1：现役唯一人口径「人」；新档落持久标，无标亦判「人」（旧档万人分叉退出）；
+- AC4：classes/regions seed ×10⁴ 与 events effect 人口径 mutation。
 """
 
 from __future__ import annotations
 
 import pytest
 
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS, POPULATION_UNIT_WAN
-from ming_sim.issues import auto_trigger_seed_issues, bind_content
-
-
-
+from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.issues import bind_content
 
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import rejected_view
@@ -40,38 +36,11 @@ NATIONAL_DISPLACED_POP = SHAANXI_POP + HENAN_POP  # 全国行=省级求和派生
 BEIZHILI_POP_PERSONS = 720 * 10000
 FARMER_NATIONAL_POP_PERSONS = 11000 * 10000
 
-
 def _displaced_rows(db: GameDB):
     return db.conn.execute(
         "SELECT name, region_id, population, satisfaction, leverage, agenda "
         "FROM classes WHERE name='流民' ORDER BY region_id"
     ).fetchall()
-
-
-def _make_legacy_db(content, path: str) -> GameDB:
-    """构造无标旧档：fresh seed 后把人口回缩到万人口径并剥掉单位标。
-
-    与真实旧档同构：DB 行为 pre-0088 content seed 出的万人值、save_meta 无
-    population_unit 标（旧档不迁移、无流民行）。"""
-    db = GameDB(path, content)
-    db.seed_static_data()
-    db.conn.execute("UPDATE classes SET population = population / 10000")
-    db.conn.execute("UPDATE regions SET population = population / 10000")
-    # 旧档不迁移：流民第八阶级行（0087 新档生效）也一并剥除，与真实 pre-0087 旧档同构
-    db.conn.execute("DELETE FROM classes WHERE name='流民'")
-    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
-    db.conn.commit()
-    return db
-
-
-@pytest.fixture
-def legacy_game(content, tmp_path):
-    """返回 (db, state)：无标万人口径旧档（含 load_state 同核）。"""
-    path = str(tmp_path / "legacy.db")
-    db = _make_legacy_db(content, path)
-    state = db.load_state()
-    bind_content(content)
-    yield db, state
 
 
 # ── 新档 classes seed（F3/r2 冻结表 + ×10⁴）─────────────────────────────────
@@ -111,7 +80,6 @@ def test_new_save_displaced_class_seed_frozen_table(game):
     assert nat["leverage"] == DEFAULT_LEV
     assert nat["agenda"] == AGENDA_FROZEN
 
-
 def test_new_save_classes_seed_persons_scale(game):
     """既有七阶级 seed 机械 ×10⁴（漏乘/重乘必咬）：抽样钉裸人数。"""
     db, _, _ = game
@@ -120,7 +88,6 @@ def test_new_save_classes_seed_persons_scale(game):
     ).fetchone()
     assert row["population"] == FARMER_NATIONAL_POP_PERSONS
 
-
 def test_new_save_regions_seed_persons_scale(game):
     """regions seed 机械 ×10⁴：北直隶 720万 → 7200000 人。"""
     db, _, _ = game
@@ -128,7 +95,6 @@ def test_new_save_regions_seed_persons_scale(game):
         "SELECT population FROM regions WHERE id='beizhili'"
     ).fetchone()
     assert row["population"] == BEIZHILI_POP_PERSONS
-
 
 def test_new_save_persistent_population_unit_marker(game):
     """F4：新档 DB 落持久单位标「人」；判别只读存档 DB，不读 content 元信息。"""
@@ -139,68 +105,17 @@ def test_new_save_persistent_population_unit_marker(game):
     ).fetchone()
     assert row is not None and row["value"] == POPULATION_UNIT_PERSONS
 
+# ── #1835 C1：无标亦走人 ──────────────────────────────────────────────────
 
-# ── 旧档双口径（F4）───────────────────────────────────────────────────────
-
-def test_legacy_save_defaults_to_wan_unit_and_keeps_snapshot(legacy_game):
-    """无标旧档一律判「万人」，seed 不重跑、快照读数不变（不混刻度、无流民行）。"""
-    db, _ = legacy_game
-    assert db.population_unit == POPULATION_UNIT_WAN
-    row = db.conn.execute(
-        "SELECT population FROM regions WHERE id='beizhili'"
-    ).fetchone()
-    assert row["population"] == 720  # 万人口径原样
-    farmer = db.conn.execute(
-        "SELECT population FROM classes WHERE name='农民' AND region_id=''"
-    ).fetchone()
-    assert farmer["population"] == 11000
-    # 旧档不迁移：无流民行（0087 新档生效）
-    assert len(_displaced_rows(db)) == 0
+def test_unmarked_save_defaults_to_persons_unit(game):
+    """无标不再分流万人：population_unit 恒为「人」。"""
+    db, _, _ = game
+    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
+    db.conn.commit()
+    assert db.population_unit == POPULATION_UNIT_PERSONS
 
 
-# ── 五项 mutation 验收矩阵（AC4+AC8 合并，逐项钉新旧档期望口径）──────────────
-
-def test_population_unit_mutation_matrix(game, legacy_game):
-    """①classes seed ②regions seed ③events effect：×10⁴ 漏乘或重乘任一即 FAIL。
-
-    期望值来自独立 oracle（content 字面/冻结表/事件 -40万），非实现推导；
-    ④⑤ prompt 契约见 test_prompt_contract_* 两案。"""
-    new_db = game[0]
-    old_db, _old_state = legacy_game
-    content = game[2]
-
-    def one(db, sql):
-        return db.conn.execute(sql).fetchone()[0]
-
-    # ① classes seed：农民全国 11000万 → 110000000 人；旧档 11000 万人不动
-    assert one(new_db, "SELECT population FROM classes WHERE name='农民' AND region_id=''") \
-        == FARMER_NATIONAL_POP_PERSONS
-    assert one(old_db, "SELECT population FROM classes WHERE name='农民' AND region_id=''") == 11000
-    # ② regions seed：北直隶 720万 → 7200000 人；旧档 720 万人不动
-    assert one(new_db, "SELECT population FROM regions WHERE id='beizhili'") == BEIZHILI_POP_PERSONS
-    assert one(old_db, "SELECT population FROM regions WHERE id='beizhili'") == 720
-
-    # ③ events effect 双向实测：同一 content 真源（华北大疫山西 -400000 人），按档口径落库
-    bind_content(content)
-    for db, expect_delta in ((new_db, -400000), (old_db, -40)):
-        before = one(db, "SELECT population FROM regions WHERE id='shanxi'")
-        state = db.load_state()
-        state.year, state.period = 1633, 7
-        triggered = auto_trigger_seed_issues(state, db)
-        assert any(item["id"] == "huabei_plague" for item in triggered)
-        after = one(db, "SELECT population FROM regions WHERE id='shanxi'")
-        assert after == before + expect_delta, (
-            f"mutation[events_effect] 口径错：期望 {expect_delta}，实得 {after - before}"
-        )
-
-
-# ── prompt 契约（④ new-save / ⑤ old-save）＋ F2 机面/玩家面拆分 ────────────
-
-
-
-
-
-# ── F1：class 写面只收 satisfaction/leverage（流民行含内）───────────────────
+# ── F1：class 写面只收 satisfaction/leverage ────────────────────────────────
 
 def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):
     """流民行接受 satisfaction/leverage 更新落库；population 更新面已删除（不得单边改人口）。"""
@@ -230,7 +145,6 @@ def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):
     assert row2["satisfaction"] == SHAANXI_SAT - 5  # 混写 population 的 item 整项不落
     assert row2["population"] == SHAANXI_POP
 
-
 # ── web 玩家面：UI 直显模板已删（P7），机面 population 单一真源 ───────────────
 
 def test_web_region_payload_has_no_population_wan_projection(game):
@@ -255,19 +169,12 @@ def test_web_region_payload_has_no_population_wan_projection(game):
     assert "population_wan" not in node_bz
     assert node_bz["population"] == BEIZHILI_POP_PERSONS
 
-
 # ── W2：新档 region_detail sub-万分支 ─────────────────────────
-
-
-
-
 
 # ── on_restore 收复单位接缝（ADR 0088：content 静态真源已全线「人」）───────────
 
 JIANZHOU_OPENING_POP_PERSONS = 1200000  # 新档开局建州人口（人）
 JIANZHOU_RESTORE_POP_PERSONS = 900000   # content on_restore 90（万）→ 迁「人」
-JIANZHOU_RESTORE_POP_WAN = 90           # 无标旧档接缝无损 ÷10⁴ 回万人
-
 
 def _settle_region_delta(db, state, content, delta):
     """自发信封形态从现役声明入口触发收复。"""
@@ -277,7 +184,6 @@ def _settle_region_delta(db, state, content, delta):
         if isinstance(item, dict):
             item.setdefault("origin_ref", "盘面自发")
     run_settle(db, state, content, delta, narrative="x", decree_text="y")
-
 
 def test_new_save_restore_jianzhou_keeps_persons_unit(game):
     """判词反例：新档收复建州不得从 1,200,000 人重置为 90——on_restore 预置按「人」落库。"""
@@ -297,14 +203,3 @@ def test_new_save_restore_jianzhou_keeps_persons_unit(game):
     assert after == JIANZHOU_RESTORE_POP_PERSONS
     assert after != 90  # 漏迁/漏换算任一即 FAIL（×10⁴ mutation 咬点）
 
-
-def test_legacy_save_restore_jianzhou_converts_to_wan(game, legacy_game):
-    """无标旧档收复建州：content→档唯一接缝无损换回万人口径，不混刻度。"""
-    old_db, old_state = legacy_game
-    _settle_region_delta(old_db, old_state, game[2], {
-        "region_delta": {"jianzhou": {"controlled_by": "ming"}},
-    })
-    after = old_db.conn.execute(
-        "SELECT population FROM regions WHERE id='jianzhou'"
-    ).fetchone()[0]
-    assert after == JIANZHOU_RESTORE_POP_WAN

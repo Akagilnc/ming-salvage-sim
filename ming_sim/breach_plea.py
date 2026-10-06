@@ -471,7 +471,10 @@ def _spent_amount_and_fiscal_count(
 
 
 def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
-    """根基三档：禁完成度数值列；读已过段数（实结算）/ 已投入 / 实际进度定性 band。"""
+    """根基三档：只读实况（已过段数 / 已投入 / bar），不读奏报 progress_band。
+
+    ADR 0073：奏报永不改世界账。反噬分档是世界后果门，不得吃 reported rail。
+    """
     row = _issue_row(db, int(commitment_ref))
     if row is None:
         return FOUNDATION_JUST_STARTED
@@ -483,23 +486,12 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     stages_passed = _stages_passed_from_records(db, int(commitment_ref), n_stages)
     spent_amount, _fiscal_count = _spent_amount_and_fiscal_count(db, row)
 
-    band = ""
-    did = parse_dossier_id(row["origin_ref"] if "origin_ref" in row.keys() else "")
-    if did is not None:
-        progress = db.list_dossier_progress(int(did))
-        if progress:
-            band = str(progress[-1].get("progress_band") or "")
-
-    rooted_bands = {"告成", "已成", "生根", "完工", "就绪"}
-    mid_bands = {"在办", "过半", "在途", "推进"}
-
-    if band in rooted_bands or bar >= _BAR_ROOTED:
+    if bar >= _BAR_ROOTED:
         return FOUNDATION_ROOTED
     if n_stages >= 2 and stages_passed >= n_stages:
         return FOUNDATION_ROOTED
     if (
-        band in mid_bands
-        or (_BAR_MID_LOW <= bar < _BAR_ROOTED)
+        (_BAR_MID_LOW <= bar < _BAR_ROOTED)
         or (n_stages >= 2 and 0 < stages_passed < n_stages)
         or (spent_amount >= _SPENT_AMOUNT_HALFWAY and bar >= _BAR_MID_LOW)
     ):
@@ -1167,9 +1159,10 @@ def _scan_remove_sponsor(db: Any, state: Any) -> List[int]:
 def scan_and_write_breach_pleas(
     db: Any, state: Any, *, commit: bool = False,
 ) -> List[int]:
-    """结算内扫描断供/挪用/撤人（改弦由 revoke/cancel 拦截缝直写）。
+    """结算内扫描断供/挪用/撤人。
 
-    相反新旨：无可行机械判据（需语义对立），不静默缺省——见模块说明/送修上抛。
+    明确撤令不经此场强制挽留（#1894）；改弦若已有他类松手 pending，由 cancels
+    坚持撤 finalize。相反新旨：无可行机械判据（需语义对立），不静默缺省——见模块说明。
     """
     written: List[int] = []
     written.extend(_scan_funding_cutoff(db, state))
@@ -1180,70 +1173,6 @@ def scan_and_write_breach_pleas(
     return written
 
 
-def try_defer_revoke_to_breach_plea(
-    db: Any,
-    state: Any,
-    *,
-    target_dossier_id: int,
-    target_issue_id: int = 0,
-    revoke_dossier_id: int = 0,
-    reason: str = "",
-    commit: bool = False,
-) -> Optional[Dict[str, object]]:
-    """改弦拦截：目标若挂 active 承诺，只写挽留 todo，返回 defer 信息；否则 None。"""
-    commitment_ids: List[int] = []
-    if target_dossier_id > 0:
-        origin_ref = f"dossier:{int(target_dossier_id)}"
-        for iss in db.conn.execute(
-            """
-            SELECT id FROM issues
-            WHERE origin_ref=? AND status='active' AND commitment_kind != ''
-            """,
-            (origin_ref,),
-        ).fetchall():
-            commitment_ids.append(int(iss["id"]))
-    if target_issue_id > 0:
-        row = db.conn.execute(
-            "SELECT id, status, commitment_kind FROM issues WHERE id=?",
-            (int(target_issue_id),),
-        ).fetchone()
-        if (
-            row is not None
-            and str(row["status"] or "") == "active"
-            and str(row["commitment_kind"] or "").strip()
-        ):
-            if int(row["id"]) not in commitment_ids:
-                commitment_ids.append(int(row["id"]))
-    if not commitment_ids:
-        return None
-    written: List[int] = []
-    for cid in commitment_ids:
-        tid = write_breach_plea_todo(
-            db, state,
-            commitment_ref=cid,
-            breach_kind=BREACH_KIND_POLICY_REVERSAL,
-            reason=str(reason) if str(reason or "").strip() else "撤回成命",
-            target_dossier_id=int(target_dossier_id or 0),
-            extra={
-                "deferred_revoke": True,
-                "revoke_dossier_id": int(revoke_dossier_id or 0),
-            },
-        )
-        if tid:
-            written.append(tid)
-    if not written:
-        # 不应再出现：write 并入后必返 id；仍空则非 deferred
-        return None
-    if commit:
-        db.conn.commit()
-    return {
-        "deferred": True,
-        "commitment_ids": commitment_ids,
-        "todo_ids": written,
-    }
-
-
-# ── 召对 extraction 真入口：反悔 / 坚持（既有键 only）──────────────────
 
 
 def _pending_breach_pleas(db: Any) -> List[Dict[str, object]]:

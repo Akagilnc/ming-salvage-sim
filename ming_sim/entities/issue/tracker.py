@@ -816,19 +816,15 @@ def apply_issue_tracker_output(
             state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) - 2)
             entity_rejections.append(RejectedItem(item={"issue_id": issue_id, "title": row["title"]}, reason="此事非诏可消（不可撤国策），已转强行推进并损皇威 2 点。", category="non_cancellable_converted", source=source))
             continue
-        # #623 / ADR 0075：active 承诺松手不得顺 cancel 即 breach+close——
-        # cancel=改弦信号：primary∪absorbed 含改弦即认并 finalize 该 merged 条；
-        # 其它类 pending 则并入改弦条。禁「报 persist 不执行」。
+        # #1894 / ADR 0075 后出修订：明确撤令（cancels）不再强制挽留下一场。
+        # 若已有他类松手产生的 pending 改弦条，cancel=坚持撤 → finalize_persist；
+        # 无 pending 则直接落入下方可撤成命路径（外廷准行当月见结果）。
         if str(row["commitment_kind"] or "").strip():
             from ming_sim.breach_plea import (
                 BREACH_KIND_POLICY_REVERSAL,
                 finalize_persist,
                 find_pending_plea,
-                parse_dossier_id,
-                write_breach_plea_todo,
             )
-            origin_ref_c = str(row["origin_ref"] or "").strip()
-            # 统一 primary∪absorbed：has_pending 与 todo 检索同一读口
             plea_todo = find_pending_plea(
                 db, issue_id, breach_kind=BREACH_KIND_POLICY_REVERSAL,
             )
@@ -836,16 +832,6 @@ def apply_issue_tracker_output(
                 finalize_persist(db, state, plea_todo, commit=False)
                 applied_cancels.append({"issue_id": issue_id, "title": row["title"], "breach_plea_decision": "persist"})
                 continue
-            # 无改弦 pending：写/并入改弦挽留条（同回合他类松手走 merge，不静默吞）
-            write_breach_plea_todo(
-                db, state,
-                commitment_ref=issue_id,
-                breach_kind=BREACH_KIND_POLICY_REVERSAL,
-                reason=str(cn.get("narrative") or "撤回成命"),
-                target_dossier_id=int(parse_dossier_id(origin_ref_c) or 0),
-            )
-            applied_cancels.append({"issue_id": issue_id, "title": row["title"], "deferred_breach_plea": True})
-            continue
         # 可撤成命：若事项来自已颁案卷，ADR 0056 的确定性毁约轨取代
         # extractor/default by_progress cancel_cost，防同一次撤旨双罚。
         linked_dossier = None

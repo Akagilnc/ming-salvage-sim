@@ -29,7 +29,6 @@ from ming_sim.constants import (
 from ming_sim.content import GameContent
 from ming_sim.db import (
     GameDB,
-    POPULATION_UNIT_PERSONS,
     _LEVERAGE_FACTIONS,
 )
 from ming_sim.decree_vocabulary import (
@@ -2022,33 +2021,11 @@ def _compute_inertia(ni: Dict[str, object]) -> int:
 def _content_population_effect_for_save(
     db: GameDB, effect: Dict[str, object]
 ) -> Dict[str, object]:
-    """#648（ADR 0088/F4）：content 静态人口量已全线「人」，落本档前按存档口径换算。
+    """#648（ADR 0088）/#1835：content 静态人口量已全线「人」，现役唯一口径原样透传。
 
-    新档（人）原样；无标旧档（万人）region_delta.population ÷10⁴（迁移后 content
-    人口值均为 10⁴ 整倍数，整除无损）。只换算 region_delta.*.population，其余段浅拷贝透传。
     只用于 content 事件真源（effect_on_trigger / event_to_issue 持久化）；LLM 产 delta
-    已按本档口径写，不得经此换算。"""
-    region_delta = effect.get("region_delta")
-    if not isinstance(region_delta, dict) or not region_delta:
-        return effect
-    if db.population_unit == POPULATION_UNIT_PERSONS:
-        return effect
-    scaled: Dict[str, object] = {**effect}
-    scaled_region_delta: Dict[str, object] = {}
-    for rid, fields in region_delta.items():
-        if isinstance(fields, dict) and "population" in fields:
-            scaled_fields = {**fields}
-            try:
-                value = int(fields["population"])
-            except (TypeError, ValueError):
-                pass  # 坏值原样交给领域核；持久读取不在此解析 catch 中。
-            else:
-                scaled_fields["population"] = db.scale_content_population_to_save_unit(value)
-            scaled_region_delta[rid] = scaled_fields
-        else:
-            scaled_region_delta[rid] = fields
-    scaled["region_delta"] = scaled_region_delta
-    return scaled
+    已按本档口径写，不得经此换算。旧档万人分流已退出。"""
+    return effect
 
 
 # 校验「二级非 dict 会让 apply 在**逐 entity 写 DB 的中途崩**,留下部分已写 + 回合照推 = 半落库」

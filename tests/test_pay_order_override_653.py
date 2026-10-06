@@ -31,7 +31,6 @@ from ming_sim.pay_order import (
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import rejected_view, class_deltas
 
-
 def _override_dossier(db, state, entries, *, text="偿还序/折发旨") -> int:
     """成案一道 pay_order_override 案卷（F1.2：旨意不是面板、每道旨一张案卷）。"""
     return db.create_decree_dossier(
@@ -42,7 +41,6 @@ def _override_dossier(db, state, entries, *, text="偿还序/折发旨") -> int:
         target_id="pay_order",
         payload={"entries": entries},
     )
-
 
 # ── 共用最小盘面：省内池不足，四科目 Due 齐备 ──
 def _board(gross: float = 0.0):
@@ -57,7 +55,6 @@ def _board(gross: float = 0.0):
         "Due": {"军饷": 18.0, "官俸": 3.0, "宗禄": 4.07, "赈济": 1.0},
     }
     return st, p
-
 
 # ═══════════════ r3/r4 键形白名单与值域 ═══════════════
 
@@ -74,7 +71,6 @@ def _board(gross: float = 0.0):
 ])
 def test_override_key_legal_shapes(key):
     assert parse_override_key(key).subject
-
 
 @pytest.mark.parametrize("key", [
     # priority 族带 # 饷源后缀＝非法（r3：序无饷源维度）
@@ -94,13 +90,11 @@ def test_override_key_illegal_shapes_fail_loud(key):
     with pytest.raises(ValueError):
         parse_override_key(key)
 
-
 @pytest.mark.parametrize("value", [0, -1, 10001, "5000", True, 5000.0, None])
 def test_haircut_value_domain_fail_loud(value):
     from ming_sim.pay_order import validate_override_value
     with pytest.raises(ValueError):
         validate_override_value("due_haircut_bp_宗禄", value)
-
 
 def test_priority_value_domain_rejects_non_int():
     from ming_sim.pay_order import validate_override_value
@@ -108,7 +102,6 @@ def test_priority_value_domain_rejects_non_int():
         validate_override_value("due_priority_军饷", "10")
     with pytest.raises(ValueError):
         validate_override_value("due_priority_军饷", 1.5)
-
 
 def test_r4_no_phantom_region_materialization_is_all_or_nothing(game):
     """r4：不新增 alias、不造虚拟 region——@SX 幻影 region fail-loud 拒**整道旨**
@@ -125,7 +118,6 @@ def test_r4_no_phantom_region_materialization_is_all_or_nothing(game):
     assert "due_haircut_bp_军饷@shaanxi#province" not in cfg
     assert db.conn.execute("SELECT COUNT(*) c FROM fiscal_config_changes").fetchone()["c"] == 0
 
-
 def test_origin_ref_must_be_dossier_provenance(game):
     db, _state, _content = game
     with pytest.raises(ValueError):
@@ -134,7 +126,6 @@ def test_origin_ref_must_be_dossier_provenance(game):
             entries=[{"key": "due_priority_军饷", "value": 40}],
             origin_ref="随手写的", commit=True,
         )
-
 
 # ═══════════════ r3/r4 读取优先级全序 goldens ═══════════════
 
@@ -153,7 +144,6 @@ def test_r4_golden1_region_source_specificity_wins():
     assert resolve_haircut_bp(config, "军饷", "shaanxi", 1, "central") is None
     assert resolve_haircut_bp(config, "军饷", "henan", 1, "central") is None
     assert resolve_haircut_bp(config, "军饷", "", 1, "central") is None
-
 
 def test_r3_central_side_scope_resolution():
     """r3 补充 golden（judge class②）：#central / 裸键在中央侧按全序独立取胜。"""
@@ -177,7 +167,6 @@ def test_r3_central_side_scope_resolution():
     assert resolve_haircut_bp(expired, "军饷", "shaanxi", 12, "central") == 6000
     assert resolve_haircut_bp(expired, "军饷", "shaanxi", 13, "central") == 9000
 
-
 def test_r4_golden2_expiry_falls_back_to_next_specific(game=None):
     """r4 golden②：同一在位组合，@shaanxi#province_until_turn 到期后（其余键不变），
     陕西省饷侧回落 #province 胜出。"""
@@ -192,7 +181,6 @@ def test_r4_golden2_expiry_falls_back_to_next_specific(game=None):
     assert config["due_haircut_bp_军饷@shaanxi#province"] == 6000
     assert config["due_haircut_bp_军饷@shaanxi#province_until_turn"] == 12
 
-
 def test_precedence_region_beats_bare_and_full_order():
     config = {
         "due_priority_军饷@shaanxi": 40,
@@ -206,12 +194,10 @@ def test_precedence_region_beats_bare_and_full_order():
     # 他省：裸键=10 → 军饷最先
     assert tuple(hn) == ("军饷", "官俸", "宗禄", "赈济")
 
-
 def test_priority_tie_breaks_on_default_baseline_stable():
     config = {"due_priority_宗禄": 10}  # 与 军饷 默认 10 并列 → 默认基准 tie-break（军饷先）
     order = resolve_pay_order_overrides(config, "shaanxi", turn=1).due_order
     assert order == ("军饷", "宗禄", "官俸", "赈济")
-
 
 def test_arrears_order_resolution_default_and_override():
     no_cfg = resolve_pay_order_overrides({}, "shaanxi", turn=1)
@@ -220,7 +206,6 @@ def test_arrears_order_resolution_default_and_override():
     res = resolve_pay_order_overrides(config, "shaanxi", turn=1)
     assert res.arrears_order == ("宗禄欠", "官俸欠", "军饷欠")
 
-
 def test_expired_only_keys_return_none_fast_path():
     config = {
         "due_priority_军饷": 40,
@@ -228,7 +213,6 @@ def test_expired_only_keys_return_none_fast_path():
     }
     assert resolve_pay_order_overrides(config, "shaanxi", turn=6) is None
     assert resolve_pay_order_overrides(config, "shaanxi", turn=5) is not None
-
 
 # ═══════════════ F1.6 验收表 golden ①–⑦ ═══════════════
 
@@ -252,7 +236,6 @@ def test_golden1_pay_order_reversal_breakdown_tsv():
     assert res.breakdown["NewDebt"]["官俸欠"] == 0.0
     assert res.new_st["军饷欠"] == pytest.approx(36.07)  # 旧欠20 + 新欠16.07
 
-
 def test_golden2_haircut_half_is_exemption_not_debt():
     """②「宗禄折半」：floor(Due×bp/10000)；折掉部分不入宗禄欠；NewDebt 只含折后未付。
     r2 golden：Due=101、bp=5000 → 应得 50、免除 51。"""
@@ -271,7 +254,6 @@ def test_golden2_haircut_half_is_exemption_not_debt():
     # 免除的 51 绝不进 CLAIM（若无折，宗禄欠将是 101-39=62）
     assert res.new_st["宗禄欠"] < 62.0
 
-
 def test_golden3_arrears_waterfall_reversal():
     """③「旧欠先偿宗禄」：surplus waterfall 先还宗禄欠、再军饷欠。"""
     st, p = _board(gross=20.0)  # 省内可支30；Due 合计26.07 → surplus≈3.93
@@ -286,7 +268,6 @@ def test_golden3_arrears_waterfall_reversal():
     res_def = settle_tick(copy.deepcopy(st), copy.deepcopy(p), [])
     assert res_def.breakdown["Repaid"]["军饷欠"] == pytest.approx(3.93)
     assert res_def.breakdown["Repaid"]["宗禄欠"] == 0.0
-
 
 def test_golden4_last_write_wins_with_two_provenance_rows(game):
     """④连下两道同维相冲旨：后旨生效；fiscal_config_changes 两行 provenance 可查。"""
@@ -310,7 +291,6 @@ def test_golden4_last_write_wins_with_two_provenance_rows(game):
     assert [r["origin_ref"] for r in rows] == [f"dossier:{d1}", f"dossier:{d2}"]
     assert (rows[0]["old_value"], rows[0]["new_value"]) == (10, 40)
     assert (rows[1]["old_value"], rows[1]["new_value"]) == (40, 10)
-
 
 def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
     """⑤期限届满月／撤销旨：全序与系数恢复默认，与无旨基线逐字节一致。"""
@@ -356,7 +336,6 @@ def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
     )
     assert db.get_fiscal_config()["due_priority_官俸@shaanxi"] == DEFAULT_DUE_PRIORITY["官俸"]
 
-
 def test_real_revoke_decree_restores_override_and_clears_expiry(game):
     """撤销使目标形状退出格律（删键），期限伴随键一并清除；读取回落祖制默认。"""
     db, state, _content = game
@@ -393,7 +372,6 @@ def test_real_revoke_decree_restores_override_and_clears_expiry(game):
     assert [row["key"] for row in tomb] == [
         "due_priority_军饷@shaanxi", "due_priority_军饷@shaanxi_until_turn",
     ]
-
 
 def test_proposed_revoke_does_not_restore_override(game):
     """未颁 revoke：owner seam 响亮拒绝，在位 override/期限/审计零变化。"""
@@ -436,7 +414,6 @@ def test_proposed_revoke_does_not_restore_override(game):
         "SELECT COUNT(*) c FROM fiscal_config_changes WHERE origin_ref=?",
         (origin,),
     ).fetchone()["c"] == 0
-
 
 def test_rejected_revoke_does_not_restore_override(game):
     """打回 revoke：owner seam 响亮拒绝，在位 override/期限/审计零变化。"""
@@ -483,7 +460,6 @@ def test_rejected_revoke_does_not_restore_override(game):
         (origin,),
     ).fetchone()["c"] == 0
 
-
 def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
     db, state, _content = game
     _pin_shortfall_board(db, "shaanxi")
@@ -516,7 +492,6 @@ def test_turn_region_summary_claim_audit_rows_do_not_consume_limit(game):
     summary = db.turn_region_summary(state.turn, limit=1)
     assert "民变事实" in summary
     assert not any(row["reason"] in summary for row in claim_rows)
-
 
 def test_real_revoke_restores_override_same_month_with_active_commitment(game):
     """#1894：目标挂 active 承诺时撤旨当月即恢复 override，不再等下一场挽留坚持。
@@ -569,7 +544,6 @@ def test_real_revoke_restores_override_same_month_with_active_commitment(game):
     )}
     assert origins == {f"dossier:{revoke}"}
 
-
 def test_golden7_replay_determinism(game):
     """⑦restore 后任意月重放结果一致；纯函数同输入同输出。"""
     db, state, _content = game
@@ -578,7 +552,6 @@ def test_golden7_replay_determinism(game):
     b = settle_tick(settle["st"], settle["p"], [])
     assert a.new_st == b.new_st
     assert a.breakdown == b.breakdown
-
 
 # ═══════════════ 桥集成：结算按新序/系数付账 ═══════════════
 
@@ -601,13 +574,11 @@ def test_bridge_applies_due_order_and_haircut_end_to_end(game):
     assert res.breakdown["haircut_军饷"] > 0              # 折发免除额入分解
     assert res.new_st != baseline.new_st                  # 偏离基线
 
-
 def _opening_settle(db, region_id):
     import json
 
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id=?", (region_id,)).fetchone()
     return json.loads(row["fiscal"])["settle"]
-
 
 # ═══════════════ settle_tick 序参/折发参验形 fail-loud ═══════════════
 
@@ -628,7 +599,6 @@ def test_due_order_bad_shapes_raise(bad):
     with pytest.raises(ValueError):
         _oracle_order({"due_order": bad}, "due_order", _DUE_KEYS)
 
-
 def test_haircut_param_bad_values_raise():
     st, p = _board()
     p["due_haircut_bp"] = {"宗禄": 0}
@@ -643,7 +613,6 @@ def test_haircut_param_bad_values_raise():
     p["due_haircut_bp"] = {"土司": 5000}
     with pytest.raises(ValueError):
         settle_tick(st, p, [])
-
 
 # ═══════════════ F2 六源纯投影 ═══════════════
 
@@ -689,7 +658,6 @@ def test_f23_region_logs_flow_sign_domain_repaid_negative(game):
     assert all(e["value"] < 0 for e in repaid_rows), repaid_rows
     assert all(e["value"] > 0 for e in debt_rows), debt_rows
 
-
 def test_fiscal_fact_brief_pure_projection_deterministic_tsv(read_game):
     db, _state, _content = read_game
     e1 = build_fiscal_fact_brief(db)
@@ -711,7 +679,6 @@ def test_fiscal_fact_brief_pure_projection_deterministic_tsv(read_game):
     )
     assert format_fiscal_fact_brief_tsv(e2) == tsv
 
-
 def test_fact_brief_levy_uses_civil_arrears_breakdown_relation(game):
     """正赋非零时，加派量=三饷应征−民欠新增，区别于三饷×(1−逋赋率)捷径。"""
     import json
@@ -725,7 +692,6 @@ def test_fact_brief_levy_uses_civil_arrears_breakdown_relation(game):
                 if e["metric"] == "加派量" and e["subject_id"] == "shaanxi")
     assert levy["value"] == pytest.approx(13.0)  # 20 - (8+20)*.25
     assert levy["value"] != pytest.approx(15.0)  # 被废止的 20*(1-.25)
-
 
 def test_fact_brief_levy_derives_regular_assessment_like_settle_tick(game):
     """正赋未直设时复用亩额派生真源，不能把 None 静默当零。"""
@@ -754,7 +720,6 @@ def test_fact_brief_levy_derives_regular_assessment_like_settle_tick(game):
     assert settled.breakdown["民欠新增"] == pytest.approx(7.5)
     assert projected["value"] == pytest.approx(12.5)
 
-
 def test_fact_brief_attributes_priority_displacement_to_dossier(game):
     """同一实付总额按祖制序重放，只报告因旨让位新增受损的对象、差额和案卷。"""
     db, state, content = game
@@ -776,7 +741,6 @@ def test_fact_brief_attributes_priority_displacement_to_dossier(game):
                 if e["detail"].startswith("旨序让位_")] == displaced
     finally:
         restored.close()
-
 
 def test_revoke_later_same_dim_decree_not_stomped(game):
     """Codex-11/revoke_shape_exit①：同维后旨在位时撤前旨，不改该键。"""
@@ -811,7 +775,6 @@ def test_revoke_later_same_dim_decree_not_stomped(game):
     ).fetchone()
     assert stomps is None
 
-
 def test_revoke_provincial_falls_back_to_nationwide(game):
     """Codex-11/revoke_shape_exit②：全国+省域并存时撤省域后该省回落全国键。"""
     db, state, _content = game
@@ -843,7 +806,6 @@ def test_revoke_provincial_falls_back_to_nationwide(game):
     assert after.due_order == ("官俸", "宗禄", "军饷", "赈济")
     # 对照：河南无省域键，同读全国键
     assert resolve_pay_order_overrides(cfg, "henan", turn).due_order == after.due_order
-
 
 def test_fact_brief_attributes_arrears_order_displacement_to_dossier(game):
     """Codex-12：旧欠序让位反事实——只报因 arrears_priority 让位新增受损与案卷。"""
@@ -898,28 +860,6 @@ def test_fact_brief_attributes_arrears_order_displacement_to_dossier(game):
         e for e in build_fiscal_fact_brief(db) if e["detail"].startswith("旨序让位_")
     ]
 
-
-def test_legacy_engine_pay_order_materialize_fails_loud_not_fulfilled(game):
-    """Codex-10/legacy_no_consumer：legacy 引擎物化 fail-loud，案卷不得标 fulfilled。"""
-    db, state, _content = game
-    db.conn.execute(
-        "INSERT INTO fiscal_config (key, value, kind, note) "
-        "VALUES ('__fiscal_engine', 0, 'meta', 'test legacy engine') "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, note=excluded.note"
-    )
-    db.conn.commit()
-    assert db.fiscal_engine() == "legacy"
-    did = _override_dossier(
-        db, state, [{"key": "due_priority_军饷@shaanxi", "value": 40}],
-    )
-    with pytest.raises(ValueError):
-        db.apply_dossier_promulgation(state, did, "promulgated")
-    assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
-    dossier = db.get_decree_dossier(did)
-    assert dossier["status"] != "closed"
-    assert str(dossier.get("execution_outcome") or "") != "fulfilled"
-
-
 def test_fact_brief_priority_provenance_falls_back_to_nationwide_scope(game):
     """真实撤回局部胜出键后应回落全国键，并归因于真正造成让位的全国旨。"""
     db, state, _content = game
@@ -951,7 +891,6 @@ def test_fact_brief_priority_provenance_falls_back_to_nationwide_scope(game):
     assert displaced[0]["origin_ref"] == f"dossier:{nationwide}"
     assert displaced[0]["origin_ref"] != f"dossier:{local}"
 
-
 def test_fact_brief_priority_provenance_prefers_winning_scoped_over_later_nationwide(game):
     """全国键先写、scoped 后写且两者皆能造成让位时，provenance 须收口胜出 scoped 键。"""
     db, state, _content = game
@@ -974,7 +913,6 @@ def test_fact_brief_priority_provenance_prefers_winning_scoped_over_later_nation
     assert len(displaced) == 1
     assert displaced[0]["origin_ref"] == f"dossier:{scoped}"
     assert displaced[0]["origin_ref"] != f"dossier:{nationwide}"
-
 
 def test_fact_brief_arrears_provenance_prefers_winning_scoped_over_nationwide(game):
     """旧欠序：scoped 胜出时 provenance 不得被较晚/并存的全国键抢走。"""
@@ -1022,7 +960,6 @@ def test_fact_brief_arrears_provenance_prefers_winning_scoped_over_nationwide(ga
     assert displaced[0]["origin_ref"] == f"dossier:{scoped}"
     assert displaced[0]["origin_ref"] != f"dossier:{nationwide}"
 
-
 def test_fact_brief_priority_provenance_ignores_later_noncausal_dossier(game):
     """后旨若不再改变实序，不得抢走先旨造成的让位 provenance。"""
     db, state, _content = game
@@ -1046,7 +983,6 @@ def test_fact_brief_priority_provenance_ignores_later_noncausal_dossier(game):
     assert displaced[0]["origin_ref"] == f"dossier:{causal}"
     assert displaced[0]["origin_ref"] != f"dossier:{noncausal}"
 
-
 def test_fiscal_fact_brief_missing_settle_key_exits_dynamic_membership(game):
     """F2①：合法 fiscal dict 缺 settle key 是合法非成员，不产该省事实。"""
     db, _state, _content = game
@@ -1056,7 +992,6 @@ def test_fiscal_fact_brief_missing_settle_key_exits_dynamic_membership(game):
         e["subject_kind"] == "region" and e["subject_id"] == "henan"
         for e in entries
     )
-
 
 @pytest.mark.parametrize("bad_fiscal", [
     "[]",
@@ -1072,16 +1007,12 @@ def test_fiscal_fact_brief_present_but_malformed_fails_loud(game, bad_fiscal):
     with pytest.raises(ValueError):
         build_fiscal_fact_brief(db)
 
-
 def test_fiscal_fact_brief_bad_json_fails_loud(game):
     """F2①：坏 fiscal JSON 仍响亮失败（ADR 0005）。"""
     db, _state, _content = game
     db.conn.execute("UPDATE regions SET fiscal='{bad json' WHERE id='henan'")
     with pytest.raises(ValueError):
         build_fiscal_fact_brief(db)
-
-
-
 
 def test_fiscal_fact_brief_haircut_and_relief_facts(game):
     """折发受损事实（province/central 侧）与补发受益事实入投影（F4 资源事实）。"""
@@ -1114,12 +1045,7 @@ def test_fiscal_fact_brief_haircut_and_relief_facts(game):
     assert relief and relief[0]["value"] < 0 and relief[0]["affected_class"] == "军户"
     assert relief[0]["origin_ref"] == f"dossier:{did}"
 
-
 # ═══════════════ F3 LLM 综合归因边界 ═══════════════
-
-
-
-
 
 def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
     """F3.2：单一财政受损事实在案时，LLM 综合判断的正向 satisfaction 原样接收。"""
@@ -1134,7 +1060,6 @@ def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
     applied = settle_delta(state, db, {'class_delta': {'军户': {'satisfaction': 9}}}, SettlementContext())
     assert class_deltas(applied)["军户"]["satisfaction"] == 9
     assert rejected_view(applied, "class_delta") == []
-
 
 # ═══════════════ F1 颁布生命周期 E2E（ADR 0055 判后物化缝）═══════════════
 
@@ -1161,7 +1086,6 @@ def test_lifecycle_promulgated_materializes_and_next_settlement_reads(game):
     after = db.settle_province_tick("shaanxi")
     assert after.breakdown["实付分账"]["军饷"] < before.breakdown["实付分账"]["军饷"]
 
-
 def test_lifecycle_rejected_decree_zero_config_write(game):
     """⑥打回：效果跟判决走——零 config 写入、零 provenance、结算照默认序。"""
     from dossier_test_helpers import rejected_verdict
@@ -1179,7 +1103,6 @@ def test_lifecycle_rejected_decree_zero_config_write(game):
     ).fetchone()["c"] == before_rows                      # 零 provenance
     assert db.get_decree_dossier(did)["status"] == "proposed"  # 打回持有态
 
-
 def test_lifecycle_force_promulgation_after_rejection(game):
     """强颁：中旨标记＋代价照 0055/0056 落，config 自下一次结算生效。"""
     from dossier_test_helpers import rejected_verdict
@@ -1191,7 +1114,6 @@ def test_lifecycle_force_promulgation_after_rejection(game):
     db.apply_dossier_promulgation(state, did, "force_promulgated")
     assert db.get_fiscal_config()["due_haircut_bp_宗禄"] == 5000  # 强颁物化
     assert db.dossier_authorizes_effects(did)
-
 
 def test_stale_until_cleared_by_permanent_overwrite(game):
     """F1.4：有期限旨被后来的永久旨覆盖 → 遗留 _until_turn 清除，新旨不再到期。"""
@@ -1218,7 +1140,6 @@ def test_stale_until_cleared_by_permanent_overwrite(game):
     assert res is not None
     assert res.due_order == ("官俸", "军饷", "宗禄", "赈济")  # 军饷序位30（与宗禄并列按基准 tie-break）
 
-
 def test_staging_rejects_illegal_entries_fail_loud(game):
     """成案点先验：非法键形/幻影 region 收夜即响亮拒，不入案卷。"""
     db, state, _content = game
@@ -1232,7 +1153,6 @@ def test_staging_rejects_illegal_entries_fail_loud(game):
         _override_dossier(db, state, [{"key": "due_haircut_bp_宗禄", "value": 20000}])
     with pytest.raises(ValueError):
         _override_dossier(db, state, [])
-
 
 def test_materialize_requires_real_promulgated_dossier(game):
     """物化入口资格校验：案卷必须真实存在、action_type 合法且已过颁布门。"""
@@ -1251,7 +1171,6 @@ def test_materialize_requires_real_promulgated_dossier(game):
             entries=[{"key": "due_priority_军饷", "value": 40}],
             origin_ref=f"dossier:{did}", commit=True,
         )
-
 
 # ═══════════════ 中央侧折发消费者（flows 读端）═══════════════
 
@@ -1285,7 +1204,6 @@ def test_central_due_haircut_consumer(game):
     jy_raw = army_needed(next(r for r in rows if r["id"] == "jingying")) * 1.0
     assert dues["jingying"] == pytest.approx(math.floor(jy_raw * 0.6))
     # 免除不入欠：欠发只按折后应得计（shortfall 上界即折后 due）
-
 
 def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     """#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
@@ -1336,9 +1254,6 @@ def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     assert float(after["central_pay_arrears"] or 0) == pytest.approx(old_central_arrears)
     assert float(after["arrears"] or 0) == pytest.approx(old_arrears)
 
-
-
-
 # ═══════════════ 独立 oracle 宪制 mutation 自验 ═══════════════
 
 def test_oracle_independent_of_shared_haircut_helper(monkeypatch):
@@ -1362,7 +1277,6 @@ def test_oracle_independent_of_shared_haircut_helper(monkeypatch):
     with pytest.raises(ft.FiscalConservationError):
         settle_tick(st, p, [])
 
-
 def test_oracle_independent_of_shared_order_resolver(monkeypatch):
     """mutation②破坏优先序：落账侧序解析被劫持 → 独立 oracle 必红。
     盘面须让序真正改变分配：池不足（新债落点随序变）＋多账户旧欠。"""
@@ -1377,7 +1291,6 @@ def test_oracle_independent_of_shared_order_resolver(monkeypatch):
     with pytest.raises(ft.FiscalConservationError):
         settle_tick(st, p, [])
 
-
 def test_oracle_independent_of_debt_mapping(monkeypatch):
     """mutation③破坏映射：落账侧 Due→CLAIM 映射错位 → 独立 oracle 必红。"""
     import ming_sim.fiscal_tick as ft
@@ -1388,7 +1301,6 @@ def test_oracle_independent_of_debt_mapping(monkeypatch):
     )
     with pytest.raises((ft.FiscalConservationError, ValueError)):
         settle_tick(st, p, [])
-
 
 # ═══════════════ F2 投影真源修正 goldens（judge r2 class②）═══════════════
 
@@ -1431,7 +1343,6 @@ def test_fact_brief_per_source_windows_and_region_attribution(game):
         "SELECT owner_power, manpower, salary_rate FROM armies WHERE id='southwest_tusi'"
     ).fetchone()) == 0
 
-
 def test_fact_brief_zero_need_army_region_attribution_not_gated(game):
     """零需残军（manpower=0 携历史欠，0023 D6/D11）属地归因不被 need 门误删：
     月需=0 只短路欠饷月数计算（不做除法），army 仍入 region_of_army 册——
@@ -1469,7 +1380,6 @@ def test_fact_brief_zero_need_army_region_attribution_not_gated(game):
     assert repaid and repaid[0]["value"] == pytest.approx(-3.0)
     assert repaid[0]["region"] == "shaanxi"
 
-
 def test_fact_brief_central_haircut_floor_per_army_matches_real_accounting(game):
     """多军同省中央折发：投影复用 flows._central_dues_with_haircut 唯一读端——每军各自
     floor（账实同舍入），禁先聚省再舍入。beizhili 三军 raw=9.0/4.0/7.2、bp=5000：
@@ -1500,7 +1410,6 @@ def test_fact_brief_central_haircut_floor_per_army_matches_real_accounting(game)
     assert cut[0]["value"] != pytest.approx(10.1)  # 聚省再舍入的伪重建值必不相同
     assert cut[0]["origin_ref"] == f"dossier:{did}"
 
-
 def test_fact_brief_unmet_relief_is_current_turn_damage(game):
     """赈济未敷（unmet_relief）＝settle_tick 落进 st 的当月流量 → 农民受损事实在案。"""
     import json as _json
@@ -1523,7 +1432,6 @@ def test_fact_brief_unmet_relief_is_current_turn_damage(game):
     assert unmet[0]["affected_class"] == "农民"
     assert unmet[0]["origin_ref"] == "region:shaanxi:settle.st.unmet_relief"
 
-
 def test_fact_brief_province_auto_repaied_is_beneficiary_fact(game):
     """省池自动偿还（surplus waterfall）＝army_logs 当月负 delta → 军户受益事实（<0）。"""
     db, state, _content = game
@@ -1545,7 +1453,6 @@ def test_fact_brief_province_auto_repaied_is_beneficiary_fact(game):
     assert repaid[0]["region"] == "shaanxi"
     assert repaid[0]["origin_ref"].startswith("army_logs:")
 
-
 def test_fact_brief_long_term_stock_not_fed_as_turn_damage(game):
     """回归钉死：长期 st 欠额存量（官俸欠/宗禄欠）不再生成受损事实——归因对象只准是
     本回合分量（上轮既禁旧行为）。"""
@@ -1564,7 +1471,6 @@ def test_fact_brief_long_term_stock_not_fed_as_turn_damage(game):
     entries = build_fiscal_fact_brief(db)
     assert not [e for e in entries if e["affected_class"] == "官僚"]
     assert not [e for e in entries if e["affected_class"] == "宗藩"]
-
 
 # ═══════════════ 拟旨 capture→成案（财政物化与下一次省 tick 分别由上方领域用例覆盖）═══
 
@@ -1592,7 +1498,6 @@ def _pin_shortfall_board(db, region_id):
         (_json.dumps(fiscal, ensure_ascii=False), region_id),
     )
     db.conn.commit()
-
 
 def _capture_override_decree(game, monkeypatch, text, entries):
     """真实手工拟诏 capture seam（mock LLM 抽取）→ 草案落库 → 结束边界成案 staging。
@@ -1633,14 +1538,12 @@ def _capture_override_decree(game, monkeypatch, text, entries):
     assert dossier["action_type"] == "pay_order_override"
     return int(dossier["id"])
 
-
 def test_manual_override_capture_stages_without_premature_materialization(game, monkeypatch):
     db, _state, _content = game
     entries = [{"key": "due_priority_军饷@shaanxi", "value": 40}]
     did = _capture_override_decree(game, monkeypatch, "今岁边饷居末", entries)
     assert db.get_decree_dossier(did)["status"] == "proposed"
     assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
-
 
 # ═══════════════ F2.3（owner 拍板 r5）：官俸欠/宗禄欠当回合流量持久留痕 ═══════════════
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Dict, List, Tuple
 from ming_sim.applier import RejectedItem, Provenance
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.db import GameDB
 from ming_sim.models import GameState
 from ming_sim.constants import BANDIT_ABSORPTION_FIELDS, BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
 from ming_sim.strict_types import strict_int as _strict_int
@@ -33,12 +33,6 @@ def _apply_bandit_absorptions(
     rejected: List[RejectedItem] = []
     power_changes: List[Dict[str, object]] = []
     items = absorptions if isinstance(absorptions, list) else []
-    # 仅 substrate 人口径新档开环；legacy 不误开（对齐 #649/#650）。
-    if db.population_unit != POPULATION_UNIT_PERSONS:
-        for item in items:
-            rejected.append(RejectedItem(item=item if isinstance(item, dict) else {"raw_value": item}, reason="bandit_absorptions 仅适用于 population_unit='人' 的人口池档", category="invalid_enum", source=source))
-        return applied, rejected, power_changes
-
     for item in items:
         if not isinstance(item, dict):
             rejected.append(RejectedItem(item={"raw_value": item}, reason="bandit_absorptions 项必须是 object(dict)", category="invalid_shape", source=source))

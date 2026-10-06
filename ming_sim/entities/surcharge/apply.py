@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 
 from ming_sim.displaced_population import surcharge_population_pool_members as _surcharge_population_pool_members
 from ming_sim.applier import Provenance, RejectedItem
-from ming_sim.db import POPULATION_UNIT_PERSONS
 
 SURCHARGE_DECREE_FIELDS = frozenset({"region_id", "monthly_amount", "reason", "origin_ref"})
 
@@ -38,10 +37,6 @@ def _apply_surcharge_decrees(
     from ming_sim.constants import _SETTLE_META_JIAPIAI_KEY
     applied: List[Dict[str, object]] = []
     rejected: List[RejectedItem] = []
-    if not db.is_substrate_hub_fiscal_engine_enabled():
-        for item in (items if isinstance(items, list) else []):
-            rejected.append(RejectedItem(item=item if isinstance(item, dict) else {"raw_value": item}, reason="surcharge_decrees 仅适用于 substrate_hub 财政档", category="invalid_enum", source=source))
-        return applied, rejected
     claimed_origins: set[tuple[str, str]] = set()
     for item in (items if isinstance(items, list) else []):
         if not isinstance(item, dict):
@@ -76,9 +71,6 @@ def _apply_surcharge_decrees(
                 "missing_ref",
                 f"surcharge_decrees {region_id!r} 无 settle 财政基座，逐省累积账无处落",
             )
-            continue
-        if db.population_unit != POPULATION_UNIT_PERSONS:
-            _reject("missing_ref", "surcharge_decrees 仅适用于 population_unit='人' 的人口池档")
             continue
         if _surcharge_population_pool_members(db, region_id) != {"农民", "流民"}:
             _reject("missing_ref", f"surcharge_decrees {region_id!r} 缺农民/流民省级人口池")

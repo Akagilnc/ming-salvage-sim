@@ -78,9 +78,9 @@ logger = logging.getLogger(__name__)
 
 # ADR 0088 / #648：人口存储单位口径。content 静态人口量已全线「人」（与 armies.manpower
 # 同刻度）；存档口径判别持久化在 DB 内（save_meta 表），新档 seed 落「人」标，
-# 无标旧档一律判「万人」legacy——不得读 content 元信息判别（其不随档持久化）。
+# #1812/#1835：人口口径唯一为「人」；旧档万人平行架构退出，无标亦走现役。
 POPULATION_UNIT_PERSONS = "人"
-POPULATION_UNIT_WAN = "万人"
+POPULATION_UNIT_WAN = "万人"  # 退役常量，仅防外部误引用
 _POPULATION_UNIT_KEY = "population_unit"
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -312,10 +312,8 @@ class ProvinceFiscalTickOutcome(NamedTuple):
 
 _ARMY_PAY_SOURCE_CUTOVER_KEY = "__army_pay_source_cutover"
 _FISCAL_ENGINE_KEY = "__fiscal_engine"
-_FISCAL_ENGINE_LEGACY = 0
 _FISCAL_ENGINE_SUBSTRATE_HUB = 1
 _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY = "central_army_pay_arrears"
-_STANDALONE_MILITARY_PAY_FUNNEL_ID = "__standalone_military_pay_funnel__"
 _STRUCTURAL_FISCAL_MINIMUMS = {
     "central_taicang_sink_loss_rate": 1,
     "central_jingyun_sink_loss_rate": 1,
@@ -2631,8 +2629,8 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # #648（ADR 0088）：存档级持久元数据；人口单位口径判别标（population_unit）落此，
-        # 无标旧档一律判「万人」legacy，不读 content 元信息。
+        # #648（ADR 0088）/ #1835：存档级持久元数据；新档落 population_unit=人。
+        # 现役唯一口径为人；无标不再分流万人路径。
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS save_meta (
@@ -3205,26 +3203,8 @@ class GameDB:
                 or not isinstance(settle.get("p"), dict):
             raise ValueError(f"region {region_id!r} 无 settle 财政基座（缺 st/p）")
         pay_rows: List[Dict[str, float | str]] = []
-        standalone_pay_component: Optional[Dict[str, float]] = None
         if self.is_army_pay_source_cutover_enabled():
             pay_rows = self._derive_region_army_pay_due(region_id, settle)
-            if pay_rows:
-                primary_source_due = self._primary_source_army_pay_due(settle)
-                if self._has_standalone_army_pay_funnel(settle, primary_source_due):
-                    row_due_total = sum(float(row["due"]) for row in pay_rows)
-                    row_arrears_total = sum(float(row["province_pay_arrears"]) for row in pay_rows)
-                    standalone_pay_component = {
-                        "due": self._standalone_army_pay_due_component(
-                            settle,
-                            row_due_total,
-                            primary_source_due,
-                        ),
-                        "province_pay_arrears": self._standalone_army_pay_arrears_component(
-                            settle,
-                            row_arrears_total,
-                            primary_source_due,
-                        ),
-                    }
         tick_p = settle["p"]
         if p_overrides:
             tick_p = dict(tick_p)
@@ -3243,12 +3223,10 @@ class GameDB:
                 tick_p["due_haircut_bp"] = dict(overrides.haircut_bp)
         result = settle_tick(settle["st"], tick_p, actions)  # raise→下方不执行（港口锁）
         if pay_rows:
-            self._apply_region_army_pay_tick(pay_rows, result, standalone_pay_component)
+            self._apply_region_army_pay_tick(pay_rows, result)
         settle["st"] = result.new_st
-        if self.is_army_pay_source_cutover_enabled():
-            self._refresh_standalone_army_pay_arrears_component(region_id, settle)
-            if pay_rows:
-                self._reconcile_region_army_pay_container(region_id, settle)
+        if self.is_army_pay_source_cutover_enabled() and pay_rows:
+            self._reconcile_region_army_pay_container(region_id, settle)
         self.conn.execute(
             "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (json.dumps(fiscal, ensure_ascii=False), region_id),
@@ -3756,14 +3734,10 @@ class GameDB:
 
     @property
     def population_unit(self) -> str:
-        """本档人口存储单位口径（ADR 0088/#648）：新档「人」，无标旧档一律「万人」。
+        """本档人口存储单位口径：现役唯一「人」（#1812 无历史包袱；#1835 旧档支路退出）。
 
-        判别只读存档 DB 内的持久标记（save_meta），不读 content 元信息（其不随档
-        持久化，0088 明文禁止）。旧档不迁移、读写按档口径走 legacy。"""
-        row = self.conn.execute(
-            "SELECT value FROM save_meta WHERE key = ?", (_POPULATION_UNIT_KEY,)
-        ).fetchone()
-        return str(row[0]) if row else POPULATION_UNIT_WAN
+        仍写 save_meta 标记供新档重开识别；无标或旧标不再分流万人路径。"""
+        return POPULATION_UNIT_PERSONS
 
     def _mark_population_unit_persons(self) -> None:
         """新档 classes 首次 seed 时落持久人口单位标「人」（commit 由 seed_static_data 末尾统一提交）。"""
@@ -3773,15 +3747,8 @@ class GameDB:
         )
 
     def scale_content_population_to_save_unit(self, value: int) -> int:
-        """content 静态人口量（事件 effect 等）已全线「人」；落本档前按存档口径换算。
-
-        新档（人）原样；无标旧档（万人）÷10⁴——迁移后 content 人口值均为 10⁴ 整倍数，
-        整除无损（F4 禁的是对旧档读写加通用有损换算层；此处是 content→档的唯一确定性
-        口径接缝，非通用层）。"""
-        value = int(value)
-        if self.population_unit == POPULATION_UNIT_PERSONS:
-            return value
-        return value // 10000
+        """content 静态人口量已全线「人」；现役唯一口径，原样落入。"""
+        return int(value)
 
     def seed_static_data(self) -> None:
         self._ensure_office_type_parents()
@@ -3869,7 +3836,6 @@ class GameDB:
                 )
         if not self.table_has_rows("classes"):
             # ADR 0088/#648：classes 首次 seed = 新档 cutover 点，落持久人口单位标「人」。
-            # 旧档表已有行（万人口径）不重 seed、不落标 → population_unit 恒判「万人」legacy。
             self._mark_population_unit_persons()
             for cls in self.content.classes.values():
                 self.conn.execute(
@@ -4039,15 +4005,11 @@ class GameDB:
         return bool(row and int(row["value"] or 0) == 1)
 
     def fiscal_engine(self) -> str:
-        row = self.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = ?",
-            (_FISCAL_ENGINE_KEY,),
-        ).fetchone()
-        value = int(row["value"] or 0) if row is not None else _FISCAL_ENGINE_LEGACY
-        return "substrate_hub" if value == _FISCAL_ENGINE_SUBSTRATE_HUB else "legacy"
+        """现役唯一财政引擎：substrate_hub（#1812/#1835 旧档 legacy 支路退出）。"""
+        return "substrate_hub"
 
     def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
-        return self.fiscal_engine() == "substrate_hub"
+        return True
 
     def _migrate_missing_fiscal_engine_from_pay_source_cutover(self) -> None:
         if self.conn.execute(
@@ -4081,7 +4043,7 @@ class GameDB:
         )
 
     def _initialize_army_pay_source_spine(self, is_fresh_armies_seed: bool) -> None:
-        """Fresh-save cutover for #287 S1; existing saves stay on legacy army-pay flow."""
+        """Army pay source spine cutover for #287 S1（现役唯一路径）。"""
         if not is_fresh_armies_seed:
             return
         rows = self.conn.execute(
@@ -4213,149 +4175,6 @@ class GameDB:
             total += float(settle["st"].get("军饷欠", 0) or 0.0)
         return total
 
-    def _is_seeded_military_pay_funnel(self, settle: Dict[str, Any]) -> bool:
-        meta = settle.get("_meta")
-        if not isinstance(meta, dict):
-            return False
-        postures = meta.get("postures")
-        return isinstance(postures, list) and "纯军饷漏斗" in postures
-
-    def _has_standalone_army_pay_funnel(
-        self,
-        settle: Dict[str, Any],
-        primary_source_due: Optional[float] = None,
-    ) -> bool:
-        return primary_source_due is not None or self._is_seeded_military_pay_funnel(settle)
-
-    def _standalone_army_pay_due_component(
-        self,
-        settle: Dict[str, Any],
-        row_due_total: float,
-        primary_source_due: Optional[float],
-    ) -> float:
-        if primary_source_due is not None:
-            return primary_source_due
-        if not self._is_seeded_military_pay_funnel(settle):
-            return 0.0
-        meta = settle.setdefault("_meta", {})
-        if not isinstance(meta, dict):
-            raise ValueError("_meta 非字典")
-        existing = meta.get("standalone_military_pay_due")
-        if isinstance(existing, bool):
-            raise ValueError("standalone_military_pay_due 非法")
-        if isinstance(existing, (int, float)):
-            value = float(existing)
-        else:
-            p_obj = settle.get("p")
-            if not isinstance(p_obj, dict):
-                raise ValueError("settle.p 非法")
-            due_obj = p_obj.get("Due")
-            if not isinstance(due_obj, dict):
-                raise ValueError("settle.p.Due 非法")
-            raw_due = float(due_obj.get("军饷", 0) or 0)
-            value = raw_due if self._is_seeded_military_pay_funnel(settle) else raw_due - row_due_total
-        if not math.isfinite(value) or value < -1e-9:
-            raise ValueError("standalone_military_pay_due 非法")
-        value = max(0.0, value)
-        meta["standalone_military_pay_due"] = value
-        return value
-
-    def _standalone_army_pay_arrears_component(
-        self,
-        settle: Dict[str, Any],
-        row_arrears_total: float,
-        primary_source_due: Optional[float],
-    ) -> float:
-        if not self._has_standalone_army_pay_funnel(settle, primary_source_due):
-            return 0.0
-        meta = settle.setdefault("_meta", {})
-        if not isinstance(meta, dict):
-            raise ValueError("_meta 非字典")
-        existing = meta.get("standalone_military_pay_arrears")
-        if isinstance(existing, bool):
-            raise ValueError("standalone_military_pay_arrears 非法")
-        if isinstance(existing, (int, float)):
-            value = float(existing)
-        else:
-            st = settle.get("st")
-            if not isinstance(st, dict):
-                raise ValueError("settle.st 非法")
-            value = float(st.get("军饷欠", 0) or 0) - row_arrears_total
-        if not math.isfinite(value) or value < -1e-9:
-            raise ValueError("standalone_military_pay_arrears 非法")
-        value = max(0.0, value)
-        meta["standalone_military_pay_arrears"] = value
-        return value
-
-    def _refresh_standalone_army_pay_arrears_component(
-        self,
-        region_id: str,
-        settle: Dict[str, Any],
-    ) -> None:
-        primary_source_due = self._primary_source_army_pay_due(settle)
-        if not self._has_standalone_army_pay_funnel(settle, primary_source_due):
-            return
-        row_arrears_total = sum(
-            float(row["province_pay_arrears"])
-            for row in self._army_pay_source_rows_for_region(region_id)
-        )
-        st = settle.get("st")
-        if not isinstance(st, dict):
-            raise ValueError("settle.st 非法")
-        current_total = float(st.get("军饷欠", 0) or 0)
-        standalone_arrears = max(0.0, current_total - row_arrears_total)
-        meta = settle.setdefault("_meta", {})
-        if not isinstance(meta, dict):
-            raise ValueError("_meta 非字典")
-        meta["standalone_military_pay_arrears"] = standalone_arrears
-
-    def _standalone_army_pay_container_total(self) -> float:
-        total = 0.0
-        arrears_rows = self.conn.execute(
-            """
-            SELECT pay_source_region, COALESCE(SUM(province_pay_arrears), 0) AS total
-            FROM armies
-            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-              AND province_pay_share > 0
-              AND pay_source_region != ''
-            GROUP BY pay_source_region
-            """
-        ).fetchall()
-        arrears_by_region = {
-            str(row["pay_source_region"]): float(row["total"] or 0.0)
-            for row in arrears_rows
-        }
-        rows = self.conn.execute(
-            "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
-        ).fetchall()
-        for row in rows:
-            region_id = str(row["id"])
-            try:
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"region {region_id} fiscal JSON 非法，无法校验军饷容器守恒") from exc
-            if not isinstance(fiscal, dict):
-                raise ValueError(f"region {region_id} fiscal 非字典，无法校验军饷容器守恒")
-            settle = fiscal.get("settle")
-            if settle is None:
-                continue
-            if not isinstance(settle, dict):
-                raise ValueError(f"region {region_id} settle 非法，无法校验军饷容器守恒")
-            if not isinstance(settle.get("st"), dict):
-                raise ValueError(f"region {region_id} settle.st 非法，无法校验军饷容器守恒")
-            primary_source_due = self._primary_source_army_pay_due(settle)
-            if not self._has_standalone_army_pay_funnel(settle, primary_source_due):
-                continue
-            row_arrears_total = arrears_by_region.get(region_id, 0.0)
-            total += self._standalone_army_pay_arrears_component(
-                settle,
-                row_arrears_total,
-                primary_source_due,
-            )
-        return total
-
-    def _primary_source_only_army_pay_container_total(self) -> float:
-        return self._standalone_army_pay_container_total()
 
     def _has_complete_province_pay_containers(self) -> bool:
         rows = self.conn.execute(
@@ -4466,22 +4285,18 @@ class GameDB:
         if not self._has_complete_province_pay_containers():
             return
         province_container = self._province_army_pay_container_total()
-        standalone_total = self._standalone_army_pay_container_total()
-        expected_province_container = province_total + standalone_total
-        if abs(province_container - expected_province_container) > 1e-6:
+        if abs(province_container - province_total) > 1e-6:
             raise ValueError(
                 "省级军饷欠容器守恒破："
                 f"container={province_container} "
-                f"Σprovince={province_total} "
-                f"Σstandalone={standalone_total}"
+                f"Σprovince={province_total}"
             )
-        expected_total = army_total + standalone_total
+        expected_total = army_total
         if abs((province_container + central_container) - expected_total) > 1e-6:
             raise ValueError(
                 "双容器守恒破："
                 f"Σcontainer={province_container + central_container} "
-                f"Σarmy={army_total} "
-                f"Σstandalone={standalone_total}"
+                f"Σarmy={army_total}"
             )
 
     def _validate_pay_source_values(
@@ -4961,27 +4776,9 @@ class GameDB:
             })
         return out
 
-    def _primary_source_army_pay_due(self, settle: Dict[str, Any]) -> Optional[float]:
-        meta = settle.get("_meta")
-        if not isinstance(meta, dict):
-            return None
-        primary_source = meta.get("primary_source")
-        if not isinstance(primary_source, dict):
-            return None
-        refined = primary_source.get("fields_refined")
-        if not isinstance(refined, list) or "军饷" not in refined:
-            return None
-        if "现额银两_年" not in primary_source:
-            return None
-        raw_annual = primary_source.get("现额银两_年")
-        if isinstance(raw_annual, bool) or not isinstance(raw_annual, (int, float)):
-            raise ValueError("primary_source 现额银两_年 非法，无法派生 Due.军饷")
-        value = float(raw_annual) / 10000 / 12
-        if not math.isfinite(value) or value < 0:
-            raise ValueError("primary_source 现额银两_年 非法，无法派生 Due.军饷")
-        return value
 
     def _derive_region_army_pay_due(self, region_id: str, settle: Dict[str, Any]) -> List[Dict[str, float | str]]:
+        """逐军省份额为军饷唯一真源；无对应军份额的省旁账不另立。"""
         rows = self._army_pay_source_rows_for_region(region_id)
         p = settle.get("p")
         if not isinstance(p, dict):
@@ -4992,31 +4789,15 @@ class GameDB:
         st = settle.get("st")
         if not isinstance(st, dict):
             raise ValueError("settle.st 非法")
-        primary_source_due = self._primary_source_army_pay_due(settle)
         row_due_total = sum(float(row["due"]) for row in rows)
         row_arrears_total = sum(float(row["province_pay_arrears"]) for row in rows)
-        if self._has_standalone_army_pay_funnel(settle, primary_source_due):
-            standalone_due = self._standalone_army_pay_due_component(
-                settle,
-                row_due_total,
-                primary_source_due,
-            )
-            due_obj["军饷"] = standalone_due + row_due_total
-        elif rows:
-            due_obj["军饷"] = row_due_total
-        else:
-            due_obj["军饷"] = 0
-        if self._has_standalone_army_pay_funnel(settle, primary_source_due):
-            standalone_arrears = self._standalone_army_pay_arrears_component(
-                settle,
-                row_arrears_total,
-                primary_source_due,
-            )
-            st["军饷欠"] = standalone_arrears + row_arrears_total
-        elif rows:
-            st["军饷欠"] = row_arrears_total
-        else:
-            st["军饷欠"] = 0
+        due_obj["军饷"] = row_due_total if rows else 0
+        st["军饷欠"] = row_arrears_total if rows else 0
+        # 清掉历史旁账 meta，避免旧标档残留驱动第二真源
+        meta = settle.get("_meta")
+        if isinstance(meta, dict):
+            meta.pop("standalone_military_pay_due", None)
+            meta.pop("standalone_military_pay_arrears", None)
         return rows
 
     def _reconcile_all_army_pay_source_regions(self) -> None:
@@ -5060,7 +4841,6 @@ class GameDB:
         self,
         pay_rows: List[Dict[str, float | str]],
         result: Any,
-        standalone_pay_component: Optional[Dict[str, float]] = None,
     ) -> None:
         if not pay_rows:
             return
@@ -5072,15 +4852,6 @@ class GameDB:
         action_paid = float((breakdown.get("action还") or {}).get("军饷欠", 0) or 0)
         balances = {str(row["id"]): float(row["province_pay_arrears"]) for row in pay_rows}
         due_by_component = {str(row["id"]): float(row["due"]) for row in pay_rows}
-        standalone_id = _STANDALONE_MILITARY_PAY_FUNNEL_ID
-        if standalone_pay_component is not None:
-            standalone_due = float(standalone_pay_component.get("due", 0.0) or 0.0)
-            standalone_arrears = float(
-                standalone_pay_component.get("province_pay_arrears", 0.0) or 0.0
-            )
-            if standalone_due > 0 or standalone_arrears > 0:
-                balances[standalone_id] = standalone_arrears
-                due_by_component[standalone_id] = standalone_due
         action_repaid_by_army = {str(row["id"]): 0.0 for row in pay_rows}
         new_debt_by_army = {str(row["id"]): 0.0 for row in pay_rows}
         surplus_repaid_by_army = {str(row["id"]): 0.0 for row in pay_rows}
@@ -5219,16 +4990,14 @@ class GameDB:
             (region_id,),
         ).fetchone()["total"]
         row_arrears_total = float(total or 0)
-        primary_source_due = self._primary_source_army_pay_due(settle)
-        standalone_arrears = self._standalone_army_pay_arrears_component(
-            settle,
-            row_arrears_total,
-            primary_source_due,
-        )
         st = settle.get("st")
         if not isinstance(st, dict):
             raise ValueError("settle.st 非法")
-        st["军饷欠"] = standalone_arrears + row_arrears_total
+        st["军饷欠"] = row_arrears_total
+        meta = settle.get("_meta")
+        if isinstance(meta, dict):
+            meta.pop("standalone_military_pay_due", None)
+            meta.pop("standalone_military_pay_arrears", None)
 
     def _drop_maintenance_column(self) -> None:
         """#173：物理移除退役的 armies.maintenance_per_turn 列（月饷由 army_needed 按兵力派生）。
@@ -6546,9 +6315,7 @@ class GameDB:
         )
         # 军饷科目取数认 budget_key；呈现名跟预算行 name（玩家/摘要同源）。
         other_expense = (
-            ("中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
-            if self.is_substrate_hub_fiscal_engine_enabled()
-            else ("宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
+            "中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护"
         )
         expense_present = [
             army_pay_label if army_pay_amt else "",
@@ -6571,8 +6338,6 @@ class GameDB:
 
     def treasury_hub_result(self, state: GameState) -> Optional[Dict[str, int]]:
         """已执行边饷 hub 三项结果；只读 ledger/container，不重算结算。"""
-        if not self.is_substrate_hub_fiscal_engine_enabled():
-            return None
         # pre_settle 已在当月 state.turn 写 ledger/覆盖容器，settling/awaiting_decision
         # 相位下 next_period 尚未推进——此刻 state.turn 本身就是刚结算完的 turn（两者语义
         # 相同，见 FRONT_HALF_DONE_PHASES 单一真源）。换月后（summoning 等其它相位）
@@ -7207,15 +6972,9 @@ class GameDB:
         held = ""
         if str(row["controlled_by"]) != "ming":
             held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
-        # ADR 0088/#648：人口展示按档口径——新档（人）玩家面投影「约N万口」（P4）；
-        # 机面裸人数；无标旧档沿万人 legacy 原样，不加换算层。
-        persons_unit = self.population_unit == POPULATION_UNIT_PERSONS
-
-        pop_qual = (
-            f"人口{population_wan_kou_label(row['population'])}" if persons_unit
-            else f"人口{row['population']}万人"
-        )
-        pop_raw = f"人口{row['population']}人" if persons_unit else f"人口{row['population']}万人"
+        # ADR 0088/#648 / #1835：现役唯一人口径——玩家面「约N万口」（P4），机面裸人数。
+        pop_qual = f"人口{population_wan_kou_label(row['population'])}"
+        pop_raw = f"人口{row['population']}人"
         if qualitative:
             return (
                 f"{row['name']}（{row['kind']}）{held}：{pop_qual}，"
@@ -22087,85 +21846,6 @@ class GameDB:
                 f"ids={[x['id'] for x in submitted]} (status unchanged)"
             )
         return submitted
-
-    # ── 调试用通用 CRUD（仅限白名单核心表）──────────────────────
-    # 表名 → 主键列。只暴露核心几张，防误删元数据/日志表。
-    ADMIN_TABLES: Dict[str, str] = {
-        "game_state": "id",        # 局势
-        "metrics": "key",          # 国家修正（国库/内库/民心/皇威）
-        "regions": "id",           # 地区
-        "armies": "id",            # 军队
-        "characters": "name",      # 人物
-        "buildings": "id",         # 建筑
-    }
-
-    def admin_check_table(self, table: str) -> str:
-        pk = self.ADMIN_TABLES.get(table)
-        if pk is None:
-            raise DeclarationDataError(f"表 {table!r} 不在调试白名单")
-        return pk
-
-    def admin_columns(self, table: str) -> List[Dict[str, object]]:
-        """PRAGMA 取列定义：name/type/notnull/pk/default。"""
-        self.admin_check_table(table)
-        cur = self.conn.execute(f"PRAGMA table_info({table})")
-        return [
-            {
-                "name": r["name"],
-                "type": r["type"],
-                "notnull": bool(r["notnull"]),
-                "pk": bool(r["pk"]),
-                "default": r["dflt_value"],
-            }
-            for r in cur.fetchall()
-        ]
-
-    def admin_rows(self, table: str) -> List[Dict[str, object]]:
-        pk = self.admin_check_table(table)
-        cur = self.conn.execute(f"SELECT * FROM {table} ORDER BY {pk}")
-        return [dict(r) for r in cur.fetchall()]
-
-    def _admin_valid_cols(self, table: str) -> set:
-        return {c["name"] for c in self.admin_columns(table)}
-
-    def admin_upsert(self, table: str, values: Dict[str, object]) -> Dict[str, object]:
-        """按主键原位 upsert，返回落库后的行。只接受表内有的列。"""
-        pk = self.admin_check_table(table)
-        valid = self._admin_valid_cols(table)
-        data = {k: v for k, v in values.items() if k in valid}
-        if pk not in data or data[pk] in (None, ""):
-            raise DeclarationDataError(f"缺主键 {pk}")
-        cols = list(data.keys())
-        placeholders = ",".join("?" for _ in cols)
-        collist = ",".join(cols)
-        update_cols = [column for column in cols if column != pk]
-        conflict_action = (
-            "DO UPDATE SET "
-            + ",".join(f"{column}=excluded.{column}" for column in update_cols)
-            if update_cols else "DO NOTHING"
-        )
-        self.conn.execute(
-            f"INSERT INTO {table} ({collist}) VALUES ({placeholders}) "
-            f"ON CONFLICT({pk}) {conflict_action}",
-            [data[c] for c in cols],
-        )
-        # 国库/内库同时落在 economy_accounts.balance，load_state 会用后者盖回 metrics。
-        # 只改 metrics 表会在下回合被覆盖，故此处同步 economy_accounts。
-        if table == "metrics" and data.get("key") in ("国库", "内库") and "value" in data:
-            self.conn.execute(
-                "UPDATE economy_accounts SET balance = ? WHERE account = ?",
-                (int(data["value"]), data["key"]),
-            )
-        self.conn.commit()
-        row = self.conn.execute(f"SELECT * FROM {table} WHERE {pk}=?", (data[pk],)).fetchone()
-        return dict(row) if row else {}
-
-    def admin_delete(self, table: str, pk_value: object) -> int:
-        """按主键删行，返回受影响行数。"""
-        pk = self.admin_check_table(table)
-        cur = self.conn.execute(f"DELETE FROM {table} WHERE {pk}=?", (pk_value,))
-        self.conn.commit()
-        return cur.rowcount
 
     def record_relation_edge_event(
         self,

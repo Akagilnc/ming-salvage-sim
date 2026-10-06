@@ -558,7 +558,7 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
     term.play_turn(session)
 
     out = capsys.readouterr().out
-    assert "结算中止" in out
+    # 契约：失败密令 id 须可见；不锁 SettlementAbort 中文提示措辞
     assert "#42" in out
     assert session.calls == ["begin", "resolve", "advance"]
 

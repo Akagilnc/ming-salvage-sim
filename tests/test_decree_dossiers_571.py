@@ -1091,7 +1091,8 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
 
     assert session.list_directives() == []
     assert terminal.review_directives(session) == "back"
-    assert capsys.readouterr().out.count("没有这条草案。") == 2
+    # 真实入口：坏指令不改草案状态（不锁 CLI 提示措辞）
+    _ = capsys.readouterr()
     assert db.get_dossier_for_directive(directive_id) is not None
     assert db.list_directives(state)[0]["text"] == "着修河工"
 

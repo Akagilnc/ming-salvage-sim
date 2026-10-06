@@ -1,0 +1,21 @@
+ming_sim/breach_plea.py:474:    """根基三档：只读实况（已过段数 / 已投入 / bar），不读奏报 progress_band。
+ming_sim/db.py:1699:                progress_band TEXT NOT NULL,
+ming_sim/db.py:11500:            "progress_band": str(item["progress_band"]),
+ming_sim/db.py:11530:                "progress_band": band, "memorial_text": text,
+ming_sim/db.py:11537:                progress_band=band, memorial_text=text, origin=origin,
+ming_sim/db.py:11574:                SET progress_band=?, memorial_text=?, origin=?
+ming_sim/db.py:11583:                    (dossier_id, turn, progress_band, memorial_text, is_terminal, origin)
+ming_sim/db.py:11600:        progress_band: str,
+ming_sim/db.py:11614:        band = str(progress_band or "").strip()
+ming_sim/db.py:11640:    def list_dossier_progress(self, dossier_id: int) -> List[Dict[str, object]]:
+ming_sim/db.py:11658:            SELECT id, dossier_id, turn, progress_band, memorial_text,
+ming_sim/db.py:11675:        信号=奏报 progress_band 面 vs 执行格/实况 origin 面，供 extractor 读，不进密奏正文断言。
+ming_sim/db.py:11700:        reports = self.list_dossier_progress(int(dossier_id))
+ming_sim/db.py:11702:            str(item.get("progress_band") or "").strip()
+ming_sim/db.py:11704:            if str(item.get("progress_band") or "").strip()
+ming_sim/db.py:11753:                "progress": self.list_dossier_progress(dossier_id),
+ming_sim/db.py:11788:            band = str(item.get("progress_band") or "").strip()
+ming_sim/db.py:11819:                dossier_id, int(turn), str(item.get("progress_band") or "").strip(),
+ming_sim/db.py:11824:            reports.append(self.list_dossier_progress(dossier_id)[-1])
+ming_sim/db.py:21477:                    self.list_dossier_progress(int(dossier["id"]))
+ming_sim/db.py:21504:                self.list_dossier_progress(int(dossier["id"]))

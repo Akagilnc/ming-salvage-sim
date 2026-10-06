@@ -34,7 +34,6 @@ from ming_sim.breach_plea import (
     expire_breach_pleas_on_due,
     finalize_persist,
     scan_and_write_breach_pleas,
-    try_defer_revoke_to_breach_plea,
     write_breach_plea_todo,
 )
 from tests.test_due_review_621 import _settle_empty_month
@@ -628,25 +627,6 @@ def test_no_decision_pause_on_breach_plea_settle(game, monkeypatch):
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
 
 
-def test_try_defer_only_for_commitment_kind(game):
-    """非承诺 initiative 不 defer——#523 锚形仍即时 breach。"""
-    db, state, content = game
-    did, holder = _executing_policy_dossier(db, state, token="non-commit")
-    # 无 commitment_kind
-    issue_id = db.insert_issue(
-        state, kind="initiative", title="非承诺initiative",
-        origin_kind="decree", origin_ref=f"dossier:{did}",
-        cancellable="decree",
-    )
-    deferred = try_defer_revoke_to_breach_plea(
-        db, state, target_dossier_id=did, target_issue_id=issue_id, reason="撤",
-    )
-    assert deferred is None
-
-
-# ── 修后四组新增用例 ──────────────────────────────────────────────────
-
-
 def test_same_turn_dual_breach_kinds_merge_not_swallowed(game):
     """同回合第二类松手不得静默吞：并入既有 pending + meta 记全被吞类。"""
     db, state, content = game
@@ -680,12 +660,14 @@ def test_same_turn_dual_breach_kinds_merge_not_swallowed(game):
     assert meta.get("breach_kind") == BREACH_KIND_FUNDING
     absorbed = meta.get("absorbed_breach_kinds") or []
     assert BREACH_KIND_POLICY_REVERSAL in absorbed
-    # try_defer 不得返空 todo_ids
-    deferred = try_defer_revoke_to_breach_plea(
-        db, state, target_dossier_id=did, reason="再撤", commit=True,
+    # #1894：明确 cancels 不再经 try_defer 强制挽留；有 pending 改弦时坚持撤 finalize
+    from ming_sim.applier import Provenance
+    from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+    out = apply_issue_tracker_output(
+        db, state, {"cancels": [{"issue_id": cid, "narrative": "撤回成命"}]},
+        content=content, source=Provenance.system_simulation,
     )
-    assert deferred and deferred.get("deferred")
-    assert deferred.get("todo_ids"), "try_defer 不得返空 todo_ids 掩蔽"
+    assert any(c.get("breach_plea_decision") == "persist" for c in out.cancels)
 
 
 def test_persist_reclaims_bundled_authority(game):

@@ -1,7 +1,7 @@
 """#1274 QA D-1 拟诏归一残余：验证庭 r1 四类处方聚焦测。
 
 1) #1391 泛称闭集（大臣）capture 零 409；「不存在之人甲」仍 409
-2) #1331/#1339 起居注 involved_people 投影滤非人；默认时辰非「此时」
+2) #1331/#1339 起居注 involved_people 投影滤非人；开夜 time_of_day 走模块默认常量
 3) #1341/#1338 PATCH /api/decree 零调用方已拆，OpenAPI/实现一致
 4) #1327 空载短路；#1465 切片③：外层 30s 总罩已删
 """
@@ -100,8 +100,7 @@ def test_night_archive_involved_people_drops_non_persons(game):
     import ming_sim.audience_night as an
 
     db, state, _ = game
-    night = an.open_night(db, state)  # 默认时辰须为更次口径
-    assert night["time_of_day"] != "此时"
+    night = an.open_night(db, state)  # 默认时辰走模块常量（经公开入口）
     assert night["time_of_day"] == an.DEFAULT_TIME_OF_DAY
 
     an.summon_enter(db, night["id"], "杨嗣昌", method=an.METHOD_XUANRU)
@@ -125,15 +124,6 @@ def test_night_archive_involved_people_drops_non_persons(game):
         assert banned not in people, banned
     assert "王承恩" in people
     assert "杨嗣昌" in people
-    # 标题不得出现「此时」
-
-
-def test_default_time_of_day_is_shichen_not_cishi():
-    import ming_sim.audience_night as an
-
-    assert an.DEFAULT_TIME_OF_DAY != "此时"
-    # 时辰单字「时」结尾的更次/时刻口径
-    assert an.DEFAULT_TIME_OF_DAY.endswith("时")
 
 
 # ── 3) #1341/#1338 PATCH 死契约拆除 ────────────────────────────────

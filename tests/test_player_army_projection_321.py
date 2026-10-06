@@ -115,12 +115,12 @@ def test_player_army_situation_six_tier_truth_table(
 
 
 def _configure(db, fiscal_path: str) -> None:
-    value = 0 if fiscal_path == "legacy" else 1
+    # #1835 C1：现役唯一 substrate_hub；fiscal_path 仅保留参数位兼容 parametrize。
     for key in ("__army_pay_source_cutover", "__fiscal_engine"):
         db.conn.execute(
             "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
+            (key, 1),
         )
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
@@ -232,11 +232,11 @@ def test_four_chains_embed_situation_matrix(game):
     # 代表：latch=0, L=55, p=0 → 不满；arrears>0（精确小数 12.5）
     is_mutinied, loyalty, probation, expected = 0, 55, 0, "不满"
     db, state, content = game
-    _configure(db, "legacy")
+    _configure(db, "substrate_hub")
     arrears = 12.5
     _write_mutiny_fixture(
         db,
-        "legacy",
+        "substrate_hub",
         loyalty=loyalty,
         arrears=arrears,
         is_mutinied=is_mutinied,

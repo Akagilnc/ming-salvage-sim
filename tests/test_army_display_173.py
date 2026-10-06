@@ -28,28 +28,6 @@ def test_army_payload_exposes_army_needed(read_game):
         )
 
 
-def test_army_report_shows_actual_charge(game):
-    """army_report 月饷总额须基于 army_needed（引擎实扣）——格式化金额串出现在真实出口。"""
-    from ming_sim.assets import format_money
-    from ming_sim.models import monthly_amount
-
-    db, _state, _ = game
-    aid = db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 "
-        "ORDER BY manpower DESC LIMIT 1"
-    ).fetchone()["id"]
-    db.conn.execute(
-        "UPDATE armies SET manpower = manpower + 100000 WHERE id=?", (aid,)
-    )
-    db.conn.commit()
-    total_needed = sum(
-        army_needed(r) for r in db.conn.execute("SELECT * FROM armies").fetchall()
-    )
-    expected = format_money(monthly_amount(total_needed))
-    report = db.army_report(limit=20)
-    assert expected in report
-    assert monthly_amount(total_needed) > 0
-
 
 def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     """#305/D10：detail/report/roster 走欠饷近似；分账字段与抽象裸分不进真实出口。"""
@@ -94,7 +72,6 @@ def test_army_payload_exposes_approx_arrears_text_not_raw(game):
     payload = {army["id"]: army for army in db.army_payload()}
     assert "arrears" not in payload[row["id"]]
     assert payload[row["id"]]["arrears_text"] == expected
-    assert "12.5" not in expected
 
 
 

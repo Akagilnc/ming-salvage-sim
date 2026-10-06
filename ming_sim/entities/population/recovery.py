@@ -1,7 +1,7 @@
 """Recovery population accounting, owned by the population domain."""
 from __future__ import annotations
 from typing import Dict, List, Tuple
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.db import GameDB
 from ming_sim.models import GameState
 from ming_sim.applier import Provenance, RejectedItem
 from ming_sim.constants import (
@@ -43,8 +43,6 @@ def _apply_recovery_driven_transfers(
     幂等键 (dossier_id, turn)：同键不双扣池。立即开仓/#522 pacification 不在此列。
     """
     from ming_sim.entities.population.apply import _apply_population_transfers
-    if db.population_unit != POPULATION_UNIT_PERSONS:
-        return [], []
     turn = int(state.turn)
     # 月份推进事务只执行一次；同一案在本次扫描内仅回流一次。
     seen_keys: set[tuple[int, int]] = set()
