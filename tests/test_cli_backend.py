@@ -12,7 +12,6 @@ import os
 from types import SimpleNamespace
 
 import pytest
-from agno.agent import Agent
 from agno.models.message import Message
 from pydantic import BaseModel
 

@@ -7,18 +7,11 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from pathlib import Path
 
 import pytest
 
-import ming_sim.rescript_draft as rescript_mod
-from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 from ming_sim.db import GameDB
-from ming_sim.exceptions import LLMUnavailable, SettlementAbort
 from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-
-_CANNED = '{"economy_moves": [], "new_armies": [], "new_issues": [], "secret_order_updates": []}'
 
 # #1778 决定 3：生成批次的票拟必带参与名单（ADR 0053 三档，至少一名主办）。
 _ROSTER = [{"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None}]

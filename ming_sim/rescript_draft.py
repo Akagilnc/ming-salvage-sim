@@ -36,10 +36,6 @@ from ming_sim.exceptions import LLMContractError
 from ming_sim.participant_roster import PARTICIPANT_LEAD_TIER, PARTICIPANT_TIERS
 from ming_sim.structured_decree import StructuredDecreeCombinationError
 
-# #1746：单 option 契约失败（缺/错/组合/接地/形）→ 同一会话补交（不含首抽）；耗尽只剔该 option。
-# decision: missing-field-heal-by-resume-not-drop / per-option-drop-after-heal-exhausted
-# decision: heal-covers-illegal-values-too（不问错在哪；不按错误种类分闸）
-RESCRIPT_OPTION_FIELD_HEAL_RETRIES = 3
 # 整 option 替换语义标记（非 object 等）；出现在 missing_fields 时合并器接受完整 option 体。
 _OPTION_REPLACE_FIELD = "option"
 
