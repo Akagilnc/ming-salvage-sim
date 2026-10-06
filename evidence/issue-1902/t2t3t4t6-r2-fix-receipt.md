@@ -1,6 +1,7 @@
 # #1902 修内司 T2/T3/T4/T6 续修回执（复裁后）
 
 - 基线 stamp：`3b4f16402`
+- FIX SHA：`767fb831261026a0273953fea228c8389d338269`
 - 判词续：inspector 复裁 continue（T2 上层词面；T3 legacies 无痕；T4 DRAFT 仍在传输；T6 测试旧依赖）
 - **不宣称合并/关票**
 
