@@ -5,8 +5,13 @@
 ## 一、两条入口
 
 ```text
+册外入册（须先于任命）
+  转译/月链声明 registrations
+    → declaration_dispatch._dispatch_registrations
+    → session.register_unlisted_person_record
+
 召对任免
-  propose_appointment / 口头任免分类
+  转译声明 commission.appointment / 口头任免分类
     → pending_actions(kind=office)
     → 玩家确认或结束回合默认同意
     → commit_pending_actions：只成任免案卷，不授官
@@ -28,7 +33,7 @@
 
 ## 二、召对任免
 
-`propose_appointment` 返回任免候选；`GameSession._stage_appointment_candidate` 将其写入 `pending_actions`，与口头任免共用确认闸。候选在这里尚未授官，也不能因该候选获得新职或传召资格。
+召对转译声明的任免载荷（`commission.appointment` 等）经现役 stage 写入 `pending_actions(kind=office)`，与口头任免共用确认闸。候选在这里尚未授官，也不能因该候选获得新职或传召资格。册外新人须先走上一节 `registrations` 入册，不得假定已退役的 `propose_appointment` 工具仍存在。
 
 候选载荷的核心字段：
 

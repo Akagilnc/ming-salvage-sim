@@ -35,7 +35,7 @@
 
 ### 吏部铨选任命（皇帝点名补人）
 
-明朝官员数以千计，名册只收 30 余位主要人物。皇帝若强行点名起用名册外的某人（如把当时还是底层小官的史可法擢为浙江巡抚），由**吏部尚书**专属 court tool `propose_appointment(name, office, faction, reason)` 处理：
+明朝官员数以千计，名册只收 30 余位主要人物。皇帝若强行点名起用名册外的某人（如把当时还是底层小官的史可法擢为浙江巡抚）：
 
-- 吏部尚书 Agent 凭历史知识自行裁断——查无此人、或纯属杜撰的名字直接据实回禀「查无此员」，史有其人且任命说得通才调 tool。不做无脑照办，也不做代码端字面校验（符合"无 fallback"约束：tool 只在 LLM 判定合理时才触发）。
-- tool 触发后先进入任免暂存与颁布判决；顺颁后才物化人物、提交后投影运行时名册。完整时序见 [`docs/character-office-changes.md`](../character-office-changes.md)。
+- 册外须先经显式 `registrations` 入册声明（`declaration_dispatch` → `register_unlisted_person_record`）或史实补档；任命核不隐式建档（ADR 0009：`hallucinated_id`）。
+- 在册后再经召对转译任免声明进入暂存与颁布判决；顺颁后物化授官。完整时序见 [`docs/character-office-changes.md`](../character-office-changes.md)。

@@ -62,7 +62,7 @@
 | 佟养性 | 74/68 | 铸炮·辽人降军·工匠 | 在后金那边（敌方，可策反/对标） |
 
 > ✅ **郑芝龙 / 宋应星 / 汤若望（"孙若望"）不在预置 58 人 ≠ 招不了**，但**任命核不隐式建档**（ADR 0009：人物须已存在；册外直接 `人物变更/任命` → `hallucinated_id` 拒收）。
-> 合法顺序：先经史实人物补档或用户确认登记（召对吏部 `propose_appointment` 成案入册 / 显式入册写口，见 [`character-office-changes`](character-office-changes.md)），**再**月链声明 `人物变更` 任命。
+> 合法顺序：先经显式 `registrations` 入册声明（`declaration_dispatch` → `register_unlisted_person_record`）或史实人物补档，**再**月链 `人物变更` 任命。见 [`character-office-changes`](character-office-changes.md)。
 > 海盗/外族（郑芝龙）授官另需「招抚/反正」：在册后先 `易主`(new_power→ming) 再任官。
 
 ---
@@ -122,7 +122,7 @@
 ### 招科技人才（不在 58 人名册也能招）
 
 1. **在册者**：诏书明文「召/起/拜/授 某某 为 某官」，月链 `人物变更`（动作 `任命` 等）即可。
-2. **册外者**：先史实人物补档或用户确认登记入册（召对吏部 `propose_appointment` 成案 / 显式入册写口），**再**任命。直接对陌生名写任命 → `hallucinated_id` 拒收（ADR 0009）。
+2. **册外者**：先显式 `registrations` 入册（`declaration_dispatch` → `register_unlisted_person_record`）或史实人物补档，**再**任命。直接对陌生名写任命 → `hallucinated_id` 拒收（ADR 0009）。
 
 - **徐光启**：在册，直接起复授工部/礼部，挂西学农政火器。
 - **袁可立**：在册，起复督登莱（开海+辽东海路）。
