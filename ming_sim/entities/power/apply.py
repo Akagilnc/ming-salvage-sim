@@ -21,7 +21,7 @@ def _apply_bandit_absorptions(
     absorptions: object,
     *,
     source: Provenance = Provenance.system_simulation,
-) -> Tuple[List[Dict[str, object]], List[Dict[str, object]], List[Dict[str, object]]]:
+) -> Tuple[List[Dict[str, object]], List[RejectedItem], List[Dict[str, object]]]:
     """#652/0087：流民投贼吸收原子 applier。
 
     LLM 只产 typed 请求；本核：actual=min(requested, 省池)→扣流民池（无农民对端，
@@ -30,7 +30,7 @@ def _apply_bandit_absorptions(
     返回 (applied_absorptions, rejections, power_changes)。
     """
     applied: List[Dict[str, object]] = []
-    rejected: List[Dict[str, object]] = []
+    rejected: List[RejectedItem] = []
     power_changes: List[Dict[str, object]] = []
     items = absorptions if isinstance(absorptions, list) else []
     # 仅 substrate 人口径新档开环；legacy 不误开（对齐 #649/#650）。

@@ -17,7 +17,7 @@ from ming_sim.applier import RejectedItem, Provenance
 import copy
 import json
 import math
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.materials import secret_order_origin
@@ -1761,7 +1761,7 @@ def apply_monthly_covert_actual_progress(
     commit: bool = False,
     only_supplied: bool = False,
     source: Provenance = Provenance.system_simulation,
-) -> List[Dict[str, object]]:
+) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
     """当月实况轨落笔：推演者声明的真实投入/效果 → dossier_actual_progress。
 
     不发明人物/钱粮/地区固定套餐；奏报永不入 apply。
@@ -1770,6 +1770,7 @@ def apply_monthly_covert_actual_progress(
     #1896：查案密令改走逐证核算——4a 声明的 effort 记到指定事实，累计到该证难度
     才记已掌握；不再由执行态折固定增量、满统一阈自动坐实。执行态枚举对查案
     不再是必填（#1895 同批废旧查案的意愿底档），缺省只落事实投入。
+    返回 (applied, rejections)：拒收一律 canonical :class:`~ming_sim.applier.RejectedItem`。
     """
     rejections: List[RejectedItem] = []
     orders = list(db.list_secret_orders(status="active"))
@@ -1801,16 +1802,15 @@ def apply_monthly_covert_actual_progress(
         sel = by_sel.get(oid) or {}
         inv_target = _investigation_target_of(contract)
         if inv_target:
-            result = _apply_investigation_selection(
+            result, item_rejections = _apply_investigation_selection(
                 db, state, order=order, dossier=dossier, sel=sel,
                 target=inv_target, investigator=minister, turn=turn,
                 source=source,
             )
-            # #1835 S1：查案无效只走 canonical RejectedItem，不再回声到 applied dict。
-            if isinstance(result, RejectedItem):
-                rejections.append(result)
-                continue
-            applied.append(result)
+            # #1835 S1：查案拒收（整项或反应项）只走 canonical RejectedItem。
+            rejections.extend(item_rejections)
+            if result is not None:
+                applied.append(result)
             continue
         selected = sel.get("fidelity", sel.get("执行态", sel.get("state")))
         fidelity = normalize_fidelity_state(selected)
@@ -1881,7 +1881,7 @@ def _apply_investigation_selection(
     investigator: str,
     turn: int,
     source: Provenance = Provenance.system_simulation,
-) -> Dict[str, object] | RejectedItem:
+) -> Tuple[Optional[Dict[str, object]], List[RejectedItem]]:
     """查案密令的逐证落账（#1896）。幂等键＝(dossier, turn)，重开只续未成核算。
 
     无效声明（缺 effort／effort 非数字或非有限／只给了旧执行态）不是合法的
@@ -1890,10 +1890,13 @@ def _apply_investigation_selection(
 
     人物知情与反应按真实因果承接：知情来源解自案卷已落的传话记录（跨月持续），
     毁证与压案共用该判定，未知情不替其落账（见 ``_resolve_investigation_knowledge``）。
+
+    返回 (applied_or_none, rejections)：整项失败时 applied 为 None；合法实入与反应拒收
+    可并存——反应拒收走 canonical 列表，不嵌进 applied 的替代键。
     """
     did = int(dossier["id"])
     oid = int(order["id"])
-    rejected_reactions: List[Dict[str, object]] = []
+    reaction_rejections: List[RejectedItem] = []
     # 同月重入不重复施加投入：实况轨已有本月行即说明本月已核算过。lane 累加本身
     # 不带幂等键，若不在此拦一道，同一 turn 内被扫两次就会把力气算两遍。
     existing = db.conn.execute(
@@ -1904,12 +1907,12 @@ def _apply_investigation_selection(
     declaration = _investigation_declaration(sel)
     invalid = str(declaration.get("invalid") or "").strip()
     if invalid:
-        return RejectedItem(
+        return None, [RejectedItem(
             item=dict(sel) if isinstance(sel, Mapping) else {"order_id": oid},
             reason=f"密令 {oid} 查案声明无效：{invalid}",
             category="invalid_enum",
             source=source,
-        )
+        )]
     if existing is not None:
         return {
             "order_id": oid,
@@ -1921,7 +1924,7 @@ def _apply_investigation_selection(
             "mastered_facts": [],
             "originated_quantity": 0.0,
             "already_applied": True,
-        }
+        }, []
     # 真实传话声明先落账：知情判定的唯一来源就是它（关系边存在不算）。
     tip = declaration.get("tip_off")
     tip_source = str(tip.get("source") or "").strip() if isinstance(tip, Mapping) else ""
@@ -1952,11 +1955,17 @@ def _apply_investigation_selection(
             acts["suppression"] = dict(suppression)
         else:
             # 未知情不替其压案：不落这项事实，也不改任何实证（P6 人物决定归人物，
-            # 但引擎不替一个不知情的人记下他"压了案"）。
-            rejected_reactions.append({
-                "reaction": "suppression", "form": str(suppression.get("form") or ""),
-                "reason": "无真实关系网知情来源，不承接压案声明",
-            })
+            # 但引擎不替一个不知情的人记下他"压了案"）。拒收走 canonical 通道。
+            reaction_rejections.append(RejectedItem(
+                item={
+                    "order_id": oid,
+                    "reaction": "suppression",
+                    "form": str(suppression.get("form") or ""),
+                },
+                reason="无真实关系网知情来源，不承接压案声明",
+                category="invalid_enum",
+                source=source,
+            ))
     if acts:
         _append_investigation_log(db, did, INVESTIGATION_ACTS_KEY, {
             "turn": int(turn), "investigator": investigator, **acts,
@@ -2010,11 +2019,9 @@ def _apply_investigation_selection(
     }
     if result.get("dropped_fact_key"):
         applied["dropped_fact_key"] = str(result["dropped_fact_key"])
-    if rejected_reactions:
-        applied["rejected_reactions"] = rejected_reactions
     if spoiled_result:
         applied["spoliation"] = spoiled_result
-    return applied
+    return applied, reaction_rejections
 
 
 def list_due_secret_orders_for_settlement(db: Any, state: Any) -> List[Dict[str, object]]:

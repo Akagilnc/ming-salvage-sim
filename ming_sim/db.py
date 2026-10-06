@@ -4556,7 +4556,7 @@ class GameDB:
         latched_escape: str | None = None,
         raw_item: Dict[str, object] | None = None,
             source: Provenance = Provenance.system_simulation,
-    ) -> List[Dict[str, object]]:
+    ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
         """唯一生产 owner_power 转出口（ADR 0025 D5/D7 + #318）。
 
         同事务顺序：核销欠饷 → 清 is_mutinied/probation → 改 owner。
@@ -6113,7 +6113,7 @@ class GameDB:
         changes: List[Dict[str, object]],
         commit: bool = True,
             source: Provenance = Provenance.system_simulation,
-    ) -> List[Dict[str, object]]:
+    ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
         """据 extractor 输出改人物 power_id（降将/叛臣/归正）。new_power 须为合法 power id。"""
         rejections: List[RejectedItem] = []
         applied: List[Dict[str, object]] = []
@@ -6786,14 +6786,14 @@ class GameDB:
         deltas: Dict[str, Dict[str, int]],
         commit: bool = True,
             source: Provenance = Provenance.system_simulation,
-    ) -> List[Dict[str, object]]:
+    ) -> List[RejectedItem]:
         """deltas 结构：{ key: {satisfaction: +/-N, leverage: +/-N} }
         key 形式：'农民' (全国) 或 '农民@shaanxi' (省级)。
 
         查无此阶级（名/省不匹配）→ missing_ref 逐项拒收留痕（ADR 0008 决定 1，#14/#63
-        死法 3）；入参经 _apply_class_dict 预清洗。返回拒收项列表，桥接自动收。
+        死法 3）；入参经 _apply_class_dict 预清洗。返回 RejectedItem 列表，由调用方收进拒收报告。
         """
-        rejected: List[Dict[str, object]] = []
+        rejected: List[RejectedItem] = []
         for key, fields in deltas.items():
             if not fields:
                 continue
@@ -6946,7 +6946,7 @@ class GameDB:
         origin_ref: str = "",
         require_origin: bool = False,
             source: Provenance = Provenance.system_simulation,
-    ) -> List[Dict[str, object]]:
+    ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
         rejections: List[RejectedItem] = []
         allowed_fields = {"leverage", "military_strength", "supply"}
         changes: List[Dict[str, object]] = []
@@ -7277,7 +7277,7 @@ class GameDB:
         origin_ref: str = "",
         require_origin: bool = False,
             source: Provenance = Provenance.system_simulation,
-    ) -> List[Dict[str, object]]:
+    ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
         rejections: List[RejectedItem] = []
         changes: List[Dict[str, object]] = []
         for region_id, raw_changes in region_deltas.items():
@@ -7844,7 +7844,7 @@ class GameDB:
         origin_ref: str = "",
         require_origin: bool = False,
             source: Provenance = Provenance.system_simulation,
-    ) -> List[Dict[str, object]]:
+    ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
         rejections: List[RejectedItem] = []
         changes: List[Dict[str, object]] = []
         for army_id, raw_changes in army_deltas.items():
@@ -8243,7 +8243,7 @@ class GameDB:
         origin_ref: str = "",
         require_origin: bool = False,
             source: Provenance = Provenance.system_simulation,
-    ) -> List[Dict[str, object]]:
+    ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
         """据 extractor 输出建新军队。同 id/name 已存在 → 把 manpower 当扩军增量。owner_power 必须是已知 power。"""
         rejections: List[RejectedItem] = []
         valid_powers = {r["id"] for r in self.conn.execute("SELECT id FROM powers").fetchall()}
@@ -8777,7 +8777,7 @@ class GameDB:
             f"{row['status']}"
         )
 
-    def adjust_factions(self, deltas: Dict[str, object], commit: bool = True, source: Provenance = Provenance.system_simulation) -> List[Dict[str, object]]:
+    def adjust_factions(self, deltas: Dict[str, object], commit: bool = True, source: Provenance = Provenance.system_simulation) -> List[RejectedItem]:
         """逐项落库；查无此派系名 → missing_ref 逐项拒收留痕（ADR 0008 决定 1，#14/#63
         死法 3）。入参经 _apply_faction_dict 预清洗（坏值已在那层拒），此处只余未知名一类。
         返回 RejectedItem 列表，由调用方收进拒收报告。
@@ -8789,7 +8789,7 @@ class GameDB:
         立即令 leverage 体现（offset+官职和，含本次增量）；结算尾 reconcile 确认同值、不抹。
         offset 不 clamp（leverage 读时 clamp）。非白名单（宗室等）维持原样直写 leverage 列
         （reconcile 不碰非白名单）。satisfaction 两者都照旧 clamp 直写。"""
-        rejected: List[Dict[str, object]] = []
+        rejected: List[RejectedItem] = []
         for faction, val in deltas.items():
             if isinstance(val, dict):
                 sat_d = int(val.get("satisfaction") or 0)

@@ -22,8 +22,8 @@ def _apply_class_dict(
     留痕（原为静默忽略；合法转移入口开通后，静默通道不得存活），其余 sat/lev 合法
     item 不受累——一切人口变化走 population_transfers 守恒原语。二级真值非 dict
     （如 {"农民": 0}）同样逐项拒收。
-    返回 (已落 delta dict, 拒收项列表)：前者供 web 「阶级变化」面板，后者由顶层置于
-    "class_delta_rejections" 段、桥接自动收。
+    返回 (已落 delta dict, 拒收项列表)：前者供 web 「阶级变化」面板，后者为
+    canonical RejectedItem，由段适配器并入 SectionResult.rejected。
     """
     # #649 C3/C4：字段名先经 ITEM_FIELD_ALIASES 单一真源 canonical 化（满意→satisfaction、
     # 人口→population），使 population guard 对中英文拼写统一整项拒收，不在本层手抄别名分支。

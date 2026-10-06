@@ -1,6 +1,6 @@
 """实体记账原语。"""
 from __future__ import annotations
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 if TYPE_CHECKING:
     from ming_sim.db import GameDB
     from ming_sim.models import GameState
@@ -18,7 +18,7 @@ def _apply_economy_list(
     require_origin: bool = False,
     origin_ref: str = "",
     source: Provenance,
-) -> List[Dict[str, object]]:
+) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
     """落 extractor 抽出的 economy_moves 到 economy_ledger。
 
     支持结构化字段：

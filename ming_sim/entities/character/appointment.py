@@ -213,7 +213,7 @@ def _office_appointment_failure(
     kind: str = "",
     reason_suffix: str = "",
     source: Provenance = Provenance.system_simulation,
-) -> Dict[str, object]:
+) -> RejectedItem:
     """Map known appointment write failures to typed rejection categories.
 
     Category comes only from typed exception attributes — never from message text.
@@ -240,7 +240,7 @@ def apply_office_appointment(
     region_id: str = "",
     llm_config: Any = None,
     source: Provenance = Provenance.system_simulation,
-) -> Dict[str, object]:
+) -> Dict[str, object] | RejectedItem:
     """朝臣任命/调任的唯一落地核。
 
     写前数据失败返回 RejectedItem。授官、起复、建档与顶替的写口异常原样上抛，

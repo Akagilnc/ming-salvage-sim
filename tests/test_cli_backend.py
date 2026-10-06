@@ -710,9 +710,9 @@ def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
     cc.invoke(msgs, Message(role="assistant"), response_format=_RF)
 
     cc.invoke(msgs, Message(role="assistant"))
-    # response_format 使 prompt 与无格式约束路径可区分；不锁模板措辞
-    assert seen[0] != seen[2] and len(seen[0]) > len(seen[2])
-    assert seen[1] != seen[2] and len(seen[1]) > len(seen[2])
+    # 三条路径均把输入原文交到 CLI；不锁模板措辞、长度或附加量
+    assert len(seen) == 3
+    assert all("EXTRACT" in prompt for prompt in seen)
 
 
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):

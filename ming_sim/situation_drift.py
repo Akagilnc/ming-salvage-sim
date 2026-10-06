@@ -197,13 +197,12 @@ def apply_situation_monthly_drift(
     state: GameState,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
     source: Provenance = Provenance.system_simulation,
-) -> List[Dict[str, object]]:
-    """返回 inertia 自然结案路产生的容忍拒收项——settle 在 inertia 之后补收进
-    收集器(桥接跑在 inertia 前,只 tlog 等于这条路脱离 rejection_reports 管线,
-    与 tracker-close 路同输入两判;ship-pre r1)。"""
+) -> List[RejectedItem]:
+    """返回 inertia 自然结案路产生的容忍拒收项（canonical RejectedItem），
+    由调用方收进拒收报告。"""
     # inertia 是每月自然漂移基础量，对所有进行中 issue 都生效（含本月被 advance 触动的）。
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
-    inertia_rejections: List[Dict[str, object]] = []
+    inertia_rejections: List[RejectedItem] = []
     active = db.list_active_issues()
     commit_local = not bool(getattr(db.conn, "in_transaction", False))
     # 累计单月 metric 落账，用于上限 clamp

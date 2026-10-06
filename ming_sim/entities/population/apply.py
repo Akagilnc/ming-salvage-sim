@@ -12,7 +12,7 @@ def _apply_population_transfers(
     transfers: object,
     *,
     source: Provenance,
-) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
     """#649/ADR 0087：人口守恒转移原语（delta 段 population_transfers 的唯一落库核）。
 
     canonical 段形＝转移记录 list；每条记录**同时表达两条腿**（源阶级减 N、目标阶级
@@ -28,7 +28,7 @@ def _apply_population_transfers(
     异常照常上抛由 applier.atomic 回滚（两轴分立）。
 
     返回 (applied list, rejections list)：前者供当前声明落账反馈，
-    后者由顶层置于 "population_transfers_rejections" 段、桥接自动收。
+    后者为 canonical RejectedItem，由段适配器并入 SectionResult.rejected。
     不复用 DeltaApplyResult（其 applied 声明为 dict、文档限定 faction/class）；
     本核 applied 为转移记录 list，直接声明窄类型（#649 C2）。
     """
@@ -38,7 +38,7 @@ def _apply_population_transfers(
     )
 
     applied: List[Dict[str, object]] = []
-    rejected: List[Dict[str, object]] = []
+    rejected: List[RejectedItem] = []
     items = transfers if isinstance(transfers, list) else []
     population_unit = db.population_unit
     for item in items:

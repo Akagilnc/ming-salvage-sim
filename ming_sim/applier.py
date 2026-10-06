@@ -1,6 +1,6 @@
 """结算落库统一拒收契约与事务边界（ADR 0008 S0 骨架）。
 
-契约住此模块；各 section 适配器将原地迁入（PR2）。
+契约住此模块；段适配器在 entities/* 与 settlement 目录，经登记表调度。
 公开类型：Provenance / RejectedItem / SectionResult / RejectionCollector。
 """
 

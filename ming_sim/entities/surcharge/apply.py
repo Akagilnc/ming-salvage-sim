@@ -20,7 +20,7 @@ def _apply_surcharge_decrees(
     items: object,
     *,
     source: Provenance = Provenance.system_simulation,
-) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
     """#650/0089 明渠：下旨加派 → 逐省加派量累积账当回合落库（P1）。
 
     canonical 段形＝list，每项 {region_id, monthly_amount, reason?, origin_ref}：
@@ -37,7 +37,7 @@ def _apply_surcharge_decrees(
     """
     from ming_sim.constants import _SETTLE_META_JIAPIAI_KEY
     applied: List[Dict[str, object]] = []
-    rejected: List[Dict[str, object]] = []
+    rejected: List[RejectedItem] = []
     if not db.is_substrate_hub_fiscal_engine_enabled():
         for item in (items if isinstance(items, list) else []):
             rejected.append(RejectedItem(item=item if isinstance(item, dict) else {"raw_value": item}, reason="surcharge_decrees 仅适用于 substrate_hub 财政档", category="invalid_enum", source=source))

@@ -19,7 +19,7 @@ def apply(run):
     from ming_sim.entities.population.apply import _apply_population_transfers
 
     transfer_items: List[object] = []
-    transfer_rejections: List[Dict[str, object]] = []
+    transfer_rejections: List[RejectedItem] = []
     for item in (run.current_extracted.get("population_transfers") or []):
         source = str(item.get("source") or "") if isinstance(item, dict) else ""
         region_id = source.rpartition("@")[2]

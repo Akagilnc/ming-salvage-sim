@@ -313,7 +313,7 @@ def resolve_relation_edge_events_from_extraction(
     allowed_endpoint_names: Any,
     dossier_ids_at_input: Any = None,
     source: Provenance = Provenance.system_simulation,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[RejectedItem]]:
     """#633 结算口真入口（resolve_credit_events_from_extraction 先例）。
 
     消费 extractor delta 的 ``relation_edge_events`` section，经 record_relation_edge_event

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from ming_sim.applier import RejectedItem, Provenance
 
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Dict, List, Tuple
 
 if TYPE_CHECKING:
     from ming_sim.db import GameDB
@@ -66,7 +66,7 @@ def apply_army_delta_with_cannon_transfer(
     db: GameDB, state: GameState, pseudo_event: Event, army_id: str,
     raw_changes: Dict[str, object],
     source: Provenance = Provenance.system_simulation,
-) -> List[Dict[str, object]]:
+) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
     """Apply one extracted army item, including an explicit paired cannon transfer."""
     army_changes: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []

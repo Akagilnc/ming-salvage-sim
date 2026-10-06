@@ -65,13 +65,8 @@ def apply_issue_tracker_output(
     #    的代码/DB 异常上抛 SettlementAbort，同 close_issues / new_issues 段，#63）
     for adv in tracker_output.get("advances", []) or []:
         if not isinstance(adv, dict):
-            # 非 dict 项（advances:[null]/标量，_sanitize 不清列表项可达）：adv.get 抛 AttributeError
-            # 崩整月——逐项拒收守门（同 close_issues 非 dict 守卫）。注：真实 settle 路
-            # validate_delta_shape 已前置 abort 非 dict list 项（结构畸形＝响亮失败防半落库），故此
-            # 守卫是 defense-in-depth——直接调 apply / 绕过 validate 时才生效（codex advances r2 P2：
-            # 非 dict 主路径走 validate abort、非逐项拒收，是 validate 层「结构畸形前置 abort」vs
-            # 「值脏逐项拒收」的两层分工；改 validate 让非 dict 亦逐项拒收＝跨所有 list 段的设计决策，
-            # defer #63 validate 层通用切片）。
+            # 非 dict 项：sanitize_delta_shape 已在前置闸按 ADR 0015 逐项拒收并剔除；
+            # 此处再守一道，直调 tracker / 绕过前置闸时同样不崩整月（同 close_issues）。
             entity_rejections.append(RejectedItem(item={"raw_value": adv}, reason=f"advances 条目非对象（应为 dict）：{adv!r}", category="invalid_enum", source=source))
             continue
         try:

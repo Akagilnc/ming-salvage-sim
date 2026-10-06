@@ -127,7 +127,7 @@ def apply_person_changes(
     derived_from: str = "",
     origin_ref: str = "",
     require_origin: bool = False,
-) -> List[Dict[str, object]]:
+) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
     pass
 
     import ming_sim.entities.character.appointment as office_appointment
@@ -150,7 +150,7 @@ def apply_person_changes(
             result.item = item
         return result
 
-    def origin_rejected(item: Dict[str, object]) -> Dict[str, object] | None:
+    def origin_rejected(item: Dict[str, object]) -> RejectedItem | None:
         error = db.effect_origin_rejection(origin_ref) if require_origin else None
         return rejected(item, str(error["reason"]), str(error["category"])) if error else None
 
