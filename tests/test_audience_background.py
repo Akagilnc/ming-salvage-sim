@@ -123,6 +123,13 @@ class _FakeSession(HallAdmissionSessionMixin):
     def refresh_runtime_after_chat_rollback(self):
         return None
 
+    def can_undo_last_audience_chat(self, minister_name: str) -> bool:
+        # #1902 J3：资格真源在会话共核
+        return GameSession.can_undo_last_audience_chat(self, minister_name)
+
+    def undo_last_audience_chat(self, minister_name: str, **kwargs):
+        return GameSession.undo_last_audience_chat(self, minister_name, **kwargs)
+
     def can_summon(self, character):
         # 召见资格真源 session.can_summon——假壳挂真方法，禁自造文案表
         return GameSession.can_summon(self, character)
