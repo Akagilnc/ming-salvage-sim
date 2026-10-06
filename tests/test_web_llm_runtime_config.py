@@ -85,8 +85,12 @@ def test_runtime_api_reasoning_strength_builds_llm_config(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     runtime = {
         "channel": "api",
-        "reasoning_strength": "high",
-        "api": {"base_url": "https://api.example.com/v1", "model": "gpt-5", "api_key": "sk-test"},
+        "api": {
+            "base_url": "https://api.example.com/v1",
+            "model": "gpt-5",
+            "api_key": "sk-test",
+            "reasoning_strength": "high",
+        },
         "cli": {"runner": "", "model": "", "timeout_seconds": ""},
     }
 
@@ -420,10 +424,6 @@ def test_menu_status_active_cli_unsupported_runner_not_ready_despite_preserved_a
         "channel": "cli",
         "api": {"base_url": "https://api.example.com/v1", "model": "gpt-api", "api_key": "sk-real-key"},
         "cli": {"runner": "bogus", "model": "gpt-5.5", "timeout_seconds": "240"},
-        # 顶层别名暴露 API 槽（_normalize_runtime_llm 行为）。
-        "base_url": "https://api.example.com/v1",
-        "model": "gpt-api",
-        "api_key": "sk-real-key",
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -446,7 +446,6 @@ def test_menu_status_active_cli_placeholder_api_key_not_counted(monkeypatch):
         "channel": "cli",
         "api": {"base_url": "", "model": "", "api_key": "cli-backend"},
         "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
-        "api_key": "cli-backend",
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -496,9 +495,6 @@ def test_menu_status_reports_inactive_cli_reasoning_strength(monkeypatch):
             "reasoning_strength": "low",
         },
         "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "high"},
-        "base_url": "https://api.example.com/v1",
-        "model": "gpt-5",
-        "api_key": "sk-test",
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -517,11 +513,13 @@ def test_menu_status_uses_advanced_model_for_api_reasoning_capability(monkeypatc
     monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
         "channel": "api",
-        "base_url": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
-        "api_key": "sk-test",
-        "advanced_base_url": "https://api.example.com/v1",
-        "advanced_model": "gpt-5",
+        "api": {
+            "base_url": "https://api.deepseek.com/v1",
+            "model": "deepseek-chat",
+            "api_key": "sk-test",
+            "advanced_base_url": "https://api.example.com/v1",
+            "advanced_model": "gpt-5",
+        },
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -728,10 +726,6 @@ def test_menu_status_and_game_config_expose_default_headers(monkeypatch):
             "api_key": "sk-test",
             "default_headers": headers,
         },
-        "default_headers": headers,
-        "base_url": "https://api.example.com/v1",
-        "model": "gpt-api",
-        "api_key": "sk-test",
     })
     cfg = LLMConfig(
         api_key="sk-test",
@@ -796,15 +790,6 @@ def test_menu_status_treats_saved_cli_runtime_as_ready_without_api_key(monkeypat
         "channel": "cli",
         "api": {"base_url": "", "model": "", "api_key": ""},
         "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
-        "base_url": "",
-        "model": "",
-        "api_key": "",
-        "timeout_seconds": "180",
-        "thinking_level": "",
-        "advanced_model": "",
-        "advanced_base_url": "",
-        "advanced_api_key": "",
-        "advanced_thinking_level": "",
     })
 
     status = asyncio.run(web_app.api_menu_status())
@@ -845,15 +830,6 @@ def test_game_llm_config_reports_active_cli_channel_without_fake_api_key(monkeyp
             "reasoning_strength": "medium",
         },
         "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "medium"},
-        "base_url": "https://api.example.com/v1",
-        "model": "api-fallback",
-        "api_key": "",
-        "timeout_seconds": "180",
-        "thinking_level": "",
-        "advanced_model": "",
-        "advanced_base_url": "",
-        "advanced_api_key": "",
-        "advanced_thinking_level": "",
         "reasoning_strength": "medium",
     })
 
@@ -893,9 +869,6 @@ def test_game_llm_config_reports_inactive_cli_reasoning_strength(monkeypatch):
             "reasoning_strength": "low",
         },
         "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240", "reasoning_strength": "high"},
-        "base_url": "https://api.example.com/v1",
-        "model": "gpt-5",
-        "api_key": "sk-test",
     })
 
     result = asyncio.run(web_app.api_get_llm_config())
@@ -1220,7 +1193,9 @@ def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
     old_turn = runtime.state.turn
 
     if failure == "candidate":
-        real_session = web_app.GameSession
+        # 候选构造权威在 save_slots.open_candidate_session → ming_sim.session.GameSession
+        import ming_sim.session as session_mod
+        real_session = session_mod.GameSession
         attempts = 0
 
         def fail_first_candidate(*args, **kwargs):
@@ -1230,7 +1205,7 @@ def test_hot_replace_http_failure_keeps_old_state_and_writes_usable(
                 raise RuntimeError("candidate sentinel")
             return real_session(*args, **kwargs)
 
-        monkeypatch.setattr(web_app, "GameSession", fail_first_candidate)
+        monkeypatch.setattr(session_mod, "GameSession", fail_first_candidate)
     else:
         monkeypatch.setattr(
             runtime.db, "backup_to",
@@ -1257,7 +1232,7 @@ def test_menu_save_llm_api_channel_rejects_placeholder_existing_key(monkeypatch)
     saved = []
     monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
     monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved.append((a, k)))
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api_key": "cli-backend"})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {"api": {"api_key": "cli-backend"}})
 
     with pytest.raises(web_app.HTTPException) as exc:
         asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(

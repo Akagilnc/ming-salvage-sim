@@ -621,8 +621,6 @@ export type SecretOrder = {
   turn_closed: number | null;
 };
 
-export type ProposedDirective = { id: number; text: string; status: string; notes: string };
-
 export type PendingActionFailure = {
   id: number;
   kind: string;
@@ -684,18 +682,6 @@ export type ChatResponse = {
   pending_directive_count?: number;
   can_undo_last_chat?: boolean;
   court_action?: string;
-  next_minister?: string;
-  registered_minister?: string;
-  proposed_directive?: ProposedDirective | null;
-  secret_order_id?: number;
-  // #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问哪一道；无则缺席/null。
-  directive_confirmation_ambiguous?: DirectiveConfirmationAmbiguous | null;
-  // #670：成功记召机面控制码（SUMMON_FRESH / SUMMON_IN_TRANSIT）；禁止写入 setError/danger note。
-  admission?: string;
-};
-
-export type DirectiveConfirmationAmbiguous = {
-  candidates: { id: number; summary: string }[];
 };
 
 export type ChatUndoResponse = {

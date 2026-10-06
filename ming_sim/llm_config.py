@@ -136,37 +136,30 @@ def cli_idle_timeout_seconds(data: Dict[str, object]) -> float:
 
 
 def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
+    """只认 channel / api / cli 槽；不迁移扁平旧输入，不复制顶层 API alias。"""
     channel = str(data.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:
-        # 扁平旧配置只有「存在真实 API key」才推断 api。占位符 + 默认数值字段
-        # （timeout 等）不算 api 信号，否则旧 CLI-env 存档被误升成显式
-        # API、env CLI 后端被忽略，假 key 还会被送上 API 路径。
-        channel = "api" if is_real_api_key(data.get("api_key")) else ""
+        channel = ""
     api_raw = data.get("api")
     cli_raw = data.get("cli")
-    api_source = api_raw if isinstance(api_raw, dict) else data
-    api = _api_runtime_slot(api_source)
+    api = _api_runtime_slot(api_raw if isinstance(api_raw, dict) else {})
     cli = _cli_runtime_slot(cli_raw if isinstance(cli_raw, dict) else {})
     # #1902：transport 段退役——策略不再从 runtime 档读（旧档里的该段被忽略）。
-    migrated_api_strength = (
+    # 槽内 thinking_level → reasoning_strength 仍可归一（提供方思考参数，非扁平迁移）。
+    api_strength = (
         normalize_reasoning_strength(api.get("reasoning_strength"))
-        or normalize_reasoning_strength(data.get("reasoning_strength") if channel != "cli" else "")
-        or legacy_reasoning_strength(api_source)
+        or legacy_reasoning_strength(api)
     )
-    if migrated_api_strength:
-        api["reasoning_strength"] = migrated_api_strength
+    if api_strength:
+        api["reasoning_strength"] = api_strength
     cli_strength = normalize_reasoning_strength(cli.get("reasoning_strength"))
-    active_strength = cli_strength if channel == "cli" else migrated_api_strength
-    out = {
+    active_strength = cli_strength if channel == "cli" else api_strength
+    return {
         "channel": channel,
         "api": api,
         "cli": cli,
+        "reasoning_strength": active_strength,
     }
-    # Transitional API aliases keep existing callers working while the UI/API
-    # slices move to explicit slots. Keep these even when CLI is active.
-    out.update(api)
-    out["reasoning_strength"] = active_strength
-    return out
 
 
 def normalize_openai_base_url(base_url: str) -> str:
@@ -294,17 +287,14 @@ def cli_model_from_env(runner: str, fallback: str = "") -> str:
 
 
 def _api_runtime_value(runtime: Dict[str, object], key: str, fallback: str) -> str:
-    """运行档 API 槽取该字段（按字符串读）；档里没有才回落入口入参/env。
+    """从 runtime['api'] 槽取字段；档里没有才回落入口入参/env。
 
-    ``load_runtime_llm`` 已把 api 槽同时铺成顶层 alias，故顶层读即为槽读；
-    这里只做「档内取值 + 回落」这一件事，落差由本函数一处决定。数值槽
-    （timeout_seconds）由调用方另走数值解析，不受这里的字符串化影响。
+    数值槽（timeout_seconds）由调用方另走数值解析，不受这里的字符串化影响。
     """
-    value = runtime.get(key)
+    api = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
+    value = api.get(key)
     if value is None:
         return fallback
-    # 原写 `"" if value is str else str(value)`：那是拿实例与类型对象比，恒为 False，
-    # 空串由下一行兜住——死分支且误导读者（#1902 判词）。此处只做字符串化。
     text = str(value)
     if not text:
         return fallback
@@ -341,20 +331,21 @@ def llm_config_from_runtime(
     """
     channel = str(runtime.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:
-        # #1902：档里没写通道时按是否已配真实 API key 判；旧 env 选宿主的路已退役。
+        # #1902：档里没写通道时按 cli 槽是否已声明 runner 判；旧 env 选宿主的路已退役。
         channel = "cli" if isinstance(runtime.get("cli"), dict) and str(
             (runtime.get("cli") or {}).get("runner") or ""
         ).strip() else "api"
+    api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
     cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
     cli_runner = str(cli_slot.get("runner") or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
     base_url = _api_runtime_value(runtime, "base_url", base_url)
     model = _api_runtime_value(runtime, "model", model)
     api_key = _api_runtime_value(runtime, "api_key", api_key)
-    # 超时是数值槽：档内有值就用档值（两端同一口径），否则回落入口/env 入参。
+    # 超时是数值槽：api 槽有值就用槽值（两端同一口径），否则回落入口/env 入参。
     # #1902 S3：与 load 路径共用 _slot_number，不另维平行浮点取值。
     timeout_seconds = _slot_number(
-        runtime.get("timeout_seconds"),
+        api_slot.get("timeout_seconds"),
         float,
         _slot_number(timeout_seconds, float, API_DEFAULT_TIMEOUT_SECONDS),
     )
@@ -383,8 +374,7 @@ def llm_config_from_runtime(
         else ""
     )
     reasoning_strength = normalize_reasoning_strength(
-        (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
-        or runtime.get("reasoning_strength", "")
+        cli_slot.get("reasoning_strength") if channel == "cli" else api_slot.get("reasoning_strength")
     ) or legacy_reasoning
     # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
     cli_timeout = _slot_number(cli_slot.get("timeout_seconds"), float, CLI_DEFAULT_TIMEOUT_SECONDS)
@@ -394,8 +384,8 @@ def llm_config_from_runtime(
         # 占位符不当真 key：清空让下游空检查报「未配 API key」，
         # 而不是拿假 key 去探 OpenAI（误导性 412）。
         api_key = ""
-    # #1794：附加头只属 API 槽；load_runtime_llm 已归一并顶层 alias，扁平单读。
-    default_headers = dict(runtime.get("default_headers") or {})
+    # #1794：附加头只属 API 槽。
+    default_headers = dict(api_slot.get("default_headers") or {})
     return LLMConfig(
         api_key=api_key,
         base_url=normalize_openai_base_url(base_url),
@@ -602,7 +592,7 @@ def save_runtime_llm(
         strength_source = (
             existing_cli.get("reasoning_strength", "")
             if active_channel == "cli"
-            else existing_api.get("reasoning_strength") or existing.get("reasoning_strength", "")
+            else existing_api.get("reasoning_strength", "")
         )
         strength = normalize_reasoning_strength(strength_source)
     else:

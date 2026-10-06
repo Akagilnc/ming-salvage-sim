@@ -16,15 +16,17 @@
   的唯一实现；核只判定并归类失败原因，对玩家说什么由入口翻。
 - ``copy_sqlite_file``：「用存档覆盖主库」那一步的唯一实现，两端共用。
 
-**各端自有、刻意不并入本模块**（重建与失败候选处置要碰宿主的候选/残留资源与
-呈现态，两端形状本就不同，硬并只会造出更糟的耦合）：
+**共同候选生命周期**（``open_candidate_session``）：GameSession 构造、自有队列归属、
+begin_turn、崩溃对账、失败时在**候选自有队列**上关闭——Web/CLI 共用，禁入口再各写
+一份或把候选挂回正持 barrier 的旧队列（父子屏障自等待）。
 
-- 候选会话重建：``WebGame._rebuild_session`` / ``cli._cli_rebuild_session``；
-- 失败候选处置：``WebGame._dispose_rebuild_residual`` / ``_CliSaveSlotHost.dispose_residual``。
+**各端自有回调**（呈现/宿主资源，经 ``SaveSlotHost.rebuild`` / ``dispose_residual``）：
 
-两者都经 ``SaveSlotHost`` 的 ``rebuild`` / ``dispose_residual`` 两个回调接进本模块的
-编排，**换库的时序与失败恢复顺序只有本模块一份**；入口只提供「怎么造候选、怎么处置
-残留」的能力。本模块不认识任何入口类型，也不知道 HTTP。
+- 发布与收藏/聊天缓存等呈现准备：``WebGame._rebuild_session`` / ``cli._cli_rebuild_session``；
+- 失败候选宿主残留登记：``WebGame._dispose_rebuild_residual`` / ``_CliSaveSlotHost.dispose_residual``。
+
+换库的时序与失败恢复顺序只有 ``replace_database`` 一份；本模块不认识任何入口类型，
+也不知道 HTTP。
 """
 
 from __future__ import annotations
@@ -132,6 +134,51 @@ class SaveSlotBusyError(RuntimeError):
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.detail = detail
+
+
+def open_candidate_session(
+    db_path: str,
+    llm_config: Any,
+    *,
+    content: Any = None,
+) -> Any:
+    """换库候选共同生命周期：构造 → 自有队列 → begin_turn → 召对崩溃对账。
+
+    完整初始化成功才返回候选；任一步失败则在**候选自己的写队列**上关闭（不得挂到
+    正执行 replace barrier 的旧队列，否则 close→barrier 与父票互相等待）。
+    关闭仍失败时把活残留挂到异常的 ``residual_session``，供宿主 dispose 回调登记。
+    发布与呈现准备仍由入口 rebuild 回调完成。
+    """
+    from ming_sim.session import GameSession
+    from ming_sim.session_write_queue import get_session_write_queue
+
+    candidate = None
+    try:
+        if content is not None:
+            candidate = GameSession(db_path, llm_config, content=content)
+        else:
+            candidate = GameSession(db_path, llm_config)
+        # GameSession 构造已装自有队列；此处只解析，禁改挂到父 runtime 队列。
+        get_session_write_queue(candidate)
+        candidate.begin_turn()
+        candidate.reconcile_crashed_audience_turns()
+        return candidate
+    except Exception as exc:
+        residual = candidate or getattr(exc, "residual_session", None)
+        if residual is not None:
+            try:
+                residual.close()
+            except Exception:
+                logger.exception(
+                    "open_candidate_session: rejected candidate close failed path=%s",
+                    db_path,
+                )
+                try:
+                    setattr(exc, "residual_session", residual)
+                except Exception:
+                    pass
+                raise
+        raise
 
 
 class SaveSlotHost:

@@ -935,49 +935,41 @@ class WebGame:
         )
 
     def _rebuild_session(self, llm_config: LLMConfig) -> None:
-        """Fully initialize a candidate before publishing it as the active session."""
+        """发布换库候选：共同生命周期在 save_slots；此处只办呈现与宿主残留。"""
+        from ming_sim.save_slots import open_candidate_session
+
         # #1749：先处置上一失败候选；仍活则拒绝新候选，禁覆盖仍活资源。
         if not self._dispose_rebuild_residual():
             raise RuntimeError(
                 f"previous rebuild residual still live path={self.db_path}"
             )
-        candidate = None
         try:
-            candidate = GameSession(self.db_path, llm_config)
-            q = getattr(self, "_write_queue", None)
-            if not isinstance(q, SessionWriteQueue):
-                q = get_session_write_queue(candidate)
-            else:
-                candidate._write_queue = q  # type: ignore[attr-defined]
-                candidate._write_gate = q.write_gate  # type: ignore[attr-defined]
-            candidate.begin_turn()
-            chat_history = {name: [] for name in candidate.content.characters}
-            for name, msgs in candidate.db.load_all_chat_history().items():
-                chat_history.setdefault(name, []).extend(msgs)
-            default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
-            fav_raw = candidate.db.kv_get("favorites")
-            favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
-            if not fav_raw:
-                candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
-            # #1902 T4：换库候选同样走会话共核启动恢复，不在 Web 入口另编排。
-            candidate.reconcile_crashed_audience_turns()
+            candidate = open_candidate_session(self.db_path, llm_config)
         except Exception as rebuild_exc:
-            residual = candidate or getattr(rebuild_exc, "residual_session", None)
+            residual = getattr(rebuild_exc, "residual_session", None)
             if residual is not None:
-                try:
-                    residual.close()
-                except Exception:
-                    logger.exception("failed to close rejected replacement session")
-                    wrapper = SimpleNamespace(
-                        db_path=self.db_path,
-                        session=residual,
-                        _write_queue=getattr(residual, "_write_queue", None),
-                        _write_gate=getattr(residual, "_write_gate", None),
-                    )
-                    _handback_failed_runtime(wrapper, self.db_path)
-                    self._rebuild_residual_runtime = wrapper
+                wrapper = SimpleNamespace(
+                    db_path=self.db_path,
+                    session=residual,
+                    _write_queue=getattr(residual, "_write_queue", None),
+                    _write_gate=getattr(residual, "_write_gate", None),
+                )
+                _handback_failed_runtime(wrapper, self.db_path)
+                self._rebuild_residual_runtime = wrapper
             raise
 
+        # 宿主呈现准备：聊天缓存与收藏（共核不管网页态）。
+        chat_history = {name: [] for name in candidate.content.characters}
+        for name, msgs in candidate.db.load_all_chat_history().items():
+            chat_history.setdefault(name, []).extend(msgs)
+        default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
+        fav_raw = candidate.db.kv_get("favorites")
+        favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
+        if not fav_raw:
+            candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
+
+        # 发布：挂候选自有队列，不沿用已 seal 的旧队列。
+        q = get_session_write_queue(candidate)
         self.session = candidate
         self._write_queue = q
         self._write_gate = q.write_gate
@@ -1060,20 +1052,22 @@ class WebGame:
             new_default_headers = dict(cur.default_headers or {})
         else:
             new_default_headers = _slot_header_table(default_headers)
-        # #1902 N2：编辑优先级已收成 runtime 形，生效规则只认共核投影。
+        # #1902 N2：入口把表单映射成 channel/api/cli 槽，生效规则只认共核投影。
         runtime = {
             "channel": new_channel,
-            "base_url": new_base,
-            "model": new_model,
-            "api_key": new_key,
-            "timeout_seconds": new_timeout,
-            "thinking_level": new_thinking_level,
-            "reasoning_strength": new_reasoning_strength,
-            "advanced_model": new_advanced,
-            "advanced_base_url": new_adv_base,
-            "advanced_api_key": new_adv_key,
-            "advanced_thinking_level": "",
-            "default_headers": new_default_headers,
+            "api": {
+                "base_url": new_base,
+                "model": new_model,
+                "api_key": new_key,
+                "timeout_seconds": new_timeout,
+                "thinking_level": new_thinking_level,
+                "reasoning_strength": new_reasoning_strength,
+                "advanced_model": new_advanced,
+                "advanced_base_url": new_adv_base,
+                "advanced_api_key": new_adv_key,
+                "advanced_thinking_level": "",
+                "default_headers": new_default_headers,
+            },
             "cli": {
                 "runner": new_cli_runner,
                 "model": new_cli_model,
@@ -4103,7 +4097,7 @@ async def api_menu_status() -> Dict[str, Any]:
             "advanced_base_url": cfg.advanced_base_url,
             "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
             "advanced_thinking_level": "",
-            # #1794：设置页读回附加请求头表（API 槽）；归一后扁平单读。
+            # #1794：设置页读回附加请求头表（API 槽）。
             "default_headers": dict(cfg.default_headers or {}),
         },
     }
@@ -4571,12 +4565,10 @@ async def _menu_save_cli_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     timeout_seconds = request.timeout_seconds if request.timeout_seconds > 0 else API_DEFAULT_TIMEOUT_SECONDS
     if not cli_runner:
         raise HTTPException(status_code=400, detail="cli_runner 不能为空。")
-    # #1902 N2：表单值收成 runtime 后，生效配置只走共核投影（不在菜单自造 LLMConfig）。
+    # #1902 N2：入口把表单映射成 channel/cli 槽，生效配置只走共核投影。
     config = _llm_config_from_runtime(
         {
             "channel": "cli",
-            "timeout_seconds": timeout_seconds,
-            "reasoning_strength": reasoning_strength,
             "cli": {
                 "runner": cli_runner,
                 "model": cli_model,
@@ -4659,8 +4651,9 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     if not (base_url and model):
         raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
     existing = load_runtime_llm()
+    existing_api = existing.get("api") if isinstance(existing.get("api"), dict) else {}
     if not api_key:
-        for candidate in (existing.get("api_key"), os.environ.get("OPENAI_API_KEY", "")):
+        for candidate in (existing_api.get("api_key"), os.environ.get("OPENAI_API_KEY", "")):
             if _has_real_api_key(candidate):
                 api_key = str(candidate).strip()
                 break
@@ -4668,28 +4661,30 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="api_key 未配置，请填写。")
     # advanced_api_key 留空：复用已存的（避免覆盖成空）。
     if advanced_model and not advanced_api_key:
-        advanced_api_key = real_api_key_or_empty(existing.get("advanced_api_key")) or real_api_key_or_empty(os.environ.get("OPENAI_ADVANCED_API_KEY"))
-    # #1794：请求体显式带头表则用之（含空表清空）；省略则装入档内头表（旧客户端兼容）。
+        advanced_api_key = real_api_key_or_empty(existing_api.get("advanced_api_key")) or real_api_key_or_empty(os.environ.get("OPENAI_ADVANCED_API_KEY"))
+    # #1794：请求体显式带头表则用之（含空表清空）；省略则装入档内头表。
     if request.default_headers is not None:
         default_headers = _slot_header_table(request.default_headers)
     else:
-        default_headers = _slot_header_table(existing.get("default_headers"))
+        default_headers = _slot_header_table(existing_api.get("default_headers"))
     normalized_base_url = normalize_openai_base_url(base_url)
-    # #1902 N2：菜单保存的生效配置只走共核投影；此处只收表单/已存回落值。
+    # #1902 N2：入口把表单/已存回落映射成 api 槽，生效配置只走共核投影。
     config = _llm_config_from_runtime(
         {
             "channel": "api",
-            "base_url": normalized_base_url,
-            "model": model,
-            "api_key": api_key,
-            "timeout_seconds": timeout_seconds,
-            "thinking_level": thinking_level,
-            "advanced_model": advanced_model,
-            "advanced_base_url": advanced_base_url,
-            "advanced_api_key": advanced_api_key,
-            "advanced_thinking_level": advanced_thinking_level,
-            "reasoning_strength": reasoning_strength,
-            "default_headers": default_headers,
+            "api": {
+                "base_url": normalized_base_url,
+                "model": model,
+                "api_key": api_key,
+                "timeout_seconds": timeout_seconds,
+                "thinking_level": thinking_level,
+                "advanced_model": advanced_model,
+                "advanced_base_url": advanced_base_url,
+                "advanced_api_key": advanced_api_key,
+                "advanced_thinking_level": advanced_thinking_level,
+                "reasoning_strength": reasoning_strength,
+                "default_headers": default_headers,
+            },
         },
         base_url="",
         model="",
@@ -5594,25 +5589,25 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "default_headers": dict(cfg.default_headers or {}),
         "persisted": {
             "channel": saved.get("channel", ""),
-            "base_url": saved.get("base_url", ""),
-            "model": saved.get("model", ""),
-            "has_api_key": _has_real_api_key(saved.get("api_key", "")),
-            "timeout_seconds": float(saved.get("timeout_seconds") or API_DEFAULT_TIMEOUT_SECONDS),
-            "thinking_level": saved.get("thinking_level", ""),
+            "base_url": saved_api.get("base_url", ""),
+            "model": saved_api.get("model", ""),
+            "has_api_key": _has_real_api_key(saved_api.get("api_key", "")),
+            "timeout_seconds": float(saved_api.get("timeout_seconds") or API_DEFAULT_TIMEOUT_SECONDS),
+            "thinking_level": saved_api.get("thinking_level", ""),
             "reasoning_strength": saved.get("reasoning_strength", ""),
             "api_reasoning_strength": saved_api_reasoning_strength,
             "cli_reasoning_strength": saved_cli_reasoning_strength,
-            "advanced_model": saved.get("advanced_model", ""),
-            "advanced_base_url": saved.get("advanced_base_url", ""),
-            "has_advanced_api_key": _has_real_api_key(saved.get("advanced_api_key", "")),
+            "advanced_model": saved_api.get("advanced_model", ""),
+            "advanced_base_url": saved_api.get("advanced_base_url", ""),
+            "has_advanced_api_key": _has_real_api_key(saved_api.get("advanced_api_key", "")),
             "advanced_thinking_level": "",
             "cli_runner": str(saved_cli.get("runner") or ""),
             "cli_model": str(saved_cli.get("model") or ""),
             "cli_timeout_seconds": _slot_number(
                 saved_cli.get("timeout_seconds"), float, CLI_DEFAULT_TIMEOUT_SECONDS,
             ),
-            # #1794：persisted 头表；load_runtime_llm 已归一，扁平单读。
-            "default_headers": dict(saved.get("default_headers") or {}),
+            # #1794：persisted 头表直接读 api 槽。
+            "default_headers": dict(saved_api.get("default_headers") or {}),
         },
     }
 

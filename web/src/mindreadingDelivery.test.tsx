@@ -238,7 +238,8 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     const { hookRef } = mount();
     const hook = hookRef.current!;
     const durablesSeen: number[] = [];
-    const cb: SendChatCallbacks = { ...noCbs, onDone: (d: ChatResponse) => durablesSeen.push(d.secret_order_id || 0) };
+    // 现役轮身份（chat_turn_id）作 done 即消费的结构化后果；旧 secret_order_id 响应已无产者。
+    const cb: SendChatCallbacks = { ...noCbs, onDone: (d: ChatResponse) => durablesSeen.push(d.chat_turn_id || 0) };
 
     let releaseEnd1!: () => void;
     const gate1 = new Promise<void>((r) => { releaseEnd1 = r; });
@@ -246,9 +247,9 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     vi.stubGlobal("fetch", vi.fn(async () => {
       call += 1;
       if (call === 1) {
-        // 流 1：done1 携持久后果（密令 #7），随后门控挂起（模拟尾随处理拖后 end）
+        // 流 1：done1 携现役轮身份，随后门控挂起（模拟尾随处理拖后 end）
         return gatedSse(
-          [{ event: "done", data: { history: [U("问1", 10), M("答1", 10)], suggestions: [], directives: [], secret_order_id: 7 } }],
+          [{ event: "done", data: { history: [U("问1", 10), M("答1", 10)], suggestions: [], directives: [], chat_turn_id: 7 } }],
           gate1,
           [{ event: "end", data: {} }],
         );

@@ -467,35 +467,30 @@ def _cli_reconcile_crashed_turns(session: GameSession) -> None:
 
 
 def _cli_rebuild_session(runtime: "_CliRuntime", llm_config) -> GameSession:
-    """换库后重建活会话（与 Web ``_rebuild_session`` 同一形状，只不做网页呈现态）。
+    """发布换库候选：共同生命周期在 save_slots；此处只办 CLI 同步补跑与发布。
 
-    候选**完整初始化后才发布**（#1902 J1）：建会话 → begin_turn → 挂写闸 → 召对
-    崩溃遗留对账；任一步失败即关候选并照原错上抛，活槽 ``runtime.session`` 在此
-    期间仍指着旧会话（已由共享核关闭），绝不半初始化候选蒙上活会话名。
-    共享核的失败恢复随后会用还原后的库再重建一次并把新会话发到 ``runtime.session``。
-
-    注意：共享核已在同一独占区里 ``old_session.close(write_gate_already_held=True)``
-    关过旧会话，**此处不得再 close 一次**——那会在已 seal 的队列上再进 barrier，
-    与正持有的 gate 自锁（实测挂死在 ``wait_prior``）。
+    候选完整初始化后才发布（#1902 J1）；活槽 ``runtime.session`` 在此期间仍指着
+    已被共享核关闭的旧会话。失败关闭走候选自有队列（见 ``open_candidate_session``），
+    不得挂回正持 barrier 的旧队列。
     """
     from ming_sim.content import GameContent
+    from ming_sim.save_slots import open_candidate_session
 
-    candidate = None
     try:
-        candidate = GameSession(runtime.db_path, llm_config, content=GameContent.load())
-        candidate.begin_turn()
-        _cli_write_gate(candidate)
-        _cli_reconcile_crashed_turns(candidate)
+        candidate = open_candidate_session(
+            runtime.db_path, llm_config, content=GameContent.load(),
+        )
     except Exception as exc:
-        # 构造半途失败时对象还没赋给 candidate，活连接在异常的 residual_session 上。
-        residual = candidate or getattr(exc, "residual_session", None)
+        residual = getattr(exc, "residual_session", None)
         if residual is not None:
-            try:
-                residual.close()
-            except Exception:
-                logger.exception("CLI rebuild candidate close failed")
-                runtime._rebuild_residual_runtime = residual
+            runtime._rebuild_residual_runtime = residual
         raise
+    # CLI 无后台票：同步跑启动转译补跑（Web 由宿主 spawn）。
+    from ming_sim.session_write_queue import get_session_write_queue
+    q = get_session_write_queue(candidate)
+    candidate.run_startup_translation_catch_up(
+        write_gate=q.write_gate, write_queue=q,
+    )
     runtime.session = candidate
     return candidate
 
