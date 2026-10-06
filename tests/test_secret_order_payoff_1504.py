@@ -385,7 +385,8 @@ def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
     assert closed["status"] == "failed"
 
 
-def test_settle_due_keeps_existing_progress_result_over_memorial(game):
+def test_settle_due_close_follows_surviving_memorial_and_actual(game):
+    """记进展与同月密奏是同一条奏报。结案取留下的结构化奏报，实况为零则不成。"""
     db, state, _ = game
     name = _minister(db)
     _set_axes(db, name, loyalty=20, identity=80)
@@ -393,12 +394,12 @@ def test_settle_due_keeps_existing_progress_result_over_memorial(game):
     dossier = db.dossiers.get_for_secret_order(oid)
     did = int(dossier["id"])
     db.update_secret_order_progress(oid, "承办人已报进展时间线", year=state.year, period=state.period)
-    before = str(db.get_secret_order(oid)["result"] or "")
-    assert before.strip()
+    assert str(db.get_secret_order(oid)["result"] or "") == ""
     db.record_dossier_progress(
         did, state.turn, "办成", "臣已查明全部", is_terminal=False,
     )
-    memorial = str(db.list_dossier_progress(did)[-1]["memorial_text"] or "")
+    open_reports = [row for row in db.list_dossier_progress(did) if not row["is_terminal"]]
+    assert len(open_reports) == 1
     db.conn.execute(
         "UPDATE secret_orders SET due_turn=? WHERE id=?",
         (state.turn, oid),
@@ -408,9 +409,11 @@ def test_settle_due_keeps_existing_progress_result_over_memorial(game):
     out = settle_due_secret_orders(db, state, commit=True)
     row = next(r for r in out if r["order_id"] == oid)
     closed = db.get_secret_order(oid)
-    assert str(closed["result"] or "") == before
-    assert row["result"] == before
-    assert before != memorial
+    assert row["status"] == "failed"
+    assert row["actual_units"] == 0.0
+    assert closed["status"] == "failed"
+    surviving = [item for item in db.list_dossier_progress(did) if not item["is_terminal"]]
+    assert len(surviving) == 1
 
 
 # ── 月度实进度 + 到期对账 ─────────────────────────────────────────────

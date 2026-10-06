@@ -259,7 +259,7 @@ def _load_questions(raw: object) -> list[dict]:
 
 
 def _load_optional_json(row: Any, column: str) -> object:
-    if column not in row.keys() or row[column] is None:
+    if row[column] is None:
         return None
     if column == "questions_json":
         return _load_questions(row[column])
@@ -269,7 +269,7 @@ def _load_optional_json(row: Any, column: str) -> object:
 def _row_to_staged(row: Any) -> StagedDeclaration:
     verdict = _load_optional_json(row, "verdict_json")
     questions = _load_optional_json(row, "questions_json")
-    forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
+    forecast_text = row["forecast_text"]
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=str(row["decree_ref"]),
         declaration=load_stored_object(row["declaration_json"], label="declaration_json"),

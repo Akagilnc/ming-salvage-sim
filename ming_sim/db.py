@@ -55,6 +55,8 @@ from ming_sim.entities.dossier import (
     DOSSIER_EXECUTION_OUTCOMES,
     DOSSIER_REPORT_ORIGIN_MONTHLY,
     DOSSIER_REPORT_ORIGIN_NS,
+    DOSSIER_REPORT_ORIGIN_REVIEW,
+    DOSSIER_REPORT_ORIGIN_RUSH,
     DOSSIER_REPORT_ORIGIN_VERDICT,
     DOSSIER_STATUSES,
     PROMULGATION_BLOCKED_LAYERS,
@@ -851,68 +853,6 @@ def clamp_grant_arrival_amount(
     proposed = int(proposed_arrived)
     return max(lo, min(hi, proposed))
 
-_SECRET_ORDER_BODY_COLUMNS = ("result", "sim_note")
-
-def _secret_order_record_body(record: Mapping[str, object]) -> str:
-    """Stored prose must already be a string. A missing or non-string body is not rewritten as empty text."""
-    body = record.get("body")
-    if not isinstance(body, str):
-        raise TypeError("密令正文记录缺少正文")
-    return body
-
-def _secret_order_period_recorded(
-    records: Sequence[Mapping[str, object]], year: int, period: int,
-) -> bool:
-    return any(
-        int(record.get("year") or 0) == int(year)
-        and int(record.get("period") or 0) == int(period)
-        for record in records
-    )
-
-def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str:
-    """Project records by year, month, then write order. Body text is copied whole."""
-    ordered = sorted(
-        enumerate(records),
-        key=lambda pair: (
-            int(pair[1].get("year") or 0),
-            int(pair[1].get("period") or 0),
-            pair[0],
-        ),
-    )
-    parts: List[str] = []
-    for _, record in ordered:
-        marker = str(record.get("marker") or "")
-        parts.append(
-            f"〔{period_label(int(record.get('year') or 0), int(record.get('period') or 0))}〕"
-            f"{marker}{_secret_order_record_body(record)}"
-        )
-    return "\n".join(parts)
-
-def _secret_order_kept_body(text: object) -> str:
-    """空白正文记空串；已有字句原样保留，含内部空行。"""
-    raw = str(text or "")
-    return raw if raw.strip() else ""
-
-def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
-    """Read structured body records.
-
-    ``json.loads`` failures and a non-dict top level propagate. A column that
-    is not a list, or a record whose body is not a string, raises ``TypeError``.
-    A missing column means no records. Stored entries are not filtered and a
-    missing body is not replaced with an empty string.
-    """
-    parsed = json.loads(row["text_log_json"])
-    log: Dict[str, List[Dict[str, object]]] = {}
-    for column in _SECRET_ORDER_BODY_COLUMNS:
-        entries = parsed.get(column, [])
-        if not isinstance(entries, list):
-            raise TypeError(f"密令正文记录 {column} 不是列表")
-        for item in entries:
-            if not isinstance(item, dict):
-                raise TypeError("密令正文记录条目不是对象")
-            _secret_order_record_body(item)
-        log[column] = entries
-    return log
 
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
@@ -2952,36 +2892,6 @@ class GameDB:
                 "faction": r["faction"] or "",
             })
         return debuted
-
-    def apply_historical_power_renames(self, state: GameState) -> List[Dict[str, object]]:
-        """月初 tick：历史国号/称谓变化。稳定 id 不变，只改展示名与别名。"""
-        changes: List[Dict[str, object]] = []
-        if state.year > 1636 or (state.year == 1636 and state.period >= 4):
-            ev = self.content.event_by_id.get("huangtaiji_chengdi")
-            if ev is None or not isinstance(ev.effect_on_trigger, dict):
-                raise ValueError("历史改国号缺少事件真源 huangtaiji_chengdi.effect_on_trigger")
-            power_renames = ev.effect_on_trigger.get("power_renames")
-            if not isinstance(power_renames, list):
-                raise ValueError("历史改国号缺少 power_renames 列表")
-            for idx, item in enumerate(power_renames):
-                if not isinstance(item, dict):
-                    raise ValueError(f"历史改国号 power_renames[{idx}] 非 dict")
-                power_id = str(item.get("power_id") or "").strip()
-                new_name = str(item.get("new_name") or "").strip()
-                if not power_id or not new_name:
-                    raise ValueError(f"历史改国号 power_renames[{idx}] 缺少 power_id/new_name")
-                changed = self.apply_power_rename(
-                    state,
-                    power_id,
-                    new_name,
-                    aliases=str(item.get("aliases") or ""),
-                    reason=str(item.get("reason") or ""),
-                    status=str(item.get("status") or ""),
-                    last_action=str(item.get("last_action") or ""),
-                )
-                if changed:
-                    changes.append(changed)
-        return changes
 
     def next_pool_portrait_id(self, prefix: str = "minister_pool_") -> str:
         """分配下一个预设头像 ID（顺序递增，不循环）。
@@ -5581,39 +5491,6 @@ class GameDB:
             })
         return out
 
-    def _write_secret_order_body(
-        self,
-        order_id: int,
-        column: str,
-        records: Sequence[Mapping[str, object]],
-        *,
-        extra_assignments: str = "",
-        extra_params: Sequence[object] = (),
-    ) -> None:
-        assert column in _SECRET_ORDER_BODY_COLUMNS
-        row = self.character_knowledge.secret_order_row(int(order_id), active_only=False)
-        if row is None:
-            return
-        log = _secret_order_body_log(row)
-        log[column] = [dict(record) for record in records]
-        params: List[object] = list(extra_params)
-        params.extend((
-            _project_secret_order_bodies(log[column]),
-            json.dumps(log, ensure_ascii=False),
-        ))
-        sets = f"{column} = ?, text_log_json = ?, updated_at = CURRENT_TIMESTAMP"
-        if extra_assignments:
-            sets = f"{extra_assignments}, {sets}"
-        self.character_knowledge.update_secret_order_assignments(
-            int(order_id), sets, params,
-        )
-
-    def _read_secret_order_body_before_write(self, order_id: int) -> None:
-        """写正文前先读账。读失败在调用方事务内、本写事务外抛出。"""
-        row = self.character_knowledge.secret_order_row(int(order_id), active_only=True)
-        if row is not None:
-            _secret_order_body_log(row)
-
     def record_investigation_spoiled_fact(
         self,
         *,
@@ -6349,10 +6226,7 @@ class GameDB:
         name = str(minister_name or "").strip()
         if not name:
             return None
-        try:
-            return self.chat_messages.latest_held_user_id(name, None if turn is None else int(turn))
-        except sqlite3.OperationalError:
-            return None
+        return self.chat_messages.latest_held_user_id(name, None if turn is None else int(turn))
 
     def _parse_origin_chat_message_id(
         self, payload: Optional[Mapping[str, object]],
@@ -8805,7 +8679,7 @@ class GameDB:
                     continue
                 key = self._office_archive_key(
                     lead["office"], lead["office_type"],
-                    location=lead["location"] if "location" in lead.keys() else "",
+                    location=lead["location"] or "",
                     character_name=lead_name,
                 )
                 if key:
@@ -8925,7 +8799,7 @@ class GameDB:
                         continue
                     key = self._office_archive_key(
                         lead["office"], lead["office_type"],
-                        location=lead["location"] if "location" in lead.keys() else "",
+                        location=lead["location"] or "",
                         character_name=lead_name,
                     )
                     if key:
@@ -9126,7 +9000,7 @@ class GameDB:
         reader_archive_key = (
             self._office_archive_key(
                 office_row["office"], office_row["office_type"],
-                location=office_row["location"] if "location" in office_row.keys() else "",
+                location=office_row["location"] or "",
                 character_name=name,
             )
             if office_row is not None else ""
@@ -13617,10 +13491,7 @@ class GameDB:
             if mid is not None:
                 out.setdefault(mid, False)
         if out:
-            try:
-                turns = self.reign.chat_turns_for_user_message_ids(list(out))
-            except sqlite3.OperationalError:
-                turns = []
+            turns = self.reign.chat_turns_for_user_message_ids(list(out))
             for turn in turns:
                 durable = any(
                     out.get(int(raw), False)
@@ -13658,10 +13529,7 @@ class GameDB:
             if commit:
                 self.conn.commit()
             return []
-        try:
-            live_ids = self.chat_messages.existing_ids(pins)
-        except sqlite3.OperationalError:
-            live_ids = []
+        live_ids = self.chat_messages.existing_ids(pins)
         source_ids: List[str] = []
         for mid in live_ids:
             self.chat_messages.set_knowledge_status(mid, "withheld")
@@ -13731,10 +13599,7 @@ class GameDB:
         explicit_exclude = set(self._coerce_positive_message_ids(exclude_message_ids))
         protection = self._secret_origin_message_protection()
         exclude = explicit_exclude | set(protection)
-        try:
-            rows = self.chat_messages.held_rows(sorted(name_set) if name_set else None)
-        except sqlite3.OperationalError:
-            return 0
+        rows = self.chat_messages.held_rows(sorted(name_set) if name_set else None)
         if not rows:
             return 0
         state = self.load_state()
@@ -14181,8 +14046,8 @@ class GameDB:
             {
                 "id": int(r["id"]),
                 "turn_issued": int(r["turn_issued"]),
-                "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
-                "deadline_span": int(r["deadline_span"] if "deadline_span" in r.keys() else 0),
+                "due_turn": int(r["due_turn"] or 0),
+                "deadline_span": int(r["deadline_span"] or 0),
                 "year_issued": int(r["year_issued"]),
                 "period_issued": int(r["period_issued"]),
                 "minister_name": r["minister_name"],
@@ -14192,7 +14057,7 @@ class GameDB:
                 "importance": int(r["importance"]),
                 "status": r["status"],
                 "result": r["result"] or "",
-                "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
+                "sim_note": r["sim_note"] or "",
                 # Emperor-facing secret-order payload is an authorized private
                 # product seam; expose the same canonical monthly rail used by
                 # the personnel extractor and future dossier inquiry.
@@ -14201,8 +14066,8 @@ class GameDB:
                     if (dossier := self.dossiers.get_for_secret_order(int(r["id"])))
                     else []
                 ),
-                "excluded_names": load_stored_list(r["excluded_names"], label='excluded_names') if "excluded_names" in r.keys() else [],
-                "excluded_targets": load_stored_object(r["excluded_targets"], label='excluded_targets') if "excluded_targets" in r.keys() else {},
+                "excluded_names": load_stored_list(r["excluded_names"], label='excluded_names'),
+                "excluded_targets": load_stored_object(r["excluded_targets"], label='excluded_targets'),
                 "turn_closed": r["turn_closed"],
             }
             for r in rows
@@ -14280,62 +14145,55 @@ class GameDB:
                 raise
         tlog(f"[secret_order] close id={order_id} status={status}")
 
-    def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
-        """#1504：大臣自认办结 → 缩 due_turn 至当月，月末机械对账。
+    def _current_game_turn(self, fallback: int = 0) -> int:
+        row = ReignStateStore(self.conn).read_current_settle_turn()
+        return int(row["turn"]) if row is not None else int(fallback)
 
-        claim 按月戳追加进 result（奏报/陈词轨），不入实况对账真源。仅 active 可提交。
+    def _note_secret_order_report(
+        self, order_id: int, text: str, *, band: str, origin: str,
+    ) -> bool:
+        """把一条奏报原文写入 0058 密令轨。月份身份是当前 game_state.turn。
+
+        正文原样入库。判空只用副本。调用方持有事务。
         """
+        raw = str(text or "")
+        if not raw.strip():
+            return False
+        row = self.character_knowledge.secret_order_row(int(order_id), active_only=True)
+        if row is None:
+            return False
+        dossier = self.dossiers.get_for_secret_order(int(order_id))
+        if dossier is None:
+            return False
+        self.record_dossier_progress(
+            int(dossier["id"]), self._current_game_turn(), band, raw,
+            origin=origin, commit=False,
+        )
+        return True
+
+    def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
+        """#1504：大臣自认办结 → 缩 due_turn 至当月，月末按实况对账。
+
+        claim 是 LLM 自由文本，原样进入奏报轨的核议 origin，不改实况、不改正文列。
+        空陈词只缩短到期回合。年月参数不参与条目身份。
+        """
+        _ = (year, period)
         row = CharacterKnowledgeStore(self.conn).read_submit_secret_order_for_review((int(order_id),))
         if not row or row["status"] != "active":
             return False
-        turn_row = ReignStateStore(self.conn).read_current_settle_turn()
-        current_turn = int(turn_row["turn"]) if turn_row is not None else int(row["turn_issued"] or 0)
-        stamp = f"〔{period_label(year, period)}〕[提交核议] "
-        note = claim or ""
-        prev = CharacterKnowledgeStore(self.conn).read_submit_secret_order_for_review_result((int(order_id),))["result"] or ""
-        lines = [ln for ln in prev.split("\n") if ln.strip()]
-        lines.append(f"{stamp}{note}")
+        current_turn = self._current_game_turn(int(row["turn_issued"] or 0))
+        claim_text = str(claim or "")
         with atomic(self):
-            CharacterKnowledgeStore(self.conn).write_submit_secret_order_for_review((current_turn, "\n".join(lines), int(order_id)))
+            CharacterKnowledgeStore(self.conn).write_submit_secret_order_for_review(
+                (current_turn, int(order_id)),
+            )
+            if claim_text.strip():
+                self._note_secret_order_report(
+                    int(order_id), claim_text, band="核议",
+                    origin=DOSSIER_REPORT_ORIGIN_REVIEW,
+                )
             self.mark_secret_order_in_progress(int(order_id), commit=False)
-        tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={note[:60]!r}")
-        return True
-
-    def _has_secret_order_period_line(self, order_id: int, column: str, year: int, period: int) -> bool:
-        """本年月该列是否已有一行（用于一回合一步闸门）。"""
-        stamp = f"〔{period_label(year, period)}〕"
-        row = self.character_knowledge.secret_period_line(int(order_id), column)
-        if row is None:
-            return False
-        return any(ln.startswith(stamp) for ln in str(row["v"] or "").split("\n"))
-
-    def _append_secret_order_line(
-        self, order_id: int, column: str, note: str, year: int, period: int,
-        reject_if_same_period: bool = False,
-        commit: bool = True,
-    ) -> bool:
-        """把一条带年月戳的进展/副作用追加进密令的 result/sim_note，存成历史时间线。
-        reject_if_same_period=True 时，本年月已有行则拒写（返回 False，用于一回合一步）；
-        否则同年月再写替换当月行。不同年月一律新增。返回是否实际写入。"""
-        assert column in ("result", "sim_note")
-        stamp = f"〔{period_label(year, period)}〕"
-        row = self.character_knowledge.secret_period_line(int(order_id), column, active_only=True)
-        if row is None:
-            return False  # 已结案或不存在，不追加
-        lines = [ln for ln in str(row["v"] or "").split("\n") if ln.strip()]
-        if reject_if_same_period and any(ln.startswith(stamp) for ln in lines):
-            return False  # 本回合已推过一步，拒
-        lines = [ln for ln in lines if not ln.startswith(stamp)]  # 去掉当月旧行
-        lines.append(f"{stamp}{note}")
-        # 按〔年月〕戳排序，保证时间线顺序（同月替换后不致错位）
-        def _stamp_key(ln: str):
-            import re as _re
-            m = _re.match(r"〔(\d+)年(\d+)月〕", ln)
-            return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
-        lines.sort(key=_stamp_key)
-        self.character_knowledge.set_secret_period_line(int(order_id), column, "\n".join(lines))
-        if commit:
-            self.conn.commit()
+        tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={claim_text[:60]!r}")
         return True
 
     def update_secret_order_progress(
@@ -14347,21 +14205,28 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> bool:
-        """承办人推进一步：按年月追加进 result 历史时间线，不改 status。
-        同月再报则替换当月行（修改最新进度，不叠加多条）。"""
-        with atomic(self):
-            ok = self._append_secret_order_line(
-                order_id,
-                "result",
-                progress_note,
-                year,
-                period,
-                reject_if_same_period=False,
-                commit=False,
+        """承办人推进一步：写入当月奏报轨，不改 status、不改正文列。
+
+        同月再报替换同一条月度奏报。正文里的日期不另立月份。
+        """
+        _ = (year, period)
+        note = str(progress_note or "")
+
+        def _write() -> bool:
+            ok = self._note_secret_order_report(
+                order_id, note, band="进展",
+                origin=DOSSIER_REPORT_ORIGIN_MONTHLY,
             )
             if ok:
                 self.mark_secret_order_in_progress(order_id, commit=False)
-        tlog(f"[secret_order] progress id={order_id} ok={ok} note={progress_note[:40]!r}")
+            return ok
+
+        if commit:
+            with atomic(self):
+                ok = _write()
+        else:
+            ok = _write()
+        tlog(f"[secret_order] progress id={order_id} ok={ok} note={note[:40]!r}")
         return ok
 
     def update_secret_order_sim_note(
@@ -14373,26 +14238,55 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> None:
-        """推演写密令副作用（泄漏/反弹等），按年月追加进 sim_note 历史时间线，
-        不动 result/status。同月再写替换（推演每月一次）。与承办人进展分列。"""
+        """推演写本月推进实况。原文进入实况轨当月 note，不覆盖单位。
+
+        月份身份是当前 game_state.turn。年月参数不参与存储，正文日期不另立月份。
+        不写 secret_orders.sim_note，不进奏报轨。
+        """
+        _ = (year, period)
         if commit:
             with atomic(self):
-                self._update_secret_order_sim_note_in_transaction(
-                    order_id, sim_note, year, period,
-                )
+                self._update_secret_order_sim_note_in_transaction(order_id, sim_note)
         else:
-            self._update_secret_order_sim_note_in_transaction(
-                order_id, sim_note, year, period,
-            )
-        tlog(f"[secret_order] sim_note id={order_id} note={sim_note[:40]!r}")
+            self._update_secret_order_sim_note_in_transaction(order_id, sim_note)
+        tlog(f"[secret_order] actual note id={order_id} note={str(sim_note)[:40]!r}")
 
     def _update_secret_order_sim_note_in_transaction(
-        self, order_id: int, sim_note: str, year: int, period: int,
+        self, order_id: int, sim_note: str,
     ) -> None:
-        """调用方持有事务时写密令实况并同步案卷，不自行落定。"""
-        self._append_secret_order_line(
-            order_id, "sim_note", sim_note, year, period, commit=False,
-        )
+        """调用方持有事务时把实况原文写入当月实况轨，并同步案卷在办。
+
+        只写 note，不改 units。数值写口见 record_actual_progress。
+        """
+        raw = str(sim_note or "")
+        if not raw.strip():
+            return
+        row = self.character_knowledge.secret_order_row(int(order_id), active_only=True)
+        if row is None:
+            return
+        dossier = self.dossiers.get_for_secret_order(int(order_id))
+        if dossier is None:
+            raise ValueError("密令进展缺少对应案卷")
+        did = int(dossier["id"])
+        turn = self._current_game_turn()
+        existing_rows = [
+            item for item in self.dossiers.actual_progress(did)
+            if int(item.get("turn") or 0) == int(turn)
+        ]
+        if not existing_rows:
+            self.dossiers.record_actual_progress(
+                did, turn, units=0.0, fidelity_state="", floor_state="",
+                note=raw, commit=False,
+            )
+        else:
+            prior = existing_rows[0]
+            self.dossiers.record_actual_progress(
+                did, turn,
+                units=float(prior.get("units") or 0.0),
+                fidelity_state=str(prior.get("fidelity_state") or ""),
+                floor_state=str(prior.get("floor_state") or ""),
+                note=raw, commit=False,
+            )
         self.mark_secret_order_in_progress(order_id, commit=False)
 
     def mark_secret_order_in_progress(
@@ -14430,26 +14324,28 @@ class GameDB:
             months = 1
         target_turn = int(state.turn) + months
         old_due = int(row["due_turn"] or 0)
-        stamp = f"〔{period_label(state.year, state.period)}〕"
-        why = reason if str(reason or "").strip() else "奉旨加急"
-        prev = row["result"] or ""
-        lines = [ln for ln in prev.split("\n") if ln.strip()]
+        raw_reason = str(reason or "")
+        # 催办理由自由正文原样；仅真正空串才回落缺省，禁 strip 判空。
+        why = raw_reason or "奉旨加急"
         with atomic(self):
             if months <= 0:
-                lines.append(f"{stamp}[奉旨即核] {why}；本月到期按实进度对账。")
-                CharacterKnowledgeStore(self.conn).write_rush_secret_order((int(state.turn), "\n".join(lines), int(order_id)))
+                CharacterKnowledgeStore(self.conn).write_rush_secret_order(
+                    (int(state.turn), int(order_id)),
+                )
                 status = "active"
                 due_turn = int(state.turn)
             else:
                 due_turn = target_turn if old_due <= 0 else min(old_due, target_turn)
-                lines.append(f"{stamp}[奉旨加急] {why}；御限改为 {months} 个月内核议。")
                 CharacterKnowledgeStore(self.conn).write_rush_secret_order_secret_orders((
-                        due_turn,
-                        max(int(due_turn) - int(state.turn), 0),
-                        "\n".join(lines),
-                        int(order_id),
-                    ))
+                    due_turn,
+                    max(int(due_turn) - int(state.turn), 0),
+                    int(order_id),
+                ))
                 status = "active"
+            self._note_secret_order_report(
+                int(order_id), why, band="催办",
+                origin=DOSSIER_REPORT_ORIGIN_RUSH,
+            )
             self.mark_secret_order_in_progress(int(order_id), commit=False)
         tlog(f"[secret_order] rush id={order_id} old_due={old_due} due={due_turn} status={status}")
         return {"id": int(order_id), "title": row["title"], "status": status, "due_turn": due_turn}
@@ -14463,9 +14359,9 @@ class GameDB:
             "id": int(r["id"]), "minister_name": r["minister_name"],
             "title": r["title"], "content": r["content"],
             "status": r["status"], "result": r["result"] or "",
-            "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
+            "sim_note": r["sim_note"] or "",
             "turn_issued": int(r["turn_issued"]),
-            "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
+            "due_turn": int(r["due_turn"] or 0),
             "turn_closed": r["turn_closed"],
         }
 

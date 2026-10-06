@@ -115,13 +115,7 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
 
 def commitment_natural_due_turn(row: Any) -> int:
     """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。"""
-    try:
-        keys = row.keys()  # sqlite3.Row
-    except Exception:
-        keys = list(row.keys()) if isinstance(row, dict) else []
-    stages_raw = row["stages_json"] if "stages_json" in keys else (
-        row.get("stages_json") if isinstance(row, dict) else None
-    )
+    stages_raw = row["stages_json"]
     stages = normalize_commitment_stages(stages_raw)
     if stages:
         return max(int(s["due_turn"]) for s in stages)
@@ -156,10 +150,7 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
                 cid = str(item.get("character_id") or "").strip()
                 if cid:
                     names.append(cid)
-    try:
-        origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
-    except Exception:
-        origin_ref = ""
+    origin_ref = row["origin_ref"] or ""
     did = parse_dossier_id(origin_ref)
     if did is not None:
         dossier = db.dossiers.get(int(did))
@@ -473,16 +464,14 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     row = IssueStore(db.conn).row(int(commitment_ref))
     if row is None:
         return FOUNDATION_JUST_STARTED
-    stages = normalize_commitment_stages(
-        row["stages_json"] if "stages_json" in row.keys() else None
-    )
+    stages = normalize_commitment_stages(row["stages_json"])
     n_stages = len(stages)
     bar = int(row["bar_value"] or 0)
     stages_passed = _stages_passed_from_records(db, int(commitment_ref), n_stages)
     spent_amount, _fiscal_count = _spent_amount_and_fiscal_count(db, row)
 
     band = ""
-    did = parse_dossier_id(row["origin_ref"] if "origin_ref" in row.keys() else "")
+    did = parse_dossier_id(row["origin_ref"] or "")
     if did is not None:
         progress = db.list_dossier_progress(int(did))
         if progress:
@@ -1016,9 +1005,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
 
     # 案卷 executor office 快照
     if not expected:
-        did = parse_dossier_id(
-            commitment_row["origin_ref"] if "origin_ref" in commitment_row.keys() else ""
-        )
+        did = parse_dossier_id(commitment_row["origin_ref"] or "")
         if did is not None:
             try:
                 executor_id, payload_json = db.dossiers.executor_payload_of(int(did))
@@ -1049,10 +1036,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
             if oc is not None:
                 # 有任何调任记录且 status active → 调
                 # 过宽；要求 dossier 绑承诺同源
-                did = parse_dossier_id(
-                    commitment_row["origin_ref"]
-                    if "origin_ref" in commitment_row.keys() else ""
-                )
+                did = parse_dossier_id(commitment_row["origin_ref"] or "")
                 if did is not None:
                     linked = CharacterStore(db.conn).read_sponsor_transferred_1((name, int(did)))
                     if linked is not None:

@@ -9,7 +9,6 @@ reign header (which year/month/turn, and whether the game is over); the
 from __future__ import annotations
 
 import json
-import sqlite3
 
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
@@ -144,14 +143,13 @@ class ReignStateStore:
         ).fetchone()
         if row is None:
             return None
-        keys = row.keys()
         return {
             "year": int(row["year"]),
             "period": int(row["period"]),
             "turn": int(row["turn"]),
             "turn_phase": str(row["turn_phase"] or "summoning"),
-            "ended": bool(row["ended"]) if "ended" in keys else False,
-            "ending_status": str(row["ending_status"] or "") if "ending_status" in keys else "",
+            "ended": bool(row["ended"]),
+            "ending_status": str(row["ending_status"] or ""),
         }
 
     def read_metrics(self) -> Dict[str, int]:
@@ -430,14 +428,11 @@ class ReignStateStore:
         return bool(row and int(row["id"]) == int(chat_turn_id))
 
     def _current_open_night_id(self) -> int:
-        """当前开着（open/closing）的召对夜 id；无夜或旧档无表返回 0（#498）。"""
-        try:
-            row = self._conn.execute(
-                "SELECT id FROM audience_nights "
-                "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-        except sqlite3.OperationalError:
-            return 0
+        """当前开着（open/closing）的召对夜 id；无夜返回 0。"""
+        row = self._conn.execute(
+            "SELECT id FROM audience_nights "
+            "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
+        ).fetchone()
         return int(row["id"]) if row is not None else 0
 
     def kv_get(self, key: str) -> str | None:

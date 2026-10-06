@@ -60,6 +60,8 @@ _PENDING_ACTION_COLUMNS = frozenset({
 })
 DOSSIER_REPORT_ORIGIN_MONTHLY = "dossier-report:monthly_errand"
 DOSSIER_REPORT_ORIGIN_VERDICT = "dossier-report:execution_verdict"
+DOSSIER_REPORT_ORIGIN_RUSH = "dossier-report:rush"
+DOSSIER_REPORT_ORIGIN_REVIEW = "dossier-report:review_claim"
 DOSSIER_EXECUTION_OUTCOMES = frozenset({
     "executing", "fulfilled", "degraded", "failed", "transformed",
 })

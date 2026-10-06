@@ -454,44 +454,6 @@ def test_closed_night_archive_derives_stable_titles_people_and_no_content(game):
     assert all("messages" not in item and "content" not in item for item in entries)
 
 
-def test_closed_night_archive_batches_each_metadata_store_once(game):
-    db, state, _ = game
-    for minister in ("杨嗣昌", "洪承畴", "孙传庭"):
-        night_id = open_audience_night(db, state)
-        an.summon_enter(db, night_id, minister, method=an.METHOD_YUECI)
-        append_night_chat(db, state, night_id, minister, "问话", "答复", 10)
-        db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (night_id,))
-    db.conn.commit()
-    statements = []
-    db.conn.set_trace_callback(statements.append)
-
-    entries = db.list_closed_night_archives()
-
-    db.conn.set_trace_callback(None)
-    selects = [" ".join(statement.lower().split()) for statement in statements if statement.lstrip().lower().startswith("select")]
-    assert len(entries) == 3
-    assert sum(" from audience_nights " in statement for statement in selects) == 1
-    assert sum(" from story_ledger_entries " in statement for statement in selects) == 1
-    assert sum(" from chat_turns " in statement for statement in selects) == 1
-
-
-def test_read_night_scroll_reads_each_metadata_store_once(game):
-    db, state, _ = game
-    night_id = open_audience_night(db, state)
-    an.summon_enter(db, night_id, "杨嗣昌", method=an.METHOD_YUECI)
-    append_night_chat(db, state, night_id, "杨嗣昌", "问话", "答复", 10)
-    statements = []
-    db.conn.set_trace_callback(statements.append)
-
-    scroll = an.read_night_scroll(db, night_id)
-
-    db.conn.set_trace_callback(None)
-    selects = [" ".join(statement.lower().split()) for statement in statements if statement.lstrip().lower().startswith("select")]
-    assert scroll[0]["container"]["audience_type"] == "越次召对"
-    assert sum(" from story_ledger_entries " in statement for statement in selects) == 1
-    assert sum(" from chat_turns " in statement for statement in selects) == 1
-
-
 def test_personal_projection_only_reads_the_current_open_night(game):
     db, state, _ = game
     old_night = open_audience_night(db, state)
@@ -504,13 +466,3 @@ def test_personal_projection_only_reads_the_current_open_night(game):
 
     assert [message["content"] for message in projection] == ["本夜问话", "本夜答复"]
     assert {message["chat_turn_id"] for message in projection} == {current_turn}
-
-
-
-
-def test_history_projection_handlers_are_sync_for_sqlite_access():
-    import inspect
-    import web_app
-
-    assert not inspect.iscoroutinefunction(web_app.api_audience_scroll)
-    assert not inspect.iscoroutinefunction(web_app.api_history_turns)

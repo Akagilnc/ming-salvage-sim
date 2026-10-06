@@ -588,8 +588,7 @@ def commitment_progress_payload(
     paid_this_month: int = 0,
     include_current_month: bool = False,
 ) -> Optional[Dict[str, object]]:
-    keys = row.keys() if hasattr(row, "keys") else []
-    if not str(row["commitment_kind"] if "commitment_kind" in keys else "").strip():
+    if not str(row["commitment_kind"] or "").strip():
         return None
     gate = _commitment_stop_gate(row)
     remaining = _commitment_remaining_from_gate(gate, state, db) if gate else None
@@ -8802,8 +8801,8 @@ def _apply_score_extraction_body(
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum", "reason": "order_id 非整数或超界"})
             continue
-        # 未知/非 active 密令的副作用写不进（_append_secret_order_line 静默返 False）→ 须显式拒收，
-        # 否则未知 id 被无脑 append 成功 = 静默报「已应用」（cmr secret-order r1 codex，#14）。
+        # 未知/非 active 密令的副作用写不进 → 须显式拒收，
+        # 否则未知 id 被无脑记成功 = 静默报「已应用」（cmr secret-order r1 codex，#14）。
         order = db.get_secret_order(real_id)
         if order is None:
             applied_secret_orders.append({"order_id": real_id, "rejected": True,

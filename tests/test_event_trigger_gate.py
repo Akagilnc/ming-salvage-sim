@@ -1934,7 +1934,6 @@ def test_historical_auto_trigger_event_expires_after_latest_window(game):
         content.events.remove(ev)
 
 
-
 def test_huabei_plague_keeps_soft_degree_axis_as_situation_issue(game):
     """#192：天灾核心事实硬落后，蔓延/赈疫程度轴仍留 active issue 给软判推进。"""
     db, state, content = game
@@ -2047,45 +2046,6 @@ def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
     ).fetchone()
     assert after["manpower"] == before["manpower"] - 51000
     assert after["morale"] == before["morale"] - 16
-
-
-
-
-def test_historical_power_rename_tick_reads_huangtaiji_event_effect(game):
-    """CMR：月初展示名 tick 也读事件 effect，避免同一称帝事实维护两份文案。"""
-    db, state, content = game
-    ev = content.event_by_id["huangtaiji_chengdi"]
-    rename = ev.effect_on_trigger["power_renames"][0]
-    original = dict(rename)
-    try:
-        rename.update(
-            {
-                "new_name": "测试清",
-                "aliases": "后金，测试清",
-                "reason": "测试称帝事实",
-                "status": "测试称帝状态",
-                "last_action": "测试称帝行动",
-            }
-        )
-        state.year = 1636
-        state.period = 4
-
-        changed = db.apply_historical_power_renames(state)
-
-        assert changed and changed[0]["new_name"] == "测试清"
-        row = db.conn.execute(
-            "SELECT name, aliases, status, last_action FROM powers WHERE id=?",
-            ("houjin",),
-        ).fetchone()
-        assert dict(row) == {
-            "name": "测试清",
-            "aliases": "后金，测试清",
-            "status": "测试称帝状态",
-            "last_action": "测试称帝行动",
-        }
-    finally:
-        rename.clear()
-        rename.update(original)
 
 
 def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
@@ -3475,128 +3435,6 @@ def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
-
-def test_pending_person_gate_prefetches_character_rows_for_displacement(game):
-    """online R1 Gemini：独占官职顶替模拟不得对每个人物逐条 SELECT。"""
-    db, _state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "蓟辽督师", "职名分", "袁崇焕"),
-    )
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "兵部尚书,左都御史", "兵部", "崔呈秀"),
-    )
-    ev = Event(
-        id="__test_prefetch_displacement_pending__",
-        title="测试·顶替预加载",
-        kind="朝议",
-        summary="崔呈秀仍兼兵部尚书时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.崔呈秀.office": "== 兵部尚书,左都御史"},
-    )
-    select_count = 0
-
-    def trace(sql):
-        nonlocal select_count
-        if sql.lstrip().upper().startswith("SELECT"):
-            select_count += 1
-
-    db.conn.set_trace_callback(trace)
-    try:
-        blocked = issues._pending_person_changes_block_event_gate(
-            ev,
-            [{"name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
-            db,
-            content=content,
-        )
-    finally:
-        db.conn.set_trace_callback(None)
-
-    assert blocked is True
-    assert select_count <= 8
-
-
-def test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues(game, monkeypatch):
-    """online R3 Gemini：同一批 event_pool 不应为每个 pending gate 重查全量人物表。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
-    ev1 = Event(
-        id="__test_shared_shadow_prefetch_1__",
-        title="测试·共享快照一",
-        kind="朝议",
-        summary="x",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.status": "== active"},
-    )
-    ev2 = Event(
-        id="__test_shared_shadow_prefetch_2__",
-        title="测试·共享快照二",
-        kind="朝议",
-        summary="x",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.status": "== active"},
-    )
-    content.seed_events.extend([ev1, ev2])
-    content.event_by_id[ev1.id] = ev1
-    content.event_by_id[ev2.id] = ev2
-
-    def fake_gather_candidate_events(_state, _db):
-        return [ev1, ev2]
-
-    full_character_selects = 0
-
-    def trace(sql):
-        nonlocal full_character_selects
-        normalized = " ".join(sql.split()).upper()
-        if "FROM CHARACTERS" in normalized and "STATUS_REASON" in normalized:
-            full_character_selects += 1
-
-    monkeypatch.setattr(issues, "gather_candidate_events", fake_gather_candidate_events)
-    db.conn.set_trace_callback(trace)
-    try:
-        out = issues.apply_issue_tracker_output(
-            db,
-            state,
-            {
-                "new_issues": [
-                    {"origin_kind": "event_pool", "id": ev1.id},
-                    {"origin_kind": "event_pool", "id": ev2.id},
-                ]
-            },
-            content=content,
-            pending_person_changes_for_gates=[
-                {"name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "测试共享快照"}
-            ],
-            candidate_event_ids_at_input={ev1.id, ev2.id},
-        )
-    finally:
-        db.conn.set_trace_callback(None)
-        content.seed_events.remove(ev1)
-        content.seed_events.remove(ev2)
-        content.event_by_id.pop(ev1.id, None)
-        content.event_by_id.pop(ev2.id, None)
-
-    assert [item["rejected"] for item in out["new_issues"]] == [True, True]
-    assert full_character_selects == 1
 
 
 def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game):

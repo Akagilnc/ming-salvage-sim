@@ -588,7 +588,7 @@ def _character_affair_lines(
         title = f"尚未入档旨稿#{int(row['id'])}"
         # #1812 P6：raw body 是草稿自由正文，判空只用局部 stripped 副本。
         # sqlite3.Row / dict 同形：下标读取，禁 .get（Row 无此方法）。
-        body = str(row["text"] if "text" in row.keys() else "")
+        body = str(row["text"] or "")
         text = f"{body}（尚未入档）" if body.strip() else "尚未入档"
         lines.append((dir_key, title, text, text, True))
     for dir_key, title, directory_text, opening_text, is_handling in _own_affair_lines(
@@ -736,6 +736,30 @@ def minimal_opening_context(
     return "\n".join(parts)
 
 
+def _secret_order_memorials(order: Any) -> list[str]:
+    """承办人自己的月度奏报。月份与进展取记录字段，正文原样。
+
+    催办/核议不是月报，实况单位不进这份材料。不从正文日期或排列序号推定月份。
+    """
+    from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_MONTHLY
+    from ming_sim.supervision import report_origin_base
+
+    monthly = DOSSIER_REPORT_ORIGIN_MONTHLY
+    texts: list[str] = []
+    for item in order.get("dossier_progress") or []:
+        if not isinstance(item, Mapping) or item.get("is_terminal"):
+            continue
+        if report_origin_base(item.get("origin")) != monthly:
+            continue
+        text = str(item.get("memorial_text") or "")
+        if not text.strip():
+            continue
+        turn = int(item.get("turn") or 0)
+        band = str(item.get("progress_band") or "")
+        texts.append(f"回合：{turn}\n进展：{band}\n{text}")
+    return texts
+
+
 def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
     """Directory copy of the minister's active secret-order reminder.
 
@@ -743,16 +767,24 @@ def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> 
     text is kept for on-demand read — no replacement length cap (#1833 AC).
     DB/read failures raise; they are not washed into an empty-business result.
     """
+    from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_MONTHLY
+    from ming_sim.supervision import report_origin_base
+
     name = str(getattr(character, "name", "") or "")
     orders = db.get_active_secret_orders_for_minister(name) if name else []
     if orders:
+        monthly = DOSSIER_REPORT_ORIGIN_MONTHLY
         lines = [
             "【你身上还在办的密令】",
             "在册密令：",
         ]
         for o in orders:
-            advanced = db._has_secret_order_period_line(
-                int(o["id"]), "result", state.year, state.period,
+            turn = int(state.turn)
+            advanced = any(
+                not item.get("is_terminal")
+                and int(item.get("turn") or 0) == turn
+                and report_origin_base(item.get("origin")) == monthly
+                for item in (o.get("dossier_progress") or [])
             )
             tag = "✅ 本月已推进" if advanced else "⚠️ 本月尚未推进"
             due_turn = int(o.get("due_turn") or 0)
@@ -763,6 +795,7 @@ def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> 
             content = str(o.get("content") or "")
             if content:
                 lines.append(content)
+            lines.extend(_secret_order_memorials(o))
         brief = "\n".join(lines)
     else:
         brief = ""

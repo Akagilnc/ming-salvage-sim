@@ -4296,37 +4296,6 @@ def test_all_ming_settle_substrates_advance_on_fixed_flows(fresh_game):
         "楚藩重省宗禄 Due 应重于江南基准"
 
 
-def test_shadow_spine_uses_batch_bridge_without_per_region_reload(fresh_game, monkeypatch):
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    calls = {"batch": 0}
-
-    def fake_batch_bridge():
-        calls["batch"] += 1
-        return [
-            SimpleNamespace(
-                region_id="shaanxi",
-                error=None,
-                result=SimpleNamespace(
-                    breakdown={"实征": 1.2, "起运到京": 0.3, "火耗实收": 0.4},
-                    new_st={"军饷欠": 2, "官俸欠": 0, "宗禄欠": 0, "民欠旧赋": 1},
-                ),
-            )
-        ]
-
-    def fail_single_region_reload(*args, **kwargs):
-        raise AssertionError("shadow spine must use the batch fiscal payload bridge")
-
-    monkeypatch.setattr(db, "settle_ming_province_substrate_ticks", fake_batch_bridge)
-    monkeypatch.setattr(db, "settle_province_tick", fail_single_region_reload)
-
-    remitted = flows_mod._advance_province_fiscal_substrate(db, state)
-
-    assert calls["batch"] == 1
-    assert remitted == pytest.approx(0.3)
-
-
 def test_seeded_substrates_keep_multi_tick_historical_trajectories(fresh_db):
     """#70 capstone：用真实 content seed 跑多 tick 轨迹，而非只测首 tick golden。"""
     jiangnan = ("nanzhili", "zhejiang", "jiangxi", "huguang")

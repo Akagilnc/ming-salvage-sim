@@ -147,19 +147,6 @@ class CharacterKnowledgeStore:
             f"SELECT * FROM secret_orders {where} ORDER BY id DESC", params,
         ).fetchall()
 
-    def secret_period_line(self, order_id: int, column: str, *, active_only: bool = False) -> Any:
-        assert column in ("result", "sim_note")
-        active = " AND status='active'" if active_only else ""
-        return self._conn.execute(
-            f"SELECT {column} AS v FROM secret_orders WHERE id=?{active}", (order_id,),
-        ).fetchone()
-
-    def set_secret_period_line(self, order_id: int, column: str, value: str) -> None:
-        assert column in ("result", "sim_note")
-        self._conn.execute(
-            f"UPDATE secret_orders SET {column}=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (value, order_id),
-        )
-
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
@@ -430,15 +417,6 @@ class CharacterKnowledgeStore:
             sql += " AND status = 'active'"
         return self._conn.execute(sql, (int(order_id),)).fetchone()
 
-    def update_secret_order_assignments(
-        self, order_id: int, assignments_sql: str, params: Sequence[object],
-    ) -> None:
-        """Write pre-checked SET assignments for one secret_orders row."""
-        self._conn.execute(
-            f"UPDATE secret_orders SET {assignments_sql} WHERE id = ?",
-            tuple(params) + (int(order_id),),
-        )
-
     def sources_for_turn(self, turn: int) -> List[Dict[str, object]]:
         """Shared sources registered in one month, oldest first."""
         return [
@@ -614,7 +592,11 @@ class CharacterKnowledgeStore:
         return self._conn.execute('\n                UPDATE secret_orders\n                SET status = ?, result = ?, turn_closed = ?, updated_at = CURRENT_TIMESTAMP\n                WHERE id = ?\n                ', params)
 
     def write_submit_secret_order_for_review(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n                UPDATE secret_orders\n                SET due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP\n                WHERE id = ? AND status = 'active'\n                ", params)
+        return self._conn.execute(
+            "UPDATE secret_orders SET due_turn = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status = 'active'",
+            params,
+        )
 
     def read_restore_secret_order_brief_projection_in_tx(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT turn_issued,year_issued,period_issued,minister_name,title,content FROM secret_orders WHERE id=?', params).fetchone()
@@ -641,10 +623,18 @@ class CharacterKnowledgeStore:
         return self._conn.execute('SELECT id, title, status, result, due_turn FROM secret_orders WHERE id = ?', params).fetchone()
 
     def write_rush_secret_order(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n                    UPDATE secret_orders\n                    SET due_turn = ?, deadline_span = 0,\n                        result = ?, updated_at=CURRENT_TIMESTAMP\n                    WHERE id = ?\n                    ', params)
+        return self._conn.execute(
+            "UPDATE secret_orders SET due_turn = ?, deadline_span = 0, "
+            "updated_at=CURRENT_TIMESTAMP WHERE id = ?",
+            params,
+        )
 
     def write_rush_secret_order_secret_orders(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n                    UPDATE secret_orders\n                    SET due_turn = ?, deadline_span = ?, result = ?, updated_at = CURRENT_TIMESTAMP\n                    WHERE id = ?\n                    ', params)
+        return self._conn.execute(
+            "UPDATE secret_orders SET due_turn = ?, deadline_span = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            params,
+        )
 
     def read_auto_submit_due_secret_orders(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            SELECT id, title, result FROM secret_orders\n            WHERE status = 'active' AND due_turn > 0 AND due_turn <= ?\n            ORDER BY id\n            ", params).fetchall()
@@ -660,9 +650,6 @@ class CharacterKnowledgeStore:
 
     def read_interrupt_dossiers_for_character(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT status,result FROM secret_orders WHERE id=?', params).fetchone()
-
-    def read_submit_secret_order_for_review_result(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT result FROM secret_orders WHERE id = ?', params).fetchone()
 
     def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT id, title FROM secret_orders WHERE status='active' ORDER BY id", params).fetchall()
