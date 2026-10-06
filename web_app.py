@@ -1512,7 +1512,8 @@ class WebGame:
         }
         for row in self.db.list_active_legacies(self.state):
             # #1902 T3 / ADR 0005：JSON 数据坏 → 空对象继续但留真因；未知代码故障响亮上抛。
-            legacy_id = int(row["id"]) if row.get("id") is not None else None
+            # list_active_legacies 返回 sqlite3.Row（必有 id 列），禁 dict.get 假设。
+            legacy_id = int(row["id"])
             try:
                 eff = json.loads(str(row["modifiers"] or "{}"))
             except json.JSONDecodeError as exc:
