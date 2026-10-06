@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from typing import Any, Mapping
-
 DOSSIER_ACTION_TYPES = frozenset({
     "policy", "appointment", "acting_appointment",
     "assignment", "military_order",

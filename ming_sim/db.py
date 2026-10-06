@@ -2565,8 +2565,6 @@ class GameDB:
         self.ensure_column(
             "factions", "leverage_offset", "REAL NOT NULL DEFAULT 0"
         )
-        self._leverage_offset_col_added = False
-        self._leverage_offsets_calibrated = self._has_meta_flag("__leverage_offsets_calibrated")
         # 拒收 provenance source（#144 / ADR 0008 决定 5）：崩溃恢复重放须用原始来源，否则玩家
         # 来源(player_decree/hitl)的拒收被恢复路记成 system_simulation、静默不提示。老档缺省
         # 'system_simulation'（旧档缺来源时的默认值）。
@@ -3730,9 +3728,8 @@ class GameDB:
         # 条件触发、幂等；现役种档职责，不是旧档升级器。
         self._migrate_legacy_office_pollution()
         # 新档派系势力 offset 校准（钦定基线 − 开局权重和）。
-        self._calibrate_faction_offsets(
-            is_fresh_factions_seed, offset_col_added=False,
-        )
+        if is_fresh_factions_seed:
+            self._calibrate_faction_offsets()
         self.conn.commit()
 
 
@@ -5259,67 +5256,31 @@ class GameDB:
         for faction in _LEVERAGE_FACTIONS:
             self.recompute_faction_leverage(faction)
 
-    def _calibrate_faction_offsets(
-        self, is_fresh_factions_seed: bool, offset_col_added: bool = False
-    ) -> None:
-        """#9 offset 校准：offset = 基线 leverage − 当前在朝官职权重和。每个 DB 生命周期最多跑一次。
-        新档（is_fresh_factions_seed）：基线取**钦定 content.factions[f].leverage**（不读 DB——
-        污染清洗的 set_character_status 已用 offset=0 把 DB leverage 改脏，读 DB 会把脏值烙进 offset），
-        校准后立即 recompute 令 DB leverage 自洽（开局权重和稳定 → leverage 复现钦定基线、保开局平衡）。
-        老档且 offset 列**本次刚 ADD**（真·一次性迁移）：基线取**当前 DB leverage**（玩过后的真值），
-        offset 令首次 recompute 不跳变（幂等迁移）；不 recompute（避免把老档当前值改动）。
-        否则（列已存在的常规后续 load）：**直接 return、什么都不碰**——offset 已校准。
-        cmr R3：缺这一闸，老档每次 load 都重锚 offset；leverage 被 clamp 到 0/100 后再 load，
-        offset 会被重锚成 round(clamped − weight_sum)≠原值，基线永久腐蚀。
-        只校准白名单 faction；非白名单 offset 留 0、leverage 永不被 recompute 触碰。
+    def _calibrate_faction_offsets(self) -> None:
+        """新档 offset 校准：offset = 钦定 content 基线 − 当前在朝官职权重和。
+
+        只服务新档 seed；已校准（持久标记）则不再碰。不读 DB leverage 反推旧档。
         不在此 commit——由 seed_static_data 末尾统一提交。
-        #9 线上 R3 crash-safety：校准成功后写持久标记 __leverage_offsets_calibrated；该标记已存在
-        （已校准过）则直接 return、绝不再碰 offset——比内存 flag 更强（跨进程/跨实例、崩溃可检测）。"""
-        # 持久标记已在（上一生命周期校准成功落库）且**列非本次刚 ADD**（offset 数据仍在）：绝不再碰
-        # offset——堵「已校准的 leverage 被 clamp 后再重锚成 round(clamped−weight) 腐蚀基线」。
-        # 注意须排除 offset_col_added：列若刚被 DROP+重 ADD（offset 数据已丢），即便 metrics 里残留
-        # 旧标记也必须重校准（数据真没了），否则 offset 全留 0、leverage 被重写成裸权重和。
-        if not offset_col_added and self._has_meta_flag("__leverage_offsets_calibrated"):
-            self._leverage_offset_col_added = False
+        """
+        if self._has_meta_flag("__leverage_offsets_calibrated"):
             return
-        # 老档常规 load（列早已存在、offset 已校准）：绝不再碰 offset。
-        if not is_fresh_factions_seed and not offset_col_added:
-            return
-        # #9 R1 finding#3：一次性迁移 flag 用后即消费置 False（无论本次走老档反推还是 fresh 校准，
-        # 都已锚定完毕）。否则同实例第二次 seed_static_data 仍见 flag=True、再进老档迁移分支，把
-        # 已 clamp 的 leverage 重锚成 round(clamped − weight_sum)≠原值 → 基线腐蚀。
-        self._leverage_offset_col_added = False
         for faction in _LEVERAGE_FACTIONS:
             row = self.conn.execute(
-                "SELECT leverage FROM factions WHERE name=?", (faction,)
+                "SELECT 1 FROM factions WHERE name=?", (faction,)
             ).fetchone()
             if row is None:
-                continue  # 该白名单派系不在本档 factions 表（数据缺失）→ 跳过
-            if is_fresh_factions_seed:
-                content_faction = self.content.factions.get(faction)
-                if content_faction is None:
-                    continue
-                baseline = int(content_faction.leverage)
-            else:
-                baseline = int(row["leverage"])
+                continue
+            content_faction = self.content.factions.get(faction)
+            if content_faction is None:
+                continue
+            baseline = int(content_faction.leverage)
             weight_sum = self._faction_office_weight_sum(faction)
             offset = baseline - weight_sum
             self.conn.execute(
                 "UPDATE factions SET leverage_offset=? WHERE name=?", (offset, faction)
             )
-            if is_fresh_factions_seed:
-                # 立即 recompute 令 DB leverage 与公式自洽（修污染清洗用 offset=0 写脏的中间值）。
-                self.recompute_faction_leverage(faction)
-        # 校准成功：落持久标记。与上面 offset/leverage 的写在同一事务（调用方统一 commit），
-        # 崩在校准中途则标记一并未落、下次开档重做（原子：offset+标记 全有或全无）。
+            self.recompute_faction_leverage(faction)
         self._set_meta_flag("__leverage_offsets_calibrated")
-        self._leverage_offsets_calibrated = True
-        # #177 R1 finding#1（codex P2）：当前校准已存精确 float offset → 同时落 v2 标记，
-        # 使 init_schema 的 v2 迁移跳过（免对已正确存 float 的档重复扫）。
-        self._set_meta_flag("__leverage_offsets_float_v2")
-        # Fresh/current-rule calibration already uses the expanded #562 table;
-        # do not mistake it for an old save that needs the one-time re-anchor.
-        self._set_meta_flag("__leverage_offsets_rank_rules_562")
 
     def _has_meta_flag(self, key: str) -> bool:
         """查 metrics 表里某持久标记是否存在（#9 R3 crash-safe 迁移标记用）。metrics 在 init_schema
