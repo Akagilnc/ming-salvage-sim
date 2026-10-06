@@ -25,7 +25,15 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
-from ming_sim.applier import load_stored_json, load_stored_list, load_stored_object, safe_json_dumps, sanitize_sqlite_text
+from ming_sim.applier import (
+    StoredDocumentError,
+    durable_int,
+    load_stored_json,
+    load_stored_list,
+    load_stored_object,
+    safe_json_dumps,
+    sanitize_sqlite_text,
+)
 from ming_sim.participant_roster import participant_roster_names
 from ming_sim.entities.column_write import upsert_by_pk
 
@@ -615,27 +623,67 @@ class CharacterKnowledgeStore:
             row["dossier_progress_json"], label="dossier_progress_json",
         )
         # 同月、同一业务身份只留一条。催办/核议与月度奏报 origin base 不同，同月并存。
+        # 既存成员 id/turn 与读缝 coerce→durable_int 同一契约：损坏沿系统边界上抛，
+        # 不得靠 Python int() 截断/收 bool 正常消费（#1889 R5）。
+        # 缺键保留旧算法默认 0；键在场则 blank=None（与 coerce_progress_row 同）。
         incoming = report_origin_base(origin)
-        existing = next((
-            item for item in reports
-            if not item.get("is_terminal")
-            and int(item.get("turn", 0)) == int(turn)
-            and report_origin_base(item.get("origin")) == incoming
-        ), None)
-        if existing is None or is_terminal:
-            report_id = max((int(item.get("id", 0)) for item in reports), default=0) + 1
-            existing = {
-                "id": report_id, "dossier_id": int(dossier_id), "turn": int(turn),
-                "progress_band": band, "memorial_text": text,
-                "is_terminal": bool(is_terminal), "origin": origin,
-            }
-            reports.append(existing)
-        else:
-            report_id = int(existing["id"])
-            existing.update(
-                progress_band=band, memorial_text=text, origin=origin,
+        incoming_turn = int(turn)
+
+        def _member_turn(item: object) -> int:
+            if not isinstance(item, Mapping):
+                raise StoredDocumentError("dossier_progress 成员须为对象")
+            if "turn" not in item:
+                return 0
+            return durable_int(
+                item["turn"], label="dossier_progress.turn", blank=None,
             )
-        reports.sort(key=lambda item: (int(item["turn"]), int(item["id"])))
+
+        def _member_id(item: object, *, required: bool) -> int:
+            if not isinstance(item, Mapping):
+                raise StoredDocumentError("dossier_progress 成员须为对象")
+            if "id" not in item:
+                if required:
+                    raise StoredDocumentError("dossier_progress.id 损坏")
+                return 0
+            return durable_int(
+                item["id"], label="dossier_progress.id", blank=None,
+            )
+
+        try:
+            existing = next((
+                item for item in reports
+                if not item.get("is_terminal")
+                and _member_turn(item) == incoming_turn
+                and report_origin_base(item.get("origin")) == incoming
+            ), None)
+            if existing is None or is_terminal:
+                report_id = max(
+                    (_member_id(item, required=False) for item in reports),
+                    default=0,
+                ) + 1
+                existing = {
+                    "id": report_id, "dossier_id": int(dossier_id),
+                    "turn": incoming_turn,
+                    "progress_band": band, "memorial_text": text,
+                    "is_terminal": bool(is_terminal), "origin": origin,
+                }
+                reports.append(existing)
+            else:
+                report_id = _member_id(existing, required=True)
+                existing.update(
+                    progress_band=band, memorial_text=text, origin=origin,
+                )
+            reports.sort(
+                key=lambda item: (
+                    _member_turn(item), _member_id(item, required=True),
+                ),
+            )
+        except StoredDocumentError:
+            raise
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            raise StoredDocumentError(
+                f"dossier_progress 损坏：{exc}",
+            ) from exc
         self._conn.execute(
             "UPDATE secret_orders SET dossier_progress_json=?, "
             "updated_at=CURRENT_TIMESTAMP WHERE id=?",
