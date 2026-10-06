@@ -6783,8 +6783,15 @@ class GameDB:
         if row is None:
             raise ValueError("密令不存在")
         reports = load_stored_list(row["dossier_progress_json"], label='dossier_progress_json')
-        existing = next((item for item in reports if not item.get("is_terminal")
-                         and int(item.get("turn", 0)) == int(turn)), None)
+        # 同月、同一业务身份只留一条。催办/核议与月度奏报 origin base 不同，同月并存。
+        from ming_sim.supervision import report_origin_base
+        incoming = report_origin_base(origin)
+        existing = next((
+            item for item in reports
+            if not item.get("is_terminal")
+            and int(item.get("turn", 0)) == int(turn)
+            and report_origin_base(item.get("origin")) == incoming
+        ), None)
         if existing is None or is_terminal:
             report_id = max((int(item.get("id", 0)) for item in reports), default=0) + 1
             existing = {
@@ -14238,10 +14245,9 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> None:
-        """推演写本月推进实况。原文进入实况轨当月 note，不覆盖单位。
+        """推演副作用原文写入 secret_orders.sim_note，不进实况核算轨、不进月报轨。
 
-        月份身份是当前 game_state.turn。年月参数不参与存储，正文日期不另立月份。
-        不写 secret_orders.sim_note，不进奏报轨。
+        年月参数不参与存储；正文不解析、不拆行、不去空行。有字才写；追加保既有原文。
         """
         _ = (year, period)
         if commit:
@@ -14249,14 +14255,14 @@ class GameDB:
                 self._update_secret_order_sim_note_in_transaction(order_id, sim_note)
         else:
             self._update_secret_order_sim_note_in_transaction(order_id, sim_note)
-        tlog(f"[secret_order] actual note id={order_id} note={str(sim_note)[:40]!r}")
+        tlog(f"[secret_order] sim_note id={order_id} note={str(sim_note)[:40]!r}")
 
     def _update_secret_order_sim_note_in_transaction(
         self, order_id: int, sim_note: str,
     ) -> None:
-        """调用方持有事务时把实况原文写入当月实况轨，并同步案卷在办。
+        """调用方持有事务时把推演副作用原文追加进 sim_note 列，并同步案卷在办。
 
-        只写 note，不改 units。数值写口见 record_actual_progress。
+        不写 dossier_actual_progress：该轨是核算单位真源（0073），有行即视为本月已核算。
         """
         raw = str(sim_note or "")
         if not raw.strip():
@@ -14264,29 +14270,10 @@ class GameDB:
         row = self.character_knowledge.secret_order_row(int(order_id), active_only=True)
         if row is None:
             return
-        dossier = self.dossiers.get_for_secret_order(int(order_id))
-        if dossier is None:
-            raise ValueError("密令进展缺少对应案卷")
-        did = int(dossier["id"])
-        turn = self._current_game_turn()
-        existing_rows = [
-            item for item in self.dossiers.actual_progress(did)
-            if int(item.get("turn") or 0) == int(turn)
-        ]
-        if not existing_rows:
-            self.dossiers.record_actual_progress(
-                did, turn, units=0.0, fidelity_state="", floor_state="",
-                note=raw, commit=False,
-            )
-        else:
-            prior = existing_rows[0]
-            self.dossiers.record_actual_progress(
-                did, turn,
-                units=float(prior.get("units") or 0.0),
-                fidelity_state=str(prior.get("fidelity_state") or ""),
-                floor_state=str(prior.get("floor_state") or ""),
-                note=raw, commit=False,
-            )
+        prev = str(row["sim_note"] or "")
+        # 既有正文原样保留（含内部空行）；新注只追加，不按月戳拆改。
+        body = f"{prev}\n{raw}" if prev else raw
+        self.character_knowledge.set_secret_order_sim_note(int(order_id), body)
         self.mark_secret_order_in_progress(order_id, commit=False)
 
     def mark_secret_order_in_progress(

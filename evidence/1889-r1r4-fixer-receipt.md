@@ -47,7 +47,10 @@ R1 / R2 / R3 / R4（判词 submission.latest.accepted.fix.classes）
 - materials 本月已推进改读 `dossier_progress` 结构化 turn+origin
 - 正文列 result/sim_note 不再被进展路径拆改
 
-**复扫**：R2 谓词命中 0。
+**复扫（二轮）**：
+- 同月替换按 `report_origin_base` 分身份，催办/核议/月报并存
+- `sim_note` 只追加 `secret_orders.sim_note` 正文列，不创建 `dossier_actual_progress` 空单位行
+- R2 谓词与身份混写残差 0
 
 ---
 
@@ -72,7 +75,7 @@ R1 / R2 / R3 / R4（判词 submission.latest.accepted.fix.classes）
 - `apply_power_rename`（issues 事件 effect 现役）
 - 合法 NULL/无行；dict 迭代 `.keys()`；character_knowledge PRAGMA 发现 participant_roster 表（非旧档缺列默认）
 
-**复扫**：R3 谓词命中 0。
+**复扫（二轮）**：清退 breach_plea/issues/decree/materials 缺列默认及悬空 `keys`；谓词命中 0。
 
 ---
 
@@ -88,6 +91,8 @@ R1 / R2 / R3 / R4（判词 submission.latest.accepted.fix.classes）
 - `test_read_night_scroll_reads_each_metadata_store_once`
 - `test_pending_person_gate_prefetches_character_rows_for_displacement`
 - `test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues`
+- `test_auto_trigger_historical_event_to_issue_uses_outer_transaction`
+- `test_auto_trigger_historical_events_use_preloaded_terminal_refs`
 
 **保留/复用**：既有真实财政落库/回滚案、夜档结果案、皇太极模型选择案、保密负向案。未新增平行证明测试；未改批量/事务契约。
 
@@ -98,7 +103,7 @@ R1 / R2 / R3 / R4（判词 submission.latest.accepted.fix.classes）
 ## 测试适配（非新增证明案）
 
 - `test_settle_due_keeps_existing_progress_result_over_memorial` → `test_settle_due_close_follows_surviving_memorial_and_actual`（进展走结构化轨，result 列不再被写）
-- `test_only_emperor_private_payload_shows_monthly_report` → `test_emperor_private_payload_preserves_monthly_report`（对齐 0058 承办人材料可读己方月报）
+- `test_emperor_private_payload_preserves_monthly_report`：保留 `memorial_text` 对测试自注入原文的存读保真；保留材料路径存在（承办人可读己方月报）
 
 ---
 
@@ -132,6 +137,6 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" \
   tests/test_secret_order_monthly_progress_566.py
 ```
 
-**结果**：`86 passed, 1 warning in 2.79s`（`/tmp/1889-r1r4-focused.out`）
+**二轮聚焦**：`84 passed, 1 warning in 3.08s`（`/tmp/1889-r2r4-r2.out`，含判词点名案）
 
 未跑全量；未改宿主/席位/存档；未 amend/stash/push。

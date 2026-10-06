@@ -478,10 +478,7 @@ def _own_affair_lines(
         linked_affair_id = _issue_linked_affair_id(db, issue_id)
         if not linked_affair_id:
             continue
-        try:
-            roster = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            roster = set()
+        roster = participant_roster_names(issue["participant_roster"])
         if character_name in roster or _reader_in_issue_audience(db, issue, character_name):
             handling_ids.add(linked_affair_id)
 
@@ -663,10 +660,7 @@ def _opening_affair_lines(
         dir_key = f"issue-{issue_id}"
         if dir_key not in visible or dir_key in seen:
             continue
-        try:
-            roster = participant_roster_names(issue["participant_roster"])
-        except (KeyError, IndexError, TypeError):
-            roster = set()
+        roster = participant_roster_names(issue["participant_roster"])
         if character_name not in roster and not _reader_in_issue_audience(db, issue, character_name):
             continue
         seen.add(dir_key)
@@ -1945,16 +1939,13 @@ def _character_projection_from_db_row(row: Any) -> Any:
     from ming_sim.models import Character
 
     def _int(key: str, default: int = 0) -> int:
-        try:
-            return int(row[key])
-        except (KeyError, TypeError, ValueError):
+        value = row[key]
+        if value is None:
             return default
+        return int(value)
 
     def _str(key: str, default: str = "") -> str:
-        try:
-            value = row[key]
-        except (KeyError, IndexError, TypeError):
-            return default
+        value = row[key]
         return default if value is None else str(value)
 
     return Character(

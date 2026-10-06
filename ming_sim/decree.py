@@ -365,7 +365,7 @@ def build_promulgation_judge_context(
         "gatekeepers": gatekeepers,
         "promulgation_history": history,
         "current_events": [
-            {key: row[key] for key in ("id", "title", "status") if key in row.keys()}
+            {"id": row["id"], "title": row["title"], "status": row["status"]}
             for row in issue_rows
         ],
     }

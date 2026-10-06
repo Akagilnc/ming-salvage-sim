@@ -523,13 +523,12 @@ def _legacy_commitment_stop_gate(resolve_condition: object) -> Dict[str, str]:
 
 
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
-    keys = row.keys() if hasattr(row, "keys") else []
-    raw = row["stop_condition"] if "stop_condition" in keys else ""
+    raw = row["stop_condition"] or ""
     if _has_stop_condition(raw):
         gate = json.loads(raw) if isinstance(raw, str) else raw
         if isinstance(gate, dict):
             return gate
-    return _legacy_commitment_stop_gate(row["resolve_condition"] if "resolve_condition" in keys else "")
+    return _legacy_commitment_stop_gate(row["resolve_condition"] or "")
 
 
 def _commitment_remaining_from_gate(
@@ -597,9 +596,8 @@ def commitment_progress_payload(
     # key is absent OR present-but-NULL/0. `int(row["origin_turn"] or 0)` would collapse
     # a NULL/0 to 0 and leak the absolute turn number into months_elapsed (#380 cmr:
     # gemini + coderabbit). Only a positive origin_turn is a real anchor.
-    origin_turn_raw = row["origin_turn"] if "origin_turn" in keys else None
     try:
-        origin_turn = int(origin_turn_raw)
+        origin_turn = int(row["origin_turn"])
     except (TypeError, ValueError):
         origin_turn = 0
     if origin_turn <= 0:
@@ -627,10 +625,9 @@ def _commitment_arrears_remaining_text(amount: object) -> str:
 
 
 def commitment_display_text(progress: Dict[str, object], row: sqlite3.Row) -> str:
-    keys = row.keys() if hasattr(row, "keys") else []
-    ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
-    end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
-    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else 0
+    ongoing = loads_effect_dict(row["ongoing_effects"] or {})
+    end_turn = int(row["end_turn"] or 0)
+    origin_turn = int(row["origin_turn"] or 0)
     stop_gate = _commitment_stop_gate(row)
     months = int(progress.get("months_elapsed") or 0)
     duration = max(0, end_turn - origin_turn) if end_turn > 0 else 0
@@ -665,16 +662,15 @@ def commitment_timed_bar_value(progress: Dict[str, object], row: sqlite3.Row) ->
     Returns None for bar-driven (stop_gate), arrears, or passive (no ongoing effects) commitments.
     When non-None, bar = wall-clock months_elapsed / (end_turn - origin_turn) * 100, clamped 0-100.
     """
-    keys = row.keys() if hasattr(row, "keys") else []
-    end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
+    end_turn = int(row["end_turn"] or 0)
     if end_turn <= 0:
         return None
     if _commitment_stop_gate(row):
         return None
-    ongoing = loads_effect_dict(row["ongoing_effects"] if "ongoing_effects" in keys else {})
+    ongoing = loads_effect_dict(row["ongoing_effects"] or {})
     if not _monthly_ongoing_effects_has_work(ongoing):
         return None
-    origin_turn = int(row["origin_turn"] or 0) if "origin_turn" in keys else 0
+    origin_turn = int(row["origin_turn"] or 0)
     duration = end_turn - origin_turn
     if duration <= 0:
         return None
@@ -4354,28 +4350,17 @@ def _initiative_resolve_pairing_warnings(
 
 
 def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = None) -> None:
-    """在 initiative 结案处调配对守门：tlog 响亮告警（#14/#27 风格）；sink 给定时再收进供
-    程序 surface（inertia 自然结案路只 tlog、不收 sink）。仅对 kind=initiative 生效；
-    row 字段缺失/JSON 畸形一律安全降级、不阻断结算。"""
-    def _g(key, default):
-        try:
-            return new_row[key]
-        except (KeyError, IndexError, TypeError):
-            return default
-    if str(_g("kind", "") or "") != "initiative":
+    """在 initiative 结案处调配对守门：tlog 响亮告警；sink 给定时再收进。仅 kind=initiative。"""
+    if str(new_row["kind"] or "") != "initiative":
         return
-    # tags/ongoing_effects 在 DB row 里是 JSON 串，但调用方（test/mock/上游预解析）可能已传
-    # 解析好的 list/dict——此时 json.loads(容器) 抛 TypeError 被 except 吞成空，会静默丢有效
-    # 数据、把本该响的告警消音 / 把有效月支误判成缺失（PR#107 R3 gemini medium，与下游
-    # _initiative_resolve_pairing_warnings 的 isinstance 防御同向）。先认已解析的容器。
-    raw_tags = _g("tags", "[]")
+    # tags/ongoing_effects 在 DB 是 JSON 串；调用方也可能已传解析好的 list/dict。
+    raw_tags = new_row["tags"]
     if isinstance(raw_tags, (list, tuple)):
         tags = list(raw_tags)
     else:
-        tags = load_stored_list(raw_tags, label="tags")
-    # ongoing_effects 经 loads_effect_dict：已解析对象原样；空白是空对象；损坏即拒。
-    ongoing = loads_effect_dict(_g("ongoing_effects", "{}"))
-    for w in _initiative_resolve_pairing_warnings(str(_g("title", "") or ""), tags, ongoing, effect):
+        tags = load_stored_list(raw_tags if raw_tags is not None else "[]", label="tags")
+    ongoing = loads_effect_dict(new_row["ongoing_effects"] if new_row["ongoing_effects"] is not None else "{}")
+    for w in _initiative_resolve_pairing_warnings(str(new_row["title"] or ""), tags, ongoing, effect):
         tlog(f"[pairing] {w}")
         if sink is not None:
             sink.append(w)

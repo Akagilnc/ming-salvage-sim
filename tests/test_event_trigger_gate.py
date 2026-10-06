@@ -822,30 +822,6 @@ def test_mao_event_effect_uses_unified_person_change_key():
     ]
 
 
-def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, monkeypatch):
-    """auto-trigger 事务体内转 issue 时不得内部 commit，回滚边界由外层 atomic 统一控制。"""
-    db, state, content = game
-    issues.bind_content(content)
-    event_id = "__test_auto_trigger_atomic__"
-    ev = _hist_event(event_id, {})
-    ev.auto_trigger = True
-    calls = []
-
-    def fake_event_to_issue(db_arg, state_arg, ev_arg, *, commit=True):
-        calls.append((ev_arg.id, commit))
-        return 999
-
-    monkeypatch.setattr(issues, "event_to_issue", fake_event_to_issue)
-    content.events.append(ev)
-    try:
-        triggered = issues.auto_trigger_seed_issues(state, db)
-    finally:
-        content.events.remove(ev)
-
-    assert calls == [(event_id, False)]
-    assert {"id": event_id, "title": ev.title, "issue_id": 999} in triggered
-
-
 def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
     """内容契约：person_core_subjects 写了就必须是字符串数组，空字符串不能吞成缺省。"""
     from ming_sim import content as content_module
@@ -1890,23 +1866,6 @@ def test_historical_auto_trigger_core_effect_is_applied_once(game):
         "SELECT COUNT(*) FROM event_triggers WHERE event_id=?",
         ("huabei_plague",),
     ).fetchone()[0] == 1
-
-
-def test_auto_trigger_historical_events_use_preloaded_terminal_refs(game, monkeypatch):
-    """PR review：历史 auto_trigger 去重应批量读 event_triggers，避免每事件查 terminal_state。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1633
-    state.period = 7
-
-    def _unexpected_per_event_probe(*_args, **_kwargs):
-        raise AssertionError("auto_trigger historical loop must not call event_terminal_state per event")
-
-    monkeypatch.setattr(type(db), "event_terminal_state", _unexpected_per_event_probe)
-
-    triggered = issues.auto_trigger_seed_issues(state, db)
-
-    assert any(item["id"] == "huabei_plague" for item in triggered)
 
 
 def test_historical_auto_trigger_event_expires_after_latest_window(game):

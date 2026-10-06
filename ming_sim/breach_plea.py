@@ -120,9 +120,7 @@ def commitment_natural_due_turn(row: Any) -> int:
     if stages:
         return max(int(s["due_turn"]) for s in stages)
     try:
-        end_turn = int(row["end_turn"] if "end_turn" in keys else (
-            row.get("end_turn") if isinstance(row, dict) else 0
-        ) or 0)
+        end_turn = int(row["end_turn"] or 0)
     except (TypeError, ValueError):
         end_turn = 0
     return end_turn if end_turn > 0 else 0
@@ -130,10 +128,7 @@ def commitment_natural_due_turn(row: Any) -> int:
 
 def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
     refs: Set[str] = {f"issue:{int(commitment_ref)}"}
-    try:
-        origin = str(row["origin_ref"] or "").strip()
-    except (TypeError, KeyError, IndexError):
-        origin = ""
+    origin = str(row["origin_ref"] or "").strip()
     if origin:
         refs.add(origin)
     return refs
@@ -181,20 +176,13 @@ def _dedicated_accounts(row: Any) -> List[str]:
             seen.add(acc)
             accounts.append(acc)
 
-    try:
-        keys = row.keys()
-    except Exception:
-        keys = []
-
-    tags_raw = row["tags"] if "tags" in keys else "[]"
-    tags = load_stored_list(tags_raw, label="tags")
+    tags = load_stored_list(row["tags"], label="tags")
     for tag in tags:
         t = str(tag or "").strip()
         if t.startswith("专款:"):
             _add(t.split(":", 1)[1].strip())
 
-    ongoing_raw = row["ongoing_effects"] if "ongoing_effects" in keys else "{}"
-    ongoing = loads_effect_dict(ongoing_raw or "{}")
+    ongoing = loads_effect_dict(row["ongoing_effects"] or "{}")
     economy = ongoing.get("economy") if isinstance(ongoing, dict) else None
     if isinstance(economy, list):
         for item in economy:

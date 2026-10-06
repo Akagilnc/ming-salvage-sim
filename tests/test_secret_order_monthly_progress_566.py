@@ -64,9 +64,10 @@ def _record_monthly_report(db, state, progress):
 def test_emperor_private_payload_preserves_monthly_report(game):
     db, state, content = game
     order_id, dossier_id = _order(db, state)
+    marker = "首批饷车已验山海关关防566"
     _record_monthly_report(db, state, {
         "dossier_id": dossier_id, "progress_band": "在途核验",
-        "memorial_text": "首批饷车已验山海关关防566",
+        "memorial_text": marker,
     })
 
     # Emperor-facing secret-order product payload exposes the canonical rail.
@@ -75,6 +76,7 @@ def test_emperor_private_payload_preserves_monthly_report(game):
     assert int(last["turn"]) == int(state.turn)
     assert last["progress_band"] == "在途核验"
     assert last.get("is_terminal") is False
+    assert last["memorial_text"] == marker
 
     from ming_sim.materials import list_materials, prepare_character_materials, release_material_tree
     prepared = prepare_character_materials(

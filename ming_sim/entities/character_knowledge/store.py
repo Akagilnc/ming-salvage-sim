@@ -417,6 +417,12 @@ class CharacterKnowledgeStore:
             sql += " AND status = 'active'"
         return self._conn.execute(sql, (int(order_id),)).fetchone()
 
+    def set_secret_order_sim_note(self, order_id: int, value: str) -> None:
+        self._conn.execute(
+            "UPDATE secret_orders SET sim_note=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (str(value), int(order_id)),
+        )
+
     def sources_for_turn(self, turn: int) -> List[Dict[str, object]]:
         """Shared sources registered in one month, oldest first."""
         return [
