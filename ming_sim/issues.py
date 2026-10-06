@@ -6518,9 +6518,38 @@ def _apply_person_changes(
                     # 信用写端只消费 extractor 宣告本体行，禁盯 derived_from 文本特判。
                     "cascade_echo": True,
                 }
-            result = project_appointment_result(
-                item,
-                apply_office_appointment(
+            def _restore_pre_derive_person_state() -> None:
+                # transit_start_turn 与 transit_to 成对回滚：派生任命前置 set_character_status
+                # （放归/赦还→offstage 属 ousted）现会清 transit_start_turn=0，回滚须对称还原，
+                # 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
+                # 业务拒收与代码故障共用：故障上抛前也必须还原，不得只洗 DB savepoint
+                # 而丢内存三面同步（ADR 0005 / #1853）。
+                db.conn.execute(
+                    "UPDATE characters SET status=?, office=?, office_type=?, "
+                    "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=?, "
+                    "transit_distance_remaining=?, transit_speed_factor=?, transit_start_turn=? "
+                    "WHERE name=?",
+                    (
+                        row["status"], row["office"], row["office_type"],
+                        row["status_reason"], row["status_changed_turn"], row["reason_code"],
+                        row["transit_to"], row["transit_distance_remaining"],
+                        row["transit_speed_factor"], row["transit_start_turn"], name,
+                    ),
+                )
+                if content is not None and name in content.characters:
+                    ch = content.characters[name]
+                    ch.status = str(row["status"] or "")
+                    ch.office = str(row["office"] or "")
+                    ch.office_type = str(row["office_type"] or ch.office_type)
+                    ch.transit_to = str(row["transit_to"] or "")
+                    ch.transit_distance_remaining = row["transit_distance_remaining"]
+                    ch.transit_speed_factor = row["transit_speed_factor"]
+                    ch.transit_start_turn = int(row["transit_start_turn"] or 0)
+                    ch.status_reason = str(row["status_reason"] or "")
+                    ch.reason_code = str(row["reason_code"] or "")
+
+            try:
+                appointment_result = apply_office_appointment(
                     db,
                     state,
                     content,
@@ -6538,40 +6567,17 @@ def _apply_person_changes(
                     ).strip(),
                     llm_config=llm_config,
                     commit=False if derive_label else commit_person_change,
-                ),
-            )
+                )
+            except Exception:
+                if derive_label:
+                    _restore_pre_derive_person_state()
+                raise
+            result = project_appointment_result(item, appointment_result)
             wrapped = {"动作": effective_action, **result}
             if derive_label:
                 wrapped["derived_from"] = derive_label
                 if wrapped.get("rejected"):
-                    # transit_start_turn 与 transit_to 成对回滚：派生任命前置 set_character_status
-                    # （放归/赦还→offstage 属 ousted）现会清 transit_start_turn=0，回滚须对称还原，
-                    # 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
-                    db.conn.execute(
-                        "UPDATE characters SET status=?, office=?, office_type=?, "
-                        "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=?, "
-                        "transit_distance_remaining=?, transit_speed_factor=?, transit_start_turn=? "
-                        "WHERE name=?",
-                        (
-                            row["status"], row["office"], row["office_type"],
-                            row["status_reason"], row["status_changed_turn"], row["reason_code"],
-                            row["transit_to"], row["transit_distance_remaining"],
-                            row["transit_speed_factor"], row["transit_start_turn"], name,
-                        ),
-                    )
-                    if content is not None and name in content.characters:
-                        ch = content.characters[name]
-                        ch.status = str(row["status"] or "")
-                        ch.office = str(row["office"] or "")
-                        ch.office_type = str(row["office_type"] or ch.office_type)
-                        ch.transit_to = str(row["transit_to"] or "")
-                        ch.transit_distance_remaining = row["transit_distance_remaining"]
-                        ch.transit_speed_factor = row["transit_speed_factor"]
-                        ch.transit_start_turn = int(row["transit_start_turn"] or 0)
-                        # 对称 DB 侧回滚（上方 UPDATE 已还原全 7 字段）：内存也还原缘由/码，
-                        # 守三面同步（决定6），免前置步刷过内存缘由后此路回滚留脏值（PR#106 R2 gemini）。
-                        ch.status_reason = str(row["status_reason"] or "")
-                        ch.reason_code = str(row["reason_code"] or "")
+                    _restore_pre_derive_person_state()
                 else:
                     applied.append(release_result)
                     log_applied(release_result, item, commit=False)
