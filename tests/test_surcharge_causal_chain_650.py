@@ -393,15 +393,6 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
     assert _gazette_projection_body(db, state, "温体仁", second_turn) == free_body
 
 
-# ── legacy 万口径档：折算随存档单位换算，sub-万不可表达 ────────────────────────
-
-
-
-
-
-
-
-
 
 # ── AC4/AC5：e2e 验收锚用例①前半——陕西加派→流民↑→回响；restore 接续；停加派止 ──
 

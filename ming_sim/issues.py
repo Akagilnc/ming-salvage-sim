@@ -2590,7 +2590,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                     _apply_issue_entities(
                         db,
                         state,
-                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        ev.effect_on_trigger,
                         f"事件#{ev.id}触发",
                         content=c,
                     )
@@ -2614,7 +2614,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                 _apply_issue_entities(
                     db,
                     state,
-                    _content_population_effect_for_save(db, ev.effect_on_trigger),
+                    ev.effect_on_trigger,
                     f"事件#{ev.id}触发",
                     content=c,
                 )
@@ -2733,9 +2733,9 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     if ev.effect_on_resolve:
         # #648：content 真源人口量已「人」，持久化进 issue 行前按本档口径换算，
         # 使后续结案/失败落账（读行内 effect）天然按档口径，无需在读取端再换算。
-        effect_resolve = _content_population_effect_for_save(db, ev.effect_on_resolve)
+        effect_resolve = ev.effect_on_resolve
     if ev.effect_on_fail:
-        effect_fail = _content_population_effect_for_save(db, ev.effect_on_fail)
+        effect_fail = ev.effect_on_fail
     # insert 的代码/DB 真异常上抛（ADR 0008 决定1 / ADR 0005 fail-loud），与 decree 路径
     # （apply_issue_tracker_output 的 new_issues 段）一致；旧 `except Exception: WARN; return None`
     # 把真异常吞成 None、调用方记普通 rejected，正是 #14/#63 catalog「该落没落无人知」实例
@@ -2770,7 +2770,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         _apply_issue_entities(
             db,
             state,
-            _content_population_effect_for_save(db, ev.effect_on_trigger),
+            ev.effect_on_trigger,
             f"事件#{ev.id}触发",
             content=_ctx(),
         )
@@ -3380,11 +3380,6 @@ def _spawn_legacy_from_effect(
     return summary
 
 
-def _content_population_effect_for_save(
-    db: GameDB, effect: Dict[str, object]
-) -> Dict[str, object]:
-    """content 静态人口量已全线「人」，现役档同口径，无需换算。"""
-    return effect
 
 
 def _apply_issue_entities(
@@ -5081,7 +5076,7 @@ def apply_issue_tracker_output(
                         _apply_issue_entities(
                             db,
                             state,
-                            _content_population_effect_for_save(db, ev.effect_on_trigger),
+                            ev.effect_on_trigger,
                             f"事件#{ev.id}触发",
                             content=runtime_content,
                             llm_config=llm_config,
@@ -5107,7 +5102,7 @@ def apply_issue_tracker_output(
                     _apply_issue_entities(
                         db,
                         state,
-                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        ev.effect_on_trigger,
                         f"事件#{ev.id}触发",
                         content=runtime_content,
                         llm_config=llm_config,

@@ -4,7 +4,7 @@ canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5）：
 - 原子单记录双写：一条转移记录同事务「源阶级减 N、目标阶级增 N」，LLM 不提交双腿；
 - reason×方向矩阵（加派/摊派/灾害/兵灾/逃亡；回流出池见 #652 settle 真缝），出阵组合逐项拒收；
 - class_delta 写 population 由静默忽略升格逐项拒收；两轴分立（数据拒收不中止事务）；
-- 单位随存档 population_unit（新档人/sub-万精确，legacy 万口径、sub-万不可表达）；
+- 单位「人」；
 - restore 后流民池从 classes 只读 DB 无损接续。
 主测缝：apply_score_extraction 落账及恢复后的 DB 状态。
 """
@@ -20,8 +20,6 @@ from ming_sim.issues import apply_score_extraction
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
 DISPLACED_SHAANXI = 150000    # 流民@shaanxi
-LEGACY_FARMER_SHAANXI = 600   # ÷10⁴ 万口径
-LEGACY_DISPLACED_SHAANXI = 15
 
 
 def _pop(db: GameDB, name: str, region_id: str) -> int:
@@ -40,12 +38,6 @@ def _transfer(**kw):
     base = {"origin_ref": "盘面自发"}
     base.update(kw)
     return base
-
-
-# ── legacy 档夹具：万口径、无单位标，但保留流民行（÷10⁴）供转移账落账 ────────
-
-
-
 
 
 # ── 守恒双写正例 ─────────────────────────────────────────────────────────────
@@ -282,7 +274,7 @@ def test_unknown_top_level_key_now_per_section_rejection_not_abort(game):
     assert applied["metric_delta"].get("民心") == 1  # 其余 section 照落，不整份退
 
 
-# ── 双单位（F3）：新档 sub-万精确；legacy 万口径、sub-万不可表达 ──────────────
+# ── 单位口径（F3）：现役一律「人」，sub-万精确 ──────────────
 
 
 

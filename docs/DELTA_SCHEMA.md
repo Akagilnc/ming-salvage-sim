@@ -76,7 +76,7 @@ C0 效果字段须用 `EMPTY_EXTRACTION` 中的键；条目字段别名由 `ITEM
 | `account` | **必须** `国库` 或 `内库` | 不在表内整条丢 |
 | `delta` | **必须** int 且 **非零** | 0 直接丢 |
 | `category` | 自由文本 | 自由文本 |
-| `reason` | ≤80 字 | 自由文本 |
+| `reason` | 自由文本 | 自由文本 |
 | `purpose` | 可选 `补饷` / `其它` | 补饷会跟 army arrears 联动 |
 | `target_kind` | `purpose=补饷` 时必填 `army` | 配合 target_id 用 |
 | `target_id` | `purpose=补饷` 时必填合法 army_id | 缺失或不存在则整条拒收不扣账 |
@@ -105,7 +105,7 @@ canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一
 |---|---|
 | `source` | `<class_name>@<region_id>` 省级行（如 `农民@shaanxi`）；全国行（region_id 空）不合法 |
 | `target` | 同上；须与 source **同 region_id**（跨省在途归 #475 预留，本契约不做） |
-| `amount` | 拟转正整数（严格 int，拒数字串/float/bool）；单位随存档 `population_unit`（新档「人」、legacy「万」），全线禁混刻度 |
+| `amount` | 拟转正整数（严格 int，拒数字串/float/bool）；单位「人」，全线禁混刻度 |
 | `reason` | 枚举×方向矩阵：`加派`/`摊派`/`灾害`＝农民→流民；`兵灾`＝农民→流民、军户→流民；`逃亡`＝军户→流民；`回流`＝流民→农民（**仅引擎 recovery 单核可写**，extractor 申报整项拒收，#652）。方向出阵即拒 |
 | `origin_ref` | **必填** `dossier:<id>`（须存在且已颁）或精确哨兵 `盘面自发`——来源追溯契约与 `reason` 机制枚举两槽并存、职责互斥 |
 
@@ -122,11 +122,11 @@ canonical 段形＝list；中英别名：`流民投贼` / `投贼吸收`。LLM �
 |---|---|
 | `region_id` | 须有 `流民@region_id` 省级行 |
 | `power_id` | 流寇股：`bandits` 或 `bandit_*`，须已入库 |
-| `requested_count` | 正整数（严格 int）；单位随存档 `population_unit` |
+| `requested_count` | 正整数（严格 int）；单位「人」 |
 | `origin_ref` | 必填 `dossier:<id>` 或 `盘面自发` |
 
 - 流寇 `power_updates.military_strength` **正增量**整项拒收（必须走本段）；负增量（剿股）仍走 `power_updates`。
-- 仅 `population_unit='人'` 新档可写；legacy 拒收。
+- 现役人口池档可写。
 - item 字段中英别名：`地区编号`→region_id、`势力编号`→power_id、`请求口数`/`请求人数`/`拟吸口数`→requested_count。
 
 ### `surcharge_decrees` — 下旨加派（#650/ADR 0089 明渠）
@@ -257,7 +257,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 | `origin_kind` | **必须** `"decree"` |
 | `origin_ref` | 承诺 issue 必填，指回诏书 / 旨意来源 |
 | `kind` | 默认 `initiative`；若用 `situation` 则按系统危机走 |
-| `title` | ≤60 字 |
+| `title` | 自由文本 |
 | `bar_value` | int，默认 25 |
 | `expected_months` | int |
 | `end_turn` | int，硬时限承诺到期回合；默认 0 |
@@ -491,7 +491,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 |---|---|---|
 | `new_issues[].origin_kind` | 不填 | **必填** `decree` / `event_pool` / `impeachment_surge` |
 | `new_issues[].kind` | 写 `reform` | 白名单 `situation` / `initiative`；改革/试点都用 `initiative` |
-| `new_issues[].title` | — | ≤60 字 |
+| `new_issues[].title` | — | 自由文本 |
 | `close_issues[].reason` | 填了 `result` 没填 `reason` | close_issues 要 **`reason`** 字段（不是 result），空则整条被跳过。注：若同时用 `issue_advances` 把 bar 推满（≥100），issue 会**自动 resolved**，不依赖 close_issues |
 | `power_updates` 字段 | 写 `{"stance":...}` 或 `{"satisfaction":...}` | **实际守门只收三个字段：`威望`(leverage) / `实力`(military_strength) / `经济`(supply——英文 canonical 是 supply,别名表把 经济 映到它;写 `economy` 不被认会拒)。** 连 `satisfaction` / `cohesion` / `stance` / `leader` / `agenda` 全被拒，逐项拒收留痕落 `rejection_reports`（不再 print WARN——v0.8.x PR2-S1;supply 一直在白名单内,旧坑表把它列进被拒名单是 doc 错误）。改外势态度文用 `world_advance`；改归附倾向只能动 leverage/military_strength/supply。本文档上方 `power_updates` 段已按运行时守门收敛。〔崇祯二年五、六月结算实测，turn 8/9〕|
 
