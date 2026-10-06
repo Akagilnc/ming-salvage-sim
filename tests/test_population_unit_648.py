@@ -105,16 +105,6 @@ def test_new_save_persistent_population_unit_marker(game):
     ).fetchone()
     assert row is not None and row["value"] == POPULATION_UNIT_PERSONS
 
-# ── #1835 C1：无标亦走人 ──────────────────────────────────────────────────
-
-def test_unmarked_save_defaults_to_persons_unit(game):
-    """无标不再分流万人：population_unit 恒为「人」。"""
-    db, _, _ = game
-    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
-    db.conn.commit()
-    assert db.population_unit == POPULATION_UNIT_PERSONS
-
-
 # ── F1：class 写面只收 satisfaction/leverage ────────────────────────────────
 
 def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):

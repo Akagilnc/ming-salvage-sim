@@ -36,9 +36,7 @@ from ming_sim.token_stats import tlog
 
 # 皇庄增量租率：没收藩王庄田转皇庄后，每万亩每月增加内库收入（万两）
 # 基准皇庄收入走 fiscal_config.皇庄_base；此常数只用于增量计算
-_HUANG_TIAN_RENT_PER_WAN_MU = 0.57  # ≈ 20万两/月 ÷ 35万亩
 
-_FIXED_FLOW_NUMERIC_FIELDS = ("huang_tian", "liao_xiang", "salt_tax", "commerce_tax", "corruption")
 _CENTRAL_TAICANG_HUMAN_LOSS_RATE = "central_taicang_human_loss_rate"
 _CENTRAL_TAICANG_SINK_LOSS_RATE = "central_taicang_sink_loss_rate"
 _CENTRAL_JINGYUN_HUMAN_LOSS_RATE = "central_jingyun_human_loss_rate"
@@ -943,19 +941,13 @@ def _advance_province_fiscal_substrate(
         if outcome.error is not None:
             # settle_tick 的契约失败（坏态/守恒破）+ 基座缺失 → shadow 隔离，不炸 pre_settle
             exc = outcome.error
-            if db.is_army_pay_source_cutover_enabled():
-                tlog(
-                    f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}结算中止："
-                    f"{type(exc).__name__}: {exc}"
-                )
-                raise _FixedFiscalAbort(
-                    f"{outcome.region_id} 省级财政基座结算失败：{type(exc).__name__}: {exc}"
-                ) from exc
             tlog(
-                f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}未推进（隔离）："
+                f"[fiscal-substrate] {outcome.region_id} 本{TURN_UNIT}结算中止："
                 f"{type(exc).__name__}: {exc}"
             )
-            continue
+            raise _FixedFiscalAbort(
+                f"{outcome.region_id} 省级财政基座结算失败：{type(exc).__name__}: {exc}"
+            ) from exc
         res = outcome.result
         advanced = True
         b = res.breakdown

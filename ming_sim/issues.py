@@ -1787,7 +1787,7 @@ def _auto_trigger_seed_issues_in_atomic(
             rejected = issue_effects._apply_issue_entities(
                 db,
                 state,
-                _content_population_effect_for_save(db, ev.effect_on_trigger),
+                ev.effect_on_trigger,
                 f"事件#{ev.id}触发",
                 content=c,
                 source=Provenance.system_simulation,
@@ -1818,7 +1818,7 @@ def _auto_trigger_seed_issues_in_atomic(
                 rejected = issue_effects._apply_issue_entities(
                     db,
                     state,
-                    _content_population_effect_for_save(db, ev.effect_on_trigger),
+                    ev.effect_on_trigger,
                     f"事件#{ev.id}触发",
                     content=c,
                     source=Provenance.system_simulation,
@@ -1946,9 +1946,9 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     if ev.effect_on_resolve:
         # #648：content 真源人口量已「人」，持久化进 issue 行前按本档口径换算，
         # 使后续结案/失败落账（读行内 effect）天然按档口径，无需在读取端再换算。
-        effect_resolve = _content_population_effect_for_save(db, ev.effect_on_resolve)
+        effect_resolve = ev.effect_on_resolve
     if ev.effect_on_fail:
-        effect_fail = _content_population_effect_for_save(db, ev.effect_on_fail)
+        effect_fail = ev.effect_on_fail
     # insert 的代码/DB 真异常上抛（ADR 0008 决定1 / ADR 0005 fail-loud），与 decree 路径
     # （apply_issue_tracker_output 的 new_issues 段）一致；旧 `except Exception: WARN; return None`
     # 把真异常吞成 None、调用方记普通 rejected，正是 #14/#63 catalog「该落没落无人知」实例
@@ -2018,14 +2018,6 @@ def _compute_inertia(ni: Dict[str, object]) -> int:
 # applier 是唯一的枚举守门（cleaner 只做 direction 同义词映射等无损规范化,cmr S3 r2）。
 
 
-def _content_population_effect_for_save(
-    db: GameDB, effect: Dict[str, object]
-) -> Dict[str, object]:
-    """#648（ADR 0088）/#1835：content 静态人口量已全线「人」，现役唯一口径原样透传。
-
-    只用于 content 事件真源（effect_on_trigger / event_to_issue 持久化）；LLM 产 delta
-    已按本档口径写，不得经此换算。旧档万人分流已退出。"""
-    return effect
 
 
 # 校验「二级非 dict 会让 apply 在**逐 entity 写 DB 的中途崩**,留下部分已写 + 回合照推 = 半落库」

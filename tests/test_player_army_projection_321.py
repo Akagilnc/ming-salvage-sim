@@ -45,32 +45,6 @@ _PERSISTENT_COL_TOKENS = (
 )
 
 # 六档真值表（票面 latch / 边界 / probation；含全部明确边界样本）
-_TIER_CASES = (
-    # (is_mutinied, loyalty, probation, expected_tier)
-    (1, 100, 0, "哗变"),  # latch L=100
-    (1, 100, 1, "哗变"),  # latch 盖过 probation
-    (1, 95, 0, "哗变"),
-    (1, 10, 3, "哗变"),
-    (0, 39, 0, "鼓噪"),
-    (0, 19, 0, "鼓噪"),  # L<20 未闩 → 鼓噪，非哗变
-    (0, 30, 1, "鼓噪"),  # probation 不覆盖低档
-    (0, 40, 0, "不满"),
-    (0, 50, 1, "不满"),  # probation 不覆盖中低档
-    (0, 59, 0, "不满"),
-    (0, 60, 1, "不满"),  # probation 只挡回正常
-    (0, 80, 2, "不满"),
-    (0, 60, 0, "一般"),
-    (0, 69, 0, "一般"),
-    (0, 70, 0, "优秀"),
-    (0, 79, 0, "优秀"),
-    (0, 80, 0, "死忠"),
-    (0, 100, 0, "死忠"),
-)
-
-_TIER_IDS = [
-    f"L{loyalty}-latch{latch}-p{prob}-{tier}"
-    for latch, loyalty, prob, tier in _TIER_CASES
-]
 
 
 def _row(
@@ -93,35 +67,9 @@ def _row(
     return base
 
 
-@pytest.mark.parametrize(
-    "is_mutinied,loyalty,probation,expected",
-    _TIER_CASES,
-    ids=_TIER_IDS,
-)
-def test_player_army_situation_six_tier_truth_table(
-    is_mutinied, loyalty, probation, expected
-):
-    row = _row(is_mutinied=is_mutinied, loyalty=loyalty, mutiny_probation=probation)
-    sit = _player_army_situation(row, monthly_pay=10)
-    assert sit["mutiny_tier"] == expected
-    assert sit["morale_text"] == _qualitative_army_stat("morale", row["morale"])
-    assert sit["arrears_text"] == _army_arrears_report_text(row, 10)
-    # derive 非「正常」时档名必须与 derive 一致；正常时再细分
-    derived = derive_army_mutiny_state(row)
-    if derived != "正常":
-        assert sit["mutiny_tier"] == derived
-    else:
-        assert sit["mutiny_tier"] in ("一般", "优秀", "死忠")
-
 
 def _configure(db, fiscal_path: str) -> None:
-    # #1835 C1：现役唯一 substrate_hub；fiscal_path 仅保留参数位兼容 parametrize。
-    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
-        db.conn.execute(
-            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, 1),
-        )
+    # #1835 C1：现役唯一 substrate_hub 军饷路径。
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,

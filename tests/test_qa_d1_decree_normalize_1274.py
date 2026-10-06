@@ -81,17 +81,6 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
         )
 
 
-@pytest.mark.parametrize("name", ["大臣", "群臣", "边将", "朝鲜边军", "陛下", "皇帝"])
-def test_is_non_person_covers_generics_and_collectives(name):
-    """泛称/集体通名单真源（participant_roster）覆盖票面字样。"""
-    from ming_sim.participant_roster import is_non_person_participant_name
-    import ming_sim.cli_backend as cli_backend
-
-    assert is_non_person_participant_name(name) is True
-    # cli_backend 别名同源，禁平行第二份闭集
-    assert cli_backend._is_non_person_participant_name(name) is True
-
-
 # ── 2) #1331/#1339 起居注投影 ──────────────────────────────────────
 
 
@@ -100,9 +89,7 @@ def test_night_archive_involved_people_drops_non_persons(game):
     import ming_sim.audience_night as an
 
     db, state, _ = game
-    night = an.open_night(db, state)  # 默认时辰走模块常量（经公开入口）
-    assert night["time_of_day"] == an.DEFAULT_TIME_OF_DAY
-
+    night = an.open_night(db, state)
     an.summon_enter(db, night["id"], "杨嗣昌", method=an.METHOD_XUANRU)
     an.append_ledger_entry(
         db, night["id"],

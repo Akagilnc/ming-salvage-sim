@@ -308,7 +308,7 @@ def apply_issue_tracker_output(
                         issue_effects._apply_issue_entities(
                             db,
                             state,
-                            issues._content_population_effect_for_save(db, ev.effect_on_trigger),
+                            ev.effect_on_trigger,
                             f"事件#{ev.id}触发",
                             content=runtime_content,
                             llm_config=llm_config,
@@ -332,7 +332,7 @@ def apply_issue_tracker_output(
                     issue_effects._apply_issue_entities(
                         db,
                         state,
-                        issues._content_population_effect_for_save(db, ev.effect_on_trigger),
+                        ev.effect_on_trigger,
                         f"事件#{ev.id}触发",
                         content=runtime_content,
                         llm_config=llm_config,

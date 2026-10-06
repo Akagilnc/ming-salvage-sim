@@ -28,17 +28,6 @@ def _pay_source():
     }
 
 
-def _disable_army_pay_source_cutover(db):
-    db.conn.execute(
-        """
-        INSERT INTO fiscal_config (key, value, kind, note)
-        VALUES ('__army_pay_source_cutover', 0, 'meta', 'legacy new-army test')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value, note = excluded.note
-        """
-    )
-    db.conn.commit()
-
-
 # ── schema：列已物理删除 ──────────────────────────────────────────────
 
 def test_armies_table_has_no_maintenance_column(read_game):
@@ -90,11 +79,11 @@ def test_existing_save_drops_maintenance_column_on_open(content, tmp_path):
 
 # ── 建军：manpower 唯一必填，维护费不再是字段 ──────────────────────────
 
-def test_legacy_new_army_needs_only_manpower(game):
+def test_new_army_needs_manpower_and_pay_source(game):
     db, state, _ = game
-    _disable_army_pay_source_cutover(db)
     created, created_rejections = db.create_armies_from_extraction(state, [{
         "id": "qin_army_x", "name": "秦军营", "owner_power": "ming", "manpower": 8000,
+        **_pay_source(),
     }], source=Provenance.system_simulation)
     assert created and created_rejections == [], created
     assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_x'").fetchone() is not None

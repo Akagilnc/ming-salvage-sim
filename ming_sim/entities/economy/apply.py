@@ -154,7 +154,6 @@ def _apply_economy_list(
             if origin_error:
                 rejections.append(RejectedItem(item=move, reason=origin_error["reason"], category=origin_error["category"], source=source))
                 continue
-            pay_source_cutover = db.is_army_pay_source_cutover_enabled()
             payable_arrears = _payable_army_arrears_cap(row)
             if payable_arrears <= 0:
                 current_arrears = (
@@ -186,9 +185,8 @@ def _apply_economy_list(
                 beyond_intent=beyond_raw,
             )
             if spent:
-                if pay_source_cutover:
-                    db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
-                    db._reconcile_central_army_pay_arrears_container()
+                db._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
+                db._reconcile_central_army_pay_arrears_container()
                 from ming_sim.covert_levy import canonical_fiscal_result
                 applied.append(canonical_fiscal_result(
                     db, move, applied=True,
