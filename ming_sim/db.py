@@ -75,7 +75,6 @@ logger = logging.getLogger(__name__)
 # 同刻度）；存档口径判别持久化在 DB 内（save_meta 表），新档 seed 落「人」标，
 # 无标旧档一律判「万人」legacy——不得读 content 元信息判别（其不随档持久化）。
 POPULATION_UNIT_PERSONS = "人"
-POPULATION_UNIT_WAN = "万人"
 _POPULATION_UNIT_KEY = "population_unit"
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -310,7 +309,6 @@ class ProvinceFiscalTickOutcome(NamedTuple):
 
 _ARMY_PAY_SOURCE_CUTOVER_KEY = "__army_pay_source_cutover"
 _FISCAL_ENGINE_KEY = "__fiscal_engine"
-_FISCAL_ENGINE_LEGACY = 0
 _FISCAL_ENGINE_SUBSTRATE_HUB = 1
 _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY = "central_army_pay_arrears"
 _STANDALONE_MILITARY_PAY_FUNNEL_ID = "__standalone_military_pay_funnel__"
@@ -2733,7 +2731,6 @@ class GameDB:
             self._set_meta_flag("__leverage_offsets_rank_rules_562")
             self.conn.commit()
         self.init_fiscal_config()
-        self._migrate_missing_fiscal_engine_from_pay_source_cutover()
 
     def _migrate_legacy_office_pollution(self) -> None:
         """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
@@ -3087,48 +3084,9 @@ class GameDB:
                 (int(turn), rate_key, 100, "rate", origin_ref, note, beyond_flag),
             ],
         )
-        # Only salt/commerce have live region-field side-channel consumers.
-        # Tian/liao assessments are derived from the catalogue by the levy applier.
-        if budget_role == "dynamic" and stem in self._SIDE_CHANNEL_REGION_FIELD:
-            self._restore_dynamic_region_field(stem, max(0, int(init_value)))
         if commit:
             self.conn.commit()
         return base_key
-
-    def _restore_dynamic_region_field(self, stem: str, declared_base: int) -> int:
-        """按声明额度摊回盐税／商税现役旁路实收。
-
-        省字段是盐税／商税旁路的实收，目录 base 是系数。份额沿用 seed 各省分布：
-        `province = round(seed_province × declared_base / seed_base)`。声明等于
-        seed 定额时 round 回原值，声明 0 得 0。seed 本身为 0 的省份保持 0。
-        seed 定额缺失或非正时不写。
-        """
-        field = self._SIDE_CHANNEL_REGION_FIELD.get(stem)
-        if field is None:
-            return 0
-        seed_base = self._seeded_fiscal_config_value(f"{stem}_base")
-        if seed_base is None or seed_base <= 0:
-            return 0
-        declared = max(0, int(declared_base))
-        touched = 0
-        for row in self.conn.execute("SELECT id, fiscal FROM regions").fetchall():
-            region_def = self.content.regions.get(str(row["id"]))
-            seed_value = int((region_def.fiscal or {}).get(field, 0) or 0) if region_def else 0
-            if seed_value <= 0:
-                continue
-            target = max(0, round(seed_value * declared / seed_base))
-            fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
-            if not isinstance(fiscal, dict):
-                continue
-            if int(fiscal.get(field, 0) or 0) == target:
-                continue
-            fiscal[field] = target
-            self.conn.execute(
-                "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (json.dumps(fiscal, ensure_ascii=False), str(row["id"])),
-            )
-            touched += 1
-        return touched
 
     # Live substrate-hub side channels read these region fields directly.
     _SIDE_CHANNEL_REGION_FIELD = {
@@ -3805,14 +3763,11 @@ class GameDB:
 
     @property
     def population_unit(self) -> str:
-        """本档人口存储单位口径（ADR 0088/#648）：新档「人」，无标旧档一律「万人」。
+        """现役人口存储单位口径：一律「人」。
 
-        判别只读存档 DB 内的持久标记（save_meta），不读 content 元信息（其不随档
-        持久化，0088 明文禁止）。旧档不迁移、读写按档口径走 legacy。"""
-        row = self.conn.execute(
-            "SELECT value FROM save_meta WHERE key = ?", (_POPULATION_UNIT_KEY,)
-        ).fetchone()
-        return str(row[0]) if row else POPULATION_UNIT_WAN
+        #1812 无历史包袱：不再按无标旧档回落「万人」双轨。新档仍可落 population_unit
+        标记作元数据，判别不再分支。"""
+        return POPULATION_UNIT_PERSONS
 
     def _mark_population_unit_persons(self) -> None:
         """新档 classes 首次 seed 时落持久人口单位标「人」（commit 由 seed_static_data 末尾统一提交）。"""
@@ -3822,15 +3777,8 @@ class GameDB:
         )
 
     def scale_content_population_to_save_unit(self, value: int) -> int:
-        """content 静态人口量（事件 effect 等）已全线「人」；落本档前按存档口径换算。
-
-        新档（人）原样；无标旧档（万人）÷10⁴——迁移后 content 人口值均为 10⁴ 整倍数，
-        整除无损（F4 禁的是对旧档读写加通用有损换算层；此处是 content→档的唯一确定性
-        口径接缝，非通用层）。"""
-        value = int(value)
-        if self.population_unit == POPULATION_UNIT_PERSONS:
-            return value
-        return value // 10000
+        """content 静态人口量已全线「人」；现役档同口径，原样落盘。"""
+        return int(value)
 
     def seed_static_data(self) -> None:
         self._ensure_office_type_parents()
@@ -4070,33 +4018,15 @@ class GameDB:
 
 
     def is_army_pay_source_cutover_enabled(self) -> bool:
-        row = self.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = ?",
-            (_ARMY_PAY_SOURCE_CUTOVER_KEY,),
-        ).fetchone()
-        return bool(row and int(row["value"] or 0) == 1)
+        """现役军饷分源 spine 恒开；#1812 清退无标回落 legacy 的双轨。"""
+        return True
 
     def fiscal_engine(self) -> str:
-        row = self.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = ?",
-            (_FISCAL_ENGINE_KEY,),
-        ).fetchone()
-        value = int(row["value"] or 0) if row is not None else _FISCAL_ENGINE_LEGACY
-        return "substrate_hub" if value == _FISCAL_ENGINE_SUBSTRATE_HUB else "legacy"
+        """现役财政引擎恒为 substrate_hub；#1812 清退无标回落 legacy 的双轨。"""
+        return "substrate_hub"
 
     def is_substrate_hub_fiscal_engine_enabled(self) -> bool:
-        return self.fiscal_engine() == "substrate_hub"
-
-    def _migrate_missing_fiscal_engine_from_pay_source_cutover(self) -> None:
-        if self.conn.execute(
-            "SELECT 1 FROM fiscal_config WHERE key = ?",
-            (_FISCAL_ENGINE_KEY,),
-        ).fetchone():
-            return
-        if not self.is_army_pay_source_cutover_enabled():
-            return
-        self._mark_substrate_hub_fiscal_engine_enabled()
-        self.conn.commit()
+        return True
 
     def _mark_army_pay_source_cutover_enabled(self) -> None:
         self.conn.execute(
@@ -4119,7 +4049,7 @@ class GameDB:
         )
 
     def _initialize_army_pay_source_spine(self, is_fresh_armies_seed: bool) -> None:
-        """Fresh-save cutover for #287 S1; existing saves stay on legacy army-pay flow."""
+        """Fresh-save cutover for #287 S1; write current spine markers on new armies seed."""
         if not is_fresh_armies_seed:
             return
         rows = self.conn.execute(
@@ -6541,9 +6471,7 @@ class GameDB:
         )
         # 军饷科目取数认 budget_key；呈现名跟预算行 name（玩家/摘要同源）。
         other_expense = (
-            ("中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
-            if self.is_substrate_hub_fiscal_engine_enabled()
-            else ("宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护")
+            "中央军饷", "太仓亏空", "宗室禄米", "百官俸禄", "工部", "赈灾备用", "建筑维护"
         )
         expense_present = [
             army_pay_label if army_pay_amt else "",
@@ -6566,8 +6494,6 @@ class GameDB:
 
     def treasury_hub_result(self, state: GameState) -> Optional[Dict[str, int]]:
         """已执行边饷 hub 三项结果；只读 ledger/container，不重算结算。"""
-        if not self.is_substrate_hub_fiscal_engine_enabled():
-            return None
         # pre_settle 已在当月 state.turn 写 ledger/覆盖容器，settling/awaiting_decision
         # 相位下 next_period 尚未推进——此刻 state.turn 本身就是刚结算完的 turn（两者语义
         # 相同，见 FRONT_HALF_DONE_PHASES 单一真源）。换月后（summoning 等其它相位）
@@ -7190,15 +7116,9 @@ class GameDB:
         held = ""
         if str(row["controlled_by"]) != "ming":
             held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
-        # ADR 0088/#648：人口展示按档口径——新档（人）玩家面投影「约N万口」（P4）；
-        # 机面裸人数；无标旧档沿万人 legacy 原样，不加换算层。
-        persons_unit = self.population_unit == POPULATION_UNIT_PERSONS
-
-        pop_qual = (
-            f"人口{population_wan_kou_label(row['population'])}" if persons_unit
-            else f"人口{row['population']}万人"
-        )
-        pop_raw = f"人口{row['population']}人" if persons_unit else f"人口{row['population']}万人"
+        # ADR 0088/#648：现役人口单位「人」——玩家面投影「约N万口」（P4）；机面裸人数。
+        pop_qual = f"人口{population_wan_kou_label(row['population'])}"
+        pop_raw = f"人口{row['population']}人"
         if qualitative:
             return (
                 f"{row['name']}（{row['kind']}）{held}：{pop_qual}，"

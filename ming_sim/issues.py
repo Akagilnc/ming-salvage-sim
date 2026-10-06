@@ -30,7 +30,6 @@ from ming_sim.distance import DistanceMatrix
 from ming_sim.paths import bundled_path
 from ming_sim.db import (
     GameDB,
-    POPULATION_UNIT_PERSONS,
     _LEVERAGE_FACTIONS,
     _approx_wanliang,
     compute_loyalty_soft_adjust,
@@ -755,99 +754,6 @@ def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]
             continue
         items.extend(item for item in raw if isinstance(item, dict))
     return items
-
-
-def _recurring_funding_label_tokens(*values: object) -> set[str]:
-    tokens: set[str] = set()
-    for value in values:
-        raw = str(value or "").strip()
-        if not raw:
-            continue
-        key_stem = raw
-        if key_stem.endswith("_base") or key_stem.endswith("_rate"):
-            key_stem = key_stem.rsplit("_", 1)[0]
-        normalized = re.sub(r"[\s，。、“”‘’：:；;,.·_\-（）()\[\]【】]+", "", key_stem)
-        for word in (
-            "同批extractor误产的重复",
-            "同批误产的重复",
-            "每月",
-            "按月",
-            "月度",
-            "月支",
-            "拨给",
-            "拨付",
-            "拨银",
-            "拨",
-            "给",
-            "支给",
-            "支出",
-            "开支",
-            "费用",
-            "经费",
-            "月",
-            "万两",
-            "银两",
-            "银",
-        ):
-            normalized = normalized.replace(word, "")
-        if normalized:
-            tokens.add(normalized)
-    return tokens
-
-
-def _commitment_fiscal_create_duplicate_reason(
-    create: Dict[str, object],
-    commitment_economy: List[Dict[str, object]],
-    db: GameDB,
-) -> str:
-    account = str(create.get("account") or "").strip()
-    display = str(create.get("display") or "") or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or ""))
-    create_tokens = _recurring_funding_label_tokens(
-        display,
-        create.get("key"),
-        create.get("reason"),
-    )
-    if not account or not create_tokens:
-        return ""
-    for item in commitment_economy:
-        if str(item.get("account") or "").strip() != account:
-            continue
-        try:
-            delta = _strict_int(item.get("delta"))
-        except (TypeError, ValueError):
-            continue
-        if delta >= 0:
-            continue
-        item_tokens = _recurring_funding_label_tokens(
-            item.get("category"),
-            item.get("reason"),
-            item.get("purpose"),
-        )
-        if create_tokens & item_tokens:
-            return "同批已有承诺 issue ongoing_effects.economy 承载该经常性拨款，fiscal_create 已去重"
-    return ""
-
-
-def _commitment_carrier_same_account_unmatched(
-    create: Dict[str, object],
-    commitment_economy: List[Dict[str, object]],
-) -> str:
-    """ADR0027 残留观测：同批、同账户、有 decree 承诺月支，却**未按科目名匹配上**的
-    fiscal_create —— 疑似异名漏匹（两模块给同一笔起不同名）。返回触发账户名供日志，
-    无则空串。**仅作试玩观测信号、不改落库行为**：该 fiscal_create 仍照常落账。"""
-    account = str(create.get("account") or "").strip()
-    if not account:
-        return ""
-    for item in commitment_economy:
-        if str(item.get("account") or "").strip() != account:
-            continue
-        try:
-            delta = _strict_int(item.get("delta"))
-        except (TypeError, ValueError):
-            continue
-        if delta < 0:
-            return account
-    return ""
 
 
 def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
@@ -3477,33 +3383,8 @@ def _spawn_legacy_from_effect(
 def _content_population_effect_for_save(
     db: GameDB, effect: Dict[str, object]
 ) -> Dict[str, object]:
-    """#648（ADR 0088/F4）：content 静态人口量已全线「人」，落本档前按存档口径换算。
-
-    新档（人）原样；无标旧档（万人）region_delta.population ÷10⁴（迁移后 content
-    人口值均为 10⁴ 整倍数，整除无损）。只换算 region_delta.*.population，其余段浅拷贝透传。
-    只用于 content 事件真源（effect_on_trigger / event_to_issue 持久化）；LLM 产 delta
-    已按本档口径写，不得经此换算。"""
-    region_delta = effect.get("region_delta")
-    if not isinstance(region_delta, dict) or not region_delta:
-        return effect
-    if db.population_unit == POPULATION_UNIT_PERSONS:
-        return effect
-    scaled: Dict[str, object] = {**effect}
-    scaled_region_delta: Dict[str, object] = {}
-    for rid, fields in region_delta.items():
-        if isinstance(fields, dict) and "population" in fields:
-            scaled_fields = {**fields}
-            try:
-                scaled_fields["population"] = db.scale_content_population_to_save_unit(
-                    fields["population"]
-                )
-            except (TypeError, ValueError):
-                pass  # 非整人口值交由下游 apply_region_deltas 既有拒收留痕，不在此静默改写
-            scaled_region_delta[rid] = scaled_fields
-        else:
-            scaled_region_delta[rid] = fields
-    scaled["region_delta"] = scaled_region_delta
-    return scaled
+    """content 静态人口量已全线「人」，现役档同口径，无需换算。"""
+    return effect
 
 
 def _apply_issue_entities(
@@ -7355,14 +7236,6 @@ def _apply_surcharge_decrees(
     should_commit = bool(commit) and db.owns_transaction()
     applied: List[Dict[str, object]] = []
     rejected: List[Dict[str, object]] = []
-    if not db.is_substrate_hub_fiscal_engine_enabled():
-        for item in (items if isinstance(items, list) else []):
-            rejected.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": "surcharge_decrees 仅适用于 substrate_hub 财政档",
-                "item": item if isinstance(item, dict) else {"raw_value": item},
-            })
-        return applied, rejected
     claimed_origins: set[tuple[str, str]] = set()
     for item in (items if isinstance(items, list) else []):
         if not isinstance(item, dict):
@@ -7405,9 +7278,6 @@ def _apply_surcharge_decrees(
                 f"surcharge_decrees {region_id!r} 无 settle 财政基座，逐省累积账无处落",
             )
             continue
-        if db.population_unit != POPULATION_UNIT_PERSONS:
-            _reject("missing_ref", "surcharge_decrees 仅适用于 population_unit='人' 的人口池档")
-            continue
         if surcharge_population_pool_members(db, region_id) != {"农民", "流民"}:
             _reject("missing_ref", f"surcharge_decrees {region_id!r} 缺农民/流民省级人口池")
             continue
@@ -7438,9 +7308,6 @@ def _apply_surcharge_decrees(
             _reject("invalid_enum", "surcharge_decrees 同批同一旨意与省份只能成功一次")
             continue
         reason = str(item.get("reason") or "")
-        if len(reason) > 120:
-            _reject("invalid_enum", f"surcharge_decrees reason 超 120 字：{reason!r}")
-            continue
         meta = dict(settle.get("_meta") or {})
         old = max(0.0, float(meta.get(SETTLE_META_JIAPIAI_KEY, 0) or 0))
         new = max(0.0, old + amount)  # 负额停征/蠲免，账面钳 ≥0
@@ -7489,15 +7356,6 @@ def _apply_bandit_absorptions(
     power_changes: List[Dict[str, object]] = []
     items = absorptions if isinstance(absorptions, list) else []
     # 仅 substrate 人口径新档开环；legacy 不误开（对齐 #649/#650）。
-    if db.population_unit != POPULATION_UNIT_PERSONS:
-        for item in items:
-            rejected.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": "bandit_absorptions 仅适用于 population_unit='人' 的人口池档",
-                "item": item if isinstance(item, dict) else {"raw_value": item},
-            })
-        return applied, rejected, power_changes
-
     for item in items:
         if not isinstance(item, dict):
             rejected.append({
@@ -8798,21 +8656,6 @@ def _apply_score_extraction_body(
                 ("affair_declarations", {"raw_value": raw}, str(exc)),
             )
 
-    commitment_economy_carriers: List[Dict[str, object]] = []
-    for item in issue_summary.get("new_issues") or []:
-        if not (
-            isinstance(item, dict)
-            and not item.get("rejected")
-            and str(item.get("commitment_kind") or "").strip()
-            and item.get("issue_id") is not None
-        ):
-            continue
-        row = db.conn.execute("SELECT ongoing_effects FROM issues WHERE id=?", (int(item["issue_id"]),)).fetchone()
-        if row is None:
-            continue
-        ongoing = loads_effect_dict(row["ongoing_effects"])
-        commitment_economy_carriers.extend(_monthly_economy_items(ongoing))
-
     def _ordered_strategic_items(field: str, event_id: str) -> list[tuple[str, object]]:
         items = ordered_deltas.get(field) or []
         return [
@@ -9160,31 +9003,6 @@ def _apply_score_extraction_body(
                 "reason": "该旧案暗渠摊派已奉旨禁绝", "item": create,
             })
             continue
-        # Dedup is a business rule, not an authorization gate.  It must only see
-        # a shape-valid, canonically authorized carrier; otherwise it can hide a
-        # missing/forged origin behind deduped_commitment_carrier.
-        if direction == "expense":
-            dedup_reason = _commitment_fiscal_create_duplicate_reason(
-                create, commitment_economy_carriers, db
-            )
-            if dedup_reason:
-                applied_fiscal_creates.append({
-                    "rejected": True, "reason": dedup_reason,
-                    "category": "deduped_commitment_carrier", "item": create,
-                })
-                continue
-            residual_account = _commitment_carrier_same_account_unmatched(
-                create, commitment_economy_carriers
-            )
-            if residual_account:
-                residual_display = (
-                    str(create.get("display") or "")
-                    or (db._stem_of(key) or key) or "无名月支"
-                )
-                tlog(
-                    f"[commitment-dedup] ADR0027 残留观测：同批{residual_account}已有 decree 承诺月支，"
-                    f"但 fiscal_create「{residual_display}」未按科目名匹配上、照常落账——疑似异名漏匹，试玩留意。"
-                )
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
             note=str(create.get("reason") or ""),

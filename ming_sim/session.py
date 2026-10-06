@@ -1761,8 +1761,7 @@ class GameSession:
             )
         dossiered_directives = list(self.db.list_dossiered_draft_directives(self.state))
         # DB owner supplies the canonical read-only default-approval projection.
-        # Negative preview ids participate in stale-decree fingerprinting without
-        # colliding with durable turn_directives ids.
+        # Negative preview ids stay distinct from durable turn_directives ids.
         pending_directives = self.db.preview_pending_directives(
             self.state, content=getattr(self, "content", None),
         )
@@ -1794,7 +1793,6 @@ class GameSession:
         self.auto_save("preresolve")
         # #1816/#1812：旧合并诏文 LLM 前置已撤；decree_text 仅显式/恢复存稿，不另造生成器。
         decree_text = decree or self.last_decree or ""
-        self.last_decree = decree_text
         self.last_decree = decree_text
         # 恢复 fallthrough 把存档真源穿透传入（#146 cmr r2）；正常颁诏 recovered_source is None
         # → 省略 source 参数走默认 player_decree（行为不变）。

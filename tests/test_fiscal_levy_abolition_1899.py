@@ -121,12 +121,10 @@ def test_abolition_moves_real_persisted_treasury_ledger(game):
 
 @pytest.mark.parametrize(
     ("stem", "category", "seed_base", "init_value"),
-    [(stem, stem, base, value) for stem, base in (("盐税", 23), ("商税", 7))
-     for value in (0, base, base * 2)]
-    + [("田赋", "起运", 68, 0), ("辽饷", "起运", 43, 43), ("辽饷", "起运", 43, 86)],
+    [("田赋", "起运", 68, 0), ("辽饷", "起运", 43, 43), ("辽饷", "起运", 43, 86)],
 )
 def test_recreated_dynamic_tax_moves_real_persisted_ledger(game, stem, category, seed_base, init_value):
-    """重立声明额度仍只由省级路径消费；不重复中央收入。"""
+    """重立田赋／辽饷仍只由省级路径消费；不重复中央收入。"""
     db, state = _at(game, 1628, 1, 10)
     _settle_month(game, 10)
     baseline = _remittance(db, 10, category)
