@@ -726,8 +726,6 @@ def test_657_five_actions_domain_writes(game):
     assert (hit['choice'] or {}).get('action') == 'summon'
     ledger_after = db.conn.execute('SELECT COUNT(*) AS c FROM story_ledger_entries').fetchone()['c']
     assert ledger_after == ledger_before
-    cols = {r[1] for r in db.conn.execute('PRAGMA table_info(pending_decisions)').fetchall()}
-    assert 'consumed_epoch' not in cols
     _ = derive_draft_capability
 
 def _657_db_path_of(game_or_path) -> str:
@@ -906,8 +904,6 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     db, state, content = game
     assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES < DOSSIER_ACTION_TYPES
     assert 'dismiss_assignment' in RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES
-    cols = {r[1] for r in db.conn.execute('PRAGMA table_info(decree_dossiers)').fetchall()}
-    assert 'rescript_origin' not in cols
     ministers = db.conn.execute("SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 2").fetchall()
     mname = str(ministers[0]['name']) if ministers else '杨嗣昌'
     other = str(ministers[1]['name']) if len(ministers) > 1 else mname

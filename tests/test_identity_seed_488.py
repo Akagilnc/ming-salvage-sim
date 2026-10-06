@@ -9,28 +9,22 @@ from ming_sim.session import _sync_offices_from_db_impl
 
 
 def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
+    """DB seed_guilt 与已加载 content 输入结构化全等（不硬编码 crime 散文）。"""
     db, state, content = game
-    _severity = {"无", "轻", "中", "重"}
     row = db.conn.execute(
         "SELECT faction, identity, seed_guilt FROM characters WHERE name=?",
         ("王承恩",),
     ).fetchone()
-    assert row["faction"] == "皇党"
-    assert row["identity"] == 95
-    wang_guilt = json.loads(row["seed_guilt"])
-    assert set(wang_guilt) == {"crime", "severity"}
-    assert isinstance(wang_guilt["crime"], str)
-    assert wang_guilt["severity"] in _severity
+    assert row["faction"] == content.characters["王承恩"].faction
+    assert row["identity"] == content.characters["王承恩"].identity
+    assert json.loads(row["seed_guilt"]) == content.characters["王承恩"].seed_guilt
 
     温 = db.conn.execute(
         "SELECT faction, identity, seed_guilt FROM characters WHERE name=?", ("温体仁",)
     ).fetchone()
-    assert 温["faction"] == "皇党"
-    assert 温["identity"] == 18
-    wen_guilt = json.loads(温["seed_guilt"])
-    assert set(wen_guilt) == {"crime", "severity"}
-    assert isinstance(wen_guilt["crime"], str) and wen_guilt["crime"].strip()
-    assert wen_guilt["severity"] in _severity
+    assert 温["faction"] == content.characters["温体仁"].faction
+    assert 温["identity"] == content.characters["温体仁"].identity
+    assert json.loads(温["seed_guilt"]) == content.characters["温体仁"].seed_guilt
 
 
 def test_identity_and_seed_guilt_survive_restore(game):
@@ -46,7 +40,7 @@ def test_identity_and_seed_guilt_survive_restore(game):
     ).fetchone()
     assert dict(after) == dict(before)
     guilt = json.loads(after["seed_guilt"])
-    assert guilt["severity"] == "重"
+    assert guilt == json.loads(before["seed_guilt"])
     assert content.characters["魏忠贤"].identity == before["identity"]
     assert content.characters["魏忠贤"].seed_guilt == guilt
 

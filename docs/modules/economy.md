@@ -24,9 +24,9 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `tax_per_turn` | INTEGER | 省级月税基准（万两），含田赋+辽饷+盐税+商税合计 |
-| `gentry_resistance` | INTEGER 0-100 | 士绅阻力；进入省级 settle / 政治压力 |
-| `unrest` | INTEGER 0-100 | 民变压力；进入省级 settle / 事件门 |
-| `fiscal` | JSON | 税种细分 + settle 基座 + 腐败度，见下表 |
+| `gentry_resistance` | INTEGER 0-100 | 士绅阻力；政治/事件与材料投影用，**不**自动写入 `fiscal.settle` tick 输入 |
+| `unrest` | INTEGER 0-100 | 民变压力；事件门与材料投影用，**不**自动写入 settle tick 输入 |
+| `fiscal` | JSON | 税种细分 + `settle` 基座 + 腐败度，见下表 |
 
 `fiscal` JSON 字段说明：
 
@@ -38,8 +38,8 @@
 | `liao_xiang` | 万两/月 | 辽饷月摊派额（settle / 叙事用） |
 | `salt_tax` | 万两/月 | 盐税月基数，hub 旁路汇总 |
 | `commerce_tax` | 万两/月 | 商税月基数，hub 旁路汇总 |
-| `corruption` | 0-100 | 腐败度；region_delta 可写，推演材料可读 |
-| `settle` | object | 省级财政基座 st/p；hub tick 真源 |
+| `corruption` | 0-100 | 腐败度；region_delta 可写，材料可读；**不**自动映射进 settle tick |
+| `settle` | object | 省级财政基座 `st`/`p`；`settle_province_tick` 只读这里（及现役覆盖参数），与顶层士绅/民变/corruption 无自动耦合 |
 
 ---
 
@@ -63,9 +63,9 @@
 ### 动态变化
 
 **收入/压力路径（现行）：**
-- 省级 settle 参数与士绅/民变/腐败进入 tick 账本，影响起运与地方存留
+- 省级 tick 只消费 `fiscal.settle` 的 st/p（及桥接层显式覆盖参数）；改顶层 `gentry_resistance`/`unrest`/`fiscal.corruption` **不会**单独改变同 st/p 的 tick 结果
 - 灾荒、加派、清丈等经人口池与 surcharge/levy 通道改应征与入池
-- 整治贪腐 / 巡按 → `regions.fiscal.corruption` delta（仍由 region_delta 白名单写入）
+- 整治贪腐 / 巡按 → `regions.fiscal.corruption` delta（region_delta 白名单写入，供材料/叙事；要进 settle 须改 settle 参数本身）
 - 盐税/商税基数改各省 `fiscal` 字段才进 hub 旁路；皇庄改 `fiscal_config`
 
 ---
@@ -83,7 +83,7 @@
 | 赈灾备用 | 5 | 制度性预留 |
 | 工部 | 5 | 工部日常维护 |
 
-军饷不在 fixed 目录：预算分列「中央军饷拟拨」「京运补拟拨」，实拨走 substrate hub。建筑维护按各建筑 condition 折算，不进 fiscal_config base。
+军饷不在 fixed 目录：预算分列「中央军饷拟拨」「京运补拟拨」，实拨走 substrate hub。建筑维护不进 fiscal_config base：产出按 condition 折算，维护费不折算（内廷扣内库，其余扣国库）。
 
 ### 内库 fixed（摘录）
 

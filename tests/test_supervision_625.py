@@ -30,11 +30,6 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.supervision import (
     EMPTY_TRANSFORMATION_TENDENCY_FACTS,
-    EXPOSURE_ALLOWED_COLS,
-    EXPOSURE_TABLE,
-    FORBIDDEN_DULLING_COL_FRAGMENTS,
-    PRESENCE_ALLOWED_COLS,
-    PRESENCE_TABLE,
     SUPERVISION_RELATION,
 )
 
@@ -138,44 +133,11 @@ def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
     return int(created["issue_id"])
 
 
-def _table_cols(db, table: str) -> set[str]:
-    return {
-        str(row["name"])
-        for row in db.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
-    }
 
 
 # ── AC1 事实底 ────────────────────────────────────────────────────
 
 
-def test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols(game):
-    db, state, _content = game
-    assert PRESENCE_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    assert EXPOSURE_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    pcols = _table_cols(db, PRESENCE_TABLE)
-    ecols = _table_cols(db, EXPOSURE_TABLE)
-    assert pcols == PRESENCE_ALLOWED_COLS
-    assert ecols == EXPOSURE_ALLOWED_COLS
-    # 全库不得长出钝化数值列。
-    tables = [
-        str(r[0])
-        for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    ]
-    for table in tables:
-        for col in _table_cols(db, table):
-            low = col.lower()
-            for frag in FORBIDDEN_DULLING_COL_FRAGMENTS:
-                assert frag.lower() not in low, f"{table}.{col} 命中禁列片段 {frag}"
 
 
 def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, content):

@@ -1,0 +1,4 @@
+member	action
+docs/modules/buildings.md direct buildings declaration + maintenance from 国库 only	FIXED
+docs/modules/economy.md gentry/unrest/corruption enter settle tick; maintenance by condition	FIXED
+ming_sim/db.py source_chat_turn_id ensure_column comment	FIXED

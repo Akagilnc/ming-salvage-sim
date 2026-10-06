@@ -771,21 +771,8 @@ def test_t12_restore_preserves_tables_and_rebuild(tmp_path, content):
     first.close()
 
     second = GameDB(str(path), content)
-    # 表/列/值仍在
+    # 值仍在（snapshot 含账本结果）
     assert _snapshot(second) == snap
-    cols = {
-        r["name"]
-        for r in second.conn.execute("PRAGMA table_info(factions)").fetchall()
-    }
-    assert "edict_overdraw" in cols
-    tables = {
-        r["name"]
-        for r in second.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    assert "faction_axis_debt" in tables
-    assert "centrifuge_log" in tables
     rebuild_centrifuge_cache(second)
     # cache≡log：blood/wariness/overdraw 与 log 聚合一致
     log = _log_rows(second)

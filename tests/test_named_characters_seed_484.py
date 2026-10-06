@@ -3,6 +3,7 @@
 import pytest
 
 import ming_sim.content as content_module
+from ming_sim.assets import load_json_asset
 from ming_sim.content import load_character_content
 
 
@@ -12,14 +13,20 @@ def _by_name():
 
 
 def test_r3_named_characters_load_legal_guilt_and_historical_offices():
+    """loader 输出与 characters.json 已加载输入结构化保真（crime/severity 全等，不硬编码文句）。"""
     chars = _by_name()
-    _severity = {"无", "轻", "中", "重"}
+    raw_items = load_json_asset("characters.json")["characters"]
+    raw_by_name = {str(item["name"]): item for item in raw_items}
 
-    for name in ("郭允厚", "李从心"):
-        guilt = chars[name].seed_guilt
-        assert set(guilt) == {"crime", "severity"}
-        assert isinstance(guilt["crime"], str) and guilt["crime"].strip()
-        assert guilt["severity"] in _severity
+    def _expected_guilt(name: str) -> dict:
+        raw = raw_by_name[name].get("seed_guilt") or {}
+        return {
+            "crime": str(raw.get("crime") or "").strip(),
+            "severity": str(raw.get("severity") or "无").strip(),
+        }
+
+    for name in ("郭允厚", "李从心", "胡廷宴"):
+        assert chars[name].seed_guilt == _expected_guilt(name)
 
     hu = chars["胡廷宴"]
     # ADR 0009：离事职名分必清；罪由走 seed_guilt，不挂现职。
@@ -27,9 +34,6 @@ def test_r3_named_characters_load_legal_guilt_and_historical_offices():
     assert hu.office_type == "督抚"
     assert hu.status == "dismissed"
     assert hu.aliases == ["胡廷宴", "胡总督"]
-    assert set(hu.seed_guilt) == {"crime", "severity"}
-    assert isinstance(hu.seed_guilt["crime"], str) and hu.seed_guilt["crime"].strip()
-    assert hu.seed_guilt["severity"] in _severity
 
     li = chars["李从心"]
     assert "工部尚书" in li.office

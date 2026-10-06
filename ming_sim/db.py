@@ -1339,10 +1339,7 @@ class GameDB:
                 source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            -- #1890：idx_pending_actions_source_turn 在 init 幂等补缺（见下方 CREATE INDEX）。
-            -- 历史注：曾因旧档缺列不能写在 CREATE；#1843 已退役旧库补列阶梯。
-            -- pending_actions 已存在时 CREATE TABLE IF NOT EXISTS 不重建、不补
-            -- source_chat_turn_id，索引会引用缺列失败。索引随下面的 ensure_column 建。
+            -- #1890：idx_pending_actions_source_turn 在下方与列一同 CREATE INDEX（列已在 CREATE 基线）。
 
             CREATE TABLE IF NOT EXISTS recommendation_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
