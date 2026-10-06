@@ -439,9 +439,8 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
 
 # --- tags 字段严格化（cmr ni r8 codex medium）---
 # tags = list(ni.get("tags") or []) 对标量串静默拆字（list("募营")=['募','营']）、对非串元素
-# 不拒（list([5])=[5]）。后果：_initiative_resolve_pairing_warnings 用子串匹配整词「募营」判
-# new_armies 配对，拆字后「募 营」失配 → bypass #45/#46 守门；且拆字本身污染 DB tags。与 R6
-# int 字段 _strict_int 同一字段校验 class——缺省/null/空串→[]，present 须 list/tuple 且元素全 str。
+# 不拒（list([5])=[5]）并污染 DB tags。与 R6 int 字段 _strict_int 同一字段校验 class——
+# 缺省/null/空串→[]，present 须 list/tuple 且元素全 str。
 
 
 @pytest.mark.parametrize("bad_tags", ["募营", "单串标量"])

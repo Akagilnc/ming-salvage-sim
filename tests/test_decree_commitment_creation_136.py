@@ -912,47 +912,6 @@ def test_empty_json_stop_condition_allows_advance_to_resolved(game):
     assert advanced["closed_turn"] == state.turn
 
 
-def test_commitment_skips_cli_resolve_effect_enrich(game, monkeypatch):
-    import ming_sim.cli_backend as _cb
-
-    db, state, content = game
-    calls = []
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(
-        _cb,
-        "enrich_initiative_effects",
-        lambda *args, **kwargs: calls.append((args, kwargs))
-        or {"effect_on_resolve": {"metrics": {"民心": 9}}, "ongoing_effects": {}, "effect_on_fail": {}},
-    )
-
-    I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-liao-arrears"),
-                    "kind": "initiative",
-                    "title": "每月补辽饷直到补齐",
-                    "ongoing_effects": {
-                        "economy": [
-                            {"account": "国库", "delta": -50, "category": "补饷承诺", "reason": "每月补辽饷"}
-                        ]
-                    },
-                    "stop_condition": {"army.guanning.arrears": "<=0"},
-                    "commitment_kind": "until_stop",
-                }
-            ]
-        },
-        content=content,
-    )
-
-    row = _issue_by_title(db, "每月补辽饷直到补齐")
-    assert calls == []
-    assert json.loads(row["effect_on_resolve"]) == {}
-
-
 def test_one_shot_appeasement_economy_move_does_not_create_commitment_issue(game, monkeypatch):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)

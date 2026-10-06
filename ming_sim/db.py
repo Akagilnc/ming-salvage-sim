@@ -15695,6 +15695,7 @@ class GameDB:
         初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
         """
         # Free prose execution note fragment: preserve raw (#1834 F16).
+        # Append legal new fragment as-is; no content-match identity gate (#1834 F35).
         text = str(fragment or "")
         if not text.strip():
             raise ValueError("说明片段不能为空")
@@ -15702,9 +15703,7 @@ class GameDB:
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
         existing = str(row.get("execution_note") or "")
-        if text in existing.split("；"):
-            merged = existing
-        elif existing.strip():
+        if existing.strip():
             merged = f"{existing}；{text}"
         else:
             merged = text

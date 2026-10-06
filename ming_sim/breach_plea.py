@@ -311,13 +311,14 @@ def _merge_plea_kind_into_todo(
         )
     meta["absorbed_breach_kinds"] = absorbed_list
     # 保留首类 primary；补充理由/案卷。理由进 due_review note → 案卷实况，禁止 [:N]（#1834 F16）。
+    # Free reason prose: append legal new text as-is; no content-match dedup (#1834 F35).
     if reason and not str(meta.get("reason") or "").strip():
         meta["reason"] = str(reason)
     elif reason:
         prev = str(meta.get("reason") or "")
         add = str(reason)
-        if add and add not in prev:
-            meta["reason"] = f"{prev}；{add}"
+        if add.strip():
+            meta["reason"] = f"{prev}；{add}" if prev.strip() else add
     if int(target_dossier_id or 0) > 0 and int(meta.get("target_dossier_id") or 0) <= 0:
         meta["target_dossier_id"] = int(target_dossier_id)
     if extra:

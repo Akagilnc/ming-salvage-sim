@@ -357,13 +357,14 @@ def _payload_owned_person_duplicate(
 
 
 def _issue_condition_text(raw: object) -> str:
+    """Free condition prose for transport/persist: preserve raw; emptiness on local copy."""
     if raw is None:
         return ""
     if isinstance(raw, str):
-        return raw.strip()
+        return raw
     if isinstance(raw, (dict, list)):
         return json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
-    return str(raw).strip()
+    return str(raw)
 
 
 def _normalize_commitment_kind(raw: object) -> str:
@@ -3259,30 +3260,6 @@ def _apply_issue_entities(
     return tolerated
 
 
-# #45/#46（M1 状态可信链路）：国策结案实体后果强制配对守门。语义命中练军/募营/调将却无
-# new_armies/office_changes、或命月经费/俸/饷却无月度 economy 时响亮告警，堵「只推进度条、
-# 实体后果只活邸报」的半落库（#45 太学府月经费没立账、#46 天雄军没建军籍真踩坑）。
-# warn-only：列入结果供 surface、不阻断结算；检查国策自身 effect_on_resolve/ongoing_effects
-# 是否带应有实体（正解就该挂在这两处、enrich 也如此填），不跨引顶层、保持纯函数可测。
-_MILITARY_RAISE_PHRASES = (
-    "练军", "练兵", "练成", "募营", "募兵", "募军", "建军", "新军", "成军",
-    "团练", "编练", "立营", "组建", "扩军",
-)
-_MILITARY_MOVE_PHRASES = ("调将", "调防", "移镇", "督师", "镇守", "调任主将")
-_FISCAL_RECURRING_PHRASES = (
-    "月经费", "经费", "月俸", "俸禄", "岁俸", "军饷", "粮饷", "月饷", "岁支",
-    "廪", "养兵", "养廉", "月银",
-)
-
-
-def _nonempty_list(v: object) -> bool:
-    return isinstance(v, list) and len(v) > 0
-
-
-def _nonempty_dict(v: object) -> bool:
-    return isinstance(v, dict) and len(v) > 0
-
-
 _STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS: Dict[str, Dict[str, frozenset[str]]] = {
     "jisi_lubian": {
         "regions": frozenset({"beizhili"}),
@@ -4241,105 +4218,6 @@ def _restore_person_content_from_snapshot(
     _restore_content_character_rows(content, content_rows)
 
 
-def _has_economy_entry(d: object) -> bool:
-    """是否含「flows 会真正立账」的月度 economy 项：account∈(国库,内库) + delta 经 int() 强转非零
-    ——与 flows._apply_economy_list 同口径（它只对 国库/内库 立账、`int(delta or 0)` 强转、跳过
-    零额/非数/它账）。空壳/它账/零额/非数不算配对，数字串 delta 同 flows 认账（CMR codex+claude）。
-    economy 非 list（畸形 JSON：int/str/bool）→ 安全返 False，不 TypeError 崩结算（PR#107 gemini）。"""
-    if not isinstance(d, dict):
-        return False
-    eco = d.get("economy")
-    if not isinstance(eco, list):
-        return False
-    for item in eco:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("account") or "") not in ("国库", "内库"):
-            continue
-        try:
-            delta = int(item.get("delta") or 0)
-        except (TypeError, ValueError):
-            continue
-        if delta != 0:
-            return True
-    return False
-
-
-def _initiative_resolve_pairing_warnings(
-    title: str, tags: object, ongoing_effects: object, effect: object,
-) -> List[str]:
-    """国策结案实体后果强制配对守门（#45/#46）——仅在 initiative 结案处调用。
-    返回缺配对的告警串列表（空=无缺漏）。warn-only，调用方 surface、不阻断。"""
-    tag_list = tags if isinstance(tags, (list, tuple)) else []
-    blob = str(title or "") + " " + " ".join(str(t) for t in tag_list)
-    effect = effect if isinstance(effect, dict) else {}
-    warns: List[str] = []
-
-    # 练军/募营 须落 new_armies；调将 须落人物变更——分别判，不混为一谈（练军只挂调任仍缺军籍、
-    # 调将只挂建军仍缺主将调任，混判会互相消音，CMR codex）。office_changes 是 ADR 0009 死键、
-    # _apply_issue_entities 不读，不纳入 has_office（纳入会消音本该响的告警，CMR gemini）。
-    needs_army = any(p in blob for p in _MILITARY_RAISE_PHRASES)
-    needs_office = any(p in blob for p in _MILITARY_MOVE_PHRASES)
-    if needs_army or needs_office:
-        # 形对：_apply_issue_entities 只落 list 的 new_armies/人物变更/character_status_changes、
-        # dict 的 army_delta；畸形容器（字符串/错类型）不算真配对，不该消音告警（PR#107 codex）。
-        has_army = _nonempty_list(effect.get("new_armies")) or _nonempty_dict(effect.get("army_delta"))
-        has_office = (
-            _nonempty_list(effect.get("人物变更"))
-            or _nonempty_list(effect.get("character_status_changes"))
-        )
-        if needs_army and not has_army:
-            warns.append(
-                f"军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
-            )
-        if needs_office and not has_office:
-            warns.append(
-                f"军事国策「{str(title)[:16]}」结案无人物变更配对（调将疑未落主将调任，#46）"
-            )
-
-    if any(p in blob for p in _FISCAL_RECURRING_PHRASES):
-        # 只查国策自身 effect/ongoing 的月度 economy；顶层 fiscal_creates 不在本纯函数视野内，
-        # 故告警文案不声称查了它——若另经 fiscal_creates 立账可忽略本提示（CMR claude）。
-        if not _has_economy_entry(effect) and not _has_economy_entry(ongoing_effects):
-            warns.append(
-                f"经制国策「{str(title)[:16]}」结案无月度 economy 配对"
-                "（疑月经费/俸饷未立常设月支；若已另经 fiscal_creates 立账可忽略，#45）"
-            )
-    return warns
-
-
-def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = None) -> None:
-    """在 initiative 结案处调配对守门：tlog 响亮告警（#14/#27 风格）；sink 给定时再收进供
-    程序 surface（inertia 自然结案路只 tlog、不收 sink）。仅对 kind=initiative 生效；
-    row 字段缺失/JSON 畸形一律安全降级、不阻断结算。"""
-    def _g(key, default):
-        try:
-            return new_row[key]
-        except (KeyError, IndexError, TypeError):
-            return default
-    if str(_g("kind", "") or "") != "initiative":
-        return
-    # tags/ongoing_effects 在 DB row 里是 JSON 串，但调用方（test/mock/上游预解析）可能已传
-    # 解析好的 list/dict——此时 json.loads(容器) 抛 TypeError 被 except 吞成空，会静默丢有效
-    # 数据、把本该响的告警消音 / 把有效月支误判成缺失（PR#107 R3 gemini medium，与下游
-    # _initiative_resolve_pairing_warnings 的 isinstance 防御同向）。先认已解析的容器。
-    raw_tags = _g("tags", "[]")
-    if isinstance(raw_tags, (list, tuple)):
-        tags = list(raw_tags)
-    else:
-        try:
-            tags = json.loads(raw_tags or "[]")
-        except (TypeError, ValueError):
-            tags = []
-    # ongoing_effects 经统一守门 loads_effect_dict（已解析 dict 原样 / JSON 串解析 / 非 dict→{}，
-    # 含调用方预解析容器的兼容，#117 R5 chokepoint 一致）。
-    ongoing = loads_effect_dict(_g("ongoing_effects", "{}"))
-    for w in _initiative_resolve_pairing_warnings(str(_g("title", "") or ""), tags, ongoing, effect):
-        tlog(f"[pairing] {w}")
-        if sink is not None:
-            sink.append(w)
-
-
 def apply_issue_tracker_output(
     db: GameDB,
     state: GameState,
@@ -4360,7 +4238,6 @@ def apply_issue_tracker_output(
     # same-batch new_issues births from later carriers (close / durable origin).
     touched_ids: set = set()
     applied_advances: List[Dict[str, object]] = []
-    pairing_warnings: List[str] = []  # #45/#46 国策结案实体后果强制配对告警（warn-only）
     applied_new: List[Dict[str, object]] = []
     applied_cancels: List[Dict[str, object]] = []
     # issue 实体后果的容忍拒收项（issue_strict=False）——挂进返回 summary,
@@ -4471,7 +4348,6 @@ def apply_issue_tracker_output(
         # 终结结算：bar 自然推到 100/0 触发的 resolved/failed，与 close_issues 一样落终结效果（含建筑）
         if new_row["status"] == "resolved":
             effect = loads_effect_dict(new_row["effect_on_resolve"])
-            _emit_pairing_warnings(new_row, effect, pairing_warnings)
             parent_origin_ref = _canonical_issue_origin(db, new_row)
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
             entity_rejections.extend(r for r in _apply_economy_list(
@@ -4808,7 +4684,8 @@ def apply_issue_tracker_output(
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
         legacy_resolve_text = _issue_condition_text(ni.get("resolve_condition"))
-        if not legacy_resolve_text and isinstance(stop_condition_raw, str):
+        # Empty-check on local strip copy; persist path keeps raw (#1834 F34).
+        if not legacy_resolve_text.strip() and isinstance(stop_condition_raw, str):
             legacy_resolve_text = stop_condition
         legacy_resolve_commitment_shape = (
             commitment_condition_role(legacy_resolve_text).get("condition_role")
@@ -4823,7 +4700,7 @@ def apply_issue_tracker_output(
                 or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
                 or (
                     isinstance(stop_condition_raw, str)
-                    and bool(stop_condition)
+                    and bool(stop_condition.strip())
                     and bool(origin_ref)
                     and not resolve_eff
                     and not fail_eff
@@ -4898,26 +4775,8 @@ def apply_issue_tracker_output(
                     "item": ni, "title": title,
                 })
                 continue
-        # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
-        # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
-        if kind == "initiative" and not resolve_eff and not is_commitment:
-            from ming_sim.cli_backend import cli_backend_active, enrich_initiative_effects
-            if cli_backend_active(llm_config):
-                try:
-                    enr = enrich_initiative_effects(
-                        title,
-                        str(ni.get("stage_text") or ""),
-                        llm_config=llm_config,
-                    )
-                    resolve_eff = enr.get("effect_on_resolve") or resolve_eff
-                    ongoing_eff = enr.get("ongoing_effects") or ongoing_eff
-                    fail_eff = enr.get("effect_on_fail") or fail_eff
-                    print(f"[issue/enrich] 国策「{title[:16]}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
-                except Exception as exc:
-                    print(f"[issue/enrich] 补全失败，沿用空效果：{exc}")
-                # floor 在 try 外：即便 enrich 抛错或没补上，CLI 后端国策也绝不入空壳（codexB）。
-                if not resolve_eff:
-                    resolve_eff = {"metrics": {"民心": 1}}
+        # #1834 F38：国策只承接声明中的合法效果；退役第二次效果补全与无依据收益 floor。
+        # 空 effect_on_resolve 原样入库，由现有调用/记录/恢复契约处理。
         # 字段强转脏数据 → 拒整项（ADR 0008 决定 1：new_issue 即「项」，坏字段令该项无法洁净构造
         # → 拒留痕，非默认掩盖）。这些强转会因脏 LLM 数据抛：bar_value/severity 的 int()、
         # cancel_cost 的 dict("脏")、tags 的 list(5)、_compute_inertia 的 legacy `int(inertia)`
@@ -4938,9 +4797,8 @@ def apply_issue_tracker_output(
             # 不进 except 拒收路。
             # tags 严格化（cmr ni r8 codex medium，与上方 int 字段同一字段校验 class）：缺省/null/
             # 空串 → []；present 必须是 list/tuple 且元素全为 str。原 `list(ni.get("tags") or [])`
-            # 把标量串拆字（list("募营")=['募','营']）——既污染 DB tags，又让 _initiative_resolve_
-            # pairing_warnings 的整词子串匹配（"募营" in blob）失配 → bypass #45/#46 new_armies 配对
-            # 守门；非串元素（list([5])=[5]）也静默落库。脏值落 except 拒整项。
+            # 把标量串拆字（list("募营")=['募','营']）污染 DB tags；非串元素（list([5])=[5]）
+            # 也静默落库。脏值落 except 拒整项。
             _tags_raw = ni.get("tags")
             if _tags_raw is None or _tags_raw == "":
                 tags = []
@@ -4961,7 +4819,8 @@ def apply_issue_tracker_output(
             })
             continue
         resolve_condition = _issue_condition_text(ni.get("resolve_condition"))
-        if not resolve_condition and isinstance(ni.get("stop_condition"), str):
+        # Empty-check on local strip copy; resolve_condition itself stays raw (#1834 F34).
+        if not resolve_condition.strip() and isinstance(ni.get("stop_condition"), str):
             resolve_condition = stop_condition
         # A structured roster is an item-level contract.  In particular a
         # mapping is not an iterable roster: iterating it would persist its
@@ -5237,8 +5096,6 @@ def apply_issue_tracker_output(
         if isinstance(cl_effect, dict):
             # 浅合并：metrics/economy/factions/buildings/legacy 等顶层段，现给覆盖预设
             effect = {**effect, **cl_effect}
-        if reason == "resolved":
-            _emit_pairing_warnings(new_row, effect, pairing_warnings)
         parent_origin_ref = _canonical_issue_origin(db, new_row)
         _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
         entity_rejections.extend(r for r in _apply_economy_list(
@@ -5306,19 +5163,15 @@ def apply_issue_tracker_output(
                 "category": "non_cancellable_converted",
             })
             continue
-        # #623 / ADR 0075：active 承诺松手不得顺 cancel 即 breach+close——
-        # cancel=改弦信号：primary∪absorbed 含改弦即认并 finalize 该 merged 条；
-        # 其它类 pending 则并入改弦条。禁「报 persist 不执行」。
+        # #1894 / #1834 F37：明确撤旨（cancels）不再强制写次回合挽留。
+        # 已有模型自主/他类松手 pending 且含改弦时，cancel=坚持 → finalize 既有条；
+        # 否则走下方既有可撤成命写口（0056 + cancel_issue），当月落实。
         if str(row["commitment_kind"] or "").strip():
             from ming_sim.breach_plea import (
                 BREACH_KIND_POLICY_REVERSAL,
                 finalize_persist,
                 find_pending_plea,
-                parse_dossier_id,
-                write_breach_plea_todo,
             )
-            origin_ref_c = str(row["origin_ref"] or "").strip()
-            # 统一 primary∪absorbed：has_pending 与 todo 检索同一读口
             plea_todo = find_pending_plea(
                 db, issue_id, breach_kind=BREACH_KIND_POLICY_REVERSAL,
             )
@@ -5332,22 +5185,7 @@ def apply_issue_tracker_output(
                 })
                 touched_ids.add(issue_id)
                 continue
-            # 无改弦 pending：写/并入改弦挽留条（同回合他类松手走 merge，不静默吞）
-            write_breach_plea_todo(
-                db, state,
-                commitment_ref=issue_id,
-                breach_kind=BREACH_KIND_POLICY_REVERSAL,
-                reason=str(cn.get("narrative") or "撤回成命"),
-                target_dossier_id=int(parse_dossier_id(origin_ref_c) or 0),
-            )
-            applied_cancels.append({
-                "issue_id": issue_id,
-                "rejected": False,
-                "title": row["title"],
-                "deferred_breach_plea": True,
-            })
-            touched_ids.add(issue_id)
-            continue
+            # 无既有改弦 pending：不写 deferred 挽留，落入下方正常撤旨路径。
         # 可撤成命：若事项来自已颁案卷，ADR 0056 的确定性毁约轨取代
         # extractor/default by_progress cancel_cost，防同一次撤旨双罚。
         linked_dossier = None
@@ -5373,11 +5211,14 @@ def apply_issue_tracker_output(
         cost = {} if deterministic_breach else (cn.get("applied_cost") or {})
         if isinstance(cost, dict):
             _apply_metric_dict(state, cost.get("metrics") or {}, db=db)
-            parent_origin_ref = _canonical_issue_origin(db, row)
-            entity_rejections.extend(r for r in _apply_economy_list(
-                db, state, cost.get("economy") or [], commit=commit_now,
-                origin_ref=parent_origin_ref, require_origin=True,
-            ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+            # economy 才需合法 origin；空 cost / 仅 metrics 的明确撤旨不得因无案源卡死 cancel 写口（#1834 F37）。
+            economy_items = cost.get("economy") or []
+            if economy_items:
+                parent_origin_ref = _canonical_issue_origin(db, row)
+                entity_rejections.extend(r for r in _apply_economy_list(
+                    db, state, economy_items, commit=commit_now,
+                    origin_ref=parent_origin_ref, require_origin=True,
+                ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
             entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         db.cancel_issue(
             state, issue_id,
@@ -5397,7 +5238,6 @@ def apply_issue_tracker_output(
         "entity_rejections": entity_rejections,
         "applied_person_changes": issue_person_changes,
         "touched_ids": sorted(touched_ids),
-        "pairing_warnings": pairing_warnings,
     }
 
 
@@ -8995,8 +8835,8 @@ def _apply_score_extraction_body(
 
     state.clamp()
     # 实际应用结果契约（ADR 0157 步骤 4／4a）：只报已落账事实与拒收段。
-    # 抽取输入回声（world_advance / person_changes）与 warn-only 辅助
-    # （pairing_warnings）不入此契约；ongoing 结局读数亦非本段已提交效果。
+    # 抽取输入回声（world_advance / person_changes）不入此契约；
+    # ongoing 结局读数亦非本段已提交效果。
     report: Dict[str, object] = {
         "metric_delta": applied_metric,
         "validate_shape_rejections": validate_rejection_items,

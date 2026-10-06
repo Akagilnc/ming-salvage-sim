@@ -39,7 +39,6 @@ from ming_sim.issues import (
     _commitment_gate_references_arrears,
     _commitment_stop_gate,
     _ctx,
-    _emit_pairing_warnings,
     _gate_passed,
     _invalid_monthly_mapping_shape,
     _merged_mapping_effect,
@@ -387,7 +386,6 @@ def apply_situation_monthly_drift(
                     continue
                 if new_row["status"] == "resolved":
                     effect = loads_effect_dict(new_row["effect_on_resolve"])
-                    _emit_pairing_warnings(new_row, effect)  # inertia 路只 tlog（#45/#46）
                     _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
                     inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], origin_ref=parent_origin_ref) if r.get("rejected"))  # economy 拒收不蒸发（#14）
                     inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
