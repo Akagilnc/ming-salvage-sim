@@ -1264,10 +1264,12 @@ def dossier_id_in_origin(origin: object) -> Optional[int]:
 def _candidate_event_fact(ev: Any) -> dict[str, object]:
     """一个候选事件的结构化事实（ADR 0014 触发门已由 gather 判过，这里只转述事实）。
 
-    战果软判需要的「历史结果 + 历史成因」锚 = summary / precondition /
-    resolve_condition / fail_condition；不给 effect 载荷，代码不代模型算软判。
-    结局标签只对 strategic_foreign 的 node/ending 战事给，取既有写口的同一份
-    白名单（issues.strategic_event_outcome_labels），空集即该事件不收结局标签。
+    资格门已在引擎侧判完，不把 trigger_gate（含裸人物属性门槛）再供入人读目录
+    （#1834 F33 / ADR 0143）。战果软判需要的「历史结果 + 历史成因」锚 =
+    summary / precondition / resolve_condition / fail_condition；不给 effect 载荷，
+    代码不代模型算软判。结局标签只对 strategic_foreign 的 node/ending 战事给，
+    取既有写口的同一份白名单（issues.strategic_event_outcome_labels），空集即
+    该事件不收结局标签。
     """
     from ming_sim.issues import strategic_event_outcome_labels
 
@@ -1276,7 +1278,6 @@ def _candidate_event_fact(ev: Any) -> dict[str, object]:
         "title": str(ev.title),
         "kind": str(ev.kind),
         "interests": list(ev.interests),
-        "trigger_gate": dict(ev.trigger_gate),
         "terminal_reason_labels": list(getattr(ev, "terminal_reason_labels", []) or []),
         "summary": str(ev.summary),
         "event_type": str(ev.event_type),
@@ -1571,7 +1572,6 @@ def _write_candidate_event_files(tmp: Path, candidates: list) -> list[str]:
             ("事件类型", item["event_type"]),
             ("事由", item["summary"]),
             ("相关", "、".join(item["interests"])),
-            ("前提门", "\n" + _material_facts_text(item["trigger_gate"])),
             ("可解条件", item["resolve_condition"]),
             ("崩坏条件", item["fail_condition"]),
             ("历史前情与结果", item["precondition"]),

@@ -1834,9 +1834,7 @@ def _advance_after_gazette(
     if chain.get("advanced"):
         return True
     from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
-    from ming_sim.decree import (
-        TIMEOUT_TURN, _carry_pending_clarification_actions, atomic_and_reload,
-    )
+    from ming_sim.decree import TIMEOUT_TURN, atomic_and_reload
     from ming_sim.rescript_actions import clear_return_revise_choice_anchors
 
     settled_year, settled_period = int(state.year), int(state.period)
@@ -1873,7 +1871,6 @@ def _advance_after_gazette(
         from ming_sim.displaced_population import apply_recovery_driven_transfers
         apply_recovery_driven_transfers(db, state, commit=False)
         state.next_period()
-        _carry_pending_clarification_actions(db, state, turn, content=content)
         state.turn_phase = "issued"
         db.save_state(state)
         db.clear_month_open_snapshot(turn)

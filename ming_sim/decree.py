@@ -678,20 +678,6 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     )
 
 
-def _carry_pending_clarification_actions(
-    db: GameDB, state: GameState, before_turn: int, *, content=None,
-) -> None:
-    """Keep unresolved pre-edict drafts discoverable in the new month."""
-    for pending_action in db.list_pending_actions(before_turn):
-        prepared = db._prepare_pending_directive(state, pending_action, content=content)
-        if prepared["classification"] == "needs_clarification":
-            db.conn.execute(
-                "UPDATE pending_actions "
-                "SET turn=?, night_id=0, night_approved=0 WHERE id=?",
-                (int(state.turn), int(pending_action["id"])),
-            )
-
-
 def resolve_directives(
     state: GameState,
     db: GameDB,

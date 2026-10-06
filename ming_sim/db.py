@@ -17105,7 +17105,7 @@ class GameDB:
             # #498：同回合可跨两夜（一月多夜）。旧夜遗留的 pending directive 被本夜复用更新时，
             # 必须把归属原子迁到当前开着的夜并清 night_approved，否则本夜应允的
             # WHERE night_id=当前夜 更新零行、收夜漏交、随后被默认同意旁路批交。
-            # #502 L5（同缝）：合并保留下划线控制键，正文改草不抹待澄清/夜内态。
+            # #502 L5（同缝）：合并保留下划线控制键，正文改草不抹夜内态闸。
             existing_payload = self.conn.execute(
                 "SELECT payload_json FROM pending_actions WHERE id=?", (int(row["id"]),),
             ).fetchone()
@@ -17182,8 +17182,8 @@ class GameDB:
         """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
         与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清 night_approved，
         使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。返回该行 id（不存在/非 pending 则 0）。
-        **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
-        静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
+        **合并保留下划线控制键**（_directive_status 等）——正文改草不得
+        静默抹掉夜内态闸（#502 L5）。
         #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。"""
         from ming_sim.audience_night import assert_night_accepts_player_input
         assert_night_accepts_player_input(self, what="改草")
@@ -17243,7 +17243,7 @@ class GameDB:
         existing_json: object, new_payload: Dict[str, object],
     ) -> Dict[str, object]:
         """把新 payload 与旧 payload 里的下划线控制键（`_` 前缀）合并：新 payload 为主，
-        旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态/待澄清闸（#502 L5）。"""
+        旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态闸（#502 L5）。"""
         try:
             old = json.loads(existing_json or "{}") if not isinstance(
                 existing_json, (dict, list)) else existing_json
@@ -17314,34 +17314,6 @@ class GameDB:
             raise ValueError("旨稿机械载荷不完整或非法，拒绝改草")
         return normalized
 
-    def flag_directive_needs_clarification(self, candidate_id: int) -> int:
-        """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
-        「不回→默认同意」误提交（含糊口令 ≠ 未表态）。皇帝下一句指明后由确认路清标并准驳。
-        返回该行 id（不存在/非 pending 则 0）。
-        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
-        row = self.conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'",
-            (int(candidate_id),),
-        ).fetchone()
-        if row is None:
-            return 0
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (ValueError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        payload["_needs_clarification"] = True
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
-        )
-        self.conn.commit()
-        return int(candidate_id)
-
     def list_pending_actions(
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
     ) -> List[Dict[str, object]]:
@@ -17406,7 +17378,6 @@ class GameDB:
 
     def _prepare_pending_directive(
         self, state: GameState, pa: Dict[str, object], *, content=None,
-        allow_clarification: bool = False,
     ) -> Dict[str, object]:
         """Classify and, only when valid, project one staged directive."""
         if (
@@ -17419,8 +17390,6 @@ class GameDB:
             payload = json.loads(str(pa.get("payload_json") or "{}"))
             if not isinstance(payload, dict):
                 return {"classification": "invalid"}
-            if payload.get("_needs_clarification") and not allow_clarification:
-                return {"classification": "needs_clarification"}
             payload = self._normalize_directive_dossier_payload(
                 payload, content=content, current_turn=int(state.turn),
             )
@@ -17502,11 +17471,8 @@ class GameDB:
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
                 prepared = self._prepare_pending_directive(
                     state, pa, content=content,
-                    allow_clarification=action_ids is not None,
                 )
                 classification = prepared["classification"]
-                if classification == "needs_clarification":
-                    continue
                 if classification == "invalid":
                     cm = atomic(self) if owns_transaction else contextlib.nullcontext()
                     with cm:
