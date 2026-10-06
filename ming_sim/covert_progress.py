@@ -549,6 +549,11 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
 
 
 def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[Dict[str, object]]:
+    """Durable read of a frozen covert-task contract.
+
+    Missing key → None (合法无契约). Present but invalid frozen payload is
+    StoredDocumentError — not the same as coerce-only product validation None.
+    """
     if not isinstance(dossier, Mapping):
         return None
     payload = dossier.get("payload")
@@ -557,12 +562,24 @@ def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[
         if isinstance(raw_json, str) and raw_json.strip():
             from ming_sim.applier import load_stored_object
 
-            payload = load_stored_object(raw_json, label=f"案卷#{dossier.get('id')} payload_json")
+            payload = load_stored_object(
+                raw_json, label=f"案卷#{dossier.get('id')} payload_json",
+            )
         else:
             payload = None
     if not isinstance(payload, Mapping):
         return None
-    return coerce_covert_task_contract(payload.get(CONTRACT_KEY))
+    raw_contract = payload.get(CONTRACT_KEY)
+    if raw_contract is None:
+        return None
+    coerced = coerce_covert_task_contract(raw_contract)
+    if coerced is None:
+        from ming_sim.applier import StoredDocumentError
+
+        raise StoredDocumentError(
+            f"案卷#{dossier.get('id')} covert-task 契约损坏",
+        )
+    return coerced
 
 
 def require_covert_task_contract(dossier: Mapping[str, object] | None) -> Dict[str, object]:

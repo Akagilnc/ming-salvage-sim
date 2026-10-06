@@ -6291,7 +6291,9 @@ class GameDB:
         # 既存 brief pins：成员损坏是读缝，不得 ValueError 洗成 pending failed。
         pins: List[int] = []
         for pin in parsed:
-            value = durable_int(pin, label="origin_chat_message_ids")
+            value = durable_int(
+                pin, label="origin_chat_message_ids", blank=None,
+            )
             if value <= 0:
                 raise StoredDocumentError("origin_chat_message_ids 必须为正整数")
             pins.append(value)
@@ -6758,13 +6760,22 @@ class GameDB:
             origin = cls._normalize_dossier_report_origin(
                 item.get("origin"), is_terminal=is_terminal,
             )
+            # id/turn 必填；dossier_id 可空时回落查询上下文（None 与空串同形）。
+            raw_did = item.get("dossier_id")
+            if raw_did is None or raw_did == "":
+                resolved_did = int(dossier_id)
+            else:
+                resolved_did = durable_int(
+                    raw_did, label="dossier_progress.dossier_id", blank=None,
+                )
             return {
-                "id": durable_int(item["id"], label="dossier_progress.id"),
-                "dossier_id": durable_int(
-                    item.get("dossier_id") if item.get("dossier_id") is not None else dossier_id,
-                    label="dossier_progress.dossier_id",
+                "id": durable_int(
+                    item["id"], label="dossier_progress.id", blank=None,
                 ),
-                "turn": durable_int(item["turn"], label="dossier_progress.turn"),
+                "dossier_id": resolved_did,
+                "turn": durable_int(
+                    item["turn"], label="dossier_progress.turn", blank=None,
+                ),
                 "progress_band": str(item["progress_band"]),
                 "memorial_text": str(item["memorial_text"]),
                 "is_terminal": is_terminal,
@@ -14006,31 +14017,32 @@ class GameDB:
         rows = self.character_knowledge.secret_order_rows(status, minister_name)
         out: List[Dict[str, object]] = []
         for r in rows:
-            oid = durable_int(r["id"], label="secret_orders.id")
+            oid = durable_int(r["id"], label="secret_orders.id", blank=None)
             dossier = self.dossiers.get_for_secret_order(oid)
             out.append({
                 "id": oid,
                 "turn_issued": durable_int(
-                    r["turn_issued"], label="secret_orders.turn_issued",
+                    r["turn_issued"], label="secret_orders.turn_issued", blank=None,
                 ),
+                # due_turn / deadline_span：既有可空默认 0。
                 "due_turn": durable_int(
-                    r["due_turn"], label="secret_orders.due_turn",
+                    r["due_turn"], label="secret_orders.due_turn", blank=0,
                 ),
                 "deadline_span": durable_int(
-                    r["deadline_span"], label="secret_orders.deadline_span",
+                    r["deadline_span"], label="secret_orders.deadline_span", blank=0,
                 ),
                 "year_issued": durable_int(
-                    r["year_issued"], label="secret_orders.year_issued",
+                    r["year_issued"], label="secret_orders.year_issued", blank=None,
                 ),
                 "period_issued": durable_int(
-                    r["period_issued"], label="secret_orders.period_issued",
+                    r["period_issued"], label="secret_orders.period_issued", blank=None,
                 ),
                 "minister_name": r["minister_name"],
                 "title": r["title"],
                 "content": r["content"],
                 "tags": load_stored_list(r["tags"], label='tags'),
                 "importance": durable_int(
-                    r["importance"], label="secret_orders.importance",
+                    r["importance"], label="secret_orders.importance", blank=None,
                 ),
                 "status": r["status"],
                 "result": r["result"] or "",
@@ -14161,7 +14173,9 @@ class GameDB:
         if not row or row["status"] != "active":
             return False
         current_turn = self._current_game_turn(
-            durable_int(row["turn_issued"], label="secret_orders.turn_issued"),
+            durable_int(
+                row["turn_issued"], label="secret_orders.turn_issued", blank=None,
+            ),
         )
         claim_text = str(claim or "")
         with atomic(self):
@@ -14284,7 +14298,9 @@ class GameDB:
         except (TypeError, ValueError):
             months = 1
         target_turn = int(state.turn) + months
-        old_due = durable_int(row["due_turn"], label="secret_orders.due_turn")
+        old_due = durable_int(
+            row["due_turn"], label="secret_orders.due_turn", blank=0,
+        )
         raw_reason = str(reason or "")
         # 催办理由自由正文原样；仅真正空串才回落缺省，禁 strip 判空。
         why = raw_reason or "奉旨加急"
@@ -14317,16 +14333,17 @@ class GameDB:
         if not r:
             return None
         return {
-            "id": durable_int(r["id"], label="secret_orders.id"),
+            "id": durable_int(r["id"], label="secret_orders.id", blank=None),
             "minister_name": r["minister_name"],
             "title": r["title"], "content": r["content"],
             "status": r["status"], "result": r["result"] or "",
             "sim_note": r["sim_note"] or "",
             "turn_issued": durable_int(
-                r["turn_issued"], label="secret_orders.turn_issued",
+                r["turn_issued"], label="secret_orders.turn_issued", blank=None,
             ),
+            # due_turn 可空列：合法缺省 0（既有 int(or 0) 语义）。
             "due_turn": durable_int(
-                r["due_turn"], label="secret_orders.due_turn",
+                r["due_turn"], label="secret_orders.due_turn", blank=0,
             ),
             "turn_closed": r["turn_closed"],
         }

@@ -49,14 +49,18 @@ class StoredDocumentError(Exception):
     """
 
 
-def durable_int(raw: object, *, label: str, blank: int = 0) -> int:
+def durable_int(
+    raw: object, *, label: str, blank: int | None = 0,
+) -> int:
     """Read one integer from a durable column.
 
-    None/empty uses ``blank``. Present values reuse strict_int (reject bool/
-    float/overflow); failures are StoredDocumentError (read seam), not product
-    ValueError washed into pending failed.
+    ``blank`` is the value for None/empty on *optional* columns (e.g. due_turn).
+    Pass ``blank=None`` for required columns: None/empty is StoredDocumentError,
+    not a silent 0. Present values reuse strict_int (reject bool/float/overflow).
     """
     if raw is None or raw == "":
+        if blank is None:
+            raise StoredDocumentError(f"{label} 损坏")
         return int(blank)
     from ming_sim.strict_types import strict_int
 
