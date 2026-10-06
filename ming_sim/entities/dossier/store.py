@@ -13,6 +13,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 from ming_sim.applier import (
     StoredDocumentError,
+    durable_int,
     load_stored_list,
     load_stored_object,
 )
@@ -1612,6 +1613,127 @@ class DossierStore:
             (int(dossier_id), int(turn), band, text, 1 if is_terminal else 0, origin),
         )
         return int(cur.lastrowid)
+
+    @staticmethod
+    def normalize_report_origin(origin: object, *, is_terminal: bool = False) -> str:
+        """Normalize reported-progress origin; empty defaults by terminal flag."""
+        raw = str(origin or "").strip()
+        if not raw:
+            return (
+                DOSSIER_REPORT_ORIGIN_VERDICT
+                if is_terminal
+                else DOSSIER_REPORT_ORIGIN_MONTHLY
+            )
+        prefix = DOSSIER_REPORT_ORIGIN_NS
+        if not raw.startswith(prefix) or not raw[len(prefix):].strip():
+            raise ValueError("奏报 origin 须带 dossier-report 命名空间前缀")
+        return raw
+
+    @classmethod
+    def coerce_progress_row(
+        cls, item: Mapping[str, object], *, dossier_id: int,
+    ) -> dict[str, object]:
+        """Assemble one durable progress member; corrupt rows are read-seam faults."""
+        try:
+            if not isinstance(item, Mapping):
+                raise StoredDocumentError("dossier_progress 成员须为对象")
+            is_terminal = bool(item.get("is_terminal"))
+            origin = cls.normalize_report_origin(
+                item.get("origin"), is_terminal=is_terminal,
+            )
+            raw_did = item.get("dossier_id")
+            if raw_did is None or raw_did == "":
+                resolved_did = int(dossier_id)
+            else:
+                resolved_did = durable_int(
+                    raw_did, label="dossier_progress.dossier_id", blank=None,
+                )
+            return {
+                "id": durable_int(
+                    item["id"], label="dossier_progress.id", blank=None,
+                ),
+                "dossier_id": resolved_did,
+                "turn": durable_int(
+                    item["turn"], label="dossier_progress.turn", blank=None,
+                ),
+                "progress_band": str(item["progress_band"]),
+                "memorial_text": str(item["memorial_text"]),
+                "is_terminal": is_terminal,
+                "origin": origin,
+            }
+        except StoredDocumentError:
+            raise
+        except (TypeError, ValueError, KeyError, AttributeError) as exc:
+            raise StoredDocumentError(
+                f"dossier_progress 损坏：{exc}",
+            ) from exc
+
+    def record_dossier_progress(
+        self,
+        dossier_id: int,
+        turn: int,
+        progress_band: str,
+        memorial_text: str,
+        *,
+        is_terminal: bool = False,
+        origin: str = "",
+        commit: bool = True,
+    ) -> int:
+        """Append one reported-progress entry; write path splits by physical track.
+
+        Secret-order dossiers stay on secret_orders.dossier_progress_json (#566),
+        owned by CharacterKnowledgeStore. Non-secret execution-surface dossiers use
+        dossier_reported_progress (#619). Reported rows never enter apply (ADR 0073).
+        """
+        from ming_sim.entities.character_knowledge.store import CharacterKnowledgeStore
+
+        owns = self._owns()
+        dossier = self.get(int(dossier_id))
+        band = str(progress_band or "").strip()
+        text = str(memorial_text or "")
+        if dossier is None:
+            raise ValueError("案卷不存在")
+        if not band or not text.strip():
+            raise ValueError("进展档和密奏均不能为空")
+        origin_norm = self.normalize_report_origin(
+            origin, is_terminal=bool(is_terminal),
+        )
+        secret_order_id = dossier.get("secret_order_id")
+        if secret_order_id:
+            report_id = CharacterKnowledgeStore(self._conn).record_secret_dossier_progress(
+                int(secret_order_id), int(dossier_id), int(turn), band, text,
+                is_terminal=bool(is_terminal), origin=origin_norm,
+            )
+            self._commit(commit, owns)
+            return report_id
+        # get() already hydrated payload; do not re-parse or silent-fallback empty.
+        if not has_execution_surface(dossier.get("action_type"), dossier["payload"]):
+            raise ValueError("非执行面案卷不可挂奏报")
+        report_id = self.upsert_reported_progress(
+            int(dossier_id), int(turn), band=band, text=text, origin=origin_norm,
+            is_terminal=bool(is_terminal),
+        )
+        self._commit(commit, owns)
+        return report_id
+
+    def list_dossier_progress(self, dossier_id: int) -> list[dict[str, object]]:
+        """Unified read seam over secret private rail and general reported rail."""
+        from ming_sim.entities.character_knowledge.store import CharacterKnowledgeStore
+
+        dossier = self.get(int(dossier_id))
+        if dossier is None:
+            return []
+        if dossier.get("secret_order_id"):
+            return [
+                self.coerce_progress_row(item, dossier_id=int(dossier_id))
+                for item in CharacterKnowledgeStore(self._conn).list_secret_dossier_progress_items(
+                    int(dossier["secret_order_id"]),
+                )
+            ]
+        return [
+            self.coerce_progress_row(dict(row), dossier_id=int(dossier_id))
+            for row in self.reported_progress_rows(int(dossier_id))
+        ]
 
     def record_cost_event(
         self, dossier_id: int, turn: int, cost_kind: str, target_kind: str,

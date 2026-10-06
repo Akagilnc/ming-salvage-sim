@@ -115,7 +115,7 @@ def _seed_halfway(db, state, *, did: int, bar: int = 45):
         state, "国库", -10, "投入", "半途投入",
         origin_ref=origin, commit=True,
     )
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         did, state.turn, "在办", "过半", is_terminal=False, commit=True,
     )
     return bar
@@ -254,7 +254,7 @@ def test_ac1_deformation_exposure_triggers_commitment_backlash(game):
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
     # #622 分叉读端：奏报假象 + 旨外实况
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         did, state.turn, "在办", "田亩清丈已十之八九",
         is_terminal=False, commit=True,
     )
@@ -447,7 +447,7 @@ def test_ac3_just_started_and_rooted_do_not_trigger(game):
         state, "国库", -10, "投入", "生根投入",
         origin_ref=f"dossier:{did_r}", commit=True,
     )
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         did_r, state.turn, "告成", "已生根", is_terminal=False, commit=True,
     )
     cid_r = _insert_commitment(

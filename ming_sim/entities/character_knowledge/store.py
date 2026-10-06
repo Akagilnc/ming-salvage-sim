@@ -588,8 +588,72 @@ class CharacterKnowledgeStore:
             item["excluded_names"] = row["excluded_names"] or "[]"
         return item
 
-    def write_record_secret_dossier_progress(self, params: Any = ()) -> Any:
-        return self._conn.execute('UPDATE secret_orders SET dossier_progress_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', params)
+    def record_secret_dossier_progress(
+        self,
+        order_id: int,
+        dossier_id: int,
+        turn: int,
+        band: str,
+        text: str,
+        *,
+        is_terminal: bool,
+        origin: str,
+    ) -> int:
+        """Full private-rail write: load JSON, dedupe by turn+origin base, allocate id, sort, persist.
+
+        Caller owns the transaction/commit. Missing order raises ValueError.
+        """
+        from ming_sim.supervision import report_origin_base
+
+        row = self._conn.execute(
+            "SELECT dossier_progress_json FROM secret_orders WHERE id=?",
+            (int(order_id),),
+        ).fetchone()
+        if row is None:
+            raise ValueError("密令不存在")
+        reports = load_stored_list(
+            row["dossier_progress_json"], label="dossier_progress_json",
+        )
+        # 同月、同一业务身份只留一条。催办/核议与月度奏报 origin base 不同，同月并存。
+        incoming = report_origin_base(origin)
+        existing = next((
+            item for item in reports
+            if not item.get("is_terminal")
+            and int(item.get("turn", 0)) == int(turn)
+            and report_origin_base(item.get("origin")) == incoming
+        ), None)
+        if existing is None or is_terminal:
+            report_id = max((int(item.get("id", 0)) for item in reports), default=0) + 1
+            existing = {
+                "id": report_id, "dossier_id": int(dossier_id), "turn": int(turn),
+                "progress_band": band, "memorial_text": text,
+                "is_terminal": bool(is_terminal), "origin": origin,
+            }
+            reports.append(existing)
+        else:
+            report_id = int(existing["id"])
+            existing.update(
+                progress_band=band, memorial_text=text, origin=origin,
+            )
+        reports.sort(key=lambda item: (int(item["turn"]), int(item["id"])))
+        self._conn.execute(
+            "UPDATE secret_orders SET dossier_progress_json=?, "
+            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (json.dumps(reports, ensure_ascii=False), int(order_id)),
+        )
+        return report_id
+
+    def list_secret_dossier_progress_items(self, order_id: int) -> list:
+        """Load private-rail progress members; missing order is legal absence ([])."""
+        row = self._conn.execute(
+            "SELECT dossier_progress_json FROM secret_orders WHERE id=?",
+            (int(order_id),),
+        ).fetchone()
+        if row is None:
+            return []
+        return load_stored_list(
+            row["dossier_progress_json"], label="dossier_progress_json",
+        )
 
     def write_create_secret_order(self, params: Any = ()) -> Any:
         return self._conn.execute("\n                INSERT INTO secret_orders\n                    (turn_issued, due_turn, deadline_span, year_issued, period_issued, minister_name, title, content, tags, importance, status, excluded_names, excluded_targets)\n                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)\n                ", params)
@@ -606,9 +670,6 @@ class CharacterKnowledgeStore:
 
     def read_restore_secret_order_brief_projection_in_tx(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT turn_issued,year_issued,period_issued,minister_name,title,content FROM secret_orders WHERE id=?', params).fetchone()
-
-    def read_record_secret_dossier_progress(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT dossier_progress_json FROM secret_orders WHERE id=?', params).fetchone()
 
     def read_upsert_secret_order(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT id FROM secret_orders WHERE minister_name=? AND status='active' ORDER BY id DESC LIMIT 1", params).fetchone()

@@ -336,12 +336,12 @@ def test_actual_progress_container_separate_from_reported_rail(game):
         note="实况一笔",
     )
     # 奏报轨另写
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         did, state.turn, "在办", "臣称已有端绪", is_terminal=False,
     )
 
     actual = db.dossiers.actual_progress(did)
-    reported = db.list_dossier_progress(did)
+    reported = db.dossiers.list_dossier_progress(did)
     assert len(actual) == 1
     assert actual[0]["units"] == 1.0
     assert actual[0]["origin_ref"] == f"dossier:{did}"
@@ -367,7 +367,7 @@ def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
     dossier = db.dossiers.get_for_secret_order(oid)
     did = int(dossier["id"])
     # 只写奏报，不写实况
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         did, state.turn, "办成", "臣已查明全部", is_terminal=False,
     )
     # 推 due 到当月
@@ -395,10 +395,10 @@ def test_settle_due_close_follows_surviving_memorial_and_actual(game):
     did = int(dossier["id"])
     db.update_secret_order_progress(oid, "承办人已报进展时间线", year=state.year, period=state.period)
     assert str(db.get_secret_order(oid)["result"] or "") == ""
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         did, state.turn, "办成", "臣已查明全部", is_terminal=False,
     )
-    open_reports = [row for row in db.list_dossier_progress(did) if not row["is_terminal"]]
+    open_reports = [row for row in db.dossiers.list_dossier_progress(did) if not row["is_terminal"]]
     assert len(open_reports) == 1
     db.conn.execute(
         "UPDATE secret_orders SET due_turn=? WHERE id=?",
@@ -412,7 +412,7 @@ def test_settle_due_close_follows_surviving_memorial_and_actual(game):
     assert row["status"] == "failed"
     assert row["actual_units"] == 0.0
     assert closed["status"] == "failed"
-    surviving = [item for item in db.list_dossier_progress(did) if not item["is_terminal"]]
+    surviving = [item for item in db.dossiers.list_dossier_progress(did) if not item["is_terminal"]]
     assert len(surviving) == 1
 
 
@@ -1502,7 +1502,7 @@ def test_false_memorial_does_not_create_or_erase_evidence(game):
     state.turn += 1
     db.save_state(state)
     # 奏报自称"已查明全部" + 零投入
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         did, state.turn, "办成", "臣已查明全部罪状", is_terminal=False,
     )
     apply_monthly_covert_actual_progress(

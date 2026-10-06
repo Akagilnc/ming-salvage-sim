@@ -88,7 +88,7 @@ def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
 
 def _make_forked(db, state, dossier_id: int, *, token: str = "fork"):
     """奏报 + 旨外实况 → fork 单源读端为真。"""
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         dossier_id, state.turn, "已竣", f"奏称{token}已完",
         is_terminal=False, commit=True,
     )
@@ -112,7 +112,7 @@ def test_world_materials_exclude_secret_fork_from_gazette(game, tmp_path):
     owner = next(iter(_chars_by_faction(db).values()))[0]["name"]
 
     def _report(dossier_id: int, token: str) -> None:
-        db.record_dossier_progress(
+        db.dossiers.record_dossier_progress(
             dossier_id, state.turn, "已竣", f"奏称{token}已完",
             is_terminal=False, commit=True,
         )

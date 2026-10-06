@@ -85,7 +85,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     before_fp = _world_fingerprint(db)
 
     # 承办人先挂过程奏报（假象：报已成）
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         xf_id, state.turn, "在办", "田亩清丈已十之八九，即可全竣",
         is_terminal=False, commit=True,
     )
@@ -114,7 +114,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     assert after_real != before_fp  # 实况入 apply
     # 再挂一条纯假进度，世界不得再变
     mid_fp = _world_fingerprint(db)
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         xf_id, state.turn, "已全完", "田亩尽数清丈、国库应增百万",
         is_terminal=False, commit=True,
     )
@@ -131,7 +131,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     assert len(_cost_liability(db, xf_id)) == 1
 
     # 双口径三面：奏报说兑现 × 执行格记变形 × 实况效果在库
-    xf_progress = db.list_dossier_progress(xf_id)
+    xf_progress = db.dossiers.list_dossier_progress(xf_id)
     terminal_rows = [r for r in xf_progress if r.get("is_terminal")]
     assert terminal_rows, xf_progress
     term = terminal_rows[-1]
@@ -158,7 +158,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
 
     # ── degraded 对照：同场景无旨外标记、仅表报 → degraded ──
     deg_id = _executing_policy(db, state, token="deg-622")
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         deg_id, state.turn, "在办", "田亩清丈已十之八九，即可全竣",
         is_terminal=False, commit=True,
     )
@@ -171,14 +171,14 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     deg_dossier = db.dossiers.get(deg_id)
     assert deg_dossier["execution_outcome"] == "degraded"
     assert result_deg["verdict"]["outcome"] == "degraded"
-    deg_progress = db.list_dossier_progress(deg_id)
+    deg_progress = db.dossiers.list_dossier_progress(deg_id)
     deg_term = [r for r in deg_progress if r.get("is_terminal")][-1]
     assert deg_term["progress_band"] not in {
         "degraded", "transformed", "fulfilled", "failed", "executing",
     }
     # 假进度尾部：再写奏报，世界 fingerprint 不变
     fp_before_fake = _world_fingerprint(db)
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         deg_id, state.turn + 1, "已竣", "奏称完结而库银未动",
         is_terminal=False, commit=True,
     )
@@ -197,7 +197,7 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
 
     # 被稽核目标案卷：奏报 + 旨外实况 → 分叉
     target_id = _executing_policy(db, state, token="audit-target-622")
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         target_id, state.turn, "已竣", "清丈全完、加派如额",
         is_terminal=False, commit=True,
     )

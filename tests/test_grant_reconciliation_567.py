@@ -192,9 +192,9 @@ def test_per_route_storage_restore_and_escort_split(game):
     assert escort_rows[0]["escort_source_dossier_id"] == escort_dossier_id
 
     # 无护行：不对拨饷案卷写进展；有护行：进展挂密令案卷（#566 容器）
-    assert db.list_dossier_progress(bare) == []
-    assert db.list_dossier_progress(escorted_grant) == []
-    progress = db.list_dossier_progress(escort_dossier_id)
+    assert db.dossiers.list_dossier_progress(bare) == []
+    assert db.dossiers.list_dossier_progress(escorted_grant) == []
+    progress = db.dossiers.list_dossier_progress(escort_dossier_id)
     assert len(progress) == 1
     assert "护行路已核关防" in progress[0]["memorial_text"]
 
@@ -204,7 +204,7 @@ def test_per_route_storage_restore_and_escort_split(game):
     reopened = GameDB(path, content=content)
     assert reopened.dossiers.reconciliations(bare) == bare_rows
     assert reopened.dossiers.reconciliations(escorted_grant) == escort_rows
-    assert reopened.list_dossier_progress(escort_dossier_id) == progress
+    assert reopened.dossiers.list_dossier_progress(escort_dossier_id) == progress
     stored = reopened.conn.execute(
         "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()

@@ -124,9 +124,9 @@ def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game
         for did in ids
     ]
     db.record_monthly_dossier_progress(state.turn, reports)
-    assert db.list_dossier_progress(title_only)
-    assert db.list_dossier_progress(unrelated)
-    assert db.list_dossier_progress(short)
+    assert db.dossiers.list_dossier_progress(title_only)
+    assert db.dossiers.list_dossier_progress(unrelated)
+    assert db.dossiers.list_dossier_progress(short)
 
 
 def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
@@ -144,8 +144,8 @@ def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
     db.close_secret_order(eligible_id, "failed", "护行中止", state.turn)
     db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
 
-    assert db.list_dossier_progress(eligible)[-1]["is_terminal"] is True
-    assert db.list_dossier_progress(ordinary)
+    assert db.dossiers.list_dossier_progress(eligible)[-1]["is_terminal"] is True
+    assert db.dossiers.list_dossier_progress(ordinary)
 
 
 def test_character_terminal_status_closes_secret_orders_through_canonical_progress_rail(game):
@@ -184,9 +184,9 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     assert orders[unchained_id]["status"] == "failed"
     assert db.dossiers.get(chained_dossier)["status"] == "closed"
     assert db.dossiers.get(unchained_dossier)["status"] == "closed"
-    terminal = db.list_dossier_progress(chained_dossier)[-1]
+    terminal = db.dossiers.list_dossier_progress(chained_dossier)[-1]
     assert terminal["is_terminal"] is True
-    assert db.list_dossier_progress(unchained_dossier)
+    assert db.dossiers.list_dossier_progress(unchained_dossier)
 
 
 def test_current_secret_order_deadline_controls_monthly_eligibility(game):
@@ -371,4 +371,4 @@ def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
                 "progress_band": "伪进展",
                 "memorial_text": "不得命中真实案卷",
             }])
-    assert db.list_dossier_progress(dossier_id) == []
+    assert db.dossiers.list_dossier_progress(dossier_id) == []

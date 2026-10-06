@@ -170,7 +170,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     if branch["dossier_id"] is not None:
         # 读端方法属 GameDB 契约面：抛错=代码/schema bug，响亮上抛（ADR 0005），
         # 不得吞成「空证据」误导裁决。催办/监督缺源仍按空列表降级。
-        progress_reports = list(db.list_dossier_progress(int(branch["dossier_id"])))
+        progress_reports = list(db.dossiers.list_dossier_progress(int(branch["dossier_id"])))
         # #1260：durable_effects 合并单源（economy+fiscal）。
         durable_effects = list(
             db.list_dossier_durable_effects(int(branch["dossier_id"]))
@@ -460,9 +460,9 @@ def _apply_dossier_verdict(
     if is_terminal and outcome in {"degraded", "transformed"}:
         # #622：奏报轨载承办人假象；progress_band 定性中文；判官真值只在执行格。
         # 进度写失败不得静默：执行格可能已落，分叉态须响亮（P1 / ADR 0005）
-        prior = list(db.list_dossier_progress(int(dossier_id)))
+        prior = list(db.dossiers.list_dossier_progress(int(dossier_id)))
         band, memorial = terminal_report_facade(outcome, prior_reports=prior)
-        db.record_dossier_progress(
+        db.dossiers.record_dossier_progress(
             int(dossier_id), int(state.turn), band, memorial,
             is_terminal=True,
             origin=DOSSIER_REPORT_ORIGIN_VERDICT,
@@ -470,7 +470,7 @@ def _apply_dossier_verdict(
         )
     elif not is_terminal:
         # 中段过程奏报：非终值
-        db.record_dossier_progress(
+        db.dossiers.record_dossier_progress(
             int(dossier_id), int(state.turn), "在办", note,
             is_terminal=False, commit=False,
         )

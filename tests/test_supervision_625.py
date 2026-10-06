@@ -437,7 +437,7 @@ def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
         db, state, auditor=str(auditor_row["name"]), subject_id=subject_id, token="dr",
     )
     db.record_monthly_supervision_facts(state.turn, commit=True)
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         subject_id, state.turn, "在办", "表报已陈，实绩未充",
         is_terminal=False, commit=True,
     )

@@ -6731,170 +6731,6 @@ class GameDB:
         if commit and owns:
             self.conn.commit()
 
-    @classmethod
-    def _normalize_dossier_report_origin(
-        cls, origin: object, *, is_terminal: bool = False,
-    ) -> str:
-        raw = str(origin or "").strip()
-        if not raw:
-            return (
-                DOSSIER_REPORT_ORIGIN_VERDICT
-                if is_terminal
-                else DOSSIER_REPORT_ORIGIN_MONTHLY
-            )
-        prefix = DOSSIER_REPORT_ORIGIN_NS
-        if not raw.startswith(prefix) or not raw[len(prefix):].strip():
-            raise ValueError("奏报 origin 须带 dossier-report 命名空间前缀")
-        return raw
-
-    @classmethod
-    def _coerce_dossier_progress_row(
-        cls, item: Mapping[str, object], *, dossier_id: int,
-    ) -> Dict[str, object]:
-        # 既存 progress 成员装配：损坏是读缝，不得 AttributeError/ValueError 洗成 pending failed。
-        try:
-            if not isinstance(item, Mapping):
-                raise StoredDocumentError("dossier_progress 成员须为对象")
-            is_terminal = bool(item.get("is_terminal"))
-            # Empty origin defaults live only in _normalize_dossier_report_origin.
-            origin = cls._normalize_dossier_report_origin(
-                item.get("origin"), is_terminal=is_terminal,
-            )
-            # id/turn 必填；dossier_id 可空时回落查询上下文（None 与空串同形）。
-            raw_did = item.get("dossier_id")
-            if raw_did is None or raw_did == "":
-                resolved_did = int(dossier_id)
-            else:
-                resolved_did = durable_int(
-                    raw_did, label="dossier_progress.dossier_id", blank=None,
-                )
-            return {
-                "id": durable_int(
-                    item["id"], label="dossier_progress.id", blank=None,
-                ),
-                "dossier_id": resolved_did,
-                "turn": durable_int(
-                    item["turn"], label="dossier_progress.turn", blank=None,
-                ),
-                "progress_band": str(item["progress_band"]),
-                "memorial_text": str(item["memorial_text"]),
-                "is_terminal": is_terminal,
-                "origin": origin,
-            }
-        except StoredDocumentError:
-            raise
-        except (TypeError, ValueError, KeyError, AttributeError) as exc:
-            raise StoredDocumentError(
-                f"dossier_progress 损坏：{exc}",
-            ) from exc
-
-    def _record_secret_dossier_progress(
-        self,
-        dossier_id: int,
-        order_id: int,
-        turn: int,
-        band: str,
-        text: str,
-        *,
-        is_terminal: bool,
-        origin: str,
-        commit: bool,
-    ) -> int:
-        owns = self.owns_transaction()
-        row = CharacterKnowledgeStore(self.conn).read_record_secret_dossier_progress((order_id,))
-        if row is None:
-            raise ValueError("密令不存在")
-        reports = load_stored_list(row["dossier_progress_json"], label='dossier_progress_json')
-        # 同月、同一业务身份只留一条。催办/核议与月度奏报 origin base 不同，同月并存。
-        from ming_sim.supervision import report_origin_base
-        incoming = report_origin_base(origin)
-        existing = next((
-            item for item in reports
-            if not item.get("is_terminal")
-            and int(item.get("turn", 0)) == int(turn)
-            and report_origin_base(item.get("origin")) == incoming
-        ), None)
-        if existing is None or is_terminal:
-            report_id = max((int(item.get("id", 0)) for item in reports), default=0) + 1
-            existing = {
-                "id": report_id, "dossier_id": int(dossier_id), "turn": int(turn),
-                "progress_band": band, "memorial_text": text,
-                "is_terminal": bool(is_terminal), "origin": origin,
-            }
-            reports.append(existing)
-        else:
-            report_id = int(existing["id"])
-            existing.update(
-                progress_band=band, memorial_text=text, origin=origin,
-            )
-        reports.sort(key=lambda item: (int(item["turn"]), int(item["id"])))
-        CharacterKnowledgeStore(self.conn).write_record_secret_dossier_progress((json.dumps(reports, ensure_ascii=False), order_id))
-        self._commit_dossier_write(commit, owns)
-        return report_id
-
-    def record_dossier_progress(
-        self,
-        dossier_id: int,
-        turn: int,
-        progress_band: str,
-        memorial_text: str,
-        *,
-        is_terminal: bool = False,
-        origin: str = "",
-        commit: bool = True,
-    ) -> int:
-        """Append one reported-progress entry; write path splits by physical track.
-
-        Secret-order dossiers stay on secret_orders.dossier_progress_json (#566).
-        Non-secret execution-surface dossiers use dossier_reported_progress (#619).
-        Reported rows never enter apply (ADR 0073).
-        """
-        owns = self.owns_transaction()
-        dossier = self.dossiers.get(int(dossier_id))
-        band = str(progress_band or "").strip()
-        text = str(memorial_text or "")
-        if dossier is None:
-            raise ValueError("案卷不存在")
-        if not band or not text.strip():
-            raise ValueError("进展档和密奏均不能为空")
-        origin_norm = self._normalize_dossier_report_origin(
-            origin, is_terminal=bool(is_terminal),
-        )
-        secret_order_id = dossier.get("secret_order_id")
-        if secret_order_id:
-            return self._record_secret_dossier_progress(
-                int(dossier_id), int(secret_order_id), int(turn), band, text,
-                is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
-            )
-        # dossiers.get 已按 hydrate_dossier_row 解析并 fail-loud 校验过 payload，直接复用，
-        # 不在此对同一载荷二次解析或静默回退空对象。
-        if not has_execution_surface(dossier.get("action_type"), dossier["payload"]):
-            raise ValueError("非执行面案卷不可挂奏报")
-        report_id = self.dossiers.upsert_reported_progress(
-            int(dossier_id), int(turn), band=band, text=text, origin=origin_norm,
-            is_terminal=bool(is_terminal),
-        )
-        self._commit_dossier_write(commit, owns)
-        return report_id
-
-    def list_dossier_progress(self, dossier_id: int) -> List[Dict[str, object]]:
-        """Unified read seam over secret private rail and general reported rail."""
-        dossier = self.dossiers.get(int(dossier_id))
-        if dossier is None:
-            return []
-        if dossier.get("secret_order_id"):
-            row = CharacterKnowledgeStore(self.conn).read_record_secret_dossier_progress((int(dossier["secret_order_id"]),))
-            if row is None:
-                return []
-            return [
-                self._coerce_dossier_progress_row(item, dossier_id=int(dossier_id))
-                for item in load_stored_list(row["dossier_progress_json"], label='dossier_progress_json')
-            ]
-        return [
-            self._coerce_dossier_progress_row(dict(row), dossier_id=int(dossier_id))
-            for row in self.dossiers.reported_progress_rows(int(dossier_id))
-        ]
-
     def _audit_fork_signals_for_source(self, source_dossier_id: int) -> List[Dict[str, object]]:
         """#622：稽核链在场时，月报输入面确定性携带被稽核案卷分叉信号。
 
@@ -6924,7 +6760,7 @@ class GameDB:
         from ming_sim.supervision import is_reported_actual_fork
 
         target = self.dossiers.get(int(dossier_id))
-        reports = self.list_dossier_progress(int(dossier_id))
+        reports = self.dossiers.list_dossier_progress(int(dossier_id))
         reported_bands = [
             str(item.get("progress_band") or "").strip()
             for item in reports
@@ -6968,7 +6804,7 @@ class GameDB:
                 "dossier_id": dossier_id,
                 "secret_order_id": int(row["secret_order_id"]),
                 "title": payload.get("title", ""),
-                "progress": self.list_dossier_progress(dossier_id),
+                "progress": self.dossiers.list_dossier_progress(dossier_id),
             }
             # #622 AC5：仅当稽核链在场时挂分叉信号键；无链则键不出现。
             fork_signals = self._audit_fork_signals_for_source(dossier_id)
@@ -7019,13 +6855,13 @@ class GameDB:
             origin = declared_report_action_origin(
                 item.get("origin"), base=DOSSIER_REPORT_ORIGIN_MONTHLY,
             )
-            self.record_dossier_progress(
+            self.dossiers.record_dossier_progress(
                 dossier_id, int(turn), str(item["progress_band"]).strip(),
                 str(item["memorial_text"]),
                 origin=origin,
                 commit=False,
             )
-            reports.append(self.list_dossier_progress(dossier_id)[-1])
+            reports.append(self.dossiers.list_dossier_progress(dossier_id)[-1])
         return reports
 
     def _grant_escort_presence(
@@ -11193,8 +11029,8 @@ class GameDB:
                     applied.append(committed)
                 continue
             payload = load_stored_object(pa["payload_json"], label="payload_json")
-            # apply 抛错(如 催办 对已非 active 的密令)= 当 False:下面标 failed、
-            # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
+            # 产品 ValueError（如催办非 active）隔离为 failed，不中断同批其余项；
+            # 未知代码／系统故障上抛，由既有失败边界承接（ADR0005 / #1889 R5）。
             cm = atomic(self) if owns_transaction else contextlib.nullcontext()
             with cm:
                 savepoint = f"pending_action_apply_{int(pa['id'])}"
@@ -11218,24 +11054,18 @@ class GameDB:
 
                 self.conn.execute(f"SAVEPOINT {savepoint}")
                 try:
-                    # 接缝分流（ADR0005 / #1889 R5）：apply 业务/模型坏项可隔离标 failed；
-                    # committed 状态写是持久主写，故障不得洗成 pending failed。
+                    # 接缝分流（ADR0005 / #1889 R5）：只隔离契约认定的产品坏项；
+                    # 未知代码与持久系统故障沿既有失败边界上抛，不得洗成 pending failed。
                     try:
                         ok = self._apply_pending_action(
                             state, pa, payload, content=content,
                             rejection_collector=rejection_collector)
-                    except Exception as exc:
+                    except (TypeError, ValueError) as exc:
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
                         restore_office_memory()
                         # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
-                        from ming_sim.applier import (
-                            RejectionCollectorRequired,
-                            StoredDocumentError,
-                        )
+                        from ming_sim.applier import RejectionCollectorRequired
                         if isinstance(exc, RejectionCollectorRequired):
-                            raise
-                        # 持久写（sqlite）与持久读损坏：系统接缝，不得洗成 pending failed。
-                        if isinstance(exc, (sqlite3.Error, StoredDocumentError)):
                             raise
                         rejection = getattr(exc, "dossier_link_rejection", None)
                         if rejection is not None:
@@ -11245,6 +11075,10 @@ class GameDB:
                         tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                         ok = False
                         self.dossiers.set_pending_status(int(pa["id"]), "failed")
+                    except Exception:
+                        self.conn.execute(f"ROLLBACK TO {savepoint}")
+                        restore_office_memory()
+                        raise
                     else:
                         if ok:
                             try:
@@ -11326,26 +11160,20 @@ class GameDB:
                 savepoint = f"pending_action_directive_{int(pa['id'])}"
                 self.conn.execute(f"SAVEPOINT {savepoint}")
                 try:
-                    # 接缝分流（ADR0005 / #1889 R5）：apply 坏项可标 failed；
-                    # committed 状态写故障沿既有上抛，不得洗成 pending failed。
+                    # 接缝分流（ADR0005 / #1889 R5）：只隔离产品 TypeError/ValueError；
+                    # 未知代码与持久系统故障沿既有失败边界上抛。
                     payload_for_apply = dict(payload)
                     payload_for_apply["_directive_status"] = directive_status
                     try:
                         ok = self._apply_pending_action(
                             state, pa, payload_for_apply, content=content,
                             rejection_collector=rejection_collector)
-                    except Exception as exc:
-                        # #654 r3-C.2 路1：directive apply 坏项——回滚后标 failed，不崩结算
+                    except (TypeError, ValueError) as exc:
+                        # #654 r3-C.2 路1：directive 产品坏项——回滚后标 failed，不崩结算
                         self.conn.execute(f"ROLLBACK TO {savepoint}")
                         # 0150-D2 / #1745：typed 归属缺口不得吞成 pending failed。
-                        from ming_sim.applier import (
-                            RejectionCollectorRequired,
-                            StoredDocumentError,
-                        )
+                        from ming_sim.applier import RejectionCollectorRequired
                         if isinstance(exc, RejectionCollectorRequired):
-                            raise
-                        # 持久写／持久读损坏沿既有上抛，不得洗成 pending failed。
-                        if isinstance(exc, (sqlite3.Error, StoredDocumentError)):
                             raise
                         self.dossiers.set_pending_status(int(pa["id"]), "failed")
                         tlog(
@@ -11354,6 +11182,9 @@ class GameDB:
                         )
                         result = None
                         ok = False
+                    except Exception:
+                        self.conn.execute(f"ROLLBACK TO {savepoint}")
+                        raise
                     else:
                         if ok:
                             try:
@@ -14051,7 +13882,7 @@ class GameDB:
                 # product seam; expose the same canonical monthly rail used by
                 # the personnel extractor and future dossier inquiry.
                 "dossier_progress": (
-                    self.list_dossier_progress(int(dossier["id"]))
+                    self.dossiers.list_dossier_progress(int(dossier["id"]))
                     if dossier is not None else []
                 ),
                 "excluded_names": load_stored_list(
@@ -14082,7 +13913,7 @@ class GameDB:
         def close_in_current_transaction() -> None:
             dossier = self.dossiers.get_for_secret_order(int(order_id))
             reports = (
-                self.list_dossier_progress(int(dossier["id"]))
+                self.dossiers.list_dossier_progress(int(dossier["id"]))
                 if dossier is not None else []
             )
             has_progress_chain = bool(reports)
@@ -14102,7 +13933,7 @@ class GameDB:
                             last_memorial = text
                             break
                     if close_text.strip() != last_memorial:
-                        self.record_dossier_progress(
+                        self.dossiers.record_dossier_progress(
                             int(dossier["id"]), int(turn_closed), "结案",
                             close_text, is_terminal=True, commit=False,
                         )
@@ -14156,7 +13987,7 @@ class GameDB:
         dossier = self.dossiers.get_for_secret_order(int(order_id))
         if dossier is None:
             return False
-        self.record_dossier_progress(
+        self.dossiers.record_dossier_progress(
             int(dossier["id"]), self._current_game_turn(), band, raw,
             origin=origin, commit=False,
         )

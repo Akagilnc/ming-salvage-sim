@@ -1251,7 +1251,7 @@ def test_step_4a_rescript_continuation_feeds_supply_run_input(game, monkeypatch)
     assert str(captured_feed.get("board") or "").strip()
 
     # Verify 0058 structured落库与实况单位（禁盯密奏正文）
-    reports = db.list_dossier_progress(dossier_id)
+    reports = db.dossiers.list_dossier_progress(dossier_id)
     assert any(str(r.get("progress_band") or "") == "顺利" for r in reports)
     actual_units = db.dossiers.actual_progress_units(dossier_id)
     assert actual_units == 5.0
@@ -1313,7 +1313,7 @@ def test_step_4a_deferred_disclosure_sees_fresh_0058_progress(game, monkeypatch)
     ).fetchall()
     assert len(rows) == 1
     assert str(rows[0]["source_id"]).startswith(f"secret_order_disclosure:{order_id}:")
-    reports = db.list_dossier_progress(dossier_id)
+    reports = db.dossiers.list_dossier_progress(dossier_id)
     assert any(str(r.get("progress_band") or "") == "顺利" for r in reports)
     chain = month_chain._load_chain(db, turn)
     assert chain.get("secret_orders_disclosures_done") is True
@@ -1379,15 +1379,15 @@ def test_step_4a_incomplete_0058_report_fails_loud_and_retry_restarts(game, monk
     chain = month_chain._load_chain(db, turn)
     assert chain.get("secret_orders_supply_invalid") is True
     # Neither dossier received a progress report
-    assert db.list_dossier_progress(dossier_1) == []
-    assert db.list_dossier_progress(dossier_2) == []
+    assert db.dossiers.list_dossier_progress(dossier_1) == []
+    assert db.dossiers.list_dossier_progress(dossier_2) == []
 
     # Retry: discards invalid product, re-calls supply run
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
     assert call_count == 2
-    assert len(db.list_dossier_progress(dossier_1)) == 1
-    assert len(db.list_dossier_progress(dossier_2)) == 1
+    assert len(db.dossiers.list_dossier_progress(dossier_1)) == 1
+    assert len(db.dossiers.list_dossier_progress(dossier_2)) == 1
 
 
 def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypatch):
@@ -1449,7 +1449,7 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
 
     assert call_count == 1
     # Phase 1 already committed: 0058 report exists
-    assert len(db.list_dossier_progress(dossier_id)) == 1
+    assert len(db.dossiers.list_dossier_progress(dossier_id)) == 1
     chain = month_chain._load_chain(db, turn)
     assert chain.get("secret_orders_reports_done") is True
     assert chain.get("secret_orders_supply_product") is not None
@@ -1459,7 +1459,7 @@ def test_step_4a_crash_recovery_resumes_without_re_running_supply(game, monkeypa
     assert result.stage == "gazette"
     assert call_count == 1  # Not re-run!
     # Reports not duplicated
-    assert len(db.list_dossier_progress(dossier_id)) == 1
+    assert len(db.dossiers.list_dossier_progress(dossier_id)) == 1
     # Phase 3 actual progress landed
     assert db.conn.execute(
         "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
@@ -1581,7 +1581,7 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
         (dossier_id, turn),
     ).fetchone()[0] == 0
     assert chain.get("secret_orders_reports_done") is True
-    silent_origin = db.list_dossier_progress(dossier_id)[-1]["origin"]
+    silent_origin = db.dossiers.list_dossier_progress(dossier_id)[-1]["origin"]
     assert not origin_has_mark(silent_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
     assert not origin_has_mark(silent_origin, ORIGIN_MARK_PRIVATE_GOODS)
     silent_relations = {
@@ -1608,8 +1608,8 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
     assert call_count == 3
-    assert len(db.list_dossier_progress(dossier_id)) == 1
-    declared_origin = db.list_dossier_progress(dossier_id)[-1]["origin"]
+    assert len(db.dossiers.list_dossier_progress(dossier_id)) == 1
+    declared_origin = db.dossiers.list_dossier_progress(dossier_id)[-1]["origin"]
     assert origin_has_mark(declared_origin, ORIGIN_MARK_SAME_FACTION_BLIND)
     assert origin_has_mark(declared_origin, ORIGIN_MARK_PRIVATE_GOODS)
     assert "不是行动" not in str(declared_origin)
@@ -1793,7 +1793,7 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     result = session.resolve_turn(allow_empty_decree=True)
     assert result.stage == "gazette"
     assert call_count == 1  # 保留产物，不重跑 supply
-    assert len(db.list_dossier_progress(dossier_id)) == 1
+    assert len(db.dossiers.list_dossier_progress(dossier_id)) == 1
 
 
 def test_step_4a_settles_due_secret_order(game, monkeypatch):

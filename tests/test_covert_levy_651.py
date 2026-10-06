@@ -124,7 +124,7 @@ def test_rejected_canonical_results_neither_consume_nor_create_channel(game, mon
 def test_covert_consumer_requires_real_beyond_intent_effect_without_narrowing_generic_fork(game):
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
-    db.record_dossier_progress(did, state.turn, "有成", "饷事已有眉目", commit=False)
+    db.dossiers.record_dossier_progress(did, state.turn, "有成", "饷事已有眉目", commit=False)
     db.record_dossier_execution(did, "transformed", "暗中摊派", state.turn, close=False, commit=False)
     assert db.read_dossier_fork_state(did)["fork"] is True  # shared #622/#627 contract
     db.conn.execute(
@@ -138,7 +138,7 @@ def _exposed_todo(db, state, monkeypatch, did):
     db.conn.execute(
         "UPDATE decree_dossiers SET promulgation_decision='promulgated' WHERE id=?", (did,)
     )
-    db.record_dossier_progress(did, state.turn, "有成", "军饷已有着落", commit=False)
+    db.dossiers.record_dossier_progress(did, state.turn, "有成", "军饷已有着落", commit=False)
     db.record_dossier_execution(did, "transformed", "暗中摊派", state.turn, close=True, commit=False)
     monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
         "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],

@@ -832,7 +832,7 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     ).fetchone()["fidelity_state"] == "忠实"
     assert any(
         item["memorial_text"] == "本月密奏已达"
-        for item in db.list_dossier_progress(dossier_id)
+        for item in db.dossiers.list_dossier_progress(dossier_id)
     )
     recon = db.dossiers.reconciliations(grant_id)[-1]
     assert recon["note"] == "实抵已到"

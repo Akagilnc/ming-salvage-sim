@@ -375,7 +375,7 @@ def test_persist_leaves_execution_verdict_to_model(game):
     db.record_issue_economy_move(
         state, "国库", -10, "投入", "半途投入", origin_ref=origin, commit=True,
     )
-    db.record_dossier_progress(did, state.turn, "在办", "过半", commit=True)
+    db.dossiers.record_dossier_progress(did, state.turn, "在办", "过半", commit=True)
     cid, _ = _insert_commitment(
         db, state, title="办到一半之诺", origin_ref=origin,
         bar_value=45, end_turn=state.turn + 50,

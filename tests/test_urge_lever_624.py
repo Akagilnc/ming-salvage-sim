@@ -188,7 +188,7 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
         title="失真对照之诺",
     )
     # 有表报无实账 → 基线 degraded
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         dossier_id, state.turn, "在办", "表报已陈，实绩未充",
         is_terminal=False, commit=True,
     )

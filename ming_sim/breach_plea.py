@@ -461,7 +461,7 @@ def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
     band = ""
     did = parse_dossier_id(row["origin_ref"] or "")
     if did is not None:
-        progress = db.list_dossier_progress(int(did))
+        progress = db.dossiers.list_dossier_progress(int(did))
         if progress:
             band = str(progress[-1].get("progress_band") or "")
 

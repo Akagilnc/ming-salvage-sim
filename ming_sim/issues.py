@@ -5059,7 +5059,7 @@ def apply_issue_tracker_output(
         if issue_affair is not None and dossier_origin:
             try:
                 db.affairs.assert_origin_matches_declaration(origin_ref, issue_affair)
-            except (KeyError, TypeError, ValueError) as exc:
+            except (TypeError, ValueError) as exc:
                 applied_new.append({
                     "rejected": True, "category": "invalid_enum", "item": ni,
                     "title": title, "reason": str(exc),
@@ -5852,7 +5852,9 @@ def apply_office_appointment(
             ch.office = new_office
             ch.office_type = new_office_type
             ch.office_region = seat
-        except Exception as exc:
+        except (TypeError, ValueError) as exc:
+            # 产品/契约坏项（含 OfficeAppointmentRejection）逐项拒；
+            # 未知代码与持久系统故障沿既有边界上抛（ADR0005 / #1889 R5）
             _restore_person_write_state(db, content, snapshot, commit=commit)
             return _office_appointment_failure(name, new_office, exc)
         return {
@@ -5918,7 +5920,8 @@ def apply_office_appointment(
             )
             return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
                     **({"displaced": displaced_parts} if displaced_parts else {})}
-    except Exception as exc:
+    except (TypeError, ValueError) as exc:
+        # 产品/契约坏项逐项拒；未知代码与持久系统故障上抛（ADR0005 / #1889 R5）
         _restore_person_write_state(db, content, snapshot, commit=commit)
         return _office_appointment_failure(
             name, new_office, exc, kind="appoint",
@@ -6800,7 +6803,8 @@ def _apply_dossier_participant_items(
                 "dossier_id": dossier_id,
                 "character_id": persisted["character_id"], "tier": persisted["tier"],
             })
-        except (TypeError, ValueError, KeyError) as exc:
+        except (TypeError, ValueError) as exc:
+            # 产品坏项隔离；KeyError/未知代码故障上抛（ADR0005 / #1889 R5）
             results.append({
                 "rejected": True, "category": "invalid_participant_roster",
                 "reason": str(exc), "item": item,
@@ -7233,7 +7237,7 @@ def record_secret_order_disclosure(
         return False
     dossier = db.dossiers.get_for_secret_order(order_id)
     progress = (
-        db.list_dossier_progress(int(dossier["id"]))
+        db.dossiers.list_dossier_progress(int(dossier["id"]))
         if dossier is not None else []
     )
     progress_text = format_public_progress_disclosure(progress)
@@ -7612,11 +7616,11 @@ def _apply_score_extraction_body(
             # #619/#622：表报终值旁路——仅 degraded/transformed 挂奏报行；
             # 变形案载承办人假象（不得回填判官真值）；progress_band 定性中文。
             if outcome in {"degraded", "transformed"}:
-                prior = list(db.list_dossier_progress(int(dossier_id)))
+                prior = list(db.dossiers.list_dossier_progress(int(dossier_id)))
                 band, memorial = terminal_report_facade(
                     outcome, prior_reports=prior,
                 )
-                db.record_dossier_progress(
+                db.dossiers.record_dossier_progress(
                     dossier_id, state.turn, band, memorial,
                     is_terminal=True,
                     origin=DOSSIER_REPORT_ORIGIN_VERDICT,
@@ -7630,7 +7634,8 @@ def _apply_score_extraction_body(
             dossier_execution_results.append({
                 "dossier_id": dossier_id, "outcome": outcome,
             })
-        except (TypeError, ValueError, KeyError) as exc:
+        except (TypeError, ValueError) as exc:
+            # 产品坏项隔离；KeyError/未知代码故障上抛（ADR0005 / #1889 R5）
             dossier_execution_results.append({
                 "rejected": True, "category": "invalid_transition",
                 "reason": str(exc), "item": item,
@@ -7648,7 +7653,7 @@ def _apply_score_extraction_body(
             authority_change_results.append(
                 _apply_authority_change_item(db, state, item)
             )
-        except (TypeError, ValueError, KeyError) as exc:
+        except (TypeError, ValueError) as exc:
             reason = str(exc)
             category = "invalid_authority_change"
             if reason in {
@@ -8814,7 +8819,8 @@ def _apply_score_extraction_body(
             applied_secret_orders.append({
                 "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
             })
-        except Exception as exc:
+        except (TypeError, ValueError) as exc:
+            # 产品/契约坏项逐项拒；未知代码与持久系统故障沿既有边界上抛（ADR0005 / #1889 R5）
             applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
 
     # report_section 保留 sanitize 原 section，供 _collect_inline_rejections 一次归属

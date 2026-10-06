@@ -40,7 +40,7 @@ def _face(db, dossier_id: int) -> dict:
     assert row is not None
     payload = json.loads(str(row.get("payload_json") or "{}"))
     decisions = db.dossiers.decisions(dossier_id)
-    progress = db.list_dossier_progress(dossier_id)
+    progress = db.dossiers.list_dossier_progress(dossier_id)
     roster = row.get("participant_roster")
     if roster is None:
         roster = payload.get("participant_roster") or payload.get("participants")
@@ -146,7 +146,7 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
         (int(errand_id),),
     )
     db.conn.commit()
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         errand_id, state.turn, "在途", "已出京赴陕",
         origin=DOSSIER_REPORT_MONTHLY,
     )
@@ -177,11 +177,11 @@ def test_mid_month_restore_keeps_dossier_four_faces(game, tmp_path, content):
         assert _face(restored, appt_id) == before_appt
         assert _face(restored, errand_id) == before_errand
 
-        restored.record_dossier_progress(
+        restored.dossiers.record_dossier_progress(
             errand_id, state.turn + 1, "将结", "已抵西安",
             origin=DOSSIER_REPORT_MONTHLY,
         )
-        cont = restored.list_dossier_progress(errand_id)
+        cont = restored.dossiers.list_dossier_progress(errand_id)
         assert [row["memorial_text"] for row in cont] == ["已出京赴陕", "已抵西安"]
     finally:
         restored.close()

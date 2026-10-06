@@ -431,11 +431,11 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
             (int(errand),),
         )
         db.conn.commit()
-        db.record_dossier_progress(
+        db.dossiers.record_dossier_progress(
             errand, state.turn, "在途", memorial_text,
             origin="dossier-report:monthly_errand",
         )
-        progress_rows = db.list_dossier_progress(errand)
+        progress_rows = db.dossiers.list_dossier_progress(errand)
         memorial_blob = "\n".join(
             str(r.get("memorial_text") or "") for r in progress_rows
         )

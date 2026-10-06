@@ -351,7 +351,7 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     assert db.dossier_has_beyond_intent(did) is True
 
     # Fork predicate expands to fiscal
-    db.record_dossier_progress(
+    db.dossiers.record_dossier_progress(
         did, state.turn, "在办", "新税已立、岁入可期",
         is_terminal=False, commit=True,
     )
