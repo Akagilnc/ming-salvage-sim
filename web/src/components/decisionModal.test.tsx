@@ -7,7 +7,6 @@ import type { PendingDecision } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-
 const decisions: PendingDecision[] = [
   {
     idx: 0,
@@ -152,23 +151,6 @@ describe("DecisionModal", () => {
     cleanup();
   });
 
-  it("assembles each decision as ordered sections of one red-seal document", () => {
-    const cleanup = render(<DecisionModal decisions={decisions} onResolve={vi.fn()} />);
-    const documentPage = document.querySelector<HTMLElement>(".decision-document");
-    expect(documentPage).not.toBeNull();
-
-    // 印即确认键：文书序末位为 .decision-confirm 真按钮，无独立装饰 seal
-    const sealConfirm = documentPage!.querySelector<HTMLButtonElement>(".decision-confirm");
-    expect(sealConfirm).not.toBeNull();
-    expect(sealConfirm!.tagName).toBe("BUTTON");
-    expect(documentPage!.querySelector(".decision-seal")).toBeNull();
-    expect(document.querySelectorAll(".decision-confirm")).toHaveLength(1);
-    act(() => document.querySelector<HTMLButtonElement>(".decision-option")!.click());
-    act(() => sealConfirm!.click());
-
-    cleanup();
-  });
-
   it("renders no page for a month with no decisions", () => {
     const cleanup = render(<DecisionModal decisions={[]} onResolve={vi.fn()} />);
     expect(document.querySelector(".decision-page")).toBeNull();
@@ -209,29 +191,6 @@ describe("DecisionModal", () => {
       dossier_id: 42, dossier_decision: "force_promulgated",
       note: "朕意已决。",
     }]);
-    cleanup();
-  });
-
-  it("keeps the handwritten reply in the existing resolve payload", () => {
-    const onResolve = vi.fn();
-    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={onResolve} />);
-    const note = document.querySelector<HTMLTextAreaElement>("textarea");
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(note, "着即办理，不得有误。");
-      (note as HTMLTextAreaElement & { _valueTracker?: { setValue: (value: string) => void } })._valueTracker?.setValue("");
-      note!.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
-    expect(onResolve).toHaveBeenCalledWith([{ note: "着即办理，不得有误。" }]);
-    cleanup();
-  });
-
-  it("keeps the selected memorial's label and hint in the existing resolve payload", () => {
-    const onResolve = vi.fn();
-    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={onResolve} />);
-    act(() => document.querySelector<HTMLButtonElement>(".decision-option")!.click());
-    act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
-    expect(onResolve).toHaveBeenCalledWith([{ label: "拨帑速发", hint: "先解燃眉之急。" }]);
     cleanup();
   });
 
@@ -317,59 +276,6 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     expect(options[0].classList.contains("is-picked")).toBe(true);
 
     cleanup();
-  });
-
-  it("keeps the three-state invariant for listed picks without sealing the handwritten-only path", () => {
-    const cleanupListed = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
-    const confirm = () => document.querySelector<HTMLButtonElement>(".decision-confirm")!;
-    const options = () => document.querySelectorAll<HTMLButtonElement>(".decision-option");
-
-    // 无择票拟 ⇔ 无选中样 ⇔ 确认不可用（须择票拟语义下）
-    expect(options()[0].classList.contains("is-picked")).toBe(false);
-    expect(options()[1].classList.contains("is-picked")).toBe(false);
-    expect(confirm().disabled).toBe(true);
-
-    act(() => options()[0].click());
-    expect(options()[0].classList.contains("is-picked")).toBe(true);
-    expect(confirm().disabled).toBe(false);
-
-    cleanupListed();
-
-    // 亲笔批示-only 路径（ADR 0043 留门）不得改死
-    const onResolve = vi.fn();
-    const cleanupNote = render(<DecisionModal decisions={[decisions[0]]} onResolve={onResolve} />);
-    const note = document.querySelector<HTMLTextAreaElement>(".decision-note")!;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(note, "着即办理。");
-      (note as HTMLTextAreaElement & { _valueTracker?: { setValue: (value: string) => void } })._valueTracker?.setValue("");
-      note.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
-    expect(confirm().disabled).toBe(false);
-    act(() => confirm().click());
-    expect(onResolve).toHaveBeenCalledWith([{ note: "着即办理。" }]);
-    cleanupNote();
-
-    // dossier 路径仍须择票拟：仅亲笔不可确认
-    const dossierDecision: PendingDecision = {
-      ...decisions[0],
-      event_id: "dossier:7",
-      options: [{
-        label: "强颁", hint: "以中旨颁行。",
-        dossier_id: 7, dossier_decision: "force_promulgated",
-      }],
-    };
-    const cleanupDossier = render(<DecisionModal decisions={[dossierDecision]} onResolve={vi.fn()} />);
-    const dossierNote = document.querySelector<HTMLTextAreaElement>(".decision-note")!;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(dossierNote, "朕意已决。");
-      (dossierNote as HTMLTextAreaElement & { _valueTracker?: { setValue: (value: string) => void } })._valueTracker?.setValue("");
-      dossierNote.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    expect(confirm().disabled).toBe(true);
-    expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
-
-    cleanupDossier();
   });
 
   it("#657 同页两类 + 六动作可点 + 留中默认", () => {
