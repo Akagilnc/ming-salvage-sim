@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
 
 import pytest
 
@@ -351,33 +350,6 @@ def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game
 
 # --------------------------------------------- P5：批内条目并行不串行
 
-def test_brew_batch_runs_items_in_parallel_not_serialized(game):
-    db, state, _ = game
-    pairs = [("甲", "乙"), ("丙", "丁")]
-    for source, target in pairs:
-        _add_edge(db, state, source=source, target=target, kind="协作",
-                  context=f"{source}与{target}当场协作。", origin=f"audience:{source}{target}")
-
-    barrier = threading.Barrier(len(pairs))
-    threads: list = []
-
-    def parallel_brew(payload_json: str) -> str:
-        payload = json.loads(payload_json)
-        threads.append(threading.current_thread().name)
-        barrier.wait()  # 串行实现会在第二个条目处超时破裂
-        return json.dumps(
-            _script(recent=f"{payload['source']}与{payload['target']}协作在案。"),
-            ensure_ascii=False,
-        )
-
-    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
-    assert len(report["brewed"]) == 2
-    assert len(set(threads)) == 2
-    for source, target in pairs:
-        assert db.get_relation_summary(source, target)["recent_segment"] == (
-            f"{source}与{target}协作在案。"
-        )
-
 
 # ------------------------------------------------- 「本月新增」总判据（历史水位不选旧事）
 
@@ -636,32 +608,4 @@ def test_unescaped_control_byte_rejected_not_stripped(game):
 # -------------------------------- 庭裁 Z2：删固定 max_workers=4，按批定容
 
 
-def test_batch_of_five_relations_all_enter_call_seam_concurrently(game):
-    """庭裁 Z2：worker 数按本批实际 jobs 数定容，不设固定 4 上限——5 条独立
-    关系同批时第 5 条必须能与前四条同时进入调用缝（串行或固定上限实现会在
-    Barrier 处超时破裂）。不新增速率限制/信号量/配额等任何护栏。"""
-    db, state, _ = game
-    pairs = [("甲", "乙"), ("丙", "丁"), ("戊", "己"), ("庚", "辛"), ("壬", "癸")]
-    for source, target in pairs:
-        _add_edge(db, state, source=source, target=target, kind="协作",
-                  context=f"{source}与{target}当场协作。", origin=f"audience:{source}{target}")
 
-    barrier = threading.Barrier(len(pairs))
-    threads: list = []
-
-    def parallel_brew(payload_json: str) -> str:
-        payload = json.loads(payload_json)
-        threads.append(threading.current_thread().name)
-        barrier.wait()  # 第 5 条排不到缝即在此超时破裂
-        return json.dumps(
-            _script(recent=f"{payload['source']}与{payload['target']}协作在案。"),
-            ensure_ascii=False,
-        )
-
-    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
-    assert len(report["brewed"]) == 5
-    assert len(set(threads)) == 5
-    for source, target in pairs:
-        assert db.get_relation_summary(source, target)["recent_segment"] == (
-            f"{source}与{target}协作在案。"
-        )

@@ -8276,9 +8276,31 @@ class GameDB:
         Missing tables mean a fresh session with no history yet (length 0)—
         schema drift must not be swallowed via OperationalError→0.
         """
-        if not session_id:
+        if not session_id or not self._table_exists("agno_runs"):
             return 0
-        return len(self._agno_table_run_dicts(session_id))
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM agno_runs WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return int(row["n"] if row is not None else 0)
+
+    def agno_run_ids(self, session_id: str) -> List[str]:
+        """Ordered run_id list for a session (table-only; no run_data decode)."""
+        if not session_id or not self._table_exists("agno_runs"):
+            return []
+        rows = self.conn.execute(
+            """
+            SELECT run_id FROM agno_runs
+            WHERE session_id = ?
+            ORDER BY run_index ASC, created_at ASC, run_id ASC
+            """,
+            (session_id,),
+        ).fetchall()
+        return [
+            str(r["run_id"])
+            for r in rows
+            if r["run_id"] is not None
+        ]
 
     def truncate_agno_session_runs(self, session_id: str, keep_count: int) -> None:
         """截回 session 的 Agno 历史到 keep_count（transport 重试 per-attempt）。
@@ -8311,35 +8333,6 @@ class GameDB:
             int(turn_row.get("agno_runs_before") or 0),
         )
 
-    def _agno_table_run_dicts(self, session_id: str) -> List[Dict[str, Any]]:
-        if not self._table_exists("agno_runs"):
-            return []
-        rows = self.conn.execute(
-            """
-            SELECT run_id, run_data FROM agno_runs
-            WHERE session_id = ?
-            ORDER BY run_index ASC, created_at ASC, run_id ASC
-            """,
-            (session_id,),
-        ).fetchall()
-        out: List[Dict[str, Any]] = []
-        for row in rows:
-            rid = row["run_id"]
-            if rid is None:
-                continue
-            payload: Dict[str, Any] = {"run_id": str(rid)}
-            raw = row["run_data"]
-            if raw not in (None, ""):
-                try:
-                    decoded = json.loads(raw) if isinstance(raw, str) else raw
-                except (TypeError, ValueError):
-                    decoded = None
-                if isinstance(decoded, dict):
-                    payload = dict(decoded)
-                    payload["run_id"] = str(rid)
-            out.append(payload)
-        return out
-
     def _truncate_agno_runs_in_tx(self, session_id: str, keep_count: int) -> None:
         """Truncate table run history back to keep_count (retry/undo/reconcile).
 
@@ -8349,23 +8342,10 @@ class GameDB:
         if not session_id:
             return
         keep = max(0, int(keep_count))
-        if not self._table_exists("agno_runs"):
+        ids = self.agno_run_ids(session_id)
+        if len(ids) <= keep:
             return
-        rows = self.conn.execute(
-            """
-            SELECT run_id FROM agno_runs
-            WHERE session_id = ?
-            ORDER BY run_index ASC, created_at ASC, run_id ASC
-            """,
-            (session_id,),
-        ).fetchall()
-        if len(rows) <= keep:
-            return
-        drop_ids = [
-            str(r["run_id"])
-            for r in rows[keep:]
-            if r["run_id"] is not None
-        ]
+        drop_ids = ids[keep:]
         if drop_ids:
             self.conn.executemany(
                 "DELETE FROM agno_runs WHERE session_id = ? AND run_id = ?",

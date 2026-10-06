@@ -19,12 +19,12 @@
             → outer commit 后 registry.project_outcome
 
 月末人物变化
-  extractor 的「人物变更」
-    → apply_score_extraction
+  月链声明段「人物变更」
+    → declaration_dispatch → apply_score_extraction
     → ADR 0009 人物 applier
 ```
 
-旧 `appointments` / `office_changes` / `character_status_changes` / `character_power_changes` 只为历史 delta 重放保留，由 sanitize 层翻译；新内容只写 `人物变更`，字段与动作见 ADR 0009 和 `docs/DELTA_SCHEMA.md`。
+人物写只认 canonical 键 `人物变更`（ADR 0009 / [`DELTA_SCHEMA`](DELTA_SCHEMA.md)）；旧四 key 与 legacy 翻译层已退役，不得再经 sanitize 重放。
 
 ## 二、召对任免
 
