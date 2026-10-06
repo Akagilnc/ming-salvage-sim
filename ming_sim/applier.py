@@ -52,16 +52,17 @@ class StoredDocumentError(Exception):
 def durable_int(raw: object, *, label: str, blank: int = 0) -> int:
     """Read one integer from a durable column.
 
-    None/empty uses ``blank``. A present non-integer is StoredDocumentError
-    (read seam), not a model/product ValueError.
+    None/empty uses ``blank``. Present values reuse strict_int (reject bool/
+    float/overflow); failures are StoredDocumentError (read seam), not product
+    ValueError washed into pending failed.
     """
     if raw is None or raw == "":
         return int(blank)
-    if isinstance(raw, bool):
-        raise StoredDocumentError(f"{label} 损坏")
+    from ming_sim.strict_types import strict_int
+
     try:
-        return int(raw)  # type: ignore[arg-type]
-    except (TypeError, ValueError) as exc:
+        return strict_int(raw)
+    except (TypeError, ValueError, OverflowError) as exc:
         raise StoredDocumentError(f"{label} 损坏") from exc
 
 
