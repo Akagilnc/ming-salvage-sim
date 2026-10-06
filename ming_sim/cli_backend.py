@@ -1218,9 +1218,7 @@ def _loads_lenient(
 
 
 
-def _fake_completion(
-    text: str, model_id: str, tool_calls: list[ChatCompletionMessageFunctionToolCall] | None = None,
-) -> ChatCompletion:
+def _fake_completion(text: str, model_id: str) -> ChatCompletion:
     """把纯文本包成 OpenAI ChatCompletion 交给 agno 解析。"""
     msg = ChatCompletionMessage(role="assistant", content=text)
     choice = Choice(index=0, message=msg, finish_reason="stop")
@@ -1372,49 +1370,6 @@ class CliChat(OpenAIChat):
 
     async def ainvoke_stream(self, *args, **kwargs):  # type: ignore[override]
         for response in self.invoke_stream(*args, **kwargs):
-            yield response
-
-    def response_stream(  # type: ignore[override]
-        self,
-        messages: List[Message],
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Any]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        tool_call_limit: Optional[int] = None,
-        stream_model_response: bool = True,
-        run_response: Any = None,
-        send_media_to_model: bool = True,
-        compression_manager: Any = None,
-        **kwargs: Any,  # 吸掉 agno 演进新增的 kwarg(如 after_tool_results)，免 override 签名漂移炸 CI
-    ):
-        yield from super().response_stream(
-            messages, response_format=response_format, tools=tools,
-            tool_choice=tool_choice, tool_call_limit=tool_call_limit,
-            stream_model_response=stream_model_response, run_response=run_response,
-            send_media_to_model=send_media_to_model,
-            compression_manager=compression_manager, **kwargs,
-        )
-
-    async def aresponse_stream(  # type: ignore[override]
-        self,
-        messages: List[Message],
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Any]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        tool_call_limit: Optional[int] = None,
-        stream_model_response: bool = True,
-        run_response: Any = None,
-        send_media_to_model: bool = True,
-        compression_manager: Any = None,
-        **kwargs: Any,  # 吸掉 agno 演进新增的 kwarg(如 after_tool_results)，免 override 签名漂移炸 CI
-    ):
-        async for response in super().aresponse_stream(
-            messages, response_format=response_format, tools=tools,
-            tool_choice=tool_choice, tool_call_limit=tool_call_limit,
-            stream_model_response=stream_model_response, run_response=run_response,
-            send_media_to_model=send_media_to_model,
-            compression_manager=compression_manager, **kwargs,
-        ):
             yield response
 
 

@@ -90,15 +90,12 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
     assert status == "dead"
     assert reason == declaration["on_scene_facts"][0]["reason"]
 
-    prepare_scene_materials(db, state, dest_root=tmp_path / "after-kill")
-    # 下一句供料以账本 status 为准：死者不得仍以 active 出现在朝臣查询。
-    active_names = {
-        str(row["name"])
-        for row in db.conn.execute(
-            "SELECT name FROM characters WHERE status='active'"
-        )
-    }
-    assert victim not in active_names
+    prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-kill")
+    listed = list_materials(prepared.root)
+    # 结构化读取：供料目录须有朝臣名册；死者不在现役名册投影。
+    assert any(path.endswith("朝臣名册.txt") for path in listed)
+    court = {row["name"] for row in db.current_court_roster_rows(state)}
+    assert victim not in court
 
 
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):

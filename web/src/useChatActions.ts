@@ -183,10 +183,7 @@ export function useChatActions({
         void refreshDurableProjection({ secretOrders: true });
         // 面板态：仅当前大臣面板未切走才落。
         if (selectedMinisterRef.current !== initiatingPanelName) return;
-            setCanUndoLastChat(!!data.can_undo_last_chat);
-        if (data.court_action === "dismiss") {
-          clearPendingText();
-        }
+        setCanUndoLastChat(!!data.can_undo_last_chat);
       },
       // #1764：end = 抽取成案/收夜等尾随已 join 的提交完成缝；再读权威 durable（含 cased_directives）。
       // 不延迟 done；不新建轮询/总线。观察者离面无 end 时，重入拟诏经公共 openModal(edict)→loadState。

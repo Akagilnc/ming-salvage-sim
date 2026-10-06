@@ -171,12 +171,6 @@ def test_court_break_writes_no_exit_ledger(game, monkeypatch):
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
 
 
-# ── L1 R2：court_action=dismiss 单缝——非流式 web /api/audience/chat
-#          与 CLI tool 路共 GameSession.chat 产源，令退落告退账、名单即时去人 ──
-
-
-
-
 # ── L2：告退后再宣入须重新落入殿账（present_names_at 单一在场真源）──────────
 
 
