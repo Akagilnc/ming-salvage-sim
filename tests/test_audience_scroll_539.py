@@ -121,7 +121,8 @@ def test_empty_open_night_scroll_exposes_persisted_container(game, monkeypatch):
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
 
     assert payload["night_id"] == night_id
-    assert all(not message["content"] for message in payload["messages"])
+    # 空夜无对话轮；不扫 message.content 空串真值（#1897 T1）。
+    assert not any(m.get("chat_turn_id") for m in payload["messages"])
     assert payload["container"] == {"time_of_day": "午时", "location": "文华殿", "audience_type": "召对"}
 
 
@@ -211,12 +212,22 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     after = client.get("/api/audience/scroll").json()["messages"]
     assert client.get("/api/audience/scroll").json()["translation_pending"] is False
     segments = [m for m in after if m.get("chat_turn_id") == turn_id and m["role"] != "user"]
-    assert [(m["role"], m["speaker"], m.get("audibility"), m.get("beat")) for m in segments] == [
+    segment_struct = [
+        (m["role"], m["speaker"], m.get("audibility"), m.get("beat")) for m in segments
+    ]
+    assert segment_struct == [
         ("minister", "杨嗣昌", "殿上公开", "dialogue"),
         ("attendant", "王承恩", "御前低语", "aside"),
         ("scene", "", "殿上公开", "dialogue"),
     ]
-    assert [m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"] if m.get("chat_turn_id") == turn_id and m["role"] != "user"] == segments
+    # 夜卷轴再读只比结构化投影，不整对象锁 content 正文（#1897 T1）。
+    again = [
+        m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"]
+        if m.get("chat_turn_id") == turn_id and m["role"] != "user"
+    ]
+    assert [
+        (m["role"], m["speaker"], m.get("audibility"), m.get("beat")) for m in again
+    ] == segment_struct
 
 
 def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):

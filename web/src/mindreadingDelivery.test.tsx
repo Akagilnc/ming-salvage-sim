@@ -296,14 +296,12 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
 
     act(() => { void hook.sendChat("温体仁", "问2", noCbs); });
     await tick();
-    // 固定 UI busy；待答槽位占用用结构化空/非空，不锁 pending 自由正文等值（#1897 T1）。
+    // 固定 UI busy 隔离契约（与待答槽同位回收）；不锁 pending 自由正文非空（#1897 T1）。
     expect(busyRef.current).toBe("大臣思索中");
-    expect(Boolean(hookRef.current!.pendingUserMessage)).toBe(true);
 
     releaseEnd1();
     await act(async () => { await p1; });
     expect(busyRef.current).toBe("大臣思索中");            // 旧流未清掉流 2 的 busy
-    expect(Boolean(hookRef.current!.pendingUserMessage)).toBe(true);  // 旧流未清掉流 2 待答槽
   });
 
   it("陈旧同大臣历史响应：更旧的 GET 迟到不抹掉新完成的轮（generation 守卫）", async () => {

@@ -18005,10 +18005,23 @@ class GameDB:
                 if classification == "invalid":
                     cm = atomic(self) if owns_transaction else contextlib.nullcontext()
                     with cm:
+                        try:
+                            inv_payload = json.loads(pa["payload_json"] or "{}")
+                            if not isinstance(inv_payload, dict):
+                                inv_payload = {}
+                        except (ValueError, TypeError):
+                            inv_payload = {}
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
+                        self._record_pending_domain_rejection(
+                            rejection_collector, state, pa, inv_payload,
+                            reason="拟旨暂存领域校验未通过",
+                            category="invalid_shape",
+                        )
+                        if rejection_collector is not None:
+                            rejection_collector.flush_to_db(self)
                     continue
                 payload = dict(prepared["payload"])
                 payload["_canonical_pending_directive"] = True
@@ -18061,8 +18074,17 @@ class GameDB:
                         restore_office_memory()
                         # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
                         # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
+                        # 布尔领域失败同样贯通拒收留痕（#1897 N1），不靠 failed 状态顶替。
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
+                        self._record_pending_domain_rejection(
+                            rejection_collector, state, pa, payload,
+                            reason=(
+                                f"{pa.get('kind')}/{pa.get('action')} "
+                                "领域条件不成立，该暂存已失败"
+                            ),
+                            category="invalid_state",
+                        )
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
                     restore_office_memory()
@@ -18174,6 +18196,14 @@ class GameDB:
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
+                        self._record_pending_domain_rejection(
+                            rejection_collector, state, pa, payload,
+                            reason=(
+                                f"{pa.get('kind')}/{pa.get('action')} "
+                                "领域条件不成立，该暂存已失败"
+                            ),
+                            category="invalid_state",
+                        )
                 except Exception as exc:
                     # directive 特路与通用分支同款：typed 领域拒收回滚后标 failed。
                     # 真实 SQLite / 未分类 ValueError 不标 failed，交外层原链停住（#1897 可补跑）。
@@ -18209,17 +18239,30 @@ class GameDB:
         state: GameState,
         pa: Mapping[str, object],
         payload: Mapping[str, object],
-        exc: BaseException,
+        exc: BaseException | None = None,
+        *,
+        reason: str | None = None,
+        category: str | None = None,
     ) -> None:
         """领域坏项进既有 rejection_reports；内存 sideband 只供同步应允读回原因。
 
+        覆盖 typed 异常、classification=invalid、_apply 返回 False 三类出口。
         真故障不经此路（调用方已 re-raise）。失败 status 不能代替法定拒收留痕。
         """
         if rejection_collector is None:
             return
         from ming_sim.applier import Provenance, RejectedItem
-        rejection_collector.note_commit_rejection(int(pa["id"]), exc)
-        category = str(getattr(exc, "category", "") or "invalid_state")
+        if exc is not None:
+            rejection_collector.note_commit_rejection(int(pa["id"]), exc)
+            cat = str(
+                category
+                or getattr(exc, "category", "")
+                or "invalid_state"
+            )
+            why = str(reason if reason is not None else exc)
+        else:
+            cat = str(category or "invalid_state")
+            why = str(reason or "领域条件不成立，该暂存已失败")
         item = {
             "id": int(pa["id"]),
             "kind": str(pa.get("kind") or ""),
@@ -18232,8 +18275,8 @@ class GameDB:
             f"pending_{item['kind'] or 'action'}",
             RejectedItem(
                 item=item,
-                reason=str(exc),
-                category=category,
+                reason=why,
+                category=cat,
                 source=Provenance.player_decree,
             ),
             int(state.turn),

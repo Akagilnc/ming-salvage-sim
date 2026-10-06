@@ -212,14 +212,22 @@ def test_issue_material_projection_does_not_pollute_durable_events_or_db(game, t
     public_before = int(db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE character_name=''"
     ).fetchone()["n"])
-    durable_before = tuple(db.get_character_knowledge(state, AUDIENCE_NAME).get("events") or [])
+    # 身份集合（source_id/kind），不整对象锁 events 正文（#1897 T1）。
+    durable_before_ids = tuple(
+        (str(e.get("source_id") or ""), str(e.get("kind") or ""))
+        for e in (db.get_character_knowledge(state, AUDIENCE_NAME).get("events") or [])
+    )
 
     prepared = prepare_character_materials(
         db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
     )
 
     assert _issue_paths(prepared, issue_id)
-    assert tuple(db.get_character_knowledge(state, AUDIENCE_NAME).get("events") or []) == durable_before
+    durable_after_ids = tuple(
+        (str(e.get("source_id") or ""), str(e.get("kind") or ""))
+        for e in (db.get_character_knowledge(state, AUDIENCE_NAME).get("events") or [])
+    )
+    assert durable_after_ids == durable_before_ids
     row_after = _issue_row(db)
     assert int(row_after["id"]) == issue_id
     assert row_after["origin_ref"] == row["origin_ref"]

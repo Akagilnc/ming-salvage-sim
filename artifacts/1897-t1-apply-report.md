@@ -564,6 +564,27 @@ member_table_rows=168
 | `test_gazette_author_1862` 材料路径 strip 非空 | 改为路径身份 |
 | `test_month_chain_1843` index/board strip | 改为类型／目录结构 |
 | `test_secret_order_payoff_1504` read_material strip/正文等值 | 改为路径集合结构 |
-| `web/src/mindreadingDelivery.test.tsx` pending 正文 | 改为槽位占用布尔 + 固定 busy UI |
+| `web/src/mindreadingDelivery.test.tsx` pending 正文 | 去掉 Boolean(pending) 非空换形；只留固定 busy UI 隔离 |
 | `web/src/components/situation.test.tsx` fallback | 恢复固定 UI「未知进度」；去 issue.title 散文负向哨兵 |
+| `test_failed_retry…` / `test_load_save…` question/content 等值 | 改为 chat_turn_id／条数水位 |
+| `test_translation_segments…` 整对象 messages==segments | 改为 role/speaker/audibility/beat 结构投影 |
+| `test_issue_material_projection…` events 整对象 | 改为 (source_id, kind) 身份集合 |
+| `test_surcharge…` `_gazette_projection_body is not None` | 改为 projection source_id 身份存在 |
+| `test_empty_open_night…` `not message["content"]` | 改为无 chat_turn_id 对话轮 |
+| `decisionModal` / `modals` 正文 not.toContain 哨兵 | 改为选项／turn 节点结构负向 |
 
+
+
+## #1897 续裁 T1 补扫（相对 5776f7d75）
+
+| 成员 | 处置 |
+|---|---|
+| `test_failed_retry_rolls_back_side_effects_and_keeps_question` | 去 question/content 正文等值，改 chat_turn 水位 |
+| `test_load_save_reconciles_interrupted_orphan` | 同上 |
+| `test_translation_segments_replace_neutral_reply_in_real_scroll` | 去整对象 segments 等值，只比 role/speaker/audibility/beat |
+| `test_issue_material_projection_does_not_pollute_durable_events_or_db` | events 改 source_id/kind 身份集合 |
+| `mindreadingDelivery` 重叠流 | 只留固定 busy UI，去 pending 非空谓词 |
+| `test_surcharge` gazette body is not None | 改 source_id 行在 |
+| `test_qa_t1` minister content 等值 | 改条数+chat_turn_id |
+| `test_audience_translation_1838` presence body | 只比 enter/exit 效果序 |
+| `test_faction_brew_637` stance_segment 等值 | 改摘要行在／水位字段 |

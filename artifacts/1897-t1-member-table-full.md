@@ -15,7 +15,9 @@
 
 | 成员 | 处置 | 依据 |
 |---|---|---|
-| `test_failed_retry_rolls_back_side_effects_and_keeps_question` | 合法保留 | 结构化字段 |
+| `test_failed_retry_rolls_back_side_effects_and_keeps_question` | 合法保留（纠正文等值） | chat_turn_id／条数水位；已去 question/content 正文锁 |
+| `test_load_save_reconciles_interrupted_orphan` | 合法保留（纠正文等值） | interrupted 重试清单挂接 chat_turn_id；已去 question 正文锁 |
+| `test_657_rescript_summon_writes_enter_fact_and_is_idempotent` | 合法保留（去 body 空串） | tags/origin/幂等；已去 body=="" 真值 |
 | `test_post_reply_failure_resumes_close_without_regenerating_reply` | 合法保留 | 结构化字段 |
 | `test_pure_audience_zero_ledger_turn_survives_reopen` | 合法保留 | 结构化字段 |
 | `test_reopen_reconcile_unblocks_and_keeps_question` | 合法保留 | 结构化字段 |
@@ -29,7 +31,8 @@
 | `test_personal_projection_only_reads_the_current_open_night` | 合法保留 | 结构化字段 |
 | `test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats` | 合法保留 | 结构化字段 |
 | `test_scroll_contract_merges_both_stores_with_container_and_coda` | 合法保留 | 结构化字段 |
-| `test_translation_segments_replace_neutral_reply_in_real_scroll` | 合法保留 | 结构化字段 |
+| `test_translation_segments_replace_neutral_reply_in_real_scroll` | 合法保留（纠整对象） | role/speaker/audibility/beat；已去 messages==segments 正文壳 |
+| `test_empty_open_night_scroll_exposes_persisted_container` | 合法保留（纠空串真值） | 无 chat_turn_id；已去 not content |
 
 ## `tests/test_audience_translation_1838.py`
 
@@ -259,7 +262,7 @@
 
 | 成员 | 处置 | 依据 |
 |---|---|---|
-| `test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_it` | 合法保留 | 改写后无 hollow 谓词主导；保留既有结构断言 |
+| `test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_it` | 合法保留（纠正文壳） | turn_reports 行 + projection:turn_report source_id 身份；已去 body is not None |
 
 ## `web/src/appDurableWiring.test.tsx`
 
@@ -294,7 +297,7 @@
 |---|---|---|
 | `assembles each decision as ordered sections of one red-seal document` | 合法保留 | 负向闸；批红文书布局 |
 | `moves focus to the next memorial when continuing to the next decision` | 合法保留 | 负向闸；焦点／忙态／回调；批红文书布局 |
-
+| `rejects the whole batch when any item is not a valid PendingDecision` | 合法保留（纠散文哨兵） | result=[] + 无 .decision-option 节点；已去 not.toContain 正文 |
 ## `web/src/components/modals.test.tsx`
 
 | 成员 | 处置 | 依据 |
@@ -305,6 +308,7 @@
 | `#671 史册月档经 HistoryModal fetch 呈现独立递话原文` | 合法保留 | 负向闸；拒收／失败形态；焦点／忙态／回调 |
 | `#671 王承恩递话在邸报纸面外独立区，不经 stripOrganicMarkdown；空则不渲染` | 合法保留 | 负向闸 |
 | `adds translated roles and minister emphasis inside the same unchanged turn block` | 合法保留 | turn-id 身份节点；结构化字段 |
+| `does not flash old minister chat while the night scroll is loading or failed` | 合法保留（纠散文哨兵） | 无 data-audience-turn-id + alert；已去 not.toContain 正文 |
 | `does not merge personal history while the canonical scroll refresh is delayed` | 合法保留 | turn-id 身份节点；负向闸；结构化字段 |
 | `does not treat an ordinary history reduction as a withdrawal` | 合法保留 | turn-id 身份节点；负向闸；结构化字段 |
 | `groups only adjacent rows of a turn without moving an interleaved scene row` | 合法保留 | turn-id 身份节点；负向闸；结构化字段 |
@@ -355,7 +359,7 @@
 | `accepted 后普通流中断会移除未持久化的半段回话` | 合法保留 | 结构化字段 |
 | `宣召落账先于回话重读主角，end 后仍重读尾随场景` | 合法保留 | turn-id 身份节点；负向闸；结构化字段 |
 | `无夜 identity 不接纳猜测出的旧卷，新夜回话失败也不回闪` | 合法保留 | 改写后无 hollow 谓词主导；保留既有结构断言 |
-| `重叠流归属：旧流尾巴（finally）不清掉更新请求的 busy / 待答文` | 合法保留 | 改写后无 hollow 谓词主导；保留既有结构断言 |
+| `重叠流归属：旧流尾巴（finally）不清掉更新请求的 busy / 待答文` | 合法保留（纠非空换形） | 固定 busy「大臣思索中」隔离；已去 Boolean(pendingUserMessage) |
 | `陈旧同大臣历史响应：更旧的 GET 迟到不抹掉新完成的轮（generation 守卫）` | 合法保留 | 改写后仍含可报红结构断言（非仅 exists） |
 
 ## `web/src/ministerScrollLens.test.ts`

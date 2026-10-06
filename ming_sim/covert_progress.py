@@ -2028,8 +2028,10 @@ def _apply_investigation_selection(
         raw_note = sel_map.get("备注")
     else:
         raw_note = None
-    if raw_note is None or isinstance(raw_note, (Mapping, list)) or str(raw_note) == "":
-        note = f"查案实况：本月投入 {result.get('effort_applied', 0.0):g}，已掌握 {units:g} 条"
+    # 与普通 covert 同约：未提供字段 → None 保留已存正文；显式提供（含空串／空白）
+    # 原样写入。禁止按空串拼机器叙述顶替（P6 / #1897 N2）。
+    if raw_note is None or isinstance(raw_note, (Mapping, list)):
+        note: Optional[str] = None
     else:
         note = str(raw_note)
     row = db.record_dossier_actual_progress(

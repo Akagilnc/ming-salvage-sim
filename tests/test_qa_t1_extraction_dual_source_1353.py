@@ -584,9 +584,15 @@ def test_stream_post_reply_exception_preserves_phase_and_recovers_original_turn(
     game.retry_interrupted_reply("殿上", chat_turn_id)
     assert calls == ["退朝", "court_break"]
     assert game.reply_retries("殿上") == []
-    assert [r["content"] for r in game.db.conn.execute(
-        "SELECT content FROM chat_messages WHERE role='minister' AND minister_name=?", ("殿上",)
-    )] == ["臣遵旨。"]
+    # 回话行水位：chat_turns.minister_message_id 挂接；不锁 content 正文（#1897 T1）。
+    mid = game.db.conn.execute(
+        "SELECT minister_message_id FROM chat_turns WHERE id=?", (int(chat_turn_id),),
+    ).fetchone()["minister_message_id"]
+    assert mid is not None
+    assert game.db.conn.execute(
+        "SELECT COUNT(*) c FROM chat_messages WHERE role='minister' AND minister_name=? AND id=?",
+        ("殿上", int(mid)),
+    ).fetchone()["c"] == 1
 
 
 def test_dispatch_exception_after_persist_retains_reply_recovery(web_game, monkeypatch):

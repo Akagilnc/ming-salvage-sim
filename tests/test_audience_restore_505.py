@@ -437,12 +437,20 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     ).fetchone()["error_pack_path"])
     assert (pack / "traceback.txt").is_file()
     assert (pack / "save_backup.db").is_file()
-    assert [r["question"] for r in db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
-    assert [
-        r["content"] for r in db.conn.execute(
-            "SELECT content FROM chat_messages WHERE role='user'"
-        ).fetchall()
-    ] == ["剿抚孰先？"]
+    # 问话身份／水位：retry 挂同一 chat_turn，user_message 行在；不锁正文（#1897 T1）。
+    retries = db.get_interrupted_reply_retries(minister)
+    assert len(retries) == 1
+    assert int(retries[0]["chat_turn_id"]) == int(ct)
+    uid = db.conn.execute(
+        "SELECT user_message_id FROM chat_turns WHERE id=?", (ct,)
+    ).fetchone()["user_message_id"]
+    assert uid is not None
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM chat_messages WHERE role='user' AND id=?", (int(uid),)
+    ).fetchone()["c"] == 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM chat_messages WHERE role='user'"
+    ).fetchone()["c"] == 1
     # 消费后无残留 rollback_items（否则将来重试成功→撤回会双还原）。
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM chat_turn_rollback_items WHERE chat_turn_id=?", (ct,)
@@ -852,7 +860,10 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
     assert game.db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
-    assert [r["question"] for r in game.db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
+    # 问话水位：interrupted 重试清单挂接同一 chat_turn；不锁 question 正文（#1897 T1）。
+    retries = game.db.get_interrupted_reply_retries(minister)
+    assert len(retries) == 1
+    assert int(retries[0]["chat_turn_id"]) == int(ct)
 
 
 # ---------------------------------------------------------------------------
@@ -891,7 +902,7 @@ def test_657_rescript_summon_writes_enter_fact_and_is_idempotent(game):
     assert entry is not None
     assert rescript_summon_origin_consumed(entry)
     assert TAG_ENTER in entry["tags"]
-    assert str(entry.get("body") or "") == ""
+    # 入殿脚手架只认 tags/origin；不锁 body 空串真值（#1897 T1）。
     assert int(sc["entry_id"]) == int(entry["id"])
 
     again = prepare_rescript_summon_scaffold(
