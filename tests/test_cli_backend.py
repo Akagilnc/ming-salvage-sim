@@ -302,18 +302,6 @@ def test_run_codex_maps_reasoning_strength_to_native_effort(monkeypatch):
     assert 'model_reasoning_effort="medium"' not in joined
 
 
-def test_run_codex_stdout_empty_fallback(monkeypatch):
-    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    _capture_run(
-        monkeypatch,
-        _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
-    )
-    out, n = cb._run_codex("p")
-    # #1834 F16：只切横幅边界，不对 LLM 段 strip；stderr 段内换行保留。
-    assert out == "STDOUT_BODY\n"
-    assert n == 1
-
-
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
     monkeypatch.setenv("MAX_THINKING_TOKENS", "32000")
     captured = _capture_run(monkeypatch)
@@ -621,21 +609,6 @@ def test_run_agy_success_single_subprocess(monkeypatch):
     assert out == "STDOUT_BODY" and attempts == 1
     assert state["agy"] == 1
     assert state["warm"] >= 1  # 暖 keychain 是操作步骤，不是重试策略
-
-
-@pytest.mark.parametrize(
-    "banner", ["Authentication required", "authentication timed out"],
-)
-def test_run_agy_auth_race_is_retryable_typed_without_private_loop(monkeypatch, banner):
-    """#1465 切片③：agy auth race 抛可重试 typed，**一次子进程**——
-    重试次数归 llm_transport，runner 内不得再自转 4 次。"""
-    from ming_sim.exceptions import LLMUnavailable
-
-    state = _agy_popen(monkeypatch, [(banner, 0)])
-    with pytest.raises(LLMUnavailable) as ei:
-        cb._run_agy("p")
-    assert ei.value.code == "llm_connection_error"
-    assert state["agy"] == 1
 
 
 def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):

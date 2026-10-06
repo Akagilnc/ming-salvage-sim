@@ -161,16 +161,15 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
 ):
     """②三次瞬断耗尽 → 系统层终失败呈现、夜不封、可重发。
 
-    注入 = agy auth race（已知瞬断实证）；耗尽后换出文脚本重发即成。
-    同一条测另钉：机器文本（`Authentication required`）一个字都不得进 delta ——
-    终失败只以系统层人话呈现（票面「系统层人话报错」/ ADR 0046 否决失败戏内化）。
+    注入 = rc=0 空输出（可重试 typed 空输出，结构化路径）；耗尽后换出文脚本重发即成。
+    #1834 F26：不再用成功正文词表冒充认证/连接故障。
     """
     from ming_sim import audience_night as an
 
     # runtime 即使误配为五次，玩家的一次动作仍以票面三次为硬上限。
     _pin_transport_policy(monkeypatch, tmp_path, max_attempts=5)
     script = install_fake_cli_runner(monkeypatch, [
-        {"stdout": ("Authentication required\n",), "returncode": 0},
+        {"stdout": (), "returncode": 0},
     ])
     web_game, minister = _cli_web_game(game, monkeypatch, backend="agy")
     db = web_game.db
@@ -184,20 +183,16 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     events = _parse_sse(response.text)
     assert events[-1][0] == "error", events
     detail = events[-1][1]
-    assert detail.get("code") == "llm_connection_error", detail
+    assert detail.get("code") == "llm_empty_output", detail
     attempts = detail.get("transport_attempts") or []
     assert [a.get("outcome") for a in attempts] == [
         "retryable_fail", "retryable_fail", "terminal_fail",
     ], attempts
     assert script.calls == 3
-    # 机器文本不得以大臣口吻落到玩家眼前：delta 通道零机文（含重试起手的 replace）
     deltas = "".join(
         str(payload.get("content") or "") for name, payload in events if name == "delta"
     )
-    assert "Authentication required" not in deltas, deltas
     assert deltas.strip() == "", deltas
-    # 诊断串仍在系统层（provider_message），供复盘
-    assert "Authentication required" in str(detail.get("provider_message") or ""), detail
     # 夜不封：终失败不封夜，玩家可再召
     assert night_closed["n"] == 0
     assert an.get_open_night(db) is not None

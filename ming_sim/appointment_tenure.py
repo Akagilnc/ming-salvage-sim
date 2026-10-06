@@ -1,20 +1,9 @@
-"""任命名分成色的持久化契约（ADR 0064）与执行侧号令力读端（#613）。"""
+"""任命名分成色的持久化契约（ADR 0064）。"""
 
 from __future__ import annotations
 
-from typing import Mapping
-
 APPOINTMENT_TENURES = frozenset({"真除", "署理", "兼署", "加衔"})
 DEFAULT_APPOINTMENT_TENURE = "真除"
-
-# 号令力次序（PRD ID-1）：真除＞兼署＞署理＞加衔。数值越大号令越实。
-# 四档必须两两可分，兼署不得与真除/署理塌缩混同。
-COMMAND_POWER_RANK: Mapping[str, int] = {
-    "真除": 3,
-    "兼署": 2,
-    "署理": 1,
-    "加衔": 0,
-}
 
 
 def appointment_tenure_from(payload: dict[str, object]) -> str:
@@ -36,8 +25,3 @@ def normalize_appointment_tenure(value: object) -> str:
     if text in APPOINTMENT_TENURES:
         return text
     return DEFAULT_APPOINTMENT_TENURE
-
-
-def command_power_rank(tenure: object) -> int:
-    """号令力档位：真除=3 … 加衔=0。"""
-    return int(COMMAND_POWER_RANK[normalize_appointment_tenure(tenure)])
