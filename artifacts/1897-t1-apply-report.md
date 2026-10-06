@@ -588,3 +588,10 @@ member_table_rows=168
 | `test_qa_t1` minister content 等值 | 改条数+chat_turn_id |
 | `test_audience_translation_1838` presence body | 只比 enter/exit 效果序 |
 | `test_faction_brew_637` stance_segment 等值 | 改摘要行在／水位字段 |
+
+## T1 负向闸／退休测试（相对 f89df9fe）
+
+| 成员 | 处置 |
+|---|---|
+| `modals.test.tsx` does not flash old minister chat | 负向改 `.chat-message` 覆盖无 turn_id 泄漏 |
+| `test_unnamed_speaker_cannot_finish_translation` | 改名并改为逐项拒收契约，不锁整轮 AudienceTranslateError |

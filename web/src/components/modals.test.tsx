@@ -720,9 +720,12 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       chat: [{ role: "minister", content: "旧分线程不应闪回" }],
     });
 
-    // 加载／失败中不挂个人分线程 turn 节点；不以正文负向哨兵（#1897 T1）。
+    // 加载／失败中不挂任何旧分线程消息节点（含无 turn_id 的 loose chat-message）。
+    // 仅查 data-audience-turn-id 射不到无持久轮身份的夹具泄漏（#1897 T1）。
+    expect(document.querySelectorAll(".chat-message")).toHaveLength(0);
     expect(document.querySelectorAll("[data-audience-turn-id]")).toHaveLength(0);
     await act(async () => { reject(new Error("卷轴读取失败")); await Promise.resolve(); });
+    expect(document.querySelectorAll(".chat-message")).toHaveLength(0);
     expect(document.querySelectorAll("[data-audience-turn-id]")).toHaveLength(0);
     expect(document.querySelector('[role="alert"]')).not.toBeNull();
   });

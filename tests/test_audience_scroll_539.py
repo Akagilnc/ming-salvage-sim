@@ -230,10 +230,9 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     ] == segment_struct
 
 
-def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
-    import pytest
+def test_unnamed_speaker_scene_facts_are_item_rejected(game, monkeypatch):
+    """缺姓名的 minister/attendant 分段：逐项拒收，不升级整轮异常（N1 / #1897 T1）。"""
     import web_app
-    from ming_sim.audience_translate import AudienceTranslateError
     from ming_sim.audience_translation import apply_audience_round_translation
 
     db, state, _ = game
@@ -241,12 +240,21 @@ def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
     turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "何解？", "臣领旨。", 10)
     monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
     for role in ("minister", "attendant"):
-        with pytest.raises(AudienceTranslateError):
-            apply_audience_round_translation(db, state, {
-                "scene_facts": [{"body": "臣领旨。", "role": role, "audibility": "殿上公开", "person_names": []}],
-            }, night_id=night_id, chat_turn_id=turn_id)
+        result = apply_audience_round_translation(db, state, {
+            "scene_facts": [{
+                "body": "臣领旨。", "role": role,
+                "audibility": "殿上公开", "person_names": [],
+            }],
+        }, night_id=night_id, chat_turn_id=turn_id)
+        assert result.scene_facts.applied == []
+        assert len(result.scene_facts.rejected) == 1
+        assert result.scene_facts.rejected[0].category == "invalid_shape"
+    # 拒收留痕 durable；水位可 done（不因段项拒收整轮挂起）。
+    assert db.conn.execute(
+        "SELECT COUNT(*) c FROM rejection_reports WHERE section='scene_facts'"
+    ).fetchone()["c"] >= 1
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
-    assert payload["translation_pending"] is True
+    assert payload["translation_pending"] is False
     reply = next(m for m in payload["messages"]
                  if m.get("chat_turn_id") == turn_id and m["role"] != "user")
     assert (reply["role"], reply["speaker"]) == ("scene", "")
