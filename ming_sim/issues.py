@@ -1497,7 +1497,7 @@ def apply_historical_fiscal_rates(
     settle.p，保证后续 settle_tick 当月读到目标值且重复运行不叠加。
     """
     c = _ctx()
-    should_commit = commit and not db.conn.in_transaction
+    should_commit = commit and db.owns_transaction()
     applied: List[Dict[str, object]] = []
 
     def run_fiscal_levy_pass() -> None:
@@ -1746,7 +1746,7 @@ def apply_event_cascading_invalidations(
     """
     content = _ctx()
     _validate_event_dependency_graph_acyclic(content, state)
-    should_commit = commit and not db.conn.in_transaction
+    should_commit = commit and db.owns_transaction()
     terminalized: List[Dict[str, object]] = []
     terminal_records = _event_terminal_records(db)
 
@@ -2301,7 +2301,7 @@ def apply_event_terminal_states(
 ) -> List[Dict[str, object]]:
     """Persist deterministic event terminal states from the current board position."""
     c = _ctx()
-    should_commit = commit and not db.conn.in_transaction
+    should_commit = commit and db.owns_transaction()
     terminal_refs = _event_trigger_refs(db)
     terminalized: List[Dict[str, object]] = []
 
@@ -4454,7 +4454,7 @@ def apply_issue_tracker_output(
     issue_person_changes: List[Dict[str, object]] = []
     runtime_content = content if content is not None else _ctx()
     event_by_id = runtime_content.event_by_id
-    external_transaction = db.conn.in_transaction
+    external_transaction = not db.owns_transaction()
     commit_now = not external_transaction
     if external_transaction:
         _register_runtime_rollback_snapshot(db, state, runtime_content)
@@ -5921,7 +5921,9 @@ def apply_office_appointment(
                 )
             )
             if new_office_type == "后宫":
-                raise ValueError("后宫任命已退役")
+                raise OfficeAppointmentRejection(
+                    "后宫任命已退役", category="invalid_enum",
+                )
             # Resolved seat is the sole identity for write / displace / projection.
             # Local same-office omit-region reuses character_offices; central strips.
             seat = _resolve_appointment_seat(
@@ -5966,9 +5968,13 @@ def apply_office_appointment(
             ch.office = new_office
             ch.office_type = new_office_type
             ch.office_region = seat
-        except Exception as exc:
+        except OfficeAppointmentRejection as exc:
+            # Typed LLM/input refusal → rejected item (ADR 0005 / #1853).
             _restore_person_write_state(db, content, snapshot, commit=commit)
             return _office_appointment_failure(name, new_office, exc)
+        except Exception:
+            _restore_person_write_state(db, content, snapshot, commit=commit)
+            raise
         return {
             "name": name, "old_status": cur_status, "old_office": old_office, "new_office": new_office,
             "kind": "transfer", "reason": reason,
@@ -5985,8 +5991,8 @@ def apply_office_appointment(
     # office_type 必须透传：apply_appointment→add_character 靠它走 person-title 守卫（名分不建
     # offices 父行、不写 character_offices）。漏传则 infer 兜成「待铨」→ 名分人物被当普通官职、
     # 建脏 character_offices 行（#1058 接缝回归；transfer 分支已带 new_office_type，此处对称补齐）。
-    # 建档抛错(DB 锁/唯一约束/注册失败)不得上抛崩月末结算致半落库(P1 铁律);
-    # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
+    # Typed seat/input refusals → rejected item; schema/code faults restore then
+    # re-raise (ADR 0005 / #1853).
     snapshot = _snapshot_person_write_state(db, content)
     try:
         new_office, new_office_type, appointment_tenure, raw_seat = (
@@ -6001,7 +6007,9 @@ def apply_office_appointment(
             )
         )
         if new_office_type == "后宫":
-            raise ValueError("后宫任命已退役")
+            raise OfficeAppointmentRejection(
+                "后宫任命已退役", category="invalid_enum",
+            )
         seat = _resolve_appointment_seat(
             db,
             name=name,
@@ -6032,12 +6040,15 @@ def apply_office_appointment(
             )
             return {"name": appointed, "new_office": new_office, "kind": "appoint", "reason": reason,
                     **({"displaced": displaced_parts} if displaced_parts else {})}
-    except Exception as exc:
+    except OfficeAppointmentRejection as exc:
         _restore_person_write_state(db, content, snapshot, commit=commit)
         return _office_appointment_failure(
             name, new_office, exc, kind="appoint",
             reason_suffix=f"；原 status={cur_status or '不在册'}",
         )
+    except Exception:
+        _restore_person_write_state(db, content, snapshot, commit=commit)
+        raise
     # apply_appointment 返回假值（查重拒/approved false/字段空——现均改库前早退）：防御性还原快照、
     # 与 except 路对称，确保此分支在任何 apply_appointment 行为下都不留半落库（P1 第一铁律，线上 gemini R3）。
     _restore_person_write_state(db, content, snapshot, commit=commit)
@@ -6059,7 +6070,7 @@ def _apply_person_changes(
     require_origin: bool = False,
 ) -> List[Dict[str, object]]:
     if external_transaction is None:
-        external_transaction = db.conn.in_transaction
+        external_transaction = not db.owns_transaction()
     commit_person_change = not external_transaction
 
     def rejected(
@@ -6507,9 +6518,38 @@ def _apply_person_changes(
                     # 信用写端只消费 extractor 宣告本体行，禁盯 derived_from 文本特判。
                     "cascade_echo": True,
                 }
-            result = project_appointment_result(
-                item,
-                apply_office_appointment(
+            def _restore_pre_derive_person_state() -> None:
+                # transit_start_turn 与 transit_to 成对回滚：派生任命前置 set_character_status
+                # （放归/赦还→offstage 属 ousted）现会清 transit_start_turn=0，回滚须对称还原，
+                # 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
+                # 业务拒收与代码故障共用：故障上抛前也必须还原，不得只洗 DB savepoint
+                # 而丢内存三面同步（ADR 0005 / #1853）。
+                db.conn.execute(
+                    "UPDATE characters SET status=?, office=?, office_type=?, "
+                    "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=?, "
+                    "transit_distance_remaining=?, transit_speed_factor=?, transit_start_turn=? "
+                    "WHERE name=?",
+                    (
+                        row["status"], row["office"], row["office_type"],
+                        row["status_reason"], row["status_changed_turn"], row["reason_code"],
+                        row["transit_to"], row["transit_distance_remaining"],
+                        row["transit_speed_factor"], row["transit_start_turn"], name,
+                    ),
+                )
+                if content is not None and name in content.characters:
+                    ch = content.characters[name]
+                    ch.status = str(row["status"] or "")
+                    ch.office = str(row["office"] or "")
+                    ch.office_type = str(row["office_type"] or ch.office_type)
+                    ch.transit_to = str(row["transit_to"] or "")
+                    ch.transit_distance_remaining = row["transit_distance_remaining"]
+                    ch.transit_speed_factor = row["transit_speed_factor"]
+                    ch.transit_start_turn = int(row["transit_start_turn"] or 0)
+                    ch.status_reason = str(row["status_reason"] or "")
+                    ch.reason_code = str(row["reason_code"] or "")
+
+            try:
+                appointment_result = apply_office_appointment(
                     db,
                     state,
                     content,
@@ -6527,40 +6567,17 @@ def _apply_person_changes(
                     ).strip(),
                     llm_config=llm_config,
                     commit=False if derive_label else commit_person_change,
-                ),
-            )
+                )
+            except Exception:
+                if derive_label:
+                    _restore_pre_derive_person_state()
+                raise
+            result = project_appointment_result(item, appointment_result)
             wrapped = {"动作": effective_action, **result}
             if derive_label:
                 wrapped["derived_from"] = derive_label
                 if wrapped.get("rejected"):
-                    # transit_start_turn 与 transit_to 成对回滚：派生任命前置 set_character_status
-                    # （放归/赦还→offstage 属 ousted）现会清 transit_start_turn=0，回滚须对称还原，
-                    # 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
-                    db.conn.execute(
-                        "UPDATE characters SET status=?, office=?, office_type=?, "
-                        "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=?, "
-                        "transit_distance_remaining=?, transit_speed_factor=?, transit_start_turn=? "
-                        "WHERE name=?",
-                        (
-                            row["status"], row["office"], row["office_type"],
-                            row["status_reason"], row["status_changed_turn"], row["reason_code"],
-                            row["transit_to"], row["transit_distance_remaining"],
-                            row["transit_speed_factor"], row["transit_start_turn"], name,
-                        ),
-                    )
-                    if content is not None and name in content.characters:
-                        ch = content.characters[name]
-                        ch.status = str(row["status"] or "")
-                        ch.office = str(row["office"] or "")
-                        ch.office_type = str(row["office_type"] or ch.office_type)
-                        ch.transit_to = str(row["transit_to"] or "")
-                        ch.transit_distance_remaining = row["transit_distance_remaining"]
-                        ch.transit_speed_factor = row["transit_speed_factor"]
-                        ch.transit_start_turn = int(row["transit_start_turn"] or 0)
-                        # 对称 DB 侧回滚（上方 UPDATE 已还原全 7 字段）：内存也还原缘由/码，
-                        # 守三面同步（决定6），免前置步刷过内存缘由后此路回滚留脏值（PR#106 R2 gemini）。
-                        ch.status_reason = str(row["status_reason"] or "")
-                        ch.reason_code = str(row["reason_code"] or "")
+                    _restore_pre_derive_person_state()
                 else:
                     applied.append(release_result)
                     log_applied(release_result, item, commit=False)
@@ -7351,7 +7368,7 @@ def apply_person_changes_only(
     #652 recovery / bandit 等结算核。返回形状与 full applier 的 applied_person_changes 对齐。
     """
     runtime_content = content if content is not None else _ctx()
-    caller_transaction = db.conn.in_transaction
+    caller_transaction = not db.owns_transaction()
     if caller_transaction:
         _register_runtime_rollback_snapshot(db, state, runtime_content)
     changes = _canonicalize_person_change_names(
@@ -7457,7 +7474,7 @@ def apply_score_extraction(
     ``effect_sequence``：C0 effects 数组的逐笔 payload；提供时按交代先后交错
     落各笔的普通字段，批次副作用仍只跑一次（#1844）。
     """
-    caller_transaction = db.conn.in_transaction
+    caller_transaction = not db.owns_transaction()
     commit_now = not caller_transaction
     if caller_transaction:
         _register_runtime_rollback_snapshot(db, state, content)
@@ -8022,7 +8039,7 @@ def _apply_score_extraction_body(
             content=content,
             llm_config=llm_config,
             allow_legacy_partial_power=legacy,
-            external_transaction=db.conn.in_transaction,
+            external_transaction=not db.owns_transaction(),
             origin_ref=origin_ref,
             require_origin=require_origin,
         )

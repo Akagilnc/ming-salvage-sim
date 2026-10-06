@@ -26,6 +26,15 @@ from ming_sim.llm_transport import default_transport_policy
 from tests.web_audience_test_doubles import install_hall_admission, minister_double
 from tests.conftest import stub_audience_translate, stub_scene_agent
 
+def _query_conn_no_user_message():
+    """生产 _fail_chat_turn_and_reload 直调 db.conn SELECT；负向夹具只给查询协作面。
+    fetchone=None → 走 fail_chat_turn（无问话 id），不复制回滚业务。"""
+    return SimpleNamespace(
+        execute=lambda *_a, **_k: SimpleNamespace(fetchone=lambda: None, fetchall=lambda: []),
+    )
+
+
+
 
 def _assert_write_path_free(runtime) -> None:
     """After failpath cleanup, a subsequent gated write and drain must not block.
@@ -62,6 +71,10 @@ def _assert_write_path_free(runtime) -> None:
 class _FailingPrologueDB:
     def __init__(self):
         self.failed_turns: list[int] = []
+        self.conn = _query_conn_no_user_message()
+
+    def kv_get(self, _key):
+        return ""
 
     def create_chat_turn(self, *a, **k):
         return 7
@@ -91,7 +104,7 @@ class _FailingPrologueDB:
         return 0
 
 
-def _base_runtime(db):
+def _base_runtime(db, monkeypatch):
     character = minister_double("测试大臣")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
     runtime = object.__new__(web_app.WebGame)
@@ -101,6 +114,17 @@ def _base_runtime(db):
     runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
     runtime._mark_pending_write = lambda key=None: runtime._write_queue.claim(key=key or ("pending",))  # type: ignore
     runtime._complete_pending_write = lambda ticket=None: runtime._write_queue.complete(ticket)  # type: ignore
+    # 负向/门闩案：只替夜受理协作面，不复制持久化；生产直调 get_open_night→conn。
+    import ming_sim.audience_night as an
+    _fake_night = {"id": 1, "status": "open"}
+    monkeypatch.setattr(an, "get_open_night", lambda _db: dict(_fake_night))
+    monkeypatch.setattr(
+        an, "ensure_open_night_for_audience", lambda _db, _state: dict(_fake_night),
+    )
+    monkeypatch.setattr(
+        an, "assert_night_accepts_player_input",
+        lambda _db, *a, **k: dict(_fake_night),
+    )
     sess = install_hall_admission(SimpleNamespace(
         temporary_characters=set(),
         content=SimpleNamespace(characters={character.name: character}),
@@ -152,9 +176,9 @@ def _base_runtime(db):
     return runtime, character.name
 
 
-def test_prologue_failure_fails_orphan_turn_and_releases_gate():
+def test_prologue_failure_fails_orphan_turn_and_releases_gate(monkeypatch):
     db = _FailingPrologueDB()
-    runtime, minister = _base_runtime(db)
+    runtime, minister = _base_runtime(db, monkeypatch)
     gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)  # prologue 在 append_chat_message 崩 → 重新抛出
@@ -164,12 +188,12 @@ def test_prologue_failure_fails_orphan_turn_and_releases_gate():
     _assert_write_path_free(runtime)
 
 
-def test_prologue_finally_does_not_release_foreign_gate_holder():
+def test_prologue_finally_does_not_release_foreign_gate_holder(monkeypatch):
     """#542 r6g: cleanup 的 with write_gate 退出后、finally 前另一写者经
     `_serialized_web_write` 取得写路径；本线程不得误放致外来写者互斥被破坏，
     且外来写者须能自行完成写并退出临界区。"""
     db = _FailingPrologueDB()
-    runtime, minister = _base_runtime(db)
+    runtime, minister = _base_runtime(db, monkeypatch)
     other_entered = threading.Event()
     allow_other_exit = threading.Event()
     other_completed_ok: list[bool] = []
@@ -220,6 +244,12 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
 class _DoubleFailDB:
     """prologue fails AND cleanup (fail_chat_turn) also fails — tests that
     write path + pending ownership are still released (R3 self-check)."""
+    def __init__(self):
+        self.conn = _query_conn_no_user_message()
+
+    def kv_get(self, _key):
+        return ""
+
 
     def create_chat_turn(self, *a, **k):
         return 7
@@ -249,11 +279,11 @@ class _DoubleFailDB:
         return 0
 
 
-def test_prologue_cleanup_failure_still_releases_gate_and_counter():
+def test_prologue_cleanup_failure_still_releases_gate_and_counter(monkeypatch):
     """R3 self-check: prologue 崩 → _fail_chat_turn_and_reload 自身也崩（DB 已坏）→
     写路径与 pending ownership 仍须释放，否则 drain 永久挂起、所有写入被永久挡。"""
     db = _DoubleFailDB()
-    runtime, minister = _base_runtime(db)
+    runtime, minister = _base_runtime(db, monkeypatch)
 
     gen = runtime.chat_stream("殿上", "辽东军情如何？")
     with pytest.raises(RuntimeError):
@@ -273,6 +303,12 @@ class _StreamCrashAgent:
 class _WorkerPathDB:
     """Prologue succeeds (append_chat_message OK) but worker scene payload crashes
     AND fail_chat_turn also crashes → worker double-failure path."""
+    def __init__(self):
+        self.conn = _query_conn_no_user_message()
+
+    def kv_get(self, _key):
+        return ""
+
 
     def create_chat_turn(self, *a, **k):
         return 7
@@ -302,11 +338,11 @@ class _WorkerPathDB:
         return 0
 
 
-def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
+def test_worker_cleanup_failure_still_emits_error_and_releases_gate(monkeypatch):
     """R3 self-check: worker 内 scene payload 崩 → _fail_chat_turn_and_reload 自身也崩 →
     仍须推 error 事件给消费者（否则 generator 永久挂死）、释放写路径 + pending ownership。"""
     db = _WorkerPathDB()
-    runtime, minister = _base_runtime(db)
+    runtime, minister = _base_runtime(db, monkeypatch)
     agent = _StreamCrashAgent()
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
@@ -322,13 +358,13 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     _assert_write_path_free(runtime)
 
 
-def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog):
+def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog, monkeypatch):
     """#1353 r13 / ADR 0005：payload-None 清理 abandon + fail 双二次失败 →
     消费者有界收到*原始* error→end；清理异常只 logger.exception 记 traceback，不覆盖原错、不阻断终态。"""
     import logging
 
     db = _WorkerPathDB()
-    runtime, minister = _base_runtime(db)
+    runtime, minister = _base_runtime(db, monkeypatch)
     agent = _StreamCrashAgent()
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: agent)
     runtime.session._character = lambda name: minister_double(minister)
@@ -374,17 +410,16 @@ def test_worker_cleanup_double_failure_emits_original_error_end_and_logs(caplog)
     _assert_write_path_free(runtime)
 
 
-def test_worker_postprocess_exception_emits_error_end():
+def test_worker_postprocess_exception_emits_error_end(monkeypatch):
     """#1353 r12：payload 成功后后处理（_spawn_pending_write_thread 高亮）抛错 → 单一出口 error→end。
 
     事件握手：有界消费必见 end；禁只走 finally 致消费者永阻。
     #1842：殿上走 _scene_chat_stream_payload；后处理尾随仍为 spawn 缝。
     """
     db = _WorkerPathDB()
-    runtime, minister = _base_runtime(db)
+    runtime, minister = _base_runtime(db, monkeypatch)
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session.close_night_after_chat_if_needed = None
 
     runtime._scene_chat_stream_payload = (  # type: ignore[method-assign]
         lambda *a, **k: {
@@ -497,8 +532,6 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
     )
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
     response = TestClient(web_app.app).post("/api/decree/issue", json={})
     detail = _assert_structured_llm_http(response)

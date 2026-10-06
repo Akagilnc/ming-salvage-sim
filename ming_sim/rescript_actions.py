@@ -1082,11 +1082,10 @@ def list_deliberation_candidate_ids(db: Any, content: Any) -> List[str]:
 
     if content is None:
         raise ValueError("deliberate 需要 content 以解析可召候选")
-    resolve = getattr(db, "resolve_power_id", None)
     names: List[str] = []
     characters = getattr(content, "characters", {}) or {}
     for name, ch in characters.items():
-        if not _is_summonable_court_minister(ch, resolve_power_id=resolve):
+        if not _is_summonable_court_minister(ch, resolve_power_id=db.resolve_power_id):
             continue
         # 与 can_summon 同口径：DB 权威 status 须 active（罢/狱/流/致仕/故/未登场均排除）
         status, _ = db.get_character_status(str(name))

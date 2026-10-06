@@ -610,11 +610,7 @@ def dispatch_declaration(
     collector = RejectionCollector()
     origin_ctid = int(chat_turn_id or source_chat_turn_id or 0)
     # 有源轮则入口自记前像：后台/直接调用都不必依赖 caller 窗口快照。
-    before = (
-        db.capture_chat_rollback_snapshot()
-        if origin_ctid > 0 and hasattr(db, "capture_chat_rollback_snapshot")
-        else None
-    )
+    before = db.capture_chat_rollback_snapshot() if origin_ctid > 0 else None
     with atomic(db):
         result = _dispatch_declaration_sections(
             db, state, declaration,
@@ -627,7 +623,7 @@ def dispatch_declaration(
         collector.flush_to_db(db)
         # 前像与 section/拒收同权威事务提交前写入（0036 R3 / 0038）；
         # 提交后才记前像会在崩溃窗口丢撤回完整性。atomic 内 conn.commit 为 no-op。
-        if before is not None and hasattr(db, "record_chat_turn_rollback_diffs"):
+        if before is not None:
             db.record_chat_turn_rollback_diffs(
                 origin_ctid, before, db.capture_chat_rollback_snapshot(),
             )
@@ -714,7 +710,7 @@ def settle_staged_declarations_in_decree_order(
     for decree_ref in decree_refs_in_order:
         collector = RejectionCollector()
         merged: Optional[DeclarationDispatchResult] = None
-        with atomic_and_reload(db, state, content=getattr(db, "content", None)):
+        with atomic_and_reload(db, state, content=db.content):
             if not db.staged_declarations.is_settled(decree_ref):
                 staged = db.staged_declarations.staged_for(decree_ref)
                 if staged:
@@ -1301,7 +1297,7 @@ def _dispatch_commissions(
                 if roster is not None:
                     from ming_sim.cli_backend import normalize_draft_person_roster
                     roster = normalize_draft_person_roster(
-                        roster, db=db, content=getattr(db, "content", None),
+                        roster, db=db, content=db.content,
                     )
                 row_id = stage_assignment_candidate(
                     db, int(state.turn), actor, text=body,
@@ -1447,7 +1443,7 @@ def _dispatch_commissions(
         if appointment_fields:
             from ming_sim.session import _canonical_minister_key
             appointment_fields["name"] = _canonical_minister_key(
-                getattr(db, "content", None), appointment_fields["name"], db,
+                db.content, appointment_fields["name"], db,
             )
 
         mode = item.get("mode", "ordinary")
@@ -1575,7 +1571,7 @@ def _dispatch_commissions(
                 from ming_sim.session import _appointment_intent_is_current_office_noop
                 if _appointment_intent_is_current_office_noop(
                     db, appointment_fields["name"], appointment_fields["office"],
-                    content=getattr(db, "content", None),
+                    content=db.content,
                 ):
                     return None
             # office 成案链只吃任免字段；禁把 grant 的 execution_surface 等带进
@@ -1981,7 +1977,7 @@ def _dispatch_rushes(
             })
             continue
         # secret_order
-        order = db.get_secret_order(target_id) if hasattr(db, "get_secret_order") else None
+        order = db.get_secret_order(target_id)
         if order is None:
             _reject(rejected, item, f"催办目标密令不存在：{target_id}", "hallucinated_id", source)
             continue

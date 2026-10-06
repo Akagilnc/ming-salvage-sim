@@ -1,0 +1,59 @@
+ming_sim/applier.py:55:_commit_suspended 默认 off：保证 GameDB.__init__ 紧接的 init_schema 建表照常提交。
+ming_sim/applier.py:65:_commit_suspended = False
+ming_sim/applier.py:68:if self._commit_suspended:
+ming_sim/applier.py:98:if self._commit_suspended:
+ming_sim/applier.py:120:if self._commit_suspended:
+ming_sim/applier.py:128:if self._commit_suspended:
+ming_sim/applier.py:143:bool(getattr(conn, "_commit_suspended", False))
+ming_sim/applier.py:144:or int(getattr(conn, "_atomic_depth", 0) or 0) > 0
+ming_sim/applier.py:178:depth = getattr(conn, "_atomic_depth", 0) + 1
+ming_sim/applier.py:185:conn._commit_suspended = True
+ming_sim/applier.py:186:conn._atomic_depth = depth
+ming_sim/applier.py:194:conn._atomic_depth = depth - 1
+ming_sim/applier.py:197:conn._commit_suspended = False
+ming_sim/applier.py:205:conn._atomic_depth = depth - 1
+ming_sim/applier.py:207:conn._commit_suspended = False
+ming_sim/applier.py:419:if getattr(db.conn, "_atomic_depth", 0) == 0:
+ming_sim/audience_night.py:272:suspend 持有事务时才提交（用 _commit_suspended / _atomic_depth 判据，不看 in_transaction）。
+ming_sim/audience_night.py:278:not bool(getattr(conn, "_commit_suspended", False))
+ming_sim/audience_night.py:279:and int(getattr(conn, "_atomic_depth", 0) or 0) == 0
+ming_sim/audience_night.py:1712:not bool(getattr(db.conn, "_commit_suspended", False))
+ming_sim/audience_night.py:1713:and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+ming_sim/audience_translation.py:160:not bool(getattr(db.conn, "_commit_suspended", False))
+ming_sim/audience_translation.py:161:and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+ming_sim/covert_progress.py:1529:if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+ming_sim/covert_progress.py:1870:if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+ming_sim/covert_progress.py:2091:if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+ming_sim/db.py:9357:not bool(getattr(self.conn, "_commit_suspended", False))
+ming_sim/db.py:9358:and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+ming_sim/db.py:9642:not bool(getattr(self.conn, "_commit_suspended", False))
+ming_sim/db.py:9643:and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+ming_sim/db.py:11850:if commit and not bool(getattr(self.conn, "_commit_suspended", False)) and int(
+ming_sim/db.py:11851:getattr(self.conn, "_atomic_depth", 0) or 0
+ming_sim/db.py:17260:not bool(getattr(self.conn, "_commit_suspended", False))
+ming_sim/db.py:17261:and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+ming_sim/db.py:17310:not bool(getattr(self.conn, "_commit_suspended", False))
+ming_sim/db.py:17311:and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+ming_sim/db.py:17388:not bool(getattr(self.conn, "_commit_suspended", False))
+ming_sim/db.py:17389:and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+ming_sim/db.py:17422:not bool(getattr(self.conn, "_commit_suspended", False))
+ming_sim/db.py:17423:and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+ming_sim/db.py:17552:not bool(getattr(self.conn, "_commit_suspended", False))
+ming_sim/db.py:17553:and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+ming_sim/db.py:20768:if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+ming_sim/db.py:20842:if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+ming_sim/db.py:21708:if not bool(getattr(self.conn, "_commit_suspended", False)) and int(
+ming_sim/db.py:21709:getattr(self.conn, "_atomic_depth", 0) or 0
+ming_sim/db.py:22165:if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+ming_sim/db.py:23010:if getattr(self.conn, "_commit_suspended", False):
+ming_sim/decree.py:927:if getattr(db.conn, "_atomic_depth", 0) > 0:
+ming_sim/decree.py:973:- body 抛 BaseException 时：先（若有）调 on_error(exc)，再仅当 `_atomic_depth==0`（本层
+ming_sim/decree.py:989:if getattr(db.conn, "_atomic_depth", 0) == 0:
+ming_sim/error_pack.py:160:（_commit_suspended）会响亮 RuntimeError——这是设计约束（脏页备份），不在此处吞。
+ming_sim/flows.py:54:if getattr(db.conn, "_commit_suspended", False):
+ming_sim/flows.py:1029:if not getattr(db.conn, "_commit_suspended", False):
+ming_sim/month_chain.py:711:and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+ming_sim/session.py:1242:not bool(getattr(self.db.conn, "_commit_suspended", False))
+ming_sim/session.py:1243:and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
+web_app.py:3326:（`_commit_suspended=True`）跑财政 tick/硬立项，**到块尾才落 `turn_phase=SETTLING`**
+web_app.py:5807:# 走同一无锁连接（否则撞 _commit_suspended 守卫成 500）。走 _write_gate → 忙时干净 409

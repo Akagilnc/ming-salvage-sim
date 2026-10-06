@@ -1,0 +1,32 @@
+path	line	ctx	kind	verdict	snippet
+ming_sim/applier.py	184	atomic	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/audience_night.py	900	open_night	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/audience_night.py	933	open_night	A_TRY	SWALLOW_OTHER	try:
+ming_sim/audience_translation.py	316	_gate_cm	A_TRY	EXCLUDED_RERAISE	try:
+ming_sim/db.py	962	__init__	A_TRY	EXCLUDED_RERAISE	try:
+ming_sim/db.py	3563	_ensure_office_type_parents	B_TABLE_PROBE:character_offices	EXCLUDED_INIT_MIGRATION	if self._table_exists("character_offices"):
+ming_sim/db.py	3574	_ensure_office_type_parents	B_TABLE_PROBE:character_offices	EXCLUDED_INIT_MIGRATION	if self._table_exists("character_offices"):
+ming_sim/db.py	8619	_arrears_init	A_TRY	EXCLUDED_RERAISE	try:
+ming_sim/db.py	9779	_agno_session_columns	B_TABLE_PROBE:agno_sessions	EXCLUDED_OPTIONAL	if not self._table_exists("agno_sessions"):
+ming_sim/db.py	9848	_agno_table_run_dicts	B_TABLE_PROBE:agno_runs	EXCLUDED_OPTIONAL	if not self._table_exists("agno_runs"):
+ming_sim/db.py	9937	_truncate_agno_runs_in_tx	B_TABLE_PROBE:agno_runs	EXCLUDED_OPTIONAL	if self._table_exists("agno_runs"):
+ming_sim/db.py	17636	_run_pending_action_commit_lifecycle	A_TRY	SWALLOW_OTHER	try:
+ming_sim/db.py	19434	ensure_dossiers_for_draft_directives	A_TRY	EXCLUDED_RERAISE	try:
+ming_sim/db.py	19443	ensure_dossiers_for_draft_directives	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/db.py	22118	close_in_current_transaction	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/db.py	22704	apply_relation_brew_result	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/db.py	22754	mark_relation_brew_pending	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/db.py	22886	mark_faction_brew_pending	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/db.py	22926	apply_faction_brew_result	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/declaration_dispatch.py	830	_item_savepoint_scope	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/issues.py	5910	apply_office_appointment	A_TYPED	EXCLUDED_TYPED_BUSINESS	Name(id='OfficeAppointmentRejection', ct
+ming_sim/issues.py	5910	apply_office_appointment	A_TRY	EXCLUDED_RERAISE	try:
+ming_sim/issues.py	5997	apply_office_appointment	A_TYPED	EXCLUDED_TYPED_BUSINESS	Name(id='OfficeAppointmentRejection', ct
+ming_sim/issues.py	5997	apply_office_appointment	A_TRY	EXCLUDED_RERAISE	try:
+ming_sim/issues.py	7580	_apply_extracted_army_delta	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/issues.py	8061	_apply_person_changes_itemwise	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/issues.py	8113	_apply_economy_moves_list	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+ming_sim/session.py	338	_drop_runtime_registration	A_TRY	EXCLUDED_SAVEPOINT_CLEANUP	try:
+web_app.py	3783	_c7_try_fulfill_archive	A_TRY	SWALLOW_OTHER	try:
+web_app.py	3985	_runtime_restorable	A_TRY	EXCLUDED_LOG_PROBE	try:
+web_app.py	4223	_main_db_campaign_id	A_TRY	EXCLUDED_LOG_PROBE	try:

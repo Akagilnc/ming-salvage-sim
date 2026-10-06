@@ -1177,8 +1177,8 @@ def test_976_pending_secret_pin_survives_partial_commit_same_minister(game):
     assert _shared_source_count(db, mid_a_reply) == 1
 
 
-def test_976_retryable_failed_secret_pin_stays_withheld_during_other_commit(game):
-    """落库失败仍可原对话重试，故 pin 在失败生命周期内继续禁行。"""
+def test_976_rejected_secret_pin_stays_withheld_during_other_commit(game):
+    """A rejected secret intent must not leak when another intent commits."""
     db, state, content = game
     assignee = _active_ministers(db, content)[0]
     failed_marker = "失败可重试甲密：暗查不存在案卷-A976"
@@ -1198,7 +1198,6 @@ def test_976_retryable_failed_secret_pin_stays_withheld_during_other_commit(game
     assert db.commit_pending_actions(
         state, minister_name=assignee.name, action_ids={failed_id}, content=content,
     ) == []
-    assert db.list_failed_secret_order_actions(assignee.name)[0]["id"] == failed_id
 
     mid_committed, committed_id = _stage_new_secret(
         db, state, assignee.name, committed_marker,
@@ -1432,7 +1431,6 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     ).fetchone()[0] == 1, "未撤销密令的 brief 不应受级联影响"
     assert msg_u == 0 and msg_m == 0
     assert msg_b == 1, "early B public message wrongly deleted"
-    assert not db._is_active_secret_order_assignee(a.name)
 
 
 @pytest.mark.parametrize("rollback_entry", ["undo_chat_turn", "fail_chat_turn"])

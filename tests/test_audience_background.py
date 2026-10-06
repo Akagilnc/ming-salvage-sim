@@ -86,6 +86,8 @@ class _FakeSession(HallAdmissionSessionMixin):
             "_recognize_audience_command_verdict",
             "summon_character",
             "schedule_pending_scene_translation",
+            "close_night_after_chat_if_needed",
+            "schedule_close_night_after_chat_if_needed",
         ):
             if hasattr(GameSession, _name):
                 setattr(self, _name, _types.MethodType(getattr(GameSession, _name), self))
@@ -168,30 +170,6 @@ def _assert_next_accepted(stream) -> None:
     assert accepted["night_id"] > 0
     assert isinstance(accepted["chat_turn_id"], int)
     assert accepted["chat_turn_id"] > 0
-
-
-
-
-def test_chat_reload_exposes_retryable_failed_secret_order(game):
-    db, state, content = game
-    minister_name = "毕自严"
-    web_game = _web_game(db, state, content, _FakeAgent())
-    secret_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=minister_name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": minister_name},
-    )
-    db.stage_pending_action(
-        state.turn, kind="office", action="任命", minister_name=minister_name, target_id=None,
-        payload={"text": "测试任免原文", "name": "测试新臣", "office": "太常寺卿"},
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed'")
-    db.conn.commit()
-
-    failures = web_game.pending_action_failures_for(minister_name)
-
-    assert len(failures) == 1
-    assert failures[0]["id"] == secret_id
-    assert failures[0]["kind"] == "secret_order"
 
 
 

@@ -151,13 +151,19 @@ def atomic(db: Any) -> Iterator[None]:
     """把 db.conn 上的一段写序列包成单事务，期内暂停所有 commit。
 
     进入：置暂停标志，期内全部 self.conn.commit() 变 no-op。
-    正常退出：解除暂停 + 一次真 commit。
-    异常：解除暂停 + rollback + 原样 re-raise（ADR 0005 fail-loud，不吞）。
+    正常退出：仅当本层真正开了事务时解除暂停 + 一次真 commit。
+    异常：仅当本层开了事务时 rollback；借用外层事务时不抢先落定/回滚。
+    原样 re-raise（ADR 0005 fail-loud，不吞）。
 
     嵌套 flat/可重入：内层 atomic 不另起事务、不提前提交，由最外层统一
-    commit/rollback（计数深度，仅深度归 0 时落定）。内层异常即使被中间层
-    try/except 吞掉，最外层退出也强制回滚并响亮抛错（rollback-only 标志，
-    cmr S1 F2）——flat 语义下「吞内层异常后继续提交」结构上不可达。
+    commit/rollback（计数深度，仅深度归 0 且本层拥有事务时落定）。内层异常
+    即使被中间层 try/except 吞掉，最外层退出也强制回滚并响亮抛错
+    （rollback-only 标志，cmr S1 F2）——flat 语义下「吞内层异常后继续提交」
+    结构上不可达。
+
+    与 :func:`connection_owns_transaction` 同一归属契约：外层已 BEGIN / 已在
+    atomic 内时，内层不得 COMMIT（SQLite COMMIT 会清空 savepoint；见
+    https://www.sqlite.org/lang_savepoint.html）。
 
     备份请在 rollback/commit 之后、atomic 之外做：db.backup_to 在 atomic 内
     会响亮拒绝（备份走同连接 pager，会带上未提交脏页，cmr S1 F3）。
@@ -170,6 +176,8 @@ def atomic(db: Any) -> Iterator[None]:
         )
     # 进入深度：>1 表示嵌套内层，退出时不落定。
     depth = getattr(conn, "_atomic_depth", 0) + 1
+    # 本层是否开了事务：已有外层 BEGIN/atomic 时借用，不得在退出时抢提交。
+    started_here = False
     # 状态变更全部在 try 内：BEGIN 抛错 / KeyboardInterrupt 落在入口窗口时，
     # except 分支照常复位，暂停标志不泄漏（泄漏=79 处 commit 永久静默失效，
     # cmr S1 r3 F2）。
@@ -180,13 +188,15 @@ def atomic(db: Any) -> Iterator[None]:
             # legacy 模式只有 DML 隐式开事务；不显式 BEGIN 的话，DDL 打头的
             # 序列（如 flush_to_db 建表）跑在 autocommit 里、回滚留表（cmr S1 r2 F2）。
             conn.execute("BEGIN")
+            started_here = True
         yield
     except BaseException:
         conn._atomic_depth = depth - 1
         if depth == 1:
             conn._atomic_rollback_only = False
             conn._commit_suspended = False
-            conn.rollback()
+            if started_here:
+                conn.rollback()
         else:
             # 内层异常：标记 rollback-only，防中间层吞掉后外层照常提交。
             conn._atomic_rollback_only = True
@@ -197,11 +207,21 @@ def atomic(db: Any) -> Iterator[None]:
             conn._commit_suspended = False
             if getattr(conn, "_atomic_rollback_only", False):
                 conn._atomic_rollback_only = False
-                conn.rollback()
+                if started_here:
+                    conn.rollback()
+                    raise RuntimeError(
+                        "atomic: 内层异常被调用方吞掉，本层事务已整体回滚。"
+                        "flat 语义下内层无独立原子性——请勿在 atomic 之间吞内层异常。"
+                    )
+                # 借用外层 BEGIN/atomic：本层不得抢先 ROLLBACK；只响亮要求外层整体回滚。
                 raise RuntimeError(
-                    "atomic: 内层异常被调用方吞掉，事务已整体回滚。"
+                    "atomic: 内层异常被调用方吞掉；本层借用外层事务，未抢先 rollback，"
+                    "外层必须整体回滚。"
                     "flat 语义下内层无独立原子性——请勿在 atomic 之间吞内层异常。"
                 )
+            if not started_here:
+                # 外层拥有事务：只解除暂停，由外层统一 COMMIT/ROLLBACK。
+                return
             try:
                 conn.commit()
             except BaseException:
@@ -384,14 +404,6 @@ class RejectionCollector:
         self._buffer.clear()
         self._flushed.clear()
 
-    def has_player_visible_rejection(self) -> bool:
-        """本回合是否有 player_decree / hitl_decision 来源的拒收——决定玩家面邸报是否给一句
-        in-world 提示（ADR 0008 决定 5：仅这两来源对玩家可见，系统推演来源安静）。
-        检 _buffer + _flushed：报告组装在事务内、commit/mirror 前，拒收已 record 可能已 flush 未 mirror。"""
-        _visible = {Provenance.player_decree.value, Provenance.hitl_decision.value}
-        return any(row["source"] in _visible for row in (*self._buffer, *self._flushed))
-
-
 def register_runtime_outcome_callbacks(
     db: Any,
     *,
@@ -404,7 +416,7 @@ def register_runtime_outcome_callbacks(
     runtime-memory updates) only fire after the outermost commit, and are discarded on
     rollback. Depth 0 runs on_commit immediately.
     """
-    if getattr(db.conn, "_atomic_depth", 0) == 0:
+    if connection_owns_transaction(db.conn):
         if on_commit is not None:
             on_commit()
         return

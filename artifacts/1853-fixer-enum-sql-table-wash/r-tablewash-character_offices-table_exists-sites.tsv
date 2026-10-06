@@ -1,0 +1,3 @@
+path	line	ctx	kind	verdict	snippet
+ming_sim/db.py	3563	site	B_RESIDUAL	SITE	if self._table_exists("character_offices"):
+ming_sim/db.py	3574	site	B_RESIDUAL	SITE	if self._table_exists("character_offices"):

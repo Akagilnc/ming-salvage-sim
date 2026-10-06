@@ -57,8 +57,6 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     直接读表：``list_pending_actions`` 投影不含 night_id / night_approved，
     转译必须看见本夜归属与应允态，不能靠那条呈现投影。
     """
-    if not hasattr(db, "conn"):
-        return []
     params: list[Any] = [int(turn)]
     sql = (
         "SELECT id, kind, action, payload_json, night_id, night_approved "
@@ -98,7 +96,7 @@ def build_night_said_so_far(
     该轮的已说；本轮正文只走【本轮皇帝】【本轮回话】，不在此重复；亦不读后续
     已持久化轮（下一句不等转译时可能已落库）。
     """
-    if int(night_id or 0) <= 0 or not hasattr(db, "conn"):
+    if int(night_id or 0) <= 0:
         return []
     from ming_sim.audience_night import list_chat_turns_for_night, list_ledger
 
@@ -202,8 +200,6 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     只读 DB 真源；查询失败按 ADR 0005 上抛，不得静默退化为空目录。
     不猜、不从正文匹配改写模型输出。
     """
-    if not hasattr(db, "conn"):
-        return ""
     lines: List[str] = []
     for row in db.conn.execute(
         "SELECT id, name FROM regions ORDER BY id"
