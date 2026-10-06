@@ -1912,72 +1912,6 @@ def compose_unknown_participant_inworld_report(
     )
 
 
-def compose_decree_validation_recovery(
-    failed_fields: Optional[List[str]] = None,
-    *,
-    speaker_name: str = "",
-    speaker_role: str = "",
-    emperor_words: str = "",
-    prior_output: str = "",
-    llm_config: Any = None,
-) -> str:
-    """Turn typed decree rejection facts into a player-facing retry cue via the LLM.
-
-    #1765：接皇帝原话与原产出；零形式约束（禁句数/句式硬限，ADR 0033）。
-    speaker_role：接 minister_speaker_role 客观档料；不在此复制人物/党派材料。
-    """
-    field_groups = {
-        "银两数目": {"amount"},
-        "款项来源": {"account"},
-        "用途": {"purpose"},
-        "旨意正文": {"text", "body", "decree_text"},
-        "所指对象": {"target_kind", "target_id"},
-        "所指地域": {"region_id", "locality_scope"},
-        "承办人": {"assignee", "assignee_id", "assignee_name"},
-        "拨付节奏": {"cadence"},
-        "办理方式": {"action_type", "dossier_action_type", "transaction_category"},
-    }
-    failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
-    features = [label for label, keys in field_groups.items() if failed & keys]
-    feature = "、".join(features) if features else "旨意所指对象或必需内容"
-    role = str(speaker_role or "").strip()
-    if not role:
-        name = str(speaker_name or "").strip()
-        role = name or "大臣"
-    prompt = (
-        f"你是{role}。一份拟旨在记录前校验未通过，"
-        f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
-        "补充或改说所需信息后重拟。"
-    )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
-        prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
-        prompt += f"\n【原产出】{prior}"
-    return _compose_inworld_fact_report(
-        prompt, llm_config=llm_config, tag="decree_validation_recovery",
-    )
-
-
-# #1765：密令落库缺口的 typed 标签（机面事实；不进玩家分类文案）。
-_SECRET_LANDING_GAP_LABELS = {
-    "title": "结构化标题",
-    "content": "密令正文",
-    "covert_task": "差务合同",
-    "extract": "抽取结果",
-}
-
-
-def _secret_landing_gap_feature(landing_gaps: Optional[List[str]] = None) -> str:
-    """Shared gaps → human feature labels for feedback and recovery prompts."""
-    gaps = [str(g).strip() for g in (landing_gaps or []) if str(g).strip()]
-    labels = [
-        _SECRET_LANDING_GAP_LABELS.get(g, g) for g in gaps
-    ] or ["密令结构化要件"]
-    return "、".join(labels)
-
-
 def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
     """Typed gaps that block a new secret order from landing. Empty ⇒ can land."""
     so = secret if isinstance(secret, dict) else {}
@@ -1997,41 +1931,6 @@ def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
 def secret_order_can_land(secret: Optional[Dict[str, Any]]) -> bool:
     """True when extract result has title + content + frozen contract and no extract_failed."""
     return not secret_order_landing_gaps(secret)
-
-
-def compose_secret_order_landing_recovery(
-    landing_gaps: Optional[List[str]] = None,
-    *,
-    speaker_name: str = "",
-    speaker_role: str = "",
-    emperor_words: str = "",
-    prior_output: str = "",
-    contract_error: str = "",
-    llm_config: Any = None,
-) -> str:
-    """#1765：落不了库时大臣以本职揣摩/追问；角色特征化、零形式约束（0033）。"""
-    feature = _secret_landing_gap_feature(landing_gaps)
-    err = str(contract_error or "").strip()
-    err_clause = f"（诊断：{err}）" if err else ""
-    role = str(speaker_role or "").strip()
-    if not role:
-        name = str(speaker_name or "").strip()
-        role = f"大臣{name}" if name else "大臣"
-    prompt = (
-        f"你是{role}。皇帝刚下的密令意图已受理，"
-        f"但还落不了库，缺：{feature}{err_clause}。"
-        f"以本职揣摩圣意：能从皇帝原话与既有交代补全的，陈述你理解的密令要点请皇帝确认；"
-        f"揣摩不出的，以本职口吻当场请示皇帝所需。"
-    )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
-        prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
-        prompt += f"\n【原抽取产出】{prior}"
-    return _compose_inworld_fact_report(
-        prompt, llm_config=llm_config, tag="secret_order_landing_recovery",
-    )
 
 
 def _canon_person_id_key(raw: Any, *, db: Any, content: Any) -> Optional[str]:
@@ -4128,8 +4027,8 @@ def _extract_secret_order(
         # executor here guarantees cleanup even if any later normalization raises.
         if confirmation_pool is not None:
             confirmation_pool.shutdown(wait=True)
-    # 解析失败（None）与合法空对象 {}：保留各自身份供 gaps/诊断，但下游统一走
-    # land_or_recover（能落暂存 / 不能落 compose recovery）；不得 or {} 合流洗成成功空抽取。
+    # 解析失败（None）与合法空对象 {}：保留各自身份供 gaps/诊断；
+    # 不得 or {} 合流洗成成功空抽取。
     parsed = _loads_lenient(raw)
     if parsed is None:
         if not extract_failed:
@@ -4155,7 +4054,7 @@ def _extract_secret_order(
         extractor_content=_content_llm,
     )
     # #1565/0142：题名只认抽取器结构化「标题」；禁从 content/player_command 散文截取。
-    # 缺标题由下游 land_or_recover 统一 recovery 可见可恢复，不在此合成。
+    # 缺标题不在此合成，由下游 landing gaps 判定。
     title = str(obj.get("标题") or "").strip()
     # 承办人：皇帝祈使点名 > 结构化「承办人」字段 > 默认（ADR 0142：禁 minister_reply/
     # extractor 散文反推）。
