@@ -5204,9 +5204,16 @@ def apply_issue_tracker_output(
             )
         )
         if deterministic_breach:
-            db.breach_decree_dossier(
-                state, int(linked_dossier["id"]),
-                reason=str(cn.get("narrative") or "撤回成命"), commit=False,
+            # #1894 / #1834 F37：0056 名声账不得抢先关原案卷；结案留给本月
+            # dossier_executions。与 revoke_decree / finalize_persist 同尺。
+            from ming_sim.breach_plea import apply_persist_revoke_tail
+            apply_persist_revoke_tail(
+                db, state,
+                target_dossier_id=int(linked_dossier["id"]),
+                reason=str(cn.get("narrative") or "撤回成命"),
+                apply_0056=True,
+                close_target=False,
+                commitment_ref=int(issue_id),
             )
         cost = {} if deterministic_breach else (cn.get("applied_cost") or {})
         if isinstance(cost, dict):

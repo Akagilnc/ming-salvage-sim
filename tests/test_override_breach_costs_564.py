@@ -246,7 +246,10 @@ def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
     issues.apply_issue_tracker_output(db, state, {"cancels": [cancel]})
 
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "dropped"
-    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+    # #1894 / #1834 F37：0056 只落名声账，不抢先关原案卷；终值留给执行格声明。
+    after = db.get_decree_dossier(dossier_id)
+    assert after["status"] in {"promulgated", "executing"}
+    assert not str(after["execution_outcome"] or "")
     assert state.metrics["皇威"] == max(0, authority - 5)
     assert state.metrics["民心"] == popular_support
     events = _cost_events(db, dossier_id)
