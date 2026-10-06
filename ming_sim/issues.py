@@ -1944,8 +1944,6 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     if ev.issue_inertia:
         inertia = ev.issue_inertia
     if ev.effect_on_resolve:
-        # #648：content 真源人口量已「人」，持久化进 issue 行前按本档口径换算，
-        # 使后续结案/失败落账（读行内 effect）天然按档口径，无需在读取端再换算。
         effect_resolve = ev.effect_on_resolve
     if ev.effect_on_fail:
         effect_fail = ev.effect_on_fail

@@ -7234,12 +7234,7 @@ class GameDB:
                 continue
             old_val = row[raw_field]
             if raw_field in (REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS):
-                # #648（ADR 0088）：on_restore 是 content 静态真源→存档接缝，population
-                # 已全线「人」，落本档前按存档口径换算（新档原样；无标旧档无损÷10⁴）。
-                new_val: object = (
-                    int(value)
-                    if raw_field == "population" else int(value)
-                )
+                new_val: object = int(value)
             else:
                 new_val = str(value)
             if str(old_val) == str(new_val):
@@ -7523,30 +7518,7 @@ class GameDB:
                 if field in ("reason", "origin_ref"):
                     continue
                 if field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
-                    continue
-                # #318：cutover 关闭时 owner_power 仍须经唯一 adapter，禁止 text 直写旁路
-                # （同 owner no-op / 未在上方预消费的残余路径）
-                if field == "owner_power":
-                    current_row = self.conn.execute(
-                        "SELECT * FROM armies WHERE id = ?", (army_id,)
-                    ).fetchone()
-                    if current_row is None:
-                        continue
-                    landed, refused = self.transition_army_owner_power(
-                        state,
-                        current_row,
-                        str(value or "").strip(),
-                        reason=reason,
-                        actor=actor,
-                        event_id=event.id,
-                        edict_id=edict_id,
-                        origin_ref=origin_ref,
-                        require_origin=require_origin,
-                        raw_item={"army_id": army_id, "changes": raw_changes},
-                    source=source)
-                    changes.extend(landed)
-                    rejections.extend(refused)
-                    continue
+                    continue  # owner_power 等由上方 _apply_army_pay_source_delta 唯一写
                 if field not in _ARMY_VALID_SET:
                     # ADR 0008 决定 1:LLM 引用非法军队字段 = 逐项拒收留痕(invalid_enum),
                     # 不再 print 静默跳;同军队的合法字段照落,坏一项不带走整批。
