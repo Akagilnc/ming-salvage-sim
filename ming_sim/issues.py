@@ -4986,7 +4986,8 @@ def apply_issue_tracker_output(
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
         if kind == "initiative" and not resolve_eff and not is_commitment:
-            from ming_sim.cli_backend import cli_backend_active, enrich_initiative_effects
+            from ming_sim.cli_backend import cli_backend_active
+            from ming_sim.draft_intent import enrich_initiative_effects
             if cli_backend_active(llm_config):
                 try:
                     enr = enrich_initiative_effects(

@@ -5,6 +5,7 @@ import pytest
 import ming_sim.cli_backend as cli_backend
 
 
+import ming_sim.draft_intent as draft_intent
 def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game, monkeypatch):
     db, _state, content = game
     db.conn.execute("UPDATE game_state SET turn=7 WHERE id=1")
@@ -23,7 +24,7 @@ def test_single_pay_order_capture_grounds_relative_deadline_at_current_turn(game
         }, ensure_ascii=False), {}
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake)
-    result = cli_backend.resubmit_draft_admission_payload(
+    result = draft_intent.resubmit_draft_admission_payload(
         "拟旨让陕西边饷居末、官俸优先三个月",
         bad_payload={}, failure_reason="成案未入档",
         db=db, content=content,
@@ -61,7 +62,7 @@ def test_relative_deadline_cannot_stage_llm_computed_expired_turn(game, monkeypa
         }, ensure_ascii=False), {}),
     )
     with pytest.raises(ValueError):
-        cli_backend.resubmit_draft_admission_payload(
+        draft_intent.resubmit_draft_admission_payload(
             "陕西边饷居末三个月",
             bad_payload={}, failure_reason="成案未入档",
             db=db, content=content,
@@ -79,5 +80,5 @@ def test_single_pay_order_capture_rejects_missing_entries(monkeypatch):
     )
     # #1902 R2：钉非法 entries 响亮拒收；不锁诊断词面。
     with pytest.raises(ValueError):
-        cli_backend.extract_draft_intent("拟旨改饷序", "臣已拟妥")
+        draft_intent.extract_draft_intent("拟旨改饷序", "臣已拟妥")
 

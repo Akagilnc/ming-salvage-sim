@@ -1579,6 +1579,7 @@ def _capture_override_decree(game, monkeypatch, text, entries):
     import json as _json
 
     import ming_sim.cli_backend as cli_backend
+    import ming_sim.draft_intent as draft_intent
     from ming_sim.session import GameSession
 
     db, state, content = game
@@ -1596,7 +1597,7 @@ def _capture_override_decree(game, monkeypatch, text, entries):
         return (_json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    payload = cli_backend.resubmit_draft_admission_payload(
+    payload = draft_intent.resubmit_draft_admission_payload(
         text, bad_payload={}, failure_reason="成案未入档",
         db=db, content=content,
     )

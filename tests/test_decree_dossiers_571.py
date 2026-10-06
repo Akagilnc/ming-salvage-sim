@@ -2,6 +2,7 @@ import json
 
 import pytest
 import ming_sim.cli_backend as cli_backend
+import ming_sim.draft_intent as draft_intent
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
 from tests.conftest import covering_monthly_extract
@@ -972,6 +973,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
     """#1902：拟诏台手写入口退役后，抽取核 → 案卷这条路只有一条（原 web/cli 两参数
     维度已随两条入口同形而删——同一路径跑两遍不证明任何额外契约）。"""
     import ming_sim.cli_backend as cli_backend
+    import ming_sim.draft_intent as draft_intent
     from ming_sim.session import GameSession
 
     db, state, content = game
@@ -1000,7 +1002,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
     session.state = state
     session.llm_config = None
     session.content = content
-    payload = cli_backend.resubmit_draft_admission_payload(
+    payload = draft_intent.resubmit_draft_admission_payload(
         directive_text, bad_payload={}, failure_reason="成案未入档",
         db=db, content=content,
     )
@@ -1050,6 +1052,7 @@ def test_manual_directive_capture_rejects_malformed_roster(
     game, monkeypatch, entry, bad_roster,
 ):
     import ming_sim.cli_backend as cli_backend
+    import ming_sim.draft_intent as draft_intent
     from ming_sim.session import GameSession
     db, state, content = game
     response = {
@@ -1071,7 +1074,7 @@ def test_manual_directive_capture_rejects_malformed_roster(
 
     # #1902：Web 手写入口退役，业务拒收直接以 ValueError 上抛（旧路由包成 409）。
     with pytest.raises(ValueError):
-        payload = cli_backend.resubmit_draft_admission_payload(
+        payload = draft_intent.resubmit_draft_admission_payload(
             "手工旨意", bad_payload={}, failure_reason="成案未入档",
             db=db, content=content,
         )
@@ -1090,6 +1093,7 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
     game, monkeypatch, entry, tier,
 ):
     import ming_sim.cli_backend as cli_backend
+    import ming_sim.draft_intent as draft_intent
     from ming_sim.session import GameSession
     db, state, content = game
     participant = _active_minister(db)
@@ -1115,7 +1119,7 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
 
     # #1902：两条手写入口同退役，业务拒收只剩共享抽取核这一条路径。
     with pytest.raises(ValueError):
-        payload = cli_backend.resubmit_draft_admission_payload(
+        payload = draft_intent.resubmit_draft_admission_payload(
             "手工旨意", bad_payload={}, failure_reason="成案未入档",
             db=db, content=content,
         )
@@ -1354,6 +1358,7 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
     from ming_sim.session import GameSession
     import ming_sim.cli_backend as cli_backend
 
+    import ming_sim.draft_intent as draft_intent
     db, state, content = game
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
@@ -1654,6 +1659,7 @@ def test_draft_extraction_does_not_capture_acting_appointment(monkeypatch):
     """现役单旨：署理不入草案（#1902 N5 多旨批抽已退役）。"""
     import ming_sim.cli_backend as cli_backend
 
+    import ming_sim.draft_intent as draft_intent
     acting = {
         "拟旨意图": "拟旨",
         "正文": "命洪承畴暂署兵部尚书",
@@ -1666,7 +1672,7 @@ def test_draft_extraction_does_not_capture_acting_appointment(monkeypatch):
         lambda *_args, **_kwargs: (json.dumps(acting, ensure_ascii=False), {}),
     )
 
-    result = cli_backend.extract_draft_intent(
+    result = draft_intent.extract_draft_intent(
         "命洪承畴暂署兵部尚书", "臣已拟妥",
     )
 

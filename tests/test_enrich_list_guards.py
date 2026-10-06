@@ -7,6 +7,7 @@ issue-effect 的 economy（经 _apply_economy_list apply choke）与展示用 _f
 from __future__ import annotations
 
 import ming_sim.cli_backend as cb
+import ming_sim.draft_intent as di
 from ming_sim.flows import (
     _apply_class_dict,
     _apply_economy_list,
@@ -21,7 +22,7 @@ def test_enrich_buildings_non_list_no_crash(monkeypatch):
         raw = ('{"effect_on_resolve": {"buildings": ' + bad +
                ', "metrics": {"民心": 1}}, "ongoing_effects": {}, "effect_on_fail": {}}')
         monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (raw, 1))
-        out = cb.enrich_initiative_effects("练新军", "现状", llm_config=None)
+        out = di.enrich_initiative_effects("练新军", "现状", llm_config=None)
         assert isinstance(out["effect_on_resolve"], dict)  # 不崩、结构正常
         assert out["effect_on_resolve"].get("buildings") == []  # 脏非 list 值被源头清成 []（gemini PR#127）
 

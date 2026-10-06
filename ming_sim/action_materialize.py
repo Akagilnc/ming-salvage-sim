@@ -171,7 +171,7 @@ def _apply_existing_appointment_hit(
     tenure / region_id 等字段标记原样补写。summon_after 与 annotate 同原子。
     """
     from ming_sim.applier import atomic
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     with atomic(session.db):
         resolved = int(row["id"])
@@ -230,7 +230,7 @@ def stage_pacification_candidate(
     Reused by audience translation; commit resolves the target through
     _find_pacification_target.  ``source_chat_turn_id``（#1890）随新行落库。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     target = str(target_id or "").strip()
     if not target:
@@ -352,7 +352,7 @@ def stage_punishment_candidate(
 
     ``source_chat_turn_id``（#1890）随新行落库。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     target = str(target_id or "").strip()
     action = str(punish_action or "").strip()
@@ -797,7 +797,7 @@ def stage_grant_allocation_candidate(
     each stage a new candidate (#502 / #518); only a structured target_candidate
     id updates the named pending grant.  ``source_chat_turn_id``（#1890）随新行落库。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     action = str(grant_action or "").strip()
     target = str(target_id or "").strip()
@@ -1502,7 +1502,7 @@ def stage_assignment_candidate(
     #1565/0142：题名=显式 title|结构化 target_id 锚；正文唯一真源=payload.text；
     禁散文截题、禁空正文借题名伪造成功、禁缺锚静默丢单。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     body = str(text or "").strip()
     if not body:
@@ -1632,7 +1632,7 @@ def stage_authorization_candidate(
     holder = 确认闸对象 = 当前大臣；收夜只成案卷；授予走 authority_changes，判后物化。
     禁止技能 id / grant_skill 镜像。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
@@ -1723,7 +1723,7 @@ def stage_referral_candidate(
     #1565/0142：题名=显式 title|结构化 target_id 锚；正文唯一真源=payload.text；
     禁散文截题、禁空正文借题名伪造成功、禁缺锚静默丢单。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     body = str(text or "").strip()
     if not body:
@@ -1830,7 +1830,7 @@ def stage_revoke_authority_candidate(
     唯一解析到现存 authority_records.id；0/多匹配不暂存。
     收夜只成案卷；收回走 authority_changes，判后物化。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
@@ -1912,7 +1912,7 @@ def stage_revoke_decree_candidate(
     ``affair_declaration`` 是既有事务关联接缝（#1894 / ADR 0154）：原旨与撤令
     沿同一事务，缺席即无关联，代码不据正文推断。
     """
-    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.draft_intent import resolve_directive_mode
 
     if str(target_candidate or "").strip() == "含糊":
         return 0

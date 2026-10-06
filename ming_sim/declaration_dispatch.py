@@ -1237,7 +1237,7 @@ def _dispatch_commissions(
             ):
                 _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
                 continue
-            from ming_sim.cli_backend import secret_order_can_land
+            from ming_sim.draft_intent import secret_order_can_land
             if not secret_order_can_land(dict(secret)):
                 _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
                 continue
@@ -1298,7 +1298,7 @@ def _dispatch_commissions(
             try:
                 roster = assignment.get("participant_roster")
                 if roster is not None:
-                    from ming_sim.cli_backend import normalize_draft_person_roster
+                    from ming_sim.draft_intent import normalize_draft_person_roster
                     roster = normalize_draft_person_roster(
                         roster, db=db, content=getattr(db, "content", None),
                     )

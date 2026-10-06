@@ -86,7 +86,6 @@ def _657_subprocess_resolve(
     *,
     crash: str = "",
     prewrite_mode: str = "",
-    timeout: float = 180.0,
 ) -> dict:
     """同文件可复用：子进程真 HTTP POST resolve_decisions/stream。
 
@@ -98,6 +97,7 @@ def _657_subprocess_resolve(
       - "revise" stub 改票新 options
       - "deliberate" stub 廷议意愿
     stdout 只回传 @@SUMMARY@@ JSON；真杀进程无 summary 时父进程认 returncode。
+    #1902 T1 / 硬规9：禁 subprocess.run(timeout=)——超时路径会 SIGKILL。
     """
     import os
     import subprocess
@@ -239,7 +239,6 @@ def _657_subprocess_resolve(
         [sys.executable, "-c", worker, db_path, body_json, crash, prewrite_mode],
         capture_output=True,
         text=True,
-        timeout=timeout,
         cwd=root,
         env={**os.environ, "MING_SIM_DB": db_path, "OPENAI_API_KEY": "sk-test"},
     )
@@ -2624,6 +2623,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     """#658：Web 真入口 → 真实 resolve_directives 成案/颁布/仿真/封驳三选/restore。"""
     import types
     import ming_sim.cli_backend as cli_backend
+    import ming_sim.draft_intent as draft_intent
     import ming_sim.session as session_mod
     from ming_sim import rescript_actions as ra
     from ming_sim.db import GameDB
@@ -2648,7 +2648,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     from ming_sim.session_write_queue import get_session_write_queue
     web_game = types.SimpleNamespace(db=db, state=state, content=content, session=session, directive_rows=lambda: db.list_directives(state, statuses=('pending', 'draft')), directive_payload=lambda row: dict(row))
     web_game._write_gate = get_session_write_queue(web_game).write_gate
-    payload = cli_backend.resubmit_draft_admission_payload(
+    payload = draft_intent.resubmit_draft_admission_payload(
         text_in, bad_payload={}, failure_reason="成案未入档",
         db=db, content=content,
         llm_config=getattr(session, "llm_config", None),
@@ -2713,6 +2713,7 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     """#658：typed 解析边界表驱动 + 一条外部入口零写（不跨裸值/双别名/session 全排列）。"""
     from ming_sim.db import imperial_push_target_dossier_id, parse_backing_dossier_id
     import ming_sim.cli_backend as cli_backend
+    import ming_sim.draft_intent as draft_intent
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, monkeypatch, title='南迁')
     did = int(stalled['id'])
@@ -2756,9 +2757,9 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
             '事务声明': push_declaration,
         }, ensure_ascii=False), 1)
     monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_push)
-    push_extract = cli_backend.extract_draft_intent('着即强推', '臣已拟成', db=db)
+    push_extract = draft_intent.extract_draft_intent('着即强推', '臣已拟成', db=db)
     assert push_extract['target_dossier_id'] == bind_did
-    push_payload = cli_backend.project_draft_extract_to_directive_payload(
+    push_payload = draft_intent.project_draft_extract_to_directive_payload(
         push_extract, decree_text='御笔强推', db=db, content=content,
     )
     assert push_payload.get('affair_declaration')
@@ -2780,7 +2781,7 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
         return (json.dumps({'拟旨意图': '拟旨', '目标案卷ID': True}, ensure_ascii=False), 1)
     monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_bad)
     with pytest.raises(ValueError):
-        cli_backend.resubmit_draft_admission_payload(
+        draft_intent.resubmit_draft_admission_payload(
             f'着即强推南迁（案卷{did}）',
             bad_payload={}, failure_reason="成案未入档",
             db=db, content=content,
@@ -2888,6 +2889,7 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game, monkeypatch):
 def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     """#658：普通 triad + target 矛盾载荷——一条真实入口零写（禁 classifier/session/backend 三份）。"""
     import ming_sim.cli_backend as cli_backend
+    import ming_sim.draft_intent as draft_intent
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, monkeypatch, title='混载')
     did = int(stalled['id'])
@@ -2898,7 +2900,7 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
         return (json.dumps({'拟旨意图': '拟旨', '动作类型': 'policy', '目标类型': 'issue', '目标ID': 'river', '目标案卷ID': did}, ensure_ascii=False), 1)
     monkeypatch.setattr(cli_backend, '_run_backend_for_config', backend_mixed)
     with pytest.raises(ValueError):
-        cli_backend.resubmit_draft_admission_payload(
+        draft_intent.resubmit_draft_admission_payload(
             '混载旨文', bad_payload={}, failure_reason="成案未入档",
             db=db, content=content,
         )

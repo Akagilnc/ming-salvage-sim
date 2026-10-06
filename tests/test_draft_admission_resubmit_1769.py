@@ -25,6 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import ming_sim.cli_backend as cb
+import ming_sim.draft_intent as di
 import ming_sim.decree as decree_mod
 import ming_sim.session as session_mod
 import web_app
@@ -91,7 +92,7 @@ _GOOD_XIEANG = {
 
 # 名册产物错同形：结构合法但点名朝中查无此人 → heal 耗尽 → UnknownParticipantEscalate
 _UNKNOWN_NAME = "张三丰"
-_STORED_BAD_PAY_ORDER = cb.project_draft_extract_to_directive_payload(
+_STORED_BAD_PAY_ORDER = di.project_draft_extract_to_directive_payload(
     {
         "draft_action": "拟旨",
         "dossier_action_type": "pay_order_override",
@@ -103,7 +104,7 @@ _STORED_BAD_PAY_ORDER = cb.project_draft_extract_to_directive_payload(
     },
     decree_text=_DECREE_TEXT,
 )
-_STORED_GOOD_XIEANG = cb.project_draft_extract_to_directive_payload(
+_STORED_GOOD_XIEANG = di.project_draft_extract_to_directive_payload(
     {
         "draft_action": "拟旨",
         "dossier_action_type": "grant_allocation",
@@ -173,7 +174,7 @@ def _queue_backend(monkeypatch, captures: list) -> None:
 def _spy_resubmit_kwargs(monkeypatch) -> list[dict]:
     """截获补交结构化入参（failure_reason / bad_payload），不扫 prompt 文本。"""
     calls: list[dict] = []
-    real = cb.resubmit_draft_admission_payload
+    real = di.resubmit_draft_admission_payload
 
     def wrapper(decree_text, *, bad_payload, failure_reason, **kwargs):
         calls.append({
@@ -188,7 +189,7 @@ def _spy_resubmit_kwargs(monkeypatch) -> list[dict]:
             **kwargs,
         )
 
-    monkeypatch.setattr(cb, "resubmit_draft_admission_payload", wrapper)
+    monkeypatch.setattr(di, "resubmit_draft_admission_payload", wrapper)
     return calls
 
 
@@ -488,7 +489,7 @@ def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
     def boom(*_a, **_k):
         raise RuntimeError(_RESUBMIT_FAULT_MARK)
 
-    monkeypatch.setattr(cb, "resubmit_draft_admission_payload", boom)
+    monkeypatch.setattr(di, "resubmit_draft_admission_payload", boom)
     body = _post_issue_stream(
         client, expected_turn=turn, step="1769 resubmit-code-fault",
         allow_error=True,
@@ -556,7 +557,7 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
-    from ming_sim.cli_backend import project_draft_extract_to_directive_payload
+    from ming_sim.draft_intent import project_draft_extract_to_directive_payload
     bad_payload = project_draft_extract_to_directive_payload(
         {
             "draft_action": "拟旨",

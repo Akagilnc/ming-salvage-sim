@@ -162,23 +162,15 @@ class AudienceChatTurn:
 
 @dataclass
 class ChatTurnResult:
+    """场景召对一轮结果（#1902 T6：只保留现役产者字段）。
+
+    旧入口（按大臣 chat / 分类器 / 拟旨当场落）曾产 appointed/registered/displaced/
+    proposed_directive / secret_order_id / pending_action_* / 含糊准驳 / 密令 landing
+    等字段；场景入口只产 answer + court_action（+ 转译暂存）。无产者字段与死消费者
+    已清退，不复活旧产者。
+    """
     answer: str
-    court_action: str = ""   # "" | dismiss | summon | court_break | handled
-    next_minister: str = ""
-    proposed_directive: Optional[DirectiveView] = None
-    appointed_minister: str = ""   # 吏部本轮铨选新任的人物姓名（已可召见）
-    registered_minister: str = ""  # 名册外史实/用户确认人物建档后可召见
-    displaced_minister: str = ""   # 因新任腾缺被罢黜（dismissed）的原任者姓名
-    refresh_ministers: List[str] = field(default_factory=list)
-    secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
-    pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
-    pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
-    # #502 AC5：多道并存时口头准驳含糊 → 结构化含糊态（含候选集），驱动大臣当场追问哪一道。
-    directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
-    # Typed decree validation recovery (failed_fields + LLM report); sync/retry must project it.
-    decree_validation_failure: Optional[Dict[str, Any]] = None
-    # #1765：密令落不了库 → 大臣揣摩/追问（landing_gaps + report）；与拟旨 recovery 同投影缝。
-    secret_order_landing_recovery: Optional[Dict[str, Any]] = None
+    court_action: str = ""   # "" | court_break（场景口令）；其余旧动作已随入口退役
     # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
     # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
     pending_audience_translation: Optional[Dict[str, Any]] = None
@@ -1099,6 +1091,17 @@ class GameSession:
     # 这里。两端曾各写一份同形编排（WebGame._start_chat_turn/_fail_chat_turn_and_reload
     # 与 cli/terminal.py 内联的同一段），那份副本随本方法落地删除。
 
+    def reconcile_crashed_audience_turns(self) -> None:
+        """启动／换库共核：崩溃遗留在飞回话终态化 + post_reply 恢复对账（ADR 0036）。
+
+        #1902 T4：Web 建局／rebuild 与 CLI 起手／读档重建曾各抄同一两句；生命周期
+        归本会话核，入口只在适当时机调用。宿主资源（写闸／呈现缓存）仍由入口适配。
+        """
+        if not hasattr(self.db, "conn"):
+            return
+        self.db.reconcile_interrupted_chat_turns()
+        self.db.reconcile_post_reply_recovery()
+
     def begin_audience_chat_turn(
         self, message: str, *, message_speaker: str = "",
         agno_session_id: str = "", runs_before: int = 0, ensure_summon: str = "",
@@ -1860,7 +1863,7 @@ class GameSession:
         拿旧拒因问第二遍。故把**本次**产物与**本次**写回失败事实带到下一次重写；
         返回值即下一轮的 carry_over（写回成功的旨不入内，改按 ensure 新拒因走）。
         """
-        from ming_sim.cli_backend import resubmit_draft_admission_payload
+        from ming_sim.draft_intent import resubmit_draft_admission_payload
         from ming_sim.error_pack import settlement_abort_message, write_error_pack
         from ming_sim.exceptions import SettlementAbort
 

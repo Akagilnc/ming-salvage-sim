@@ -20,6 +20,7 @@ from types import SimpleNamespace
 def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
     """#1391：参与人「大臣」不进 roster、零 409，草案可落库。"""
     import ming_sim.cli_backend as cli_backend
+    import ming_sim.draft_intent as draft_intent
     from ming_sim.session import GameSession
 
     db, state, content = game
@@ -39,7 +40,7 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
         return (json.dumps(response, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    payload = cli_backend.resubmit_draft_admission_payload(
+    payload = draft_intent.resubmit_draft_admission_payload(
         text, bad_payload={}, failure_reason="成案未入档",
         db=db, content=content,
     )
@@ -64,6 +65,7 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
     """#1391 负向：纠错耗尽后真正不存在之人仍拒收（ADR 0053 缝不松；#1274 V-1 人话）。"""
     import ming_sim.cli_backend as cli_backend
 
+    import ming_sim.draft_intent as draft_intent
     db, _state, content = game
     text = "着不存在之人甲核太仓"
     response = {
@@ -80,7 +82,7 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
     with pytest.raises(ValueError) as ei:
-        cli_backend.resubmit_draft_admission_payload(
+        draft_intent.resubmit_draft_admission_payload(
             text, bad_payload={}, failure_reason="成案未入档",
             db=db, content=content,
         )
@@ -133,6 +135,7 @@ def test_normal_capture_path_unchanged(game, monkeypatch):
     """正常抽取路径：结构字段仍按 LLM 结果落地（非一律 special_decree）。"""
     import ming_sim.cli_backend as cli_backend
 
+    import ming_sim.draft_intent as draft_intent
     db, _state, content = game
     text = "着毕自严核清太仓实存"
     response = {
@@ -146,7 +149,7 @@ def test_normal_capture_path_unchanged(game, monkeypatch):
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
     )
-    payload = cli_backend.resubmit_draft_admission_payload(
+    payload = draft_intent.resubmit_draft_admission_payload(
         text, bad_payload={}, failure_reason="成案未入档",
         db=db, content=content,
     )

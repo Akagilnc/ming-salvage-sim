@@ -207,15 +207,6 @@ def _handle_court_command(
     return None
 
 
-def _confirm_pending_directive(session: GameSession, draft, minister_name: str) -> None:
-    """Legacy CLI display only; end-turn default approval owns submission."""
-    print(f"\n{minister_name}拟旨如下：\n")
-    print("─" * 50)
-    print(draft.text)
-    print("─" * 50)
-    print(f"此旨已候结束本{TURN_UNIT}成案。\n")
-
-
 def _print_interrupted_reply_retry_hint(session: GameSession) -> None:
     """#505：CLI 系统层恢复提示——崩溃后问话保留，可输入「重试回话」重新生成。
 
@@ -376,22 +367,9 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             raise
         print(wrap(result.answer))
         print()
-        _print_pending_action_failures(getattr(result, "pending_action_failures", []) or [])
-        if result.proposed_directive is not None:
-            _confirm_pending_directive(session, result.proposed_directive, character.name)
-        if result.appointed_minister:
-            print(f"【吏部铨选】{result.appointed_minister}已补入朝堂名册，本回合起可召见。\n")
-        if result.registered_minister:
-            print(f"【人物补档】{result.registered_minister}已补入人物档，本回合起可召见。\n")
-        if result.displaced_minister:
-            print(f"【腾缺去职】{result.displaced_minister}原任官缺由新任接掌，已罢黜出朝堂名册。\n")
-        if result.court_action == "dismiss":
-            # 告退账已由 session.chat（court_action=dismiss 单缝）落地，此处不重复写。
-            return "dismiss"
-        if result.court_action == "summon" and result.next_minister:
-            is_temporary = result.next_minister in session.temporary_characters
-
-            return f"{'summon-temp' if is_temporary else 'summon'}:{result.next_minister}"
+        # #1902 T6：旧 result 字段（拟旨/铨选/密令 landing 等）无场景产者，死消费者已清。
+        if result.court_action == "court_break":
+            return "court_break"
 
 
 def _cli_save(session: GameSession, name: str) -> None:
@@ -476,14 +454,8 @@ class _CliSaveSlotHost:
 
 
 def _cli_reconcile_crashed_turns(session: GameSession) -> None:
-    """重开对账：崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，ADR 0036）。
-
-    两处调用形状与 Web 建局同一句（``web_app`` 的 ``WebGame.__init__`` 与
-    ``_rebuild_session``）：起手建局一次、读档重建一次。缺这条，孤儿 generating 轮
-    会被当成本夜「上一轮仍在进行」，玩家续问与收夜都被永久挡死。
-    """
-    session.db.reconcile_interrupted_chat_turns()
-    session.db.reconcile_post_reply_recovery()
+    """CLI 适配：转调会话共核启动恢复（#1902 T4）。"""
+    session.reconcile_crashed_audience_turns()
 
 
 def _cli_rebuild_session(runtime: "_CliRuntime", llm_config) -> GameSession:

@@ -20881,20 +20881,25 @@ class GameDB:
                 tuple(referenced),
             ).fetchall()
         }
-        from ming_sim.participant_roster import is_non_person_participant_name
+        from ming_sim.participant_roster import (
+            UnknownParticipantRefError,
+            is_non_person_participant_name,
+        )
 
-        def _roster_ref_error(label: str, name: str) -> ValueError:
-            # #1380：拒「皇帝」等非人通称时给人话提示，禁裸「参与人物不存在：皇帝」
+        def _roster_ref_error(label: str, name: str) -> UnknownParticipantRefError:
+            # #1380：拒「皇帝」等非人通称时给人话提示；控制面认类型不认词面（#1902 T2）。
             if is_non_person_participant_name(name):
-                return ValueError(
+                msg = (
                     f"{label}不存在：{name}。"
                     f"人物参与人须为朝堂名册中的大臣姓名，"
                     f"不可填「{name}」等非人通称或机构名。"
                 )
-            return ValueError(
-                f"{label}不存在：{name}。"
-                f"请填写朝堂名册中已有的大臣姓名。"
-            )
+            else:
+                msg = (
+                    f"{label}不存在：{name}。"
+                    f"请填写朝堂名册中已有的大臣姓名。"
+                )
+            return UnknownParticipantRefError(label, name, msg)
 
         for item in entries:
             character_id = str(item.get("character_id") or "").strip()

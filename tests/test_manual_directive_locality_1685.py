@@ -26,6 +26,7 @@ def test_manual_directive_region_assembly_writes_single_and_advances(
 ):
     """#1624/#1685 主干：LLM 抽 region+单省 → 共同契约落 single → 封存推进。"""
     import ming_sim.cli_backend as cli_backend
+    import ming_sim.draft_intent as draft_intent
     import web_app
 
     new = tracer_client.post("/api/menu/new_game")
@@ -39,7 +40,7 @@ def test_manual_directive_region_assembly_writes_single_and_advances(
         return json.dumps(_extracted("单省"), ensure_ascii=False), 1
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
-    payload = cli_backend.resubmit_draft_admission_payload(
+    payload = draft_intent.resubmit_draft_admission_payload(
         "着依旨施行。", bad_payload={}, failure_reason="成案未入档",
         db=game.db, content=game.content,
         llm_config=getattr(game.session, "llm_config", None),

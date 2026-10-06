@@ -324,6 +324,7 @@ def test_rescript_follow_draft_nails_drafted_roster(game, monkeypatch):
 def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     """真实拟旨落稿 → 盖玺（#1902 起经会话写入面，不再经拟诏台 Web 路由）。"""
     import ming_sim.cli_backend as cli_backend
+    import ming_sim.draft_intent as draft_intent
     import web_app
 
     new = tracer_client.post("/api/menu/new_game")
@@ -336,7 +337,7 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
     text = "着户部继续核查陕西赈务，按月具报。"
-    payload = cli_backend.resubmit_draft_admission_payload(
+    payload = draft_intent.resubmit_draft_admission_payload(
         text, bad_payload={}, failure_reason="成案未入档",
         db=game.db, content=game.content,
         llm_config=getattr(game.session, "llm_config", None),
@@ -389,6 +390,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     非 #1783 拨帑 tracer。填帽 insert_issue 直落；观察面为持久化案卷。
     """
     import ming_sim.cli_backend as cli_backend
+    import ming_sim.draft_intent as draft_intent
     import web_app
 
     new = tracer_client.post("/api/menu/new_game")
@@ -418,7 +420,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
     text = "着户部继续核查陕西赈务，按月具报。"
-    payload = cli_backend.resubmit_draft_admission_payload(
+    payload = draft_intent.resubmit_draft_admission_payload(
         text, bad_payload={}, failure_reason="成案未入档",
         db=game.db, content=game.content,
         llm_config=getattr(game.session, "llm_config", None),
@@ -529,6 +531,7 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     """
     import ming_sim.cli_backend as cb
 
+    import ming_sim.draft_intent as di
     db, _state, content = game
     first = "毕自严"
     assert first in content.characters
@@ -585,7 +588,7 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
         return (json.dumps(_drift_payload(), ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", backend)
-    result = cb.extract_draft_intent_with_roster_heal(
+    result = di.extract_draft_intent_with_roster_heal(
         "着户部继续核查陕西赈务，按月具报。", "臣遵拟。",
         db=db, content=content,
     )

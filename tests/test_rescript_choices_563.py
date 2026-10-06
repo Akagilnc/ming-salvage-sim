@@ -3,6 +3,7 @@ import json
 import pytest
 
 import ming_sim.cli_backend as cli_backend
+import ming_sim.draft_intent as draft_intent
 import ming_sim.decree as decree_mod
 from tests.dossier_test_helpers import rejected_verdict
 
@@ -40,7 +41,7 @@ def test_manual_mode_uses_typed_extractor_judgment(
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
     )
-    assert cli_backend.resubmit_draft_admission_payload(
+    assert draft_intent.resubmit_draft_admission_payload(
         emperor_text, bad_payload={}, failure_reason="成案未入档",
     )["mode"] == expected
 
@@ -54,7 +55,7 @@ def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(
         cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
     )
 
-    payload = cli_backend.resubmit_draft_admission_payload(
+    payload = draft_intent.resubmit_draft_admission_payload(
         "增列核验期限", bad_payload={}, failure_reason="成案未入档",
         existing_mode="midzhi",
     )
@@ -94,7 +95,7 @@ def test_declared_staging_uses_typed_mode_not_minister_text(
     db, state, _content = game
     candidate_id = db.stage_directive_candidate(
         state.turn, "温体仁", {"text": minister_text, "actor": "温体仁",
-                             "mode": cli_backend.resolve_directive_mode(extracted=caller_mode),
+                             "mode": draft_intent.resolve_directive_mode(extracted=caller_mode),
                              "dossier_action_type": "special_decree", "target_kind": "policy",
                              "target_id": "river-works"},
     )

@@ -17,6 +17,7 @@ from agno.models.message import Message
 
 from ming_sim.agents import run_agent_stream_text
 import ming_sim.cli_backend as cb
+import ming_sim.draft_intent as di
 from ming_sim.models import LLMConfig
 
 
@@ -114,7 +115,7 @@ def test_enrich_army_parsed_and_normalized(monkeypatch):
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
     _patch_runner(monkeypatch, "agy", lambda prompt, **kw: (canned, 1))
-    out = cb.enrich_initiative_effects("孙传庭练秦兵", "陕西督练新军")
+    out = di.enrich_initiative_effects("孙传庭练秦兵", "陕西督练新军")
     armies = out["effect_on_resolve"]["new_armies"]
     assert armies[0]["id"] == "qinjun"
     assert armies[0]["manpower"] == 20000
@@ -126,7 +127,7 @@ def test_enrich_building_region_floor(monkeypatch):
         "ongoing_effects": {}, "effect_on_fail": {},
     }, ensure_ascii=False)
     _patch_runner(monkeypatch, "agy", lambda prompt, **kw: (canned, 1))
-    out = cb.enrich_initiative_effects("设格致局", "")
+    out = di.enrich_initiative_effects("设格致局", "")
     assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
 
 
@@ -135,7 +136,7 @@ def test_enrich_backend_error_returns_empty_effects(monkeypatch):
         raise RuntimeError("backend down")
     monkeypatch.setattr(cb, "_run_backend_for_config", boom)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    out = cb.enrich_initiative_effects("设格致局", "")
+    out = di.enrich_initiative_effects("设格致局", "")
     assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
 
 
@@ -147,7 +148,7 @@ def test_enrich_nondict_subfields_guarded(monkeypatch):
         ),
     )
     monkeypatch.setattr(cb, "_trace", lambda r: None)
-    out = cb.enrich_initiative_effects("设局", "")
+    out = di.enrich_initiative_effects("设局", "")
     assert out == {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}}
 
 

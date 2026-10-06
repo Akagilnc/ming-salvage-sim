@@ -59,6 +59,20 @@ def is_non_person_participant_name(name: str) -> bool:
     return False
 
 
+class UnknownParticipantRefError(ValueError):
+    """名册引用不存在的结构化故障（#1902 T2 / ADR 0142）。
+
+    控制面只认本类型与 ``names``／``label`` 字段，禁止从 ``str(exc)`` 词面正则回推。
+    ``label`` 为「参与人物」或「委派人」。
+    """
+
+    def __init__(self, label: str, name: str, message: str):
+        self.label = str(label or "").strip() or "参与人物"
+        self.name = str(name or "").strip()
+        self.names = [self.name] if self.name else []
+        super().__init__(message)
+
+
 def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
     """案卷归属人：首名 canonical 主办，缺档时才读 legacy executor。
 

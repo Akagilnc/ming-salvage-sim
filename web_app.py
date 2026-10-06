@@ -800,11 +800,8 @@ class WebGame:
             self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
             if not _fav_raw:
                 self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
-            # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
-            # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
-            if hasattr(self.db, "conn"):
-                self.db.reconcile_interrupted_chat_turns()
-                self.db.reconcile_post_reply_recovery()
+            # #505／#1902 T4：启动恢复生命周期归会话共核；入口只调共核再启宿主后台补跑。
+            self.session.reconcile_crashed_audience_turns()
             # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
             self._spawn_startup_extraction_catch_up()
         except Exception as init_exc:
@@ -964,9 +961,8 @@ class WebGame:
             favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
             if not fav_raw:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
-            if hasattr(candidate.db, "conn"):
-                candidate.db.reconcile_interrupted_chat_turns()
-                candidate.db.reconcile_post_reply_recovery()
+            # #1902 T4：换库候选同样走会话共核启动恢复，不在 Web 入口另编排。
+            candidate.reconcile_crashed_audience_turns()
         except Exception as rebuild_exc:
             residual = candidate or getattr(rebuild_exc, "residual_session", None)
             if residual is not None:
@@ -1988,19 +1984,9 @@ class WebGame:
         minister_name: str,
         answer: str,
         court_action: str = "",
-        next_minister: str = "",
-        proposed_directive: Optional[Dict[str, Any]] = None,
-        appointed_minister: str = "",
-        registered_minister: str = "",
-        displaced_minister: str = "",
-        secret_order_id: int = 0,
-        pending_action_id: int = 0,
         chat_turn_id: int = 0,
         accepted_turn: Optional[int] = None,
         before_snapshot: Optional[Dict[str, Any]] = None,
-        directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None,
-        decree_validation_failure: Optional[Dict[str, Any]] = None,
-        secret_order_landing_recovery: Optional[Dict[str, Any]] = None,
         persisted_message_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         character = None if minister_name == "殿上" else self.session._character(minister_name)
@@ -2046,18 +2032,7 @@ class WebGame:
             # #544：供高亮判官落库锚定（非流式折窗 / 流式补挂）
             "minister_message_id": int(minister_message_id or 0),
             "court_action": court_action,
-            "next_minister": next_minister,
-            "proposed_directive": proposed_directive,
-            "appointed_minister": appointed_minister,
-            "registered_minister": registered_minister,
-            "displaced_minister": displaced_minister,
-            "secret_order_id": secret_order_id or 0,
-            "pending_action_id": pending_action_id or 0,
-            # #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问；无则 None。
-            "directive_confirmation_ambiguous": directive_confirmation_ambiguous or None,
-            "decree_validation_failure": decree_validation_failure or None,
-            # #1765：密令落不了库的大臣揣摩/追问（landing_gaps + report）。
-            "secret_order_landing_recovery": secret_order_landing_recovery or None,
+            # #1902 T6：旧 result 投影字段无场景产者，已随死契约清退。
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             # #1716：done 载荷同步 pending_directive_count——onDone 直接落 UI，不单靠 refresh 竞态。
@@ -2218,27 +2193,12 @@ class WebGame:
                 )
             turn, result, minister_message_id = retry_outcome
             try:
-                proposed = None
-                if result.proposed_directive is not None:
-                    d = result.proposed_directive
-                    proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
                 payload = self._chat_payload(
                     minister_name, result.answer,
-                    court_action=result.court_action, next_minister=result.next_minister,
-                    proposed_directive=proposed, appointed_minister=result.appointed_minister,
-                    registered_minister=result.registered_minister,
-                    displaced_minister=result.displaced_minister,
-                    secret_order_id=result.secret_order_id,
-                    pending_action_id=getattr(result, "pending_action_id", 0),
+                    court_action=result.court_action,
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
                     before_snapshot=turn.before_snapshot,
-                    directive_confirmation_ambiguous=getattr(
-                        result, "directive_confirmation_ambiguous", None),
-                    decree_validation_failure=getattr(
-                        result, "decree_validation_failure", None),
-                    secret_order_landing_recovery=getattr(
-                        result, "secret_order_landing_recovery", None),
                     persisted_message_id=minister_message_id,
                 )
                 # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
@@ -2332,10 +2292,6 @@ class WebGame:
         # 非流式 agent 回整段时 transport 可能未分片 emit——补一次 delta 保 SSE 契约。
         if answer and emitted["n"] == 0:
             _emit(answer)
-        proposed = None
-        if result.proposed_directive is not None:
-            d = result.proposed_directive
-            proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
         with cm:
             with atomic(self.db):
@@ -2343,23 +2299,10 @@ class WebGame:
                     minister_name,
                     answer,
                     court_action=getattr(result, "court_action", "") or "",
-                    next_minister=getattr(result, "next_minister", "") or "",
-                    proposed_directive=proposed,
-                    appointed_minister=getattr(result, "appointed_minister", "") or "",
-                    registered_minister=getattr(result, "registered_minister", "") or "",
-                    displaced_minister=getattr(result, "displaced_minister", "") or "",
-                    secret_order_id=int(getattr(result, "secret_order_id", 0) or 0),
-                    pending_action_id=int(getattr(result, "pending_action_id", 0) or 0),
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
                     # #1902 F2：回滚差异由共核方法随落回话一起记，调用方不再另记一份。
                     before_snapshot=before_snapshot,
-                    directive_confirmation_ambiguous=getattr(
-                        result, "directive_confirmation_ambiguous", None),
-                    decree_validation_failure=getattr(
-                        result, "decree_validation_failure", None),
-                    secret_order_landing_recovery=getattr(
-                        result, "secret_order_landing_recovery", None),
                 )
         # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
         result._admitted_write_ticket = admitted_ticket
