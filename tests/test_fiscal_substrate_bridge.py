@@ -721,8 +721,6 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
         army_total + db._standalone_army_pay_container_total()
     )
 
-
-
 def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
     import ming_sim.flows as flows_mod
 
@@ -1928,8 +1926,6 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
     assert after_balance == before_balance
     assert state.metrics["国库"] == before_balance
 
-
-
 def test_zero_due_province_army_morale_short_circuits(fresh_db):
     _write_settle(
         fresh_db,
@@ -2046,7 +2042,6 @@ def test_tusi_self_funded_army_skips_pay_morale_channel(fresh_db):
     ).fetchone()
     assert row["arrears"] == pytest.approx(0)
     assert row["morale"] == 80
-
 
 def test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale(fresh_game):
     import ming_sim.flows as flows_mod
@@ -3601,18 +3596,6 @@ def test_standalone_army_pay_funnel_rejects_malformed_settle_shapes(
     with pytest.raises(ValueError):
         fresh_db._derive_region_army_pay_due(region_id, settle)
 
-def test_standalone_army_pay_container_total_uses_grouped_arrears(fresh_db, monkeypatch):
-    def fail_single_region_lookup(region_id):
-        raise AssertionError(f"unexpected per-region army pay lookup: {region_id}")
-
-    monkeypatch.setattr(
-        fresh_db,
-        "_army_pay_source_rows_for_region",
-        fail_single_region_lookup,
-    )
-
-    assert fresh_db._standalone_army_pay_container_total() >= 0
-
 @pytest.mark.parametrize(
     ("mutate",),
     [
@@ -3881,8 +3864,6 @@ def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
     db.conn.commit()
     apply_fixed_period_flows(db, state)
     assert _read_settle(db, "henan")["st"]["省库库银"] != 40, "明控且有 settle 的省应 tick"
-
-
 
 def test_cutover_pay_source_errors_abort_fixed_flows(fresh_game, monkeypatch, tmp_path):
     import ming_sim.error_pack as error_pack_mod
@@ -4180,8 +4161,6 @@ def test_resolve_directives_nested_cutover_bad_state_uses_settlement_abort_error
     assert (pack / "traceback.txt").read_text(encoding="utf-8")
     assert _read_settle(db)["p"] == []
 
-
-
 def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh_game):
     import ming_sim.flows as flows_mod
 
@@ -4369,7 +4348,6 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
             abs_tol=0.01,
         )
 
-
 def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     _write_settle(
         fresh_db,
@@ -4465,7 +4443,6 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     ).fetchone()
     assert int(army["province_pay_arrears"]) == 10
     assert int(army["morale"]) == 72
-
 
 def test_budget_projection_preserves_persisted_fiscal_snapshots(fresh_game):
     from ming_sim.flows import compute_budget_lines

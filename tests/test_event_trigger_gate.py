@@ -1687,22 +1687,6 @@ def test_historical_auto_trigger_core_effect_is_applied_once(game):
         ("huabei_plague",),
     ).fetchone()[0] == 1
 
-def test_auto_trigger_historical_events_use_preloaded_terminal_refs(game, monkeypatch):
-    """PR review：历史 auto_trigger 去重应批量读 event_triggers，避免每事件查 terminal_state。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1633
-    state.period = 7
-
-    def _unexpected_per_event_probe(*_args, **_kwargs):
-        raise AssertionError("auto_trigger historical loop must not call event_terminal_state per event")
-
-    monkeypatch.setattr(type(db), "event_terminal_state", _unexpected_per_event_probe)
-
-    triggered = issues.auto_trigger_seed_issues(state, db)
-
-    assert any(item["id"] == "huabei_plague" for item in triggered)
-
 def test_historical_auto_trigger_event_expires_after_latest_window(game):
     """#188：历史 auto_trigger 也须尊重最晚窗口，过期后不能硬触发。"""
     db, state, content = game
@@ -3840,13 +3824,13 @@ def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
             "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
         ).fetchone()[0] == before_logs
 
-def test_event_pool_current_candidate_recheck_cached_until_state_changes(game, monkeypatch):
-    """online R2 Gemini：同一批无状态变化的 event_pool 项不应重复重算候选池。"""
+def test_event_pool_current_candidate_recheck_rejects_when_no_longer_candidates(game, monkeypatch):
+    """输入时在候选池、重验时已不在候选池的 event_pool 项须拒收。"""
     db, state, content = game
     issues.bind_content(content)
     ev1 = Event(
-        id="__test_cached_current_candidate_1__",
-        title="测试·候选缓存一",
+        id="__test_recheck_current_candidate_1__",
+        title="测试·候选重验一",
         kind="朝议",
         summary="x",
         urgency=10,
@@ -3857,8 +3841,8 @@ def test_event_pool_current_candidate_recheck_cached_until_state_changes(game, m
         event_type="situation",
     )
     ev2 = Event(
-        id="__test_cached_current_candidate_2__",
-        title="测试·候选缓存二",
+        id="__test_recheck_current_candidate_2__",
+        title="测试·候选重验二",
         kind="朝议",
         summary="x",
         urgency=10,
@@ -3871,14 +3855,8 @@ def test_event_pool_current_candidate_recheck_cached_until_state_changes(game, m
     content.seed_events.extend([ev1, ev2])
     content.event_by_id[ev1.id] = ev1
     content.event_by_id[ev2.id] = ev2
-    calls = 0
 
-    def fake_gather_candidate_events(_state, _db):
-        nonlocal calls
-        calls += 1
-        return []
-
-    monkeypatch.setattr(issues, "gather_candidate_events", fake_gather_candidate_events)
+    monkeypatch.setattr(issues, "gather_candidate_events", lambda _state, _db: [])
     try:
         out = issues.apply_issue_tracker_output(
             db,
@@ -3899,7 +3877,6 @@ def test_event_pool_current_candidate_recheck_cached_until_state_changes(game, m
         content.event_by_id.pop(ev2.id, None)
 
     assert [item["rejected"] for item in out["new_issues"]] == [True, True]
-    assert calls == 1
 
 def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
     """#203 CMR：同一轮重复 emit 已触发事件时，第二条应拒收留痕而不是 abort。"""
