@@ -187,7 +187,7 @@ def _seed_guilt_storage_value(value: object) -> str:
     if isinstance(value, Mapping):
         if not value:
             return ""
-        crime = str(value.get("crime") or "").strip()
+        crime = str(value.get("crime") or "")
         severity = str(value.get("severity") or "无").strip()
         return safe_json_dumps({"crime": crime, "severity": severity}, ensure_ascii=False)
     return str(value or "")
@@ -4575,7 +4575,7 @@ class GameDB:
                     bar_good_meaning=ev.bar_good_meaning or "已平",
                     bar_bad_meaning=ev.bar_bad_meaning or "失控",
                     inertia=inertia,
-                    stage_text=ev.stage_text or ev.str(summary or ""),
+                    stage_text=ev.stage_text or str(getattr(ev, "summary", "") or ""),
                     severity=int(ev.severity),
                     region_hint=ev.region_hint,
                     faction_hint=",".join(ev.interests[:2]),
@@ -7157,7 +7157,7 @@ class GameDB:
             (
                 building_id,
                 region_id,
-                str(name or "").strip() or "无名建筑",
+                (str(name or "") if str(name or "").strip() else "无名建筑"),
                 category,
                 max(1, min(5, int(level))),
                 max(0, min(100, int(condition))),
@@ -7176,7 +7176,7 @@ class GameDB:
             (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
             VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房', ?)
             """,
-            (state.turn, state.year, state.period, building_id, str(name or "").strip(), "诏书新立建筑", origin_ref),
+            (state.turn, state.year, state.period, building_id, str(name or ""), "诏书新立建筑", origin_ref),
         )
         if commit:
             self.conn.commit()
@@ -7489,8 +7489,9 @@ class GameDB:
         for item in list(phrases or []):
             if not isinstance(item, str):
                 continue
-            phrase = item.strip()
-            if phrase:
+            # Free prose highlight phrases: preserve raw; strip only emptiness (#1834 F16).
+            phrase = item
+            if phrase.strip():
                 clean.append(phrase)
         payload = json.dumps(clean, ensure_ascii=False)
         self.conn.execute(
@@ -8468,10 +8469,19 @@ class GameDB:
                             "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
                             (int(target_id),),
                         ).fetchone()
-                        current = json.loads(brief[0] or "[]") if brief is not None else []
+                        current = (
+                            self._loads_stored_json_list(
+                                brief[0],
+                                surface="secret_order_briefs.origin_chat_message_ids",
+                            )
+                            if brief is not None else []
+                        )
                         pins = [pin for pin in current if int(pin) not in undone]
                     else:
-                        pins = json.loads(str(raw_pins) or "[]")
+                        pins = self._loads_stored_json_list(
+                            raw_pins,
+                            surface="secret_order_briefs.origin_chat_message_ids",
+                        )
                     self._restore_secret_order_brief_projection_in_tx(int(target_id), pins)
             else:
                 raise ValueError(f"不支持的回滚策略：{strategy}")
@@ -9825,7 +9835,7 @@ class GameDB:
                 due_turn = deadline = 0
             if due_turn <= 0 and deadline > 0 and current_turn > 0:
                 due_turn = int(current_turn) + deadline
-            station = str(normalized.get("station") or "").strip()
+            station = str(normalized.get("station") or "")  # Free prose place name F21
             has_deadline_intent = due_turn > 0 or deadline > 0
             requires_due = not station  # 限期出战：无调驻面，due 为限期载体
             if due_turn > int(current_turn or 0):
@@ -11065,7 +11075,7 @@ class GameDB:
                 continue
             if not fork_state["fork"]:
                 continue
-            case_summary = str(row["decree_text"] or "").strip()
+            case_summary = str(row["decree_text"] or "")  # Free prose F21
             if len(case_summary) > 48:
                 case_summary = str(case_summary or "")
             # 物理事实：奏报面 / 执行格 / 旨外——直接复用 fork 读端（类型已保证）
@@ -11480,7 +11490,7 @@ class GameDB:
             # P7：硬门只落结构化事实；标题仅链接源承诺既有事实，不拼装新成句。
             # 玩家 stage/narrative 由叙事 LLM 步从特征化输入长出；bar 端标故意留空，
             # web 空串不渲染（#626 甲：不开 bar 写口）。
-            title_c = str(crow["title"] if crow is not None else "").strip()
+            title_c = str(crow["title"] if crow is not None else "")  # Free prose F21
             # 一锤子：复用既有 _apply_metric_dict（ISSUE_METRIC_KEYS），不自建 clamp。
             applied_metrics = _apply_metric_dict(
                 state, dict(BACKLASH_NAMED_METRICS), db=self,
@@ -12900,7 +12910,10 @@ class GameDB:
                     or bool(row["was_force_promulgated"])
                     or int(row["id"]) in known_dossier_ids
                     or reader_archive_key in set(
-                        json.loads(row["office_archive_keys"] or "[]")
+                        self._loads_stored_json_list(
+                            row["office_archive_keys"],
+                            surface="decree_dossiers.office_archive_keys",
+                        )
                     )
                 )
             ) or (
@@ -14146,7 +14159,7 @@ class GameDB:
         #659：只改人读驻地/结构化驻地；不触 pay_source_region。仅 station 无 region
         时只改人读字段，region 保持原值（禁止从 station 文本反推）。
         """
-        dest = str(station or "").strip()
+        dest = str(station or "")  # Free prose place name F21
         dest_region = str(station_region or "").strip()
         if not dest and not dest_region:
             return
@@ -14494,7 +14507,7 @@ class GameDB:
         army_id = str(
             payload.get("target_id") or row.get("target_id") or ""
         ).strip()
-        station = str(payload.get("station") or "").strip()
+        station = str(payload.get("station") or "")  # Free prose place name F21
         station_region = str(
             payload.get("station_region")
             or payload.get("实际驻地")
@@ -14538,10 +14551,10 @@ class GameDB:
         不得回填题名，不得以题名/target_id 冒充正文。
         真缺锚时 title 为空串——caller 复用既有 execution failed 接缝，保留案卷与正文。
         """
-        title = str(payload.get("title") or "").strip()
+        title = str(payload.get("title") or "")  # Free prose F21
         if not title:
             title = str(payload.get("target_id") or "").strip()
-        body = str(payload.get("text") or row.get("decree_text") or "").strip()
+        body = str(payload.get("text") or row.get("decree_text") or "")  # Free prose F21
         return title, body
 
     def _apply_referral_verdict_effect(
@@ -14913,7 +14926,7 @@ class GameDB:
                 break
         if not hit:
             return
-        context = str(reason or "").strip() or "处置站台者"
+        context = str(reason or ""); context = context if context.strip() else "处置站台者"
         from ming_sim.credit_events import KIND_BETRAY, write_credit_event
         write_credit_event(
             self, state,
@@ -16352,7 +16365,7 @@ class GameDB:
         office = str(payload.get("office") or "")
         if pa["action"] == "任命":
             # 朝臣任命/升迁/调任 → person-only adapter（不经 full settlement recovery）。
-            reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
+            reason = str(payload.get("reason") or "奉旨任免"); reason = reason if reason.strip() else "奉旨任免"
             office_type = str(payload.get("office_type") or "").strip()
             try:
                 appointment_tenure = appointment_tenure_from(payload)

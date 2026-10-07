@@ -2627,7 +2627,6 @@ def _pending_person_changes_block_event_gate(
     pending_person_changes: List[Dict[str, object]],
     db: GameDB,
     *,
-    allow_legacy_partial_power: bool = False,
     content: Optional[GameContent] = None,
     shadow_rows: Optional[Dict[str, Dict[str, str]]] = None,
     power_shadow_rows: Optional[Dict[str, Dict[str, int]]] = None,
@@ -2792,10 +2791,9 @@ def _pending_person_changes_block_event_gate(
         elif action == "易主":
             way = str(item.get("方式") or item.get("way") or "").strip()
             backlash = item.get("反噬", item.get("backlash"))
-            legacy_partial = allow_legacy_partial_power and bool(item.get("legacy_partial"))
             if not way:
                 continue
-            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS and not legacy_partial:
+            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS:
                 continue
             if not isinstance(backlash, dict):
                 continue
@@ -3912,7 +3910,6 @@ def _strategic_event_result_preflight_error(
                 person_changes,
                 content=content,
                 llm_config=llm_config,
-                allow_legacy_partial_power=False,
                 external_transaction=True,
             )
         finally:
@@ -4186,7 +4183,6 @@ def apply_issue_tracker_output(
     llm_config: Any = None,
     content=None,
     pending_person_changes_for_gates: Optional[List[Dict[str, object]]] = None,
-    allow_legacy_partial_power_for_gates: bool = False,
     candidate_event_ids_at_input: Optional[set[str]] = None,
     candidate_event_ids_authoritative: bool = False,
     impeachment_surge_candidates_at_input: Optional[List[Dict[str, object]]] = None,
@@ -4513,7 +4509,6 @@ def apply_issue_tracker_output(
                 ev,
                 pending_person_changes_for_gates or [],
                 db,
-                allow_legacy_partial_power=allow_legacy_partial_power_for_gates,
                 content=runtime_content,
                 shadow_rows=shared_shadow_rows,
                 power_shadow_rows=shared_power_shadow_rows,
@@ -5812,7 +5807,6 @@ def _apply_person_changes(
     llm_config: Any = None,
     source: str = "system_simulation",
     derived_from: str = "",
-    allow_legacy_partial_power: bool = False,
     external_transaction: bool | None = None,
     origin_ref: str = "",
     require_origin: bool = False,
@@ -6343,11 +6337,10 @@ def _apply_person_changes(
         if action == "易主":
             way = str(item.get("方式") or item.get("way") or "").strip()
             backlash = item.get("反噬", item.get("backlash"))
-            legacy_partial = allow_legacy_partial_power and bool(item.get("legacy_partial"))
             if not way:
                 applied.append(rejected(item, "易主 缺 方式", "missing_field"))
                 continue
-            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS and not legacy_partial:
+            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS:
                 applied.append(rejected(item, "易主 方式非白名单", "invalid_enum"))
                 continue
             if not isinstance(backlash, dict):
@@ -6612,20 +6605,6 @@ def _apply_person_changes(
         db.conn.commit()
     return applied
 
-
-def _legacy_person_report_section(result: Dict[str, object]) -> str:
-    item = result.get("item")
-    source = item if isinstance(item, dict) else result
-    action = str(source.get("动作") or source.get("action") or result.get("动作") or "").strip()
-    if source.get("legacy_gate"):
-        return "character_status_changes"
-    if source.get("legacy_partial"):
-        return "character_power_changes"
-    if source.get("legacy_spillover"):
-        return "office_changes"
-    if action in {"任命", "调任"}:
-        return "office_changes"
-    return ""
 
 
 def _apply_dossier_participant_items(
@@ -7673,8 +7652,6 @@ def _apply_score_extraction_body(
         id(item): army_ids[index] if index < len(army_ids) else ""
         for index, item in enumerate(extracted.get("new_armies") or [])
     }
-    use_legacy_person_keys = False
-    legacy_person_mode = False
     strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(extracted, runtime_content)
     strategic_event_result_delta_event_ids = _event_result_delta_event_ids(
         set(_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS),
@@ -7793,24 +7770,12 @@ def _apply_score_extraction_body(
 
     amnesty_conflict_power_ids = _amnesty_conflict_power_ids(person_changes)
 
-    def _annotate_legacy_person_rejections(results: List[Dict[str, object]]) -> None:
-        for result in results:
-            if isinstance(result, dict) and result.get("rejected"):
-                report_section = _legacy_person_report_section(result)
-                if report_section:
-                    result["report_section"] = report_section
-                    if (
-                        report_section == "character_power_changes"
-                        and result.get("category") == "hallucinated_id"
-                    ):
-                        result["report_category"] = "missing_ref"
 
     applied_person_changes: List[Dict[str, object]] = []
 
     def _apply_normalized_person_changes(
         changes: List[Dict[str, object]],
         *,
-        legacy: bool,
         origin_ref: str = "",
         require_origin: bool = True,
     ) -> List[Dict[str, object]]:
@@ -7822,13 +7787,10 @@ def _apply_score_extraction_body(
             changes,
             content=content,
             llm_config=llm_config,
-            allow_legacy_partial_power=legacy,
             external_transaction=not db.owns_transaction(),
             origin_ref=origin_ref,
             require_origin=require_origin,
         )
-        if legacy:
-            _annotate_legacy_person_rejections(results)
         if origin_ref:
             for result in results:
                 result.setdefault("origin_ref", origin_ref)
@@ -7845,7 +7807,7 @@ def _apply_score_extraction_body(
             try:
                 origin_ref = _origin_ref_from_result_item(person_change)
                 results = _apply_normalized_person_changes(
-                    [dict(person_change)], legacy=legacy_person_mode, origin_ref=origin_ref,
+                    [dict(person_change)], origin_ref=origin_ref,
                 )
                 if not results or all(result.get("rejected") for result in results):
                     db.conn.execute(f"ROLLBACK TO {savepoint}")
@@ -8187,7 +8149,6 @@ def _apply_score_extraction_body(
         "cancels": extracted.get("cancels") or [],
     }, llm_config=llm_config, content=content,
         pending_person_changes_for_gates=post_issue_person_changes,
-        allow_legacy_partial_power_for_gates=legacy_person_mode,
         candidate_event_ids_at_input=candidate_event_ids_at_input,
         candidate_event_ids_authoritative=candidate_event_ids_authoritative,
         impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
@@ -8357,7 +8318,7 @@ def _apply_score_extraction_body(
                 continue
             clean_item = dict(item)
             event_person_results.extend(_apply_normalized_person_changes(
-                [clean_item], legacy=legacy_person_mode, origin_ref=origin_ref, require_origin=True,
+                [clean_item], origin_ref=origin_ref, require_origin=True,
             ))
         for power_id, raw_changes in event_power_items:
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
