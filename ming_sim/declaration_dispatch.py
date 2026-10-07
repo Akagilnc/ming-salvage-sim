@@ -917,7 +917,7 @@ def _assert_commission_grant_target_exists(
     if kind == "issue":
         try:
             iid = int(tid)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise KeyError(f"事项不存在：{tid}") from exc
         row = db.conn.execute("SELECT 1 FROM issues WHERE id=?", (iid,)).fetchone()
         if row is None:
@@ -1132,7 +1132,7 @@ def _dispatch_commissions(
                 continue
             try:
                 origin_id = strict_int(strategy.get("source_chat_turn_id"), accept_numeric_strings=False)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 origin_id = 0
             target_id = strategy.get("target_id")
             if not body or not actor or not isinstance(target_id, str) or not target_id.strip() or origin_id <= 0:
@@ -1177,7 +1177,7 @@ def _dispatch_commissions(
                 continue
             try:
                 order_id = strict_int(progress.get("order_id"), accept_numeric_strings=False)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 order_id = 0
             note = progress.get("note")
             target = _active_secret_order(db, order_id)
@@ -1210,7 +1210,7 @@ def _dispatch_commissions(
                 continue
             try:
                 order_id = strict_int(update.get("order_id"), accept_numeric_strings=False)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 order_id = 0
             target = _active_secret_order(db, order_id)
             assignee = _scene_secret_assignee(minister_name, target)
@@ -1251,7 +1251,7 @@ def _dispatch_commissions(
                 continue
             try:
                 order_id = strict_int(review.get("order_id"), accept_numeric_strings=False)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 order_id = 0
             claim = review.get("claim")
             if not isinstance(claim, str):
@@ -1304,7 +1304,7 @@ def _dispatch_commissions(
                 # durable 拒收让下一句戏文里的大臣自己复述/请示（ADR 0155 场中
                 # 承接），不留一条注定落不了库的暂存。
                 frozen_task = build_covert_task_contract(covert_task=secret.get("covert_task"))
-            except (CovertContractError, TypeError, ValueError) as exc:
+            except (CovertContractError, TypeError, ValueError, OverflowError) as exc:
                 _reject(rejected, item, f"密令差务契约不成立：{exc}", "invalid_shape", source)
                 continue
             # ADR 0153:5：承办人只据明确声明分派。场景标签（殿上整场轮）不是人，
@@ -1395,7 +1395,7 @@ def _dispatch_commissions(
                     roster = normalize_draft_person_roster(
                         roster, db=db, content=getattr(db, "content", None),
                     )
-                except (TypeError, ValueError) as exc:
+                except (TypeError, ValueError, OverflowError) as exc:
                     # 输入转换窄捕获：只盖名单归一，不盖后续物化／写入。
                     _reject(rejected, item, str(exc), "invalid_shape", source)
                     continue
@@ -1606,7 +1606,7 @@ def _dispatch_commissions(
             continue
         try:
             raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
         if appointment_fields:
@@ -1869,7 +1869,7 @@ def _dispatch_endorsements(
             action_id = strict_int(
                 item.get("action_id"), accept_numeric_strings=False,
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             action_id = 0
         form = str(item.get("form") or "").strip()
         endorser_id = str(item.get("endorser_id") or "").strip()
@@ -1991,7 +1991,7 @@ def _stage_prohibit_covert_levy(
 
     try:
         dossier_id = int(item["target_id"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         raise KeyError("禁摊派交办缺场面案卷 id") from None
     if not any(
         scene.get("kind") == "covert_levy_exposure"
@@ -2205,7 +2205,7 @@ def _dispatch_rushes(
         target_kind = str(item.get("target_kind") or "").strip()
         try:
             target_id = int(item.get("target_id") or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             target_id = 0
         if target_kind not in {"commitment", "secret_order"} or target_id <= 0:
             _reject(
@@ -2214,11 +2214,20 @@ def _dispatch_rushes(
                 "invalid_shape", source,
             )
             continue
+        # 期限走唯一权威 _coerce_deadline_months（#1897 C1）：可辨识脏类型/非有限
+        # 领域拒收本项，不静默 default、不升格真故障带走同批。
+        from ming_sim.db import _coerce_deadline_months
         try:
             raw_deadline = item.get("deadline_months", 1)
-            deadline = max(0, min(int(raw_deadline if raw_deadline is not None else 1), 36))
-        except (TypeError, ValueError):
-            deadline = 1
+            deadline = _coerce_deadline_months(
+                1 if raw_deadline is None else raw_deadline, default=1,
+            )
+        except DecreeMaterializationValidationError as exc:
+            _reject(
+                rejected, item, str(exc),
+                getattr(exc, "category", None) or "invalid_shape", source,
+            )
+            continue
         reason = str(item.get("reason") or "")
         actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
         if target_kind == "commitment":
@@ -2238,7 +2247,7 @@ def _dispatch_rushes(
                 continue
             try:
                 stage_idx = int(item["stage_idx"])
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, OverflowError):
                 _reject(rejected, item, "催办缺目标分段索引", "invalid_shape", source)
                 continue
             from ming_sim.staged_commitment import normalize_commitment_stages
@@ -2366,7 +2375,7 @@ def _dispatch_promises(
             action_id = strict_int(
                 item.get("action_id"), accept_numeric_strings=False,
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             action_id = 0
         decision = str(item.get("decision") or "").strip()
         if action_id <= 0 or decision not in {"应允", "拒绝", "修改", "留中"}:
@@ -2474,7 +2483,7 @@ def _dispatch_promises(
                         order_id = int(
                             entry.get("secret_order_id") or entry.get("target_id") or 0,
                         )
-                    except (TypeError, ValueError):
+                    except (TypeError, ValueError, OverflowError):
                         order_id = 0
                     if order_id > 0:
                         applied_row["secret_order_id"] = order_id
@@ -2564,7 +2573,7 @@ def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, st
     """
     try:
         raw_affair = declaration_from_payload(item, allowed=ATTACH_EXPERIENCE)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None, "invalid_shape"
     if raw_affair is None:
         return None, None
@@ -2758,7 +2767,7 @@ def _dispatch_on_scene_facts(
                     name = str(result.get("name") or "").strip()
                     try:
                         _attach_character_affair_pointer(db, name, affair_id)
-                    except (ValueError, KeyError) as exc:
+                    except (ValueError, KeyError, OverflowError) as exc:
                         category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
                         raise _ItemAtomicReject(str(exc), category) from exc
         except _ItemAtomicReject as exc:
@@ -2992,7 +3001,7 @@ def _dispatch_edge_events(
                 if affair_id is not None:
                     try:
                         db.affairs.attach_pointer("relation_edge_events", event_id, affair_id)
-                    except (ValueError, KeyError) as exc:
+                    except (ValueError, KeyError, OverflowError) as exc:
                         category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
                         raise _ItemAtomicReject(str(exc), category) from exc
         except _ItemAtomicReject as exc:
@@ -3073,7 +3082,7 @@ def _dispatch_registrations(
             continue
         try:
             loyalty = int(item.get("loyalty"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             loyalty = 55
         # Typed seat only — same keys as person-change appointment path.
         seat = str(

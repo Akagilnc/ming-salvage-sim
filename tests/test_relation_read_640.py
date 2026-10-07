@@ -163,8 +163,8 @@ def test_judge_face_reads_edges_invisible_to_role_view(ledger):
     jia_pairs = {(d["source"], d["target"]) for d in project_relation_ledger(db, viewer="王绍徽")}
     assert ("钱谦益", "温体仁") not in jia_pairs
     # 有账与无账行为可辨：判官读面含该君臣对；不锁摘要散文。
-    wei_yang = next(d for d in judge_face if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌"))
-    assert (wei_yang["source"], wei_yang["target"]) == (EMPEROR_NODE, "杨嗣昌")
+    # next 谓词已锁定身份；不重复自证同谓词（#1897 T1）。
+    next(d for d in judge_face if (d["source"], d["target"]) == (EMPEROR_NODE, "杨嗣昌"))
 
 
 def test_omniscient_is_superset_same_core(ledger):

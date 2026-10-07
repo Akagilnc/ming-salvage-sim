@@ -180,7 +180,7 @@ def stage_pacification_candidate(
             continue
         try:
             payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if not isinstance(payload, dict):
             continue
@@ -292,7 +292,7 @@ def stage_punishment_candidate(
     if issue_id is not None:
         try:
             linked_issue_id = int(issue_id)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return 0
         if linked_issue_id <= 0:
             return 0
@@ -306,7 +306,7 @@ def stage_punishment_candidate(
             return 0
         try:
             roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return 0
         if not isinstance(roster, list) or not roster:
             return 0
@@ -339,7 +339,7 @@ def stage_punishment_candidate(
             continue
         try:
             payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if not isinstance(payload, dict):
             continue
@@ -349,7 +349,7 @@ def stage_punishment_candidate(
             continue
         try:
             stored_issue_id = int(payload.get("issue_id") or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             stored_issue_id = 0
         if stored_issue_id != linked_issue_id:
             continue
@@ -387,7 +387,7 @@ def stage_punishment_candidate(
         staged["transaction_category"] = category
     try:
         n = int(amount) if amount is not None and amount != "" else 0
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         n = 0
     # #517 r2：罚俸 admission 要求正数 amount；缺/零/非法不得成候选。
     if action == "罚俸":
@@ -708,7 +708,7 @@ def _parse_json_field(raw: object) -> Any:
         return None
     try:
         value = json.loads(text)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return text
     return value
 
@@ -724,11 +724,11 @@ def _assignment_absolute_end_turn(
     """
     try:
         et = int(end_turn or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         et = 0
     try:
         months = int(deadline_months or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         months = 0
     cur = int(turn)
     if months > 0:
@@ -833,7 +833,7 @@ def _list_pending_office_rows(
 def _office_payload(row: Dict[str, Any]) -> Dict[str, Any]:
     try:
         payload = json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -1058,7 +1058,7 @@ def _parse_revoke_decree_target(
         kind = "dossier"
     try:
         tid = int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if tid <= 0:
         return None
@@ -1075,7 +1075,7 @@ def _parse_revoke_decree_target(
         if origin.startswith("dossier:"):
             try:
                 linked = int(origin.split(":", 1)[1])
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 linked = 0
         # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路
         if linked <= 0:
@@ -1178,7 +1178,7 @@ def stage_assignment_candidate(
                 continue
             try:
                 payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 break
             if not isinstance(payload, dict):
                 break
@@ -1201,7 +1201,7 @@ def stage_assignment_candidate(
     }
     try:
         origin_cid = int(source_chat_turn_id or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         origin_cid = 0
     # #1890：来源轮不写进载荷——它只落 pending_actions.source_chat_turn_id 一列
     # （交办的统一身份）。载荷里留副本等于同一事实两处可写，改草与迟到转译
@@ -1311,7 +1311,7 @@ def stage_revoke_decree_candidate(
                 continue
             try:
                 payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 break
             if not isinstance(payload, dict):
                 break

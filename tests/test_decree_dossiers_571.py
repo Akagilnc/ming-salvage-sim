@@ -378,7 +378,7 @@ def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] == pending_id
     )
-    assert dossier["pending_action_id"] == pending_id
+    # next 谓词已锁定 pending_action_id；不重复自证（#1897 T1）。
     assert dossier["source_chat_turn_id"] == chat_turn_id
     assert dossier["executor_kind"] == "character"
     assert dossier["executor_id"] == minister

@@ -255,10 +255,10 @@ def test_month_end_entry_owner_and_matrix_reject(monkeypatch, tmp_path):
     assert calls == ["rescript-draft", "rescript-draft-heal"]
     assert healed is not None and len(healed) == 1
     grant = next(o for o in healed[0]["options"] if o.get("grant_action") == "协饷")
+    # next 谓词已锁定 grant_action；不重复自证（#1897 T1）。
     assert grant["target_kind"] == "army"
     assert grant["target_id"] == "guanning"
     assert grant["locality_scope"] == "none"
-    assert grant.get("grant_action") == "协饷"
     assert len(healed[0]["options"]) == 2
 
     # heal 耗尽仍 army+single → 只剔坏 option，兄弟仍可呈

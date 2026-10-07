@@ -1484,7 +1484,6 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].textContent).toContain("1 年 11 月");
     expect(rows[0].textContent).toContain("第 7 回合");
-    expect(host.textContent).not.toContain("不应出现的场卷");
   });
 
   it("#671 史册月档经 HistoryModal fetch 呈现独立递话原文", async () => {

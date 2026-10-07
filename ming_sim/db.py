@@ -18476,7 +18476,7 @@ class GameDB:
                 return False
             try:
                 stage_idx = int(payload.get("stage_idx") if payload.get("stage_idx") is not None else 0)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 stage_idx = 0
             deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
             from ming_sim.urge_lever import rush_staged_commitment_stage
