@@ -12,6 +12,8 @@ cannon cap 12、firearm 0-100)保持——clamp 不是拒收,clamp 后照落。
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
@@ -634,9 +636,14 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
         "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
     }, narrative="x", decree_text="y")
 
-    rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
+    rows = _rejection_rows(
+        db, turn, "issue_summary.entity_rejections",
+        columns="section, reason, category, source, item_json",
+    )
     assert len(rows) == 1
-    assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
+    assert rows[0][2] == "invalid_enum"
+    item = json.loads(rows[0][4])
+    assert item.get("field") == "士气大振" or "士气大振" in item
 
 
 def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):

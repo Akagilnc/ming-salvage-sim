@@ -822,12 +822,15 @@ def test_translation_pending_create_approve_reject_undo_via_real_chat_turn(
     assert r.pending_action_id == 0  # #1842：前台不等后台转译
     persist_and_schedule_scene(sess, db, r)
     sess._write_queue.barrier(lambda: None)
-    created = db.conn.execute(
-        "SELECT id FROM pending_actions WHERE payload_json LIKE ? ORDER BY id DESC LIMIT 1",
-        (f"%{create_text}%",),
-    ).fetchone()
-    assert created is not None
-    created_id = int(created["id"])
+    created_id = None
+    for row in db.conn.execute(
+        "SELECT id, payload_json FROM pending_actions ORDER BY id DESC",
+    ).fetchall():
+        payload = json.loads(row["payload_json"] or "{}")
+        if payload.get("text") == create_text:
+            created_id = int(row["id"])
+            break
+    assert created_id is not None
     assert db.conn.execute(
         "SELECT COUNT(*) n FROM pending_actions WHERE id=? AND status='pending'",
         (created_id,),

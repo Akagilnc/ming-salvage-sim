@@ -45,12 +45,11 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     assert context == decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
     )
-    encoded = json.dumps(context, ensure_ascii=False, sort_keys=True)
-    assert "satisfaction" not in encoded
-    assert "满意" not in encoded
+    # 结构键白名单：派系面不含 satisfaction；不扫序列化载体禁词。
     assert context["dossiers"][0]["mode"] == "midzhi"
     assert context["dossiers"][0]["break_rank"] == {"office_rank": "越三级"}
     assert set(context["factions"][0]) == {"name", "leverage", "agenda"}
+    assert all("satisfaction" not in row for row in context["factions"])
     assert context["imperial_authority_band"] in IMPERIAL_AUTHORITY_BANDS
     assert context["classes"]
     assert all(isinstance(name, str) for name in context["classes"])

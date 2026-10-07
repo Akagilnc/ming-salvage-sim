@@ -14,6 +14,8 @@ class 则只收嵌套字段 dict、扁平 int 逐项拒收。
 
 from __future__ import annotations
 
+import json
+
 from tests.section_rejection_helpers import run_declaration as run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
@@ -227,7 +229,11 @@ def test_issue_effect_faction_rejection_reaches_reports(game):
         "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
     }, narrative="x", decree_text="y")
 
-    rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
+    rows = _rejection_rows(
+        db, turn, "issue_summary.entity_rejections",
+        columns="section, reason, category, source, item_json",
+    )
     rows = [r for r in rows if r[2] == "missing_ref"]
     assert len(rows) == 1, rows
-    assert "查无此派系" in rows[0][1]
+    item = json.loads(rows[0][4])
+    assert item.get("faction") == "查无此派系" or item.get("name") == "查无此派系" or "查无此派系" in item

@@ -17,7 +17,6 @@ def _scroll_game(db):
 
 
 def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(game, monkeypatch):
-    import json
     import web_app
     from tests.test_audience_background import _FakeAgent, _web_game
 
@@ -40,10 +39,8 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(gam
         "/api/audience/chat/stream",
         json={"message": "新场问话"},
     )
-    events = [
-        (block.splitlines()[0].removeprefix("event: "), json.loads(block.splitlines()[1].removeprefix("data: ")))
-        for block in response.text.strip().split("\n\n")
-    ]
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
+    events = _parse_sse(response.text)
     persisted = an.get_open_night(db)
 
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -58,7 +55,6 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(gam
 
 
 def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game, monkeypatch):
-    import json
     import web_app
     from tests.test_audience_background import _FakeAgent, _web_game
 
@@ -72,10 +68,8 @@ def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game
         "/api/audience/chat/stream",
         json={"message": "宣王绍徽"},
     )
-    events = [
-        (block.splitlines()[0].removeprefix("event: "), json.loads(block.splitlines()[1].removeprefix("data: ")))
-        for block in response.text.strip().split("\n\n")
-    ]
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
+    events = _parse_sse(response.text)
     kinds = [kind for kind, _ in events]
     assert response.status_code == 200
     assert kinds.index("accepted") < kinds.index("protagonist_changed") < kinds.index("done")

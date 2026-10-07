@@ -10,6 +10,8 @@ except Exception: print [WARN]` 整段吞——连代码异常都被吞掉(违 A
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows, run_declaration
@@ -195,10 +197,15 @@ def test_ming_power_update_rejected_with_trace(game):
         "power_updates": {"ming": {"leverage": 5}},
     }, narrative="x", decree_text="y")
 
-    rows = [r for r in _rejection_rows(db, turn) if r[0] == "power_changes"]
+    rows = [
+        r for r in _rejection_rows(
+            db, turn, columns="section, reason, category, source, item_json",
+        ) if r[0] == "power_changes"
+    ]
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
-    assert "ming" in rows[0][1] or "大明" in rows[0][1]
+    item = json.loads(rows[0][4])
+    assert item.get("power_id") == "ming" or item.get("id") == "ming" or "ming" in item
 
 
 def test_float_and_bool_power_values_rejected(game):

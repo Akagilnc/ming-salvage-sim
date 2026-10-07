@@ -53,30 +53,62 @@ def test_every_active_seven_faction_minister_has_featured_dossier(game):
 
 
 def test_seven_faction_dossiers_are_objective_and_identity_scoped(game):
+    """#494：identity 桶决定供料来源；最低桶不喂派系档/议程。
+
+    契约落在确定性装配等值（源字段 + 固定低档文案），不扫自由文禁词。
+    """
+    from ming_sim.context import _faction_band, _identity_bucket
+    from ming_sim.qualitative import identity_band
+
     db, _state, content = game
     base = next(c for c in content.characters.values() if c.faction == "东林")
 
-    for faction in SEVEN_FACTIONS:
-        # middle 档：core + agenda 原文入面；数值盘面只经定性带，不钉自由文本禁词。
-        rendered = faction_context_with_db(replace(base, faction=faction, identity=65), db)
+    assert _identity_bucket(20) == "low"
+    assert _identity_bucket(60) == "middle"
+    assert _identity_bucket(90) == "high"
+
+    def _expected(faction: str, identity: int) -> str:
         row = _faction_row(db, faction)
-        core = _FACTION_DOSSIERS[faction]["core"]
-        assert core in rendered
-        assert str(row["agenda"]) in rendered
+        dossier = _FACTION_DOSSIERS[faction]
+        bucket = _identity_bucket(identity)
+        if bucket == "low":
+            body = (
+                "与该派仅有名义关联，未提供该派内情；"
+                "人物立场由自身经历与当下处境呈现。"
+            )
+        elif bucket == "middle":
+            body = (
+                f"这个党是什么样一伙人：{dossier['core']}"
+                f"所求：{row['agenda']}；当前朝势："
+                f"{_faction_band('leverage', row['leverage'])}。"
+            )
+        else:
+            body = (
+                f"这个党是什么样一伙人：{dossier['core']}"
+                f"其内部：{dossier['internal']}"
+                f"所求：{row['agenda']}；当前朝势："
+                f"{_faction_band('leverage', row['leverage'])}，"
+                f"对政局态度{_faction_band('satisfaction', row['satisfaction'])}。"
+            )
+        return (
+            f"【派系档料】{faction}：{body}"
+            f"【党派认同】此人对本派的认同为{identity_band(identity)}。"
+        )
+
+    for faction in SEVEN_FACTIONS:
+        assert faction_context_with_db(
+            replace(base, faction=faction, identity=65), db,
+        ) == _expected(faction, 65)
 
     faction = base.faction
-    core = _FACTION_DOSSIERS[faction]["core"]
-    internal = _FACTION_DOSSIERS[faction]["internal"]
-    agenda = str(_faction_row(db, faction)["agenda"])
+    low = faction_context_with_db(replace(base, identity=20), db)
     middle = faction_context_with_db(replace(base, identity=60), db)
     high = faction_context_with_db(replace(base, identity=90), db)
-    low = faction_context_with_db(replace(base, identity=20), db)
-    # 三档装配结果互异；高档才有 internal 原文，中档有 core/agenda 原文。
+    # 源装配等值：低档固定文案（不喂 dossier/agenda）；中/高按桶拼 core/internal。
+    assert low == _expected(faction, 20)
+    assert middle == _expected(faction, 60)
+    assert high == _expected(faction, 90)
     assert len({low, middle, high}) == 3
-    assert core in middle and core in high
-    assert agenda in middle and agenda in high
-    assert internal in high
-    assert middle != high and low != middle
 
 
 def test_north_star_ministers_have_distinct_featured_voices(game):

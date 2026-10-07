@@ -101,6 +101,7 @@ class _SettlementGame:
 
 
 async def _serialized_terminal_event(route_name: str) -> tuple[str, dict]:
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
     if route_name == "issue":
         response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
     else:
@@ -111,9 +112,9 @@ async def _serialized_terminal_event(route_name: str) -> tuple[str, dict]:
         chunk.decode() if isinstance(chunk, bytes) else chunk
         async for chunk in response.body_iterator
     ]
-    serialized = "".join(chunks)
-    event_line, data_line = serialized.strip().splitlines()
-    return event_line.removeprefix("event: "), json.loads(data_line.removeprefix("data: "))
+    events = _parse_sse("".join(chunks))
+    assert events
+    return events[-1]
 
 
 @pytest.mark.parametrize(
