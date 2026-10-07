@@ -54,61 +54,11 @@ def _stage_record(
     }
 
 
-def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
-    """Normalize structured stages payload → durable list.
-
-    Accepts list/tuple of dicts, or a JSON array string. Non-JSON free text
-    returns [] here (读侧宽容面)；写侧由 ``stages_to_json`` 响亮拒绝。
-
-    分段承诺是机械事实（到期判账），只认显式结构化字段。引擎不得从 LLM 自由
-    散文正则反推语义（ADR 0142 / #1897 / #1890；owner 2026-09-30「肯定不能让
-    代码去扣」）。原 ``parse_staged_year_promise`` 中文数词年诺捕获已删。
-    自由正文原样入载体，禁 strip／截断规范化（#1897）。
-    """
-    if raw in (None, "", [], ()):
-        return []
-    data = raw
-    if isinstance(raw, str):
-        text = raw.strip()
-        if not text or text == "[]":
-            return []
-        try:
-            data = json.loads(text)
-        except (TypeError, ValueError):
-            return []
-    if not isinstance(data, (list, tuple)):
-        return []
-    out: List[Dict[str, object]] = []
-    for idx, item in enumerate(data):
-        if not isinstance(item, dict):
-            continue
-        try:
-            due_turn = int(item.get("due_turn") or 0)
-        except (TypeError, ValueError, OverflowError):
-            continue
-        if due_turn <= 0:
-            continue
-        try:
-            stage_idx = int(item.get("stage_idx", idx))
-        except (TypeError, ValueError, OverflowError):
-            stage_idx = idx
-        texts = _stage_text_fields(item)
-        if texts is None:
-            continue
-        criterion, origin_context = texts
-        out.append(_stage_record(
-            stage_idx=stage_idx, due_turn=due_turn,
-            criterion_text=criterion, origin_context=origin_context,
-        ))
-    out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
-    return out
-
-
 def _stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
-    """Write-path stage admission: every item must be a valid stage dict.
+    """Stage admission: every item must be a valid stage dict.
 
-    历史读侧 ``normalize_commitment_stages`` 可跳过坏段；写口不得把坏结构
-    洗成成功（#1897 C1）。整数字段复用 ``strict_int``；正文转换复用
+    读/写共用此严格面（#1897 E1/K2）：缺省空与显式坏值分开；已持久腐坏
+    不得跳段洗成合法身份。整数字段复用 ``strict_int``；正文转换复用
     ``_stage_text_fields``（#1897 K2），不复制别名/回填规则。
     """
     from ming_sim.strict_types import strict_int
@@ -145,6 +95,36 @@ def _stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
         ))
     out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
     return out
+
+
+def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
+    """Normalize structured stages payload → durable list.
+
+    缺省（None/""/[]/"[]"）→ 空列表；已持久 JSON/schema 腐坏或非数组 → 上抛。
+    与写口共用 ``_stages_for_write``，无平行宽容跳段/回填（#1897 E1/K2；ADR0005）。
+
+    分段承诺是机械事实（到期判账），只认显式结构化字段。引擎不得从 LLM 自由
+    散文正则反推语义（ADR 0142 / #1897 / #1890）。原 ``parse_staged_year_promise``
+    中文数词年诺捕获已删。自由正文原样入载体，禁 strip／截断规范化（#1897）。
+    """
+    if raw in (None, "", [], ()):
+        return []
+    data = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text or text == "[]":
+            return []
+        try:
+            data = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"stages_json 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
+            ) from exc
+    if not isinstance(data, (list, tuple)):
+        raise ValueError(f"stages_json 须为 JSON 数组，得 {type(data).__name__}")
+    if len(data) == 0:
+        return []
+    return _stages_for_write(data)
 
 
 def stages_to_json(stages: object) -> str:
@@ -276,12 +256,11 @@ def list_due_grant_report_dossiers_for_scan(
 
     commitment_ref=0；stage_idx=dossier_id 作 UNIQUE 去重键；
     payload 携带 dossier_id/origin_ref 供 due_review 桥接。
+    复用 get_decree_dossier 响亮读口，不平行宽容腐坏 payload（#1897 E1/K2）。
     """
-    import json as _json
-
     rows = db.conn.execute(
         """
-        SELECT id, decree_text, payload_json, due_turn, execution_outcome, status
+        SELECT id, due_turn, execution_outcome
         FROM decree_dossiers
         WHERE status='executing'
           AND action_type='grant_allocation'
@@ -295,19 +274,19 @@ def list_due_grant_report_dossiers_for_scan(
     for row in rows:
         if str(row["execution_outcome"] or "").strip():
             continue
-        try:
-            payload = _json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         did = int(row["id"])
+        dossier = db.get_decree_dossier(did)
+        if dossier is None:
+            raise ValueError(f"案卷不存在：{did}")
+        payload = dossier.get("payload") or {}
+        if not isinstance(payload, dict):
+            raise ValueError(f"案卷#{did} payload_json 非对象")
+        # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         due_turn = int(row["due_turn"] or 0)
         # #1897：due 扫描写入待办的自由字段原样透传，禁 strip。
         title = str(payload.get("title") or payload.get("purpose") or "")
         criterion = str(payload.get("ongoing_effects") or "") or title or "依限奏报"
-        origin = str(row["decree_text"] or payload.get("text") or criterion)
+        origin = str(dossier.get("decree_text") or payload.get("text") or criterion)
         due.append({
             "commitment_ref": 0,
             "stage_idx": did,  # UNIQUE(commitment_ref, stage_idx, entry_kind)

@@ -1098,21 +1098,14 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
             commitment_row["origin_ref"] if "origin_ref" in commitment_row.keys() else ""
         )
         if did is not None:
-            drow = db.conn.execute(
-                "SELECT executor_id, payload_json FROM decree_dossiers WHERE id=?",
-                (int(did),),
-            ).fetchone()
-            if drow is not None and str(drow["executor_id"] or "") == name:
-                try:
-                    payload = json.loads(drow["payload_json"] or "{}")
-                except (TypeError, ValueError):
-                    payload = {}
-                if isinstance(payload, dict):
-                    expected = str(
-                        payload.get("executor_office")
-                        or payload.get("office")
-                        or ""
-                    ).strip()
+            drow = db.get_decree_dossier(int(did))
+            if drow is not None and str(drow.get("executor_id") or "") == name:
+                payload = drow.get("payload") if isinstance(drow.get("payload"), dict) else {}
+                expected = str(
+                    payload.get("executor_office")
+                    or payload.get("office")
+                    or ""
+                ).strip()
 
     # office_change_records：有调任记录且当前 office 与最早/承诺侧不一致
     oc = db.conn.execute(

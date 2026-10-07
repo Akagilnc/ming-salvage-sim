@@ -12063,13 +12063,8 @@ class GameDB:
                 int(dossier_id), int(secret_order_id), int(turn), raw_band, text,
                 is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
             )
-        payload = {}
-        try:
-            loaded = json.loads(str(dossier.get("payload_json") or "{}"))
-            if isinstance(loaded, dict):
-                payload = loaded
-        except (TypeError, ValueError):
-            payload = {}
+        # get_decree_dossier 已响亮解析 payload；不平行宽容重读（#1897 E1/K2）。
+        payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
         if not self._dossier_has_execution_surface(dossier.get("action_type"), payload):
             raise ValueError("非执行面案卷不可挂奏报")
         return self._record_general_dossier_progress(
@@ -12275,22 +12270,26 @@ class GameDB:
         return False, None, ""
 
     def list_monthly_grant_reconciliation_targets(self) -> List[Dict[str, object]]:
-        """扫描面：executing 且仍在途的拨帑案卷（排除成案不足额已 failed+close）。"""
+        """扫描面：executing 且仍在途的拨帑案卷（排除成案不足额已 failed+close）。
+
+        复用 get_decree_dossier 响亮读口；腐坏 payload 不上扫成空底（#1897 E1/K2）。
+        """
         rows = self.conn.execute(
             """
-            SELECT * FROM decree_dossiers
+            SELECT id FROM decree_dossiers
             WHERE status='executing' AND action_type='grant_allocation'
             ORDER BY id
             """
         ).fetchall()
         targets: List[Dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(str(row["payload_json"] or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
+            dossier_id = int(row["id"])
+            dossier = self.get_decree_dossier(dossier_id)
+            if dossier is None:
+                raise ValueError(f"案卷不存在：{dossier_id}")
+            payload = dossier.get("payload") or {}
             if not isinstance(payload, dict):
-                payload = {}
+                raise ValueError(f"案卷#{dossier_id} payload_json 非对象")
             policy = dossier_action_policy("grant_allocation", payload)
             if policy.get("execution_surface") != "in_transit":
                 continue
@@ -12304,7 +12303,6 @@ class GameDB:
                 ordered = 0
             if ordered <= 0:
                 continue
-            dossier_id = int(row["id"])
             escorted, source_id, relation = self._grant_escort_presence(dossier_id)
             targets.append({
                 "dossier_id": dossier_id,
@@ -12312,8 +12310,8 @@ class GameDB:
                 "escorted": escorted,
                 "escort_source_dossier_id": source_id,
                 "relation_type": relation,
-                "decree_text": str(row["decree_text"] or ""),
-                "target_id": str(row["target_id"] or ""),
+                "decree_text": str(dossier.get("decree_text") or ""),
+                "target_id": str(dossier.get("target_id") or ""),
             })
         return targets
 
@@ -18776,17 +18774,22 @@ class GameDB:
     def _invalid_office_recommendation_snapshots(
         self, state: GameState, dossiers: Iterable[Dict[str, object]],
     ) -> set[int]:
-        """返回批前盘面中确实不匹配的荐人快照案号；其他异常原样上抛。"""
+        """返回批前盘面中确实不匹配的荐人快照案号；其他异常原样上抛。
+
+        已带 payload 的行直接用；否则走 get_decree_dossier 响亮读（#1897 E1/K2）。
+        """
         invalid = set()
         for row in dossiers:
             if str(row.get("action_type") or "") != "appointment":
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
+            payload = row.get("payload")
             if not isinstance(payload, dict):
-                payload = {}
+                dossier = self.get_decree_dossier(int(row["id"]))
+                if dossier is None:
+                    raise ValueError(f"案卷不存在：{row.get('id')}")
+                payload = dossier.get("payload") or {}
+            if not isinstance(payload, dict):
+                raise ValueError(f"案卷#{row.get('id')} payload_json 非对象")
             if payload.get("recommendation") is None:
                 continue
             minister = str(payload.get("_minister_name") or "")

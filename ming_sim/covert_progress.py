@@ -774,16 +774,11 @@ def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, o
 
 
 def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
-    row = db.conn.execute(
-        "SELECT payload_json FROM decree_dossiers WHERE id=?",
-        (int(dossier_id),),
-    ).fetchone()
-    if row is None:
+    """案卷 payload 读口：复用 get_decree_dossier，腐坏响亮（#1897 E1/K2）。"""
+    dossier = db.get_decree_dossier(int(dossier_id))
+    if dossier is None:
         return {}
-    try:
-        payload = json.loads(str(row["payload_json"] or "{}"))
-    except (TypeError, ValueError):
-        return {}
+    payload = dossier.get("payload")
     return dict(payload) if isinstance(payload, Mapping) else {}
 
 
@@ -878,21 +873,21 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     """已被别的案查获过的事实键（#1896 同一事实不重复查获）。
 
     键取"已掌握（mastered）"：掌握证据不再置 used，故去重也只看掌握。
+    复用 get_decree_dossier，腐坏 payload 不上扫跳过（#1897 E1/K2）。
     """
     used: set[str] = set()
-    rows = db.conn.execute(
-        "SELECT id, payload_json FROM decree_dossiers",
-    ).fetchall()
+    rows = db.conn.execute("SELECT id FROM decree_dossiers").fetchall()
     skip = int(except_dossier_id or 0)
     for row in rows:
-        if skip and int(row["id"] or 0) == skip:
+        did = int(row["id"] or 0)
+        if skip and did == skip:
             continue
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
+        dossier = db.get_decree_dossier(did)
+        if dossier is None:
             continue
+        payload = dossier.get("payload")
         if not isinstance(payload, Mapping):
-            continue
+            raise ValueError(f"案卷#{did} payload_json 非对象")
         for lane in _lanes_from_payload(payload):
             if lane.get("mastered"):
                 used.add(str(lane["fact_key"]))
@@ -2019,16 +2014,30 @@ def _apply_investigation_selection(
         raw_note = sel_map.get("备注")
     else:
         raw_note = None
-    # 与普通 covert 同约：未提供字段 → None 保留已存正文；显式提供（含空串／空白）
-    # 原样写入。禁止按空串拼机器叙述顶替（P6 / #1897 N2）。
-    if raw_note is None or isinstance(raw_note, (Mapping, list)):
-        note: Optional[str] = None
-    else:
-        note = str(raw_note)
+    # 查案 note = 密奏正文（可谎）：入奏报轨，不入实况轨（DELTA_SCHEMA / #1897 R1）。
+    # 普通 covert 的执行态备注仍走实况 note；此处分轨，不改正文、不另立第三载体。
+    memorial_note: Optional[str] = None
+    if raw_note is not None and not isinstance(raw_note, (Mapping, list)):
+        memorial_note = str(raw_note)
     row = db.record_dossier_actual_progress(
         did, turn, units=units, fidelity_state="", floor_state="",
-        note=note, commit=False,
+        note=None, commit=False,
     )
+    if memorial_note is not None and memorial_note.strip():
+        band = ""
+        for item in db.list_dossier_progress(did):
+            if int(item.get("turn") or 0) == int(turn) and not item.get("is_terminal"):
+                band = str(item.get("progress_band") or "")
+                if band.strip():
+                    break
+        if not band.strip():
+            band = str(
+                sel_map.get("progress_band") or sel_map.get("进展") or ""
+            )
+        if band.strip():
+            db.record_dossier_progress(
+                did, turn, band, memorial_note, commit=False,
+            )
     db.mark_secret_order_in_progress(oid, commit=False)
     applied: Dict[str, object] = {
         "order_id": oid,
