@@ -539,10 +539,13 @@ def test_run_agy_success_single_subprocess(monkeypatch):
 
 
 def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
-    """未知非零退出（无 typed status）= 确定性失败：不洗成瞬断、不私有重试。"""
+    """已确证非零退出 = typed 确定性失败：不洗成瞬断、不私有重试。"""
+    from ming_sim.exceptions import LLMUnavailable
+
     state = _agy_popen(monkeypatch, [("", 1)])
-    with pytest.raises(RuntimeError):
+    with pytest.raises(LLMUnavailable) as ei:
         cb._dispatch_cli_runner("agy", "p")
+    assert "退出码" in str(ei.value.provider_message or "")
     assert state["agy"] == 1
 
 class _RcProc:
@@ -557,10 +560,13 @@ class _RcProc:
     ],
 )
 def test_run_runner_fail_loud_on_bad_exit(monkeypatch, runner, proc):
+    from ming_sim.exceptions import LLMUnavailable
+
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     _capture_run(monkeypatch, lambda cmd, **kw: proc())
-    with pytest.raises(RuntimeError):
+    with pytest.raises(LLMUnavailable) as ei:
         cb._dispatch_cli_runner(runner, "p")
+    assert "退出码" in str(ei.value.provider_message or "")
 
 def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
     """rc=0 但零输出 = 可重试 typed 空输出（交 transport 再试），不是确定性失败。"""
@@ -610,9 +616,7 @@ def test_run_backend_for_config_passes_reasoning_strength_to_codex(monkeypatch):
 
 
 def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
-    """真实 runner 失败后翻 typed LLMUnavailable；trace.error 仍保留原故障诊断。"""
-    from ming_sim.exceptions import LLMUnavailable
-
+    """runner 路径未识别异常原样上浮；trace.error 保留原故障诊断（非闭包宽翻 typed）。"""
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
     injected = RuntimeError("codex 挂了")
@@ -621,10 +625,9 @@ def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
         raise injected
 
     _patch_runner(monkeypatch, "codex", boom)
-    with pytest.raises(LLMUnavailable) as ei:
+    with pytest.raises(RuntimeError) as ei:
         cb._run_backend_for_config("任意提示", _cli_codex_cfg(), tag="probe")
-    # 因果链可回溯到宿主原故障；不要求 RuntimeError 原样穿出（与 CliChat 同契约）
-    assert ei.value.__cause__ is injected or getattr(ei.value.__cause__, "__cause__", None) is injected
+    assert ei.value is injected
     assert len(recs) == 1
     # 可见诊断须能回溯到原故障来源，不是任意非空串
     assert recs[0].get("error") == str(injected)
@@ -799,9 +802,12 @@ def test_describe_effective_model_includes_new_runners(runner):
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
 def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
+    from ming_sim.exceptions import LLMUnavailable
+
     _capture_run(monkeypatch, _RcProc(stderr="auth failed", returncode=1))
-    with pytest.raises(RuntimeError):
+    with pytest.raises(LLMUnavailable) as ei:
         cb._dispatch_cli_runner(runner, "p")
+    assert "退出码" in str(ei.value.provider_message or "")
 
 # ── #1256 S2 gate LLM args / config / evidence ──
 

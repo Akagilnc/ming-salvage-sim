@@ -499,7 +499,10 @@ def _iter_cli_process_lines(
     def _raise_stream_error() -> None:
         err = result.stream_error
         if err is not None:
-            raise RuntimeError(f"CLI 管道读取失败：{err}") from err
+            # 已确证的宿主管道 I/O 失败 → typed；非本机命令构造代码故障。
+            from ming_sim.llm_model import cli_runner_unavailable
+            host_exc = RuntimeError(f"CLI 管道读取失败：{err}")
+            raise cli_runner_unavailable(host_exc, backend="cli") from err
 
     try:
         while open_streams > 0:
@@ -771,8 +774,8 @@ def _iter_cli_runner_text(
     私有 for-attempt 循环。失败按 typed 分类抛，交上层统一重试或终结：
     - 静默超阈值 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
     - 空输出 → llm_empty_output（可重试）
-    - stdin 未送达 / 未知非零退出 → RuntimeError（确定性失败，一次不重试；禁从
-      stderr 散文抠状态）
+    - stdin 未送达 / 未知非零退出 → cli_runner_unavailable（typed 确定性失败，一次不重试；
+      禁从 stderr 散文抠状态；仅此已确证宿主 I/O／退出接缝翻 typed）
     - 宿主未暴露结构化鉴权状态时如实按正文／退出码处理，不另造词表（宿主缺口）
 
     静默预算只认 transport 策略 idle（= 设置页那一格的静默判死阈值，CLI 与 API 同权威）。
@@ -830,18 +833,24 @@ def _iter_cli_runner_text(
         # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
         # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
         if outcome.stdin_error is not None:
-            raise RuntimeError(
+            # 已确证：子进程未收到 prompt（宿主 I/O），非命令构造代码故障。
+            from ming_sim.llm_model import cli_runner_unavailable
+            host_exc = RuntimeError(
                 f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
-            ) from outcome.stdin_error
+            )
+            raise cli_runner_unavailable(host_exc, backend=runner) from outcome.stdin_error
         # 管道读失败已在 _iter_cli_process_lines 即时升格；本生成器完整消费该泵，
         # 不另加上层同因兜底（#1902 REDUNDANT-CLI-STREAM-ERROR-FALLBACK）。
         # #1902 T2 / 锚定宪法：交付保留宿主原正文，不以 strip 改写呈现；
         # 空产出只以「去空白后是否为空」作判定，不把裁剪结果当交付物。
         primary = stdout_text if stdout_text.strip() else final_text
-        # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
-        # 禁从 stdout/stderr 自由词面判鉴权／切分呈现横幅（#1902 T2 / ADR 0142）。
+        # 已确证非零退出 → typed 确定性失败（#1780 / ADR 0142）；禁从 stderr 词面分类。
         if returncode != 0:
-            raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
+            from ming_sim.llm_model import cli_runner_unavailable
+            host_exc = RuntimeError(
+                f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}"
+            )
+            raise cli_runner_unavailable(host_exc, backend=runner) from host_exc
         if not primary.strip():
             raise transport_failure_unavailable(
                 empty_output_failure(), attempts=1, exhausted=False,
@@ -966,29 +975,18 @@ def _run_backend_for_config(
     text, attempts, error = "", 0, None
 
     def _one_call() -> str:
-        # 宿主执行闭包：已确证 runner 失败翻 typed（与 CliChat.invoke 同契约）；
-        # 策略/配置投影在闭包外，代码故障不得被此翻成「模型不可用」。
-        from ming_sim.exceptions import LLMUnavailable
-        from ming_sim.llm_model import cli_runner_unavailable
-        from ming_sim.llm_transport import TransportIdleTimeout
-
-        try:
-            if parts is None:
-                return _run_backend(prompt)[0]
-            runner, model, reasoning_strength = parts
-            return _dispatch_cli_runner(
-                runner, prompt,
-                model=model or None,
-                reasoning_strength=reasoning_strength or None,
-            )[0]
-        except (LLMUnavailable, TransportIdleTimeout):
-            raise
-        except Exception as exc:
-            backend = (parts[0] if parts else "") or _backend_label(llm_config)
-            raise cli_runner_unavailable(exc, backend=backend) from exc
+        # 无 Exception→typed 宽包装：命令构造等代码故障原样上浮；
+        # 已确证宿主 I/O／退出失败只在 _iter_cli_runner_text 等接缝翻 typed。
+        if parts is None:
+            return _run_backend(prompt)[0]
+        runner, model, reasoning_strength = parts
+        return _dispatch_cli_runner(
+            runner, prompt,
+            model=model or None,
+            reasoning_strength=reasoning_strength or None,
+        )[0]
 
     try:
-        # resolve_transport_policy 在 runner 闭包外：投影代码故障原样上浮。
         resolved_policy = policy or resolve_transport_policy()
         text, attempt_records = run_with_transport(
             _one_call, policy=resolved_policy,
@@ -996,7 +994,7 @@ def _run_backend_for_config(
         attempts = len(attempt_records)
         return text, attempts
     except Exception as exc:
-        # trace 留宿主原诊断（provider_message / __cause__），不写玩家面 typed 文案。
+        # typed 出口：trace 留 provider_message 原诊断，不写玩家面文案。
         from ming_sim.exceptions import LLMUnavailable as _LLMUnavailable
         if isinstance(exc, _LLMUnavailable) and exc.provider_message:
             error = str(exc.provider_message)
