@@ -1601,11 +1601,22 @@ def _materialize_rescript_desk(
 def world_question_event_bindings(
     chain: Dict[str, Any], *, db: Any, state: Any, turn: int,
 ) -> Dict[str, str]:
-    """读推送时钉死的「案头行身份 → 事件身份」。缺表时补钉一次，已钉的不再重算。"""
-    pinned = chain.get("world_question_event_bindings")
-    if not isinstance(pinned, dict):
+    """读推送时钉死的「案头行身份 → 事件身份」。缺表时补钉一次，已钉的不再重算。
+
+    合法缺省（缺键/None）补钉；合法空对象 {} 保持已钉；错形响亮，不洗成 {}。
+    """
+    from ming_sim.db import GameDB
+
+    pinned = GameDB.optional_object(
+        chain.get("world_question_event_bindings"),
+        surface="month_chain.world_question_event_bindings",
+    )
+    if pinned is None:
         _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
-        pinned = chain.get("world_question_event_bindings") or {}
+        pinned = GameDB.optional_object(
+            chain.get("world_question_event_bindings"),
+            surface="month_chain.world_question_event_bindings",
+        ) or {}
     return {
         str(key): str(value)
         for key, value in pinned.items()
@@ -1624,9 +1635,15 @@ def _pin_world_question_event_bindings(
     id 不是这份快照。没有这份身份的请旨保持非事件身份：剩余数量不能证明它属于
     某一到期事项，也不按标题猜配。钉完之后快照再变也不改这张表。
     """
-    if isinstance(chain.get("world_question_event_bindings"), dict):
-        return
+    from ming_sim.db import GameDB
     from ming_sim.issues import gather_fiscal_levy_petitions
+
+    # 已钉（含合法空 {}）不重算；错形响亮，不覆盖原值。
+    if GameDB.optional_object(
+        chain.get("world_question_event_bindings"),
+        surface="month_chain.world_question_event_bindings",
+    ) is not None:
+        return
 
     questions = [
         q for q in (chain.get("world_questions") or []) if isinstance(q, dict)

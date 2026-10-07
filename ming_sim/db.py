@@ -13053,9 +13053,8 @@ class GameDB:
         for todo in self.list_next_audience_todos(status="consumed"):
             if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
                 continue
+            # list_next_audience_todos → _parse_todo_payload_json 已保证为对象。
             payload = todo.get("payload_json") or {}
-            if not isinstance(payload, dict):
-                continue
             if str(payload.get(PLEA_VERDICT_KEY) or "") != PLEA_VERDICT_PERSIST:
                 continue
             cid = int(todo.get("commitment_ref") or 0)
@@ -15017,11 +15016,8 @@ class GameDB:
             raise ValueError(f"执行 outcome 非法：{outcome}")
         if outcome == "executing" and close:
             raise ValueError("executing 是非终态，必须以 close=False 记录")
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            payload = self.parse_engine_payload_json(
-                row.get("payload_json"), surface="decree_dossiers.payload_json",
-            )
+        # get_decree_dossier → _dossier_row 已保证 payload 为对象。
+        payload = row.get("payload") or {}
         immediate = (
             row["status"] == "promulgated"
             and not self._dossier_has_execution_surface(

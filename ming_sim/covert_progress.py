@@ -540,14 +540,8 @@ def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[
         return None
     from ming_sim.db import GameDB
 
-    payload = dossier.get("payload")
-    if not isinstance(payload, Mapping):
-        raw_json = dossier.get("payload_json")
-        if raw_json in (None, ""):
-            return None
-        payload = GameDB.parse_engine_payload_json(
-            raw_json, surface="decree_dossiers.payload_json",
-        )
+    # get_decree_dossier / list → _dossier_row 已保证 payload 为对象。
+    payload = dossier.get("payload") or {}
     return coerce_covert_task_contract(payload.get(CONTRACT_KEY))
 
 

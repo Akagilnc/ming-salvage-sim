@@ -412,15 +412,8 @@ def restore_pay_order_override(
             f"恢复 override 的 revoke 案卷 dossier:{int(revoke_dossier_id)} "
             f"未过合法颁布门（顺颁/强颁），禁删 config"
         )
-    from ming_sim.db import GameDB
-
-    payload = target.get("payload")
-    if payload is None:
-        payload = target.get("payload_json")
-    if not isinstance(payload, dict):
-        payload = GameDB.parse_engine_payload_json(
-            payload, surface="decree_dossiers.payload_json",
-        )
+    # get_decree_dossier → _dossier_row 已保证 payload 为对象。
+    payload = target.get("payload") or {}
     entries = payload.get("entries")
     if entries is not None and not isinstance(entries, list):
         raise ValueError(

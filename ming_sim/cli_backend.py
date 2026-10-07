@@ -2229,15 +2229,8 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
     lines: List[str] = []
     for row in rows or []:
         try:
-            # list_decree_dossiers already decoded payload (F39). Wrong shape raises;
-            # do not skip-wash stalled candidates into empty fact blocks.
-            payload = row.get("payload")
-            if not isinstance(payload, dict):
-                from ming_sim.db import GameDB
-                payload = GameDB.parse_engine_payload_json(
-                    row.get("payload_json"),
-                    surface="decree_dossiers.payload_json",
-                )
+            # list_decree_dossiers → _dossier_row 已保证 payload 为对象。
+            payload = row.get("payload") or {}
             if str(payload.get("deliberation_state") or "") != "stalled":
                 continue
             did = int(row["id"])

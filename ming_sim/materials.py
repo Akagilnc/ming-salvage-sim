@@ -1434,14 +1434,10 @@ def _world_fiscal_levy_petitions(db: Any, state: Any) -> list:
     presented = {}
     for row in db.list_event_petition_records():
         event_id = str(row.get("event_id") or "")
-        record = row.get("petition")
-        # list_event_petition_records already required petition object (F39).
+        # list_event_petition_records 已保证在场 petition 为对象；此处不再重验。
+        record = row.get("petition") or {}
         if not event_id:
             continue
-        if not isinstance(record, dict):
-            raise ValueError(
-                f"event_petition#{event_id}.petition 须为对象，得 {type(record).__name__}"
-            )
         # 答案字段（label/hint/note）与呈疏字段同在 choice_json 顶层，petition 段
         # 只放「何时呈、呈的什么」——两处都读，别只读一层。
         presented[event_id] = {
@@ -1636,16 +1632,10 @@ def _world_effect_materials(
             ):
                 continue
             if table == "issues":
-                # list_world_effect_history already decoded object fields via the
-                # effect/object authorities (F39). Non-dict here is a contract break,
-                # not a skip-to-empty wash. Per-item non-dict person rows stay as-is
-                # (model bad-item boundary is upstream rejection, not silent drop).
+                # list_world_effect_history 已用 loads_effect_dict / parse_engine 保证
+                # 四字段为对象；此处只做人物子项投影，不再重验对象闸。
                 for field in ("ongoing_effects", "cancel_cost", "effect_on_resolve", "effect_on_fail"):
                     effects = row[field]
-                    if not isinstance(effects, dict):
-                        raise ValueError(
-                            f"issues.{field} 须为对象，得 {type(effects).__name__}"
-                        )
                     for key in PERSON_EFFECT_KEYS:
                         items = effects.get(key)
                         if isinstance(items, list):
@@ -1903,15 +1893,8 @@ def continuing_dossier_facts(db: Any, turn: int) -> list[dict[str, object]]:
         if status != "executing":
             continue
         dossier_id = int(row["id"])
-        # list_decree_dossiers_for_simulation already decoded payload via object
-        # authority (F39). Non-dict is contract break — not an empty-facts wash.
-        payload = row.get("payload")
-        if payload is None:
-            payload = {}
-        elif not isinstance(payload, dict):
-            raise ValueError(
-                f"decree_dossiers#{dossier_id}.payload 须为对象，得 {type(payload).__name__}"
-            )
+        # list_decree_dossiers_for_simulation → _dossier_row 已保证 payload 为对象。
+        payload = row.get("payload") or {}
         facts.append({
             "id": dossier_id,
             "status": status,

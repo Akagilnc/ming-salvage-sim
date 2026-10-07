@@ -239,11 +239,8 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     row = db.get_decree_dossier(dossier_id)
     if row is None or not db.dossier_authorizes_effects(dossier_id):
         return None
-    payload = row.get("payload")
-    if not isinstance(payload, dict):
-        payload = GameDB.parse_engine_payload_json(
-            row.get("payload_json"), surface="decree_dossiers.payload_json",
-        )
+    # get_decree_dossier → _dossier_row 已保证 payload 为对象。
+    payload = row.get("payload") or {}
     if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
         return None
     return {**row, "payload": payload}
@@ -6409,12 +6406,7 @@ def _apply_person_changes(
                         )
                         continue
                     if action_type == "pacification":
-                        payload = dossier.get("payload")
-                        if not isinstance(payload, dict):
-                            payload = GameDB.parse_engine_payload_json(
-                                dossier.get("payload_json"),
-                                surface="decree_dossiers.payload_json",
-                            )
+                        payload = dossier.get("payload") or {}
                         bound_target = str(
                             payload.get("target_id") or dossier.get("target_id") or ""
                         ).strip()
