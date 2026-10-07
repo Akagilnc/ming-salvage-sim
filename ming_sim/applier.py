@@ -70,6 +70,33 @@ def durable_int(
         raise StoredDocumentError(f"{label} 损坏") from exc
 
 
+def durable_float(
+    raw: object, *, label: str, blank: float | None = 0.0,
+    allow_nonfinite: bool = False,
+) -> float:
+    """Read one float from a durable column.
+
+    ``blank`` is the value for None/empty on *optional* columns.
+    Pass ``blank=None`` for required columns. Bool is always corruption.
+    Non-finite values raise unless ``allow_nonfinite`` (e.g. gone-fact difficulty).
+    """
+    import math
+
+    if raw is None or raw == "":
+        if blank is None:
+            raise StoredDocumentError(f"{label} 损坏")
+        return float(blank)
+    if isinstance(raw, bool):
+        raise StoredDocumentError(f"{label} 损坏")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise StoredDocumentError(f"{label} 损坏") from exc
+    if not allow_nonfinite and not math.isfinite(value):
+        raise StoredDocumentError(f"{label} 损坏")
+    return float(value)
+
+
 def load_stored_json(raw: object, *, label: str, blank: object = None) -> object:
     """Read one durable JSON document.
 

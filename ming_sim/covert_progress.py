@@ -20,7 +20,7 @@ import json
 import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from ming_sim.applier import StoredDocumentError, load_stored_object
+from ming_sim.applier import StoredDocumentError, durable_float, durable_int, load_stored_object
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.materials import secret_order_origin
 from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES
@@ -722,10 +722,7 @@ def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:
 
 
 def _delivery_matches_economy(item: Mapping[str, object], delivery: Mapping[str, object]) -> bool:
-    try:
-        delta = float(item.get("delta") or 0)
-    except (TypeError, ValueError):
-        return False
+    delta = durable_float(item.get("delta"), label="economy_moves.delta", blank=0.0)
     sign = int(delivery.get("effect_sign") or 0)
     if sign < 0 and delta >= 0:
         return False
@@ -750,10 +747,7 @@ def _delivery_matches_economy(item: Mapping[str, object], delivery: Mapping[str,
 
 
 def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, object]) -> bool:
-    try:
-        delta = float(row["delta"] or 0)
-    except (TypeError, ValueError, KeyError):
-        return False
+    delta = durable_float(row["delta"], label="region_logs.delta", blank=0.0)
     sign = int(delivery.get("effect_sign") or 0)
     return (
         ((sign < 0 and delta < 0) or (sign > 0 and delta > 0))
@@ -806,43 +800,47 @@ def _seed_guilt_severity(db: Any, target: str) -> str:
 
 
 
-def _lane_number(item: Mapping[str, object], key: str, caster, default):
-    """缺省 → default；键在场但损坏 → StoredDocumentError（与合法 0 区分）。"""
-    if key not in item or item[key] is None or item[key] == "":
-        return default
-    try:
-        return caster(item[key])
-    except (TypeError, ValueError) as exc:
-        raise StoredDocumentError(f"fact_lanes.{key} 损坏") from exc
-
-
 def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]]:
     """lane 集读口：投入累计、逐条难度、已掌握。
 
     #1896 后不再有 used／reason_code 字段——满阈自动写依律的旧清算轨已退役
     （ADR 0098 后出修订），掌握证据本身不等于依法清算；去重读口按 mastered 判。
+    缺省集合为空；在场非名单/非对象成员是持久损坏，不洗成空集。
     """
     raw = payload.get(FACT_LANES_KEY)
+    if raw is None or raw == "":
+        return []
+    if not isinstance(raw, list):
+        raise StoredDocumentError("fact_lanes 必须为名单")
     lanes: List[Dict[str, object]] = []
     seen: set[str] = set()
-    if isinstance(raw, list):
-        for item in raw:
-            if not isinstance(item, Mapping):
-                continue
-            key = str(item.get("fact_key") or "").strip()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            effort = _lane_number(item, "effort", float, 0.0)
-            difficulty = _lane_number(item, "difficulty", float, 0.0)
-            months = _lane_number(item, "months", int, 0)
-            lanes.append({
-                "fact_key": key,
-                "effort": max(0.0, effort),
-                "difficulty": max(0.0, difficulty),
-                "months": max(0, months),
-                "mastered": bool(item.get("mastered")),
-            })
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise StoredDocumentError("fact_lanes 成员须为对象")
+        key = str(item.get("fact_key") or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        effort = durable_float(
+            item["effort"] if "effort" in item else None,
+            label="fact_lanes.effort", blank=0.0,
+        )
+        difficulty = durable_float(
+            item["difficulty"] if "difficulty" in item else None,
+            label="fact_lanes.difficulty", blank=0.0,
+            allow_nonfinite=True,  # gone 事实难度可持久为 +inf
+        )
+        months = durable_int(
+            item["months"] if "months" in item else None,
+            label="fact_lanes.months", blank=0,
+        )
+        lanes.append({
+            "fact_key": key,
+            "effort": max(0.0, effort),
+            "difficulty": max(0.0, difficulty),
+            "months": max(0, months),
+            "mastered": bool(item.get("mastered")),
+        })
     return lanes
 
 
@@ -995,14 +993,11 @@ def investigation_fact_difficulty(
     if worker:
         ability_row = db.characters.field_row("ability", worker)
         if ability_row is not None:
-            try:
-                ability = float(ability_row["ability"])
-            except (TypeError, ValueError):
-                ability = _ABILITY_REFERENCE
-            # 零是合法能力，走同一公式（参考值/能力）。0 用 inf 表达除零，
-            # 不另立「能力为零则拒绝」的闸，也不把前置因子覆盖成常数。
-            # 解析失败或非有限值仍按参考能力（乘子为 1）。
-            if math.isfinite(ability) and ability >= 0.0:
+            ability = durable_float(
+                ability_row["ability"], label="characters.ability", blank=None,
+            )
+            # 零是合法能力，走同一公式（参考值/能力）。0 用 inf 表达除零。
+            if ability >= 0.0:
                 difficulty *= (
                     math.inf if ability == 0.0 else _ABILITY_REFERENCE / ability
                 )
@@ -1070,13 +1065,10 @@ def investigation_monthly_capacity(
         return _CAPACITY_MIN  # 未到差：无差可查，投入为零
     capacity = 1.0
     if row is not None:
-        try:
-            ability = float(row["ability"])
-        except (TypeError, ValueError):
-            ability = _ABILITY_CAPACITY_REFERENCE
-        # 零参与同一带宽公式。解析失败或非有限值用参考能力。
-        if math.isfinite(ability):
-            capacity *= 1.0 + _ABILITY_CAPACITY_WEIGHT * (
+        ability = durable_float(
+            row["ability"], label="characters.ability", blank=None,
+        )
+        capacity *= 1.0 + _ABILITY_CAPACITY_WEIGHT * (
                 (ability - _ABILITY_CAPACITY_REFERENCE) / _ABILITY_CAPACITY_REFERENCE
             )
     open_n = sum(
@@ -1173,7 +1165,16 @@ def investigation_lane_actual_units(db: Any, dossier_id: int) -> float:
 def investigation_clue_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
     """案卷已并入的真实线索（各源汇案），含是否已被本月核算消费。"""
     raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_CLUES_KEY)
-    return [dict(x) for x in raw if isinstance(x, Mapping)] if isinstance(raw, list) else []
+    if raw is None or raw == "":
+        return []
+    if not isinstance(raw, list):
+        raise StoredDocumentError("investigation_clues 必须为名单")
+    out: List[Dict[str, object]] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise StoredDocumentError("investigation_clues 成员须为对象")
+        out.append(dict(item))
+    return out
 
 
 def _route_pointerless_clue(lanes: List[Dict[str, object]], target: str) -> str:
@@ -1614,10 +1615,9 @@ def originated_quantity_this_turn(
                 continue
             if not _delivery_matches_economy(item, delivery):
                 continue
-            try:
-                qty += abs(float(item.get("delta") or 0))
-            except (TypeError, ValueError):
-                continue
+            qty += abs(durable_float(
+                item.get("delta"), label="economy_moves.delta", blank=0.0,
+            ))
     if "人物变更" in fields:
         action = str(delivery.get("person_action") or "").strip()
         qty += float(db.person_logs.count_by_origin(
@@ -1627,7 +1627,9 @@ def originated_quantity_this_turn(
         rows = RegionStore(db.conn).read_originated_quantity_this_turn((origin, current))
         for row in rows:
             if _delivery_matches_region(row, delivery):
-                qty += abs(float(row["delta"] or 0))
+                qty += abs(durable_float(
+                    row["delta"], label="region_logs.delta", blank=0.0,
+                ))
     return qty
 
 

@@ -16,7 +16,7 @@ from ming_sim.entities.issue.store import IssueStore
 import json
 from typing import Any, Dict, List, Optional
 
-from ming_sim.applier import load_stored_list
+from ming_sim.applier import durable_int,  load_stored_list
 
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
@@ -168,18 +168,17 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
                 parts = load_stored_list(row["participants"], label="participants")
                 if parts:
                     name = str(parts[0]).strip()
+    # 找不到主办人：中性档 50。找到人物但列损坏：不洗成 50。
     integrity, courage = 50, 50
     if name:
         crow = CharacterStore(db.conn).read_resolve_host_character((name,))
         if crow is not None:
-            try:
-                integrity = int(crow["integrity"])
-            except (TypeError, ValueError):
-                integrity = 50
-            try:
-                courage = int(crow["courage"])
-            except (TypeError, ValueError):
-                courage = 50
+            integrity = durable_int(
+                crow["integrity"], label="characters.integrity", blank=None,
+            )
+            courage = durable_int(
+                crow["courage"], label="characters.courage", blank=None,
+            )
     return {"name": name, "integrity": integrity, "courage": courage}
 
 

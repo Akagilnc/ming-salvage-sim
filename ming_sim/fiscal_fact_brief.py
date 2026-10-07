@@ -42,7 +42,7 @@ from __future__ import annotations
 from ming_sim.entities.army.store import ArmyStore
 from ming_sim.entities.region.store import RegionStore
 from ming_sim.entities.reign_state.store import ReignStateStore
-from ming_sim.applier import load_stored_object
+from ming_sim.applier import load_stored_object, durable_float
 
 import json
 import math
@@ -428,10 +428,9 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
     #    中央侧无自动偿还位（0023 D7③），均不在本缝重复计。
     repaid_log_rows = ArmyStore(db.conn).read_build_fiscal_fact_brief_id_army_id_old_value_new_value((turn,))
     for row in repaid_log_rows:
-        try:
-            delta = float(str(row["new_value"])) - float(str(row["old_value"]))
-        except (TypeError, ValueError):
-            continue
+        old_v = durable_float(row["old_value"], label="army_logs.old_value", blank=None)
+        new_v = durable_float(row["new_value"], label="army_logs.new_value", blank=None)
+        delta = new_v - old_v
         if delta >= 0:
             continue  # 只取偿还方向；增欠已由②的双累加器现值承载，不重复计
         army_id = str(row["army_id"])
@@ -511,10 +510,7 @@ def build_fiscal_fact_brief(db: Any) -> List[Dict[str, Any]]:
     #    region_logs 随档恢复，投影可重建（E2E 在案）。
     flow_rows = RegionStore(db.conn).read_build_fiscal_fact_brief((turn,))
     for row in flow_rows:
-        try:
-            delta = float(row["delta"] or 0)
-        except (TypeError, ValueError):
-            continue
+        delta = durable_float(row["delta"], label="region_logs.delta", blank=0.0)
         if not math.isfinite(delta) or abs(delta) <= 1e-9:
             continue
         field = str(row["field"])

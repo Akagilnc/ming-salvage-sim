@@ -26,7 +26,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from ming_sim.applier import load_stored_list, load_stored_object
+from ming_sim.applier import durable_int, load_stored_list, load_stored_object
 from ming_sim.models import loads_effect_dict
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
@@ -119,10 +119,7 @@ def commitment_natural_due_turn(row: Any) -> int:
     stages = load_commitment_stages(stages_raw)
     if stages:
         return max(int(s["due_turn"]) for s in stages)
-    try:
-        end_turn = int(row["end_turn"] or 0)
-    except (TypeError, ValueError):
-        end_turn = 0
+    end_turn = durable_int(row["end_turn"], label="issues.end_turn", blank=0)
     return end_turn if end_turn > 0 else 0
 
 

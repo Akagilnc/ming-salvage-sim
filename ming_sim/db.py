@@ -1830,30 +1830,38 @@ class GameDB:
             return changes
 
         old_source = str(row["pay_source_region"] or "")
+        from ming_sim.applier import durable_float as _durable_float
+        # 未提供的旧列：持久损坏上抛，不冒充声明拒收。
         try:
             if pay_source_region is _SENTINEL:
                 pay_source_region_val = str(row["pay_source_region"] or "").strip()
-            else:
-                pay_source_region_val = str(pay_source_region or "").strip()
             if province_pay_share is _SENTINEL:
                 province_share = _coerce_pay_source_float(row["province_pay_share"])
-            else:
-                province_share = _coerce_pay_source_float(province_pay_share)
             if central_pay_share is _SENTINEL:
                 central_share = _coerce_pay_source_float(row["central_pay_share"])
-            else:
-                central_share = _coerce_pay_source_float(central_pay_share)
             if is_tusi is _SENTINEL:
                 is_tusi_val = bool(row["is_tusi"])
-            else:
-                is_tusi_val = _coerce_bool_flag(is_tusi)
             if self_funded_pay is _SENTINEL:
                 self_funded_val = bool(row["self_funded_pay"])
-            else:
+            province_arrears = _durable_float(
+                row["province_pay_arrears"], label="armies.province_pay_arrears", blank=0.0,
+            )
+            central_arrears = _durable_float(
+                row["central_pay_arrears"], label="armies.central_pay_arrears", blank=0.0,
+            )
+        except (TypeError, ValueError) as exc:
+            raise StoredDocumentError(f"军饷源持久列损坏：{exc}") from exc
+        try:
+            if pay_source_region is not _SENTINEL:
+                pay_source_region_val = str(pay_source_region or "").strip()
+            if province_pay_share is not _SENTINEL:
+                province_share = _coerce_pay_source_float(province_pay_share)
+            if central_pay_share is not _SENTINEL:
+                central_share = _coerce_pay_source_float(central_pay_share)
+            if is_tusi is not _SENTINEL:
+                is_tusi_val = _coerce_bool_flag(is_tusi)
+            if self_funded_pay is not _SENTINEL:
                 self_funded_val = _coerce_bool_flag(self_funded_pay)
-
-            province_arrears = float(row["province_pay_arrears"] or 0)
-            central_arrears = float(row["central_pay_arrears"] or 0)
 
             exempt = owner_power != "ming" or is_tusi_val or self_funded_val
             if exempt:
@@ -2035,29 +2043,49 @@ class GameDB:
         # 真 owner 变更已由上方 return。禁止把 latch return 前移到校验之前。
         old_source = str(row["pay_source_region"] or "")
         owner_power = str(row["owner_power"] or "").strip()
-        pay_source_region = str(normalized.get("pay_source_region", row["pay_source_region"]) or "").strip()
+        # 旧持久列先读：损坏走 StoredDocumentError，不冒充 army_delta 产品拒收。
+        from ming_sim.applier import durable_float as _durable_float
         try:
-            province_share = _coerce_pay_source_float(
-                normalized.get("province_pay_share", row["province_pay_share"])
+            base_province_share = _coerce_pay_source_float(row["province_pay_share"])
+            base_central_share = _coerce_pay_source_float(row["central_pay_share"])
+            base_is_tusi = bool(row["is_tusi"])
+            base_self_funded = bool(row["self_funded_pay"])
+            province_arrears = _durable_float(
+                row["province_pay_arrears"], label="armies.province_pay_arrears", blank=0.0,
             )
-            central_share = _coerce_pay_source_float(
-                normalized.get("central_pay_share", row["central_pay_share"])
+            central_arrears = _durable_float(
+                row["central_pay_arrears"], label="armies.central_pay_arrears", blank=0.0,
+            )
+            base_pay_source = str(row["pay_source_region"] or "").strip()
+        except (TypeError, ValueError) as exc:
+            raise StoredDocumentError(f"军饷源持久列损坏：{exc}") from exc
+
+        try:
+            pay_source_region = (
+                str(normalized.get("pay_source_region") or "").strip()
+                if "pay_source_region" in normalized else base_pay_source
+            )
+            province_share = (
+                _coerce_pay_source_float(normalized["province_pay_share"])
+                if "province_pay_share" in normalized else base_province_share
+            )
+            central_share = (
+                _coerce_pay_source_float(normalized["central_pay_share"])
+                if "central_pay_share" in normalized else base_central_share
             )
             is_tusi = (
                 _coerce_bool_flag(normalized["is_tusi"])
-                if "is_tusi" in normalized else bool(row["is_tusi"])
+                if "is_tusi" in normalized else base_is_tusi
             )
             self_funded = (
                 _coerce_bool_flag(normalized["self_funded_pay"])
-                if "self_funded_pay" in normalized else bool(row["self_funded_pay"])
+                if "self_funded_pay" in normalized else base_self_funded
             )
-            province_arrears = float(row["province_pay_arrears"] or 0)
-            central_arrears = float(row["central_pay_arrears"] or 0)
             exempt = owner_power != "ming" or is_tusi or self_funded
             exempt_by_ming_flag = (
                 owner_power == "ming"
-                and not bool(row["is_tusi"])
-                and not bool(row["self_funded_pay"])
+                and not base_is_tusi
+                and not base_self_funded
                 and (is_tusi or self_funded)
             )
             if exempt_by_ming_flag and (province_arrears + central_arrears) > 1e-9:
@@ -5092,10 +5120,9 @@ class GameDB:
         # 与 previous_turn_summary / turn_reports.report_text 同口径：非空才算有报
         row = self.turn_reports.archive(previous_turn)
         if row is not None and (row["report"] or ""):
-            try:
-                return reign_period_label(int(row["year"]), int(row["period"]))
-            except (TypeError, ValueError):
-                return ""
+            year = durable_int(row["year"], label="turn_reports.year", blank=None)
+            period = durable_int(row["period"], label="turn_reports.period", blank=None)
+            return reign_period_label(year, period)
         # #1843 reopen：无有效邸报则真空；旧 turn_logs 回落已删。
         return ""
 
@@ -6866,10 +6893,9 @@ class GameDB:
                 continue
             if self._grant_allocation_is_honorific(payload):
                 continue
-            try:
-                ordered = int(payload.get("amount") or 0)
-            except (TypeError, ValueError):
-                ordered = 0
+            ordered = durable_int(
+                payload.get("amount"), label="grant_allocation.amount", blank=0,
+            )
             if ordered <= 0:
                 continue
             dossier_id = int(row["id"])

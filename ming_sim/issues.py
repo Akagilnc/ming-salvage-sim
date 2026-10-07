@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
-from ming_sim.applier import atomic, connection_owns_transaction, load_stored_list, load_stored_object
+from ming_sim.applier import atomic, connection_owns_transaction, durable_int, load_stored_list, load_stored_object
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
@@ -572,10 +572,11 @@ def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
         payload = load_stored_object(row["metric_delta"], label="metric_delta")
         progress = payload.get("commitment_progress")
         if isinstance(progress, dict):
-            try:
-                return int(progress.get("paid_total") or 0)
-            except (TypeError, ValueError):
-                return 0
+            return durable_int(
+                progress.get("paid_total"),
+                label="commitment_progress.paid_total",
+                blank=0,
+            )
     return 0
 
 
@@ -596,10 +597,14 @@ def commitment_progress_payload(
     # key is absent OR present-but-NULL/0. `int(row["origin_turn"] or 0)` would collapse
     # a NULL/0 to 0 and leak the absolute turn number into months_elapsed (#380 cmr:
     # gemini + coderabbit). Only a positive origin_turn is a real anchor.
-    try:
-        origin_turn = int(row["origin_turn"])
-    except (TypeError, ValueError):
+    # 合法未设锚：NULL/空/非正 → 以当前 turn 起算。在场损坏字符串不洗成 0。
+    raw_origin = row["origin_turn"]
+    if raw_origin is None or raw_origin == "":
         origin_turn = 0
+    else:
+        origin_turn = durable_int(
+            raw_origin, label="issues.origin_turn", blank=None,
+        )
     if origin_turn <= 0:
         origin_turn = int(state.turn)
     months_elapsed = max(0, int(state.turn) - origin_turn)
@@ -1263,7 +1268,6 @@ def _fiscal_levy_land_denominator(
     meta: Dict[str, object],
     parsed_total_land: float,
     *,
-    denominator_complete: bool,
     region_id: str,
 ) -> float:
     if _SETTLE_META_LAND_DENOMINATOR_KEY in meta:
@@ -1271,9 +1275,7 @@ def _fiscal_levy_land_denominator(
             meta[_SETTLE_META_LAND_DENOMINATOR_KEY],
             ctx=f"{region_id}.settle._meta.{_SETTLE_META_LAND_DENOMINATOR_KEY}",
         )
-    if denominator_complete:
-        return parsed_total_land
-    return 0.0
+    return parsed_total_land
 
 
 def _fiscal_levy_share_seed(
@@ -1337,7 +1339,6 @@ def _apply_fiscal_levy_targets(
     jiao_in_force = _jiao_levy_in_force(terminal_records, state)
     lian_levy_approved = _fiscal_levy_event_approved(terminal_records, _LIAN_LEVY_START_EVENT_ID)
     region_entries: List[Dict[str, object]] = []
-    denominator_complete = True
     for row in RegionStore(db.conn).read_apply_fiscal_levy_targets():
         region_id = str(row["id"])
         fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
@@ -1386,7 +1387,6 @@ def _apply_fiscal_levy_targets(
         land_denominator = _fiscal_levy_land_denominator(
             meta,
             total_land,
-            denominator_complete=denominator_complete,
             region_id=region_id,
         )
         has_jiao_seed = _SETTLE_META_JIAO_SEED_KEY in meta
