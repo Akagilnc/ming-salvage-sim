@@ -1980,18 +1980,20 @@ def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):
     """④ 清锚扫描：choice_json 损坏 / 非 object → 响亮失败，禁静默跳过。
 
     区分度在**两次各自写坏的 choice_json**（先不可解析，后可解析但非 object）；
-    报错措辞不是契约（#1889）。
+    持久接缝为 StoredDocumentError，报错措辞不是契约（#1889）。
     """
     from ming_sim import rescript_actions as ra
+    from ming_sim.applier import StoredDocumentError
+
     db, state, _content = game
     urgent, _ = _plant_urgent_desk(db, state)
     db.conn.execute("UPDATE pending_decisions SET choice_json=?, revision_round=1 WHERE turn=? AND idx=? AND kind='rescript_draft'", ('{not-json', int(urgent['source_turn'] or urgent['turn']), int(urgent['idx'])))
     db.conn.commit()
-    with pytest.raises(ValueError):
+    with pytest.raises(StoredDocumentError):
         ra.clear_return_revise_choice_anchors(db, None)
     db.conn.execute("UPDATE pending_decisions SET choice_json=? WHERE turn=? AND idx=? AND kind='rescript_draft'", ('[1,2]', int(urgent['source_turn'] or urgent['turn']), int(urgent['idx'])))
     db.conn.commit()
-    with pytest.raises(ValueError):
+    with pytest.raises(StoredDocumentError):
         ra.clear_return_revise_choice_anchors(db, None)
 
 def test_657_default_hold_preserves_red_pen_note(game):

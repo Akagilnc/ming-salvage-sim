@@ -3860,11 +3860,12 @@ def test_settle_province_tick_unknown_region_raises(fresh_db):
 
 
 def test_settle_province_tick_nondict_fiscal_raises(fresh_db):
-    # cmr R3（gemini）：fiscal JSON 非 dict（如 "[]"）→ ValueError（可被隔离捕获），
-    # 非 fiscal.get 抛 AttributeError 逃逸。
+    # 已持久 fiscal 非对象：load_stored_object 接缝 → StoredDocumentError（非产品 ValueError）。
+    from ming_sim.applier import StoredDocumentError
+
     fresh_db.conn.execute("UPDATE regions SET fiscal='[]' WHERE id='shaanxi'")
     fresh_db.conn.commit()
-    with pytest.raises(ValueError):
+    with pytest.raises(StoredDocumentError):
         fresh_db.settle_province_tick("shaanxi", [])
 
 

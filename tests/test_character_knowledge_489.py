@@ -1167,9 +1167,15 @@ def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
         state, "国库", -1, "秘密分类", "秘密流水原因",
         origin_ref=f"dossier:{dossier['id']}",
     )
+    move = db.conn.execute(
+        "SELECT delta, balance_after FROM economy_ledger WHERE origin_ref=? "
+        "ORDER BY id DESC LIMIT 1",
+        (f"dossier:{dossier['id']}",),
+    ).fetchone()
+    assert move is not None and int(move["delta"]) == -1
     ledger = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
-    # Amount remains visible; secret case semantics stay hidden. Do not lock hide-label wording.
-    assert "-1" in ledger
+    # Amount/balance via structured ledger; presentation only observed (no ASCII/Unicode minus lock).
+    assert str(int(move["balance_after"])) in ledger
     assert "秘密分类" not in ledger and "秘密流水原因" not in ledger
 
 
@@ -1190,9 +1196,15 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         state, "国库", -2, "职署秘密分类", "职署秘密流水",
         origin_ref=f"dossier:{dossier['id']}",
     )
-    # 现职户部：数额可见、案情隐藏
+    move = db.conn.execute(
+        "SELECT delta, balance_after FROM economy_ledger WHERE origin_ref=? "
+        "ORDER BY id DESC LIMIT 1",
+        (f"dossier:{dossier['id']}",),
+    ).fetchone()
+    assert move is not None and int(move["delta"]) == -2
+    # 现职户部：数额结构化可见、案情隐藏；不锁减号拼写
     hidden = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
-    assert "-2" in hidden
+    assert str(int(move["balance_after"])) in hidden
     assert "职署秘密分类" not in hidden and "职署秘密流水" not in hidden
 
     # 继任入户部：仍按当前 office_type 排挤（不靠签发时人名快照）
@@ -1206,7 +1218,7 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         successor_view = db.get_character_knowledge(
             state, successor.name,
         )["world"]["treasury"]
-        assert "-2" in successor_view
+        assert str(int(move["balance_after"])) in successor_view
         assert "职署秘密流水" not in successor_view
     finally:
         db.set_character_office(clerk.name, clerk_office, office_type=clerk_type)

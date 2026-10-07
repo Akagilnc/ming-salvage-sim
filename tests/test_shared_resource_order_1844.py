@@ -153,17 +153,14 @@ def test_player_decree_missing_entity_rejection_persists_for_feed(game, monkeypa
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='补饷坏目标' AND delta != 0"
     ).fetchone()[0] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref' AND item_json LIKE '%no-such-army-1844%'"
-    ).fetchone()[0] >= 1
+    # Identity via decoded item fields — not raw JSON substring / LIKE format lock.
+    assert _missing_ref_target_matches(db.conn, "no-such-army-1844") >= 1
 
     db_path = tmp_path / "reject-reopen.db"
     db.conn.execute("VACUUM INTO ?", (str(db_path),))
     reopened = sqlite3.connect(str(db_path))
     reopened.row_factory = sqlite3.Row
-    assert reopened.execute(
-        "SELECT COUNT(*) FROM rejection_reports WHERE category='missing_ref' AND item_json LIKE '%no-such-army-1844%'"
-    ).fetchone()[0] >= 1
+    assert _missing_ref_target_matches(reopened, "no-such-army-1844") >= 1
     assert reopened.execute(
         "SELECT status FROM staged_declarations WHERE decree_ref=?",
         (ref,),
@@ -325,6 +322,18 @@ def _invalid_shape_matches(db, section: str, key: str, value: str) -> int:
     for row in rows:
         item = json.loads(row["item_json"])
         if isinstance(item, dict) and item.get(key) == value:
+            matched += 1
+    return matched
+
+
+def _missing_ref_target_matches(conn, target_id: str) -> int:
+    """Count missing_ref rows whose decoded item carries target_id."""
+    matched = 0
+    for row in conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE category='missing_ref'"
+    ):
+        item = json.loads(row["item_json"])
+        if isinstance(item, dict) and item.get("target_id") == target_id:
             matched += 1
     return matched
 

@@ -417,10 +417,13 @@ def test_directive_routing_rejection_rolls_back_with_outer_owner(
     ("extension_json", "["),
 ])
 def test_restore_malformed_durable_json_fails_loud(env, column, bad):
+    from ming_sim.applier import StoredDocumentError
+
     db, state, _ = env
     dossier_id = _create(db, state, category=None, action="policy")
     db.conn.execute(f"UPDATE decree_dossiers SET {column}=? WHERE id=?", (bad, dossier_id))
-    with pytest.raises(ValueError):
+    # Durable row decode seam — not product ValueError.
+    with pytest.raises(StoredDocumentError):
         db.dossiers.get(dossier_id)
 
 
