@@ -3435,7 +3435,8 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     try:
         from ming_sim.simulation import _canonical_item_fields
         norm = _canonical_item_fields(obj) if obj else {}
-    except ImportError:
+    except ImportError as exc:
+        _log(f"enrich_initiative_effects import failed: {type(exc).__name__}: {exc}")
         norm = obj
     # isinstance 守门：norm 或其子段被 LLM 给成非 dict 时归 {}，不让 dict("乱填") 抛错。
     def _d(v):

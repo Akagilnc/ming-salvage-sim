@@ -690,7 +690,8 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     否则返回 ''。结果按官名缓存，避免重复调用。"""
     try:
         from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
-    except ImportError:
+    except ImportError as exc:
+        tlog(f"[office_infer] import failed: {type(exc).__name__}: {exc}")
         return ""
     if not cli_backend_active(llm_config):
         return ""
