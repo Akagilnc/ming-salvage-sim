@@ -3022,14 +3022,6 @@ class _NonBlockingWebWriteGate:
         return False
 
 
-def _spawn_startup_catch_up_nonfatal(game) -> None:
-    """Start post-replacement catch-up without turning a successful replacement into failure."""
-    try:
-        game._spawn_startup_extraction_catch_up()
-    except Exception:
-        logger.exception("startup extraction catch-up scheduling failed")
-
-
 def _run_hot_replace(game, replace: Callable[[], None], *, failure_label: str) -> None:
     """局内忙态先回 409；真正排空与独占由 ``_replace_database`` 单点负责。"""
     try:
@@ -3050,7 +3042,8 @@ def _run_hot_replace(game, replace: Callable[[], None], *, failure_label: str) -
     except Exception as exc:
         logger.exception("%s", failure_label)
         raise HTTPException(status_code=500, detail=f"{failure_label}：{exc}") from exc
-    _spawn_startup_catch_up_nonfatal(game)
+    # 预检／调度故障上抛；单轮模型失败由共核 catch_up 隔离，不在此非致命宽吞。
+    game._spawn_startup_extraction_catch_up()
 
 
 @contextlib.contextmanager
@@ -4450,7 +4443,8 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
             _release_opening(opening_path)
 
     published_game, state_snapshot = await loop.run_in_executor(None, _load_work)
-    _spawn_startup_catch_up_nonfatal(published_game)
+    # 与建局／换库同形：启动补跑预检故障上抛，不另包非致命策略。
+    published_game._spawn_startup_extraction_catch_up()
     return {"state": state_snapshot}
 
 
