@@ -17191,19 +17191,19 @@ class GameDB:
             actors.add(executor_id)
         roster = dossier.get("participant_roster") or []
         if isinstance(roster, str):
-            try:
-                roster = json.loads(roster)
-            except (TypeError, ValueError):
-                roster = []
-        if isinstance(roster, list):
-            for entry in roster:
-                if not isinstance(entry, dict):
-                    continue
-                if str(entry.get("tier") or "").strip() not in {"主办", "协办"}:
-                    continue
-                character_id = str(entry.get("character_id") or "").strip()
-                if character_id:
-                    actors.add(character_id)
+            roster = _load_durable_json_list(
+                roster, surface="participant_roster",
+            )
+        elif not isinstance(roster, list):
+            raise ValueError("participant_roster 须为列表")
+        for entry in roster:
+            if not isinstance(entry, dict):
+                raise ValueError("participant_roster 每项须为对象")
+            if str(entry.get("tier") or "").strip() not in {"主办", "协办"}:
+                continue
+            character_id = str(entry.get("character_id") or "").strip()
+            if character_id:
+                actors.add(character_id)
         target_kind = str(dossier.get("target_kind") or "").strip()
         target_id = str(dossier.get("target_id") or "").strip()
         domains: set[str] = set()
