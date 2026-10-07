@@ -9973,53 +9973,55 @@ class GameDB:
 
     @classmethod
     def _dossier_row(cls, row: Any) -> Dict[str, object]:
-        out = dict(row)
-        out["id"] = int(out["id"])
-        out["region_id"] = str(out.get("region_id") or "")
-        for key in (
-            "source_chat_turn_id", "pending_action_id", "directive_id",
-            "due_turn", "created_turn", "created_year", "created_period",
-            "held_turn", "affair_id",
-        ):
-            out[key] = int(out.get(key) or 0)
-        if out.get("secret_order_id") is not None:
-            out["secret_order_id"] = int(out["secret_order_id"])
-        out["rescript_pending"] = bool(out.get("rescript_pending"))
+        """解码 decree_dossiers 持久行。
+
+        列/JSON/mode 解码故障属账本代码故障（RuntimeError），不得以 ValueError
+        落入 ensure 产物捕获，也不得被 effect_origin_rejection 洗成声明来源非法（F39）。
+        缺行（get 返回 None）与声明侧不存在目标仍由调用方按产物错处理。
+        """
+        did_hint: object = "?"
         try:
-            payload = json.loads(out.get("payload_json") or "{}")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} payload_json 无效") from exc
-        if not isinstance(payload, dict):
-            raise ValueError(f"案卷#{out['id']} payload_json 非对象")
-        out["payload"] = payload
-        out["mode"] = cls._normalize_dossier_mode(
-            payload["mode"] if "mode" in payload else "ordinary"
-        )
-        try:
-            stigma = json.loads(out.get("stigma_json") or "[]")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} stigma_json 无效") from exc
-        if not isinstance(stigma, list):
-            raise ValueError(f"案卷#{out['id']} stigma_json 非列表")
-        out["stigma"] = stigma
-        try:
-            roster = json.loads(out.get("participant_roster") or "[]")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} participant_roster 无效") from exc
-        if not isinstance(roster, list):
-            raise ValueError(f"案卷#{out['id']} participant_roster 非列表")
-        out["participant_roster"] = roster
-        try:
-            extension = json.loads(out.get("extension_json") or "{}")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} extension_json 无效") from exc
-        if not isinstance(extension, dict):
-            raise ValueError(f"案卷#{out['id']} extension_json 非对象")
-        signal = extension.get("execution_signal")
-        if signal is not None and not isinstance(signal, dict):
-            raise ValueError(f"案卷#{out['id']} execution_signal 非对象")
-        out["execution_signal"] = signal
-        return out
+            out = dict(row)
+            out["id"] = int(out["id"])
+            did_hint = out["id"]
+            out["region_id"] = str(out.get("region_id") or "")
+            for key in (
+                "source_chat_turn_id", "pending_action_id", "directive_id",
+                "due_turn", "created_turn", "created_year", "created_period",
+                "held_turn", "affair_id",
+            ):
+                out[key] = int(out.get(key) or 0)
+            if out.get("secret_order_id") is not None:
+                out["secret_order_id"] = int(out["secret_order_id"])
+            out["rescript_pending"] = bool(out.get("rescript_pending"))
+            # 复用既有 object/list 权威；失败域在本口统一翻成 RuntimeError。
+            payload = cls.parse_engine_payload_json(
+                out.get("payload_json"),
+                surface=f"decree_dossiers#{did_hint}.payload_json",
+            )
+            out["payload"] = payload
+            out["mode"] = cls._normalize_dossier_mode(
+                payload["mode"] if "mode" in payload else "ordinary"
+            )
+            out["stigma"] = cls._loads_stored_json_list(
+                out.get("stigma_json"),
+                surface=f"decree_dossiers#{did_hint}.stigma_json",
+            )
+            out["participant_roster"] = cls._loads_stored_json_list(
+                out.get("participant_roster"),
+                surface=f"decree_dossiers#{did_hint}.participant_roster",
+            )
+            extension = cls.parse_engine_payload_json(
+                out.get("extension_json"),
+                surface=f"decree_dossiers#{did_hint}.extension_json",
+            )
+            out["execution_signal"] = cls.optional_object(
+                extension.get("execution_signal"),
+                surface=f"decree_dossiers#{did_hint}.execution_signal",
+            )
+            return out
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError(f"案卷#{did_hint} 持久解码失败") from exc
 
     # #619 / ADR 0073 reported-progress origin namespace (ID-11 open append).
     DOSSIER_REPORT_ORIGIN_NS = "dossier-report:"
