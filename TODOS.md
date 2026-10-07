@@ -164,9 +164,9 @@
 - **铁律**：凡诏书新政带"每月 X 万经费/俸/饷"的，产 delta 时**issue + `fiscal_creates` 必须成对出**（issue 管进度、fiscal_creates 管账）。一次性投入才用 `economy_moves`。
 - **已补**：崇祯二年六月起 `taixuefu_base`(国库 expense 500) + `huoqi_base`(国库 expense 200) 已立账；六月当月用 economy_moves 补扣、常设账自七月固定 tick 起自动走（采甲案：前 4 月不倒补）。
 
-### T4. "练新军/编新营"国策必须同产 new_armies + office_changes（已踩坑） → [issue #46](https://github.com/Akagilnc/ming-salvage-sim/issues/46)（实例已补，缺引擎级强制配对）
-- **教训**：「荡寇天雄军」国策(issue 13)崇祯二年六月结案=练成，但**只做了 issue 进度条，漏了 ① `new_armies` 建天雄军军籍记人马 ② `office_changes` 把卢象升从大名知府调任为带兵主将**。结果"卢象升移驻东协"只在邸报，军册上查无天雄军、卢仍是文官知府，崇祯二年八月被陛下"卢象升现有多少人马"一问当场穿帮。
-- **铁律**：凡诏书"练某军/募某营/调某将镇某地"的，产 delta 时 **issue（进度）+ `new_armies`（军籍人马）+ `office_changes`（主将调任）必须配齐**。光推 bar 不落实体 = 账实不符。
+### T4. "练新军/编新营"国策必须同产 new_armies + 人物变更（已踩坑） → [issue #46](https://github.com/Akagilnc/ming-salvage-sim/issues/46)（实例已补，缺引擎级强制配对）
+- **教训**：「荡寇天雄军」国策(issue 13)崇祯二年六月结案=练成，但**只做了 issue 进度条，漏了 ① `new_armies` 建天雄军军籍记人马 ② 主将调任（当时写路为 `office_changes`，现役已归 `人物变更`）**。结果"卢象升移驻东协"只在邸报，军册上查无天雄军、卢仍是文官知府，崇祯二年八月被陛下"卢象升现有多少人马"一问当场穿帮。
+- **铁律**：凡诏书"练某军/募某营/调某将镇某地"的，产 delta 时 **issue（进度）+ `new_armies`（军籍人马）+ `人物变更`（主将任命/调任）必须配齐**。旧 `office_changes` 键已退役，不得再当写路。光推 bar 不落实体 = 账实不符。
 - **已补**：崇祯二年八月立天雄军军籍(兵 18000)+ 调卢象升「荡寇将军」督天雄军镇蓟镇东协·喜峰口、受孙承宗节制。
 
 ### T5. 密令应支持「撤销/提前结束」（玩家面，留待深挖密令机制时做）

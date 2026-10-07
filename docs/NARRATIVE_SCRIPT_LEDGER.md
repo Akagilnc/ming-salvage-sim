@@ -98,8 +98,8 @@ System:
 
 - `decree_text`：本月诏书。
 - `narrative`：本月邸报 / 推演文本。
-- `delta`：本月准备喂给 `apply_score_extraction` 的 JSON。
-- `applied`：`apply_score_extraction` 返回值。
+- `delta`：本月准备喂给现役落库入口（`declaration_dispatch` → `settlement.settle_delta`；旧 `apply_score_extraction` 已退役）的 JSON。
+- `applied`：落库返回的 typed `SettlementOutcome` / 段视图（不是已删总入口的 dict 返回值）。
 - DB 读回结果：结算后从数据库重新查状态，不信叙事自称。
 
 输出：
@@ -146,7 +146,7 @@ driver settle
   读取 decree_text
   读取 narrative
   读取 delta
-  apply_score_extraction
+  declaration_dispatch → settlement.settle_delta
   从 DB 读回真实状态
   生成三栏账
   打印 mismatch
@@ -196,7 +196,7 @@ report-only 跑几回合后，把高置信规则变成结算质量门。
 
 - 新军必须有 `new_armies`。
 - 既有军队变化必须有 `army_delta`。
-- 主将 / 镇地变化同时检查 `office_changes` 或 `army_delta.commander/station`。
+- 主将 / 镇地变化同时检查 `人物变更`（任命/调任）或 `army_delta.commander/station`。
 
 ### 人物
 
@@ -213,8 +213,8 @@ report-only 跑几回合后，把高置信规则变成结算质量门。
 
 要求：
 
-- 任官 / 调任必须有 `office_changes`。
-- 退场 / 惩处必须有 `character_status_changes`。
+- 任官 / 调任必须有 `人物变更`（任命/调任）。
+- 退场 / 惩处必须有 `人物变更`（处置）。旧 `office_changes` / `character_status_changes` 已退役，不得再当检查键。
 - 头衔目前无稳定字段，第一版先 report-only 标记，不做硬闸。
 
 ### 事项与工程
@@ -254,7 +254,7 @@ report-only 跑几回合后，把高置信规则变成结算质量门。
 它直接服务 `docs/TODO.md` 里的几条铁律：
 
 - 带月经费的新政必须同产 `fiscal_creates`。
-- 练新军 / 编新营必须同产 `new_armies` + `office_changes`。
+- 练新军 / 编新营必须同产 `new_armies` + `人物变更`（主将任命/调任）。
 - 决策当回合全量落库。
 - restore 只读 DB 就能无损接续。
 
