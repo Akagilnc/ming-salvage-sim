@@ -847,11 +847,26 @@ def payload_declares_escort(payload: object) -> bool:
     )
 
 def _load_durable_json_list(raw: object, *, surface: str) -> list:
-    """Durable JSON array column: corrupt / wrong top-level fail loud (#1897 E1)."""
-    try:
-        value = json.loads(raw or "[]")
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{surface} 腐坏 JSON") from exc
+    """Durable JSON array column: corrupt / wrong top-level fail loud (#1897 E1).
+
+    SQL NULL may default to empty list; empty string / non-str / non-list must not
+    be falsy-washed into a legal empty array.
+    """
+    if isinstance(raw, list):
+        value = raw
+    else:
+        if raw is None:
+            text = "[]"
+        elif not isinstance(raw, str):
+            raise ValueError(
+                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
+            )
+        else:
+            text = raw
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{surface} 腐坏 JSON") from exc
     if not isinstance(value, list):
         raise ValueError(f"{surface} 须为列表")
     return value
@@ -865,14 +880,46 @@ def _load_durable_str_list(raw: object, *, surface: str) -> list:
 
 
 def _load_durable_json_object(raw: object, *, surface: str) -> dict:
-    """Durable JSON object column: corrupt / wrong top-level fail loud (#1897 E1)."""
-    try:
-        value = json.loads(raw or "{}")
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{surface} 腐坏 JSON") from exc
+    """Durable JSON object column: corrupt / wrong top-level fail loud (#1897 E1).
+
+    SQL NULL may default to empty object; empty string / non-str / non-object
+    must not be falsy-washed into a legal empty object.
+    """
+    if isinstance(raw, dict):
+        value = raw
+    else:
+        if raw is None:
+            text = "{}"
+        elif not isinstance(raw, str):
+            raise ValueError(
+                f"{surface} 须为 JSON 文本，得 {type(raw).__name__}"
+            )
+        else:
+            text = raw
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{surface} 腐坏 JSON") from exc
     if not isinstance(value, dict):
         raise ValueError(f"{surface} 须为对象")
     return value
+
+
+def _optional_payload_str_list(
+    payload: Mapping[str, object], key: str, *, surface: str,
+) -> list:
+    """Staged payload optional str-list: absent/None → []; present non-list/non-str loud.
+
+    Do not use ``payload.get(key) or []`` — False/{} wash into legal empty.
+    """
+    if key not in payload or payload.get(key) is None:
+        return []
+    raw = payload.get(key)
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"{surface} 须为列表，得 {type(raw).__name__}"
+        )
+    return _require_str_list_members(raw, surface=surface)
 
 
 def _require_durable_prose(raw: object, *, field: str, required: bool = True) -> str:
@@ -10139,35 +10186,39 @@ class GameDB:
             out["secret_order_id"] = int(out["secret_order_id"])
         out["rescript_pending"] = bool(out.get("rescript_pending"))
         try:
-            payload = json.loads(out.get("payload_json") or "{}")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} payload_json 无效") from exc
-        if not isinstance(payload, dict):
-            raise ValueError(f"案卷#{out['id']} payload_json 非对象")
+            payload = _load_durable_json_object(
+                out.get("payload_json"), surface=f"案卷#{out['id']} payload_json",
+            )
+        except ValueError as exc:
+            raise ValueError(f"案卷#{out['id']} payload_json 无效：{exc}") from exc
         out["payload"] = payload
         out["mode"] = cls._normalize_dossier_mode(
             payload["mode"] if "mode" in payload else "ordinary"
         )
         try:
-            stigma = json.loads(out.get("stigma_json") or "[]")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} stigma_json 无效") from exc
-        if not isinstance(stigma, list):
-            raise ValueError(f"案卷#{out['id']} stigma_json 非列表")
+            stigma = _load_durable_json_list(
+                out.get("stigma_json"), surface=f"案卷#{out['id']} stigma_json",
+            )
+        except ValueError as exc:
+            raise ValueError(f"案卷#{out['id']} stigma_json 无效：{exc}") from exc
         out["stigma"] = stigma
+        # 与 project_execution_liability_parties / participant_roster_names 共权威（#1897 E1）。
+        from ming_sim.participant_roster import decode_durable_participant_roster
         try:
-            roster = json.loads(out.get("participant_roster") or "[]")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} participant_roster 无效") from exc
-        if not isinstance(roster, list):
-            raise ValueError(f"案卷#{out['id']} participant_roster 非列表")
-        out["participant_roster"] = roster
+            out["participant_roster"] = decode_durable_participant_roster(
+                out.get("participant_roster"),
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"案卷#{out['id']} participant_roster 无效：{exc}"
+            ) from exc
         try:
-            extension = json.loads(out.get("extension_json") or "{}")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} extension_json 无效") from exc
-        if not isinstance(extension, dict):
-            raise ValueError(f"案卷#{out['id']} extension_json 非对象")
+            extension = _load_durable_json_object(
+                out.get("extension_json"),
+                surface=f"案卷#{out['id']} extension_json",
+            )
+        except ValueError as exc:
+            raise ValueError(f"案卷#{out['id']} extension_json 无效：{exc}") from exc
         signal = extension.get("execution_signal")
         if signal is not None and not isinstance(signal, dict):
             raise ValueError(f"案卷#{out['id']} execution_signal 非对象")
@@ -16344,13 +16395,18 @@ class GameDB:
                     assignee = str(pa["minister_name"] or "").strip()
                 if not assignee:
                     raise ValueError("持久字段 assignee 不得为空")
-                tags_raw = payload.get("tags") or []
-                tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
+                # 可选集合：缺省合法空；present 非 list/非 str 成员响亮（#1897 E1）。
+                # 禁 payload.get(key) or [] 的 falsy 洗空。
+                tags = _optional_payload_str_list(
+                    payload, "tags", surface="密令 tags",
+                )
                 deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
-                excluded = payload.get("excluded_names") or []
-                excluded = [str(t).strip() for t in excluded if str(t).strip()] if isinstance(excluded, list) else []
-                excluded_offices = payload.get("excluded_offices") or []
-                excluded_offices = [str(t).strip() for t in excluded_offices if str(t).strip()] if isinstance(excluded_offices, list) else []
+                excluded = _optional_payload_str_list(
+                    payload, "excluded_names", surface="密令 excluded_names",
+                )
+                excluded_offices = _optional_payload_str_list(
+                    payload, "excluded_offices", surface="密令 excluded_offices",
+                )
                 # pa["minister_name"] = audience speaker who captured the oral
                 # decree; may differ from final assignee (跨人承办).
                 # Stage-time pin: do not re-guess max(held) after confirm utterance.
@@ -16587,7 +16643,10 @@ class GameDB:
                 ):
                     return False
             return True
-        return False
+        # 未知 kind/action 是内部 schema 故障，不得标 failed+业务 invalid_state（#1897 E1）。
+        raise ValueError(
+            f"未知内部动作 {pa.get('kind')}/{pa.get('action')}"
+        )
 
     @staticmethod
     def _appointment_slice_from_combined_payload(
@@ -16964,8 +17023,7 @@ class GameDB:
 
     def withdraw_pending_action(self, action_id: int, turn: int) -> bool:
         """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。
-        已 committed / 非本回合 / 不存在 → False。
-        仍 inactive 的 office:<id> 传召 origin 同步清掉（#672 颁前反悔）。"""
+        已 committed / 非本回合 / 不存在 → False。"""
         owns_transaction = self.owns_transaction()
         row = self.conn.execute(
             "SELECT id, kind, version FROM pending_actions "
@@ -17020,8 +17078,7 @@ class GameDB:
         返回删除条数。只动该大臣、只动 pending(已 committed 不动)。
         action_ids 非空=进一步只删指定 pending_actions.id（召对确认只可作用于本轮开始前可见项）。
         kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
-        是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。
-        仍 inactive 的 office:<id> 传召 origin 随 pending 同步清（#672 颁前拒绝）。"""
+        是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。"""
         owns_transaction = self.owns_transaction()
         params: List[object] = [int(turn), str(minister_name)]
         where = "turn=? AND minister_name=? AND status='pending'"
@@ -17035,13 +17092,6 @@ class GameDB:
         if kind_filter_exclude is not None:
             where += " AND kind<>?"
             params.append(str(kind_filter_exclude))
-        office_ids = [
-            int(row["id"])
-            for row in self.conn.execute(
-                f"SELECT id FROM pending_actions WHERE {where} AND kind='office'",
-                tuple(params),
-            ).fetchall()
-        ]
         directive_ids = [
             int(row["id"])
             for row in self.conn.execute(
@@ -17055,10 +17105,6 @@ class GameDB:
             f"DELETE FROM pending_actions WHERE {where}",
             tuple(params),
         )
-        if office_ids:
-            from ming_sim.audience_night import discard_inactive_office_summon
-            for pending_id in office_ids:
-                discard_inactive_office_summon(self, pending_id)
         if owns_transaction:
             self.conn.commit()
         return cur.rowcount
@@ -19062,8 +19108,23 @@ class GameDB:
                 if strict_structured and tier_value is None:
                     raise _schema_error("参与人物 tier 必须显式提供")
                 tier = str(tier_value or ("" if strict_structured else "知情")).strip()
-                raw_role = str(value.get("role") or value.get("职分") or "")
-                role = raw_role if raw_role.strip() else ""
+                # 职分是自由文字：原值持久；strip 只作局部判空，不改写（#1897 E2）。
+                if "role" in value:
+                    role_raw = value.get("role")
+                elif "职分" in value:
+                    role_raw = value.get("职分")
+                else:
+                    role_raw = ""
+                if role_raw is None:
+                    role = ""
+                elif not isinstance(role_raw, str):
+                    if strict_structured or as_durable:
+                        raise _schema_error(
+                            f"参与人 role 须为字符串，得 {type(role_raw).__name__}"
+                        )
+                    role = str(role_raw)
+                else:
+                    role = role_raw
                 delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
             else:
                 if strict_structured:
@@ -20085,7 +20146,26 @@ class GameDB:
         if row is None or row["status"] != "active":
             return False
         persisted_title = title
-        tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
+        if tags is not None:
+            if not isinstance(tags, list):
+                raise ValueError(
+                    f"secret_orders#{int(order_id)} tags 须为列表，"
+                    f"得 {type(tags).__name__}"
+                )
+            tags_json = json.dumps(
+                _require_str_list_members(
+                    tags, surface=f"secret_orders#{int(order_id)} tags",
+                ),
+                ensure_ascii=False,
+            )
+        else:
+            # 保留原标签：空串/腐坏响亮，不 or "[]" 洗（#1897 E1）。
+            tags_json = json.dumps(
+                _load_durable_str_list(
+                    row["tags"], surface=f"secret_orders#{int(order_id)} tags",
+                ),
+                ensure_ascii=False,
+            )
         deadline = max(0, min(int(deadline_months or 0), 36))
         legacy_people, prior_targets = _load_secret_order_exclusions(
             row, surface=f"secret_orders#{int(order_id)}",
@@ -20160,7 +20240,9 @@ class GameDB:
                 "minister_name": r["minister_name"],
                 "title": r["title"],
                 "content": r["content"],
-                "tags": json.loads(r["tags"] or "[]"),
+                "tags": _load_durable_str_list(
+                    r["tags"], surface=f"secret_orders#{int(r['id'])} tags",
+                ),
                 "importance": int(r["importance"]),
                 "status": r["status"],
                 "result": r["result"] or "",

@@ -5633,35 +5633,6 @@ def _office_appointment_failure(
     return result
 
 
-def _is_typed_appointment_domain_fault(exc: BaseException) -> bool:
-    """Only already-classified domain faults become per-item reject."""
-    if isinstance(exc, OfficeAppointmentRejection):
-        return True
-    category = getattr(exc, "category", None)
-    return isinstance(category, str) and bool(category)
-
-
-def _office_appointment_after_failure(
-    db: GameDB,
-    content,
-    snapshot: Dict[str, object],
-    *,
-    name: str,
-    new_office: str,
-    exc: BaseException,
-    commit: bool,
-    kind: str = "",
-    reason_suffix: str = "",
-) -> Dict[str, object]:
-    """Rollback always; typed domain → reject; real write/code faults re-raise (#1897 E1)."""
-    _restore_person_write_state(db, content, snapshot, commit=commit)
-    if _is_typed_appointment_domain_fault(exc):
-        return _office_appointment_failure(
-            name, new_office, exc, kind=kind, reason_suffix=reason_suffix,
-        )
-    raise
-
-
 def apply_office_appointment(
     db: GameDB,
     state: GameState,
@@ -6693,10 +6664,20 @@ def _apply_dossier_participant_items(
                 raise ValueError("追加参与层级必须为主办/协办/知情")
             if not delegator_id:
                 raise ValueError("追加参与人必须注明委派人")
+            # 职分自由文字：原值运输；strip 只作局部判空，不改持久值（#1897 E2）。
+            role_raw = item.get("role")
+            if role_raw is None:
+                role = ""
+            elif not isinstance(role_raw, str):
+                raise ValueError(
+                    f"追加参与人职分须为原文，得 {type(role_raw).__name__}"
+                )
+            else:
+                role = role_raw
             addition = {
                 "character_id": character_id,
                 "tier": tier,
-                "role": str(item.get("role") or "").strip(),
+                "role": role,
                 "delegator_id": delegator_id,
             }
         except (TypeError, ValueError) as exc:
@@ -6715,7 +6696,7 @@ def _apply_dossier_participant_items(
                 if not any(
                     row.get("character_id") == character_id
                     and row.get("tier") == tier
-                    and row.get("role") == str(item.get("role") or "").strip()
+                    and row.get("role") == role
                     and row.get("delegator_id") == delegator_id
                     for row in existing.get("participant_roster", [])
                 ):

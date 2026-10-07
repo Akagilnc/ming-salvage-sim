@@ -1682,69 +1682,6 @@ def update_summon_travel_tone(
     return entry_id
 
 
-def ensure_inactive_office_summon(
-    db: Any, pending_id: int, person_name: str, *, night_id: int,
-    origin_chat_turn_id: int = 0,
-) -> int:
-    """Ensure the pre-close, inactive half of an appointment-plus-summon intent.
-
-    Binds origin_chat_turn_id so #506 undo of the staging turn erases this row;
-    still-inactive origins are also discarded on pending reject/withdraw.
-    """
-    origin = f"office:{int(pending_id)}"
-    existing = _ledger_by_origin_ref(db, origin)
-    if existing is not None:
-        return int(existing["id"])
-    if int(night_id) <= 0:
-        raise AudienceNightError("任命后传召须在召对夜内落账", code="night_not_found")
-    return append_ledger_entry(
-        db, int(night_id), person_names=[str(person_name).strip()],
-        tags=[METHOD_CHUANZHAO, _summon_origin_tag(origin)], origin_ref=origin,
-        origin_chat_turn_id=int(origin_chat_turn_id or 0),
-    )
-
-
-def discard_inactive_office_summon(db: Any, pending_id: int) -> bool:
-    """Delete still-inactive office:<pending_id> origin; refuse activated history.
-
-    Matches withdraw/drop owns_transaction: do not commit over a caller-owned
-    BEGIN/atomic, so outer rollback can restore pending + origin together.
-    """
-    conn = db.conn
-    owns_transaction = connection_owns_transaction(conn)
-    origin = f"office:{int(pending_id)}"
-    entry = _ledger_by_origin_ref(db, origin)
-    if entry is None:
-        return False
-    tags = list(entry.get("tags") or [])
-    # Activated / in-transit / settled rows are post-promulgation history — keep.
-    if TAG_SUMMON_UNSETTLED in tags or TAG_IN_TRANSIT in tags or TAG_SUMMON_SETTLED in tags:
-        return False
-    conn.execute(
-        "DELETE FROM story_ledger_entries WHERE id=?",
-        (int(entry["id"]),),
-    )
-    if owns_transaction:
-        conn.commit()
-    return True
-
-
-def activate_office_summon(db: Any, pending_id: int) -> Optional[Dict[str, Any]]:
-    """Activate the original inactive row; never append to a closed night."""
-    origin = f"office:{int(pending_id)}"
-    entry = _ledger_by_origin_ref(db, origin)
-    if entry is None:
-        return None
-    tags = list(entry["tags"])
-    if TAG_SUMMON_UNSETTLED not in tags:
-        tags.append(TAG_SUMMON_UNSETTLED)
-        db.conn.execute(
-            "UPDATE story_ledger_entries SET tags=? WHERE id=?",
-            (json.dumps(tags, ensure_ascii=False), int(entry["id"])),
-        )
-    return {**entry, "tags": tags}
-
-
 def commit_fresh_summons_for_night(
     db: Any,
     state: GameState,

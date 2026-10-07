@@ -1082,6 +1082,7 @@ def _attach_commission_escort(
 
 def _attach_commission_staging_fields(
     payload: Dict[str, Any], item: Mapping[str, object], *, turn: int,
+    db: Any = None,
 ) -> None:
     """透传既有 staging 字段：assignee / participant_roster / due_turn。
 
@@ -1106,15 +1107,27 @@ def _attach_commission_staging_fields(
         # 押解名单已先写入 participant_roster。此处再给一份名单时合并，
         # 不整表替换——否则押解人的职责与机械档从真源消失，只剩投影。
         # 复用 GameDB 现役 normalize + equality 追加（#1900 J19），不另维规则。
+        # 委派链走共同 validator 准入（#1897 E1），不拖到收夜才抛。
         from ming_sim.db import GameDB
 
+        if db is not None:
+            from ming_sim.cli_backend import normalize_draft_person_roster
+            # 引用/身份归一在当次名单上做；委派链相对合并后主协办集校验，
+            # 避免押解主办只在 existing 时被误拒（#1897 E1）。
+            roster = normalize_draft_person_roster(
+                roster, db=db, content=getattr(db, "content", None),
+                validate_delegations=False,
+            )
         existing = payload.get("participant_roster")
         # 新交办名单走既有严格参与人语义（ADR 0053／#1900 J19）：
         # 拒字符串兼容与缺档猜「知情」；完整条目 equality 合并不变。
-        payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+        merged = GameDB.merge_participant_roster_entries(
             existing if isinstance(existing, list) else [],
             roster,
         )
+        if db is not None:
+            db._validate_dossier_delegations(merged, as_declaration=True)
+        payload["participant_roster"] = merged
     elif lead and not isinstance(payload.get("participant_roster"), list):
         payload["participant_roster"] = [{
             "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
@@ -1307,8 +1320,19 @@ def _dispatch_commissions(
             if origin_mid is None:
                 _reject(rejected, item, "密令修改缺本轮口谕源轮", "missing_ref", source)
                 continue
+            # title 缺省＝沿用旧题；present 坏类型/空白逐项拒收。禁 falsy or 洗（#1897 E1）。
+            if "title" in update:
+                new_title = _declared_prose(update.get("title"))
+                if new_title is None:
+                    _reject(
+                        rejected, item, "密令修改标题须为非空原文",
+                        "invalid_shape", source,
+                    )
+                    continue
+            else:
+                new_title = target["title"]
             payload = {
-                "new_title": update.get("title") or target["title"],
+                "new_title": new_title,
                 "new_content": content_text,
                 "deadline_months": update.get("deadline_months", 0),
                 "origin_chat_message_id": origin_mid,
@@ -1727,9 +1751,9 @@ def _dispatch_commissions(
         # 与同函数 declaration_from_payload 接缝一致（#1900 J19-R1）；不整份中止。
         try:
             _attach_commission_staging_fields(
-                payload, item, turn=int(state.turn),
+                payload, item, turn=int(state.turn), db=db,
             )
-        except DecreeMaterializationValidationError as exc:
+        except (DecreeMaterializationValidationError, ValueError) as exc:
             _reject(
                 rejected, item, str(exc),
                 getattr(exc, "category", None) or "invalid_shape", source,

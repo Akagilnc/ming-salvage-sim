@@ -1909,10 +1909,12 @@ def _canon_person_id_keys(
 
 def normalize_draft_person_roster(
     roster: Any, *, db: Any, content: Any,
+    validate_delegations: bool = True,
 ) -> List[Dict[str, object]]:
     """人物参与人：normalize → 非人滤除 → canon → ADR 0053 校验。
 
     capture 与召对 materialize 共用；校验失败 raise ValueError（参与人物不存在…）。
+    validate_delegations=False：调用方将与既有名单合并后再验委派链（#1897 E1）。
     """
     if not isinstance(roster, list):
         raise ValueError("参与人须为对象列表")
@@ -1935,6 +1937,9 @@ def normalize_draft_person_roster(
             entry["delegator_id"] = delegator  # None if 非人
         person_roster.append(entry)
     db._validate_participant_roster_references(person_roster)
+    # 委派链与成案/追加同一权威；声明面 as_declaration → 领域拒收（#1897 E1）。
+    if validate_delegations:
+        db._validate_dossier_delegations(person_roster, as_declaration=True)
     return person_roster
 
 
