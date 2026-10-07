@@ -56,8 +56,12 @@ def test_prepare_writes_typed_tree_with_board_affairs_and_gazette_index(game, tm
 
     for rel in names:
         assert read_material(prepared.root, rel)
-    # 独立入档标题原文搬运，不解析 INDEX 的路径、日期或排版。
-    assert "辽东告急" in read_material(prepared.root, "INDEX.txt")
+    # 入档标题在 turn_reports 结构化字段；邸报路径在目录集合。
+    assert any(
+        str(row.get("title") or "") == "辽东告急"
+        for row in db.list_turn_reports()
+    )
+    assert any(p.startswith("邸报/") for p in names)
 
     # 无裸副本：不得直接倒出世界库/JSON。
     assert not any(n.lower().endswith((".db", ".sqlite", ".sqlite3", ".json")) for n in names)

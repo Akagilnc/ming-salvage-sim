@@ -171,9 +171,7 @@ def test_web_entry_captures_before_await_close(web_game, monkeypatch):
     # 真失败后展示态退出
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
-    detail = resp.json()["detail"]
-    text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
-    assert _IN_FLIGHT_DETAIL in text
+    assert resp.json()["detail"] == _IN_FLIGHT_DETAIL
 
 
 # ── 3. 真失败另形：pending 抽取仍失败 → 人话 + 展示态退出 ──────────────
@@ -425,9 +423,7 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
 
     resp = asyncio.run(go())
     assert resp.status_code == 409, resp.text
-    detail = resp.json()["detail"]
-    text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
-    assert _GATE_BUSY_DETAIL in text
+    assert resp.json()["detail"] == _GATE_BUSY_DETAIL
     # 点即入曾发生
     assert saw.get("snap") == before
     # 拒收后不得留孤儿核账展示态
@@ -615,8 +611,22 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     t.join()
     assert "err" not in b_result, b_result.get("err")
     assert b_result.get("status") == 200, b_result
-    # SSE 外层 event 名；不锁自由正文。
-    assert "event: error" in (b_result.get("body") or ""), b_result
+    # SSE 事件字段；不扫整流正文。
+    body = b_result.get("body") or ""
+    events = []
+    for block in body.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        ev_name = ""
+        data_raw = ""
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                ev_name = line.split(":", 1)[1].strip()
+            elif line.startswith("data:"):
+                data_raw += line.split(":", 1)[1].strip()
+        if ev_name and data_raw:
+            events.append(ev_name)
+    assert events and events[-1] == "error", events
     # B 进 resolve 后 session 再创建了孤儿快照
     assert saw["session_reaccept"] is True
     # B finally 须清掉该孤儿（created_display=False 不得再跳过 exit）

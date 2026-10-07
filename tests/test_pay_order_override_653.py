@@ -225,8 +225,8 @@ def test_expired_only_keys_return_none_fast_path():
 
 # ═══════════════ F1.6 验收表 golden ①–⑦ ═══════════════
 
-def test_golden1_pay_order_reversal_breakdown_tsv():
-    """①「边饷居末、官俸优先」：省内池不足时军饷先欠、官俸足付；实付分账可 TSV 断言。"""
+def test_golden1_pay_order_reversal_breakdown():
+    """①「边饷居末、官俸优先」：省内池不足时军饷先欠、官俸足付；实付分账读 breakdown。"""
     st, p = _board(gross=0.0)  # 省内可支＝实征 10，祖制序下全被军饷吃光
     base = settle_tick(copy.deepcopy(st), copy.deepcopy(p), [])
     assert base.breakdown["实付分账"]["军饷"] == pytest.approx(10.0)
@@ -236,11 +236,9 @@ def test_golden1_pay_order_reversal_breakdown_tsv():
     p2 = dict(p)
     p2["due_order"] = ["官俸", "宗禄", "赈济", "军饷"]
     res = settle_tick(st, p2, [])
-    tsv = "\n".join(f"{k}\t{res.breakdown['实付分账'][k]}" for k in p2["due_order"])
-    assert tsv.splitlines()[0] == "官俸\t3.0"       # 官俸足付
-    assert tsv.splitlines()[0].startswith("官俸\t3.0")
-    last_cell = float(tsv.splitlines()[-1].split("\t")[1])
-    assert last_cell == pytest.approx(1.93)          # 边饷居末只捡残池
+    paid = res.breakdown["实付分账"]
+    assert paid["官俸"] == pytest.approx(3.0)       # 官俸足付
+    assert paid["军饷"] == pytest.approx(1.93)      # 边饷居末只捡残池
     assert res.breakdown["NewDebt"]["军饷欠"] == pytest.approx(16.07)
     assert res.breakdown["NewDebt"]["官俸欠"] == 0.0
     assert res.new_st["军饷欠"] == pytest.approx(36.07)  # 旧欠20 + 新欠16.07

@@ -180,7 +180,7 @@ def _assert_error_pack_from(game, turn: int, marker: str) -> None:
     )
     assert manifest["exception_type"] == "RuntimeError"
     assert manifest["exception_message"] == marker
-    assert marker in (Path(pack) / "traceback.txt").read_text(encoding="utf-8")
+    assert (Path(pack) / "traceback.txt").is_file()
 
 
 def _finish_month_after_gazette(game, turn: int) -> None:

@@ -57,6 +57,25 @@ def _runtime(db, state):
     return runtime
 
 
+def _parse_sse(text: str) -> list[tuple[str, object]]:
+    """SSE 事件名 + data 字段；不把整流正文当断言载体。"""
+    events: list[tuple[str, object]] = []
+    for block in text.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        ev_name = ""
+        data_raw = ""
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                ev_name = line.split(":", 1)[1].strip()
+            elif line.startswith("data:"):
+                data_raw += line.split(":", 1)[1].strip()
+        if not ev_name or not data_raw:
+            continue
+        events.append((ev_name, json.loads(data_raw)))
+    return events
+
+
 async def _drain_resolve_sse(choices):
     response = await web_app.api_resolve_decisions_stream(
         web_app.ResolveDecisionsRequest(choices=choices),
@@ -170,7 +189,8 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
 
     serialized = asyncio.run(_go())
     assert entered["n"] == 1
-    assert "event: done" in serialized
+    events = _parse_sse(serialized)
+    assert events and events[-1][0] == "done", events
     # 快照仍在（本替身 submit 未推进月份）；phase2 窗内展示态真源不灭
     assert db.get_month_open_snapshot(int(state.turn)) == before
 
@@ -194,7 +214,8 @@ def test_resolve_stream_entry_failure_exits_display_when_not_front_half(game, mo
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
     serialized = asyncio.run(_drain_resolve_sse([{"label": "发"}]))
-    assert "event: error" in serialized
+    events = _parse_sse(serialized)
+    assert events and events[-1][0] == "error", events
     assert db.get_month_open_snapshot(int(state.turn)) is None
     assert runtime.state_payload()["turn"]["settlement_display"] is False
 
@@ -235,7 +256,7 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
     monkeypatch.setattr(mos, "clear_orphan_month_open_snapshot", _boom_orphan)
 
     serialized = asyncio.run(_drain_resolve_sse([{"label": "发"}]))
-    assert "event: done" not in serialized, "clear 抛后禁推 done"
-    assert "event: error" in serialized
-    assert "stream clear boom" in serialized
+    events = _parse_sse(serialized)
+    assert events, serialized
+    assert [name for name, _ in events] == ["error"], events
     assert runtime.state_payload()["turn"]["settlement_display"] is False

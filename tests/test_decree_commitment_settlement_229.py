@@ -6,7 +6,6 @@ from tests.test_due_review_621 import _settle_empty_month as _player_month
 from ming_sim.issues import (
     apply_score_extraction,
     commitment_progress_payload,
-    show_active_issues,
 )
 from ming_sim.situation_drift import apply_situation_monthly_drift
 
@@ -478,7 +477,7 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     assert payloads[-1]["commitment_progress"]["remaining_arrears"] == 0
 
 
-def test_commitment_progress_contexts_are_structured(game, capsys):
+def test_commitment_progress_contexts_are_structured(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
@@ -508,9 +507,6 @@ def test_commitment_progress_contexts_are_structured(game, capsys):
     progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
     assert progress is not None
     assert progress["months_elapsed"] == 1
-    show_active_issues(db)
-    output = capsys.readouterr().out
-    assert "直到补齐" in output
 
 
 

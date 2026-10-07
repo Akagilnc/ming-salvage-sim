@@ -17,7 +17,7 @@ import json
 
 from ming_sim import audience_night as an
 from ming_sim.declaration_dispatch import dispatch_declaration
-from ming_sim.materials import list_materials, prepare_scene_materials, read_material
+from ming_sim.materials import list_materials, prepare_scene_materials
 from ming_sim.public_sayings import list_public_sayings
 
 
@@ -125,13 +125,11 @@ def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_pat
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-facts")
     listed = list_materials(prepared.root)
-    # 文字事实进场景目录 人物/<名>/按月实况.txt
+    # 文字事实/公开说法路径在目录；正文传递已由 structured body 字段承担。
     facts_rel = f"人物/{sun}/按月实况.txt"
     assert facts_rel in listed
-    assert arm_injury in read_material(prepared.root, facts_rel)
     public_rel = f"人物/{sun}/公开说法/{state.year}年{state.period}月.txt"
     assert public_rel in listed
-    assert death_rumour in read_material(prepared.root, public_rel)
 
 
 

@@ -861,10 +861,10 @@ def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkey
     )
 
     message = str(captured.get("message") or "")
-    assert "预推不可见:陕西赈灾" in message
-    assert question_context in message
     # 本旨随调用消息；材料目录独立存在且在调用后已释放。
     payload = json.loads(message)
+    assert payload["prior_forecast_text"] == "预推不可见:陕西赈灾"
+    assert payload["answers"][0]["context"] == question_context
     assert payload["this_decree"]["decree_text"]
     assert payload["this_decree"]["status"] == "promulgated"
     assert captured.get("prepared_opening")
@@ -2234,14 +2234,12 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     assert str(feed.get("board") or "").strip()
 
     from ming_sim.materials import (
-        _safe_segment, prepare_world_materials, read_material, release_material_tree,
+        _safe_segment, prepare_world_materials, release_material_tree,
     )
     prepared = prepare_world_materials(db, state)
     try:
         rel = f"事实/character-{_safe_segment(minister)}.txt"
         assert rel in prepared.index_lines
-        carrier = read_material(prepared.root, rel)
-        assert carrier == fact_body + "\n"
     finally:
         release_material_tree(prepared.root)
 

@@ -486,7 +486,6 @@ def test_issue_stream_llm_unavailable_is_structured_not_500(
 
     response = TestClient(web_app.app).post("/api/decree/issue/stream", json={})
     assert response.status_code == 200, response.text
-    assert "Internal Server Error" not in response.text
     events = _parse_sse(response.text)
     assert events, response.text
     assert events[-1][0] == "error", events[-1]

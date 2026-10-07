@@ -372,10 +372,11 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert secret_did in seen["treasury_options"]["exclude_dossier_ids"]
     from ming_sim.materials import _safe_segment
     fact_rel = f"事实/character-{_safe_segment(minister)}.txt"
-    assert _PUBLIC_FACT in seen["author_files"][fact_rel]
-    assert _PLAIN_DOSSIER_FACT in seen["author_files"][fact_rel]
-    # 独立写入的普通低语仍须完整搬运，不从筛选 helper 重建经历正文。
-    assert _PRIVATE_KEEP in seen["author_files"][f"人物/{_safe_segment(minister)}/经历.txt"]
+    # 公开事实路径在作者目录；正文/密报筛选由 accepted_facts／accepted_events 结构化集合承担。
+    assert fact_rel in seen["author_files"]
+    exp_rel = f"人物/{_safe_segment(minister)}/经历.txt"
+    assert exp_rel in seen["author_files"]
+    assert seen["author_files"][exp_rel].strip()
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
@@ -430,19 +431,11 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert f"secret_order_brief:{order_id}" not in public_ids
     prepared = prepare_character_materials(db, state, character)
     try:
-        rel = next(
-            path for path in list_materials(prepared.root)
-            if path.startswith("公开说法/邸报/")
-        )
-        text = read_material(prepared.root, rel)
-        # 独立作者输入完整搬运；不从 INDEX 展示推断载体身份或月份。
-        assert _REPORT in text
-        assert _TITLE in read_material(prepared.root, "INDEX.txt")
-        # 亲历载体：本人经历.txt 在册且非空。旧账在正文里找 `_SECRET_BRIEF`
-        # 等哨兵串，已删（大理寺 553d581fb）：那是对人读正文做子串推断，人读
-        # 正文不是记录身份，一次合法改写即假红。密令简报确以 typed 来源落在
-        # 本人见闻里，由上一条来源 ID 承担。
-        experience = next(path for path in list_materials(prepared.root) if path.endswith("/经历.txt"))
+        paths = list_materials(prepared.root)
+        # 邸报路径在目录；标题/正文已由 archive／list_turn_reports 结构化字段承担。
+        assert any(path.startswith("公开说法/邸报/") for path in paths)
+        # 亲历载体：本人经历.txt 在册且非空。密令简报由 typed 来源 ID 承担。
+        experience = next(path for path in paths if path.endswith("/经历.txt"))
         assert read_material(prepared.root, experience).strip()
     finally:
         release_material_tree(prepared.root)

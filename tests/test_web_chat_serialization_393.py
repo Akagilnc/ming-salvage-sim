@@ -306,7 +306,12 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     first = asyncio.run(drive_first_event())
 
     assert events == ["tick", "stream"]
-    assert "event: done" in first
+    first_event_name = ""
+    for line in str(first).splitlines():
+        if line.startswith("event:"):
+            first_event_name = line.split(":", 1)[1].strip()
+            break
+    assert first_event_name == "done", first
 
 
 def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkeypatch):

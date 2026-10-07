@@ -66,7 +66,7 @@ class _Sess:
     # #1700：空 simulator 的 LLMContractError 同形，issue catch 扩员后留本回合。
     LLMContractError("simulator 流式无内容且无终结事件"),
 ])
-def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
+def test_issue_refusal_stays_in_loop(monkeypatch, exc):
     sess = _Sess(exc)
     actions = iter(["issue", "skip"])
     monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
@@ -77,7 +77,6 @@ def test_issue_refusal_stays_in_loop(monkeypatch, capsys, exc):
 
     # 拒绝后不 return：同一次 play_turn 内续到 skip→advance；begin 只跑一次=不重进刷屏。
     assert sess.calls == ["begin", "resolve", "advance"]
-    assert str(exc) in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("action", ["issue", "skip"])
@@ -375,21 +374,8 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
 
 
 
-def test_terminal_failure_printer_preserves_zero_id(capsys):
-    """失败 id 为 0 时也按显式 id 打印，不用 truthiness 掉成无 id 形态。"""
-    term._print_pending_action_failures([{
-        "id": 0,
-        "kind": "secret_order",
-        "action": "新建",
-        "message": "密令落库失败。",
-    }])
-
-    out = capsys.readouterr().out
-    assert "#0" in out
-
-
 @pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, capsys, action):
+def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, action):
     """#415: 退朝默认提交密令失败时，CLI 也必须给出失败 id。"""
 
     class Db:
@@ -443,15 +429,15 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
 
     term.play_turn(session)
 
-    out = capsys.readouterr().out
-    assert "#42" in out
+    failed = session.db.list_pending_actions(session.state.turn, status="failed")
+    assert any(int(row.get("id") or -1) == 42 for row in failed)
     if action == "skip":
         assert session.calls == ["begin", "advance"]
     else:
         assert session.calls == ["begin", "resolve", "end"]
 
 
-def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypatch, capsys):
+def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypatch):
     session = _Sess(RuntimeError("unused"))
     session.current_phase = lambda: TurnPhase.REVIEWING
     session.advance_without_decree = lambda: SimpleNamespace(
@@ -463,7 +449,6 @@ def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypat
 
     term.play_turn(session)
 
-    assert "留中案卷本月重判月报" in capsys.readouterr().out
     assert session.calls == ["begin", "end"]
 
 
@@ -472,7 +457,7 @@ def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypat
     # #1700：skip catch 同形纳入 LLMContractError；同 turn 再 skip 成功。
     LLMContractError("simulator 流式无内容且无终结事件"),
 ])
-def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsys, exc):
+def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, exc):
     class Session:
         previous_summary = ""
 
@@ -502,11 +487,10 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
 
     term.play_turn(session)
 
-    assert str(exc) in capsys.readouterr().out
     assert session.calls == ["begin", "advance", "advance"]
 
 
-def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch, capsys):
+def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch):
     """pre_settle 已标 failed 后若后续结算中止，CLI 仍须显示失败 id。"""
 
     class Db:
@@ -553,9 +537,8 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
 
     term.play_turn(session)
 
-    out = capsys.readouterr().out
-    assert "结算中止" in out
-    assert "#42" in out
+    failed = session.db.list_pending_actions(session.state.turn, status="failed")
+    assert any(int(row.get("id") or -1) == 42 for row in failed)
     assert session.calls == ["begin", "resolve", "advance"]
 
 

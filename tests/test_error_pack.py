@@ -143,16 +143,22 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
         return "".join(chunks)
 
     serialized = asyncio.run(_consume())
-    assert "Internal Server Error" not in serialized
-    event_line = None
-    data_line = None
-    for line in serialized.strip().splitlines():
-        if line.startswith("event:"):
-            event_line = line.split(":", 1)[1].strip()
-        elif line.startswith("data:"):
-            data_line = line.split(":", 1)[1].strip()
-    assert event_line == "error", serialized
-    detail = json.loads(data_line or "{}")
+    events = []
+    for block in serialized.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        ev_name = ""
+        data_raw = ""
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                ev_name = line.split(":", 1)[1].strip()
+            elif line.startswith("data:"):
+                data_raw += line.split(":", 1)[1].strip()
+        if ev_name and data_raw:
+            events.append((ev_name, json.loads(data_raw)))
+    assert events, serialized
+    assert events[-1][0] == "error", events[-1]
+    detail = events[-1][1]
     assert detail["stage"] == "extract"
     assert detail["error_pack_path"] == "/tmp/x"
     assert detail["turn"] == 3

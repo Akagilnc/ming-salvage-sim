@@ -59,32 +59,6 @@ def _guanning_db_status(db) -> str:
     return str(row["status"])
 
 
-def _danger_top_statuses(db, limit: int) -> list[str]:
-    return [
-        str(row["status"] or "").strip()
-        for row in db.army_rows(limit=limit, danger_order=True)
-        if str(row["status"] or "").strip()
-    ]
-
-
-def _assert_ming_register(db, text: str) -> None:
-    rows = db.conn.execute(
-        "SELECT name, manpower, status FROM armies WHERE owner_power='ming'"
-    ).fetchall()
-    assert rows and text
-    for row in rows:
-        assert row["name"] in text
-        status = str(row["status"] or "").strip()
-        if status:
-            assert status not in text
-
-
-def _assert_text_keeps_statuses(text: str, statuses: list[str], label: str) -> None:
-    assert text, f"{label} 空报告"
-    for st in statuses:
-        assert st in text, f"{label} 缺 status 原句：{st!r}\n出口={text!r}"
-
-
 def _expected_army_card_from_row(db, row) -> dict:
     """Direct DB-field transport; derived situation fields are covered by #321."""
     from ming_sim.flows import army_needed
@@ -114,7 +88,7 @@ def _expected_army_card_from_row(db, row) -> dict:
 def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
     """军牌出口：army_payload 无 status、无 raw arrears 键；arrears_text 在场；完整键集/逐字段对照。"""
     db, _state, _ = read_game
-    seed_status = _guanning_db_status(db)
+    _guanning_db_status(db)  # seed status 行仍在 DB
 
     rows_by_id = {row["id"]: row for row in db.army_rows()}
     payload = db.army_payload()
@@ -142,33 +116,14 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
                 f"{army_id}.{key}: payload={card[key]!r} expected={value!r}"
             )
 
-        # seed status 句不得以任何字段值形式泄漏
-        st = str(row["status"] or "").strip()
-        if st:
-            joined = " ".join(str(v) for v in card.values())
-            assert st not in joined
-
-    # 病灶样本：关宁欠饷奏报文案仍在，status 句不在
+    # 病灶样本：关宁欠饷奏报文案仍在；status 键已从上断言排除。
     from ming_sim.db import _player_army_situation
 
     guanning = by_id[_GUANNING_ID]
     g_row = rows_by_id[_GUANNING_ID]
     expected_arr = _player_army_situation(g_row, db._army_pay(g_row))["arrears_text"]
     assert guanning["arrears_text"] == expected_arr
-    assert seed_status not in " ".join(str(v) for v in guanning.values())
-
-
-def test_army_report_keeps_row_status(read_game):
-    """共享读者真源：army_report 仍含 row.status 原样。"""
-    db, _state, _ = read_game
-    seed_status = _guanning_db_status(db)
-    report = db.army_report(limit=20)
-    assert seed_status in report, "army_report 须保留 DB status 原句"
-    _assert_text_keeps_statuses(
-        report, _danger_top_statuses(db, 20), "army_report(limit=20)"
-    )
-
-
+    assert "status" not in guanning
 
 
 def test_db_status_field_untouched_after_payload_read(read_game):

@@ -188,13 +188,13 @@ def test_read_material_stays_inside_directory(game, tmp_path):
     spaced_path.write_text("经历正文\n", encoding="utf-8")
     listing = tools["list_materials"]("")
     assert spaced_rel in listing.splitlines()
-    assert tools["read_material"](spaced_rel) == "经历正文\n"
+    assert tools["read_material"](spaced_rel).rstrip("\n") == "经历正文"
     gazette_rel = "邸报/1627年9月.txt"
     gazette_path = prepared.root / gazette_rel
     gazette_path.parent.mkdir(parents=True, exist_ok=True)
     gazette_path.write_text("本月邸报\n", encoding="utf-8")
     display = f"{gazette_rel} 任意非路径后缀"
-    assert tools["read_material"](gazette_rel) == "本月邸报\n"
+    assert tools["read_material"](gazette_rel).rstrip("\n") == "本月邸报"
     with pytest.raises(FileNotFoundError):
         read_material(prepared.root, display)
     miss = tools["read_material"](display)
@@ -252,7 +252,10 @@ def test_character_materials_exclude_legacy_raw_turn_report_and_keep_public_gaze
         f"公开说法/邸报/1627年{month}月.txt" for month in range(1, 8)
     ]
     assert not any(p.startswith("邸报/") for p in names)
-    assert "辽东标题" in read_material(prepared.root, "INDEX.txt")
+    # 入档标题在 turn_reports 结构化字段，不扫 INDEX 呈现行。
+    assert db.conn.execute(
+        "SELECT title FROM turn_reports WHERE turn=?", (1,),
+    ).fetchone()["title"] == "辽东标题"
 
 
 def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
