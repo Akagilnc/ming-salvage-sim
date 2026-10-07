@@ -352,10 +352,18 @@ def _spoken_this_scene(db: Any, character: Any) -> str:
 
 
 def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
-    """ADR 0154：issue 若已指向某 affair，返回该 affair id；未挂靠返 0。"""
+    """ADR 0154：issue 若已指向某 affair，返回该 affair id；未挂靠返 0。
+
+    Missing issue (KeyError) is not a link. Corrupt durable ``issues.affair_id``
+    raises from AffairStore.affair_id_for_issue (F39) — never wash into unlinked.
+    """
     try:
-        return int(db.affairs.affair_id_for_issue(int(issue_id)))
-    except (KeyError, TypeError, ValueError):
+        iid = int(issue_id)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    try:
+        return int(db.affairs.affair_id_for_issue(iid))
+    except KeyError:
         return 0
 
 

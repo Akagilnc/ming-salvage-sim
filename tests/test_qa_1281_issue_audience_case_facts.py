@@ -1,4 +1,8 @@
-"""#1281: issue materials = knowledge visibility ∪ audience-named supplement."""
+"""#1281: issue materials = knowledge visibility ∪ audience-named supplement.
+
+Contracts run through prepare_character_materials (F45): the retired
+project_issue_materials helper is not a second authority.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +11,6 @@ from dataclasses import replace
 
 import pytest
 
-from ming_sim.knowledge import project_issue_materials
 from ming_sim.materials import _safe_segment, list_materials, prepare_character_materials
 
 
@@ -39,16 +42,6 @@ def test_issue_materials_keep_knowledge_visibility_without_audience_veto(game, t
     assert any(int(row["id"]) == issue_id for row in audience_knowledge.get("issues") or [])
     assert any(int(row["id"]) == issue_id for row in outsider_knowledge.get("issues") or [])
 
-    audience_projection = project_issue_materials(db, AUDIENCE_NAME, audience_knowledge)
-    outsider_projection = project_issue_materials(db, NON_AUDIENCE_NAME, outsider_knowledge)
-    audience_row = next(row for row in audience_projection if row["id"] == issue_id)
-    outsider_row = next(row for row in outsider_projection if row["id"] == issue_id)
-
-    assert audience_row["source_id"] == f"issue:{issue_id}"
-    assert outsider_row["source_id"] == f"issue:{issue_id}"
-    assert AUDIENCE_NAME in audience_row["audience_names"]
-    assert NON_AUDIENCE_NAME not in outsider_row["audience_names"]
-
     audience = prepare_character_materials(
         db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "audience",
     )
@@ -70,11 +63,6 @@ def test_empty_audience_is_empty_supplement_not_knowledge_veto(game, tmp_path):
 
     knowledge = db.get_character_knowledge(state, AUDIENCE_NAME)
     assert any(int(item["id"]) == issue_id for item in knowledge.get("issues") or [])
-    projected = next(
-        item for item in project_issue_materials(db, AUDIENCE_NAME, knowledge)
-        if item["id"] == issue_id
-    )
-    assert projected["audience_names"] == ()
 
     prepared = prepare_character_materials(
         db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
@@ -97,13 +85,6 @@ def test_audience_supplement_grants_originating_issue_outside_knowledge(game, tm
     outsider_knowledge = db.get_character_knowledge(state, NON_AUDIENCE_NAME)
     assert all(int(item["id"]) != issue_id for item in audience_knowledge.get("issues") or [])
     assert all(int(item["id"]) != issue_id for item in outsider_knowledge.get("issues") or [])
-
-    audience_projection = project_issue_materials(db, AUDIENCE_NAME, audience_knowledge)
-    outsider_projection = project_issue_materials(db, NON_AUDIENCE_NAME, outsider_knowledge)
-    projected = next(item for item in audience_projection if item["id"] == issue_id)
-    assert projected["source_id"] == f"issue:{issue_id}"
-    assert AUDIENCE_NAME in projected["audience_names"]
-    assert all(item["id"] != issue_id for item in outsider_projection)
 
     audience = prepare_character_materials(
         db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "audience",
