@@ -118,7 +118,7 @@ def _apply_existing_appointment_hit(
             current = session.db.conn.execute(
                 "SELECT payload_json FROM pending_actions WHERE id=?", (resolved,),
             ).fetchone()
-            stored = json.loads(current["payload_json"] or "{}")
+            stored = _pending_payload_dict(current)
             stored.update(recommendation_fields)
             session.db.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -178,12 +178,7 @@ def stage_pacification_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
+        payload = _pending_payload_dict(row)
         if str(payload.get("dossier_action_type") or "").strip() != "pacification":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -339,12 +334,7 @@ def stage_punishment_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
+        payload = _pending_payload_dict(row)
         if str(payload.get("dossier_action_type") or "").strip() != "punishment":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -848,12 +838,20 @@ def _list_pending_office_rows(
     return out
 
 
+def _pending_payload_dict(row: Mapping[str, Any]) -> Dict[str, Any]:
+    """已持久 pending 候选载荷：复用引擎读路，腐坏响亮（#1897 E1 / ADR 0005）。"""
+    from ming_sim.db import GameDB
+
+    return dict(
+        GameDB.parse_engine_payload_json(
+            row["payload_json"],
+            surface="pending_actions.payload_json",
+        )
+    )
+
+
 def _office_payload(row: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    return _pending_payload_dict(row)
 
 
 def _match_office_row_by_name_office(
@@ -1160,18 +1158,8 @@ def _resolve_pending_target_candidate(
             continue
         if int(row["id"]) != want_id:
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError) as exc:
-            raise DecreeMaterializationValidationError(
-                f"续办目标候选载荷损坏：{want_id}",
-                failed_fields=("target_candidate",),
-            ) from exc
-        if not isinstance(payload, dict):
-            raise DecreeMaterializationValidationError(
-                f"续办目标候选载荷损坏：{want_id}",
-                failed_fields=("target_candidate",),
-            )
+        # 已持久候选解码/schema 故障响亮上抛，不洗成声明拒收（#1897 E1）。
+        payload = _pending_payload_dict(row)
         if str(payload.get("dossier_action_type") or "").strip() != expected_action:
             raise DecreeMaterializationValidationError(
                 f"续办目标候选类型不匹配：{want_id}",

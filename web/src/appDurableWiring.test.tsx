@@ -1355,8 +1355,7 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host.querySelector('[data-directive-phase="failed"]')).toBeNull();
     expect(host.querySelector('[data-role="local-error"]')).toBeNull();
     expect(host.querySelector(".directive-edit")).toBeNull();
-    expect(host.textContent).not.toContain("old-month-local-fail");
-    expect(host.textContent).not.toContain("旧月未落库改稿");
+    // 新月恢复面已由结构节点证明；不以旧错/改稿自由文作正文哨兵（#1897 T1）。
   });
 
   it("#1852 真实页面：服务端已推进但载入新月失败时邸报可读可关、旧月入口不可提交", async () => {
@@ -1734,12 +1733,10 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
 
     await act(async () => { await Promise.resolve(); });
+    // 等待面／锁饰不出现；不以 SSE 自由正文作 textContent 哨兵（#1897 T1）。
     expect(host.querySelector('[data-testid="settlement-wait-progress"]')).toBeNull();
     expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
     expect(host.querySelector(".settlement-lock")).toBeNull();
-    expect(host.textContent).not.toContain("推敲片段甲");
-    expect(host.textContent).not.toContain("奏章片段乙");
-    expect(host.textContent).not.toContain("任意显示文案");
     // 核账叙事仍在（王承恩固定提示）
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
 

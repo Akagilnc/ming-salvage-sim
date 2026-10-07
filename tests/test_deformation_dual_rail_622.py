@@ -137,9 +137,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     assert len(xf_progress) == 1
     assert xf_dossier["execution_outcome"] == "transformed"
     assert db.list_economy_moves_for_dossier(xf_id)
-    # 机械分叉：list_dossier_progress band 面 ≠ 英文执行格原串
-    bands = {r["progress_band"] for r in xf_progress}
-    assert "transformed" not in bands
+    # progress_band 是自由奏报面，不以英文执行格作禁词门（#1897 T1）。
 
     # AC4：restore 后旨外效果可溯源
     backup = tmp_path / "restore-622.db"

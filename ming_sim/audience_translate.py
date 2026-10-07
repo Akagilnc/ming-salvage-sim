@@ -70,13 +70,14 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     sql += " ORDER BY id"
     rows = db.conn.execute(sql, tuple(params)).fetchall()
     out: List[str] = []
+    from ming_sim.db import GameDB
+
     for row in rows:
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        # 已持久 pending 载荷腐坏响亮，不静默成空摘要（#1897 E1 / ADR 0005）。
+        payload = GameDB.parse_engine_payload_json(
+            row["payload_json"],
+            surface="pending_actions.payload_json",
+        )
         # #1897：pending 摘要供料保留 payload 自由正文，禁 strip。
         text = str(payload.get("text") or row["action"] or "")
         brief = text if text else str(row["kind"] or "")

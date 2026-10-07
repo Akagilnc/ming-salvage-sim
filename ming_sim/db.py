@@ -17320,12 +17320,10 @@ class GameDB:
                 f"暂存动作状态不可挂背书：{row['status']}",
                 failed_fields=("status",), category="invalid_item",
             )
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        # 已持久候选解码响亮，不吞成空背书底（#1897 E1）。
+        payload = self.parse_engine_payload_json(
+            row["payload_json"], surface="pending_actions.payload_json",
+        )
         form = str(entry.get("form") or "").strip()
         endorser_id = str(entry.get("endorser_id") or "").strip()
         imperial = bool(entry.get("imperial", False))
@@ -17751,11 +17749,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             return 0
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (ValueError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict) or "_needs_clarification" not in payload:
+        payload = self.parse_engine_payload_json(
+            row["payload_json"], surface="pending_actions.payload_json",
+        )
+        if "_needs_clarification" not in payload:
             return int(candidate_id)
         payload.pop("_needs_clarification", None)
         self.conn.execute(
@@ -17910,12 +17907,9 @@ class GameDB:
         ).fetchone()
         if row is None:
             return 0
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (ValueError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = dict(self.parse_engine_payload_json(
+            row["payload_json"], surface="pending_actions.payload_json",
+        ))
         payload["_needs_clarification"] = True
         self.conn.execute(
             "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -17997,10 +17991,11 @@ class GameDB:
             or pa.get("action") != "拟旨"
         ):
             return {"classification": "invalid"}
+        # 已持久候选 JSON 腐坏响亮上抛；领域归一失败才归 invalid（#1897 E1）。
+        payload = self.parse_engine_payload_json(
+            pa.get("payload_json"), surface="pending_actions.payload_json",
+        )
         try:
-            payload = json.loads(str(pa.get("payload_json") or "{}"))
-            if not isinstance(payload, dict):
-                return {"classification": "invalid"}
             if payload.get("_needs_clarification") and not allow_clarification:
                 return {"classification": "needs_clarification"}
             payload = self._normalize_directive_dossier_payload(
@@ -18094,12 +18089,11 @@ class GameDB:
                 if classification == "invalid":
                     cm = atomic(self) if owns_transaction else contextlib.nullcontext()
                     with cm:
-                        try:
-                            inv_payload = json.loads(pa["payload_json"] or "{}")
-                            if not isinstance(inv_payload, dict):
-                                inv_payload = {}
-                        except (ValueError, TypeError):
-                            inv_payload = {}
+                        # 领域 invalid 前 JSON 已可解析；再读仍走响亮契约。
+                        inv_payload = self.parse_engine_payload_json(
+                            pa.get("payload_json"),
+                            surface="pending_actions.payload_json",
+                        )
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
@@ -18121,12 +18115,10 @@ class GameDB:
                 if committed is not None:
                     applied.append(committed)
                 continue
-            try:
-                payload = json.loads(pa["payload_json"] or "{}")
-                if not isinstance(payload, dict):
-                    payload = {}
-            except (ValueError, TypeError):
-                payload = {}
+            # 已持久候选解码故障响亮，不洗成空载荷续 apply（#1897 E1）。
+            payload = self.parse_engine_payload_json(
+                pa.get("payload_json"), surface="pending_actions.payload_json",
+            )
             # apply 抛错(如 催办 对已非 active 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
             cm = atomic(self) if owns_transaction else contextlib.nullcontext()
@@ -21505,12 +21497,9 @@ class GameDB:
                 if mid > 0:
                     out[mid] = True
         for row in pending_rows:
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(payload, dict):
-                continue
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="pending_actions.payload_json",
+            )
             mid = self._parse_origin_chat_message_id(payload)
             if mid is not None:
                 out.setdefault(mid, False)
