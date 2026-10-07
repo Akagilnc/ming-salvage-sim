@@ -1132,7 +1132,7 @@ def _dispatch_commissions(
                 continue
             try:
                 origin_id = strict_int(strategy.get("source_chat_turn_id"), accept_numeric_strings=False)
-            except (TypeError, ValueError, OverflowError):
+            except (TypeError, ValueError):
                 origin_id = 0
             target_id = strategy.get("target_id")
             if not body or not actor or not isinstance(target_id, str) or not target_id.strip() or origin_id <= 0:
@@ -1177,7 +1177,7 @@ def _dispatch_commissions(
                 continue
             try:
                 order_id = strict_int(progress.get("order_id"), accept_numeric_strings=False)
-            except (TypeError, ValueError, OverflowError):
+            except (TypeError, ValueError):
                 order_id = 0
             note = progress.get("note")
             target = _active_secret_order(db, order_id)
@@ -1210,7 +1210,7 @@ def _dispatch_commissions(
                 continue
             try:
                 order_id = strict_int(update.get("order_id"), accept_numeric_strings=False)
-            except (TypeError, ValueError, OverflowError):
+            except (TypeError, ValueError):
                 order_id = 0
             target = _active_secret_order(db, order_id)
             assignee = _scene_secret_assignee(minister_name, target)
@@ -1251,7 +1251,7 @@ def _dispatch_commissions(
                 continue
             try:
                 order_id = strict_int(review.get("order_id"), accept_numeric_strings=False)
-            except (TypeError, ValueError, OverflowError):
+            except (TypeError, ValueError):
                 order_id = 0
             claim = review.get("claim")
             if not isinstance(claim, str):
@@ -1629,9 +1629,17 @@ def _dispatch_commissions(
         if grant_raw:
             payload["mode"] = mode
         # 非 #1815 新形；声明给出则透传到 directive payload，代码不猜当前大臣。
-        _attach_commission_staging_fields(
-            payload, item, turn=int(state.turn),
-        )
+        # 期限换算走 _assignment_absolute_end_turn：脏数字领域拒收（#1897 C1）。
+        try:
+            _attach_commission_staging_fields(
+                payload, item, turn=int(state.turn),
+            )
+        except DecreeMaterializationValidationError as exc:
+            _reject(
+                rejected, item, str(exc),
+                getattr(exc, "category", None) or "invalid_shape", source,
+            )
+            continue
 
         if not _attach_commission_affair(
             db, item, payload, rejected=rejected, source=source,
@@ -1869,7 +1877,7 @@ def _dispatch_endorsements(
             action_id = strict_int(
                 item.get("action_id"), accept_numeric_strings=False,
             )
-        except (TypeError, ValueError, OverflowError):
+        except (TypeError, ValueError):
             action_id = 0
         form = str(item.get("form") or "").strip()
         endorser_id = str(item.get("endorser_id") or "").strip()
@@ -2375,7 +2383,7 @@ def _dispatch_promises(
             action_id = strict_int(
                 item.get("action_id"), accept_numeric_strings=False,
             )
-        except (TypeError, ValueError, OverflowError):
+        except (TypeError, ValueError):
             action_id = 0
         decision = str(item.get("decision") or "").strip()
         if action_id <= 0 or decision not in {"应允", "拒绝", "修改", "留中"}:
@@ -2767,7 +2775,7 @@ def _dispatch_on_scene_facts(
                     name = str(result.get("name") or "").strip()
                     try:
                         _attach_character_affair_pointer(db, name, affair_id)
-                    except (ValueError, KeyError, OverflowError) as exc:
+                    except (ValueError, KeyError) as exc:
                         category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
                         raise _ItemAtomicReject(str(exc), category) from exc
         except _ItemAtomicReject as exc:
@@ -3001,7 +3009,7 @@ def _dispatch_edge_events(
                 if affair_id is not None:
                     try:
                         db.affairs.attach_pointer("relation_edge_events", event_id, affair_id)
-                    except (ValueError, KeyError, OverflowError) as exc:
+                    except (ValueError, KeyError) as exc:
                         category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
                         raise _ItemAtomicReject(str(exc), category) from exc
         except _ItemAtomicReject as exc:
@@ -3080,10 +3088,21 @@ def _dispatch_registrations(
         if error_category is not None:
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
             continue
-        try:
-            loyalty = int(item.get("loyalty"))
-        except (TypeError, ValueError, OverflowError):
+        # 缺省忠诚可落 55；显式脏值（含非有限）不得洗成缺省成功（#1897 C1）。
+        if "loyalty" not in item or item.get("loyalty") is None:
             loyalty = 55
+        else:
+            raw_loyalty = item.get("loyalty")
+            try:
+                if isinstance(raw_loyalty, bool):
+                    raise TypeError("loyalty cannot be a boolean")
+                loyalty = int(raw_loyalty)
+            except (TypeError, ValueError, OverflowError) as exc:
+                _reject(
+                    rejected, item, f"入册声明 loyalty 非法：{exc}",
+                    "invalid_shape", source,
+                )
+                continue
         # Typed seat only — same keys as person-change appointment path.
         seat = str(
             item.get("region_id") or item.get("任所") or item.get("office_region") or ""

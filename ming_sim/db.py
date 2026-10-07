@@ -18474,10 +18474,26 @@ class GameDB:
             target_id = pa.get("target_id")
             if target_id is None:
                 return False
-            try:
-                stage_idx = int(payload.get("stage_idx") if payload.get("stage_idx") is not None else 0)
-            except (TypeError, ValueError, OverflowError):
+            raw_stage = payload.get("stage_idx")
+            if raw_stage is None:
                 stage_idx = 0
+            else:
+                # 显式脏分段不得洗成 0 后催错段（#1897 C1）。
+                from ming_sim.action_materialize import DecreeMaterializationValidationError
+                if isinstance(raw_stage, bool):
+                    raise DecreeMaterializationValidationError(
+                        "stage_idx cannot be a boolean",
+                        failed_fields=("stage_idx",),
+                        category="invalid_shape",
+                    )
+                try:
+                    stage_idx = int(raw_stage)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise DecreeMaterializationValidationError(
+                        "stage_idx must be a finite integer",
+                        failed_fields=("stage_idx",),
+                        category="invalid_shape",
+                    ) from exc
             deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
             from ming_sim.urge_lever import rush_staged_commitment_stage
             result = rush_staged_commitment_stage(

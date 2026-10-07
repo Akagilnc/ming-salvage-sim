@@ -180,7 +180,7 @@ def stage_pacification_candidate(
             continue
         try:
             payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError, OverflowError):
+        except (TypeError, ValueError):
             continue
         if not isinstance(payload, dict):
             continue
@@ -306,7 +306,7 @@ def stage_punishment_candidate(
             return 0
         try:
             roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (TypeError, ValueError, OverflowError):
+        except (TypeError, ValueError):
             return 0
         if not isinstance(roster, list) or not roster:
             return 0
@@ -339,7 +339,7 @@ def stage_punishment_candidate(
             continue
         try:
             payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError, OverflowError):
+        except (TypeError, ValueError):
             continue
         if not isinstance(payload, dict):
             continue
@@ -708,7 +708,7 @@ def _parse_json_field(raw: object) -> Any:
         return None
     try:
         value = json.loads(text)
-    except (TypeError, ValueError, OverflowError):
+    except (TypeError, ValueError):
         return text
     return value
 
@@ -721,15 +721,30 @@ def _assignment_absolute_end_turn(
     - 显式期限月数优先：deadline_months=N → turn+N
     - end_turn 已严格大于当前 turn → 视为绝对回合
     - 否则 0<end_turn≤turn → 视为相对月数 turn+end_turn
+
+    缺省/空 → 0；可辨识 LLM 脏数字（bool/非数/非有限）领域拒收，不洗成 0 成功
+    （#1897 C1 / ADR 0015）。
     """
-    try:
-        et = int(end_turn or 0)
-    except (TypeError, ValueError, OverflowError):
-        et = 0
-    try:
-        months = int(deadline_months or 0)
-    except (TypeError, ValueError, OverflowError):
-        months = 0
+    def _finite_int(raw: object, *, field: str, default: int) -> int:
+        if raw is None or raw == "":
+            return int(default)
+        if isinstance(raw, bool):
+            raise DecreeMaterializationValidationError(
+                f"{field} cannot be a boolean",
+                failed_fields=(field,),
+                category="invalid_shape",
+            )
+        try:
+            return int(raw)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise DecreeMaterializationValidationError(
+                f"{field} must be a finite integer",
+                failed_fields=(field,),
+                category="invalid_shape",
+            ) from exc
+
+    et = _finite_int(end_turn, field="end_turn", default=0)
+    months = _finite_int(deadline_months, field="deadline_months", default=0)
     cur = int(turn)
     if months > 0:
         return cur + months
@@ -833,7 +848,7 @@ def _list_pending_office_rows(
 def _office_payload(row: Dict[str, Any]) -> Dict[str, Any]:
     try:
         payload = json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError, OverflowError):
+    except (TypeError, ValueError):
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -1075,7 +1090,7 @@ def _parse_revoke_decree_target(
         if origin.startswith("dossier:"):
             try:
                 linked = int(origin.split(":", 1)[1])
-            except (TypeError, ValueError, OverflowError):
+            except (TypeError, ValueError):
                 linked = 0
         # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路
         if linked <= 0:
@@ -1178,7 +1193,7 @@ def stage_assignment_candidate(
                 continue
             try:
                 payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError, OverflowError):
+            except (TypeError, ValueError):
                 break
             if not isinstance(payload, dict):
                 break
@@ -1201,7 +1216,7 @@ def stage_assignment_candidate(
     }
     try:
         origin_cid = int(source_chat_turn_id or 0)
-    except (TypeError, ValueError, OverflowError):
+    except (TypeError, ValueError):
         origin_cid = 0
     # #1890：来源轮不写进载荷——它只落 pending_actions.source_chat_turn_id 一列
     # （交办的统一身份）。载荷里留副本等于同一事实两处可写，改草与迟到转译
@@ -1311,7 +1326,7 @@ def stage_revoke_decree_candidate(
                 continue
             try:
                 payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError, OverflowError):
+            except (TypeError, ValueError):
                 break
             if not isinstance(payload, dict):
                 break
