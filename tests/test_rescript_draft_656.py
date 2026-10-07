@@ -818,11 +818,14 @@ def test_generate_rescript_draft_degrades_loudly_without_raising(game, monkeypat
 
 def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     """r2 裁决 B3 / ADR 0005：程序错不得以「非承重支路」为由吞成降级。
-    validator 抛 RuntimeError（代码故障）必须响亮上抛——票拟业务降级 ≠ 代码故障降级。"""
+    validator 抛 RuntimeError（代码故障）必须响亮上抛——票拟业务降级 ≠ 代码故障降级。
+    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, _content = game
 
+    fault = RuntimeError("programmer bug sentinel")
+
     def _buggy_validate(data, ids, **_kwargs):
-        raise RuntimeError("programmer bug sentinel")
+        raise fault
 
     monkeypatch.setattr(
         rescript_mod, "run_agent_text",
@@ -832,8 +835,9 @@ def test_generate_rescript_draft_program_error_propagates(game, monkeypatch):
     payload = {
         "active_issues": [], "gazette": "邸报", "triage_actor": {}, "turn": {},
     }
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as ei:
         generate_rescript_draft(object(), payload, state.turn)
+    assert ei.value is fault
 
 # ---------------------------------------------------------------------------
 # F1.3/F2.5 崩溃恢复：不重跑票拟步（持久层读回）＋restore 往返无损

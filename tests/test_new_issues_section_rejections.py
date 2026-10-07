@@ -304,15 +304,20 @@ def test_new_issue_falsy_nonstring_kind_rejected(read_game, bad_kind):
 
 def test_new_issue_insert_code_exception_propagates(game, monkeypatch):
     db, state, _ = game
-    def _boom(*a, **k):
-        raise RuntimeError("模拟 insert_issue 落库代码异常")
-    monkeypatch.setattr(type(db), "insert_issue", _boom)
     # insert 代码/DB 异常不再 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
-    with pytest.raises(RuntimeError):
+    # 来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。
+    fault = RuntimeError("模拟 insert_issue 落库代码异常")
+
+    def _boom(*a, **k):
+        raise fault
+
+    monkeypatch.setattr(type(db), "insert_issue", _boom)
+    with pytest.raises(RuntimeError) as ei:
         I.apply_issue_tracker_output(db, state, {
             "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state),
                             "kind": "situation", "title": "测试·正常字段"}],
         })
+    assert ei.value is fault
 
 
 def test_new_issue_valid_decree_still_creates(game):
@@ -344,36 +349,44 @@ def test_new_issue_valid_decree_still_creates(game):
 def test_event_to_issue_insert_exception_propagates(read_game, monkeypatch):
     db, state, _ = read_game
     # 直接覆盖 fix 点：event_to_issue 内 insert 真异常上抛，不再 WARN 吞成 None。
+    # 来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。
     eid = _pick_event_pool_id(db)
     ev = I._ctx().event_by_id[eid]
 
+    fault = RuntimeError("模拟 event_to_issue insert 落库代码异常")
+
     def _boom(*a, **k):
-        raise RuntimeError("模拟 event_to_issue insert 落库代码异常")
+        raise fault
 
     monkeypatch.setattr(type(db), "insert_issue", _boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as ei:
         I.event_to_issue(db, state, ev)
+    assert ei.value is fault
 
 
 def test_new_issue_event_pool_insert_exception_propagates(game, monkeypatch):
     db, state, content = game
     # codex 强调的 call-site seam：通过 apply_issue_tracker_output 的 event_pool 分支驱动，
     # insert 真异常一路上抛（上层 applier.atomic 据此 SettlementAbort），不被吞成静默 rejected。
+    # 来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。
     eid = "__event_pool_insert_exception__"
     ev = _hist_event(eid)
     I.bind_content(content)
     _open_event_window(state, ev)
 
+    fault = RuntimeError("模拟 event_pool insert 落库代码异常")
+
     def _boom(*a, **k):
-        raise RuntimeError("模拟 event_pool insert 落库代码异常")
+        raise fault
 
     with _TempEvents(content, ev):
         _ensure_event_candidate(db, state, eid)
         monkeypatch.setattr(type(db), "insert_issue", _boom)
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError) as ei:
             I.apply_issue_tracker_output(db, state, {
                 "new_issues": [{"origin_kind": "event_pool", "id": eid}],
             })
+        assert ei.value is fault
 
 
 def test_event_to_issue_duplicate_returns_none_not_raise(game):

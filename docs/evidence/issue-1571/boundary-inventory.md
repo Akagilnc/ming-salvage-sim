@@ -3,7 +3,6 @@
 - **用途**：issue #1571（案卷 store 摘取，ADR 0151）大理寺一审打回项——补当前 HEAD 的完整迁移账：案卷表 / GameDB 方法 / 生产调用点 / 测试文件逐项映射到新 owner；`faction_denunciations` 处置；「25 个外部方法」按实测重算并证明归并路径。
 - **基线**：分支 `kimi/issue-1571`，HEAD `e88cc29c`。下文所有 `db.py` 行号均指 `ming_sim/db.py` 在该 HEAD 的行号。
 - **方法（AST 口径）**：python `ast` 解析 `db.py`（22,392 行，`GameDB` 536 个方法）与 `ming_sim/**` + 根目录生产脚本（`driver.py`/`web_app.py`/`main.py`/`launcher.py`/`spike_settle_tick.py`）+ `tests/**`；方法集以**定义行号区间**圈定（见 §0.1），外部使用以 `ast.Call`/`ast.Attribute` 按方法名匹配计数，命中点已抽核为 `db.` 调用。只给事实与映射，不给新设计。
-- **#1895 追注（2026-09-30）**：本文为 `e88cc29c` 基线的**历史证据快照**，其中 `trigger_supervision_countermeasures` 的拆分提案（`list_supervision_countermeasure_candidates` 纯读件 + 编排层）**已随 #1895 整体退役、不再施工**——代码不再按 integrity 档判定人物是否反制、也不再 hash 指定反制形态，人物反制归 #1861／#1843 run 自选（见 `docs/adr/0077-supervision-dulling-person-conditioned.md` 后出修订段，commit `1e5b14f40`）。本文其余行号、计数与归属账原样保留为该 HEAD 的历史依据，不因本次退役而改写。
 
 ## 0. 口径与判词/票面数字复核
 
