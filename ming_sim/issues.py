@@ -4092,6 +4092,138 @@ def _declared_levy_outcome_attribution_error(item: dict, event_id: str) -> str:
     return ""
 
 
+def _preflight_items_from_merged_extraction(
+    extracted: Dict[str, object],
+    ordered_deltas: Dict[str, list[tuple[str, object]]],
+    ordered_effect_event_ids: dict[str, list[str]] | None,
+) -> list[tuple[str, dict]]:
+    """把字段级 event_id 归属重组成信封形，供既有 C3 预检复用（非第二套规则）。"""
+    by_event: dict[str, dict] = {}
+    declared = ordered_effect_event_ids or {}
+
+    def _env(event_id: str) -> dict:
+        return by_event.setdefault(event_id, {})
+
+    for field in _ORDERED_DELTA_FIELDS:
+        pairs = list(ordered_deltas.get(field) or [])
+        ids = list(declared.get(field) or [])
+        for index, (key, value) in enumerate(pairs):
+            event_id = str(ids[index] if index < len(ids) else "").strip()
+            if not event_id:
+                continue
+            bucket = _env(event_id).setdefault(field, {})
+            if isinstance(bucket, dict):
+                bucket[key] = value
+    for field in ("new_armies", "人物变更", "new_issues"):
+        raw_items = extracted.get(field) or []
+        if not isinstance(raw_items, list):
+            continue
+        ids = list(declared.get(field) or [])
+        for index, item in enumerate(raw_items):
+            event_id = str(ids[index] if index < len(ids) else "").strip()
+            if not event_id and field == "new_issues" and isinstance(item, dict):
+                if str(item.get("origin_kind") or "").lower() == "event_pool":
+                    event_id = str(item.get("id") or item.get("origin_ref") or "").strip()
+            if not event_id:
+                continue
+            _env(event_id).setdefault(field, []).append(item)
+    outcomes = extracted.get("事件结局")
+    if isinstance(outcomes, dict):
+        for raw_id, label in outcomes.items():
+            event_id = str(raw_id or "").strip()
+            if not event_id:
+                continue
+            _env(event_id).setdefault("事件结局", {})[event_id] = label
+    return [(event_id, env) for event_id, env in by_event.items()]
+
+
+def _strip_rejected_event_ownership(
+    extracted: Dict[str, object],
+    ordered_deltas: Dict[str, list[tuple[str, object]]],
+    ordered_effect_event_ids: dict[str, list[str]],
+    rejected_event_ids: set[str],
+    *,
+    reasons_by_event: Mapping[str, str] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """预检拒收的事件信封整封退出序列；返回 (拒收 new_issues 投影, 拒收人物投影)。"""
+    rejected_issues: list[dict] = []
+    rejected_persons: list[dict] = []
+    if not rejected_event_ids:
+        return rejected_issues, rejected_persons
+    reasons = reasons_by_event or {}
+    for field in _ORDERED_DELTA_FIELDS:
+        pairs = list(ordered_deltas.get(field) or [])
+        ids = list(ordered_effect_event_ids.get(field) or [])
+        kept_pairs: list[tuple[str, object]] = []
+        kept_ids: list[str] = []
+        for index, pair in enumerate(pairs):
+            event_id = str(ids[index] if index < len(ids) else "").strip()
+            if event_id in rejected_event_ids:
+                continue
+            kept_pairs.append(pair)
+            kept_ids.append(event_id)
+        ordered_deltas[field] = kept_pairs
+        ordered_effect_event_ids[field] = kept_ids
+        if field in extracted and isinstance(extracted.get(field), dict):
+            extracted[field] = {key: value for key, value in kept_pairs}
+    for field in ("new_armies", "人物变更", "new_issues"):
+        raw_items = extracted.get(field) or []
+        if not isinstance(raw_items, list):
+            continue
+        ids = list(ordered_effect_event_ids.get(field) or [])
+        kept_items: list[object] = []
+        kept_ids: list[str] = []
+        for index, item in enumerate(raw_items):
+            event_id = str(ids[index] if index < len(ids) else "").strip()
+            if not event_id and field == "new_issues" and isinstance(item, dict):
+                if str(item.get("origin_kind") or "").lower() == "event_pool":
+                    event_id = str(item.get("id") or item.get("origin_ref") or "").strip()
+            if event_id in rejected_event_ids:
+                reason = str(reasons.get(event_id) or "事件效果预检拒收")
+                if field == "new_issues" and isinstance(item, dict):
+                    rejected_issues.append({
+                        **dict(item),
+                        "id": str(item.get("id") or event_id),
+                        "rejected": True,
+                        "category": "event_rejected",
+                        "reason": reason,
+                    })
+                elif field == "人物变更" and isinstance(item, dict):
+                    rejected_persons.append({
+                        "name": _person_change_name(item),
+                        "动作": str(item.get("动作") or item.get("action") or "").strip(),
+                        "rejected": True,
+                        "category": "event_rejected",
+                        "reason": reason,
+                        "item": dict(item),
+                    })
+                continue
+            kept_items.append(item)
+            if ids:
+                kept_ids.append(event_id if index < len(ids) else "")
+        extracted[field] = kept_items
+        if field in ordered_effect_event_ids or kept_ids:
+            ordered_effect_event_ids[field] = kept_ids[:len(kept_items)]
+    outcomes = extracted.get("事件结局")
+    if isinstance(outcomes, dict):
+        extracted["事件结局"] = {
+            key: value for key, value in outcomes.items()
+            if str(key or "").strip() not in rejected_event_ids
+        }
+    # 无 new_issues 声明、仅库存归属被拒时仍投影事件拒收行。
+    seen_issue_ids = {str(item.get("id") or "") for item in rejected_issues}
+    for event_id in sorted(rejected_event_ids):
+        if event_id in seen_issue_ids:
+            continue
+        rejected_issues.append({
+            "id": event_id,
+            "rejected": True,
+            "category": "event_rejected",
+            "reason": str(reasons.get(event_id) or "事件效果预检拒收"),
+        })
+    return rejected_issues, rejected_persons
+
+
 def preflight_declared_event_effects(
     db: GameDB, state: GameState, items: list[tuple[str, dict]],
     open_affair_ids: set[int] | None = None,
@@ -7481,9 +7613,10 @@ def _apply_score_extraction_body(
                 kept.append(stamped)
             extracted[field] = kept
 
-    # 调用方提供的序列＝正式入口已跑 preflight_declared_event_effects；
-    # 缺省派生的单步只统一编排形状，不把显式归属当作 C3 已接纳。
-    event_stock_pre_admitted = effect_sequence is not None
+    # 调用方提供序列＝正式入口已预检。缺省派生单步统一编排；若含显式事件归属，
+    # 复用同一 preflight_declared_event_effects，拒收整封退出后再 admit。
+    preflight_rejected_issues: list[dict] = []
+    preflight_rejected_persons: list[dict] = []
     if effect_sequence is not None:
         stamped_sequence = []
         for step_extracted, step_ordered, step_event_ids in effect_sequence:
@@ -7499,9 +7632,48 @@ def _apply_score_extraction_body(
             stamped_sequence.append((stamped_step, step_ordered, step_event_ids))
         effect_sequence = stamped_sequence
     else:
-        # 直接 apply：单步接入同一编排；事件库存仍待 tracker／deferred 准入后落。
+        step_event_ids = dict(ordered_effect_event_ids or {})
+        # 仅当声明了事件库存归属时走完整 C3；纯 event_pool 立项仍交 tracker。
+        stock_owned = any(
+            str(event_id or "").strip()
+            for field in (
+                "region_delta", "army_delta", "power_updates", "new_armies", "人物变更",
+            )
+            for event_id in (step_event_ids.get(field) or [])
+        )
+        if stock_owned:
+            preflight_items = _preflight_items_from_merged_extraction(
+                extracted, ordered_deltas, step_event_ids,
+            )
+            if preflight_items:
+                rejected_by_index = preflight_declared_event_effects(
+                    db, state, preflight_items,
+                    open_affair_ids=authorized_open_affairs,
+                )
+                reasons_by_event: dict[str, str] = {}
+                rejected_event_ids: set[str] = set()
+                for index, reason in rejected_by_index.items():
+                    if 0 <= index < len(preflight_items):
+                        event_id, env = preflight_items[index]
+                        eid = str(event_id)
+                        rejected_event_ids.add(eid)
+                        reasons_by_event[eid] = str(reason)
+                        validate_rejections.append(
+                            (
+                                "event_effects",
+                                {"event_id": eid, **dict(env)},
+                                str(reason),
+                            ),
+                        )
+                stripped_issues, stripped_persons = _strip_rejected_event_ownership(
+                    extracted, ordered_deltas, step_event_ids, rejected_event_ids,
+                    reasons_by_event=reasons_by_event,
+                )
+                preflight_rejected_issues.extend(stripped_issues)
+                preflight_rejected_persons.extend(stripped_persons)
+                ordered_effect_event_ids = step_event_ids
         effect_sequence = [
-            (extracted, ordered_deltas, ordered_effect_event_ids or {}),
+            (extracted, ordered_deltas, step_event_ids),
         ]
 
     def _origin_ref_from_result_item(item: Mapping[str, object] | None) -> str:
@@ -7891,7 +8063,7 @@ def _apply_score_extraction_body(
         *,
         apply_event_owned: bool = False,
     ) -> None:
-        # apply_event_owned：仅消费预检已接纳的事件战果；未预检归属保持 defer。
+        # apply_event_owned：消费预检已接纳的事件战果（拒收信封已整封剥离）。
         step_new_armies = step_extracted.get("new_armies") or []
         declared = step_event_ids.get("new_armies") or []
         for idx, army_item in enumerate(step_new_armies):
@@ -8452,10 +8624,9 @@ def _apply_score_extraction_body(
             for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
                 applied_metric[metric] = applied_metric.get(metric, 0) + delta
         # 先实体后钱：同笔内欠饷加额须先于补饷拨款可见。
-        # 仅预检已接纳的事件战果在本笔消费；未预检归属仍 defer 到 tracker 终局。
+        # 预检已接纳（或无事件归属）的库存在本笔消费；拒收信封已整封剥离。
         _apply_ordinary_entity_step(
-            step_extracted, step_ordered, step_event_ids,
-            apply_event_owned=event_stock_pre_admitted,
+            step_extracted, step_ordered, step_event_ids, apply_event_owned=True,
         )
         step_moves = list(step_extracted.get("economy_moves") or [])
         _apply_economy_moves_list(step_moves, index_base=economy_index_base)
@@ -8464,8 +8635,7 @@ def _apply_score_extraction_body(
         _apply_world_step_fiscal_and_petition(step_extracted)
         # #1844/#1899：派系/阶级/加派/人口/投贼/势力同缝按交代先后。
         _apply_world_step_ordered_stock(
-            step_extracted, step_ordered, step_event_ids,
-            apply_event_owned=event_stock_pre_admitted,
+            step_extracted, step_ordered, step_event_ids, apply_event_owned=True,
         )
     _finalize_loss_pair_changes()
     power_changes = list(absorption_power_changes) + power_changes
@@ -8496,6 +8666,12 @@ def _apply_score_extraction_body(
         defer_event_trigger_ids=strategic_event_pool_ids,
         open_affair_ids_at_input=authorized_open_affairs,
         pre_admitted_event_ids=landed_event_stock_ids)
+    if preflight_rejected_issues:
+        merged_new = list(issue_summary.get("new_issues") or [])
+        merged_new.extend(preflight_rejected_issues)
+        issue_summary = {**issue_summary, "new_issues": merged_new}
+    if preflight_rejected_persons:
+        applied_person_changes.extend(preflight_rejected_persons)
 
     # Affair closure observes the batch's final issue state. In particular, a
     # same-batch linked issue must prevent closure rather than leave a closed
@@ -8644,32 +8820,8 @@ def _apply_score_extraction_body(
             _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""))
             continue
         event_person_changes = _event_person_changes(event_id)
-        # 预检已接纳：库存已在步进落账。未预检直接 apply：tracker 准入后复用同一 helper 落库存。
+        # 归属与信封预检已在写入前判定；region/army/power/new_armies 已在序列步进落账。
         event_person_results: List[Dict[str, object]] = []
-        if event_id not in landed_event_stock_ids:
-            event_region_items = _ordered_strategic_items("region_delta", event_id)
-            event_army_items = _ordered_strategic_items("army_delta", event_id)
-            event_power_items = _ordered_strategic_items("power_updates", event_id)
-            event_new_armies = _event_new_armies(event_id)
-            if event_region_items or event_army_items or event_power_items or event_new_armies:
-                mini_extracted: Dict[str, object] = {"new_armies": list(event_new_armies)}
-                mini_ordered: Dict[str, list[tuple[str, object]]] = {
-                    "region_delta": list(event_region_items),
-                    "army_delta": list(event_army_items),
-                    "power_updates": list(event_power_items),
-                }
-                mini_event_ids: dict[str, list[str]] = {
-                    "new_armies": [event_id] * len(event_new_armies),
-                    "region_delta": [event_id] * len(event_region_items),
-                    "army_delta": [event_id] * len(event_army_items),
-                    "power_updates": [event_id] * len(event_power_items),
-                }
-                _apply_ordinary_entity_step(
-                    mini_extracted, mini_ordered, mini_event_ids, apply_event_owned=True,
-                )
-                _apply_power_update_pairs(
-                    event_power_items, step_event_ids=mini_event_ids, apply_event_owned=True,
-                )
         for item in event_person_changes:
             try:
                 origin_ref = _origin_ref_from_result_item(item)
@@ -8686,7 +8838,7 @@ def _apply_score_extraction_body(
             event_person_results.extend(_apply_normalized_person_changes(
                 [clean_item], origin_ref=origin_ref, require_origin=True,
             ))
-        # Tracker／deferred 准入后终局：不写后二次预检；库存或已预检步进落，或刚由 helper 落。
+        # Admitted C3：预检已决，库存已在序列步进落账；此处只终局与人物补落。
         db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
         apply_event_cascading_invalidations(state, db, commit=commit_now)
         new_issue["reason"] = "事件已记为触发，软判结果已落主账"
