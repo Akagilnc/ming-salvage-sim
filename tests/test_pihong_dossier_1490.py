@@ -22,6 +22,7 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import rejected_verdict
+from tests.rescript_test_helpers import sql_rescript_draft
 
 @pytest.fixture
 def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
@@ -489,33 +490,11 @@ def _layer_a_option(**overrides):
 
 
 
-def _sql_rescript_draft(
-    db, turn, *, idx, event_id, title, context='', options=None,
-    actor_name='', actor_office='', actor_faction='',
-):
-    """单行 SQL 夹具：idx/event_id 必填，无续编、无身份合成、无批量算法。"""
-    db.conn.execute(
-        'INSERT INTO pending_decisions '
-        '(turn, idx, event_id, title, context, options_json, choice_json, '
-        " status, kind, actor_name, actor_office, actor_faction) "
-        "VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)",
-        (
-            int(turn), int(idx), str(event_id), str(title), str(context),
-            json.dumps(options or [], ensure_ascii=False),
-            str(actor_name), str(actor_office), str(actor_faction),
-        ),
-    )
-
 def _plant_urgent_desk(db, state, *, options=None, actor_name='杨嗣昌'):
     opts = options or [_layer_a_option(), _layer_a_option(label='缓征', hint='先赈后征')]
     turn = int(state.turn)
-    # 夹具重入：只清同 event_id 旧行，再以固定 idx/event_id 种入（无 MAX 续编、无 urgent 合成）。
     event_id = 'plant:陕西告饥'
-    db.conn.execute(
-        "DELETE FROM pending_decisions WHERE turn=? AND event_id=?",
-        (turn, event_id),
-    )
-    _sql_rescript_draft(
+    sql_rescript_draft(
         db, turn, idx=100, event_id=event_id,
         title='陕西告饥', context='秦地赤旱', options=opts,
         actor_name=actor_name, actor_office='兵部尚书', actor_faction='东林',
@@ -675,7 +654,7 @@ def test_657_http_default_hold_keyed_empty_action_and_betray(web_game, monkeypat
     _657_install_real_phase2_llm_boundary(monkeypatch)
     opt = _layer_a_option()
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
-    _sql_rescript_draft(
+    sql_rescript_draft(
         db, int(state.turn), idx=0, event_id='plant:HTTP默认留中',
         title='HTTP默认留中', context='c',
         options=[opt, _layer_a_option(label='备', hint='h')],
@@ -780,7 +759,7 @@ def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title='陕
         turn = int(state.turn)
         for i, d in enumerate(drafts):
             title = str(d.get('title') or '')
-            _sql_rescript_draft(
+            sql_rescript_draft(
                 db, turn, idx=i,
                 event_id=str(d.get('event_id') or '').strip() or f'plant:{title or i}',
                 title=title, context=str(d.get('context') or ''),
@@ -965,7 +944,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
             drafts_opts = [_layer_a_option(label='骨架', hint='h'), _layer_a_option(label='b', hint='h')]
             cap = ''
             label = choice_fields.get('label') or '中旨'
-        _sql_rescript_draft(
+        sql_rescript_draft(
             db, int(state.turn), idx=0, event_id=f'plant:{title}',
             title=title, context='c', options=drafts_opts,
             actor_name=mname, actor_office='o', actor_faction='f',
@@ -1162,7 +1141,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     opt_fields = {'action_type': 'assignment', 'label': '幂等交办', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'assignee_name': '', 'transaction_category': '督赈', 'deadline_months': 1, 'participant_roster': _roster(_ROSTER_LEAD)}
     opt = normalize_rescript_layer_a_option(opt_fields)
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
-    _sql_rescript_draft(
+    sql_rescript_draft(
         db, int(state.turn), idx=0, event_id='plant:幂等急务',
         title='幂等急务', context='c',
         options=[opt, _layer_a_option(label='b', hint='h')],
@@ -1786,7 +1765,7 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     opt = normalize_rescript_layer_a_option({'label': '备', 'hint': 'h', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈'})
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
     prepare_resolve_front_half(state, db, decree_text='诏', content=content)
-    _sql_rescript_draft(
+    sql_rescript_draft(
         db, int(state.turn), idx=0, event_id='plant:改票契约',
         title='改票契约', context='c',
         options=[opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}],
@@ -2515,6 +2494,12 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     assert 'target_dossier_id' not in payload
     assert payload.get('dossier_action_type') == 'policy'
     assert payload.get('target_id') == 'river-works'
+    # 第二次种 stalled 前清掉上一次夹具急务行（固定 idx/event_id），由用例自管。
+    db.conn.execute(
+        "DELETE FROM pending_decisions WHERE turn=? AND event_id=?",
+        (int(state.turn), 'plant:陕西告饥'),
+    )
+    db.conn.commit()
     stalled2, _ = _658_plant_stalled_deliberation(db, state, content, title='改草强推')
     did2 = int(stalled2['id'])
     name = _summonable_name(db, content)
@@ -2528,6 +2513,7 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     assert 'dossier_action_type' not in staged
     assert 'target_kind' not in staged
     assert 'target_id' not in staged
+
 
 def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     """#658：普通 triad + target 矛盾载荷——一条真实入口零写（禁 classifier/session/backend 三份）。"""
@@ -2617,7 +2603,7 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             db.conn.execute("DELETE FROM pending_decisions")
             db.conn.commit()
             case_opt = liaodong_opt if name == "follow_draft" else opt
-            _sql_rescript_draft(
+            sql_rescript_draft(
                 db, int(state.turn), idx=0, event_id=f'plant:急务-{name}',
                 title=f'急务-{name}', context='c',
                 options=[case_opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}],
@@ -2738,7 +2724,7 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     _657_install_real_phase2_llm_boundary(monkeypatch)
     db.conn.execute("DELETE FROM pending_decisions")
     db.conn.commit()
-    _sql_rescript_draft(
+    sql_rescript_draft(
         db, int(state.turn), idx=0, event_id='plant:急务-军令',
         title='急务-军令', context='c',
         options=[army_opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}],

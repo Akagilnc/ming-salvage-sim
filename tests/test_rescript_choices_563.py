@@ -4,28 +4,7 @@ import pytest
 
 import ming_sim.cli_backend as cli_backend
 from tests.dossier_test_helpers import rejected_verdict
-
-def _sql_rescript_draft(
-    db, turn, *, idx, event_id, title, context="", options=None,
-    actor_name="", actor_office="", actor_faction="",
-):
-    """单行 SQL 夹具：idx/event_id 必填，无续编、无身份合成、无批量算法。"""
-    db.conn.execute(
-        "INSERT INTO pending_decisions "
-        "(turn, idx, event_id, title, context, options_json, choice_json, "
-        " status, kind, actor_name, actor_office, actor_faction) "
-        "VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)",
-        (
-            int(turn), int(idx), str(event_id), str(title), str(context),
-            json.dumps(options or [], ensure_ascii=False),
-            str(actor_name), str(actor_office), str(actor_faction),
-        ),
-    )
-
-
-
-
-
+from tests.rescript_test_helpers import sql_rescript_draft
 
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
     return db.create_decree_dossier(
@@ -400,7 +379,7 @@ def test_657_capability_revalidate_on_follow(game):
         "transaction_category": "督赈",
     })
     assert opt["draft_capability"] == derive_draft_capability(opt)
-    _sql_rescript_draft(
+    sql_rescript_draft(
         db, int(state.turn), idx=0, event_id="draft:急",
         title="急", context="c",
         options=[opt, {"label": "备", "hint": "b",

@@ -12,23 +12,7 @@ from ming_sim.structured_decree import (
     assemble_structured_decree,
 )
 from tests.directive_seed_helpers import seed_manual_draft
-
-def _sql_rescript_draft(
-    db, turn, *, idx, event_id, title, context="", options=None,
-    actor_name="", actor_office="", actor_faction="",
-):
-    """单行 SQL 夹具：idx/event_id 必填，无续编、无身份合成、无批量算法。"""
-    db.conn.execute(
-        "INSERT INTO pending_decisions "
-        "(turn, idx, event_id, title, context, options_json, choice_json, "
-        " status, kind, actor_name, actor_office, actor_faction) "
-        "VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)",
-        (
-            int(turn), int(idx), str(event_id), str(title), str(context),
-            json.dumps(options or [], ensure_ascii=False),
-            str(actor_name), str(actor_office), str(actor_faction),
-        ),
-    )
+from tests.rescript_test_helpers import sql_rescript_draft
 
 from tests.test_month_loop_tracer_1468 import (  # noqa: F401
     _post_issue_stream,
@@ -170,7 +154,7 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
     alt = normalize_rescript_layer_a_option({
         **_OWNER_OPTION, "label": "缓征", "hint": "b", "transaction_category": "钱粮",
     })
-    _sql_rescript_draft(
+    sql_rescript_draft(
         db, int(state.turn), idx=0, event_id="draft:陕西告饥",
         title="陕西告饥", context="秦地赤旱",
         options=[opt, alt],
