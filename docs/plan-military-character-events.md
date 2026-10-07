@@ -1,5 +1,8 @@
 # 三大系统扩充计划：军事 / 人物 / 事件
 
+> **状态：被取代的历史计划（#1843）**。下文仍指挥已退役的 `simulator` / `extractor` 与 `score_extractor.md` / `season_simulator.md` 接法，**不得再按此施工**。
+> 现役月链与字段契约见 [`SETTLEMENT_FLOW`](SETTLEMENT_FLOW.md)、[`DELTA_SCHEMA`](DELTA_SCHEMA.md)；人物写见 ADR 0009。领域模块基线仍可参考 `docs/modules/*`。
+
 > 范围：在不破"设定 JSON 是唯一来源"和"无 fallback"约束下，把军事系统做厚、人物系统加性格细节、事件系统补足李自成 / 张献忠 / 后金三条主推演线。
 > 现状基线：`docs/modules/armies.md`、`docs/modules/characters.md`、`docs/modules/events.md` 已定核心数值；`content/external_powers.json` 已有后金/八旗/汉军/蒙古/朝鲜/流寇盘面；`content/events.json` 已散落张献忠谷城再反、李自成入河南、洛阳之屠、开封陷、攻北京等节点，但未串成线。
 

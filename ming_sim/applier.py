@@ -404,6 +404,7 @@ class RejectionCollector:
         self._buffer.clear()
         self._flushed.clear()
 
+
 def register_runtime_outcome_callbacks(
     db: Any,
     *,

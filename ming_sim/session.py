@@ -77,13 +77,6 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
 
     if not _os.path.isdir(saves_dir):
         return
-    legacy_auto = _re.compile(rf"^{_re.escape(AUTO_SAVE_PREFIX)}\d{{4}}_\d{{2}}_t\d{{4}}_.+\.db$")
-    for f in _os.listdir(saves_dir):
-        if legacy_auto.match(f):
-            try:
-                _os.remove(_os.path.join(saves_dir, f))
-            except OSError:
-                pass
     campaign_id = (campaign_id or "").strip()
     if not campaign_id:
         return
@@ -104,7 +97,7 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
             try:
                 _os.remove(_os.path.join(saves_dir, stale))
             except OSError:
-                pass
+                logger.exception("prune_auto_saves failed removing %s", stale)
 
 
 # TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；
@@ -3049,7 +3042,7 @@ class GameSession:
     def auto_save(self, tag: str) -> Optional[str]:
         """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。
         文件名 auto_<campaign_id>_<year>_<period>_<turn>_<tag>.db；prune 只动同 campaign 的自动档，
-        不碰用户手动存档。失败可继续游戏，但须留真因日志（#1902 T3 / ADR 0005）。"""
+        不碰用户手动存档。失败非致命（不阻断月链），但必须留异常真因（ADR 0005）。"""
         try:
             import os as _os
             saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
@@ -3066,8 +3059,8 @@ class GameSession:
             self.db.backup_to(target)
             prune_auto_saves(saves_dir, campaign_id)
             return target
-        except Exception as exc:
-            logger.warning("自动备份失败（旁路继续）：%s", exc)
+        except Exception:
+            logger.exception("auto_save failed tag=%s", tag)
             return None
 
     def save_to(self, name: str) -> Dict[str, object]:

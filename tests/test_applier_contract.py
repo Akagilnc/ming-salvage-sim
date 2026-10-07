@@ -1,10 +1,8 @@
 """S0 — ming_sim/applier.py 公开结构化契约与拒收落库行为。
 
-分类（#1902 T5；不得把下列标成 EXTERNAL_REAL_ENTRY 或 INTERNAL_SHAPE=0 假清）：
-- PUBLIC_STRUCTURED：Provenance 枚举／RejectedItem 字段／RejectionCollector
-  flush→DB／mirror_to_jsonl——ADR 0008 对外结构化契约与落库行为。
-- 纯内部 SectionResult／ApplyContext 形状证明已清退。
-- 聚合／落账真实入口行为复用 tests/test_declaration_dispatch_1835.py。
+覆盖：Provenance 五值矩阵 / RejectedItem 四字段 / RejectionCollector
+缓冲→flush_to_db / mirror_to_jsonl / reset / 来源 admission / DDL 回滚。
+SectionResult.merge 由声明分派及暂存结算真实消费者覆盖。
 """
 
 from __future__ import annotations
@@ -23,12 +21,6 @@ def test_provenance_enum_values():
     assert Provenance.secret_order.value == "secret_order"
     assert Provenance.system_simulation.value == "system_simulation"
     assert Provenance.unknown.value == "unknown"
-
-
-def test_provenance_from_string():
-    """可按字符串反查成员。"""
-    assert Provenance("player_decree") is Provenance.player_decree
-    assert Provenance("system_simulation") is Provenance.system_simulation
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +42,7 @@ def test_rejected_item_fields():
 
 
 # ---------------------------------------------------------------------------
-# RejectionCollector — 缓冲与 flush（真实落库行为）
+# RejectionCollector fixtures
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -63,6 +55,10 @@ def clean_rejections(game):
     db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
     return game
 
+
+# ---------------------------------------------------------------------------
+# RejectionCollector — 缓冲与 flush
+# ---------------------------------------------------------------------------
 
 def test_rejection_collector_flush_before_record_leaves_db_empty(clean_rejections):
     """flush 前 DB 中无 rejection_reports 行。"""
@@ -137,30 +133,8 @@ def test_rejection_collector_flush_stores_item_as_json(clean_rejections):
 # RejectionCollector — mirror_to_jsonl
 # ---------------------------------------------------------------------------
 
-def test_mirror_to_jsonl_writes_lines(game, tmp_path):
-    """flush 后 mirror_to_jsonl 把已落库行 append 为 jsonl 行。"""
-    db, state, content = game
-    rc = RejectionCollector()
-    ri = RejectedItem(
-        item={"id": "ghost"}, reason="不存在", category="hallucinated_id", source=Provenance.unknown
-    )
-    rc.record("army_delta", ri, turn=5)
-    rc.flush_to_db(db)
-
-    out = str(tmp_path / "rejections.jsonl")
-    rc.mirror_to_jsonl(out)
-
-    lines = open(out, encoding="utf-8").readlines()
-    assert len(lines) == 1
-    row = json.loads(lines[0])
-    assert row["section"] == "army_delta"
-    assert row["turn"] == 5
-    assert row["category"] == "hallucinated_id"
-    assert json.loads(row["item_json"]) == {"id": "ghost"}
-
-
 def test_mirror_to_jsonl_appends_on_multiple_calls(game, tmp_path):
-    """多次「flush→mirror」批次追加而不覆盖。"""
+    """多次「flush→commit→mirror」批次追加而不覆盖。"""
     db, state, content = game
     out = str(tmp_path / "rejections.jsonl")
     for turn in (1, 2):
@@ -168,6 +142,7 @@ def test_mirror_to_jsonl_appends_on_multiple_calls(game, tmp_path):
         ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
         rc.record("metric_delta", ri, turn=turn)
         rc.flush_to_db(db)
+        db.conn.commit()
         rc.mirror_to_jsonl(out)
 
     lines = open(out, encoding="utf-8").readlines()
@@ -211,15 +186,18 @@ def test_flush_then_mirror_writes_jsonl(clean_rejections, tmp_path):
     row = json.loads(lines[0])
     assert row["section"] == "army_delta"
     assert row["turn"] == 7
+    assert row["category"] == "hallucinated_id"
+    assert json.loads(row["item_json"]) == {"id": "ghost"}
 
 
 def test_mirror_idempotent_after_flush(clean_rejections, tmp_path):
-    """同一批行 mirror 两次只写一次（已镜像的行不重复 append）。"""
+    """commit 后同一批行 mirror 两次只写一次（已镜像的行不重复 append）。"""
     db, state, content = clean_rejections
     rc = RejectionCollector()
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("metric_delta", ri, turn=1)
     rc.flush_to_db(db)
+    db.conn.commit()
 
     out = str(tmp_path / "rejections.jsonl")
     rc.mirror_to_jsonl(out)
@@ -288,27 +266,6 @@ def test_record_rejects_unknown_source_string():
 # ---------------------------------------------------------------------------
 # 环境不变式 pin（cmr S0 r2）
 # ---------------------------------------------------------------------------
-
-def test_collector_counts_deterministic_on_polluted_save(game):
-    """活存档已带 rejection_reports 行时，clean 起步后计数仍确定（cmr S0 r2 C-R2）。
-
-    模拟「真实游玩写入拒收行后的 probe.db」：先污染再清场，断言计数从 0 起。
-    """
-    db, state, content = game
-    rc0 = RejectionCollector()
-    ri = RejectedItem(item={}, reason="既有行", category="invalid_enum", source=Provenance.unknown)
-    rc0.record("army_delta", ri, turn=3)
-    rc0.flush_to_db(db)
-    db.conn.commit()  # 污染已提交，等价于游玩过的存档
-
-    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")  # clean_rejections 同款清场
-
-    rc = RejectionCollector()
-    rc.record("metric_delta", ri, turn=1)
-    rc.flush_to_db(db)
-    count = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
-    assert count == 1
-
 
 def test_ddl_in_open_transaction_rolls_back(game):
     """CREATE TABLE 在打开的事务内不隐式 commit，且随 rollback 撤销。

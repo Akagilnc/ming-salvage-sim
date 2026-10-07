@@ -322,13 +322,6 @@ def materialize_pay_order_decree(
         raise PayOrderKeyError(
             f"override 旨案卷 {origin} 未过合法颁布门（顺颁/强颁），禁物化 config"
         )
-    # P1 / ADR 0090：legacy 发饷环不读 due_priority/haircut 键——零消费方不得假装已执行。
-    # fail-loud 拒物化；禁另写 legacy 发饷消费者（平行机制）。
-    if db.fiscal_engine() == "legacy":
-        raise PayOrderKeyError(
-            "pay_order_override 在 fiscal_engine=legacy 下无结算消费方，禁物化"
-            "（P1：零消费不得标已执行）"
-        )
     turn = int(turn)
     prepared = prepare_pay_order_entries(db, entries)
 

@@ -12,35 +12,35 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-import httpx
 import json
 import sqlite3
 import threading
 
 import pytest
-from openai import APIConnectionError, APITimeoutError
 
 from ming_sim.faction_brew import STANCE_KEY, VIEW_FACTION_STANCE
 from ming_sim.exceptions import LLMUnavailable
-from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY, build_brew_input, run_month_end_relation_brew
+from ming_sim.relation_brew import (
+    FOUNDINGS_KEY,
+    RECENT_KEY,
+    MonthEndRelationBrewLeg,
+)
 from ming_sim.relations import EMPEROR_NODE
 
 
-@pytest.mark.parametrize("error_type", [APITimeoutError, APIConnectionError])
-def test_provider_fault_becomes_typed_brew_failure(monkeypatch, error_type):
-    """生产调用缝仅把已知 provider 故障译成声明类型，保留原始 cause。"""
-    from ming_sim.mechanical_tail import _brew_fn_for_session
-
-    fault = error_type(request=httpx.Request("POST", "https://llm.invalid/v1"))
-    monkeypatch.setattr("ming_sim.agents.create_relation_brew_agent", lambda *_a: object())
-    def fail(*_a, **_kw):
-        raise fault
-    monkeypatch.setattr("ming_sim.agents.run_agent_text", fail)
-    brew = _brew_fn_for_session(SimpleNamespace(llm_config=object(), agno_db=None))
-    with pytest.raises(LLMUnavailable) as caught:
-        brew(json.dumps({"source": "甲", "target": "乙"}))
-    assert caught.value.__cause__ is fault
+def run_month_end_relation_brew(db, state, brew_fn, *, parallel=True, settled_turn=None, settled_year=None, settled_period=None):
+    """Test helper: drive the live Leg three-phase entry (no retired convenience wrapper)."""
+    leg = MonthEndRelationBrewLeg(
+        db, state, brew_fn,
+        settled_turn=settled_turn,
+        settled_year=settled_year,
+        settled_period=settled_period,
+        parallel=parallel,
+    )
+    if not leg.prepare():
+        return leg.report
+    leg.brew()
+    return leg.persist()
 
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
@@ -235,9 +235,6 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert int(summary["last_event_id"]) >= int(failed_id)
 
 
-# ---------------- #642 锚④：build_brew_input 只投影 prior 字段（全序/筛选归 read 缝）
-
-
 def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     """生产装配：prepare→build_brew_input 经历史读缝取 prior；与 new 互斥。
 
@@ -376,9 +373,6 @@ def test_historical_events_alone_do_not_select_in_later_month(game):
     assert report["selected"] == 0
     assert calls == []
     assert db.get_relation_summary("毕自严", "王绍徽") is None
-
-
-# ------------------------------------------------------- 奠基段拼装机械语义
 
 
 # ------- 判词类③ fail-loud 异常边界：DB/schema/程序错误响亮，仅 LLM 单条降级

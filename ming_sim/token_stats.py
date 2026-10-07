@@ -56,8 +56,6 @@ def _record_usage(model_id: str, usage: object, caller_tag: str = "?") -> None:
     )
 
 
-
-
 def _get_client_base_url(self_client_holder: object) -> str:
     """从 openai Completions self 拿 client.base_url。"""
     try:
@@ -67,8 +65,7 @@ def _get_client_base_url(self_client_holder: object) -> str:
         base = getattr(client, "base_url", "")
         return str(base) if base else ""
     except Exception as exc:
-        # #1902 F1 / ADR 0005：统计旁路可继续，但不得静默。
-        tlog(f"[token_stats] base_url lookup failed: {type(exc).__name__}: {exc}")
+        tlog(f"[TOKEN] client base_url lookup failed: {type(exc).__name__}: {exc}")
         return ""
 
 
@@ -113,8 +110,7 @@ def install_token_stats_patch() -> None:
         try:
             from openai.resources.chat.completions import Completions, AsyncCompletions  # type: ignore
         except Exception as exc:
-            # #1902 F1：统计旁路未装上时仍须留痕，不得静默 return。
-            tlog(f"[token_stats] patch install skipped: {type(exc).__name__}: {exc}")
+            tlog(f"[TOKEN] install patch skipped: {type(exc).__name__}: {exc}")
             return
         orig_create = Completions.create
         orig_acreate = AsyncCompletions.create
@@ -128,8 +124,7 @@ def install_token_stats_patch() -> None:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
                 _record_usage(model_id, getattr(resp, "usage", None))
             except Exception as exc:
-                # ADR 0005 / #1902 F1：统计旁路可继续，但不得静默抹去原因。
-                tlog(f"[token_stats] record_usage failed: {type(exc).__name__}: {exc}")
+                tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         async def patched_acreate(self, *args, **kwargs):
@@ -141,8 +136,7 @@ def install_token_stats_patch() -> None:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
                 _record_usage(model_id, getattr(resp, "usage", None))
             except Exception as exc:
-                # ADR 0005 / #1902 F1：统计旁路可继续，但不得静默抹去原因。
-                tlog(f"[token_stats] record_usage failed: {type(exc).__name__}: {exc}")
+                tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         Completions.create = patched_create  # type: ignore

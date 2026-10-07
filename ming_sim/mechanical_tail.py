@@ -355,9 +355,8 @@ def schedule_mechanical_tail_after_advance(
         )
     try:
         get_session_write_queue(session)
-    except Exception as exc:
-        # 无写队列时机械尾不能入队；旁路跳过须留真因（#1902 T3 / ADR 0005）。
-        logger.warning("mechanical_tail: session write queue unavailable, skip submit: %s", exc)
+    except Exception:
+        logger.exception("schedule_mechanical_tail: write queue unavailable")
         return
     _submit_tail(
         session,
@@ -437,9 +436,8 @@ def ensure_mechanical_tails(session: Any) -> None:
     db = session.db
     try:
         get_session_write_queue(session)
-    except Exception as exc:
-        # 无写队列时不能续接机械尾；旁路跳过须留真因（#1902 T3 / ADR 0005）。
-        logger.warning("ensure_mechanical_tails: session write queue unavailable, skip: %s", exc)
+    except Exception:
+        logger.exception("ensure_mechanical_tails: write queue unavailable")
         return
     current = int(getattr(session.state, "turn", 0) or 0)
     pending_turns = _pending_mechanical_tails(db, current_turn=current)

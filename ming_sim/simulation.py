@@ -120,7 +120,7 @@ ITEM_FIELD_ALIASES = {
     "leverage": "leverage", "影响力": "leverage", "势力": "leverage",
     # new_armies 子字段（建军）
     "owner_power": "owner_power", "归属": "owner_power", "所属": "owner_power",
-    # character_power_changes 子字段（人物易主）
+    # character / 人物变更 易主子字段
     "new_power": "new_power", "新势力": "new_power",
     "station": "station", "驻扎地": "station", "驻地": "station",
     "station_region": "station_region", "实际驻地": "station_region", "驻地省": "station_region",
@@ -164,10 +164,6 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "fiscal_changes": [],
     "fiscal_creates": [],
     "fiscal_removes": [],
-    "office_changes": [],
-    "appointments": [],
-    "character_status_changes": [],
-    "character_power_changes": [],
     "人物变更": [],
     "secret_order_updates": [],
     "covert_exec_selections": [],

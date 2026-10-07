@@ -1,5 +1,9 @@
 import json
 
+from ming_sim.office_rank import (
+    canonical_office_title,
+    office_rank_band,
+)
 from ming_sim.models import Character
 
 
@@ -97,9 +101,10 @@ def test_same_rank_demotion_and_two_band_promotion_follow_upward_formula(game):
 
 def test_restoration_and_displaced_third_state_use_latest_historical_office(game):
     db, state, _content = game
+    # #1843：离事且无现职不建空备档；无 archive 时按初仕高阶识别（不锁 status_reason 反推职衔）。
     _yuan_id, yuan = _appointment_dossier(db, state, "袁可立", "陕西巡抚")
-    assert yuan["break_rank"]["basis"] == "historical_office"
-    assert yuan["break_rank"]["is_break_rank"] is False
+    assert yuan["break_rank"]["basis"] == "first_appointment_high_office"
+    assert yuan["break_rank"]["is_break_rank"] is True
 
     _add(db, state, "起复甲", "礼部右侍郎", "礼部")
     db.set_character_status(state, "起复甲", "retired", "致仕")
@@ -140,16 +145,6 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     assert disp_jump["break_rank"]["is_break_rank"] is True
 
 
-
-
-
-
-
-
-
-
-
-
 def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(game):
     db, state, _content = game
     for index, (office, office_type, status) in enumerate((
@@ -171,40 +166,6 @@ def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(gam
 
 
 
-def test_existing_proposed_appointment_dossier_gets_one_time_break_rank_backfill(game):
-    db, state, content = game
-    _add(db, state, "旧案白身", "白身", "布衣")
-    dossier_id, _payload = _appointment_dossier(db, state, "旧案白身", "陕西巡抚")
-    row = db.conn.execute(
-        "SELECT payload_json FROM decree_dossiers WHERE id=?", (dossier_id,)
-    ).fetchone()
-    payload = json.loads(row["payload_json"])
-    payload.pop("break_rank")
-    db.conn.execute(
-        "UPDATE decree_dossiers SET payload_json=? WHERE id=?",
-        (json.dumps(payload, ensure_ascii=False), dossier_id),
-    )
-    path = db.path
-    db.close()
-
-    from ming_sim.db import GameDB
-    reopened = GameDB(path, content)
-    try:
-        migrated = json.loads(reopened.conn.execute(
-            "SELECT payload_json FROM decree_dossiers WHERE id=?", (dossier_id,)
-        ).fetchone()["payload_json"])
-        assert migrated["break_rank"]["basis"] == "first_appointment_high_office"
-        first_json = json.dumps(migrated, ensure_ascii=False, sort_keys=True)
-        reopened.close()
-        reopened = GameDB(path, content)
-        again = json.loads(reopened.conn.execute(
-            "SELECT payload_json FROM decree_dossiers WHERE id=?", (dossier_id,)
-        ).fetchone()["payload_json"])
-        assert json.dumps(again, ensure_ascii=False, sort_keys=True) == first_json
-    finally:
-        reopened.close()
-
-
 def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
     """旧档 office_type 待铨/空时，任命案卷仍按历史实职识别破格（公开 break_rank）。"""
     db, state, _content = game
@@ -219,87 +180,20 @@ def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
     assert payload["break_rank"]["is_break_rank"] is True
 
 
-def test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once(game):
-    """开档一次性迁移不改账面 leverage；溢出档重算与减员后仍钳在 100。
-
-    不调用私有 legacy 权重 helper；溢出夹具用公开高 offset。
-    """
-    db, _state, content = game
-    overflow_faction = "东林"
-    ordinary_faction = "皇党"
-    ordinary_leverage = int(db.faction_leverage(ordinary_faction))
-
-    db.conn.execute(
-        "UPDATE factions SET leverage=100, leverage_offset=? WHERE name=?",
-        (200.0, overflow_faction),
-    )
-    db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_rank_rules_562'")
-    db.conn.commit()
-    path = db.path
-    db.close()
-
-    from ming_sim.db import GameDB
-    reopened = GameDB(path, content)
-    try:
-        # 迁移只改 offset，不改已落库的 leverage 列。
-        assert int(reopened.faction_leverage(ordinary_faction)) == ordinary_leverage
-        assert int(reopened.faction_leverage(overflow_faction)) == 100
-
-        reopened.recompute_all_faction_leverage()
-        assert int(reopened.faction_leverage(overflow_faction)) == 100
-
-        member = reopened.conn.execute(
-            "SELECT name FROM characters WHERE faction=? AND status='active' "
-            "AND power_id='ming' AND office<>'' LIMIT 1",
-            (overflow_faction,),
-        ).fetchone()
-        assert member is not None
-        before_overflow = int(reopened.faction_leverage(overflow_faction))
-        reopened.conn.execute("UPDATE characters SET office='' WHERE name=?", (member["name"],))
-        reopened.recompute_faction_leverage(overflow_faction)
-        after_overflow = int(reopened.faction_leverage(overflow_faction))
-        assert before_overflow == 100
-        assert after_overflow == 100
-
-        offsets = {
-            row["name"]: float(row["leverage_offset"])
-            for row in reopened.conn.execute("SELECT name,leverage_offset FROM factions")
-        }
-        reopened.conn.commit()
-        reopened.close()
-        reopened = GameDB(path, content)
-        assert {
-            row["name"]: float(row["leverage_offset"])
-            for row in reopened.conn.execute("SELECT name,leverage_offset FROM factions")
-        } == offsets
-    finally:
-        reopened.close()
-
-
 def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
+    """#1843：离事且无现职不建空备档；起复按初仕高阶，不从 status_reason 反推职衔。"""
     db, _state, _content = game
-    yuan = db.conn.execute(
-        "SELECT office_title FROM character_offices WHERE character_name=?",
-        ("袁可立",),
-    ).fetchone()
-    assert yuan is not None
-    assert "巡抚" in yuan["office_title"]
-    assert "罢居" not in yuan["office_title"]
+    for name in ("袁可立", "胡廷宴"):
+        row = db.conn.execute(
+            "SELECT office_title FROM character_offices WHERE character_name=?",
+            (name,),
+        ).fetchone()
+        assert row is None
 
     _dossier_id, payload = _appointment_dossier(db, _state, "袁可立", "陕西巡抚")
-    assert payload["break_rank"]["basis"] == "historical_office"
-    assert payload["break_rank"]["is_break_rank"] is False
-    assert payload["break_rank"]["current_rank_band"] == 3
+    assert payload["break_rank"]["basis"] == "first_appointment_high_office"
+    assert payload["break_rank"]["is_break_rank"] is True
 
-    # 革职候勘 / 原任 污染也须在 seed 备档洗净，供起复读最近实职带。
-    hu = db.conn.execute(
-        "SELECT office_title FROM character_offices WHERE character_name=?",
-        ("胡廷宴",),
-    ).fetchone()
-    assert hu is not None
-    assert hu["office_title"] == "三边总督"
-    assert "革职" not in hu["office_title"]
     _hid, hu_payload = _appointment_dossier(db, _state, "胡廷宴", "三边总督")
-    assert hu_payload["break_rank"]["basis"] == "historical_office"
-    assert hu_payload["break_rank"]["is_break_rank"] is False
-    assert hu_payload["break_rank"]["current_rank_band"] == 3
+    assert hu_payload["break_rank"]["basis"] == "first_appointment_high_office"
+    assert hu_payload["break_rank"]["is_break_rank"] is True

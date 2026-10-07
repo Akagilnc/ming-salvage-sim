@@ -11,7 +11,6 @@ from ming_sim import llm_model
 from ming_sim.llm_model import create_chat_model, verify_llm_available
 from ming_sim.models import LLMConfig
 
-
 def test_create_chat_model_respects_api_channel_over_backend_env(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     cfg = LLMConfig(
@@ -25,7 +24,6 @@ def test_create_chat_model_respects_api_channel_over_backend_env(monkeypatch):
 
     assert isinstance(model, OpenAIChat)
     assert not isinstance(model, CliChat)
-
 
 def test_create_chat_model_uses_cli_channel_without_backend_env(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -55,7 +53,6 @@ def test_create_chat_model_uses_cli_channel_without_backend_env(monkeypatch):
 # #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
 # 选宿主只认运行配置（channel + cli_runner）。
 
-
 def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = load_llm_config("https://api.example.com", "gpt-test", api_key="sk-test")
@@ -66,7 +63,6 @@ def test_loaded_api_config_is_not_rerouted_by_later_backend_env(monkeypatch):
     assert cfg.channel == "api"
     assert isinstance(model, OpenAIChat)
     assert not isinstance(model, CliChat)
-
 
 def test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -86,7 +82,6 @@ def test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning(monkeypa
     assert advanced.reasoning_strength == "high"
     assert advanced.thinking_level == ""
 
-
 def test_load_llm_config_migrates_legacy_none_thinking_to_off(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.delenv("MING_SIM_REASONING_STRENGTH", raising=False)
@@ -99,7 +94,6 @@ def test_load_llm_config_migrates_legacy_none_thinking_to_off(monkeypatch):
     )
 
     assert cfg.reasoning_strength == "off"
-
 
 def test_create_chat_model_maps_off_reasoning_to_openai_none(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -116,7 +110,6 @@ def test_create_chat_model_maps_off_reasoning_to_openai_none(monkeypatch):
 
     assert model.reasoning_effort == "none"
 
-
 def test_create_chat_model_off_reasoning_uses_none_for_gpt56_not_version_list(monkeypatch):
     """#1452：关思考档不得靠 gpt-5.1/5.2/5.4/5.5 盯文枚举——gpt-5.6 掉表外会落到 minimal。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -132,7 +125,6 @@ def test_create_chat_model_off_reasoning_uses_none_for_gpt56_not_version_list(mo
 
     assert model.reasoning_effort == "none"
 
-
 def test_create_chat_model_off_reasoning_keeps_minimal_for_legacy_o1(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(
@@ -146,7 +138,6 @@ def test_create_chat_model_off_reasoning_keeps_minimal_for_legacy_o1(monkeypatch
     model = create_chat_model(cfg)
 
     assert model.reasoning_effort == "minimal"
-
 
 @pytest.mark.parametrize("model_id", ["o3-mini", "o4-mini", "o3", "o4-mini-high"])
 def test_create_chat_model_off_reasoning_keeps_minimal_for_o3_o4(monkeypatch, model_id):
@@ -163,7 +154,6 @@ def test_create_chat_model_off_reasoning_keeps_minimal_for_o3_o4(monkeypatch, mo
     model = create_chat_model(cfg)
 
     assert model.reasoning_effort == "minimal", model_id
-
 
 def test_create_chat_model_strips_provider_prefix_for_reasoning_family(monkeypatch):
     """#1461：openai/gpt-5.x 带 provider 前缀仍须识别为推理族（剥前缀后判）。"""
@@ -195,7 +185,6 @@ def test_create_chat_model_strips_provider_prefix_for_reasoning_family(monkeypat
     model5 = create_chat_model(cfg5)
     assert model5.reasoning_effort == "none"
 
-
 def test_create_chat_model_never_injects_max_tokens(monkeypatch):
     """#1472：create_chat_model 构造 kwargs 永不含 max_tokens（官方上限）。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -223,7 +212,6 @@ def test_create_chat_model_never_injects_max_tokens(monkeypatch):
     for kwargs in captured:
         assert "max_tokens" not in kwargs
 
-
 def test_create_chat_model_passes_default_headers_at_transport_boundary(monkeypatch):
     """#1794：配置附加头整张交给 OpenAIChat.default_headers 公开字段。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -244,7 +232,6 @@ def test_create_chat_model_passes_default_headers_at_transport_boundary(monkeypa
     assert isinstance(model, OpenAIChat)
     assert not isinstance(model, CliChat)
     assert model.default_headers == headers
-
 
 def test_create_chat_model_omits_default_headers_when_empty(monkeypatch):
     """#1794：空表＝现状——不向底层塞 default_headers。"""
@@ -269,51 +256,6 @@ def test_create_chat_model_omits_default_headers_when_empty(monkeypatch):
     assert len(captured) == 1
     assert "default_headers" not in captured[0]
 
-
-def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game, tmp_path):
-    """#1794：召对/拟诏真实入口 → OpenAIChat 构造缝头表整张到达；不跑真实 LLM。"""
-    from ming_sim.agents import bind_content as agents_bind, create_rescript_draft_agent
-    from ming_sim.materials import PreparedMaterials
-    from ming_sim.registry import create_scene_agent
-
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    db, state, content = game
-    agents_bind(content)
-
-    headers = {
-        "X-Custom-Session": "sess-fixed-1",
-        "User-Agent": "ming-qa/1.0",
-    }
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model="gpt-test",
-        channel="api",
-        default_headers=headers,
-    )
-
-    captured: list = []
-    real = llm_model.OpenAIChat
-
-    def spy(*args, **kwargs):
-        captured.append(dict(kwargs))
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
-
-    create_scene_agent(
-        cfg, PreparedMaterials(root=tmp_path, opening="", index_lines=()),
-        content=content,
-    )
-    assert captured, "召对入口须构造 OpenAIChat"
-    assert captured[-1].get("default_headers") == headers
-
-    before = len(captured)
-    create_rescript_draft_agent(cfg, db)
-    assert len(captured) == before + 1, "拟诏入口须再构造一次 OpenAIChat"
-    assert captured[-1].get("default_headers") == headers
-
-
 def test_create_chat_model_strips_top_p_for_openai_reasoning_family(monkeypatch):
     """#1452：luna/gpt-5 推理族拒 top_p（HTTP 400 空 assistant → agno Unknown model error）。
     召对 registry 固定传 top_p=0.9，工厂必须剥离，temperature 可保留。"""
@@ -334,7 +276,6 @@ def test_create_chat_model_strips_top_p_for_openai_reasoning_family(monkeypatch)
     assert "top_p" not in params
     assert params.get("temperature") == 0.6
 
-
 def test_create_chat_model_keeps_top_p_for_non_reasoning_api_models(monkeypatch):
     """#1452 零回归：glm/qwen 等非 OpenAI 推理族仍吃 top_p。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -350,7 +291,6 @@ def test_create_chat_model_keeps_top_p_for_non_reasoning_api_models(monkeypatch)
     assert model.top_p == 0.9
     assert model.get_request_params().get("top_p") == 0.9
 
-
 def test_create_chat_model_leaves_openai_reasoning_default_unset(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(
@@ -363,7 +303,6 @@ def test_create_chat_model_leaves_openai_reasoning_default_unset(monkeypatch):
     model = create_chat_model(cfg, enable_thinking=False)
 
     assert getattr(model, "reasoning_effort", None) in ("", None)
-
 
 def test_create_chat_model_maps_reasoning_strength_to_dashscope_thinking_budget(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -379,7 +318,6 @@ def test_create_chat_model_maps_reasoning_strength_to_dashscope_thinking_budget(
 
     assert model.extra_body == {"enable_thinking": True, "thinking_budget": 10000}
 
-
 def test_create_chat_model_maps_reasoning_strength_to_minimax_thinking(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(
@@ -393,7 +331,6 @@ def test_create_chat_model_maps_reasoning_strength_to_minimax_thinking(monkeypat
     model = create_chat_model(cfg, enable_thinking=True)
 
     assert model.extra_body == {"thinking": {"type": "disabled"}, "reasoning_split": True}
-
 
 def test_minimax_reasoning_strength_overrides_stale_thinking_level(monkeypatch):
     """#358 cmr: 统一推理强度选档（低/中/高）对 minimax 须直接映射 adaptive，不被遗留
@@ -415,7 +352,6 @@ def test_minimax_reasoning_strength_overrides_stale_thinking_level(monkeypatch):
 
 # #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
 # 选宿主只认运行配置（channel + cli_runner）。
-
 
 def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
@@ -442,7 +378,6 @@ def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch)
 
     assert not isinstance(captured["model"], CliChat)
 
-
 def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     seen = {}
@@ -466,7 +401,6 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
     verify_llm_available(cfg)
 
     assert seen["config"] is cfg
-
 
 def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -492,7 +426,6 @@ def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
 # #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
 # 选宿主只认运行配置（channel + cli_runner）。
 
-
 def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
     """legacy env-only smoke 失败同样抛 LLMUnavailable（fail-fast，不静默放行）。"""
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
@@ -505,7 +438,6 @@ def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
     with pytest.raises(LLMUnavailable):
         verify_llm_available(cfg)
 
-
 def _api_cfg(**overrides) -> LLMConfig:
     base = dict(
         api_key="sk-test",
@@ -515,7 +447,6 @@ def _api_cfg(**overrides) -> LLMConfig:
     )
     base.update(overrides)
     return LLMConfig(**base)
-
 
 def test_verify_llm_available_api_smoke_omits_max_tokens(monkeypatch):
     """#1472：API 烟测不发 max_tokens，取官方上限（避免小预算饿死推理族）。"""
@@ -540,7 +471,6 @@ def test_verify_llm_available_api_smoke_omits_max_tokens(monkeypatch):
     verify_llm_available(_api_cfg())
     assert "max_tokens" not in captured["kwargs"]
 
-
 def test_verify_llm_available_api_empty_content_passes(monkeypatch):
     """推理模型思考耗尽回空 content：调用成功即过，空文不作失败。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -560,7 +490,6 @@ def test_verify_llm_available_api_empty_content_passes(monkeypatch):
     # 走真实 extract_agent_text：空 content 不得误杀
     verify_llm_available(_api_cfg())
 
-
 def test_verify_llm_available_api_empty_content_none_passes(monkeypatch):
     """content=None 同空串：烟测不校验返回内容。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -578,7 +507,6 @@ def test_verify_llm_available_api_empty_content_none_passes(monkeypatch):
 
     monkeypatch.setattr(llm_model, "Agent", FakeAgent)
     verify_llm_available(_api_cfg())
-
 
 def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch):
     """#1455：status=ERROR 且空 content 仍是权威失败——设置页不得判连通成功。
@@ -602,7 +530,6 @@ def test_verify_llm_available_api_empty_content_error_status_raises(monkeypatch)
     with pytest.raises(LLMUnavailable) as ei:
         verify_llm_available(_api_cfg())
     assert ei.value.code == "llm_run_error"
-
 
 def test_verify_llm_available_api_error_status_nonempty_content_raises(monkeypatch):
     """真错：生产 agno 形 status=ERROR 且 content 非空错误串，走真实 extract_agent_text，须报 llm_run_error。"""
@@ -650,24 +577,6 @@ def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
 # #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
 # 选宿主只认运行配置（channel + cli_runner）。
 
-
-def test_web_runtime_cli_no_saved_timeout_uses_cli_default(monkeypatch):
-    """codex R1 #3：web env CLI 无 saved cli.timeout_seconds 时回落 CLI 槽默认（静默判死 60），
-    不回落 API request timeout（180）。"""
-    import web_app
-    from ming_sim.llm_config import CLI_DEFAULT_TIMEOUT_SECONDS
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    cfg = web_app._llm_config_from_runtime(
-        {"channel": "cli", "cli": {"runner": "codex", "model": "gpt-5.5"}},
-        base_url="", model="m", api_key="", timeout_seconds=180.0,
-        thinking_level="", advanced_model="", advanced_base_url="",
-        advanced_api_key="", advanced_thinking_level="",
-    )
-    assert cfg.channel == "cli"
-    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 60.0
-    assert cfg.cli_timeout_seconds != 180.0
-
-
 def test_for_role_advanced_empty_cli_model_no_api_model_leak(monkeypatch):
     """#52 核查:CLI 通道 + advanced 角色(simulator)+ cli_model 空时,for_role 把
     advanced_model 放进 model,但 create_chat_model(唯一 CliChat 工厂)不得把它当 --model
@@ -684,7 +593,6 @@ def test_for_role_advanced_empty_cli_model_no_api_model_leak(monkeypatch):
     assert derived.cli_model == ""           # cli_model 仍空
     chat = create_chat_model(derived)
     assert chat.id == "gpt-5.5"              # runner 默认,不是 api-advanced
-
 
 def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
     """RT2(Red Team)：channel=cli + cli_model 空时，不许把 API model 名（llm_config.model）
@@ -711,7 +619,6 @@ def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
     m_agy = _cli("agy")
     assert m_agy.id != "api-fallback-model"   # agy 无 --model，空 id 即可，关键是不漏 API 名
 
-
 # --- #1271 S1: cli_supports_reasoning_strength 单源委派 ---
 
 @pytest.mark.parametrize(
@@ -735,7 +642,6 @@ def test_cli_supports_reasoning_strength_matrix(runner, expected):
 
     assert cli_supports_reasoning_strength(runner) is expected
 
-
 def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     """#1472：ming_sim.agents 现役工厂 + gate 真实参数面无 max_tokens 键。"""
     from types import SimpleNamespace
@@ -752,7 +658,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     fake_ctx = SimpleNamespace(
         game_world_prompt="gw",
         decree_writer_prompt="dw",
-        season_simulator_prompt="ss",
         ending_summary_prompt="es",
     )
     monkeypatch.setattr(agents_mod, "_ctx", lambda: fake_ctx)
@@ -814,8 +719,6 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     assert len(seen) == before_gate + 1, f"gate must hit create_chat_model once, got +{len(seen) - before_gate}"
     assert "max_tokens" not in seen[-1], seen[-1]
 
-
-
 def test_gate_evidence_config_omits_max_tokens():
     """#1472：四闸证据块不再写 max_tokens。"""
     from types import SimpleNamespace
@@ -825,3 +728,47 @@ def test_gate_evidence_config_omits_max_tokens():
     cfg = cb.gate_llm_config_from_args(args)
     block = cb.gate_evidence_config(args, cfg)
     assert "max_tokens" not in block
+
+
+def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game, tmp_path):
+    """#1794：召对/拟诏真实入口 → OpenAIChat 构造缝头表整张到达；不跑真实 LLM。"""
+    from ming_sim.agents import bind_content as agents_bind, create_rescript_revise_agent
+    from ming_sim.materials import PreparedMaterials
+    from ming_sim.registry import create_scene_agent
+
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    db, state, content = game
+    agents_bind(content)
+
+    headers = {
+        "X-Custom-Session": "sess-fixed-1",
+        "User-Agent": "ming-qa/1.0",
+    }
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="gpt-test",
+        channel="api",
+        default_headers=headers,
+    )
+
+    captured: list = []
+    real = llm_model.OpenAIChat
+
+    def spy(*args, **kwargs):
+        captured.append(dict(kwargs))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(llm_model, "OpenAIChat", spy)
+
+    create_scene_agent(
+        cfg, PreparedMaterials(root=tmp_path, opening="", index_lines=()),
+        content=content,
+    )
+    assert captured, "召对入口须构造 OpenAIChat"
+    assert captured[-1].get("default_headers") == headers
+
+    before = len(captured)
+    create_rescript_revise_agent(cfg, db)
+    assert len(captured) == before + 1, "改票入口须再构造一次 OpenAIChat"
+    assert captured[-1].get("default_headers") == headers

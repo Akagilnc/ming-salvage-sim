@@ -30,6 +30,11 @@ PERSON_STATUSES = (
     "dead",
 )
 
+# ADR 0009 不变式 1：离事者（非 active）职名分必清。由 PERSON_STATUSES 派生，禁止各入口另造平行集合。
+PERSON_OUSTED_STATUSES = frozenset(
+    status for status in PERSON_STATUSES if status != "active"
+)
+
 PERSON_REASON_CODES = (
     "被顶替",
     "获罪削籍",
@@ -55,8 +60,6 @@ PERSON_TITLE_KINDS = ("职名分", "身名分", "无名分")
 PERSON_IDENTITY_TITLES = ("听用候铨", "降臣", "归附", "待选", "诸生")
 
 PERSON_ALLEGIANCE_CHANGE_WAYS = ("主动投敌", "被俘而降", "主动归附")
-
-PERSON_LEGACY_ALLEGIANCE_CHANGE_WAYS = ("不明",)
 
 PERSON_REASON_CODE_ALIASES = {
     "守制": "丁忧",
@@ -108,6 +111,26 @@ def normalize_title_kind(value: object) -> str:
     if raw in PERSON_IDENTITY_TITLES:
         return "身名分"
     return ""
+
+
+def current_title_kind(office: object = "", office_type: object = "") -> str:
+    """ADR 0009 当前名分类别（供 resolve_person_transition）：职名分 / 身名分。
+
+    口径与既有事件闸／声明入口同源：空职、显式「身名分」、PERSON_IDENTITY_TITLES
+    （及 normalize_title_kind 能认作身名分的职衔字）→ 身名分；其余非空现职 → 职名分。
+    未仕／宗藩／后宫／外臣等身份桶现职以静态名册为真源；禁止经本函数扩 transition 语义。
+    """
+    office_text = str(office or "").strip()
+    kind = str(office_type or "").strip()
+    if (
+        not office_text
+        or kind == "身名分"
+        or office_text in PERSON_IDENTITY_TITLES
+        or normalize_title_kind(office_text) == "身名分"
+    ):
+        return "身名分"
+    return "职名分"
+
 
 
 def resolve_person_transition(

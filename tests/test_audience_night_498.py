@@ -516,60 +516,6 @@ def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):
     assert int(n_nights) == 0
 
 
-def test_old_save_migration_night_id_index_order(content, tmp_path):
-    """旧档无 night_id 列：ensure_column 后再建索引，重开不炸。"""
-    path = str(tmp_path / "migrate-reopen.db")
-    conn = sqlite3.connect(path)
-    conn.executescript(
-        """
-        CREATE TABLE chat_turns (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            minister_name TEXT NOT NULL,
-            turn INTEGER NOT NULL,
-            year INTEGER NOT NULL,
-            period INTEGER NOT NULL,
-            user_message_id INTEGER,
-            minister_message_id INTEGER,
-            agno_session_id TEXT NOT NULL DEFAULT '',
-            agno_runs_before INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'active',
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            undone_at TEXT
-        );
-        CREATE TABLE game_state (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            year INTEGER NOT NULL,
-            period INTEGER NOT NULL,
-            turn INTEGER NOT NULL,
-            turn_phase TEXT NOT NULL DEFAULT 'summoning'
-        );
-        INSERT INTO game_state (id, year, period, turn) VALUES (1, 1628, 1, 1);
-        """
-    )
-    conn.commit()
-    conn.close()
-    # 完整 GameDB 初始化会 ensure 列 + 建索引
-    db = GameDB(path, content)
-    cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(chat_turns)").fetchall()}
-    assert "night_id" in cols
-    assert "night_seq" in cols
-    # 索引存在
-    idxs = {
-        r["name"]
-        for r in db.conn.execute("PRAGMA index_list(chat_turns)").fetchall()
-    }
-    assert "idx_chat_turns_night" in idxs
-    # 可写挂夜轮
-    state = db.load_state()
-    minister = _active_minister(db, content)
-    night = an.open_night(db, state)
-    cid = db.create_chat_turn(state, minister, "migrate", 0, night_id=night["id"])
-    row = db.conn.execute(
-        "SELECT night_id, night_seq, status FROM chat_turns WHERE id=?", (cid,),
-    ).fetchone()
-    assert int(row["night_id"]) == night["id"]
-    assert row["status"] == "generating"
-    db.close()
 
 
 # 结算相位不得召对 + 等 gate 期间相位翻转（TOCTOU）被拒 → 真实 WebGame.chat_stream 验证，

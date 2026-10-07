@@ -51,9 +51,8 @@ def test_s1_public_projection_filter_unchanged(game):
 
 
 def test_s2_tracer_613_565_readers_see_appended_roster(game):
-    """② 同一 tracer 尾断言 #613/#565 读端可见追加参与人。"""
+    """② 同一 tracer 尾断言 #611/#565 读端可见追加参与人。"""
     import ming_sim.issues as issue_engine
-    from ming_sim.decree import execution_side_read_fields
     from ming_sim.participant_roster import project_execution_liability_parties
     from tests.test_authority_ledger_611 import _grant
 
@@ -67,7 +66,7 @@ def test_s2_tracer_613_565_readers_see_appended_roster(game):
         "character_id": lead, "tier": "主办", "role": "密访",
     }], state=state)
     dossier_before = db.get_decree_dossier(dossier_id)
-    # Grant authority to worker on this secret scope so #613 projection can hit
+    # Grant authority to worker on this secret scope so #611 projection can hit
     # once worker is on the roster (actors = executor ∪ 主办/协办).
     auth_id = _grant(
         db, state, content, worker, "专差督办",
@@ -94,11 +93,11 @@ def test_s2_tracer_613_565_readers_see_appended_roster(game):
         row.get("character_id") == worker and row.get("tier") == "协办"
         for row in dossier["participant_roster"]
     )
-    # #613 held_authorities: character executor ∪ roster 主办/协办
-    side = execution_side_read_fields(db, state, dossier)
-    held_holders = {item["holder_id"] for item in side["held_authorities"]}
+    # #611 held_authorities: character executor ∪ roster 主办/协办
+    held = db.project_applicable_authorities(state.turn, dossier)
+    held_holders = {item["holder_id"] for item in held}
     assert worker in held_holders
-    assert str(auth_id) in side["authorization_ids"]
+    assert str(auth_id) in {str(item["id"]) for item in held}
 
 
 def test_s2_public_dossier_participants_still_rejects_secret_id(game):

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 
 from ming_sim.db import GameDB
-from ming_sim.fiscal_fact_brief import build_fiscal_fact_brief
 from ming_sim.models import Event
 
 # content/classes.json 冻结字面（施工 oracle，非实现推导）
@@ -105,15 +104,6 @@ def test_redeploy_moves_fact_region_keeps_pay_source(game):
     assert row["station_region"] == "shandong"
     assert row["pay_source_region"] == pay_src == "liaodong"
 
-    entries = build_fiscal_fact_brief(db)
-    d_regions = {
-        e["region"] for e in entries
-        if e["subject_id"] == "dongjiang" and e["metric"] == "分源欠饷月数"
-    }
-    assert d_regions == {"shandong"}
-    assert "dongjiang_area" not in d_regions
-    assert "liaodong" not in d_regions
-
 
 def test_station_region_rejects_unknown_region_id(game):
     """非空 station_region 必须是已入库 regions.id；不从 station 反推。"""
@@ -146,4 +136,4 @@ def test_fresh_seed_station_region_and_class_slices(game):
     assert _pop(db, "流民", "liaodong") == LIUMIN_LIAODONG
     assert _pop(db, "军户", "dongjiang_area") == JUNHU_DONGJIANG
     assert _pop(db, "流民", "dongjiang_area") == LIUMIN_DONGJIANG
-    # 旧档 ensure_column 路径：新列存在且默认空串合法
+

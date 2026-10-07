@@ -26,12 +26,6 @@ from ming_sim.qualitative import qualitative_character_axis
 SUPERVISION_RELATION = "稽核"
 
 # 督办判官读面的三个结构化键
-SUPERVISION_SURFACE_KEYS = (
-    "supervision_history",
-    "loophole_exposures",
-    "transformation_tendency_facts",
-)
-
 # transformation_tendency_facts 空形——唯一真源（禁调用方手写七键字面量）
 EMPTY_TRANSFORMATION_TENDENCY_FACTS: Dict[str, object] = {
     "longest_consecutive_presence_months": 0,
@@ -66,30 +60,6 @@ INTEGRITY_MEDIOCRE_BANDS = frozenset({"操守多亏", "操守未稳", "操守平
 # GameDB.trigger_supervision_countermeasures 一并退役——代码不再按 integrity 档
 # 判定人物是否反制、不再 hash 指定反制形态。监督在场事实与稽核人定性仍照留，
 # 供 #1861 逐旨推演／#1843 世界段 run 依人物可及事实自选。
-
-# #627 检举事实表列白名单（PRAGMA 验收）
-DENUNCIATION_TABLE = "faction_denunciations"
-DENUNCIATION_ALLOWED_COLS = frozenset({
-    "id", "turn", "accuser_name", "accuser_faction",
-    "subject_name", "subject_faction", "target_dossier_id",
-    "origin", "payload_json", "memorial_text",
-})
-
-# PRAGMA 白名单：事实表仅 id / FK / turn / 枚举 / 布尔
-PRESENCE_TABLE = "dossier_supervision_presence"
-EXPOSURE_TABLE = "dossier_loophole_exposures"
-PRESENCE_ALLOWED_COLS = frozenset({
-    "id", "dossier_id", "turn", "auditor_name", "audit_dossier_id",
-    "relation_type", "present",
-})
-EXPOSURE_ALLOWED_COLS = frozenset({
-    "id", "dossier_id", "turn", "action_type", "execution_form",
-})
-# 全库禁「钝化数值」列名（AC1）
-FORBIDDEN_DULLING_COL_FRAGMENTS = (
-    "dull", "dulling", "钝化", "陋规", "supervision_score", "dull_rate",
-)
-
 
 def integrity_band(value: object) -> str:
     return str(qualitative_character_axis("integrity", value) or "")

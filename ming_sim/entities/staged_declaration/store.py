@@ -29,7 +29,10 @@ CREATE TABLE IF NOT EXISTS staged_declarations (
     status TEXT NOT NULL DEFAULT 'staged'
         CHECK(status IN ('staged','discarded','settled')),
     created_turn INTEGER NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    verdict_json TEXT,
+    questions_json TEXT,
+    forecast_text TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_staged_declarations_decree
     ON staged_declarations(decree_ref, id);
@@ -69,17 +72,6 @@ class StagedDeclarationStore:
     @staticmethod
     def ensure_schema(conn: Any) -> None:
         conn.executescript(_SCHEMA_SQL)
-        cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(staged_declarations)")}
-        if "visible_refs_json" not in cols:
-            conn.execute(
-                "ALTER TABLE staged_declarations ADD COLUMN visible_refs_json TEXT NOT NULL DEFAULT '{}'"
-            )
-        if "verdict_json" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN verdict_json TEXT")
-        if "questions_json" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN questions_json TEXT")
-        if "forecast_text" not in cols:
-            conn.execute("ALTER TABLE staged_declarations ADD COLUMN forecast_text TEXT")
 
     def stage(
         self, *, decree_ref: str, declaration: Mapping[str, object], turn: int,

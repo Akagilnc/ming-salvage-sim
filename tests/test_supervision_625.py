@@ -2,7 +2,7 @@
 
 Seams:
 - dossier_supervision_presence / dossier_loophole_exposures 事实表
-- record_monthly_supervision_facts（与 grant recon 同段）
+- record_monthly_supervision_presence（与 grant recon 同段）
 - build_due_review_input.supervision_history
 - 督办复核的监督事实观察槽
 - auto_trigger 涌现缝反制 issue
@@ -30,11 +30,6 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.supervision import (
     EMPTY_TRANSFORMATION_TENDENCY_FACTS,
-    EXPOSURE_ALLOWED_COLS,
-    EXPOSURE_TABLE,
-    FORBIDDEN_DULLING_COL_FRAGMENTS,
-    PRESENCE_ALLOWED_COLS,
-    PRESENCE_TABLE,
     SUPERVISION_RELATION,
 )
 
@@ -138,44 +133,11 @@ def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
     return int(created["issue_id"])
 
 
-def _table_cols(db, table: str) -> set[str]:
-    return {
-        str(row["name"])
-        for row in db.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
-    }
 
 
 # ── AC1 事实底 ────────────────────────────────────────────────────
 
 
-def test_ac1_presence_exposure_schema_pragma_and_no_dulling_cols(game):
-    db, state, _content = game
-    assert PRESENCE_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    assert EXPOSURE_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    pcols = _table_cols(db, PRESENCE_TABLE)
-    ecols = _table_cols(db, EXPOSURE_TABLE)
-    assert pcols == PRESENCE_ALLOWED_COLS
-    assert ecols == EXPOSURE_ALLOWED_COLS
-    # 全库不得长出钝化数值列。
-    tables = [
-        str(r[0])
-        for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        ).fetchall()
-    ]
-    for table in tables:
-        for col in _table_cols(db, table):
-            low = col.lower()
-            for frag in FORBIDDEN_DULLING_COL_FRAGMENTS:
-                assert frag.lower() not in low, f"{table}.{col} 命中禁列片段 {frag}"
 
 
 def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, content):
@@ -189,8 +151,8 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
 
     turn = int(state.turn)
     # 同段写口：与 grant recon 一并调用
-    db.record_monthly_supervision_facts(turn, commit=True)
-    db.record_monthly_supervision_facts(turn, commit=True)  # 幂等不双计
+    db.record_monthly_supervision_presence(turn, commit=True)
+    db.record_monthly_supervision_presence(turn, commit=True)  # 幂等不双计
 
     presence = db.list_supervision_presence(subject_id)
     assert len(presence) == 1
@@ -232,7 +194,7 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
         assert restored.list_supervision_history(subject_id) == expected_hist
         assert restored.list_loophole_exposures(subject_id) == expected_exp
         # restore 后同 turn 重跑不双计
-        restored.record_monthly_supervision_facts(turn, commit=True)
+        restored.record_monthly_supervision_presence(turn, commit=True)
         assert len(restored.list_supervision_presence(subject_id)) == 1
     finally:
         restored.close()
@@ -291,7 +253,7 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
 
     base_turn = int(state.turn)
     for offset in range(12):  # 原硬门月数门（#1895 退役）只为铺满在场事实
-        db.record_monthly_supervision_facts(base_turn + offset, commit=True)
+        db.record_monthly_supervision_presence(base_turn + offset, commit=True)
 
     hist_m = db.list_supervision_history(sub_m, as_of_turn=base_turn + 11)
     hist_u = db.list_supervision_history(sub_u, as_of_turn=base_turn + 11)
@@ -437,7 +399,7 @@ def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
     _audit_dossier(
         db, state, auditor=str(auditor_row["name"]), subject_id=subject_id, token="dr",
     )
-    db.record_monthly_supervision_facts(state.turn, commit=True)
+    db.record_monthly_supervision_presence(state.turn, commit=True)
     db.record_dossier_progress(
         subject_id, state.turn, "在办", "表报已陈，实绩未充",
         is_terminal=False, commit=True,

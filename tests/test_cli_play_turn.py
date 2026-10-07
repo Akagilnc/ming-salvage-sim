@@ -376,6 +376,92 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
     assert session.calls == ["begin", "advance", "advance"]
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
+    """#1716 CLI：minister_chat「重试回话」成功收夜后返回 court_break，关夜且无 presence。
+
+    入口仍是 minister_chat 的重试命令；不重记问话既有契约一并覆盖。
+    """
+    import types
+
+    db, state, content = game
+    character = next(c for c in content.characters.values() if c.status == "active")
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    night_id = int(night["id"])
+    # 中断轮问话为收夜口令——retry 再生后 court_action=court_break。
+    question = "退朝"
+    ct = db.create_chat_turn(
+        state, character.name, f"cli:{character.name}", 0,
+        night_id=night_id, status="generating",
+    )
+    mid = db.append_chat_message(character.name, state.turn, "user", question)
+    db.update_chat_turn_messages(ct, user_message_id=mid)
+    db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ct,))
+    db.conn.commit()
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.llm_config = SimpleNamespace(channel="api")
+
+    sess.registry = SimpleNamespace(
+        get=lambda _ch, **_kw: SimpleNamespace(
+            run=lambda *_a, **_k: SimpleNamespace(content="臣遵旨。", tools=[]),
+        ),
+        session_ids={},
+    )
+    sess._audience_prompt_for_message = lambda msg, character=None, chat_turn_id=0, **_kw: msg
+    sess.close_night_after_chat_if_needed = types.MethodType(
+        GameSession.close_night_after_chat_if_needed, sess,
+    )
+
+    seen = {}
+
+    def _retry(**kwargs):
+        seen.update(kwargs)
+        assert int(kwargs.get("chat_turn_id") or 0) == ct
+        assert kwargs.get("question") == question
+        # 真核会落 active + minister 消息；本入口 tracer 只证命令进共核。
+        db.conn.execute(
+            "UPDATE chat_turns SET status='active', minister_message_id=? WHERE id=?",
+            (mid, ct),
+        )
+        db.conn.commit()
+        return (
+            SimpleNamespace(id=ct),
+            SimpleNamespace(answer="臣遵旨。", court_action="court_break"),
+            1,
+        )
+
+    sess.execute_interrupted_reply_retry = _retry  # type: ignore[method-assign]
+    sess.pending_audience_reply_retries = lambda: [{  # type: ignore[method-assign]
+        "chat_turn_id": ct,
+        "question": question,
+        "message_speaker": character.name,
+        "turn": state.turn,
+        "user_message_id": mid,
+    }]
+    db.conn.execute(
+        "UPDATE chat_turns SET extract_status='done' WHERE id=?",
+        (ct,),
+    )
+    db.conn.commit()
+
+    answers = iter(["重试回话"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert term.minister_chat(sess, character) == "court_break"
+    assert seen.get("chat_turn_id") == ct
+    assert seen.get("schedule_close_night") is True
+
+    row = db.conn.execute(
+        "SELECT status, minister_message_id FROM chat_turns WHERE id=?", (ct,),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert int(row["minister_message_id"] or 0) == mid
+
+
 @pytest.mark.parametrize("action", ["skip", "issue"])
 def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
     """#1843/PR #1876: HITL 续跑实际推进月份后，play_turn 必须调用 end_turn 并结束本回合。"""

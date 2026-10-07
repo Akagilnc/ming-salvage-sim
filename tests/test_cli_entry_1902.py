@@ -15,6 +15,7 @@ import os
 from types import SimpleNamespace
 
 import pytest
+from tests.rescript_test_helpers import sql_rescript_draft
 
 import ming_sim.cli.terminal as term
 from ming_sim import audience_night as an
@@ -238,10 +239,21 @@ def _real_submit_session(monkeypatch, db, state, content, *, candidate_ids=()):
 def test_cli_blank_pick_on_urgent_reaches_core_hold(game, monkeypatch):
     """急务回车 → 经真 submit_hitl_choices 机械 hold，案卷落 decided（外部可见）。"""
     db, state, content = game
-    db.save_rescript_drafts(int(state.turn), [{
+    _drafts = [{
         "title": "陕西告饥", "context": "秦地赤旱",
         "options": [{"label": "发饷", "hint": "照拟", "draft_capability": "cap-1"}],
-    }])
+    }]
+    for _i, _d in enumerate(_drafts):
+        sql_rescript_draft(
+            db, int(state.turn), idx=100 + _i,
+            event_id=str(_d.get("event_id") or f"plant:{_d.get('title') or _i}"),
+            title=str(_d.get("title") or ""),
+            context=str(_d.get("context") or ""),
+            options=_d.get("options") or [],
+            actor_name=str(_d.get("actor_name") or ""),
+            actor_office=str(_d.get("actor_office") or ""),
+            actor_faction=str(_d.get("actor_faction") or ""),
+        )
     db.conn.commit()
     session = _real_submit_session(monkeypatch, db, state, content)
     monkeypatch.setattr("builtins.input", lambda _prompt="": "")

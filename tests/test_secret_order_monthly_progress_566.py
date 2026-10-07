@@ -42,18 +42,6 @@ def _production_session(db, state, content):
     return session
 
 
-def _canned_monthly_settlement(monkeypatch, extractor_calls):
-    """Keep the production settlement pipeline; replace only external LLM seams."""
-    from tests.settlement_seam_helpers import canned_full_settlement
-
-    def _track_world(*_a, **_k):
-        extractor_calls.append("world")
-        return "本月公开邸报"
-
-    canned_full_settlement(monkeypatch, narrative="本月公开邸报")
-    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _track_world)
-
-
 def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
 

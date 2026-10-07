@@ -25,6 +25,8 @@ from typing import Any, Dict, Optional
 from ming_sim.applier import atomic, safe_json_dumps
 from ming_sim.paths import bundled_path, user_data_dir
 
+logger = logging.getLogger(__name__)
+
 
 _ERROR_PACKS_SUBDIR = "error_packs"
 
@@ -71,9 +73,8 @@ def _read_version() -> str:
     """读 VERSION 文件（bundled）；缺失 / 读失败回 'unknown'，绝不让写包失败。"""
     try:
         return Path(bundled_path("VERSION")).read_text(encoding="utf-8").strip()
-    except Exception as exc:
-        # 确证安全旁路：版本缺失不阻断错误包；须留真因（#1902 T3 / ADR 0005）。
-        logging.getLogger(__name__).warning("error_pack VERSION read failed: %s", exc)
+    except Exception:
+        logger.exception("error pack VERSION read failed")
         return "unknown"
 
 
@@ -92,6 +93,7 @@ def _read_complete_pack_manifest(path: Path) -> Optional[Dict[str, object]]:
             return None
         manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
+        logger.exception("error pack manifest read failed path=%s", path)
         return None
     return manifest if isinstance(manifest, dict) else None
 
@@ -118,6 +120,7 @@ def latest_error_pack_for_turn(db_path: object, turn: int) -> Optional[str]:
             return None
         entries = list(root.iterdir())
     except OSError:
+        logger.exception("error packs root scan failed root=%s", root)
         return None
     expected_db_path = str(db_path)
     prefix = f"turn{int(turn)}_attempt"
@@ -128,7 +131,10 @@ def latest_error_pack_for_turn(db_path: object, turn: int) -> Optional[str]:
             if not (path.is_dir() and path.name.startswith(prefix)):
                 continue
             n = int(path.name[len(prefix):])
-        except (OSError, ValueError):
+        except ValueError:
+            continue  # 目录名非 attempt 序号：正常非候选
+        except OSError:
+            logger.exception("error pack entry stat failed path=%s", path)
             continue
         manifest = _read_complete_pack_manifest(path)
         if manifest is None:
@@ -146,6 +152,7 @@ def latest_error_pack_for_turn(db_path: object, turn: int) -> Optional[str]:
     try:
         return str(best.resolve())
     except OSError:
+        logger.exception("error pack path resolve failed path=%s", best)
         return None
 
 

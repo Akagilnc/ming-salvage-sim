@@ -6,7 +6,7 @@ import ming_sim.cli_backend as cli_backend
 import ming_sim.draft_intent as draft_intent
 import ming_sim.decree as decree_mod
 from tests.dossier_test_helpers import rejected_verdict
-
+from tests.rescript_test_helpers import sql_rescript_draft
 
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
     return db.create_decree_dossier(
@@ -407,12 +407,13 @@ def test_657_capability_revalidate_on_follow(game, monkeypatch):
         "transaction_category": "督赈",
     })
     assert opt["draft_capability"] == derive_draft_capability(opt)
-    db.save_rescript_drafts(int(state.turn), [{
-        "title": "急", "context": "c",
-        "options": [opt, {"label": "备", "hint": "b",
-                           "draft_capability": derive_draft_capability({"label": "备"})}],
-        "actor_name": "A", "actor_office": "o", "actor_faction": "f",
-    }])
+    sql_rescript_draft(
+        db, int(state.turn), idx=0, event_id="draft:急",
+        title="急", context="c",
+        options=[opt, {"label": "备", "hint": "b",
+                       "draft_capability": derive_draft_capability({"label": "备"})}],
+        actor_name="A", actor_office="o", actor_faction="f",
+    )
     db.conn.commit()
     desk = db.list_rescript_desk(int(state.turn))
     key = desk[0]["decision_key"]

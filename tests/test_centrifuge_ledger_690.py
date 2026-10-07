@@ -769,7 +769,7 @@ def test_t12_restore_preserves_tables_and_rebuild(tmp_path, content):
     first.close()
 
     second = GameDB(str(path), content)
-    # 表/列/值仍在
+    # 值仍在（snapshot 含账本结果）
     assert _snapshot(second) == snap
     rebuild_centrifuge_cache(second)
     # cache≡log：blood/wariness/overdraw 与 log 聚合一致

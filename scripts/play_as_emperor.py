@@ -318,6 +318,7 @@ def run(
     prev_hint = ""            # 上一步命中的 prompt，用于检测卡同界面
     stuck_count = 0           # 同一界面连续重复次数
     STUCK_LIMIT = 6           # 连续卡同界面上限，超则升级退出路径
+    termination_failed = False
 
     try:
         while completed_periods < turns:
@@ -506,28 +507,24 @@ def run(
             pass
 
     finally:
-        # 硬规9：禁 SIGKILL。
-        # - pexpect.terminate(force=True) 在 SIGHUP/SIGCONT/SIGINT 仍存活时发 SIGKILL
-        # - pexpect.close() / PtyProcess.close() 默认 force=True，同样可落到 SIGKILL
-        # - spawn.__exit__ 调 close()，故禁止 with pexpect.spawn(...) 上下文管理
-        # 只走 terminate(force=False)；不调用 child.close()；未退如实记终止缺口。
+        # pexpect.terminate 返回 False = 未能终止；不得当成功返回。
+        # 日志关闭仍执行（资源收尾与失败呈现分立）。
         if child.isalive():
-            try:
-                exited = bool(child.terminate(force=False))
-            except Exception as exc:
-                log(f"[CLI 子进程 terminate 失败（终止缺口，不 SIGKILL）: {exc}]")
-            else:
-                if child.isalive() or not exited:
-                    log(
-                        "[CLI 子进程 terminate 后仍未退出（终止缺口，不 SIGKILL）]"
-                    )
-        # 故意不调用 child.close()（默认 force=True → 可 SIGKILL）
+            stopped = child.terminate(force=False)
+            if not stopped:
+                termination_failed = True
+                log(
+                    "[收尾失败] pexpect.terminate(force=False) 返回 False，"
+                    f"child 仍存活={child.isalive()}"
+                )
         log_file.close()
 
     print(f"\n=== 结束。完成 {completed_periods}/{turns} 月。Log: {log_path} ===")
     print("\n### 玩家(qwen) 侧 token：")
     from ming_sim.token_stats import print_token_summary
     print_token_summary()
+    if termination_failed:
+        return 1
     return 0 if completed_periods >= turns else 1
 
 

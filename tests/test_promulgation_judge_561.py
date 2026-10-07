@@ -4,7 +4,6 @@ import pytest
 
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
-from ming_sim import audience_night
 from ming_sim.exceptions import LLMContractError
 from ming_sim.models import LLMConfig
 from ming_sim.qualitative import power_band, qualitative_character_axis
@@ -118,7 +117,6 @@ def test_promulgation_context_projects_faction_leverage_as_qualitative_band(game
     assert all(set(row) == {"name", "leverage", "agenda"} for row in context["factions"])
     assert any(row["agenda"] for row in context["factions"])
 
-
 def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
     db, state, _content = game
     ordinary = _dossier(db, state)
@@ -150,35 +148,6 @@ def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
         {"dossier_id": midzhi_reject, "turn": state.turn, "mode": "midzhi",
          "marker": "批红强颁", "outcome": "promulgated"},
     ]
-
-def test_gate_extracts_actual_cli_judge_payload_and_rejects_ambiguous_capture():
-    from scripts.promulgation_gate_561 import (
-        _captured_judge_payload,
-        _judge_payload_from_prompt,
-    )
-
-    expected = {"turn": {"turn": 7}, "dossiers": [{"id": 11}]}
-    encoded = json.dumps(expected, ensure_ascii=False, sort_keys=True)
-    prompt = f"【系统设定】\njudge\n\n【皇帝/输入】\n{encoded}\n\n【执行约束·必读】done"
-    record = {
-        "seq": 3, "attempts": 1, "error": None, "prompt": prompt,
-        "prompt_chars": len(prompt),
-    }
-
-    assert _judge_payload_from_prompt(prompt) == expected
-    actual, provenance = _captured_judge_payload([record], expected)
-    assert actual == expected
-    assert provenance == {
-        "source": "MING_SIM_TRACE_PATH real CliChat.invoke prompt",
-        "seq": 3, "attempts": 1, "error": None,
-        "matches_builder_expectation": True,
-    }
-    for records in ([], [record, record], [{**record, "attempts": 2}],
-                    [{**record, "prompt_chars": len(prompt) - 1}]):
-        with pytest.raises(RuntimeError):
-            _captured_judge_payload(records, expected)
-    with pytest.raises(RuntimeError):
-        _judge_payload_from_prompt(prompt.replace(encoded, encoded[:-1]))
 
 def test_promulgation_verdict_list_shape_has_one_canonical_authority(game):
     db, _state, _content = game
@@ -413,18 +382,6 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
         fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
     )
 
-def test_gate_second_verdict_reads_pending_or_applied_history_strictly():
-    from scripts.promulgation_gate_561 import _select_second_verdict
-
-    rejected = {"dossier_id": 7, "decision": "rejected"}
-    promoted = {"dossier_id": 7, "decision": "promulgated"}
-    assert _select_second_verdict(True, 7, [promoted], [rejected]) == promoted
-    assert _select_second_verdict(False, 7, [rejected], [promoted]) == promoted
-    for rows in ([], [{"dossier_id": 7, "decision": ""}],
-                 [promoted, promoted], [{"dossier_id": 8, "decision": "promulgated"}]):
-        with pytest.raises(RuntimeError):
-            _select_second_verdict(True, 7, rows, [])
-
 def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatch, tmp_path):
     """Non-awaiting arms must read applied history at the pre-resolve turn."""
     from ming_sim.content import GameContent
@@ -443,10 +400,8 @@ def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatc
             {"dossier_id": int(row["id"]), "decision": "promulgated"}
             for row in dossiers
         ]
-        db.save_pending_promulgation_verdicts(state.turn, verdicts)
         db.apply_dossier_verdicts(state, verdicts, content=content)
-        # Settlement consumes pending and advances turn — the bug surface.
-        assert db.get_pending_promulgation_verdicts(state.turn) == []
+        # Settlement advances turn — the bug surface (pending batch writer retired).
         state.turn += 1
         db.save_state(state)
         return decree_mod.ResolveResult(awaiting=False, report="settled")
@@ -555,6 +510,28 @@ def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
     assert by_event[f"dossier:{authority_edge}"]["dossier_decision"] != (
         "force_promulgated"
     )
+
+def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
+    """TD-1 / ADR 0055 S6: ordinary class planted dossiers must all pass or the arm fails."""
+    from scripts.promulgation_gate_561 import _ordinary_class_all_promulgated
+
+    assert _ordinary_class_all_promulgated([
+        ({"ordinary": 1, "hostile": 2},
+         {1: {"decision": "promulgated"}, 2: {"decision": "rejected"}}),
+        ({"ordinary": 3},
+         {3: {"decision": "promulgated"}}),
+    ]) is True
+    assert _ordinary_class_all_promulgated([
+        ({"ordinary": 1}, {1: {"decision": "rejected"}}),
+    ]) is False
+    assert _ordinary_class_all_promulgated([
+        ({"ordinary": 1}, {1: {"decision": "promulgated"}}),
+        ({"ordinary": 4}, {4: {"decision": "rejected"}}),
+    ]) is False
+    # Arms without ordinary do not invent a sample; empty plant is not a pass.
+    assert _ordinary_class_all_promulgated([
+        ({"hostile": 2}, {2: {"decision": "rejected"}}),
+    ]) is False
 
 def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     """TD-9: 安抚首领 = 东林 agenda posture; 许誉卿 stays; no 钱谦益 roster swap."""

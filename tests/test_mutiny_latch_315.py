@@ -14,16 +14,6 @@ from ming_sim.flows import apply_fixed_period_flows
 ARMY = "guanning"
 
 
-def _configure(db):
-    value = 1  # active substrate_hub cutover
-    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
-        db.conn.execute(
-            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
-
-
 def _setup(
     db,
     *,
@@ -33,10 +23,9 @@ def _setup(
     is_tusi: int = 0,
     self_funded_pay: int = 0,
 ):
-    _configure(db)
     db.conn.execute("UPDATE armies SET manpower=0")
     if is_tusi or self_funded_pay:
-        # 现役 cutover 守恒：豁免军份额/欠饷须全 0；本案只验 latch 不被 tick 改写。
+        # 现役 hub 守恒：豁免军份额/欠饷须全 0；本案只验 latch 不被 tick 改写。
         db.conn.execute(
             """UPDATE armies SET owner_power='ming', is_tusi=?, self_funded_pay=?,
                manpower=10000, salary_rate=1, loyalty=?, arrears=0, is_mutinied=?,

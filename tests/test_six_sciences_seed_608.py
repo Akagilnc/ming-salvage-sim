@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from ming_sim.db import (
-    _OFFICE_LEVERAGE_WEIGHT,
     _member_office_weight,
     infer_office_type_from_office,
 )
+
+
+def test_six_sciences_offices_infer_to_own_category():
+    """六科、给事中和都给事中均确定性归入六科。"""
+    assert infer_office_type_from_office("六科") == "六科"
+    assert infer_office_type_from_office("兵科给事中") == "六科"
+    assert infer_office_type_from_office("礼科都给事中") == "六科"
 
 
 def test_fresh_seed_contains_sourced_six_sciences_censors(game):
@@ -22,14 +28,19 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     ).fetchall()
 
     assert len(rows) == 2
+    by_name = {row["name"]: row for row in rows}
     for row in rows:
         assert row["office_type"] == "六科"
-        assert "给事中" in row["office"]
-
-    by_name = {row["name"]: row for row in rows}
+    # 在朝给事中有现职；未登场者 office 空，职衔在 status_reason（seed 不解析造历史职）。
+    assert "给事中" in by_name["许誉卿"]["office"]
     assert by_name["许誉卿"]["status"] == "active"
     assert by_name["韩一良"]["status"] == "offstage"
+    assert by_name["韩一良"]["office"] == ""
     assert by_name["韩一良"]["debut_year"] == 1628
+    reason = db.conn.execute(
+        "SELECT status_reason FROM characters WHERE name='韩一良'"
+    ).fetchone()["status_reason"]
+    assert "给事中" in reason
 
     before = db._faction_office_weight_sum("中立")
     assert state.year == 1627
@@ -40,9 +51,12 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     debuted = db.apply_historical_debuts(state)
     assert any(item["name"] == "韩一良" for item in debuted)
     assert db.get_character_status("韩一良")[0] == "active"
-    assert db._faction_office_weight_sum("中立") == before + _member_office_weight(
-        "六科", "户科给事中"
-    )
+    # 登场只改 status；不把 status_reason 写回 office，故派系职权重不变。
+    assert db._faction_office_weight_sum("中立") == before
+    office = db.conn.execute(
+        "SELECT office FROM characters WHERE name='韩一良'"
+    ).fetchone()["office"]
+    assert office == ""
 
 
 def test_six_sciences_censor_exit_recomputes_its_faction_leverage(game):

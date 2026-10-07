@@ -219,8 +219,8 @@ def _login_shell_path() -> Optional[str]:
         m = re.search(r"<<<CMRPATH>>>(.*?)<<<ENDPATH>>>", proc.stdout or "", re.S)
         if m:
             discovered = m.group(1).strip()
-    except Exception as exc:
-        logger.warning("登录 shell PATH 探测失败：%s", exc)
+    except Exception:
+        logger.exception("login shell PATH discovery failed")
         discovered = ""
     _DISCOVERED_LOGIN_PATH = discovered
     return discovered or None
@@ -327,8 +327,8 @@ def _trace(record: Dict[str, Any]) -> None:
             _trace_announced = True
         if announce:
             print(f"[cli_backend] LLM trace → {_TRACE_PATH}", flush=True)
-    except Exception as exc:  # trace 永不应中断游戏；旁路须留真因（ADR 0005）
-        logger.warning("trace 写盘失败：%s", exc)
+    except Exception:  # trace 永不应中断游戏，但必须留真因（ADR 0005）
+        logger.exception("LLM trace write failed path=%s", _TRACE_PATH)
 
 
 def _warm_keychain() -> None:
@@ -339,8 +339,8 @@ def _warm_keychain() -> None:
             ["security", "find-generic-password", "-s", "Antigravity Safe Storage"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-    except Exception as exc:
-        logger.warning("keychain 暖探失败：%s", exc)
+    except Exception:
+        logger.exception("keychain warm failed")
 
 
 # CLI 子进程读循环轮询步长（秒）：只决定「多快发现静默/退出」，不是任何超时预算。
@@ -407,7 +407,8 @@ def _iter_cli_process_lines(
       并 terminate 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现；
       不 SIGKILL，硬规9）。
     - idle 只认 transport 策略（`_cli_idle_seconds`）= 设置页那一格的静默判死阈值。
-    - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀。
+    - **不设 attempt 总墙钟，收尾不做 SIGKILL 升级（宪法 #9）**：只要还有新字节就不判死；
+      收尾只 terminate + wait，失败原样上抛。
     - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
     - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
     所有 runner 共用本读法；禁各自复制一套 idle 循环。clock 可注入（受控推进）。
@@ -1259,7 +1260,7 @@ class CliChat(OpenAIChat):
 
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
         """一次子进程。等多久算死归 transport 策略（设置页那一格的静默判死阈值）：
-        出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。"""
+        不设 attempt 总墙钟；只有静默超阈值才判死重试，收尾只 SIGTERM。"""
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
         return _dispatch_cli_runner(
             self.backend,

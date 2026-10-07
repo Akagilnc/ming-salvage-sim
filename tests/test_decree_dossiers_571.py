@@ -88,7 +88,6 @@ def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(g
         "character_id": person, "tier": "主办", "role": "", "delegator_id": None,
     }]
 
-
 @pytest.mark.parametrize("write_path", ["create", "append"])
 @pytest.mark.parametrize("delegation", ["self", "unrelated"])
 def test_dossier_roster_write_boundary_rejects_invalid_delegator(
@@ -224,13 +223,6 @@ def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch
     assert result["dossier_participants"][1]["character_id"] == good
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert [item["character_id"] for item in roster] == [lead, good]
-
-
-
-
-
-
-
 
 @pytest.mark.parametrize("authority", [None, set()])
 def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
@@ -1181,6 +1173,10 @@ def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
 # #1902：拟诏台手写改稿（Web PATCH /api/directives、CLI edit）随整条入口退役，
 # 「手改旨文并重抽 mechanics」这条能力不再存在，本用例随之退役；改稿入口不再
 # 注册的回归由 tests/test_web_entry_1902.py 钉。
+def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
+    import ming_sim.cli.terminal as terminal
+    import ming_sim.cli_backend as cli_backend
+    from ming_sim.session import GameSession
 
 
 def test_secret_order_progress_persists_executing_until_terminal(game):
@@ -1398,7 +1394,6 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
             reopened.close()
     finally:
         session.db.close()
-
 
 def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game, monkeypatch):
     from ming_sim.decree_forecast import decree_ref_for_dossier

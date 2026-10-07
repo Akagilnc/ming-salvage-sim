@@ -11,7 +11,7 @@
 
 - `level`：规模与能力，1-5。
 - `condition`：完好 0-100，**同时是产出折算系数**（实际产出 = `output_amount × condition / 100`）。
-- `maintenance`：每月维护费，整数万两，固定从国库扣。
+- `maintenance`：每月维护费，整数万两；**不按 condition 折算**。内廷类扣内库，其余扣国库。
 - `risk`：贪腐、事故、扰民、被毁的可能，0-100。
 - `output_metric` / `output_amount`：结构化产出。`output_metric` 白名单 `国库`/`内库`/`民心`/`皇威`/`""`（空串=纯叙事无结算产出）；`output_amount` 为每月产出量（国库/内库单位万两，民心/皇威为量表点数）。
 
@@ -23,8 +23,8 @@
 
 **日常运行纯程序化，不调 LLM。** 每月 `flows.apply_fixed_period_flows` 遍历所有建筑：
 
-- 按 `output_metric` 把折算后产出加进对应账户（国库/内库走 `economy_ledger`；民心/皇威直改量表）。
-- 从国库扣 `maintenance`（能扣多少扣多少，跟军饷同逻辑）。
+- 按 `output_metric` 把 **condition/100 折算后**产出加进对应账户（国库/内库走 `economy_ledger`；民心/皇威直改量表）。
+- 扣 `maintenance` 全额（不折算；能扣多少扣多少）：`category==内廷` → 内库，其余 → 国库。
 
 `condition`/`risk`/`level` 是静态的，不自然漂移——只有 LLM 才改。
 
@@ -32,7 +32,7 @@
 
 皇帝只能通过圣旨命人修、建、查、拨款、停办或追责。**建筑的新建/扩建/废止全部走局势（issue），没有独立的 building_delta/new_buildings 顶层字段。**
 
-- 皇帝下旨建火炮厂/修边堡/设织造局 → `score_extractor` 立一条 `initiative` 局势。
+- 皇帝下旨建火炮厂/修边堡/设织造局 → 月链世界段转译为局势（`new_issues` / initiative 类）经 `declaration_dispatch` 落账；**没有**独立顶层 `buildings` / `building_delta` / `new_buildings` 声明段（`EMPTY_EXTRACTION` 不含这些键；直接 `effects.buildings` 会 `invalid_shape`）。
 - 局势 bar 跑完结案 → 该 issue 的 `effect_on_resolve`（或失败时 `effect_on_fail`）里的 `buildings` 段落地建筑。
 - `buildings` 段是数组，每项 `action` ∈ `create`（新建）/`modify`（改既有数值）/`remove`（拆毁）。落地由 `issues._apply_issue_buildings` 处理。
 
