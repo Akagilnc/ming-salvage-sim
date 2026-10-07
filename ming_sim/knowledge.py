@@ -93,13 +93,13 @@ def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
 
     Reuses durable exclusion authority in ming_sim.db (#1897 E1/C2).
     """
-    from ming_sim.db import _load_durable_json_list, _load_exclusion_targets
+    from ming_sim.db import _load_durable_str_list, _load_exclusion_targets
 
     try:
         raw_names = row["excluded_names"]
     except (KeyError, IndexError, TypeError):
         raw_names = "[]"
-    names_list = _load_durable_json_list(
+    names_list = _load_durable_str_list(
         raw_names, surface="knowledge excluded_names",
     )
     excluded_names = {str(name) for name in names_list}
@@ -337,8 +337,8 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
         if source_id.startswith("turn_report:") and not source_id.endswith(":public"):
             continue
         participants = participant_roster_names(row["participant_roster"])
-        from ming_sim.db import _load_durable_json_list
-        excluded = _load_durable_json_list(
+        from ming_sim.db import _load_durable_str_list
+        excluded = _load_durable_str_list(
             row["excluded_names"], surface="knowledge excluded_names",
         )
         # A participant-rostered source is private to its participants unless

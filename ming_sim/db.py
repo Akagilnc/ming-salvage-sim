@@ -857,6 +857,13 @@ def _load_durable_json_list(raw: object, *, surface: str) -> list:
     return value
 
 
+def _load_durable_str_list(raw: object, *, surface: str) -> list:
+    """Durable string-array column: list + each member str (#1897 E1)."""
+    return _require_str_list_members(
+        _load_durable_json_list(raw, surface=surface), surface=surface,
+    )
+
+
 def _load_durable_json_object(raw: object, *, surface: str) -> dict:
     """Durable JSON object column: corrupt / wrong top-level fail loud (#1897 E1)."""
     try:
@@ -868,18 +875,50 @@ def _load_durable_json_object(raw: object, *, surface: str) -> dict:
     return value
 
 
+def _require_durable_prose(raw: object, *, field: str, required: bool = True) -> str:
+    """Durable free-text field: already str, no str() coercion (#1897 E1).
+
+    Matches declaration-side ``_declared_prose`` contract for transport fields.
+    Required empty / non-str on already-staged payload is schema fault, not
+    domain invalid_shape rejection.
+    """
+    if not isinstance(raw, str):
+        raise ValueError(
+            f"持久字段 {field} 须为字符串，得 {type(raw).__name__}"
+        )
+    if required and not raw.strip():
+        raise ValueError(f"持久字段 {field} 不得为空")
+    return raw
+
+
+def _require_str_list_members(values: list, *, surface: str) -> list:
+    """Each durable list member must already be str — no str() wash (#1897 E1)."""
+    out: list = []
+    for index, item in enumerate(values):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"{surface}[{index}] 须为字符串，得 {type(item).__name__}"
+            )
+        out.append(item)
+    return out
+
+
 def _load_exclusion_targets(raw: object, *, surface: str) -> dict:
-    """Durable exclusion targets: object + people/offices list members (#1897 E1/C2)."""
+    """Durable exclusion targets: object + people/offices string lists (#1897 E1/C2)."""
     payload = _load_durable_json_object(raw, surface=surface)
-    people = payload.get("people", [])
-    offices = payload.get("offices", [])
-    if not isinstance(people, list):
+    people_raw = payload.get("people", [])
+    offices_raw = payload.get("offices", [])
+    if not isinstance(people_raw, list):
         raise ValueError(f"{surface} people 须为列表")
-    if not isinstance(offices, list):
+    if not isinstance(offices_raw, list):
         raise ValueError(f"{surface} offices 须为列表")
     return {
-        "people": list(people),
-        "offices": list(offices),
+        "people": _require_str_list_members(
+            people_raw, surface=f"{surface} people",
+        ),
+        "offices": _require_str_list_members(
+            offices_raw, surface=f"{surface} offices",
+        ),
         **{k: v for k, v in payload.items() if k not in {"people", "offices"}},
     }
 
@@ -892,7 +931,7 @@ def _load_secret_order_exclusions(
     raw_names = row["excluded_names"] if "excluded_names" in keys else "[]"
     raw_targets = row["excluded_targets"] if "excluded_targets" in keys else "{}"
     return (
-        _load_durable_json_list(raw_names, surface=f"{surface} excluded_names"),
+        _load_durable_str_list(raw_names, surface=f"{surface} excluded_names"),
         _load_exclusion_targets(raw_targets, surface=f"{surface} excluded_targets"),
     )
 
@@ -8923,7 +8962,7 @@ class GameDB:
         # source_projection of the same source_id must not replace it.
         public_kept: set[str] = set()
         for row in rows:
-            excluded_names = _load_durable_json_list(
+            excluded_names = _load_durable_str_list(
                 row["excluded_names"],
                 surface="character_knowledge_events excluded_names",
             )
@@ -8950,7 +8989,7 @@ class GameDB:
         character_names = {str(row["name"]) for row in characters}
         for row in source_rows:
             participants = participant_roster_names(row["participant_roster"])
-            excluded_names = _load_durable_json_list(
+            excluded_names = _load_durable_str_list(
                 row["excluded_names"],
                 surface="character_knowledge_sources excluded_names",
             )
@@ -16007,10 +16046,16 @@ class GameDB:
             )
         except DecreeMaterializationValidationError:
             return {"classification": "invalid"}
-        text = str(payload.get("text") or "")
-        if not text.strip():
-            return {"classification": "invalid"}
-        actor = str(payload.get("actor") or pa.get("minister_name") or "").strip()
+        # 已持久正文：类型／空缺 schema 故障响亮，不记领域 invalid（#1897 E1）。
+        text = _require_durable_prose(payload.get("text"), field="text")
+        actor_raw = payload.get("actor", pa.get("minister_name") or "")
+        if actor_raw is None:
+            actor_raw = ""
+        if not isinstance(actor_raw, str):
+            raise ValueError(
+                f"持久字段 actor 须为字符串，得 {type(actor_raw).__name__}"
+            )
+        actor = actor_raw.strip()
         payload["text"] = text
         payload["actor"] = actor
         return {
@@ -16286,14 +16331,19 @@ class GameDB:
             oid = pa["target_id"]
             if pa["action"] == "新建":
                 # 自由文本零删改（CLAUDE.md P6）：判空在副本上做，存的仍是原文。
-                title = str(payload.get("title") or "")
-                content_text = str(payload.get("content") or "")
-                assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
-                # 已持久 required 字段缺失是 schema 故障，不得 False+业务拒收洗白（#1897 E1）。
-                if not title.strip() or not content_text.strip() or not assignee:
-                    raise ValueError(
-                        "密令暂存缺少必填字段 title/content/assignee"
-                    )
+                # 已持久散文：禁 str() 洗类型；空缺／非 str 响亮（#1897 E1）。
+                title = _require_durable_prose(payload.get("title"), field="title")
+                content_text = _require_durable_prose(
+                    payload.get("content"), field="content",
+                )
+                if "assignee" in payload and payload.get("assignee") is not None:
+                    assignee = _require_durable_prose(
+                        payload.get("assignee"), field="assignee",
+                    ).strip()
+                else:
+                    assignee = str(pa["minister_name"] or "").strip()
+                if not assignee:
+                    raise ValueError("持久字段 assignee 不得为空")
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
                 deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
@@ -16361,11 +16411,18 @@ class GameDB:
             origin_speaker = str(pa.get("minister_name") or "") or None
             if pa["action"] == "更新":
                 deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
+                # 已持久更新正文禁 str() 洗类型（#1897 E1）。
+                new_title = _require_durable_prose(
+                    payload.get("new_title"), field="new_title",
+                )
+                new_content = _require_durable_prose(
+                    payload.get("new_content"), field="new_content",
+                )
                 # No pin → update_secret_order_by_id preserves brief pins (no pure-public auto-capture).
                 return self.update_secret_order_by_id(
                     state, int(oid),
-                    str(payload.get("new_title") or ""),
-                    str(payload.get("new_content") or ""),
+                    new_title,
+                    new_content,
                     tags=None, deadline_months=deadline,
                     origin_minister_name=origin_speaker,
                     origin_chat_message_id=origin_mid,
@@ -16465,11 +16522,16 @@ class GameDB:
                 payload = self._normalize_directive_dossier_payload(
                     payload, content=content, current_turn=int(state.turn),
                 )
-            text = str(payload.get("text") or "")
-            actor = str(payload.get("actor") or pa["minister_name"] or "").strip()
-            # 已持久 required 正文缺失是 schema 故障，不得 False+业务拒收（#1897 E1）。
-            if not text.strip():
-                raise ValueError("拟旨暂存缺少正文")
+            # 已持久正文：与 prepare 共吃 _require_durable_prose，禁 str() 洗白（#1897 E1）。
+            text = _require_durable_prose(payload.get("text"), field="text")
+            actor_raw = payload.get("actor", pa["minister_name"] or "")
+            if actor_raw is None:
+                actor_raw = ""
+            if not isinstance(actor_raw, str):
+                raise ValueError(
+                    f"持久字段 actor 须为字符串，得 {type(actor_raw).__name__}"
+                )
+            actor = actor_raw.strip()
             # actor FK → characters(name)：空串/非名册不得落库（SQLite FK 不接受空串）。
             if actor and self.conn.execute(
                 "SELECT 1 FROM characters WHERE name=?", (actor,),
@@ -19228,11 +19290,11 @@ class GameDB:
             (source, source),
         ).fetchone()
         if row is not None:
-            names = _load_durable_json_list(
+            names = _load_durable_str_list(
                 row["excluded_names"],
                 surface="character_knowledge_events excluded_names",
             )
-            return [str(name) for name in names]
+            return list(names)
         # Private briefs and public disclosure events inherit exclusions from
         # secret_orders. Bare ``secret_order:N`` shared sources are not produced
         # and are not a lookup key here (register gate rejects that prefix).
@@ -19257,21 +19319,21 @@ class GameDB:
                 (int(match.group(1)),),
             ).fetchone()
             if saying is not None:
-                names = _load_durable_json_list(
+                names = _load_durable_str_list(
                     saying["excluded_names"],
                     surface="public_sayings excluded_names",
                 )
-                return [str(name) for name in names]
+                return list(names)
             return []
         row = self.conn.execute(
             "SELECT excluded_names FROM character_knowledge_sources WHERE source_id=?", (source,)
         ).fetchone()
         if row is not None:
-            names = _load_durable_json_list(
+            names = _load_durable_str_list(
                 row["excluded_names"],
                 surface="character_knowledge_sources excluded_names",
             )
-            return [str(name) for name in names]
+            return list(names)
         return []
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
