@@ -1242,10 +1242,8 @@ def run_secret_orders_supply(
         )
     finally:
         release_material_tree(prepared.root)
-    data = parse_agent_json(raw, "secret_orders_supply")
-    if not isinstance(data, dict):
-        raise LLMUnavailable("整月供料产物非有效 JSON 对象", stage="secret_orders_supply")
-    return data
+    # 顶层 object 唯一权威在 parse_agent_json；此处不再重复判定。
+    return parse_agent_json(raw, "secret_orders_supply")
 
 
 def _step_4a_secret_order_supply(
@@ -1286,20 +1284,7 @@ def _step_4a_secret_order_supply(
             step="secret_orders_supply",
             operation=_call_supply,
         )
-        if not isinstance(product, dict):
-            # #1902 F1：非 dict 供给产物不得洗成 {} 当正常接续。
-            exc = TypeError(
-                f"secret_orders_supply 产物类型非法：{type(product).__name__}"
-            )
-            chain["secret_orders_supply_invalid"] = True
-            _save_chain(db, turn, chain, decree_text=decree_text, source=source)
-            _abort_month_call(
-                db, state, chain,
-                decree_text=decree_text, source=source,
-                step="secret_orders_supply",
-                exc=exc,
-                kind="code_exception",
-            )
+        # parse_agent_json 已保证 dict；_guard_month_call 失败即中止，无第三层顶层 object 收口。
         chain["secret_orders_supply_product"] = product
         _save_chain(db, turn, chain, decree_text=decree_text, source=source)
 

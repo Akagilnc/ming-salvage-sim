@@ -4774,19 +4774,17 @@ def apply_issue_tracker_output(
             from ming_sim.cli_backend import cli_backend_active
             from ming_sim.draft_intent import enrich_initiative_effects
             if cli_backend_active(llm_config):
-                try:
-                    enr = enrich_initiative_effects(
-                        title,
-                        str(ni.get("stage_text") or ""),
-                        llm_config=llm_config,
-                    )
-                    resolve_eff = enr.get("effect_on_resolve") or resolve_eff
-                    ongoing_eff = enr.get("ongoing_effects") or ongoing_eff
-                    fail_eff = enr.get("effect_on_fail") or fail_eff
-                    print(f"[issue/enrich] 国策「{title[:16]}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
-                except Exception as exc:
-                    print(f"[issue/enrich] 补全失败，沿用空效果：{exc}")
-                # floor 在 try 外：即便 enrich 抛错或没补上，CLI 后端国策也绝不入空壳（codexB）。
+                # 模型不可用由 enrich 收成空效果；代码侧故障原样上抛（ADR 0005），不得洗成 floor。
+                enr = enrich_initiative_effects(
+                    title,
+                    str(ni.get("stage_text") or ""),
+                    llm_config=llm_config,
+                )
+                resolve_eff = enr.get("effect_on_resolve") or resolve_eff
+                ongoing_eff = enr.get("ongoing_effects") or ongoing_eff
+                fail_eff = enr.get("effect_on_fail") or fail_eff
+                print(f"[issue/enrich] 国策「{title[:16]}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
+                # floor：模型未补上时兜底，绝不入空壳（codexB）。
                 if not resolve_eff:
                     resolve_eff = {"metrics": {"民心": 1}}
         # 字段强转脏数据 → 拒整项（ADR 0008 决定 1：new_issue 即「项」，坏字段令该项无法洁净构造

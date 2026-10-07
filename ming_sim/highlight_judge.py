@@ -32,8 +32,7 @@ def parse_highlight_judge_output(raw: str) -> List[str]:
         data = parse_agent_json(text, "高亮判官")
     except (LLMContractError, json.JSONDecodeError, TypeError, ValueError):
         return []
-    if not isinstance(data, dict):
-        return []
+    # 顶层 object 由 parse_agent_json 保证；此处只验业务字段 highlights。
     items = data.get("highlights")
     if not isinstance(items, list):
         return []
