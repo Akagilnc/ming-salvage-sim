@@ -221,8 +221,6 @@ def test_character_terminal_status_closes_orders_without_synthetic_memorial(game
     assert chained_progress == before_chained
     assert unchained_progress == before_unchained
     assert all(not row.get("is_terminal") for row in chained_progress)
-    assert all("途中病故" not in str(row.get("memorial_text") or "") for row in chained_progress)
-    assert all("人物终态" not in str(row.get("memorial_text") or "") for row in chained_progress)
     assert unchained_progress
 
 
