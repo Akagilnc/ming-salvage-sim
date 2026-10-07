@@ -75,13 +75,6 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
 
     if not _os.path.isdir(saves_dir):
         return
-    legacy_auto = _re.compile(rf"^{_re.escape(AUTO_SAVE_PREFIX)}\d{{4}}_\d{{2}}_t\d{{4}}_.+\.db$")
-    for f in _os.listdir(saves_dir):
-        if legacy_auto.match(f):
-            try:
-                _os.remove(_os.path.join(saves_dir, f))
-            except OSError:
-                pass
     campaign_id = (campaign_id or "").strip()
     if not campaign_id:
         return

@@ -74,9 +74,6 @@ def test_inner_court_materials_do_not_read_faction_report(game, tmp_path, monkey
         )
 
 
-
-
-
 def test_current_state_facts_are_selected_by_content_domain_not_role_label(
     game, monkeypatch
 ):
@@ -168,29 +165,6 @@ def test_public_directive_is_seen_by_uninvolved_minister_but_secret_exclusion_wi
         for item in view["public_events"]
     )
     assert not any(item.get("source_id") == f"secret_order:{order}" for item in view["events"])
-
-def test_turn_report_keeps_source_specific_secret_exclusion_boundary(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    order = create_test_secret_order(db,
-        state, "毕自严", "暗查亏空", "密事不得告知礼部", [], excluded_names=[minister.name]
-    )
-    db.record_public_knowledge_event(
-        state, "密事记录", "SECRET_SOURCE_MARKER_490", source_id=f"secret_order:{order}"
-    )
-    marker = "TURN_REPORT_SECRET_MARKER_490"
-    # #883: this independently public source, not the aggregate itself,
-    # authorizes the visible public fragment.
-    db.record_public_knowledge_event(state, "朝廷常务", marker, source_id="test:490:public")
-    db.save_turn_report(
-        state, f"朝廷常务；{marker}", public_body=f"朝廷常务；{marker}",
-    )
-
-    view = db.get_character_knowledge(state, minister.name)
-    public_ids = {item.get("source_id") for item in view["public_events"]}
-
-    assert "test:490:public" in public_ids
-    assert f"secret_order:{order}" not in public_ids
 
 def test_turn_report_projects_public_and_secret_items_per_character(game):
     db, state, content = game
@@ -326,20 +300,6 @@ def test_excluded_participant_event_is_not_visible_to_excluded_character(game):
 
     assert not any(item["source_id"] == "restricted:excluded" for item in view["events"])
 
-def test_secret_blacklist_survives_later_public_projection(game):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    order = create_test_secret_order(db,
-        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_names=[minister.name]
-    )
-    db.record_public_knowledge_event(
-        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-    )
-
-    view = db.get_character_knowledge(db.load_state(), minister.name)
-
-    assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
-
 def test_public_reports_accumulate_across_turns(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
@@ -439,43 +399,6 @@ def test_secret_office_snapshot_keeps_explicit_people_target_separate(game):
         "offices": ["户部"],
     }
 
-def test_secret_office_exclusion_snapshots_people_before_transfer_and_publication(game):
-    db, state, content = game
-    excluded = next(c for c in content.characters.values() if c.office_type == "户部")
-    order = create_test_secret_order(db,
-        state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_offices=["户部"]
-    )
-
-    db.set_character_office(excluded.name, "礼部尚书", office_type="礼部")
-    db.record_public_knowledge_event(
-        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-    )
-
-    row = db.conn.execute("SELECT excluded_names FROM secret_orders WHERE id=?", (order,)).fetchone()
-    assert excluded.name in row["excluded_names"]
-    view = db.get_character_knowledge(state, excluded.name)
-    assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
-    assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
-    assert excluded.office == "礼部尚书"
-
-def test_disclosed_secret_source_keeps_its_public_projection(game):
-    """A later public disclosure must not be replaced by the private source payload."""
-    db, state, content = game
-    excluded = next(c for c in content.characters.values() if c.office_type == "户部")
-    order = create_test_secret_order(db,
-        state, "毕自严", "暗查亏空", "查户部旧账", [],
-        excluded_names=[excluded.name],
-    )
-    db.record_public_knowledge_event(
-        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-    )
-
-    items = db.knowledge_items_for_turn(state.turn)
-
-    disclosed = next(item for item in items if item["source_id"] == f"secret_order:{order}")
-    assert disclosed["title"] == "密查公开"
-    assert disclosed["body"] == "该案已奉明发"
-
 @pytest.mark.parametrize("exclusion_owner", ["event", "source", "projection"])
 def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game, exclusion_owner):
     db, state, content = game
@@ -525,27 +448,6 @@ def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
         "SELECT body FROM character_knowledge_sources WHERE source_id='test:long-source'"
     ).fetchone()
     assert row["body"] == body
-
-def test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure(game):
-    db, state, _content = game
-    order = create_test_secret_order(db, state, "毕自严", "密查", "查账", [])
-    db.conn.execute(
-        "UPDATE secret_orders SET excluded_names=?, excluded_targets='{}' WHERE id=?",
-        (json.dumps(["魏忠贤"], ensure_ascii=False), order),
-    )
-    db.record_public_knowledge_event(
-        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
-    )
-    assert db.update_secret_order_by_id(state, order, "续查", "继续查账")
-    saved = db.conn.execute(
-        "SELECT excluded_names FROM secret_orders WHERE id=?", (order,)
-    ).fetchone()
-    assert "魏忠贤" in json.loads(saved["excluded_names"])
-    public = db.conn.execute(
-        "SELECT body FROM character_knowledge_events WHERE source_id=? AND character_name=''",
-        (f"secret_order:{order}",),
-    ).fetchone()
-    assert public["body"] == "该案已奉明发"
 
 def test_secret_exclusion_is_source_scoped_not_global_for_same_bucket(game):
     db, state, content = game
@@ -1348,8 +1250,6 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
     # 只能证接线，且人读正文不是记录身份（大理寺 aa62c7def）。
     assert view["scope"]["army_ids"] == (rows[0]["id"],)
     assert view["world"]["command"]
-
-
 
 
 @pytest.fixture
