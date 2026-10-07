@@ -8478,41 +8478,13 @@ def _apply_score_extraction_body(
 
     def _apply_bandit_absorption_items(items: object) -> None:
         # #652 回流在月份推进时统一执行；本段流寇只吃当时余池。
-        applied, rejected, power_changes = _apply_bandit_absorptions(
+        applied, rejected, power_rows = _apply_bandit_absorptions(
             db, state, items or [], commit=commit_now,
         )
         applied_absorptions.extend(applied)
         absorption_rejections.extend(rejected)
-        absorption_power_changes.extend(power_changes)
+        absorption_power_changes.extend(power_rows)
 
-    if effect_sequence is not None:
-        economy_index_base = 0
-        for step_extracted, step_ordered, step_event_ids in effect_sequence:
-            for key, value in step_ordered.get("metric_delta") or []:
-                for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
-                    applied_metric[metric] = applied_metric.get(metric, 0) + delta
-            # 先实体后钱：同笔内欠饷加额须先于补饷拨款可见。
-            _apply_ordinary_entity_step(step_extracted, step_ordered, step_event_ids)
-            step_moves = list(step_extracted.get("economy_moves") or [])
-            _apply_economy_moves_list(step_moves, index_base=economy_index_base)
-            economy_index_base += len(step_moves)
-            # #1844/#1899：财政与亲裁结局进入逐笔接缝，退出固定分类回灌旁路。
-            _apply_world_step_fiscal_and_petition(step_extracted)
-            # #1844/#1899：加派→人口→投贼同缝按交代先后，后项读前项落账存量。
-            _apply_surcharge_items(step_extracted.get("surcharge_decrees") or [])
-            _apply_population_transfer_items(step_extracted.get("population_transfers") or [])
-            _apply_bandit_absorption_items(step_extracted.get("bandit_absorptions") or [])
-        petition_outcomes_applied = True
-        _finalize_loss_pair_changes()
-    else:
-        metric_items = ordered_deltas.get("metric_delta") or []
-        for key, value in metric_items:
-            for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
-                applied_metric[metric] = applied_metric.get(metric, 0) + delta
-        # 2) economy_moves
-        # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
-        # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
-        _apply_economy_moves_list(list(extracted.get("economy_moves") or []), index_base=0)
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
@@ -8533,104 +8505,160 @@ def _apply_score_extraction_body(
                 else:
                     total[key] = previous + delta
 
-    faction_items = ordered_deltas.get("faction_delta") or []
-    applied_factions, faction_rejections = {}, []
-    for key, value in faction_items:
-        applied, rejected = _apply_faction_dict(db, {key: value}, commit=commit_now)
-        _merge_applied_deltas(applied_factions, applied)
-        faction_rejections.extend(rejected)
-    # #653 F3.2：财政事实只作为 internal extractor 的输入证据；最终方向与幅度由
-    # LLM 结合事件、任免等同回合事实综合判断，沿用既有 class_delta 契约原样接收。
-    class_items = ordered_deltas.get("class_delta") or []
-    applied_classes, class_rejections = {}, []
-    for key, value in class_items:
-        applied, rejected = _apply_class_dict(db, {key: value}, commit=commit_now)
-        _merge_applied_deltas(applied_classes, applied)
-        class_rejections.extend(rejected)
-    # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
-    new_armies_raw = extracted.get("new_armies") or []
-    strategic_new_armies_raw = [
-        item for item in new_armies_raw
-        if declared_new_army_event_by_item.get(id(item), "") in strategic_event_referenced_ids
-    ]
+    applied_factions: Dict[str, object] = {}
+    faction_rejections: List[Dict[str, object]] = []
+    applied_classes: Dict[str, object] = {}
+    class_rejections: List[Dict[str, object]] = []
 
-    if effect_sequence is None:
-        # 对象输入：实体在经济之后（保现行先后）；实现复用逐笔 helper，不另维护副本。
-        # 加派/人口/投贼仍按既有对象批次相对序，不另立调度器。
-        _apply_surcharge_items(extracted.get("surcharge_decrees") or [])
-        _apply_population_transfer_items(extracted.get("population_transfers") or [])
-        _apply_ordinary_entity_step(
-            extracted, ordered_deltas, ordered_effect_event_ids or {},
-        )
-        _apply_bandit_absorption_items(extracted.get("bandit_absorptions") or [])
-    # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
-    #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
+    def _apply_faction_items(pairs: object) -> None:
+        for key, value in (pairs or []):
+            applied, rejected = _apply_faction_dict(db, {key: value}, commit=commit_now)
+            _merge_applied_deltas(applied_factions, applied)
+            faction_rejections.extend(rejected)
+
+    def _apply_class_items(pairs: object) -> None:
+        # #653 F3.2：财政事实只作为 internal extractor 的输入证据；最终方向与幅度由
+        # LLM 结合事件、任免等同回合事实综合判断，沿用既有 class_delta 契约原样接收。
+        for key, value in (pairs or []):
+            applied, rejected = _apply_class_dict(db, {key: value}, commit=commit_now)
+            _merge_applied_deltas(applied_classes, applied)
+            class_rejections.extend(rejected)
 
     # 5) power_updates：非明势力三项简表（威望/实力/经济）落库
     # ADR 0008 决定 1:不再整段吞——LLM 脏数据(未知 power id/字段非法)在
     # apply_power_deltas 内逐项拒收留痕(返回列表含 {"rejected": True, ...});
     # 代码异常(KeyError/AttributeError 等)上抛到 settle 层回滚整批,绝不吞。
     # #652：流寇实力正增只走 bandit_absorptions；自由 power_updates 正实力拒。
-    power_changes: List[Dict[str, object]] = list(absorption_power_changes)
-    power_items = (
-        (power_id, changes) for index, (power_id, changes) in enumerate(ordered_deltas.get("power_updates") or [])
-        if not _effect_event_ids(
-            "power_updates", index, strategic_event_referenced_ids, ordered_effect_event_ids,
-        )
-    )
-    for power_id, raw_changes in power_items:
-        if power_id in amnesty_conflict_power_ids:
-            power_changes.append({
-                "power_id": power_id,
-                "rejected": True,
-                "category": "invalid_transition",
-                "reason": "同一股同一时段已有招安易主，拒绝顶层 power_updates 剿股；削股须随易主反噬一处落账",
-                "item": {"power_id": power_id, "changes": raw_changes},
-            })
-            continue
-        if not isinstance(raw_changes, dict):
-            continue
-        if _is_bandit_power_id(str(power_id)):
-            # 只剥正实力；威望/经济等同包其它字段仍可落。
-            stripped: Dict[str, object] = {}
-            positive_ms_rejected = False
-            ms_item: Dict[str, object] | None = None
-            for k, v in raw_changes.items():
-                mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
-                if mapped != "military_strength":
-                    stripped[k] = v
-                    continue
-                try:
-                    if isinstance(v, bool) or isinstance(v, float):
-                        raise ValueError("非整数")
-                    ms_delta = int(v)
-                except (TypeError, ValueError):
-                    stripped[k] = v  # 交 apply_power_deltas 原样拒非整数
-                    continue
-                if ms_delta > 0:
-                    positive_ms_rejected = True
-                    ms_item = {"power_id": power_id, "field": str(k), "value": v}
-                else:
-                    stripped[k] = v
-            if positive_ms_rejected:
+    power_changes: List[Dict[str, object]] = []
+
+    def _apply_power_update_pairs(
+        pairs: object,
+        step_event_ids: dict[str, list[str]] | None = None,
+    ) -> None:
+        event_ids_map = step_event_ids if step_event_ids is not None else ordered_effect_event_ids
+        for index, (power_id, raw_changes) in enumerate(pairs or []):
+            if _effect_event_ids(
+                "power_updates", index, strategic_event_referenced_ids, event_ids_map,
+            ):
+                continue
+            if power_id in amnesty_conflict_power_ids:
                 power_changes.append({
                     "power_id": power_id,
                     "rejected": True,
-                    "category": "invalid_enum",
-                    "reason": (
-                        "流寇实力正增须走 bandit_absorptions 吃池顶，"
-                        "禁止自由 power_updates 正实力"
-                    ),
-                    "item": ms_item or {"power_id": power_id, "changes": raw_changes},
+                    "category": "invalid_transition",
+                    "reason": "同一股同一时段已有招安易主，拒绝顶层 power_updates 剿股；削股须随易主反噬一处落账",
+                    "item": {"power_id": power_id, "changes": raw_changes},
                 })
-            if not stripped:
                 continue
-            raw_changes = stripped
-        origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-        payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-        power_changes.extend(db.apply_power_deltas(
-            state, {power_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
-        ))
+            if not isinstance(raw_changes, dict):
+                continue
+            if _is_bandit_power_id(str(power_id)):
+                # 只剥正实力；威望/经济等同包其它字段仍可落。
+                stripped: Dict[str, object] = {}
+                positive_ms_rejected = False
+                ms_item: Dict[str, object] | None = None
+                for k, v in raw_changes.items():
+                    mapped = POWER_FIELD_ALIASES.get(str(k).strip(), str(k).strip())
+                    if mapped != "military_strength":
+                        stripped[k] = v
+                        continue
+                    try:
+                        if isinstance(v, bool) or isinstance(v, float):
+                            raise ValueError("非整数")
+                        ms_delta = int(v)
+                    except (TypeError, ValueError):
+                        stripped[k] = v  # 交 apply_power_deltas 原样拒非整数
+                        continue
+                    if ms_delta > 0:
+                        positive_ms_rejected = True
+                        ms_item = {"power_id": power_id, "field": str(k), "value": v}
+                    else:
+                        stripped[k] = v
+                if positive_ms_rejected:
+                    power_changes.append({
+                        "power_id": power_id,
+                        "rejected": True,
+                        "category": "invalid_enum",
+                        "reason": (
+                            "流寇实力正增须走 bandit_absorptions 吃池顶，"
+                            "禁止自由 power_updates 正实力"
+                        ),
+                        "item": ms_item or {"power_id": power_id, "changes": raw_changes},
+                    })
+                if not stripped:
+                    continue
+                raw_changes = stripped
+            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+            power_changes.extend(db.apply_power_deltas(
+                state, {power_id: payload}, commit=commit_now,
+                origin_ref=origin_ref, require_origin=True,
+            ))
+
+    def _apply_world_step_ordered_stock(
+        step_extracted: Dict[str, object],
+        step_ordered: Dict[str, list[tuple[str, object]]],
+        step_event_ids: dict[str, list[str]],
+    ) -> None:
+        """同一交代笔内的有序存量读写：分类不再合批重排。"""
+        _apply_faction_items(step_ordered.get("faction_delta") or [])
+        _apply_class_items(step_ordered.get("class_delta") or [])
+        _apply_surcharge_items(step_extracted.get("surcharge_decrees") or [])
+        _apply_population_transfer_items(step_extracted.get("population_transfers") or [])
+        _apply_bandit_absorption_items(step_extracted.get("bandit_absorptions") or [])
+        _apply_power_update_pairs(
+            step_ordered.get("power_updates") or [], step_event_ids=step_event_ids,
+        )
+
+    if effect_sequence is not None:
+        economy_index_base = 0
+        for step_extracted, step_ordered, step_event_ids in effect_sequence:
+            for key, value in step_ordered.get("metric_delta") or []:
+                for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
+                    applied_metric[metric] = applied_metric.get(metric, 0) + delta
+            # 先实体后钱：同笔内欠饷加额须先于补饷拨款可见。
+            _apply_ordinary_entity_step(step_extracted, step_ordered, step_event_ids)
+            step_moves = list(step_extracted.get("economy_moves") or [])
+            _apply_economy_moves_list(step_moves, index_base=economy_index_base)
+            economy_index_base += len(step_moves)
+            # #1844/#1899：财政与亲裁结局进入逐笔接缝，退出固定分类回灌旁路。
+            _apply_world_step_fiscal_and_petition(step_extracted)
+            # #1844/#1899：派系/阶级/加派/人口/投贼/势力同缝按交代先后。
+            _apply_world_step_ordered_stock(step_extracted, step_ordered, step_event_ids)
+        petition_outcomes_applied = True
+        _finalize_loss_pair_changes()
+        power_changes = list(absorption_power_changes) + power_changes
+    else:
+        metric_items = ordered_deltas.get("metric_delta") or []
+        for key, value in metric_items:
+            for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
+                applied_metric[metric] = applied_metric.get(metric, 0) + delta
+        # 2) economy_moves
+        # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
+        # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
+        _apply_economy_moves_list(list(extracted.get("economy_moves") or []), index_base=0)
+        _apply_faction_items(ordered_deltas.get("faction_delta") or [])
+        _apply_class_items(ordered_deltas.get("class_delta") or [])
+        # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
+        # 对象输入：实体在经济之后（保现行先后）；实现复用逐笔 helper，不另维护副本。
+        # 加派/人口/投贼/势力仍按既有对象批次相对序，不另立调度器。
+        _apply_surcharge_items(extracted.get("surcharge_decrees") or [])
+        _apply_population_transfer_items(extracted.get("population_transfers") or [])
+        _apply_ordinary_entity_step(
+            extracted, ordered_deltas, ordered_effect_event_ids or {},
+        )
+        _apply_bandit_absorption_items(extracted.get("bandit_absorptions") or [])
+        power_changes = list(absorption_power_changes)
+        _apply_power_update_pairs(ordered_deltas.get("power_updates") or [])
+    # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
+    #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
+
+    # 4) new_armies 战略事件归属（数组/对象共用）
+    new_armies_raw = extracted.get("new_armies") or []
+    strategic_new_armies_raw = [
+        item for item in new_armies_raw
+        if declared_new_army_event_by_item.get(id(item), "") in strategic_event_referenced_ids
+    ]
 
     _apply_person_changes_itemwise(pre_issue_person_changes, phase="pre")
 
