@@ -1508,10 +1508,20 @@ class GameSession:
             row = self.db.get_directive(did)
             if row is None or str(row["status"] or "") != "draft":
                 continue
+            # 持久读失败是代码/账本故障，不得 continue 进补交耗尽空返回（F39）。
+            # 与同方法写回 Exception 分支同出口：错误包 + SettlementAbort。
             try:
                 bad_payload = self.db.read_directive_dossier_payload(row)
-            except ValueError:
-                continue
+            except ValueError as exc:
+                pack_path = write_error_pack(
+                    self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,
+                )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="directive_admission_resubmit",
+                    error_pack_path=pack_path,
+                ) from exc
             reason = str(item.get("reason") or "")
             prior = carried.get(did)
             if prior is not None:

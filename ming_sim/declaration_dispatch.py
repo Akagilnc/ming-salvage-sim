@@ -1329,10 +1329,8 @@ def _dispatch_commissions(
                     source_chat_turn_id=source_chat_turn_id,
                 )
             except DecreeMaterializationValidationError as exc:
-                # LLM materialize shape only. Durable payload ValueError propagates (F39).
-                _reject(rejected, item, str(exc), "invalid_shape", source)
-                continue
-            except TypeError as exc:
+                # LLM materialize shape only. Durable/code faults (ValueError/TypeError
+                # from DB ops, payload parse, …) propagate — not invalid_shape (F39).
                 _reject(rejected, item, str(exc), "invalid_shape", source)
                 continue
             if row_id:

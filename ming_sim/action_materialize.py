@@ -622,7 +622,6 @@ class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
         # 权威 require_explicit_xiexang_fields 一次给出完整事实；此处只携带
         facts = tuple(dict(f) for f in field_failures)
         fields = tuple(str(f["field"]) for f in facts)
-        self.missing_fields = fields  # compatibility alias for existing callers
         self.field_failures = facts
         super().__init__(
             "拨饷旨意缺少结构化字段："

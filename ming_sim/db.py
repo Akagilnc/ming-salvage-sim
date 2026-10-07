@@ -17075,60 +17075,15 @@ class GameDB:
             for r in rows
         ]
 
-    def upsert_pending_directive(
-        self, turn: int, minister_name: str, payload: Dict[str, object],
-        source_chat_turn_id: int = 0,
-    ) -> int:
-        """暂存或原地更新(last-write-wins)一条 kind=directive 拟旨意图(ADR 0006)。
-        同一回合同一大臣至多一条 pending directive——新意图覆盖旧(补充=原地更新,非新增态)。
-        返回行 id。
-
-        ``source_chat_turn_id``（#1890）只在新起一行时钉身份；命中既有行的
-        改稿分支刻意不换身份（见该分支注记）。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="暂存")
-        row = self.conn.execute(
-            "SELECT id FROM pending_actions "
-            "WHERE turn=? AND minister_name=? AND kind='directive' AND status='pending'",
-            (int(turn), str(minister_name)),
-        ).fetchone()
-        if row is not None:
-            # #498：同回合可跨两夜（一月多夜）。旧夜遗留的 pending directive 被本夜复用更新时，
-            # 必须把归属原子迁到当前开着的夜并清 night_approved，否则本夜应允的
-            # WHERE night_id=当前夜 更新零行、收夜漏交、随后被默认同意旁路批交。
-            # #502 L5（同缝）：合并保留下划线控制键，正文改草不抹夜内态闸。
-            existing_payload = self.conn.execute(
-                "SELECT payload_json FROM pending_actions WHERE id=?", (int(row["id"]),),
-            ).fetchone()
-            merged = self._merge_directive_payload(
-                existing_payload["payload_json"] if existing_payload else "{}", payload or {})
-            self._discard_pending_decree_forecast(int(row["id"]))
-            self.conn.execute(
-                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
-                "version=version+1 WHERE id=?",
-                (json.dumps(merged, ensure_ascii=False),
-                 self._current_open_night_id(), int(row["id"])),
-            )
-            self.conn.commit()
-            return int(row["id"])
-        # #1890：只有 INSERT 分支钉来源轮。改草分支（上方 UPDATE）刻意不动
-        # source_chat_turn_id —— 一道交办的身份是它首次被说出口的那一轮，
-        # 补充/改稿不换身份，否则撤回前一轮会连带作废后来轮的修订。
-        return self.stage_pending_action(
-            turn, kind="directive", action="拟旨",
-            minister_name=minister_name, target_id=None, payload=payload,
-            source_chat_turn_id=source_chat_turn_id,
-        )
-
     def stage_directive_candidate(
         self, turn: int, minister_name: str, payload: Dict[str, object],
         source_chat_turn_id: int = 0,
     ) -> int:
-        """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
-        与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
-        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。
+        """新拟一道独立圣旨候选——总是 INSERT 新行（#502）。
 
-        ``source_chat_turn_id``（#1890）：本道交办的来源轮，随新行落库。"""
+        改草/补充既有候选走 update_directive_candidate（显式 id），不猜同臣同回合覆盖。
+        ``source_chat_turn_id``（#1890）：本道交办的来源轮，随新行落库。
+        """
         return self.stage_pending_action(
             turn, kind="directive", action="拟旨",
             minister_name=minister_name, target_id=None, payload=payload,
@@ -17168,12 +17123,14 @@ class GameDB:
     def update_directive_candidate(
         self, candidate_id: int, payload: Dict[str, object],
     ) -> int:
-        """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
-        与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清 night_approved，
-        使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。返回该行 id（不存在/非 pending 则 0）。
+        """原地更新某一道 pending directive 候选正文（#502 显式 id 改草，不冻结）。
+
+        把归属迁到当前开着的夜并清 night_approved，使本夜应允
+        （WHERE night_id=当前夜）命中、收夜不漏交。返回该行 id（不存在/非 pending 则 0）。
         **合并保留下划线控制键**（_directive_status 等）——正文改草不得
         静默抹掉夜内态闸（#502 L5）。
-        #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。"""
+        #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。
+        """
         from ming_sim.audience_night import assert_night_accepts_player_input
         assert_night_accepts_player_input(self, what="改草")
         row = self.conn.execute(
@@ -18795,15 +18752,18 @@ class GameDB:
                     # 已有案卷：幂等跳过（补交重跑 ensure 时不重复建）
                     if self.get_dossier_for_directive(did) is not None:
                         continue
+                    # 持久读在产物 ValueError 捕获之外：腐坏/代码故障走外层
+                    # SettlementAbort（0005），不得洗成 locality_fanout_failed（F39）。
+                    payload = self.read_directive_dossier_payload(row)
                     sp = f"ensure_directive_{did}"
                     self.conn.execute(f"SAVEPOINT {sp}")
                     try:
                         self._ensure_directive_dossier(
                             state, did, str(row["text"]),
-                            self.read_directive_dossier_payload(row), commit=False,
+                            payload, commit=False,
                         )
                     except ValueError as exc:
-                        # 产物/契约错：逐项隔离留痕，保持 draft（#1769 补交/耗尽入口）
+                        # 成案产物/契约错（非持久读）：逐项隔离留痕，保持 draft
                         self.conn.execute(f"ROLLBACK TO {sp}")
                         reason = str(exc)
                         rejection_rows.append({"directive_id": did, "reason": reason})

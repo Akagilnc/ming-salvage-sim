@@ -36,7 +36,7 @@ from ming_sim.exceptions import LLMContractError
 from ming_sim.participant_roster import PARTICIPANT_LEAD_TIER, PARTICIPANT_TIERS
 from ming_sim.structured_decree import StructuredDecreeCombinationError
 
-# 整 option 替换语义标记（非 object 等）；出现在 missing_fields 时合并器接受完整 option 体。
+# 整 option 替换语义标记（非 object 等）；field_failures 中出现时合并器接受完整 option 体。
 _OPTION_REPLACE_FIELD = "option"
 
 
@@ -90,39 +90,33 @@ def _note_failed(
 
 
 class RescriptOptionMissingFieldsError(ValueError):
-    """可定位到单 option 的契约失败（#1746 补交分支）。
+    """可定位到单 option 的契约失败。
 
-    缺字段、错值、组合矛盾、未知键、非 object 等凡可定位到 option 的失败
-    均走同一补交回路（heal-covers-illegal-values-too）；非顶层/急务条目非法。
-    权威失败事实只有 field_failures（field/current/expected）；missing_fields 由其派生。
+    缺字段、错值、组合矛盾、未知键、非 object 等凡可定位到 option 的失败。
+    权威失败事实只有 field_failures（field/current/expected）。
     """
 
     def __init__(
         self,
         message: str,
         *,
-        raw_option: object = None,
         field_failures: Optional[Sequence[Mapping[str, object]]] = None,
     ) -> None:
-        self.raw_option = raw_option
         # 权威接缝已给出事实；此处只承载，不过滤/去重/补空
         self.field_failures: Tuple[Dict[str, object], ...] = tuple(
             dict(f) for f in (field_failures or ())
         )
-        self.missing_fields = tuple(str(f["field"]) for f in self.field_failures)
         super().__init__(message)
 
 
 def _raise_option_missing_fields(
     message: str,
     *,
-    raw_option: object = None,
     field_failures: Optional[Sequence[Mapping[str, object]]] = None,
 ) -> None:
-    """抛可定位单 option 契约失败（#1746 heal-by-resume）。不问错误种类。"""
+    """抛可定位单 option 契约失败。不问错误种类。"""
     raise RescriptOptionMissingFieldsError(
         message,
-        raw_option=raw_option,
         field_failures=field_failures,
     )
 
@@ -676,7 +670,6 @@ def normalize_rescript_layer_a_option(
     if not isinstance(raw, dict):
         _raise_option_missing_fields(
             "票拟 option 非 object（层 A shape）",
-            raw_option=raw,
             field_failures=[
                 _field_failure(
                     _OPTION_REPLACE_FIELD,
@@ -1045,7 +1038,6 @@ def normalize_rescript_layer_a_option(
     if facts:
         _raise_option_missing_fields(
             f"票拟 option 契约失败字段：{'/'.join(facts)}",
-            raw_option=raw,
             field_failures=list(facts.values()),
         )
 
@@ -1116,7 +1108,6 @@ def _ungrounded_target_failure(
         return None
     return RescriptOptionMissingFieldsError(
         f"票拟 option.target_id 不在同批 {kind}_targets：{tid!r}",
-        raw_option=raw_option,
         field_failures=[
             _field_failure(
                 "target_id",
