@@ -336,7 +336,7 @@ def test_883_cross_turn_chat_origin_withheld_on_late_secret_create(game):
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"] == "held"
     state.turn = int(state.turn) + 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     oid = create_test_secret_order(db, state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
     assert db.conn.execute(
@@ -364,7 +364,7 @@ def test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_origin(game)
     mid = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=chat_origin)
     db.conn.commit()
     state.turn = int(state.turn) + 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     oid = create_test_secret_order(db,
         state, assignee.name, extracted_title, extracted_body, [],
     )
@@ -535,7 +535,7 @@ def test_976_withhold_does_not_yank_old_released_public_user(game):
 
     # 远离开 settle 窗口（>1 回合）。
     state.turn = int(state.turn) + 5
-    db.save_state(state)
+    db.reign.save_game_state(state)
     mid_secret = db.chat_messages.insert(minister_name=assignee.name, turn=state.turn, role="user", content=secret_origin)
     db.conn.commit()
     oid = create_test_secret_order(db,
@@ -570,7 +570,7 @@ def test_976_release_stamps_original_message_date(game):
 
     for _ in range(13):
         state.next_period()
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.release_held_audience_knowledge()
 
     row = db.conn.execute(

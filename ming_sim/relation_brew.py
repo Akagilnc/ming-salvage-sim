@@ -70,7 +70,7 @@ def select_brew_targets(db: Any, *, year: int, period: int) -> List[Dict[str, An
         (row["source"], row["target"]): row for row in db.person_logs.get_relation_summaries()
     }
     pending = {
-        (row["source"], row["target"]): row for row in db.get_relation_brew_pending()
+        (row["source"], row["target"]): row for row in db.person_logs.get_relation_brew_pending()
     }
     latest_event_id: Dict[Tuple[str, str], int] = {}
     for row in PersonLogStore(db.conn).read_select_faction_brew_targets((int(year), int(period))):

@@ -58,10 +58,10 @@ def select_faction_brew_targets(db: Any, *, year: int, period: int) -> List[Dict
     不同派均入选、两端同派去重（GROUP 语义由 max 归并保证）。"""
     projection = project_character_factions(db)
     summaries = {
-        row["faction"]: row for row in db.get_faction_stance_summaries()
+        row["faction"]: row for row in db.factions.get_faction_stance_summaries()
     }
     pending = {
-        row["faction"]: row for row in db.get_faction_brew_pending()
+        row["faction"]: row for row in db.person_logs.get_faction_brew_pending()
     }
     latest_event_id: Dict[str, int] = {}
     for row in PersonLogStore(db.conn).read_select_faction_brew_targets((int(year), int(period))):

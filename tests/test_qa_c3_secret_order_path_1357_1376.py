@@ -111,4 +111,4 @@ def test_pending_secret_order_count_reflects_staged_candidate(game):
     assert payload["pending_secret_order_count"] == 1
     assert payload["pending_count"] == 1
     # 闸门：尚未落真实密令表
-    assert db.list_secret_orders() == []
+    assert db.character_knowledge.list_secret_orders() == []

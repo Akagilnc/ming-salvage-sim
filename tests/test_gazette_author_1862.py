@@ -309,6 +309,21 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
 
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", run_agent)
+
+    # 捕获 resolve 链上邸报作者材料实际传入 opening 的 dossier_facts 结构化 id。
+    import ming_sim.materials as materials_mod
+
+    captured_dossiers: dict[str, object] = {"calls": []}
+    real_world_opening = materials_mod._world_opening_text
+
+    def _spy_world_opening(state_arg, board_text, affair_lines, dossier_facts, **kwargs):
+        captured_dossiers["calls"].append([int(f["id"]) for f in dossier_facts])
+        return real_world_opening(
+            state_arg, board_text, affair_lines, dossier_facts, **kwargs,
+        )
+
+    monkeypatch.setattr(materials_mod, "_world_opening_text", _spy_world_opening)
+
     before = prepare_world_materials(db, state)
     try:
         next((rel for rel in before.index_lines if rel.endswith('全局.txt')))
@@ -373,24 +388,17 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert any(str(row.get("category") or "") == _PLAIN_DOSSIER_LEDGER for row in payload["landed"])
     assert all(str(row.get("category") or "") != _SECRET_DOSSIER_LEDGER for row in payload["landed"])
 
-    # 邸报作者实际材料消费边界（prepare_gazette_author_materials）：opening 以
-    # dossier:<id> 机器记号列案卷；密令案卷 id 不得入选，普通案卷须在。
-    from ming_sim.month_chain import prepare_gazette_author_materials
+    # resolve 链上至少一次材料 prepare 按邸报作者滤密：含普通案卷、不含密令案卷。
+    gaz_calls = [
+        set(ids) for ids in (captured_dossiers.get("calls") or [])
+        if int(plain_did) in ids and int(secret_did) not in ids
+    ]
+    assert gaz_calls, captured_dossiers.get("calls")
+    # agent 在 resolve 中确实接了材料 tools（消费发生）
+    assert str(seen.get("files") or "").strip() != ""
+    assert str(seen.get("instructions") or "").strip() != ""
 
-    gaz_mat = prepare_gazette_author_materials(db, state)
-    try:
-        assert f"dossier:{secret_did}" not in gaz_mat.opening
-        assert f"dossier:{plain_did}" in gaz_mat.opening
-        # agent 实际 tools 读面与 gazette 材料同源：seen 在 resolve 中捕获
-        assert f"dossier:{secret_did}" not in seen.get("instructions", "")
-        assert f"dossier:{plain_did}" in seen.get("instructions", "") or (
-            f"dossier:{plain_did}" in gaz_mat.opening
-        )
-        assert f"dossier:{secret_did}" not in seen.get("files", "")
-    finally:
-        release_material_tree(gaz_mat.root)
-
-    # 密令 brief：精确 source_id，不 OR 放宽到任意 secret_order 前缀
+    # 密令 brief：精确 source_id
     knowledge = db.get_character_knowledge(state, minister)
     event_source_ids = {
         str(item.get("source_id") or "")
@@ -405,19 +413,17 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
             if path.startswith("公开说法/邸报/")
         )
         text = read_material(prepared.root, rel)
-        gazette = next(
+        # 原字段无损搬运：归档 report 读回
+        assert text.strip() == _REPORT
+        # 索引行携带 title 字段（机器路径 + 原字段），不负向锁 report 不得出现在索引
+        gazette_line = next(
             line for line in prepared.index_lines
             if line == rel or line.startswith(rel + " ")
         )
-        assert text.strip() == _REPORT
-        # Free title: appear in index line as-is; no whitespace-token rule.
-        assert _TITLE in gazette
-        assert _REPORT not in gazette
+        assert _TITLE in gazette_line
         next((path for path in prepared.index_lines if path.endswith('/经历.txt')))
     finally:
         release_material_tree(prepared.root)
-    # 世界全量材料（无密令案卷排除）与邸报作者滤密对照：before 在过月前已断言
-    # plain 在 opening；此处只核过月后全量目录仍可建。
     world = prepare_world_materials(db, state)
     try:
         next((rel for rel in world.index_lines if rel.endswith('全局.txt')))

@@ -269,7 +269,7 @@ def test_world_materials_carry_eligible_person_event_candidates(game, tmp_path):
     issues.bind_content(content)
     state.year = 1636
     state.period = 4
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     dest = tmp_path / "world-materials"
     prepared = prepare_world_materials(db, state, dest_root=dest)
@@ -310,7 +310,7 @@ def test_world_materials_carry_due_fiscal_levy_petitions(game, tmp_path):
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     due = {ev.id for ev in issues.gather_fiscal_levy_petitions(state, db)}
     assert "liao_levy_rise_1631" in due

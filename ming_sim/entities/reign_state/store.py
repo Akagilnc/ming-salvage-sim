@@ -100,6 +100,19 @@ class ReignStateStore:
     def exists(self) -> bool:
         return self._conn.execute("SELECT 1 FROM game_state WHERE id = 1").fetchone() is not None
 
+    
+    def save_game_state(self, state) -> None:
+        """Write reign header and balances from a GameState-like object."""
+        self.save(
+            year=state.year,
+            period=state.period,
+            turn=state.turn,
+            turn_phase=state.turn_phase,
+            ended=state.ended,
+            ending_status=state.ending_status,
+            metrics=state.metrics,
+        )
+
     def save(
         self,
         *,
@@ -317,6 +330,33 @@ class ReignStateStore:
             "summary": row["summary"] or "",
             "timeline": timeline,
         }
+
+    def current_settle_turn(self) -> int:
+        row = self.read_current_settle_turn()
+        return int(row["turn"]) if row is not None and row["turn"] is not None else 0
+
+    def has_meta_flag(self, key: str) -> bool:
+        row = self.read_has_meta_flag((key,))
+        return row is not None and int(row["value"]) == 1
+
+    def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
+        rows: List[Dict[str, object]] = []
+        for row in self.read_list_economy_moves_for_dossier((f"dossier:{int(dossier_id)}",)):
+            item = dict(row)
+            raw = item.get("beyond_intent")
+            if isinstance(raw, bool):
+                flag = raw
+            elif raw in (None, ""):
+                flag = False
+            else:
+                try:
+                    flag = bool(int(raw))
+                except (TypeError, ValueError):
+                    flag = bool(raw)
+            item["beyond_intent"] = flag
+            rows.append(item)
+        return rows
+
 
     def read_is_pending_source_round_owned(self, params: Any) -> Any:
         return self._conn.execute("SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 WHERE t.id=? AND t.night_id=? AND t.status='active' AND t.minister_message_id>0 AND t.extract_status='pending' AND g.turn=?", params)

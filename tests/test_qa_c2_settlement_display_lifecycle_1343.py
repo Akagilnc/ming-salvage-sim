@@ -73,7 +73,7 @@ def test_success_clear_holds_write_gate_not_peer_txn(game, monkeypatch):
     runtime = _shell(db, state, content)
     # 成功体不推进月份，离开时仍 summoning + 快照在 → 触发成功支 clear_orphan。
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
@@ -136,7 +136,7 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
     db, state, content = game
     runtime = _shell(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.capture_month_open_snapshot(state)
 
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
@@ -173,7 +173,7 @@ def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
     db, state, content = game
     runtime = _shell(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
@@ -202,7 +202,7 @@ def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
     db, state, content = game
     runtime = _shell(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.capture_month_open_snapshot(state)
     assert runtime.state_payload()["turn"]["settlement_display"] is True
 
@@ -235,7 +235,7 @@ def test_refresh_turn_no_longer_clears_orphan(game):
     before = _click_before(state)
     db.capture_month_open_snapshot(state)
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     runtime = _shell(db, state, content)
     # 绑定真实方法（轻壳无实例绑定）

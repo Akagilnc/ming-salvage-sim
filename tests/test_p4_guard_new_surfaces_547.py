@@ -180,7 +180,7 @@ def test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in(game):
     stored = db.issues.list_pending_decisions(state.turn)
 
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     runtime = _state_payload_runtime(db, state, content, pending_decisions=stored)
     page = runtime.state_payload()

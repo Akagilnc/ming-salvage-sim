@@ -145,8 +145,12 @@ def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
     return SimpleNamespace(model=model, materials_root=handle)
 
 
-def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):
+def test_opening_handled_matters_are_filtered_within_authorized_knowledge(
+    game, tmp_path, monkeypatch,
+):
     """Real issue entry + prepare: handled roster lands in opening; bare issue stays out."""
+    import ming_sim.materials as materials_mod
+
     db, state, content = game
     character = _active_minister(db, content)
     handled_id = db.insert_issue(
@@ -161,14 +165,30 @@ def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, 
         title="无人承办事项",
         participants=[],
     )
+    captured: dict[str, object] = {}
+    real_opening = materials_mod.minimal_opening_context
+
+    def _spy_opening(character_arg, state_arg, present, affairs, spoken):
+        # 实际消费入参：affairs 结构化 id，不扫 opening 自由正文。
+        captured["affair_ids"] = [item.get("id") for item in affairs]
+        return real_opening(character_arg, state_arg, present, affairs, spoken)
+
+    monkeypatch.setattr(materials_mod, "minimal_opening_context", _spy_opening)
     prepared = prepare_character_materials(
         db, state, character, dest_root=tmp_path / "materials",
     )
-    # 实际 opening 消费边界：正经手事务以 issue id 机器记号入选（minimal_opening_context
-    # 形态 `- #{id} {title}`），不用自由标题子串当身份。
-    opening = prepared.opening
-    assert f"#{handled_id} " in opening or f"#{handled_id}　" in opening or f"- #{handled_id}" in opening
-    assert f"#{other_id} " not in opening and f"- #{other_id}" not in opening
+
+    affair_ids = {
+        int(i) for i in (captured.get("affair_ids") or [])
+        if str(i).isdigit()
+    }
+    assert int(handled_id) in affair_ids
+    assert int(other_id) not in affair_ids
+    # 字段搬运：经手 title 进入 opening 原文（非身份 oracle）
+    handled_title = db.conn.execute(
+        "SELECT title FROM issues WHERE id=?", (int(handled_id),),
+    ).fetchone()["title"]
+    assert str(handled_title or "") in prepared.opening
     issue_paths = {
         line for line in prepared.index_lines
         if line.startswith("事务/issue-")
@@ -293,7 +313,7 @@ def test_secret_order_material_read_failure_propagates(
     def boom(_name):
         raise RuntimeError("secret-order-db-boom")
 
-    monkeypatch.setattr(db, "get_active_secret_orders_for_minister", boom)
+    monkeypatch.setattr(db.character_knowledge, "get_active_secret_orders_for_minister", boom)
     with pytest.raises(RuntimeError, match='secret-order-db-boom'):
         prepare_character_materials(
             db, state, character, dest_root=tmp_path / "secret-fail",

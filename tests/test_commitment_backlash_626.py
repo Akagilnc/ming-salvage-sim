@@ -141,7 +141,7 @@ def _backlash_issues(db):
 def _set_phase_runnable(state, db):
     """pre_settle 幂等守门：settling/issued 会早退，复位到召对相位。"""
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
 
 # ── AC1：三类触发各一 ─────────────────────────────────────────────
@@ -273,7 +273,7 @@ def test_ac1_deformation_exposure_triggers_commitment_backlash(game):
         content=content,
     )
     assert applied.get("economy_moves")
-    moves = db.list_economy_moves_for_dossier(did)
+    moves = db.reign.list_economy_moves_for_dossier(did)
     # _seed_halfway 先落投入行；#622 分叉读端看 beyond_intent 实况行（非首行）
     assert moves and any(bool(m.get("beyond_intent")) for m in moves)
 
@@ -314,7 +314,7 @@ def test_ac1_transformed_without_beyond_intent_does_not_trigger(game):
         close=True, commit=True,
     )
     assert db.dossiers.get(did)["execution_outcome"] == "transformed"
-    moves = db.list_economy_moves_for_dossier(did)
+    moves = db.reign.list_economy_moves_for_dossier(did)
     assert not any(bool(m.get("beyond_intent")) for m in moves)
 
     state.turn = int(state.turn) + 1

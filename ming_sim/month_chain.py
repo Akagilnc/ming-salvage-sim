@@ -1181,7 +1181,7 @@ def build_secret_orders_supply_feed(
     candidates = db.list_monthly_dossier_progress_nudges(turn)
     eligible = _enrich_eligible_dossiers_for_supply(db, candidates)
     active_orders = _attach_investigation_facts(db, state, [
-        dict(o) for o in db.list_secret_orders(status="active")
+        dict(o) for o in db.character_knowledge.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
     ])
     materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
@@ -1251,7 +1251,7 @@ def _step_4a_secret_order_supply(
 
     candidates = db.list_monthly_dossier_progress_nudges(turn)
     active_orders = [
-        o for o in db.list_secret_orders(status="active")
+        o for o in db.character_knowledge.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
     ]
     if not candidates and not active_orders:
@@ -1847,7 +1847,7 @@ def _advance_after_gazette(
         state.next_period()
         _carry_pending_clarification_actions(db, state, turn, content=content)
         state.turn_phase = "issued"
-        db.save_state(state)
+        db.reign.save_game_state(state)
         db.month_open_snapshots.delete(int(turn))
         db.conn.commit()
         chain["advanced"] = True

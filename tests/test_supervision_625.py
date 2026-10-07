@@ -283,7 +283,7 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     assert surface_u["supervision_history"], "监督在场事实必须仍可供料"
     # 真实前括号：退役硬门若被装回 pre_settle，这里会立反制局势或调用失败。
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     pre_settle(state, db, content=content)
     assert IssueStore(db.conn).read_find_any_issue_by_origin(("supervision_countermeasure",
         f"auditor:{upright['name']}:dossier:{sub_u}",)) is None

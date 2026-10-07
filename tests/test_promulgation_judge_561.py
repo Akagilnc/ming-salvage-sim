@@ -472,7 +472,7 @@ def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatc
         # Settlement consumes pending and advances turn — the bug surface.
         assert db.dossiers.get_pending_promulgation_verdicts(state.turn) == []
         state.turn += 1
-        db.save_state(state)
+        db.reign.save_game_state(state)
         return decree_mod.ResolveResult(awaiting=False, report="settled")
 
     monkeypatch.setattr(gate, "resolve_directives", fake_resolve)

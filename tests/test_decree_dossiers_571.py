@@ -546,7 +546,7 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
     assert state.metrics["国库"] == before - 10
     assert dossier["status"] == "closed"
     assert dossier["promulgation_decision"] == "rejected"
-    moves = db.list_economy_moves_for_dossier(dossier_id)
+    moves = db.reign.list_economy_moves_for_dossier(dossier_id)
     assert len(moves) == 1
     assert moves[0]["dossier_id"] is None
     assert moves[0]["origin_ref"] == f"dossier:{dossier_id}"
@@ -737,7 +737,7 @@ def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(
     )
 
     assert state.metrics["国库"] == before - 15
-    assert len(db.list_economy_moves_for_dossier(structured_id)) == 1
+    assert len(db.reign.list_economy_moves_for_dossier(structured_id)) == 1
 
 def test_payload_owned_appointment_dedup_removes_only_exact_mechanical_effect(game):
     db, state, content = game
@@ -1036,7 +1036,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
             "grant_allocation", 30000, "内库",
         )
         assert state.metrics["内库"] == 0
-        assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -before
+        assert db.reign.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -before
     elif case == "dismiss":
         assert json.loads(dossier["payload_json"])["name"] == actor
         row = db.conn.execute(
@@ -1262,7 +1262,7 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
         state, dossier["id"], "promulgated", content=content,
     )
     assert state.metrics["国库"] == before - 25
-    assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -25
+    assert db.reign.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -25
 
 def test_secret_order_progress_persists_executing_until_terminal(game):
     from ming_sim.db import GameDB
@@ -1411,7 +1411,7 @@ def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
             state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
         )
     state.next_period()
-    db.save_state(state)
+    db.reign.save_game_state(state)
     assert dossier_id in {
         row["id"] for row in db.dossiers.list_for_simulation(state.turn)
     }
@@ -1819,7 +1819,7 @@ def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
         state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
     )
     state.turn += 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     assert dossier_id in {
         row["id"] for row in db.dossiers.list_for_simulation(state.turn)
     }
@@ -1973,7 +1973,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     )
 
     assert state.metrics["内库"] == max(0, balance - 10)
-    assert [row["delta"] for row in db.list_economy_moves_for_dossier(dossier_id)] == (
+    assert [row["delta"] for row in db.reign.list_economy_moves_for_dossier(dossier_id)] == (
         [] if expected_actual == 0 else [expected_actual]
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
@@ -1982,7 +1982,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     assert dossier["status"] == status
     assert dossier["execution_outcome"] == outcome
     assert state.metrics["内库"] == max(0, balance - 10)
-    assert len(db.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
+    assert len(db.reign.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
     if outcome != "failed":
         assert status == "executing"
         assert dossier_id in {

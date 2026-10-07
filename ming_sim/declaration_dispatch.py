@@ -1169,7 +1169,7 @@ def _dispatch_commissions(
                 order_id = 0
             note = progress.get("note")
             actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
-            active = db.get_active_secret_orders_for_minister(actor)
+            active = db.character_knowledge.get_active_secret_orders_for_minister(actor)
             target = next((o for o in active if int(o["id"]) == order_id), None)
             if (
                 target is None or order_id <= 0 or not isinstance(note, str) or not note.strip()
@@ -1200,7 +1200,7 @@ def _dispatch_commissions(
             except (TypeError, ValueError):
                 order_id = 0
             actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
-            target = next((o for o in db.get_active_secret_orders_for_minister(actor)
+            target = next((o for o in db.character_knowledge.get_active_secret_orders_for_minister(actor)
                            if int(o["id"]) == order_id), None)
             content_text = update.get("content")
             if target is None or order_id <= 0 or not isinstance(content_text, str) or not content_text.strip():
@@ -1962,7 +1962,7 @@ def _dispatch_rushes(
             })
             continue
         # secret_order
-        order = db.character_knowledge.get_secret_order(target_id) if hasattr(db, "get_secret_order") else None
+        order = db.character_knowledge.get_secret_order(target_id) if hasattr(db, "character_knowledge") else None
         if order is None:
             _reject(rejected, item, f"催办目标密令不存在：{target_id}", "hallucinated_id", source)
             continue

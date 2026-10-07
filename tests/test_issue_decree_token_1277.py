@@ -85,7 +85,7 @@ def test_double_issue_same_token_second_is_409_turn_plus_one(game, monkeypatch):
         # 模拟 resolve_turn 成功推进一格（与生产同向副作用）。
         state.turn = start + 1
         state.turn_phase = TurnPhase.SUMMONING.value
-        db.save_state(state)
+        db.reign.save_game_state(state)
         runtime.session.last_decree = "诏曰测试"
         return ResolveResult(awaiting=False, report="邸报测")
 

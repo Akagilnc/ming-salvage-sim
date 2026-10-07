@@ -350,7 +350,7 @@ def test_secret_office_exclusion_does_not_hide_unrelated_world_bucket(game):
     )
     view = db.get_character_knowledge(state, clerk.name)
 
-    assert db.list_secret_orders()[0]["excluded_targets"] == {"people": [], "offices": ["户部"]}
+    assert db.character_knowledge.list_secret_orders()[0]["excluded_targets"] == {"people": [], "offices": ["户部"]}
     # Treasury bucket stays visible under office exclusion; do not lock public seed prose.
     assert view["world"].get("treasury")
     assert not any(item["source_id"] == f"secret_order_brief:{order}" for item in view["events"])
@@ -752,7 +752,7 @@ def test_knowledge_exclusion_reads_current_office_without_nameerror(
         return [row] if character_name == name else []
 
     monkeypatch.setattr(db, "_character_knowledge_events", events)
-    monkeypatch.setattr(db, "list_issued_directives", lambda: [])
+    monkeypatch.setattr(db.issues, "list_issued_directives", lambda: [])
     monkeypatch.setattr(db.turn_reports, "list_archives", lambda: [])
     monkeypatch.setattr(db, "knowledge_exclusion_targets_for_source", lambda _: targets)
 

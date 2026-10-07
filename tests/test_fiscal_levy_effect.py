@@ -82,7 +82,7 @@ def test_shaanxi_primary_source_liao_seed_keeps_opening_transport_cap(game):
     issues.bind_content(content)
     state.year = 1627
     state.period = 10
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     apply_historical_fiscal_rates(state, db)
 
@@ -106,7 +106,7 @@ def test_liao_levy_rise_approved_by_emperor_updates_settle_before_fiscal_tick(ga
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(db, state, ("liao_levy_rise_1631", "已准"))
 
     before = _settle_payload(db, "shaanxi")
@@ -152,7 +152,7 @@ def test_liao_levy_rise_approved_lands_on_no_edict_advance_before_fiscal_tick(ga
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     before = _settle_payload(db, "shaanxi")
     seed_liao = before["p"]["三饷应征"]
     target_liao = seed_liao * 4.0 / 3.0
@@ -214,7 +214,7 @@ def test_fiscal_levy_capstone_golden_all_seeded_provinces(
     issues.bind_content(content)
     state.year = year
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(
         db, state,
         ("liao_levy_rise_1631", "已准"),
@@ -278,7 +278,7 @@ def test_fiscal_levy_rewrites_nonnumeric_current_targets_from_meta(game):
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(db, state, ("liao_levy_rise_1631", "已准"))
     fiscal = json.loads(
         str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"])
@@ -314,7 +314,7 @@ def test_fiscal_levy_is_not_auto_approved_without_emperor_decision(game):
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     before = _settle_payload(db, "shaanxi")["p"]
 
     apply_historical_fiscal_rates(state, db)
@@ -346,7 +346,7 @@ def test_fiscal_levy_events_are_not_in_model_candidate_pool(game):
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     candidate_ids = {ev.id for ev in issues.gather_candidate_events(state, db)}
 
@@ -382,7 +382,7 @@ def test_fiscal_levy_expired_pending_choice_is_terminalized(game):
     try:
         state.year = 1637
         state.period = 2
-        db.save_state(state)
+        db.reign.save_game_state(state)
         db.record_event_decision_choice(
             state,
             event_id,
@@ -407,7 +407,7 @@ def test_lian_levy_start_approved_updates_settle_before_fiscal_tick(game):
     issues.bind_content(content)
     state.year = 1639
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(
         db, state,
         ("liao_levy_rise_1631", "已准"),
@@ -458,7 +458,7 @@ def test_fiscal_levy_existing_terminal_reason_is_whitelist_validated(game):
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     before = _settle_payload(db, "shaanxi")
     db.conn.execute(
         """
@@ -483,7 +483,7 @@ def test_fiscal_levy_emperor_rejection_lands_outcome_without_levy(game):
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     before = _settle_payload(db, "shaanxi")
 
     _emperor_decides(db, state, ("liao_levy_rise_1631", "已驳"))
@@ -504,7 +504,7 @@ def test_fiscal_levy_outcome_is_written_once_and_first_verdict_wins(game):
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     before = _settle_payload(db, "shaanxi")
 
     _emperor_decides(db, state, ("liao_levy_rise_1631", "已驳"))
@@ -526,7 +526,7 @@ def test_fiscal_levy_outcome_label_outside_closed_set_aborts(game):
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     with pytest.raises(SettlementAbort):
         issues.apply_petition_event_outcome(state, db, "liao_levy_rise_1631", "留中")
@@ -543,7 +543,7 @@ def test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick(game):
     issues.bind_content(content)
     state.year = 1640
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(
         db, state,
         ("liao_levy_rise_1631", "已准"),
@@ -576,7 +576,7 @@ def test_fiscal_levy_pending_choice_waits_for_event_window(game):
     issues.bind_content(content)
     state.year = 1638
     state.period = 12
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(
         db, state,
         ("liao_levy_rise_1631", "已准"),
@@ -600,7 +600,7 @@ def test_fiscal_levy_pending_choice_waits_for_event_window(game):
 
     state.year = 1639
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(db, state, ("lian_levy_start_1639", "已准"))
     apply_historical_fiscal_rates(state, db)
 
@@ -620,7 +620,7 @@ def test_liao_levy_targets_all_seeded_settles_without_compounding_or_clobbering_
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(db, state, ("liao_levy_rise_1631", "已准"))
 
     before_by_region = {}
@@ -658,7 +658,7 @@ def test_liao_levy_rewrites_numeric_string_targets_to_canonical_numbers(game):
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     apply_historical_fiscal_rates(state, db)
     stale = _settle_payload(db, "shaanxi")
@@ -699,7 +699,7 @@ def test_jiao_levy_rises_then_stops_and_keeps_base_transport(game):
     issues.bind_content(content)
     state.year = 1637
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     # 剿饷开征 1637 到点上疏；练饷（1639）与剿饷议停（1640）当年尚未到点，无从亲裁。
     _emperor_decides(
         db, state,
@@ -727,7 +727,7 @@ def test_jiao_levy_rises_then_stops_and_keeps_base_transport(game):
 
     state.year = 1640
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     # 1640：剿饷议停与练饷开征各自到点上疏，此时亲裁。
     _emperor_decides(
         db, state,
@@ -753,7 +753,7 @@ def test_levy_retreat_recomputes_transport_without_active_rate_change(game):
     issues.bind_content(content)
     state.year = 1640
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.mark_event_triggered(state, "liao_levy_rise_1631", source="test", terminal_reason="已驳", commit=False)
     db.mark_event_triggered(state, "jiao_levy_start_1637", source="test", terminal_reason="已准", commit=False)
     db.mark_event_triggered(state, "jiao_levy_stop_1640", source="test", terminal_reason="已停", commit=False)
@@ -785,7 +785,7 @@ def test_jiao_levy_stop_rejected_keeps_levy_in_force(game):
     issues.bind_content(content)
     state.year = 1640
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(
         db, state,
         ("liao_levy_rise_1631", "已准"),
@@ -809,7 +809,7 @@ def test_jiao_stop_is_obsolete_when_start_was_rejected(game):
     issues.bind_content(content)
     state.year = 1640
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.mark_event_triggered(state, "jiao_levy_start_1637", source="test", terminal_reason="已驳")
 
     terminalized = issues.apply_event_terminal_states(state, db)
@@ -827,7 +827,7 @@ def test_jiao_stop_definition_missing_fails_loud(game, monkeypatch):
     issues.bind_content(content)
     state.year = 1637
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     event_by_id = dict(content.event_by_id)
     event_by_id.pop("jiao_levy_stop_1640", None)
     monkeypatch.setattr(content, "event_by_id", event_by_id)
@@ -841,7 +841,7 @@ def test_lian_levy_targets_all_seeded_settles_without_compounding_or_clobbering_
     issues.bind_content(content)
     state.year = 1639
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(
         db, state,
         ("liao_levy_rise_1631", "已准"),
@@ -891,7 +891,7 @@ def test_fiscal_levy_components_are_land_share_calibrated_and_marked_provisional
     issues.bind_content(content)
     state.year = 1639
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     total_land = _settle_land_sum(db)
 
     apply_historical_fiscal_rates(state, db)
@@ -926,7 +926,7 @@ def test_lost_seeded_province_keeps_current_levy_rate_and_uses_it_on_restore(gam
     db.conn.commit()
     state.year = 1639
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(
         db, state,
         ("liao_levy_rise_1631", "已准"),
@@ -987,7 +987,7 @@ def test_lian_levy_gate_waits_until_1639_and_needs_no_stop_event(game):
     issues.bind_content(content)
     state.year = 1638
     state.period = 12
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(
         db, state,
         ("liao_levy_rise_1631", "已准"),
@@ -1010,7 +1010,7 @@ def test_lian_levy_gate_waits_until_1639_and_needs_no_stop_event(game):
 
     state.year = 1639
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     # 练饷此刻才到点：此前无任何行，此时亲裁才落终态（窗口外无从亲裁）。
     assert db.conn.execute(
         "SELECT 1 FROM event_triggers WHERE event_id=?",
@@ -1036,7 +1036,7 @@ def test_fiscal_levy_gate_waits_until_1631_and_generic_terminal_pass_skips_it(ga
     issues.bind_content(content)
     state.year = 1630
     state.period = 12
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     before = _settle_payload(db, "shaanxi")
     apply_historical_fiscal_rates(state, db)
@@ -1048,7 +1048,7 @@ def test_fiscal_levy_gate_waits_until_1631_and_generic_terminal_pass_skips_it(ga
 
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _emperor_decides(db, state, ("liao_levy_rise_1631", "已准"))
     apply_historical_fiscal_rates(state, db)
     # 结局由亲裁语义写口落定；饷率通道只据终态账落征收，故断言事件账而非 applied 清单。
@@ -1119,7 +1119,7 @@ def test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice(g
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     before = _settle_payload(db, "shaanxi")["p"]
     seen = []
 
@@ -1189,7 +1189,7 @@ def test_unpresented_fiscal_levy_declaration_leaves_terminal_empty(game, monkeyp
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     def translate(*_a, **_k):
         return {"effects": [{
@@ -1222,7 +1222,7 @@ def test_non_event_world_question_is_not_bound_to_the_only_due_levy(game, monkey
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     _install_liao_month_stubs(
         monkeypatch,
@@ -1267,7 +1267,7 @@ def test_rejected_levy_identity_does_not_write_a_terminal_from_a_sibling_envelop
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     before = int(state.metrics["民心"])
 
     result = dispatch_declaration(db, state, {"effects": [
@@ -1303,7 +1303,7 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     before = _settle_payload(db, "shaanxi")
 
     def translate(*_a, **_k):
@@ -1349,7 +1349,7 @@ def test_fiscal_levy_held_petition_is_supplied_to_next_world_segment(game, monke
 def _present_liao_petition(db, state):
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.record_event_petition_answer(
         state, "liao_levy_rise_1631", {},
         {"title": "辽饷", "context": "请旨", "options": ["已准", "已驳"]},
@@ -1468,7 +1468,7 @@ def test_independent_petition_outcome_commits_for_another_connection(game):
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     held = issues.apply_petition_event_outcome(
         state, db, "liao_levy_rise_1631", "已准", commit=False,

@@ -63,7 +63,7 @@ def test_settling_survives_begin_turn_phase_whitelist(game, monkeypatch):
 
     db, state, content = game
     state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     # 用 __new__ 跳过重型 __init__（agno/registry/LLM），只装 begin_turn 需要的协作者；
     # 重型协作者打桩（registry 建 agent / auto_save / office 同步均与白名单无关）。
@@ -97,15 +97,15 @@ def test_due_secret_order_submission_rolls_back_on_pre_settle_crash(saved_game, 
     assert before[0] == "active"
     original_result = before[1]
 
-    orig_save = db.save_state
+    orig_save = db.reign.save_game_state
     def _boom_save(st):
         raise RuntimeError("phase-write boom")
-    monkeypatch.setattr(db, "save_state", _boom_save)
+    monkeypatch.setattr(db.reign, "save_game_state", _boom_save)
 
     with pytest.raises(RuntimeError, match='phase-write boom'):
         pre_settle(state, db)
 
-    monkeypatch.setattr(db, "save_state", orig_save)
+    monkeypatch.setattr(db.reign, "save_game_state", orig_save)
     other = sqlite3.connect(db.path)
     try:
         row = other.execute("SELECT status, result FROM secret_orders WHERE id=2").fetchone()
@@ -206,7 +206,7 @@ def test_enter_review_does_not_clobber_settling(game):
     from ming_sim.session import GameSession, TurnPhase
     db, state, content = game
     state.turn_phase = "settling"
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -299,7 +299,7 @@ def test_sticky_phases_cover_awaiting_decision(game):
     from ming_sim.session import GameSession
     db, state, content = game
     state.turn_phase = "awaiting_decision"
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -320,7 +320,7 @@ def test_advance_without_edict_refused_at_awaiting(game):
     turn = state.turn
     pre_settle(state, db)  # 真落财政 + settling
     state.turn_phase = "awaiting_decision"  # HITL 暂停后的相位
-    db.save_state(state)
+    db.reign.save_game_state(state)
     rows_before = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
 
@@ -351,7 +351,7 @@ def test_resolve_turn_idempotent_at_awaiting(game, monkeypatch):
     from ming_sim.session import GameSession
     db, state, content = game
     state.turn_phase = "awaiting_decision"
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.issues.save_pending_decisions(state.turn, [{
         "title": "辽东战和", "context": "皇太极请款",
         "options": [{"label": "战", "hint": ""}, {"label": "和", "hint": ""}],

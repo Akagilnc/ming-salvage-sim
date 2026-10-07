@@ -257,9 +257,25 @@ class PersonLogStore:
             for row in rows
         ]
 
-    def read_get_relation_brew_pending(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT * FROM relation_brew_pending WHERE item_kind = '关系' ORDER BY source, target", params).fetchall()
+    def get_relation_brew_pending(self) -> List[Dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM relation_brew_pending WHERE item_kind = '关系' ORDER BY source, target",
+        ).fetchall()
+        return [dict(row) for row in rows]
 
-    def read_get_faction_brew_pending(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT * FROM relation_brew_pending WHERE item_kind = '派系' ORDER BY target", params).fetchall()
+    def get_faction_brew_pending(self) -> List[Dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM relation_brew_pending WHERE item_kind = '派系' ORDER BY target",
+        ).fetchall()
+        return [
+            {
+                "faction": row["target"],
+                "year": row["year"],
+                "period": row["period"],
+                "reason": row["reason"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
 

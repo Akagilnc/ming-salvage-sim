@@ -429,7 +429,7 @@ def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
 def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeypatch):
     db, state, content = game
     state.turn += 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ids = []
     pending_ids = []
     minister = next(iter(content.characters.values()))

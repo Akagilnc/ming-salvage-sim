@@ -114,14 +114,14 @@ def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
     applied = db.commit_pending_actions(state, action_ids=[action_id])
 
     assert [row["id"] for row in applied] == [action_id]
-    order = db.list_secret_orders(minister_name="孙承宗")[0]
+    order = db.character_knowledge.list_secret_orders(minister_name="孙承宗")[0]
     dossier = db.dossiers.get_for_secret_order(order["id"])
     assert [row["target_dossier_id"] for row in db.dossiers.links(dossier["id"])] == targets
 
 
 def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(game):
     db, state, _ = game
-    before_orders = len(db.list_secret_orders())
+    before_orders = len(db.character_knowledge.list_secret_orders())
     action_id = db.stage_pending_action(
         state.turn, "secret_order", "新建", "孙承宗",
         {"title": "护行密令", "content": "护送旧案", "assignee": "孙承宗",
@@ -133,7 +133,7 @@ def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(gam
 
     assert db.commit_pending_actions(state, action_ids=[action_id]) == []
 
-    assert len(db.list_secret_orders()) == before_orders
+    assert len(db.character_knowledge.list_secret_orders()) == before_orders
     assert db.dossiers.list_pending_actions(state.turn, status="failed")[0]["id"] == action_id
     audit = db.dossiers.link_rejections(pending_action_id=action_id)
     assert audit[-1]["target_dossier_id"] == 999999

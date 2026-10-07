@@ -675,7 +675,7 @@ def build_secret_covert_effect_briefs(
     """internal 档房私密输入：typed 合同 + origin，不含密令正文（#883）。"""
     rows = list(orders or [])
     if not rows:
-        rows = list(db.list_secret_orders(status="active"))
+        rows = list(db.character_knowledge.list_secret_orders(status="active"))
     current_turn = _current_game_turn(db, turn)
     out: List[Dict[str, object]] = []
     for order in rows:
@@ -1526,7 +1526,7 @@ def find_active_investigation_order_id(db: Any, target: str) -> int:
     name = str(target or "").strip()
     if not name:
         return 0
-    for order in db.list_secret_orders(status="active"):
+    for order in db.character_knowledge.list_secret_orders(status="active"):
         dossier = db.dossiers.get_for_secret_order(int(order["id"]))
         if dossier is None:
             continue
@@ -1601,7 +1601,7 @@ def originated_quantity_this_turn(
     fields = canonical_fields_for_delivery(unit=unit)
     qty = 0.0
     if "economy_moves" in fields:
-        for item in db.list_economy_moves_for_dossier(did):
+        for item in db.reign.list_economy_moves_for_dossier(did):
             if int(item.get("turn") or 0) != current:
                 continue
             if not _delivery_matches_economy(item, delivery):
@@ -1749,7 +1749,7 @@ def apply_monthly_covert_actual_progress(
     才记已掌握；不再由执行态折固定增量、满统一阈自动坐实。执行态枚举对查案
     不再是必填（#1895 同批废旧查案的意愿底档），缺省只落事实投入。
     """
-    orders = list(db.list_secret_orders(status="active"))
+    orders = list(db.character_knowledge.list_secret_orders(status="active"))
     by_sel = _selection_map(selections)
     applied: List[Dict[str, object]] = []
     turn = int(state.turn)
@@ -1991,7 +1991,7 @@ def _apply_investigation_selection(
 def list_due_secret_orders_for_settlement(db: Any, state: Any) -> List[Dict[str, object]]:
     turn = int(state.turn)
     due: List[Dict[str, object]] = []
-    for order in db.list_secret_orders(status="active"):
+    for order in db.character_knowledge.list_secret_orders(status="active"):
         due_turn = int(order.get("due_turn") or 0)
         if due_turn > 0 and due_turn <= turn:
             due.append(order)

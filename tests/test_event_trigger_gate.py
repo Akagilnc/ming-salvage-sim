@@ -4007,7 +4007,7 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
     db, state, content = game
     issues.bind_content(content)
     state.year, state.period = 1636, 4
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     def _power_name():
         return db.conn.execute(

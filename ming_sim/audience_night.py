@@ -693,7 +693,7 @@ def _allocate_seq(db: Any, night_id: int) -> int:
 
 
 def _character_status(db: Any, name: str) -> str:
-    if hasattr(db, "get_character_status"):
+    if hasattr(db, "characters") and hasattr(db.characters, "get_character_status"):
         status, _reason = db.characters.get_character_status(name)
         return str(status or "")
     row = CharacterStore(db.conn).read_dead_person_core_subjects((name,))

@@ -514,7 +514,7 @@ def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, m
         assert grant_dossiers, case["label"]
 
         state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
-        db.save_state(state)
+        db.reign.save_game_state(state)
         for d in grant_dossiers:
             db.apply_dossier_promulgation(
                 state, int(d["id"]), decision="promulgated", content=content,

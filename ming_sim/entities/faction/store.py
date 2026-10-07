@@ -176,6 +176,14 @@ class FactionStore:
     def write_apply_faction_brew_result(self, params: Any = ()) -> Any:
         return self._conn.execute('\n                INSERT INTO faction_stance_summaries\n                    (faction, stance_segment, last_event_id,\n                     last_brewed_turn, last_brewed_year, last_brewed_period)\n                VALUES (?, ?, ?, ?, ?, ?)\n                ON CONFLICT(faction) DO UPDATE SET\n                    stance_segment = excluded.stance_segment,\n                    last_event_id = excluded.last_event_id,\n                    last_brewed_turn = excluded.last_brewed_turn,\n                    last_brewed_year = excluded.last_brewed_year,\n                    last_brewed_period = excluded.last_brewed_period,\n                    updated_at = CURRENT_TIMESTAMP\n                ', params)
 
+    def get_faction_stance_summaries(self) -> list[dict]:
+        rows = self.read_get_faction_stance_summaries()
+        return [dict(row) for row in rows]
+
+    def get_faction_stance_summary(self, faction: str):
+        row = self.read_get_faction_stance_summary((str(faction),))
+        return dict(row) if row is not None else None
+
     def read_get_faction_stance_summaries(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM faction_stance_summaries ORDER BY faction', params).fetchall()
 

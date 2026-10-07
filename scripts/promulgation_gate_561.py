@@ -248,7 +248,7 @@ def _prepare_reconsideration_facts(
     if grant.get("rejected") is True:
         raise RuntimeError(f"reconsideration authority grant rejected: {grant}")
     state.metrics["皇威"] = 100
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.conn.commit()
 
     second_context = _judge_context_for_dossier(db, state, dossier_id)
@@ -315,7 +315,7 @@ def _apply_base_board(db: GameDB, state, *, authority: int) -> None:
         (BASE_DONGLIN_AGENDA,),
     )
     state.metrics["皇威"] = int(authority)
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.conn.commit()
 
 

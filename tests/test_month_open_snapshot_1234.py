@@ -69,7 +69,7 @@ def test_capture_is_idempotent_and_turn_bound(game):
 
     db.capture_month_open_snapshot(state)
     state.metrics["国库"] = before["国库"] + 99
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.capture_month_open_snapshot(state)
 
     snap = db.month_open_snapshots.get(int(state.turn))
@@ -86,7 +86,7 @@ def test_state_payload_overlays_snapshot_when_present(game):
     state.metrics["内库"] = before["内库"] - 7
     state.metrics["民心"] = max(0, before["民心"] - 3)
     state.metrics["皇威"] = before["皇威"] + 2
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     payload = _runtime(db, state).state_payload()
     assert payload["turn"]["settlement_display"] is True
@@ -111,7 +111,7 @@ def test_awaiting_decision_keeps_month_open_money_and_pending(game):
     db.capture_month_open_snapshot(state)
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     state.metrics["国库"] = before["国库"] + 80
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     db.issues.save_pending_decisions(int(state.turn), [{
         "event_id": "evt-x",
@@ -136,7 +136,7 @@ def test_fresh_connection_same_face(game):
     before = _click_before_metrics(state)
     db.capture_month_open_snapshot(state)
     state.metrics["国库"] = before["国库"] + 11
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     face_a = _runtime(db, state).state_payload()
     face_b = _runtime(db, state).state_payload()
@@ -151,12 +151,12 @@ def test_clear_on_month_complete_returns_live_values(game):
     turn = int(state.turn)
     db.capture_month_open_snapshot(state)
     state.metrics["国库"] = before["国库"] + 40
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     db.month_open_snapshots.delete(int(turn))
     db.conn.commit()
     state.turn = turn + 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     payload = _runtime(db, state).state_payload()
     assert payload["turn"]["settlement_display"] is False
@@ -171,7 +171,7 @@ def test_cross_month_snapshot_does_not_bleed(game):
     db.capture_month_open_snapshot(state)
     state.turn = turn + 1
     state.metrics["国库"] = before["国库"] + 5
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     payload = _runtime(db, state).state_payload()
     assert payload["turn"]["settlement_display"] is False
@@ -185,7 +185,7 @@ def test_oracle_normal_phase_clears_via_startup_hook(game):
     db.capture_month_open_snapshot(state)
     state.metrics["国库"] = before["国库"] + 123
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     assert state.turn_phase not in FRONT_HALF_DONE_PHASES
 
     cleared = clear_orphan_month_open_snapshot(db, state)
@@ -195,7 +195,7 @@ def test_oracle_normal_phase_clears_via_startup_hook(game):
     # ADR 0008：前半段未提交窗口引擎零持久态——崩溃回滚后活盘=点击前。
     for k, v in before.items():
         state.metrics[k] = v
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     payload = _runtime(db, state).state_payload()
     assert payload["turn"]["settlement_display"] is False
@@ -210,7 +210,7 @@ def test_oracle_settling_phase_keeps_display_for_recovery(game):
     db.capture_month_open_snapshot(state)
     state.metrics["国库"] = before["国库"] + 50
     state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     cleared = clear_orphan_month_open_snapshot(db, state)
     assert cleared is False
@@ -325,7 +325,7 @@ def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
         db.capture_month_open_snapshot(state)
         state.metrics["国库"] = before["国库"] + 30
         state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        db.save_state(state)
+        db.reign.save_game_state(state)
         return ResolveResult(
             awaiting=True,
             decisions=[{"title": "测", "context": "x", "idx": 0, "options": []}],
@@ -373,12 +373,12 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
         mid["snap"] = db.month_open_snapshots.get(int(state.turn))
         mid["payload"] = runtime.state_payload()
         state.metrics["国库"] = before["国库"] + 9
-        db.save_state(state)
+        db.reign.save_game_state(state)
         # 模拟结算完成：相位回 summoning、清快照（生产 settle 尾同款）
         db.month_open_snapshots.delete(int(int(state.turn)))
         db.conn.commit()
         state.turn_phase = TurnPhase.SUMMONING.value
-        db.save_state(state)
+        db.reign.save_game_state(state)
         return ResolveResult(awaiting=False, report="ok", advanced=True)
 
     runtime.session.advance_without_decree = _observe_then_done
@@ -425,13 +425,13 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     def _advance_awaiting(**_kw):
         # entry accept 已 capture；桩内保持快照，落生产 awaiting 相位。
         state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        db.save_state(state)
+        db.reign.save_game_state(state)
         return ResolveResult(awaiting=True, decisions=list(decisions))
 
     def _end_turn():
         # 镜像 session.end_turn durable 副作用（只置 SUMMONING 并 save，不推进 turn）。
         state.turn_phase = TurnPhase.SUMMONING.value
-        db.save_state(state)
+        db.reign.save_game_state(state)
 
     runtime.session.advance_without_decree = _advance_awaiting
     runtime.session.end_turn = _end_turn

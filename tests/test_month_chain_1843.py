@@ -82,7 +82,7 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
     _stage_edict(db, state, minister, "陕西赈灾", "陕西赈灾", -1, affair.id)
     _stage_edict(db, state, minister, "大凌河", "大凌河", -10**12, affair.id)
     state.metrics["国库"] = 500000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     closed_turn = int(state.turn)
     sources_before = {
         str(row[0]) for row in db.conn.execute("SELECT source_id FROM character_knowledge_sources")
@@ -168,7 +168,7 @@ def test_unforecast_edict_is_caught_up_once_and_crash_does_not_double_charge(gam
     )
     second_ref = pending_action_decree_ref(second_id, 1)
     state.metrics["国库"] = 500000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     produced = []
 
     def product(session, snapshot):
@@ -503,7 +503,7 @@ def test_failed_declaration_commit_reloads_memory_from_db(game):
 def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monkeypatch):
     db, state, content = game
     state.turn = 2
-    db.save_state(state)
+    db.reign.save_game_state(state)
     from ming_sim.declaration_dispatch import (
         held_dossier_decree_ref, pending_action_decree_ref, stage_declaration,
     )

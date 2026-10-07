@@ -81,7 +81,7 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
     before = _click_before(state)
     db.capture_month_open_snapshot(state)
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.issues.save_pending_decisions(int(state.turn), [{
         "event_id": "evt-1",
         "title": "饷银",
@@ -189,7 +189,7 @@ def test_resolve_stream_entry_failure_exits_display_when_not_front_half(game, mo
     # 非 awaiting：accept 会新建快照；submit 拒 → 失败 exit 须清。
     # gate 须为真锁：exit 路径 gate.acquire，禁 null cm 替身。
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     def _boom(*_a, **_k):
         raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
@@ -211,7 +211,7 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
     db, state, _content = game
     runtime = _runtime(db, state)
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.capture_month_open_snapshot(state)
     db.issues.save_pending_decisions(int(state.turn), [{
         "event_id": "evt-1",
@@ -225,7 +225,7 @@ def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
         with write_gate:
             # 回 summoning 常态，使成功支 clear_orphan 真触发
             state.turn_phase = TurnPhase.SUMMONING.value
-            db.save_state(state)
+            db.reign.save_game_state(state)
             return "邸报：测。"
 
     runtime.session.submit_hitl_choices = _submit_hitl

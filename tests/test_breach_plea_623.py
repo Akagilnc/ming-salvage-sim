@@ -299,7 +299,7 @@ def test_two_successive_loosenings_get_independent_pleas(game):
     assert t1 > 0
     # 推进一回合后第二次：改弦
     state.turn += 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     t2 = write_breach_plea_todo(
         db, state, commitment_ref=cid, breach_kind=BREACH_KIND_POLICY_REVERSAL,
         reason="改弦", target_dossier_id=did, commit=True,

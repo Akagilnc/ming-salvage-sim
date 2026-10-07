@@ -405,7 +405,7 @@ def test_limited_duration_ongoing_commitment_rejects_past_end_turn(game, monkeyp
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     state.turn = 4
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     out = I.apply_score_extraction(
         db,

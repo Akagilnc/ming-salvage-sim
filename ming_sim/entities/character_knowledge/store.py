@@ -475,6 +475,86 @@ class CharacterKnowledgeStore:
             "turn_closed": r["turn_closed"],
         }
 
+    def secret_brief_origin_chat_message_ids(self, order_id: int) -> list[int]:
+        """Durable oral pins already registered on this order's brief (may be empty)."""
+        from ming_sim.applier import StoredDocumentError, durable_int, load_stored_list
+
+        rows = self.secret_brief_pins(int(order_id))
+        if not rows:
+            return []
+        parsed = load_stored_list(
+            rows[0]["origin_chat_message_ids"], label="origin_chat_message_ids",
+        )
+        pins: list[int] = []
+        for pin in parsed:
+            value = durable_int(
+                pin, label="origin_chat_message_ids", blank=None,
+            )
+            if value <= 0:
+                raise StoredDocumentError("origin_chat_message_ids 必须为正整数")
+            pins.append(value)
+        return list(dict.fromkeys(pins))
+
+    def list_secret_orders(
+        self,
+        status: str | None = None,
+        minister_name: str | None = None,
+        *,
+        with_dossier_progress: bool = True,
+    ) -> list[dict[str, object]]:
+        from ming_sim.applier import durable_int, load_stored_list, load_stored_object
+        from ming_sim.entities.dossier.store import DossierStore
+
+        rows = self.secret_order_rows(status, minister_name)
+        dossiers = DossierStore(self._conn) if with_dossier_progress else None
+        out: list[dict[str, object]] = []
+        for r in rows:
+            oid = durable_int(r["id"], label="secret_orders.id", blank=None)
+            dossier = dossiers.get_for_secret_order(oid) if dossiers is not None else None
+            out.append({
+                "id": oid,
+                "turn_issued": durable_int(
+                    r["turn_issued"], label="secret_orders.turn_issued", blank=None,
+                ),
+                "due_turn": durable_int(
+                    r["due_turn"], label="secret_orders.due_turn", blank=0,
+                ),
+                "deadline_span": durable_int(
+                    r["deadline_span"], label="secret_orders.deadline_span", blank=0,
+                ),
+                "year_issued": durable_int(
+                    r["year_issued"], label="secret_orders.year_issued", blank=None,
+                ),
+                "period_issued": durable_int(
+                    r["period_issued"], label="secret_orders.period_issued", blank=None,
+                ),
+                "minister_name": r["minister_name"],
+                "title": r["title"],
+                "content": r["content"],
+                "tags": load_stored_list(r["tags"], label="tags"),
+                "importance": durable_int(
+                    r["importance"], label="secret_orders.importance", blank=None,
+                ),
+                "status": r["status"],
+                "result": r["result"] or "",
+                "sim_note": r["sim_note"] or "",
+                "dossier_progress": (
+                    dossiers.list_dossier_progress(int(dossier["id"]))
+                    if dossiers is not None and dossier is not None else []
+                ),
+                "excluded_names": load_stored_list(
+                    r["excluded_names"], label="excluded_names",
+                ),
+                "excluded_targets": load_stored_object(
+                    r["excluded_targets"], label="excluded_targets",
+                ),
+                "turn_closed": r["turn_closed"],
+            })
+        return out
+
+    def get_active_secret_orders_for_minister(self, minister_name: str) -> list[dict[str, object]]:
+        return self.list_secret_orders(status="active", minister_name=minister_name)
+
     def set_secret_order_sim_note(self, order_id: int, value: str) -> None:
         self._conn.execute(
             "UPDATE secret_orders SET sim_note=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",

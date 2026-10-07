@@ -640,7 +640,7 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
 
     db, state = fresh_game
     state.metrics["国库"] = 0
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     _zero_non_meta_fiscal_config(db)
     db.conn.execute(
@@ -712,7 +712,7 @@ def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
         )
 
         state.turn += 1
-        db.save_state(state)
+        db.reign.save_game_state(state)
 
     assert len(set(balances)) > 1
     assert balances[-1] == db.load_state().metrics["国库"]
@@ -751,7 +751,7 @@ def test_fixed_flows_substrate_hub_central_capacity_reduces_current_central_arre
 
     db, state = fresh_game
     state.metrics["国库"] = 10
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _set_all_settle_grants(db, 0)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     _zero_non_meta_fiscal_config(db)
@@ -803,7 +803,7 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
 
     db, state = fresh_game
     state.metrics["国库"] = 15
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _set_all_settle_grants(db, 0)
     _write_settle(
         db,
@@ -960,7 +960,7 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
 
     db, state = fresh_game
     state.metrics["国库"] = 10
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _set_all_settle_grants(db, 0)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     _zero_non_meta_fiscal_config(db)
@@ -1035,7 +1035,7 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
     # 换 turn-1 前若仍按「换月后」口径找 turn-1 的 ledger，会把本次刚写的容器与上一次
     # （不存在/不同）turn 的国库实拨拼在一起。
     state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     assert db.treasury_hub_result(state) == {
         "settled_turn": state.turn,
         "treasury_disbursed": 10,
@@ -1046,7 +1046,7 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
     # #1366：AWAITING_DECISION 与 settling 语义相同（FRONT_HALF_DONE_PHASES 单一真源，
     # 真实 HITL 暂停也落在此相位），内部投影不得漏判退回 turn-1 拼接。
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     assert db.treasury_hub_result(state) == {
         "settled_turn": state.turn,
         "treasury_disbursed": 10,
@@ -1067,12 +1067,12 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
     assert runtime.budget_payload()["settled_army_pay"] is None
 
     state.turn_phase = TurnPhase.SETTLING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     assert runtime.budget_payload()["settled_army_pay"] is None
 
     state.next_period()
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.month_open_snapshots.delete(int(settled_turn))
     db.conn.commit()
     assert runtime.budget_payload()["settled_army_pay"] == {
@@ -1100,7 +1100,7 @@ def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_ji
     # 次月国库为零：容器覆盖为本月零值且 ledger 无 hub 行；玩家结果仍须绑定
     # 本次 settled turn，不能把上月实拨 10 与本月零容器拼接。
     state.metrics["国库"] = 0
-    db.save_state(state)
+    db.reign.save_game_state(state)
     second_turn = state.turn
     second_flows = flows_mod.apply_fixed_period_flows(db, state)
     assert not any(row.get("category") == "边饷hub" for row in second_flows)
@@ -1118,7 +1118,7 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
 
     db, state = fresh_game
     state.metrics["国库"] = 0
-    db.save_state(state)
+    db.reign.save_game_state(state)
     sync_opening_legacies(db, state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     _zero_non_meta_fiscal_config(db)
@@ -1420,7 +1420,7 @@ def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expense
 
     db, state = fresh_game
     state.metrics["国库"] = 15
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _set_all_settle_grants(db, 0)
     _write_settle(
         db,
@@ -1509,7 +1509,7 @@ def test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers(fresh
 
     db, state = fresh_game
     state.metrics["国库"] = 5
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _set_all_settle_grants(db, 0)
     _write_settle(
         db,
@@ -1617,7 +1617,7 @@ def test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit(fresh_game)
 
     db, state = fresh_game
     state.metrics["国库"] = 10
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _set_all_settle_grants(db, 0)
     _write_settle(
         db,
@@ -1732,7 +1732,7 @@ def test_region_army_morale_haircut_denominator_counts_only_real_army_rows(fresh
 
     db, state = fresh_game
     state.metrics["国库"] = 2
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _set_all_settle_grants(db, 0)
     _write_settle(
         db, "liaodong", {
@@ -1789,7 +1789,7 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
 
     db, state = fresh_game
     state.metrics["国库"] = 2
-    db.save_state(state)
+    db.reign.save_game_state(state)
     _set_all_settle_grants(db, 0)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     _zero_non_meta_fiscal_config(db)
@@ -2038,7 +2038,7 @@ def test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale(f
 
     db, state = fresh_game
     state.metrics["国库"] = 0
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
     _zero_non_meta_fiscal_config(db)
     db.conn.execute(
@@ -4012,7 +4012,7 @@ def test_cutover_outbound_debit_failure_uses_settlement_abort_error_pack(
 
     db, state = fresh_game
     state.metrics["国库"] = 5
-    db.save_state(state)
+    db.reign.save_game_state(state)
     monkeypatch.setattr(error_pack_mod, "user_data_dir", lambda: tmp_path)
     db.conn.execute(
         "\n        UPDATE armies\n        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,\n            central_pay_share = 0, pay_source_region = '',\n            province_pay_arrears = 0, central_pay_arrears = 0"

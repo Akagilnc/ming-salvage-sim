@@ -1915,7 +1915,7 @@ class WebGame:
 
         后台转译不在此等待。无夜的轻量替身仍按大臣查；在飞的定义由 DB 写口维护。
         """
-        if hasattr(self.db, "list_in_flight_chat_turns"):
+        if hasattr(self.db, "reign") and hasattr(self.db.reign, "list_in_flight_chat_turns"):
             if hasattr(self.db, "conn"):
                 from ming_sim.audience_night import get_open_night
                 night = get_open_night(self.db)
@@ -2120,7 +2120,7 @@ class WebGame:
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "pending_directive_count": self.pending_directive_count(),
-            "secret_orders": project_secret_orders_for_player(self.db.list_secret_orders()),
+            "secret_orders": project_secret_orders_for_player(self.db.character_knowledge.list_secret_orders()),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
 
@@ -5144,7 +5144,7 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     """
     game = get_game()
     orders = project_secret_orders_for_player(
-        game.db.list_secret_orders(), status=status,
+        game.db.character_knowledge.list_secret_orders(), status=status,
     )
     return {"orders": orders}
 

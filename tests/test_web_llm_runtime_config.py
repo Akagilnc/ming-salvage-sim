@@ -1102,7 +1102,7 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
         # 真正建立下一回合的 end_turn 产出 begin；重复普通 begin_turn 刷新不改写内容。
         seed.state.turn += 1
         seed.state.period += 1
-        seed.db.save_state(seed.state)
+        seed.db.reign.save_game_state(seed.state)
         seed.session.end_turn()
         next_begin_path = next((ud / "saves").glob(
             f"auto_*_{seed.state.year:04d}_{seed.state.period:02d}_t{seed.state.turn:04d}_begin.db"

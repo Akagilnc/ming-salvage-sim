@@ -107,6 +107,10 @@ class PowerStore:
     def read_apply_power_rename(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM powers WHERE id = ?', params).fetchone()
 
+    def display_name(self, power_id: str) -> str:
+        row = self.read_power_display_name((str(power_id),))
+        return str(row["name"]) if row else str(power_id)
+
     def read_power_display_name(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT name FROM powers WHERE id = ?', params).fetchone()
 

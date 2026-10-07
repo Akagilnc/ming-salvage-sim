@@ -232,7 +232,7 @@ def test_levy_pass_folds_jiapai_into_sanxiang_targets(game):
     db, state, content = game
     issues.bind_content(content)
     state.year, state.period = 1627, 10
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     apply_score_extraction(db, state, {
         "surcharge_decrees": [_decree(db, state,monthly_amount=10.0)],

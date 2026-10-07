@@ -215,7 +215,7 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 500_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-7)
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
@@ -263,7 +263,7 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 500_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-5)
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
@@ -331,7 +331,7 @@ def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 400_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-2)
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
@@ -471,7 +471,7 @@ def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 300_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-4)
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
@@ -517,7 +517,7 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 500_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-4)
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
@@ -611,7 +611,7 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 500_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-6)
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)
@@ -668,7 +668,7 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     minister = next(iter(content.characters.values())).name
     state.metrics["国库"] = 500_000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-6)
     turn = int(state.turn)
     _forbid_extractor(monkeypatch)

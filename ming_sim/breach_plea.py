@@ -428,7 +428,7 @@ def _spent_amount_and_fiscal_count(
         origin = ""
     did = parse_dossier_id(origin)
     if did is not None:
-        for mv in db.list_economy_moves_for_dossier(int(did)):
+        for mv in db.reign.list_economy_moves_for_dossier(int(did)):
             try:
                 delta = int(mv.get("delta") or 0)
             except (TypeError, ValueError):

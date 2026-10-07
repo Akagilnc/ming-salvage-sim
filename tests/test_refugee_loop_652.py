@@ -300,7 +300,7 @@ def test_non_recovery_grant_no_回流(game, monkeypatch):
     )
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     assert db.dossiers.get(dossier_id)["execution_outcome"] == "fulfilled"
-    assert db.list_economy_moves_for_dossier(dossier_id)
+    assert db.reign.list_economy_moves_for_dossier(dossier_id)
     before = _pop(db, "流民", "shaanxi")
     _advance_canned_month(db, state, content, monkeypatch)
     assert _pop(db, "流民", "shaanxi") == before
@@ -310,14 +310,14 @@ def test_non_recovery_grant_no_回流(game, monkeypatch):
 def test_recovery_without_paid_evidence_produces_nothing(game, monkeypatch):
     db, state, content = game
     dossier_id = _recovery_grant(db, state, amount=30)
-    assert db.list_economy_moves_for_dossier(dossier_id)
+    assert db.reign.list_economy_moves_for_dossier(dossier_id)
     db.conn.execute("DELETE FROM economy_ledger WHERE origin_ref=?", (f"dossier:{dossier_id}",))
     db.conn.execute("DELETE FROM decree_dossier_reconciliations WHERE dossier_id=?", (dossier_id,))
     db.conn.execute(
         "UPDATE decree_dossiers SET closed_turn=? WHERE id=?", (state.turn, dossier_id),
     )
     db.conn.commit()
-    assert db.list_economy_moves_for_dossier(dossier_id) == []
+    assert db.reign.list_economy_moves_for_dossier(dossier_id) == []
     before = _pop(db, "流民", "shaanxi")
     _advance_canned_month(db, state, content, monkeypatch)
     assert _pop(db, "流民", "shaanxi") == before
@@ -355,7 +355,7 @@ def _in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi", tag
     row = db.dossiers.get(dossier_id)
     assert row["status"] == "executing"
     assert row["execution_outcome"] in ("", None)
-    moves = db.list_economy_moves_for_dossier(dossier_id)
+    moves = db.reign.list_economy_moves_for_dossier(dossier_id)
     assert moves and any(int(m.get("delta") or 0) < 0 for m in moves)
     return dossier_id
 
@@ -424,7 +424,7 @@ def _force_in_transit_recovery_grant(db, state, *, amount=40, region_id="shaanxi
     row = db.dossiers.get(dossier_id)
     assert row["status"] == "executing"
     assert str(row["execution_outcome"] or "") == ""
-    assert any(int(move.get("delta") or 0) < 0 for move in db.list_economy_moves_for_dossier(dossier_id))
+    assert any(int(move.get("delta") or 0) < 0 for move in db.reign.list_economy_moves_for_dossier(dossier_id))
     return dossier_id
 
 
@@ -525,7 +525,7 @@ def test_in_transit_relief_stays_executing_before_gazette(game, monkeypatch):
         db, state, amount=amount, region_id="henan", tag="east",
     )
     state.next_period()
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     sim_calls: list = []
     _canned_judge(

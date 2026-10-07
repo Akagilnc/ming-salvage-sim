@@ -186,7 +186,7 @@ def test_pre_settle_ticks_arrival_before_terminal_states(game):
             start_turn=4,
             content=content,
         )
-        db.save_state(state)
+        db.reign.save_game_state(state)
 
         pre_settle(state, db, content=content)
 

@@ -703,7 +703,7 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
         "options": [{"label": "发饷", "hint": "拨银五万两"}],
     }])
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.save_resolve_context(
         turn_before, "测试诏书",
         {"candidate_events": [], "transit_semantics": []},

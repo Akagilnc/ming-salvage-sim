@@ -202,7 +202,7 @@ def _657_subprocess_resolve(
         # 保持待裁
         game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
         game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        game.db.save_state(game.state)
+        game.db.reign.save_game_state(game.state)
 
         summary = {"db_path": db_path, "body": choices}
         try:
@@ -287,7 +287,7 @@ def _plant_dossier_awaiting(db, state):
     db.issues.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '批红待裁', 'context': '密查陕西驿卒', 'rejection_reason': '科臣封驳', 'opposition': '东林', 'options': options}])
     db.save_resolve_context(state.turn, '诏曰密查', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}], 'transit_semantics': []})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     return dossier_id
 
 def test_missing_dossier_fields_stay_pending_then_full_retry_decides(web_game, monkeypatch):
@@ -315,7 +315,7 @@ def test_missing_dossier_fields_stay_pending_then_full_retry_decides(web_game, m
     assert row['choice'] is None
     assert phase2_calls == [], '校验失败不得进入 phase2'
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     full = {'decision_key': d_key, 'label': '强颁', 'hint': '以中旨强行颁出', 'note': '准。先济关宁边饷。', 'dossier_id': dossier_id, 'dossier_decision': 'force_promulgated'}
     r2 = asyncio.run(_post_resolve([full]))
     assert r2.status_code == 200, r2.text
@@ -351,7 +351,7 @@ def _plant_due_commitment_shaped_awaiting(db, state, *, dossier_id: int=12):
     db.issues.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '承诺到期核验', 'context': '清丈之诺届期', 'options': options}])
     db.save_resolve_context(state.turn, '诏曰核验', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}]})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
 def test_due_commitment_shaped_submit_does_not_poison_or_deadlock(web_game, monkeypatch):
     """#1492 A 真 HTTP：due-commitment 形提交后不落 poisoned decided、不批红卡死。
@@ -428,7 +428,7 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(web_game, monk
     db.issues.save_pending_decisions(state.turn, [{'event_id': f'dossier:{dossier_id}', 'title': '批红待裁', 'context': '密查陕西驿卒', 'options': options}])
     db.save_resolve_context(state.turn, '诏曰密查', {'candidate_events': [{'id': 'ev_border', 'title': '边警'}]})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     phase2_calls: list[list] = []
 
     def _phase2(_state, _db, *_a, **_k):
@@ -447,7 +447,7 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(web_game, monk
     assert row['choice'] is None
     assert phase2_calls == [], '非法选择不得进入 phase2'
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     unknown = {'decision_key': db.issues.list_rescript_desk(int(state.turn))[0]['decision_key'], 'label': '伪留中', 'hint': '未知动作', 'dossier_id': dossier_id, 'dossier_decision': 'promulgated'}
     r2 = asyncio.run(_post_resolve([unknown]))
     assert r2.status_code == 200, r2.text
@@ -455,7 +455,7 @@ def test_mixed_legal_illegal_options_illegal_choice_stays_pending(web_game, monk
     assert phase2_calls == []
     assert db.issues.list_pending_decisions(state.turn)[0]['status'] == 'pending'
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     legal = {'decision_key': db.issues.list_rescript_desk(int(state.turn))[0]['decision_key'], 'label': '强颁', 'hint': '以中旨强行颁出', 'note': '准。', 'dossier_id': dossier_id, 'dossier_decision': 'force_promulgated'}
     r3 = asyncio.run(_post_resolve([legal]))
     assert r3.status_code == 200, r3.text
@@ -478,7 +478,7 @@ def test_ordinary_event_with_hallucinated_capability_submits(web_game, monkeypat
     db.issues.save_pending_decisions(state.turn, [{'event_id': event_id, 'title': '边警', 'context': '辽东来报', 'options': [{'label': '准其销号', 'hint': '事已办结'}, {'label': '强颁', 'hint': '幻觉批红', 'dossier_id': 3, 'dossier_decision': 'hold'}]}])
     db.save_resolve_context(state.turn, '诏曰边警', {'candidate_events': [{'id': event_id, 'title': '边警'}]})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     phase2_calls: list[list] = []
 
     def _phase2(_state, _db, *_a, **_k):
@@ -672,7 +672,7 @@ def test_657_http_default_hold_keyed_empty_action_and_betray(web_game, monkeypat
     db.issues.save_rescript_drafts(int(state.turn), [{'title': 'HTTP默认留中', 'context': 'c', 'options': [opt, _layer_a_option(label='备', hint='h')], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}])
     db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.conn.commit()
     desk = db.issues.list_rescript_desk(int(state.turn))
     key = next((r['decision_key'] for r in desk if r['title'] == 'HTTP默认留中'))
@@ -773,7 +773,7 @@ def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title='陕
     db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
     db.save_turn_report(state, '邸报')
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
     web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.conn.commit()
@@ -876,7 +876,7 @@ def test_657_return_revise_round_prior_and_clear_anchor(web_game, monkeypatch):
         assert not (hit['choice'] or {})
         state = probe.load_state()
         state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        probe.save_state(state)
+        probe.reign.save_game_state(state)
         probe.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
         probe.conn.commit()
         new_opt = next((o for o in hit['options'] or [] if str(o.get('label') or '') == '新拟甲'))
@@ -1015,7 +1015,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'grant_allocation', 'label': '加衔', 'hint': 'h', 'grant_action': '加衔', 'target_kind': 'character', 'target_id': '', 'name': '', 'locality_scope': 'none'}, db=db, content=content, state=state)
     state.metrics['国库'] = int(state.metrics.get('国库') or 0) + 5000
-    db.save_state(state)
+    db.reign.save_game_state(state)
     treasury_before = int(state.metrics.get('国库') or 0)
     amount_a4 = 1000
     p = ra.map_rescript_option_or_choice({'action_type': 'grant_allocation', 'label': '赏', 'hint': 'h', 'grant_action': '赏赉', 'amount': amount_a4, 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
@@ -1067,7 +1067,7 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         content.characters[mname].status = 'active'
     db.conn.commit()
     state.metrics['国库'] = int(state.metrics.get('国库') or 0) + 500
-    db.save_state(state)
+    db.reign.save_game_state(state)
     treasury_b = int(state.metrics.get('国库') or 0)
     fine_amt = 50
     p = ra.map_rescript_option_or_choice({'action_type': 'punishment', 'label': '罚俸', 'hint': 'h', 'punish_action': '罚俸', 'amount': fine_amt, 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
@@ -1175,11 +1175,11 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     inner = by_account['内库']
     assert inner['status'] == 'closed'
     assert inner['promulgation_decision'] == 'promulgated'
-    assert len(db.list_economy_moves_for_dossier(int(inner['id']))) == 1
+    assert len(db.reign.list_economy_moves_for_dossier(int(inner['id']))) == 1
     reviewed = by_account['国库']
     assert reviewed['status'] == 'proposed'
     assert reviewed['promulgation_decision'] == ''
-    assert db.list_economy_moves_for_dossier(int(reviewed['id'])) == []
+    assert db.reign.list_economy_moves_for_dossier(int(reviewed['id'])) == []
     assert db.dossiers.get_pending_promulgation_verdicts(state.turn) == [pending]
     db.issues.save_pending_decisions(state.turn, [{'event_id': '', 'title': '先拨内帑', 'context': 'c', 'options': [options[0]]}, {'event_id': '', 'title': '后拨内帑失读', 'context': 'c', 'options': [options[0]]}])
     failed_rows = [row for row in db.issues.list_rescript_desk(int(state.turn)) if row['title'] in {'先拨内帑', '后拨内帑失读'}]
@@ -1304,7 +1304,7 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
                 int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
             )
             state.turn_phase = TurnPhase.AWAITING_DECISION.value
-            db.save_state(state)
+            db.reign.save_game_state(state)
             return db.issues.list_rescript_desk(int(state.turn))[0]["decision_key"]
 
         key = get_session_write_queue(web_game.session).run_exclusive(plant_case)
@@ -1438,7 +1438,7 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
         int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     desk = db.issues.list_rescript_desk(int(state.turn))
     key = desk[0]["decision_key"]
     r = asyncio.run(_post_resolve([{
@@ -1597,7 +1597,7 @@ def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch)
     assert 'event: done' not in r1.text, r1.text
     assert phase2_calls == [], '空 desk + 非空无键载荷须整批拒，不得进 phase2'
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     r2 = asyncio.run(_post_resolve([]))
     assert r2.status_code == 200, r2.text
     assert 'event: done' in r2.text, r2.text
@@ -1740,7 +1740,7 @@ def test_1620_http_follow_draft_office_token_routes_to_person(web_game, monkeypa
     db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
     db.save_turn_report(state, '邸报')
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     before = len(db.dossiers.list_dossiers())
     turn_before = int(web_game.state.turn)
     r = asyncio.run(_post_resolve([{'decision_key': urgent['decision_key'], 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label']}]))
@@ -1778,7 +1778,7 @@ def test_1620_http_follow_draft_grant_uses_stored_amount(web_game, monkeypatch):
     monkeypatch.setattr(session_mod, 'resolve_decisions_phase2', _phase2)
     db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     before = len(db.dossiers.list_dossiers())
     r = asyncio.run(_post_resolve([{'decision_key': urgent['decision_key'], 'action': 'follow_draft', 'draft_capability': grant_opt['draft_capability'], 'label': grant_opt['label']}]))
     assert r.status_code == 200, r.text
@@ -1969,7 +1969,7 @@ def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     db, state, content = game
     db.issues.save_pending_decisions(int(state.turn), [{'title': '歧义亲裁', 'context': 'c', 'options': [{'label': '同名', 'hint': '一'}, {'label': ' 同名 ', 'hint': '二'}]}])
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     session = make_light_session(db, state, content)
     choice = [{'decision_key': db.issues.list_rescript_desk(int(state.turn))[0]['decision_key'], 'label': '同名', 'action': 'decision'}]
     with pytest.raises(ValueError):
@@ -2069,7 +2069,7 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     prepare_resolve_front_half(state, db, decree_text='诏', content=content)
     db.issues.save_rescript_drafts(int(state.turn), [{'title': '改票契约', 'context': 'c', 'options': [opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}], 'actor_name': '杨嗣昌', 'actor_office': 'o', 'actor_faction': 'f'}])
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     desk = db.issues.list_rescript_desk(int(state.turn))
     key = desk[0]['decision_key']
     sess = GameSession.__new__(GameSession)
@@ -2217,7 +2217,7 @@ def test_1625_phase1_publication_projects_only_coherent_recovery_tuples(web_game
     state = PhaseRaceState(**original_state.__dict__)
     state.turn_phase = TurnPhase.SETTLING.value
     web_game.session.state = state
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.conn.commit()
     web_app._begin_settlement_entry(web_game)
     desk_holder = {}
@@ -2259,7 +2259,7 @@ def test_1625_inflight_phase2_does_not_advertise_resume(web_game, monkeypatch):
     kind, turn_s, idx_s = key.split(':')
     choice_json = json.dumps({'decision_key': key, 'action': 'follow_draft', 'label': '备'}, ensure_ascii=False)
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.conn.commit()
     assert web_game.session.pending_decisions(), 'reverse 窗起点须有 pending 案头'
     assert db.resolve_contexts.get(state.turn) is not None
@@ -2334,7 +2334,7 @@ def test_657_resume_phase2_signal_empty_desk_http(web_game, monkeypatch):
     kind, turn_s, idx_s = key.split(':')
     db.conn.execute("UPDATE pending_decisions SET status='decided', choice_json=? WHERE kind=? AND turn=? AND idx=?", (json.dumps(choice, ensure_ascii=False), kind, int(turn_s), int(idx_s)))
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     web_game.state.turn_phase = TurnPhase.AWAITING_DECISION.value
     web_game.session.state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.conn.commit()
@@ -2475,7 +2475,7 @@ def test_658_deliberate_backed_and_stalled_dossier_first(game):
     finally:
         reopened.close()
     state.turn = int(state.turn) + 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
     stalled, key2 = _658_plant_stalled_deliberation(db, state, content, title='议而不决')
     assert key2 != key
@@ -2484,7 +2484,7 @@ def test_658_deliberate_backed_and_stalled_dossier_first(game):
     issue = db.conn.execute('SELECT status FROM issues WHERE origin_ref=?', (f"dossier:{int(stalled['id'])}",)).fetchone()
     assert issue is not None and str(issue['status']) == 'active'
     state.turn = int(state.turn) + 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
     urgent3, _ = _plant_urgent_desk(db, state)
     key3 = urgent3['decision_key']
@@ -2597,7 +2597,7 @@ def test_658_free_decree_capture_target_dossier_real_entry(game, monkeypatch):
     assert payload.get('mode') == 'midzhi'
     assert payload.get('affair_declaration')
     state.turn_phase = TurnPhase.SUMMONING.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     canned_full_settlement(monkeypatch, narrative=f'邸报：强推案卷{did}。')
 
     def _reject_reviewed(dossiers, state_arg, **kw):
@@ -2878,7 +2878,7 @@ def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action='follow
         db.conn.commit()
         db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
         state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        db.save_state(state)
+        db.reign.save_game_state(state)
     get_session_write_queue(web_game.session).run_exclusive(plant_desk)
 
     async def _get_state():
@@ -3070,7 +3070,7 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
         int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
     )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     desk = db.issues.list_rescript_desk(int(state.turn))
     key = desk[0]["decision_key"]
     r = asyncio.run(_post_resolve([{

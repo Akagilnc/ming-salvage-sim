@@ -343,7 +343,7 @@ def test_supplied_outcome_labels_match_writer_whitelist(game, content):
     db, state, _ = game
     # 推进到有战略战事候选的时点，否则本用例无候选可验（空转）。
     state.year, state.period = 1629, 11
-    db.save_state(state)
+    db.reign.save_game_state(state)
     captured = {}
 
     def _capture(request, config):

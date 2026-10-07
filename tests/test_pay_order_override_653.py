@@ -355,7 +355,7 @@ def test_golden4_last_write_wins_with_two_provenance_rows(game):
 def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
     """⑤期限届满月／撤销旨：全序与系数恢复默认，与无旨基线逐字节一致。"""
     db, state, _content = game
-    turn = db._current_settle_turn()
+    turn = db.reign.current_settle_turn()
     d21 = _override_dossier(db, state, [
         {"key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": turn},
         {"key": "due_haircut_bp_宗禄@shaanxi", "value": 5000, "until_turn": turn},
@@ -384,14 +384,14 @@ def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
         text="官俸优先旨",
     )
     db.apply_dossier_promulgation(state, d22, "promulgated")
-    assert resolve_pay_order_overrides(db.fiscal_config.values(), "shaanxi", db._current_settle_turn()) is not None
+    assert resolve_pay_order_overrides(db.fiscal_config.values(), "shaanxi", db.reign.current_settle_turn()) is not None
     d23 = _override_dossier(
         db, state, [{"key": "due_priority_官俸@shaanxi", "value": DEFAULT_DUE_PRIORITY["官俸"]}],
         text="撤回前旨",
     )
     db.apply_dossier_promulgation(state, d23, "promulgated")   # 撤销旨本身先过颁布门
     revoke_pay_order_decree(
-        db, turn=db._current_settle_turn(),
+        db, turn=db.reign.current_settle_turn(),
         keys=["due_priority_官俸@shaanxi"], origin_ref=f"dossier:{d23}", commit=True,
     )
     assert db.fiscal_config.values()["due_priority_官俸@shaanxi"] == DEFAULT_DUE_PRIORITY["官俸"]
@@ -402,7 +402,7 @@ def test_real_revoke_decree_restores_override_and_clears_expiry(game):
     db, state, _content = game
     target = _override_dossier(db, state, [{
         "key": "due_priority_军饷@shaanxi", "value": 40,
-        "until_turn": db._current_settle_turn() + 2,
+        "until_turn": db.reign.current_settle_turn() + 2,
     }])
     db.apply_dossier_promulgation(state, target, "promulgated")
     revoke = db.create_decree_dossier(
@@ -418,7 +418,7 @@ def test_real_revoke_decree_restores_override_and_clears_expiry(game):
     # 形状退出格律：键不在位（对齐到期 _live），禁留 live 默认值
     assert "due_priority_军饷@shaanxi" not in cfg
     assert "due_priority_军饷@shaanxi_until_turn" not in cfg
-    assert resolve_pay_order_overrides(cfg, "shaanxi", db._current_settle_turn()) is None
+    assert resolve_pay_order_overrides(cfg, "shaanxi", db.reign.current_settle_turn()) is None
     changes = db.conn.execute(
         "SELECT key, origin_ref FROM fiscal_config_changes WHERE origin_ref=? ORDER BY id",
         (f"dossier:{revoke}",),
@@ -438,7 +438,7 @@ def test_real_revoke_decree_restores_override_and_clears_expiry(game):
 def test_proposed_revoke_does_not_restore_override(game):
     """未颁 revoke：owner seam 响亮拒绝，在位 override/期限/审计零变化。"""
     db, state, _content = game
-    until = db._current_settle_turn() + 2
+    until = db.reign.current_settle_turn() + 2
     target = _override_dossier(db, state, [{
         "key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": until,
     }])
@@ -455,7 +455,7 @@ def test_proposed_revoke_does_not_restore_override(game):
     with pytest.raises(PayOrderKeyError):
         restore_pay_order_override(
             db,
-            turn=db._current_settle_turn(),
+            turn=db.reign.current_settle_turn(),
             target_dossier_id=target,
             revoke_dossier_id=revoke,
             reason="未颁不得删 config",
@@ -483,7 +483,7 @@ def test_rejected_revoke_does_not_restore_override(game):
     from dossier_test_helpers import rejected_verdict
 
     db, state, _content = game
-    until = db._current_settle_turn() + 2
+    until = db.reign.current_settle_turn() + 2
     target = _override_dossier(db, state, [{
         "key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": until,
     }])
@@ -501,7 +501,7 @@ def test_rejected_revoke_does_not_restore_override(game):
     with pytest.raises(PayOrderKeyError):
         restore_pay_order_override(
             db,
-            turn=db._current_settle_turn(),
+            turn=db.reign.current_settle_turn(),
             target_dossier_id=target,
             revoke_dossier_id=revoke,
             reason="打回不得删 config",
@@ -557,7 +557,7 @@ def test_real_revoke_restores_override_same_month_with_active_commitment(game):
     from ming_sim.declaration_dispatch import dispatch_declaration
 
     db, state, content = game
-    until = db._current_settle_turn() + 3
+    until = db.reign.current_settle_turn() + 3
     target = _override_dossier(db, state, [{
         "key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": until,
     }])
@@ -860,7 +860,7 @@ def test_revoke_provincial_falls_back_to_nationwide(game):
         text="陕西边饷居末",
     )
     db.apply_dossier_promulgation(state, local, "promulgated")
-    turn = db._current_settle_turn()
+    turn = db.reign.current_settle_turn()
     before = resolve_pay_order_overrides(db.fiscal_config.values(), "shaanxi", turn)
     assert before is not None and before.due_order.index("军饷") == 3  # 省域50居末
     revoke = db.create_decree_dossier(
@@ -1162,7 +1162,7 @@ def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
 def test_lifecycle_promulgated_materializes_and_next_settlement_reads(game):
     """顺颁：判决当回合落 config；本月已按旧序完成的结算不追溯、下一次结算读取。"""
     db, state, _content = game
-    db._current_settle_turn()
+    db.reign.current_settle_turn()
     # 本月结算先按旧序完成（fixed flow 已结束的等价断言：旧序结果在案）
     before = db.settle_province_tick("shaanxi")
     assert before.breakdown["实付分账"]["军饷"] > 0
@@ -1217,7 +1217,7 @@ def test_lifecycle_force_promulgation_after_rejection(game):
 def test_stale_until_cleared_by_permanent_overwrite(game):
     """F1.4：有期限旨被后来的永久旨覆盖 → 遗留 _until_turn 清除，新旨不再到期。"""
     db, state, _content = game
-    turn = db._current_settle_turn()
+    turn = db.reign.current_settle_turn()
     d1 = _override_dossier(db, state, [
         {"key": "due_priority_军饷", "value": 40, "until_turn": turn + 1},
     ])
@@ -1454,7 +1454,7 @@ def test_fact_brief_zero_need_army_region_attribution_not_gated(game):
     from ming_sim.flows import army_needed
 
     db, state, _content = game
-    turn = db._current_settle_turn()
+    turn = db.reign.current_settle_turn()
     db.conn.execute(
         "UPDATE armies SET manpower=0, province_pay_arrears=5.0"
         " WHERE id='shaanxi_army'"
@@ -1538,7 +1538,7 @@ def test_fact_brief_unmet_relief_is_current_turn_damage(game):
 def test_fact_brief_province_auto_repaied_is_beneficiary_fact(game):
     """省池自动偿还（surplus waterfall）＝army_logs 当月负 delta → 军户受益事实（<0）。"""
     db, state, _content = game
-    turn = db._current_settle_turn()
+    turn = db.reign.current_settle_turn()
     db.conn.execute(
         "INSERT INTO army_logs (turn, year, period, army_id, field, old_value,"
         " new_value, delta, reason, actor)"

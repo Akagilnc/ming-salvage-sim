@@ -85,7 +85,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
 
         _set_guanning_arrears(game.db, 60, central=60, province=0)
         game.state.metrics["国库"] = max(int(game.state.metrics["国库"]), 100)
-        game.db.save_state(game.state)
+        game.db.reign.save_game_state(game.state)
         treasury_before = int(game.state.metrics["国库"])
         turn_before = int(game.state.turn)
 

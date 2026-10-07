@@ -389,7 +389,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     tail_reads_under_gate = []
     main_saves_under_gate = []
     orig_reports = db.turn_reports.list_archives
-    orig_save_state = db.save_state
+    orig_save_state = db.reign.save_game_state
     in_tail = False
 
     def _reports():
@@ -403,7 +403,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
         return orig_save_state(game_state)
 
     monkeypatch.setattr(db.turn_reports, "list_archives", _reports)
-    monkeypatch.setattr(db, "save_state", _save_state)
+    monkeypatch.setattr(db.reign, "save_game_state", _save_state)
 
     try:
         assert session.resolve_turn(allow_empty_decree=True).advanced is True

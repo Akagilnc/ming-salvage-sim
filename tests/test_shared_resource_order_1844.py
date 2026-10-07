@@ -102,7 +102,7 @@ def test_player_decrees_soft_cap_shared_treasury_in_order(game, monkeypatch):
     )
     _quiesce_treasury_tick(db)
     state.metrics["国库"] = 120
-    db.save_state(state)
+    db.reign.save_game_state(state)
     first_ref = _stage_player_edict(
         db, state, minister, affair.id,
         {"economy_moves": [{

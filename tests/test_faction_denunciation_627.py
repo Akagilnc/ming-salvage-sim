@@ -360,7 +360,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
 
     # 同人同案同真伪类跨 turn 亦拒（去重键不含 turn）
     state.turn = int(state.turn) + 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     second = db.accept_faction_denunciations(state, [entry], commit=True)
     assert second == []
     assert len(db.dossiers.denunciations(target_dossier_id=did)) == 2

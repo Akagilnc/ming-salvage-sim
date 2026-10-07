@@ -208,7 +208,7 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     # 保旧摘要（本就无摘要）、事件不丢、pending 持久在册。
     assert db.person_logs.get_relation_summary("温体仁", "周延儒") is None
     assert db.person_logs.get_relation_edge_events(source="温体仁", target="周延儒")
-    pending = db.get_relation_brew_pending()
+    pending = db.person_logs.get_relation_brew_pending()
     assert [(row["source"], row["target"]) for row in pending] == [("温体仁", "周延儒")]
 
     # 次月无新事件，仍因 pending 被选中；成功后 pending 清除、摘要落定。
@@ -228,7 +228,7 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     prior_hits = [e for e in payload["prior_events"] if e["origin"] == "audience:turn-1"]
     assert len(new_hits) + len(prior_hits) == 1
     assert len(new_hits) == 1 and prior_hits == []
-    assert db.get_relation_brew_pending() == []
+    assert db.person_logs.get_relation_brew_pending() == []
     summary = db.person_logs.get_relation_summary("温体仁", "周延儒")
     assert summary["recent_segment"] == "温周结怨，朝堂侧目。"
     assert summary["dimension"] == "大臣"
@@ -522,7 +522,7 @@ def test_brew_program_error_propagates_loudly_not_degraded(game):
     with pytest.raises(KeyError, match='酿制手程序错误'):
         run_month_end_relation_brew(db, state, buggy_brew)
     # 响亮上扑而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
-    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+    assert [(row["source"], row["target"]) for row in db.person_logs.get_relation_brew_pending()] == [
         ("温体仁", "周延儒")
     ]
 
@@ -542,7 +542,7 @@ def test_brew_fn_value_error_is_program_error_propagates_loudly(game):
     with pytest.raises(ValueError, match='酿制手程序错误'):
         run_month_end_relation_brew(db, state, buggy_brew)
     # 响亮上抛而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
-    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+    assert [(row["source"], row["target"]) for row in db.person_logs.get_relation_brew_pending()] == [
         ("温体仁", "周延儒")
     ]
 
@@ -566,7 +566,7 @@ def test_parse_seam_value_error_degrades_single_item(game):
     # 保旧摘要（本就无摘要）、事件不丢、pending 持久在册。
     assert db.person_logs.get_relation_summary("温体仁", "周延儒") is None
     assert db.person_logs.get_relation_edge_events(source="温体仁", target="周延儒")
-    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+    assert [(row["source"], row["target"]) for row in db.person_logs.get_relation_brew_pending()] == [
         ("温体仁", "周延儒")
     ]
 
@@ -610,7 +610,7 @@ def test_duplicate_json_objects_rejected_not_first_object_picked(game):
     # 拒收而非择取：旧摘要（含奠基段与近况段）字节不变。
     assert second["founding_segment"] == first["founding_segment"]
     assert second["recent_segment"] == first["recent_segment"]
-    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+    assert [(row["source"], row["target"]) for row in db.person_logs.get_relation_brew_pending()] == [
         (EMPEROR_NODE, "杨嗣昌")
     ]
 
@@ -630,7 +630,7 @@ def test_unescaped_control_byte_rejected_not_stripped(game):
     report = run_month_end_relation_brew(db, state, control_byte_brew)
     assert report["selected"] == 2 and report["degraded"] and report["brewed"] == []
     assert db.person_logs.get_relation_summary(EMPEROR_NODE, "杨嗣昌") is None
-    assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
+    assert [(row["source"], row["target"]) for row in db.person_logs.get_relation_brew_pending()] == [
         (EMPEROR_NODE, "杨嗣昌")
     ]
 

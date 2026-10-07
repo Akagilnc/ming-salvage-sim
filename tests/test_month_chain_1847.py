@@ -846,7 +846,7 @@ def test_question_note_only_is_kept_and_other_decisions_still_require_label(
     assert not db.staged_declarations.questions_for(ref)
 
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     db.issues.save_pending_decisions(int(state.turn), [{
         "event_id": "season:1",
         "title": "旧抉择",

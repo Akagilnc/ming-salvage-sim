@@ -105,7 +105,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
         content=content,
     )
     assert applied["economy_moves"], applied
-    moves = db.list_economy_moves_for_dossier(xf_id)
+    moves = db.reign.list_economy_moves_for_dossier(xf_id)
     assert moves and moves[0]["beyond_intent"] is True
     assert moves[0]["origin_ref"] == f"dossier:{xf_id}"
 
@@ -139,7 +139,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
         "transformed", "degraded", "fulfilled", "failed", "executing", "变形",
     }
     assert xf_dossier["execution_outcome"] == "transformed"
-    assert db.list_economy_moves_for_dossier(xf_id)
+    assert db.reign.list_economy_moves_for_dossier(xf_id)
     # 机械分叉：list_dossier_progress band 面 ≠ 英文执行格原串
     bands = {r["progress_band"] for r in xf_progress}
     assert "transformed" not in bands
@@ -149,7 +149,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     db.backup_to(str(backup))
     restored = GameDB(str(backup), content=content)
     try:
-        r_moves = restored.list_economy_moves_for_dossier(xf_id)
+        r_moves = restored.reign.list_economy_moves_for_dossier(xf_id)
         assert r_moves and r_moves[0]["beyond_intent"] is True
         assert r_moves[0]["origin_ref"] == f"dossier:{xf_id}"
         assert restored.dossiers.get(xf_id)["execution_outcome"] == "transformed"
@@ -163,7 +163,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
         is_terminal=False, commit=True,
     )
     # 无 durable beyond_intent 效果——仅表报
-    assert db.list_economy_moves_for_dossier(deg_id) == []
+    assert db.reign.list_economy_moves_for_dossier(deg_id) == []
 
     result_deg = _prime_and_apply_due_review(
         db, state, content, dossier_id=deg_id, title="打折对照·清丈",
@@ -384,7 +384,7 @@ def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
     _seed_army_arrears(db, "guanning", 40)
     _seed_army_arrears(db, "xuan_da", 30)
     state.metrics["国库"] = 500
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     ledger_before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
     db.insert_issue(

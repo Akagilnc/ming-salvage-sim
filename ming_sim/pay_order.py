@@ -459,7 +459,7 @@ def dossier_override_still_in_force(db: Any, dossier_id: int) -> bool:
     ``until_turn`` 时，祖制默认序/系数仍被压住，旨的实效仍在。判据只读既有
     账本（键 + 期限伴随键），不反演前旨值、不新增机制。
     """
-    turn = db._current_settle_turn()
+    turn = db.reign.current_settle_turn()
     origin = f"dossier:{int(dossier_id)}"
     rows = db.fiscal_config.override_rows_for_origin(origin)
     config = {str(row["key"]): int(row["value"]) for row in rows}

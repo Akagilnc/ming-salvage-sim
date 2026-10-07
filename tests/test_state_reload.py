@@ -116,11 +116,11 @@ def test_pre_settle_self_reloads_memory_on_rollback(game, monkeypatch):
     before_metrics = dict(state.metrics)
     before_ledger = _ledger_count(db, turn)
 
-    # save_state 抛错：此时内存 phase 已被赋成 settling、apply_fixed_period_flows 已直改 state.metrics。
+    # save_game_state 抛错：此时内存 phase 已被赋成 settling、apply_fixed_period_flows 已直改 state.metrics。
     def _boom_save(st):
         raise RuntimeError("save boom")
 
-    monkeypatch.setattr(db, "save_state", _boom_save)
+    monkeypatch.setattr(db.reign, "save_game_state", _boom_save)
 
     with pytest.raises(RuntimeError, match="save boom"):
         pre_settle(state, db)
@@ -134,8 +134,11 @@ def test_pre_settle_self_reloads_memory_on_rollback(game, monkeypatch):
     assert state.metrics == before_metrics
     assert _ledger_count(db, turn) == before_ledger
 
-    # 再调 pre_settle（恢复 save_state）能完整跑、不被脏相位跳过。
-    monkeypatch.setattr(db, "save_state", db.__class__.save_state.__get__(db))
+    # 再调 pre_settle（恢复 save）能完整跑、不被脏相位跳过。
+    monkeypatch.setattr(
+        db.reign, "save_game_state",
+        db.reign.__class__.save_game_state.__get__(db.reign),
+    )
     pre_settle(state, db)
     assert state.turn_phase == "settling"
     assert _ledger_count(db, turn) > before_ledger

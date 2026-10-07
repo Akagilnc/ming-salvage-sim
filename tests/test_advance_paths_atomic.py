@@ -71,7 +71,7 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
         ],
     }])
     state.turn_phase = "awaiting_decision"
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     def _phase2(_state, _db, *_args, **_kwargs):
         _db.issues.clear_pending_decisions(turn)
@@ -139,7 +139,7 @@ def test_submit_event_decision_binds_from_candidate_snapshot_without_event_id(ga
         ],
     }])
     state.turn_phase = "awaiting_decision"
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     def _phase2(_state, _db, *_args, **_kwargs):
         _db.issues.clear_pending_decisions(turn)
@@ -213,7 +213,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     )
     db.conn.commit()
     state.turn_phase = "awaiting_decision"
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     seen = []
 
@@ -242,7 +242,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
 
     # 复位 awaiting 再试异载荷（模拟 phase2 再次失败后的续跑）
     state.turn_phase = "awaiting_decision"
-    db.save_state(state)
+    db.reign.save_game_state(state)
     # ② #1589：空 desk + 非空无键异载荷整批拒，不静默吞掉——phase2 不重入
     with pytest.raises(ValueError):
         sess.submit_hitl_choices(
@@ -273,7 +273,7 @@ def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch
         "context": "清核河工", "options": [option],
     }])
     state.turn_phase = "awaiting_decision"
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     monkeypatch.setattr(
         session_mod, "resolve_decisions_phase2", lambda *_a, **_k: "ok",

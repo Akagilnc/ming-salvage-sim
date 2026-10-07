@@ -261,7 +261,7 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
         state = session.state
         # Low authority so resistance is on the table.
         state.metrics["皇威"] = 15
-        db.save_state(state)
+        db.reign.save_game_state(state)
 
         # P-5 邸报原料：开局无 seed 后，经生产首月结算缝先落非空真实 report。
         # 必须在种植 proposed 案卷之前（否则结算会再进颁布判官）。

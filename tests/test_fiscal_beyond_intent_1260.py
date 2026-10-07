@@ -340,7 +340,7 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     )
     assert applied["fiscal_creates"] and not applied["fiscal_creates"][0].get("rejected")
     # Zero beyond-flagged economy moves (foundation seed may add plain spend later)
-    eco = db.list_economy_moves_for_dossier(did)
+    eco = db.reign.list_economy_moves_for_dossier(did)
     assert not any(bool(m.get("beyond_intent")) for m in eco), eco
     fisc = db.list_fiscal_effects_for_dossier(did)
     assert any(r.get("beyond_intent") is True for r in fisc), fisc
@@ -467,7 +467,7 @@ def test_s3_nested_ongoing_economy_alias_旨外恶果_lands_ledger(game):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     state.metrics["国库"] = 500
-    db.save_state(state)
+    db.reign.save_game_state(state)
 
     ledger_before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
     db.insert_issue(

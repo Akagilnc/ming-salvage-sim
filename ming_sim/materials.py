@@ -760,7 +760,7 @@ def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> 
     from ming_sim.supervision import report_origin_base
 
     name = str(getattr(character, "name", "") or "")
-    orders = db.get_active_secret_orders_for_minister(name) if name else []
+    orders = db.character_knowledge.get_active_secret_orders_for_minister(name) if name else []
     if orders:
         monthly = DOSSIER_REPORT_ORIGIN_MONTHLY
         lines = [
@@ -1768,7 +1768,7 @@ def dossier_paid_amount(db: Any, dossier_id: object) -> int:
         return 0
     return sum(
         max(0, -int(move.get("delta") or 0))
-        for move in db.list_economy_moves_for_dossier(oid)
+        for move in db.reign.list_economy_moves_for_dossier(oid)
     )
 
 
@@ -2116,7 +2116,7 @@ def _write_one_present_person(
     from ming_sim.context import character_context_with_db
 
     dossier_body = character_context_with_db(character, db, turn=int(state.turn))
-    if hasattr(db, "get_character_status"):
+    if hasattr(db, "characters") and hasattr(db.characters, "get_character_status"):
         status, reason = db.characters.get_character_status(name)
         status_text = str(status or "").strip()
         reason_text = str(reason or "")

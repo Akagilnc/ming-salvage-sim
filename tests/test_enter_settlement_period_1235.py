@@ -361,7 +361,7 @@ def test_awaiting_decision_still_emits_pending(game):
     before = _click_before(state)
     db.capture_month_open_snapshot(state)
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
+    db.reign.save_game_state(state)
     decisions = [{"title": "测", "context": "x", "idx": 0, "options": [{"label": "a"}]}]
 
     runtime = object.__new__(web_app.WebGame)

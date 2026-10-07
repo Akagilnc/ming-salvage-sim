@@ -732,7 +732,7 @@ class GameSession:
             TurnPhase.AWAITING_DECISION.value, TurnPhase.SETTLING.value,
         ):
             self.state.turn_phase = TurnPhase.SUMMONING.value
-            self.db.save_state(self.state)
+            self.db.reign.save_game_state(self.state)
         self._begun = True
         return self.turn_snapshot()
 
@@ -741,7 +741,7 @@ class GameSession:
 
     def _set_phase(self, phase: TurnPhase) -> None:
         self.state.turn_phase = phase.value
-        self.db.save_state(self.state)
+        self.db.reign.save_game_state(self.state)
 
     def turn_snapshot(self) -> TurnSnapshot:
         return TurnSnapshot(
@@ -757,7 +757,7 @@ class GameSession:
     def end_turn(self) -> None:
         """新回合建立（resolve 已推进 state.turn）；阶段回 summoning 并留月初档。"""
         self.state.turn_phase = TurnPhase.SUMMONING.value
-        self.db.save_state(self.state)
+        self.db.reign.save_game_state(self.state)
         self.auto_save("begin")
 
     def note_chat_rollback(self, deleted_committed_draft_ids: Optional[List[int]] = None) -> None:
@@ -1925,11 +1925,11 @@ class GameSession:
         # 机械尾已在推进后占用同一条连接。这次落相位走写队列那把闸
         # （与尾部读写票同一对象）；调用方已持闸时不再重入。
         if write_gate_already_held:
-            self.db.save_state(self.state)
+            self.db.reign.save_game_state(self.state)
         else:
             from ming_sim.session_write_queue import get_session_write_queue
             with get_session_write_queue(self).write_gate:
-                self.db.save_state(self.state)
+                self.db.reign.save_game_state(self.state)
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:
@@ -2077,7 +2077,7 @@ class GameSession:
             }
             cand_factions.discard("")
             faction_rows = [
-                row for row in self.db.get_faction_stance_summaries()
+                row for row in self.db.factions.get_faction_stance_summaries()
                 if str(row.get("faction") or "") in cand_factions
             ]
             agent = create_rescript_deliberate_agent(self.llm_config, self.agno_db)
@@ -2227,7 +2227,7 @@ class GameSession:
             if int(self.state.turn) != before_turn or self.state.ended
             else TurnPhase.SETTLING.value
         )
-        self.db.save_state(self.state)
+        self.db.reign.save_game_state(self.state)
         return report
 
     def resolve_rescript_decisions(
@@ -2373,7 +2373,7 @@ class GameSession:
             if int(self.state.turn) != before_turn or self.state.ended
             else TurnPhase.SETTLING.value
         )
-        self.db.save_state(self.state)
+        self.db.reign.save_game_state(self.state)
         return report
 
     def advance_without_decree(

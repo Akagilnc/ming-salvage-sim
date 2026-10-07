@@ -730,7 +730,7 @@ def write_decree_with_agno(
     # 持久损坏由 list_secret_orders 既有读缝抛出，不在此洗成空清单。
     closed_evidence: List[Dict[str, object]] = []
     if db is not None:
-        for o in db.list_secret_orders(status="done"):
+        for o in db.character_knowledge.list_secret_orders(status="done"):
             if o.get("result"):
                 closed_evidence.append({
                     "id": int(o["id"]), "title": o["title"],
@@ -1203,7 +1203,7 @@ def pre_settle(
                 tlog(f"[secret_order] 到期待对账 {due_orders}")
             # 完成相位：同事务内落 settling（崩在上面任一步=全回滚=相位未变）。
             state.turn_phase = TurnPhase.SETTLING.value
-            db.save_state(state)
+            db.reign.save_game_state(state)
             collector.flush_to_db(db)
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)

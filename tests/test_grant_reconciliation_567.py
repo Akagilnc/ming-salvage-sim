@@ -219,13 +219,13 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     gid = _in_transit_grant(db, state, amount=ORDERED)
     after_grant_inner = int(state.metrics["内库"])
     assert after_grant_inner == before_inner - ORDERED
-    moves_before = db.list_economy_moves_for_dossier(gid)
+    moves_before = db.reign.list_economy_moves_for_dossier(gid)
 
     _record_monthly(db, state, reconciliations=[
         {"dossier_id": gid, "arrived_amount": 16},
     ])
     assert int(state.metrics["内库"]) == after_grant_inner
-    assert db.list_economy_moves_for_dossier(gid) == moves_before
+    assert db.reign.list_economy_moves_for_dossier(gid) == moves_before
 
     result = issue_engine.apply_score_extraction(
         db, state,
@@ -245,7 +245,7 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     assert recon["arrived_amount"] == 16
     # 仍无二次扣库
     assert int(state.metrics["内库"]) == after_grant_inner
-    assert db.list_economy_moves_for_dossier(gid) == moves_before
+    assert db.reign.list_economy_moves_for_dossier(gid) == moves_before
 
 
 def test_missing_soft_judge_uses_band_midpoint(game):

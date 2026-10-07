@@ -71,7 +71,7 @@ def test_emperor_private_payload_preserves_monthly_report(game):
     })
 
     # Emperor-facing secret-order product payload exposes the canonical rail.
-    emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
+    emperor_order = next(item for item in db.character_knowledge.list_secret_orders() if item["id"] == order_id)
     last = emperor_order["dossier_progress"][-1]
     assert int(last["turn"]) == int(state.turn)
     assert last["progress_band"] == "在途核验"
@@ -134,7 +134,7 @@ def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
     eligible_id, eligible = _order(db, state)
     ordinary_id, ordinary = _order(db, state, title="保护堤岸", tags=["河工"])
     state.turn += 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     reports = [
         {"dossier_id": eligible, "progress_band": "在途", "memorial_text": "已出京"},
         {"dossier_id": ordinary, "progress_band": "在办", "memorial_text": "河工并列密奏"},
@@ -156,7 +156,7 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
         db, state, title="清查库藏", tags=["财政"],
     )
     state.turn += 1
-    db.save_state(state)
+    db.reign.save_game_state(state)
     reports = [
         {
             "dossier_id": chained_dossier,

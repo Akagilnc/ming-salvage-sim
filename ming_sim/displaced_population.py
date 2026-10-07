@@ -120,7 +120,7 @@ def _recovery_effective_silver_wan(db: GameDB, dossier_id: int, turn: int) -> in
     if arrived_this_turn:
         return max(0, sum(arrived_this_turn))
     paid = 0
-    for move in db.list_economy_moves_for_dossier(int(dossier_id)):
+    for move in db.reign.list_economy_moves_for_dossier(int(dossier_id)):
         # economy_ledger.delta 是持久账本列，腐值必须响亮失败交外层事务回滚——
         # 静默跳过会把实付证据算少、凭空缩掉回流人口转移。
         delta = int(move.get("delta") or 0)

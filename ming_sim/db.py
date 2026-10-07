@@ -1209,11 +1209,6 @@ class GameDB:
         fiscal = load_stored_object(row["fiscal"], label='fiscal')
         return self._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
 
-    def _current_settle_turn(self) -> int:
-        """#653 override 期限判定用的当前绝对 turn（game_state 单行真源；无行=0＝永不到期）。"""
-        row = ReignStateStore(self.conn).read_current_settle_turn()
-        return int(row["turn"]) if row is not None and row["turn"] is not None else 0
-
     def settle_ming_province_substrate_ticks(
         self,
         actions_by_region: Optional[Dict[str, List[Dict[str, Any]]]] = None,
@@ -1274,7 +1269,7 @@ class GameDB:
         # 无在位 override 键 → resolve 返 None → 零合并，结算逐字节走默认路径（回归不破）。
         from ming_sim.pay_order import resolve_pay_order_overrides
         overrides = resolve_pay_order_overrides(
-            self.fiscal_config.values(), region_id, self._current_settle_turn()
+            self.fiscal_config.values(), region_id, self.reign.current_settle_turn()
         )
         if overrides is not None:
             tick_p = dict(tick_p)
@@ -2491,18 +2486,6 @@ class GameDB:
             raise ValueError("settle.st 非法")
         st["军饷欠"] = row_arrears_total
 
-    def save_state(self, state: GameState) -> None:
-        """Write the reign header and balances. 持久写口归 reign_state store（#1889）。"""
-        self.reign.save(
-            year=state.year,
-            period=state.period,
-            turn=state.turn,
-            turn_phase=state.turn_phase,
-            ended=state.ended,
-            ending_status=state.ending_status,
-            metrics=state.metrics,
-        )
-
     def load_state(self, start_ym: str = "") -> GameState:
         header = self.reign.read()
         if header is None:
@@ -2525,7 +2508,7 @@ class GameDB:
             # 这次初始化就不算成功（异常上抛，事务回滚）。否则 game_state 已落库而开局
             # 事实缺失，下次重开 reign.exists() 为真、再也不会补 seed，得到一份永久残缺的新档。
             with atomic(self):
-                self.save_state(state)
+                self.reign.save_game_state(state)
                 self.ensure_opening_ledger(state)
                 self.seed_opening_crises(state)
                 self.seed_opening_gazette(state)
@@ -2785,7 +2768,7 @@ class GameDB:
         Reloading an existing save does not re-anchor. The marker and the offset
         rows commit with the caller's transaction.
         """
-        if not is_fresh_factions_seed or self._has_meta_flag("__leverage_offsets_calibrated"):
+        if not is_fresh_factions_seed or self.reign.has_meta_flag("__leverage_offsets_calibrated"):
             return
         for faction in _LEVERAGE_FACTIONS:
             row = FactionStore(self.conn).read_faction_leverage((faction,))
@@ -2800,12 +2783,6 @@ class GameDB:
             self.recompute_faction_leverage(faction)
         self.reign.upsert_metric("__leverage_offsets_calibrated", 1)
         self._leverage_offsets_calibrated = True
-
-    def _has_meta_flag(self, key: str) -> bool:
-        """查 metrics 表里某持久标记是否存在（#9 R3 crash-safe 迁移标记用）。metrics 在 init_schema
-        建表脚本里已建，故此调用安全。值约定 1=已置位。"""
-        row = ReignStateStore(self.conn).read_has_meta_flag((key,))
-        return row is not None and int(row["value"]) == 1
 
     def resolve_power_id(self, character) -> str:
         """人物所属势力 id 的权威解析：DB 行 power_id 优先，回退内存 power_id，默认 ming。
@@ -3644,11 +3621,6 @@ class GameDB:
             )
         return payload
 
-    def power_display_name(self, power_id: str) -> str:
-        """power_id → 显示名（如 houjin→后金）。缺则回退 id。"""
-        row = PowerStore(self.conn).read_power_display_name((str(power_id),))
-        return str(row["name"]) if row else str(power_id)
-
     def region_report(self, limit: int = 5) -> str:
         rows = self.regions.rows(limit=limit, danger_order=True)
         if not rows:
@@ -3659,7 +3631,7 @@ class GameDB:
         for row in rows:
             held = ""
             if str(row["controlled_by"]) != "ming":
-                held = f"【已为{self.power_display_name(row['controlled_by'])}所据】"
+                held = f"【已为{self.powers.display_name(row['controlled_by'])}所据】"
             defense = f"，城防炮{int(row['cannon'])}门" if int(row["cannon"] or 0) > 0 else ""
             parts.append(
                 f"{row['name']}{held}：{_public_support_description(row['public_support'])}，"
@@ -3678,7 +3650,7 @@ class GameDB:
             raise ValueError(f"地区未入库：{raw_name}")
         held = ""
         if str(row["controlled_by"]) != "ming":
-            held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
+            held = f"，控制权：已为{self.powers.display_name(row['controlled_by'])}所据（非大明辖治）"
         # 人口存储是人。玩家面投影「约N万口」；机面写裸人数。
         pop_qual = f"人口{population_wan_kou_label(row['population'])}"
         pop_raw = f"人口{row['population']}人"
@@ -5787,7 +5759,7 @@ class GameDB:
                 if table == "secret_orders":
                     raw_pins = before_row.get("_rollback_brief_origin_chat_message_ids")
                     if raw_pins is None:
-                        current = self._brief_origin_chat_message_ids(int(target_id))
+                        current = self.character_knowledge.secret_brief_origin_chat_message_ids(int(target_id))
                         pins = [pin for pin in current if int(pin) not in undone]
                     else:
                         pins = load_stored_list(raw_pins, label="rollback brief pins")
@@ -6279,25 +6251,6 @@ class GameDB:
                 if mid is not None and mid not in pinned_ids:
                     pinned_ids.append(mid)
         return pinned_ids
-
-    def _brief_origin_chat_message_ids(self, order_id: int) -> List[int]:
-        """Durable oral pins already registered on this order's brief (may be empty)."""
-        rows = self.character_knowledge.secret_brief_pins(int(order_id))
-        if not rows:
-            return []
-        parsed = load_stored_list(
-            rows[0]["origin_chat_message_ids"], label="origin_chat_message_ids",
-        )
-        # 既存 brief pins：成员损坏是读缝，不得 ValueError 洗成 pending failed。
-        pins: List[int] = []
-        for pin in parsed:
-            value = durable_int(
-                pin, label="origin_chat_message_ids", blank=None,
-            )
-            if value <= 0:
-                raise StoredDocumentError("origin_chat_message_ids 必须为正整数")
-            pins.append(value)
-        return list(dict.fromkeys(pins))
 
     def _classify_secret_order_audience(
         self,
@@ -7749,7 +7702,7 @@ class GameDB:
         origin_ref = f"dossier:{int(dossier_id)}"
         # 幂等：同案已有补饷流水则不二扣（ready 重放 / 重复 settle 护栏）。
         existing = [
-            m for m in self.list_economy_moves_for_dossier(int(dossier_id))
+            m for m in self.reign.list_economy_moves_for_dossier(int(dossier_id))
             if str(m.get("purpose") or "") == "补饷"
         ]
         if existing:
@@ -8948,7 +8901,7 @@ class GameDB:
                                 state.turn, close=True, commit=False,
                             )
                     else:
-                        moves = self.list_economy_moves_for_dossier(dossier_id)
+                        moves = self.reign.list_economy_moves_for_dossier(dossier_id)
                         actual = int(moves[0]["delta"]) if moves else 0
                         if actual != -amount:
                             if policy["execution_surface"] == "in_transit":
@@ -12514,7 +12467,7 @@ class GameDB:
 
         只供事实，不参与裁决形状。四读端改调此处，禁再各写一份合并。
         """
-        return list(self.list_economy_moves_for_dossier(int(dossier_id))) + list(
+        return list(self.reign.list_economy_moves_for_dossier(int(dossier_id))) + list(
             self.list_fiscal_effects_for_dossier(int(dossier_id))
         )
 
@@ -12543,17 +12496,6 @@ class GameDB:
             bool(row.get("beyond_intent"))
             for row in self.list_dossier_durable_effects(int(dossier_id))
         )
-
-    def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
-        rows: List[Dict[str, object]] = []
-        for row in ReignStateStore(self.conn).read_list_economy_moves_for_dossier((f"dossier:{int(dossier_id)}",)):
-            item = dict(row)
-            # Normalize beyond_intent to bool for adjudicator consumers (#622).
-            item["beyond_intent"] = bool(self.coerce_beyond_intent_flag(
-                item.get("beyond_intent")
-            ))
-            rows.append(item)
-        return rows
 
     # ----- secret_orders（密令系统）-----
 
@@ -12830,7 +12772,7 @@ class GameDB:
         brief_rows = self.character_knowledge.secret_brief_pins()
         pending_rows = self.dossiers.secret_order_pending_payloads()
         for row in brief_rows:
-            for mid in self._brief_origin_chat_message_ids(int(row["order_id"])):
+            for mid in self.character_knowledge.secret_brief_origin_chat_message_ids(int(row["order_id"])):
                 out[mid] = True
         for row in pending_rows:
             payload = load_stored_object(row["payload_json"], label="payload_json")
@@ -13035,7 +12977,7 @@ class GameDB:
         """
         pins = self._coerce_positive_message_ids(origin_chat_message_ids)
         # Keep earlier oral provenance when a later approval/update names another pin.
-        pins = list(dict.fromkeys([*self._brief_origin_chat_message_ids(int(order_id)), *pins]))
+        pins = list(dict.fromkeys([*self.character_knowledge.secret_brief_origin_chat_message_ids(int(order_id)), *pins]))
         pins_json = safe_json_dumps(pins, ensure_ascii=False)
         self.character_knowledge.upsert_secret_brief(
             order_id=int(order_id), turn=state.turn, year=state.year, period=state.period,
@@ -13366,7 +13308,7 @@ class GameDB:
         # Preserve create-time oral pins when caller did not name a new pin.
         classify_ids = origin_chat_message_ids
         if origin_chat_message_id is None and classify_ids is None:
-            classify_ids = self._brief_origin_chat_message_ids(int(order_id))
+            classify_ids = self.character_knowledge.secret_brief_origin_chat_message_ids(int(order_id))
         with atomic(self):
             if deadline:
                 CharacterKnowledgeStore(self.conn).write_update_secret_order_by_id((persisted_title, content, tags_json, int(state.turn) + deadline, deadline,
@@ -13393,65 +13335,6 @@ class GameDB:
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
         self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)
         return True
-
-    def list_secret_orders(
-        self,
-        status: Optional[str] = None,
-        minister_name: Optional[str] = None,
-    ) -> List[Dict[str, object]]:
-        rows = self.character_knowledge.secret_order_rows(status, minister_name)
-        out: List[Dict[str, object]] = []
-        for r in rows:
-            oid = durable_int(r["id"], label="secret_orders.id", blank=None)
-            dossier = self.dossiers.get_for_secret_order(oid)
-            out.append({
-                "id": oid,
-                "turn_issued": durable_int(
-                    r["turn_issued"], label="secret_orders.turn_issued", blank=None,
-                ),
-                # due_turn / deadline_span：既有可空默认 0。
-                "due_turn": durable_int(
-                    r["due_turn"], label="secret_orders.due_turn", blank=0,
-                ),
-                "deadline_span": durable_int(
-                    r["deadline_span"], label="secret_orders.deadline_span", blank=0,
-                ),
-                "year_issued": durable_int(
-                    r["year_issued"], label="secret_orders.year_issued", blank=None,
-                ),
-                "period_issued": durable_int(
-                    r["period_issued"], label="secret_orders.period_issued", blank=None,
-                ),
-                "minister_name": r["minister_name"],
-                "title": r["title"],
-                "content": r["content"],
-                "tags": load_stored_list(r["tags"], label='tags'),
-                "importance": durable_int(
-                    r["importance"], label="secret_orders.importance", blank=None,
-                ),
-                "status": r["status"],
-                "result": r["result"] or "",
-                "sim_note": r["sim_note"] or "",
-                # Emperor-facing secret-order payload is an authorized private
-                # product seam; expose the same canonical monthly rail used by
-                # the personnel extractor and future dossier inquiry.
-                "dossier_progress": (
-                    self.dossiers.list_dossier_progress(int(dossier["id"]))
-                    if dossier is not None else []
-                ),
-                "excluded_names": load_stored_list(
-                    r["excluded_names"], label='excluded_names',
-                ),
-                "excluded_targets": load_stored_object(
-                    r["excluded_targets"], label='excluded_targets',
-                ),
-                "turn_closed": r["turn_closed"],
-            })
-        return out
-
-    def get_active_secret_orders_for_minister(self, minister_name: str) -> List[Dict[str, object]]:
-        """返回该大臣名下未结案密令（active）。done/failed 已结案不再返回。"""
-        return self.list_secret_orders(status="active", minister_name=minister_name)
 
     def close_secret_order(
         self,
@@ -13896,25 +13779,12 @@ class GameDB:
             self.conn.commit()
         return max(int(cur.rowcount or 0), 0)
 
-    def get_relation_brew_pending(self) -> List[Dict[str, Any]]:
-        """关系对 pending（#636 语义原样）：只回 item_kind='关系' 的行。"""
-        rows = PersonLogStore(self.conn).read_get_relation_brew_pending()
-        return [dict(row) for row in rows]
-
     # ------------------------------------------------------------------
     # #637 派系态势摘要 S6：持久化接缝（ADR 0084）。
     # 复用 #636 单一 durable claim/watermark/apply+clear 所有者（庭裁 r1 F2）：
     # pending 走同一 relation_brew_pending 表（item_kind='派系' 身份），apply 与
     # pending 清除同事务原子落定，与 apply_relation_brew_result 同构。
     # ------------------------------------------------------------------
-
-    def get_faction_stance_summaries(self) -> List[Dict[str, Any]]:
-        rows = FactionStore(self.conn).read_get_faction_stance_summaries()
-        return [dict(row) for row in rows]
-
-    def get_faction_stance_summary(self, faction: str) -> Optional[Dict[str, Any]]:
-        row = FactionStore(self.conn).read_get_faction_stance_summary((str(faction),))
-        return dict(row) if row is not None else None
 
     def claim_faction_brew_targets(self, *, year: int, period: int) -> int:
         """settled 年月涉派派系先作 durable claim（庭裁 r1 F2：复用既有认领机制）。
@@ -13929,20 +13799,6 @@ class GameDB:
         if owns:
             self.conn.commit()
         return max(int(cur.rowcount or 0), 0)
-
-    def get_faction_brew_pending(self) -> List[Dict[str, Any]]:
-        """派系工作项 pending：item_kind='派系' 行，target 即派系名。"""
-        rows = PersonLogStore(self.conn).read_get_faction_brew_pending()
-        return [
-            {
-                "faction": row["target"],
-                "year": row["year"],
-                "period": row["period"],
-                "reason": row["reason"],
-                "created_at": row["created_at"],
-            }
-            for row in rows
-        ]
 
     def mark_faction_brew_pending(
         self,

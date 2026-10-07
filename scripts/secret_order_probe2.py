@@ -61,7 +61,7 @@ def main() -> None:
         if "密旨" in para or "曹化淳" in para or "化淳" in para or "底册" in para or "近臣" in para:
             print(para.strip())
     print("\n========== 密令状态 ==========\n")
-    for o in sess.db.list_secret_orders():
+    for o in sess.db.character_knowledge.list_secret_orders():
         print(f"#{o['id']} status={o['status']} title={o['title']!r}")
         print(f"    result={o.get('result')!r}")
     sess.close()

@@ -102,7 +102,7 @@ def test_pre_settle_tick_before_event_terminal_reads_new_location(game):
     try:
         state.turn = t0 + 1
         state.turn_phase = TurnPhase.REVIEWING.value
-        db.save_state(state)
+        db.reign.save_game_state(state)
         pre_settle(state, db, content=content)
         row = _ledger(db, name)
         assert row['location'] == 'beizhili' and row['transit_to'] == ''
@@ -132,7 +132,7 @@ def test_pre_settle_tick_before_seed_auto_trigger_reads_new_location(game):
     try:
         state.turn = t0 + 1
         state.turn_phase = TurnPhase.REVIEWING.value
-        db.save_state(state)
+        db.reign.save_game_state(state)
         pre_settle(state, db, content=content)
         row = _ledger(db, name)
         assert row['location'] == 'beizhili' and row['transit_to'] == ''
@@ -196,7 +196,7 @@ def test_mid_countdown_save_reopen_continues_identically(game, tmp_path):
     r0 = _put_in_transit(db, content, name, origin=origin, dest=dest, speed_factor=1.0, start_turn=t0)
     n = _oracle_n(r0, 1.0)
     assert n >= 3
-    db.save_state(state)
+    db.reign.save_game_state(state)
     initial_backup = tmp_path / 'transit_mid_initial.db'
     db.backup_to(str(initial_backup))
     control: dict[int, dict] = {}
@@ -217,7 +217,7 @@ def test_mid_countdown_save_reopen_continues_identically(game, tmp_path):
             arrivals = tick_transit_arrivals(db_r, state_r, content)
             _assert_transit_frame_equal(_transit_frame(db_r, name, arrivals), control[k])
         state_r.turn = t0 + mid_k
-        db_r.save_state(state_r)
+        db_r.reign.save_game_state(state_r)
         reopen_path = db_r.path
         db_r.close()
         db2 = GameDB(reopen_path, content)

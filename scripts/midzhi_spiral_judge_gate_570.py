@@ -187,7 +187,7 @@ def _open_pair(root: str, index: int, content: GameContent) -> tuple:
             "UPDATE factions SET leverage=70, agenda=? WHERE name='东林'",
             (BOARD_DONGLIN_AGENDA,),
         )
-        db.save_state(state)
+        db.reign.save_game_state(state)
         db.conn.commit()
         agno = SqliteDb(db_file=str(arm_dir / "agno.db"))
         dbs.append((db, state, agno))
