@@ -292,7 +292,8 @@ def test_brew_batch_runs_items_in_parallel_not_serialized(game):
     def parallel_brew(payload_json: str) -> str:
         payload = json.loads(payload_json)
         threads.append(threading.current_thread().name)
-        barrier.wait()  # 串行实现会在第二个条目处超时破裂
+        # 标准库 Barrier 超时：串行故障秒级 BrokenBarrierError，不无限挂起。
+        barrier.wait(timeout=2.0)
         return json.dumps(
             _script(recent=f"{payload['source']}与{payload['target']}协作在案。"),
             ensure_ascii=False,
@@ -394,7 +395,8 @@ def test_batch_of_five_relations_all_enter_call_seam_concurrently(game):
     def parallel_brew(payload_json: str) -> str:
         payload = json.loads(payload_json)
         threads.append(threading.current_thread().name)
-        barrier.wait()  # 第 5 条排不到缝即在此超时破裂
+        # 固定四工人时第 5 条进不了缝 → wait 超时 BrokenBarrierError，秒级报红。
+        barrier.wait(timeout=2.0)
         return json.dumps(
             _script(recent=f"{payload['source']}与{payload['target']}协作在案。"),
             ensure_ascii=False,

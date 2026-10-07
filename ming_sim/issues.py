@@ -8441,10 +8441,9 @@ def _apply_score_extraction_body(
         _apply_population_transfer_items(step_extracted.get("population_transfers") or [])
         _apply_bandit_absorption_items(step_extracted.get("bandit_absorptions") or [])
         # 流寇同股同信封双削：只看本笔人物招安，不跨批/跨信封扩大。
-        step_person_raw = step_extracted.get("人物变更") or []
+        # 与人物写核共用 normalize_person_changes（action→动作），不另抄别名表。
         step_amnesty_powers = _amnesty_conflict_power_ids(
-            [item for item in step_person_raw if isinstance(item, dict)]
-            if isinstance(step_person_raw, list) else []
+            normalize_person_changes({"人物变更": step_extracted.get("人物变更") or []})
         )
         _apply_power_update_pairs(
             step_ordered.get("power_updates") or [],

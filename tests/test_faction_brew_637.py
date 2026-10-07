@@ -231,7 +231,8 @@ def test_relation_and_faction_items_share_single_batch_in_parallel(game):
     def parallel_brew(payload_json: str) -> str:
         payload = json.loads(payload_json)
         threads.append(threading.current_thread().name)
-        barrier.wait()  # 串行实现会在第 2/3 条处超时破裂
+        # 标准库 Barrier 超时：串行故障秒级 BrokenBarrierError，不无限挂起。
+        barrier.wait(timeout=2.0)
         if payload.get("view") == VIEW_FACTION_STANCE:
             return json.dumps({STANCE_KEY: "朝局如常。"}, ensure_ascii=False)
         return json.dumps(
