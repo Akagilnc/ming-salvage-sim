@@ -224,10 +224,12 @@ def test_due_review_scene_has_no_internal_payload(game):
 
 
 def test_due_review_scene_enters_open_night_fact_inputs(game):
-    """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。"""
+    """#1838 reopen：待裁场面进场景开场最小集，不再写开夜旁白账。
+
+    真实 prepare 入口上观察结构化场面字段；不锁 helper 的 JSON 序列化原文。
+    """
     import json
     from ming_sim.materials import (
-        _scene_pending_audience_facts,
         prepare_scene_materials,
         release_material_tree,
     )
@@ -249,18 +251,17 @@ def test_due_review_scene_enters_open_night_fact_inputs(game):
     scene = scenes[0]
     prepared = prepare_scene_materials(db, state)
     try:
-        facts = _scene_pending_audience_facts(db, state)
-        matched = [
-            json.loads(line) for line in facts
-            if json.loads(line).get("todo_id") == scene["todo_id"]
-        ]
+        decoded = []
+        for line in prepared.opening.splitlines():
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                decoded.append(obj)
+        matched = [row for row in decoded if row.get("todo_id") == scene["todo_id"]]
         assert len(matched) == 1
         assert matched[0] == scene
-        payload = next(
-            line for line in facts
-            if json.loads(line).get("todo_id") == scene["todo_id"]
-        )
-        assert payload in prepared.opening
     finally:
         release_material_tree(prepared.root)
 

@@ -24,7 +24,6 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.relation_brew import (
     FOUNDINGS_KEY,
     RECENT_KEY,
-    build_brew_input,
     relation_dimension,
     run_month_end_relation_brew,
 )
@@ -188,31 +187,7 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert int(summary["last_event_id"]) >= int(failed_id)
 
 
-# ---------------- #642 锚④：build_brew_input 只投影 prior 字段（全序/筛选归 read 缝）
-
-def test_build_brew_input_projects_prior_event_fields():
-    """brew 侧只锁 prior_events 字段投影与空列表；全量有序/和解归 read 缝主干。"""
-    prior = [{
-        "id": 9, "event_kind": "知遇", "context": "越次一召原句。",
-        "origin": "seed:founding", "year": 1628, "period": 11,
-    }]
-    payload = build_brew_input(
-        source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
-        year=1635, period=6, summary=None, new_events=[],
-        has_pending=False, prior_events=prior,
-    )
-    row = payload["prior_events"][0]
-    assert set(row) == {"event_kind", "context", "origin", "year", "period"}
-    assert row["event_kind"] == "知遇"
-    assert row["origin"] == "seed:founding"
-    assert (row["year"], row["period"]) == (1628, 11)
-    assert "id" not in row
-    assert build_brew_input(
-        source="甲", target="乙", dimension="大臣",
-        year=1635, period=6, summary=None, new_events=[],
-        has_pending=True, prior_events=[],
-    )["prior_events"] == []
-
+# ---------------- #642 锚④：prior 经生产 brew 入口投影（helper 单测已清退）
 
 def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     """生产装配：prepare→build_brew_input 经历史读缝取 prior；与 new 互斥。

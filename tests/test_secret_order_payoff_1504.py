@@ -956,7 +956,6 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
         # 此刻树还在（run_secret_orders_supply 收尾才释放），就地读给断言用
         captured["prompt"] = prompt
         feed = _json.loads(prompt)
-        bodies = {}
         paths = {}
         tools = {tool.__name__: tool for tool in material_tools(captured["root"])}
         for entry in feed.get("active_secret_orders") or []:
@@ -965,7 +964,6 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
                 who = str((entry.get(side) or {}).get("name") or "")
                 rel = str((entry.get(side) or {}).get("materials_path") or "")
                 if who and rel:
-                    bodies[(who, rel)] = rel  # 路径身份，不取正文真值（#1897 T1）
                     base = Path(rel).parent.as_posix()
                     listed = list_materials(captured["root"], base)
                     assert set(tools["list_materials"](base).splitlines()) == set(listed)
@@ -973,7 +971,6 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
                     for path in listed:
                         tools["read_material"](path)  # 路径可读；不取正文真值
                     paths[who] = {Path(path).relative_to(base).as_posix() for path in listed}
-        captured["bodies"] = bodies
         captured["paths"] = paths
         return _json.dumps({"dossier_progress_reports": [], "covert_exec_selections": []})
 
@@ -986,14 +983,14 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
     assert captured["root"] is not None, "生产入口没有把备好的材料树交给 agent"
     feed = _json.loads(captured["prompt"])
     order = next(o for o in feed["active_secret_orders"] if int(o["id"]) == oid)
-    bodies = captured["bodies"]
     for side, who in (
         ("investigator_identity_materials", name),
         ("investigation_target_identity_materials", target),
     ):
         rel = order[side]["materials_path"]
         assert "materials" not in order[side]
-        assert bodies[(who, rel)] == rel
+        assert rel  # 生产入口给出可定位 materials_path
+        assert who in captured["paths"]
         visible = {int(row["id"]) for row in db.get_character_knowledge(state, who)["issues"]}
         paths = captured["paths"][who]
         assert {path for path in paths if path.startswith("事务/issue-")} == {

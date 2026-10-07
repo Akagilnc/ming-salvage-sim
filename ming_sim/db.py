@@ -563,19 +563,36 @@ def directive_payload_admits_structured_write(payload: Mapping[str, object]) -> 
 
 
 def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
-    """解析密令期限；显式 0 是合法值，不能被缺省兜底吞掉。"""
+    """解析密令/催办期限；显式 0 是合法值，不能被缺省兜底吞掉。
+
+    可辨识的 LLM 脏类型走既有 DecreeMaterializationValidationError 领域拒收
+    （#1897 C1 / ADR 0015 per-item），不升格为真故障带走同批合法同行。
+    """
+    from ming_sim.action_materialize import DecreeMaterializationValidationError
+
+    def _reject(message: str) -> None:
+        raise DecreeMaterializationValidationError(
+            message,
+            failed_fields=("deadline_months",),
+            category="invalid_shape",
+        )
+
     if raw is None:
         return int(default)
     if isinstance(raw, bool):
-        raise TypeError("deadline_months cannot be a boolean")
+        _reject("deadline_months cannot be a boolean")
     if isinstance(raw, str):
-        raise TypeError("deadline_months cannot be a string")
+        _reject("deadline_months cannot be a string")
     if not isinstance(raw, (int, float)):
-        raise TypeError("deadline_months must be a numeric type")
+        _reject("deadline_months must be a numeric type")
     try:
         deadline = int(raw)
     except (ValueError, OverflowError) as exc:
-        raise TypeError("deadline_months must be a finite numeric type") from exc
+        raise DecreeMaterializationValidationError(
+            "deadline_months must be a finite numeric type",
+            failed_fields=("deadline_months",),
+            category="invalid_shape",
+        ) from exc
     return max(0, min(deadline, 36))
 
 

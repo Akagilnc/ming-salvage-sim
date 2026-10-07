@@ -1479,6 +1479,11 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<HistoryModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
     expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+    // 可见列表身份/结构：只留月档一行，场卷 title 不进列表。
+    const rows = Array.from(host.querySelectorAll(".history-turn-item"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain("1 年 11 月");
+    expect(rows[0].textContent).toContain("第 7 回合");
     expect(host.textContent).not.toContain("不应出现的场卷");
   });
 
