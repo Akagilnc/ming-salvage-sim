@@ -463,6 +463,7 @@ def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
 
 
 def _has_stop_condition(stop_condition: object) -> bool:
+    """Explicit gate presence. Corrupt durable JSON raises (F39); vacuum is False."""
     if isinstance(stop_condition, (dict, list)):
         return bool(stop_condition)
     raw = str(stop_condition or "").strip()
@@ -470,9 +471,15 @@ def _has_stop_condition(stop_condition: object) -> bool:
         return False
     try:
         parsed = json.loads(raw)
-    except (TypeError, ValueError):
-        return False
-    return isinstance(parsed, (dict, list)) and bool(parsed)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"issues.stop_condition 腐坏 JSON：{raw[:80]!r}"
+        ) from exc
+    if not isinstance(parsed, (dict, list)):
+        raise ValueError(
+            f"issues.stop_condition 须为对象或列表，得 {type(parsed).__name__}"
+        )
+    return bool(parsed)
 
 
 def _optional_positive_dossier_id(raw: object, *, field: str) -> Optional[int]:
@@ -12535,12 +12542,9 @@ class GameDB:
         raw = self.kv_get(self.MEMORIAL_READS_KV_KEY)
         if not raw:
             return set()
-        try:
-            data = json.loads(raw)
-        except (TypeError, ValueError):
-            return set()
-        if not isinstance(data, list):
-            return set()
+        data = self._loads_stored_json_list(
+            raw, surface="kv_store.memorial_reads",
+        )
         return {str(item) for item in data if str(item or "").strip()}
 
     def mark_memorials_read(self, keys: Iterable[str]) -> None:

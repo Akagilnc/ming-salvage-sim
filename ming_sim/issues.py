@@ -6638,6 +6638,28 @@ def _apply_dossier_participant_items(
             # Free prose role（职分文字）：preserve raw; emptiness on local copy (#1834 F21).
             role_raw = str(item.get("role") or "")
             role = role_raw if role_raw.strip() else ""
+        except (TypeError, ValueError, KeyError) as exc:
+            results.append({
+                "rejected": True, "category": "invalid_participant_roster",
+                "reason": str(exc), "item": item,
+            })
+            continue
+        # Durable roster decode faults must not become LLM item rejection (F39).
+        row = db.conn.execute(
+            "SELECT participant_roster FROM decree_dossiers WHERE id=?",
+            (int(dossier_id),),
+        ).fetchone()
+        if row is None:
+            results.append({
+                "rejected": True, "category": "invalid_participant_roster",
+                "reason": f"案卷不存在：{dossier_id}", "item": item,
+            })
+            continue
+        GameDB._loads_stored_json_list(
+            row["participant_roster"],
+            surface="decree_dossiers.participant_roster",
+        )
+        try:
             added = db.append_decree_dossier_participants(dossier_id, [{
                 "character_id": character_id,
                 "tier": tier,
@@ -6647,12 +6669,18 @@ def _apply_dossier_participant_items(
             if not added:
                 # Exact durable duplicate is the only no-write success case.
                 existing = db.get_decree_dossier(dossier_id) or {}
+                roster = existing.get("participant_roster", [])
+                if isinstance(roster, str):
+                    roster = GameDB._loads_stored_json_list(
+                        roster, surface="decree_dossiers.participant_roster",
+                    )
                 if not any(
                     row.get("character_id") == character_id
                     and row.get("tier") == tier
                     and row.get("role") == role
                     and row.get("delegator_id") == delegator_id
-                    for row in existing.get("participant_roster", [])
+                    for row in (roster or [])
+                    if isinstance(row, dict)
                 ):
                     raise ValueError("参与人未实际加入案卷")
             persisted = added[0] if added else {

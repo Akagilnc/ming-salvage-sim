@@ -327,11 +327,12 @@ def stage_punishment_candidate(
             return 0
         if disposition not in issue_dispositions_allowed():
             return 0
-        try:
-            roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (TypeError, ValueError):
-            return 0
-        if not isinstance(roster, list) or not roster:
+        from ming_sim.db import GameDB
+
+        roster = GameDB._loads_stored_json_list(
+            issue["target_roster"], surface="issues.target_roster",
+        )
+        if not roster:
             return 0
         if disposition == "办人":
             if target not in roster:
@@ -1218,17 +1219,17 @@ def stage_assignment_candidate(
     pointed = str(target_candidate or "").strip()
     if pointed.isdigit():
         want_id = int(pointed)
+        from ming_sim.db import GameDB
+
         for row in pending_rows:
             if row.get("kind") != "directive":
                 continue
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            # Corrupt durable payload is a real fault (F39), not "no candidate".
+            payload = GameDB.parse_engine_payload_json(
+                row.get("payload_json"), surface="pending_actions.payload_json",
+            )
             if str(payload.get("dossier_action_type") or "").strip() != "assignment":
                 break
             existing_id = want_id
@@ -1344,15 +1345,14 @@ def stage_revoke_decree_candidate(
     pointed = str(target_candidate or "").strip()
     if pointed.isdigit():
         want_id = int(pointed)
+        from ming_sim.db import GameDB
+
         for row in pending_rows:
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = GameDB.parse_engine_payload_json(
+                row.get("payload_json"), surface="pending_actions.payload_json",
+            )
             if str(payload.get("dossier_action_type") or "").strip() != "revoke_decree":
                 break
             existing_id = want_id

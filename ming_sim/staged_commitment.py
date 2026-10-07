@@ -50,17 +50,27 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     out: List[Dict[str, object]] = []
     for idx, item in enumerate(data):
         if not isinstance(item, dict):
-            continue
+            raise ValueError(
+                f"commitments.stages_json[{idx}] 须为对象，得 {type(item).__name__}"
+            )
         try:
             due_turn = int(item.get("due_turn") or 0)
-        except (TypeError, ValueError):
-            continue
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"commitments.stages_json[{idx}].due_turn 非法"
+            ) from exc
+        # Non-positive due is absent schedule, not corruption; skip the segment.
         if due_turn <= 0:
             continue
-        try:
-            stage_idx = int(item.get("stage_idx", idx))
-        except (TypeError, ValueError):
+        if "stage_idx" not in item:
             stage_idx = idx
+        else:
+            try:
+                stage_idx = int(item.get("stage_idx"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"commitments.stages_json[{idx}].stage_idx 非法"
+                ) from exc
         # Free prose → durable stages / materials: preserve bytes (incl. edge
         # whitespace). Emptiness only on a local copy (#1834 F16 / ADR 0142).
         criterion = str(

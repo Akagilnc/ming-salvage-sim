@@ -151,21 +151,19 @@ _DEBT_SEVERITIES = frozenset({"轻", "中", "重"})
 def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
     """真相底只收结构化罪情。severity ∈ {轻, 中, 重} 才入罪谱。
 
-    crime 是说明散文，不承重。解析失败、非对象、severity 为空或「无」，都不造罪。
+    crime 是说明散文，不承重。真空/severity 为空或「无」不算罪；腐坏 JSON 响亮（F39）。
     """
+    from ming_sim.db import GameDB
+
     if isinstance(seed_guilt, Mapping):
-        guilt: object = seed_guilt
+        guilt: Mapping[str, object] = seed_guilt
     else:
         text = str(seed_guilt or "").strip()
         if not text:
             return False
-        try:
-            parsed = json.loads(text)
-        except (TypeError, ValueError):
-            return False
-        if not isinstance(parsed, Mapping):
-            return False
-        guilt = parsed
+        guilt = GameDB.parse_engine_payload_json(
+            text, surface="characters.seed_guilt",
+        )
     severity = str(guilt.get("severity") or "").strip()
     return severity in _DEBT_SEVERITIES
 
@@ -540,19 +538,16 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
 def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[Dict[str, object]]:
     if not isinstance(dossier, Mapping):
         return None
+    from ming_sim.db import GameDB
+
     payload = dossier.get("payload")
     if not isinstance(payload, Mapping):
         raw_json = dossier.get("payload_json")
-        if isinstance(raw_json, str) and raw_json.strip():
-            try:
-                loaded = json.loads(raw_json)
-            except (TypeError, ValueError):
-                loaded = None
-            payload = loaded if isinstance(loaded, Mapping) else None
-        else:
-            payload = None
-    if not isinstance(payload, Mapping):
-        return None
+        if raw_json in (None, ""):
+            return None
+        payload = GameDB.parse_engine_payload_json(
+            raw_json, surface="decree_dossiers.payload_json",
+        )
     return coerce_covert_task_contract(payload.get(CONTRACT_KEY))
 
 
@@ -723,6 +718,8 @@ def _is_seed_guilt_fact_key(target: str, fact_key: str) -> bool:
 
 
 def _seed_guilt_severity(db: Any, target: str) -> str:
+    from ming_sim.db import GameDB
+
     row = db.conn.execute(
         "SELECT seed_guilt FROM characters WHERE name=?",
         (str(target),),
@@ -735,13 +732,10 @@ def _seed_guilt_severity(db: Any, target: str) -> str:
     text = str(raw or "").strip()
     if not text:
         return ""
-    try:
-        parsed = json.loads(text)
-    except (TypeError, ValueError):
-        return ""
-    if isinstance(parsed, Mapping):
-        return str(parsed.get("severity") or "").strip()
-    return ""
+    parsed = GameDB.parse_engine_payload_json(
+        text, surface="characters.seed_guilt",
+    )
+    return str(parsed.get("severity") or "").strip()
 
 
 def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]]:
