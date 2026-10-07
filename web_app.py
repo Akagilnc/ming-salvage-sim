@@ -59,7 +59,6 @@ from ming_sim.llm_config import (
     normalize_openai_base_url,
     normalize_thinking_level,
     normalize_reasoning_strength,
-    legacy_reasoning_strength,
     save_runtime_llm,
     _slot_header_table,
 )
@@ -565,6 +564,16 @@ def _has_real_api_key(value: object) -> bool:
     return is_real_api_key(value)
 
 
+def _runtime_api_slot(runtime: Dict[str, Any]) -> Dict[str, Any]:
+    slot = runtime.get("api") if isinstance(runtime, dict) else None
+    return slot if isinstance(slot, dict) else {}
+
+
+def _runtime_cli_slot(runtime: Dict[str, Any]) -> Dict[str, Any]:
+    slot = runtime.get("cli") if isinstance(runtime, dict) else None
+    return slot if isinstance(slot, dict) else {}
+
+
 def _llm_config_from_runtime(
     runtime: Dict[str, Any],
     *,
@@ -584,22 +593,13 @@ def _llm_config_from_runtime(
     env_runner = cli_backend_from_env()
     if channel not in VALID_CHANNELS:
         channel = "cli" if env_runner else "api"
-    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
+    cli_slot = _runtime_cli_slot(runtime)
+    api_slot = _runtime_api_slot(runtime)
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
-    legacy_reasoning = (
-        legacy_reasoning_strength({
-            "advanced_model": advanced_model,
-            "advanced_thinking_level": advanced_thinking_level,
-            "thinking_level": thinking_level,
-        })
-        if channel != "cli"
-        else ""
-    )
     reasoning_strength = normalize_reasoning_strength(
-        (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
-        or runtime.get("reasoning_strength", "")
-    ) or legacy_reasoning
+        cli_slot.get("reasoning_strength") if channel == "cli" else api_slot.get("reasoning_strength")
+    )
     # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
     if channel == "cli":
@@ -608,8 +608,8 @@ def _llm_config_from_runtime(
         # 占位符不当真 key：清空让下游空检查报「未配 API key」，
         # 而不是拿假 key 去探 OpenAI（误导性 412）。
         api_key = ""
-    # #1794：附加头只属 API 槽；load_runtime_llm 已归一并顶层 alias，扁平单读。
-    default_headers = dict(runtime.get("default_headers") or {})
+    # #1794：附加头只属 API 槽。
+    default_headers = dict(api_slot.get("default_headers") or {})
     return LLMConfig(
         api_key=api_key,
         base_url=normalize_openai_base_url(base_url),
@@ -748,18 +748,19 @@ class WebGame:
         timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS)
         # 菜单写的 runtime_llm.json 优先于 env，让"在网页里改的配置"重启后仍生效。
         runtime = load_runtime_llm()
-        base_url = runtime.get("base_url") or base_url
-        model = runtime.get("model") or model
+        api_slot = _runtime_api_slot(runtime)
+        base_url = api_slot.get("base_url") or base_url
+        model = api_slot.get("model") or model
         # 占位符不当真 key：stale cli-backend 不该覆盖真实 env key（否则 api 通道
         # 启动被清空报「未配 API key」，而 menu 用 env key 判 ready，二者矛盾）。
-        _rt_api_key = runtime.get("api_key")
+        _rt_api_key = api_slot.get("api_key")
         api_key = _rt_api_key if is_real_api_key(_rt_api_key) else api_key
-        thinking_level = runtime.get("thinking_level") or thinking_level
-        advanced_model = runtime.get("advanced_model") or advanced_model
-        advanced_base_url = runtime.get("advanced_base_url") or advanced_base_url
-        advanced_api_key = real_api_key_or_empty(runtime.get("advanced_api_key")) or advanced_api_key
-        advanced_thinking_level = runtime.get("advanced_thinking_level") or advanced_thinking_level
-        timeout_seconds = float(runtime.get("timeout_seconds") or timeout_seconds)
+        thinking_level = api_slot.get("thinking_level") or thinking_level
+        advanced_model = api_slot.get("advanced_model") or advanced_model
+        advanced_base_url = api_slot.get("advanced_base_url") or advanced_base_url
+        advanced_api_key = real_api_key_or_empty(api_slot.get("advanced_api_key")) or advanced_api_key
+        advanced_thinking_level = api_slot.get("advanced_thinking_level") or advanced_thinking_level
+        timeout_seconds = float(api_slot.get("timeout_seconds") or timeout_seconds)
         random.seed(int(os.environ.get("MING_SIM_SEED", "7")))
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self.db_path = db_path
@@ -4344,8 +4345,8 @@ async def api_menu_status() -> Dict[str, Any]:
     channel = str(runtime.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:
         channel = "cli" if env_runner else "api"
-    cli_slot = runtime.get("cli") if isinstance(runtime.get("cli"), dict) else {}
-    api_slot = runtime.get("api") if isinstance(runtime.get("api"), dict) else {}
+    cli_slot = _runtime_cli_slot(runtime)
+    api_slot = _runtime_api_slot(runtime)
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     # cli_model_saved = 原样存盘值（空=用户选「默认」档）；cli_model = 兜底成默认名的 resolved 值。
     # 表单（CliModelField 下拉）须读 raw，否则空保存被 resolved 成默认名 → 下拉误判「其他(手填)」
@@ -4353,12 +4354,11 @@ async def api_menu_status() -> Dict[str, Any]:
     cli_model_saved = str(cli_slot.get("model") or "").strip()
     cli_model = cli_model_saved or str(cli_model_from_env(cli_runner, "")).strip()
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
-    has_api_key = _has_real_api_key(runtime.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
-    base_url = runtime.get("base_url") or os.environ.get("OPENAI_BASE_URL", "")
-    model = runtime.get("model") or os.environ.get("OPENAI_MODEL", "")
+    has_api_key = _has_real_api_key(api_slot.get("api_key")) or _has_real_api_key(os.environ.get("OPENAI_API_KEY"))
+    base_url = api_slot.get("base_url") or os.environ.get("OPENAI_BASE_URL", "")
+    model = api_slot.get("model") or os.environ.get("OPENAI_MODEL", "")
     reasoning_strength = normalize_reasoning_strength(
-        (cli_slot.get("reasoning_strength") if channel == "cli" else runtime.get("reasoning_strength"))
-        or runtime.get("reasoning_strength", "")
+        cli_slot.get("reasoning_strength") if channel == "cli" else api_slot.get("reasoning_strength")
     )
     cli_reasoning_strength = normalize_reasoning_strength(cli_slot.get("reasoning_strength"))
     api_reasoning_strength = normalize_reasoning_strength(api_slot.get("reasoning_strength"))
@@ -4368,8 +4368,8 @@ async def api_menu_status() -> Dict[str, Any]:
         else _api_reasoning_supported_for_effective_model(
             str(base_url),
             str(model),
-            str(runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", "")),
-            str(runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", "")),
+            str(api_slot.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", "")),
+            str(api_slot.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", "")),
         )
     )
     # readiness 按 active channel 判：API 通道看真实 key，CLI 通道看 runner 是否受支持。
@@ -4402,14 +4402,14 @@ async def api_menu_status() -> Dict[str, Any]:
             "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
             # #1271：能力名单自 cli_backend 单源导出，供前端 fallback 消费（禁前端硬编码）。
             "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
-            "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
-            "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
-            "advanced_model": runtime.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
-            "advanced_base_url": runtime.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
-            "has_advanced_api_key": _has_real_api_key(runtime.get("advanced_api_key")) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
+            "timeout_seconds": float(api_slot.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
+            "thinking_level": api_slot.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
+            "advanced_model": api_slot.get("advanced_model") or os.environ.get("OPENAI_ADVANCED_MODEL", ""),
+            "advanced_base_url": api_slot.get("advanced_base_url") or os.environ.get("OPENAI_ADVANCED_BASE_URL", ""),
+            "has_advanced_api_key": _has_real_api_key(api_slot.get("advanced_api_key")) or _has_real_api_key(os.environ.get("OPENAI_ADVANCED_API_KEY")),
             "advanced_thinking_level": "",
-            # #1794：设置页读回附加请求头表（API 槽）；归一后扁平单读。
-            "default_headers": dict(runtime.get("default_headers") or {}),
+            # #1794：设置页读回附加请求头表（API 槽）。
+            "default_headers": dict(api_slot.get("default_headers") or {}),
         },
     }
 
@@ -4954,8 +4954,9 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
     if not (base_url and model):
         raise HTTPException(status_code=400, detail="base_url / model 不能为空。")
     existing = load_runtime_llm()
+    existing_api = _runtime_api_slot(existing)
     if not api_key:
-        for candidate in (existing.get("api_key"), os.environ.get("OPENAI_API_KEY", "")):
+        for candidate in (existing_api.get("api_key"), os.environ.get("OPENAI_API_KEY", "")):
             if _has_real_api_key(candidate):
                 api_key = str(candidate).strip()
                 break
@@ -4963,12 +4964,12 @@ async def api_menu_save_llm(request: LlmSetupRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="api_key 未配置，请填写。")
     # advanced_api_key 留空：复用已存的（避免覆盖成空）。
     if advanced_model and not advanced_api_key:
-        advanced_api_key = real_api_key_or_empty(existing.get("advanced_api_key")) or real_api_key_or_empty(os.environ.get("OPENAI_ADVANCED_API_KEY"))
+        advanced_api_key = real_api_key_or_empty(existing_api.get("advanced_api_key")) or real_api_key_or_empty(os.environ.get("OPENAI_ADVANCED_API_KEY"))
     # #1794：请求体显式带头表则用之（含空表清空）；省略则装入档内头表（旧客户端兼容）。
     if request.default_headers is not None:
         default_headers = _slot_header_table(request.default_headers)
     else:
-        default_headers = _slot_header_table(existing.get("default_headers"))
+        default_headers = _slot_header_table(existing_api.get("default_headers"))
     normalized_base_url = normalize_openai_base_url(base_url)
     config = LLMConfig(
         api_key=api_key,
@@ -6006,10 +6007,14 @@ async def api_get_llm_config() -> Dict[str, Any]:
     from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS, cli_model_choices, cli_runner_choices
     cfg = get_game().session.llm_config
     saved = load_runtime_llm()
-    saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
-    saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
+    saved_cli = _runtime_cli_slot(saved)
+    saved_api = _runtime_api_slot(saved)
     saved_api_reasoning_strength = normalize_reasoning_strength(saved_api.get("reasoning_strength"))
     saved_cli_reasoning_strength = normalize_reasoning_strength(saved_cli.get("reasoning_strength"))
+    saved_channel = str(saved.get("channel") or "").strip().lower()
+    persisted_strength = (
+        saved_cli_reasoning_strength if saved_channel == "cli" else saved_api_reasoning_strength
+    )
     reasoning_supported = (
         cli_supports_reasoning_strength(cfg.cli_runner)
         if cfg.channel == "cli"
@@ -6043,23 +6048,23 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "default_headers": dict(cfg.default_headers or {}),
         "persisted": {
             "channel": saved.get("channel", ""),
-            "base_url": saved.get("base_url", ""),
-            "model": saved.get("model", ""),
-            "has_api_key": _has_real_api_key(saved.get("api_key", "")),
-            "timeout_seconds": float(saved.get("timeout_seconds") or API_DEFAULT_TIMEOUT_SECONDS),
-            "thinking_level": saved.get("thinking_level", ""),
-            "reasoning_strength": saved.get("reasoning_strength", ""),
+            "base_url": saved_api.get("base_url", ""),
+            "model": saved_api.get("model", ""),
+            "has_api_key": _has_real_api_key(saved_api.get("api_key", "")),
+            "timeout_seconds": float(saved_api.get("timeout_seconds") or API_DEFAULT_TIMEOUT_SECONDS),
+            "thinking_level": saved_api.get("thinking_level", ""),
+            "reasoning_strength": persisted_strength,
             "api_reasoning_strength": saved_api_reasoning_strength,
             "cli_reasoning_strength": saved_cli_reasoning_strength,
-            "advanced_model": saved.get("advanced_model", ""),
-            "advanced_base_url": saved.get("advanced_base_url", ""),
-            "has_advanced_api_key": _has_real_api_key(saved.get("advanced_api_key", "")),
+            "advanced_model": saved_api.get("advanced_model", ""),
+            "advanced_base_url": saved_api.get("advanced_base_url", ""),
+            "has_advanced_api_key": _has_real_api_key(saved_api.get("advanced_api_key", "")),
             "advanced_thinking_level": "",
             "cli_runner": str(saved_cli.get("runner") or ""),
             "cli_model": str(saved_cli.get("model") or ""),
             "cli_timeout_seconds": _runtime_float(saved_cli.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS),
-            # #1794：persisted 头表；load_runtime_llm 已归一，扁平单读。
-            "default_headers": dict(saved.get("default_headers") or {}),
+            # #1794：persisted 头表自 API 槽投影，非第二持久真源。
+            "default_headers": dict(saved_api.get("default_headers") or {}),
         },
     }
 

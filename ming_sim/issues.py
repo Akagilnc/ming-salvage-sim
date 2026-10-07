@@ -8143,6 +8143,313 @@ def _apply_score_extraction_body(
                 db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
             ))
 
+    # 财政写口与亲裁结局：数组逐笔与对象批次共用同一实现；#1844 数组路径按交代交错。
+    applied_fiscal_removes: List[Dict[str, object]] = []
+    applied_fiscal_creates: List[Dict[str, object]] = []
+    applied_fiscal: List[Dict[str, object]] = []
+    fiscal_config_snapshot = db.get_fiscal_config()
+    deferred_loss_pair_changes: List[Dict[str, object]] = []
+    loss_pair_running: Dict[str, int] = {}
+    loss_pair_final_by_pair: Dict[Tuple[str, str], Dict[str, int]] = {}
+    petition_outcomes_applied = False
+
+    def _apply_fiscal_removes_items(removes: list) -> None:
+        for remove in removes or []:
+            key = str(remove.get("key") or "").strip()
+            if not key:
+                applied_fiscal_removes.append({
+                    "rejected": True, "reason": "fiscal_removes 缺 key,无法定位裁撤目标。",
+                    "category": "invalid_enum", "item": remove,
+                })
+                continue
+            if db._stem_of(key) == "":
+                applied_fiscal_removes.append({
+                    "rejected": True, "reason": f"裁撤 key「{key}」非法（多重 _base/_rate 后缀）。",
+                    "category": "invalid_enum", "item": remove,
+                })
+                continue
+            if db.fiscal_config_loss_rate_pair(key) is not None:
+                applied_fiscal_removes.append({
+                    "rejected": True,
+                    "reason": f"裁撤目标「{key}」是中央损耗率成对配置，不可裁撤。",
+                    "category": "invalid_enum", "item": remove,
+                })
+                continue
+            if db.is_structural_fiscal_config_key(key):
+                applied_fiscal_removes.append({
+                    "rejected": True,
+                    "reason": f"裁撤目标「{key}」是结构性财政地板，不可裁撤。",
+                    "category": "invalid_enum", "item": remove,
+                })
+                continue
+            fiscal_config = db.get_fiscal_config()
+            stem = db._stem_of(key)
+            if key not in fiscal_config and not any(
+                candidate in fiscal_config for candidate in (f"{stem}_base", f"{stem}_rate")
+            ):
+                applied_fiscal_removes.append({
+                    "rejected": True, "reason": f"裁撤目标「{key}」不存在,跳过。",
+                    "category": "missing_ref", "item": remove,
+                })
+                continue
+            origin_ref = str(remove.get("origin_ref") or "").strip()
+            origin_error = db.effect_origin_rejection(origin_ref)
+            if origin_error:
+                applied_fiscal_removes.append({**origin_error, "item": remove})
+                continue
+            from ming_sim.covert_levy import stopped_covert_effect
+            if stopped_covert_effect(
+                db, origin_ref=origin_ref, beyond_intent=remove.get("beyond_intent"),
+            ):
+                applied_fiscal_removes.append({
+                    "rejected": True, "category": "forbidden_effect",
+                    "reason": "该旧案暗渠摊派已奉旨禁绝", "item": remove,
+                })
+                continue
+            removed_key = db.remove_fiscal_item(
+                key, commit=commit_now, origin_ref=origin_ref,
+                reason=str(remove.get("reason") or ""), turn=state.turn,
+                beyond_intent=remove.get("beyond_intent"),
+            )
+            if removed_key is None:
+                applied_fiscal_removes.append({
+                    "rejected": True, "reason": f"裁撤目标「{key}」不存在,跳过。",
+                    "category": "missing_ref", "item": remove,
+                })
+                continue
+            from ming_sim.covert_levy import canonical_fiscal_result
+            applied_fiscal_removes.append(canonical_fiscal_result(
+                db, remove, applied=True,
+                key=removed_key, reason=str(remove.get("reason") or ""),
+            ))
+
+    def _apply_fiscal_creates_items(creates: list) -> None:
+        for create in creates or []:
+            direction_raw = str(create.get("direction") or "").strip()
+            direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
+            key = str(create.get("key") or "").strip()
+            account = str(create.get("account") or "").strip()
+            if not key or account not in _FISCAL_ACCOUNTS or direction not in _FISCAL_DIRECTIONS:
+                applied_fiscal_creates.append({
+                    "rejected": True,
+                    "reason": f"新立项枚举非法（key={key!r} account={account!r} direction={direction!r}）。",
+                    "category": "invalid_enum", "item": create,
+                })
+                continue
+            init_raw = _norm_int_leaf(create.get("init_value"))
+            if init_raw is None:
+                init_value = 0
+            elif isinstance(init_raw, bool) or not isinstance(init_raw, int) or init_raw < 0:
+                applied_fiscal_creates.append({
+                    "rejected": True,
+                    "reason": f"新立项「{key}」初值 init_value 非法（{init_raw!r}，须非负整数），不静默归 0。",
+                    "category": "invalid_enum", "item": create,
+                })
+                continue
+            else:
+                init_value = init_raw
+            display = str(create.get("display") or "") or (db._stem_of(key) or key)
+            origin_ref = str(create.get("origin_ref") or "").strip()
+            origin_error = db.effect_origin_rejection(origin_ref)
+            if origin_error:
+                applied_fiscal_creates.append({**origin_error, "item": create})
+                continue
+            from ming_sim.covert_levy import stopped_covert_effect
+            if stopped_covert_effect(
+                db, origin_ref=origin_ref, beyond_intent=create.get("beyond_intent"),
+            ):
+                applied_fiscal_creates.append({
+                    "rejected": True, "category": "forbidden_effect",
+                    "reason": "该旧案暗渠摊派已奉旨禁绝", "item": create,
+                })
+                continue
+            new_key = db.create_fiscal_item(
+                key, account, direction, display, init_value,
+                note=str(create.get("reason") or ""),
+                origin_ref=origin_ref,
+                turn=state.turn,
+                beyond_intent=create.get("beyond_intent"),
+                commit=commit_now,
+            )
+            if new_key is None:
+                applied_fiscal_creates.append({
+                    "rejected": True,
+                    "reason": f"新立项「{key}」已存在或被落库拒绝,跳过。",
+                    "category": "invalid_enum", "item": create,
+                })
+                continue
+            from ming_sim.covert_levy import canonical_fiscal_result
+            applied_fiscal_creates.append(canonical_fiscal_result(
+                db, create, applied=True,
+                key=new_key, account=account, direction=direction,
+                display=display, init_value=max(0, init_value),
+                reason=str(create.get("reason") or ""),
+            ))
+
+    def _apply_fiscal_changes_items(changes: list) -> None:
+        for change in changes or []:
+            key = str(change.get("key") or "").strip()
+            if not key:
+                applied_fiscal.append({
+                    "rejected": True,
+                    "reason": "调率项缺 key,无法定位科目。",
+                    "category": "invalid_enum", "item": change,
+                })
+                continue
+            if db._stem_of(key) == "":
+                applied_fiscal.append({
+                    "rejected": True,
+                    "reason": f"调率 key「{key}」非法（多重 _base/_rate 后缀）。",
+                    "category": "invalid_enum", "item": change,
+                })
+                continue
+            delta_raw = _norm_int_leaf(change.get("delta"))
+            if delta_raw is None:
+                continue
+            if isinstance(delta_raw, bool) or not isinstance(delta_raw, int):
+                applied_fiscal.append({
+                    "rejected": True,
+                    "reason": f"调率 delta 非整数（{delta_raw!r}），不静默吞。",
+                    "category": "invalid_enum", "item": change,
+                })
+                continue
+            if delta_raw == 0:
+                continue
+            delta = delta_raw
+            current = db.get_fiscal_config().get(key)
+            if current is None:
+                applied_fiscal.append({
+                    "rejected": True, "reason": f"调率目标「{key}」不存在,跳过。",
+                    "category": "missing_ref", "item": change,
+                })
+                continue
+            origin_ref = str(change.get("origin_ref") or "").strip()
+            from ming_sim.covert_levy import stopped_covert_effect
+            if stopped_covert_effect(
+                db, origin_ref=origin_ref, beyond_intent=change.get("beyond_intent"),
+            ):
+                applied_fiscal.append({
+                    "rejected": True, "category": "forbidden_effect",
+                    "reason": "该旧案暗渠摊派已奉旨禁绝", "item": change,
+                })
+                continue
+            origin_error = db.effect_origin_rejection(origin_ref)
+            if origin_error:
+                applied_fiscal.append({**origin_error, "item": change})
+                continue
+            loss_pair = db.fiscal_config_loss_rate_pair(key)
+            if loss_pair is not None:
+                current = loss_pair_running.get(key, fiscal_config_snapshot.get(key, current))
+                new_val = max(0, current + delta)
+                loss_pair_running[key] = new_val
+                human_key, sink_key = loss_pair
+                pair_values = loss_pair_final_by_pair.setdefault(loss_pair, {
+                    human_key: loss_pair_running.get(
+                        human_key, fiscal_config_snapshot.get(human_key, 0)
+                    ),
+                    sink_key: loss_pair_running.get(
+                        sink_key, fiscal_config_snapshot.get(sink_key, 0)
+                    ),
+                })
+                pair_values[key] = new_val
+                deferred_loss_pair_changes.append({
+                    "pair": loss_pair,
+                    "key": key,
+                    "old": current,
+                    "new": new_val,
+                    "delta": delta,
+                    "reason": str(change.get("reason") or ""),
+                    "origin_ref": origin_ref,
+                    "item": change,
+                })
+                continue
+            new_val = max(0, current + delta)
+            try:
+                db.validate_fiscal_config_value(key, new_val)
+            except ValueError as exc:
+                applied_fiscal.append({
+                    "rejected": True,
+                    "reason": f"调率目标「{key}」非法：{exc}",
+                    "category": "invalid_enum", "item": change,
+                })
+                continue
+            _write_fiscal_config_change(
+                db, turn=state.turn, key=key, old_value=current, new_value=new_val,
+                origin_ref=origin_ref, reason=str(change.get("reason") or ""),
+                beyond_intent=change.get("beyond_intent"),
+            )
+            from ming_sim.covert_levy import canonical_fiscal_result
+            applied_fiscal.append(canonical_fiscal_result(
+                db, change, applied=new_val != current,
+                key=key, old=current, new=new_val, delta=delta,
+                reason=str(change.get("reason") or ""),
+            ))
+
+    def _apply_petition_outcomes_from(payload: Dict[str, object]) -> None:
+        outcomes = payload.get("事件结局") or {}
+        for event_id in sorted(petition_effect_ids):
+            raw_label = _event_outcome_label(outcomes, event_id)
+            if not raw_label:
+                continue
+            apply_petition_event_outcome(state, db, event_id, raw_label, commit=commit_now)
+
+    def _apply_world_step_fiscal_and_petition(step_extracted: Dict[str, object]) -> None:
+        # 同笔内保亲裁→removes→creates→changes 既有相对序；跨笔严格跟交代先后。
+        _apply_petition_outcomes_from(step_extracted)
+        _apply_fiscal_removes_items(list(step_extracted.get("fiscal_removes") or []))
+        _apply_fiscal_creates_items(list(step_extracted.get("fiscal_creates") or []))
+        _apply_fiscal_changes_items(list(step_extracted.get("fiscal_changes") or []))
+
+    def _finalize_loss_pair_changes() -> None:
+        for loss_pair, final_values in loss_pair_final_by_pair.items():
+            pair_changes = [
+                change for change in deferred_loss_pair_changes
+                if change["pair"] == loss_pair
+            ]
+            try:
+                db.set_fiscal_config_batch(final_values, commit=False)
+            except ValueError as exc:
+                for change in pair_changes:
+                    applied_fiscal.append({
+                        "rejected": True,
+                        "reason": f"调率目标「{change['key']}」非法：{exc}",
+                        "category": "invalid_enum",
+                        "item": change["item"],
+                    })
+                continue
+            for change in pair_changes:
+                db.conn.execute(
+                    "UPDATE fiscal_config SET origin_ref=? WHERE key=?",
+                    (change["origin_ref"], change["key"]),
+                )
+                db.record_fiscal_config_change(
+                    turn=state.turn, key=str(change["key"]),
+                    old_value=int(change["old"]), new_value=int(change["new"]),
+                    origin_ref=str(change["origin_ref"]), reason=str(change["reason"]),
+                    beyond_intent=change["item"].get("beyond_intent")
+                    if isinstance(change.get("item"), dict) else 0,
+                )
+                from ming_sim.covert_levy import canonical_fiscal_result
+                source = change["item"] if isinstance(change.get("item"), dict) else {}
+                applied_fiscal.append(canonical_fiscal_result(
+                    db, source, applied=change["new"] != change["old"],
+                    key=change["key"], old=change["old"], new=change["new"],
+                    delta=change["delta"], reason=change["reason"],
+                ))
+
+    # _norm_int_leaf used by fiscal creates/changes — define before first use.
+    def _norm_int_leaf(v):
+        """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,
+        其余原样返回。无损归一在 cleaner 与此处各一次,
+        **判定语义只在 applier**（ship-pre r1 措辞修正:cleaner 残留的同式转换
+        与本函数同结果,见 S3 disposition「无害重复」）。"""
+        if isinstance(v, str):
+            try:
+                return int(v.strip())
+            except ValueError:
+                return v
+        return v
+
     if effect_sequence is not None:
         economy_index_base = 0
         for step_extracted, step_ordered, step_event_ids in effect_sequence:
@@ -8154,6 +8461,10 @@ def _apply_score_extraction_body(
             step_moves = list(step_extracted.get("economy_moves") or [])
             _apply_economy_moves_list(step_moves, index_base=economy_index_base)
             economy_index_base += len(step_moves)
+            # #1844/#1899：财政与亲裁结局进入逐笔接缝，退出固定分类回灌旁路。
+            _apply_world_step_fiscal_and_petition(step_extracted)
+        petition_outcomes_applied = True
+        _finalize_loss_pair_changes()
     else:
         metric_items = ordered_deltas.get("metric_delta") or []
         for key, value in metric_items:
@@ -8240,45 +8551,12 @@ def _apply_score_extraction_body(
         item for item in new_armies_raw
         if declared_new_army_event_by_item.get(id(item), "") in strategic_event_referenced_ids
     ]
-    ordinary_new_armies_raw = [
-        item for item in new_armies_raw
-        if declared_new_army_event_by_item.get(id(item), "") not in strategic_event_referenced_ids
-    ]
 
     if effect_sequence is None:
-        # 先建军：避免同回合 army_delta 引用新军被跳过。
-        # ADR 0008 决定 1（PR2-S2）：LLM 脏数据（查无此地/此军、字段非法、值不可解析）在
-        # 三个 db 方法内逐项拒收留痕（返回列表含 {"rejected": True, ...}，桥接自动收进
-        # rejection_reports），好项照落、坏一项不带走整批；代码异常（bug 类）仍上抛到 settle
-        # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
-        for army_item in ordinary_new_armies_raw:
-            origin_ref = str(army_item.get("origin_ref") or "").strip()
-            created_armies.extend(db.create_armies_from_extraction(
-                state, [army_item], actor="档房", commit=commit_now, origin_ref=origin_ref, require_origin=True,
-            ))
-        region_items = (
-            (region_id, changes) for index, (region_id, changes) in enumerate(ordered_deltas.get("region_delta") or [])
-            if not _effect_event_ids(
-                "region_delta", index, strategic_event_referenced_ids, ordered_effect_event_ids,
-            )
+        # 对象输入：实体在经济之后（保现行先后）；实现复用逐笔 helper，不另维护副本。
+        _apply_ordinary_entity_step(
+            extracted, ordered_deltas, ordered_effect_event_ids or {},
         )
-        for region_id, raw_changes in region_items:
-            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-            region_changes.extend(db.apply_region_deltas(
-                state, pseudo_event, None, "档房", {region_id: payload}, commit=commit_now, origin_ref=origin_ref, require_origin=True,
-            ))
-        army_items = (
-            (army_id, changes)
-            for index, (army_id, changes) in enumerate(ordered_deltas.get("army_delta") or [])
-            if not _effect_event_ids(
-                "army_delta", index, strategic_event_referenced_ids, ordered_effect_event_ids,
-            )
-        )
-        for army_id, raw_changes in army_items:
-            army_changes.extend(_apply_extracted_army_delta(
-                db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
-            ))
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
@@ -8479,11 +8757,9 @@ def _apply_score_extraction_body(
 
     # #1891/#1892：三饷亲裁语义落账——批红经 #1815 单一语义写口置定事件结局，原始选项标签
     # 不再旁路代批（ADR 0153:5）。留中／未给标签则不写终态：本疏已答而事件未终。
-    for event_id in sorted(petition_effect_ids):
-        raw_label = _event_outcome_label(extracted.get("事件结局") or {}, event_id)
-        if not raw_label:
-            continue
-        apply_petition_event_outcome(state, db, event_id, raw_label, commit=commit_now)
+    # 数组逐笔路径已在 effect_sequence 内按交代次序落过，这里只承接对象批次。
+    if not petition_outcomes_applied:
+        _apply_petition_outcomes_from(extracted)
 
 
     for new_issue in (issue_summary.get("new_issues") or []):
@@ -8594,321 +8870,13 @@ def _apply_score_extraction_body(
                 applied_person_changes.append(row)
     _apply_person_changes_itemwise(post_issue_person_changes, phase="post")
 
-    def _norm_int_leaf(v):
-        """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,
-        其余原样返回。无损归一在 cleaner 与此处各一次,
-        **判定语义只在 applier**（ship-pre r1 措辞修正:cleaner 残留的同式转换
-        与本函数同结果,见 S3 disposition「无害重复」）。"""
-        if isinstance(v, str):
-            try:
-                return int(v.strip())
-            except ValueError:
-                return v
-        return v
+    # 6.4–7) 对象批次：财政仍按 removes→creates→changes 分类序；数组逐笔已在前面落完。
+    if effect_sequence is None:
+        _apply_fiscal_removes_items(list(extracted.get("fiscal_removes") or []))
+        _apply_fiscal_creates_items(list(extracted.get("fiscal_creates") or []))
+        _apply_fiscal_changes_items(list(extracted.get("fiscal_changes") or []))
+        _finalize_loss_pair_changes()
 
-    # 6.4) fiscal_removes：推演彻底裁撤月固定收支项（罢税/裁俸），优先级最高，先于 creates/changes。
-    #      含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。删 base+rate 两行。
-    applied_fiscal_removes: List[Dict[str, object]] = []
-    for remove in extracted.get("fiscal_removes") or []:
-        key = str(remove.get("key") or "").strip()
-        if not key:
-            # 空 key = 脏项,记拒留痕(不再纯静默 continue;ADR 决定 1 / S3)。
-            applied_fiscal_removes.append({
-                "rejected": True, "reason": "fiscal_removes 缺 key,无法定位裁撤目标。",
-                "category": "invalid_enum", "item": remove,
-            })
-            continue
-        if db._stem_of(key) == "":
-            # 多重后缀垃圾 key = 非法,与 create 段同口径 invalid_enum——误标
-            # missing_ref「不存在」会让机读聚合失真（cmr S3 r10）。
-            applied_fiscal_removes.append({
-                "rejected": True, "reason": f"裁撤 key「{key}」非法（多重 _base/_rate 后缀）。",
-                "category": "invalid_enum", "item": remove,
-            })
-            continue
-        if db.fiscal_config_loss_rate_pair(key) is not None:
-            applied_fiscal_removes.append({
-                "rejected": True,
-                "reason": f"裁撤目标「{key}」是中央损耗率成对配置，不可裁撤。",
-                "category": "invalid_enum", "item": remove,
-            })
-            continue
-        if db.is_structural_fiscal_config_key(key):
-            applied_fiscal_removes.append({
-                "rejected": True,
-                "reason": f"裁撤目标「{key}」是结构性财政地板，不可裁撤。",
-                "category": "invalid_enum", "item": remove,
-            })
-            continue
-        fiscal_config = db.get_fiscal_config()
-        stem = db._stem_of(key)
-        if key not in fiscal_config and not any(
-            candidate in fiscal_config for candidate in (f"{stem}_base", f"{stem}_rate")
-        ):
-            applied_fiscal_removes.append({
-                "rejected": True, "reason": f"裁撤目标「{key}」不存在,跳过。",
-                "category": "missing_ref", "item": remove,
-            })
-            continue
-        origin_ref = str(remove.get("origin_ref") or "").strip()
-        origin_error = db.effect_origin_rejection(origin_ref)
-        if origin_error:
-            applied_fiscal_removes.append({**origin_error, "item": remove})
-            continue
-        from ming_sim.covert_levy import stopped_covert_effect
-        if stopped_covert_effect(
-            db, origin_ref=origin_ref, beyond_intent=remove.get("beyond_intent"),
-        ):
-            applied_fiscal_removes.append({
-                "rejected": True, "category": "forbidden_effect",
-                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": remove,
-            })
-            continue
-        removed_key = db.remove_fiscal_item(
-            key, commit=commit_now, origin_ref=origin_ref,
-            reason=str(remove.get("reason") or ""), turn=state.turn,
-            beyond_intent=remove.get("beyond_intent"),
-        )
-        if removed_key is None:
-            # 查无此项 = 正常业务拒绝,逐项拒收留痕(不再 print 静默跳;ADR 决定 1 / S3)。
-            applied_fiscal_removes.append({
-                "rejected": True, "reason": f"裁撤目标「{key}」不存在,跳过。",
-                "category": "missing_ref", "item": remove,
-            })
-            continue
-        from ming_sim.covert_levy import canonical_fiscal_result
-        applied_fiscal_removes.append(canonical_fiscal_result(
-            db, remove, applied=True,
-            key=removed_key, reason=str(remove.get("reason") or ""),
-        ))
-
-    # 6.5) fiscal_creates：推演凭空新立月固定收支项（税是其一种）。先于 fiscal_changes，
-    #      使同{月}「新立关税 + 立即调率」可一气落地。
-    applied_fiscal_creates: List[Dict[str, object]] = []
-    for create in extracted.get("fiscal_creates") or []:
-        # direction 同义词在唯一守门人处归一（cmr S3 r9:只放在可选的
-        # cleaner 层会让直接落账的声明漏判；DELTA_SCHEMA 明言吃中文别名）。表与 cleaner 共用
-        # simulation._DIRECTION_NORMALIZE（懒 import 避循环）。先归一再去重：ADR0027
-        # 承诺载体都是月度【支出】(delta<0)，dedup/残留观测只对【支出】fiscal_create 生效；
-        # 同名的【收入】新科目(如新税)与承诺无关，绝不可被误去重或误报残留(codex correctness)。
-        direction_raw = str(create.get("direction") or "").strip()
-        direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
-        key = str(create.get("key") or "").strip()
-        account = str(create.get("account") or "").strip()
-        # key 空 / account / direction 非法 = 脏枚举,原先纯静默 continue,改记拒留痕
-        # （ADR 决定 1 / S3；「在场即须合法」对称 S1/S2）。
-        if not key or account not in _FISCAL_ACCOUNTS or direction not in _FISCAL_DIRECTIONS:
-            applied_fiscal_creates.append({
-                "rejected": True,
-                "reason": f"新立项枚举非法（key={key!r} account={account!r} direction={direction!r}）。",
-                "category": "invalid_enum", "item": create,
-            })
-            continue
-        # init_value 缺省/null = 0 合法；在场脏值（字符串/float/bool/负值）显式拒，不静默归 0。
-        # bool 是 int 子类，先于 int 判（对称 S1/S2）。
-        init_raw = _norm_int_leaf(create.get("init_value"))  # 无损整数串归一（cmr S3 r10）
-        if init_raw is None:
-            init_value = 0
-        elif isinstance(init_raw, bool) or not isinstance(init_raw, int) or init_raw < 0:
-            # 负值同拒：静默 clamp 0 = 又一面「凭空建零值项」（cmr S3 r3）。
-            applied_fiscal_creates.append({
-                "rejected": True,
-                "reason": f"新立项「{key}」初值 init_value 非法（{init_raw!r}，须非负整数），不静默归 0。",
-                "category": "invalid_enum", "item": create,
-            })
-            continue
-        else:
-            init_value = init_raw
-        # display 缺省=归一 stem（与落库同源——raw key 去 _base 会把「关税_rate」
-        # 显示成「关税_rate」,cmr S3 r11;DELTA_SCHEMA 契约「缺省=key 去后缀」）。
-        display = str(create.get("display") or "") or (db._stem_of(key) or key)
-        origin_ref = str(create.get("origin_ref") or "").strip()
-        origin_error = db.effect_origin_rejection(origin_ref)
-        if origin_error:
-            applied_fiscal_creates.append({**origin_error, "item": create})
-            continue
-        from ming_sim.covert_levy import stopped_covert_effect
-        if stopped_covert_effect(
-            db, origin_ref=origin_ref, beyond_intent=create.get("beyond_intent"),
-        ):
-            applied_fiscal_creates.append({
-                "rejected": True, "category": "forbidden_effect",
-                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": create,
-            })
-            continue
-        new_key = db.create_fiscal_item(
-            key, account, direction, display, init_value,
-            note=str(create.get("reason") or ""),
-            origin_ref=origin_ref,
-            turn=state.turn,
-            beyond_intent=create.get("beyond_intent"),
-            commit=commit_now,
-        )
-        if new_key is None:
-            # 已存在 / db 拒 = 正常业务拒绝,逐项拒收留痕（不再 print 静默跳）。
-            applied_fiscal_creates.append({
-                "rejected": True,
-                "reason": f"新立项「{key}」已存在或被落库拒绝,跳过。",
-                "category": "invalid_enum", "item": create,
-            })
-            continue
-        from ming_sim.covert_levy import canonical_fiscal_result
-        applied_fiscal_creates.append(canonical_fiscal_result(
-            db, create, applied=True,
-            key=new_key, account=account, direction=direction,
-            display=display, init_value=max(0, init_value),
-            reason=str(create.get("reason") or ""),
-        ))
-
-    # 7) fiscal_changes：调整月度固定收支系数
-    applied_fiscal: List[Dict[str, object]] = []
-    fiscal_config_snapshot = db.get_fiscal_config()
-    deferred_loss_pair_changes: List[Dict[str, object]] = []
-    loss_pair_running: Dict[str, int] = {}
-    loss_pair_final_by_pair: Dict[Tuple[str, str], Dict[str, int]] = {}
-    for change in extracted.get("fiscal_changes") or []:
-        key = str(change.get("key") or "").strip()
-        if not key:
-            # 空 key = 脏项,先于一切无操作短路记拒——否则 delta 0/null 的空 key 项
-            # 被短路吞掉无痕（与 falsy 短路同类序错,cmr S3 r2）。
-            applied_fiscal.append({
-                "rejected": True,
-                "reason": "调率项缺 key,无法定位科目。",
-                "category": "invalid_enum", "item": change,
-            })
-            continue
-        if db._stem_of(key) == "":
-            # 多重后缀垃圾 key 与 create/remove 同口径 invalid_enum——标 missing_ref
-            # 「不存在」会让机读聚合失真（ship-pre r5,三段补齐）。
-            applied_fiscal.append({
-                "rejected": True,
-                "reason": f"调率 key「{key}」非法（多重 _base/_rate 后缀）。",
-                "category": "invalid_enum", "item": change,
-            })
-            continue
-        delta_raw = _norm_int_leaf(change.get("delta"))  # 无损整数串归一（cmr S3 r10）
-        # delta 缺省 = 无操作,静默放过不记拒（免得每月刷无意义拒收行）。
-        if delta_raw is None:
-            continue
-        # 脏值判定必须先于「==0 无操作」短路——False==0 / 0.0==0 为真,放后面会把
-        # 脏 bool/float 静默吞掉（cmr S3 r1,顺序与 S1 对称）。
-        # delta 在场但脏（字符串/float/bool）= LLM 脏数据,原裸 int() 静默 continue（吞），
-        # 改显式拒留痕；bool 是 int 子类,先于 int 判（对称 S1/S2 / S3）。
-        if isinstance(delta_raw, bool) or not isinstance(delta_raw, int):
-            applied_fiscal.append({
-                "rejected": True,
-                "reason": f"调率 delta 非整数（{delta_raw!r}），不静默吞。",
-                "category": "invalid_enum", "item": change,
-            })
-            continue
-        if delta_raw == 0:
-            # 显式 int 0 = 无操作（脏值已在上方拒掉,此处只剩真 int;空 key 已在循环顶记拒）。
-            continue
-        delta = delta_raw
-        current = db.get_fiscal_config().get(key)
-        if current is None:
-            # 未知 key = 正常业务拒绝,逐项拒收留痕（不再 print 静默跳）。
-            applied_fiscal.append({
-                "rejected": True, "reason": f"调率目标「{key}」不存在,跳过。",
-                "category": "missing_ref", "item": change,
-            })
-            continue
-        origin_ref = str(change.get("origin_ref") or "").strip()
-        from ming_sim.covert_levy import stopped_covert_effect
-        if stopped_covert_effect(
-            db, origin_ref=origin_ref, beyond_intent=change.get("beyond_intent"),
-        ):
-            applied_fiscal.append({
-                "rejected": True, "category": "forbidden_effect",
-                "reason": "该旧案暗渠摊派已奉旨禁绝", "item": change,
-            })
-            continue
-        origin_error = db.effect_origin_rejection(origin_ref)
-        if origin_error:
-            applied_fiscal.append({**origin_error, "item": change})
-            continue
-        loss_pair = db.fiscal_config_loss_rate_pair(key)
-        if loss_pair is not None:
-            current = loss_pair_running.get(key, fiscal_config_snapshot.get(key, current))
-            new_val = max(0, current + delta)
-            loss_pair_running[key] = new_val
-            human_key, sink_key = loss_pair
-            pair_values = loss_pair_final_by_pair.setdefault(loss_pair, {
-                human_key: loss_pair_running.get(
-                    human_key, fiscal_config_snapshot.get(human_key, 0)
-                ),
-                sink_key: loss_pair_running.get(
-                    sink_key, fiscal_config_snapshot.get(sink_key, 0)
-                ),
-            })
-            pair_values[key] = new_val
-            deferred_loss_pair_changes.append({
-                "pair": loss_pair,
-                "key": key,
-                "old": current,
-                "new": new_val,
-                "delta": delta,
-                "reason": str(change.get("reason") or ""),
-                "origin_ref": origin_ref,
-                "item": change,
-            })
-            continue
-        new_val = max(0, current + delta)
-        try:
-            db.validate_fiscal_config_value(key, new_val)
-        except ValueError as exc:
-            applied_fiscal.append({
-                "rejected": True,
-                "reason": f"调率目标「{key}」非法：{exc}",
-                "category": "invalid_enum", "item": change,
-            })
-            continue
-        _write_fiscal_config_change(
-            db, turn=state.turn, key=key, old_value=current, new_value=new_val,
-            origin_ref=origin_ref, reason=str(change.get("reason") or ""),
-            beyond_intent=change.get("beyond_intent"),
-        )
-        from ming_sim.covert_levy import canonical_fiscal_result
-        applied_fiscal.append(canonical_fiscal_result(
-            db, change, applied=new_val != current,
-            key=key, old=current, new=new_val, delta=delta,
-            reason=str(change.get("reason") or ""),
-        ))
-    for loss_pair, final_values in loss_pair_final_by_pair.items():
-        pair_changes = [
-            change for change in deferred_loss_pair_changes
-            if change["pair"] == loss_pair
-        ]
-        try:
-            db.set_fiscal_config_batch(final_values, commit=False)
-        except ValueError as exc:
-            for change in pair_changes:
-                applied_fiscal.append({
-                    "rejected": True,
-                    "reason": f"调率目标「{change['key']}」非法：{exc}",
-                    "category": "invalid_enum",
-                    "item": change["item"],
-                })
-            continue
-        for change in pair_changes:
-            db.conn.execute(
-                "UPDATE fiscal_config SET origin_ref=? WHERE key=?",
-                (change["origin_ref"], change["key"]),
-            )
-            db.record_fiscal_config_change(
-                turn=state.turn, key=str(change["key"]),
-                old_value=int(change["old"]), new_value=int(change["new"]),
-                origin_ref=str(change["origin_ref"]), reason=str(change["reason"]),
-                beyond_intent=change["item"].get("beyond_intent")
-                if isinstance(change.get("item"), dict) else 0,
-            )
-            from ming_sim.covert_levy import canonical_fiscal_result
-            source = change["item"] if isinstance(change.get("item"), dict) else {}
-            applied_fiscal.append(canonical_fiscal_result(
-                db, source, applied=change["new"] != change["old"],
-                key=change["key"], old=change["old"], new=change["new"],
-                delta=change["delta"], reason=change["reason"],
-            ))
     successful_authority_changes = [
         item for item in authority_change_results
         if isinstance(item, dict) and item.get("rejected") is not True
