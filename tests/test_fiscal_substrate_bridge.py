@@ -621,6 +621,8 @@ def test_conservation_rejects_excluded_army_with_pay_source_debt(fresh_db):
 
 
 def test_conservation_rejects_province_source_army_without_settle_base(fresh_db):
+    from ming_sim.applier import StoredDocumentError
+
     fresh_db.conn.execute(
         "UPDATE regions SET controlled_by = 'ming', fiscal = '{}' WHERE id = 'taiwan'"
     )
@@ -629,7 +631,7 @@ def test_conservation_rejects_province_source_army_without_settle_base(fresh_db)
     )
     fresh_db._reconcile_central_army_pay_arrears_container()
 
-    with pytest.raises(ValueError):
+    with pytest.raises(StoredDocumentError):
         fresh_db.assert_army_pay_source_container_conservation()
 
 
