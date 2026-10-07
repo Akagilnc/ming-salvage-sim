@@ -2611,15 +2611,16 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
                 continue
             # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
             # 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
+            # Free title/body: carry as-is into extract feed (P6); no strip.
             title = str(
                 payload.get("title")
                 or payload.get("target_id")
                 or issue["title"]
                 or ""
-            ).strip()
+            )
             body = str(
                 payload.get("text") or row.get("decree_text") or ""
-            ).strip()
+            )
             # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
@@ -2904,11 +2905,12 @@ def extract_draft_intent(
     )
     # 补充模式（has_pending_draft + existing_draft_text）：注入现有草案，要求 LLM 输出合并草案。
     # 直接用大臣回话（可能是「好的，加上…」等确认语）会覆盖原草案——须由 LLM 合并。
+    # Free existing draft: empty-check without mutating carried body (P6).
     _existing_draft_text = (
         "" if existing_draft_text is None else str(existing_draft_text)
-    ).strip()
+    )
     _supplement_mode = (has_pending_draft or bool(_candidates)) and (
-        bool(_existing_draft_text) or bool(_candidates))
+        bool(_existing_draft_text.strip()) or bool(_candidates))
     intent_schema_line = (
         '  "拟旨意图": "无|拟旨",\n'
         '  "动作类型": "policy|approve_reject|assignment|'
@@ -2952,7 +2954,7 @@ def extract_draft_intent(
     )
     draft_context = (
         f"【现有草案】{_existing_draft_text}\n"
-        if _existing_draft_text else ""
+        if _existing_draft_text.strip() else ""
     )
     candidates_context = (
         "【现有候选】\n" + "\n".join(
