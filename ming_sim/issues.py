@@ -4517,6 +4517,7 @@ def apply_issue_tracker_output(
     event_result_delta_event_ids: Optional[set[str]] = None,
     defer_event_trigger_ids: Optional[set[str]] = None,
     open_affair_ids_at_input: Optional[set[int]] = None,
+    pre_admitted_event_ids: Optional[set[str]] = None,
 ) -> Dict[str, object]:
     # Do not re-copy open_affair_ids_at_input: settle path already hands the single
     # internal working set from apply_score_extraction; a second copy would drop
@@ -4545,6 +4546,7 @@ def apply_issue_tracker_output(
     )
     event_result_delta_event_ids = set(event_result_delta_event_ids or set())
     defer_event_trigger_ids = set(defer_event_trigger_ids or set())
+    pre_admitted_event_ids = set(pre_admitted_event_ids or set())
     consumed_event_ids: set[str] = set()
     current_candidate_event_ids: set[str] = set()
     candidates_dirty = True
@@ -4800,12 +4802,22 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 已过期终态，不再从 event_pool 立项。")
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "事件已过期终态"})
                 continue
+            if ev.id in consumed_event_ids:
+                print(f"[INFO] new_issue 已拒：事件 {event_id} 本批已消费。")
+                applied_new.append({
+                    "id": ev.id,
+                    "title": ev.title,
+                    "rejected": True,
+                    "reason": "事件本批已消费",
+                })
+                continue
             if (
                 ev.id not in candidate_event_ids
-                or ev.id in consumed_event_ids
+                and ev.id not in pre_admitted_event_ids
             ):
                 # LLM 只能从本回合候选池中挑选事件；落库端重验窗口、trigger_gate 与已触发状态，
                 # 避免陈旧/伪造 id 穿透候选层后直接应用确定性后果（#203 CMR）。
+                # 本批已按预检接纳落过世界战果者：单次接纳贯穿，不因写后改门再拒。
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 applied_new.append({
                     "id": ev.id,
@@ -4832,7 +4844,13 @@ def apply_issue_tracker_output(
                 candidates_dirty = False
                 if candidate_snapshot_authoritative:
                     candidate_event_ids |= current_candidate_event_ids
-            if not candidate_snapshot_authoritative and ev.id not in current_candidate_event_ids:
+            # 本批已按预检接纳落过世界战果的 C3 事件：单次接纳贯穿终局，
+            # 不得因本批战果改写前提门后再 gather 拒收（两账分裂）。
+            if (
+                not candidate_snapshot_authoritative
+                and ev.id not in current_candidate_event_ids
+                and ev.id not in pre_admitted_event_ids
+            ):
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
                 applied_new.append({
                     "id": ev.id,
@@ -8079,6 +8097,8 @@ def _apply_score_extraction_body(
                 db.conn.execute(f"RELEASE {savepoint}")
                 raise
 
+    landed_event_stock_ids: set[str] = set()
+
     def _apply_ordinary_entity_step(
         step_extracted: Dict[str, object],
         step_ordered: Dict[str, list[tuple[str, object]]],
@@ -8094,24 +8114,24 @@ def _apply_score_extraction_body(
             if not isinstance(army_item, dict):
                 continue
             event_for_item = declared[idx] if idx < len(declared) else ""
-            if (
-                not apply_event_owned
-                and event_for_item in strategic_event_referenced_ids
-            ):
+            event_owned = event_for_item in strategic_event_referenced_ids
+            if not apply_event_owned and event_owned:
                 continue
+            if apply_event_owned and event_owned and event_for_item:
+                landed_event_stock_ids.add(event_for_item)
             origin_ref = str(army_item.get("origin_ref") or "").strip()
             created_armies.extend(db.create_armies_from_extraction(
                 state, [army_item], actor="档房", commit=commit_now,
                 origin_ref=origin_ref, require_origin=True,
             ))
         for index, (region_id, raw_changes) in enumerate(step_ordered.get("region_delta") or []):
-            if (
-                not apply_event_owned
-                and _effect_event_ids(
-                    "region_delta", index, strategic_event_referenced_ids, step_event_ids,
-                )
-            ):
+            owned = _effect_event_ids(
+                "region_delta", index, strategic_event_referenced_ids, step_event_ids,
+            )
+            if not apply_event_owned and owned:
                 continue
+            if apply_event_owned and owned:
+                landed_event_stock_ids.update(owned)
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             region_changes.extend(db.apply_region_deltas(
@@ -8119,13 +8139,13 @@ def _apply_score_extraction_body(
                 commit=commit_now, origin_ref=origin_ref, require_origin=True,
             ))
         for index, (army_id, raw_changes) in enumerate(step_ordered.get("army_delta") or []):
-            if (
-                not apply_event_owned
-                and _effect_event_ids(
-                    "army_delta", index, strategic_event_referenced_ids, step_event_ids,
-                )
-            ):
+            owned = _effect_event_ids(
+                "army_delta", index, strategic_event_referenced_ids, step_event_ids,
+            )
+            if not apply_event_owned and owned:
                 continue
+            if apply_event_owned and owned:
+                landed_event_stock_ids.update(owned)
             army_changes.extend(_apply_extracted_army_delta(
                 db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
             ))
@@ -8561,6 +8581,9 @@ def _apply_score_extraction_body(
                 # 已预检接纳的事件战果：与 deferred 成功分支同形直写，不套自由正实力剥除。
                 if not isinstance(raw_changes, dict):
                     continue
+                landed_event_stock_ids.update(_effect_event_ids(
+                    "power_updates", index, strategic_event_referenced_ids, event_ids_map,
+                ))
                 origin_ref = str(raw_changes.get("origin_ref") or "").strip()
                 payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
                 power_changes.extend(db.apply_power_deltas(
@@ -8711,7 +8734,8 @@ def _apply_score_extraction_body(
         impeachment_surge_candidates_at_input=impeachment_surge_candidates_at_input,
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids,
-        open_affair_ids_at_input=authorized_open_affairs)
+        open_affair_ids_at_input=authorized_open_affairs,
+        pre_admitted_event_ids=landed_event_stock_ids)
 
     # Affair closure observes the batch's final issue state. In particular, a
     # same-batch linked issue must prevent closure rather than leave a closed
