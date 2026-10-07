@@ -1024,8 +1024,8 @@ def _attach_commission_staging_fields(
 ) -> None:
     """透传既有 staging 字段：assignee / participant_roster / due_turn。
 
-    字段可在交办顶层，或挂在 grant 对象内（与 stage_grant_allocation_candidate
-    kwargs 同口径）。期限单源＝due_turn；deadline_months / end_turn 仅作换算输入。
+    字段可在交办顶层，或挂在 grant 对象内。期限单源＝due_turn；
+    deadline_months / end_turn 仅作换算输入。
     """
     grant = item.get("grant") if isinstance(item.get("grant"), Mapping) else {}
     lead = str(
@@ -1052,7 +1052,7 @@ def _attach_commission_staging_fields(
     months_src = (
         item if item.get("deadline_months") not in (None, "", 0) else grant
     )
-    # 与 stage_assignment / stage_grant 同缝：相对月数或绝对回合 → 绝对 due_turn。
+    # 与 stage_assignment 同缝：相对月数或绝对回合 → 绝对 due_turn。
     absolute_due = _assignment_absolute_end_turn(
         int(turn),
         end_turn=(due_src or item).get("due_turn") or (end_src or item).get("end_turn") or 0,

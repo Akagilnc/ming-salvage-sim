@@ -1,4 +1,0 @@
-rule	detail
-literal_hits_are_scan_surface_not_verdict	n12_literal_hits=176; named-key/assign scan only — NOT full-class duplicate proof; exclusion requires per-hit second-definition check
-no_auto_exclude_from_symbol_list	smell without second definition ≠ EXCLUDED; remains in literal_hits for human
-human_judgment_required	KEEP/CONVERGED/spike exemption only in evidence/1847-w5-correction/human_judgment.tsv

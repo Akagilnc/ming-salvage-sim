@@ -1,3 +1,0 @@
-klass	kind	file	loc	symbol	disposition	basis
-旧兼容及退役残余闭包	identity_wrapper_candidate	tests/test_settlement_write_guard_393.py	105	directive_payload	KEEP_TEST_DOUBLE	测试替身透传
-重复或闲置测试流程	idle_unused_helper	tests/*	enum_post	47 mechanical	KEEP_NOT_DUPLICATE_FLOW	非AST同形闲置流程

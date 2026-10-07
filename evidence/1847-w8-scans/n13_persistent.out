@@ -1,8 +1,0 @@
-stdlib_format_exception_only RuntimeError: wait timed out (soft terminate fail)
-te_walk_text wait timed out (soft terminate fail) | caused by: idle > 0.05s
-N13_STDLIB_CHECK: no compact cause-only exit; TE cause walk kept
-classified llm_error False
-classified_provider_message wait timed out (soft terminate fail) | caused by: idle > 0.05s
-consumer_exc RuntimeError wait timed out (soft terminate fail) | caused by: idle > 0.05s
-trace_error wait timed out (soft terminate fail) | caused by: idle > 0.05s
-N13_PERSISTENT_PROBE PASS

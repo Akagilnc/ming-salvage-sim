@@ -1,5 +1,0 @@
-WITHDRAWN: not behavioral mutation. Source-existence assert only
-(hasattr/routes/inventory). Do not treat MUTATION_PROBE_DONE PASS as
-behavior evidence. See evidence/1847-w15-fixer-report.md §自查纠正
-and retire-structure-w15-corr.out / temp-mutation-content-sync-w15-corr.out.
-ORIGINAL_LINE: MUTATION_PROBE_DONE PASS deleted_nonstream+migrate_backfill; seed_inventory_kept

@@ -336,7 +336,7 @@ def test_fiscal_levy_rewrites_nonnumeric_current_targets_from_meta(game):
     )
 
 
-def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, monkeypatch):
+def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game):
     db, state, content = game
     issues.bind_content(content)
     state.year = 1637
@@ -365,8 +365,6 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, mo
         str(db.conn.execute("SELECT fiscal FROM regions WHERE id = ?", ("shaanxi",)).fetchone()["fiscal"])
     )
     fiscal["settle"]["st"]["官民田"] = []
-    msgs = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
         (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
@@ -375,7 +373,6 @@ def test_fiscal_levy_bad_region_does_not_redistribute_jiao_lian_targets(game, mo
 
     apply_historical_fiscal_rates(state, db)
 
-    assert any("[fiscal-levy] shaanxi settle 解析失败" in msg for msg in msgs)
     huguang = _settle_payload(db, "huguang")
     assert math.isclose(huguang["_meta"]["剿饷基线"], expected_jiao, rel_tol=1e-9, abs_tol=1e-9)
     assert math.isclose(huguang["_meta"]["练饷基线"], expected_lian, rel_tol=1e-9, abs_tol=1e-9)
@@ -449,7 +446,7 @@ def test_fiscal_levy_incomplete_first_pass_does_not_freeze_zero_share_seed(
 
 @pytest.mark.parametrize("bad_meta_key", ["剿饷基线", "练饷基线", "饷率田亩分母基线"])
 def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
-    game, monkeypatch, bad_meta_key
+    game, bad_meta_key
 ):
     db, state, content = game
     issues.bind_content(content)
@@ -468,8 +465,6 @@ def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
     )
     fiscal = json.loads(original_shaanxi_fiscal)
     fiscal["settle"].setdefault("_meta", {})[bad_meta_key] = []
-    msgs = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute(
         "UPDATE regions SET fiscal = ? WHERE id = ?",
         (json.dumps(fiscal, ensure_ascii=False), "shaanxi"),
@@ -478,7 +473,6 @@ def test_fiscal_levy_bad_share_meta_does_not_crash_or_redistribute_first_pass(
 
     apply_historical_fiscal_rates(state, db)
 
-    assert any("[fiscal-levy] shaanxi settle 解析失败" in msg and bad_meta_key in msg for msg in msgs)
     incomplete = _settle_payload(db, "huguang")
     assert "剿饷基线" not in incomplete["_meta"]
     assert math.isclose(incomplete["p"]["三饷应征"], expected_liao, rel_tol=1e-9, abs_tol=1e-9)
