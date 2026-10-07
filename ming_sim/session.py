@@ -1223,7 +1223,10 @@ class GameSession:
         if not night_was_open:
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
-        agno_session_id, runs_before = self.scene_model_session_anchor(night_id)
+        # 未绑定调用（与 begin 自身同形）：测试壳只持 db，不必自带锚点方法。
+        agno_session_id, runs_before = GameSession.scene_model_session_anchor(
+            self, night_id,
+        )
         with atomic(self.db):
             chat_turn_id = self.db.create_chat_turn(
                 self.state,
@@ -1271,10 +1274,9 @@ class GameSession:
         （Web 流式/重试：转译要挂在闸外），落库与回滚差异仍同一条路。
         Web 外层若已持有 ``atomic``，这里的内层是扁平嵌套，由外层提交。
 
-        须已建持久轮；零轮 append 旁路已清退（生产消费者均走 durable turn）。
+        生产消费者均持真实持久轮；未建轮取消的合法 no-op 属于
+        ``fail_audience_chat_turn``，本方法不设零轮早退旁路。
         """
-        if not turn.chat_turn_id:
-            return 0
         from ming_sim.applier import atomic
 
         with atomic(self.db):
@@ -1917,7 +1919,9 @@ class GameSession:
         session_id 与建轮／恢复同一 ``scene_model_session_anchor`` 事实。
         """
         llm_config = getattr(self, "llm_config", None)
-        session_id, _runs_before = self.scene_model_session_anchor(night_id)
+        session_id, _runs_before = GameSession.scene_model_session_anchor(
+            self, night_id,
+        )
         return create_scene_agent(
             llm_config,
             prepared,

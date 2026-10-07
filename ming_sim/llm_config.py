@@ -522,16 +522,19 @@ def load_runtime_llm() -> Dict[str, object]:
         with open(RUNTIME_LLM_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
-        # 坏档 ≠ 缺档：明示真因后再回落，禁无痕洗成空配置。
+        # 坏档 ≠ 缺档：保留真实异常对象明示后再回落，禁无痕洗成空配置。
         logger.warning(
-            "runtime_llm load failed path=%s err_type=%s err=%s",
-            RUNTIME_LLM_PATH, type(exc).__name__, exc,
+            "runtime_llm load failed path=%s", RUNTIME_LLM_PATH,
+            exc_info=(type(exc), exc, exc.__traceback__),
         )
         return {}
     if not isinstance(data, dict):
+        err = TypeError(
+            f"runtime_llm top-level {type(data).__name__}, expected dict"
+        )
         logger.warning(
-            "runtime_llm load failed path=%s err_type=TypeError err=top-level %s, expected dict",
-            RUNTIME_LLM_PATH, type(data).__name__,
+            "runtime_llm load failed path=%s", RUNTIME_LLM_PATH,
+            exc_info=(type(err), err, None),
         )
         return {}
     return _normalize_runtime_llm(data)
