@@ -2143,7 +2143,7 @@ def _levy_block_declines_presentation(raw_json: str) -> bool:
 
     try:
         obj = json.loads(raw_json)
-    except Exception:
+    except (TypeError, ValueError, json.JSONDecodeError):
         return False
     return isinstance(obj, dict) and obj.get("present") is False
 

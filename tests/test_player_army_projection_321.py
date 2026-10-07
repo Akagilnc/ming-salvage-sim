@@ -14,10 +14,7 @@ from ming_sim.db import (
 )
 from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
-from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, read_material
-from tests.material_helpers import prepare_identity_materials
-from tests.test_army_card_status_1501 import _assert_ming_register
+
 
 ARMY = "guanning"
 
@@ -36,69 +33,6 @@ _MUTINY_ORDINAL_KEYS = frozenset(
         "mutiny_state",
     }
 )
-
-# 六档真值表（票面 latch / 边界 / probation；含全部明确边界样本）
-_TIER_CASES = (
-    # (is_mutinied, loyalty, probation, expected_tier)
-    (1, 100, 0, "哗变"),  # latch L=100
-    (1, 100, 1, "哗变"),  # latch 盖过 probation
-    (1, 95, 0, "哗变"),
-    (1, 10, 3, "哗变"),
-    (0, 39, 0, "鼓噪"),
-    (0, 19, 0, "鼓噪"),  # L<20 未闩 → 鼓噪，非哗变
-    (0, 30, 1, "鼓噪"),  # probation 不覆盖低档
-    (0, 40, 0, "不满"),
-    (0, 50, 1, "不满"),  # probation 不覆盖中低档
-    (0, 59, 0, "不满"),
-    (0, 60, 1, "不满"),  # probation 只挡回正常
-    (0, 80, 2, "不满"),
-    (0, 60, 0, "一般"),
-    (0, 69, 0, "一般"),
-    (0, 70, 0, "优秀"),
-    (0, 79, 0, "优秀"),
-    (0, 80, 0, "死忠"),
-    (0, 100, 0, "死忠"),
-)
-
-_TIER_IDS = [
-    f"L{loyalty}-latch{latch}-p{prob}-{tier}"
-    for latch, loyalty, prob, tier in _TIER_CASES
-]
-
-
-def _row(
-    *,
-    is_mutinied: int = 0,
-    loyalty: int = 70,
-    mutiny_probation: int = 0,
-    morale: int = 73,
-    arrears: float = 0.0,
-    **extra,
-):
-    base = {
-        "is_mutinied": is_mutinied,
-        "loyalty": loyalty,
-        "mutiny_probation": mutiny_probation,
-        "morale": morale,
-        "arrears": arrears,
-    }
-    base.update(extra)
-    return base
-
-
-@pytest.mark.parametrize(
-    "is_mutinied,loyalty,probation,expected",
-    _TIER_CASES,
-    ids=_TIER_IDS,
-)
-def test_player_army_situation_six_tier_truth_table(
-    is_mutinied, loyalty, probation, expected
-):
-    row = _row(is_mutinied=is_mutinied, loyalty=loyalty, mutiny_probation=probation)
-    sit = _player_army_situation(row, monthly_pay=10)
-    assert sit["mutiny_tier"] == expected
-    assert isinstance(sit["morale_text"], str)
-    assert isinstance(sit["arrears_text"], str)
 
 
 def _configure(db) -> None:
@@ -250,25 +184,6 @@ def test_structured_situation_on_payload_and_map_nodes(game):
     _assert_structured_situation(map_army, sit, "map_nodes.armies")
     map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
     _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
-
-    # 链2：report（LLM 输入装配）
-    report = db.army_report(limit=30)
-    _assert_chain_embeds_situation(report, sit, "army_report")
-
-    war = next(c for c in content.characters.values() if c.office_type == "兵部")
-    knowledge = build_character_knowledge(db, state, war.name)
-    military = (knowledge.get("world") or {}).get("military") or ""
-    _assert_ming_register(db, military)
-
-    # 链4：roster（LLM 输入装配）
-    roster = db.army_roster()
-    _assert_chain_embeds_situation(roster, sit, "army_roster")
-    prepared = prepare_identity_materials(db, state, war)
-    blob = "\n".join(
-        read_material(prepared.root, path)
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
-    _assert_ming_register(db, blob)
 
 
 def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):

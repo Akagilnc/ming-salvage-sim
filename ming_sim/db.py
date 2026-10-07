@@ -690,7 +690,7 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     否则返回 ''。结果按官名缓存，避免重复调用。"""
     try:
         from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
-    except Exception:
+    except ImportError:
         return ""
     if not cli_backend_active(llm_config):
         return ""
@@ -708,7 +708,8 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="office_infer")
         cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
         out = cand if cand in allowed_set else ""
-    except Exception:
+    except Exception as exc:
+        tlog(f"[office_infer] backend failed: {type(exc).__name__}: {exc}")
         out = ""
     _OFFICE_TYPE_LLM_CACHE[text] = out
     return out
@@ -4580,31 +4581,28 @@ class GameDB:
             # 推导默认 bar / inertia / ongoing / effect，与 event_to_issue 同口径；精调字段优先
             bar = ev.bar_value or max(20, min(60, 50 - int(ev.severity / 5)))
             inertia = ev.issue_inertia  # 默认 0=不漂；要月漂在 seed 里显式填
-            try:
-                self.insert_issue(
-                    state,
-                    kind="situation",
-                    title=ev.title,
-                    origin_kind="event_pool",
-                    origin_ref=ev.id,
-                    bar_value=bar,
-                    bar_good_meaning=ev.bar_good_meaning or "已平",
-                    bar_bad_meaning=ev.bar_bad_meaning or "失控",
-                    inertia=inertia,
-                    stage_text=ev.stage_text or ev.summary,
-                    severity=int(ev.severity),
-                    region_hint=ev.region_hint,
-                    faction_hint=",".join(ev.interests[:2]),
-                    tags=ev.issue_tags or [ev.kind],
-                    ongoing_effects=ev.ongoing_effects,
-                    cancellable="never",
-                    effect_on_resolve=ev.effect_on_resolve,
-                    effect_on_fail=ev.effect_on_fail,
-                    resolve_condition=ev.resolve_condition,
-                    fail_condition=ev.fail_condition,
-                )
-            except Exception as exc:
-                print(f"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}")
+            self.insert_issue(
+                state,
+                kind="situation",
+                title=ev.title,
+                origin_kind="event_pool",
+                origin_ref=ev.id,
+                bar_value=bar,
+                bar_good_meaning=ev.bar_good_meaning or "已平",
+                bar_bad_meaning=ev.bar_bad_meaning or "失控",
+                inertia=inertia,
+                stage_text=ev.stage_text or ev.summary,
+                severity=int(ev.severity),
+                region_hint=ev.region_hint,
+                faction_hint=",".join(ev.interests[:2]),
+                tags=ev.issue_tags or [ev.kind],
+                ongoing_effects=ev.ongoing_effects,
+                cancellable="never",
+                effect_on_resolve=ev.effect_on_resolve,
+                effect_on_fail=ev.effect_on_fail,
+                resolve_condition=ev.resolve_condition,
+                fail_condition=ev.fail_condition,
+            )
 
     def _canonicalize_character_location(self, raw: object) -> str:
         """#654 G：location 唯一写缝归一——精确 compact 等值；未知非空 fail-loud。"""
@@ -8993,7 +8991,7 @@ class GameDB:
             return None
         try:
             timeline = json.loads(row["timeline"] or "[]")
-        except Exception as exc:
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
             tlog(f"[db] timeline JSON 损坏，回空：{exc}")  # #14 surface
             timeline = []
         return {
@@ -9235,13 +9233,13 @@ class GameDB:
         for r in rows:
             try:
                 options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
                 options = []
             choice_raw = (r["choice_json"] or "").strip()
             try:
                 choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 tlog(f"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}")  # #14 surface
                 choice = None
             source_turn = int(r["turn"])
@@ -9288,7 +9286,7 @@ class GameDB:
         idx = int(r["idx"])
         try:
             options = json.loads(r["options_json"] or "[]")
-        except Exception as exc:
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
             tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
             options = []
         if not isinstance(options, list):
@@ -9296,7 +9294,7 @@ class GameDB:
         choice_raw = (r["choice_json"] or "").strip()
         try:
             choice = json.loads(choice_raw) if choice_raw else None
-        except Exception as exc:
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
             tlog(f"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}")
             choice = None
         return {
@@ -16590,7 +16588,7 @@ class GameDB:
         def _load(text: str, default, label: str):
             try:
                 return json.loads(text) if text else default
-            except Exception as exc:
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 tlog(f"[db] resolve_context {label} JSON 损坏，回退默认、恢复将丢该段（turn={turn}）：{exc}")  # #14 surface
                 return default
         attendant_message = str(row["attendant_message"] or "")
@@ -18042,7 +18040,7 @@ class GameDB:
         ).fetchall():
             try:
                 eff = json.loads(str(lg["modifiers"] or "{}"))
-            except Exception as exc:
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 tlog(f"[db] legacy modifiers JSON 损坏，跳过该 legacy：{exc}")  # #14 surface
                 continue
             for acc in ("国库", "内库", "民心", "皇威"):

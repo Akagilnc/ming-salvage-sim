@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import logging
 import os
 from typing import Dict, Optional
 
@@ -21,6 +22,7 @@ from ming_sim.models import (
 from ming_sim.paths import user_data_path
 
 RUNTIME_LLM_PATH = user_data_path("runtime_llm.json")
+logger = logging.getLogger(__name__)
 
 _API_RUNTIME_FIELDS = (
     "base_url",
@@ -412,7 +414,10 @@ def load_runtime_llm() -> Dict[str, object]:
     try:
         with open(RUNTIME_LLM_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
+    except json.JSONDecodeError:
+        return {}
+    except OSError:
+        logger.exception("load_runtime_llm failed path=%s", RUNTIME_LLM_PATH)
         return {}
     if not isinstance(data, dict):
         return {}

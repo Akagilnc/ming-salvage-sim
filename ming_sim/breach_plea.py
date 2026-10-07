@@ -107,10 +107,12 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
 
 def commitment_natural_due_turn(row: Any) -> int:
     """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。"""
-    try:
-        keys = row.keys()  # sqlite3.Row
-    except Exception:
-        keys = list(row.keys()) if isinstance(row, dict) else []
+    if hasattr(row, "keys"):
+        keys = row.keys()
+    elif isinstance(row, dict):
+        keys = row.keys()
+    else:
+        keys = []
     stages_raw = row["stages_json"] if "stages_json" in keys else (
         row.get("stages_json") if isinstance(row, dict) else None
     )
@@ -169,7 +171,7 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
                     names.append(cid)
     try:
         origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
-    except Exception:
+    except (TypeError, KeyError, IndexError, AttributeError):
         origin_ref = ""
     did = parse_dossier_id(origin_ref)
     if did is not None:
@@ -201,9 +203,11 @@ def _dedicated_accounts(row: Any) -> List[str]:
             seen.add(acc)
             accounts.append(acc)
 
-    try:
+    if hasattr(row, "keys"):
         keys = row.keys()
-    except Exception:
+    elif isinstance(row, dict):
+        keys = row.keys()
+    else:
         keys = []
 
     tags_raw = row["tags"] if "tags" in keys else "[]"
@@ -470,7 +474,7 @@ def _spent_amount_and_fiscal_count(
     fiscal_count = 0
     try:
         origin = str(row["origin_ref"] or "")
-    except Exception:
+    except (TypeError, KeyError, IndexError, AttributeError):
         origin = ""
     did = parse_dossier_id(origin)
     if did is not None:
