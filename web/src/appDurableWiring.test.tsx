@@ -1576,7 +1576,8 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
     expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
     expect(findButton(host, "盖玺颁诏过月")).toBeFalsy();
-    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    // 半程面以结构化缺席为准，不用议题标题作全页身份哨兵（#1902 TEST-PROSE）。
+    expect(host.querySelector(".situation-list")).toBeNull();
 
     // 收束：decisions → 必达 DecisionModal 仍可达（#1236；兼本票批红从新入口之证明）
     await act(async () => {
@@ -2167,7 +2168,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull();
 
     // 关闭组：半程局势不渲染；只读 closed_issues 仍可达（上月已结入口不关死）
-    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    // 结构契约：半程 list 缺席 / 已结 list 在；不在含已结标题的 host 上禁自由议题词。
     expect(host.querySelector(".situation-list")).toBeNull();
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
     expect(host.textContent).toContain(SNAP_CLOSED);
@@ -2344,10 +2345,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(loadRequests[1]).toEqual({ path: "/api/saves/auto_begin/load", method: "POST" });
     await closeOpenOverlay(host);
 
-    // closed_issues：只读可达；半程议题零泄漏；不误弹局势了结全屏
+    // closed_issues：只读可达；半程 list 结构缺席；不误弹局势了结全屏
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
     expect(host.textContent).toContain(SNAP_CLOSED);
-    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(host.querySelector(".situation-list")).toBeNull();
     expect(host.querySelector('[role="dialog"][aria-label="局势了结"]')).toBeNull();
   });
 

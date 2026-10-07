@@ -451,11 +451,9 @@ def _iter_cli_process_lines(
                     break
                 chunks.put((kind, chunk))
         except BaseException as exc:
-            # 读取失败不得洗成普通 EOF／成功收尾：记真因交父循环既有失败口；
-            # finally 仍发哨兵，避免父侧空等。SystemExit/KeyboardInterrupt 不吞。
-            # 主动 cancel（idle 等）若已在父侧抛出，以父侧终态为准，不另造监督层。
-            if isinstance(exc, (SystemExit, KeyboardInterrupt)):
-                raise
+            # 读取失败（含线程内 SystemExit/KeyboardInterrupt/TypeError）记真因交父循环；
+            # 不得在工作线程内 re-raise 冒充已传给父调用（threading 只走 excepthook）。
+            # finally 仍发哨兵，避免父侧空等。主动 cancel 若已在父侧抛出，以其终态为准。
             if result.stream_error is None:
                 result.stream_error = exc
             logger.warning("CLI %s 管道读取失败：%s", kind, exc)
@@ -496,11 +494,20 @@ def _iter_cli_process_lines(
         "err": codecs.getincrementaldecoder("utf-8")("replace"),
     }
     pending_out = ""
+
+    def _raise_stream_error() -> None:
+        err = result.stream_error
+        if err is not None:
+            raise RuntimeError(f"CLI 管道读取失败：{err}") from err
+
     try:
         while open_streams > 0:
+            # 已知读故障立刻升格：不等另一管道 EOF，也不让后续 idle 改写成可重试分类。
+            _raise_stream_error()
             try:
                 kind, chunk = chunks.get(timeout=_CLI_POLL_SECONDS)
             except queue.Empty:
+                _raise_stream_error()
                 check_idle_budget(
                     last_activity_at=last_activity, policy=policy, clock=tick,
                 )
@@ -514,8 +521,10 @@ def _iter_cli_process_lines(
                 else:
                     leftover = pending_out + tail
                     pending_out = ""
-                    if leftover:
+                    # 已有读故障则不把半截正文当成功产出。
+                    if leftover and result.stream_error is None:
                         yield leftover
+                _raise_stream_error()
                 continue
             # 任意新字节即活动（票面「CLI stdout 新字节」）；不要求凑成一行。
             last_activity = tick()
@@ -529,15 +538,13 @@ def _iter_cli_process_lines(
                 if nl < 0:
                     break
                 line, pending_out = pending_out[: nl + 1], pending_out[nl + 1 :]
-                yield line
-        # 与 stdin_error 同形：读失败不得当成功 EOF 交付；半截 stdout 由调用方丢弃。
-        # 在等进程退出前升格，避免已知读故障仍空转 idle。
-        if result.stream_error is not None:
-            raise RuntimeError(
-                f"CLI 管道读取失败：{result.stream_error}"
-            ) from result.stream_error
+                if result.stream_error is None:
+                    yield line
+            _raise_stream_error()
+        _raise_stream_error()
         # 管道已 EOF 但进程未退：静默同样计入 idle 预算，仍无总墙钟。
         while proc.poll() is None:
+            _raise_stream_error()
             check_idle_budget(
                 last_activity_at=last_activity, policy=policy, clock=tick,
             )
