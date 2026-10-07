@@ -7,7 +7,12 @@ prompt = open("/tmp/issues_prompt.txt").read()
 
 def parse_new_issues(raw):
     # 复用项目宽松解析
-    obj = cb._loads_lenient(raw) or {}
+    try:
+    obj = json.loads(raw)
+except Exception:
+    obj = {}
+if not isinstance(obj, dict):
+    obj = {}
     ni = obj.get("新立局势") or obj.get("new_issues") or []
     return obj, ni
 

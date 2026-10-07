@@ -1,5 +1,5 @@
 """Agno Agent 执行与工厂（非大臣类）：run_agent_*、parse_agent_json、
-诏书润色/月末推演/打分提取/JSON 修复 agent。L5。
+诏书润色/月末推演/打分提取 agent。L5。
 
 通过 bind_content() 注入 GameContent（取提示词）。
 """
@@ -9,7 +9,6 @@ from __future__ import annotations
 import inspect
 import json
 import os
-import re
 import time
 from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, List, Optional, Sequence
@@ -17,7 +16,6 @@ from typing import Any, Dict, List, Optional, Sequence
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 
-from ming_sim.assets import strip_json_fence
 from ming_sim.content import GameContent
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.cli_backend import describe_effective_model
@@ -364,70 +362,19 @@ def _agent_run_accepts_stream(agent: object) -> bool:
 
 
 def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
-    text = strip_json_fence(raw)
-    # 试 1：原文直解
+    """Strict JSON object decoder for agent structured output.
+
+    Uses the stdlib decoder only. No fence stripping, control-byte rewrite,
+    outer-brace crop, or first-object pick — malformed output fails the
+    existing LLM contract channel and keeps the true raw response.
+    """
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        data = None
-    # 试 2：截 {...} 最外层再解
-    if data is None:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end <= start:
-            abort_llm_contract(stage, "没有返回 JSON object", raw)
-        snippet = text[start : end + 1]
-        try:
-            data = json.loads(snippet)
-        except json.JSONDecodeError:
-            data = None
-        # 试 3：净化 control char（\r\v\f\x00-\x1f 等）后再解
-        if data is None:
-            cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", snippet)
-            try:
-                data = json.loads(cleaned)
-            except json.JSONDecodeError:
-                data = None
-        # 试 4：截取首个合法平衡的 {...} 子串（防 LLM 重发拼接）
-        if data is None:
-            depth = 0
-            in_str = False
-            esc = False
-            best_end = -1
-            for i, ch in enumerate(snippet):
-                if esc:
-                    esc = False
-                    continue
-                if ch == "\\" and in_str:
-                    esc = True
-                    continue
-                if ch == '"':
-                    in_str = not in_str
-                    continue
-                if in_str:
-                    continue
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        best_end = i
-                        break
-            if best_end > 0:
-                first_block = snippet[: best_end + 1]
-                first_block = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", first_block)
-                try:
-                    data = json.loads(first_block)
-                except json.JSONDecodeError as error:
-                    raise LLMContractError(
-                        f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}",
-                        raw_value=raw,
-                    ) from error
-            else:
-                raise LLMContractError(
-                    f"{stage} 输出不是合法 JSON\n原始输出：{raw[:800]}",
-                    raw_value=raw,
-                )
+        data = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise LLMContractError(
+            f"{stage} 输出不是合法 JSON：{error}\n原始输出：{raw[:800]}",
+            raw_value=raw,
+        ) from error
     if not isinstance(data, dict):
         abort_llm_contract(stage, "顶层必须是 JSON object", raw)
     return data

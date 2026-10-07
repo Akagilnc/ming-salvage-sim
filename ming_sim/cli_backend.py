@@ -2678,7 +2678,11 @@ def extract_draft_intent(
         # 那会让写入口把失败洗成 special_decree 冒充成功产物（失败诚实宪法）。
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
         # #1849：解析失败也是抽取失败，不是「无意图」（与单条路同一根因）。
-        obj = _loads_lenient(raw)
+        # Strict stdlib decoder only — no fence/JSONC/brace-crop repair of free prose.
+        try:
+            obj = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            obj = None
         if not isinstance(obj, dict):
             raise ValueError("多旨稿抽取产物不可解析为 JSON 对象")
         values = obj.get("成品旨稿")
@@ -2933,7 +2937,11 @@ def extract_draft_intent(
     # #1849：解析失败/缺意图键/非法意图值都是抽取产物不可用，不是「无意图」；
     # 一律响亮拒收（同 _coerce_draft_target_kind / 动作类型非法的既有契约），
     # 禁再消解成合法无意图让写入口覆盖原草稿。
-    obj = _loads_lenient(raw)
+    # Strict stdlib decoder only — no fence/JSONC/brace-crop repair of free prose.
+    try:
+        obj = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        obj = None
     if not isinstance(obj, dict):
         raise ValueError("拟旨抽取产物不可解析为 JSON 对象")
     if "拟旨意图" not in obj:
@@ -3411,91 +3419,6 @@ def resubmit_draft_admission_payload(
 
 
 
-def _scan_outside_strings(text: str, handle) -> str:
-    """逐字扫描 text，字符串内部（含转义）原样输出；字符串外的字符交给
-    handle(text, i, out, n) -> next_i 处理（append 想保留的到 out、返回下一位置）。
-    JSONC 清洗的共享底座：字符串/转义态只在此一处维护，避免每趟各写一份状态机。"""
-    out: List[str] = []
-    in_str = esc = False
-    i, n = 0, len(text)
-    while i < n:
-        ch = text[i]
-        if in_str:
-            out.append(ch)
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            i += 1
-        elif ch == '"':
-            in_str = True
-            out.append(ch)
-            i += 1
-        else:
-            i = handle(text, i, out, n)
-    return "".join(out)
-
-
-def _strip_jsonc(body: str) -> str:
-    """quote-aware 清洗 JSONC：剥 // 行注释、去结构尾逗号，但字符串内部一律不动——
-    串值里的 //、,}、:// （如 "x,}" / "a//b" / "http://..."）全保留。
-    旧实现用裸正则非 quote-aware，会把串内 // 当注释、串内 ,} 当尾逗号误伤（#6）。
-    两趟扫描：先剥注释（避免「逗号到右括号之间夹注释」漏判尾逗号），再去尾逗号。"""
-    def _strip_comment(t: str, i: int, out: List[str], n: int) -> int:
-        if t[i] == "/" and i + 1 < n and t[i + 1] == "/":
-            nl = t.find("\n", i)
-            return n if nl == -1 else nl  # 跳到行尾（换行本身保留，由下一轮 append）
-        out.append(t[i])
-        return i + 1
-
-    def _strip_trailing_comma(t: str, i: int, out: List[str], n: int) -> int:
-        if t[i] == ",":
-            k = i + 1
-            while k < n and t[k] in " \t\r\n":
-                k += 1
-            if k < n and t[k] in "}]":
-                return i + 1  # 丢弃结构尾逗号
-        out.append(t[i])
-        return i + 1
-
-    return _scan_outside_strings(_scan_outside_strings(body, _strip_comment), _strip_trailing_comma)
-
-
-def _loads_lenient(
-    raw: str, *, accepted_types: tuple[type, ...] = (dict,),
-) -> Optional[Any]:
-    """容错解析 JSON：剥代码围栏并截取首个受理容器。失败返回 None。"""
-    t = (raw or "").strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
-        t = re.sub(r"\s*```$", "", t).strip()
-    starts = []
-    if dict in accepted_types:
-        starts.append((t.find("{"), "}"))
-    if list in accepted_types:
-        starts.append((t.find("["), "]"))
-    starts = [(index, closer) for index, closer in starts if index >= 0]
-    if not starts:
-        return None
-    i, closer = min(starts, key=lambda item: item[0])
-    j = t.rfind(closer)
-    if j <= i:
-        return None
-    body = t[i:j + 1]
-    try:
-        obj = json.loads(body)
-    except (ValueError, TypeError):
-        # 严格解析失败才做 JSONC 容错（CMR F8）：模型照 prompt 模板回带 // 行注释或尾逗号时救回。
-        # 先严格、失败才清洗 —— 合法 JSON 不经清洗器。清洗器 quote-aware：串值里的 //、,}、://
-        # 一律不动（#6，旧裸正则会误伤 "x,}"→"x}"、"a//b"→截断）。
-        try:
-            obj = json.loads(_strip_jsonc(body))
-        except (ValueError, TypeError):
-            return None
-    return obj if isinstance(obj, accepted_types) else None
-
 
 def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = None) -> Dict[str, Any]:
     """国策(initiative)立项后 agy 一贯不填效果字段（实测 0/4）。这里聚焦补全：
@@ -3532,7 +3455,15 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="issue_enrich")
     except Exception as exc:  # 补全失败不阻断结算（trace 已在咽喉记下，含 error）
         _log(f"国策效果补全失败：{exc}")
-    obj = _loads_lenient(raw) or {}
+    # Strict stdlib decoder; non-blocking enrich keeps empty dict on contract failure.
+    obj: Dict[str, Any] = {}
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            obj = parsed
     try:
         from ming_sim.simulation import _canonical_item_fields
         norm = _canonical_item_fields(obj) if obj else {}

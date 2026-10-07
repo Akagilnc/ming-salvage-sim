@@ -938,8 +938,8 @@ def _commission_grant_payload(
         GRANT_ACTIONS,
         require_grant_allocation_shape,
         resolve_grant_account,
-        write_locality_scope_for_target_kind,
     )
+    from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 
     grant_action = str(grant.get("grant_action") or grant.get("action") or "").strip()
     # 兼容 C0 旧形：未写 grant_action 但给了协饷五字段 → 视作协饷。

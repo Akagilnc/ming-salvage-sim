@@ -35,9 +35,13 @@ def test_parse_highlight_judge_bad_output_is_empty():
 
 
 def test_parse_highlight_judge_valid_phrases():
+    # Strict JSON object only; fenced/prose wrappers are bad output → empty.
     assert parse_highlight_judge_output(
-        '```json\n{"highlights": ["**辽饷**", "户部亏空", "  "]}\n```'
+        '{"highlights": ["**辽饷**", "户部亏空", "  "]}'
     ) == ["**辽饷**", "户部亏空"]
+    assert parse_highlight_judge_output(
+        '```json\n{"highlights": ["**辽饷**", "户部亏空"]}\n```'
+    ) == []
 
 
 def test_run_highlight_judge_timeout_and_exception_degrade_silently():

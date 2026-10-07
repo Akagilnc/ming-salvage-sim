@@ -4848,8 +4848,6 @@ class GameDB:
             )
             self.recompute_faction_leverage(faction)
         self._set_meta_flag("__leverage_offsets_calibrated")
-        self._leverage_offsets_calibrated = True
-        self._set_meta_flag("__leverage_offsets_float_v2")
 
 
     def _has_meta_flag(self, key: str) -> bool:

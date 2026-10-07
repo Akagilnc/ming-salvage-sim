@@ -32,8 +32,6 @@ class FieldSpec:
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
     # Field is populated only when another canonical field has one of these values.
     populated_when: Optional[Tuple[str, FrozenSet[str]]] = None
-    # A controller value may narrow this enum's effective allowed values.
-    allowed_when: Optional[Tuple[str, str, FrozenSet[str]]] = None
 
 
 @dataclass(frozen=True)
@@ -220,17 +218,6 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
         if normalized not in spec.allowed:
             return False, f"{spec.name} out of enum: {raw!r}"
     return True, ""
-
-
-def effective_field_allowed(
-    spec: FieldSpec, candidate: Mapping[str, Any],
-) -> Optional[FrozenSet[str]]:
-    """Project the enum values allowed for this candidate from one field row."""
-    if spec.allowed_when is not None:
-        controller, controller_value, allowed = spec.allowed_when
-        if str(candidate.get(controller) or "").strip() == controller_value:
-            return allowed
-    return spec.allowed
 
 
 def field_population_allowed(

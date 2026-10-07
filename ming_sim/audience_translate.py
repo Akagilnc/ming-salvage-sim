@@ -432,10 +432,14 @@ def run_declaration_translate_prompt(
     prompt: str, llm_config: Any = None, *, tag: str, policy: Any = None,
 ) -> Mapping[str, object]:
     """共用声明转译 runner：沿现有宿主 extractor 与 JSON 解析接缝。"""
-    from ming_sim.cli_backend import _loads_lenient, _run_json_extractor_for_config
+    from ming_sim.cli_backend import _run_json_extractor_for_config
 
     raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag=tag, policy=policy)
-    obj = _loads_lenient(raw, accepted_types=(dict,))
+    # Strict stdlib decoder only — no fence/JSONC/brace-crop repair of free prose.
+    try:
+        obj = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        obj = None
     if not isinstance(obj, dict):
         raise AudienceTranslateError("转译输出无法解析为 JSON 对象")
     return obj
