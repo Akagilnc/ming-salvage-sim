@@ -539,53 +539,6 @@ def apply_appointment(
     return (name, displaced)
 
 
-def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
-    """把落库失败的暂存动作翻成可给玩家看的失败状态。"""
-    kind = str(pa.get("kind") or "")
-    action = str(pa.get("action") or "")
-    noun = {
-        "secret_order": "密令",
-        "office": "任免",
-        "directive": "拟旨",
-    }.get(kind, "政务动作")
-    # #1765 ②：坏 payload 重放入口已删——系统层只报「未落库」这一件事，
-    # 不再承诺重试、也不按失败来源分类交代（0046 薄系统层）。
-    message = f"{noun}未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。"
-    return {
-        "id": int(pa.get("id") or 0),
-        "kind": kind,
-        "action": action,
-        "minister_name": str(pa.get("minister_name") or ""),
-        "message": message,
-    }
-
-
-def _failed_secret_order_ids(db: Any, turn: int) -> set[int]:
-    """本回合已 failed 的密令 pending id 集；Web/CLI 结算差集共核。
-
-    生产 db 恒有 list_pending_actions（GameDB）；缺协议不空返回洗白。
-    """
-    return {
-        int(action.get("id") or 0)
-        for action in db.list_pending_actions(int(turn), status="failed")
-        if action.get("kind") == "secret_order"
-    }
-
-
-def _new_secret_order_failure_payloads(
-    db: Any, turn: int, before_ids: set[int],
-) -> List[Dict[str, Any]]:
-    """相对 before_ids 的新增密令失败投影；Web/CLI 入口直引，禁两端各写一份。
-
-    生产 db 恒有 list_pending_actions（GameDB）；缺协议不空返回洗白。
-    """
-    return [
-        _pending_action_failure_payload(action)
-        for action in db.list_pending_actions(int(turn), status="failed")
-        if action.get("kind") == "secret_order"
-        and int(action.get("id") or 0) not in before_ids
-    ]
-
 
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
     """启动/读档时以 DB characters 表重建内存人物表。

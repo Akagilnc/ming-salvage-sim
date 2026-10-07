@@ -714,7 +714,7 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
     result = sess.scene_chat("边饷如何？", chat_turn_id=ctid)
     fut = persist_and_schedule_scene(sess, db, result)
     assert fut is not None
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="simulated translate transport failure"):
         fut.result(timeout=30)
     assert result.answer == "臣在。"
     after = db.conn.execute(

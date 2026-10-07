@@ -22,9 +22,7 @@ from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
 from ming_sim.session import (
     GameSession,
     TurnPhase,
-    _failed_secret_order_ids,
     _is_summonable_court_minister,
-    _new_secret_order_failure_payloads,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,19 +37,6 @@ _STATUS_LABEL = {
 }
 
 # 旧手拟确认/驳回词表已随手拟入口清退（#1902 S1）。
-# 密令失败差集共核：ming_sim.session._failed_secret_order_ids / _new_secret_order_failure_payloads
-
-
-def _print_pending_action_failures(failures: List[dict]) -> None:
-    for failure in failures:
-        message = str(failure.get("message") or "密令落库失败。")
-        raw_failure_id = failure.get("id")
-        try:
-            failure_id = int(raw_failure_id) if raw_failure_id is not None else None
-        except (TypeError, ValueError):
-            failure_id = None
-        suffix = f" #{failure_id}" if failure_id is not None else ""
-        print(f"【密令落库失败{suffix}】{wrap(message)}\n")
 
 
 def _print_header(session: GameSession) -> None:
@@ -664,7 +649,6 @@ def play_turn(session: GameSession) -> Optional[GameSession]:
             return action
         if action == "skip":
             turn_before = int(session.state.turn)
-            failed_before = _failed_secret_order_ids(session.db, turn_before)
             try:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
@@ -676,13 +660,7 @@ def play_turn(session: GameSession) -> Optional[GameSession]:
                 # #1700：空 simulator 的 LLMContractError 同形，不落到 run_cli「程序中止」。
                 # #1853 J5：真异常经本 except 原样上抛呈现；终态业务拒收不再另造失败载荷。
                 print(f"\n{error}")
-                _print_pending_action_failures(
-                    _new_secret_order_failure_payloads(session.db, turn_before, failed_before)
-                )
                 continue
-            _print_pending_action_failures(
-                _new_secret_order_failure_payloads(session.db, turn_before, failed_before)
-            )
             if result is not None:
                 print(report)
                 if getattr(session.state, "ended", False):
@@ -695,7 +673,6 @@ def play_turn(session: GameSession) -> Optional[GameSession]:
             continue
         if action == "issue":
             turn_before = int(session.state.turn)
-            failed_before = _failed_secret_order_ids(session.db, turn_before)
             try:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
@@ -706,13 +683,7 @@ def play_turn(session: GameSession) -> Optional[GameSession]:
                 # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。
                 # #1853 J5：真异常经本 except 原样上抛呈现；终态业务拒收不再另造失败载荷。
                 print(f"\n{error}")
-                _print_pending_action_failures(
-                    _new_secret_order_failure_payloads(session.db, turn_before, failed_before)
-                )
                 continue
-            _print_pending_action_failures(
-                _new_secret_order_failure_payloads(session.db, turn_before, failed_before)
-            )
             if result is not None:
                 print(report)
                 if getattr(session.state, "ended", False):

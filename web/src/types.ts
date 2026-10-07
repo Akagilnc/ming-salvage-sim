@@ -620,13 +620,6 @@ export type SecretOrder = {
   turn_closed: number | null;
 };
 
-export type PendingActionFailure = {
-  id: number;
-  kind: string;
-  action: string;
-  minister_name?: string;
-  message: string;
-};
 
 /** #505：崩溃后待重试的中断回话（系统层恢复，非内容选项）。 */
 export type ReplyRetry = {

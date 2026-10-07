@@ -3403,14 +3403,9 @@ class GameDB:
 
     def _migrate_next_audience_todos_drop_issue_fk(self) -> None:
         """#1783：next_audience_todos 去 issues FK，允案卷 due 直挂 commitment_ref=0。"""
-        try:
-            fks = self.conn.execute(
-                "PRAGMA foreign_key_list(next_audience_todos)"
-            ).fetchall()
-        except Exception as exc:
-            # 表不存在／PRAGMA 失败：迁移旁路跳过，留真因（#1902 T3）。
-            logger.warning("migrate next_audience_todos FK drop skipped: %s", exc)
-            return
+        fks = self.conn.execute(
+            "PRAGMA foreign_key_list(next_audience_todos)"
+        ).fetchall()
         if not fks:
             return
         self.conn.execute("PRAGMA foreign_keys=OFF")
@@ -15251,38 +15246,6 @@ class GameDB:
                 )
         self._commit_dossier_write(commit, owns_transaction=owns_transaction)
 
-    def merge_execution_note(
-        self, dossier_id: int, fragment: str, *, commit: bool = True,
-    ) -> str:
-        """下游说明片段合并写口（#565；S12/#567 消费方）。
-
-        初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
-        """
-        text = str(fragment or "").strip()
-        if not text:
-            raise ValueError("说明片段不能为空")
-        row = self.get_decree_dossier(dossier_id)
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        existing = str(row.get("execution_note") or "").strip()
-        if text in existing.split("；"):
-            merged = existing
-        elif existing:
-            merged = f"{existing}；{text}"
-        else:
-            merged = text
-        owns = self.owns_transaction() if commit else False
-        if merged != existing:
-            self.conn.execute(
-                """
-                UPDATE decree_dossiers
-                SET execution_note=?, updated_at=CURRENT_TIMESTAMP
-                WHERE id=?
-                """,
-                (merged, int(dossier_id)),
-            )
-            self._commit_dossier_write(commit, owns_transaction=owns)
-        return merged
 
     def apply_dossier_promulgation(
         self, state: GameState, dossier_id: int, decision: str, *,
@@ -18865,33 +18828,6 @@ class GameDB:
         )
         return cur.rowcount
 
-    def list_failed_secret_order_actions(
-        self, minister_name: Optional[str] = None,
-    ) -> List[Dict[str, object]]:
-        """跨回合可读的 failed 密令 pending 行；Web/CLI 呈现共核取数（#1902）。"""
-        sql = (
-            "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
-            "FROM pending_actions WHERE status='failed' AND kind='secret_order'"
-        )
-        params: tuple[object, ...] = ()
-        if minister_name is not None:
-            sql += " AND minister_name=?"
-            params = (str(minister_name),)
-        sql += " ORDER BY turn DESC, id"
-        rows = self.conn.execute(sql, params).fetchall()
-        return [
-            {
-                "id": int(r["id"]),
-                "turn": int(r["turn"]),
-                "kind": r["kind"],
-                "action": r["action"],
-                "target_id": None if r["target_id"] is None else int(r["target_id"]),
-                "minister_name": r["minister_name"],
-                "payload_json": r["payload_json"],
-                "status": r["status"],
-            }
-            for r in rows
-        ]
 
     def discard_failed_secret_order_intents(self) -> int:
         """过回合前丢弃既有 failed secret-order intents（CONTEXT：未处理失败下达在过回合丢弃）。
