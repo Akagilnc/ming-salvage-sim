@@ -14,9 +14,7 @@ from .relations import EMPEROR_NODE
 def _known_names(db: Any, recommender: str) -> set[str]:
     """Return names in the recommender's visible private/public event rosters."""
     names: set[str] = set()
-    conn = getattr(db, "conn", None)
-    if conn is None:
-        return names
+    conn = db.conn
     def add_visible_roster(source: Any, event: Any = None) -> None:
         if source is None:
             return

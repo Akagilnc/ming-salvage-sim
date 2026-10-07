@@ -10,9 +10,9 @@ import time
 from types import SimpleNamespace
 
 import web_app
-from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
 from tests.wait_utils import reset_menu_path_leases, wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
+from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
 
 # 兼容旧调用名：真源在 wait_utils.reset_menu_path_leases。
 _reset_path_leases = reset_menu_path_leases

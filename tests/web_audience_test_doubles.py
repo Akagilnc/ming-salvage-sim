@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Any, Optional
 
-from ming_sim.session import AudienceAdmission, AudienceAdmissionDecision
+from ming_sim.session import AudienceAdmission, AudienceAdmissionDecision, GameSession
 
 
 def allow_hall_admission(
@@ -38,6 +38,18 @@ def allow_hall_admit_audience(character: Any) -> AudienceAdmissionDecision:
     )
 
 
+def _bind_core_close_seams(session: Any) -> None:
+    """#1853：现役入口直调核心收夜接缝；测试轻壳缺绑不得再靠 getattr 回退。"""
+    if getattr(session, "close_night_after_chat_if_needed", None) is None:
+        session.close_night_after_chat_if_needed = MethodType(
+            GameSession.close_night_after_chat_if_needed, session,
+        )
+    if getattr(session, "schedule_close_night_after_chat_if_needed", None) is None:
+        session.schedule_close_night_after_chat_if_needed = MethodType(
+            GameSession.schedule_close_night_after_chat_if_needed, session,
+        )
+
+
 class HallAdmissionSessionMixin:
     """给 class 体可改的假 Session 混入统一放行入口（实现只此一处）。"""
 
@@ -45,11 +57,22 @@ class HallAdmissionSessionMixin:
     # #1716：收夜入口走 admit_audience（不 consume）；壳须同混入。
     admit_audience = staticmethod(allow_hall_admit_audience)
 
+    def close_night_after_chat_if_needed(self, court_action, *, write_gate=None, barrier_ticket=None):
+        return GameSession.close_night_after_chat_if_needed(
+            self, court_action, write_gate=write_gate, barrier_ticket=barrier_ticket,
+        )
+
+    def schedule_close_night_after_chat_if_needed(self, court_action, *, write_gate=None):
+        return GameSession.schedule_close_night_after_chat_if_needed(
+            self, court_action, write_gate=write_gate,
+        )
+
 
 def install_hall_admission(session: Any) -> Any:
     """给无法改 class 体的轻壳一次赋值共享函数。"""
     session.consume_audience_admission = allow_hall_admission
     session.admit_audience = allow_hall_admit_audience
+    _bind_core_close_seams(session)
     return session
 
 

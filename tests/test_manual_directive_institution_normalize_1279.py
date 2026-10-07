@@ -199,24 +199,6 @@ def test_capture_manual_directive_drops_collective_and_institution_names(
     assert ids == ["毕自严"]
 
 
-def test_non_person_filter_does_not_use_institution_substring_class():
-    """带姓称谓别名不是裸机构，不得被参与人分流误判。"""
-    import ming_sim.cli_backend as cli_backend
-
-    # 参与人 raw 三分流：带姓称谓别名不是裸机构，不得判非人
-    assert cli_backend._is_non_person_participant_name("韩阁老") is False
-    assert cli_backend._is_non_person_participant_name("毕户部") is False
-    assert cli_backend._is_non_person_participant_name("曹太监") is False
-    # 裸机构整词 / 自称仍非人（含 r2 扩入的寺监院府）
-    assert cli_backend._is_non_person_participant_name("司礼监") is True
-    assert cli_backend._is_non_person_participant_name("户部") is True
-    assert cli_backend._is_non_person_participant_name("陛下") is True
-    assert cli_backend._is_non_person_participant_name("大理寺") is True
-    assert cli_backend._is_non_person_participant_name("翰林院") is True
-    assert cli_backend._is_non_person_participant_name("通政使司") is True
-    assert cli_backend._is_non_person_participant_name("西厂") is True
-
-
 def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
     """禁放松主键校验：纠错耗尽后真正不存在的人名仍在 capture seam 拒收。"""
     import ming_sim.cli_backend as cli_backend

@@ -313,7 +313,7 @@
     },
     {
       "name": "张缙彦",
-      "office": "清涧知县",
+      "office": "",
       "office_type": "地方",
       "faction": "皇党",
       "aliases": [
@@ -343,7 +343,8 @@
       "status": "offstage",
       "debut_year": 1631,
       "debut_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "status_reason": "清涧知县"
     },
     {
       "name": "杨嗣昌",
@@ -689,7 +690,7 @@
     },
     {
       "name": "李之藻",
-      "office": "历局修历起复",
+      "office": "",
       "office_type": "礼部",
       "faction": "西学",
       "aliases": [
@@ -720,7 +721,8 @@
       "debut_year": 1629,
       "debut_month": 0,
       "location": "beizhili",
-      "power_id": "ming"
+      "power_id": "ming",
+      "status_reason": "历局修历起复"
     },
     {
       "name": "徐应秋",
@@ -757,7 +759,7 @@
     },
     {
       "name": "汤若望",
-      "office": "钦天监历局修历",
+      "office": "",
       "office_type": "礼部",
       "faction": "西学",
       "aliases": [
@@ -788,7 +790,8 @@
       "debut_year": 1630,
       "debut_month": 0,
       "location": "beizhili",
-      "power_id": "ming"
+      "power_id": "ming",
+      "status_reason": "钦天监历局修历"
     },
     {
       "name": "袁可立",
@@ -1521,7 +1524,7 @@
     },
     {
       "name": "胡廷宴",
-      "office": "原三边总督，革职候勘",
+      "office": "",
       "office_type": "督抚",
       "faction": "中立",
       "aliases": [
@@ -2165,7 +2168,7 @@
     },
     {
       "name": "吴三桂",
-      "office": "辽东总兵吴襄子，武生",
+      "office": "",
       "office_type": "边镇",
       "faction": "军队",
       "aliases": [
@@ -2196,11 +2199,12 @@
       "seed_guilt": {
         "crime": "无(引清入关是十余年后事,坚决不预判)",
         "severity": "无"
-      }
+      },
+      "status_reason": "辽东总兵吴襄子，武生"
     },
     {
       "name": "左良玉",
-      "office": "辽东军中下级武弁",
+      "office": "",
       "office_type": "边镇",
       "faction": "军队",
       "aliases": [
@@ -2231,7 +2235,8 @@
       "seed_guilt": {
         "crime": "无(后期拥兵自重、剽掠地方军阀化是后事,存疑不预坐)",
         "severity": "无"
-      }
+      },
+      "status_reason": "辽东军中下级武弁"
     },
     {
       "name": "高迎祥",
@@ -2391,7 +2396,7 @@
     },
     {
       "name": "陈新甲",
-      "office": "兵部郎中（候用）",
+      "office": "",
       "office_type": "兵部",
       "faction": "军队",
       "aliases": [
@@ -2421,11 +2426,12 @@
       "seed_guilt": {
         "crime": "无(后任兵书因泄议和事被诛是后事)",
         "severity": "无"
-      }
+      },
+      "status_reason": "兵部郎中（候用）"
     },
     {
       "name": "傅宗龙",
-      "office": "兵部边务（候用）",
+      "office": "",
       "office_type": "边镇",
       "faction": "军队",
       "aliases": [
@@ -2456,7 +2462,8 @@
       "seed_guilt": {
         "crime": "无",
         "severity": "无"
-      }
+      },
+      "status_reason": "兵部边务（候用）"
     },
     {
       "name": "丁启睿",
@@ -3587,7 +3594,7 @@
     },
     {
       "name": "韩一良",
-      "office": "户科给事中",
+      "office": "",
       "office_type": "六科",
       "faction": "中立",
       "aliases": [
@@ -3614,7 +3621,8 @@
       "debut_month": 0,
       "power_id": "ming",
       "location": "beizhili",
-      "intrigue": 24
+      "intrigue": 24,
+      "status_reason": "户科给事中"
     },
     {
       "name": "朱术桂",

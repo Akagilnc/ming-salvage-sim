@@ -136,7 +136,7 @@ def _decree_ref_is_secret(db: Any, decree_ref: str) -> bool:
     if not str(decree_ref).startswith(prefix):
         return False
     raw = str(decree_ref)[len(prefix):].split(":", 1)[0]
-    if not raw.isdigit() or not hasattr(db, "conn"):
+    if not raw.isdigit():
         return False
     row = db.dossiers.pending_kind_row(int(raw))
     return row is not None and str(row["kind"] or "") == "secret_order"
@@ -183,16 +183,14 @@ def _month_fact_materials(
         for row in ReignStateStore(db.conn).read_month_ledger((turn,)):
             origin = str(row["origin_ref"] or "")
             if not include_secret_sources and (
-                is_secret_order_origin(origin)
-                or _origin_is_secret_dossier(origin, secret_dossiers)
+                _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
             ):
                 continue
-            landed.append({
-                "account": row["account"],
-                "delta": int(row["delta"]),
-                "category": row["category"],
+            rejections.append({
+                "section": row["section"],
+                "item": item,
                 "reason": row["reason"],
-                "origin_ref": origin,
+                "category": row["category"],
             })
     rejections: List[Dict[str, Any]] = []
     if hasattr(db, "conn"):
@@ -688,12 +686,9 @@ def _abort_month_call(
     turn = int(state.turn)
     # 事务已回滚时，失败记录只叠在已提交链上。调用方链在 alongside 里改过的
     # 内存相位（world_committed 等）不随失败写回。
-    if (
-        kind == "code_exception"
-        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
-    ):
+    if kind == "code_exception" and db.owns_transaction():
         from ming_sim.decree import reload_state_from_db
-        reload_state_from_db(db, state, content=getattr(db, "content", None))
+        reload_state_from_db(db, state, content=db.content)
     committed = _load_chain(db, turn)
     escape_armed = False
     if kind == "model_exhausted" and step in _TRANSLATE_ESCAPE_STEPS:
@@ -1172,7 +1167,7 @@ def build_secret_orders_supply_feed(
 ) -> Dict[str, Any]:
     """整月密报供料：沿邸报作者本月材料读口，但不滤密令来源；另附密令对象与盘面。
 
-    不拼装「已生效效果」清单，也不另造逐段实际结果账本。
+    不拼装「已生效效果」清单，也不另造逐段实际结果账本；专用逐路实况账本已退役（#1900 J18）。
     """
     from ming_sim.covert_progress import _is_issuance_turn
     from ming_sim.materials import _world_board_text
@@ -1186,7 +1181,10 @@ def build_secret_orders_supply_feed(
     ])
     materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
     return {
-        "instruction": "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。",
+        "instruction": (
+            "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。"
+            "逐路汇总执行状态时据案卷关联与核账事实读，别拿整条密令的成败反推。"
+        ),
         "turn": turn,
         "eligible_dossiers": eligible,
         "active_secret_orders": active_orders,
@@ -1406,9 +1404,7 @@ def _run_month_drift(
     collector = RejectionCollector()
     with atomic(db):
         db.record_monthly_supervision_presence(turn, commit=False)
-        db.record_monthly_grant_reconciliations(
-            turn, [], rejection_collector=collector, source=source,
-        )
+        db.record_monthly_grant_reconciliations(turn)
         db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         retire_unsettled_summons_for_inactive(db)
         # #651：漂移只承接不依赖本段 applied 的持久态（已决「禁摊派」欠饷是否再开口）。

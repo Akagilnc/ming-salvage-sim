@@ -82,9 +82,7 @@ def test_liaodong_buildings_enter_monthly_period_flows(game):
     for r in rows:
         metric = str(r["output_metric"] or "")
         out_base = int(r["output_amount"] or 0)
-        cond = max(0, min(100, int(r["condition"] or 0)))
-        produced = round(out_base * cond / 100) if metric and out_base else 0
-        if produced <= 0 or metric not in ("国库", "内库", "民心", "皇威"):
+        if out_base <= 0 or metric not in ("国库", "内库", "民心", "皇威"):
             continue
         hit = any(
             f.get("category") == "建筑产出" and f.get("building") == r["name"]

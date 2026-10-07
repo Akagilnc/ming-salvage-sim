@@ -6,7 +6,6 @@ from tests.test_due_review_621 import _settle_empty_month as _player_month
 from ming_sim.issues import (
     apply_score_extraction,
     commitment_progress_payload,
-    show_active_issues,
 )
 from ming_sim.situation_drift import apply_situation_monthly_drift
 
@@ -171,49 +170,6 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
     assert payload["commitment_progress"]["months_elapsed"] == 1
     assert payload["commitment_progress"]["remaining_to_goal"] == 19
 
-
-def test_legacy_character_resolve_condition_commitment_settles_when_threshold_reached(game):
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
-    db.conn.execute("UPDATE characters SET loyalty=64 WHERE name='毛文龙'")
-    content.characters["毛文龙"].loyalty = 64
-    db.conn.commit()
-
-    issue_id = db.insert_issue(
-        state,
-        kind="initiative",
-        title="旧档安抚毛文龙·持续承诺",
-        origin_kind="decree",
-        origin_ref="decree:turn-1:legacy-appease-mao",
-        bar_value=0,
-        inertia=0,
-        stage_text="遣臣常驻皮岛安抚毛文龙，逐月消解其观望。",
-        resolve_condition="character.毛文龙.loyalty >= 65",
-        ongoing_effects={
-            "人物变更": [
-                {
-                    "name": "毛文龙",
-                    "动作": "评定",
-                    "loyalty": 2,
-                    "reason": "奉旨持续安抚，观望稍解",
-                }
-            ]
-        },
-        cancellable="decree",
-    )
-
-    _advance_player_month(db, state, content)
-
-    assert _character_loyalty(db, "毛文龙") == 66
-    row = _issue_row(db, issue_id)
-    assert row["status"] == "resolved"
-    assert row["bar_value"] == 100
-    advances = db.conn.execute(
-        "SELECT trigger_kind FROM issue_advances WHERE issue_id=? ORDER BY id",
-        (issue_id,),
-    ).fetchall()
-    assert [row["trigger_kind"] for row in advances] == ["ongoing", "commitment_resolve"]
 
 
 def test_faction_class_commitment_ongoing_applies_monthly_when_counted(game):
@@ -529,7 +485,7 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     assert payloads[-1]["commitment_progress"]["remaining_arrears"] == 0
 
 
-def test_commitment_progress_contexts_are_structured(game, capsys):
+def test_commitment_progress_contexts_are_structured(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
@@ -556,12 +512,10 @@ def test_commitment_progress_contexts_are_structured(game, capsys):
 
     _advance_player_month(db, state, content)
 
+    # 外部契约：承诺进度结构化字段；不锁 CLI 回显措辞，也不用恒真占位键。
     progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
     assert progress is not None
     assert progress["months_elapsed"] == 1
-    show_active_issues(db)
-    output = capsys.readouterr().out
-    assert "直到补齐" in output
 
 
 
@@ -1445,7 +1399,8 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     row = _issue_row(db, issue_id)
     assert row["status"] == "dropped"
     assert row["closed_turn"] == state.turn
-    assert "圣裁处理" in row["resolution_summary"]
+    # 原文无损：resolution_summary 承接 close narrative，不锁诊断子串。
+    assert row["resolution_summary"] == "皇帝已复试孙承宗，此承诺已由圣裁处理。"
     assert int(state.metrics["民心"]) == popular_support_at_ack
     advances = db.conn.execute(
         "SELECT trigger_kind, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id",

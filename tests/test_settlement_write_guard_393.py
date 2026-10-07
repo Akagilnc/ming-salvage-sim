@@ -20,7 +20,6 @@ from ming_sim.models import TurnPhase, FRONT_HALF_DONE_PHASES
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
 
-
 class _RecordingDB:
     def __init__(self):
         self.writes: list[str] = []
@@ -61,6 +60,13 @@ class _RecordingDB:
     def set_character_status(self, *a, **k):
         self.writes.append("set_character_status")
 
+    def admin_upsert(self, *a, **k):
+        self.writes.append("admin_upsert")
+        return {"key": "x", "value": "1"}
+
+    def admin_delete(self, *a, **k):
+        self.writes.append("admin_delete")
+        return 1
 
 class _FakeGame:
     def __init__(self, turn_phase: str):
@@ -120,10 +126,8 @@ class _FakeGame:
         self.db.writes.append("mark_memorials_read")
         return {"memorials": [], "unread_memorial_count": 0}
 
-
 def _invoke(coro):
     return asyncio.run(coro)
-
 
 # #1849 / ADR 0152：独立手拟新增口退役后，drafts 唯一仍会跑拟旨抽取的 Web 写端点是
 # PATCH /api/directives/{id}（改稿）；create 用例随入口一并删除。
@@ -160,7 +164,6 @@ def test_directive_capture_runs_outside_write_gate(monkeypatch):
     assert captured_context[0]["existing_mode"] == "midzhi"
     assert game.db.writes == ["unrelated-write"]
 
-
 def test_directive_capture_result_is_rejected_after_turn_changes(monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
@@ -188,7 +191,6 @@ def test_directive_capture_result_is_rejected_after_turn_changes(monkeypatch):
     assert exc.value.status_code == 409
     assert calls == []
 
-
 # 端点（无 file 参数的）→ 触发可调用。守门命中即 409、db.writes 为空。
 def _endpoint_cases():
     return [
@@ -214,7 +216,6 @@ def _endpoint_cases():
         ("memorials_read", lambda: web_app.api_memorials_read({"keys": ["progress:1"]})),
     ]
 
-
 @pytest.mark.parametrize("phase", [TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value])
 @pytest.mark.parametrize("name,call", _endpoint_cases(), ids=lambda c: c if isinstance(c, str) else "")
 def test_direct_db_write_refused_by_phase(monkeypatch, phase, name, call):
@@ -225,7 +226,6 @@ def test_direct_db_write_refused_by_phase(monkeypatch, phase, name, call):
         _invoke(call())
     assert ei.value.status_code == 409
     assert game.db.writes == [], f"{name} wrote DB during settlement: {game.db.writes}"
-
 
 @pytest.mark.parametrize("name,call", _endpoint_cases(), ids=lambda c: c if isinstance(c, str) else "")
 def test_direct_db_write_refused_when_gate_held(monkeypatch, name, call):
@@ -295,7 +295,6 @@ def test_advance_without_edict_refused_by_phase(monkeypatch):
     assert ei.value.status_code == 409
     assert game.db.writes == []
 
-
 def test_advance_without_edict_refused_when_gate_held(monkeypatch):
     """相位尚未落定但结算 worker 已持锁时，退朝端点不得阻塞事件循环等锁。"""
     game = _FakeGame(TurnPhase.SUMMONING.value)
@@ -330,7 +329,6 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
     finally:
         game._write_gate.release()
         worker.join()
-
 
 def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
     """#1353 r12：删预探后，真实短持接缝被占 → 409 不挂死。
@@ -391,7 +389,6 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
         if game._write_gate.locked():
             game._write_gate.release()
         worker.join()
-
 
 def test_direct_db_write_succeeds_when_free(monkeypatch):
     """守门不破坏正常流：相位正常 + 锁空 → 直写端点照常落库，且事后锁已释放。"""

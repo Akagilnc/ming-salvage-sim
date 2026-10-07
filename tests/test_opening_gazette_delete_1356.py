@@ -1,10 +1,9 @@
 """#1356/#1292：删除固定开局邸报（P7）。
 
-钉测只保四个票面行为：
+钉测只保票面行为：
 1. t0 previous_summary 严格空
-2. 旧 seed 精确清且真实报保留（含三短语反例：真报含短语不被删）
-3. 空壳可关闭（前端 vitest）
-4. 首月真报出现
+2. 空壳可关闭（前端 vitest）
+3. 首月真报出现
 """
 
 from __future__ import annotations
@@ -61,7 +60,6 @@ def test_new_game_t0_previous_summary_strictly_empty(game):
     assert summary == ""
     # 固定空态文案不得回流
 
-
 def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
     """r5：t0 无上月报 → previous_reign_period_label 与空 summary 同口径（禁九月残留）。"""
     db, state, _content = game
@@ -71,7 +69,7 @@ def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
     label = db.previous_turn_reign_period_label(state)
     assert label == ""
 
-
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_state_payload_t0_previous_summary_empty(game):
     """Web state_payload 开局 previous_summary 严格空。"""
     import web_app

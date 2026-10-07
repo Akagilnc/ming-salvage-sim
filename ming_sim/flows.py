@@ -36,7 +36,7 @@ from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.token_stats import tlog
 
 
-# ── 省级财政（substrate hub only）────────────────────────────────────────
+# ── 固定财政 / substrate hub ──────────────────────────────────────────────────
 
 _CENTRAL_TAICANG_HUMAN_LOSS_RATE = "central_taicang_human_loss_rate"
 _CENTRAL_TAICANG_SINK_LOSS_RATE = "central_taicang_sink_loss_rate"
@@ -54,7 +54,7 @@ def raise_fixed_period_flow_abort_if_needed(
     """Convert fixed-flow marker aborts after any surrounding transaction has rolled back."""
     if not isinstance(exc, _SubstrateHubFixedFlowAbort):
         return
-    if getattr(db.conn, "_commit_suspended", False):
+    if not db.owns_transaction():
         return
     pack_path = write_error_pack(db, state, exc=exc, extracted=None, resolve_ctx=None)
     raise SettlementAbort(
@@ -88,8 +88,8 @@ def _as_settle_param_nonnegative_float(label: str, value: object) -> float:
     return amount
 
 
-def _substrate_hub_salt_commerce_income_split(db: GameDB) -> Tuple[float, float]:
-    """Salt and commerce taxes stay as central side-channel income under cutover."""
+def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True) -> Tuple[float, float]:
+    """Salt and commerce taxes stay as central side-channel income under hub."""
     salt_total = 0.0
     commerce_total = 0.0
     rows = RegionStore(db.conn).read_province_army_pay_container_total()
@@ -231,9 +231,10 @@ def _substrate_hub_budget_income_lines(
 
 # 固定月度收支科目目录现走数据驱动：db.iter_budget_items() 从 fiscal_config 读
 # budget_role=fixed 的 base 项（account/direction/display）。加新税源只改 content/fiscal_config.json。
-# 税收走 substrate hub 起运/盐商；军饷预算只列京运补与中央份额拟拨，
-# 不预演结算分配或损耗。compute_budget_lines 是预算展示同源，flows 落账 /
-# UI budget_payload / db.treasury_budget_summary 三处共用。
+# 省级起运/盐商/太仓亏空等动态收入走 substrate hub；皇庄走 fiscal_config 基准；
+# 军饷预算只列京运补与中央份额拟拨，不预演结算分配或损耗。
+# compute_budget_lines 是预算展示同源，flows 落账 / UI budget_payload /
+# db.treasury_budget_summary 三处共用。
 
 
 def compute_budget_lines(
@@ -242,7 +243,7 @@ def compute_budget_lines(
     """唯一定额预算源。返回 {"国库":{"income":[行],"expense":[行]},"内库":{...}}；
     每行至少含 {name,amount,note}，可另带 budget_key 等工程元数据（军饷行固定 budget_key=army_pay，
     供落账/摘要按 key 认科目；消费方不得依赖 name 措辞）。
-    税收＝substrate hub 起运/盐商投影；
+    省级起运/盐商/太仓＝substrate hub 投影；皇庄＝fiscal_config 基准；
     军饷预算分列京运补与中央份额拟拨，不预演分配或损耗；
     建筑＝按 condition 折产/维护；
     其余＝fiscal_config base×rate（全月值）。三处调用方据此各取所需，不重算。"""
@@ -285,7 +286,7 @@ def compute_budget_lines(
     # 皇庄＝fiscal_config 基准（开局校准月额）。
     huang_base = round(int(cfg.get("皇庄_base", 20)) * cfg.get("皇庄_rate", 100) / 100)
     budget["内库"]["income"].append(
-        {"name": "皇庄", "amount": int(huang_base + nk_huang), "note": "皇庄月地租（基准+没收藩田增量）"}
+        {"name": "皇庄", "amount": int(huang_base), "note": "皇庄月地租（fiscal_config 基准）"}
     )
     for item in db.iter_budget_items():
         base_key = str(item["key"])
@@ -807,7 +808,7 @@ def _central_dues_with_haircut(
 
 def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, object]]:
     """月度财政 tick：固定收支（compute_budget_lines 定额）+ 军饷逐军 + 建筑逐项落账，LLM 推演前完成。"""
-    if not getattr(db.conn, "_commit_suspended", False):
+    if db.owns_transaction():
         from ming_sim.applier import atomic
         metrics_before = dict(state.metrics)
         try:
@@ -939,6 +940,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
 
     # ── 固定收支落账（税/皇庄/宗室/官俸/织造…全走唯一定额源 compute_budget_lines）──
     # 军饷与建筑另有逐项落账逻辑（arrears/condition），故下面跳过这两类，仅落其余定额项。
+    # hub 收入已由上方 outbound/province tick 落账，预算行带 internal=substrate_hub 的跳过。
     def _apply_budget_lines(*, skip_substrate_hub_lines: bool = False) -> None:
         budget = compute_budget_lines(
             db, state, project_substrate_hub=not skip_substrate_hub_lines
@@ -1026,7 +1028,7 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
     # apply_region_deltas / apply_army_deltas 在每笔增量落账时按维度净 pct 放大/缩小。
     # 因此上面的固定收支（田赋/军饷/建筑产出）已自动被修正，无需独立 tick，否则会重复计。
 
-    # ── 省级财政基座（settle_tick）hub 推进 ──
+    # ── #66 省级财政基座（settle_tick）推进 + hub 入国库 ──
     try:
         remittance_total = _advance_province_fiscal_substrate(
             db,
@@ -1131,10 +1133,11 @@ def _advance_province_fiscal_substrate(
     state: GameState,
     jingyun_paid_gross_by_region: Optional[Dict[str, float]] = None,
 ) -> float:
-    """月末固定财政相位推进省级 settle_tick 基座（substrate hub）。
+    """#66/#266：月末固定财政相位推进省级 settle_tick 基座。
 
-    推进基座末态并返回本 tick 起运到京合计，供调用方统一入国库。
-    基座缺失或 settle_tick 契约失败 → 月级 fail-loud 中止（ADR 0021 决定 9）。
+    推进基座末态并返回本 tick 起运到京合计，供调用方统一入 hub/国库。
+    基座缺失或 settle_tick 契约失败 → fail-loud 中止固定财政（#1843 唯一 hub 路径）。
+    settle_tick 自身契约外的代码异常仍上抛（ADR 0005）。
     """
     owns_transaction = db.owns_transaction()
     advanced = False

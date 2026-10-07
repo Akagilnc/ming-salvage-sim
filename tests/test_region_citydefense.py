@@ -25,7 +25,6 @@ def test_city_level_tiers_by_history(read_game):
     assert lv("dongjiang_area") == 0      # 皮岛孤悬
     assert lv("mongol_chahar") == 0       # 游牧
 
-
 def test_region_cannon_cap_by_city_level(game):
     """城防炮上限 = city_level×8：北直隶(5)封顶 40，陕西(2)封顶 16。"""
     db, state, _ = game
@@ -33,7 +32,6 @@ def test_region_cannon_cap_by_city_level(game):
     assert db.conn.execute("SELECT cannon FROM regions WHERE id='beizhili'").fetchone()[0] == 40
     db.apply_region_cannon(state, "shaanxi", 999)
     assert db.conn.execute("SELECT cannon FROM regions WHERE id='shaanxi'").fetchone()[0] == 16
-
 
 def test_region_cannon_level0_caps_zero(game):
     """level 0 的地方(游牧/孤岛)城防炮上限 0。"""

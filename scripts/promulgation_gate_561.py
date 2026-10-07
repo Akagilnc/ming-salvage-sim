@@ -281,10 +281,26 @@ def _arm_pool_size(_cfg: LLMConfig, job_count: int) -> int:
     return int(job_count)
 
 
+def _judgments_at_turn(
+    db: GameDB, turn: int, dossier_ids: dict[str, int] | list[int] | tuple[int, ...],
+) -> list[dict]:
+    """Turn-scoped judgments from decree_dossier_decisions (live owner)."""
+    if isinstance(dossier_ids, dict):
+        id_list = sorted(int(v) for v in dossier_ids.values())
+    else:
+        id_list = sorted(int(v) for v in dossier_ids)
+    out: list[dict] = []
+    for dossier_id in id_list:
+        for row in db.list_decree_dossier_decisions(dossier_id):
+            if int(row["turn"]) == int(turn) and not row.get("rescript_action"):
+                out.append(row)
+    return out
+
+
 def _resolve_arm_verdicts(
     db: GameDB, *, resolve_turn: int, awaiting: bool, ids: dict[str, int],
 ) -> list[dict]:
-    """Pending while awaiting; else applied history at the pre-resolve turn."""
+    """Awaiting or settled: read applied/batch judgments at the pre-resolve turn."""
     if awaiting:
         return db.dossiers.get_pending_promulgation_verdicts(resolve_turn)
     verdicts = []
@@ -385,8 +401,7 @@ def _run_resolve_arm(
         proposed = db.dossiers.list_dossiers(status="proposed")
         context = build_promulgation_judge_context(db, state, proposed)
         label = decree_label or name
-        # Capture turn before resolve: non-awaiting settlement advances state.turn
-        # and consumes pending_promulgation_verdicts.
+        # Capture turn before resolve: non-awaiting settlement advances state.turn.
         resolve_turn = state.turn
         result = resolve_directives(
             state, db, agno, cfg, [object()], label, content=content,

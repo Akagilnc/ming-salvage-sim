@@ -142,9 +142,10 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
         db.apply_dossier_promulgation(
             state, dossier_id, "promulgated", content=content,
         )
-    except RuntimeError:
-        # ADR0005 / #1889 R5：未知代码故障沿既有失败边界上抛，不得洗成产品拒收
-        pass
+    except RuntimeError as exc:
+        # Injected code fault must surface as RuntimeError through the real
+        # promulgation entry (ADR 0005 / #1853 / #1889 R5); not washed to product reject.
+        assert exc is not None
     else:
         raise AssertionError("dossier materialization failure did not propagate")
 

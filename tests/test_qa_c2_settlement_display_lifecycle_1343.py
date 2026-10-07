@@ -10,10 +10,11 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
 import threading
-from contextlib import contextmanager
 from types import SimpleNamespace
 
 import web_app

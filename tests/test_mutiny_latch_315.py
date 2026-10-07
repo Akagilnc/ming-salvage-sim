@@ -28,10 +28,9 @@ def _setup(
     is_tusi: int = 0,
     self_funded_pay: int = 0,
 ):
-    _configure(db)
     db.conn.execute("UPDATE armies SET manpower=0")
     if is_tusi or self_funded_pay:
-        # 现役 cutover 守恒：豁免军份额/欠饷须全 0；本案只验 latch 不被 tick 改写。
+        # 现役 hub 守恒：豁免军份额/欠饷须全 0；本案只验 latch 不被 tick 改写。
         db.conn.execute(
             """UPDATE armies SET owner_power='ming', is_tusi=?, self_funded_pay=?,
                manpower=10000, salary_rate=1, loyalty=?, is_mutinied=?,

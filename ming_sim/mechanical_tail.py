@@ -359,6 +359,7 @@ def schedule_mechanical_tail_after_advance(
     try:
         get_session_write_queue(session)
     except Exception:
+        logger.exception("schedule_mechanical_tail: write queue unavailable")
         return
     _submit_tail(
         session,
@@ -438,6 +439,7 @@ def ensure_mechanical_tails(session: Any) -> None:
     try:
         get_session_write_queue(session)
     except Exception:
+        logger.exception("ensure_mechanical_tails: write queue unavailable")
         return
     current = int(getattr(session.state, "turn", 0) or 0)
     pending_turns = _pending_mechanical_tails(db, current_turn=current)

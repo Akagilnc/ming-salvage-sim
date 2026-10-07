@@ -91,7 +91,6 @@ def _cli_session(db, state, content):
             answer="臣有本奏。", proposed_directive=None, appointed_minister="",
             registered_minister="", displaced_minister="", court_action="",
             next_minister="", secret_order_id=0, pending_action_id=0,
-            pending_action_failures=[],
         )
 
     def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
@@ -103,6 +102,9 @@ def _cli_session(db, state, content):
         chat=chat, scene_chat=scene_chat,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
+        # #1853：入口直调核心 schedule；轻壳缺绑不得靠 getattr 回退。
+        schedule_close_night_after_chat_if_needed=lambda *_a, **_k: None,
+        close_night_after_chat_if_needed=lambda *_a, **_k: None,
     )
 
 
@@ -151,9 +153,7 @@ def test_court_break_writes_no_exit_ledger(game, monkeypatch):
         assert open_n is not None
         nid = int(open_n["id"])
         closed_nid["id"] = nid
-        an._set_night_fields(
-            db, nid, status=an.NIGHT_STATUS_CLOSED, closed_at="test",
-        )
+        an.close_night(db, state, night_id=nid, content=content)
 
     session.close_night_after_chat_if_needed = _close_ok
     session.schedule_close_night_after_chat_if_needed = _close_ok

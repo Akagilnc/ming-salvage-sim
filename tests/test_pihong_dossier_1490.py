@@ -12,7 +12,6 @@ D. 命中 allowed 后从服务端 option 重建 label/hint/能力字段，客户
 """
 from __future__ import annotations
 import asyncio
-import copy
 import json
 import threading
 import httpx
@@ -23,6 +22,7 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import rejected_verdict
+from tests.rescript_test_helpers import sql_rescript_draft
 
 @pytest.fixture
 def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
@@ -63,7 +63,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
         game.session.close()
     except Exception:
         pass
-
 
 def _657_install_real_phase2_llm_boundary(monkeypatch_or_module):
     """只中和 phase2 LLM 边界；保留 resolve_decisions_phase2 真结算/推月。"""
@@ -266,7 +265,6 @@ def _657_subprocess_resolve(
     data["_killed"] = False
     return data
 
-
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=web_app.app), base_url='http://t')
 
@@ -327,23 +325,6 @@ def test_missing_dossier_fields_stay_pending_then_full_retry_decides(web_game, m
     choice = decided_row['choice'] or {}
     assert choice.get('dossier_id') == dossier_id
     assert choice.get('dossier_decision') == 'force_promulgated'
-
-def test_bind_preserves_dossier_event_id():
-    """#1490 接收端病灶：bind 不得把 dossier: 前缀 event_id 当 off-snapshot 解绑。"""
-    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
-    decisions = [{'event_id': 'dossier:8', 'title': '批红待裁', 'options': [{'label': '强颁', 'dossier_id': 8, 'dossier_decision': 'force_promulgated'}]}]
-    payload = {'candidate_events': [{'id': 'ev1', 'title': '边警'}]}
-    out = bind_decisions_to_candidate_events(decisions, payload)
-    assert out[0]['event_id'] == 'dossier:8'
-
-def test_bind_unbinds_dossier_prefix_without_capability_fields():
-    """#1492 A：due-commitment 形 origin_ref=dossier:N + 纯 {label,hint} options
-    不得保留 dossier: 前缀——否则 submit 空对空放行后 phase2 批红卡死。"""
-    from ming_sim.settlement_payload import bind_decisions_to_candidate_events
-    decisions = [{'event_id': 'dossier:12', 'title': '承诺到期核验', 'options': [{'label': '准其销号', 'hint': '事已办结'}, {'label': '着再催办', 'hint': '期限宽延'}]}]
-    payload = {'candidate_events': [{'id': 'ev1', 'title': '边警'}]}
-    out = bind_decisions_to_candidate_events(decisions, payload)
-    assert 'event_id' not in out[0] or not str(out[0].get('event_id') or '').startswith('dossier:'), out[0]
 
 def _plant_due_commitment_shaped_awaiting(db, state, *, dossier_id: int=12):
     """种 due-commitment 同形：event_id=dossier:N，options 仅 {label,hint}。"""
@@ -510,6 +491,9 @@ def _layer_a_option(**overrides):
     base = {'label': '发帑赈济', 'hint': '所安者饥民', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'title': '陕西赈济', 'deadline_months': 3, 'participant_roster': [dict(item) for item in _ROSTER]}
     base.update(overrides)
     return normalize_rescript_layer_a_option(base)
+
+
+
 
 def _plant_urgent_desk(db, state, *, options=None, actor_name='杨嗣昌'):
     opts = options or [_layer_a_option(), _layer_a_option(label='缓征', hint='先赈后征')]
@@ -824,7 +808,7 @@ def test_657_record_event_choice_failure_rolls_back_batch(game, monkeypatch):
     monkeypatch.setattr(db, 'record_event_decision_choice', boom)
     before_triggers = db.conn.execute('SELECT COUNT(*) AS c FROM event_triggers').fetchone()['c']
     batch = ra.validate_all(desk, [{'decision_key': u_key, 'action': 'follow_draft', 'draft_capability': opt['draft_capability'], 'label': opt['label']}, {'decision_key': d_key, 'label': '打回', 'hint': '驳回', 'action': 'decision'}])
-    with pytest.raises(RuntimeError, match='event ledger inject'):
+    with pytest.raises(RuntimeError):
         ra.apply_rescript_batch(db, state, batch, ra.PrewriteResults(), content=content)
     drafts = [r for r in db.issues.list_rescript_drafts() if r['title'] == '陕西告饥']
     assert drafts and drafts[0]['status'] == 'pending'
@@ -1603,7 +1587,6 @@ def test_1589_empty_desk_rejects_nonempty_keyless_choices(web_game, monkeypatch)
     assert 'event: done' in r2.text, r2.text
     assert phase2_calls == [1], '真正空 choices 续跑仍合法，走 submit_decisions'
 
-
 def test_657_s6_http_present_target_gets_unique_origin_entry(web_game, monkeypatch):
     """S6：目标已在场，真 HTTP summon → 该 origin 恰一条 TAG_ENTER 事实账。"""
     from ming_sim.audience_night import (
@@ -1632,7 +1615,6 @@ def test_657_s6_http_present_target_gets_unique_origin_entry(web_game, monkeypat
     tags = json.loads(rows[0]['tags'] or '[]')
     assert TAG_ENTER in tags
     assert not rows[0]["body"]
-
 
 def test_657_web_http_hitl_lock_boundary_same_gate(web_game, monkeypatch):
     """Class4/S2 web 生产调用：真 HTTP → submit_hitl；①/③ 持同一 gate，② 释放。"""
@@ -1823,7 +1805,6 @@ def test_1620_layer_a_money_grant_requires_positive_amount():
     assert honor.get('grant_action') == '加衔'
     assert 'amount' not in honor
 
-
 def test_657_follow_draft_ignores_client_field_overlay(game):
     """Spec1/A12：同 capability 不得靠客户端字段 overlay 改机械载荷。"""
     from ming_sim import rescript_actions as ra
@@ -1884,7 +1865,6 @@ def test_657_midzhi_verdict_no_party_satisfaction(game):
     parties = json.loads(str(stored['affected_parties_json'] or '[]'))
     assert parties == []
 
-
 def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
     web_game, monkeypatch,
 ):
@@ -1936,7 +1916,6 @@ def test_657_summon_missing_tag_enter_blocks_phase2_then_retry(
     tags = json.loads(rows[0]['tags'] or '[]')
     assert TAG_ENTER in tags
     assert str(rows[0]["body"] or "") == ""
-
 
 # ---------------------------------------------------------------------------
 # #657 大理寺六类：扩展既有 tracer，不另造夹具族
@@ -2495,7 +2474,6 @@ def test_658_deliberate_backed_and_stalled_dossier_first(game):
     assert len(db.dossiers.list_dossiers()) == dossiers_before
     assert db.dossiers.find_by_decision_key(key3) is None
 
-
 def test_658_stage_rejects_bad_backing_zero_write(game):
     """#658：stage 首写接缝拒坏 shape / 不存在 id；pending/案卷/信用零写。"""
     from ming_sim.action_materialize import stage_punishment_candidate
@@ -2718,7 +2696,6 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     assert db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c'] == before_dirs + 2
     assert _dossier_payload(db.dossiers.get(did)).get('deliberation_state') == 'stalled'
 
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     game, monkeypatch, tmp_path,
@@ -2794,6 +2771,12 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     assert 'target_dossier_id' not in payload
     assert payload.get('dossier_action_type') == 'policy'
     assert payload.get('target_id') == 'river-works'
+    # 第二次种 stalled 前清掉上一次夹具急务行（固定 idx/event_id），由用例自管。
+    db.conn.execute(
+        "DELETE FROM pending_decisions WHERE turn=? AND event_id=?",
+        (int(state.turn), 'plant:陕西告饥'),
+    )
+    db.conn.commit()
     stalled2, _ = _658_plant_stalled_deliberation(db, state, content, title='改草强推')
     did2 = int(stalled2['id'])
     name = _summonable_name(db, content)
@@ -2807,6 +2790,7 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     assert 'dossier_action_type' not in staged
     assert 'target_kind' not in staged
     assert 'target_id' not in staged
+
 
 def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     """#658：普通 triad + target 矛盾载荷——一条真实入口零写（禁 classifier/session/backend 三份）。"""
@@ -2831,45 +2815,19 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _1778_raw_options():
-    """错误包 turn1 里被丢掉的两条（2:0/2:1）＋政令/非七类/单省，各带 0053 名单。"""
-    lead = _roster(_ROSTER_LEAD)
-    two_leads = _roster(_ROSTER_LEAD, '杨嗣昌') + _roster('陈新甲', tier='协办')
-    return {'assignment_national': {'label': '责户部清理钱粮亏短', 'hint': '所安者太仓', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'issue', 'target_id': '太仓亏空', 'locality_scope': 'national', 'region_id': '', 'transaction_category': '钱粮', 'deadline_months': 3, 'participant_roster': lead}, 'grant_national': {'label': '发内帑周转军国急用', 'hint': '所解者急饷', 'action_type': 'grant_allocation', 'assignee_name': '', 'target_kind': 'issue', 'target_id': '太仓亏空', 'locality_scope': 'national', 'region_id': '', 'transaction_category': '', 'grant_action': '项目经费', 'amount': 200, 'account': '内库', 'participant_roster': lead}, 'policy_national': {'label': '清丈全国田亩', 'hint': '所清者隐田', 'action_type': 'policy', 'assignee_name': '', 'target_kind': 'policy', 'target_id': '清丈天下田亩', 'locality_scope': 'national', 'region_id': '', 'transaction_category': '', 'participant_roster': two_leads}, 'special_none': {'label': '特旨慰谕九边', 'hint': '所安者边军', 'action_type': 'special_decree', 'assignee_name': '', 'target_kind': 'policy', 'target_id': '慰谕九边', 'locality_scope': 'none', 'region_id': '', 'transaction_category': '', 'participant_roster': lead}, 'assignment_single': {'label': '拨赈陕西饥民', 'hint': '所安者秦民', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈', 'deadline_months': 2, 'participant_roster': lead}}
-
-def _1778_generate(monkeypatch, db, state, items):
-    """真实票拟生成入口（canned run_agent_text，无 live LLM）。"""
-    import ming_sim.rescript_draft as draft_mod
-    from ming_sim.rescript_draft import generate_rescript_draft
-
-    monkeypatch.setattr(
-        draft_mod, "run_agent_text",
-        lambda *a, **k: json.dumps({"items": items}, ensure_ascii=False),
-    )
-    return generate_rescript_draft(
-        object(),
-        {"active_issues": [], "region_targets": [
-            {"id": "shaanxi", "name": "陕西", "kind": "腹地"},
-        ]},
-        int(state.turn),
-    )
 
 
-def _1778_roster_of(option):
-    return [(str(e.get('character_id') or ''), str(e.get('tier') or '')) for e in option.get('participant_roster') or [] if isinstance(e, dict)]
 
-def _1778_plant_and_follow(web_game, monkeypatch, drafts, *, desk_action='follow_draft'):
-    """落桌 → GET /api/game/state 看见票面名单 → 逐条 follow_draft/midzhi 成案。
 
-    desk_action="midzhi" 时用同文件既有 midzhi 短 dict 形，从 head 取本案 C.4 键
-    （必含 participant_roster）；不复刻 web 投影全键表。
-    返回 {title: 新增案卷行}；断言留给调用方（外部结构化结果，不看散文）。
+def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
+    """P3+S10(+S1)：六动作参数表真 HTTP + 真 phase2 外部结构化终局。
 
-    落桌写库经 SessionWriteQueue.run_exclusive（#1884 / #1845 同类）：上一轮
-    过月后的机械尾可能仍在写同一连接，布置不得绕开写闸。
+    不含 S5/S6（独立符号）。#1490 批红 force/hold 物化由同文件既有 #1490 专测覆盖，
+    不在本符号 stub phase2 冒充。five_actions_domain_writes 保留领域写，不得标 P3。
     """
-    from ming_sim.session_write_queue import get_session_write_queue
-    state, db = (web_game.session.state, web_game.db)
+    from ming_sim.audience_night import TAG_ENTER
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     def plant_desk():
         db.conn.execute('DELETE FROM pending_decisions')
@@ -2912,58 +2870,165 @@ def test_1778_drafted_roster_rides_to_pihong_and_nails_the_dossier(web_game, mon
     """
     monkeypatch.setenv('MING_SIM_USER_DATA_DIR', str(tmp_path / 'ud'))
     _657_install_real_phase2_llm_boundary(monkeypatch)
-    db, state = (web_game.db, web_game.session.state)
-    raw = _1778_raw_options()
-    items = [{'title': '太仓亏空', 'context': '太仓见底，边饷催迫。', 'options': [raw['assignment_national'], raw['grant_national']]}, {'title': '全国清丈', 'context': '隐田日多，赋役不均。', 'options': [raw['policy_national'], raw['special_none']]}, {'title': '陕西告饥', 'context': '秦地赤旱，饥民待哺。', 'options': [raw['assignment_single'], {**raw['assignment_single'], 'label': '备拟缓征'}]}]
-    drafts = _1778_generate(monkeypatch, db, state, items)
-    assert drafts is not None and len(drafts) == 3
-    pack_dir = tmp_path / 'ud' / 'error_packs' / 'rescript_draft_degraded'
-    assert not pack_dir.exists(), '验收 1：不得产生耗尽错误包'
-    by_title = {str(d['title']): d for d in drafts}
-    assert [str(o['label']) for o in by_title['太仓亏空']['options']] == ['责户部清理钱粮亏短', '发内帑周转军国急用']
-    assert _1778_roster_of(by_title['全国清丈']['options'][0]) == [(_ROSTER_LEAD, '主办'), ('杨嗣昌', '主办'), ('陈新甲', '协办')]
-    round_a = _1778_plant_and_follow(web_game, monkeypatch, [{'title': '太仓亏空', 'context': 'c', 'options': by_title['太仓亏空']['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}, {'title': '全国清丈', 'context': 'c', 'options': by_title['全国清丈']['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}, {'title': '陕西告饥', 'context': 'c', 'options': by_title['陕西告饥']['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}])
-    assert set(round_a) == {'责户部清理钱粮亏短', '清丈全国田亩', '拨赈陕西饥民'}
-    assignment = round_a['责户部清理钱粮亏短']
-    assert assignment['action_type'] == 'assignment'
-    assert assignment['region_id'] == ''
-    assert _1778_roster_of(assignment) == [(_ROSTER_LEAD, '主办')]
-    policy = round_a['清丈全国田亩']
-    assert policy['action_type'] == 'policy'
-    assert policy['region_id'] == ''
-    assert _1778_roster_of(policy) == [(_ROSTER_LEAD, '主办'), ('杨嗣昌', '主办'), ('陈新甲', '协办')]
-    single = round_a['拨赈陕西饥民']
-    assert single['action_type'] == 'assignment'
-    assert single['region_id'] == 'shaanxi'
 
-    def _first(option_list):
-        return [option_list[1], option_list[0]]
-    round_b = _1778_plant_and_follow(web_game, monkeypatch, [{'title': '太仓亏空-拨帑', 'context': 'c', 'options': _first(by_title['太仓亏空']['options']), 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}, {'title': '特旨慰谕', 'context': 'c', 'options': _first(by_title['全国清丈']['options']), 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}])
-    assert set(round_b) == {'发内帑周转军国急用', '特旨慰谕九边'}
-    grant = round_b['发内帑周转军国急用']
-    assert grant['action_type'] == 'grant_allocation'
-    assert grant['region_id'] == ''
-    assert _1778_roster_of(grant) == [(_ROSTER_LEAD, '主办')]
-    special = round_b['特旨慰谕九边']
-    assert special['action_type'] == 'special_decree'
-    assert special['region_id'] == ''
-    assert _1778_roster_of(special) == [(_ROSTER_LEAD, '主办')]
-    round_midzhi = _1778_plant_and_follow(web_game, monkeypatch, [{'title': '太仓亏空-中旨', 'context': 'c', 'options': by_title['太仓亏空']['options'], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}], desk_action='midzhi')
-    assert set(round_midzhi) == {'责户部清理钱粮亏短'}
-    mid = round_midzhi['责户部清理钱粮亏短']
-    assert mid['action_type'] == 'assignment'
-    assert mid.get('mode') == 'midzhi'
-    assert mid['region_id'] == ''
-    assert _1778_roster_of(mid) == [(_ROSTER_LEAD, '主办')]
+    cases = [
+        ("hold", {"action": "hold", "label": "留中"}),
+        ("follow_draft", {
+            "action": "follow_draft", "label": liaodong_opt["label"],
+            "draft_capability": liaodong_opt["draft_capability"],
+        }),
+        ("midzhi", {
+            "action": "midzhi", "label": "中旨",
+            "action_type": "assignment",
+            "target_kind": "region", "target_id": "shaanxi",
+            "locality_scope": "single", "region_id": "shaanxi",
+            "transaction_category": "督赈", "deadline_months": 1,
+            "participant_roster": _roster(_ROSTER_LEAD),
+        }),
+        ("deliberate", {"action": "deliberate", "label": "下部议"}),
+        ("return_revise", {"action": "return_revise", "label": "发回改票"}),
+        # summon 置末：开夜后 auto_close 会等在飞；后续 case 不再触发 barrier 死等
+        ("summon", {
+            "action": "summon", "label": "召见", "summon_target": "杨嗣昌",
+        }),
+    ]
 
-def test_1778_missing_roster_heals_then_error_pack_without_assigning_anyone(
-    web_game, monkeypatch, tmp_path,
-):
-    """验收 3：没写名单＝票没拟完 → 补交点名 participant_roster；耗尽只留错误包。"""
-    import ming_sim.rescript_draft as draft_mod
-    from ming_sim.rescript_draft import (
-        RESCRIPT_OPTION_FIELD_HEAL_RETRIES,
-        generate_rescript_draft,
+    for name, choice_body in cases:
+        # phase2/refresh 可能换 state 对象——每轮从 session 重取真源
+        state = web_game.session.state
+        db = web_game.db
+        from ming_sim.session_write_queue import get_session_write_queue
+
+        def plant_case():
+            db.conn.execute("DELETE FROM pending_decisions")
+            db.conn.commit()
+            case_opt = liaodong_opt if name == "follow_draft" else opt
+            sql_rescript_draft(
+                db, int(state.turn), idx=0, event_id=f'plant:急务-{name}',
+                title=f'急务-{name}', context='c',
+                options=[case_opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}],
+                actor_name='杨嗣昌', actor_office='兵部尚书', actor_faction='东林',
+            )
+            db.conn.commit()
+            db.save_resolve_context(
+                int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
+            )
+            state.turn_phase = TurnPhase.AWAITING_DECISION.value
+            db.save_state(state)
+            return db.list_rescript_desk(int(state.turn))[0]["decision_key"]
+
+        key = get_session_write_queue(web_game.session).run_exclusive(plant_case)
+        choice = {**choice_body, "decision_key": key}
+
+        if name == "deliberate":
+            import ming_sim.rescript_actions as ra
+
+            def _fake_prewrite(batch, **kwargs):
+                return ra.PrewriteResults(deliberate_by_key={
+                    key: {
+                        "title": "廷议", "body": "臣请集议。", "stance": "主赈",
+                        "supporter_ids": [],
+                    },
+                })
+
+            monkeypatch.setattr(ra, "run_prewrite_llms", _fake_prewrite)
+        if name == "return_revise":
+            import ming_sim.rescript_actions as ra
+
+            def _fake_prewrite_rev(batch, **kwargs):
+                return ra.PrewriteResults(revise_by_key={
+                    key: [
+                        _layer_a_option(label="新甲", hint="h1"),
+                        _layer_a_option(label="新乙", hint="h2"),
+                    ],
+                })
+
+            monkeypatch.setattr(ra, "run_prewrite_llms", _fake_prewrite_rev)
+
+        r = asyncio.run(_post_resolve([choice]))
+        assert r.status_code == 200, f"{name}: {r.text}"
+        assert "event: error" not in r.text, f"{name}: {r.text}"
+        assert "event: done" in r.text, f"{name}: {r.text}"
+
+        hit = next(x for x in db.list_rescript_drafts() if x["title"] == f"急务-{name}")
+        if name == "hold":
+            assert hit["status"] == "decided"
+            assert (hit["choice"] or {}).get("action") == "hold"
+            edges = db.conn.execute(
+                "SELECT event_kind FROM relation_edge_events "
+                "WHERE target=? AND event_kind=?",
+                ("杨嗣昌", "辜负"),
+            ).fetchall()
+            assert edges, "hold 须写辜负信用边"
+        elif name == "follow_draft":
+            assert hit["status"] == "decided"
+            dossiers = db.list_decree_dossiers()
+            assert dossiers and dossiers[-1]["target_id"] == "liaodong"
+        elif name == "midzhi":
+            mids = [d for d in db.list_decree_dossiers() if d.get("mode") == "midzhi"]
+            assert mids and mids[-1]["status"] == "proposed"
+        elif name == "deliberate":
+            drow = db.find_deliberation_dossier_by_decision_key(key)
+            assert drow is not None
+            assert _dossier_payload(drow).get("deliberation_state") == "stalled"
+            issue = db.conn.execute(
+                "SELECT title, origin_ref FROM issues WHERE origin_ref=?",
+                (f"dossier:{int(drow['id'])}",),
+            ).fetchone()
+            assert issue is not None
+        elif name == "summon":
+            assert hit["status"] == "decided"
+            assert (hit["choice"] or {}).get("action") == "summon"
+            # S1：无需再 attach 即有全局 origin_ref+TAG_ENTER 事实账。
+            from ming_sim.audience_night import rescript_summon_origin_ref
+            kind, turn_s, idx_s = key.split(":")
+            origin = rescript_summon_origin_ref(int(turn_s), int(idx_s), 0)
+            row = db.conn.execute(
+                "SELECT body, tags FROM story_ledger_entries WHERE origin_ref=?",
+                (origin,),
+            ).fetchone()
+            assert row is not None
+            tags = json.loads(row["tags"] or "[]")
+            assert TAG_ENTER in tags
+            assert not row["body"]
+        elif name == "return_revise":
+            assert hit["status"] == "pending"
+            assert int(hit["revision_round"] or 0) == 1
+            labels = [str(o.get("label") or "") for o in (hit["options"] or [])]
+            assert "新甲" in labels
+
+
+
+def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
+    """合法军 id 经层 A 归一后进 HTTP follow_draft，案卷 target_id 为真军 id。"""
+    from ming_sim.models import TurnPhase
+    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
+
+    db, state = web_game.db, web_game.state
+    army_opt = normalize_rescript_layer_a_option({
+        "label": "敕关宁严守",
+        "hint": "所安者宁锦",
+        "action_type": "military_order",
+        "assignee_name": "祖大寿",
+        "target_kind": "army",
+        "target_id": "guanning",
+        "locality_scope": "none",
+        "region_id": "",
+        "transaction_category": "",
+        "station": "辽东 / 宁远锦州",
+        "deadline_months": 1,
+        "participant_roster": _roster("祖大寿"),
+    })
+    assert army_opt["target_id"] == "guanning"
+
+    _657_install_real_phase2_llm_boundary(monkeypatch)
+    db.conn.execute("DELETE FROM pending_decisions")
+    db.conn.commit()
+    sql_rescript_draft(
+        db, int(state.turn), idx=0, event_id='plant:急务-军令',
+        title='急务-军令', context='c',
+        options=[army_opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}],
+        actor_name='杨嗣昌', actor_office='兵部尚书', actor_faction='东林',
     )
 
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))

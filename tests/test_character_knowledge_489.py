@@ -134,6 +134,7 @@ def test_turn_report_keeps_source_specific_secret_exclusion_boundary(game):
     order = create_test_secret_order(db,
         state, "毕自严", "暗查亏空", "密事不得告知礼部", [], excluded_names=[minister.name]
     )
+    disclosure_id = f"secret_order_disclosure:{order}:{state.turn}"
     db.record_public_knowledge_event(
         state, "密事记录", "SECRET_SOURCE_MARKER_490", source_id=f"secret_order_brief:{order}"
     )
@@ -220,7 +221,6 @@ def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
     ).fetchone()[0] == 0
     assert not any(item["source_id"] == source_id for item in db.get_character_knowledge(state, minister.name)["events"])
 
-
 def test_delete_chat_messages_removes_chat_derived_knowledge_from_context(game):
     """删除聊天消息时也不能留下可投影的见闻来源。"""
     db, state, content = game
@@ -278,6 +278,7 @@ def test_secret_blacklist_survives_later_public_projection(game):
     order = create_test_secret_order(db,
         state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_names=[minister.name]
     )
+    disclosure_id = f"secret_order_disclosure:{order}:{state.turn}"
     db.record_public_knowledge_event(
         state, "密查公开", "该案已奉明发", source_id=f"secret_order_brief:{order}"
     )
@@ -341,7 +342,6 @@ def test_issue_write_path_projects_participants_across_restore(game):
     assert any(item["source_id"] == f"issue:{issue_id}" for item in before["events"])
     assert before["events"] == after["events"]
 
-
 def test_secret_office_exclusion_does_not_hide_unrelated_world_bucket(game):
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
@@ -390,6 +390,7 @@ def test_secret_office_exclusion_snapshots_people_before_transfer_and_publicatio
     )
 
     db.set_character_office(excluded.name, "礼部尚书", office_type="礼部")
+    disclosure_id = f"secret_order_disclosure:{order}:{state.turn}"
     db.record_public_knowledge_event(
         state, "密查公开", "该案已奉明发", source_id=f"secret_order_brief:{order}"
     )
@@ -409,6 +410,7 @@ def test_disclosed_secret_source_keeps_its_public_projection(game):
         state, "毕自严", "暗查亏空", "查户部旧账", [],
         excluded_names=[excluded.name],
     )
+    disclosure_id = f"secret_order_disclosure:{order}:{state.turn}"
     db.record_public_knowledge_event(
         state, "密查公开", "该案已奉明发", source_id=f"secret_order_brief:{order}"
     )
@@ -451,13 +453,14 @@ def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
     ).fetchone()
     assert row["body"] == body
 
-def test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure(game):
+def test_secret_amendment_preserves_blacklist_and_public_disclosure(game):
     db, state, _content = game
     order = create_test_secret_order(db, state, "毕自严", "密查", "查账", [])
     db.conn.execute(
         "UPDATE secret_orders SET excluded_names=?, excluded_targets='{}' WHERE id=?",
         (json.dumps(["魏忠贤"], ensure_ascii=False), order),
     )
+    disclosure_id = f"secret_order_disclosure:{order}:{state.turn}"
     db.record_public_knowledge_event(
         state, "密查公开", "该案已奉明发", source_id=f"secret_order_brief:{order}"
     )
@@ -710,7 +713,6 @@ def test_knowledge_titles_restore_without_persistence_truncation(game):
 
 # ── archive / source_scope contracts (moved from test_knowledge.py, #1185 wave1) ──
 
-
 @pytest.mark.parametrize(
     ("target_kind", "expected_visible"),
     [
@@ -880,7 +882,6 @@ def test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge(g
     reader = next(iter(content.characters))
     assert not any(item["source_id"] == f"projection:turn_report:{state.turn + 9}"
                    for item in db.get_character_knowledge(state, reader)["public_events"])
-
 
 def test_structured_person_scope_replaces_role_wide_world_reports(game):
     """Appointment jurisdiction via real declaration entrance — not DB setter hooks."""
@@ -1141,7 +1142,6 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     world = db.get_character_knowledge(state, unscoped.name)["world"]
     assert not ({"treasury", "military", "regional", "construction", "security"} & set(world))
 
-
 def test_army_truth_is_exactly_scoped_to_person_command(game):
     db, state, content = game
     general = next(c for c in content.characters.values() if c.office_type == "边镇")
@@ -1225,13 +1225,16 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         clerk.office, clerk.office_type = clerk_office, clerk_type
         successor.office, successor.office_type = prior_office, prior_type
 
+def _office_archive_path_from_materials(db, state, character, root):
+    prepared = prepare_character_materials(db, state, character, dest_root=root)
+    paths = list_materials(prepared.root)
+    return next(p for p in paths if p.endswith("/公事档案.txt"))
 
 def _referenceable_dossier_ids(db, character_name, turn) -> set[int]:
     return {
         int(item["id"])
         for item in db.list_referenceable_dossiers(character_name, turn)
     }
-
 
 def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_path):
     db, state, content = game

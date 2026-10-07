@@ -1,8 +1,6 @@
 """#612 endorsement contracts — one real entry tracer per independent external seam."""
 
 import json
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest

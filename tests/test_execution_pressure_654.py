@@ -187,7 +187,7 @@ def test_region_zero_hit_fail_loud(env):
             regions_content=content.regions,
         )
 
-# ── create_decree_dossiers fan-out ────────────────────────────────
+# ── schema + create_decree_dossiers fan-out ────────────────────────
 
 def test_national_creates_one_row_idempotent(env):
     """#1778 决定 4：全国政令成一份案卷（region_id 空），重交不增行。"""
@@ -868,6 +868,8 @@ def test_location_canonical_seed_and_write_seam(env, tmp_path):
     ).fetchone()["location"] == "beizhili"
     with pytest.raises(ValueError):
         db.set_character_transit("毕自严", location="atlantis", commit=True)
+    # 写缝已钉未知非空 fail-loud。开档别名 migrate / 开档扫 location 已随
+    # _migrate_character_location_aliases 退役，不再造旧档副本期待写回。
 
 def test_authorization_region_gets_single_locality(env):
     """D：authorization region 目标 producer 写 locality_scope=single。"""

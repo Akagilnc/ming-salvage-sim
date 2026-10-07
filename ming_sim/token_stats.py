@@ -26,36 +26,6 @@ def tlog(msg: str) -> None:
     print(f"[{ts()}] {msg}", flush=True)
 
 
-def _guess_caller_tag(kwargs: Dict[str, object]) -> str:
-    """从 messages 的所有 system 段拼合后猜哪个 agent 在调用,用于 token 日志可读。"""
-    messages = kwargs.get("messages") or []
-    sys_text = ""
-    for msg in messages:
-        if not isinstance(msg, dict) or msg.get("role") != "system":
-            continue
-        c = msg.get("content")
-        if isinstance(c, str):
-            sys_text += c
-        elif isinstance(c, list):
-            for item in c:
-                if isinstance(item, dict):
-                    sys_text += str(item.get("text", ""))
-    # minister 必须先判：大臣 system 末尾注入上月邸报全文(simulator 产出，含『日讲官』
-    # 『档房书办』等词)，若先判 extractor/simulator 会把大臣对话误标成结算 agent。
-    # 大臣自身开场白『扮演被皇帝召见』只在大臣 prompt 出现，且在邸报之前 → 用它先认。
-    if "扮演被皇帝召见" in sys_text or "大臣扮演" in sys_text:
-        return "minister"
-    # 结算/写诏 agent 的 system = game_world_prompt(很长) + 自身 prompt，关键锚点在中后段，
-    # 不能只看开头窗口。这几个 agent 不注入邸报，故全文搜各自唯一开场白即可。
-    if "档房书办" in sys_text:
-        return "extractor"
-    if "日讲官兼推演官" in sys_text or "月末推演" in sys_text:
-        return "simulator"
-    if "诏书润色" in sys_text or "正式诏书" in sys_text:
-        return "decree-writer"
-    return "?"
-
-
 def _record_usage(model_id: str, usage: object, caller_tag: str = "?") -> None:
     if usage is None:
         return
@@ -86,42 +56,6 @@ def _record_usage(model_id: str, usage: object, caller_tag: str = "?") -> None:
     )
 
 
-def record_stream_metrics(model_id: str, metrics: object, caller_tag: str = "?") -> None:
-    """记录 agno 流式 RunOutput.metrics（RunMetrics）的 token 用量。
-
-    流式调用 openai response 是 stream 对象，无 .usage，monkeypatch 抓不到——
-    故 run_agent_stream_text 在终结事件显式调本函数补记。RunMetrics 字段名与
-    OpenAI usage 不同：input_tokens/output_tokens/cache_read_tokens/...
-    """
-    if metrics is None:
-        return
-    prompt = int(getattr(metrics, "input_tokens", 0) or 0)
-    completion = int(getattr(metrics, "output_tokens", 0) or 0)
-    total = int(getattr(metrics, "total_tokens", prompt + completion) or 0)
-    cached = int(getattr(metrics, "cache_read_tokens", 0) or 0)
-    cache_creation = int(getattr(metrics, "cache_write_tokens", 0) or 0)
-    reasoning = int(getattr(metrics, "reasoning_tokens", 0) or 0)
-    if total == 0 and prompt == 0 and completion == 0:
-        return
-    bucket = TOKEN_STATS.setdefault(
-        model_id,
-        {"calls": 0, "prompt": 0, "completion": 0, "cached": 0, "reasoning": 0, "total": 0},
-    )
-    bucket["calls"] += 1
-    bucket["prompt"] += prompt
-    bucket["completion"] += completion
-    bucket["cached"] += cached
-    bucket["cache_creation"] = bucket.get("cache_creation", 0) + cache_creation
-    bucket["reasoning"] += reasoning
-    bucket["total"] += total
-    cc_part = f" cache_creation={cache_creation}" if cache_creation else ""
-    print(
-        f"[TOKEN] caller={caller_tag} model={model_id} prompt={prompt} cached={cached}{cc_part} "
-        f"completion={completion} reasoning={reasoning} total={total}",
-        flush=True,
-    )
-
-
 def _get_client_base_url(self_client_holder: object) -> str:
     """从 openai Completions self 拿 client.base_url。"""
     try:
@@ -130,7 +64,8 @@ def _get_client_base_url(self_client_holder: object) -> str:
             return ""
         base = getattr(client, "base_url", "")
         return str(base) if base else ""
-    except Exception:
+    except Exception as exc:
+        tlog(f"[TOKEN] client base_url lookup failed: {type(exc).__name__}: {exc}")
         return ""
 
 
@@ -174,35 +109,34 @@ def install_token_stats_patch() -> None:
             return
         try:
             from openai.resources.chat.completions import Completions, AsyncCompletions  # type: ignore
-        except Exception:
+        except Exception as exc:
+            tlog(f"[TOKEN] install patch skipped: {type(exc).__name__}: {exc}")
             return
         orig_create = Completions.create
         orig_acreate = AsyncCompletions.create
 
         def patched_create(self, *args, **kwargs):
             base_url = _get_client_base_url(self)
-            caller_tag = _guess_caller_tag(kwargs)
             if is_dashscope_base_url(base_url):
                 _inject_dashscope_cache_mark(kwargs)
             resp = orig_create(self, *args, **kwargs)
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-                _record_usage(model_id, getattr(resp, "usage", None), caller_tag)
-            except Exception:
-                pass
+                _record_usage(model_id, getattr(resp, "usage", None))
+            except Exception as exc:
+                tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         async def patched_acreate(self, *args, **kwargs):
             base_url = _get_client_base_url(self)
-            caller_tag = _guess_caller_tag(kwargs)
             if is_dashscope_base_url(base_url):
                 _inject_dashscope_cache_mark(kwargs)
             resp = await orig_acreate(self, *args, **kwargs)
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-                _record_usage(model_id, getattr(resp, "usage", None), caller_tag)
-            except Exception:
-                pass
+                _record_usage(model_id, getattr(resp, "usage", None))
+            except Exception as exc:
+                tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         Completions.create = patched_create  # type: ignore

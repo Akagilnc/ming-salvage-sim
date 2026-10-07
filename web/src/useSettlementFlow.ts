@@ -9,7 +9,7 @@ import {
   routeRetryDecisions,
 } from "./decisionRouting";
 import type {
-  DecisionChoice, GameState, PendingActionFailure, PendingDecision,
+  DecisionChoice, GameState, PendingDecision,
 } from "./types";
 
 /** #1852：当次核账完成后的本面邸报阅读态（刷新不恢复；朕知道了只关此态）。 */
@@ -34,7 +34,6 @@ type SettlementReceipt = {
   surfaceFailure: (message: string) => void;
   setPausedDecisionError: (message: string) => void;
   setPendingDecisions: (decisions: PendingDecision[]) => void;
-  setDecisionFailures: (failures: PendingActionFailure[]) => void;
   setGazetteReading: (reading: SettlementGazetteReading | null) => void;
   setOverlayHold: (hold: boolean) => void;
   setAdvanceRefreshFailed: (failed: boolean) => void;
@@ -46,7 +45,7 @@ type SettlementReceipt = {
   reload: () => void;
 };
 
-// 颁诏结算流：盖玺颁诏 / failed-only 退朝 / HITL 决策点续裁 / 失败重拉。
+// 颁诏结算流：盖玺颁诏 / 无旨退朝重试 / HITL 决策点续裁 / 失败重拉。
 // #1852：核账等待面不呈现推演段文/推敲/进度；写成即推进后本面开邸报阅读态，不整页 reload。
 export function useSettlementFlow({
   setBusy,
@@ -74,7 +73,6 @@ export function useSettlementFlow({
 }) {
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
-  const [decisionFailures, setDecisionFailures] = React.useState<PendingActionFailure[]>([]);
   const [pausedDecisionError, setPausedDecisionError] = React.useState("");
   // #1808：phase-1 fail-closed 的 HUD 专用位——与共享 error 分轨，避免召对等通道泄漏到普通 HUD。
   const [settlementHudError, setSettlementHudError] = React.useState("");
@@ -201,7 +199,6 @@ export function useSettlementFlow({
       setCheatDirective: write(setCheatDirective),
       setPausedDecisionError: write(setPausedDecisionError),
       setPendingDecisions: write(setPendingDecisions),
-      setDecisionFailures: write(setDecisionFailures),
       setGazetteReading: write(setSettlementGazetteReading),
       setOverlayHold: write(setPostAdvanceOverlayHold),
       setAdvanceRefreshFailed: write(setAdvanceRefreshFailed),
@@ -354,7 +351,7 @@ export function useSettlementFlow({
         }
         // #1808 B 同类：phase-1 呈现先响亮落地；其后 loadState / pending 消费链 reject 不得吞掉已写告警。
         // #1700 / #1418 r2：loadState 使 settling 续跑面可挂上（best-effort）。
-        // main #1442：pending_action_failures 落库面优先。欠账耗尽走失败单源（#1353 fold-in），无补写 CTA。
+        // 欠账耗尽走失败单源（#1353 fold-in），无补写 CTA；不以已退役的 failed 载荷分流。
         const errMsg = typeof outcome.data === "string" ? outcome.data : (errData.message || "颁诏失败。");
         receipt.surfaceFailure(errMsg);
         await refreshBestEffort(receipt);
@@ -365,7 +362,6 @@ export function useSettlementFlow({
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
         // #1234：同会话停窗经既有状态口刷新 React 态——yearMonthLabel / 顶栏四键读到 settlement_display 与快照叠影。
         // 此处不 reload；仅 409 且服务端已推进时以整页刷新恢复陈旧令牌。不自判核账态，不平行第二展示通道。
-        receipt.setDecisionFailures(outcome.data?.pending_action_failures || []);
         const route = routeIssueDecisions(outcome.data.decisions || []);
         if (route.pendingDecisions !== null) receipt.setPendingDecisions(route.pendingDecisions);
         if (route.error !== null) receipt.setPausedDecisionError(route.error);
@@ -428,7 +424,6 @@ export function useSettlementFlow({
       }
       // 成功：清空案头态；写成即推进则本面开邸报。
       receipt.setPendingDecisions([]);
-      receipt.setDecisionFailures([]);
       receipt.setPausedDecisionError("");
       if (outcome.data?.advanced === false) {
         // #1888 J5：清案头后未推进，失败尚未呈出——该状态读取是玩家下一面的唯一来源，
@@ -455,7 +450,7 @@ export function useSettlementFlow({
   /** #1418 r2：all-decided 续跑——重发 resolve_decisions/stream（空载荷；服务端用已存 choice）。 */
   const resumePhase2 = async () => submitDecisions([]);
 
-  // #1560：failed-only 拟诏台确认后退朝；复用既有 /api/decree/advance_without_edict 接缝。
+  // 退朝重试／无旨推进：复用既有 /api/decree/advance_without_edict 接缝（非 failed-only 呈现）。
   // 真空仍禁用；draft/pending 走 issueDecree，不经此路。
   // #1796：与盖玺同 busy 标——同会话立即收拟诏台 + 切核账期面。
   const advanceWithoutEdict = async () => {
@@ -471,7 +466,6 @@ export function useSettlementFlow({
         awaiting_decision?: boolean;
         advanced?: boolean;
         decisions?: PendingDecision[];
-        pending_action_failures?: PendingActionFailure[];
       }>(
         "/api/decree/advance_without_edict",
         {
@@ -486,7 +480,6 @@ export function useSettlementFlow({
       // #1433 / #1337 hop 族：退朝若停在批红，消费 awaiting_decision/decisions（同 issueDecree），
       // 不盲 reload——批红面经 loadState 状态口投影；仅 409 且服务端已推进时整页刷新。
       if (data.awaiting_decision) {
-        receipt.setDecisionFailures(data.pending_action_failures || []);
         const route = routeIssueDecisions(data.decisions || []);
         if (route.pendingDecisions !== null) receipt.setPendingDecisions(route.pendingDecisions);
         if (route.error !== null) receipt.setPausedDecisionError(route.error);
@@ -520,12 +513,8 @@ export function useSettlementFlow({
         return;
       }
       // #1808 B：catch 内 await 链 reject 不得全静默——phase-1 呈现先落地，再 best-effort 消费 pending。
-      const failures = detail?.pending_action_failures;
-      const hasPending = Array.isArray(failures) && failures.length > 0;
       receipt.surfaceFailure(
-        hasPending
-          ? (detail?.message || "退朝失败。")
-          : (err instanceof Error ? err.message : String(err)),
+        err instanceof Error ? err.message : String(err),
       );
     } finally {
       receipt.setBusy("");
@@ -579,7 +568,6 @@ export function useSettlementFlow({
     /** #1852：本面邸报阅读中或过月刚翻月尚未落阅读态时，挡住自动弹层。 */
     suppressPostAdvanceOverlays: Boolean(settlementGazetteReading) || postAdvanceOverlayHold,
     pendingDecisions,
-    decisionFailures,
     pausedDecisionError,
     settlementHudError,
     failedEntryWasRetreat,

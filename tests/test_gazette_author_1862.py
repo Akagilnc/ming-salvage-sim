@@ -72,17 +72,16 @@ def test_author_waits_until_rescript_is_done(game, monkeypatch):
         ),
     )
     db.conn.commit()
-    calls = []
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
+    # 外部 LLM 边界：挡邸报作者；可见结果是请旨台阶段，不锁调用次数。
     monkeypatch.setattr(
         month_chain, "run_gazette_text",
-        lambda *_a, **_k: calls.append(1) or (_TITLE, _REPORT),
+        lambda *_a, **_k: (_TITLE, _REPORT),
     )
     session = _session(db, state, content, monkeypatch)
     held = session.resolve_turn(allow_empty_decree=True)
     assert held.stage == "rescript"
     assert held.advanced is False
-    assert calls == []
 
 
 def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):

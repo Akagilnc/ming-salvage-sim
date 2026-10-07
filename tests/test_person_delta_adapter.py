@@ -2,12 +2,12 @@
 
 import copy
 import json
-import os
 
 import pytest
 
 import ming_sim.issues as issues
 from ming_sim.db import GameDB
+from ming_sim.exceptions import PendingActionRefusal
 from ming_sim.models import Character
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
 from ming_sim.person_delta_adapter import normalize_person_changes
@@ -130,20 +130,19 @@ def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
     """实际结果契约只报 applied_person_changes；规范化输入回声不入返回。"""
     db, state, _ = game
     extracted = {
-        "appointments": [
-            {"name": "孙传庭", "office": "陕西总督"},
-        ],
-        "character_power_changes": [
-            {"name": "孔有德", "new_power": "houjin"}
+        "人物变更": [
+            {
+                "name": "孔有德",
+                "动作": "易主",
+                "new_power": "houjin",
+                "方式": "主动投敌",
+                "反噬": {"houjin": {"leverage": 3}},
+                "origin_ref": "盘面自发",
+            }
         ],
     }
     normalized = normalize_person_changes(extracted)
-    assert [item["name"] for item in normalized] == [
-        "孔有德",
-        "孙传庭",
-    ]
-    assert normalized[0]["legacy_partial"] is True
-    assert normalized[-1]["legacy_spillover"] == "appointments（朝臣 spillover）"
+    assert [item["name"] for item in normalized] == ["孔有德"]
 
     applied = issues.apply_score_extraction(
         db, state, extracted, content=None,
@@ -1152,6 +1151,209 @@ def test_apply_score_extraction_accepts_status_reason_as_person_reason(game):
         content.characters[name].status = old_status
         content.characters[name].office = old_office
 
+
+def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fails(
+    game, monkeypatch
+):
+    """Office write code fault must fail loud (ADR 0005 / #1853) and roll back
+    derived release — not wash into a business rejected row.
+    """
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+
+    def fail_office_write(*_args, **_kwargs):
+        raise RuntimeError("simulated office write failure")
+
+    try:
+        db.set_character_status(state, name, "imprisoned", "旧案在押")
+        content.characters[name].status = "imprisoned"
+        before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
+        monkeypatch.setattr(db, "set_character_office", fail_office_write)
+
+        try:
+            issues.apply_score_extraction(
+                db,
+                state,
+                {
+                    "人物变更": [
+                        {
+                            "name": name,
+                            "origin_ref": "盘面自发", "动作": "任命",
+                            "office": "陕西总督",
+                            "office_type": "地方",
+                            "region_id": "shaanxi",
+                            "reason": "查明旧案后起用",
+                        }
+                    ]
+                },
+                content=content,
+            )
+            raise AssertionError("office write code fault must raise, not reject")
+        except RuntimeError as exc:
+            assert "simulated office write failure" in str(exc)
+
+        row = db.conn.execute(
+            "SELECT status, office, reason_code FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["status"] == "imprisoned"
+        assert row["office"] == ""
+        assert row["reason_code"] == ""
+        assert content.characters[name].status == "imprisoned"
+        assert content.characters[name].office == ""
+        assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
+    finally:
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office
+
+
+def test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch(
+    game, monkeypatch
+):
+    """Typed business refusal on item 2 keeps prior item; code faults are not this case.
+
+    Inject OfficeAppointmentRejection (LLM/input seat refusal), not RuntimeError:
+    ADR 0005 / #1853 — only typed business refusals use per-item isolation.
+    """
+    from ming_sim.applier import atomic
+    from ming_sim.exceptions import OfficeAppointmentRejection
+
+    db, state, content = game
+    first = active_ming_character(db, content)
+    second = next(
+        name
+        for name, ch in content.characters.items()
+        if name != first
+        and getattr(ch, "power_id", "ming") == "ming"
+        and getattr(ch, "office_type", "") != "后宫"
+        and db.get_character_status(name)[0] == "active"
+    )
+    old_first_status = content.characters[first].status
+    old_first_office = content.characters[first].office
+    old_second_status = content.characters[second].status
+    old_second_office = content.characters[second].office
+
+    def fail_office_write(*_args, **_kwargs):
+        raise OfficeAppointmentRejection(
+            "simulated seat refusal", category="missing_field",
+        )
+
+    try:
+        db.set_character_status(state, second, "imprisoned", "旧案在押")
+        content.characters[second].status = "imprisoned"
+        before_logs = db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name IN (?, ?)",
+            (first, second),
+        ).fetchone()[0]
+        monkeypatch.setattr(db, "set_character_office", fail_office_write)
+
+        with atomic(db):
+            applied = issues.apply_score_extraction(
+                db,
+                state,
+                {
+                    "人物变更": [
+                        {"name": first, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "先罢一人"},
+                        {
+                            "name": second,
+                            "origin_ref": "盘面自发", "动作": "任命",
+                            "office": "陕西总督",
+                            "office_type": "地方",
+                            "region_id": "shaanxi",
+                            "reason": "查明旧案后起用",
+                        },
+                    ]
+                },
+                content=content,
+            )
+
+        first_row = db.conn.execute(
+            "SELECT status, office FROM characters WHERE name=?", (first,)
+        ).fetchone()
+        second_row = db.conn.execute(
+            "SELECT status, office FROM characters WHERE name=?", (second,)
+        ).fetchone()
+        assert dict(first_row) == {"status": "dismissed", "office": ""}
+        assert dict(second_row) == {"status": "imprisoned", "office": ""}
+        assert content.characters[first].status == "dismissed"
+        assert content.characters[first].office == ""
+        assert content.characters[second].status == "imprisoned"
+        assert content.characters[second].office == ""
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name IN (?, ?)",
+            (first, second),
+        ).fetchone()[0] == before_logs + 1
+        changes = applied["applied_person_changes"]
+        assert len(changes) == 2
+        assert changes[0] == {"name": first, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "先罢一人"}
+        assert changes[1]["origin_ref"] == "盘面自发"
+        assert changes[1]["动作"] == "任命"
+        assert changes[1]["name"] == second
+        assert changes[1]["new_office"] == "陕西总督"
+        assert changes[1]["rejected"] is True
+        assert changes[1].get("category") == "missing_field"
+        assert "simulated seat refusal" in changes[1]["reason"]
+        assert changes[1]["derived_from"] == "放归"
+    finally:
+        content.characters[first].status = old_first_status
+        content.characters[first].office = old_first_office
+        content.characters[second].status = old_second_status
+        content.characters[second].office = old_second_office
+
+
+def test_derived_release_restores_when_post_office_helper_raises(game, monkeypatch):
+    """Post-office helper code fault fails loud and restores derived release (#1853)."""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_status = content.characters[name].status
+    old_office = content.characters[name].office
+
+    def fail_after_office_write(*_args, **_kwargs):
+        raise RuntimeError("simulated post-office failure")
+
+    try:
+        db.set_character_status(state, name, "imprisoned", "旧案在押")
+        content.characters[name].status = "imprisoned"
+        before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
+        monkeypatch.setattr(issues, "_displace_duplicate_offices", fail_after_office_write)
+
+        try:
+            issues.apply_score_extraction(
+                db,
+                state,
+                {
+                    "人物变更": [
+                        {
+                            "name": name,
+                            "origin_ref": "盘面自发", "动作": "任命",
+                            "office": "陕西总督",
+                            "office_type": "地方",
+                            "region_id": "shaanxi",
+                            "reason": "查明旧案后起用",
+                        }
+                    ]
+                },
+                content=content,
+            )
+            raise AssertionError("post-office code fault must raise, not reject")
+        except RuntimeError as exc:
+            assert "simulated post-office failure" in str(exc)
+
+        row = db.conn.execute(
+            "SELECT status, office, reason_code FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["status"] == "imprisoned"
+        assert row["office"] == ""
+        assert row["reason_code"] == ""
+        assert content.characters[name].status == "imprisoned"
+        assert content.characters[name].office == ""
+        assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
+    finally:
+        content.characters[name].status = old_status
+        content.characters[name].office = old_office
+
+
 def test_apply_score_extraction_does_not_release_non_ming_when_derived_appointment_is_rejected(game):
     db, state, content = game
     name = next(
@@ -1707,8 +1909,9 @@ def test_create_secret_order_rejects_vassal_prince(read_game):
     import pytest
     db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
-    with pytest.raises(ValueError):
+    with pytest.raises(PendingActionRefusal) as raised:
         create_test_secret_order(db, state, name, "密查", "着尔暗中查访", [])
+    assert raised.value.category == "ineligible_vassal"
 
 def test_create_secret_order_rejects_vassal_prince_by_alias(read_game):
     """密令 assignee 用别名（如「福王」）也须被宗藩闸挡——create_secret_order 先 _find_existing_minister
@@ -1724,8 +1927,9 @@ def test_create_secret_order_rejects_vassal_prince_by_alias(read_game):
         pytest.skip("基底盘面无带别名的宗藩")
     db.add_character(state, content.characters[prince], source="测试")
     alias = next(a for a in content.characters[prince].aliases if a != prince)
-    with pytest.raises(ValueError):
+    with pytest.raises(PendingActionRefusal) as raised:
         create_test_secret_order(db, state, alias, "密查", "着尔暗中查访", [])
+    assert raised.value.category == "ineligible_vassal"
 
 def test_create_secret_order_persists_canonical_name(game):
     """密令按别名下达给在册大臣时落库存规范名（非别名），否则后续按规范名查不到此令（cmr R3 CodeRabbit）。"""
@@ -1757,8 +1961,9 @@ def test_create_secret_order_rejects_foreign_power(game):
                   and (db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone()["power_id"] or "ming") != "ming"), None)
     if enemy is None:
         pytest.skip("基底盘面无外藩人物")
-    with pytest.raises(ValueError):
+    with pytest.raises(PendingActionRefusal) as raised:
         create_test_secret_order(db, state, enemy, "密查", "着尔暗中查访", [])
+    assert raised.value.category == "ineligible_power"
 
 def test_create_secret_order_rejects_foreign_power_by_alias(game):
     """密令 assignee 用外藩别名也须被资格闸挡——_find_existing_minister 不解非 ming 别名，
@@ -1774,8 +1979,9 @@ def test_create_secret_order_rejects_foreign_power_by_alias(game):
     if enemy is None:
         pytest.skip("基底盘面无带别名的外藩")
     alias = next(a for a in content.characters[enemy].aliases if a != enemy)
-    with pytest.raises(ValueError):
+    with pytest.raises(PendingActionRefusal) as raised:
         create_test_secret_order(db, state, alias, "密查", "着尔暗中查访", [])
+    assert raised.value.category == "ineligible_power"
 
 def test_create_secret_order_allows_returned_defector(game):
     """招抚归明者（DB power_id 翻 ming、content 仍旧势力）可受密令——资格闸认 DB 权威，
@@ -2148,6 +2354,44 @@ def test_reappoint_nonactive_syncs_character_reason_to_db(game):
         f"三面同步漏：内存 status_reason={ch.status_reason!r} != DB {row['status_reason']!r}"
     assert ch.reason_code == (row["reason_code"] or ""), \
         f"三面同步漏：内存 reason_code={ch.reason_code!r} != DB {row['reason_code']!r}"
+
+
+def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
+    """5b r3（codex-b R1 rollback 半）：任命代码故障响亮上抛前，内存 Character 的
+    status_reason/reason_code 须随 content 快照还原——此前 content 快照只存
+    status/office/office_type/transit_to，漏这两字段 → 回滚后内存滞留刷过的起复缘由。
+
+    #1853：code fault 不得洗成业务 rejected；仍须完成快照还原。
+    """
+    db, state, content = game
+    name = active_ming_character(db, content)
+    db.set_character_status(state, name, "dismissed", "旧削籍缘由", reason_code="获罪削籍")
+    content.characters[name].status = "dismissed"
+    content.characters[name].status_reason = "旧削籍缘由"
+    content.characters[name].reason_code = "获罪削籍"
+
+    # 在 read-back（ch.status_reason 已刷成起复缘由）之后触发失败，逼 except 回滚。
+    # transfer 分支的内存 office_type 现经 resolve_office_type_preserving_title 求值（名分守卫
+    # 收敛点，#1059），失败注入点随之——set_character_office 的 DB 写与 read-back 已在其前跑完。
+    def boom(*_a, **_k):
+        raise RuntimeError("post-readback failure")
+    monkeypatch.setattr(issues, "resolve_office_type_preserving_title", boom)
+
+    try:
+        issues.apply_score_extraction(
+            db, state,
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "office_type": "地方", "region_id": "shaanxi", "reason": "起用"}]},
+            content=content,
+        )
+        raise AssertionError("code fault must raise, not wash into rejected")
+    except RuntimeError as exc:
+        assert "post-readback failure" in str(exc)
+
+    ch = content.characters[name]
+    assert ch.status == "dismissed", f"回滚后内存 status 未还原：{ch.status!r}"
+    assert ch.status_reason == "旧削籍缘由", f"回滚后内存 status_reason 未还原：{ch.status_reason!r}"
+    assert ch.reason_code == "获罪削籍", f"回滚后内存 reason_code 未还原：{ch.reason_code!r}"
+
 
 def test_disposition_manual_rollback_restores_memory_reason_fields(game, monkeypatch):
     """5b（PR#106 R2 gemini medium）：处置级人工回滚（issues.py，apply_office_appointment 返回

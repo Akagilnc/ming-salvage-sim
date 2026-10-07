@@ -96,7 +96,6 @@ def test_danger_order_uses_army_needed_for_arrears_months(game):
     ordered = [r["name"] for r in db.army_rows(danger_order=True)]
     assert ordered.index(b["name"]) < ordered.index(a["name"])
 
-
 def test_danger_order_preserves_fractional_arrears(game):
     """danger_order 欠饷月数排序键不得截断小数。"""
     db, _state, _ = game
@@ -125,7 +124,6 @@ def test_danger_order_preserves_fractional_arrears(game):
 
     ordered = [r["name"] for r in db.army_rows(danger_order=True)]
     assert ordered.index("Z高欠饷军") < ordered.index("A低欠饷军")
-
 
 def test_army_rows_non_danger_sorted_by_theater_name(read_game):
     """非 danger 路按 theater,name 升序；limit 生效。"""

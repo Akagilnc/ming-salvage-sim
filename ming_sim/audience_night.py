@@ -23,6 +23,7 @@ from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ming_sim.applier import load_stored_list
+from ming_sim.applier import connection_owns_transaction
 from ming_sim.db import normalize_office
 from ming_sim.error_pack import error_packs_root
 from ming_sim.models import GameState
@@ -137,15 +138,11 @@ def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
     ]
     return max(tones or ["常行"], key=TRAVEL_SPEED_BY_TONE.__getitem__)
 _SUMMON_ORIGIN_PREFIX = "传召源#"
-# #526 / #471 S10：留侍叙事账标签——非进/出，不驱动在场（口径回灌 #500）
-TAG_STAY_ATTEND = "留侍"
-
-# #526 结构化口令判词（引擎只认判词，不重解析散文；非 ACTION_CLUSTERS）
+# 结构化口令判词（引擎只认判词，不重解析散文；非 ACTION_CLUSTERS）
+# 留侍／含糊收夜词表已退役（#1812 第5项）。
 CMD_CLOSE_NIGHT = "close_night"
 CMD_NONE = "none"
-_CMD_VERDICTS = frozenset({
-    CMD_CLOSE_NIGHT, CMD_NONE,
-})
+_CMD_VERDICTS = frozenset({CMD_CLOSE_NIGHT, CMD_NONE})
 
 METHOD_XUANRU = "宣入"
 METHOD_CHUANZHAO = "传召"
@@ -260,20 +257,16 @@ def _row_dict(row: Any) -> Dict[str, Any]:
 
 
 def _should_commit(db: Any) -> bool:
-    """本域多语句写各自开隐式事务，故用 owns_transaction() 会因自身 in_transaction 恒 False
-    而永不 durable commit（跨进程恢复丢失）。改与 db.py 同 idiom：仅当外层无显式 atomic/
-    suspend 持有事务时才提交（用 _commit_suspended / _atomic_depth 判据，不看 in_transaction）。"""
-    conn = getattr(db, "conn", None)
-    if conn is None:
-        return True
-    return (
-        not bool(getattr(conn, "_commit_suspended", False))
-        and int(getattr(conn, "_atomic_depth", 0) or 0) == 0
-    )
+    """写前归属：是否由本调用方提交。须在任何 DML 之前调用并缓存结果。
+
+    写后再问 owns_transaction() 会因自身隐式事务而恒 False；与 entity store /
+    GameDB 写口同一契约——入口捕获，出口按缓存提交。
+    """
+    return connection_owns_transaction(db.conn)
 
 
-def _commit_if_owns(db: Any) -> None:
-    if _should_commit(db):
+def _commit_if_owns(db: Any, *, owns: bool) -> None:
+    if owns:
         db.conn.commit()
 
 
@@ -578,7 +571,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
         if not _is_command_entry(entry):
             continue
         # #1838 reopen：入殿/开夜/收夜/交接/场外传召旁白账不再投影；
-        # 只投影有正文的 exit / 留侍 / 其它 scene 口令账。
+        # 只投影有正文的 exit / 其它 scene 口令账。
         if TAG_ENTER in tags:
             continue
         if (
@@ -764,6 +757,7 @@ def append_ledger_entry(
     CLOSING 拒绝玩家侧新账（默认 allow_closing=False）；收夜框架写显式
     allow_closing=True。唯有仍待转译的本月原对话轮可在封夜后补记抽取账。
     """
+    owns = _should_commit(db) if commit else False
     night = get_night(db, night_id)
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
@@ -821,7 +815,7 @@ def append_ledger_entry(
         origin_chat_turn_id=int(origin_chat_turn_id or 0),
         origin_ref=origin,
     )
-    if commit and _should_commit(db):
+    if owns:
         db.conn.commit()
     return int(entry_id)
 
@@ -856,6 +850,7 @@ def open_night(
     location = str(location or "").strip() or DEFAULT_LOCATION
 
     roster = resolve_standing_roster(db)
+    owns = _should_commit(db)
 
     # 原子：实体 + 员额入殿账，SAVEPOINT 全有或全无。
     sp = f"open_night_{int(state.turn)}_{id(state)}"
@@ -886,7 +881,7 @@ def open_night(
                 commit=False,
             )
         db.conn.execute(f"RELEASE SAVEPOINT {sp}")
-        if _should_commit(db):
+        if owns:
             db.conn.commit()
     except Exception:
         try:
@@ -972,6 +967,7 @@ def wait_in_flight_clear(
 def _set_night_fields(db: Any, night_id: int, **fields: Any) -> None:
     if not fields:
         return
+    owns = _should_commit(db)
     assignments = ", ".join(f"{k} = ?" for k in fields)
     db.reign.update_night(assignments, int(night_id), tuple(fields.values()))
     _commit_if_owns(db)
@@ -987,11 +983,8 @@ def _commit_night_approved(
     directive_status: str = "draft",
 ) -> List[Dict[str, object]]:
     """收夜提交本夜已应允白名单。沿用 commit_pending_actions 既有 terminal 语义：
-    落得了标 committed、落不了标 failed（都不留 pending，故幂等、可续跑）；失败由既有
-    pending_action_failures 渠道显眼上报，不在此另造「可续跑」的假失败阻断（否则第二次
-    只读 pending 会漏交终态 failed）。"""
-    if not hasattr(db, "dossiers"):
-        return []
+    落得了标 committed；业务拒收/软拒收标 failed；真异常留 pending 并上抛
+    （#1853：原轮/月链 error_pack 与失败路径承接，不另造 failed 专属传输）。"""
     rows: List[Dict[str, object]] = []
     for kind in sorted(kinds):
         rows.extend(db.dossiers.list_night_approved_pending(int(night_id), kind=kind))
@@ -1460,6 +1453,7 @@ def ledger_tags(db: Any, entry_id: int) -> Any:
 
 def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) -> None:
     """启程成功后把未结 fresh 账标为在途；保留 TAG_SUMMON_UNSETTLED 与 origin。"""
+    owns = _should_commit(db)
     for item in items:
         entry_id = int(item["entry_id"])
         row = ledger_tags(db, entry_id)
@@ -1485,6 +1479,7 @@ def settle_summon_origin(
     commit 由调用方事务所有权决定（与 append_story_ledger 同形）；
     行止接缝须传 commit=commit_person_change，避免 SAVEPOINT/外层事务中擅自提交。
     """
+    owns = _should_commit(db) if commit else False
     origin = str(origin_id or "").strip()
     matches = [item for item in list_unsettled_summons(db) if item["origin_id"] == origin]
     if not matches:
@@ -1585,6 +1580,7 @@ def update_summon_travel_tone(
 
     只改 tags 上的语气前缀，不另起行；无未结传召 → KeyError。
     """
+    owns = _should_commit(db)
     name = str(person_name or "").strip()
     if not name:
         raise ValueError("传召人名不能为空")
@@ -1648,11 +1644,7 @@ def discard_inactive_office_summon(db: Any, pending_id: int) -> bool:
     BEGIN/atomic, so outer rollback can restore pending + origin together.
     """
     conn = db.conn
-    owns_transaction = not (
-        bool(getattr(conn, "_commit_suspended", False))
-        or int(getattr(conn, "_atomic_depth", 0) or 0) > 0
-        or conn.in_transaction
-    )
+    owns_transaction = connection_owns_transaction(conn)
     origin = f"office:{int(pending_id)}"
     entry = _ledger_by_origin_ref(db, origin)
     if entry is None:
@@ -1887,10 +1879,10 @@ def normalize_audience_command_verdict(raw: Any) -> str:
 
 
 def recognize_audience_command(message: str) -> str:
-    """收夜控制口令结构化判词（#526 / #1812 第5项）。
+    """显式退朝口令结构化判词。
 
-    确定性封闭集仅 COURT_BREAK（q/quit/退朝/下朝/今日且到此）。
-    「留下听着」「今日就到这里吧」不再代码识别——走场景模型与转译。
+    确定性封闭集 COURT_BREAK；引擎不重解析散文。
+    留侍／含糊收夜词表已退役，不在此识别。
     不进 ACTION_CLUSTERS；非第二 parser（无自由散文正则启发）。
     """
     from ming_sim.constants import COURT_BREAK_COMMANDS
@@ -1923,7 +1915,7 @@ def recognize_xuan_command(message: str) -> Optional[str]:
     text = str(message or "").strip()
     if not text:
         return None
-    # 收夜/留侍口令优先，避免「退下」等被宣召形状误吞。
+    # 显式退朝口令优先，避免被宣召形状误吞。
     if recognize_audience_command(text) != CMD_NONE:
         return None
     m = _XUAN_COMMAND_RE.match(text)
@@ -2040,6 +2032,7 @@ def set_night_protagonist(
     ``translation`` = 转译声明），不进库、不驱动规则。代码只存声明/口令给出
     的人名，不从戏文散文解析（ADR 0142）。
     """
+    owns = _should_commit(db) if commit else False
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("御前主角人名不能为空", code="empty_protagonist")
@@ -2082,7 +2075,7 @@ def audience_scene_recap(
     空串（AC3 负向：未在场者的组装输入不含殿内对话）。区间与可闻性判据复用
     audible_entries_for（御前低语不流入、入殿前不闻），不另立第二套在场/可闻性真源。"""
     name = str(person_name or "").strip()
-    if not name or not hasattr(db, "conn"):
+    if not name:
         return ""
     nid = night_id
     if nid is None:
@@ -2297,8 +2290,6 @@ def mark_actions_night_approved(
     db: Any, action_ids: Sequence[int], *, night_id: Optional[int] = None,
 ) -> int:
     """对话应允时：把暂存标为本夜已应允，收夜再提交（密令除外，调用方分流）。"""
-    if not hasattr(db, "mark_pending_night_approved"):
-        return 0
     nid = night_id
     if nid is None:
         open_n = assert_night_accepts_player_input(db, what="应允暂存")

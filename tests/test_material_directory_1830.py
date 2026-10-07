@@ -198,18 +198,21 @@ def test_opening_handled_matters_are_filtered_within_authorized_knowledge(
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
+    """dossier 读失败响亮上抛；来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, content = game
     character = _active_minister(db, content)
 
+    fault = RuntimeError("dossier boom")
+
     def boom(*_a, **_k):
-        raise RuntimeError("dossier boom")
+        raise fault
 
     db.list_referenceable_dossiers = boom
     try:
         prepare_character_materials(db, state, character, dest_root=tmp_path / "m")
         raise AssertionError("expected fail loud")
     except RuntimeError as exc:
-        assert "dossier boom" in str(exc)
+        assert exc is fault
 
 
 def test_read_material_stays_inside_directory(game, tmp_path):
@@ -310,11 +313,14 @@ def test_secret_order_material_read_failure_propagates(
     )
     next((p for p in list_materials(prepared.root) if p.startswith('密令/')))
 
+    fault = RuntimeError("secret-order-db-boom")
+
     def boom(_name):
-        raise RuntimeError("secret-order-db-boom")
+        raise fault
 
     monkeypatch.setattr(db.character_knowledge, "get_active_secret_orders_for_minister", boom)
-    with pytest.raises(RuntimeError, match='secret-order-db-boom'):
+    with pytest.raises(RuntimeError):
         prepare_character_materials(
             db, state, character, dest_root=tmp_path / "secret-fail",
         )
+    assert ei.value is fault

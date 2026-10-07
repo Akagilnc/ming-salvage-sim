@@ -222,13 +222,12 @@ def test_recommendation_appointment_preserves_kind_and_restores_both_types(game)
     recommender = next(c for c in content.characters.values()
                        if c.office_type not in ("后宫", "宗藩"))
     candidates = db.list_recommendation_candidates(state, recommender.name)
+    # ADR 0009：离事者不持现职名分；荐起复看 status，不要求 office 非空。
     offstage = next(row for row in candidates if row["candidate_kind"] == "荐起复")
     active = next(row for row in candidates if row["candidate_kind"] == "荐在职")
-    db.conn.execute(
-        "UPDATE characters SET status='offstage', office='', reason_code='罢居' WHERE name=?",
-        (offstage["name"],),
-    )
-    db.conn.commit()
+    assert offstage["status"] in {"offstage", "retired", "dismissed"}
+    assert validate_recommendation_snapshot(db, state, recommender.name, offstage)
+    assert validate_recommendation_snapshot(db, state, recommender.name, active)
     # The staged payload carries the original candidate snapshot; commit must
     # use it instead of reclassifying the candidate after appointment.
     for row, office in ((offstage, "巡盐御史"), (active, "河道总督")):

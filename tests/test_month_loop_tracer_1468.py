@@ -191,9 +191,9 @@ def _get_state(client: TestClient) -> dict:
 
 def _pending_payload(client: TestClient) -> dict:
 
-    """#1842：待补投影唯一真源 = list_pending_translations → chat.translation_retries。"""
-    resp = client.get("/api/audience/chat")
-    _assert_not_bare_500(resp, step="GET /api/audience/chat")
+    """#1842/#1853：待补投影唯一真源 = list_pending_translations → scroll.translation_retries。"""
+    resp = client.get("/api/audience/scroll")
+    _assert_not_bare_500(resp, step="GET /api/audience/scroll")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     retries = list(body.get("translation_retries") or [])

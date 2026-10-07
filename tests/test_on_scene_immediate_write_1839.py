@@ -20,7 +20,6 @@ from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.materials import list_materials, prepare_scene_materials, read_material
 from ming_sim.public_sayings import list_public_sayings
 
-
 def _active_minister(db, *, exclude: set[str] | None = None) -> str:
     skip = exclude or set()
     row = db.conn.execute(
@@ -33,7 +32,6 @@ def _active_minister(db, *, exclude: set[str] | None = None) -> str:
         if name not in skip:
             return name
     raise AssertionError("no active minister")
-
 
 def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, night_id: int = 0):
     """一轮窗口：搭建对话轮 → 公开入口分派（入口自记前像）→ 标抽取水位。"""
@@ -95,7 +93,6 @@ def test_kill_lands_status_and_next_materials_include_roster(game, tmp_path):
     assert roster_paths
     for path in roster_paths:
         assert victim not in read_material(prepared.root, path)
-
 
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):
     """AC2：孙传庭伤臂 → 文字事实；袁崇焕对外死讯 → 公开说法；目录可见。"""
@@ -309,7 +306,6 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     assert db.conn.execute(
         "SELECT 1 FROM characters WHERE name=?", ("李若璉夜測",),
     ).fetchone() is before_listed
-
 
 def test_commission_stays_staged_not_bypassing_promulgation(game):
     """AC4：任洪承畴、拨三十万仍是暂存交办，不因「当场」绕过颁布关。"""

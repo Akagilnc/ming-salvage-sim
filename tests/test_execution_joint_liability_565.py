@@ -124,7 +124,7 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
     targets = {e["target"] for e in edges}
     assert "倪元璐" in targets
     if delegator_delta is None:
-        # degraded：委派人零机械边，但仍进走样说明
+        # degraded：委派人零机械边，责任面仍在结构化归属
         assert "徐光启" not in targets
     else:
         assert "徐光启" in targets
@@ -184,7 +184,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []
 
 
-def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
+def test_dead_liable_party_skips_satisfaction_but_stays_on_liability_roster(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
     db.conn.execute("UPDATE characters SET status='dead' WHERE name='倪元璐'")

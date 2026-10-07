@@ -9,10 +9,8 @@ from types import SimpleNamespace
 import web_app
 from ming_sim.flows import apply_fixed_period_flows, compute_budget_lines
 
-
 def _army_pay_budget_lines(budget):
     return [row for row in budget["国库"]["expense"] if row.get("budget_key") == "army_pay"]
-
 
 def test_substrate_budget_splits_proposals_without_treasury_cap(game):
     db, state, _ = game
@@ -41,7 +39,6 @@ def test_substrate_budget_splits_proposals_without_treasury_cap(game):
     state.metrics["国库"] = 100
     assert proposed_parts() == {"central": 10, "jingyun": 7}
 
-
 def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
     import ming_sim.flows as flows_mod
 
@@ -66,8 +63,8 @@ def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
     assert len(hub_rows) == 1
     assert int(hub_rows[0]["paid"]) > 0
 
-
 def test_player_budget_payload_strips_engineering_notes(read_game):
+    """#1471：API 玩家定额行键集恰为 {name, amount}；工程 note/internal 不得下发。"""
     db, state, _ = read_game
     runtime = object.__new__(web_app.WebGame)
     runtime.session = SimpleNamespace(db=db, state=state)

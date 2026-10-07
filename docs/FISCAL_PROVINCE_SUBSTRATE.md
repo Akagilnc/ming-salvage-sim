@@ -75,7 +75,7 @@ k=action力度系数(ΣCost仅含action银,Due不入;Cost>0 action其 delta/scal
 
 **#70 史实重标 + 全省 seed(2026-06-14 陕西表 / 2026-06-20 grill 扩全省,见 [ADR 0019](adr/0019-fiscal-cutover-all-province-seed-hub-split.md)):**
 
-> **范围(2026-06-20 grill 收敛 + 跨模型评审 R1/R2 + 线上 gemini 修订)**:#70 = 显式 seed **17 个现 ming 直辖省**(15 布政司/两京 + 辽东 + 皮岛)的 `settle` 块。**tick 成员 = 动态判定 `controlled_by==ming` ∧ 有 `settle` 基座(非静态元组)**——消解 F2(seed 全 17、成员走谓词)、吸收失地处理、且 on_restore 收复省被 seed 后自动纳入(线上 gemini #262:静态清单会让收复省在 `calc_province_fiscal` 退役后财政瘫痪)。单省 cutover 会造 split-brain、不可玩,故单省仅作 shadow 验证;真 cutover 全省一起翻(hub 另列,见 ADR 0019)。外域/藩属/后金不入 seed(无 settle 基座、收复走 on_restore)。**失地 = 动态成员自然出列**:省份被夺→≠ming→自动不 tick(无需独立 freeze;v0.x——substrate 是明朝口径、建模不了后金财政)。
+> **范围(2026-06-20 grill 收敛 + 跨模型评审 R1/R2 + 线上 gemini 修订)**:#70 = 显式 seed **17 个现 ming 直辖省**(15 布政司/两京 + 辽东 + 皮岛)的 `settle` 块。**tick 成员 = 动态判定 `controlled_by==ming` ∧ 有 `settle` 基座(非静态元组)**——消解 F2(seed 全 17、成员走谓词)、吸收失地处理、且 on_restore 收复省被 seed 后自动纳入(线上 gemini #262:静态清单会让收复省在旧 flat 省级月收路径退役后财政瘫痪)。单省 cutover 会造 split-brain、不可玩,故单省仅作 shadow 验证;真 cutover 全省一起翻(hub 另列,见 ADR 0019)。外域/藩属/后金不入 seed(无 settle 基座、收复走 on_restore)。**失地 = 动态成员自然出列**:省份被夺→≠ming→自动不 tick(无需独立 freeze;v0.x——substrate 是明朝口径、建模不了后金财政)。
 >
 > **方法(一条:查史料填;折算法只限田亩量、其余 carve-out)**:每省 `settle` = 输入半 + 义务半。
 >  - **田亩量(正赋/官民田/隐田)**:查《会计录》田亩;**官民田用史实田亩、≠ regions.json 的 `guan_min_tian`**(后者是较小游戏字段,与 settle 田亩 ~10× 不同量)。查不到逐省数时**仅对田亩量**用「史料国总 × 该省田亩占比」折算。

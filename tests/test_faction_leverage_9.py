@@ -189,10 +189,13 @@ def test_promotion_via_set_character_office_raises_leverage(game):
     assert after > before, f"升迁到内阁后 leverage 应上升(before={before} after={after})"
 
 def test_failed_appointment_rolls_back_faction_leverage(game):
-    """#9 finding#2 事务回滚：失败的 apply_office_appointment（走 _restore_person_write_state）后，
-    该 faction leverage 与调用前一致（中途全重算被回滚、不漂移）。"""
+    """#9 finding#2 事务回滚：代码故障上抛前走 _restore_person_write_state，
+    faction leverage 与调用前一致（中途全重算被回滚、不漂移）。
+
+    #1853：schema/code 故障不得洗成业务 rejected（ADR 0005）；注入 RuntimeError
+    必须响亮上抛，同时仍完成快照还原。
+    """
     db, state, content = game
-    # 构造失败：起复一个在册阉党成员，但 set_character_office 抛错（授个会让 infer 报错的非法链）。
     # 更稳的失败注入：monkeypatch set_character_office 抛错，验回滚还原 leverage。
     name = db.conn.execute(
         "SELECT name FROM characters WHERE faction='阉党' AND status='active' "
@@ -211,9 +214,13 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
 
     db.set_character_office = _boom  # type: ignore[assignment]
     try:
-        result = apply_office_appointment(
-            db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党"
-        )
+        try:
+            apply_office_appointment(
+                db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党"
+            )
+            raise AssertionError("代码故障必须上抛，不得洗成业务 rejected")
+        except RuntimeError as exc:
+            assert "注入故障：授官落库失败" in str(exc)
     finally:
         db.set_character_office = orig  # type: ignore[assignment]
 
@@ -822,19 +829,17 @@ def test_half_weight_odd_baseline_no_round_drift(game):
     keeper = members[0]["name"]
     db.set_character_office(keeper, "礼部侍郎", "礼部")
     assert db._faction_office_weight_sum(faction) == 2.5
+    # 设奇数基线 79，直接写 offset（不走已退役的老档反推校准）。
     baseline = 79
-    content_faction = db.content.factions[faction]
-    old_baseline = int(content_faction.leverage)
-    content_faction.leverage = baseline
-    db.conn.execute("DELETE FROM metrics WHERE key=?", ("__leverage_offsets_calibrated",))
-    db._leverage_offsets_calibrated = False
+    weight = db._faction_office_weight_sum(faction)
+    db.conn.execute(
+        "UPDATE factions SET leverage=?, leverage_offset=? WHERE name=?",
+        (baseline, baseline - weight, faction),
+    )
     db.conn.commit()
-    try:
-        db._calibrate_faction_offsets(is_fresh_factions_seed=True)
-        db.conn.commit()
-        lev = db.factions.faction_leverage(faction)
-        assert lev == baseline, (
-            f"weight_sum=2.5 + 奇数基线 {baseline} → leverage 应={baseline}（不漂），实得 {lev}"
-        )
-    finally:
-        content_faction.leverage = old_baseline
+    db.recompute_faction_leverage(faction)
+    db.conn.commit()
+    lev = db.faction_leverage(faction)
+    assert lev == baseline, (
+        f"weight_sum=2.5 + 奇数基线 {baseline} → leverage 应={baseline}（不漂），实得 {lev}"
+    )
