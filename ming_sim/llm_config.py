@@ -179,12 +179,6 @@ def _normalize_runtime_llm(data: Dict[str, object]) -> Dict[str, object]:
     transport = _transport_runtime_slot(
         transport_raw if isinstance(transport_raw, dict) else {}
     )
-    api_strength = normalize_reasoning_strength(api.get("reasoning_strength"))
-    if api_strength:
-        api["reasoning_strength"] = api_strength
-    elif "reasoning_strength" in api:
-        api["reasoning_strength"] = ""
-    cli_strength = normalize_reasoning_strength(cli.get("reasoning_strength"))
     return {
         "channel": channel,
         "api": api,

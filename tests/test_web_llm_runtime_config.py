@@ -111,8 +111,8 @@ def test_runtime_api_reasoning_strength_builds_llm_config(monkeypatch):
     assert cfg.reasoning_strength == "high"
 
 
-def test_runtime_no_longer_migrates_thinking_level_to_reasoning_strength(monkeypatch):
-    """运行配置消费者只读槽位 reasoning_strength；thinking_level 不再迁入。"""
+def test_runtime_env_legacy_advanced_thinking_builds_reasoning_strength(monkeypatch):
+    """无 runtime 槽时，Web 环境 advanced_thinking_level 仍经既有权威进 reasoning_strength。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     cfg = web_app._llm_config_from_runtime(
@@ -130,7 +130,7 @@ def test_runtime_no_longer_migrates_thinking_level_to_reasoning_strength(monkeyp
 
     assert cfg.channel == "api"
     assert cfg.advanced_thinking_level == ""
-    assert cfg.reasoning_strength == ""
+    assert cfg.reasoning_strength == "high"
 
 
 def test_build_llm_config_switches_to_api_on_real_key_over_backend_env(monkeypatch):

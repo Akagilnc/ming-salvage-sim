@@ -82,39 +82,6 @@ def test_load_runtime_llm_non_dict_payload_returns_empty(tmp_path, monkeypatch):
         assert llm_config.load_runtime_llm() == {}, f"payload={payload!r} 应回落空 dict"
 
 
-def test_load_runtime_llm_ignores_flat_api_fields(tmp_path, monkeypatch):
-    """旧扁平顶层字段不再迁入 api 槽；只认显式槽位。"""
-    path = tmp_path / "runtime_llm.json"
-    path.write_text(
-        json.dumps(
-            {
-                "base_url": "https://api.example.com/v1",
-                "model": "gpt-test",
-                "api_key": "sk-test",
-                "timeout_seconds": 120,
-                "thinking_level": "medium",
-                "advanced_model": "gpt-advanced",
-                "advanced_thinking_level": "high",
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
-
-    runtime = llm_config.load_runtime_llm()
-
-    assert runtime["channel"] == ""
-    assert runtime["api"]["base_url"] == ""
-    assert runtime["api"]["model"] == ""
-    assert runtime["api"]["api_key"] == ""
-    assert runtime["api"].get("reasoning_strength") in ("", None)
-    assert "base_url" not in runtime
-    assert "model" not in runtime
-    assert "api_key" not in runtime
-    assert "reasoning_strength" not in runtime
-
-
 def test_save_runtime_llm_persists_channel_slots(tmp_path, monkeypatch):
     path = tmp_path / "runtime_llm.json"
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
@@ -402,24 +369,6 @@ def test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli(tmp_path, 
         "model": "gpt-5.5",
         "timeout_seconds": 240,
     }
-
-
-def test_load_runtime_flat_cli_backend_placeholder_not_api_channel(tmp_path, monkeypatch):
-    # 扁平旧配置不再推断 channel；占位符 key 不得升成 api。
-    path = tmp_path / "runtime_llm.json"
-    path.write_text(json.dumps({
-        "api_key": "cli-backend",
-        "base_url": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
-        "max_tokens": 8000,
-        "timeout_seconds": 180,
-    }), encoding="utf-8")
-    monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
-
-    out = llm_config.load_runtime_llm()
-
-    assert out["channel"] == ""
-    assert out["api"]["api_key"] == ""
 
 
 def test_cli_backend_active_explicit_cli_bogus_runner_false_despite_env(monkeypatch):

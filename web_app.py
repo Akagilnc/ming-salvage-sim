@@ -59,6 +59,7 @@ from ming_sim.llm_config import (
     normalize_openai_base_url,
     normalize_thinking_level,
     normalize_reasoning_strength,
+    legacy_reasoning_strength,
     save_runtime_llm,
     _slot_header_table,
 )
@@ -597,9 +598,20 @@ def _llm_config_from_runtime(
     api_slot = _runtime_api_slot(runtime)
     cli_runner = str(cli_slot.get("runner") or env_runner or ("agy" if channel == "cli" else "")).strip().lower()
     cli_model = str(cli_slot.get("model") or cli_model_from_env(cli_runner, model)).strip()
-    reasoning_strength = normalize_reasoning_strength(
+    # 槽位优先；无槽值时复用 load_llm_config 同源的环境 thinking→strength 权威（非持久扁平迁移）。
+    slot_strength = normalize_reasoning_strength(
         cli_slot.get("reasoning_strength") if channel == "cli" else api_slot.get("reasoning_strength")
     )
+    env_strength = (
+        ""
+        if channel == "cli"
+        else legacy_reasoning_strength({
+            "advanced_model": advanced_model,
+            "advanced_thinking_level": advanced_thinking_level,
+            "thinking_level": thinking_level,
+        })
+    )
+    reasoning_strength = slot_strength or env_strength
     # 无 saved CLI timeout 时回落 CLI 默认（300），不回落 API request timeout（codex R1 #3）。
     cli_timeout = _runtime_float(cli_slot.get("timeout_seconds"), CLI_DEFAULT_TIMEOUT_SECONDS)
     if channel == "cli":
