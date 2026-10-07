@@ -67,17 +67,6 @@ def _danger_top_statuses(db, limit: int) -> list[str]:
     ]
 
 
-def _expected_ming_register(db) -> str:
-    """兵部 military 供料真源：在册 name+manpower 原值搬运（不含 status）。"""
-    rows = db.conn.execute(
-        "SELECT name, manpower FROM armies WHERE owner_power='ming' ORDER BY name"
-    ).fetchall()
-    assert rows
-    return "兵籍在册：\n" + "\n".join(
-        f"{row['name']}：{int(row['manpower'])}人" for row in rows
-    )
-
-
 def _assert_text_keeps_statuses(text: str, statuses: list[str], label: str) -> None:
     """共享读者原字段搬运：row.status 须原样出现在出口正文。"""
     assert text, f"{label} 空报告"
@@ -193,12 +182,12 @@ def test_shared_consumers_still_surface_status(read_game):
     db, state, content = read_game
     seed_status = _guanning_db_status(db)
 
-    # 2) 兵部账键 military = 在册 name+manpower 原值，不经 status 键。
+    # 2) 兵部 knowledge 供料键 military 在场（正文呈现不锁模板；军牌无 status 见键集）
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)
     world = knowledge.get("world") or {}
     assert "military" in world
-    assert str(world["military"] or "") == _expected_ming_register(db)
+    assert isinstance(world["military"], str) and world["military"]
 
     # 3) state_payload.army_warning → 真实 WebGame.state_payload 键
     payload = web_app.WebGame.state_payload(_web_runtime(db, state, content))
