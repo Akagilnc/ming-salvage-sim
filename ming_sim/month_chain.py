@@ -166,14 +166,16 @@ def _month_fact_materials(
     ).fetchall()
     for row in rows:
         decree_ref = str(row["decree_ref"] or "")
-        try:
-            declaration = json.loads(row["declaration_json"] or "{}")
-        except json.JSONDecodeError:
-            declaration = {}
-        try:
-            visible = json.loads(row["visible_refs_json"] or "{}")
-        except json.JSONDecodeError:
-            visible = {}
+        from ming_sim.db import GameDB
+
+        declaration = GameDB.parse_engine_payload_json(
+            row["declaration_json"],
+            surface="staged_declarations.declaration_json",
+        )
+        visible = GameDB.parse_engine_payload_json(
+            row["visible_refs_json"],
+            surface="staged_declarations.visible_refs_json",
+        )
         if not include_secret_sources and (
             _decree_ref_is_secret(db, decree_ref)
             or _secret_sourced(declaration)
@@ -215,10 +217,12 @@ def _month_fact_materials(
         ):
             if not include_secret_sources and str(row["source"] or "") == "secret_order":
                 continue
-            try:
-                item = json.loads(row["item_json"] or "{}")
-            except json.JSONDecodeError:
-                item = {}
+            from ming_sim.db import GameDB
+
+            item = GameDB.parse_engine_payload_json(
+                row["item_json"],
+                surface="rejection_reports.item_json",
+            )
             if not include_secret_sources and (
                 _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
             ):

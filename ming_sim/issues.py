@@ -504,11 +504,12 @@ def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     raw = row["stop_condition"] if "stop_condition" in keys else ""
     if not raw:
         return {}
-    try:
-        gate = json.loads(str(raw))
-    except (TypeError, ValueError):
-        return {}
-    return gate if isinstance(gate, dict) else {}
+    gate = json.loads(str(raw))
+    if not isinstance(gate, dict):
+        raise ValueError(
+            f"stop_condition 须为 JSON object，得 {type(gate).__name__}"
+        )
+    return gate
 
 
 def _commitment_remaining_from_gate(
@@ -8708,24 +8709,21 @@ def _apply_score_extraction_body(
                                           "category": "invalid_enum",
                                           "reason": f"密令当前 {order['status']}，非 active，不写推演副作用"})
             continue
-        try:
-            db.update_secret_order_sim_note(
-                real_id,
-                sim_note,
-                year=state.year,
-                period=state.period,
-                commit=commit_now,
+        db.update_secret_order_sim_note(
+            real_id,
+            sim_note,
+            year=state.year,
+            period=state.period,
+            commit=commit_now,
+        )
+        if disclosed and not defer_disclosure:
+            record_secret_order_disclosure(
+                db, state, real_id, sim_note, commit=commit_now,
             )
-            if disclosed and not defer_disclosure:
-                record_secret_order_disclosure(
-                    db, state, real_id, sim_note, commit=commit_now,
-                )
-            print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
-            applied_secret_orders.append({
-                "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
-            })
-        except Exception as exc:
-            applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
+        print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
+        applied_secret_orders.append({
+            "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
+        })
 
     # report_section 保留 sanitize 原 section，供 _collect_inline_rejections 一次归属
     # （0015-D6；禁止落入 validate_shape_rejections 假 section，#1745）。

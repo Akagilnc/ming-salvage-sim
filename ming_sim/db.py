@@ -711,18 +711,16 @@ _OFFICE_TYPE_LLM_CACHE: Dict[str, str] = {}
 
 
 def _offices_table() -> Dict[str, object]:
-    """加载 content/offices.json（明代职官→office_type 参考表），缓存。失败返回空表。"""
+    """加载 content/offices.json（明代职官→office_type 参考表），缓存。核心内容失败响亮。"""
     global _OFFICES_TABLE
     if _OFFICES_TABLE is None:
-        try:
-            from ming_sim.assets import load_json_asset
-            data = load_json_asset("offices.json")
-            _OFFICES_TABLE = data if isinstance(data, dict) else {}
-        except Exception as exc:
-            # 注：文件缺失 / JSON 损坏会在 load_json_asset 直接 SystemExit fail-loud（核心内容
-            # 不该静默回空表），不经此分支；这里只兜 import / 意外错误（gemini-code-assist cmr）。
-            tlog(f"[content] offices.json 意外加载失败，回空表：{exc}")  # #14 surface
-            _OFFICES_TABLE = {}
+        from ming_sim.assets import load_json_asset
+        data = load_json_asset("offices.json")
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"offices.json 须为对象，得 {type(data).__name__}"
+            )
+        _OFFICES_TABLE = data
     return _OFFICES_TABLE
 
 
@@ -5631,31 +5629,28 @@ class GameDB:
             # 推导默认 bar / inertia / ongoing / effect，与 event_to_issue 同口径；精调字段优先
             bar = ev.bar_value or max(20, min(60, 50 - int(ev.severity / 5)))
             inertia = ev.issue_inertia  # 默认 0=不漂；要月漂在 seed 里显式填
-            try:
-                self.insert_issue(
-                    state,
-                    kind="situation",
-                    title=ev.title,
-                    origin_kind="event_pool",
-                    origin_ref=ev.id,
-                    bar_value=bar,
-                    bar_good_meaning=ev.bar_good_meaning or "已平",
-                    bar_bad_meaning=ev.bar_bad_meaning or "失控",
-                    inertia=inertia,
-                    stage_text=ev.stage_text or ev.summary,
-                    severity=int(ev.severity),
-                    region_hint=ev.region_hint,
-                    faction_hint=",".join(ev.interests[:2]),
-                    tags=ev.issue_tags or [ev.kind],
-                    ongoing_effects=ev.ongoing_effects,
-                    cancellable="never",
-                    effect_on_resolve=ev.effect_on_resolve,
-                    effect_on_fail=ev.effect_on_fail,
-                    resolve_condition=ev.resolve_condition,
-                    fail_condition=ev.fail_condition,
-                )
-            except Exception as exc:
-                print(f"[WARN] 开局危机落库失败：{exc}；跳过 {ev.title}")
+            self.insert_issue(
+                state,
+                kind="situation",
+                title=ev.title,
+                origin_kind="event_pool",
+                origin_ref=ev.id,
+                bar_value=bar,
+                bar_good_meaning=ev.bar_good_meaning or "已平",
+                bar_bad_meaning=ev.bar_bad_meaning or "失控",
+                inertia=inertia,
+                stage_text=ev.stage_text or ev.summary,
+                severity=int(ev.severity),
+                region_hint=ev.region_hint,
+                faction_hint=",".join(ev.interests[:2]),
+                tags=ev.issue_tags or [ev.kind],
+                ongoing_effects=ev.ongoing_effects,
+                cancellable="never",
+                effect_on_resolve=ev.effect_on_resolve,
+                effect_on_fail=ev.effect_on_fail,
+                resolve_condition=ev.resolve_condition,
+                fail_condition=ev.fail_condition,
+            )
 
     def _canonicalize_character_location(self, raw: object) -> str:
         """#654 G：location 唯一写缝归一——精确 compact 等值；未知非空 fail-loud。"""
@@ -8904,12 +8899,9 @@ class GameDB:
 
     @staticmethod
     def _parse_highlights_json(raw: Any) -> List[str]:
-        try:
-            data = json.loads(raw or "[]")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
-            return []
+        data = GameDB._loads_stored_json_list(
+            raw, surface="chat_messages.highlights_json",
+        )
         out: List[str] = []
         for item in data:
             # Free prose highlight phrases: preserve raw; strip only emptiness (#1834 F21).
@@ -10464,11 +10456,11 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        try:
-            timeline = json.loads(row["timeline"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] timeline JSON 损坏，回空：{exc}")  # #14 surface
-            timeline = []
+        timeline = json.loads(row["timeline"] or "[]")
+        if not isinstance(timeline, list):
+            raise ValueError(
+                f"ending_summary.timeline 须为 list，得 {type(timeline).__name__}"
+            )
         return {
             "turn": int(row["turn"]),
             "year": int(row["year"]),
@@ -10721,22 +10713,15 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}")  # #14 surface
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
+            options = self._loads_stored_json_list(
+                r["options_json"], surface="pending_decisions.options_json",
+            )
+            choice = self._loads_stored_json_optional(
+                r["choice_json"], surface="pending_decisions.choice_json",
+            )
+            prior = self._loads_stored_json_list(
+                r["prior_options_json"], surface="pending_decisions.prior_options_json",
+            )
             source_turn = int(r["turn"])
             idx = int(r["idx"])
             kind = str(r["kind"] or "decision")
@@ -10750,7 +10735,7 @@ class GameDB:
                 "context": r["context"],
                 "rejection_reason": r["rejection_reason"],
                 "opposition": r["opposition"],
-                "options": options if isinstance(options, list) else [],
+                "options": options,
                 "choice": choice,
                 "status": r["status"],
                 "kind": kind,
@@ -10758,7 +10743,7 @@ class GameDB:
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
                 "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
+                "prior_options_json": prior,
             })
         return out
 
@@ -10832,36 +10817,29 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（draft turn={r['turn']} idx={r['idx']}）：{exc}")
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
+            options = self._loads_stored_json_list(
+                r["options_json"], surface="rescript_draft.options_json",
+            )
+            choice = self._loads_stored_json_optional(
+                r["choice_json"], surface="rescript_draft.choice_json",
+            )
+            prior = self._loads_stored_json_list(
+                r["prior_options_json"], surface="rescript_draft.prior_options_json",
+            )
             out.append({
                 "turn": int(r["turn"]),
                 "idx": int(r["idx"]),
                 "event_id": r["event_id"],
                 "title": r["title"],
                 "context": r["context"],
-                "options": options if isinstance(options, list) else [],
+                "options": options,
                 "choice": choice,
                 "status": r["status"],
                 "actor_name": r["actor_name"],
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
                 "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
+                "prior_options_json": prior,
             })
         return out
 
@@ -10899,24 +10877,15 @@ class GameDB:
         kind = str(r["kind"] or "decision")
         source_turn = int(r["turn"])
         idx = int(r["idx"])
-        try:
-            options = json.loads(r["options_json"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-            options = []
-        if not isinstance(options, list):
-            options = []
-        choice_raw = (r["choice_json"] or "").strip()
-        try:
-            choice = json.loads(choice_raw) if choice_raw else None
-        except Exception as exc:
-            tlog(f"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}")
-            choice = None
-        try:
-            prior = json.loads(r["prior_options_json"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-            prior = []
+        options = self._loads_stored_json_list(
+            r["options_json"], surface="rescript_desk.options_json",
+        )
+        choice = self._loads_stored_json_optional(
+            r["choice_json"], surface="rescript_desk.choice_json",
+        )
+        prior = self._loads_stored_json_list(
+            r["prior_options_json"], surface="rescript_desk.prior_options_json",
+        )
         return {
             "decision_key": f"{kind}:{source_turn}:{idx}",
             "kind": kind,
@@ -10935,7 +10904,7 @@ class GameDB:
             "actor_office": r["actor_office"],
             "actor_faction": r["actor_faction"],
             "revision_round": int(r["revision_round"] or 0),
-            "prior_options_json": prior if isinstance(prior, list) else [],
+            "prior_options_json": prior,
         }
 
     def get_rescript_desk_rows_by_keys(
@@ -18375,16 +18344,13 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        def _load(text: str, default, label: str):
-            try:
-                return json.loads(text) if text else default
-            except Exception as exc:
-                tlog(f"[db] resolve_context {label} JSON 损坏，回退默认、恢复将丢该段（turn={turn}）：{exc}")  # #14 surface
-                return default
         attendant_message = str(row["attendant_message"] or "")
         return {
             "decree_text": row["decree_text"],
-            "simulator_payload": _load(row["simulator_payload_json"], {}, "simulator_payload"),
+            "simulator_payload": self.parse_engine_payload_json(
+                row["simulator_payload_json"],
+                surface="pending_resolve_context.simulator_payload_json",
+            ),
             "source": row["source"] or "system_simulation",
             "attendant_message": attendant_message,  # #671 王承恩独立递话
         }
@@ -19322,6 +19288,40 @@ class GameDB:
             )
         return dict(data)
 
+    @staticmethod
+    def _loads_stored_json_list(raw: object, *, surface: str) -> list:
+        """持久 list JSON：真空→[]；腐坏/非 list 响亮 ValueError。"""
+        if isinstance(raw, list):
+            return list(raw)
+        if raw is None:
+            return []
+        text = str(raw).strip()
+        if not text or text == "[]":
+            return []
+        try:
+            data = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            tlog(f"[{surface}] 腐坏 JSON，拒绝静默等同空 list：{text[:80]!r}")
+            raise ValueError(f"{surface} 腐坏 JSON：{text[:80]!r}") from exc
+        if not isinstance(data, list):
+            tlog(f"[{surface}] 非 list，拒绝静默：{type(data).__name__}")
+            raise ValueError(f"{surface} 须为 list，得 {type(data).__name__}")
+        return list(data)
+
+    @staticmethod
+    def _loads_stored_json_optional(raw: object, *, surface: str) -> object:
+        """持久可选 JSON 值：真空→None；腐坏响亮 ValueError。"""
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except (TypeError, ValueError) as exc:
+            tlog(f"[{surface}] 腐坏 JSON，拒绝静默：{text[:80]!r}")
+            raise ValueError(f"{surface} 腐坏 JSON：{text[:80]!r}") from exc
+
     @classmethod
     def _parse_todo_payload_json(cls, raw: object) -> Dict[str, object]:
         return cls.parse_engine_payload_json(
@@ -19848,11 +19848,9 @@ class GameDB:
         for lg in self.conn.execute(
             "SELECT modifiers FROM legacies WHERE status='active' ORDER BY id"
         ).fetchall():
-            try:
-                eff = json.loads(str(lg["modifiers"] or "{}"))
-            except Exception as exc:
-                tlog(f"[db] legacy modifiers JSON 损坏，跳过该 legacy：{exc}")  # #14 surface
-                continue
+            eff = self.parse_engine_payload_json(
+                lg["modifiers"], surface="legacies.modifiers",
+            )
             for acc in ("国库", "内库", "民心", "皇威"):
                 v = eff.get(acc)
                 if isinstance(v, (int, float)):
