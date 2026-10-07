@@ -34,52 +34,6 @@ _MUTINY_ORDINAL_KEYS = frozenset(
 )
 
 # 六档真值表（票面 latch / 边界 / probation；含全部明确边界样本）
-_TIER_CASES = (
-    # (is_mutinied, loyalty, probation, expected_tier)
-    (1, 100, 0, "哗变"),  # latch L=100
-    (1, 100, 1, "哗变"),  # latch 盖过 probation
-    (1, 95, 0, "哗变"),
-    (1, 10, 3, "哗变"),
-    (0, 39, 0, "鼓噪"),
-    (0, 19, 0, "鼓噪"),  # L<20 未闩 → 鼓噪，非哗变
-    (0, 30, 1, "鼓噪"),  # probation 不覆盖低档
-    (0, 40, 0, "不满"),
-    (0, 50, 1, "不满"),  # probation 不覆盖中低档
-    (0, 59, 0, "不满"),
-    (0, 60, 1, "不满"),  # probation 只挡回正常
-    (0, 80, 2, "不满"),
-    (0, 60, 0, "一般"),
-    (0, 69, 0, "一般"),
-    (0, 70, 0, "优秀"),
-    (0, 79, 0, "优秀"),
-    (0, 80, 0, "死忠"),
-    (0, 100, 0, "死忠"),
-)
-
-_TIER_IDS = [
-    f"L{loyalty}-latch{latch}-p{prob}-{tier}"
-    for latch, loyalty, prob, tier in _TIER_CASES
-]
-
-
-def _row(
-    *,
-    is_mutinied: int = 0,
-    loyalty: int = 70,
-    mutiny_probation: int = 0,
-    morale: int = 73,
-    arrears: float = 0.0,
-    **extra,
-):
-    base = {
-        "is_mutinied": is_mutinied,
-        "loyalty": loyalty,
-        "mutiny_probation": mutiny_probation,
-        "morale": morale,
-        "arrears": arrears,
-    }
-    base.update(extra)
-    return base
 
 
 def _configure(db) -> None:

@@ -154,6 +154,362 @@ def test_promulgation_verdict_list_shape_has_one_canonical_authority(game):
     with pytest.raises(decree_mod.LLMContractError):
         decree_mod.validate_promulgation_verdicts({"verdicts": []}, [], db)
 
+@pytest.mark.parametrize("decision", ["promulgated", "rejected"])
+def test_promulgation_verdict_rejects_unknown_fields(game, decision):
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    verdict = (
+        {"dossier_id": dossier_id, "decision": "promulgated"}
+        if decision == "promulgated"
+        else _rejected_verdict(dossier_id, context["imperial_authority_band"])
+    )
+    verdict["foo"] = "bar"
+
+    with pytest.raises(decree_mod.LLMContractError):
+        decree_mod.validate_promulgation_verdicts(
+            [verdict], dossiers, db, prepared_context=context,
+        )
+
+def test_promulgated_verdict_strips_rejection_only_noise(game):
+    """#1397：顺颁夹带打回专属字段 → 剥离后过闸，不卡 settling。
+
+    r6 三局 rejection_reports 实证：LLM 在 decision=promulgated 上塞
+    reason/gatekeeper_id/primary_opponents/criteria_snapshot/affected_parties。
+    """
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    noisy = {
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+        "gatekeeper_id": "许誉卿",
+        "primary_opponents": [{"kind": "faction", "key": "阉党"}],
+        "reason": "有御笔手敕背书；该案未见越制破格条款。",
+        "criteria_snapshot": {
+            "imperial_authority_band": context["imperial_authority_band"],
+            "appointment_tenure": "",
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+        },
+        "affected_parties": [
+            {"kind": "faction", "key": "阉党", "direction": "negative", "intensity": "strong"},
+        ],
+        "blocked_layer": "six_offices",
+        "legal_reason_code": "",
+        "midzhi_unpromulgatable": False,
+    }
+    original_keys = set(noisy)
+
+    cleaned = decree_mod.validate_promulgation_verdicts(
+        [noisy], dossiers, db, prepared_context=context,
+    )
+
+    assert cleaned == [{"dossier_id": dossier_id, "decision": "promulgated"}]
+    # 调用方输入不被原地改写（error-pack / rejection 审计仍见原文）。
+    assert set(noisy) == original_keys
+
+def test_promulgated_midzhi_strips_affected_parties_with_rejection_noise(game):
+    """#657 §C.8：中旨顺颁剥离打回噪声与猜派 affected_parties。"""
+    db, state, _content = game
+    dossier_id = _dossier(db, state, mode="midzhi")
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    parties = [
+        {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
+    ]
+    noisy = {
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+        "affected_parties": parties,
+        "reason": "中旨行政旨照过",
+        "gatekeeper_id": "黄立极",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "blocked_layer": "six_offices",
+        "criteria_snapshot": {
+            "imperial_authority_band": context["imperial_authority_band"],
+            "appointment_tenure": "",
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+        },
+    }
+
+    cleaned = decree_mod.validate_promulgation_verdicts(
+        [noisy], dossiers, db, prepared_context=context,
+    )
+
+    assert cleaned == [{
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+    }]
+    assert "affected_parties" not in cleaned[0]
+
+def test_promulgated_true_path_clean_verdict_passes(game):
+    """#1397 钉测：干净顺颁真路径（仅 dossier_id+decision）过闸。"""
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+
+    assert decree_mod.validate_promulgation_verdicts(
+        [{"dossier_id": dossier_id, "decision": "promulgated"}],
+        dossiers, db, prepared_context=context,
+    ) == [{"dossier_id": dossier_id, "decision": "promulgated"}]
+
+def test_rejected_verdict_still_requires_full_rejection_contract(game):
+    """#1397 负向边界：打回契约不因顺颁容错而放松。"""
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+
+    with pytest.raises(decree_mod.LLMContractError):
+        decree_mod.validate_promulgation_verdicts(
+            [{"dossier_id": dossier_id, "decision": "rejected", "reason": "仅有缘由"}],
+            dossiers, db, prepared_context=context,
+        )
+
+def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(game):
+    from scripts.promulgation_gate_561 import _prepare_reconsideration_facts
+
+    db, state, _content = game
+    dossier_id = _dossier(db, state, "不经部议，清丈天下田亩并追夺士绅隐田")
+    first = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+    original_factions = {row["name"]: row for row in first["factions"]}
+
+    second = _prepare_reconsideration_facts(db, state, dossier_id, first)
+
+    assert [row["name"] for row in second["gatekeepers"]] == ["黄立极", "王体乾"]
+    assert db.conn.execute(
+        "SELECT status FROM characters WHERE name='许誉卿'"
+    ).fetchone()["status"] == "dismissed"
+    second_factions = {row["name"]: row for row in second["factions"]}
+    assert second_factions["东林"] == {
+        "name": "东林", "leverage": power_band(5),
+        "agenda": "失去许誉卿封驳支点，转入复议",
+    }
+    assert {
+        name: facts for name, facts in second_factions.items() if name != "东林"
+    } == {
+        name: facts for name, facts in original_factions.items() if name != "东林"
+    }
+    auth_ids = second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
+    assert auth_ids and all(item.isdigit() for item in auth_ids)
+    authority = db.get_authority(int(auth_ids[0]))
+    assert authority["dossier_id"] != dossier_id
+    assert db.dossier_authorizes_effects(int(authority["dossier_id"]))
+    assert second["dossiers"][0]["held_authorities"]
+    assert second["dossiers"][0]["held_authorities"][0]["privilege"] == "便宜行事"
+    assert second["imperial_authority_band"] == "强盛"
+
+def test_gate_reconsideration_resolves_missing_target_to_land_survey(game):
+    from scripts.promulgation_gate_561 import _prepare_reconsideration_facts
+
+    db, state, _content = game
+    dossier_id = _dossier(db, state, "不经部议，清丈天下田亩并追夺士绅隐田")
+    db.conn.execute(
+        "UPDATE decree_dossiers SET target_kind='', target_id='' WHERE id=?",
+        (dossier_id,),
+    )
+    first = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+
+    second = _prepare_reconsideration_facts(db, state, dossier_id, first)
+
+    held = db.get_decree_dossier(dossier_id)
+    assert held["target_kind"] == "issue"
+    assert held["target_id"] == "清丈田亩"
+    auth_ids = second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
+    assert auth_ids and all(item.isdigit() for item in auth_ids)
+    authority = db.get_authority(int(auth_ids[0]))
+    grant = db.get_decree_dossier(int(authority["dossier_id"]))
+    assert authority["scope"] == "issue:清丈田亩"
+    assert grant["target_kind"] == "issue"
+    assert grant["target_id"] == "清丈田亩"
+    assert second["dossiers"][0]["held_authorities"][0]["scope"] == "issue:清丈田亩"
+
+def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
+    from scripts.promulgation_gate_561 import _judge_context_for_dossier
+    from ming_sim.issues import apply_score_extraction
+
+    db, state, content = game
+    dossier_id = _dossier(db, state)
+    holder = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    stale = db.get_decree_dossier(dossier_id)
+    # Payload authorization strings must not become authorization_ids (#611).
+    payload = json.loads(stale["payload_json"])
+    payload["authorization_ids"] = ["fresh-authorization"]
+    db.conn.execute(
+        "UPDATE decree_dossiers SET payload_json=?, executor_kind='character', "
+        "executor_id=? WHERE id=?",
+        (json.dumps(payload), holder, dossier_id),
+    )
+    db.conn.commit()
+    grant_dossier_id = db.create_decree_dossier(
+        state, action_type="authorization", decree_text="另案授以便宜行事",
+        target_kind="issue", target_id=f"policy-{state.turn}",
+        executor_kind="character", executor_id=holder,
+        participants=[{"character_id": holder, "tier": "主办"}],
+        payload={"mode": "ordinary"},
+    )
+    db.record_dossier_decision(grant_dossier_id, "promulgated")
+    grant = apply_score_extraction(db, state, {"authority_changes": [{
+        "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
+        "scope": f"issue:policy-{state.turn}", "dossier_id": grant_dossier_id,
+    }]}, content=content)["authority_changes"][0]
+    assert grant.get("rejected") is not True
+    authority_id = int(grant["authority_id"])
+    assert db.get_authority(authority_id)["dossier_id"] == grant_dossier_id
+    assert grant_dossier_id != dossier_id
+
+    stale_context = decree_mod.build_promulgation_judge_context(db, state, [stale])
+    fresh_context = _judge_context_for_dossier(db, state, dossier_id)
+
+    # Stale row still lacks executor/target projection inputs until reloaded.
+    assert stale_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == []
+    assert fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
+        str(authority_id),
+    ]
+    assert "fresh-authorization" not in (
+        fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
+    )
+
+def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatch, tmp_path):
+    """Non-awaiting arms must read applied history at the pre-resolve turn."""
+    from ming_sim.content import GameContent
+    from ming_sim.models import LLMConfig
+    from scripts import promulgation_gate_561 as gate
+
+    content = GameContent.load()
+    cfg = LLMConfig(
+        api_key="", base_url="", model="test", channel="cli",
+        cli_runner="codex", cli_model="test",
+    )
+
+    def fake_resolve(state, db, *_a, **_k):
+        dossiers = db.list_decree_dossiers(status="proposed")
+        verdicts = [
+            {"dossier_id": int(row["id"]), "decision": "promulgated"}
+            for row in dossiers
+        ]
+        db.apply_dossier_verdicts(state, verdicts, content=content)
+        # Settlement advances turn — the bug surface (pending batch writer retired).
+        state.turn += 1
+        db.save_state(state)
+        return decree_mod.ResolveResult(awaiting=False, report="settled")
+
+    monkeypatch.setattr(gate, "resolve_directives", fake_resolve)
+    result = gate._run_resolve_arm(
+        str(tmp_path), content, cfg,
+        name="settled_arm", authority=100, kinds=("hostile",),
+    )
+    assert result["awaiting"] is False
+    assert result["verdicts"], "settled arm must recover applied verdicts"
+    assert {int(row["dossier_id"]) for row in result["verdicts"]} == set(
+        result["ids"].values()
+    )
+    assert all(row["decision"] == "promulgated" for row in result["verdicts"])
+
+def test_gatekeeper_successor_removes_donglin_block_posture(game):
+    """TD-9 successor must be registered and not recreate the 东林 block."""
+    from scripts.promulgation_gate_561 import (
+        GATEKEEPER_SUCCESSOR,
+        _gatekeeper_names,
+        _mutate_gatekeeper_replace,
+    )
+
+    db, state, _content = game
+    seeded = db.conn.execute(
+        "SELECT name, faction, status, power_id FROM characters WHERE name=?",
+        (GATEKEEPER_SUCCESSOR,),
+    ).fetchone()
+    assert seeded is not None, f"successor {GATEKEEPER_SUCCESSOR!r} must be registered"
+    assert seeded["power_id"] == "ming"
+    assert seeded["faction"] != "东林"
+
+    _mutate_gatekeeper_replace(db, state)
+    context = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+    names = _gatekeeper_names(context)
+    assert GATEKEEPER_SUCCESSOR in names
+    assert "许誉卿" not in names
+    successor = next(
+        row for row in context["gatekeepers"] if row["name"] == GATEKEEPER_SUCCESSOR
+    )
+    assert successor["faction"] != "东林"
+
+def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
+    """Rejected authority_edge must pick withdrawn/hold, never options[0] force."""
+    from scripts.promulgation_gate_561 import _choose_rescripts
+
+    db, state, _content = game
+    hostile = _dossier(db, state, "敌对清丈")
+    vital = _dossier(db, state, "命门中旨", mode="midzhi")
+    appointment = db.create_decree_dossier(
+        state, action_type="appointment", decree_text="调任",
+        target_kind="character", target_id="许誉卿", payload={"任别": "真除"},
+    )
+    authority_edge = _dossier(db, state, "越一级特授")
+    ordinary_opts = [
+        {"label": "强颁", "dossier_id": authority_edge,
+         "dossier_decision": "force_promulgated"},
+        {"label": "收回", "dossier_id": authority_edge,
+         "dossier_decision": "withdrawn"},
+        {"label": "留中", "dossier_id": authority_edge,
+         "dossier_decision": "hold"},
+    ]
+    decisions = [
+        {"event_id": f"dossier:{hostile}", "title": "批红", "context": "h",
+         "options": [
+             {"label": "强颁", "dossier_id": hostile,
+              "dossier_decision": "force_promulgated"},
+             {"label": "收回", "dossier_id": hostile,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": hostile,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{vital}", "title": "批红", "context": "v",
+         "options": [
+             {"label": "收回", "dossier_id": vital,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": vital,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{appointment}", "title": "批红", "context": "a",
+         "options": [
+             {"label": "强颁", "dossier_id": appointment,
+              "dossier_decision": "force_promulgated"},
+             {"label": "收回", "dossier_id": appointment,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": appointment,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{authority_edge}", "title": "批红", "context": "e",
+         "options": ordinary_opts},
+    ]
+    db.save_pending_decisions(state.turn, decisions)
+    chosen = _choose_rescripts(
+        db, state.turn, hostile, vital, appointment,
+    )
+    by_event = {row["event_id"]: row["choice"] for row in chosen}
+    assert by_event[f"dossier:{hostile}"]["dossier_decision"] == "hold"
+    assert by_event[f"dossier:{vital}"]["dossier_decision"] == "withdrawn"
+    assert by_event[f"dossier:{appointment}"]["dossier_decision"] == "withdrawn"
+    assert by_event[f"dossier:{authority_edge}"]["dossier_decision"] in {
+        "withdrawn", "hold",
+    }
+    assert by_event[f"dossier:{authority_edge}"]["dossier_decision"] != (
+        "force_promulgated"
+    )
 
 def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     """TD-9: 安抚首领 = 东林 agenda posture; 许誉卿 stays; no 钱谦益 roster swap."""
