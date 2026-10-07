@@ -1,8 +1,0 @@
-....                                                                     [100%]
-4 passed in 3.22s
-real 3.81
-user 1.51
-sys 0.72
-
-# pytest exit 0; 4 passed; real 3.81s
-# bins: AGY/CODEX/CLAUDE/CURSOR/KIMI/GROK/PI=/usr/bin/false

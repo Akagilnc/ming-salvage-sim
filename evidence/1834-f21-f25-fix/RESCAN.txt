@@ -1,3 +1,0 @@
-F21 role/display/summary fix sites present with preserve-raw pattern
-F22 named leftovers absent
-F25 wording assert absent

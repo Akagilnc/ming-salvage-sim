@@ -1,3 +1,0 @@
-path	line	ctx	kind	verdict	snippet
-ming_sim/db.py	14717	GameDB._require_local_office_region	B_TABLE_PROBE:character_offices	IN_CLASS_SKIP_QUERY_FALLTHROUGH	if person and title and self._table_exists("character_offices"):
-ming_sim/db.py	14741	GameDB.character_office_region	B_TABLE_PROBE:character_offices	IN_CLASS_MISSING_TO_EMPTY_OR_REFUSAL	if not name or not self._table_exists("character_offices"):

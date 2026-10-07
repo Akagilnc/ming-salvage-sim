@@ -1,1 +1,0 @@
-REVOKED_METHOD: produced by deleted permanent scripts/probe_new_green.py. Bytes of probe_new_green.json retained unmodified. See mutation_temp_real_entry.json + report.md.

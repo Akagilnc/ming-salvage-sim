@@ -1,7 +1,0 @@
-{"path": "tests/test_enrich_list_guards.py", "test": "test_inertia_ongoing_non_dict_no_crash", "line": 54, "kind": "pytest_empty_shell"}
-{"path": "tests/test_fiscal_tick.py", "test": "test_fiscal_golden", "line": 90, "kind": "pytest_empty_shell"}
-{"path": "tests/test_fiscal_tick.py", "test": "test_fiscal_g9_three_tick_death_spiral", "line": 153, "kind": "pytest_empty_shell"}
-{"path": "tests/test_issue_entities.py", "test": "test_apply_score_extraction_accepts_flat_faction_scalar", "line": 325, "kind": "pytest_empty_shell"}
-{"path": "tests/test_issue_entities.py", "test": "test_apply_score_extraction_tolerates_null_field", "line": 351, "kind": "pytest_empty_shell"}
-{"path": "tests/test_llm_channel_config.py", "test": "test_verify_llm_available_api_empty_content_passes", "line": 591, "kind": "pytest_empty_shell"}
-{"path": "tests/test_llm_channel_config.py", "test": "test_verify_llm_available_api_empty_content_none_passes", "line": 611, "kind": "pytest_empty_shell"}

@@ -1,5 +1,0 @@
-==== GREEN (no mutation) ====
-.........                                                                [100%]
-9 passed in 2.89s
-$PY -m pytest -q -p no:cacheprovider --basetemp="$BASETEMP3" --tb=line       2.66s user 0.70s system 98% cpu 3.405 total
-mut_green_exit:

@@ -1,5 +1,0 @@
-ming_sim/cli_backend.py:2383	MARK	raw_correction = "" if correction_feedback is None else str(correction_feedback)
-ming_sim/cli_backend.py:2384	MARK	correction_block = raw_correction if raw_correction.strip() else ""
-ming_sim/cli_backend.py:2385	MARK	if correction_block and not correction_block.endswith("\n"):
-ming_sim/cli_backend.py:2386	MARK	correction_block += "\n"
-ming_sim/cli_backend.py:2450	MARK	+ correction_block

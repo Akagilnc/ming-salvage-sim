@@ -1,9 +1,0 @@
-REVOKED as disposition authority.
-
-Reason: row `ming_sim/cli_backend.py:856,859` was KEEP with basis
-「backend CLI capture cleanup / process stdout packaging, not game free-prose」.
-Counter-example (user): `_iter_cli_runner_text` / `_run_cli_runner` return/yield
-stripped LLM body into supply/write chains (CliChat.invoke → extract → 拟诏/召对/…).
-Treating stdout packaging rewrite as a legal exception is disallowed.
-
-Superseded by `f16_disposition_after_counterexample.tsv` + METHOD.

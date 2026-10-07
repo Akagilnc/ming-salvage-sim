@@ -1,6 +1,0 @@
-F21: _narrative_context preserve-raw OK ('\n  奉旨依限办结；  \n')
-F22: command_power* zero hits; normalize_appointment_tenure kept in supervision
-F26: fail_if_llm_error/_AGY_AUTH_MARKERS zero hits; success body with Authentication kept; extract_agent_text COMPLETED no raise
-F27: _run_codex stdout='' stderr=banner → llm_empty_output (not body)
-F28: _grace_purpose/grant_grace zero hits
-pytest-focus: 147 passed in 3.58s

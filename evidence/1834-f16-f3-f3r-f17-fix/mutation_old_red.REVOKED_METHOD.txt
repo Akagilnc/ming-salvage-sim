@@ -1,1 +1,0 @@
-REVOKED_METHOD: produced by deleted permanent scripts/mutation_real_old_red.py. Bytes of mutation_old_red.json retained unmodified. Authoritative temp proof: mutation_temp_real_entry.json.
