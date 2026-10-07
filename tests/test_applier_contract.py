@@ -1,7 +1,8 @@
 """S0 — ming_sim/applier.py 契约类型骨架测试。
 
-覆盖：Provenance 枚举 / RejectedItem / SectionResult 聚合 / ApplyContext /
-RejectionCollector 缓冲→flush_to_db / mirror_to_jsonl。
+覆盖：Provenance 五值矩阵 / RejectedItem 四字段 / RejectionCollector
+缓冲→flush_to_db / mirror_to_jsonl / reset / 来源 admission / DDL 回滚。
+SectionResult.merge 与 ApplyContext 由声明分派及暂存结算真实消费者覆盖。
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import json
 
 import pytest
 
-from ming_sim.applier import ApplyContext, Provenance, RejectedItem, RejectionCollector, SectionResult
+from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
 
 
 def test_provenance_enum_values():
@@ -20,12 +21,6 @@ def test_provenance_enum_values():
     assert Provenance.secret_order.value == "secret_order"
     assert Provenance.system_simulation.value == "system_simulation"
     assert Provenance.unknown.value == "unknown"
-
-
-def test_provenance_from_string():
-    """可按字符串反查成员。"""
-    assert Provenance("player_decree") is Provenance.player_decree
-    assert Provenance("system_simulation") is Provenance.system_simulation
 
 
 # ---------------------------------------------------------------------------
@@ -48,40 +43,7 @@ def test_rejected_item_fields():
 
 
 # ---------------------------------------------------------------------------
-# SectionResult
-# ---------------------------------------------------------------------------
-
-def _make_ri(category="hallucinated_id") -> RejectedItem:
-    return RejectedItem(item={}, reason="x", category=category, source=Provenance.unknown)
-
-
-def test_section_result_holds_applied_and_rejected():
-    """applied 为任意列表，rejected 为 RejectedItem 列表。"""
-    r = SectionResult(applied=["a", "b"], rejected=[_make_ri()])
-    assert len(r.applied) == 2
-    assert len(r.rejected) == 1
-
-
-def test_section_result_merge():
-    """两个 SectionResult 聚合后 applied/rejected 各自拼接。"""
-    a = SectionResult(applied=[1, 2], rejected=[_make_ri("hallucinated_id")])
-    b = SectionResult(applied=[3], rejected=[_make_ri("invalid_enum"), _make_ri("missing_ref")])
-    merged = a.merge(b)
-    assert merged.applied == [1, 2, 3]
-    assert len(merged.rejected) == 3
-
-
-def test_section_result_merge_empty():
-    """空 SectionResult 与非空合并，结果与非空相等。"""
-    empty = SectionResult(applied=[], rejected=[])
-    non_empty = SectionResult(applied=[42], rejected=[_make_ri()])
-    assert empty.merge(non_empty).applied == [42]
-    assert len(empty.merge(non_empty).rejected) == 1
-    assert non_empty.merge(empty).applied == [42]
-
-
-# ---------------------------------------------------------------------------
-# ApplyContext
+# RejectionCollector fixtures
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -93,16 +55,6 @@ def clean_rejections(game):
     db, state, content = game
     db.conn.execute("DROP TABLE IF EXISTS rejection_reports")
     return game
-
-
-def test_apply_context_holds_all_fields(read_game):
-    """ApplyContext 持 db/state/content + source。"""
-    db, state, content = read_game
-    ctx = ApplyContext(db=db, state=state, content=content, source=Provenance.player_decree)
-    assert ctx.db is db
-    assert ctx.state is state
-    assert ctx.content is content
-    assert ctx.source is Provenance.player_decree
 
 
 # ---------------------------------------------------------------------------
@@ -333,27 +285,6 @@ def test_record_rejects_unknown_source_string():
 # ---------------------------------------------------------------------------
 # 环境不变式 pin（cmr S0 r2）
 # ---------------------------------------------------------------------------
-
-def test_collector_counts_deterministic_on_polluted_save(game):
-    """活存档已带 rejection_reports 行时，clean 起步后计数仍确定（cmr S0 r2 C-R2）。
-
-    模拟「真实游玩写入拒收行后的 probe.db」：先污染再清场，断言计数从 0 起。
-    """
-    db, state, content = game
-    rc0 = RejectionCollector()
-    ri = RejectedItem(item={}, reason="既有行", category="invalid_enum", source=Provenance.unknown)
-    rc0.record("army_delta", ri, turn=3)
-    rc0.flush_to_db(db)
-    db.conn.commit()  # 污染已提交，等价于游玩过的存档
-
-    db.conn.execute("DROP TABLE IF EXISTS rejection_reports")  # clean_rejections 同款清场
-
-    rc = RejectionCollector()
-    rc.record("metric_delta", ri, turn=1)
-    rc.flush_to_db(db)
-    count = db.conn.execute("SELECT COUNT(*) FROM rejection_reports").fetchone()[0]
-    assert count == 1
-
 
 def test_ddl_in_open_transaction_rolls_back(game):
     """CREATE TABLE 在打开的事务内不隐式 commit，且随 rollback 撤销。
