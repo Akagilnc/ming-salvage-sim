@@ -275,8 +275,10 @@ def test_committing_each_directive_creates_independent_restoreable_dossier(game)
     )
 
     dossiers = db.list_decree_dossiers(status="proposed")
-    # 不锁 decree_text 散文；闸=两道独立案卷与 pending_action 身份
-    assert len(dossiers[-2:]) == 2
+    # 两道输入原样进 decree_text（#1897 T1 运输）
+    assert [row["decree_text"] for row in dossiers[-2:]] == [
+        "着户部清核辽饷。", "着兵部点验军械。",
+    ]
     assert len({row["id"] for row in dossiers[-2:]}) == 2
     assert all(row["pending_action_id"] in ids for row in dossiers[-2:])
 
@@ -382,7 +384,7 @@ def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
     assert dossier["source_chat_turn_id"] == chat_turn_id
     assert dossier["executor_kind"] == "character"
     assert dossier["executor_id"] == minister
-    # 不锁 decree_text 散文；闸=密令 pending 的 chat/executor 出处
+    assert dossier["decree_text"] == "暗中核清关宁军饷"
 
 def test_terminal_target_does_not_interrupt_another_executor(game):
     db, state, _content = game

@@ -475,7 +475,8 @@ def test_disclosed_secret_source_keeps_its_public_projection(game):
     items = db.knowledge_items_for_turn(state.turn)
 
     disclosed = next(item for item in items if item["source_id"] == f"secret_order:{order}")
-    # 公开披露投影：非排除者可见该 source_id；不锁 title/body 散文
+    assert disclosed["title"] == "密查公开"
+    assert disclosed["body"] == "该案已奉明发"
     viewer = next(
         c.name for c in content.characters.values()
         if c.name != excluded.name and c.office_type not in ("后宫", "宗藩")
@@ -516,6 +517,8 @@ def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game, 
         if item.get("source_id") == source_id
     )
     assert kept["kind"] == "public"
+    assert kept["title"] == "奉明公开"
+    assert kept["body"] == "公开案情"
     allowed_view = db.get_character_knowledge(state, allowed.name)
     excluded_view = db.get_character_knowledge(state, excluded.name)
     assert any(item.get("source_id") == source_id for item in allowed_view["public_events"])
@@ -739,6 +742,8 @@ def test_decree_dossier_participant_reads_frozen_metadata_and_text(game):
     assert (item["turn"], item["year"], item["period"]) == (
         state.turn, state.year, state.period,
     )
+    # 承办人材料 body 与成案输入等值（#1897 T1）
+    assert item["body"] == "着礼部核定历书正文。"
 
 def test_secret_order_dossier_never_leaks_through_shared_roster_projection(game):
     db, state, content = game

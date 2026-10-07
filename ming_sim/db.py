@@ -568,8 +568,10 @@ def classify_directive_structured_kind(payload: Mapping[str, object]) -> str:
     has_push = imperial_push_target_dossier_id(payload) is not None
     has_triad = directive_payload_has_ordinary_triad(payload)
     if has_push and has_triad:
-        raise ValueError(
-            "旨意不得同时带普通结构化 triad 与御笔强推 target_dossier_id"
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        raise DecreeMaterializationValidationError(
+            "旨意不得同时带普通结构化 triad 与御笔强推 target_dossier_id",
+            failed_fields=("target_dossier_id", "target_kind"),
         )
     if has_push:
         return "push"
@@ -21127,20 +21129,39 @@ class GameDB:
                     character_id = str(value.get("character_id") or value.get("name") or "").strip()
                     tier_value = value.get("tier") if "tier" in value else value.get("档")
                 if strict_structured and not character_id:
-                    raise ValueError("参与人物 character_id 不能为空")
+                    from ming_sim.action_materialize import DecreeMaterializationValidationError
+                    raise DecreeMaterializationValidationError(
+                        "参与人物 character_id 不能为空",
+                        failed_fields=("participant_roster",),
+                    )
                 if strict_structured and tier_value is None:
-                    raise ValueError("参与人物 tier 必须显式提供")
+                    from ming_sim.action_materialize import DecreeMaterializationValidationError
+                    raise DecreeMaterializationValidationError(
+                        "参与人物 tier 必须显式提供",
+                        failed_fields=("participant_roster",),
+                    )
                 tier = str(tier_value or ("" if strict_structured else "知情")).strip()
                 raw_role = str(value.get("role") or value.get("职分") or "")
                 role = raw_role if raw_role.strip() else ""
                 delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
             else:
                 if strict_structured:
-                    raise ValueError("结构化参与人名单每项必须为对象")
+                    from ming_sim.action_materialize import DecreeMaterializationValidationError
+                    raise DecreeMaterializationValidationError(
+                        "结构化参与人名单每项必须为对象",
+                        failed_fields=("participant_roster",),
+                    )
                 character_id, tier, role, delegator = str(value).strip(), "知情", "", ""
             if not character_id:
                 continue
             if tier not in PARTICIPANT_TIERS:
+                # 声明严格面 → 领域拒收；宽松/遗留读侧仍裸 VE（#1897 E1）。
+                if strict_structured:
+                    from ming_sim.action_materialize import DecreeMaterializationValidationError
+                    raise DecreeMaterializationValidationError(
+                        f"参与人机械档非法：{tier}",
+                        failed_fields=("participant_roster",),
+                    )
                 raise ValueError(f"参与人机械档非法：{tier}")
             item = {"character_id": character_id, "tier": tier, "role": role,
                     "delegator_id": delegator or None}

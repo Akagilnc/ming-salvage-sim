@@ -58,6 +58,7 @@ def test_approved_recommendation_writes_both_edges_atomically(game):
     assert len(events) == 1
     event = events[0]
     assert event["candidate"] == row["name"]
+    assert event["reason"] == reason  # 荐语原样运输
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
     assert char_row["office"] == "巡盐御史"
@@ -73,10 +74,12 @@ def test_approved_recommendation_writes_both_edges_atomically(game):
     assert grace["source"] == recommender.name
     assert grace["target"] == row["name"]
     assert grace["event_kind"] == "恩义"
+    assert grace["context"] == reason
     zhiyu = by_origin[f"recommendation:{event['id']}:知遇|round:{turn}"]
     assert zhiyu["source"] == "皇帝"
     assert zhiyu["target"] == recommender.name
     assert zhiyu["event_kind"] == "知遇"
+    assert zhiyu["context"] == reason
 
     # restore：只读重建 GameState 后，任命与双边无损接续（P1/TD-5）。
     restored = db.load_state()
@@ -171,7 +174,26 @@ def test_replay_same_event_with_changed_reason_stays_two_rows(game):
             if str(e["origin"]).startswith("recommendation:501:")]
     assert len(legs) == 2
     assert {e["event_kind"] for e in legs} == {"恩义", "知遇"}
-    # 不锁 context／reason 自由正文（跨字段等值、集合 distinct、与夹具不等均非法）。
+    # 原 context 不被重放改写（#1897 T1 前像）
+    assert all(e["context"] == reason1 for e in legs)
+
+
+def test_real_entry_persists_raw_reason_verbatim(game):
+    """荐词带首尾空白/换行，事件 reason 与两腿 context 字节不变落库。"""
+    db, state, content = game
+    recommender = _pick_recommender(content)
+    row = db.list_recommendation_candidates(state, recommender.name)[0]
+    reason = "  荐其旧任有实绩，堪当巡盐之任。\n"
+    action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", reason)
+
+    _commit_and_promulgate(db, state, content, action_id)
+
+    event = db.list_recommendation_events(state, recommender.name)[0]
+    assert event["reason"] == reason
+    legs = [e for e in db.get_relation_edge_events()
+            if str(e["origin"]).startswith(f"recommendation:{event['id']}:")]
+    assert len(legs) == 2
+    assert all(e["context"] == reason for e in legs)
 
 
 def test_appointment_without_recommendation_writes_no_edges(game):
