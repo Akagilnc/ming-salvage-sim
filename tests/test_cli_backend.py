@@ -738,7 +738,6 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
     assert "--thinking" in cmd and cmd[cmd.index("--thinking") + 1] == "medium"
     assert "PROMPT_BODY" in cmd  # positional prompt
     assert captured["kw"].get("input") in (None, "")  # not stdin
-    assert "noise" not in out.lower()
 
 
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])

@@ -1206,17 +1206,39 @@ def test_657_abi_mapper_matrix_a1_a12(game, monkeypatch):
 
 
 def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, monkeypatch):
-    """Late HITL grants auto-promulgate only canonical review-exempt dossiers。真 submit。"""
+    """Late HITL grants auto-promulgate only canonical review-exempt dossiers。真 submit。
+
+    只证拨款分流与 apply 失败零写；不依赖已退役的旧批次判词持久化账。
+    """
     db, state, content = game
-    options = [{'label': '发内帑', 'hint': 'h', 'action_type': 'grant_allocation', 'grant_action': '协饷', 'account': '内库', 'amount': 7, 'purpose': '补饷', 'cadence': '一次性', 'execution_surface': 'immediate', 'target_kind': 'army', 'target_id': 'guanning'}, {'label': '国库赏赉', 'hint': 'h', 'action_type': 'grant_allocation', 'grant_action': '协饷', 'account': '国库', 'amount': 11, 'purpose': '补饷', 'cadence': '一次性', 'target_kind': 'army', 'target_id': 'guanning'}]
-    db.save_pending_decisions(state.turn, [{'event_id': '', 'title': '内帑', 'context': 'c', 'options': [options[0]]}, {'event_id': '', 'title': '国库', 'context': 'c', 'options': [options[1]]}])
+    options = [
+        {
+            'label': '发内帑', 'hint': 'h', 'action_type': 'grant_allocation',
+            'grant_action': '协饷', 'account': '内库', 'amount': 7, 'purpose': '补饷',
+            'cadence': '一次性', 'execution_surface': 'immediate',
+            'target_kind': 'army', 'target_id': 'guanning',
+        },
+        {
+            'label': '国库赏赉', 'hint': 'h', 'action_type': 'grant_allocation',
+            'grant_action': '协饷', 'account': '国库', 'amount': 11, 'purpose': '补饷',
+            'cadence': '一次性', 'target_kind': 'army', 'target_id': 'guanning',
+        },
+    ]
+    db.save_pending_decisions(state.turn, [
+        {'event_id': '', 'title': '内帑', 'context': 'c', 'options': [options[0]]},
+        {'event_id': '', 'title': '国库', 'context': 'c', 'options': [options[1]]},
+    ])
     desk = db.list_rescript_desk(int(state.turn))
-    choices = [{'decision_key': row['decision_key'], 'label': row['options'][0]['label']} for row in desk]
-    unrelated_id = db.create_decree_dossier(state, action_type='policy', decree_text='待判旧案', target_kind='issue', target_id='unrelated-1682')
-    pending = {'dossier_id': unrelated_id, 'decision': 'promulgated'}
-    db.save_pending_promulgation_verdicts(state.turn, [pending])
+    choices = [
+        {'decision_key': row['decision_key'], 'label': row['options'][0]['label']}
+        for row in desk
+    ]
     _submit_hitl(monkeypatch, db, state, content, choices)
-    grants = [row for row in db.list_decree_dossiers() if row['action_type'] == 'grant_allocation' and _dossier_payload(row).get('decision_key') in {choice['decision_key'] for choice in choices}]
+    grants = [
+        row for row in db.list_decree_dossiers()
+        if row['action_type'] == 'grant_allocation'
+        and _dossier_payload(row).get('decision_key') in {c['decision_key'] for c in choices}
+    ]
     assert len(grants) == 2
     by_account = {_dossier_payload(row)['account']: row for row in grants}
     inner = by_account['内库']
@@ -1227,22 +1249,34 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     assert reviewed['status'] == 'proposed'
     assert reviewed['promulgation_decision'] == ''
     assert db.list_economy_moves_for_dossier(int(reviewed['id'])) == []
-    # 真 submit 跑完 phase2 后盘面可能已推进；grant 分流已在上断言钉死。
-    # 回滚段：重新进入待裁并再种无关 pending，对照 apply 失败零写。
+
+    # 回滚段：重新进入待裁；apply 中途失读 → 零写。
     from ming_sim.models import TurnPhase
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
-    db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
-    db.save_pending_decisions(state.turn, [{'event_id': '', 'title': '先拨内帑', 'context': 'c', 'options': [options[0]]}, {'event_id': '', 'title': '后拨内帑失读', 'context': 'c', 'options': [options[0]]}])
-    pending2 = {'dossier_id': unrelated_id, 'decision': 'promulgated'}
-    db.save_pending_promulgation_verdicts(state.turn, [pending2])
-    failed_rows = [row for row in db.list_rescript_desk(int(state.turn)) if row['title'] in {'先拨内帑', '后拨内帑失读'}]
-    failed_choices = [{'decision_key': row['decision_key'], 'label': row['options'][0]['label']} for row in failed_rows]
+    db.save_resolve_context(
+        int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []},
+    )
+    db.save_pending_decisions(state.turn, [
+        {'event_id': '', 'title': '先拨内帑', 'context': 'c', 'options': [options[0]]},
+        {'event_id': '', 'title': '后拨内帑失读', 'context': 'c', 'options': [options[0]]},
+    ])
+    failed_rows = [
+        row for row in db.list_rescript_desk(int(state.turn))
+        if row['title'] in {'先拨内帑', '后拨内帑失读'}
+    ]
+    failed_choices = [
+        {'decision_key': row['decision_key'], 'label': row['options'][0]['label']}
+        for row in failed_rows
+    ]
     dossiers_before = db.list_decree_dossiers()
     decisions_before = db.list_pending_decisions(int(state.turn))
-    accounts_before = db.conn.execute('SELECT account, metric_key, balance, note FROM economy_accounts ORDER BY account').fetchall()
-    ledger_before = db.conn.execute('SELECT * FROM economy_ledger ORDER BY id').fetchall()
-    verdicts_before = db.get_pending_promulgation_verdicts(state.turn)
+    accounts_before = db.conn.execute(
+        'SELECT account, metric_key, balance, note FROM economy_accounts ORDER BY account'
+    ).fetchall()
+    ledger_before = db.conn.execute(
+        'SELECT * FROM economy_ledger ORDER BY id'
+    ).fetchall()
     metrics_before = copy.deepcopy(state.metrics)
     original_get = db.get_decree_dossier
     existing_ids = {int(row['id']) for row in dossiers_before}
@@ -1257,6 +1291,7 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
             missed_ids.append(dossier_id)
             return None
         return original_get(dossier_id)
+
     monkeypatch.setattr(db, 'get_decree_dossier', _miss_second_new_dossier)
     with pytest.raises(ValueError):
         _submit_hitl(monkeypatch, db, state, content, failed_choices)
@@ -1264,9 +1299,12 @@ def test_1682_late_grants_follow_policy_without_consuming_verdict_batch(game, mo
     assert missed_ids == [created_ids[1]]
     assert db.list_decree_dossiers() == dossiers_before
     assert db.list_pending_decisions(int(state.turn)) == decisions_before
-    assert db.conn.execute('SELECT account, metric_key, balance, note FROM economy_accounts ORDER BY account').fetchall() == accounts_before
-    assert db.conn.execute('SELECT * FROM economy_ledger ORDER BY id').fetchall() == ledger_before
-    assert db.get_pending_promulgation_verdicts(state.turn) == verdicts_before
+    assert db.conn.execute(
+        'SELECT account, metric_key, balance, note FROM economy_accounts ORDER BY account'
+    ).fetchall() == accounts_before
+    assert db.conn.execute(
+        'SELECT * FROM economy_ledger ORDER BY id'
+    ).fetchall() == ledger_before
     assert state.metrics == metrics_before
     assert db.load_state().metrics == metrics_before
 

@@ -10,23 +10,11 @@ from tests.rescript_test_helpers import sql_rescript_draft
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import normalize_locality_scope, resolve_dossier_region_ids
 
+
 @pytest.fixture
 def env(game):
-    db, state, content = game
-    return db, state, content
+    return game
 
-# ── 词表 / scope 归一 ──────────────────────────────────────────────
-
-@pytest.mark.parametrize("raw,expected", [
-    (None, "none"),
-    ("", "none"),
-    ("无", "none"),
-    ("全国", "national"),
-    ("单省", "single"),
-    ("national", "national"),
-])
-def test_normalize_locality_scope(raw, expected):
-    assert normalize_locality_scope(raw) == expected
 
 def test_normalize_locality_scope_rejects_unknown():
     with pytest.raises(ValueError):

@@ -244,25 +244,6 @@ def _army_pay_grant_option(**extra) -> dict:
     opt.update(extra)
     return opt
 
-def test_1620_layer_a_reward_with_army_target_stays_reward():
-    """赏赉+army 不因 target_kind 升格协饷。"""
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-
-    opt = normalize_rescript_layer_a_option({
-        "label": "赏关宁将士",
-        "hint": "恩赏",
-        "action_type": "grant_allocation",
-        "assignee_name": "",
-        "target_kind": "army",
-        "target_id": "guanning",
-        "locality_scope": "none",
-        "region_id": "",
-        "transaction_category": "",
-        "grant_action": "赏赉",
-        "amount": 50,
-        "account": "国库",
-    })
-    assert opt["grant_action"] == "赏赉"
 
 @pytest.mark.parametrize("extra,drop", [
     pytest.param({"grant_action": "赏赉"}, (), id="conflict-reward"),

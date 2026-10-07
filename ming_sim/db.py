@@ -1783,14 +1783,6 @@ class GameDB:
                 ON decree_cost_events(dossier_id, id);
 
             -- ADR 0071：持有型/持续型特权的 durable 授权档。
-                        CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
-                turn INTEGER NOT NULL,
-                dossier_id INTEGER NOT NULL,
-                verdict_json TEXT NOT NULL,
-                PRIMARY KEY(turn, dossier_id),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-
 CREATE TABLE IF NOT EXISTS authority_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 holder_id TEXT NOT NULL,
@@ -18638,43 +18630,6 @@ CREATE TABLE IF NOT EXISTS authority_records (
             for row in self.list_dossier_durable_effects(int(dossier_id))
         )
 
-
-    def save_pending_promulgation_verdicts(
-        self, turn: int, verdicts: Iterable[Dict[str, object]],
-    ) -> None:
-        """Persist one complete turn-scoped batch before simulation starts."""
-        rows = list(verdicts)
-        with atomic(self):
-            self.conn.execute(
-                "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(turn),)
-            )
-            for verdict in rows:
-                self.conn.execute(
-                    "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
-                    (int(turn), strict_int(verdict.get("dossier_id")),
-                     safe_json_dumps(verdict, ensure_ascii=False)),
-                )
-
-    def get_pending_promulgation_verdicts(
-        self, turn: int,
-    ) -> List[Dict[str, object]]:
-        rows = self.conn.execute(
-            "SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id",
-            (int(turn),),
-        ).fetchall()
-        result = []
-        for row in rows:
-            raw_value = row["verdict_json"]
-            try:
-                value = json.loads(raw_value)
-                if not isinstance(value, dict):
-                    raise ValueError("待应用颁布判决须为对象")
-            except ValueError as exc:
-                raise LLMContractError(
-                    f"待应用颁布判决读取失败：{exc}", raw_value=raw_value,
-                ) from exc
-            result.append(value)
-        return result
 
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
         rows: List[Dict[str, object]] = []

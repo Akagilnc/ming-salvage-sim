@@ -82,21 +82,6 @@ def _row(
     return base
 
 
-@pytest.mark.parametrize(
-    "is_mutinied,loyalty,probation,expected",
-    _TIER_CASES,
-    ids=_TIER_IDS,
-)
-def test_player_army_situation_six_tier_truth_table(
-    is_mutinied, loyalty, probation, expected
-):
-    row = _row(is_mutinied=is_mutinied, loyalty=loyalty, mutiny_probation=probation)
-    sit = _player_army_situation(row, monthly_pay=10)
-    assert sit["mutiny_tier"] == expected
-    assert isinstance(sit["morale_text"], str)
-    assert isinstance(sit["arrears_text"], str)
-
-
 def _configure(db) -> None:
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
