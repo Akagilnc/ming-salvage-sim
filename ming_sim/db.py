@@ -14373,8 +14373,8 @@ class GameDB:
     ) -> None:
         """#523：收权案卷顺颁后走 #611 authority_changes 收回槽。
 
-        生产项显式携 authority_id + 本项 dossier_id；观感边由 #611 槽写入。
-        不走 0056 毁约轨。
+        生产项显式携 authority_id + 本项 dossier_id；只落收回事实。
+        人物是否结怨走既有关系声明口（#1895），不走 0056 毁约轨。
         """
         from ming_sim.issues import apply_score_extraction
         from ming_sim.strict_types import strict_int
