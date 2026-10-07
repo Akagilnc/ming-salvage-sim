@@ -2365,20 +2365,12 @@ class GameDB:
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；due_turn>0 且 ≤当前回合时，settle 尾部按实进度对账派生 done/failed（#1504）。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
-        if self.ensure_column(
-            "secret_orders", "deadline_span", "INTEGER NOT NULL DEFAULT 0"
-        ):
-            self.conn.execute(
-                "UPDATE secret_orders SET deadline_span="
-                "MAX(COALESCE(due_turn, 0)-COALESCE(turn_issued, 0), 0)"
-            )
+        self.ensure_column("secret_orders", "deadline_span", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("secret_orders", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
         # #566/#883: secret monthly reports stay private on the order itself.
-        # #619 adds a separate physical general track (dossier_reported_progress);
-        # the retired shared table name remains forbidden (no shared table+flag).
+        # #619 adds a separate physical general track (dossier_reported_progress).
         self.ensure_column(
             "secret_orders", "dossier_progress_json", "TEXT NOT NULL DEFAULT '[]'")
-        self.conn.execute("DROP TABLE IF EXISTS dossier_progress_reports")
         # #489：character_knowledge_events 在早期存档中已存在但没有黑名单列；
         # ensure_column 必须覆盖「表已存在」的迁移路径，不能只依赖 CREATE TABLE。
         self.ensure_column(
@@ -2422,14 +2414,6 @@ class GameDB:
         self.ensure_column(
             "office_change_records", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
         )
-        # #1847：4a 改读段结果后 turn 列无消费者；幂等 DROP（SQLite 3.35+）。
-        office_change_cols = {
-            r["name"]
-            for r in self.conn.execute("PRAGMA table_info(office_change_records)").fetchall()
-        }
-        if "turn" in office_change_cols:
-            self.conn.execute("ALTER TABLE office_change_records DROP COLUMN turn")
-            self.conn.commit()
         self.ensure_column(
             "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -2636,14 +2620,12 @@ class GameDB:
         )
         self.affairs = AffairStore(self.conn)
         self.conn.commit()
-        self._migrate_legacy_office_pollution()
         self.init_fiscal_config()
 
-    def _migrate_legacy_office_pollution(self) -> None:
-        """ADR 0009 决定9/L94 一次性数据清洗（幂等，init 时跑）：pre-0009 存档把状态词塞在
-        office 串里（「前X，罢居Y」「…(在途)」），归位到 status/reason_code/location/transit_to，
-        使其正确进人才池（G1）。**条件触发**（office 含污染标记才动）——不误降已被玩家起复的
-        active 旧臣（其 office 已是真职、无标记，跳过）；幂等（清洗后再跑无标记可清）。"""
+    def _sanitize_seed_office_pollution(self) -> None:
+        """新档 seed 后：内容种子把状态词塞在 office 串里（「前X，罢居Y」「…(在途)」）时，
+        归位到 status/reason_code/location/transit_to，使其正确进人才池（G1）。
+        条件触发、幂等；现役种档职责，不是旧档升级器。"""
         import re
         # location 是 region_id；罢居地名（松江/高阳等府名）多非 region_id，只在解析出合法 region_id
         # 才写 location（同下方在途循环口径，不把府名硬塞进 region_id 列）；罢居地信息留在 status_reason。
@@ -3725,8 +3707,7 @@ class GameDB:
         self._initialize_army_pay_source_spine(is_fresh_armies_seed)
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
         # 新档罢居/在途 office 污染清洗：init_schema 时 characters 尚空，须在 seed 后跑。
-        # 条件触发、幂等；现役种档职责，不是旧档升级器。
-        self._migrate_legacy_office_pollution()
+        self._sanitize_seed_office_pollution()
         # 新档派系势力 offset 校准（钦定基线 − 开局权重和）。
         if is_fresh_factions_seed:
             self._calibrate_faction_offsets()
@@ -17378,12 +17359,7 @@ class GameDB:
         """
         structured = dict(payload or {})
         if not structured:
-            structured = {
-                "dossier_action_type": "special_decree",
-                "target_kind": "policy",
-                "target_id": f"legacy-directive:{directive_id}",
-                "locality_scope": "none",
-            }
+            raise ValueError("普通旨意缺少受控目标，拒绝成案")
         # #658：互斥权威——push 与 ordinary 并存响亮拒绝；push 在 normalize 前短路
         kind = classify_directive_structured_kind(structured)
         target_did = (
@@ -17444,14 +17420,10 @@ class GameDB:
         ).fetchone()
         # #1890：来源轮只认 pending_actions.source_chat_turn_id 这一列（交办的
         # 统一身份），并按 turn_directives.source_pending_action_id 从新指旧找到
-        # 那道交办（ADR 0054：禁反向回填）。载荷里那份副本已删——同一事实两处
-        # 可写，改草/迟到转译会让两者漂移。认不到行（无 pending 的直写路径）
-        # 时回落载荷，仅保旧档兼容，不作为常规来源。
+        # 那道交办（ADR 0054：禁反向回填）。无 pending 的直写路径 source_turn=0。
         dossier_source_turn = 0
         if pending is not None:
             dossier_source_turn = int(pending["source_chat_turn_id"] or 0)
-        if dossier_source_turn <= 0:
-            dossier_source_turn = int(structured.get("source_chat_turn_id") or 0)
         return self.create_decree_dossiers(
             state,
             action_type=action_type,

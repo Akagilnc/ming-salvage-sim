@@ -20,12 +20,6 @@ from ming_sim.llm_transport import (
 from ming_sim.models import TurnPhase
 from tests.month_chain_helpers import make_light_session
 
-
-def _forbid_extractor(monkeypatch):
-    """旧 write_decree 前置已撤；保留调用点 no-op。"""
-    del monkeypatch
-
-
 def _stage_settled_ready_edict(db, state, minister, *, delta=-3):
     from ming_sim.declaration_dispatch import pending_action_decree_ref
 
@@ -54,18 +48,15 @@ def _stage_settled_ready_edict(db, state, minister, *, delta=-3):
     )
     return ref
 
-
 def _ningyuan_ledger_rows(db):
     return list(db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE category='宁远补饷' ORDER BY id",
     ))
 
-
 def _world_ledger_rows(db):
     return list(db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE category='世界段饷' ORDER BY id",
     ))
-
 
 def _http_status_error(status: int) -> APIStatusError:
     response = SimpleNamespace(status_code=status, headers={}, request=None)
@@ -74,7 +65,6 @@ def _http_status_error(status: int) -> APIStatusError:
         response=response,
         body={"error": {"message": f"http {status}"}},
     )
-
 
 @pytest.mark.parametrize("failure", ["429", "retryable"])
 def test_month_entry_world_push_follows_audience_transport_policy(
@@ -88,7 +78,6 @@ def test_month_entry_world_push_follows_audience_transport_policy(
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     bind_content(content)
     turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
     sleeps: list[float] = []
     monkeypatch.setattr(
         "ming_sim.llm_transport._sleep_retry_interval",
@@ -139,7 +128,6 @@ def test_month_entry_world_push_follows_audience_transport_policy(
     assert not chain.get("world_text_ready")
     assert not chain.get("world_committed")
 
-
 def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, tmp_path):
     """补跑用尽只写失败标记，不得覆盖先前已提交的结局事实。"""
     import ming_sim.decree_forecast as decree_forecast
@@ -168,7 +156,6 @@ def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, 
                  "text": "补跑失败"},
     )
     turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
     failed = {"once": True}
 
     def produce(*_a, **_k):
@@ -205,7 +192,6 @@ def test_forecast_exhaustion_does_not_overwrite_prior_ending(game, monkeypatch, 
     assert state.ending_status == "emperor_abdicate"
     assert db.staged_declarations.is_settled(first_ref)
 
-
 def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatch, tmp_path):
     """步骤 3 世界推演用尽：停住当前过月 run，已落旨不动，留错误包与可续相位。"""
     import ming_sim.month_chain as month_chain
@@ -217,7 +203,6 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     db.save_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-7)
     turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
 
     def exhaust(*_a, **_k):
         raise LLMUnavailable(
@@ -250,7 +235,6 @@ def test_world_text_exhaustion_stops_month_keeps_settled_edicts(game, monkeypatc
     assert not chain.get("world_text_ready")
     assert not chain.get("world_committed")
 
-
 def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     game, monkeypatch, tmp_path,
 ):
@@ -265,7 +249,6 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     db.save_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-5)
     turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
 
     world_calls = []
     translate_calls = []
@@ -318,7 +301,6 @@ def test_world_translate_exhaustion_keeps_text_resume_retries_translate_only(
     assert len(_ningyuan_ledger_rows(db)) == 1
     assert int(_ningyuan_ledger_rows(db)[0]["delta"]) == -5
 
-
 def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
     game, monkeypatch, tmp_path,
 ):
@@ -333,7 +315,6 @@ def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
     db.save_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-2)
     turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
 
     world_texts = ["第一段文", "逃生口重推段文"]
     world_calls = {"n": 0}
@@ -392,7 +373,6 @@ def test_escape_hatch_discards_world_segment_only_on_second_player_retry(
     assert len(_ningyuan_ledger_rows(db)) == 1
     assert int(_ningyuan_ledger_rows(db)[0]["delta"]) == -2
 
-
 def test_settlement_recovery_projects_month_call_failure(
     game, monkeypatch, tmp_path, _offline_scene_beat_generator,
 ):
@@ -410,7 +390,6 @@ def test_settlement_recovery_projects_month_call_failure(
     monkeypatch.setattr(web_app, "web_game", web_game)
     db, state = web_game.db, web_game.state
     turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
 
     def exhaust(*_a, **_k):
         raise LLMUnavailable(
@@ -458,7 +437,6 @@ def test_settlement_recovery_projects_month_call_failure(
     )
     web_game.session.close()
 
-
 def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
     game, monkeypatch, tmp_path,
 ):
@@ -473,7 +451,6 @@ def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
     db.save_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-4)
     turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
 
     monkeypatch.setattr(
         month_chain, "run_world_segment_text", lambda *_a, **_k: "段文已存",
@@ -503,7 +480,6 @@ def test_code_exception_during_world_commit_keeps_phase_and_settled_edicts(
     assert chain.get("world_text") == "段文已存"
     assert not chain.get("world_committed")
 
-
 def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
     game, monkeypatch, tmp_path,
 ):
@@ -519,7 +495,6 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
     db.save_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-4)
     turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
 
     world_calls = {"n": 0}
     translate_calls = {"n": 0}
@@ -591,12 +566,10 @@ def test_world_commit_failure_after_alongside_retries_uncommitted_segment(
         "SELECT balance FROM economy_accounts WHERE account='国库'",
     ).fetchone()["balance"])
 
-
 def _month_chain_of(db, turn):
     return (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )
-
 
 def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     game, monkeypatch, tmp_path,
@@ -613,7 +586,6 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     db.save_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-6)
     turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
     monkeypatch.setattr(
         month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}},
@@ -653,7 +625,6 @@ def test_edict_settle_code_exception_stops_at_month_entry_and_retries_once(
     assert len(rows) == 1 and int(rows[0]["delta"]) == -6
     assert calls["n"] == 2
 
-
 def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     game, monkeypatch, tmp_path,
 ):
@@ -670,7 +641,6 @@ def test_error_pack_failure_keeps_original_fault_and_retry_phase(
     db.save_state(state)
     ref = _stage_settled_ready_edict(db, state, minister, delta=-6)
     turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *_a, **_k: "")
     monkeypatch.setattr(
         month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}},

@@ -58,14 +58,11 @@ def _record_usage(model_id: str, usage: object, caller_tag: str = "?") -> None:
 
 def _get_client_base_url(self_client_holder: object) -> str:
     """从 openai Completions self 拿 client.base_url。"""
-    try:
-        client = getattr(self_client_holder, "_client", None)
-        if client is None:
-            return ""
-        base = getattr(client, "base_url", "")
-        return str(base) if base else ""
-    except Exception:
+    client = getattr(self_client_holder, "_client", None)
+    if client is None:
         return ""
+    base = getattr(client, "base_url", "")
+    return str(base) if base else ""
 
 
 def _inject_dashscope_cache_mark(kwargs: Dict[str, object]) -> None:
@@ -108,7 +105,8 @@ def install_token_stats_patch() -> None:
             return
         try:
             from openai.resources.chat.completions import Completions, AsyncCompletions  # type: ignore
-        except Exception:
+        except Exception as exc:
+            tlog(f"[TOKEN] install patch skipped: {type(exc).__name__}: {exc}")
             return
         orig_create = Completions.create
         orig_acreate = AsyncCompletions.create
@@ -122,8 +120,9 @@ def install_token_stats_patch() -> None:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
                 # caller 只认显式诊断；不对 system/user 自由戏文猜来源。
                 _record_usage(model_id, getattr(resp, "usage", None), "?")
-            except Exception:
-                pass
+            except Exception as exc:
+                # 遥测失败不得冒充成功：落真因后仍交回正文（usage 与 completion 正文分判）。
+                tlog(f"[TOKEN] record_usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         async def patched_acreate(self, *args, **kwargs):
@@ -134,8 +133,8 @@ def install_token_stats_patch() -> None:
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
                 _record_usage(model_id, getattr(resp, "usage", None), "?")
-            except Exception:
-                pass
+            except Exception as exc:
+                tlog(f"[TOKEN] record_usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         Completions.create = patched_create  # type: ignore

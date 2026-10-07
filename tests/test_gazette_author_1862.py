@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from tests.material_helpers import prepare_identity_materials
 import json
 
@@ -24,7 +23,7 @@ from ming_sim.models import LLMConfig, reign_period_label
 from tests.conftest import append_night_chat, open_audience_night
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.month_chain_helpers import make_light_session
-from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
+from tests.test_month_chain_1843 import _stage_edict
 
 _SECRET_DECL = "SECRET_DECL_1862"
 _SECRET_FORECAST = "SECRET_FORECAST_1862"
@@ -44,19 +43,15 @@ _PLAIN_DOSSIER_FACT = "PLAIN_DOSSIER_FACT_1862"
 _TITLE = "关山烽火"
 _REPORT = "本月实况正文"
 
-
 def _llm() -> LLMConfig:
     return LLMConfig(api_key="test", base_url="http://127.0.0.1:9", model="gazette-test")
 
-
 def _session(db, state, content, monkeypatch):
-    _forbid_extractor(monkeypatch)
     monkeypatch.setattr(month_translate, "translate_month_segment", lambda *_a, **_k: {"effects": {}})
     session = make_light_session(db, state, content)
     session.llm_config = _llm()
     session._write_gate = session._write_queue.write_gate
     return session
-
 
 def test_author_waits_until_rescript_is_done(game, monkeypatch):
     db, state, content = game
@@ -84,7 +79,6 @@ def test_author_waits_until_rescript_is_done(game, monkeypatch):
     assert held.stage == "rescript"
     assert held.advanced is False
     assert calls == []
-
 
 def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     db, state, content = game
@@ -460,7 +454,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         assert read_material(world_tree.root, board).strip()
     finally:
         release_material_tree(world_tree.root)
-
 
 def test_gazette_failure_retries_report_only(game, monkeypatch):
     db, state, content = game

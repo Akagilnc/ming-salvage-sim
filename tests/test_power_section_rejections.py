@@ -1,6 +1,6 @@
 """PR2-S1(ADR 0008 决定 1,#91)——两个整段吞 section 迁入逐项拒收契约。
 
-section 5 power_updates、section 9b character_power_changes：原先 `try: db.apply_*()
+section 5 power_updates、人物变更·易主：原先 `try: db.apply_*()
 except Exception: print [WARN]` 整段吞——连代码异常都被吞掉(违 ADR 0005/决定 1)。
 改为:LLM 脏数据(未知 power id/未知人物/字段非法)逐项拒收留痕,好项照落;
 代码异常(KeyError/AttributeError 等)原样上抛，原子分派回滚整批。
@@ -91,10 +91,10 @@ def test_power_deltas_code_exception_aborts_settlement(game, monkeypatch):
         }, narrative="x", decree_text="y")
 
 
-# ---- section 9b: character_power_changes(人物易主) ----
+# ---- 人物变更·易主 ----
 
 def test_unknown_person_power_change_rejected_good_lands(saved_game):
-    """character_power_changes 引用查无此人 → 逐项拒收留痕(不再 print 静默跳);
+    """人物变更·易主引用查无此人 → 逐项拒收留痕(不再 print 静默跳);
     同信封里合法人物易主照落——坏一项不带走整批(ADR 决定 1)。
     用 saved_game：依赖玩过存档的特定人物易主基线，fresh seed 不复现（#5）。"""
     db, state, content = saved_game
@@ -105,16 +105,24 @@ def test_unknown_person_power_change_rejected_good_lands(saved_game):
         "SELECT name FROM characters WHERE power_id='ming' LIMIT 1").fetchone()[0]
 
     run_settle(db, state, content, {
-        "character_power_changes": [
-            {"name": "查无此人辛", "new_power": good_power, "reason": "降"},
-            {"name": real, "new_power": good_power, "reason": "叛"},
+        "人物变更": [
+            {
+                "动作": "易主", "name": "查无此人辛", "new_power": good_power,
+                "方式": "主动投敌", "反噬": {good_power: {"leverage": 1}}, "reason": "降",
+                "origin_ref": "盘面自发",
+            },
+            {
+                "动作": "易主", "name": real, "new_power": good_power,
+                "方式": "主动投敌", "反噬": {good_power: {"leverage": 1}}, "reason": "叛",
+                "origin_ref": "盘面自发",
+            },
         ],
     }, narrative="x", decree_text="y")
 
-    rows = [r for r in _rejection_rows(db, turn) if r[0] == "character_power_changes"]
+    rows = [r for r in _rejection_rows(db, turn) if r[0] == "applied_person_changes"]
     assert len(rows) == 1
     assert rows[0][1]  # reason 非空
-    assert rows[0][2] == "missing_ref"
+    assert rows[0][2] == "hallucinated_id"
     # 好项照落
     after = db.conn.execute(
         "SELECT power_id FROM characters WHERE name=?", (real,)).fetchone()[0]

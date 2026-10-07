@@ -20,12 +20,6 @@ from ming_sim.applier import Provenance
 from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
 
-
-def _forbid_extractor(monkeypatch):
-    """旧 write_decree 前置已撤；保留调用点 no-op。"""
-    del monkeypatch
-
-
 def _archive_and_stub_world(db, state, monkeypatch):
     db.save_turn_report(state, "本月邸报正文·公开")
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
@@ -33,7 +27,6 @@ def _archive_and_stub_world(db, state, monkeypatch):
         "ming_sim.month_translate.translate_month_segment",
         lambda *a, **k: {"effects": {}},
     )
-
 
 class _DeferredExecutor:
     """已有接缝：提交只记账，由测试在调用线程上执行。"""
@@ -43,24 +36,20 @@ class _DeferredExecutor:
         self.future = Future()
         return self.future
 
-
 def _install_deferred(monkeypatch):
     executor = _DeferredExecutor()
     monkeypatch.setattr("ming_sim.audience_translation._executor", executor)
     return executor
 
-
 def _run_deferred(executor):
     executor.fn()
     executor.future.set_result(None)
-
 
 def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monkeypatch):
     """提交到受管后台票；无需线程即可核实尾工作不在前台调用栈执行。"""
     db, state, content = game
     closed_turn = int(state.turn)
     closed_year, closed_period = int(state.year), int(state.period)
-    _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
     brew_calls = []
 
@@ -93,13 +82,11 @@ def test_advance_schedules_mechanical_tail_after_front_month_advance(game, monke
     }]
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
-
 def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     """崩溃后只留 DB 未完标记时，同过月入口续接，不因重开跳过或重复执行。"""
     db, state, content = game
     closed_turn = int(state.turn)
     closed_year, closed_period = int(state.year), int(state.period)
-    _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
 
     from ming_sim.mechanical_tail import ensure_mechanical_tails
@@ -145,14 +132,12 @@ def test_reopen_resumes_incomplete_mechanical_tail(game, monkeypatch):
     assert calls == [closed_turn]
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
-
 def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch):
     """模型耗尽须留下失败凭据并阻断下次过月。"""
     from ming_sim.exceptions import LLMUnavailable
 
     db, state, content = game
     closed_turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
 
     def boom(*_a, **_k):
@@ -181,7 +166,6 @@ def test_exhausted_mechanical_tail_fails_and_blocks_next_month(game, monkeypatch
     with pytest.raises(SettlementAbort):
         session.resolve_turn(allow_empty_decree=True)
 
-
 def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
     """过月真实酿制腿不能把模型耗尽藏在单条 degraded 报告中。"""
     from ming_sim.exceptions import LLMUnavailable
@@ -193,7 +177,6 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
     closed_turn = int(state.turn)
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="当殿讦奏", origin="audience:turn-1")
-    _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
     monkeypatch.setattr("ming_sim.agents.create_relation_brew_agent", lambda *a: object())
     monkeypatch.setattr("ming_sim.agents.create_faction_brew_agent", lambda *a: object())
@@ -225,7 +208,6 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
             _run_deferred(retry_executor)
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
     assert WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state)) is None
-
 
 def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
     """Web 共用过月 barrier 入口先恢复 pending 尾，再等待队列。"""
@@ -278,14 +260,12 @@ def test_web_barrier_resumes_pending_tail_before_join(game, monkeypatch):
     session.await_translations_before_month()
     assert order == ["tail-done", "barrier"]
 
-
 def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch):
     """后台程序异常须传播至 Future 观察面并保留 pending，后续入口能重提。"""
     import ming_sim.audience_translation as audience_translation
 
     db, state, content = game
     closed_turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
     session = make_light_session(db, state, content)
     session.llm_config = object()
@@ -347,7 +327,6 @@ def test_non_exhausted_tail_failure_stays_pending_and_retries(game, monkeypatch)
     assert int(state.turn) == closed_turn + 2
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "done"
 
-
 @pytest.mark.parametrize("model_text,tail_status,visible", [
     ("\n 史评 \n", "done", "\n 史评 \n"),
     ("  ", "done", "  "),
@@ -360,7 +339,6 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
 
     db, state, content = game
     closed_turn = int(state.turn)
-    _forbid_extractor(monkeypatch)
     _archive_and_stub_world(db, state, monkeypatch)
     monkeypatch.setattr(
         "ming_sim.mechanical_tail._run_relation_brew", lambda *a, **k: None,
@@ -442,7 +420,6 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
         assert landed["summary"] == ""
     assert _printed_ending_summary(session) == visible
 
-
 def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
     """大臣知识面 / 结局总评邸报 / 材料目录均不再吃章节记忆（真读口行为，非表缺席自证）。"""
     from types import SimpleNamespace
@@ -503,7 +480,6 @@ def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
         assert any(n.startswith("邸报/") for n in names)
     finally:
         release_material_tree(prepared.root)
-
 
 def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     """缺模型配置：机械尾失败，错误落在失败尾上，可点重试。"""
