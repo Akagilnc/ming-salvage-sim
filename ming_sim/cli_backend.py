@@ -2498,60 +2498,6 @@ def extract_draft_intent_with_roster_heal(
             return done
 
 
-def _stalled_deliberation_push_facts(db: Any) -> str:
-    """#658：自由下旨可强推的 stalled 廷议＋active issue 投影（候选相关切片）。"""
-    if db is None:
-        return ""
-    # #1849：供料库读失败是代码/IO 错，一律响亮上抛（ADR 0005）。此前静默洗成
-    # 空事实块，抽取遂在缺御笔强推事实下照常出产、写入口再覆盖原草稿——
-    # 失败被消解成合法产物（失败诚实宪法）。
-    rows = db.list_decree_dossiers(status="proposed")
-    lines: List[str] = []
-    for row in rows or []:
-        try:
-            payload = row.get("payload") if isinstance(row.get("payload"), dict) else None
-            if payload is None:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            if not isinstance(payload, dict):
-                continue
-            if str(payload.get("deliberation_state") or "") != "stalled":
-                continue
-            did = int(row["id"])
-            issue = db.conn.execute(
-                "SELECT id, title FROM issues WHERE origin_ref=? AND status='active' "
-                "LIMIT 1",
-                (f"dossier:{did}",),
-            ).fetchone()
-            if issue is None:
-                continue
-            # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
-            # 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
-            title = str(
-                payload.get("title")
-                or payload.get("target_id")
-                or issue["title"]
-                or ""
-            )
-            body = str(
-                payload.get("text") or row.get("decree_text") or ""
-            )
-            # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
-            lines.append(
-                f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
-            )
-        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
-            # #1849：坏项隔离留痕（ADR 0005：只拒该项、不带走整批，但必须记原因）。
-            _log(f"强推案卷事实跳过坏行（dossier={row.get('id')!r}）：{exc}")
-            continue
-    if not lines:
-        return ""
-    return (
-        "【可御笔强推的议而不决案卷】仅当皇帝明确强推下列事项时填目标案卷ID；"
-        "否则目标案卷ID留 null。\n"
-        + "\n".join(lines) + "\n"
-    )
-
-
 def extract_draft_intent(
     player_message: Optional[str],
     minister_reply: str,
@@ -2588,7 +2534,6 @@ def extract_draft_intent(
     correction_block = str(correction_feedback or "")
     if correction_block and not correction_block.endswith("\n"):
         correction_block += "\n"
-    stalled_push_facts = _stalled_deliberation_push_facts(db)
     open_affair_facts = _draft_intent_open_affair_facts(db)
     from ming_sim.action_clusters import (
         assert_action_candidate_shape,
@@ -2639,7 +2584,6 @@ def extract_draft_intent(
             + roster_facts
             + army_facts
             + pay_order_facts
-            + stalled_push_facts
             + open_affair_facts
             + "御笔强推逐道只填目标案卷ID；普通非拨帑旨用共同契约字段，拨帑旨只用 ACTION_CLUSTERS 字段。两种形状不得并存。\n"
             + "同一句交办只写一处事务声明（对象顶层，attach 仅 new|existing）；"
@@ -2850,7 +2794,7 @@ def extract_draft_intent(
         '  "事务声明": {"attach":"new|existing","name":"","origin":"","affair_id":null},\n'
         '  "目标案卷ID": null' + (
             "," if (_candidates or _supplement_mode) else ""
-        ) + '        // 御笔强推议而不决廷议时填该案卷整数 ID；非此意图留 null\n'
+        ) + '        // 御笔强推既有案卷时填该案卷整数 ID；非此意图留 null\n'
     )
     # 多道模式：加「目标草案」判新拟 vs 补某道 + 现有候选清单（供 LLM 指认）。
     target_schema_line = (
@@ -2889,12 +2833,11 @@ def extract_draft_intent(
         + structured_decree_prompt_contract() + "\n"
         '非拨帑旨填共同契约目标/属地/事务类别/承办字段及“颁布方式”(普通|中旨直发)；拨帑旨只用 ACTION_CLUSTERS 字段。\n'
         '同一句交办只写一处事务声明（attach 仅 new|existing）；无声明不自建。\n'
-        "御笔强推议而不决事项亦归拟旨，并填目标案卷ID。\n\n"
+        "御笔强推既有案卷亦归拟旨，并填目标案卷ID。\n\n"
         + correction_block
         + roster_facts
         + army_facts
         + pay_order_facts
-        + stalled_push_facts
         + open_affair_facts
         + draft_context
         + candidates_context

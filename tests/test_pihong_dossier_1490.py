@@ -94,42 +94,27 @@ def _plant_dossier_awaiting(db, state):
     return dossier_id
 
 
-def _658_plant_stalled_deliberation(db, state, content, *, title="议而不决"):
-    """直接种 stalled 廷议案卷 + active issue（旧 deliberate 六动作已撤）。"""
-    del content
-    key = f"decision:{int(state.turn)}:delib-plant-{title}"
+def _plant_proposed_push_target(db, state, *, title="待强推案"):
+    """现役 proposed 案卷，供御笔强推 target_dossier_id 结构性负向案复用。"""
     body = f"{title}正文"
-    payload = {
-        "dossier_action_type": "policy",
-        "mode": "ordinary",
-        "decision_key": key,
-        "deliberation_state": "stalled",
-        "title": title,
-        "body": body,
-        "target_kind": "policy",
-        "target_id": f"deliberation:{key}",
-        "locality_scope": "none",
-    }
     dossier_id = int(db.create_decree_dossier(
         state,
         action_type="policy",
         decree_text=body,
-        target_kind="policy",
-        target_id=f"deliberation:{key}",
-        payload=payload,
+        target_kind="issue",
+        target_id=f"push-target-{title}-{int(state.turn)}",
+        payload={
+            "dossier_action_type": "policy",
+            "mode": "ordinary",
+            "title": title,
+            "target_kind": "issue",
+            "target_id": f"push-target-{title}-{int(state.turn)}",
+        },
         status="proposed",
     ))
-    db.insert_issue(
-        state,
-        kind="situation",
-        title=title,
-        origin_kind="deliberation",
-        origin_ref=f"dossier:{dossier_id}",
-        stage_text=body,
-    )
-    stalled = db.get_decree_dossier(dossier_id)
-    assert stalled is not None
-    return (stalled, key)
+    row = db.get_decree_dossier(dossier_id)
+    assert row is not None
+    return row
 
 
 def test_missing_dossier_fields_stay_pending_then_full_retry_decides(web_game, monkeypatch):
@@ -332,19 +317,6 @@ def test_ordinary_event_with_hallucinated_capability_submits(web_game, monkeypat
     assert not stored.get('dossier_decision')
 
 
-def _dossier_payload(row):
-    if not isinstance(row, dict):
-        return {}
-    payload = row.get('payload')
-    if isinstance(payload, dict) and payload:
-        return payload
-    try:
-        loaded = json.loads(str(row.get('payload_json') or '{}'))
-    except (TypeError, ValueError):
-        return {}
-    return loaded if isinstance(loaded, dict) else {}
-
-
 def _summonable_name(db, content):
     """现役可召大臣名：读 active 大臣，不依赖已撤 list_deliberation_candidate_ids。"""
     del db
@@ -381,35 +353,10 @@ def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     assert db.list_pending_decisions(int(state.turn))[0]['status'] == 'pending'
 
 
-def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
-    """冷场案卷不进过月补跑判官；同月普通案卷仍补跑。"""
-    import ming_sim.decree as decree_mod
-    import ming_sim.month_chain as month_chain
-    db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='冷场')
-    stalled_id = int(stalled['id'])
-    normal_id = int(db.create_decree_dossier(state, action_type='policy', decree_text='清核河工', target_kind='issue', target_id=f'river-{state.turn}'))
-    seen: list[int] = []
-
-    def product(_session, snapshot):
-        candidate = snapshot.get('candidate') or {}
-        dossier_id = int(snapshot.get('dossier_id') or candidate.get('id') or 0)
-        seen.append(dossier_id)
-        return {'verdict': {'decision': 'promulgated', 'dossier_id': dossier_id}, 'declaration': {}, 'questions': None, 'forecast_text': ''}
-    monkeypatch.setattr(month_chain, 'run_world_segment_text', lambda *a, **k: '')
-    monkeypatch.setattr('ming_sim.decree_forecast.produce_forecast_product', product)
-    decree_mod.resolve_directives(state, db, None, object(), [], '清核河工', content=content)
-    assert stalled_id not in seen
-    assert normal_id in seen
-    assert db.get_decree_dossier(stalled_id)['status'] == 'proposed'
-    assert _dossier_payload(db.get_decree_dossier(stalled_id)).get('deliberation_state') == 'stalled'
-
-
 def test_658_ordinary_edit_does_not_inherit_push_target(game):
     """#658：普通 triad 改草不得继承旧强推 target。"""
     db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='旧强推')
-    did = int(stalled['id'])
+    did = int(_plant_proposed_push_target(db, state, title='旧强推')['id'])
     dir_id = int(db.add_directive(state, None, '着即强推', 'test-658-edit', dossier_payload={'target_dossier_id': did}))
     db.update_directive_text(dir_id, '着清核河工', dossier_payload={'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'river-works', 'mode': 'ordinary'})
     row = db.conn.execute('SELECT dossier_payload_json FROM turn_directives WHERE id=?', (dir_id,)).fetchone()
@@ -417,8 +364,7 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     assert 'target_dossier_id' not in payload
     assert payload.get('dossier_action_type') == 'policy'
     assert payload.get('target_id') == 'river-works'
-    stalled2, _ = _658_plant_stalled_deliberation(db, state, content, title='改草强推')
-    did2 = int(stalled2['id'])
+    did2 = int(_plant_proposed_push_target(db, state, title='改草强推')['id'])
     name = _summonable_name(db, content)
     cid = int(db.stage_directive_candidate(state.turn, name, payload={'text': '着清核河工原文', 'actor': name, 'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'river-works', 'mode': 'ordinary'}))
     db.update_directive_candidate(cid, {'target_dossier_id': did2, 'mode': 'midzhi'})
@@ -436,8 +382,7 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
     """#658：普通 triad + target 矛盾载荷——一条真实入口零写（禁 classifier/session/backend 三份）。"""
     import ming_sim.cli_backend as cli_backend
     db, state, content = game
-    stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='混载')
-    did = int(stalled['id'])
+    did = int(_plant_proposed_push_target(db, state, title='混载')['id'])
     before_dossiers = len(db.list_decree_dossiers())
     before_dirs = db.conn.execute('SELECT COUNT(*) AS c FROM turn_directives').fetchone()['c']
 

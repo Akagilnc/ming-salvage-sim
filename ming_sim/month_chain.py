@@ -1060,7 +1060,6 @@ def _settle_edicts(
     session: Any, *, chain: Dict[str, Any], on_outcome: Any = None,
 ) -> Optional[Dict[str, object]]:
     from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
-    from ming_sim.decree import _is_stalled_deliberation
     from ming_sim.decree_forecast import (
         _is_held_for_rejudgment,
         decree_ref_for_dossier,
@@ -1086,8 +1085,6 @@ def _settle_edicts(
             chain["recommendation_invalid_ids"] = sorted(invalid)
             _save_chain(db, int(state.turn), chain, source=Provenance.player_decree)
     for dossier in db.list_decree_dossiers():
-        if _is_stalled_deliberation(dossier):
-            continue
         status = str(dossier.get("status") or "")
         created = int(dossier.get("created_turn") or 0)
         held = _is_held_for_rejudgment(dossier, int(state.turn))

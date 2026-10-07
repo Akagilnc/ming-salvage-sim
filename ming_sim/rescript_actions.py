@@ -314,11 +314,13 @@ def apply_imperial_deliberation_push(
     mode: str | None = None,
     commit: bool = False,
 ) -> int:
-    """自由下旨御笔强推 stalled 廷议：复用案卷 + 御笔手敕 + stalled→backed。
+    """自由下旨御笔强推既有案卷：复用案卷 + 御笔手敕。
 
     directive_identity＝本次自由下旨 durable identity（decision_key provenance）。
     mode 为 push 载荷已归一的 mode 真源；写入原案卷 payload.mode，禁第二存储。
+    不依赖已退役的 stalled/backed 廷议状态协议。
     """
+    del state  # 保留签名兼容调用方；强推不再结案 issue 投影
     did = int(target_dossier_id)
     dkey = str(directive_identity or "").strip()
     if not dkey:
@@ -332,24 +334,15 @@ def apply_imperial_deliberation_push(
     if not isinstance(payload, dict):
         payload = json.loads(str(row.get("payload_json") or "{}"))
     if not isinstance(payload, dict):
-        raise ValueError("廷议案卷 payload 非对象")
-    if str(payload.get("deliberation_state") or "") != "stalled":
-        raise ValueError(f"御笔强推只接 stalled 廷议：{did}")
-    origin = f"dossier:{did}"
-    issue = db.conn.execute(
-        "SELECT id, status FROM issues WHERE origin_ref=? AND status='active' LIMIT 1",
-        (origin,),
-    ).fetchone()
-    if issue is None:
-        raise ValueError(f"御笔强推要求 active issue origin_ref={origin}")
+        raise ValueError("案卷 payload 非对象")
     new_payload = dict(payload)
-    new_payload["deliberation_state"] = "backed"
     if mode is not None:
         # 贯穿既有 mode 真源（payload.mode）；普通缺省 ordinary 亦显式落库
         new_payload["mode"] = db._normalize_dossier_mode(mode)
     if decree_text and not str(new_payload.get("imperial_push_note") or ""):
         new_payload["imperial_push_note"] = str(decree_text)
-    db.update_decree_dossier_payload(did, new_payload, commit=False)
+    if new_payload != payload:
+        db.update_decree_dossier_payload(did, new_payload, commit=False)
     db.add_dossier_endorsement(
         did,
         form="御笔手敕",
@@ -357,14 +350,6 @@ def apply_imperial_deliberation_push(
         imperial=True,
         decision_key=dkey,
         source_chat_turn_id=0,
-        commit=False,
-    )
-    # #658：stalled→backed 同事务终结 origin_ref 投影 issue，禁 durable ledger 自相矛盾
-    db.close_issue(
-        state,
-        int(issue["id"]),
-        reason="resolved",
-        narrative=str(decree_text or new_payload.get("title") or "御笔强推"),
         commit=False,
     )
     if commit:

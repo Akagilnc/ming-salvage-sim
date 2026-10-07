@@ -146,11 +146,6 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
-    """#658：stalled 廷议不进颁布集合（判官/stub/校验/消费共用）。"""
-    return str(_dossier_payload_dict(dossier).get("deliberation_state") or "") == "stalled"
-
-
 def build_promulgation_judge_context(
     db: GameDB,
     state: GameState,

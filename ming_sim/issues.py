@@ -365,7 +365,7 @@ def _issue_condition_text(raw: object) -> str:
 
 def _normalize_commitment_kind(raw: object) -> str:
     value = str(raw or "").strip().lower()
-    if value in {COMMITMENT_KIND_UNTIL_STOP, "until_condition", "recurring_until", "commitment"}:
+    if value == COMMITMENT_KIND_UNTIL_STOP:
         return COMMITMENT_KIND_UNTIL_STOP
     return ""
 
@@ -492,21 +492,6 @@ def _apply_issue_buildings(
             print(f"[WARN] issue effect buildings 落库失败：{exc}；op={op}")
             raise
     return applied
-
-
-def commitment_condition_role(resolve_condition: object, commitment_kind: object = "") -> Dict[str, str]:
-    if str(commitment_kind or "").strip():
-        return {
-            "condition_role": "commitment_stop_condition",
-            "condition_note": "承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
-        }
-    text = str(resolve_condition or "").strip()
-    if re.fullmatch(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+", text):
-        return {
-            "condition_role": "commitment_stop_condition",
-            "condition_note": "人物承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
-        }
-    return {}
 
 
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
@@ -4981,18 +4966,11 @@ def apply_issue_tracker_output(
             ) > 0
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
-        legacy_resolve_commitment_shape = (
-            commitment_condition_role(
-                _issue_condition_text(ni.get("resolve_condition"))
-            ).get("condition_role")
-            == "commitment_stop_condition"
-        )
         commitment_shape_without_marker = (
             not commitment_kind
             and kind == "initiative"
             and (
                 end_turn_marker_shape
-                or legacy_resolve_commitment_shape
                 or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
                 or (
                     isinstance(stop_condition_raw, str)
@@ -5346,11 +5324,7 @@ def apply_issue_tracker_output(
             reason in ("resolved", "failed")
             and chk is not None
             and chk["status"] == "active"
-            and (
-                chk["commitment_kind"]
-                or commitment_condition_role(chk["resolve_condition"] or "").get("condition_role")
-                == "commitment_stop_condition"
-            )
+            and chk["commitment_kind"]
         ):
             applied_closes.append({
                 "rejected": True,
@@ -8450,6 +8424,67 @@ def _apply_score_extraction_body(
                 return v
         return v
 
+    # 人口/流民/加派：数组逐笔与对象批次共用；#1844 数组路径按交代交错，退出合批重排。
+    applied_surcharges: List[Dict[str, object]] = []
+    surcharge_rejections: List[Dict[str, object]] = []
+    surcharge_claims: set[tuple[str, str]] = set()
+    applied_transfers: List[Dict[str, object]] = []
+    transfer_rejections: List[Dict[str, object]] = []
+    applied_absorptions: List[Dict[str, object]] = []
+    absorption_rejections: List[Dict[str, object]] = []
+    absorption_power_changes: List[Dict[str, object]] = []
+
+    def _apply_surcharge_items(items: object) -> None:
+        applied, rejected = _apply_surcharge_decrees(
+            db, items or [], commit=commit_now,
+        )
+        applied_surcharges.extend(applied)
+        surcharge_rejections.extend(rejected)
+        for item in applied:
+            surcharge_claims.add(
+                (str(item.get("origin_ref") or ""), str(item.get("region_id") or ""))
+            )
+
+    def _apply_population_transfer_items(items: object) -> None:
+        # 3.5) population_transfers：人口守恒转移原语（#649/0087）——单记录双写。
+        transfer_items: list[object] = []
+        for item in (items or []):
+            source = str(item.get("source") or "") if isinstance(item, dict) else ""
+            region_id = source.rpartition("@")[2]
+            claim = (
+                (str(item.get("origin_ref") or ""), region_id)
+                if isinstance(item, dict) else ("", "")
+            )
+            if isinstance(item, dict) and str(item.get("reason") or "").strip() == "回流":
+                # #652：回流唯一由 recovery 单核写入；LLM 自由抽取拒收，防同源双写。
+                transfer_rejections.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": "回流仅由赈济/招抚屯田 recovery 单核写入，extractor 不得自由申报",
+                    "item": item,
+                })
+            elif isinstance(item, dict) and item.get("reason") == "加派" and claim in surcharge_claims:
+                transfer_rejections.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": "同一道加派旨的人口后果已由加派账唯一拥有",
+                    "item": item,
+                })
+            else:
+                transfer_items.append(item)
+        applied, primitive_rejections = _apply_population_transfers(
+            db, transfer_items, commit=commit_now,
+        )
+        applied_transfers.extend(applied)
+        transfer_rejections.extend(primitive_rejections)
+
+    def _apply_bandit_absorption_items(items: object) -> None:
+        # #652 回流在月份推进时统一执行；本段流寇只吃当时余池。
+        applied, rejected, power_changes = _apply_bandit_absorptions(
+            db, state, items or [], commit=commit_now,
+        )
+        applied_absorptions.extend(applied)
+        absorption_rejections.extend(rejected)
+        absorption_power_changes.extend(power_changes)
+
     if effect_sequence is not None:
         economy_index_base = 0
         for step_extracted, step_ordered, step_event_ids in effect_sequence:
@@ -8463,6 +8498,10 @@ def _apply_score_extraction_body(
             economy_index_base += len(step_moves)
             # #1844/#1899：财政与亲裁结局进入逐笔接缝，退出固定分类回灌旁路。
             _apply_world_step_fiscal_and_petition(step_extracted)
+            # #1844/#1899：加派→人口→投贼同缝按交代先后，后项读前项落账存量。
+            _apply_surcharge_items(step_extracted.get("surcharge_decrees") or [])
+            _apply_population_transfer_items(step_extracted.get("population_transfers") or [])
+            _apply_bandit_absorption_items(step_extracted.get("bandit_absorptions") or [])
         petition_outcomes_applied = True
         _finalize_loss_pair_changes()
     else:
@@ -8508,43 +8547,6 @@ def _apply_score_extraction_body(
         applied, rejected = _apply_class_dict(db, {key: value}, commit=commit_now)
         _merge_applied_deltas(applied_classes, applied)
         class_rejections.extend(rejected)
-    # 3.45) surcharge_decrees：明渠加派旨落逐省累积账（#650/0089，P1）。
-    applied_surcharges, surcharge_rejections = _apply_surcharge_decrees(
-        db,
-        extracted.get("surcharge_decrees") or [],
-        commit=commit_now,
-    )
-    # 3.5) population_transfers：人口守恒转移原语（#649/0087）——单记录双写，
-    # 源阶级减 N、目标阶级增 N 同事务原子；逐项拒收面见 flows._apply_population_transfers。
-    surcharge_claims = {
-        (str(item.get("origin_ref") or ""), str(item.get("region_id") or ""))
-        for item in applied_surcharges
-    }
-    transfer_items: list[object] = []
-    transfer_rejections: list[Dict[str, object]] = []
-    for item in (extracted.get("population_transfers") or []):
-        source = str(item.get("source") or "") if isinstance(item, dict) else ""
-        region_id = source.rpartition("@")[2]
-        claim = (str(item.get("origin_ref") or ""), region_id) if isinstance(item, dict) else ("", "")
-        if isinstance(item, dict) and str(item.get("reason") or "").strip() == "回流":
-            # #652：回流唯一由 recovery 单核写入；LLM 自由抽取拒收，防同源双写。
-            transfer_rejections.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": "回流仅由赈济/招抚屯田 recovery 单核写入，extractor 不得自由申报",
-                "item": item,
-            })
-        elif isinstance(item, dict) and item.get("reason") == "加派" and claim in surcharge_claims:
-            transfer_rejections.append({
-                "rejected": True, "category": "invalid_enum",
-                "reason": "同一道加派旨的人口后果已由加派账唯一拥有",
-                "item": item,
-            })
-        else:
-            transfer_items.append(item)
-    applied_transfers, primitive_rejections = _apply_population_transfers(
-        db, transfer_items, commit=commit_now,
-    )
-    transfer_rejections.extend(primitive_rejections)
     # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
     new_armies_raw = extracted.get("new_armies") or []
     strategic_new_armies_raw = [
@@ -8554,18 +8556,15 @@ def _apply_score_extraction_body(
 
     if effect_sequence is None:
         # 对象输入：实体在经济之后（保现行先后）；实现复用逐笔 helper，不另维护副本。
+        # 加派/人口/投贼仍按既有对象批次相对序，不另立调度器。
+        _apply_surcharge_items(extracted.get("surcharge_decrees") or [])
+        _apply_population_transfer_items(extracted.get("population_transfers") or [])
         _apply_ordinary_entity_step(
             extracted, ordered_deltas, ordered_effect_event_ids or {},
         )
+        _apply_bandit_absorption_items(extracted.get("bandit_absorptions") or [])
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
-
-    # #652 回流在月份推进时统一执行；本段流寇只吃当时余池。
-    applied_absorptions, absorption_rejections, absorption_power_changes = (
-        _apply_bandit_absorptions(
-            db, state, extracted.get("bandit_absorptions") or [], commit=commit_now,
-        )
-    )
 
     # 5) power_updates：非明势力三项简表（威望/实力/经济）落库
     # ADR 0008 决定 1:不再整段吞——LLM 脏数据(未知 power id/字段非法)在

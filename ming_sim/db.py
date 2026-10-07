@@ -104,9 +104,6 @@ def _army_owner_transition_pay_kwargs(normalized: Mapping[str, object]) -> Dict[
         key: (normalized[key] if key in normalized else _SENTINEL)
         for key in _ARMY_OWNER_TRANSITION_PAY_KEYS
     }
-_COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
-
-
 def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
     """ADR 0025 D6 唯一军心上限真源。"""
     return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
@@ -454,10 +451,6 @@ def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
         "morale_text": _qualitative_army_stat("morale", row["morale"]),
         "arrears_text": _army_arrears_report_text(row, monthly_pay),
     }
-
-
-def _is_commitment_stop_condition(resolve_condition: object) -> bool:
-    return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
 
 
 def _has_stop_condition(stop_condition: object) -> bool:
@@ -12468,7 +12461,7 @@ class GameDB:
     def update_decree_dossier_payload(
         self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = True,
     ) -> None:
-        """Replace payload_json for an existing dossier (deliberation_state 等 typed 字段)."""
+        """Replace payload_json for an existing dossier."""
         did = int(dossier_id)
         if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
             raise KeyError(f"案卷不存在：{did}")
@@ -12480,34 +12473,6 @@ class GameDB:
         )
         if commit:
             self._commit_dossier_write(True)
-
-    def find_deliberation_dossier_by_decision_key(
-        self, decision_key: str,
-    ) -> Optional[Dict[str, object]]:
-        """按批红 decision_key 取廷议案卷（payload.decision_key + deliberation_state）。"""
-        key = str(decision_key or "").strip()
-        if not key:
-            return None
-        row = self.conn.execute(
-            """
-            SELECT * FROM decree_dossiers
-            WHERE json_extract(payload_json, '$.decision_key') = ?
-              AND json_extract(payload_json, '$.deliberation_state') IS NOT NULL
-            ORDER BY id LIMIT 1
-            """,
-            (key,),
-        ).fetchone()
-        if row is None:
-            return None
-        out = self._dossier_row(row)
-        # 读缝附 payload 对象，避免调用方只认 payload 键时踩空
-        try:
-            out["payload"] = json.loads(str(out.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            out["payload"] = {}
-        if not isinstance(out["payload"], dict):
-            out["payload"] = {}
-        return out
 
     def append_decree_dossier_participants(
         self, dossier_id: int, participants: Iterable[object], *,
@@ -13036,7 +13001,7 @@ class GameDB:
     def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
         """本月新生/重判案卷及所有未结案执行中案卷。
 
-        #658：旧案本回合刚获 pending 颁布 verdict（如 stalled→backed 后顺颁）
+        # 旧案本回合刚获 pending 颁布 verdict
         亦入同一清单，不另建第二可见集。
         """
         rows = self.conn.execute(
@@ -16767,7 +16732,7 @@ class GameDB:
     ) -> List[int]:
         """旧式/新式旨稿共用的幂等成案口；返回已成案 dossier id 列表（#1778 起 national 亦单行）。
 
-        #658：payload.target_dossier_id 指向 stalled 廷议时，复用该案卷并落御笔手敕，
+        # payload.target_dossier_id 指向既有案卷时，复用该案卷并落御笔手敕，
         不新建第二案卷。directive identity = directive:<id>。
         """
         structured = dict(payload or {})
@@ -16780,7 +16745,7 @@ class GameDB:
             if kind == "push" else None
         )
         if target_did is not None:
-            # 同 directive↔目标 dossier 已绑定：幂等返回，不重跑 stalled 校验副作用
+            # 同 directive↔目标 dossier 已绑定：幂等返回，不重跑 push 副作用
             bound = self.conn.execute(
                 "SELECT id FROM decree_dossiers WHERE id=? AND directive_id=?",
                 (int(target_did), int(directive_id)),
@@ -17824,7 +17789,6 @@ class GameDB:
         commitment_stop_condition = (
             bool(row["commitment_kind"])
             or has_stop_condition
-            or _is_commitment_stop_condition(row["resolve_condition"])
         )
         if to_value >= 100 and not commitment_stop_condition:
             new_status = "resolved"
