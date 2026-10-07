@@ -102,8 +102,3 @@ async def consume_issue_stream_response(response, *, step: str = "issue/stream")
     return payload
 
 
-def issue_stream(expected_turn: int | None = None, *, cheat: str = ""):
-    """旧 _body(expected_turn) 的替身：真 IssueDecreeRequest（流式入口仍用同一请求体）。"""
-    from web_app import IssueDecreeRequest
-
-    return IssueDecreeRequest(cheat=cheat, expected_turn=expected_turn)

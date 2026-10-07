@@ -190,7 +190,7 @@ def create_chat_model(
         )
         if effort:
             kwargs["reasoning_effort"] = effort
-    # 探针：新配置用 channel 显式选择执行通道；未声明 channel 的旧路径暂沿用 env fallback。
+    # 通道只由运行配置 channel 声明；未声明则走 API 路径。
     # CliChat 继承 OpenAIChat，吃同一套 kwargs；reasoning_effort 等 CLI 无关字段被忽略。
     from ming_sim.cli_backend import (
         CliChat,

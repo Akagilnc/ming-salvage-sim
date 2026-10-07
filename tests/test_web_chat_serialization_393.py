@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import pytest
-
 import asyncio
-import json
 import threading
 from types import SimpleNamespace
 
@@ -11,8 +8,6 @@ import web_app
 from tests.web_audience_test_doubles import (
     HallAdmissionSessionMixin, open_audience_night_conn,
 )
-from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order
-from tests.wait_utils import wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
 
 
@@ -36,19 +31,6 @@ class _FakeAgent:
         yield _RunContent("臣已知悉。")
         self.allow_finish.wait()
         yield RunCompletedEvent()
-
-
-class _SecretOrderAgent:
-    """A streamed tool result, matching the WebGame tool-result boundary."""
-
-    def __init__(self, result: str):
-        self.result = result
-
-    def run(self, *args, **kwargs):
-        yield _RunContent("臣已领密旨。")
-        completed = RunCompletedEvent()
-        completed.tools = [SimpleNamespace(tool_name="secret_order", result=self.result)]
-        yield completed
 
 
 class _FakeSession(HallAdmissionSessionMixin):

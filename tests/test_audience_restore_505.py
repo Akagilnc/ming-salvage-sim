@@ -607,18 +607,6 @@ def _seed_agno_v3_runs(db, session_id: str, run_count: int) -> None:
     db.conn.commit()
 
 
-def _insert_agno_table_run(db, session_id: str, run_id: str, run_index: int) -> None:
-    """Insert one Agno 3 table run row (shared by transport failpath fixtures)."""
-    _ensure_agno_runs_table(db)
-    db.conn.execute(
-        "INSERT INTO agno_runs "
-        "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
-        "VALUES (?, ?, 'agent', 'FAILED', ?, ?, ?)",
-        (run_id, session_id, run_index, json.dumps({"run_id": run_id}), run_index + 1),
-    )
-    db.conn.commit()
-
-
 def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content

@@ -947,7 +947,7 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, str]]:
 def _run_backend_for_config(
     prompt: str, llm_config: Any = None, tag: str = "", *, policy=None,
 ) -> Tuple[str, int]:
-    """runtime CLI 配置优先；没有显式 CLI channel 时保持旧 env/default 行为。
+    """runtime CLI 配置优先；无显式 CLI channel 时走默认 runner 直调（不读 env 选宿主）。
 
     直接编程路径（职官分类/各 extractor/国策补全/连通性 verify）的唯一咽喉：
     每次调用 try/finally 写一条 trace，谁调都记，不靠各调用方自觉手写。
@@ -1063,8 +1063,8 @@ def _backend_label(llm_config: Any = None) -> str:
 def describe_effective_model(llm_config: Any = None) -> str:
     """日志用：返回该 config **实际调用**的「runner/model」可读串，而非 CLI 通道下的 API-fallback
     占位 `cfg.model`（如 gpt-4o-mini）——后者误导排查（#84）。runner 解析与 create_chat_model 同口径：
-    api 通道→cfg.model；cli/legacy-env→真实 runner + 解析后的 cli_model（如 codex/gpt-5.3-codex-spark）。
-    注：legacy-env 默认模型下，CliChat.id 留空（codex 分派再回落 _CODEX_MODEL），故 trace 的 model_id
+    api 通道→cfg.model；cli 通道→真实 runner + 解析后的 cli_model（如 codex/gpt-5.3-codex-spark）。
+    注：未显式填 cli_model 时，CliChat.id 可留空（codex 分派再回落 _CODEX_MODEL），故 trace 的 model_id
     可能是空串而本函数已解析出真实默认——本函数是更准的可读标签，不与 trace 的未解析 id 逐字对齐。"""
     channel = _llm_channel(llm_config)
     # #1902：宿主只由运行配置选——空 channel 不再回落环境变量，按 API 通道读 cfg.model。
@@ -1072,7 +1072,7 @@ def describe_effective_model(llm_config: Any = None) -> str:
         (getattr(llm_config, "cli_runner", "") or _DEFAULT_RUNNER).strip().lower()
         if channel == "cli" else None
     )
-    if not runner:  # api 通道 / 形态1（空 channel 无 env）：用 cfg.model
+    if not runner:  # api 通道 / 空 channel：用 cfg.model
         return str(getattr(llm_config, "model", "") or "?")
     # 只有实际吃 --model 的 runner 才追加 /model；agy 忽略 model、走自身 Gemini ladder，
     # 给它挂个不被消费的 cli_model 反而误导（#84 codex），只显示 runner 名。
@@ -1084,7 +1084,7 @@ def describe_effective_model(llm_config: Any = None) -> str:
 
 
 def cli_backend_active(llm_config: Any = None) -> bool:
-    """是否处于 CLI 后端路径：显式 channel 直接按其 runner 判，无显式 channel 才看旧 env。"""
+    """是否处于 CLI 后端路径：仅当运行配置显式 channel=cli 且 runner 合法时为真。"""
     channel = _llm_channel(llm_config)
     if channel == "api":
         return False

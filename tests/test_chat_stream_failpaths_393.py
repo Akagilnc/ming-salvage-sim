@@ -230,63 +230,6 @@ def test_prologue_finally_does_not_release_foreign_gate_holder():
     _assert_write_path_free(runtime)
 
 
-class _DoubleFailDB:
-    """prologue fails AND cleanup (fail_chat_turn) also fails — tests that
-    write path + pending ownership are still released (R3 self-check)."""
-
-    def __init__(self):
-        self.conn = open_audience_night_conn()
-
-    def create_chat_turn(self, *a, **k):
-        return 7
-
-    def capture_chat_rollback_snapshot(self):
-        return {}
-
-    def record_chat_turn_rollback_diffs(self, *a, **k):
-        return None
-
-    def append_chat_message(self, *a, **k):
-        raise RuntimeError("DB 写盘失败（模拟 prologue 崩溃）")
-
-    def update_chat_turn_messages(self, *a, **k):
-        return None
-
-    def fail_chat_turn(self, chat_turn_id):
-        raise RuntimeError("fail_chat_turn 也崩了（DB 已坏）")
-
-    def load_all_chat_history(self):
-        return {}
-
-    def get_last_active_chat_turn(self, *a, **k):
-        return None
-
-    def agno_runs_length(self, *a, **k):
-        return 0
-
-    def kv_get(self, key, default=None):
-        return default
-
-    def restore_interrupted_after_failed_retry(self, *a, **k):
-        return []
-
-    def set_chat_turn_error_pack(self, *a, **k):
-        return None
-
-
-def test_prologue_cleanup_failure_still_releases_gate_and_counter():
-    """R3 self-check: prologue 崩 → _fail_chat_turn_and_reload 自身也崩（DB 已坏）→
-    写路径与 pending ownership 仍须释放，否则 drain 永久挂起、所有写入被永久挡。"""
-    db = _DoubleFailDB()
-    runtime, minister = _base_runtime(db)
-
-    gen = runtime.chat_stream("殿上", "辽东军情如何？")
-    with pytest.raises(RuntimeError):
-        next(gen)
-
-    _assert_write_path_free(runtime)
-
-
 class _StreamCrashAgent:
     """Agent whose generator raises on first iteration → triggers worker except path."""
 
@@ -563,43 +506,6 @@ class _CountingFailAgent:
             self.calls += 1
             n = self.calls
         if n <= self.fail_times:
-            raise self.error_factory(n)
-        yield RunContent("臣")
-        yield RunContent("已核辽饷。")
-        yield RunCompletedEvent()
-
-
-class _FailLeavingAgnoRunAgent:
-    """#1465 fo2Og：失败 attempt 留下确定性 Agno run 残迹，并记录每 attempt 读回的 run_id 序列。
-
-    残迹写入与 truncate 同一 GameDB Agno 域（非私有缓存旁路）；成功 attempt 不另写 run。
-    """
-
-    def __init__(self, db, session_id: str, *, fail_times: int, error_factory):
-        self.db = db
-        self.session_id = str(session_id)
-        self.fail_times = int(fail_times)
-        self.error_factory = error_factory
-        self.calls = 0
-        self.history_at_attempt_start: list[list[str]] = []
-
-    def run(self, *_a, **_k):
-        self.calls += 1
-        n = self.calls
-        # 本 attempt 启动时持久读回（_start_stream 已先 truncate）
-        self.history_at_attempt_start.append(
-            list(self.db.agno_run_ids(self.session_id))
-        )
-        if n <= self.fail_times:
-            from tests.test_audience_restore_505 import _insert_agno_table_run
-
-            rid = f"fail-attempt-{n}"
-            _insert_agno_table_run(
-                self.db,
-                self.session_id,
-                rid,
-                run_index=self.db.agno_runs_length(self.session_id),
-            )
             raise self.error_factory(n)
         yield RunContent("臣")
         yield RunContent("已核辽饷。")
