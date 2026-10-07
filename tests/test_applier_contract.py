@@ -2,7 +2,7 @@
 
 覆盖：Provenance 五值矩阵 / RejectedItem 四字段 / RejectionCollector
 缓冲→flush_to_db / mirror_to_jsonl / reset / 来源 admission / DDL 回滚。
-SectionResult.merge 与 ApplyContext 由声明分派及暂存结算真实消费者覆盖。
+SectionResult.merge 由声明分派及暂存结算真实消费者覆盖。
 """
 
 from __future__ import annotations
@@ -134,30 +134,8 @@ def test_rejection_collector_flush_stores_item_as_json(clean_rejections):
 # RejectionCollector — mirror_to_jsonl
 # ---------------------------------------------------------------------------
 
-def test_mirror_to_jsonl_writes_lines(game, tmp_path):
-    """flush 后 mirror_to_jsonl 把已落库行 append 为 jsonl 行。"""
-    db, state, content = game
-    rc = RejectionCollector()
-    ri = RejectedItem(
-        item={"id": "ghost"}, reason="不存在", category="hallucinated_id", source=Provenance.unknown
-    )
-    rc.record("army_delta", ri, turn=5)
-    rc.flush_to_db(db)
-
-    out = str(tmp_path / "rejections.jsonl")
-    rc.mirror_to_jsonl(out)
-
-    lines = open(out, encoding="utf-8").readlines()
-    assert len(lines) == 1
-    row = json.loads(lines[0])
-    assert row["section"] == "army_delta"
-    assert row["turn"] == 5
-    assert row["category"] == "hallucinated_id"
-    assert json.loads(row["item_json"]) == {"id": "ghost"}
-
-
 def test_mirror_to_jsonl_appends_on_multiple_calls(game, tmp_path):
-    """多次「flush→mirror」批次追加而不覆盖。"""
+    """多次「flush→commit→mirror」批次追加而不覆盖。"""
     db, state, content = game
     out = str(tmp_path / "rejections.jsonl")
     for turn in (1, 2):
@@ -165,6 +143,7 @@ def test_mirror_to_jsonl_appends_on_multiple_calls(game, tmp_path):
         ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
         rc.record("metric_delta", ri, turn=turn)
         rc.flush_to_db(db)
+        db.conn.commit()
         rc.mirror_to_jsonl(out)
 
     lines = open(out, encoding="utf-8").readlines()
@@ -208,15 +187,18 @@ def test_flush_then_mirror_writes_jsonl(clean_rejections, tmp_path):
     row = json.loads(lines[0])
     assert row["section"] == "army_delta"
     assert row["turn"] == 7
+    assert row["category"] == "hallucinated_id"
+    assert json.loads(row["item_json"]) == {"id": "ghost"}
 
 
 def test_mirror_idempotent_after_flush(clean_rejections, tmp_path):
-    """同一批行 mirror 两次只写一次（已镜像的行不重复 append）。"""
+    """commit 后同一批行 mirror 两次只写一次（已镜像的行不重复 append）。"""
     db, state, content = clean_rejections
     rc = RejectionCollector()
     ri = RejectedItem(item={}, reason="r", category="invalid_enum", source=Provenance.unknown)
     rc.record("metric_delta", ri, turn=1)
     rc.flush_to_db(db)
+    db.conn.commit()
 
     out = str(tmp_path / "rejections.jsonl")
     rc.mirror_to_jsonl(out)
