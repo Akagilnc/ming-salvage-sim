@@ -148,10 +148,9 @@ PROMULGATION_VERDICT_HEAL_RETRIES = 3
 
 
 def stub_promulgation_verdicts(
-    dossiers: Sequence[Dict[str, object]], state: GameState,
+    dossiers: Sequence[Dict[str, object]],
 ) -> List[Dict[str, object]]:
     """Deterministic auto-promulgation for exempt dossiers and explicit test fixtures."""
-    del state
     return [
         {"dossier_id": int(row["id"]), "decision": "promulgated"}
         for row in dossiers

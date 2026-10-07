@@ -304,7 +304,7 @@ def produce_forecast_product(session: Any, snapshot: Dict[str, Any]) -> Dict[str
                 transport_policy=audience_transport_policy(),
             )
         else:
-            raw = decree.stub_promulgation_verdicts([candidate], session.state)
+            raw = decree.stub_promulgation_verdicts([candidate])
         verdicts = decree.validate_promulgation_verdicts(
             raw, [candidate], session.db, prepared_context=snapshot["context"],
         )

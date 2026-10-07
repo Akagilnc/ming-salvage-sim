@@ -8,10 +8,9 @@ from ming_sim.exceptions import LLMContractError
 
 
 def test_default_promulgation_stub_passes_every_dossier_without_collaborators():
-    state = object()
     dossiers = [{"id": 7}, {"id": 11}]
 
-    assert stub_promulgation_verdicts(dossiers, state) == [
+    assert stub_promulgation_verdicts(dossiers) == [
         {"dossier_id": 7, "decision": "promulgated"},
         {"dossier_id": 11, "decision": "promulgated"},
     ]
