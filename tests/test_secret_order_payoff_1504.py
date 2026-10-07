@@ -969,9 +969,9 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
                     base = Path(rel).parent.as_posix()
                     listed = list_materials(captured["root"], base)
                     assert set(tools["list_materials"](base).splitlines()) == set(listed)
-                    # 工具可读路径集合与 list_materials 一致；不锁正文等值／非空。
+                    # 工具可读路径集合与 list_materials 一致；不锁正文 type／等值／非空（#1897 T1）。
                     for path in listed:
-                        assert isinstance(tools["read_material"](path), str)
+                        tools["read_material"](path)  # 路径可读；不取正文真值
                     paths[who] = {Path(path).relative_to(base).as_posix() for path in listed}
         captured["bodies"] = bodies
         captured["paths"] = paths

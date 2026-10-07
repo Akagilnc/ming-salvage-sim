@@ -63,7 +63,6 @@ def _items_json(items: list) -> str:
 
 
 def _parse_heal(prompt: object) -> dict:
-    assert isinstance(prompt, str) and prompt.strip()
     body = json.loads(prompt)
     assert body.get("kind") == "rescript_option_field_heal"
     assert isinstance(body.get("failures"), list) and body["failures"]

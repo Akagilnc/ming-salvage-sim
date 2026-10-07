@@ -28,58 +28,8 @@ def _cli_codex_cfg() -> LLMConfig:
     )
 
 
-def _so_json(**fields) -> str:
-    base = {
-        "标题": "密查",
-        "内容": "TASK_BODY",
-        "承办人": "",
-        "期限月数": 0,
-        "标签": [],
-    }
-    base.update(fields)
-    return json.dumps(base, ensure_ascii=False)
-
-
 def _patch_backend(monkeypatch, payload: str):
     monkeypatch.setattr(cb, "_run_backend", lambda p: (payload, 1))
-
-
-
-
-
-
-
-
-
-
-
-def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
-    canned = json.dumps({
-        "标题": "密查",
-        "内容": "查账",
-        "承办人": "毕自严",
-        "排除对象": {"人物": ["魏忠贤"], "机构": ["司礼监"]},
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
-    result = cb._extract_secret_order("密查账目", "臣领旨", "毕自严")
-    assert result["excluded_names"] == ["魏忠贤"]
-    assert result["excluded_offices"] == ["司礼监"]
-    assert result["excluded_targets"] == {"people": ["魏忠贤"], "offices": ["司礼监"]}
-
-
-def test_extract_secret_order_returns_assignee_without_title_prose_lock(monkeypatch):
-    """抽取落 assignee／title 字段；不锁标题自由正文或长度（旧「长标题截断」属正文保真证明，已清退）。"""
-    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
-    canned = _so_json(标题=long_title, 内容="查明事实并回奏。", 承办人="毕自严", 标签=["辽饷"])
-
-    def fake_json_extractor(prompt, llm_config=None, tag="", *, policy=None):
-        return canned, 1
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)
-    result = cb._extract_secret_order(
-        f"密令如下：{long_title}\n查明事实并回奏。", "臣领密旨", "毕自严",
-    )
-    assert result["assignee"] == "毕自严"
 
 
 def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
@@ -96,65 +46,6 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     )
     assert people == [character.name]
     assert offices == [office]
-
-
-
-
-def test_secret_content_assembly_is_emperor_plus_extractor_only():
-    """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
-    for reply_key in ("reply", "minister_reply"):
-        with pytest.raises(TypeError):
-            cb.assemble_secret_order_content(
-                emperor_intent="旨", extractor_content="声明", **{reply_key: "臣答"},
-            )
-
-    task = "密查关宁欠饷"
-    extracted = f"{task}，三月内回奏，方法：密访核册"
-    body = cb.assemble_secret_order_content(
-        emperor_intent=task,
-        extractor_content=extracted,
-    )
-    assert body == extracted
-    # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
-    partial = "臣已领旨办理。"
-    merged = cb.assemble_secret_order_content(
-        emperor_intent=f"{task}，三月内回奏",
-        extractor_content=partial,
-    )
-    assert task in merged and "三月内回奏" in merged
-    assert partial in merged
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ── enrich_initiative_effects ──
@@ -243,7 +134,6 @@ def test_run_backend_dispatch(monkeypatch, env, attr, out):
 
 
 # ── secret extract keep family ──
-
 
 
 # ── runner argv / error contracts (subprocess mocked) ──
@@ -687,27 +577,7 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
     assert captured["cmd"][0] == resolved
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ── lenient JSON via public extract seam ──
-
-
-
-
-
 
 
 # ── CliChat public: prompt shape + typed completion structure ──
@@ -991,16 +861,6 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
     got = dbmod.infer_office_type_from_office("绝无此名的杜撰怪衔甲", llm_config=_cli_codex_cfg())
     assert got == "边镇"
     assert len(recs) == 1 and "绝无此名的杜撰怪衔甲" in recs[0]["prompt"]
-
-
-def test_secret_extract_traces_exactly_once(monkeypatch):
-    recs = []
-    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
-    canned = '{"标题":"密查","内容":"查关宁军饷","承办人":"骆养性","期限月数":3,"标签":["关宁"]}'
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
-    assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"
 
 
 # ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──

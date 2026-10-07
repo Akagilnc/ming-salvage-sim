@@ -727,15 +727,6 @@ def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
     return row is not None
 
 
-def _current_game_turn(db: Any, turn: object = None) -> int:
-    if turn is not None:
-        return int(turn)
-    row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
-    if row is not None:
-        return int(row["turn"])
-    return 0
-
-
 def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:
     """差务可数单位 → 既有 extractor 字段/applier，不发明第三轨。"""
     return list(_FIELD_FOR_UNIT.get(str(unit or "").strip(), []))

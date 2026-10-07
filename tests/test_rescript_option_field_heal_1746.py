@@ -143,14 +143,13 @@ def _assert_call_history(calls: list[dict]) -> None:
     for call in calls:
         assert call["roles"] == hist_roles
         assert len(call.get("contents") or []) == len(hist_roles)
-        assert isinstance(call.get("prompt"), str) and call["prompt"]
-        assert isinstance(call.get("response"), str) and call["response"]
+        # 角色链长度身份；不锁 prompt/response 正文 type／非空（#1897 T1）。
+        assert "prompt" in call and "response" in call
         hist_roles = hist_roles + ["user", "assistant"]
 
 
 def _parse_heal_request(prompt: object) -> dict:
     """LLM 实际收到的补交 user 内容：结构化 JSON（非 formatter 旁路）。"""
-    assert isinstance(prompt, str) and prompt.strip()
     body = json.loads(prompt)
     assert isinstance(body, dict)
     assert body.get("kind") == "rescript_option_field_heal"

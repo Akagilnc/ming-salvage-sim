@@ -14328,40 +14328,68 @@ class GameDB:
         endorser_id: object = "", imperial: object = False,
     ) -> tuple[int, int, str, str, str, bool]:
         """#658：provenance 恰取 source_chat_turn_id>0 或 decision_key 非空之一。"""
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         if isinstance(dossier_id, bool) or not isinstance(dossier_id, int):
-            raise ValueError("背书案卷 id 须为整数")
+            raise DecreeMaterializationValidationError(
+                "背书案卷 id 须为整数", failed_fields=("dossier_id",), category="invalid_item",
+            )
         if isinstance(source_chat_turn_id, bool) or not isinstance(source_chat_turn_id, int):
-            raise ValueError("背书来源对话轮 id 须为整数")
+            raise DecreeMaterializationValidationError(
+                "背书来源对话轮 id 须为整数", failed_fields=("source_chat_turn_id",), category="invalid_item",
+            )
         if not isinstance(decision_key, str):
-            raise ValueError("背书 decision_key 须为字符串")
+            raise DecreeMaterializationValidationError(
+                "背书 decision_key 须为字符串", failed_fields=("decision_key",), category="invalid_item",
+            )
         if not isinstance(form, str) or not isinstance(endorser_id, str):
-            raise ValueError("背书形式与人物须为字符串")
+            raise DecreeMaterializationValidationError(
+                "背书形式与人物须为字符串", failed_fields=("form",), category="invalid_item",
+            )
         did, cid = dossier_id, int(source_chat_turn_id)
         dkey = decision_key.strip()
         kind, person = form.strip(), endorser_id.strip()
         if not isinstance(imperial, bool):
-            raise ValueError("御笔标记须为布尔")
+            raise DecreeMaterializationValidationError(
+                "御笔标记须为布尔", failed_fields=("imperial",), category="invalid_item",
+            )
         is_imperial = imperial
         # 恰一种 provenance：召对 chat_turn XOR 批红/下旨 decision_key。
         has_turn = cid > 0
         has_key = bool(dkey)
         if has_turn == has_key:
-            raise ValueError("背书 provenance 须恰为 source_chat_turn_id 或 decision_key 之一")
+            raise DecreeMaterializationValidationError(
+                "背书 provenance 须恰为 source_chat_turn_id 或 decision_key 之一",
+                failed_fields=("source_chat_turn_id", "decision_key"), category="invalid_item",
+            )
         if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
-            raise ValueError("背书所指案卷不存在")
+            raise DecreeMaterializationValidationError(
+                "背书所指案卷不存在", failed_fields=("dossier_id",), category="missing_ref",
+            )
         if has_turn:
             if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
-                raise ValueError("背书来源对话轮不存在")
+                raise DecreeMaterializationValidationError(
+                    "背书来源对话轮不存在", failed_fields=("source_chat_turn_id",), category="missing_ref",
+                )
         if kind not in {"会签", "当面站台", "御笔手敕"}:
-            raise ValueError("背书形式非法")
+            raise DecreeMaterializationValidationError(
+                "背书形式非法", failed_fields=("form",), category="invalid_item",
+            )
         if kind == "御笔手敕":
             if not is_imperial or person:
-                raise ValueError("御笔手敕必须使用御笔标记且不得具名大臣")
+                raise DecreeMaterializationValidationError(
+                    "御笔手敕必须使用御笔标记且不得具名大臣",
+                    failed_fields=("form", "imperial"), category="invalid_item",
+                )
         else:
             if is_imperial or not person:
-                raise ValueError("会签/当面站台必须具名背书人")
+                raise DecreeMaterializationValidationError(
+                    "会签/当面站台必须具名背书人",
+                    failed_fields=("form", "endorser_id"), category="invalid_item",
+                )
             if self.conn.execute("SELECT 1 FROM characters WHERE name=?", (person,)).fetchone() is None:
-                raise ValueError("背书人物不存在")
+                raise DecreeMaterializationValidationError(
+                    "背书人物不存在", failed_fields=("endorser_id",), category="hallucinated_id",
+                )
         return did, cid, dkey, kind, person, is_imperial
 
     def add_dossier_endorsement(
@@ -17247,7 +17275,11 @@ class GameDB:
         if row is None:
             raise KeyError(f"暂存动作不存在：{aid}")
         if str(row["status"] or "") != "pending":
-            raise ValueError(f"暂存动作状态不可挂背书：{row['status']}")
+            from ming_sim.action_materialize import DecreeMaterializationValidationError
+            raise DecreeMaterializationValidationError(
+                f"暂存动作状态不可挂背书：{row['status']}",
+                failed_fields=("status",), category="invalid_item",
+            )
         try:
             payload = json.loads(str(row["payload_json"] or "{}"))
         except (TypeError, ValueError):
@@ -17261,24 +17293,41 @@ class GameDB:
         # 暂存阶段尚无 dossier：只验形式/人物/来源轮（与 _validate 同口径）。
         if form == "御笔手敕":
             imperial, endorser_id = True, ""
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         if form not in {"会签", "当面站台", "御笔手敕"}:
-            raise ValueError("背书形式非法")
+            raise DecreeMaterializationValidationError(
+                "背书形式非法", failed_fields=("form",), category="invalid_item",
+            )
         if form == "御笔手敕":
             if not imperial or endorser_id:
-                raise ValueError("御笔手敕必须使用御笔标记且不得具名大臣")
+                raise DecreeMaterializationValidationError(
+                    "御笔手敕必须使用御笔标记且不得具名大臣",
+                    failed_fields=("form", "imperial"), category="invalid_item",
+                )
         else:
             if imperial or not endorser_id:
-                raise ValueError("会签/当面站台必须具名背书人")
+                raise DecreeMaterializationValidationError(
+                    "会签/当面站台必须具名背书人",
+                    failed_fields=("form", "endorser_id"), category="invalid_item",
+                )
             if self.conn.execute(
                 "SELECT 1 FROM characters WHERE name=?", (endorser_id,),
             ).fetchone() is None:
-                raise ValueError("背书人物不存在")
+                raise DecreeMaterializationValidationError(
+                    "背书人物不存在", failed_fields=("endorser_id",), category="hallucinated_id",
+                )
         if source_cid <= 0:
-            raise ValueError("背书来源对话轮 id 须为正整数")
+            raise DecreeMaterializationValidationError(
+                "背书来源对话轮 id 须为正整数",
+                failed_fields=("source_chat_turn_id",), category="invalid_item",
+            )
         if self.conn.execute(
             "SELECT 1 FROM chat_turns WHERE id=?", (source_cid,),
         ).fetchone() is None:
-            raise ValueError("背书来源对话轮不存在")
+            raise DecreeMaterializationValidationError(
+                "背书来源对话轮不存在",
+                failed_fields=("source_chat_turn_id",), category="missing_ref",
+            )
         items = list(payload.get("endorsements") or [])
         if not isinstance(items, list):
             items = []

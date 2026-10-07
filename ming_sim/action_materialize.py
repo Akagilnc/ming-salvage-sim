@@ -1495,14 +1495,21 @@ def stage_assignment_candidate(
         raise DecreeMaterializationValidationError(
             "交办旨意缺少正文", failed_fields=("text",),
         )
-    # 题名只认结构化锚；不得从正文/皇帝散文截取
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
-    if not matter_title:
+    # 题名只认结构化锚；不得从正文/皇帝散文截取。
+    # #1897 E2 / P6：自由题名判空与存储分开——判空用 strip 副本，存原文。
+    # 结构化 target_id 身份规范化另论（仍 strip）。
+    raw_title = str(title or "")
+    tid = str(target_id or "").strip()
+    if raw_title.strip():
+        matter_title = raw_title
+    else:
+        matter_title = tid
+    if not matter_title.strip():
         raise DecreeMaterializationValidationError(
             "交办旨意缺少结构化题名（title 或 target_id）",
             failed_fields=("title",),
         )
-    matter_id = str(target_id or "").strip() or matter_title
+    matter_id = tid or raw_title.strip()
     actor = str(minister_name or "").strip()
     if not actor:
         return 0
@@ -1577,10 +1584,15 @@ def stage_assignment_candidate(
         staged["commitment_kind"] = "until_stop"
     # #620 AC2 / #1890 / ADR 0142：分段里程碑是机械事实（到期判账），只承接
     # **显式结构化** stages——JSON 数组串或已结构化列表，一律走库层
-    # stages_to_json 的严格串行面：非 JSON 字符串响亮 ValueError（由交办分派
-    # 的既有 except 收成 durable 拒收）。全仓已无任何接缝从散文正则反推年诺。
+    # stages_to_json 的严格串行面：坏输入在此转成领域拒收异常，不让外层
+    # 用裸 ValueError 盖住整段物化／写入（#1897 E1）。全仓已无散文反推年诺。
     from ming_sim.staged_commitment import stages_to_json
-    stages_norm = json.loads(stages_to_json(stages))
+    try:
+        stages_norm = json.loads(stages_to_json(stages))
+    except ValueError as exc:
+        raise DecreeMaterializationValidationError(
+            str(exc), failed_fields=("stages",),
+        ) from exc
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
             staged["stop_condition"] = parsed_stop
@@ -1718,13 +1730,19 @@ def stage_referral_candidate(
         raise DecreeMaterializationValidationError(
             "下议旨意缺少正文", failed_fields=("text",),
         )
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
-    if not matter_title:
+    # #1897 E2 / P6：自由题名判空与存储分开；target_id 身份仍 strip。
+    raw_title = str(title or "")
+    tid = str(target_id or "").strip()
+    if raw_title.strip():
+        matter_title = raw_title
+    else:
+        matter_title = tid
+    if not matter_title.strip():
         raise DecreeMaterializationValidationError(
             "下议旨意缺少结构化题名（title 或 target_id）",
             failed_fields=("title",),
         )
-    matter_id = str(target_id or "").strip() or matter_title
+    matter_id = tid or raw_title.strip()
 
     try:
         months = int(deadline_months or 0)

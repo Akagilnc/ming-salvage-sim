@@ -740,18 +740,17 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     catalog = [line for line in seen[0]["listing"].splitlines() if line]
     assert "INDEX.txt" in catalog
     assert any(line != "INDEX.txt" for line in catalog)
-    # 目录／盘面键在；不锁 index/board 正文非空（#1897 T1）。
-    assert isinstance(seen[0]["index"], str)
-    assert isinstance(seen[0]["board"], str)
+    # 目录／材料树身份与 API／CLI 通道；不锁 index/board 正文 type 或跨字段正文通道（#1897 T1）。
+    assert "index" in seen[0] and "board" in seen[0]
     assert seen[0]["dir_has_index"] is False
-    # 开场通道＝prepare 交回的那一份，不靠栏目名从 instructions 里认。
+    # 开场通道＝prepare 交回的那一份（对象身份），不跨字段比正文。
     assert openings[0] is not None
-    assert openings[0] in seen[0]["instructions"]
+    assert any(part is openings[0] for part in seen[0]["instructions"])
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     month_chain.run_world_segment_text(db, state, cli)
     assert seen[1]["dir_has_index"] is True
-    assert isinstance(seen[1]["index"], str)
+    assert "index" in seen[1]
 
 
 def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkeypatch):

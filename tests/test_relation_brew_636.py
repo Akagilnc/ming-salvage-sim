@@ -281,34 +281,6 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     assert (source, target, int(state.year), int(state.period)) in seen
 
 
-# --------------------------------------------- P5：批内条目并行不串行
-
-def test_brew_batch_runs_items_in_parallel_not_serialized(game):
-    db, state, _ = game
-    pairs = [("甲", "乙"), ("丙", "丁")]
-    for source, target in pairs:
-        _add_edge(db, state, source=source, target=target, kind="协作",
-                  context=f"{source}与{target}当场协作。", origin=f"audience:{source}{target}")
-
-    barrier = threading.Barrier(len(pairs))
-    threads: list = []
-
-    def parallel_brew(payload_json: str) -> str:
-        payload = json.loads(payload_json)
-        threads.append(threading.current_thread().name)
-        barrier.wait()  # 串行实现会在第二个条目处超时破裂
-        return json.dumps(
-            _script(recent=f"{payload['source']}与{payload['target']}协作在案。"),
-            ensure_ascii=False,
-        )
-
-    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
-    assert len(report["brewed"]) == 2
-    assert len(set(threads)) == 2
-    for source, target in pairs:
-        summary = db.get_relation_summary(source, target)
-        assert summary["dimension"] == "大臣"
-        assert int(summary["last_event_id"]) > 0
 
 
 # ------------------------------------------------- 「本月新增」总判据（历史水位不选旧事）
@@ -528,13 +500,14 @@ def test_batch_of_five_relations_all_enter_call_seam_concurrently(game):
         _add_edge(db, state, source=source, target=target, kind="协作",
                   context=f"{source}与{target}当场协作。", origin=f"audience:{source}{target}")
 
-    barrier = threading.Barrier(len(pairs))
+    # 标准库 Barrier 默认 timeout：串行／容量不足时 wait 超时 → BrokenBarrierError 报红退出。
+    barrier = threading.Barrier(len(pairs), timeout=5)
     threads: list = []
 
     def parallel_brew(payload_json: str) -> str:
         payload = json.loads(payload_json)
         threads.append(threading.current_thread().name)
-        barrier.wait()  # 第 5 条排不到缝即在此超时破裂
+        barrier.wait(timeout=5)  # 第 5 条排不到缝即在此超时破裂
         return json.dumps(
             _script(recent=f"{payload['source']}与{payload['target']}协作在案。"),
             ensure_ascii=False,

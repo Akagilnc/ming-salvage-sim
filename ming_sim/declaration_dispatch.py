@@ -1083,8 +1083,12 @@ def _dispatch_commissions(
                 )
             except KeyError as exc:
                 _reject(rejected, item, str(exc), "invalid_state", source)
-            except (TypeError, ValueError) as exc:
-                _reject(rejected, item, str(exc), "invalid_shape", source)
+            except DecreeMaterializationValidationError as exc:
+                _reject(
+                    rejected, item, str(exc),
+                    getattr(exc, "category", None) or "invalid_shape", source,
+                )
+            # 未分类写入故障不在此冒充拒收（#1897 E1）。
             continue
 
         strategy = item.get("strategy_selection")
@@ -1356,13 +1360,18 @@ def _dispatch_commissions(
                 continue
             from ming_sim.action_materialize import stage_assignment_candidate
             actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
-            try:
-                roster = assignment.get("participant_roster")
-                if roster is not None:
+            roster = assignment.get("participant_roster")
+            if roster is not None:
+                try:
                     from ming_sim.cli_backend import normalize_draft_person_roster
                     roster = normalize_draft_person_roster(
                         roster, db=db, content=getattr(db, "content", None),
                     )
+                except (TypeError, ValueError) as exc:
+                    # 输入转换窄捕获：只盖名单归一，不盖后续物化／写入。
+                    _reject(rejected, item, str(exc), "invalid_shape", source)
+                    continue
+            try:
                 row_id = stage_assignment_candidate(
                     db, int(state.turn), actor, text=body,
                     title=assignment.get("title", ""),
@@ -1381,8 +1390,12 @@ def _dispatch_commissions(
                     source_chat_turn_id=source_chat_turn_id,
                     night_id=staged_night,
                 )
-            except (DecreeMaterializationValidationError, TypeError, ValueError) as exc:
-                _reject(rejected, item, str(exc), "invalid_shape", source)
+            except DecreeMaterializationValidationError as exc:
+                # 领域拒收走既有 typed 异常；未分类写入故障上抛（#1897 E1）。
+                _reject(
+                    rejected, item, str(exc),
+                    getattr(exc, "category", None) or "invalid_shape", source,
+                )
                 continue
             if row_id:
                 applied.append({"id": row_id, "kind": "directive"})
@@ -1871,8 +1884,15 @@ def _dispatch_endorsements(
                 db.attach_pending_action_endorsement(
                     action_id, entry, commit=False,
                 )
-            except (TypeError, ValueError, KeyError) as exc:
-                _reject(rejected, item, str(exc), "invalid_item", source)
+            except KeyError as exc:
+                _reject(rejected, item, str(exc), "missing_ref", source)
+                continue
+            except DecreeMaterializationValidationError as exc:
+                # 背书领域校验走既有 typed 异常；未分类写入故障上抛（#1897 E1）。
+                _reject(
+                    rejected, item, str(exc),
+                    getattr(exc, "category", None) or "invalid_item", source,
+                )
                 continue
         elif status == "committed":
             drow = db.conn.execute(
@@ -1896,8 +1916,12 @@ def _dispatch_endorsements(
                         source_chat_turn_id=ctid,
                         commit=False,
                     )
-            except (TypeError, ValueError) as exc:
-                _reject(rejected, item, str(exc), "invalid_item", source)
+            except DecreeMaterializationValidationError as exc:
+                # 背书领域校验；未分类写入故障上抛（#1897 E1）。
+                _reject(
+                    rejected, item, str(exc),
+                    getattr(exc, "category", None) or "invalid_item", source,
+                )
                 continue
         else:
             _reject(
@@ -1950,7 +1974,9 @@ def _stage_prohibit_covert_levy(
         raise KeyError(f"当前无待裁的暗渠摊派暴露案卷：{dossier_id}")
     body = _declared_prose(item.get("text"))
     if body is None:
-        raise ValueError("禁摊派交办缺正文")
+        raise DecreeMaterializationValidationError(
+            "禁摊派交办缺正文", failed_fields=("text",),
+        )
     actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
     payload = {
         "text": body,
@@ -2289,9 +2315,7 @@ def _dispatch_travel_tones(
                 origin_id=f"scene:xuan:{chat_turn_id}:{person}",
                 origin_chat_turn_id=chat_turn_id, travel_tone=tone,
             )
-        except ValueError as exc:
-            _reject(rejected, item, str(exc), "invalid_state", source)
-            continue
+        # 未分类写入故障不在此冒充 invalid_state（#1897 E1）；人名/语气已在上狭缝校验。
         applied.append({
             "entry_id": entry_id, "person_name": person, "tone": tone,
         })
