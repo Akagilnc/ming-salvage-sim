@@ -17,6 +17,7 @@ from ming_sim import audience_night as an
 from ming_sim.audience_night import (
     AUDIBILITY_PRIVATE,
     AUDIBILITY_PUBLIC,
+    PRESENCE_EXIT,
     TAG_ENTER,
     TAG_EXIT,
     AudienceNightError,
@@ -37,50 +38,20 @@ def _last_seq(db, night_id: int) -> int:
     return int(entries[-1]["seq"]) if entries else 0
 
 
-# ── AC1：「令 X 退下」口令 → 确定性告退账 → 名单查询即时变化（数据→引擎→交互）──
+def _record_exit(db, night_id: int, name: str, **kwargs):
+    """现役在场 exit 供料：走已有账本入口 presence_effect，不经已退役独立写口。"""
+    return an.append_ledger_entry(
+        db, night_id,
+        person_names=[name],
+        audibility=AUDIBILITY_PUBLIC,
+        body="",
+        presence_effect=PRESENCE_EXIT,
+        check_dead=False,
+        **kwargs,
+    )
 
 
-def test_dismiss_command_updates_roster_immediately(game):
-    db, state, content = game
-    _activate(db, state, "毕自严", "王绍徽")
-    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    nid = int(night["id"])
-    an.summon_enter(db, nid, "毕自严")
-    an.summon_enter(db, nid, "王绍徽")
-
-    before = an.present_names_at(db, nid)
-    assert {"毕自严", "王绍徽", STANDING} <= before
-
-    entry_id = an.dismiss_from_audience(db, "毕自严", night_id=nid)
-    assert entry_id  # 确定性落告退账
-    exit_e = an.list_ledger(db, nid)[-1]
-    assert TAG_EXIT in exit_e["tags"] and "毕自严" in exit_e["person_names"]
-
-    after = an.present_names_at(db, nid)
-    assert "毕自严" not in after  # 名单即时去人
-    assert {"王绍徽", STANDING} <= after  # 未被令退者仍在场
-
-
-def test_dismiss_noop_when_not_present(game):
-    """负向：令一个不在场者退下 → 不落账、名单不变、返回 None。"""
-    db, state, content = game
-    _activate(db, state, "王绍徽")
-    night = an.open_night(db, state, location="乾清宫")
-    nid = int(night["id"])
-    an.summon_enter(db, nid, "王绍徽")
-
-    before = an.present_names_at(db, nid)
-    seq_before = _last_seq(db, nid)
-    assert an.dismiss_from_audience(db, "毕自严", night_id=nid) is None
-    assert _last_seq(db, nid) == seq_before  # 未追加任何账
-    assert an.present_names_at(db, nid) == before
-
-    with pytest.raises(AudienceNightError) as ei:
-        an.dismiss_from_audience(db, "  ", night_id=nid)
-    assert ei.value.code == "empty_person"
-
-
-# ── AC1 真实入口 tracer：CLI 玩家「退下」口令 → 引擎告退账 → 名单即时去人 ──
+# ── AC1 真实入口 tracer：CLI 玩家「退下」原句 → 共同建轮，不自写告退账 ──
 
 
 def _cli_session(db, state, content):
@@ -199,7 +170,7 @@ def test_reenter_after_exit_reappears_in_roster(game):
     night = an.open_night(db, state, location="乾清宫")
     nid = int(night["id"])
     an.summon_enter(db, nid, "毕自严")
-    an.dismiss_from_audience(db, "毕自严", night_id=nid)
+    _record_exit(db, nid, "毕自严")
     assert "毕自严" not in an.present_names_at(db, nid)
 
     def _enters() -> int:
@@ -249,7 +220,7 @@ def _build_presence_night(db, state):
     an.summon_enter(db, nid, "毕自严"); seqs["毕自严_入"] = _last_seq(db, nid)
     an.record_summon_in_transit(db, nid, "洪承畴"); seqs["洪承畴_途"] = _last_seq(db, nid)
     an.summon_enter(db, nid, "王绍徽"); seqs["王绍徽_入"] = _last_seq(db, nid)
-    an.dismiss_from_audience(db, "徐光启", night_id=nid); seqs["徐光启_退"] = _last_seq(db, nid)
+    _record_exit(db, nid, "徐光启"); seqs["徐光启_退"] = _last_seq(db, nid)
     return nid, seqs
 
 

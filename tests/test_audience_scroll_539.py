@@ -124,7 +124,14 @@ def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch
     an.summon_enter(db, night_id, "王绍徽")
     an.summon_enter(db, night_id, "毕自严")
     an.set_night_protagonist(db, night_id, "王绍徽")
-    an.dismiss_from_audience(db, "王绍徽", night_id=night_id)
+    an.append_ledger_entry(
+        db, night_id,
+        person_names=["王绍徽"],
+        audibility=an.AUDIBILITY_PUBLIC,
+        body="",
+        presence_effect=an.PRESENCE_EXIT,
+        check_dead=False,
+    )
     monkeypatch.setattr(web_app, "get_game", lambda: _scroll_game(db))
 
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
@@ -301,19 +308,33 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
 
 
 def test_presence_commands_only_record_facts(game):
-    """入殿/告退只记事实账，戏文由场景 LLM 写。"""
+    """入殿/离场只记事实账，戏文由场景 LLM 写。"""
     db, state, _ = game
     night_id = open_audience_night(db, state)
     an.summon_enter(db, night_id, "杨嗣昌")
-    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+    an.append_ledger_entry(
+        db, night_id,
+        person_names=["杨嗣昌"],
+        audibility=an.AUDIBILITY_PUBLIC,
+        body="",
+        presence_effect=an.PRESENCE_EXIT,
+        check_dead=False,
+    )
 
     scroll = an.read_night_scroll(db, night_id)
     assert not any(m.get("beat") == "entrance" for m in scroll)
     assert not any(m.get("beat") == "exit" for m in scroll)
     # 事实账仍在
-    tags_sets = [set(e.get("tags") or []) for e in an.list_ledger(db, night_id)]
-    assert any(an.TAG_ENTER in ts and "杨嗣昌" in str(e.get("person_names"))
-               for e, ts in zip(an.list_ledger(db, night_id), tags_sets))
+    ledger = an.list_ledger(db, night_id)
+    assert any(
+        an.TAG_ENTER in (e.get("tags") or []) and "杨嗣昌" in (e.get("person_names") or [])
+        for e in ledger
+    )
+    assert any(
+        e.get("presence_effect") == an.PRESENCE_EXIT
+        and "杨嗣昌" in (e.get("person_names") or [])
+        for e in ledger
+    )
 
 
 def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):

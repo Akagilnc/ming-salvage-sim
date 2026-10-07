@@ -11,7 +11,11 @@
 from __future__ import annotations
 
 from ming_sim import audience_night as an
-from ming_sim.audience_night import AUDIBILITY_PRIVATE, AUDIBILITY_PUBLIC
+from ming_sim.audience_night import (
+    AUDIBILITY_PRIVATE,
+    AUDIBILITY_PUBLIC,
+    PRESENCE_EXIT,
+)
 
 STANDING = "王承恩"  # 常在员额（内廷近臣全程在场）
 
@@ -25,6 +29,17 @@ def _activate(db, state, *names: str) -> None:
 def _public(db, nid, name, body):
     return an.append_ledger_entry(
         db, nid, person_names=[name], body=body, audibility=AUDIBILITY_PUBLIC,
+    )
+
+
+def _record_exit(db, nid, name):
+    return an.append_ledger_entry(
+        db, nid,
+        person_names=[name],
+        audibility=AUDIBILITY_PUBLIC,
+        body="",
+        presence_effect=PRESENCE_EXIT,
+        check_dead=False,
     )
 
 
@@ -127,25 +142,9 @@ def test_exit_excludes_later_public_ledger_from_character_hearing(game):
     an.summon_enter(db, nid, "毕自严")
     an.summon_enter(db, nid, "徐光启")
     heard_id = _public(db, nid, "徐光启", "徐光启奏：陕西糜烂当速定督抚。")
-    an.dismiss_from_audience(db, "毕自严", night_id=nid)
+    _record_exit(db, nid, "毕自严")
     unheard_id = _public(db, nid, "徐光启", "徐光启续奏：九边军饷全无着落。")
 
     visible_ids = {r["id"] for r in an.audible_entries_for(db, nid, "毕自严")}
     assert heard_id in visible_ids
     assert unheard_id not in visible_ids
-
-
-def test_present_roster_reflects_command_dismissal(game):
-    """召退命令从现役在场名单移除召入者，并保留仍侍立者。"""
-    db, state, content = game
-    _activate(db, state, "毕自严", "徐光启")
-    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
-    nid = int(night["id"])
-    an.summon_enter(db, nid, "毕自严")
-    an.summon_enter(db, nid, "徐光启")
-    assert {"毕自严", "徐光启"} <= an.persons_present_tonight(db, nid)  # 正向：宣入皆在场
-
-    an.dismiss_from_audience(db, "毕自严", night_id=nid)
-    present = an.persons_present_tonight(db, nid)
-    assert "毕自严" not in present
-    assert "徐光启" in present

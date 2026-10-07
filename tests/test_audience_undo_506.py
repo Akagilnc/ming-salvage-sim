@@ -427,59 +427,68 @@ def test_undo_landed_secret_decree_removes_all_structured_records(game):
     ).fetchone()[0] == 0
 
 
-# ── L1（judge R1 S-exit-origin-unbound）：令退轮撤回 → 告退账消失 + 在场复原 ──────
-# 病根：dismiss_from_audience 落告退账时不绑本轮，undo 删不掉 → 按夜取数 ≠ 未发生，
-# 且被令退者永久差出（双轮场景在场不复原）。
+# ── L1：exit 声明轮撤回 → 离场账消失 + 在场复原 ──────────────────────────────
+# 现役路径：presence exit 经转译声明落账并绑源轮；撤回本轮须逆转在场。
 
 
-def test_undo_dismiss_round_removes_exit_ledger_and_restores_presence(game):
-    """round1 入殿 → round2 令退（绑本轮）→ undo round2 → 告退账消失且该人复在场。"""
+def _exit_declaration(minister: str) -> dict[str, object]:
+    return {
+        "presence": [{
+            "person_name": minister,
+            "effect": "exit",
+            "body": f"{minister}告退。",
+        }],
+    }
+
+
+def _is_exit_for(entry, name: str) -> bool:
+    if name not in (entry.get("person_names") or []):
+        return False
+    if entry.get("presence_effect") == an.PRESENCE_EXIT:
+        return True
+    return an.TAG_EXIT in (entry.get("tags") or [])
+
+
+def test_undo_exit_round_removes_exit_ledger_and_restores_presence(game):
+    """round1 入殿 → round2 exit 声明（绑本轮）→ undo round2 → 离场账消失且该人复在场。"""
     db, state, content = game
     m = _active_minister(db, content)
     # round1：入殿（无结构化写）
     n1, _c1 = _run_round(db, state, m)
     assert m in an.present_names_at(db, n1)
-    # round2：令退，告退账绑本轮 chat_id
-    n2, c2 = _run_round(
-        db, state, m,
-        writes=lambda night_id, chat_id: an.dismiss_from_audience(
-            db, m, origin_chat_turn_id=chat_id
-        ),
-    )
+    # round2：现役 presence exit 声明，离场账绑本轮
+    n2, c2 = _run_round(db, state, m, declaration=_exit_declaration(m))
     assert n2 == n1
-    # 令退落地：不在场（present_names_at 消费口令 TAG_EXIT）+ 告退账在册
     assert m not in an.present_names_at(db, n1)
-    assert any(an.TAG_EXIT in (e["tags"] or []) and m in e["person_names"]
-               for e in an.list_ledger(db, n1))
+    assert any(_is_exit_for(e, m) for e in an.list_ledger(db, n1))
 
     db.undo_chat_turn(c2)
 
-    # 告退账消失（origin 绑本轮，随撤回删）
-    assert not any(an.TAG_EXIT in (e["tags"] or []) and m in e["person_names"]
-                   for e in an.list_ledger(db, n1))
-    # 在场复原（round1 入殿仍在）——被令退者不再永久差出
+    assert not any(_is_exit_for(e, m) for e in an.list_ledger(db, n1))
+    # 在场复原（round1 入殿仍在）
     assert m in an.present_names_at(db, n1)
 
 
-def test_undo_single_round_enter_and_dismiss_equals_not_happened(game):
-    """单轮内入殿+令退，undo 后账与在场均 ≡ 该轮未发生（入殿账 origin 也绑本轮）。"""
+def test_undo_single_round_enter_and_exit_equals_not_happened(game):
+    """单轮内入殿+exit 声明，undo 后账与在场均 ≡ 该轮未发生。"""
     db, state, content = game
     m = _active_minister(db, content)
-    n1, c1 = _run_round(
-        db, state, m,
-        writes=lambda night_id, chat_id: an.dismiss_from_audience(
-            db, m, origin_chat_turn_id=chat_id
-        ),
-    )
-    # 本轮产了入殿账（attach）+ 告退账（dismiss），二者皆绑本轮
-    round_entries = [e for e in an.list_ledger(db, n1)
-                     if e["origin_chat_turn_id"] == c1 and m in e["person_names"]]
-    assert any(an.TAG_ENTER in (e["tags"] or []) for e in round_entries)
-    assert any(an.TAG_EXIT in (e["tags"] or []) for e in round_entries)
+    n1, c1 = _run_round(db, state, m, declaration=_exit_declaration(m))
+    # 本轮产了入殿账（attach）+ exit 声明账，二者皆绑本轮
+    round_entries = [
+        e for e in an.list_ledger(db, n1)
+        if m in (e.get("person_names") or [])
+        and (
+            int(e.get("origin_chat_turn_id") or 0) == c1
+            or int(e.get("source_chat_turn_id") or 0) == c1
+        )
+    ]
+    assert any(an.TAG_ENTER in (e.get("tags") or []) for e in round_entries)
+    assert any(_is_exit_for(e, m) for e in round_entries)
 
     db.undo_chat_turn(c1)
 
-    # 该轮所产入殿/告退账全消失；在场无该人——像本轮从未发生
+    # 该轮所产入殿/离场账全消失；在场无该人——像本轮从未发生
     assert not any(m in e["person_names"] for e in an.list_ledger(db, n1))
     assert m not in an.present_names_at(db, n1)
 
