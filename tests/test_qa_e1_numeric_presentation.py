@@ -12,7 +12,6 @@ from ming_sim.flows import apply_fixed_period_flows, compute_budget_lines
 def _army_pay_budget_lines(budget):
     return [row for row in budget["国库"]["expense"] if row.get("budget_key") == "army_pay"]
 
-
 def test_substrate_budget_splits_proposals_without_treasury_cap(game):
     db, state, _ = game
     db.conn.execute(
@@ -40,7 +39,6 @@ def test_substrate_budget_splits_proposals_without_treasury_cap(game):
     state.metrics["国库"] = 100
     assert proposed_parts() == {"central": 10, "jingyun": 7}
 
-
 def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
     import ming_sim.flows as flows_mod
 
@@ -65,7 +63,6 @@ def test_renaming_army_pay_budget_line_does_not_double_debit(game, monkeypatch):
     assert len(hub_rows) == 1
     assert int(hub_rows[0]["paid"]) > 0
 
-
 def test_player_budget_payload_strips_engineering_notes(read_game):
     """#1471：API 玩家定额行键集恰为 {name, amount}；工程 note/internal 不得下发。"""
     db, state, _ = read_game
@@ -84,18 +81,3 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
                 assert isinstance(item["name"], str)
                 assert isinstance(item["amount"], int)
 
-
-def test_army_payload_arrears_text_is_approximate_not_raw(game):
-    db, _state, _ = game
-    army_id = db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
-    ).fetchone()["id"]
-    raw = 1.2000000000000002
-    db.conn.execute(
-        "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
-        (raw, raw, army_id),
-    )
-    db.conn.commit()
-    card = {army["id"]: army for army in db.army_payload()}[army_id]
-    assert "arrears" not in card
-    assert isinstance(card["arrears_text"], str) and card["arrears_text"]

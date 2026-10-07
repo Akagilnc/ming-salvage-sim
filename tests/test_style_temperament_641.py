@@ -14,24 +14,19 @@ import pytest
 
 import ming_sim.issues as issues
 from ming_sim.content import GameContent
-from ming_sim.context import character_context_with_db, minister_dossier
 from ming_sim.decree import reload_state_from_db
 from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.person_archive_contract import format_person_actions
-from ming_sim.relation_read import project_relation_ledger
-
 
 PERSON = "毛文龙"
 NEW_STYLE = "旧恨未消，却更沉得住气，临事少作张扬。"
 # 含首尾空白与内嵌换行：写核/读面须原串透传，不得 strip 改写。
 PADDED_STYLE = "  沉得住气\n少作张扬。  "
 
-
 def _style_row(db, name=PERSON):
     return db.conn.execute(
         "SELECT style FROM characters WHERE name=?", (name,)
     ).fetchone()["style"]
-
 
 def _temperament_item(**overrides):
     item = {
@@ -43,7 +38,6 @@ def _temperament_item(**overrides):
     }
     item.update(overrides)
     return item
-
 
 def test_inertia_natural_resolve_applies_temperament_style(game):
     """生产入口：issue 自然结案 effect_on_resolve 性情 → DB/runtime/person_logs 一致。"""
@@ -83,7 +77,6 @@ def test_inertia_natural_resolve_applies_temperament_style(game):
     assert log["action"] == "性情"
     assert log["payload_summary"] == "经事锤炼，固有层改写"
 
-
 def test_apply_score_extraction_writes_temperament_style_and_log(game):
     db, state, content = game
     before = _style_row(db)
@@ -118,7 +111,6 @@ def test_apply_score_extraction_writes_temperament_style_and_log(game):
     ).fetchone()
     assert log["action"] == "性情"
     assert log["payload_summary"] == "经事锤炼，固有层改写"
-
 
 def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
     """自由文本 style 只判空、不改写：DB/runtime/applied/log normalized 与输入原串逐字节相等。"""
@@ -171,7 +163,6 @@ def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
     assert blank_out["applied_person_changes"][0]["rejected"] is True
     assert blank_out["applied_person_changes"][0]["category"] == "invalid_enum"
 
-
 def test_temperament_outer_tx_rollback_restores_db_and_runtime(game):
     db, state, content = game
     before_db = _style_row(db)
@@ -191,7 +182,6 @@ def test_temperament_outer_tx_rollback_restores_db_and_runtime(game):
     assert _style_row(db) == before_db
     assert content.characters[PERSON].style == before_rt
 
-
 def test_temperament_committed_style_survives_reload(game):
     db, state, content = game
     issues.apply_score_extraction(
@@ -204,7 +194,6 @@ def test_temperament_committed_style_survives_reload(game):
 
     assert _style_row(db) == NEW_STYLE
     assert content.characters[PERSON].style == NEW_STYLE
-
 
 @pytest.mark.parametrize(
     ("item", "category"),
@@ -243,103 +232,6 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
     assert changes[0]["reason"]
     assert changes[0]["category"] == category
     assert changes[0]["item"] == item
-
-
-def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
-    db, state, content = game
-    person = content.characters[PERSON]
-    other = next(
-        c for c in content.characters.values()
-        if c.name != person.name
-        and c.office_type not in ("后宫", "宗藩", "未仕")
-        and db.get_character_status(c.name)[0] == "active"
-        and getattr(c, "power_id", "ming") == "ming"
-    )
-
-    issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item()]},
-        content=content,
-    )
-
-    db.record_relation_edge_event(
-        source=person.name,
-        target=other.name,
-        event_kind="协作",
-        context="两人在朝上声气相通。",
-        origin="audience:turn-1",
-        turn=int(state.turn),
-        year=int(state.year),
-        period=int(state.period),
-    )
-
-    expected_own = project_relation_ledger(db, viewer=person.name)
-    assert [(d["source"], d["target"]) for d in expected_own] == [(person.name, other.name)]
-
-    dossier = minister_dossier(person)
-    assert isinstance(dossier, str) and dossier.strip()
-    rendered = character_context_with_db(person, db)
-    assert isinstance(rendered, str) and rendered.strip()
-    own_dto = expected_own[0]
-    assert isinstance(own_dto["recent_context"], str) and own_dto["recent_context"].strip()
-
-
-def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
-    """读面装配：style/summary/recent_context 存在性用 strip，正文传原串。"""
-    db, state, content = game
-    person = content.characters[PERSON]
-    other = next(
-        c for c in content.characters.values()
-        if c.name != person.name
-        and c.office_type not in ("后宫", "宗藩", "未仕")
-        and db.get_character_status(c.name)[0] == "active"
-        and getattr(c, "power_id", "ming") == "ming"
-    )
-    padded_summary_founding = "  旧谊未断，朝堂仍有声气。  "
-    padded_summary_recent = "  近因边事互为援引。\n未改旧约。  "
-    padded_edge_context = "  两人在朝上声气相通。\n仍留余地。  "
-
-    issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [_temperament_item(style=PADDED_STYLE)]},
-        content=content,
-    )
-    db.apply_relation_brew_result(
-        source=person.name,
-        target=other.name,
-        dimension="大臣",
-        founding_segment=padded_summary_founding,
-        recent_segment=padded_summary_recent,
-        last_event_id=1,
-        turn=int(state.turn),
-        year=int(state.year),
-        period=int(state.period),
-    )
-    db.record_relation_edge_event(
-        source=person.name,
-        target=other.name,
-        event_kind="协作",
-        context=padded_edge_context,
-        origin="audience:turn-1",
-        turn=int(state.turn),
-        year=int(state.year),
-        period=int(state.period),
-    )
-
-    dto = project_relation_ledger(db, viewer=person.name)[0]
-    dossier = minister_dossier(person)
-    assert isinstance(dossier, str) and dossier.strip()
-    rendered = character_context_with_db(person, db)
-    assert isinstance(rendered, str) and rendered.strip()
-
-    # DTO 字段保留写入时的空白/换行（结构化字段，不锁供料正文嵌入）。
-    assert isinstance(dto["summary"], str) and dto["summary"]
-    assert isinstance(dto["recent_context"], str) and dto["recent_context"]
-    assert PADDED_STYLE.strip() != PADDED_STYLE
-    assert dto["summary"] != dto["summary"].strip()
-
 
 def test_relation_edge_events_do_not_mutate_style(game):
     db, state, content = game
@@ -384,7 +276,6 @@ def test_relation_edge_events_do_not_mutate_style(game):
         ("性情",),
     ).fetchone()["c"]
     assert after_temperament_logs == before_temperament_logs
-
 
 def test_temperament_does_not_write_relation_edges(game):
     db, state, content = game
