@@ -49,7 +49,8 @@ def test_approved_recommendation_writes_both_edges_atomically(game):
     db, state, content = game
     recommender = _pick_recommender(content)
     row = db.list_recommendation_candidates(state, recommender.name)[0]
-    reason = "旧任有实绩，罢居后仍可起复"
+    # 带首尾空白／换行：原样运输合同并入本 tracer（#1897 T1）。
+    reason = "  旧任有实绩，罢居后仍可起复。\n"
     action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", reason)
 
     _commit_and_promulgate(db, state, content, action_id)
@@ -176,24 +177,6 @@ def test_replay_same_event_with_changed_reason_stays_two_rows(game):
     assert {e["event_kind"] for e in legs} == {"恩义", "知遇"}
     # 原 context 不被重放改写（#1897 T1 前像）
     assert all(e["context"] == reason1 for e in legs)
-
-
-def test_real_entry_persists_raw_reason_verbatim(game):
-    """荐词带首尾空白/换行，事件 reason 与两腿 context 字节不变落库。"""
-    db, state, content = game
-    recommender = _pick_recommender(content)
-    row = db.list_recommendation_candidates(state, recommender.name)[0]
-    reason = "  荐其旧任有实绩，堪当巡盐之任。\n"
-    action_id = _stage_recommendation(db, state, recommender.name, row, "巡盐御史", reason)
-
-    _commit_and_promulgate(db, state, content, action_id)
-
-    event = db.list_recommendation_events(state, recommender.name)[0]
-    assert event["reason"] == reason
-    legs = [e for e in db.get_relation_edge_events()
-            if str(e["origin"]).startswith(f"recommendation:{event['id']}:")]
-    assert len(legs) == 2
-    assert all(e["context"] == reason for e in legs)
 
 
 def test_appointment_without_recommendation_writes_no_edges(game):

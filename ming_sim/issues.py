@@ -353,13 +353,14 @@ def _payload_owned_person_duplicate(
 
 
 def _issue_condition_text(raw: object) -> str:
+    """普通叙事原文落库；判空只在调用方局部副本上 strip（#1897 E2）。"""
     if raw is None:
         return ""
     if isinstance(raw, str):
-        return raw.strip()
+        return raw
     if isinstance(raw, (dict, list)):
         return json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
-    return str(raw).strip()
+    return str(raw)
 
 
 def _normalize_commitment_kind(raw: object) -> str:
@@ -4679,7 +4680,7 @@ def apply_issue_tracker_output(
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
         resolve_text_for_shape = _issue_condition_text(ni.get("resolve_condition"))
-        if not resolve_text_for_shape and isinstance(stop_condition_raw, str):
+        if not resolve_text_for_shape.strip() and isinstance(stop_condition_raw, str):
             resolve_text_for_shape = stop_condition
         forbidden_resolve_commitment_shape = bool(
             _FORBIDDEN_COMMITMENT_RESOLVE_SHAPE.fullmatch(str(resolve_text_for_shape or "").strip())
@@ -4693,7 +4694,7 @@ def apply_issue_tracker_output(
                 or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
                 or (
                     isinstance(stop_condition_raw, str)
-                    and bool(stop_condition)
+                    and bool(str(stop_condition).strip())
                     and bool(origin_ref)
                     and not resolve_eff
                     and not fail_eff
@@ -4828,7 +4829,7 @@ def apply_issue_tracker_output(
             })
             continue
         resolve_condition = _issue_condition_text(ni.get("resolve_condition"))
-        if not resolve_condition and isinstance(ni.get("stop_condition"), str):
+        if not resolve_condition.strip() and isinstance(ni.get("stop_condition"), str):
             resolve_condition = stop_condition
         # A structured roster is an item-level contract.  In particular a
         # mapping is not an iterable roster: iterating it would persist its

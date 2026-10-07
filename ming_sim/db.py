@@ -485,7 +485,7 @@ def parse_backing_dossier_id(raw: object) -> Optional[int]:
 def require_backing_dossier_id(db: object, raw: object) -> Optional[int]:
     """解析 + 存在性：有值则案卷必须在册；供 stage 首写与 apply 复用。
 
-    形状／不存在 → 结构化领域拒收（#1897 C1）；getter 真读故障原样上抛，
+    形状／不存在 → 结构化领域拒收（#1897 E1）；getter 真读故障原样上抛，
     不按 ValueError 文案猜类别。
     """
     from ming_sim.action_materialize import DecreeMaterializationValidationError
@@ -505,7 +505,11 @@ def require_backing_dossier_id(db: object, raw: object) -> Optional[int]:
         raise RuntimeError("db missing get_decree_dossier")
     dossier = getter(backing)  # 读故障不包装
     if dossier is None:
-        raise ValueError(f"backing_dossier_id 所指案卷不存在：{backing}")
+        raise DecreeMaterializationValidationError(
+            f"backing_dossier_id 所指案卷不存在：{backing}",
+            failed_fields=("backing_dossier_id",),
+            category="hallucinated_id",
+        )
     return backing
 
 def directive_payload_has_ordinary_triad(payload: Mapping[str, object]) -> bool:
@@ -842,68 +846,40 @@ def payload_declares_escort(payload: object) -> bool:
         str(name or "").strip() for name in escortees
     )
 
-_SECRET_ORDER_BODY_COLUMNS = ("result", "sim_note")
+def _load_durable_json_list(raw: object, *, surface: str) -> list:
+    """Durable JSON array column: corrupt / wrong top-level fail loud (#1897 E1)."""
+    try:
+        value = json.loads(raw or "[]")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{surface} 腐坏 JSON") from exc
+    if not isinstance(value, list):
+        raise ValueError(f"{surface} 须为列表")
+    return value
 
-def _secret_order_kept_body(text: object) -> str:
-    """空白正文记空串；已有字句原样保留，含内部空行。"""
-    raw = str(text or "")
-    return raw if raw.strip() else ""
 
-def _secret_order_record_body(record: Mapping[str, object]) -> str:
-    """Stored prose must already be a string. A missing or non-string body is not rewritten as empty text."""
-    body = record.get("body")
-    if not isinstance(body, str):
-        raise TypeError("密令正文记录缺少正文")
-    return body
+def _load_durable_json_object(raw: object, *, surface: str) -> dict:
+    """Durable JSON object column: corrupt / wrong top-level fail loud (#1897 E1)."""
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{surface} 腐坏 JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{surface} 须为对象")
+    return value
 
-def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
-    """Read structured body records.
 
-    ``json.loads`` failures and a non-dict top level propagate. A column that
-    is not a list, or a record whose body is not a string, raises ``TypeError``.
-    A missing column means no records. Stored entries are not filtered and a
-    missing body is not replaced with an empty string.
-    """
-    parsed = json.loads(row["text_log_json"])
-    log: Dict[str, List[Dict[str, object]]] = {}
-    for column in _SECRET_ORDER_BODY_COLUMNS:
-        entries = parsed.get(column, [])
-        if not isinstance(entries, list):
-            raise TypeError(f"密令正文记录 {column} 不是列表")
-        for item in entries:
-            if not isinstance(item, dict):
-                raise TypeError("密令正文记录条目不是对象")
-            _secret_order_record_body(item)
-        log[column] = entries
-    return log
-
-def _secret_order_period_recorded(
-    records: Sequence[Mapping[str, object]], year: int, period: int,
-) -> bool:
-    return any(
-        int(record.get("year") or 0) == int(year)
-        and int(record.get("period") or 0) == int(period)
-        for record in records
+def _load_secret_order_exclusions(
+    row: Mapping[str, object] | sqlite3.Row, *, surface: str,
+) -> tuple[list, dict]:
+    """Durable exclusion columns: corrupt JSON / wrong top-level fail loud (#1897 E1)."""
+    keys = row.keys() if hasattr(row, "keys") else row
+    raw_names = row["excluded_names"] if "excluded_names" in keys else "[]"
+    raw_targets = row["excluded_targets"] if "excluded_targets" in keys else "{}"
+    return (
+        _load_durable_json_list(raw_names, surface=f"{surface} excluded_names"),
+        _load_durable_json_object(raw_targets, surface=f"{surface} excluded_targets"),
     )
 
-def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str:
-    """Project records by year, month, then write order. Body text is copied whole."""
-    ordered = sorted(
-        enumerate(records),
-        key=lambda pair: (
-            int(pair[1].get("year") or 0),
-            int(pair[1].get("period") or 0),
-            pair[0],
-        ),
-    )
-    parts: List[str] = []
-    for _, record in ordered:
-        marker = str(record.get("marker") or "")
-        parts.append(
-            f"〔{period_label(int(record.get('year') or 0), int(record.get('period') or 0))}〕"
-            f"{marker}{_secret_order_record_body(record)}"
-        )
-    return "\n".join(parts)
 
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
@@ -1853,15 +1829,6 @@ class GameDB:
                 FOREIGN KEY(event_id) REFERENCES events(id),
                 FOREIGN KEY(actor) REFERENCES characters(name)
             );
-
-            CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
-                turn INTEGER NOT NULL,
-                dossier_id INTEGER NOT NULL,
-                verdict_json TEXT NOT NULL,
-                PRIMARY KEY(turn, dossier_id),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-
 
             CREATE INDEX IF NOT EXISTS idx_economy_ledger_turn
             ON economy_ledger(turn, account);
@@ -5624,36 +5591,54 @@ class GameDB:
         When apply_score_extraction arms ``_batch_authorized_open_affair_ids``,
         ``affair:<id>`` must also sit in that frozen batch set — one authority
         for every durable-effect carrier (fiscal included).
+
+        Only identity-shape faults are absorbed as invalid_origin_ref. Durable
+        getter / store decode errors propagate loud (#1897 E1).
         """
         value = str(origin_ref or "").strip()
         valid = value == "盘面自发"
         unauthorized_batch = False
         if value.startswith("dossier:"):
+            raw_id = value.split(":", 1)[1]
             try:
-                dossier_id = int(value.split(":", 1)[1])
-                valid = dossier_id > 0 and self.get_decree_dossier(dossier_id) is not None \
-                    and self.dossier_authorizes_effects(dossier_id)
+                dossier_id = strict_sqlite_id(raw_id)
+            except (TypeError, ValueError):
+                valid = False
+            else:
+                if dossier_id <= 0:
+                    valid = False
+                else:
+                    dossier = self.get_decree_dossier(dossier_id)
+                    valid = (
+                        dossier is not None
+                        and self.dossier_authorizes_effects(dossier_id)
+                    )
+        elif value.startswith("affair:"):
+            from ming_sim.entities.affair.store import (
+                UnauthorizedAffairOriginRef,
+                parse_origin_ref,
+            )
+            try:
+                kind, affair_id = parse_origin_ref(value)
             except (OverflowError, TypeError, ValueError):
                 valid = False
-        elif value.startswith("affair:"):
-            try:
-                from ming_sim.entities.affair.store import (
-                    UnauthorizedAffairOriginRef,
-                    parse_origin_ref,
-                )
-                kind, affair_id = parse_origin_ref(value)
+            else:
                 if kind == "affair" and affair_id is not None:
-                    self.affairs.get(int(affair_id))
-                    authorized = getattr(self, "_batch_authorized_open_affair_ids", None)
-                    if authorized is not None and affair_id not in authorized:
+                    try:
+                        self.affairs.get(int(affair_id))
+                    except KeyError:
                         valid = False
-                        unauthorized_batch = True
                     else:
-                        valid = True
+                        authorized = getattr(
+                            self, "_batch_authorized_open_affair_ids", None,
+                        )
+                        if authorized is not None and affair_id not in authorized:
+                            valid = False
+                            unauthorized_batch = True
+                        else:
+                            valid = True
                 else:
                     valid = False
-            except (KeyError, OverflowError, TypeError, ValueError):
-                valid = False
         if valid:
             return None
         if unauthorized_batch:
@@ -8924,10 +8909,14 @@ class GameDB:
         for row in rows:
             try:
                 excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"character_knowledge_events excluded_names 腐坏 JSON"
+                ) from exc
             if not isinstance(excluded_names, list):
-                excluded_names = []
+                raise ValueError(
+                    "character_knowledge_events excluded_names 须为列表"
+                )
             key = str(row["source_id"] or "")
             is_public = str(row["kind"] or "") == "public"
             if key and key in public_kept and not is_public:
@@ -8953,16 +8942,24 @@ class GameDB:
             participants = participant_roster_names(row["participant_roster"])
             try:
                 excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"character_knowledge_sources excluded_names 腐坏 JSON"
+                ) from exc
             if not isinstance(excluded_names, list):
-                excluded_names = []
+                raise ValueError(
+                    "character_knowledge_sources excluded_names 须为列表"
+                )
             try:
                 excluded_targets = json.loads(row["excluded_targets"] or "{}")
-            except (TypeError, ValueError):
-                excluded_targets = {}
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"character_knowledge_sources excluded_targets 腐坏 JSON"
+                ) from exc
             if not isinstance(excluded_targets, dict):
-                excluded_targets = {}
+                raise ValueError(
+                    "character_knowledge_sources excluded_targets 须为对象"
+                )
             target_people = {
                 str(name) for name in excluded_targets.get("people", [])
             }
@@ -11049,12 +11046,9 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="faction_denunciations.payload_json",
+            )
             out.append({
                 "id": int(row["id"]),
                 "turn": int(row["turn"]),
@@ -11413,12 +11407,10 @@ class GameDB:
                 (accuser, dossier_id, origin),
             ).fetchone()
             if prior_row is not None:
-                try:
-                    prev_payload = json.loads(prior_row["payload_json"] or "{}")
-                except (TypeError, ValueError):
-                    prev_payload = {}
-                if not isinstance(prev_payload, dict):
-                    prev_payload = {}
+                prev_payload = self.parse_engine_payload_json(
+                    prior_row["payload_json"],
+                    surface="faction_denunciations.payload_json",
+                )
                 if not denunciation_case_upgraded(prev_payload, fork_state):
                     continue
 
@@ -12696,7 +12688,7 @@ class GameDB:
         if not isinstance(existing_raw, list):
             raise ValueError(f"案卷#{dossier_id} participant_roster 非列表")
         existing = self._normalize_participant_roster(
-            existing_raw, strict_structured=True,
+            existing_raw, strict_structured=True, as_durable=True,
         )
         self._validate_participant_roster_references(existing, as_durable=True)
         # 旧名册委派链：同一权威规则，内部故障出口（裸 ValueError），不跳过。
@@ -15183,19 +15175,8 @@ class GameDB:
                     self._record_dossier_verdict_metadata(
                         state, strict_int(verdict.get("dossier_id")), verdict,
                     )
-                # Consumption belongs to the same atomic unit as effect application;
-                # an outer settlement rollback restores both effects and this batch.
-                self.conn.execute(
-                    "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(state.turn),)
-                )
-                summon_nights = set(getattr(self.conn, "_deferred_office_summon_nights", set()) or set())
-                if summon_nights:
-                    from ming_sim.audience_night import commit_fresh_summons_for_night
-                    for night_id in sorted(summon_nights):
-                        commit_fresh_summons_for_night(
-                            self, state, int(night_id),
-                            content=content,
-                        )
+                # Consumption of this promulgation batch is the same atomic unit as
+                # effect application; outer settlement rollback restores both.
         finally:
             self.conn._recommendation_snapshots_prevalidated = previous_reco_prevalidated
 
@@ -15753,6 +15734,12 @@ class GameDB:
                         "UPDATE pending_actions SET status='failed' WHERE id=?",
                         (int(pa["id"]),),
                     )
+                    # 明确业务 False 进入既有拒收报告管线；failed 终态不代替 ADR0015 轨（#1897 L1）。
+                    self._record_pending_domain_rejection(
+                        rejection_collector, state, pa, payload,
+                        reason="领域条件不成立，该暂存已失败",
+                        category="invalid_state",
+                    )
             except Exception as exc:
                 self.conn.execute(f"ROLLBACK TO {savepoint}")
                 if restore_on_rollback is not None:
@@ -15830,11 +15817,13 @@ class GameDB:
     ) -> Dict[str, object]:
         """把新 payload 与旧 payload 里的下划线控制键（`_` 前缀）合并：新 payload 为主，
         旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态/待澄清闸（#502 L5）。"""
-        try:
-            old = json.loads(existing_json or "{}") if not isinstance(
-                existing_json, (dict, list)) else existing_json
-        except (ValueError, TypeError):
-            old = {}
+        if isinstance(existing_json, (dict, list)):
+            old = existing_json
+        else:
+            # 已持久候选 JSON 腐坏响亮，不洗成空底丢控制键（#1897 E1）。
+            old = GameDB.parse_engine_payload_json(
+                existing_json, surface="pending_actions.payload_json",
+            )
         merged: Dict[str, object] = dict(new_payload or {})
         if isinstance(old, dict):
             for k, v in old.items():
@@ -18969,9 +18958,25 @@ class GameDB:
 
     @staticmethod
     def _normalize_participant_roster(
-        participants: Iterable[object] | str | None, *, strict_structured: bool = False,
+        participants: Iterable[object] | str | None, *,
+        strict_structured: bool = False, as_durable: bool = False,
     ) -> List[Dict[str, object]]:
-        """Normalize ADR 0053 entries while retaining explicit legacy string input."""
+        """Normalize ADR 0053 entries while retaining explicit legacy string input.
+
+        as_durable=True：已持久名册 schema 腐坏 → 裸 ValueError（内部故障）；
+        声明严格面 schema 错误 → DMVE（#1897 E1）。
+        """
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+
+        def _schema_error(message: str):
+            if as_durable:
+                return ValueError(f"已持久名册{message}")
+            return DecreeMaterializationValidationError(
+                message,
+                failed_fields=("participant_roster",),
+                category="invalid_participant_roster",
+            )
+
         values = [participants] if isinstance(participants, str) else list(participants or [])
         roster: List[Dict[str, object]] = []
         for value in values:
@@ -18983,39 +18988,23 @@ class GameDB:
                     character_id = str(value.get("character_id") or value.get("name") or "").strip()
                     tier_value = value.get("tier") if "tier" in value else value.get("档")
                 if strict_structured and not character_id:
-                    from ming_sim.action_materialize import DecreeMaterializationValidationError
-                    raise DecreeMaterializationValidationError(
-                        "参与人物 character_id 不能为空",
-                        failed_fields=("participant_roster",),
-                    )
+                    raise _schema_error("参与人物 character_id 不能为空")
                 if strict_structured and tier_value is None:
-                    from ming_sim.action_materialize import DecreeMaterializationValidationError
-                    raise DecreeMaterializationValidationError(
-                        "参与人物 tier 必须显式提供",
-                        failed_fields=("participant_roster",),
-                    )
+                    raise _schema_error("参与人物 tier 必须显式提供")
                 tier = str(tier_value or ("" if strict_structured else "知情")).strip()
                 raw_role = str(value.get("role") or value.get("职分") or "")
                 role = raw_role if raw_role.strip() else ""
                 delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
             else:
                 if strict_structured:
-                    from ming_sim.action_materialize import DecreeMaterializationValidationError
-                    raise DecreeMaterializationValidationError(
-                        "结构化参与人名单每项必须为对象",
-                        failed_fields=("participant_roster",),
-                    )
+                    raise _schema_error("结构化参与人名单每项必须为对象")
                 character_id, tier, role, delegator = str(value).strip(), "知情", "", ""
             if not character_id:
                 continue
             if tier not in PARTICIPANT_TIERS:
-                # 声明严格面 → 领域拒收；宽松/遗留读侧仍裸 VE（#1897 E1）。
+                # 声明严格面 → 领域拒收；持久/宽松读侧裸 VE（#1897 E1）。
                 if strict_structured:
-                    from ming_sim.action_materialize import DecreeMaterializationValidationError
-                    raise DecreeMaterializationValidationError(
-                        f"参与人机械档非法：{tier}",
-                        failed_fields=("participant_roster",),
-                    )
+                    raise _schema_error(f"参与人机械档非法：{tier}")
                 raise ValueError(f"参与人机械档非法：{tier}")
             item = {"character_id": character_id, "tier": tier, "role": role,
                     "delegator_id": delegator or None}
@@ -19232,9 +19221,16 @@ class GameDB:
         ).fetchone()
         if row is not None:
             try:
-                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
-            except (TypeError, ValueError):
-                return []
+                names = json.loads(row["excluded_names"] or "[]")
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "character_knowledge_events excluded_names 腐坏 JSON"
+                ) from exc
+            if not isinstance(names, list):
+                raise ValueError(
+                    "character_knowledge_events excluded_names 须为列表"
+                )
+            return [str(name) for name in names]
         # Private briefs and public disclosure events inherit exclusions from
         # secret_orders. Bare ``secret_order:N`` shared sources are not produced
         # and are not a lookup key here (register gate rejects that prefix).
@@ -19247,10 +19243,10 @@ class GameDB:
                 "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,)
             ).fetchone()
             if order is not None:
-                try:
-                    return [str(name) for name in json.loads(order["excluded_names"] or "[]")]
-                except (TypeError, ValueError):
-                    return []
+                names, _ = _load_secret_order_exclusions(
+                    order, surface=f"secret_orders#{order_id}",
+                )
+                return [str(name) for name in names]
         # #1829 reopen：公开说法排除名单与正文同表，按 public_saying:<id> 回查。
         match = re.fullmatch(r"public_saying:(\d+)", source)
         if match:
@@ -19259,39 +19255,48 @@ class GameDB:
                 (int(match.group(1)),),
             ).fetchone()
             if saying is not None:
-                try:
-                    return [str(name) for name in json.loads(saying["excluded_names"] or "[]")]
-                except (TypeError, ValueError):
-                    return []
+                names = _load_durable_json_list(
+                    saying["excluded_names"],
+                    surface="public_sayings excluded_names",
+                )
+                return [str(name) for name in names]
             return []
         row = self.conn.execute(
             "SELECT excluded_names FROM character_knowledge_sources WHERE source_id=?", (source,)
         ).fetchone()
         if row is not None:
-            try:
-                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
-            except (TypeError, ValueError):
-                return []
+            names = _load_durable_json_list(
+                row["excluded_names"],
+                surface="character_knowledge_sources excluded_names",
+            )
+            return [str(name) for name in names]
         return []
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
+
+        def _people_offices(raw: object, *, surface: str) -> Dict[str, List[str]]:
+            payload = _load_durable_json_object(raw, surface=surface)
+            return {
+                "people": [str(x) for x in payload.get("people", [])],
+                "offices": [str(x) for x in payload.get("offices", [])],
+            }
+
         # Private briefs and public disclosure events share canonical
         # exclusions persisted on secret_orders.
         match = re.fullmatch(r"secret_order_brief:(\d+)", source)
         if match is None:
             match = re.fullmatch(r"secret_order_disclosure:(\d+)(?::.*)?", source)
         if match:
+            order_id = int(match.group(1))
             row = self.conn.execute(
                 "SELECT excluded_targets FROM secret_orders WHERE id=?",
-                (int(match.group(1)),),
+                (order_id,),
             ).fetchone()
-            try:
-                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            return {"people": [str(x) for x in payload.get("people", [])],
-                    "offices": [str(x) for x in payload.get("offices", [])]}
+            raw = row["excluded_targets"] if row is not None else "{}"
+            return _people_offices(
+                raw, surface=f"secret_orders#{order_id} excluded_targets",
+            )
         # #1829 reopen：公开说法排除目标与正文同表。
         match = re.fullmatch(r"public_saying:(\d+)", source)
         if match:
@@ -19299,23 +19304,19 @@ class GameDB:
                 "SELECT excluded_targets FROM public_sayings WHERE id=?",
                 (int(match.group(1)),),
             ).fetchone()
-            try:
-                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            return {"people": [str(x) for x in payload.get("people", [])],
-                    "offices": [str(x) for x in payload.get("offices", [])]}
+            raw = row["excluded_targets"] if row is not None else "{}"
+            return _people_offices(
+                raw, surface="public_sayings excluded_targets",
+            )
         row = self.conn.execute(
             "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)
         ).fetchone()
         if row is None:
             return {"people": [], "offices": []}
-        try:
-            payload = json.loads(row["excluded_targets"] or "{}")
-        except (TypeError, ValueError):
-            payload = {}
-        return {"people": [str(x) for x in payload.get("people", [])],
-                "offices": [str(x) for x in payload.get("offices", [])]}
+        return _people_offices(
+            row["excluded_targets"],
+            surface="character_knowledge_sources excluded_targets",
+        )
 
     def record_participation_record(
         self, state: GameState, record: Mapping[str, object], *, kind: str,
@@ -20022,18 +20023,9 @@ class GameDB:
         persisted_title = title
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
-        try:
-            prior_targets = json.loads(row["excluded_targets"] or "{}")
-        except (TypeError, ValueError):
-            prior_targets = {}
-        if not isinstance(prior_targets, dict):
-            prior_targets = {}
-        try:
-            legacy_people = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError):
-            legacy_people = []
-        if not isinstance(legacy_people, list):
-            legacy_people = []
+        legacy_people, prior_targets = _load_secret_order_exclusions(
+            row, surface=f"secret_orders#{int(order_id)}",
+        )
         people, offices = canonical_secret_order_exclusions(
             self.content, [*legacy_people, *prior_targets.get("people", [])],
             prior_targets.get("offices", []),
@@ -20089,8 +20081,12 @@ class GameDB:
             f"SELECT * FROM secret_orders {where} ORDER BY id DESC",
             params,
         ).fetchall()
-        return [
-            {
+        out: List[Dict[str, object]] = []
+        for r in rows:
+            excluded_names, excluded_targets = _load_secret_order_exclusions(
+                r, surface=f"secret_orders#{int(r['id'])}",
+            )
+            out.append({
                 "id": int(r["id"]),
                 "turn_issued": int(r["turn_issued"]),
                 "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
@@ -20112,12 +20108,11 @@ class GameDB:
                     if (dossier := self.get_dossier_for_secret_order(int(r["id"])))
                     else []
                 ),
-                "excluded_names": json.loads(r["excluded_names"] or "[]") if "excluded_names" in r.keys() else [],
-                "excluded_targets": json.loads(r["excluded_targets"] or "{}") if "excluded_targets" in r.keys() else {},
+                "excluded_names": excluded_names,
+                "excluded_targets": excluded_targets,
                 "turn_closed": r["turn_closed"],
-            }
-            for r in rows
-        ]
+            })
+        return out
 
     def get_active_secret_orders_for_minister(self, minister_name: str) -> List[Dict[str, object]]:
         """返回该大臣名下未结案密令（active）。done/failed 已结案不再返回。"""
@@ -20438,23 +20433,13 @@ class GameDB:
         ).fetchone()
         if not r:
             return None
-        try:
-            excluded_names = json.loads(r["excluded_names"] or "[]") if "excluded_names" in r.keys() else []
-        except (TypeError, ValueError):
-            excluded_names = []
-        if not isinstance(excluded_names, list):
-            excluded_names = []
-        try:
-            excluded_targets = json.loads(r["excluded_targets"] or "{}") if "excluded_targets" in r.keys() else {}
-        except (TypeError, ValueError):
-            excluded_targets = {}
-        if not isinstance(excluded_targets, dict):
-            excluded_targets = {}
+        excluded_names, excluded_targets = _load_secret_order_exclusions(
+            r, surface=f"secret_orders#{int(order_id)}",
+        )
         return {
             "id": int(r["id"]), "minister_name": r["minister_name"],
             "title": r["title"], "content": r["content"],
             "status": r["status"], "result": r["result"] or "",
-            "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
             "turn_issued": int(r["turn_issued"]),
             "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
             "turn_closed": r["turn_closed"],

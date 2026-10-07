@@ -363,12 +363,21 @@ def stage_punishment_candidate(
     if disposition in issue_dispositions_allowed() and issue_id is None:
         return 0
     if issue_id is not None:
+        from ming_sim.strict_types import strict_sqlite_id
         try:
-            linked_issue_id = int(issue_id)
-        except (TypeError, ValueError):
-            return 0
+            linked_issue_id = strict_sqlite_id(issue_id)
+        except (TypeError, ValueError) as exc:
+            raise DecreeMaterializationValidationError(
+                f"issue_id 非法：{issue_id!r}",
+                failed_fields=("issue_id",),
+                category="invalid_shape",
+            ) from exc
         if linked_issue_id <= 0:
-            return 0
+            raise DecreeMaterializationValidationError(
+                f"issue_id 须为正整数：{issue_id!r}",
+                failed_fields=("issue_id",),
+                category="invalid_shape",
+            )
         issue = db.conn.execute(
             "SELECT origin_kind,status,target_roster FROM issues WHERE id=?",
             (linked_issue_id,),
@@ -379,9 +388,16 @@ def stage_punishment_candidate(
             return 0
         try:
             roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (TypeError, ValueError):
-            return 0
-        if not isinstance(roster, list) or not roster:
+        except (TypeError, ValueError) as exc:
+            # 已持久 target_roster 腐坏是内部故障，不得洗成声明 invalid_state（#1897 E1）。
+            raise ValueError(
+                f"弹劾潮#{linked_issue_id} target_roster 腐坏"
+            ) from exc
+        if not isinstance(roster, list):
+            raise ValueError(
+                f"弹劾潮#{linked_issue_id} target_roster 须为列表"
+            )
+        if not roster:
             return 0
         if disposition == "办人":
             if target not in roster:
