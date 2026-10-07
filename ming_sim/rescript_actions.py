@@ -314,11 +314,12 @@ def apply_imperial_deliberation_push(
     mode: str | None = None,
     commit: bool = False,
 ) -> int:
-    """自由下旨御笔强推既有案卷：复用案卷 + 御笔手敕。
+    """自由下旨御笔强推既有案卷：复用案卷 + 御笔手敕 + 合法 backed 背书态。
 
     directive_identity＝本次自由下旨 durable identity（decision_key provenance）。
     mode 为 push 载荷已归一的 mode 真源；写入原案卷 payload.mode，禁第二存储。
-    不依赖已退役的 stalled/backed 廷议状态协议。
+    ADR 0152：复用原案卷追加御笔手敕并把状态改为 backed，不另建第二案卷。
+    不恢复 stalled 资格闸、active 廷议 issue 投影或 deliberate 生产者。
     """
     del state  # 保留签名兼容调用方；强推不再结案 issue 投影
     did = int(target_dossier_id)
@@ -336,6 +337,8 @@ def apply_imperial_deliberation_push(
     if not isinstance(payload, dict):
         raise ValueError("案卷 payload 非对象")
     new_payload = dict(payload)
+    # 0152 later-wins：合法御笔背书态写入；非 stalled 协议资格闸。
+    new_payload["deliberation_state"] = "backed"
     if mode is not None:
         # 贯穿既有 mode 真源（payload.mode）；普通缺省 ordinary 亦显式落库
         new_payload["mode"] = db._normalize_dossier_mode(mode)

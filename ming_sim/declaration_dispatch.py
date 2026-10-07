@@ -427,9 +427,9 @@ def _dispatch_effects(
     召对夜里的 effects 表示旨意办理结果，仍只是预推候选；当场实况由各自
     section 承接，不能借 effects 绕过 ADR 0157 的过月落账边界。
 
-    #1844：effects 数组按交代先后逐笔落账——后来的效果读到先前实际落账后的
-    存量；不按实体段固定类别顺序重排跨类因果。一次 apply 内按旨序交错字段，
-    批次性副作用（回流等）仍只核算一次。
+    #1844/#1899：effects 对象与数组均走同一 effect_sequence 逐笔落账——后来的
+    效果读到先前实际落账后的存量；不按实体段固定类别顺序重排跨类因果。单对象
+    即单步序列，不另开对象专用编排。批次性副作用（回流等）仍只核算一次。
     """
     if raw is None or raw == {}:
         return SectionResult(applied=[], rejected=[])
@@ -539,7 +539,7 @@ def _dispatch_effects(
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=ordered_effect_event_ids,
         prior_shape_rejections=shape_rejections,
-        effect_sequence=effect_sequence if isinstance(raw, list) else None,
+        effect_sequence=effect_sequence,
         defer_disclosure=defer_disclosure,
     )
     # #670：续启赴京成功后结清 in_transit 传召，与本段落账同事务。

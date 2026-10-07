@@ -32,8 +32,6 @@ from ming_sim.db import (
     GameDB,
     _LEVERAGE_FACTIONS,
     _approx_wanliang,
-    compute_loyalty_soft_adjust,
-    fold_loyalty_alias_delta,
     infer_office_type_from_office,
     latched_army_field_effect_permitted,
     normalize_office,
@@ -3831,23 +3829,8 @@ def _strategic_event_result_preflight_error(
     """ADR0014：战略事件战果是同一信封，落库前先拦整组可预见拒收项。
 
     归属已由转译 event_id 声明；本函数只验信封内容，不再从 reason 推断。
+    领域 clamp／遗产／no-op 只认现役写核与 SAVEPOINT 结构化结果，不另维护预测副本。
     """
-    legacy_mods = db.legacy_modifiers(state)
-    region_valid_fields = set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS + FISCAL_SCORE_FIELDS)
-    region_valid_fields.add("cannon")
-    region_numeric_fields = set(REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + FISCAL_SCORE_FIELDS)
-    region_numeric_fields.add("cannon")
-    army_valid_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS + ARMY_TEXT_FIELDS)
-    army_numeric_fields = set(ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS)
-
-    def _int_delta_error(kind: str, target_id: str, raw_field: object, value: object) -> str:
-        if isinstance(value, bool) or isinstance(value, float):
-            return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
-        try:
-            int(value)
-        except (TypeError, ValueError):
-            return f"战略/外敌事件「{event_title or event_id}」战果 {kind}.{target_id}.{raw_field} 值非整数：{value!r}"
-        return ""
 
     def _noop_error(kind: str, target_id: str, raw_field: object, value: object) -> str:
         return (
@@ -3855,94 +3838,30 @@ def _strategic_event_result_preflight_error(
             f"无真实世界状态变化：{value!r}"
         )
 
-    def _region_noop_error(region_id: str, row: sqlite3.Row, raw_field: object, value: object) -> str:
-        field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-        if field == "reason":
-            return ""
-        if field == "cannon":
-            delta = int(value)
-            cap = int(row["city_level"]) * 8
-            old_value = int(row["cannon"])
-            if max(0, min(cap, old_value + delta)) == old_value:
-                return _noop_error("region", region_id, raw_field, value)
-            return ""
-        if field in FISCAL_SCORE_FIELDS:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-            old_value = int(fiscal.get(field, 50))
-            delta = int(value)
-            net_pct = int(((legacy_mods.get("regions") or {})
-                           .get(region_id) or {}).get(field, 0) or 0)
-            if net_pct:
-                delta = db.apply_legacy_pct(delta, net_pct)
-            if max(0, min(100, old_value + delta)) == old_value:
-                return _noop_error("region", region_id, raw_field, value)
-            return ""
-        if field in REGION_SCORE_FIELDS:
-            old_value = int(row[field])
-            delta = int(value)
-            net_pct = int(((legacy_mods.get("regions") or {})
-                           .get(region_id) or {}).get(field, 0) or 0)
-            if net_pct:
-                delta = db.apply_legacy_pct(delta, net_pct)
-            if max(0, min(100, old_value + delta)) == old_value:
-                return _noop_error("region", region_id, raw_field, value)
-            return ""
-        if field in REGION_QUANTITY_FIELDS:
-            old_value = int(row[field])
-            if max(0, old_value + int(value)) == old_value:
-                return _noop_error("region", region_id, raw_field, value)
-            return ""
-        if field in REGION_TEXT_FIELDS:
-            return ""
-        return ""
-
-    def _army_noop_error(army_id: str, row: sqlite3.Row, raw_field: object, value: object) -> str:
-        field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-        if field == "reason":
-            return ""
-        # #319：latched 静默 no-op 与写缝同口径——战略信封预检须拒整封，不得半落兄弟结果。
-        # loyalty 不进此函数：caller 对 field=="loyalty" 先 continue，再走
-        # fold_loyalty_alias_delta + latched_army_field_effect_permitted +
-        # compute_loyalty_soft_adjust；勿在此再堆 loyalty 专属预测（死分支）。
-        if bool(row["is_mutinied"]):
-            if field == "manpower":
-                if not latched_army_field_effect_permitted(field, value):
-                    return _noop_error("army", army_id, raw_field, value)
-            else:
-                return _noop_error("army", army_id, raw_field, value)
-        if field == "cannon_equipment":
-            old_value = int(row[field])
-            if max(0, min(12, old_value + int(value))) == old_value:
-                return _noop_error("army", army_id, raw_field, value)
-            return ""
-        if field == "arrears":
-            old_value = int(row[field])
-            if max(0, old_value + int(value)) == old_value:
-                return _noop_error("army", army_id, raw_field, value)
-            return ""
-        if field in ARMY_SCORE_FIELDS:
-            old_value = int(row[field])
-            delta = int(value)
-            net_pct = int(((legacy_mods.get("armies") or {})
-                           .get(army_id) or {}).get(field, 0) or 0)
-            if net_pct:
-                delta = db.apply_legacy_pct(delta, net_pct)
-            if max(0, min(100, old_value + delta)) == old_value:
-                return _noop_error("army", army_id, raw_field, value)
-            return ""
-        if field in ARMY_QUANTITY_FIELDS:
-            old_value = int(row[field])
-            if max(0, old_value + int(value)) == old_value:
-                return _noop_error("army", army_id, raw_field, value)
-            return ""
-        if field in ARMY_TEXT_FIELDS:
-            return ""
+    def _reject_from_results(
+        kind: str, results: List[Dict[str, object]], *, sample: object = None,
+    ) -> str:
+        for result in results:
+            if result.get("rejected"):
+                return (
+                    f"战略/外敌事件「{event_title or event_id}」{kind}战果拒收："
+                    f"{result.get('reason') or result.get('category') or ''}"
+                )
+        if results and not any(
+            _strategic_result_item_has_material_world_state(result) for result in results
+        ):
+            if isinstance(sample, tuple) and len(sample) == 2:
+                target_id, raw_changes = sample
+                return _noop_error(kind, str(target_id), kind, raw_changes)
+            return _noop_error(kind, event_id, kind, sample if sample is not None else results)
         return ""
 
     def _jisi_outcome_profile_error() -> str:
         if event_id != "jisi_lubian" or outcome_label not in {"挡于边墙", "入塞被遏"}:
             return ""
-        for region_id, raw_changes in (ordered_region_items if ordered_region_items is not None else region_deltas.items()):
+        for region_id, raw_changes in (
+            ordered_region_items if ordered_region_items is not None else region_deltas.items()
+        ):
             if region_id != "beizhili" or not isinstance(raw_changes, dict):
                 continue
             for raw_field, value in raw_changes.items():
@@ -3961,131 +3880,61 @@ def _strategic_event_result_preflight_error(
     if outcome_profile_error:
         return outcome_profile_error
 
+    region_items = list(
+        ordered_region_items if ordered_region_items is not None else region_deltas.items()
+    )
+    army_items = list(
+        ordered_army_items if ordered_army_items is not None else army_deltas.items()
+    )
     preview_state = copy.deepcopy(state)
+    entity_results: List[Dict[str, object]] = []
     db.conn.execute("SAVEPOINT strategic_entity_result_preflight")
     try:
-        for region_id, raw_changes in (ordered_region_items if ordered_region_items is not None else region_deltas.items()):
-            row = db.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
-            if row is None:
-                return f"战略/外敌事件「{event_title or event_id}」战果引用未入库地区：{region_id}"
+        for region_id, raw_changes in region_items:
             if not isinstance(raw_changes, dict):
                 return f"战略/外敌事件「{event_title or event_id}」地区战果须为对象：{region_id}"
-            for raw_field, value in raw_changes.items():
-                field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field in ("reason", "origin_ref"):
-                    continue
-                if field not in region_valid_fields:
-                    return f"战略/外敌事件「{event_title or event_id}」战果引用非法地区字段：{raw_field}"
-                if field in region_numeric_fields:
-                    err = _int_delta_error("region", region_id, raw_field, value)
-                    if err:
-                        return err
-                if field == "controlled_by":
-                    controller = str(value) if value is not None else ""
-                    if (
-                        value is None
-                        or not controller
-                        or controller.lower() == "null"
-                        or db.conn.execute(
-                            "SELECT 1 FROM powers WHERE id = ? LIMIT 1",
-                            (controller,),
-                        ).fetchone() is None
-                    ):
-                        return (
-                            f"战略/外敌事件「{event_title or event_id}」地区战果 controlled_by "
-                            f"必须是 powers.id 中的非空真实势力 id：{value!r}"
-                        )
-                err = _region_noop_error(region_id, row, raw_field, value)
-                if err:
-                    return err
-
-            db.apply_region_deltas(
-                preview_state, preflight_event, None, "档房", {region_id: raw_changes}, commit=False,
-            )
-
-        for army_id, raw_changes in (ordered_army_items if ordered_army_items is not None else army_deltas.items()):
-            row = db.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
-            if row is None:
-                return f"战略/外敌事件「{event_title or event_id}」战果引用未入库军队：{army_id}"
+            entity_results.extend(db.apply_region_deltas(
+                preview_state, preflight_event, None, "档房",
+                {region_id: raw_changes}, commit=False,
+            ))
+        for army_id, raw_changes in army_items:
             if not isinstance(raw_changes, dict):
                 return f"战略/外敌事件「{event_title or event_id}」军队战果须为对象：{army_id}"
-            if "cannon_transfer_to" in raw_changes:
-                target_id = raw_changes["cannon_transfer_to"]
-                target = (db.conn.execute("SELECT cannon_equipment, is_mutinied FROM armies WHERE id=?", (target_id,)).fetchone()
-                          if isinstance(target_id, str) and target_id else None)
-                cannon_keys = [key for key in raw_changes
-                               if ARMY_FIELD_ALIASES.get(key, key) == "cannon_equipment"]
-                if (target is None or target_id == army_id or len(cannon_keys) != 1
-                        or _int_delta_error("army", army_id, cannon_keys[0], raw_changes[cannon_keys[0]])
-                        or _strict_int(raw_changes[cannon_keys[0]]) >= 0):
-                    return f"战略/外敌事件「{event_title or event_id}」随军炮转移目标或负数拟转量非法：{army_id}"
-                if int(target["cannon_equipment"]) >= 12:
-                    return _noop_error("army", army_id, "cannon_transfer_to", target_id)
-                if bool(target["is_mutinied"]) and not latched_army_field_effect_permitted(
-                    "cannon_equipment", -_strict_int(raw_changes[cannon_keys[0]]),
-                ):
-                    return _noop_error("army", target_id, "cannon_transfer_to", target_id)
-            # #320：loyalty 规范键/别名与写核同语义——先逐叶类型/字段校验，净合计后再一次
-            # 软钳判 no-op；不得按 alias 分项拿旧值独立判 no-op。
-            first_loyalty_raw_field: object | None = None
-            for raw_field, value in raw_changes.items():
-                field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field in ("reason", "origin_ref"):
-                    continue
-                if field == "cannon_transfer_to":
-                    continue
-                if field not in army_valid_fields:
-                    return f"战略/外敌事件「{event_title or event_id}」战果引用非法军队字段：{raw_field}"
-                if field in army_numeric_fields:
-                    err = _int_delta_error("army", army_id, raw_field, value)
-                    if err:
-                        return err
-                if field == "loyalty":
-                    if first_loyalty_raw_field is None:
-                        first_loyalty_raw_field = raw_field
-                    continue  # 净合计后统一 no-op 判定
-                err = _army_noop_error(army_id, row, raw_field, value)
-                if err:
-                    return err
-            loyalty_net = fold_loyalty_alias_delta(raw_changes)
-            if loyalty_net is not None:
-                net_pct = int(((legacy_mods.get("armies") or {})
-                               .get(army_id) or {}).get("loyalty", 0) or 0)
-                # #319+#320 同一写缝：post-mod 动态方向门 → ±15/cap 软调；任一步 no-op 则拒整封。
-                effect_delta = int(loyalty_net)
-                if net_pct:
-                    effect_delta = db.apply_legacy_pct(effect_delta, net_pct)
-                if bool(row["is_mutinied"]) and not latched_army_field_effect_permitted(
-                    "loyalty", loyalty_net, effect_delta=effect_delta
-                ):
-                    return _noop_error(
-                        "army",
-                        army_id,
-                        first_loyalty_raw_field if first_loyalty_raw_field is not None else "loyalty",
-                        loyalty_net,
-                    )
-                _new_loyalty, actual_delta = compute_loyalty_soft_adjust(
-                    int(row["loyalty"]),
-                    loyalty_net,
-                    net_pct=net_pct,
-                    mutiny_count=int(row["mutiny_count"] or 0),
-                    redemption_count=int(row["redemption_count"] or 0),
-                )
-                if actual_delta == 0:
-                    return _noop_error(
-                        "army",
-                        army_id,
-                        first_loyalty_raw_field if first_loyalty_raw_field is not None else "loyalty",
-                        loyalty_net,
-                    )
-
-            db.apply_army_deltas(
-                preview_state, preflight_event, None, "档房", {army_id: raw_changes}, commit=False,
-            )
-
+            # 复用正式军队落账（含随军炮转移）；origin 由下方统一环判定，探测不强制。
+            probe_changes = {
+                **raw_changes,
+                "origin_ref": "盘面自发",
+            }
+            entity_results.extend(_apply_extracted_army_delta(
+                db, preview_state, preflight_event, str(army_id), probe_changes,
+                commit_now=False,
+            ))
     finally:
         db.conn.execute("ROLLBACK TO SAVEPOINT strategic_entity_result_preflight")
         db.conn.execute("RELEASE SAVEPOINT strategic_entity_result_preflight")
+
+    if region_items or army_items:
+        sample = (
+            region_items[0] if region_items
+            else army_items[0] if army_items
+            else None
+        )
+        # 写核对未知 id／非法字段已结构化拒收；空结果＝全部被 clamp／门闩吞成无变化。
+        if not entity_results:
+            if sample is not None:
+                target_id, raw_changes = sample
+                kind = "region" if region_items else "army"
+                return _noop_error(kind, str(target_id), kind, raw_changes)
+        else:
+            err = _reject_from_results(
+                "region" if region_items and not army_items else (
+                    "army" if army_items and not region_items else "entity"
+                ),
+                entity_results,
+                sample=sample,
+            )
+            if err:
+                return err
 
     power_items = ordered_power_items if ordered_power_items is not None else list(power_updates.items())
     if power_items:
@@ -4104,92 +3953,11 @@ def _strategic_event_result_preflight_error(
         finally:
             db.conn.execute("ROLLBACK TO SAVEPOINT strategic_power_result_preflight")
             db.conn.execute("RELEASE SAVEPOINT strategic_power_result_preflight")
-        for result in power_results:
-            if result.get("rejected"):
-                return (
-                    f"战略/外敌事件「{event_title or event_id}」势力战果拒收："
-                    f"{result.get('reason') or result.get('category') or ''}"
-                )
-        if not any(_strategic_result_item_has_material_world_state(result) for result in power_results):
-            power_id, raw_changes = power_items[0]
-            return _noop_error("power", str(power_id), "power_updates", raw_changes)
+        err = _reject_from_results("power", power_results, sample=power_items[0])
+        if err:
+            return err
 
     if person_changes:
-        for item in person_changes:
-            action = str(item.get("动作") or item.get("action") or "").strip()
-            name = _person_change_name(item)
-            if action in {"处置", "罢黜"}:
-                target_status = "dismissed" if action == "罢黜" else str(item.get("status") or "").strip()
-                row = db.conn.execute(
-                    "SELECT status FROM characters WHERE name = ?",
-                    (name,),
-                ).fetchone()
-                if row is not None and str(row["status"] or "") == target_status:
-                    return _noop_error(
-                        "person",
-                        name,
-                        action,
-                        {"status": target_status},
-                    )
-            if action in {"任命", "调任"}:
-                target_office = normalize_office(str(item.get("office") or item.get("new_office") or ""))
-                if target_office:
-                    row = db.conn.execute(
-                        "SELECT c.office, c.office_type, "
-                        "COALESCE(co.appointment_tenure, '真除') AS appointment_tenure "
-                        "FROM characters c LEFT JOIN character_offices co "
-                        "ON co.character_name = c.name WHERE c.name = ?",
-                        (name,),
-                    ).fetchone()
-                    if row is not None:
-                        current_office = normalize_office(str(row["office"] or ""))
-                        current_type = str(row["office_type"] or "")
-                        # 显式名分透传（#1059 codex 同族）：noop 判定须用与真实 apply 一致的
-                        # 有效 office_type，否则显式名分（office='诸生'）被 infer 反推成 '生员'≠
-                        # current '身名分'，把幂等再声明误判成非 noop。
-                        target_type = resolve_office_type_preserving_title(
-                            target_office,
-                            str(item.get("office_type") or item.get("new_office_type") or ""),
-                            current_type,
-                            llm_config or db.llm_config,
-                        )
-                        current_tenure = str(row["appointment_tenure"] or "真除")
-                        try:
-                            target_tenure = appointment_tenure_from(item)
-                        except ValueError:
-                            return (
-                                f"战略/外敌事件「{event_title or event_id}」人物战果拒收："
-                                f"{name}{action} 任别非白名单"
-                            )
-                        if (
-                            target_office == current_office
-                            and target_type == current_type
-                            and target_tenure == current_tenure
-                        ):
-                            return _noop_error(
-                                "person",
-                                name,
-                                action,
-                                {
-                                    "office": target_office,
-                                    "office_type": target_type,
-                                    "appointment_tenure": target_tenure,
-                                },
-                            )
-            if action != "行止":
-                continue
-            row = db.conn.execute(
-                "SELECT status, location, transit_to FROM characters WHERE name = ?",
-                (name,),
-            ).fetchone()
-            if row is not None:
-                departure, departure_error = _admit_transit_departure(
-                    item,
-                    dict(row),
-                    _load_pending_gate_valid_regions(db),
-                )
-                if departure_error is None and departure is not None and not departure["material"]:
-                    return _noop_error("person", name, action, departure)
         snapshot = _snapshot_person_write_state(db, content)
         results: List[Dict[str, object]] = []
         db.conn.execute("SAVEPOINT strategic_person_result_preflight")
@@ -4220,6 +3988,16 @@ def _strategic_event_result_preflight_error(
                             f"战略/外敌事件「{event_title or event_id}」人物战果反噬拒收："
                             f"{backlash_result.get('reason') or backlash_result.get('category') or ''}"
                         )
+        if results and not any(
+            _strategic_result_item_has_material_world_state(result) for result in results
+        ):
+            sample_person = person_changes[0]
+            return _noop_error(
+                "person",
+                _person_change_name(sample_person),
+                str(sample_person.get("动作") or sample_person.get("action") or "").strip() or "人物变更",
+                sample_person,
+            )
 
     if new_armies:
         # Invisible origins are already itemwise. Do not field-probe them into
@@ -8105,8 +7883,8 @@ def _apply_score_extraction_body(
         *,
         apply_event_owned: bool = False,
     ) -> None:
-        # apply_event_owned：数组逐笔路径在步进内消费已预检接纳的事件战果；
-        # 对象路径仍 False，战果留 deferred_trigger 成功分支（保既有对象批次序）。
+        # apply_event_owned：effect_sequence 步进内消费已预检接纳的事件战果；
+        # 无序列的直接 apply 仍 False，战果由 deferred 成功分支复用本 helper 落账。
         step_new_armies = step_extracted.get("new_armies") or []
         declared = step_event_ids.get("new_armies") or []
         for idx, army_item in enumerate(step_new_armies):
@@ -8698,8 +8476,7 @@ def _apply_score_extraction_body(
         _apply_faction_items(ordered_deltas.get("faction_delta") or [])
         _apply_class_items(ordered_deltas.get("class_delta") or [])
         # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
-        # 对象输入：实体在经济之后（保现行先后）；实现复用逐笔 helper，不另维护副本。
-        # 加派/人口/投贼/势力仍按既有对象批次相对序，不另立调度器。
+        # 无序列的直接 apply：实现复用同一 helper；正式入口对象/数组均走 effect_sequence。
         _apply_surcharge_items(extracted.get("surcharge_decrees") or [])
         _apply_population_transfer_items(extracted.get("population_transfers") or [])
         _apply_ordinary_entity_step(
@@ -8843,7 +8620,7 @@ def _apply_score_extraction_body(
 
     # #1891/#1892：三饷亲裁语义落账——批红经 #1815 单一语义写口置定事件结局，原始选项标签
     # 不再旁路代批（ADR 0153:5）。留中／未给标签则不写终态：本疏已答而事件未终。
-    # 数组逐笔路径已在 effect_sequence 内按交代次序落过，这里只承接对象批次。
+    # effect_sequence 路径已在步进内落过亲裁结局；无序列的直接 apply 在此承接。
     if not petition_outcomes_applied:
         _apply_petition_outcomes_from(extracted)
 
@@ -8888,46 +8665,32 @@ def _apply_score_extraction_body(
             continue
         event_person_changes = _event_person_changes(event_id)
         # 归属与信封预检已由 preflight_declared_event_effects 在写入前判定一次。
-        # 数组逐笔路径：region/army/power/new_armies 已在对应 effect_sequence 步进落账，
-        # 此处不再合批延期重写。对象路径仍走本分支消费战果。
+        # effect_sequence 路径：region/army/power/new_armies 已在步进落账。
+        # 无序列的直接 apply：复用同一 ordinary/power helper，不另维护适配副本。
         event_person_results: List[Dict[str, object]] = []
-        if effect_sequence is None:
+        if effect_sequence is None and event_id not in landed_event_stock_ids:
             event_region_items = _ordered_strategic_items("region_delta", event_id)
             event_army_items = _ordered_strategic_items("army_delta", event_id)
             event_power_items = _ordered_strategic_items("power_updates", event_id)
             event_new_armies = _event_new_armies(event_id)
-            event_region_changes: List[Dict[str, object]] = []
-            event_army_changes: List[Dict[str, object]] = []
-            event_created_armies: List[Dict[str, object]] = []
-            event_power_changes: List[Dict[str, object]] = []
-            for item in event_new_armies:
-                origin_ref = str(item.get("origin_ref") or "").strip()
-                event_created_armies.extend(db.create_armies_from_extraction(
-                    state, [item], actor="档房", commit=commit_now,
-                    origin_ref=origin_ref, require_origin=True,
-                ))
-            created_armies.extend(event_created_armies)
-            for region_id, raw_changes in event_region_items:
-                origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-                payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-                event_region_changes.extend(db.apply_region_deltas(
-                    state, pseudo_event, None, "档房", {region_id: payload},
-                    commit=commit_now, origin_ref=origin_ref, require_origin=True,
-                ))
-            region_changes.extend(event_region_changes)
-            for army_id, raw_changes in event_army_items:
-                event_army_changes.extend(_apply_extracted_army_delta(
-                    db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
-                ))
-            army_changes.extend(event_army_changes)
-            for power_id, raw_changes in event_power_items:
-                origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-                payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-                event_power_changes.extend(db.apply_power_deltas(
-                    state, {power_id: payload}, commit=commit_now,
-                    origin_ref=origin_ref, require_origin=True,
-                ))
-            power_changes.extend(event_power_changes)
+            mini_extracted: Dict[str, object] = {"new_armies": list(event_new_armies)}
+            mini_ordered: Dict[str, list[tuple[str, object]]] = {
+                "region_delta": list(event_region_items),
+                "army_delta": list(event_army_items),
+                "power_updates": list(event_power_items),
+            }
+            mini_event_ids: dict[str, list[str]] = {
+                "new_armies": [event_id] * len(event_new_armies),
+                "region_delta": [event_id] * len(event_region_items),
+                "army_delta": [event_id] * len(event_army_items),
+                "power_updates": [event_id] * len(event_power_items),
+            }
+            _apply_ordinary_entity_step(
+                mini_extracted, mini_ordered, mini_event_ids, apply_event_owned=True,
+            )
+            _apply_power_update_pairs(
+                event_power_items, step_event_ids=mini_event_ids, apply_event_owned=True,
+            )
         for item in event_person_changes:
             try:
                 origin_ref = _origin_ref_from_result_item(item)
@@ -8945,7 +8708,7 @@ def _apply_score_extraction_body(
                 [clean_item], origin_ref=origin_ref, require_origin=True,
             ))
         # Admitted C3 events are not re-rejected here: preflight already decided the
-        # envelope; array path lands owned stock in sequence order, object path above.
+        # envelope; owned stock lands via effect_sequence or the shared helper above.
         db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
         apply_event_cascading_invalidations(state, db, commit=commit_now)
         new_issue["reason"] = "事件已记为触发，软判结果已落主账"
@@ -8959,7 +8722,8 @@ def _apply_score_extraction_body(
                 applied_person_changes.append(row)
     _apply_person_changes_itemwise(post_issue_person_changes, phase="post")
 
-    # 6.4–7) 对象批次：财政仍按 removes→creates→changes 分类序；数组逐笔已在前面落完。
+    # 6.4–7) 无 effect_sequence 的直接 apply：财政按 removes→creates→changes；
+    # 正式入口（对象/数组）均已在序列步进内落完。
     if effect_sequence is None:
         _apply_fiscal_removes_items(list(extracted.get("fiscal_removes") or []))
         _apply_fiscal_creates_items(list(extracted.get("fiscal_creates") or []))
