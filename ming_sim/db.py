@@ -14119,7 +14119,14 @@ class GameDB:
         self, dossier_id: int, participants: Iterable[object], *,
         state: Optional[GameState] = None, commit: bool = True,
     ) -> List[Dict[str, object]]:
-        """Append ADR 0053 roster entries without replacing durable members."""
+        """Append ADR 0053 roster entries without replacing durable members.
+
+        Durable roster/archive faults raise ValueError/KeyError (F39).
+        LLM addition shape/ref/conflict/delegation faults raise
+        PendingActionRefusal so callers can isolate the bad item (ADR 0005).
+        """
+        from ming_sim.exceptions import PendingActionRefusal
+
         owns_transaction = self.owns_transaction() if commit else False
         row = self.conn.execute(
             "SELECT participant_roster,action_type,decree_text FROM decree_dossiers WHERE id=?",
@@ -14132,8 +14139,17 @@ class GameDB:
             surface="decree_dossiers.participant_roster",
         )
         existing = self._normalize_participant_roster(existing_raw)
-        additions = self._normalize_participant_roster(participants, strict_structured=True)
-        self._validate_participant_roster_references(additions)
+        # Existing durable structure alone must be sound before input is judged.
+        self._validate_dossier_delegations(existing)
+        try:
+            additions = self._normalize_participant_roster(
+                participants, strict_structured=True,
+            )
+            self._validate_participant_roster_references(additions)
+        except ValueError as exc:
+            raise PendingActionRefusal(
+                str(exc), category="invalid_participant_roster",
+            ) from exc
         by_character = {str(item["character_id"]): item for item in existing}
         added: List[Dict[str, object]] = []
         for item in additions:
@@ -14141,13 +14157,22 @@ class GameDB:
             prior = by_character.get(character_id)
             if prior is not None:
                 if prior != item:
-                    raise ValueError(f"参与人物已在案且机械档不同：{character_id}")
+                    raise PendingActionRefusal(
+                        f"参与人物已在案且机械档不同：{character_id}",
+                        category="invalid_participant_roster",
+                    )
                 continue
             by_character[character_id] = item
             added.append(item)
         merged = existing + added
-        self._validate_dossier_delegations(merged)
-        self._validate_participant_roster_references(merged)
+        try:
+            self._validate_dossier_delegations(merged)
+            self._validate_participant_roster_references(merged)
+        except ValueError as exc:
+            # existing already validated alone; remaining failures are input-side.
+            raise PendingActionRefusal(
+                str(exc), category="invalid_participant_roster",
+            ) from exc
         if added:
             archive_keys: set[str] = set()
             raw_keys_row = self.conn.execute(

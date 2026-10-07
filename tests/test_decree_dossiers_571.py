@@ -62,6 +62,8 @@ def test_dossier_create_rejects_malformed_structured_roster(game, participants):
     assert db.list_decree_dossiers() == []
 
 def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(game):
+    from ming_sim.exceptions import PendingActionRefusal
+
     db, state, _content = game
     person = _active_minister(db)
 
@@ -78,7 +80,7 @@ def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(g
         target_kind="issue", target_id="granary",
         participants=[{"character_id": person, "tier": "主办"}],
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(PendingActionRefusal):
         db.append_decree_dossier_participants(dossier_id, [{
             "character_id": person, "tier": "协办", "delegator_id": "不存在的委派人",
         }])
@@ -108,12 +110,14 @@ def test_dossier_roster_write_boundary_rejects_invalid_delegator(
             )
         assert db.list_decree_dossiers() == []
     else:
+        from ming_sim.exceptions import PendingActionRefusal
+
         dossier_id = db.create_decree_dossier(
             state, action_type="assignment", decree_text="命查仓储。",
             target_kind="issue", target_id="granary",
             participants=[{"character_id": lead, "tier": "主办"}],
         )
-        with pytest.raises(ValueError):
+        with pytest.raises(PendingActionRefusal):
             db.append_decree_dossier_participants(dossier_id, invalid[1:])
         assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
 
@@ -150,12 +154,14 @@ def test_dossier_append_is_idempotent_only_for_identical_character_entry(game):
         target_kind="issue", target_id="calendar", participants=[original],
     )
 
+    from ming_sim.exceptions import PendingActionRefusal
+
     assert db.append_decree_dossier_participants(dossier_id, [original]) == []
-    with pytest.raises(ValueError):
+    with pytest.raises(PendingActionRefusal):
         db.append_decree_dossier_participants(
             dossier_id, [{**original, "tier": "协办"}],
         )
-    with pytest.raises(ValueError):
+    with pytest.raises(PendingActionRefusal):
         db.append_decree_dossier_participants(
             dossier_id, [
                 {"character_id": lead, "tier": "主办", "role": "另职"},
