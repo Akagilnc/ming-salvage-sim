@@ -502,14 +502,18 @@ def parse_origin_ref(origin_ref: object) -> tuple[str, int] | tuple[None, None]:
 
 
 def _row_to_affair(row: Any) -> Affair:
-    return Affair(
-        id=int(row["id"]),
-        name=str(row["name"]),
-        origin=str(row["origin"]),
-        status=str(row["status"]),
-        birth_key=str(row["birth_key"] or ""),
-        created_turn=int(row["created_turn"]),
-        created_year=int(row["created_year"]),
-        created_period=int(row["created_period"]),
-        closed_turn=int(row["closed_turn"] or 0),
-    )
+    """持久行解码：列损坏是账本故障（RuntimeError），不得被外层收成模型产物错。"""
+    try:
+        return Affair(
+            id=int(row["id"]),
+            name=str(row["name"]),
+            origin=str(row["origin"]),
+            status=str(row["status"]),
+            birth_key=str(row["birth_key"] or ""),
+            created_turn=int(row["created_turn"]),
+            created_year=int(row["created_year"]),
+            created_period=int(row["created_period"]),
+            closed_turn=int(row["closed_turn"] or 0),
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("affairs 持久行解码失败") from exc

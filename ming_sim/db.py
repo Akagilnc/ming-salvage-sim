@@ -6899,7 +6899,8 @@ class GameDB:
                 UnauthorizedAffairOriginRef,
                 parse_origin_ref,
             )
-            # origin 字符串形检与事务持久读拆开：get 损坏上抛（F39）。
+            # origin 字符串形检（含 i64 界）与事务持久读拆开：get 损坏上抛（F39）。
+            _SQL_I64_MIN, _SQL_I64_MAX = -(2 ** 63), 2 ** 63 - 1
             try:
                 kind, affair_id = parse_origin_ref(value)
             except (OverflowError, TypeError, ValueError):
@@ -6907,18 +6908,26 @@ class GameDB:
             else:
                 if kind == "affair" and affair_id is not None:
                     try:
-                        self.affairs.get(int(affair_id))
-                    except KeyError:
+                        aid = int(affair_id)
+                    except (OverflowError, TypeError, ValueError):
                         valid = False
                     else:
-                        authorized = getattr(
-                            self, "_batch_authorized_open_affair_ids", None,
-                        )
-                        if authorized is not None and affair_id not in authorized:
+                        if not (_SQL_I64_MIN <= aid <= _SQL_I64_MAX):
                             valid = False
-                            unauthorized_batch = True
                         else:
-                            valid = True
+                            try:
+                                self.affairs.get(aid)
+                            except KeyError:
+                                valid = False
+                            else:
+                                authorized = getattr(
+                                    self, "_batch_authorized_open_affair_ids", None,
+                                )
+                                if authorized is not None and aid not in authorized:
+                                    valid = False
+                                    unauthorized_batch = True
+                                else:
+                                    valid = True
                 else:
                     valid = False
         if valid:
@@ -14694,26 +14703,31 @@ class GameDB:
     def resolve_commitment_origin_ref(
         self, state: GameState, supplied_ref: str, *, origin_kind: str = "",
     ) -> str:
-        """承诺创建写端：有本回合已颁案卷时，origin 单向归一到案卷。"""
+        """承诺创建写端：有本回合已颁案卷时，origin 单向归一到案卷。
+
+        不存在 → KeyError（调用方可作产物拒）；持久解码损坏 → get 原样上抛（F39）。
+        id 形非法 → ValueError（产物）。
+        """
         supplied = str(supplied_ref or "").strip()
         if supplied.startswith("dossier:"):
             try:
                 dossier_id = int(supplied.split(":", 1)[1])
-            except (TypeError, ValueError):
-                raise ValueError("commitment origin_ref 案卷 id 非法")
+            except (TypeError, ValueError) as exc:
+                raise KeyError("commitment origin_ref 案卷 id 非法") from exc
+            # get 腐坏 ValueError 原样上抛；不存在 → KeyError（产物）
             if self.get_decree_dossier(dossier_id) is None:
-                raise ValueError("commitment origin_ref 指向不存在案卷")
+                raise KeyError("commitment origin_ref 指向不存在案卷")
             return supplied
         from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX, is_secret_order_origin
 
         if is_secret_order_origin(supplied):
             try:
                 secret_order_id = int(supplied[len(SECRET_ORDER_ORIGIN_PREFIX):])
-            except (TypeError, ValueError):
-                raise ValueError("commitment origin_ref 密令 id 非法")
+            except (TypeError, ValueError) as exc:
+                raise KeyError("commitment origin_ref 密令 id 非法") from exc
             dossier = self.get_dossier_for_secret_order(secret_order_id)
             if dossier is None:
-                raise ValueError("commitment origin_ref 指向无案卷密令")
+                raise KeyError("commitment origin_ref 指向无案卷密令")
             return f"dossier:{int(dossier['id'])}"
         if str(origin_kind or "") == "decree":
             row = self.conn.execute(
@@ -14721,7 +14735,7 @@ class GameDB:
                 (int(state.turn),),
             ).fetchone()
             if row is not None and int(row["n"] or 0) > 0:
-                raise ValueError(
+                raise KeyError(
                     "承诺 origin_ref 必须由产出它的明确案卷携带 dossier:<id>"
                 )
         return supplied
@@ -15006,25 +15020,30 @@ class GameDB:
 
     def dossier_authorizes_effects(self, dossier_id: int) -> bool:
         """Return whether a dossier crossed either lawful promulgation path."""
-        row = self.conn.execute(
-            """
-            SELECT d.status,d.promulgation_decision,
-                   EXISTS(
-                       SELECT 1 FROM decree_dossier_decisions h
-                       WHERE h.dossier_id=d.id
-                         AND h.rescript_action='force_promulgated'
-                   ) AS was_force_promulgated
-            FROM decree_dossiers d WHERE d.id=?
-            """,
-            (int(dossier_id),),
-        ).fetchone()
-        if row is None:
-            return False
-        return (
-            str(row["status"] or "") in {"promulgated", "executing"}
-            or str(row["promulgation_decision"] or "") == "promulgated"
-            or bool(row["was_force_promulgated"])
-        )
+        try:
+            row = self.conn.execute(
+                """
+                SELECT d.status,d.promulgation_decision,
+                       EXISTS(
+                           SELECT 1 FROM decree_dossier_decisions h
+                           WHERE h.dossier_id=d.id
+                             AND h.rescript_action='force_promulgated'
+                       ) AS was_force_promulgated
+                FROM decree_dossiers d WHERE d.id=?
+                """,
+                (int(dossier_id),),
+            ).fetchone()
+            if row is None:
+                return False
+            return (
+                str(row["status"] or "") in {"promulgated", "executing"}
+                or str(row["promulgation_decision"] or "") == "promulgated"
+                or bool(row["was_force_promulgated"])
+            )
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"decree_dossiers#{dossier_id} 效果资格持久读失败"
+            ) from exc
 
     def record_dossier_execution(
         self, dossier_id: int, outcome: str, note: str, turn: int, *,
@@ -15756,13 +15775,17 @@ class GameDB:
         downgraded = self._INTENSITY_DOWNGRADE.get(primary)
         if downgraded:
             allowed.add(downgraded)
-        faction_names = {
-            str(row["name"]) for row in self.conn.execute("SELECT name FROM factions")
-        }
-        class_names = {
-            str(row["name"])
-            for row in self.conn.execute("SELECT DISTINCT name FROM classes")
-        }
+        try:
+            faction_names = {
+                str(row["name"])
+                for row in self.conn.execute("SELECT name FROM factions")
+            }
+            class_names = {
+                str(row["name"])
+                for row in self.conn.execute("SELECT DISTINCT name FROM classes")
+            }
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("连坐名册持久读失败") from exc
         validate_affected_parties(
             affected_parties,
             faction_names=faction_names,

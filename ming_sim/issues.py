@@ -100,24 +100,14 @@ _AUTHORITY_REVOKE_OPS = frozenset({"收回", "revoke"})
 def _apply_authority_change_item(
     db: GameDB, state: GameState, item: Dict[str, object],
     *,
-    dossier: Optional[Dict[str, object]] = None,
-    dossier_loaded: bool = False,
+    dossier: Optional[Dict[str, object]],
+    dossier_id: int,
 ) -> Dict[str, object]:
     """Apply one production-slot authority grant/revoke under the #611 contract.
 
-    dossier_loaded=True：调用方已完成唯一一次 get_decree_dossier（含 None=不存在），
-    本方法不再二次查询（F39 禁重复预读）。
+    调用方完成唯一 id 形检与 get_decree_dossier；本方法不再重复解析/读取（F39）。
+    dossier is None → missing_dossier_source。
     """
-    if "dossier_id" not in item or item.get("dossier_id") in (None, ""):
-        raise ValueError("missing_dossier_source")
-    try:
-        dossier_id = _parse_sqlite_id(item.get("dossier_id"))
-    except (TypeError, ValueError):
-        raise ValueError("missing_dossier_source") from None
-    if dossier_id <= 0:
-        raise ValueError("missing_dossier_source")
-    if not dossier_loaded:
-        dossier = db.get_decree_dossier(dossier_id)
     if dossier is None:
         raise ValueError("missing_dossier_source")
     if not db.dossier_authorizes_effects(dossier_id):
@@ -137,9 +127,13 @@ def _apply_authority_change_item(
         kind, separator, target_id = scope.partition(":")
         if not separator or not kind or not target_id:
             raise ValueError("invalid_authority_scope")
-        if not db.conn.execute(
-            "SELECT 1 FROM characters WHERE name=?", (holder_id,)
-        ).fetchone():
+        try:
+            holder_row = db.conn.execute(
+                "SELECT 1 FROM characters WHERE name=?", (holder_id,),
+            ).fetchone()
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("授权对象存在性持久读失败") from exc
+        if not holder_row:
             raise ValueError("授权对象不在人物档")
         origin = db.find_authority_by_origin(
             dossier_id, holder_id=holder_id, privilege=privilege, scope=scope,
@@ -1857,43 +1851,47 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
     values: List[float] = []
     for cid in ids:
         row = None
-        if table == "event":
-            if cid not in db.content.event_by_id:
-                return None
-            values.append(1 if db.has_event_terminal_state(cid, "triggered") else 0)
-            continue
-        if table == "region":
-            row = db.conn.execute(f"SELECT {field} FROM regions WHERE id = ?", (cid,)).fetchone()
-        elif table == "army":
-            row = db.conn.execute(f"SELECT {field} FROM armies WHERE id = ?", (cid,)).fetchone()
-        elif table == "building":
-            row = db.conn.execute(f"SELECT {field} FROM buildings WHERE id = ?", (cid,)).fetchone()
-        elif table == "power":
-            row = db.conn.execute(f"SELECT {field} FROM powers WHERE id = ?", (cid,)).fetchone()
-        elif table == "faction":
-            # factions 表主键是 name（中文，如 阉党），field 取 leverage/satisfaction
-            row = db.conn.execute(f"SELECT {field} FROM factions WHERE name = ?", (cid,)).fetchone()
-        elif table == "character":
-            row = db.conn.execute(f"SELECT {field} FROM characters WHERE name = ?", (cid,)).fetchone()
-        elif table == "class":
-            if "@" in cid:
-                cname, rid = cid.split("@", 1)
-            else:
-                cname, rid = cid, ""
-            row = db.conn.execute(
-                f"SELECT {field} FROM classes WHERE name = ? AND region_id = ?",
-                (cname, rid),
-            ).fetchone()
+        try:
+            if table == "event":
+                if cid not in db.content.event_by_id:
+                    return None
+                values.append(1 if db.has_event_terminal_state(cid, "triggered") else 0)
+                continue
+            if table == "region":
+                row = db.conn.execute(f"SELECT {field} FROM regions WHERE id = ?", (cid,)).fetchone()
+            elif table == "army":
+                row = db.conn.execute(f"SELECT {field} FROM armies WHERE id = ?", (cid,)).fetchone()
+            elif table == "building":
+                row = db.conn.execute(f"SELECT {field} FROM buildings WHERE id = ?", (cid,)).fetchone()
+            elif table == "power":
+                row = db.conn.execute(f"SELECT {field} FROM powers WHERE id = ?", (cid,)).fetchone()
+            elif table == "faction":
+                row = db.conn.execute(f"SELECT {field} FROM factions WHERE name = ?", (cid,)).fetchone()
+            elif table == "character":
+                row = db.conn.execute(f"SELECT {field} FROM characters WHERE name = ?", (cid,)).fetchone()
+            elif table == "class":
+                if "@" in cid:
+                    cname, rid = cid.split("@", 1)
+                else:
+                    cname, rid = cid, ""
+                row = db.conn.execute(
+                    f"SELECT {field} FROM classes WHERE name = ? AND region_id = ?",
+                    (cname, rid),
+                ).fetchone()
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"gate key 持久读失败：{key}") from exc
         if row is None:
             return None
         try:
-            values.append(float(row[0]))
+            raw_val = row[0]
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"gate key 持久读失败：{key}") from exc
+        try:
+            values.append(float(raw_val))
         except ValueError as exc:
             # 非数值字符串 = 数值 cond 配了文本字段（如 region.x.controlled_by >=1）→ 数值转换不动。
-            # fail-loud 成清晰 content 错误（#159；Q3：trigger_gate 字段类型错属静态 content schema 错，
-            # 不静默回 None 当条件不满足）。NULL/None 走 TypeError 分支视同不达标（合法数据，非内容错）。
             raise ValueError(
-                f"trigger_gate key「{key}」字段非数值（数值比较不可比文本字段）：{row[0]!r}"
+                f"trigger_gate key「{key}」字段非数值（数值比较不可比文本字段）：{raw_val!r}"
             ) from exc
         except TypeError:
             return None
@@ -4697,6 +4695,7 @@ def apply_issue_tracker_output(
             continue
         is_commitment = bool(commitment_kind)
         if is_commitment:
+            need_stop_validate = False
             try:
                 if kind != "initiative":
                     raise ValueError("kind 须为 initiative")
@@ -4737,9 +4736,11 @@ def apply_issue_tracker_output(
                 if stop_condition_raw in (None, "", {}):
                     if end_turn_for_commitment <= 0 and not ongoing_has_work and not has_stages:
                         raise ValueError("stop_condition 须为非空 dict，除非承诺带 end_turn 或 stages")
+                    need_stop_validate = False
                     stop_condition = ""
                 else:
-                    stop_condition = _validate_commitment_stop_condition(stop_condition_raw, state, db)
+                    need_stop_validate = True
+                    stop_condition = ""  # filled after product catch
             except (TypeError, ValueError, OverflowError) as exc:
                 applied_new.append({
                     "rejected": True, "category": "invalid_enum",
@@ -4747,18 +4748,25 @@ def apply_issue_tracker_output(
                     "item": ni, "title": title,
                 })
                 continue
-            # 来源案卷持久读在产物 catch 外：payload 腐坏上抛，不得 invalid_enum（F39）。
+            if need_stop_validate:
+                # stop_condition 可能触 DB 门闩读：形检 ValueError 产物拒，解码故障上抛（F39）
+                try:
+                    stop_condition = _validate_commitment_stop_condition(
+                        stop_condition_raw, state, db,
+                    )
+                except ValueError as exc:
+                    applied_new.append({
+                        "rejected": True, "category": "invalid_enum",
+                        "reason": f"new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：{exc}",
+                        "item": ni, "title": title,
+                    })
+                    continue
+            # 来源案卷：契约/不存在 → KeyError 产物拒；持久解码 ValueError 上抛（F39）。
             try:
                 origin_ref = db.resolve_commitment_origin_ref(
                     state, origin_ref, origin_kind=str(ni.get("origin_kind") or ""),
                 )
-            except ValueError as exc:
-                # resolve 的契约错（id 非法/不存在）仍逐项拒；JSON 腐坏带 JSONDecodeError cause 上抛
-                cause: BaseException | None = exc
-                while cause is not None:
-                    if type(cause).__name__ == "JSONDecodeError":
-                        raise
-                    cause = cause.__cause__  # type: ignore[assignment]
+            except KeyError as exc:
                 applied_new.append({
                     "rejected": True, "category": "invalid_enum",
                     "reason": f"new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：{exc}",
@@ -7649,7 +7657,7 @@ def _apply_score_extraction_body(
         try:
             authority_change_results.append(
                 _apply_authority_change_item(
-                    db, state, item, dossier=dossier, dossier_loaded=True,
+                    db, state, item, dossier=dossier, dossier_id=did,
                 )
             )
         except (TypeError, ValueError, KeyError) as exc:
