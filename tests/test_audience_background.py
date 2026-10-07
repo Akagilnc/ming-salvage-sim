@@ -85,11 +85,13 @@ class _FakeSession(HallAdmissionSessionMixin):
             "fail_audience_chat_turn",
             "_record_persisted_audience_reply_failure",
             # #1902 M2：现役恢复面取数（reply_retries → pending_audience_recovery_retries）
+            "_hall_turn_ids_for_night",
             "_open_night_hall_turn_ids",
             "_chat_message_speaker",
             "pending_audience_reply_retries",
             "pending_post_reply_retries",
             "pending_audience_recovery_retries",
+            "list_pending_translation_retries",
         ):
             if hasattr(GameSession, _name):
                 setattr(self, _name, _types.MethodType(getattr(GameSession, _name), self))

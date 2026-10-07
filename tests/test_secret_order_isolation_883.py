@@ -1206,15 +1206,7 @@ def test_976_retryable_failed_secret_pin_stays_withheld_during_other_commit(game
         a for a in db.list_pending_actions(int(state.turn), status="failed", minister_name=assignee.name)
         if a.get("kind") == "secret_order"
     ]
-    # failed may be prior turn; also scan without turn filter via SQL if needed
-    if not failed_rows:
-        row = db.conn.execute(
-            "SELECT id FROM pending_actions WHERE status='failed' AND kind='secret_order' AND minister_name=? ORDER BY id DESC LIMIT 1",
-            (assignee.name,),
-        ).fetchone()
-        assert row is not None and int(row["id"]) == failed_id
-    else:
-        assert int(failed_rows[0]["id"]) == failed_id
+    assert failed_rows and int(failed_rows[0]["id"]) == failed_id
 
     mid_committed, committed_id = _stage_new_secret(
         db, state, assignee.name, committed_marker,

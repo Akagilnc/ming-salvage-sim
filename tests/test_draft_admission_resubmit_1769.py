@@ -381,6 +381,7 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     # 原抽 + 两次重写皆坏（总计 3）；变异把重写预算改回 1 时本案须红（calls==2）
     _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER])
     resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -392,6 +393,10 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     body = _post_issue_stream(client, expected_turn=turn, step="1769 exhaust")
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
+    assert len(ensure_rounds) >= 2
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(ensure_rounds[0], did)
+    assert resubmit_calls[1]["failure_reason"] == _reason_for_directive(ensure_rounds[1], did)
+    assert not product_faults  # 本路写回成功，源=ensure 而非产物 ValueError
     row = game.db.get_directive(did)
     assert row is not None and str(row["status"]) == "draft"
     assert game.db.get_dossier_for_directive(did) is None
@@ -460,6 +465,7 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     game = admission_game
     _queue_backend(monkeypatch, [_BAD_UNKNOWN_PARTICIPANT])
     resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -484,8 +490,9 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     assert not latest_error_pack_for_turn(game.db.path, turn)
     # 来源保真：第二次重写的 failure_reason = 第一次 resubmit 自身产物错原文
     assert len(resubmit_calls) == 2
+    assert ensure_rounds, "ensure 须至少一轮"
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(ensure_rounds[0], bad_id)
     assert product_faults, "第一次重写须留下本轮产物失败事实"
-    assert resubmit_calls[0]["failure_reason"]  # 原 ensure 拒因（结构化非空，真源 ensure 轮）
     assert resubmit_calls[1]["failure_reason"] == product_faults[0]
 
 
@@ -557,6 +564,7 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     game = admission_game
     _queue_backend(monkeypatch, [_NO_INTENT_REWRITE, _NO_INTENT_REWRITE])
     resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -569,6 +577,8 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     _post_issue_stream(client, expected_turn=turn, step="1769 non-intent rewrite")
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
+    assert ensure_rounds, "ensure 须至少一轮"
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(ensure_rounds[0], did)
     assert product_faults, "无拟旨意图重写须留下产物失败事实"
     # 第二次 failure_reason 绑定第一次产物错（carry），不得只验非空
     assert resubmit_calls[1]["failure_reason"] == product_faults[0]
@@ -594,6 +604,7 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     # 模型供料只服务补交重写（原抽已在 payload 里）。
     _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER])
     resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -622,6 +633,10 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     assert body.get("_event") in (None, "done", "")
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
+    assert len(ensure_rounds) >= 2
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(ensure_rounds[0], did)
+    assert resubmit_calls[1]["failure_reason"] == _reason_for_directive(ensure_rounds[1], did)
+    assert not product_faults  # 本路写回成功，源=ensure 而非产物 ValueError
 
     row = game.db.get_directive(did)
     assert row is not None

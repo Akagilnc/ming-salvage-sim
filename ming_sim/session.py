@@ -1258,18 +1258,31 @@ class GameSession:
             self.schedule_pending_scene_translation(result)
         return minister_message_id
 
-    def _open_night_hall_turn_ids(self) -> "set[int]":
-        """本夜殿上轮 id 集——中断回话与尾随失败共用的夜域筛选单源（#1902 M1）。"""
+    def _hall_turn_ids_for_night(self, night_id: Optional[int] = None) -> "set[int]":
+        """殿上轮 id 集——中断回话与尾随失败共用的夜域筛选单源（#1902 M1）。
+
+        night_id 缺省＝当前开夜；显式 night_id 供 scroll 历史夜读面复用同一筛选，
+        不在 Web 另写一份资格查询。
+        """
         from ming_sim.audience_night import get_open_night
 
-        night = get_open_night(self.db)
-        if night is None:
-            return set()
+        nid = int(night_id) if night_id is not None and int(night_id) > 0 else 0
+        if nid <= 0:
+            night = get_open_night(self.db)
+            if night is None:
+                return set()
+            nid = int(night["id"])
         return {
-            int(row["id"]) for row in self.db.list_hall_chat_turns(int(night["id"]))
+            int(row["id"]) for row in self.db.list_hall_chat_turns(nid)
         }
 
-    def pending_audience_reply_retries(self) -> List[Dict[str, Any]]:
+    def _open_night_hall_turn_ids(self) -> "set[int]":
+        """本夜殿上轮 id 集（开夜缺省入口）。"""
+        return self._hall_turn_ids_for_night()
+
+    def pending_audience_reply_retries(
+        self, *, night_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         """本夜召对轮里待重试的中断回话（问话已落、回话未落）——两端共核取数。
 
         #1902 F2：建轮归属恒为「殿上」（见 begin_audience_chat_turn 的 T1 说明），
@@ -1282,7 +1295,7 @@ class GameSession:
         """
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER
 
-        hall_ids = self._open_night_hall_turn_ids()
+        hall_ids = self._hall_turn_ids_for_night(night_id)
         if not hall_ids:
             return []
         retries = [
@@ -1298,15 +1311,17 @@ class GameSession:
             out.append(item)
         return sorted(out, key=lambda item: int(item["chat_turn_id"]))
 
-    def pending_post_reply_retries(self) -> List[Dict[str, Any]]:
+    def pending_post_reply_retries(
+        self, *, night_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         """本夜殿上已落回话的尾随失败——两端共核取数（#1902 L1）。
 
-        与 ``pending_audience_reply_retries`` 同形：共用 ``_open_night_hall_turn_ids``
+        与 ``pending_audience_reply_retries`` 同形：共用 ``_hall_turn_ids_for_night``
         夜域筛选；状态源仍是 ``get_post_reply_retries``，不与中断回话合并语义。
         """
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER
 
-        hall_ids = self._open_night_hall_turn_ids()
+        hall_ids = self._hall_turn_ids_for_night(night_id)
         if not hall_ids:
             return []
         return sorted(
@@ -1318,16 +1333,18 @@ class GameSession:
             key=lambda item: int(item["chat_turn_id"]),
         )
 
-    def pending_audience_recovery_retries(self) -> List[Dict[str, Any]]:
+    def pending_audience_recovery_retries(
+        self, *, night_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         """中断回话 + 已落回话尾随失败，本夜共核合并取数（#1902 L1）。
 
-        Web 恢复面板读此；CLI「重试回话」仍只读 ``pending_audience_reply_retries``
-        （不新增 CLI 尾随玩法）。
+        Web 恢复面板／scroll 读此；CLI「重试回话」仍只读 ``pending_audience_reply_retries``
+        （不新增 CLI 尾随玩法）。night_id 显式传入时筛该夜，缺省＝开夜。
         """
         return sorted(
             [
-                *self.pending_audience_reply_retries(),
-                *self.pending_post_reply_retries(),
+                *self.pending_audience_reply_retries(night_id=night_id),
+                *self.pending_post_reply_retries(night_id=night_id),
             ],
             key=lambda item: int(item["chat_turn_id"]),
         )

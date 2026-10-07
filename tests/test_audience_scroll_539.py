@@ -9,9 +9,22 @@ from ming_sim.audience_translation import list_pending_translations
 from tests.conftest import append_night_chat, open_audience_night
 
 def _scroll_game(db):
+    """轻壳：scroll 读面只替 DB／投影；恢复资格走 session 共核同形空实现。"""
+    session = SimpleNamespace(
+        pending_audience_recovery_retries=lambda **kw: [],
+        list_pending_translation_retries=lambda **kw: list_pending_translations(db, **kw),
+    )
     return SimpleNamespace(
         db=db,
+        session=session,
         pending_translation_retries=lambda **kw: list_pending_translations(db, **kw),
+        public_character=lambda character: {
+            "name": getattr(character, "name", ""),
+            "office": getattr(character, "office", ""),
+            "office_type": getattr(character, "office_type", ""),
+            "faction": getattr(character, "faction", ""),
+            "status": getattr(character, "status", "active"),
+        },
     )
 
 def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(game, monkeypatch):

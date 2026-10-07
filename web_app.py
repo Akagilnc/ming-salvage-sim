@@ -4840,19 +4840,6 @@ _STATUS_LABEL_WEB = {
 }
 
 
-def _reply_retries_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    turns = db.list_hall_chat_turns(int(night_id))
-    speakers = dict.fromkeys(str(row["minister_name"]) for row in turns)
-    ids = {int(row["id"]) for row in turns}
-    rows: List[Dict[str, Any]] = []
-    for speaker in speakers:
-        interrupted = db.get_interrupted_reply_retries(speaker)
-        post = db.get_post_reply_retries(speaker)
-        rows.extend(
-            retry for retry in (*interrupted, *post)
-            if int(retry["chat_turn_id"]) in ids
-        )
-    return sorted(rows, key=lambda item: int(item["chat_turn_id"]))
 
 
 @app.get("/api/audience/scroll")
@@ -4890,7 +4877,7 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
         "translation_pending": bool(pending_replies),
         "pending_translation_turn_ids": [int(row["chat_turn_id"]) for row in pending_replies],
         "translation_retries": game.pending_translation_retries(night_id=int(night["id"])),
-        "reply_retries": _reply_retries_for_night(game.db, int(night["id"])),
+        "reply_retries": game.session.pending_audience_recovery_retries(night_id=int(night["id"])),
     }
 
 
