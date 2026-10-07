@@ -16,7 +16,7 @@ def _promulgated_commitment_origin(db, state, token: str) -> str:
         state, action_type="policy", decree_text=f"测试承诺：{token}",
         target_kind="issue", target_id=token, payload={"token": token},
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
 

@@ -16,7 +16,7 @@ from tests.conftest import active_ming_character
 
 def _decree_origin(db, state) -> str:
     dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text="测试国策来源", target_kind="issue", target_id="test")
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
 def _army_count(db) -> int:

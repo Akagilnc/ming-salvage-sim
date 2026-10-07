@@ -54,7 +54,7 @@ def _decree(db: GameDB, state, region_id="shaanxi", monthly_amount=10.0, **kw):
             state, action_type="policy", decree_text=f"{region_id}加派",
             target_kind="region", target_id=region_id,
         )
-        db.record_dossier_decision(dossier_id, "promulgated")
+        db.dossiers.record_dossier_decision(dossier_id, "promulgated")
         kw["origin_ref"] = f"dossier:{dossier_id}"
     item = {"region_id": region_id, "monthly_amount": monthly_amount}
     item.update(kw)
@@ -158,7 +158,7 @@ def test_surcharge_origin_requires_effect_eligible_materialized_dossier(game):
         state, action_type="policy", decree_text="准加派", target_kind="region",
         target_id="shaanxi",
     )
-    db.record_dossier_decision(promulgated, "promulgated")
+    db.dossiers.record_dossier_decision(promulgated, "promulgated")
     items = [
         _decree(db, state, monthly_amount=2.0, origin_ref=f"dossier:{promulgated}"),
         _decree(db, state, monthly_amount=7.0, origin_ref=f"dossier:{proposed}"),

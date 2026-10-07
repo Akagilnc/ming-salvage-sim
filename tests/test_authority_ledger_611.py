@@ -30,7 +30,7 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清�
         ],
         payload={"mode": "ordinary"},
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     assert db.dossiers.authorizes_effects(dossier_id)
     return db.dossiers.get(dossier_id)
 
@@ -184,7 +184,7 @@ def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
         target_kind="issue", target_id="打回",
         executor_kind="character", executor_id=holder,
     )
-    db.record_dossier_decision(rejected_id, "rejected", reason="封驳")
+    db.dossiers.record_dossier_decision(rejected_id, "rejected", reason="封驳")
     assert not db.dossiers.authorizes_effects(rejected_id)
 
     result = issue_engine.apply_score_extraction(db, state, {

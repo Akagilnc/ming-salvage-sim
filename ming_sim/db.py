@@ -706,18 +706,14 @@ _OFFICES_TABLE: Optional[Dict[str, object]] = None
 _OFFICE_TYPE_LLM_CACHE: Dict[str, str] = {}
 
 def _offices_table() -> Dict[str, object]:
-    """加载 content/offices.json（明代职官→office_type 参考表），缓存。失败返回空表。"""
+    """加载 content/offices.json（明代职官→office_type 参考表），缓存。"""
     global _OFFICES_TABLE
     if _OFFICES_TABLE is None:
-        try:
-            from ming_sim.assets import load_json_asset
-            data = load_json_asset("offices.json")
-            _OFFICES_TABLE = data if isinstance(data, dict) else {}
-        except Exception as exc:
-            # 注：文件缺失 / JSON 损坏会在 load_json_asset 直接 SystemExit fail-loud（核心内容
-            # 不该静默回空表），不经此分支；这里只兜 import / 意外错误（gemini-code-assist cmr）。
-            tlog(f"[content] offices.json 意外加载失败，回空表：{exc}")  # #14 surface
-            _OFFICES_TABLE = {}
+        from ming_sim.assets import load_json_asset
+        data = load_json_asset("offices.json")
+        if not isinstance(data, dict):
+            raise TypeError("offices.json 须为对象")
+        _OFFICES_TABLE = data
     return _OFFICES_TABLE
 
 def _office_type_from_table(text: str) -> str:
@@ -732,11 +728,8 @@ def _office_type_from_table(text: str) -> str:
 
 def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     """表查不中（生造/罕见官名）时，CLI 后端在场则交 LLM 判 office_type（取 allowed_types）。
-    否则返回 ''。结果按官名缓存，避免重复调用。"""
-    try:
-        from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
-    except Exception:
-        return ""
+    否则返回 ''。结果按官名缓存，避免重复调用。代码故障不兜空。"""
+    from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
     if not cli_backend_active(llm_config):
         return ""
     if text in _OFFICE_TYPE_LLM_CACHE:
@@ -748,13 +741,9 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
         "只输出一个类型词（不要任何别的字），必须严格取自：" + "、".join(allowed) + "。\n"
         "官名：" + text + "\n类型："
     )
-    out = ""
-    try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="office_infer")
-        cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
-        out = cand if cand in allowed_set else ""
-    except Exception:
-        out = ""
+    raw, _ = _run_backend_for_config(prompt, llm_config, tag="office_infer")
+    cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
+    out = cand if cand in allowed_set else ""
     _OFFICE_TYPE_LLM_CACHE[text] = out
     return out
 
@@ -6833,35 +6822,9 @@ class GameDB:
         self, turn: int, generated: object = None,
     ) -> List[Dict[str, object]]:
         """Persist one valid extractor-authored brief for every eligible dossier."""
-        candidates = {
-            int(item["dossier_id"]): item
-            for item in self.list_monthly_dossier_progress_nudges(int(turn))
-        }
-        if not candidates:
-            if generated is None or generated == []:
-                return []
-            raise ValueError("无合资格长差案卷却收到本月密奏")
-        if generated is None or generated == []:
-            raise ValueError("合资格长差案卷缺少本月密奏")
-        if not isinstance(generated, list):
-            raise ValueError("合资格长差案卷缺少本月密奏")
-        supplied: Dict[int, Dict[str, object]] = {}
-        for item in generated:
-            if not isinstance(item, dict):
-                raise ValueError("长差月报格式无效")
-            try:
-                dossier_id = strict_int(item.get("dossier_id", 0))
-                if dossier_id <= 0:
-                    raise ValueError("not positive")
-            except (TypeError, ValueError) as exc:
-                raise ValueError("长差月报案卷编号无效") from exc
-            band = str(item.get("progress_band") or "").strip()
-            text = str(item.get("memorial_text") or "")
-            if dossier_id not in candidates or dossier_id in supplied or not band or not text:
-                raise ValueError("长差月报存在未知、重复或空白条目")
-            supplied[dossier_id] = item
-        if set(supplied) != set(candidates):
-            raise ValueError("合资格长差案卷月报未完整覆盖")
+        supplied = self._monthly_dossier_report_supply(int(turn), generated)
+        if supplied is None:
+            return []
 
         from ming_sim.supervision import declared_report_action_origin
 
@@ -7734,7 +7697,7 @@ class GameDB:
             f"押解对账：应解{int(latest['ordered_amount'])}两，"
             f"实抵{int(latest['arrived_amount'])}两"
         )
-        return self.merge_execution_note(int(dossier_id), fragment, commit=commit)
+        return self.dossiers.merge_execution_note(int(dossier_id), fragment, commit=commit)
 
     @staticmethod
     def _grant_allocation_is_monthly(payload: Optional[Dict[str, object]]) -> bool:
@@ -8850,81 +8813,6 @@ class GameDB:
                 )
         return supplied
 
-    def record_dossier_decision(
-        self, dossier_id: int, decision: str, *, reason: str = "",
-        blocked_layer: str = "", legal_reason_code: str = "",
-        primary_opponents: Optional[List[Dict[str, str]]] = None,
-        gatekeeper_id: Optional[str] = None,
-        criteria_snapshot: Optional[Dict[str, object]] = None,
-        commit: bool = True,
-    ) -> None:
-        """颁布/批红组合态。rejected 与 hold 永不成为主链 status。"""
-        owns = self.owns_transaction()
-        if str(legal_reason_code or "").strip():
-            raise ValueError("legal_reason_code 仅供尚未落地的依律集写入路径")
-        decision = str(decision or "").strip()
-        if decision not in {"promulgated", "rejected", "hold", "withdrawn"}:
-            raise ValueError(f"案卷判决非法：{decision}")
-        blocked_layer = str(blocked_layer or "")
-        if blocked_layer not in PROMULGATION_BLOCKED_LAYERS:
-            raise ValueError(f"颁布关口非法：{blocked_layer}")
-        row = self.dossiers.get(dossier_id)
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        slot_reason = str(reason or "")
-        slot_legal_reason = str(legal_reason_code or "")
-        if decision in {"hold", "withdrawn"}:
-            if not blocked_layer:
-                blocked_layer = str(row.get("promulgation_blocked_layer") or "")
-            slot_reason = str(row.get("promulgation_reason") or "")
-            slot_legal_reason = str(row.get("legal_reason_code") or "")
-        turn_row = ReignStateStore(self.conn).read_current_settle_turn()
-        current_turn = int(turn_row["turn"] if turn_row else 0)
-        if (
-            decision in {"promulgated", "rejected"}
-            and int(row.get("held_turn") or 0) > 0
-            and current_turn <= int(row["held_turn"])
-        ):
-            raise ValueError("留中案卷只可在下月重判")
-        if row["status"] != "proposed":
-            raise ValueError("只有 proposed 案卷可写颁布/批红判决")
-        if decision == "promulgated":
-            status, promulgation, pending = "promulgated", "promulgated", 0
-        elif decision == "rejected":
-            status, promulgation, pending = "proposed", "rejected", 1
-        elif decision == "hold":
-            if row["promulgation_decision"] != "rejected" or not row["rescript_pending"]:
-                raise ValueError("留中只可承接打回＋批红待抉择组合态")
-            status, promulgation, pending = "proposed", "rejected", 0
-        else:
-            if row["promulgation_decision"] != "rejected" or not row["rescript_pending"]:
-                raise ValueError("收回只可承接打回＋批红待抉择组合态")
-            status, promulgation, pending = "closed", "rejected", 0
-        held_turn = (
-            current_turn
-            if decision == "hold" else int(row.get("held_turn") or 0)
-        )
-        self.dossiers.set_promulgation(
-            int(dossier_id), status=status, promulgation=promulgation,
-            rescript_pending=pending, blocked_layer=blocked_layer,
-            reason=slot_reason, legal_reason_code=slot_legal_reason,
-            held_turn=held_turn, turn=current_turn,
-        )
-        self.dossiers.insert_decision(
-            int(dossier_id), current_turn,
-            decision=promulgation if decision != "hold" else "rejected",
-            blocked_layer=blocked_layer,
-            rescript_action=decision if decision in {"hold", "withdrawn"} else "",
-            reason=str(reason or ""),
-            legal_reason_code=slot_legal_reason,
-            primary_opponents_json=safe_json_dumps(primary_opponents or []),
-            gatekeeper_id=(
-                str(gatekeeper_id).strip() if gatekeeper_id is not None else None
-            ),
-            criteria_snapshot_json=safe_json_dumps(criteria_snapshot or {}),
-        )
-        self._commit_dossier_write(commit, owns)
-
     def record_dossier_execution(
         self, dossier_id: int, outcome: str, note: str, turn: int, *,
         close: bool = True, commit: bool = True,
@@ -8981,7 +8869,7 @@ class GameDB:
                 raise KeyError(f"案卷不存在：{dossier_id}")
             predeclared_midzhi = row.get("mode") == "midzhi"
             if decision not in {"promulgated", "force_promulgated"}:
-                self.record_dossier_decision(
+                self.dossiers.record_dossier_decision(
                     dossier_id, decision, blocked_layer=blocked_layer,
                     reason=reason, legal_reason_code=legal_reason_code,
                     primary_opponents=primary_opponents,
@@ -9034,7 +8922,7 @@ class GameDB:
                     stigma_reason="批红强颁", commit=False,
                 )
             else:
-                self.record_dossier_decision(
+                self.dossiers.record_dossier_decision(
                     dossier_id, "promulgated", blocked_layer=blocked_layer,
                     reason=reason, legal_reason_code=legal_reason_code, commit=False,
                 )
@@ -9542,36 +9430,6 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         return project_execution_liability_parties(dossier.get("participant_roster"))
 
-    def merge_execution_note(
-        self, dossier_id: int, fragment: str, *, commit: bool = True,
-    ) -> str:
-        """下游说明片段合并写口（#565；S12/#567 消费方）。
-
-        初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
-        """
-        owns = self.owns_transaction()
-        text = str(fragment or "")
-        if not text.strip():
-            raise ValueError("说明片段不能为空")
-        row = self.dossiers.get(dossier_id)
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        existing = str(row.get("execution_note") or "")
-        # No prose-delimiter identity: structured callers (reconciliations) own
-        # identity; free-text fragment is carried as-is without split inference.
-        if not existing:
-            merged = text
-        elif existing == text:
-            merged = existing
-        else:
-            merged = f"{existing}；{text}"
-        if merged != existing:
-            self.dossiers.merge_execution_note(
-                int(dossier_id), merged, commit=False,
-            )
-            self._commit_dossier_write(commit, owns)
-        return merged
-
     def validate_joint_liability_affected_parties(
         self, affected_parties: object, outcome: str,
     ) -> None:
@@ -9687,43 +9545,12 @@ class GameDB:
 
             if note_names:
                 # P4：只写定性人名归属，不落 weak/strong/枚举裸词。
-                self.merge_execution_note(
+                self.dossiers.merge_execution_note(
                     dossier_id,
                     "连坐归属：" + "、".join(note_names),
                     commit=False,
                 )
         return True
-
-    def save_pending_promulgation_verdicts(
-        self, turn: int, verdicts: Iterable[Dict[str, object]],
-    ) -> None:
-        """Persist one complete turn-scoped batch before simulation starts."""
-        rows = list(verdicts)
-        with atomic(self):
-            self.dossiers.save_pending_promulgation_verdicts(
-                int(turn),
-                [
-                    (strict_int(v.get("dossier_id")),
-                     safe_json_dumps(v, ensure_ascii=False))
-                    for v in rows
-                ],
-            )
-
-    def get_pending_promulgation_verdicts(
-        self, turn: int,
-    ) -> List[Dict[str, object]]:
-        rows = [{"verdict_json": j} for j in self.dossiers.pending_promulgation_verdicts(int(turn))]
-        result = []
-        for row in rows:
-            raw_value = row["verdict_json"]
-            try:
-                value = load_stored_object(raw_value, label="待应用颁布判决")
-            except StoredDocumentError as exc:
-                raise LLMContractError(
-                    f"待应用颁布判决读取失败：{exc}", raw_value=raw_value,
-                ) from exc
-            result.append(value)
-        return result
 
     def _apply_military_order_station_effect(
         self, state, *, army_id: str, station: str, actor: str, reason: str,
@@ -9964,63 +9791,9 @@ class GameDB:
 
         非 undo、不删旧账。代价归 ADR 0056（breach_decree_dossier）。
         """
-        from ming_sim.issues import apply_score_extraction
-        from ming_sim.strict_types import strict_int
-
-        try:
-            target_dossier_id = strict_int(
-                payload.get("revoke_target_dossier_id"),
-                accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            target_dossier_id = 0
-        try:
-            target_issue_id = strict_int(
-                payload.get("revoke_target_issue_id"),
-                accept_numeric_strings=True,
-            )
-        except (TypeError, ValueError):
-            target_issue_id = 0
-
-        if target_dossier_id <= 0 and target_issue_id <= 0:
-            raw = str(payload.get("target_id") or row.get("target_id") or "").strip()
-            kind = str(
-                payload.get("target_kind") or row.get("target_kind") or ""
-            ).strip()
-            if raw.startswith("dossier:"):
-                kind = "dossier"
-                raw = raw.split(":", 1)[1].strip()
-            elif raw.startswith("issue:"):
-                kind = "issue"
-                raw = raw.split(":", 1)[1].strip()
-            try:
-                tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
-            except (TypeError, ValueError):
-                tid = 0
-            if tid <= 0:
-                raise ValueError("撤回成命案卷缺少目标")
-            if kind == "issue":
-                target_issue_id = tid
-            else:
-                target_dossier_id = tid
-
-        # issue 目标：经 origin_ref 回指案卷；无合法案卷来源不得免代价终结
-        if target_dossier_id <= 0 and target_issue_id > 0:
-            issue_row = IssueStore(self.conn).read_apply_revoke_decree_verdict_effect((target_issue_id,))
-            if issue_row is None:
-                raise ValueError("撤回成命目标事项不存在")
-            if str(issue_row["kind"] or "").strip() != "initiative":
-                raise ValueError("撤回成命目标须为承诺/initiative")
-            origin = str(issue_row["origin_ref"] or "").strip()
-            if origin.startswith("dossier:"):
-                try:
-                    target_dossier_id = int(origin.split(":", 1)[1])
-                except (TypeError, ValueError):
-                    target_dossier_id = 0
-
-        if target_dossier_id <= 0:
-            # 删除 standalone issue 免代价旁路（dossier_id=0 仍 cancel_issue）
-            raise ValueError("撤回成命目标无合法案卷来源，不得免代价终结")
+        target_dossier_id, target_issue_id = self.resolve_revoke_decree_target_ids(
+            payload, row,
+        )
 
         reason = str(
             payload.get("text") or row.get("decree_text") or "撤回成命"

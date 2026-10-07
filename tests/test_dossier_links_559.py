@@ -64,7 +64,7 @@ def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     db, state, _ = game
     draft_id = _make_dossier(db, state, "尚未明发饷案")
     public_id = _make_dossier(db, state, "公开饷案")
-    db.record_dossier_decision(public_id, "promulgated")
+    db.dossiers.record_dossier_decision(public_id, "promulgated")
     other_order = create_test_secret_order(db, state, "卢象升", "密查", "不可外泄", [])
     other_secret = db.dossiers.get_for_secret_order(other_order)
 
@@ -173,8 +173,8 @@ def test_force_promulgated_rejected_dossier_is_referenceable(game):
 def test_withdrawn_rejected_dossier_is_not_referenceable(game):
     db, state, _ = game
     dossier_id = _make_dossier(db, state, "收回的旧旨")
-    db.record_dossier_decision(dossier_id, "rejected", reason="驳回")
-    db.record_dossier_decision(dossier_id, "withdrawn", reason="收回")
+    db.dossiers.record_dossier_decision(dossier_id, "rejected", reason="驳回")
+    db.dossiers.record_dossier_decision(dossier_id, "withdrawn", reason="收回")
     assert dossier_id not in {row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)}
 
 

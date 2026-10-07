@@ -1588,15 +1588,14 @@ class WebGame:
             for leg in self.content.opening_legacies
             if leg.clear_narrative
         }
+        from ming_sim.applier import load_stored_object
         for row in self.db.list_active_legacies(self.state):
-            try:
-                eff = json.loads(str(row["modifiers"] or "{}"))
-            except Exception:
-                eff = {}
-            try:
-                clear_gate = json.loads(str(row["clear_gate"] or "{}"))
-            except Exception:
-                clear_gate = {}
+            eff = load_stored_object(
+                row["modifiers"], label="遗产修正 modifiers",
+            )
+            clear_gate = load_stored_object(
+                row["clear_gate"], label="遗产消除条件 clear_gate",
+            )
             remaining_months = self.db.legacy_remaining_months(row, self.state)
             clear_condition = opening_clear_text.get(str(row["legacy_key"] or ""), "")
             if not clear_condition and clear_gate:

@@ -109,7 +109,7 @@ def test_standalone_surcharge_is_durable_to_second_connection(game):
         state, action_type="policy", decree_text="陕西加派",
         target_kind="region", target_id="shaanxi",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     applied = apply_score_extraction(db, state, {
         "surcharge_decrees": [{
             "region_id": "shaanxi", "monthly_amount": 10.0,
@@ -134,7 +134,7 @@ def test_outer_atomic_rolls_back_surcharge_and_absorption(game):
         state, action_type="policy", decree_text="陕西加派",
         target_kind="region", target_id="shaanxi",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     with pytest.raises(RuntimeError, match='rollback'):
         with atomic(db):
             apply_score_extraction(db, state, {

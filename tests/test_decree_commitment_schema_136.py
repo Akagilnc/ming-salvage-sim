@@ -8,7 +8,7 @@ def _promulgated_commitment_origin(db, state) -> str:
         state, action_type="policy", decree_text="测试辽饷承诺",
         target_kind="army", target_id="guanning", payload={"purpose": "补饷"},
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
 @pytest.mark.parametrize(

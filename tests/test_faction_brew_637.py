@@ -395,7 +395,7 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="æ¸…ä
         ],
         payload={"mode": "ordinary"},
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     assert db.dossiers.authorizes_effects(dossier_id)
     return db.dossiers.get(dossier_id)
 

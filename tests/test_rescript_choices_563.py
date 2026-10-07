@@ -137,7 +137,7 @@ def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
     db.apply_dossier_promulgation(
         state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣封驳",
     )
-    db.record_dossier_decision(dossier_id, "hold")
+    db.dossiers.record_dossier_decision(dossier_id, "hold")
     state.turn += 1
     db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
     db.apply_dossier_promulgation(

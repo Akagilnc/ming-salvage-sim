@@ -238,7 +238,7 @@ def _prepare_reconsideration_facts(
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
         payload={"mode": "ordinary"},
     )
-    db.record_dossier_decision(grant_dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(grant_dossier_id, "promulgated")
     grant = apply_score_extraction(db, state, {
         "authority_changes": [{
             "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
@@ -286,7 +286,7 @@ def _resolve_arm_verdicts(
 ) -> list[dict]:
     """Pending while awaiting; else applied history at the pre-resolve turn."""
     if awaiting:
-        return db.get_pending_promulgation_verdicts(resolve_turn)
+        return db.dossiers.get_pending_promulgation_verdicts(resolve_turn)
     verdicts = []
     for dossier_id in sorted(ids.values()):
         history = [
@@ -423,7 +423,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         if not first_result.awaiting:
             raise RuntimeError("real gate expected rejected dossiers to reach rescript")
         first_turn = state.turn
-        first_verdicts = db.get_pending_promulgation_verdicts(first_turn)
+        first_verdicts = db.dossiers.get_pending_promulgation_verdicts(first_turn)
         choices = _choose_rescripts(
             db, first_turn, ids["hostile"], ids["vital_midzhi"], ids["appointment"],
         )
@@ -439,7 +439,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         second_result = resolve_directives(
             state, db, agno, cfg, [], "留中案下月重判", content=content,
         )
-        second_pending = db.get_pending_promulgation_verdicts(second_turn)
+        second_pending = db.dossiers.get_pending_promulgation_verdicts(second_turn)
         second_history = [
             row for row in db.dossiers.decisions(ids["hostile"])
             if int(row["turn"]) == second_turn and not row.get("rescript_action")

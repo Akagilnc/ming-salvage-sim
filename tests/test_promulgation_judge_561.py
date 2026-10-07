@@ -413,7 +413,7 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
         participants=[{"character_id": holder, "tier": "主办"}],
         payload={"mode": "ordinary"},
     )
-    db.record_dossier_decision(grant_dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(grant_dossier_id, "promulgated")
     grant = apply_score_extraction(db, state, {"authority_changes": [{
         "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
         "scope": f"issue:policy-{state.turn}", "dossier_id": grant_dossier_id,
@@ -467,10 +467,10 @@ def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatc
             {"dossier_id": int(row["id"]), "decision": "promulgated"}
             for row in dossiers
         ]
-        db.save_pending_promulgation_verdicts(state.turn, verdicts)
+        db.dossiers.save_pending_promulgation_verdicts(state.turn, verdicts)
         db.apply_dossier_verdicts(state, verdicts, content=content)
         # Settlement consumes pending and advances turn — the bug surface.
-        assert db.get_pending_promulgation_verdicts(state.turn) == []
+        assert db.dossiers.get_pending_promulgation_verdicts(state.turn) == []
         state.turn += 1
         db.save_state(state)
         return decree_mod.ResolveResult(awaiting=False, report="settled")

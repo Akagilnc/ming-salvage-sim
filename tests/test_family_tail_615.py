@@ -67,7 +67,7 @@ def _grant_self_scope_authority(db, state, content, holder):
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
         payload={"mode": "ordinary"},
     )
-    db.record_dossier_decision(grant_id, "promulgated")
+    db.dossiers.record_dossier_decision(grant_id, "promulgated")
     result = issue_engine.apply_score_extraction(db, state, {
         "authority_changes": [{
             "动作": "授予",

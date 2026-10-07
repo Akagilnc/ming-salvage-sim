@@ -116,7 +116,7 @@ def test_midzhi_rejudgment_never_applies_party_satisfaction(game):
     before_new_party = _sat(db, "classes", "农民")
     before_faction = _sat(db, "factions", "东林")
     assert [row for row in _cost_events(db, dossier_id) if row["cost_kind"] == "satisfaction"] == []
-    db.record_dossier_decision(dossier_id, "hold")
+    db.dossiers.record_dossier_decision(dossier_id, "hold")
     state.turn += 1
     db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
     changed = _verdict(dossier_id)
@@ -353,10 +353,10 @@ def test_force_rejects_old_only_judge_reactions_atomically(game):
     db, state, _ = game
     dossier_id = _dossier(db, state)
     db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
-    db.record_dossier_decision(dossier_id, "hold")
+    db.dossiers.record_dossier_decision(dossier_id, "hold")
     state.turn += 1
     db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
-    db.record_dossier_decision(dossier_id, "rejected", blocked_layer="six_offices")
+    db.dossiers.record_dossier_decision(dossier_id, "rejected", blocked_layer="six_offices")
     authority = state.metrics["皇威"]
 
     with pytest.raises(ValueError):
@@ -404,8 +404,8 @@ def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued
     active = db.insert_issue(state, kind="initiative", title="旧诺", origin_kind="decree",
                              origin_ref=f"dossier:{issued}", cancellable="decree", commitment_kind="funding")
     never = _dossier(db, state)
-    db.record_dossier_decision(never, "rejected")
-    db.record_dossier_decision(never, "withdrawn")
+    db.dossiers.record_dossier_decision(never, "rejected")
+    db.dossiers.record_dossier_decision(never, "withdrawn")
     excluded = db.insert_issue(state, kind="initiative", title="未发之旨", origin_kind="decree",
                                origin_ref=f"dossier:{never}", cancellable="decree", commitment_kind="funding")
 

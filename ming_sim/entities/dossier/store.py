@@ -16,6 +16,7 @@ from ming_sim.applier import (
     durable_int,
     load_stored_list,
     load_stored_object,
+    safe_json_dumps,
 )
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import dossier_action_policy
@@ -1109,6 +1110,83 @@ class DossierStore:
             ),
         )
 
+    def record_dossier_decision(
+        self, dossier_id: int, decision: str, *, reason: str = "",
+        blocked_layer: str = "", legal_reason_code: str = "",
+        primary_opponents: Optional[list[dict[str, str]]] = None,
+        gatekeeper_id: Optional[str] = None,
+        criteria_snapshot: Optional[dict[str, object]] = None,
+        commit: bool = True,
+    ) -> None:
+        """颁布/批红组合态。rejected 与 hold 永不成为主链 status。"""
+        from ming_sim.entities.reign_state.store import ReignStateStore
+
+        owns = self._owns()
+        if str(legal_reason_code or "").strip():
+            raise ValueError("legal_reason_code 仅供尚未落地的依律集写入路径")
+        decision = str(decision or "").strip()
+        if decision not in {"promulgated", "rejected", "hold", "withdrawn"}:
+            raise ValueError(f"案卷判决非法：{decision}")
+        blocked_layer = str(blocked_layer or "")
+        if blocked_layer not in PROMULGATION_BLOCKED_LAYERS:
+            raise ValueError(f"颁布关口非法：{blocked_layer}")
+        row = self.get(dossier_id)
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        slot_reason = str(reason or "")
+        slot_legal_reason = str(legal_reason_code or "")
+        if decision in {"hold", "withdrawn"}:
+            if not blocked_layer:
+                blocked_layer = str(row.get("promulgation_blocked_layer") or "")
+            slot_reason = str(row.get("promulgation_reason") or "")
+            slot_legal_reason = str(row.get("legal_reason_code") or "")
+        turn_row = ReignStateStore(self._conn).read_current_settle_turn()
+        current_turn = int(turn_row["turn"] if turn_row else 0)
+        if (
+            decision in {"promulgated", "rejected"}
+            and int(row.get("held_turn") or 0) > 0
+            and current_turn <= int(row["held_turn"])
+        ):
+            raise ValueError("留中案卷只可在下月重判")
+        if row["status"] != "proposed":
+            raise ValueError("只有 proposed 案卷可写颁布/批红判决")
+        if decision == "promulgated":
+            status, promulgation, pending = "promulgated", "promulgated", 0
+        elif decision == "rejected":
+            status, promulgation, pending = "proposed", "rejected", 1
+        elif decision == "hold":
+            if row["promulgation_decision"] != "rejected" or not row["rescript_pending"]:
+                raise ValueError("留中只可承接打回＋批红待抉择组合态")
+            status, promulgation, pending = "proposed", "rejected", 0
+        else:
+            if row["promulgation_decision"] != "rejected" or not row["rescript_pending"]:
+                raise ValueError("收回只可承接打回＋批红待抉择组合态")
+            status, promulgation, pending = "closed", "rejected", 0
+        held_turn = (
+            current_turn
+            if decision == "hold" else int(row.get("held_turn") or 0)
+        )
+        self.set_promulgation(
+            int(dossier_id), status=status, promulgation=promulgation,
+            rescript_pending=pending, blocked_layer=blocked_layer,
+            reason=slot_reason, legal_reason_code=slot_legal_reason,
+            held_turn=held_turn, turn=current_turn,
+        )
+        self.insert_decision(
+            int(dossier_id), current_turn,
+            decision=promulgation if decision != "hold" else "rejected",
+            blocked_layer=blocked_layer,
+            rescript_action=decision if decision in {"hold", "withdrawn"} else "",
+            reason=str(reason or ""),
+            legal_reason_code=slot_legal_reason,
+            primary_opponents_json=safe_json_dumps(primary_opponents or []),
+            gatekeeper_id=(
+                str(gatekeeper_id).strip() if gatekeeper_id is not None else None
+            ),
+            criteria_snapshot_json=safe_json_dumps(criteria_snapshot or {}),
+        )
+        self._commit(commit, owns)
+
     def set_execution(
         self, dossier_id: int, *, outcome: str, note: str, turn: int,
     ) -> None:
@@ -1138,14 +1216,32 @@ class DossierStore:
             (int(turn), reason, int(dossier_id)),
         )
 
-    def merge_execution_note(self, dossier_id: int, merged: str, *, commit: bool = True) -> None:
+    def merge_execution_note(
+        self, dossier_id: int, fragment: str, *, commit: bool = True,
+    ) -> str:
+        """Merge one free-text execution note fragment onto the row."""
         owns = self._owns()
-        self._conn.execute(
-            "UPDATE decree_dossiers SET execution_note=?, updated_at=CURRENT_TIMESTAMP "
-            "WHERE id=?",
-            (merged, int(dossier_id)),
-        )
-        self._commit(commit, owns)
+        text = str(fragment or "")
+        if not text.strip():
+            raise ValueError("说明片段不能为空")
+        row = self.get(dossier_id)
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        existing = str(row.get("execution_note") or "")
+        if not existing:
+            merged = text
+        elif existing == text:
+            merged = existing
+        else:
+            merged = f"{existing}；{text}"
+        if merged != existing:
+            self._conn.execute(
+                "UPDATE decree_dossiers SET execution_note=?, "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (merged, int(dossier_id)),
+            )
+            self._commit(commit, owns)
+        return merged
 
     def ids_for_secret_order(self, secret_order_id: int) -> list[int]:
         rows = self._conn.execute(
@@ -2004,16 +2100,34 @@ class DossierStore:
         )
 
     def save_pending_promulgation_verdicts(
-        self, turn: int, verdicts: Iterable[tuple[int, str]],
+        self, turn: int, verdicts: Iterable[Mapping[str, object]],
+        *, commit: bool = True,
     ) -> None:
-        """Replace one turn's whole batch (delete-then-insert, same transaction)."""
-        self.clear_pending_promulgation_verdicts(turn)
-        for dossier_id, verdict_json in verdicts:
-            self._conn.execute(
-                "INSERT INTO pending_promulgation_verdicts"
-                "(turn,dossier_id,verdict_json) VALUES (?,?,?)",
-                (int(turn), int(dossier_id), verdict_json),
-            )
+        """Replace one turn's whole batch (serialize + delete-then-insert)."""
+        from types import SimpleNamespace
+
+        from ming_sim.applier import atomic
+
+        rows = list(verdicts)
+
+        def _write() -> None:
+            self.clear_pending_promulgation_verdicts(turn)
+            for verdict in rows:
+                dossier_id = strict_int(verdict.get("dossier_id"))
+                self._conn.execute(
+                    "INSERT INTO pending_promulgation_verdicts"
+                    "(turn,dossier_id,verdict_json) VALUES (?,?,?)",
+                    (
+                        int(turn), int(dossier_id),
+                        safe_json_dumps(verdict, ensure_ascii=False),
+                    ),
+                )
+
+        if commit and self._owns():
+            with atomic(SimpleNamespace(conn=self._conn)):
+                _write()
+        else:
+            _write()
 
     def clear_pending_promulgation_verdicts(self, turn: int) -> None:
         self._conn.execute(
@@ -2021,6 +2135,7 @@ class DossierStore:
         )
 
     def pending_promulgation_verdicts(self, turn: int) -> list[str]:
+        """Raw JSON strings for one turn. Prefer get_pending_promulgation_verdicts."""
         return [
             str(r["verdict_json"])
             for r in self._conn.execute(
@@ -2029,6 +2144,17 @@ class DossierStore:
                 (int(turn),),
             ).fetchall()
         ]
+
+    def get_pending_promulgation_verdicts(
+        self, turn: int,
+    ) -> list[dict[str, object]]:
+        """Decode one turn's pending promulgation batch; durable faults raise."""
+        result: list[dict[str, object]] = []
+        for raw_value in self.pending_promulgation_verdicts(int(turn)):
+            result.append(
+                load_stored_object(raw_value, label="待应用颁布判决")
+            )
+        return result
 
     def record_actual_progress(
         self, dossier_id: int, turn: int, *, units: float, fidelity_state: str,

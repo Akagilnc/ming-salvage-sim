@@ -283,7 +283,7 @@ def _promulgated_dossier(db, state, holder, token):
         executor_id=holder,
         payload={"token": token},
     )
-    db.record_dossier_decision(did, "promulgated")
+    db.dossiers.record_dossier_decision(did, "promulgated")
     return did
 
 

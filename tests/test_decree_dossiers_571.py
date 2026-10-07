@@ -399,7 +399,7 @@ def test_terminal_target_does_not_interrupt_another_executor(game):
         target_kind="character", target_id=target,
         executor_kind="character", executor_id=executor,
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     db.dossiers.transition(dossier_id, "executing")
 
     db.set_character_status(state, target, "imprisoned", reason="下狱")
@@ -661,7 +661,7 @@ def test_dossier_execution_rejects_non_sqlite_integer_ids(game, invalid_id):
         state, action_type="policy", decree_text="奉旨办理",
         target_kind="issue", target_id="strict-execution-id",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     db.dossiers.transition(dossier_id, "executing")
 
     result = issue_engine.apply_score_extraction(db, state, {
@@ -679,7 +679,7 @@ def test_dossier_execution_accepts_sqlite_integer_id(game):
         state, action_type="policy", decree_text="奉旨办理",
         target_kind="issue", target_id="valid-execution-id",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     db.dossiers.transition(dossier_id, "executing")
 
     result = issue_engine.apply_score_extraction(db, state, {
@@ -757,7 +757,7 @@ def test_payload_owned_appointment_dedup_removes_only_exact_mechanical_effect(ga
             "office_type": "central",
         },
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
 
     result = issue_engine.apply_score_extraction(db, state, {
         "人物变更": [{
@@ -788,7 +788,7 @@ def test_payload_owned_appointment_dedup_uses_prior_item_runtime_office_type(gam
             "office_type": "地方",
         },
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
 
     result = issue_engine.apply_score_extraction(db, state, {
         "人物变更": [
@@ -830,7 +830,7 @@ def test_payload_owned_appointment_dedup_preserves_same_person_different_effect(
             "office": "兵部尚书",
         },
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
 
     result = issue_engine.apply_score_extraction(db, state, {
         "人物变更": [{
@@ -850,7 +850,7 @@ def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
         state, action_type="policy", decree_text="持续办理",
         target_kind="issue", target_id="ongoing-policy",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     db.dossiers.transition(dossier_id, "executing")
 
     with pytest.raises(ValueError):
@@ -895,7 +895,7 @@ def test_extractor_accepts_transformed_execution_outcome(game):
         state, action_type="policy", decree_text="奉旨办理而借题行私",
         target_kind="issue", target_id="transformed-policy",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     db.dossiers.transition(dossier_id, "executing")
 
     result = issue_engine.apply_score_extraction(
@@ -1397,11 +1397,11 @@ def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
         state, action_type="special_decree", decree_text="着核边饷",
         target_kind="issue", target_id="frontier-pay",
     )
-    db.record_dossier_decision(
+    db.dossiers.record_dossier_decision(
         dossier_id, "rejected", blocked_layer="six_offices",
         reason="封驳",
     )
-    db.record_dossier_decision(dossier_id, "hold")
+    db.dossiers.record_dossier_decision(dossier_id, "hold")
 
     assert dossier_id not in {
         row["id"] for row in db.dossiers.list_for_simulation(state.turn)
@@ -1865,10 +1865,10 @@ def test_withdrawn_rescript_records_closed_turn(game):
         state, action_type="policy", decree_text="暂缓河工",
         target_kind="issue", target_id="river-works",
     )
-    db.record_dossier_decision(
+    db.dossiers.record_dossier_decision(
         dossier_id, "rejected", blocked_layer="six_offices", reason="封驳",
     )
-    db.record_dossier_decision(dossier_id, "withdrawn", reason="收回成命")
+    db.dossiers.record_dossier_decision(dossier_id, "withdrawn", reason="收回成命")
     restored = GameDB(db.path, content=content)
     try:
         dossier = restored.dossiers.get(dossier_id)
@@ -1936,7 +1936,7 @@ def test_immediate_terminal_payload_cannot_bypass_execution_surface(game):
         executor_id=_active_minister(db),
         payload={"immediate_terminal": True},
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
 
     with pytest.raises(ValueError):
         db.record_dossier_execution(

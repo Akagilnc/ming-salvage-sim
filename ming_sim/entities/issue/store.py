@@ -180,12 +180,6 @@ class IssueStore:
     def read_stop_origin_commitment_ticks(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT id FROM issues WHERE origin_ref=? AND status='active'", params).fetchall()
 
-    def read_try_defer_revoke_to_breach_plea(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n            SELECT id FROM issues\n            WHERE origin_ref=? AND status='active' AND commitment_kind != ''\n            ", params).fetchall()
-
-    def read_try_defer_revoke_to_breach_plea_id_status_commitment_kind(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, status, commitment_kind FROM issues WHERE id=?', params).fetchone()
-
     def read_issue_exists(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT id FROM issues WHERE id=?', params).fetchone()
 

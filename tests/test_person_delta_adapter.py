@@ -19,7 +19,7 @@ def _promulgated_dossier(db, state, decree_text, target_id="毛文龙"):
         state, action_type="policy", decree_text=decree_text,
         target_kind="character", target_id=target_id,
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     db.dossiers.transition(dossier_id, "executing")
     return f"dossier:{dossier_id}"
 

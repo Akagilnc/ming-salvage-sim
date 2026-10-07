@@ -539,7 +539,7 @@ def _promulgated_policy_origin(db, state, *, token: str) -> str:
         payload={"token": token},
     )
     assert dossier_id > 0
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
 

@@ -211,6 +211,9 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
 
     expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
     expect(failedTurn).toEqual({ campaign_id: "c1", night_id: 24, chat_turn_id: 8 });
+    // 中断后未持久化回话：短暂态与可见性均已清理（不匹配正文）。
+    expect(hookRef.current!.streamingMinisterMessage).toBe("");
+    expect(document.querySelector(".chat-log .scene.beat-dialogue")).toBeNull();
 
   });
 

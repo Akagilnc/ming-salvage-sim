@@ -19,7 +19,7 @@ def _promulgated_commitment_origin(db, state, token: str) -> str:
         target_id=token,
         payload={"token": token},
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
+    db.dossiers.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
 
