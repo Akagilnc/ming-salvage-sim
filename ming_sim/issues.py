@@ -7481,6 +7481,9 @@ def _apply_score_extraction_body(
                 kept.append(stamped)
             extracted[field] = kept
 
+    # 调用方提供的序列＝正式入口已跑 preflight_declared_event_effects；
+    # 缺省派生的单步只统一编排形状，不把显式归属当作 C3 已接纳。
+    event_stock_pre_admitted = effect_sequence is not None
     if effect_sequence is not None:
         stamped_sequence = []
         for step_extracted, step_ordered, step_event_ids in effect_sequence:
@@ -7496,7 +7499,7 @@ def _apply_score_extraction_body(
             stamped_sequence.append((stamped_step, step_ordered, step_event_ids))
         effect_sequence = stamped_sequence
     else:
-        # 直接 apply 与未传序列的调用方：单步接入同一编排，不另开分类回落。
+        # 直接 apply：单步接入同一编排；事件库存仍待 tracker／deferred 准入后落。
         effect_sequence = [
             (extracted, ordered_deltas, ordered_effect_event_ids or {}),
         ]
@@ -7888,7 +7891,7 @@ def _apply_score_extraction_body(
         *,
         apply_event_owned: bool = False,
     ) -> None:
-        # apply_event_owned：步进内消费已预检接纳的事件战果（现役编排恒为 True）。
+        # apply_event_owned：仅消费预检已接纳的事件战果；未预检归属保持 defer。
         step_new_armies = step_extracted.get("new_armies") or []
         declared = step_event_ids.get("new_armies") or []
         for idx, army_item in enumerate(step_new_armies):
@@ -8449,9 +8452,10 @@ def _apply_score_extraction_body(
             for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
                 applied_metric[metric] = applied_metric.get(metric, 0) + delta
         # 先实体后钱：同笔内欠饷加额须先于补饷拨款可见。
-        # 已预检接纳的事件战果亦在本笔消费，后项可读前项事件落账存量。
+        # 仅预检已接纳的事件战果在本笔消费；未预检归属仍 defer 到 tracker 终局。
         _apply_ordinary_entity_step(
-            step_extracted, step_ordered, step_event_ids, apply_event_owned=True,
+            step_extracted, step_ordered, step_event_ids,
+            apply_event_owned=event_stock_pre_admitted,
         )
         step_moves = list(step_extracted.get("economy_moves") or [])
         _apply_economy_moves_list(step_moves, index_base=economy_index_base)
@@ -8460,7 +8464,8 @@ def _apply_score_extraction_body(
         _apply_world_step_fiscal_and_petition(step_extracted)
         # #1844/#1899：派系/阶级/加派/人口/投贼/势力同缝按交代先后。
         _apply_world_step_ordered_stock(
-            step_extracted, step_ordered, step_event_ids, apply_event_owned=True,
+            step_extracted, step_ordered, step_event_ids,
+            apply_event_owned=event_stock_pre_admitted,
         )
     _finalize_loss_pair_changes()
     power_changes = list(absorption_power_changes) + power_changes
@@ -8639,9 +8644,32 @@ def _apply_score_extraction_body(
             _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""))
             continue
         event_person_changes = _event_person_changes(event_id)
-        # 归属与信封预检已由 preflight_declared_event_effects 在写入前判定一次。
-        # region/army/power/new_armies 已在 effect_sequence 步进落账，此处只补人物。
+        # 预检已接纳：库存已在步进落账。未预检直接 apply：tracker 准入后复用同一 helper 落库存。
         event_person_results: List[Dict[str, object]] = []
+        if event_id not in landed_event_stock_ids:
+            event_region_items = _ordered_strategic_items("region_delta", event_id)
+            event_army_items = _ordered_strategic_items("army_delta", event_id)
+            event_power_items = _ordered_strategic_items("power_updates", event_id)
+            event_new_armies = _event_new_armies(event_id)
+            if event_region_items or event_army_items or event_power_items or event_new_armies:
+                mini_extracted: Dict[str, object] = {"new_armies": list(event_new_armies)}
+                mini_ordered: Dict[str, list[tuple[str, object]]] = {
+                    "region_delta": list(event_region_items),
+                    "army_delta": list(event_army_items),
+                    "power_updates": list(event_power_items),
+                }
+                mini_event_ids: dict[str, list[str]] = {
+                    "new_armies": [event_id] * len(event_new_armies),
+                    "region_delta": [event_id] * len(event_region_items),
+                    "army_delta": [event_id] * len(event_army_items),
+                    "power_updates": [event_id] * len(event_power_items),
+                }
+                _apply_ordinary_entity_step(
+                    mini_extracted, mini_ordered, mini_event_ids, apply_event_owned=True,
+                )
+                _apply_power_update_pairs(
+                    event_power_items, step_event_ids=mini_event_ids, apply_event_owned=True,
+                )
         for item in event_person_changes:
             try:
                 origin_ref = _origin_ref_from_result_item(item)
@@ -8658,8 +8686,7 @@ def _apply_score_extraction_body(
             event_person_results.extend(_apply_normalized_person_changes(
                 [clean_item], origin_ref=origin_ref, require_origin=True,
             ))
-        # Admitted C3 events are not re-rejected here: preflight already decided the
-        # envelope; owned stock already landed in effect_sequence.
+        # Tracker／deferred 准入后终局：不写后二次预检；库存或已预检步进落，或刚由 helper 落。
         db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
         apply_event_cascading_invalidations(state, db, commit=commit_now)
         new_issue["reason"] = "事件已记为触发，软判结果已落主账"
