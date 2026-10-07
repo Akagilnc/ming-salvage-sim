@@ -9,7 +9,7 @@ def parse_new_issues(raw):
     # Strict stdlib JSON object decode; contract failure → empty.
     try:
         obj = json.loads(raw)
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         obj = {}
     if not isinstance(obj, dict):
         obj = {}

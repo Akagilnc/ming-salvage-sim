@@ -58,7 +58,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             break
         try:
             obj = json.loads(m.group(1))
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             continue
         if not isinstance(obj, dict):
             continue

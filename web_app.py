@@ -1588,11 +1588,11 @@ class WebGame:
         for row in self.db.list_active_legacies(self.state):
             try:
                 eff = json.loads(str(row["modifiers"] or "{}"))
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
                 eff = {}
             try:
                 clear_gate = json.loads(str(row["clear_gate"] or "{}"))
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
                 clear_gate = {}
             remaining_months = self.db.legacy_remaining_months(row, self.state)
             clear_condition = opening_clear_text.get(str(row["legacy_key"] or ""), "")

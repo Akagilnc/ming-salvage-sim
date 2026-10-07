@@ -9155,7 +9155,7 @@ class GameDB:
             return None
         try:
             timeline = json.loads(row["timeline"] or "[]")
-        except Exception as exc:
+        except (json.JSONDecodeError, TypeError) as exc:
             tlog(f"[db] timeline JSON 损坏，回空：{exc}")  # #14 surface
             timeline = []
         return {
@@ -18238,7 +18238,7 @@ class GameDB:
         ).fetchall():
             try:
                 eff = json.loads(str(lg["modifiers"] or "{}"))
-            except Exception as exc:
+            except (json.JSONDecodeError, TypeError) as exc:
                 tlog(f"[db] legacy modifiers JSON 损坏，跳过该 legacy：{exc}")  # #14 surface
                 continue
             for acc in GATE_METRIC_KEYS:  # #14 single source; was duplicate inline 4-tuple

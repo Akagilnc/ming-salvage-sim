@@ -54,7 +54,7 @@ def balanced(raw):
     """Strict stdlib JSON object decode; no brace-crop / first-object pick."""
     try:
         o = json.loads(raw)
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         return []
     return [o] if isinstance(o, dict) else []
 
