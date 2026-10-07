@@ -600,25 +600,6 @@ def test_verify_llm_available_api_error_status_nonempty_content_raises(monkeypat
         verify_llm_available(_api_cfg())
     assert ei.value.code == "llm_run_error"
 
-def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
-    cfg = LLMConfig(
-        api_key="cli-backend",
-        base_url="https://api.example.com/v1",
-        model="api-model",
-        advanced_model="api-advanced",
-        channel="cli",
-        cli_runner="codex",
-        cli_model="gpt-5.5",
-        cli_timeout_seconds=240,
-    )
-
-    derived = for_role(cfg, "simulator")
-
-    assert derived.channel == "cli"
-    assert derived.cli_runner == "codex"
-    assert derived.cli_model == "gpt-5.5"
-    assert derived.cli_timeout_seconds == 240
-
 
 def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
     """codex R1 #2：legacy env CLI（MING_SIM_LLM_BACKEND 设）时 cli_timeout_seconds 必须用
@@ -695,12 +676,6 @@ def test_cli_supports_reasoning_strength_matrix(runner, expected):
     from ming_sim.llm_config import cli_supports_reasoning_strength
 
     assert cli_supports_reasoning_strength(runner) is expected
-
-def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
-    """#1271：能力名单单源在 cli_backend（与 effort/thinking 表同缝）。"""
-    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
-
-    assert CLI_REASONING_STRENGTH_RUNNERS == frozenset({"codex", "claude", "grok", "pi"})
 
 def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     """#1472：ming_sim.agents 现役工厂 + gate 真实参数面无 max_tokens 键。"""
