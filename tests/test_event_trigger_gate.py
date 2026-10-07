@@ -14,7 +14,6 @@ import pytest
 from ming_sim import issues
 from ming_sim.models import Event
 
-
 def _promulgated_dossier(db, state, decree_text):
     dossier_id = db.create_decree_dossier(
         state, action_type="policy", decree_text=decree_text,
@@ -24,7 +23,6 @@ def _promulgated_dossier(db, state, decree_text):
     db.transition_decree_dossier(dossier_id, "executing")
     return f"dossier:{dossier_id}"
 
-
 def _hist_event(eid, gate):
     return Event(
         id=eid, title="测试门控历史事件", kind="situation",
@@ -33,7 +31,6 @@ def _hist_event(eid, gate):
         trigger_year=1, trigger_month=0,  # 极早历史锚点 → 日历窗口必开
         trigger_gate=gate,
     )
-
 
 @contextmanager
 def _restore_yuan_as_guanning_commander(db, content):
@@ -80,7 +77,6 @@ def _restore_yuan_as_guanning_commander(db, content):
             )
         db.conn.commit()
 
-
 def test_gated_historical_event_excluded_when_unsatisfied(game):
     db, state, content = game
     issues.bind_content(content)  # 防他测漂移 _content：确保 _ctx() 指向本 fixture 盘面
@@ -93,7 +89,6 @@ def test_gated_historical_event_excluded_when_unsatisfied(game):
             "前提门不达标的历史事件不应进候选（#12 机制半）"
     finally:
         content.events.remove(ev)
-
 
 def test_gated_historical_event_included_when_satisfied(game):
     db, state, content = game
@@ -108,7 +103,6 @@ def test_gated_historical_event_included_when_satisfied(game):
     finally:
         content.events.remove(ev)
 
-
 def test_ungated_historical_event_unchanged(game):
     db, state, content = game
     issues.bind_content(content)  # 防他测漂移 _content：确保 _ctx() 指向本 fixture 盘面
@@ -121,7 +115,6 @@ def test_ungated_historical_event_unchanged(game):
             "无前提门的历史事件应保持纯日历窗口行为不变"
     finally:
         content.events.remove(ev)
-
 
 def test_historical_event_expires_after_latest_window_when_gate_unsatisfied(game):
     db, state, content = game
@@ -165,7 +158,6 @@ def test_historical_event_expires_after_latest_window_when_gate_unsatisfied(game
     finally:
         content.events.remove(ev)
 
-
 def test_historical_event_gate_can_read_event_triggered_record(game):
     """#192：核心事实进 event_triggers 后，下游硬门可用 event.<id>.triggered 查询。"""
     db, state, content = game
@@ -180,7 +172,6 @@ def test_historical_event_gate_can_read_event_triggered_record(game):
         assert any(c.id == "__test_after_huabei__" for c in issues.gather_candidate_events(state, db))
     finally:
         content.events.remove(ev)
-
 
 def test_historical_event_latest_month_is_still_inside_window(game):
     db, state, content = game
@@ -207,7 +198,6 @@ def test_historical_event_latest_month_is_still_inside_window(game):
     finally:
         content.events.remove(ev)
 
-
 def test_historical_event_triggered_gate_ignores_obsolete_terminal(game):
     """ship-pre CMR：obsolete 终态只用于去重，不应打开 event.<id>.triggered 下游门。"""
     db, state, content = game
@@ -220,7 +210,6 @@ def test_historical_event_triggered_gate_ignores_obsolete_terminal(game):
         assert all(c.id != "__test_after_obsolete_mao__" for c in issues.gather_candidate_events(state, db))
     finally:
         content.events.remove(ev)
-
 
 def test_open_window_historical_event_never_expires(game):
     db, state, content = game
@@ -248,7 +237,6 @@ def test_open_window_historical_event_never_expires(game):
     finally:
         content.events.remove(ev)
 
-
 def test_open_window_historical_event_still_waits_for_earliest_time(game):
     db, state, content = game
     issues.bind_content(content)
@@ -266,7 +254,6 @@ def test_open_window_historical_event_still_waits_for_earliest_time(game):
         assert all(c.id != "__test_open_window_future_hist__" for c in cands)
     finally:
         content.events.remove(ev)
-
 
 def test_seed_event_expires_after_latest_window_when_gate_unsatisfied(game):
     db, state, content = game
@@ -301,7 +288,6 @@ def test_seed_event_expires_after_latest_window_when_gate_unsatisfied(game):
     finally:
         content.seed_events.remove(ev)
 
-
 def test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfied(game):
     db, state, content = game
     issues.bind_content(content)
@@ -333,7 +319,6 @@ def test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfi
         ).fetchone()[0] == 1
     finally:
         content.seed_events.remove(ev)
-
 
 def test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writing(game):
     db, state, content = game
@@ -369,7 +354,6 @@ def test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writi
     finally:
         content.seed_events.remove(ev)
 
-
 def test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute(game):
     """#345：落库端按已推给裁判/玩家的候选快照验收，避免触发口径与推送口径分叉。"""
     db, state, content = game
@@ -402,7 +386,6 @@ def test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute(gam
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
 
-
 def test_apply_event_terminal_states_does_not_commit_existing_transaction(game):
     db, state, content = game
     issues.bind_content(content)
@@ -432,7 +415,6 @@ def test_apply_event_terminal_states_does_not_commit_existing_transaction(game):
             db.conn.rollback()
         content.events.remove(ev)
 
-
 def test_historical_event_none_gate_no_crash(game):
     db, state, content = game
     issues.bind_content(content)
@@ -444,7 +426,6 @@ def test_historical_event_none_gate_no_crash(game):
         assert any(c.id == "__test_none_gate__" for c in cands), "None 门视同空门、恒过进候选"
     finally:
         content.events.remove(ev)
-
 
 # ── #12(b)：trigger_gate key/cond fail-loud（ADR 0012 残留 4b，Q3 裁断=fail-loud）──
 
@@ -459,7 +440,6 @@ def test_gate_key_form_error_accepts_valid_forms():
               "region.x.controlled_by"):
         assert gate_key_form_error(k) == "", (k, gate_key_form_error(k))
 
-
 def test_gate_key_form_error_rejects_typo_metric_table_structure():
     """typo'd metric / 未知表 / 结构不完整 → 非空错误说明（fail-loud 素材）。"""
     from ming_sim.content import gate_key_form_error
@@ -467,7 +447,6 @@ def test_gate_key_form_error_rejects_typo_metric_table_structure():
     assert gate_key_form_error("regon.x.unrest")   # region typo
     assert gate_key_form_error("region.x")                      # 2 段，结构不完整
     assert gate_key_form_error("event.huabei_plague.status")     # event 仅支持 triggered
-
 
 def test_gate_cond_form_error_numeric_and_text():
     """数值比较 + 文本相等都合法（load/runtime 调和，残留 4b②）；垃圾非法。"""
@@ -477,7 +456,6 @@ def test_gate_cond_form_error_numeric_and_text():
         assert gate_cond_form_error(c) == "", (c, gate_cond_form_error(c))
     assert gate_cond_form_error("abc")
     assert gate_cond_form_error(">> 5")
-
 
 def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
     """load 时 trigger_gate key typo → SystemExit fail-loud（不再静默当条件不满足）。"""
@@ -489,7 +467,6 @@ def test_load_event_fail_loud_on_bad_gate_key(monkeypatch):
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
-
 
 def test_load_event_requires_latest_or_open_window(monkeypatch):
     """历史锚定事件必须显式声明最晚时点或 open_window，漏填不许隐式永不过期。"""
@@ -503,7 +480,6 @@ def test_load_event_requires_latest_or_open_window(monkeypatch):
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
-
 
 def test_load_event_rejects_non_boolean_open_window(monkeypatch):
     """open_window 必须是 JSON boolean，不能让字符串 'false' 被 bool() 误作 True。"""
@@ -519,7 +495,6 @@ def test_load_event_rejects_non_boolean_open_window(monkeypatch):
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
 
-
 def test_load_event_rejects_strategic_foreign_situation(monkeypatch):
     """战略/外敌分类只允许 node/ending，不能被 situation 静默吞掉。"""
     import pytest
@@ -532,7 +507,6 @@ def test_load_event_rejects_strategic_foreign_situation(monkeypatch):
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
-
 
 def test_load_event_rejects_latest_before_earliest(monkeypatch):
     """最晚时点不能早于最早时点，否则该事件永远无法合法开窗。"""
@@ -547,7 +521,6 @@ def test_load_event_rejects_latest_before_earliest(monkeypatch):
     monkeypatch.setattr(content_mod, "load_json_asset", lambda *a, **k: bad)
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
-
 
 @pytest.mark.parametrize("field,value", [
     ("trigger_month", 13),
@@ -569,7 +542,6 @@ def test_load_event_rejects_month_out_of_range(monkeypatch, field, value):
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
 
-
 def test_typo_field_gate_raises_clear_not_operationalerror(read_game):
     """gate 引用 typo'd 字段（DB 无此列）→ 求值期 SELECT 抛 OperationalError，被 fail-loud
     成清晰 ValueError（含 key + 'DB 无此列'），不留 cryptic 崩（#12 Q3）。"""
@@ -578,7 +550,6 @@ def test_typo_field_gate_raises_clear_not_operationalerror(read_game):
     db, state, content = read_game
     with pytest.raises(ValueError):
         _gate_passed({"region.huguang.grane_security": ">=1"}, state.metrics, db)  # grain_security typo
-
 
 def test_gate_cond_numeric_neq_rejected_text_neq_ok():
     """cmr r1（Claude+codex concur）：'!=5' 数值 not-equal load 不许（runtime 数值分支无 !=、
@@ -590,7 +561,6 @@ def test_gate_cond_numeric_neq_rejected_text_neq_ok():
     assert gate_cond_form_error("==ming") == ""
     assert gate_cond_form_error("==5") == ""        # 数值 == → 放行
 
-
 def test_gate_key_rejects_empty_segments():
     """cmr r1（codex）：空 id / 空字段 / | 列表空成员 → fail-loud 素材（非静默/SQL 崩）。"""
     from ming_sim.content import gate_key_form_error
@@ -598,7 +568,6 @@ def test_gate_key_rejects_empty_segments():
     assert gate_key_form_error("region.x.")             # 空字段
     assert gate_key_form_error("region.shaanxi|.unrest")  # | 含空成员
     assert gate_key_form_error("region.shaanxi.unrest") == ""  # 正常仍放行
-
 
 def test_typo_field_text_gate_raises_clear(read_game):
     """cmr r1（Claude）：文本相等 gate 引用 typo'd 字段 → text-branch（_eval_gate_key_str）的
@@ -609,7 +578,6 @@ def test_typo_field_text_gate_raises_clear(read_game):
     with pytest.raises(ValueError):
         _gate_passed({"region.huguang.controled_by": "==ming"}, state.metrics, db)  # controlled_by typo
 
-
 def test_gate_key_rejects_empty_class_name():
     """cmr r2（Claude+codex concur）：class.<名>@<region> 的类名为空（@ 前）→ fail-loud
     （| 守不到单 @ 子形）。存量 class.士绅@... 正常仍放行。"""
@@ -617,7 +585,6 @@ def test_gate_key_rejects_empty_class_name():
     assert gate_key_form_error("class.@nanzhili.satisfaction")          # 空类名
     assert gate_key_form_error("class.@n1|@n2.satisfaction")            # | 多成员均空类名
     assert gate_key_form_error("class.士绅@nanzhili.satisfaction") == ""  # 正常
-
 
 def test_text_cond_requires_text_capable_key():
     """cmr r2（codex）：文本相等 cond 须配单 id region/army/power 三段 key；多 id/聚合/class/
@@ -628,7 +595,6 @@ def test_text_cond_requires_text_capable_key():
     assert gate_text_key_form_error("region.a|b.controlled_by")              # 多 id 拒
     assert gate_text_key_form_error("class.士绅.satisfaction")                # class 拒
     assert gate_text_key_form_error("民心")                                  # bare metric 拒
-
 
 def test_load_fail_loud_on_text_cond_multi_id_key(monkeypatch):
     """load 时 文本 cond 配多 id key → SystemExit fail-loud（配对校验）。"""
@@ -641,7 +607,6 @@ def test_load_fail_loud_on_text_cond_multi_id_key(monkeypatch):
     with pytest.raises(SystemExit):
         content_mod.load_event_content("x.json")
 
-
 def test_text_cond_field_must_be_text_field():
     """cmr r3（codex）：文本相等 cond 须配各表文本字段；配数值字段（如 region.x.unrest）→ fail-loud
     （runtime str(数值)!=文本 永远 False）。controlled_by 等文本字段仍放行。"""
@@ -651,7 +616,6 @@ def test_text_cond_field_must_be_text_field():
     assert gate_text_key_form_error("region.huguang.unrest")               # 数值字段 → 拒
     assert gate_text_key_form_error("power.houjin.leverage")               # 数值字段 → 拒
 
-
 def test_gate_key_rejects_empty_region_after_at():
     """online codex P2：class.<名>@<空> = 想写 regional 漏 region → runtime 静默回退 national，
     fail-loud 拒之。national 用无 @ 形式仍放行；存量 @region 形式不误拒。"""
@@ -659,7 +623,6 @@ def test_gate_key_rejects_empty_region_after_at():
     assert gate_key_form_error("class.士绅@.satisfaction")          # @ 后空 region → 拒
     assert gate_key_form_error("class.士绅.satisfaction") == ""     # national（无 @）放行
     assert gate_key_form_error("class.士绅@nanzhili.satisfaction") == ""  # regional 正常放行
-
 
 def test_numeric_cond_on_text_field_raises_clear(read_game):
     """#159：数值比较 cond 配文本字段（如 region.x.controlled_by >=1）→ runtime int(str) ValueError
@@ -671,7 +634,6 @@ def test_numeric_cond_on_text_field_raises_clear(read_game):
     with pytest.raises(ValueError):
         _gate_passed({"region.huguang.controlled_by": ">=1"}, state.metrics, db)
 
-
 def test_character_gate_rejects_malformed_field_before_sql(read_game):
     """trigger_gate 字段名必须先过白名单，不能把畸形字段拼进 SQL。"""
     import pytest
@@ -680,7 +642,6 @@ def test_character_gate_rejects_malformed_field_before_sql(read_game):
 
     with pytest.raises(ValueError):
         _gate_passed({"character.毛文龙.loyalty;DROP": ">=1"}, state.metrics, db)
-
 
 def test_character_numeric_field_text_gate_raises_clear(read_game):
     """character 数值字段走文本比较时必须 fail-loud，不能 str(loyalty) 后静默 False。"""
@@ -691,7 +652,6 @@ def test_character_numeric_field_text_gate_raises_clear(read_game):
     with pytest.raises(ValueError):
         _gate_passed({"character.毛文龙.loyalty": "==active"}, state.metrics, db)
 
-
 def test_character_typo_field_gate_raises_clear(read_game):
     """character gate 字段名 typo（DB 无此列）沿用清晰 ValueError（#201）。"""
     import pytest
@@ -700,7 +660,6 @@ def test_character_typo_field_gate_raises_clear(read_game):
 
     with pytest.raises(ValueError):
         _gate_passed({"character.毛文龙.loyality": ">=1"}, state.metrics, db)
-
 
 def test_character_text_typo_field_gate_raises_clear(read_game):
     """character 文本 gate 字段名 typo 也必须 fail-loud（#201 cmr P2）。"""
@@ -711,7 +670,6 @@ def test_character_text_typo_field_gate_raises_clear(read_game):
     with pytest.raises(ValueError):
         _gate_passed({"character.毛文龙.locaiton": "==liaodong"}, state.metrics, db)
 
-
 def test_character_text_gate_key_passes_content_validation():
     """load-time 文本 gate 校验接受 character 的文本字段（#201）。"""
     from ming_sim.content import gate_text_key_form_error
@@ -719,20 +677,17 @@ def test_character_text_gate_key_passes_content_validation():
     assert gate_text_key_form_error("character.毛文龙.location") == ""
     assert gate_text_key_form_error("character.毛文龙.office") == ""
 
-
 def test_character_text_gate_rejects_serialized_list_field():
     """character.personal_skills 是序列化列表，不适合作普通文本等值门。"""
     from ming_sim.content import gate_text_key_form_error
 
     assert gate_text_key_form_error("character.毛文龙.personal_skills")
 
-
 def test_character_text_gate_rejects_numeric_character_field():
     """character loyalty 等数值字段不应被文本等值门放行。"""
     from ming_sim.content import gate_text_key_form_error
 
     assert gate_text_key_form_error("character.毛文龙.loyalty")
-
 
 def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, monkeypatch):
     """auto-trigger 事务体内转 issue 时不得内部 commit，回滚边界由外层 atomic 统一控制。"""
@@ -756,7 +711,6 @@ def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, mon
 
     assert calls == [(event_id, False)]
     assert {"id": event_id, "title": ev.title, "issue_id": 999} in triggered
-
 
 def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
     """内容契约：person_core_subjects 写了就必须是字符串数组，空字符串不能吞成缺省。"""
@@ -784,7 +738,6 @@ def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
     with pytest.raises(SystemExit):
         content_module.load_event_content("events.json")
 
-
 def test_mao_wenlong_event_excluded_after_appeasement(game):
     """#203/#12：毛文龙 loyalty 已过阈值时，袁斩毛文龙不应再按日历进候选。"""
     db, state, content = game
@@ -796,7 +749,6 @@ def test_mao_wenlong_event_excluded_after_appeasement(game):
     cands = issues.gather_candidate_events(state, db)
 
     assert all(ev.id != "mao_wenlong" for ev in cands)
-
 
 def test_mao_wenlong_event_remains_candidate_while_player_departure_is_in_transit(game):
     """#667：行止只启程；抵达前 location gate 仍读取原地点。"""
@@ -831,7 +783,6 @@ def test_mao_wenlong_event_remains_candidate_while_player_departure_is_in_transi
         assert dict(row) == {"location": "dongjiang_area", "transit_to": "shaanxi"}
         assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
 
-
 def test_mao_wenlong_event_excluded_after_player_reassigns_yuan(game):
     """#191 CMR：袁崇焕仍活但不掌关宁时，斩毛事件不应仅因袁 active 进候选。"""
     db, state, content = game
@@ -848,7 +799,6 @@ def test_mao_wenlong_event_excluded_after_player_reassigns_yuan(game):
     cands = issues.gather_candidate_events(state, db)
 
     assert all(ev.id != "mao_wenlong" for ev in cands)
-
 
 def test_mao_wenlong_event_trigger_lands_character_status(game):
     """#203：未安抚时袁斩毛文龙触发后，毛文龙退场事实必须落库。"""
@@ -877,7 +827,6 @@ def test_mao_wenlong_event_trigger_lands_character_status(game):
             "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
         ).fetchone()[0] == before_logs + 1
 
-
 def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome(game):
     """ship-pre CMR：普通锦州战备整饬不等于松锦决战战果。"""
     db, state, content = game
@@ -899,7 +848,6 @@ def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome
     ).fetchone()["training"] == before + 5
     assert out["army_changes"][0].get("rejected") is not True
 
-
 def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game):
     """#189 CMR：战略/外敌战事不能只记事件触发而无主账结果。"""
     db, state, content = game
@@ -919,7 +867,6 @@ def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game)
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
     assert not db.has_event_triggered("jisi_lubian")
 
-
 def test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta(game):
     """ship-pre R5：低层 issue applier 也不能绕过战略战事主账门。"""
     db, state, content = game
@@ -938,7 +885,6 @@ def test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta(
 
     assert out["new_issues"][0]["rejected"] is True
     assert not db.has_event_triggered("jisi_lubian")
-
 
 def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected(game):
     """ship-pre CMR：普通调防只含战略地名，不得被误当成未触发战役战果。"""
@@ -961,7 +907,6 @@ def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected
         "SELECT station FROM armies WHERE id = ?", ("guanning",)
     ).fetchone()["station"] == "锦州前屯"
     assert out["army_changes"][0].get("rejected") is not True
-
 
 def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta(game):
     """PR R1：普通北直隶边防政策不能被林丹汗西迁锚点误当成孤儿战果。"""
@@ -990,7 +935,6 @@ def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 27
     assert out["region_changes"][0].get("rejected") is not True
-
 
 @pytest.mark.parametrize("reason", [
     "修筑洛阳城防，河南军压下降",
@@ -1025,7 +969,6 @@ def test_henan_place_policy_delta_does_not_capture_untriggered_fall_events(game,
     ).fetchone()["military_pressure"] == 26
     assert out["region_changes"][0].get("rejected") is not True
 
-
 def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(game):
     """PR R3：普通李自成势力变化不能因河南+流寇泛锚点被误当成洛阳陷落战果。"""
     db, state, content = game
@@ -1057,7 +1000,6 @@ def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(ga
     ).fetchone()["military_strength"] == 49
     assert out["power_changes"][0].get("rejected") is not True
 
-
 def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(game):
     """#189 CMR R2：同信封无关地区变化不能冒充该战略战事的主账结果。"""
     db, state, content = game
@@ -1081,7 +1023,6 @@ def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(gam
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
     ).fetchone()["unrest"] == 79
-
 
 def test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
     """#189 CMR R5：目标地区上的普通变化也不能冒充该战事结果。"""
@@ -1108,7 +1049,6 @@ def test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_eve
     ).fetchone()["unrest"] == 79
     assert out["region_changes"][0].get("rejected") is not True
 
-
 def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(game):
     """#189 CMR R4：无关人物变化不能冒充战略战事主账结果。"""
     db, state, content = game
@@ -1131,7 +1071,6 @@ def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(gam
     assert not db.has_event_triggered("jisi_lubian")
     assert db.get_character_status("孙传庭")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
-
 
 def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
     """ship-pre CMR R4：无关人物即使 reason 带战役锚词，也不能冒充战略战事主账。"""
@@ -1156,7 +1095,6 @@ def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_eve
     assert db.get_character_status("孙传庭")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
 
-
 def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate(game):
     """#189 CMR R5：点名将普通人物变化不能只靠姓名冒充该战事结果。"""
     db, state, content = game
@@ -1179,7 +1117,6 @@ def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_eve
     assert not db.has_event_triggered("wuyin_lubian")
     assert db.get_character_status("卢象升")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
-
 
 def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game):
     """#189 CMR R2：战略事件被拒时，只跳过其战果，不能吞掉本月无关地区变化。"""
@@ -1204,7 +1141,6 @@ def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game)
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
     ).fetchone()["unrest"] == 79
-
 
 def test_rejected_strategic_event_preserves_unanchored_target_region_delta(game):
     """#189 CMR R5：战略事件拒收时，目标地区上的无关普通变化仍须落库。"""
@@ -1231,7 +1167,6 @@ def test_rejected_strategic_event_preserves_unanchored_target_region_delta(game)
     ).fetchone()["unrest"] == 79
     assert out["region_changes"][0].get("rejected") is not True
 
-
 def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
     """#189 CMR R4：战略事件重复/拒收时，不能吞掉同信封无关人物变化。"""
     db, state, content = game
@@ -1254,7 +1189,6 @@ def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
     assert db.get_character_status("孙传庭")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
-
 
 def test_rejected_strategic_event_does_not_land_substitute_commander_person_delta(game):
     """#189 CMR R3：替补将也是战事软判结果；重复/拒收事件不得单独杀人。"""
@@ -1293,7 +1227,6 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
         if isinstance(rejection.get("item"), dict)
     )
 
-
 def test_pending_gate_uses_same_place_canonical_terminal_state(game):
     """#667：同地行止真实终态不在途，pending gate 不得投影出 transit_to。"""
     db, _state, content = game
@@ -1312,7 +1245,6 @@ def test_pending_gate_uses_same_place_canonical_terminal_state(game):
         db,
         content=content,
     ) is False
-
 
 def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
     """post-merge CMR：event trigger 写入不得提前提交外层普通事务。"""
@@ -1345,7 +1277,6 @@ def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
             "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
         ).fetchone()[0] == before_logs
 
-
 def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game):
     """review R3：content 省略时也要 snapshot bind_content() 的人物内存。"""
     db, state, content = game
@@ -1371,7 +1302,6 @@ def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game
         assert db.get_character_status("毛文龙")[0] == "active"
         assert content.characters["毛文龙"].status == "active"
 
-
 def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(game):
     """post-merge CMR R9：外层事务 rollback 后，state.metrics 内存也必须回到事务前。"""
     db, state, content = game
@@ -1390,7 +1320,6 @@ def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(
     db.conn.rollback()
 
     assert state.metrics["民心"] == 50
-
 
 def test_event_pool_situation_insert_respects_outer_transaction_rollback(game):
     """post-merge CMR R2：situation 事件立项也不得由 insert_issue 提前提交外层事务。"""
@@ -1432,7 +1361,6 @@ def test_event_pool_situation_insert_respects_outer_transaction_rollback(game):
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
 
-
 def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     """#203 CMR：落库端也必须重验 trigger_gate，不能信任 LLM 伪造的候选 id。"""
     db, state, content = game
@@ -1456,7 +1384,6 @@ def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
     ).fetchone()[0] == before_logs
-
 
 def test_person_core_event_obsoletes_when_named_subject_is_dead(game):
     """#191：人物核心事件的点名主体永久死亡时，应 durable 作废并退出候选池。"""
@@ -1485,7 +1412,6 @@ def test_person_core_event_obsoletes_when_named_subject_is_dead(game):
         ("yuan_xialing",),
     ).fetchone()[0] == 1
 
-
 def test_yuan_xialing_event_excluded_without_jisi_triggered(game):
     """#191 CMR：袁下狱依赖己巳之变已发生，不能与上游事件同月凭其它事实一起候选。"""
     db, state, content = game
@@ -1503,7 +1429,6 @@ def test_yuan_xialing_event_excluded_without_jisi_triggered(game):
 
     assert all(ev.id != "yuan_xialing" for ev in cands)
 
-
 def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
     """ADR0014：己巳挡于边墙结局不应打开袁下狱链。"""
     db, state, content = game
@@ -1519,7 +1444,6 @@ def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
     )
 
     assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
-
 
 def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
     """#191 CMR：洛阳陷落是城市/流寇压力事件，福王已死不应让事件进入人物核心作废终态。"""
@@ -1540,7 +1464,6 @@ def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
         ("luoyang_fallen",),
     ).fetchone() is None
 
-
 def test_li_chenghai_event_opens_after_li_zicheng_historical_debut(game):
     """#191 CMR：李自成入河南不能被默认 offstage 卡死；历史登场后人物核心门应可达。"""
     db, state, content = game
@@ -1555,7 +1478,6 @@ def test_li_chenghai_event_opens_after_li_zicheng_historical_debut(game):
     assert any(item["name"] == "李自成" for item in debuted)
     assert db.get_character_status("李自成")[0] == "active"
     assert any(ev.id == "li_chenghai" for ev in cands)
-
 
 def test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path(game):
     """#191 CMR R3：张献忠不能被 offstage+debut 0 卡死；招抚态落库后再反门应可达。"""
@@ -1578,7 +1500,6 @@ def test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path(ga
     db.conn.execute("UPDATE regions SET unrest=? WHERE id=?", (55, "huguang"))
 
     assert any(ev.id == "zhangxianzhong_zaifan" for ev in issues.gather_candidate_events(state, db))
-
 
 def test_issue_191_person_core_events_are_explicitly_classified(content):
     """#191：人物核心类逐事件显式标注；战略/外敌点名将不误纳入。"""
@@ -1622,7 +1543,6 @@ def test_issue_191_person_core_events_are_explicitly_classified(content):
         event_id for event_id in not_person_core
         if content.event_by_id[event_id].person_core_subjects
     }
-
 
 def test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated(content):
     """#194：战略/外敌类事件显式分类，且每条都有结构化 trigger_gate。"""
@@ -1690,7 +1610,6 @@ def test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated(
         assert ev.trigger_gate == trigger_gate
         assert ev.person_core_subjects == []
 
-
 def test_strategic_foreign_classification_requires_outcome_targets(content, monkeypatch):
     """PR R3：trigger_class 是内容真源，消费者 target map 漏项必须启动期 fail-loud。"""
     targets = dict(issues._STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS)
@@ -1699,7 +1618,6 @@ def test_strategic_foreign_classification_requires_outcome_targets(content, monk
 
     with pytest.raises(SystemExit):
         issues.bind_content(content)
-
 
 def test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event(game):
     """#194：战略/外敌事件点名将是席位/软判对象，不因该将死亡作废。"""
@@ -1719,7 +1637,6 @@ def test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event(
         ("dalingghe",),
     ).fetchone()
     assert row is None
-
 
 def test_huabei_plague_auto_triggers_with_deterministic_core_effect(game):
     """#192：华北大疫是天灾核心事实，到点硬触发并落库，不等 LLM 候选记得写。"""
@@ -1743,7 +1660,6 @@ def test_huabei_plague_auto_triggers_with_deterministic_core_effect(game):
     ).fetchone()
     assert after["population"] == before["population"] - 400000  # #648：新档人口单位=人（ADR 0088），content -40万
     assert after["unrest"] == before["unrest"] + 6
-
 
 def test_historical_auto_trigger_core_effect_is_applied_once(game):
     """#192：确定性核心事实重进不应二次扣数，event_triggers 是硬幂等门。"""
@@ -1771,7 +1687,6 @@ def test_historical_auto_trigger_core_effect_is_applied_once(game):
         ("huabei_plague",),
     ).fetchone()[0] == 1
 
-
 def test_auto_trigger_historical_events_use_preloaded_terminal_refs(game, monkeypatch):
     """PR review：历史 auto_trigger 去重应批量读 event_triggers，避免每事件查 terminal_state。"""
     db, state, content = game
@@ -1787,7 +1702,6 @@ def test_auto_trigger_historical_events_use_preloaded_terminal_refs(game, monkey
     triggered = issues.auto_trigger_seed_issues(state, db)
 
     assert any(item["id"] == "huabei_plague" for item in triggered)
-
 
 def test_historical_auto_trigger_event_expires_after_latest_window(game):
     """#188：历史 auto_trigger 也须尊重最晚窗口，过期后不能硬触发。"""
@@ -1812,7 +1726,6 @@ def test_historical_auto_trigger_event_expires_after_latest_window(game):
         assert db.find_any_issue_by_origin("event_pool", "__test_expiring_historical_auto__") is None
     finally:
         content.events.remove(ev)
-
 
 def test_gated_auto_trigger_seed_event_does_not_refire_after_issue_resolved(game):
     """#1892：世界事件读已落终态不再重发——结案后下月不复发（判 J4）。
@@ -1846,7 +1759,6 @@ def test_gated_auto_trigger_seed_event_does_not_refire_after_issue_resolved(game
     finally:
         content.seed_events.remove(ev)
 
-
 def test_huabei_plague_keeps_soft_degree_axis_as_situation_issue(game):
     """#192：天灾核心事实硬落后，蔓延/赈疫程度轴仍留 active issue 给软判推进。"""
     db, state, content = game
@@ -1868,7 +1780,6 @@ def test_huabei_plague_keeps_soft_degree_axis_as_situation_issue(game):
         "origin_kind": "event_pool",
         "origin_ref": "huabei_plague",
     }
-
 
 def test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effect_fails(game, monkeypatch):
     """CMR：核心事实落库失败时，不能留下已建软 issue 但未标 trigger 的半状态。"""
@@ -1892,7 +1803,6 @@ def test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effec
         ("event_pool", "huabei_plague"),
     ).fetchone() is None
     assert not db.has_event_triggered("huabei_plague")
-
 
 def test_historical_situation_auto_trigger_backfills_core_effect_for_existing_soft_issue(game):
     """CMR：旧存档已有同源 soft issue 经 schema migration 后，仍须补落核心事实。"""
@@ -1936,7 +1846,6 @@ def test_historical_situation_auto_trigger_backfills_core_effect_for_existing_so
     assert after["population"] == before["population"] - 400000  # #648：新档人口单位=人（ADR 0088），content -40万
     assert after["unrest"] == before["unrest"] + 6
 
-
 def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
     """#192：京师大疫核心事实直接削京营，不靠 LLM 记得为甲申链写状态。"""
     db, state, content = game
@@ -1959,7 +1868,6 @@ def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
     ).fetchone()
     assert after["manpower"] == before["manpower"] - 51000
     assert after["morale"] == before["morale"] - 16
-
 
 def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
     """#1893/#192：称帝不选不落、选中一次落定——两向都走真实接缝。
@@ -2052,7 +1960,6 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
         ("huangtaiji_chengdi",),
     ).fetchone()[0] == 1
 
-
 def test_fiscal_levy_events_stay_out_of_model_candidate_pool(game):
     """#1892/#1893：三饷是皇帝亲裁，不进人物候选交模型代批（ADR 0020）。"""
     from ming_sim.issues import FISCAL_LEVY_EVENT_CATEGORY
@@ -2071,7 +1978,6 @@ def test_fiscal_levy_events_stay_out_of_model_candidate_pool(game):
         assert not levy_ids & {
             ev.id for ev in issues.gather_candidate_events(state, db)
         }
-
 
 @pytest.mark.parametrize(
     "event_id,setup",
@@ -2117,7 +2023,6 @@ def test_person_events_are_model_candidates_not_engine_hard_fired(game, event_id
     assert db.event_terminal_state(event_id) is None
     assert db.find_any_issue_by_origin("event_pool", event_id) is None
     assert event_id in {ev.id for ev in issues.gather_candidate_events(state, db)}
-
 
 def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
     """post-merge CMR：同一 payload 的 advances 不能先打开 event_pool gate 再立刻触发。"""
@@ -2168,7 +2073,6 @@ def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
 
-
 def test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta(game):
     """post-merge CMR R3：顶层 metric_delta 不能先打开 event_pool gate 再触发。"""
     db, state, content = game
@@ -2208,7 +2112,6 @@ def test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta(game):
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
 
 def test_event_pool_rechecks_after_advances_close_gate(game):
     """post-merge CMR R4：同一 payload 的 advances 关掉 gate 后，不得沿用旧候选触发事件。"""
@@ -2258,7 +2161,6 @@ def test_event_pool_rechecks_after_advances_close_gate(game):
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
 
 def test_event_pool_rechecks_after_prior_event_effect_closes_gate(game):
     """post-merge CMR R5：同一 payload 前一事件效果关门后，后一事件不得沿用旧候选。"""
@@ -2328,7 +2230,6 @@ def test_event_pool_rechecks_after_prior_event_effect_closes_gate(game):
         content.event_by_id.pop(first.id, None)
         content.event_by_id.pop(second.id, None)
 
-
 def test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback(game):
     """post-merge CMR R5：decree 新立 issue 也不得由 insert_issue 提前提交外层事务。"""
     db, state, _content = game
@@ -2358,7 +2259,6 @@ def test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback(game
     db.conn.rollback()
 
     assert db.conn.execute("SELECT id FROM issues WHERE id=?", (issue_id,)).fetchone() is None
-
 
 def test_issue_tracker_advance_respects_outer_transaction_rollback(game):
     """post-merge CMR R4：advances 段不得由 db.advance_issue 提前提交外层事务。"""
@@ -2393,7 +2293,6 @@ def test_issue_tracker_advance_respects_outer_transaction_rollback(game):
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?",
         (issue_id,),
     ).fetchone()[0] == before_advances
-
 
 def test_issue_tracker_advance_effects_respect_outer_transaction_rollback(game):
     """post-merge CMR R5：advance 触发的终结经济效果不得提前提交外层事务。"""
@@ -2434,7 +2333,6 @@ def test_issue_tracker_advance_effects_respect_outer_transaction_rollback(game):
         (reason,),
     ).fetchone()[0] == 0
 
-
 def test_issue_tracker_close_respects_outer_transaction_rollback(game):
     """post-merge CMR R4：close_issues 段不得由 db.close_issue 提前提交外层事务。"""
     db, state, _content = game
@@ -2469,7 +2367,6 @@ def test_issue_tracker_close_respects_outer_transaction_rollback(game):
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?",
         (issue_id,),
     ).fetchone()[0] == before_advances
-
 
 def test_issue_tracker_close_effects_respect_outer_transaction_rollback(game):
     """post-merge CMR R5：close 终结效果的经济/建筑/派系/遗产写入必须跟外层事务回滚。"""
@@ -2527,7 +2424,6 @@ def test_issue_tracker_close_effects_respect_outer_transaction_rollback(game):
         "SELECT COUNT(*) FROM legacies WHERE name='测试遗产R5'"
     ).fetchone()[0] == 0
 
-
 def test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback(game):
     """post-merge CMR R5：close 终结实体后果建军也必须跟外层事务回滚。"""
     db, state, _content = game
@@ -2573,7 +2469,6 @@ def test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback(g
         (army_id,),
     ).fetchone()[0] == 0
 
-
 def test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback(game):
     """post-merge CMR R6：终结效果读 legacy_modifiers 时过期清理不得提前提交外层事务。"""
     db, state, _content = game
@@ -2616,7 +2511,6 @@ def test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback(g
         (reason,),
     ).fetchone()[0] == 0
 
-
 def test_apply_issue_entities_person_changes_respect_commit_false(game):
     """post-merge CMR R6：_apply_issue_entities(commit=False) 的人物 DB 写入不得自行提交。"""
     db, state, content = game
@@ -2648,7 +2542,6 @@ def test_apply_issue_entities_person_changes_respect_commit_false(game):
         ("毛文龙",),
     ).fetchone()[0] == before_logs
 
-
 def test_apply_score_extraction_top_level_economy_respects_outer_transaction_rollback(game):
     """post-merge CMR R7：顶层 economy_moves 不得自行提交外层事务。"""
     db, state, content = game
@@ -2670,7 +2563,6 @@ def test_apply_score_extraction_top_level_economy_respects_outer_transaction_rol
         (reason,),
     ).fetchone()[0] == 0
 
-
 def test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollback(game):
     """post-merge CMR R7：顶层 fiscal_changes 不得由 fiscal_config helper 提前提交。"""
     db, state, content = game
@@ -2688,7 +2580,6 @@ def test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollbac
     db.conn.rollback()
 
     assert db.get_fiscal_config()[key] == before
-
 
 def test_apply_score_extraction_class_delta_respects_outer_transaction_rollback(game):
     """post-merge CMR R7：顶层 class_delta 不得由 classes helper 提前提交。"""
@@ -2726,7 +2617,6 @@ def test_apply_score_extraction_class_delta_respects_outer_transaction_rollback(
     assert after_row is not None
     after = after_row["satisfaction"]
     assert int(after) == before
-
 
 def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transaction_rollback(game):
     """post-merge CMR R7：顶层 region/army/power/faction/new_armies 共享外层事务。"""
@@ -2793,7 +2683,6 @@ def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transactio
     ).fetchone()["satisfaction"] == faction["satisfaction"]
     assert db.conn.execute("SELECT id FROM armies WHERE id=?", (new_army_id,)).fetchone() is None
 
-
 def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback(game):
     """post-merge CMR R7：顶层 fiscal_creates/removes 不得由财政 helper 提前提交。"""
     db, state, content = game
@@ -2830,7 +2719,6 @@ def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transacti
         "SELECT key FROM fiscal_config WHERE key IN (?, ?)",
         (created_key, created_rate_key),
     ).fetchall() == []
-
 
 def test_event_pool_pending_invalid_location_does_not_block_gate(game):
     """#667：拒收的 location-only 行止不得投影到事件 gate。"""
@@ -2888,7 +2776,6 @@ def test_event_pool_pending_invalid_location_does_not_block_gate(game):
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
 
-
 def test_event_pool_pending_invalid_appointment_does_not_block_gate(game):
     """post-merge CMR R7：会被任命转移矩阵拒收的人物变更，不应提前阻断事件门。"""
     db, state, content = game
@@ -2931,7 +2818,6 @@ def test_event_pool_pending_invalid_appointment_does_not_block_gate(game):
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
 
 def test_event_pool_pending_invalid_allegiance_change_does_not_block_gate(game):
     """post-merge CMR R7：缺方式/反噬的易主拒收项，不应提前阻断 power_id 门。"""
@@ -2976,7 +2862,6 @@ def test_event_pool_pending_invalid_allegiance_change_does_not_block_gate(game):
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
 
 def test_event_pool_pending_disposition_clears_office_gate(game):
     """post-merge CMR R7：同回合处置会清空 office，事件门不得沿用旧职。"""
@@ -3032,7 +2917,6 @@ def test_event_pool_pending_disposition_clears_office_gate(game):
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
 
 def test_event_pool_pending_invalid_location_does_not_clear_transit_gate(game):
     """#667：拒收的 location-only 行止不得清空 gate 所见在途目的地。"""
@@ -3090,7 +2974,6 @@ def test_event_pool_pending_invalid_location_does_not_clear_transit_gate(game):
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
 
 def test_event_pool_pending_person_power_change_blocks_gate(game):
     """同批人物易主会真实落库，pending 闸门也必须按同一语义预检。"""
@@ -3156,7 +3039,6 @@ def test_event_pool_pending_person_power_change_blocks_gate(game):
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
 
-
 def test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate(game):
     """post-merge CMR R8：同势力易主是 no-op，不能先把职名覆盖成身份名分再误阻断。"""
     db, state, content = game
@@ -3220,7 +3102,6 @@ def test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate(game)
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
 
 def test_event_pool_pending_allegiance_backlash_blocks_power_gate(game):
     """post-merge CMR R11：易主反噬会真实改 power.*，pending 闸门也必须看同回合副作用。"""
@@ -3288,7 +3169,6 @@ def test_event_pool_pending_allegiance_backlash_blocks_power_gate(game):
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
 
-
 def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
     """post-merge CMR R8：同一人的 pending 变更必须按顺序模拟，后续拒收项不能复活前序处置。"""
     db, state, content = game
@@ -3321,7 +3201,6 @@ def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
     assert db.get_character_status("袁崇焕")[0] == "dead"
     assert out["applied_person_changes"][0]["status"] == "dead"
     assert out["applied_person_changes"][1]["rejected"] is True
-
 
 def test_apply_score_extraction_appointment_rolls_back_with_outer_transaction(game):
     """外层事务回滚时，任命的 DB 与内存身份均回到旧值。"""
@@ -3357,7 +3236,6 @@ def test_apply_score_extraction_appointment_rolls_back_with_outer_transaction(ga
         ("韩爌",),
     ).fetchone()["office"] == "内阁首辅"
     assert content.characters["韩爌"].office == "内阁首辅"
-
 
 def test_event_pool_pending_alias_appointment_blocks_canonical_gate(game):
     """post-merge CMR R9：任命别名会真实归一到在册大臣，pending 闸门也必须看规范名。"""
@@ -3412,7 +3290,6 @@ def test_event_pool_pending_alias_appointment_blocks_canonical_gate(game):
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
 
 def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
     """online R1 Gemini：非任命动作也会用别名，pending 闸门须按规范名重算。"""
@@ -3472,129 +3349,6 @@ def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
 
-
-def test_pending_person_gate_prefetches_character_rows_for_displacement(game):
-    """online R1 Gemini：独占官职顶替模拟不得对每个人物逐条 SELECT。"""
-    db, _state, content = game
-    issues.bind_content(content)
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "蓟辽督师", "职名分", "袁崇焕"),
-    )
-    db.conn.execute(
-        "UPDATE characters SET status=?, power_id=?, office=?, office_type=? WHERE name=?",
-        ("active", "ming", "兵部尚书,左都御史", "兵部", "崔呈秀"),
-    )
-    ev = Event(
-        id="__test_prefetch_displacement_pending__",
-        title="测试·顶替预加载",
-        kind="朝议",
-        summary="崔呈秀仍兼兵部尚书时才可触发。",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.崔呈秀.office": "== 兵部尚书,左都御史"},
-    )
-    select_count = 0
-
-    def trace(sql):
-        nonlocal select_count
-        if sql.lstrip().upper().startswith("SELECT"):
-            select_count += 1
-
-    db.conn.set_trace_callback(trace)
-    try:
-        blocked = issues._pending_person_changes_block_event_gate(
-            ev,
-            [{"name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
-            db,
-            content=content,
-        )
-    finally:
-        db.conn.set_trace_callback(None)
-
-    assert blocked is True
-    assert select_count <= 8
-
-
-def test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues(game, monkeypatch):
-    """online R3 Gemini：同一批 event_pool 不应为每个 pending gate 重查全量人物表。"""
-    db, state, content = game
-    issues.bind_content(content)
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
-    ev1 = Event(
-        id="__test_shared_shadow_prefetch_1__",
-        title="测试·共享快照一",
-        kind="朝议",
-        summary="x",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.status": "== active"},
-    )
-    ev2 = Event(
-        id="__test_shared_shadow_prefetch_2__",
-        title="测试·共享快照二",
-        kind="朝议",
-        summary="x",
-        urgency=10,
-        severity=10,
-        credibility=100,
-        interests=[],
-        audiences=[],
-        event_type="situation",
-        trigger_gate={"character.袁崇焕.status": "== active"},
-    )
-    content.seed_events.extend([ev1, ev2])
-    content.event_by_id[ev1.id] = ev1
-    content.event_by_id[ev2.id] = ev2
-
-    def fake_gather_candidate_events(_state, _db):
-        return [ev1, ev2]
-
-    full_character_selects = 0
-
-    def trace(sql):
-        nonlocal full_character_selects
-        normalized = " ".join(sql.split()).upper()
-        if "FROM CHARACTERS" in normalized and "STATUS_REASON" in normalized:
-            full_character_selects += 1
-
-    monkeypatch.setattr(issues, "gather_candidate_events", fake_gather_candidate_events)
-    db.conn.set_trace_callback(trace)
-    try:
-        out = issues.apply_issue_tracker_output(
-            db,
-            state,
-            {
-                "new_issues": [
-                    {"origin_kind": "event_pool", "id": ev1.id},
-                    {"origin_kind": "event_pool", "id": ev2.id},
-                ]
-            },
-            content=content,
-            pending_person_changes_for_gates=[
-                {"name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "测试共享快照"}
-            ],
-            candidate_event_ids_at_input={ev1.id, ev2.id},
-        )
-    finally:
-        db.conn.set_trace_callback(None)
-        content.seed_events.remove(ev1)
-        content.seed_events.remove(ev2)
-        content.event_by_id.pop(ev1.id, None)
-        content.event_by_id.pop(ev2.id, None)
-
-    assert [item["rejected"] for item in out["new_issues"]] == [True, True]
-    assert full_character_selects == 1
-
-
 def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game):
     """post-merge CMR R9：宗藩任命会被真实写口拒收，pending 闸门不得按成功授官误挡。"""
     db, state, content = game
@@ -3648,7 +3402,6 @@ def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
 
 def test_event_pool_pending_appointment_displacement_blocks_displaced_office_gate(game):
     """post-merge CMR R9：独占实职顶替会真实改旧任 office，pending 闸门必须模拟被顶替者。"""
@@ -3713,7 +3466,6 @@ def test_event_pool_pending_appointment_displacement_blocks_displaced_office_gat
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
 
-
 def test_event_pool_pending_appointment_clears_reason_gate(game):
     """post-merge CMR R10：任命起复会真实改 reason_code/status_reason，pending 闸门不得沿用旧缘由。"""
     db, state, content = game
@@ -3768,7 +3520,6 @@ def test_event_pool_pending_appointment_clears_reason_gate(game):
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
 
-
 def test_event_pool_pending_appointment_updates_office_type_gate(game):
     """post-merge CMR R10：任命后 office_type 由真实写口推断，pending 闸门也要同步。"""
     db, state, content = game
@@ -3817,7 +3568,6 @@ def test_event_pool_pending_appointment_updates_office_type_gate(game):
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
 
 def test_event_pool_pending_appointment_normalizes_equivalent_office(game):
     """post-merge CMR R10：全角分隔的等价官职经真实写口规范化后，不应误阻断旧 office 门。"""
@@ -3868,7 +3618,6 @@ def test_event_pool_pending_appointment_normalizes_equivalent_office(game):
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
 
-
 def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
     """post-merge CMR R4：cancels 段不得由 db.cancel_issue 提前提交外层事务。"""
     db, state, _content = game
@@ -3903,7 +3652,6 @@ def test_issue_tracker_cancel_respects_outer_transaction_rollback(game):
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=?",
         (issue_id,),
     ).fetchone()[0] == before_advances
-
 
 def test_issue_tracker_cancel_cost_respects_outer_transaction_rollback(game):
     """post-merge CMR R5：cancel applied_cost 的经济效果不得提前提交外层事务。"""
@@ -3947,7 +3695,6 @@ def test_issue_tracker_cancel_cost_respects_outer_transaction_rollback(game):
         (reason,),
     ).fetchone()[0] == 0
 
-
 def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game):
     """post-merge CMR：同回合人物评定应先影响 event_pool 前提门。"""
     db, state, content = game
@@ -3972,7 +3719,6 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game
     assert db.get_character_status("毛文龙")[0] == "active"
     assert db.conn.execute("SELECT loyalty FROM characters WHERE name=?", ("毛文龙",)).fetchone()["loyalty"] == 70
 
-
 def test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal(game):
     """post-merge CMR R2：同回合袁崇焕退场应阻断袁斩毛文龙事件。"""
     db, state, content = game
@@ -3996,7 +3742,6 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal(game):
     assert not db.has_event_triggered("mao_wenlong")
     assert db.get_character_status("毛文龙")[0] == "active"
     assert db.get_character_status("袁崇焕")[0] == "dismissed"
-
 
 def test_invalid_pending_person_change_does_not_block_event_gate(game):
     """post-merge CMR R4：未被人物 applier 接受的同回合处置，不得提前阻断事件 gate。"""
@@ -4023,7 +3768,6 @@ def test_invalid_pending_person_change_does_not_block_event_gate(game):
         assert db.get_character_status("袁崇焕")[0] == "active"
         assert out["applied_person_changes"][0]["rejected"] is True
         assert out["applied_person_changes"][0]["category"] == "invalid_transition"
-
 
 def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
     """#191：毛文龙已永久死亡时，斩毛人物核心事件应作废而非只当回合空判。"""
@@ -4057,7 +3801,6 @@ def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
     assert row is not None
     assert row["terminal_state"] == "obsolete"
     assert row["source"] == "person_core_dead"
-
 
 def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
     """#187 ship-pre：袁崇焕不在 active 位时，不应发生袁崇焕斩毛文龙。"""
@@ -4096,7 +3839,6 @@ def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
         assert db.conn.execute(
             "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
         ).fetchone()[0] == before_logs
-
 
 def test_event_pool_current_candidate_recheck_cached_until_state_changes(game, monkeypatch):
     """online R2 Gemini：同一批无状态变化的 event_pool 项不应重复重算候选池。"""
@@ -4158,7 +3900,6 @@ def test_event_pool_current_candidate_recheck_cached_until_state_changes(game, m
 
     assert [item["rejected"] for item in out["new_issues"]] == [True, True]
     assert calls == 1
-
 
 def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
     """#203 CMR：同一轮重复 emit 已触发事件时，第二条应拒收留痕而不是 abort。"""
