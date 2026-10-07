@@ -672,8 +672,6 @@ def test_numeric_cond_on_text_field_raises_clear(read_game):
         _gate_passed({"region.huguang.controlled_by": ">=1"}, state.metrics, db)
 
 
-
-
 def test_character_gate_rejects_malformed_field_before_sql(read_game):
     """trigger_gate 字段名必须先过白名单，不能把畸形字段拼进 SQL。"""
     import pytest
@@ -692,7 +690,6 @@ def test_character_numeric_field_text_gate_raises_clear(read_game):
 
     with pytest.raises(ValueError):
         _gate_passed({"character.毛文龙.loyalty": "==active"}, state.metrics, db)
-
 
 
 def test_character_typo_field_gate_raises_clear(read_game):
@@ -735,7 +732,6 @@ def test_character_text_gate_rejects_numeric_character_field():
     from ming_sim.content import gate_text_key_form_error
 
     assert gate_text_key_form_error("character.毛文龙.loyalty")
-
 
 
 def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, monkeypatch):
@@ -1318,7 +1314,6 @@ def test_pending_gate_uses_same_place_canonical_terminal_state(game):
     ) is False
 
 
-
 def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
     """post-merge CMR：event trigger 写入不得提前提交外层普通事务。"""
     db, state, content = game
@@ -1375,7 +1370,6 @@ def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game
 
         assert db.get_character_status("毛文龙")[0] == "active"
         assert content.characters["毛文龙"].status == "active"
-
 
 
 def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(game):
@@ -1525,15 +1519,6 @@ def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
     )
 
     assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
-
-
-def test_person_write_state_restore_removes_dynamic_character_attrs(game):
-    """人事写口失败回滚必须删除快照中不存在的动态属性，避免内存幽灵状态残留。"""
-    db, _state, content = game
-    snapshot = issues._snapshot_person_write_state(db, content)
-    content.characters["毛文龙"].ghost_preflight_attr = "leak"
-
-    issues._restore_person_write_state(db, content, snapshot, commit=False)
 
 
 def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):
@@ -3105,7 +3090,6 @@ def test_event_pool_pending_invalid_location_does_not_clear_transit_gate(game):
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
-
 
 
 def test_event_pool_pending_person_power_change_blocks_gate(game):

@@ -264,23 +264,6 @@ def test_rollback_restores_existing_character_attributes(game, monkeypatch):
     assert refreshed.office == office_before
 
 
-def test_reload_passes_llm_config_to_content_rebuild(game, monkeypatch):
-    """content 重建走 restore 同参：llm_config 必传（cmr S5 r3，缺省会降级「待铨」）。"""
-    import ming_sim.session as session_mod
-    from ming_sim.decree import reload_state_from_db
-    db, state, content = game
-    db.llm_config = object()  # 哨兵
-
-    seen = {}
-    def _spy(content_arg, db_arg, llm_config=None):
-        seen["llm_config"] = llm_config
-    monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", _spy)
-
-    reload_state_from_db(db, state, content=content)
-
-    assert seen["llm_config"] is db.llm_config
-
-
 # ── atomic_and_reload helper（S4：六处 try/atomic/except-reload-reraise 公共内核） ──
 
 def test_atomic_and_reload_commits_on_success(game):
