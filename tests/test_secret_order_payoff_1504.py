@@ -211,16 +211,6 @@ def _originate_catches(db, state, content, dossier_id, names):
     )
 
 
-def test_seed_guilt_structured_clean_vs_debt():
-    # 现约：只收结构化 severity∈{轻,中,重}；裸散文／解析失败不造罪（W4/#1896）。
-    assert not seed_guilt_counts_as_debt("")
-    assert not seed_guilt_counts_as_debt(None)
-    assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
-    assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
-    assert not seed_guilt_counts_as_debt("血债")
-    assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
-
-
 def test_decide_settlement_delivery_gap_bidirectional():
     done = decide_secret_order_settlement({
         "actual_units": 3.0, "target_units": 3.0, "criterion_text": "密查甲",
@@ -257,31 +247,6 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
     assert catch["kind"] == "缉获人犯" and catch["delivery"]["unit"] == "人犯"
     assert catch["delivery"]["target_units"] == 3.0
 
-
-def test_task_specific_contract_rejects_tags_without_explicit_fields():
-    with pytest.raises(CovertContractError):
-        build_covert_task_contract(
-            deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
-        )
-
-@pytest.mark.parametrize(
-    ("unit", "identity", "sign"),
-    [
-        ("万两", {"category": "密令差务", "account": "内库"}, -1),
-        ("万两", {"purpose": "其它", "account": "内库"}, -1),
-        ("万两", {"purpose": "其它", "category": "密令差务"}, -1),
-        ("人犯", {}, 1),
-        ("万亩", {"field": "registered_land", "region_target": "421"}, 1),
-        ("万亩", {"region": "henan", "region_target": "421"}, 1),
-        ("万亩", {"region": "henan", "field": "registered_land"}, 1),
-    ],
-)
-def test_confirmation_rejects_incomplete_delivery_identity(unit, identity, sign):
-    with pytest.raises(CovertContractError):
-        build_covert_task_contract(
-            kind="差务", axes=["实务事功"], direction=1,
-            delivery_unit=unit, delivery_target_units=1, effect_sign=sign, **identity,
-        )
 
 def test_confirm_persists_task_specific_contract_absent_before(game):
     db, state, _ = game

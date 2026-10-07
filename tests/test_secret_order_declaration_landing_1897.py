@@ -763,6 +763,7 @@ def test_bad_dossier_links_reject_only_their_own_item(game, monkeypatch, bad_cas
     assert len(approved.promises.rejected) == 1
     assert approved.promises.rejected[0].category == {
         "missing": "hallucinated_id", "relation": "invalid_enum", "note": "invalid_shape",
+        "capacity": "active_cap", "vassal": "ineligible_vassal", "foreign": "ineligible_power",
     }.get(bad_case, "invalid_state")
     assert len(approved.promises.applied) == 1
     assert len(db.list_secret_orders()) == before + 1

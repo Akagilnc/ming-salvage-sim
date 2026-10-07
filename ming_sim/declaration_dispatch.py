@@ -1778,6 +1778,7 @@ def _dispatch_commissions(
                     },
                     # ADR 0038：既有候选更新也按源夜承接，夜已收时不退回开夜（=0）。
                     night_id=int(night_id),
+                    origin_chat_turn_id=int(source_chat_turn_id or 0),
                 )
                 return {"id": oid, "kind": "office"}
             if appointment_fields["appoint_action"] == "任命":

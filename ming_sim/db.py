@@ -15242,18 +15242,26 @@ class GameDB:
         self._commit_dossier_write(commit, owns_transaction=owns_transaction)
         return len(rows)
 
-    def _night_id_for_staged_write(self, night_id: Optional[int], *, what: str) -> int:
+    def _night_id_for_staged_write(
+        self, night_id: Optional[int], *, what: str, source_chat_turn_id: int = 0,
+    ) -> int:
         """声明已持有源夜时盖源夜；未持有则盖当前开放夜。
 
         封夜后的迟到转译传入已封源夜：CLOSED 原样放行，不改挂落账当下的开放夜。
-        CLOSING 仍拒。night_id 缺或 <=0 维持开夜查找（无开放夜则为 0）。
+        CLOSING 在 source_chat_turn_id 为迟到源轮时放行（与 assert 同源）。
+        night_id 缺或 <=0 维持开夜查找（无开放夜则为 0）。
         """
         from ming_sim.audience_night import assert_night_accepts_player_input
         requested = int(night_id) if night_id is not None else 0
+        ctid = int(source_chat_turn_id or 0)
         if requested > 0:
-            bound = assert_night_accepts_player_input(self, requested, what=what)
+            bound = assert_night_accepts_player_input(
+                self, requested, what=what, source_chat_turn_id=ctid,
+            )
         else:
-            bound = assert_night_accepts_player_input(self, what=what)
+            bound = assert_night_accepts_player_input(
+                self, what=what, source_chat_turn_id=ctid,
+            )
         return int(bound["id"]) if bound is not None else 0
 
     def stage_pending_action(
@@ -15281,7 +15289,10 @@ class GameDB:
         payload_data: Dict[str, object] = dict(payload or {})
         # #498：未持源夜时挂当前开放夜。#1900：声明路径传入源夜则盖源夜。
         # CLOSING freezes new staged actions.
-        night_id = self._night_id_for_staged_write(night_id, what="暂存")
+        night_id = self._night_id_for_staged_write(
+            night_id, what="暂存",
+            source_chat_turn_id=int(source_chat_turn_id or 0),
+        )
         # 写前捕获归属：INSERT 后 in_transaction 会使 owns_transaction() 恒 False。
         owns = self.owns_transaction()
         cur = self.conn.execute(
@@ -15586,14 +15597,19 @@ class GameDB:
         self, candidate_id: int, payload: Dict[str, object],
         *,
         night_id: Optional[int] = None,
+        source_chat_turn_id: int = 0,
     ) -> int:
         """#529：原地更新某一道 pending office（任免）候选 payload（特旨/署理路径应答）。
 
         与 directive 改草同纪律——未持源夜时归属迁到当前开夜并清 night_approved；
         声明路径传入源夜则盖源夜。合并保留下划线控制键。
+        ``source_chat_turn_id``：迟到转译源轮，放行收夜持闸窗口。
         返回该行 id（不存在/非 pending office 则 0）。
         """
-        stamp = self._night_id_for_staged_write(night_id, what="任免路径应答")
+        stamp = self._night_id_for_staged_write(
+            night_id, what="任免路径应答",
+            source_chat_turn_id=int(source_chat_turn_id or 0),
+        )
         owns = self.owns_transaction()
         row = self.conn.execute(
             "SELECT id,payload_json,status FROM pending_actions "
@@ -15618,16 +15634,17 @@ class GameDB:
         self, candidate_id: int, payload: Dict[str, object],
         *,
         night_id: Optional[int] = None,
+        source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
         未持源夜时与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清
-        night_approved，使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。声明路径传入
-        源夜则盖源夜。返回该行 id（不存在/非 pending 则 0）。
-        **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
-        静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
-        #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。
-        声明路径传入源夜则盖源夜，不把既有候选迁到落账当下的开放夜。"""
-        stamp = self._night_id_for_staged_write(night_id, what="改草")
+        night_approved。声明路径传入源夜则盖源夜。返回该行 id。
+        ``source_chat_turn_id``：迟到转译源轮，放行收夜持闸窗口。
+        """
+        stamp = self._night_id_for_staged_write(
+            night_id, what="改草",
+            source_chat_turn_id=int(source_chat_turn_id or 0),
+        )
         row = self.conn.execute(
             "SELECT id,payload_json,status,version FROM pending_actions "
             "WHERE id=? AND kind='directive'",
@@ -15673,10 +15690,11 @@ class GameDB:
         rejection = getattr(exc, "dossier_link_rejection", None)
         if rejection is not None:
             # 业务拒收（模型指向不存在案卷）：durable 审计 + 终态 failed，
-            # 不是代码故障，不上抛。
+            # 不是代码故障，不上抛。类别随 typed 拒收贯通 promises 缝。
             self._record_dossier_link_rejection(
                 *rejection, pending_action_id=int(pa["id"]),
             )
+            self._record_typed_business_refusal(pa, exc, rejection_collector)
             self.conn.execute(
                 "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
             tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
@@ -15755,6 +15773,7 @@ class GameDB:
             return
         from ming_sim.applier import Provenance, RejectedItem
 
+        rejection_collector.note_commit_rejection(int(pa["id"]), exc)
         raw_item = getattr(exc, "item", None)
         item = dict(raw_item) if isinstance(raw_item, dict) else {}
         item.update({
