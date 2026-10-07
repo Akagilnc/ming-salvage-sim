@@ -69,12 +69,14 @@ from ming_sim.action_materialize import (
 )
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.applier import (
+    ItemAtomicReject,
     Provenance,
     RejectedItem,
     RejectionCollector,
     SectionResult,
     atomic,
     connection_owns_transaction,
+    item_savepoint_scope,
     mirror_rejections_after_commit,
 )
 from ming_sim.audience_night import (
@@ -824,61 +826,9 @@ def _reject(
     ))
 
 
-class _ItemAtomicReject(Exception):
-    """在 :func:`_item_savepoint_scope` 块内抛出以整项回滚（连同事务指针绑定）、
-    外层捕获后转成该项的 rejected 记录，不留半写状态。"""
-
-    def __init__(self, reason: str, category: str) -> None:
-        self.reason = reason
-        self.category = category
-        super().__init__(reason)
-
-
-@contextlib.contextmanager
-def _item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
-    """逐项落库的最小原子域，供 on_scene_facts / edge_events 的「动作 + 事务
-    指针绑定」两步复合写共用。已在外层事务（本模块 `dispatch_declaration`
-    直接分派自己的 `atomic_and_reload`，或 `settle_staged_declarations_in_decree_order`
-    的旨级 `atomic_and_reload`）内时只用 SAVEPOINT 做本项细粒度回滚，不再另开一层
-    `atomic`——嵌套 `atomic()` 的 flat 语义会把「本函数用 try/except 接住内层
-    异常后继续下一项」判定为吞异常并响亮拦截（cmr S1 F2），SAVEPOINT 才是
-    这里真正需要的局部回滚原语。未在任何外层事务内（独立调用）时用
-    `atomic(db)` 令本项独立开合、失败不牵连后续项——同 `db.py
-    commit_pending_actions` 既有 idiom（`atomic(self) if owns_transaction
-    else contextlib.nullcontext()` + SAVEPOINT，同一机制不重复发明）。
-
-    跨层回滚：`apply_person_changes_only` 等既有生产口在有外层事务时会调用
-    `settlement/run.py::_register_runtime_rollback_snapshot`，把恢复 `state.metrics`
-    / `content.characters` 等运行时内存态的闭包追加进
-    `conn._runtime_rollback_callbacks`——但那些闭包只在连接级真
-    `conn.rollback()`（`_SuspendableConnection.rollback`）时才会被执行；
-    SAVEPOINT 只回滚 DB 行，不会触发它。本函数复用同一个既有列表：本项
-    body 开始前记下列表长度，失败时只弹出并按登记的相反顺序执行本项新增的
-    那些闭包（不新建平行的运行时快照系统），让 DB 与运行时内存态在「本项被
-    拒收、其余 sibling 正常」这一常见场景下也保持一致；成功路径与「整段
-    declaration 真失败」路径不动这份列表，交给外层真正的 commit/rollback
-    按既有语义处理。"""
-    owns = connection_owns_transaction(db.conn)
-    cm = atomic(db) if owns else contextlib.nullcontext()
-    with cm:
-        rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
-        if rollback_callbacks is None:
-            rollback_callbacks = []
-            db.conn._runtime_rollback_callbacks = rollback_callbacks
-        baseline = len(rollback_callbacks)
-        db.conn.execute(f"SAVEPOINT {savepoint}")
-        try:
-            yield
-        except BaseException:
-            db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-            item_callbacks = rollback_callbacks[baseline:]
-            del rollback_callbacks[baseline:]
-            for callback in reversed(item_callbacks):
-                callback()
-            raise
-        else:
-            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+# 项级隔离真源在 applier；本模块保留旧私有名作调用点别名。
+_ItemAtomicReject = ItemAtomicReject
+_item_savepoint_scope = item_savepoint_scope
 
 
 def _commission_appointment_fields(

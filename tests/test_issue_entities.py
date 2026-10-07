@@ -387,21 +387,13 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before + 1
 
 
-def test_api_channel_initiative_does_not_use_backend_env_enrich(game, monkeypatch):
-    """显式 API 通道下，即便 env 残留 CLI backend，也不能触发 CLI-only 国策补全。"""
+def test_initiative_without_effects_lands_empty_not_invented(game, monkeypatch):
+    """国策缺效果时落账核据实为空，不由代码/旧补全路径捏造。"""
     import json as _j
     from ming_sim.models import LLMConfig
-    import ming_sim.cli_backend as _cb
 
     db, state, _ = game
-    called = []
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
-    monkeypatch.setattr(_cb, "enrich_initiative_effects",
-                        lambda *a, **k: called.append((a, k)) or {
-                            "effect_on_resolve": {},
-                            "ongoing_effects": {},
-                            "effect_on_fail": {},
-                        })
     cfg = LLMConfig(
         api_key="sk-test",
         base_url="https://api.example.com/v1",
@@ -414,7 +406,6 @@ def test_api_channel_initiative_does_not_use_backend_env_enrich(game, monkeypatc
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='api空回报国策'").fetchone()
     assert row is not None
-    assert called == []
     assert _j.loads(row["effect_on_resolve"]) == {}
 
 

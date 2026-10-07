@@ -19062,16 +19062,9 @@ class GameDB:
         ).fetchone()
         if row is not None:
             return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
-        # #883 CR R1 S2: bare ``secret_order:`` shared *sources* are no longer
-        # produced (create/update → private briefs; production disclosure →
-        # ``secret_order_disclosure:``; register gate rejects the prefix).
-        # Retained: ``record_public_knowledge_event`` still inherits exclusions
-        # by looking up secret_orders when source_id is ``secret_order:N`` —
-        # exercised by AC harness paths (test_character_knowledge_489 /
-        # test_minister_context / test_web_chat_serialization_393). Without
-        # this branch those writes lose the blacklist. session.py only DELETEs
-        # legacy sources with this prefix; no live production producer.
-        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
+        # 现役私有简报 ``secret_order_brief:N`` 回查 secret_orders 排除名单。
+        # 裸 ``secret_order:N`` 共享来源已退役，不再兼容读取。
+        match = re.fullmatch(r"secret_order_brief:(\d+)", source)
         if match:
             order_id = int(match.group(1))
             order = self.conn.execute(
@@ -19098,9 +19091,8 @@ class GameDB:
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
-        # Private briefs and retained bare secret-order sources share the
-        # canonical exclusions persisted on secret_orders.
-        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
+        # 现役私有简报回查 secret_orders 上的结构化排除目标。
+        match = re.fullmatch(r"secret_order_brief:(\d+)", source)
         if match:
             row = self.conn.execute(
                 "SELECT excluded_targets FROM secret_orders WHERE id=?",

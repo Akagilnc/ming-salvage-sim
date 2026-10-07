@@ -6,7 +6,12 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import RejectedItem
+from ming_sim.applier import (
+    ItemAtomicReject,
+    RejectedItem,
+    item_savepoint_scope,
+    register_runtime_rollback_snapshot,
+)
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 if TYPE_CHECKING:
@@ -504,94 +509,102 @@ def apply_person_changes(
                 llm_config=llm_config or db.llm_config,
             ):
                 continue
+            # 派生任命（放归/赦还先迁 status，再授官）是复合写：前置
+            # set_character_status 会 interrupt 关联案卷。拒收时不得人工逐表
+            # 补偿——用既有 item_savepoint_scope + 运行态快照整项回滚。
+            release_result = None
             if derive_label:
                 release_status = "offstage" if derive_label in {"放归", "赦还"} else "active"
-                # 必要前置（放归/赦还）执行 status 迁移原语（→offstage 居家），再由任命级联置 active。
-                # 政治标记（起复/昭雪/夺情）为纯审计记录、不迁移 status（决定4）——status→active+绑名分
-                # 由下面 apply_office_appointment 原子完成，避免「先置 active、名分未绑」的中间态（不变式1 全程成立）。
-                if derive_label in {"放归", "赦还"}:
-                    db.set_character_status(
-                        state,
-                        name,
-                        release_status,
-                        derive_label,
-                        reason_code="",
-                        content=content,
-                        commit=False,
-                    )
                 release_result = {
                     "name": name,
                     "动作": "处置",
                     "status": release_status,
                     "reason": derive_label,
                     "derived_from": derive_label,
-                    # applier 合成级联回声（放归/赦还/起复/昭雪/夺情）：
-                    # 信用写端只消费 extractor 宣告本体行，禁盯 derived_from 文本特判。
                     "cascade_echo": True,
                 }
-            result = project_appointment_result(
-                item,
-                office_appointment.apply_office_appointment(
-                    db,
-                    state,
-                    content,
-                    name,
-                    new_office,
-                    reason=str(item.get("reason") or ""),
-                    new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
-                    faction=str(item.get("faction") or "中立"),
-                    appointment_tenure=appointment_tenure,
-                    region_id=str(
-                        item.get("region_id")
-                        or item.get("任所")
-                        or item.get("辖区")
-                        or ""
-                    ).strip(),
-                    llm_config=llm_config,
-                    source=source,
-                ),
-            )
-            wrapped = result if isinstance(result, RejectedItem) else {"动作": effective_action, **result}
-            if derive_label:
-                if isinstance(wrapped, dict):
-                    wrapped["derived_from"] = derive_label
-                if isinstance(wrapped, RejectedItem):
-                    # transit_start_turn 与 transit_to 成对回滚：派生任命前置 set_character_status
-                    # （放归/赦还→offstage 属 ousted）现会清 transit_start_turn=0，回滚须对称还原，
-                    # 否则留「transit_to 非空 + start=0」被兜底当 legacy-overdue 误判（CMR r2 防御）。
-                    db.conn.execute(
-                        "UPDATE characters SET status=?, office=?, office_type=?, "
-                        "status_reason=?, status_changed_turn=?, reason_code=?, transit_to=?, "
-                        "transit_distance_remaining=?, transit_speed_factor=?, transit_start_turn=? "
-                        "WHERE name=?",
-                        (
-                            row["status"], row["office"], row["office_type"],
-                            row["status_reason"], row["status_changed_turn"], row["reason_code"],
-                            row["transit_to"], row["transit_distance_remaining"],
-                            row["transit_speed_factor"], row["transit_start_turn"], name,
-                        ),
+
+            def _run_appointment_write():
+                if derive_label in {"放归", "赦还"}:
+                    # 必要前置：status → offstage 居家，再由任命级联置 active。
+                    # 政治标记（起复/昭雪/夺情）不迁 status（决定4）。
+                    db.set_character_status(
+                        state,
+                        name,
+                        release_result["status"],
+                        derive_label,
+                        reason_code="",
+                        content=content,
+                        commit=False,
                     )
-                    if content is not None and name in content.characters:
-                        ch = content.characters[name]
-                        ch.status = str(row["status"] or "")
-                        ch.office = str(row["office"] or "")
-                        ch.office_type = str(row["office_type"] or ch.office_type)
-                        ch.transit_to = str(row["transit_to"] or "")
-                        ch.transit_distance_remaining = row["transit_distance_remaining"]
-                        ch.transit_speed_factor = row["transit_speed_factor"]
-                        ch.transit_start_turn = int(row["transit_start_turn"] or 0)
-                        # 对称 DB 侧回滚（上方 UPDATE 已还原全 7 字段）：内存也还原缘由/码，
-                        # 守三面同步（决定6），免前置步刷过内存缘由后此路回滚留脏值（PR#106 R2 gemini）。
-                        ch.status_reason = str(row["status_reason"] or "")
-                        ch.reason_code = str(row["reason_code"] or "")
-                else:
-                    applied.append(release_result)
-                    log_applied(release_result, item)
-            elif isinstance(wrapped, dict) and transition.startswith("normalize:"):
-                wrapped["normalized"] = f"{action}->{effective_action}"
+                return project_appointment_result(
+                    item,
+                    office_appointment.apply_office_appointment(
+                        db,
+                        state,
+                        content,
+                        name,
+                        new_office,
+                        reason=str(item.get("reason") or ""),
+                        new_office_type=str(
+                            item.get("office_type") or item.get("new_office_type") or ""
+                        ),
+                        faction=str(item.get("faction") or "中立"),
+                        appointment_tenure=appointment_tenure,
+                        region_id=str(
+                            item.get("region_id")
+                            or item.get("任所")
+                            or item.get("辖区")
+                            or ""
+                        ).strip(),
+                        llm_config=llm_config,
+                        source=source,
+                    ),
+                )
+
+            needs_item_isolation = derive_label in {"放归", "赦还"}
+            if needs_item_isolation:
+                sp = f"derive_appt_{abs(id(item)) & 0xFFFFFFFF:x}"
+                try:
+                    with item_savepoint_scope(db, sp):
+                        # 写前以本项开读的 DB 行对齐内存，再登记运行态快照：
+                        # 拒收时 SAVEPOINT 回 DB、callback 回内存，不扫关联表补偿。
+                        if content is not None and name in content.characters:
+                            ch = content.characters[name]
+                            ch.status = str(row["status"] or "")
+                            ch.office = str(row["office"] or "")
+                            ch.office_type = str(row["office_type"] or ch.office_type)
+                            ch.status_reason = str(row["status_reason"] or "")
+                            ch.reason_code = str(row["reason_code"] or "")
+                            ch.transit_to = str(row["transit_to"] or "")
+                            ch.transit_distance_remaining = row["transit_distance_remaining"]
+                            ch.transit_speed_factor = row["transit_speed_factor"]
+                            ch.transit_start_turn = int(row["transit_start_turn"] or 0)
+                        register_runtime_rollback_snapshot(db, state, content)
+                        result = _run_appointment_write()
+                        if isinstance(result, RejectedItem):
+                            raise ItemAtomicReject(result.reason, result.category)
+                except ItemAtomicReject:
+                    rejections.append(
+                        result if isinstance(result, RejectedItem) else rejected(
+                            item, "派生任命拒收", "invalid_transition",
+                        )
+                    )
+                    continue
+            else:
+                result = _run_appointment_write()
+
+            wrapped = result if isinstance(result, RejectedItem) else {"动作": effective_action, **result}
+            if derive_label and isinstance(wrapped, dict):
+                wrapped["derived_from"] = derive_label
             if isinstance(wrapped, RejectedItem):
                 rejections.append(wrapped)
                 continue
+            if release_result is not None:
+                applied.append(release_result)
+                log_applied(release_result, item)
+            elif transition.startswith("normalize:"):
+                wrapped["normalized"] = f"{action}->{effective_action}"
             applied.append(wrapped)
             log_applied(wrapped, item)
             for displacement_result in displaced_talent_pool_results(wrapped.get("displaced")):

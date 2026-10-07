@@ -9,9 +9,10 @@ from __future__ import annotations
 import enum
 import json
 import sqlite3
+import contextlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, List, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Tuple
 
 
 def safe_json_dumps(value: Any, **kwargs: Any) -> str:
@@ -187,6 +188,85 @@ def atomic(db: Any) -> Iterator[None]:
                 # commit 失败不留开事务（与原生 with conn: 语义一致）。
                 conn.rollback()
                 raise
+
+
+class ItemAtomicReject(Exception):
+    """在 :func:`item_savepoint_scope` 块内抛出以整项回滚，外层捕获后转拒收。"""
+
+    def __init__(self, reason: str, category: str) -> None:
+        self.reason = reason
+        self.category = category
+        super().__init__(reason)
+
+
+@contextmanager
+def item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
+    """逐项落库的最小原子域：外层事务内用 SAVEPOINT 做本项细粒度回滚。
+
+    已在外层事务内时只用 SAVEPOINT，不再另开 ``atomic``（嵌套 flat 语义会把
+    「接住内层异常后继续下一项」判为吞异常）。未在任何外层事务内时用
+    ``atomic(db)`` 令本项独立开合。
+
+    跨层回滚：本项 body 开始前记 ``_runtime_rollback_callbacks`` 长度，失败时
+    只回放本项新增的闭包（不新建平行快照系统）；成功路径留给外层 commit/
+    rollback 按既有语义处理。
+    """
+    owns = connection_owns_transaction(db.conn)
+    cm = atomic(db) if owns else contextlib.nullcontext()
+    with cm:
+        rollback_callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
+        if rollback_callbacks is None:
+            rollback_callbacks = []
+            db.conn._runtime_rollback_callbacks = rollback_callbacks
+        baseline = len(rollback_callbacks)
+        db.conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            yield
+        except BaseException:
+            db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            item_callbacks = rollback_callbacks[baseline:]
+            del rollback_callbacks[baseline:]
+            for callback in reversed(item_callbacks):
+                callback()
+            raise
+        else:
+            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+
+
+def register_runtime_rollback_snapshot(
+    db: Any,
+    state: Any,
+    content: Any = None,
+) -> None:
+    """Restore process memory if the surrounding DB transaction/item rolls back."""
+    conn = db.conn
+    callbacks = getattr(conn, "_runtime_rollback_callbacks", None)
+    if callbacks is None:
+        callbacks = []
+        conn._runtime_rollback_callbacks = callbacks
+    metrics_snapshot = dict(state.metrics)
+    character_objects = dict(content.characters) if content is not None else {}
+    character_attrs: Dict[str, Dict[str, object]] = {}
+    for name, character in character_objects.items():
+        character_attrs[name] = dict(vars(character))
+
+    def restore_runtime() -> None:
+        state.metrics.clear()
+        state.metrics.update(metrics_snapshot)
+        if content is not None:
+            for name in list(content.characters):
+                if name not in character_objects:
+                    del content.characters[name]
+            for name, character in character_objects.items():
+                content.characters[name] = character
+                for attr in list(vars(character)):
+                    if attr not in character_attrs[name]:
+                        delattr(character, attr)
+                for attr, value in character_attrs.get(name, {}).items():
+                    setattr(character, attr, value)
+
+    callbacks.append(restore_runtime)
 
 
 # ---------------------------------------------------------------------------

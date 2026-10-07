@@ -18,7 +18,12 @@ if TYPE_CHECKING:
     from ming_sim.models import GameState
     from ming_sim.content import GameContent
 
-from ming_sim.applier import Provenance, RejectedItem, SectionResult
+from ming_sim.applier import (
+    Provenance,
+    RejectedItem,
+    SectionResult,
+    register_runtime_rollback_snapshot,
+)
 from ming_sim.settlement import registry
 from ming_sim.settlement.outcome import (
     FiscalSectionResult,
@@ -553,11 +558,10 @@ def settle_delta(
     db._batch_frozen_open_affair_ids = run.frozen_open_affairs
     try:
 
-        def _execute(*, register_outer_runtime_snapshot: bool) -> SettlementOutcome:
-            # 仅在借用外层事务时登记运行态快照：供项级 SAVEPOINT 恢复与外层回滚接缝。
-            # 本调用为整事务主人时走 atomic_and_reload，不再用内存快照顶替 DB 同源重载。
-            if register_outer_runtime_snapshot:
-                _register_runtime_rollback_snapshot(db, state, ctx.content)
+        def _execute() -> SettlementOutcome:
+            # 整事务不在此登记全批运行态快照：事务主人走 atomic_and_reload；
+            # 借用外层时由最外层同源 reload 承接整批回滚。项级 SAVEPOINT 局部
+            # undo 由人物入口 / item_savepoint_scope 自行登记必要快照。
             if run.effect_sequence is not None:
                 _run_effect_sequence(run)
                 _run_registry_after_interleave(run)
@@ -572,8 +576,8 @@ def settle_delta(
             from ming_sim.decree import atomic_and_reload
 
             with atomic_and_reload(db, state, content=ctx.content):
-                return _execute(register_outer_runtime_snapshot=False)
-        return _execute(register_outer_runtime_snapshot=True)
+                return _execute()
+        return _execute()
     finally:
         db._batch_authorized_open_affair_ids = prev_authorized
         db._batch_frozen_open_affair_ids = prev_frozen
@@ -594,39 +598,8 @@ def _run_registry_after_interleave(run) -> None:
         _capture(run, spec.name, registry.load(spec)(run))
 
 
-def _register_runtime_rollback_snapshot(
-    db: GameDB,
-    state: GameState,
-    content: Optional[GameContent],
-) -> None:
-    """Restore process memory if the caller rolls back the surrounding DB transaction."""
-    conn = db.conn
-    callbacks = getattr(conn, "_runtime_rollback_callbacks", None)
-    if callbacks is None:
-        callbacks = []
-        conn._runtime_rollback_callbacks = callbacks
-    metrics_snapshot = dict(state.metrics)
-    character_objects = dict(content.characters) if content is not None else {}
-    character_attrs: Dict[str, Dict[str, object]] = {}
-    for name, character in character_objects.items():
-        character_attrs[name] = dict(vars(character))
-    def restore_runtime() -> None:
-        state.metrics.clear()
-        state.metrics.update(metrics_snapshot)
-        if content is not None:
-            for name in list(content.characters):
-                if name not in character_objects:
-                    del content.characters[name]
-            for name, character in character_objects.items():
-                content.characters[name] = character
-                for attr in list(vars(character)):
-                    if attr not in character_attrs[name]:
-                        delattr(character, attr)
-                for attr, value in character_attrs.get(name, {}).items():
-                    setattr(character, attr, value)
-
-    callbacks.append(restore_runtime)
-
+# 兼容旧测试/调用方对私有名的引用；真源在 applier。
+_register_runtime_rollback_snapshot = register_runtime_rollback_snapshot
 
 
 def apply_person_changes_only(
@@ -660,9 +633,10 @@ def apply_person_changes_only(
     from ming_sim.entities.character.apply import apply_person_changes
 
     def _write(*, register_outer_runtime_snapshot: bool):
-        # 外层事务内：快照供项级 SAVEPOINT 恢复；本入口为事务主人时改走同源重载。
+        # 外层事务内：快照供项级 SAVEPOINT 恢复（保护合法 sibling）；本入口为
+        # 事务主人时改走同源重载，不再用整批内存快照顶替。
         if register_outer_runtime_snapshot:
-            _register_runtime_rollback_snapshot(db, state, runtime_content)
+            register_runtime_rollback_snapshot(db, state, runtime_content)
         return apply_person_changes(
             db,
             state,

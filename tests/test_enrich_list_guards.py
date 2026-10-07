@@ -4,20 +4,17 @@ from __future__ import annotations
 import json
 import pytest
 
-import ming_sim.cli_backend as cb
 from ming_sim.applier import Provenance
 from ming_sim.declaration_dispatch import dispatch_declaration
 
 
 @pytest.mark.parametrize("bad", [True, 5, "oops", "  中文\ud800\n", {"原文": "  中文\ud800\n"}])
-def test_enriched_bad_buildings_rejected_without_losing_good_metrics(game, monkeypatch, bad):
+def test_bad_buildings_rejected_without_losing_good_metrics(game, bad):
     db, state, _ = game
-    raw = json.dumps({"effect_on_resolve": {"buildings": bad, "metrics": {"民心": 1}},
-                      "ongoing_effects": {}, "effect_on_fail": {}})
-    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (raw, 1))
-    effects = cb.enrich_initiative_effects("练新军", "现状", llm_config=None)
-    iid = db.insert_issue(state, kind="situation", title="待结局势",
-                          effect_on_resolve=effects["effect_on_resolve"])
+    iid = db.insert_issue(
+        state, kind="situation", title="待结局势",
+        effect_on_resolve={"buildings": bad, "metrics": {"民心": 1}},
+    )
     before = state.metrics["民心"]
     dispatch_declaration(db, state, {"effects": [{"close_issues": [
         {"issue_id": iid, "reason": "resolved"},

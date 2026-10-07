@@ -15,6 +15,23 @@ from ming_sim.materials import (
 )
 from tests.dossier_test_helpers import create_test_secret_order
 
+
+def _order_excluded_names(db, order_id):
+    row = db.conn.execute(
+        "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,),
+    ).fetchone()
+    return list(json.loads((row["excluded_names"] if row else "[]") or "[]"))
+
+
+def _record_order_public_disclosure(db, state, order_id, title, body):
+    """现役公开披露写法：disclosure 源 + 结构化排除，不走已退役裸 secret_order:。"""
+    db.record_public_knowledge_event(
+        state, title, body,
+        source_id=f"secret_order_disclosure:{order_id}:{state.turn}",
+        excluded_names=_order_excluded_names(db, order_id),
+    )
+    return f"secret_order_disclosure:{order_id}:{state.turn}"
+
 def test_role_roster_only_lists_current_active_ming_people(game):
     db, state, content = game
     reader = next(c for c in content.characters.values() if c.office_type == "礼部")
@@ -169,8 +186,8 @@ def test_turn_report_keeps_source_specific_secret_exclusion_boundary(game):
     order = create_test_secret_order(db,
         state, "毕自严", "暗查亏空", "密事不得告知礼部", [], excluded_names=[minister.name]
     )
-    db.record_public_knowledge_event(
-        state, "密事记录", "SECRET_SOURCE_MARKER_490", source_id=f"secret_order:{order}"
+    disclosure_id = _record_order_public_disclosure(
+        db, state, order, "密事记录", "SECRET_SOURCE_MARKER_490",
     )
     marker = "TURN_REPORT_SECRET_MARKER_490"
     # #883: this independently public source, not the aggregate itself,
@@ -181,10 +198,9 @@ def test_turn_report_keeps_source_specific_secret_exclusion_boundary(game):
     )
 
     view = db.get_character_knowledge(state, minister.name)
-    public_ids = {item.get("source_id") for item in view["public_events"]}
-
     public_sources = {item["source_id"] for item in view["public_events"]}
     assert "test:490:public" in public_sources
+    assert disclosure_id not in public_sources
     assert f"secret_order:{order}" not in public_sources
 
 def test_turn_report_projects_public_and_secret_items_per_character(game):
@@ -326,12 +342,13 @@ def test_secret_blacklist_survives_later_public_projection(game):
     order = create_test_secret_order(db,
         state, "毕自严", "暗查亏空", "查户部旧账", [], excluded_names=[minister.name]
     )
-    db.record_public_knowledge_event(
-        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+    disclosure_id = _record_order_public_disclosure(
+        db, state, order, "密查公开", "该案已奉明发",
     )
 
     view = db.get_character_knowledge(db.load_state(), minister.name)
 
+    assert not any(item["source_id"] == disclosure_id for item in view["public_events"])
     assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
 
 def test_public_reports_accumulate_across_turns(game):
@@ -437,15 +454,18 @@ def test_secret_office_exclusion_snapshots_people_before_transfer_and_publicatio
     )
 
     db.set_character_office(excluded.name, "礼部尚书", office_type="礼部")
-    db.record_public_knowledge_event(
-        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+    disclosure_id = _record_order_public_disclosure(
+        db, state, order, "密查公开", "该案已奉明发",
     )
 
     row = db.conn.execute("SELECT excluded_names FROM secret_orders WHERE id=?", (order,)).fetchone()
     assert excluded.name in json.loads(row["excluded_names"])
+    # 现役 brief 读出口仍能从 secret_orders 取结构化排除。
+    assert excluded.name in db.knowledge_exclusions_for_source(f"secret_order_brief:{order}")
     view = db.get_character_knowledge(state, excluded.name)
+    assert not any(item["source_id"] == disclosure_id for item in view["events"])
+    assert not any(item["source_id"] == disclosure_id for item in view["public_events"])
     assert not any(item["source_id"] == f"secret_order:{order}" for item in view["events"])
-    assert not any(item["source_id"] == f"secret_order:{order}" for item in view["public_events"])
     assert excluded.office == "礼部尚书"
 
 def test_disclosed_secret_source_keeps_its_public_projection(game):
@@ -456,13 +476,13 @@ def test_disclosed_secret_source_keeps_its_public_projection(game):
         state, "毕自严", "暗查亏空", "查户部旧账", [],
         excluded_names=[excluded.name],
     )
-    db.record_public_knowledge_event(
-        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+    disclosure_id = _record_order_public_disclosure(
+        db, state, order, "密查公开", "该案已奉明发",
     )
 
     items = db.knowledge_items_for_turn(state.turn)
 
-    disclosed = next(item for item in items if item["source_id"] == f"secret_order:{order}")
+    disclosed = next(item for item in items if item["source_id"] == disclosure_id)
     assert disclosed["title"] == "密查公开"
     assert disclosed["body"] == "该案已奉明发"
 
@@ -523,8 +543,8 @@ def test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure(game)
         "UPDATE secret_orders SET excluded_names=?, excluded_targets='{}' WHERE id=?",
         (json.dumps(["魏忠贤"], ensure_ascii=False), order),
     )
-    db.record_public_knowledge_event(
-        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+    disclosure_id = _record_order_public_disclosure(
+        db, state, order, "密查公开", "该案已奉明发",
     )
     assert db.update_secret_order_by_id(state, order, "续查", "继续查账")
     saved = db.conn.execute(
@@ -533,9 +553,15 @@ def test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure(game)
     assert "魏忠贤" in json.loads(saved["excluded_names"])
     public = db.conn.execute(
         "SELECT body FROM character_knowledge_events WHERE source_id=? AND character_name=''",
-        (f"secret_order:{order}",),
+        (disclosure_id,),
     ).fetchone()
     assert public["body"] == "该案已奉明发"
+    # 裸 secret_order: 不再作为公开见闻来源。
+    bare = db.conn.execute(
+        "SELECT 1 FROM character_knowledge_events WHERE source_id=?",
+        (f"secret_order:{order}",),
+    ).fetchone()
+    assert bare is None
 
 def test_secret_exclusion_is_source_scoped_not_global_for_same_bucket(game):
     db, state, content = game

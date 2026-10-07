@@ -479,19 +479,7 @@ def apply_issue_tracker_output(
             if origin_error:
                 entity_rejections.append(RejectedItem(item=ni, reason=origin_error["reason"], category=origin_error["category"], source=source))
                 continue
-        # 校验：国策缺效果时，CLI 后端可聚焦补全；模型给空即据实为空，不由代码捏造政治收益。
-        if kind == "initiative" and not resolve_eff and not is_commitment:
-            from ming_sim.cli_backend import cli_backend_active, enrich_initiative_effects
-            if cli_backend_active(llm_config):
-                enr = enrich_initiative_effects(
-                    title,
-                    str(ni.get("stage_text") or ""),
-                    llm_config=llm_config,
-                )
-                resolve_eff = _eff_dict(enr.get("effect_on_resolve"), "effect_on_resolve") or resolve_eff
-                ongoing_eff = _eff_dict(enr.get("ongoing_effects"), "ongoing_effects") or ongoing_eff
-                fail_eff = _eff_dict(enr.get("effect_on_fail"), "effect_on_fail") or fail_eff
-                print(f"[issue/enrich] 国策「{title}」补效果 resolve={bool(resolve_eff)} ongoing={bool(ongoing_eff)}")
+        # 国策效果由上游语义转译/声明供给；落账核不再调用旧 initiative 效果设计补全。
         # 字段强转脏数据 → 拒整项（ADR 0008 决定 1：new_issue 即「项」，坏字段令该项无法洁净构造
         # → 拒留痕，非默认掩盖）。这些强转会因脏 LLM 数据抛：bar_value/severity 的 int()、
         # cancel_cost 的 dict("脏")、tags 的 list(5)、_compute_inertia 的 legacy `int(inertia)`

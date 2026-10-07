@@ -962,8 +962,9 @@ def test_secret_order_carries_declared_exclusion_boundary_through_staging_to_db(
         "people": [excluded], "offices": ["兵部"],
     }
     assert excluded in json.loads(row["excluded_names"])
-    read_back = db.knowledge_exclusions_for_source(f"secret_order:{int(order['id'])}")
-    assert excluded in read_back  # 读口按该边界回查，排除对象确实被排除
+    read_back = db.knowledge_exclusions_for_source(f"secret_order_brief:{int(order['id'])}")
+    assert excluded in read_back  # 现役 brief 读口按该边界回查
+    assert db.knowledge_exclusions_for_source(f"secret_order:{int(order['id'])}") == []
 
 
 def test_secret_order_without_declared_exclusions_stays_empty_boundary(game):

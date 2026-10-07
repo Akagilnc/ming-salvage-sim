@@ -1491,22 +1491,26 @@ def test_issue_tracker_rollback_removes_dynamic_character_attrs(game):
     assert not hasattr(character, "_test_runtime_ghost_attr")
 
 
-def test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback(game):
-    """post-merge CMR R9：外层事务 rollback 后，state.metrics 内存也必须回到事务前。"""
+def test_apply_score_extraction_metric_delta_restores_runtime_via_outer_reload(game):
+    """整事务回滚后内存由最外层 atomic_and_reload 同源重载，不靠 settle 全批快照。"""
+    from ming_sim.decree import atomic_and_reload
+
     db, state, content = game
     state.metrics["民心"] = 50
+    db.conn.execute("UPDATE metrics SET value=? WHERE key=?", (50, "民心"))
     db.conn.commit()
 
-    db.conn.execute("BEGIN")
-    out = _land(
-        db,
-        state,
-        {"metric_delta": {"民心": -7}},
-        content=content,
-    )
-    assert metric_deltas(out)["民心"] == -7
-    assert state.metrics["民心"] == 43
-    db.conn.rollback()
+    with pytest.raises(RuntimeError, match="force-rollback"):
+        with atomic_and_reload(db, state, content=content):
+            out = _land(
+                db,
+                state,
+                {"metric_delta": {"民心": -7}},
+                content=content,
+            )
+            assert metric_deltas(out)["民心"] == -7
+            assert state.metrics["民心"] == 43
+            raise RuntimeError("force-rollback")
 
     assert state.metrics["民心"] == 50
 
