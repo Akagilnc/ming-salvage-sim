@@ -8083,14 +8083,21 @@ def _apply_score_extraction_body(
         step_extracted: Dict[str, object],
         step_ordered: Dict[str, list[tuple[str, object]]],
         step_event_ids: dict[str, list[str]],
+        *,
+        apply_event_owned: bool = False,
     ) -> None:
+        # apply_event_owned：数组逐笔路径在步进内消费已预检接纳的事件战果；
+        # 对象路径仍 False，战果留 deferred_trigger 成功分支（保既有对象批次序）。
         step_new_armies = step_extracted.get("new_armies") or []
         declared = step_event_ids.get("new_armies") or []
         for idx, army_item in enumerate(step_new_armies):
             if not isinstance(army_item, dict):
                 continue
             event_for_item = declared[idx] if idx < len(declared) else ""
-            if event_for_item in strategic_event_referenced_ids:
+            if (
+                not apply_event_owned
+                and event_for_item in strategic_event_referenced_ids
+            ):
                 continue
             origin_ref = str(army_item.get("origin_ref") or "").strip()
             created_armies.extend(db.create_armies_from_extraction(
@@ -8098,8 +8105,11 @@ def _apply_score_extraction_body(
                 origin_ref=origin_ref, require_origin=True,
             ))
         for index, (region_id, raw_changes) in enumerate(step_ordered.get("region_delta") or []):
-            if _effect_event_ids(
-                "region_delta", index, strategic_event_referenced_ids, step_event_ids,
+            if (
+                not apply_event_owned
+                and _effect_event_ids(
+                    "region_delta", index, strategic_event_referenced_ids, step_event_ids,
+                )
             ):
                 continue
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
@@ -8109,8 +8119,11 @@ def _apply_score_extraction_body(
                 commit=commit_now, origin_ref=origin_ref, require_origin=True,
             ))
         for index, (army_id, raw_changes) in enumerate(step_ordered.get("army_delta") or []):
-            if _effect_event_ids(
-                "army_delta", index, strategic_event_referenced_ids, step_event_ids,
+            if (
+                not apply_event_owned
+                and _effect_event_ids(
+                    "army_delta", index, strategic_event_referenced_ids, step_event_ids,
+                )
             ):
                 continue
             army_changes.extend(_apply_extracted_army_delta(
@@ -8534,12 +8547,26 @@ def _apply_score_extraction_body(
     def _apply_power_update_pairs(
         pairs: object,
         step_event_ids: dict[str, list[str]] | None = None,
+        *,
+        apply_event_owned: bool = False,
     ) -> None:
         event_ids_map = step_event_ids if step_event_ids is not None else ordered_effect_event_ids
         for index, (power_id, raw_changes) in enumerate(pairs or []):
-            if _effect_event_ids(
+            event_owned = bool(_effect_event_ids(
                 "power_updates", index, strategic_event_referenced_ids, event_ids_map,
-            ):
+            ))
+            if event_owned and not apply_event_owned:
+                continue
+            if event_owned and apply_event_owned:
+                # 已预检接纳的事件战果：与 deferred 成功分支同形直写，不套自由正实力剥除。
+                if not isinstance(raw_changes, dict):
+                    continue
+                origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+                payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+                power_changes.extend(db.apply_power_deltas(
+                    state, {power_id: payload}, commit=commit_now,
+                    origin_ref=origin_ref, require_origin=True,
+                ))
                 continue
             if power_id in amnesty_conflict_power_ids:
                 power_changes.append({
@@ -8599,6 +8626,8 @@ def _apply_score_extraction_body(
         step_extracted: Dict[str, object],
         step_ordered: Dict[str, list[tuple[str, object]]],
         step_event_ids: dict[str, list[str]],
+        *,
+        apply_event_owned: bool = False,
     ) -> None:
         """同一交代笔内的有序存量读写：分类不再合批重排。"""
         _apply_faction_items(step_ordered.get("faction_delta") or [])
@@ -8607,7 +8636,9 @@ def _apply_score_extraction_body(
         _apply_population_transfer_items(step_extracted.get("population_transfers") or [])
         _apply_bandit_absorption_items(step_extracted.get("bandit_absorptions") or [])
         _apply_power_update_pairs(
-            step_ordered.get("power_updates") or [], step_event_ids=step_event_ids,
+            step_ordered.get("power_updates") or [],
+            step_event_ids=step_event_ids,
+            apply_event_owned=apply_event_owned,
         )
 
     if effect_sequence is not None:
@@ -8617,14 +8648,19 @@ def _apply_score_extraction_body(
                 for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
                     applied_metric[metric] = applied_metric.get(metric, 0) + delta
             # 先实体后钱：同笔内欠饷加额须先于补饷拨款可见。
-            _apply_ordinary_entity_step(step_extracted, step_ordered, step_event_ids)
+            # 已预检接纳的事件战果亦在本笔消费，后项可读前项事件落账存量。
+            _apply_ordinary_entity_step(
+                step_extracted, step_ordered, step_event_ids, apply_event_owned=True,
+            )
             step_moves = list(step_extracted.get("economy_moves") or [])
             _apply_economy_moves_list(step_moves, index_base=economy_index_base)
             economy_index_base += len(step_moves)
             # #1844/#1899：财政与亲裁结局进入逐笔接缝，退出固定分类回灌旁路。
             _apply_world_step_fiscal_and_petition(step_extracted)
             # #1844/#1899：派系/阶级/加派/人口/投贼/势力同缝按交代先后。
-            _apply_world_step_ordered_stock(step_extracted, step_ordered, step_event_ids)
+            _apply_world_step_ordered_stock(
+                step_extracted, step_ordered, step_event_ids, apply_event_owned=True,
+            )
         petition_outcomes_applied = True
         _finalize_loss_pair_changes()
         power_changes = list(absorption_power_changes) + power_changes
@@ -8827,37 +8863,48 @@ def _apply_score_extraction_body(
             new_issue["reason"] = outcome_error
             _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""))
             continue
-        event_region_items = _ordered_strategic_items("region_delta", event_id)
-        event_army_items = _ordered_strategic_items("army_delta", event_id)
-        event_power_items = _ordered_strategic_items("power_updates", event_id)
         event_person_changes = _event_person_changes(event_id)
-        event_new_armies = _event_new_armies(event_id)
         # 归属与信封预检已由 preflight_declared_event_effects 在写入前判定一次。
-        event_region_changes: List[Dict[str, object]] = []
-        event_army_changes: List[Dict[str, object]] = []
+        # 数组逐笔路径：region/army/power/new_armies 已在对应 effect_sequence 步进落账，
+        # 此处不再合批延期重写。对象路径仍走本分支消费战果。
         event_person_results: List[Dict[str, object]] = []
-        event_created_armies: List[Dict[str, object]] = []
-        event_power_changes: List[Dict[str, object]] = []
-        for item in event_new_armies:
-            origin_ref = str(item.get("origin_ref") or "").strip()
-            event_created_armies.extend(db.create_armies_from_extraction(
-                state, [item], actor="档房", commit=commit_now,
-                origin_ref=origin_ref, require_origin=True,
-            ))
-        created_armies.extend(event_created_armies)
-        for region_id, raw_changes in event_region_items:
-            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-            event_region_changes.extend(db.apply_region_deltas(
-                state, pseudo_event, None, "档房", {region_id: payload},
-                commit=commit_now, origin_ref=origin_ref, require_origin=True,
-            ))
-        region_changes.extend(event_region_changes)
-        for army_id, raw_changes in event_army_items:
-            event_army_changes.extend(_apply_extracted_army_delta(
-                db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
-            ))
-        army_changes.extend(event_army_changes)
+        if effect_sequence is None:
+            event_region_items = _ordered_strategic_items("region_delta", event_id)
+            event_army_items = _ordered_strategic_items("army_delta", event_id)
+            event_power_items = _ordered_strategic_items("power_updates", event_id)
+            event_new_armies = _event_new_armies(event_id)
+            event_region_changes: List[Dict[str, object]] = []
+            event_army_changes: List[Dict[str, object]] = []
+            event_created_armies: List[Dict[str, object]] = []
+            event_power_changes: List[Dict[str, object]] = []
+            for item in event_new_armies:
+                origin_ref = str(item.get("origin_ref") or "").strip()
+                event_created_armies.extend(db.create_armies_from_extraction(
+                    state, [item], actor="档房", commit=commit_now,
+                    origin_ref=origin_ref, require_origin=True,
+                ))
+            created_armies.extend(event_created_armies)
+            for region_id, raw_changes in event_region_items:
+                origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+                payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+                event_region_changes.extend(db.apply_region_deltas(
+                    state, pseudo_event, None, "档房", {region_id: payload},
+                    commit=commit_now, origin_ref=origin_ref, require_origin=True,
+                ))
+            region_changes.extend(event_region_changes)
+            for army_id, raw_changes in event_army_items:
+                event_army_changes.extend(_apply_extracted_army_delta(
+                    db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
+                ))
+            army_changes.extend(event_army_changes)
+            for power_id, raw_changes in event_power_items:
+                origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+                payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+                event_power_changes.extend(db.apply_power_deltas(
+                    state, {power_id: payload}, commit=commit_now,
+                    origin_ref=origin_ref, require_origin=True,
+                ))
+            power_changes.extend(event_power_changes)
         for item in event_person_changes:
             try:
                 origin_ref = _origin_ref_from_result_item(item)
@@ -8874,16 +8921,8 @@ def _apply_score_extraction_body(
             event_person_results.extend(_apply_normalized_person_changes(
                 [clean_item], origin_ref=origin_ref, require_origin=True,
             ))
-        for power_id, raw_changes in event_power_items:
-            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-            event_power_changes.extend(db.apply_power_deltas(
-                state, {power_id: payload}, commit=commit_now,
-                origin_ref=origin_ref, require_origin=True,
-            ))
-        power_changes.extend(event_power_changes)
         # Admitted C3 events are not re-rejected here: preflight already decided the
-        # envelope, and owned fields land in settlement order after that admission.
+        # envelope; array path lands owned stock in sequence order, object path above.
         db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
         apply_event_cascading_invalidations(state, db, commit=commit_now)
         new_issue["reason"] = "事件已记为触发，软判结果已落主账"
