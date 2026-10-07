@@ -868,16 +868,32 @@ def _load_durable_json_object(raw: object, *, surface: str) -> dict:
     return value
 
 
+def _load_exclusion_targets(raw: object, *, surface: str) -> dict:
+    """Durable exclusion targets: object + people/offices list members (#1897 E1/C2)."""
+    payload = _load_durable_json_object(raw, surface=surface)
+    people = payload.get("people", [])
+    offices = payload.get("offices", [])
+    if not isinstance(people, list):
+        raise ValueError(f"{surface} people 须为列表")
+    if not isinstance(offices, list):
+        raise ValueError(f"{surface} offices 须为列表")
+    return {
+        "people": list(people),
+        "offices": list(offices),
+        **{k: v for k, v in payload.items() if k not in {"people", "offices"}},
+    }
+
+
 def _load_secret_order_exclusions(
     row: Mapping[str, object] | sqlite3.Row, *, surface: str,
 ) -> tuple[list, dict]:
-    """Durable exclusion columns: corrupt JSON / wrong top-level fail loud (#1897 E1)."""
+    """Durable exclusion columns: corrupt JSON / nested schema fail loud (#1897 E1)."""
     keys = row.keys() if hasattr(row, "keys") else row
     raw_names = row["excluded_names"] if "excluded_names" in keys else "[]"
     raw_targets = row["excluded_targets"] if "excluded_targets" in keys else "{}"
     return (
         _load_durable_json_list(raw_names, surface=f"{surface} excluded_names"),
-        _load_durable_json_object(raw_targets, surface=f"{surface} excluded_targets"),
+        _load_exclusion_targets(raw_targets, surface=f"{surface} excluded_targets"),
     )
 
 
@@ -8907,16 +8923,10 @@ class GameDB:
         # source_projection of the same source_id must not replace it.
         public_kept: set[str] = set()
         for row in rows:
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"character_knowledge_events excluded_names 腐坏 JSON"
-                ) from exc
-            if not isinstance(excluded_names, list):
-                raise ValueError(
-                    "character_knowledge_events excluded_names 须为列表"
-                )
+            excluded_names = _load_durable_json_list(
+                row["excluded_names"],
+                surface="character_knowledge_events excluded_names",
+            )
             key = str(row["source_id"] or "")
             is_public = str(row["kind"] or "") == "public"
             if key and key in public_kept and not is_public:
@@ -8940,26 +8950,14 @@ class GameDB:
         character_names = {str(row["name"]) for row in characters}
         for row in source_rows:
             participants = participant_roster_names(row["participant_roster"])
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"character_knowledge_sources excluded_names 腐坏 JSON"
-                ) from exc
-            if not isinstance(excluded_names, list):
-                raise ValueError(
-                    "character_knowledge_sources excluded_names 须为列表"
-                )
-            try:
-                excluded_targets = json.loads(row["excluded_targets"] or "{}")
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"character_knowledge_sources excluded_targets 腐坏 JSON"
-                ) from exc
-            if not isinstance(excluded_targets, dict):
-                raise ValueError(
-                    "character_knowledge_sources excluded_targets 须为对象"
-                )
+            excluded_names = _load_durable_json_list(
+                row["excluded_names"],
+                surface="character_knowledge_sources excluded_names",
+            )
+            excluded_targets = _load_exclusion_targets(
+                row["excluded_targets"],
+                surface="character_knowledge_sources excluded_targets",
+            )
             target_people = {
                 str(name) for name in excluded_targets.get("people", [])
             }
@@ -15735,6 +15733,7 @@ class GameDB:
                         (int(pa["id"]),),
                     )
                     # 明确业务 False 进入既有拒收报告管线；failed 终态不代替 ADR0015 轨（#1897 L1）。
+                    # 坏持久 payload 不得走此路——_apply 须响亮上抛（#1897 E1）。
                     self._record_pending_domain_rejection(
                         rejection_collector, state, pa, payload,
                         reason="领域条件不成立，该暂存已失败",
@@ -16262,7 +16261,12 @@ class GameDB:
                 item=item,
                 reason=why,
                 category=cat,
-                source=Provenance.player_decree,
+                # 与 _record_typed_business_refusal 同一来源规则（#1897 L1）。
+                source=(
+                    Provenance.secret_order
+                    if str(pa.get("kind") or "") == "secret_order"
+                    else Provenance.player_decree
+                ),
             ),
             int(state.turn),
         )
@@ -16285,8 +16289,11 @@ class GameDB:
                 title = str(payload.get("title") or "")
                 content_text = str(payload.get("content") or "")
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
+                # 已持久 required 字段缺失是 schema 故障，不得 False+业务拒收洗白（#1897 E1）。
                 if not title.strip() or not content_text.strip() or not assignee:
-                    return False
+                    raise ValueError(
+                        "密令暂存缺少必填字段 title/content/assignee"
+                    )
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
                 deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
@@ -16460,8 +16467,9 @@ class GameDB:
                 )
             text = str(payload.get("text") or "")
             actor = str(payload.get("actor") or pa["minister_name"] or "").strip()
+            # 已持久 required 正文缺失是 schema 故障，不得 False+业务拒收（#1897 E1）。
             if not text.strip():
-                return False
+                raise ValueError("拟旨暂存缺少正文")
             # actor FK → characters(name)：空串/非名册不得落库（SQLite FK 不接受空串）。
             if actor and self.conn.execute(
                 "SELECT 1 FROM characters WHERE name=?", (actor,),
@@ -19220,16 +19228,10 @@ class GameDB:
             (source, source),
         ).fetchone()
         if row is not None:
-            try:
-                names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    "character_knowledge_events excluded_names 腐坏 JSON"
-                ) from exc
-            if not isinstance(names, list):
-                raise ValueError(
-                    "character_knowledge_events excluded_names 须为列表"
-                )
+            names = _load_durable_json_list(
+                row["excluded_names"],
+                surface="character_knowledge_events excluded_names",
+            )
             return [str(name) for name in names]
         # Private briefs and public disclosure events inherit exclusions from
         # secret_orders. Bare ``secret_order:N`` shared sources are not produced
@@ -19276,7 +19278,7 @@ class GameDB:
         source = str(source_id or "")
 
         def _people_offices(raw: object, *, surface: str) -> Dict[str, List[str]]:
-            payload = _load_durable_json_object(raw, surface=surface)
+            payload = _load_exclusion_targets(raw, surface=surface)
             return {
                 "people": [str(x) for x in payload.get("people", [])],
                 "offices": [str(x) for x in payload.get("offices", [])],

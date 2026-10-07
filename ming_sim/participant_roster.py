@@ -89,18 +89,28 @@ def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
 
 
 def participant_roster_names(raw: object) -> set[str]:
-    """Project persisted dict roster entries to their character names."""
-    try:
-        roster = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        return set()
+    """Project persisted dict roster entries to their character names.
+
+    Durable decode / top-level / member faults propagate loud (#1897 E1).
+    Empty list is a valid empty roster.
+    """
+    if isinstance(raw, list):
+        roster = raw
+    else:
+        try:
+            roster = json.loads(raw or "[]")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("participant_roster 腐坏 JSON") from exc
     if not isinstance(roster, list):
-        return set()
-    return {
-        str(item.get("character_id") or item.get("name"))
-        for item in roster
-        if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
-    }
+        raise ValueError("participant_roster 须为列表")
+    names: set[str] = set()
+    for item in roster:
+        if not isinstance(item, dict):
+            raise ValueError("participant_roster 每项须为对象")
+        name = str(item.get("character_id") or item.get("name") or "").strip()
+        if name:
+            names.add(name)
+    return names
 
 
 def project_execution_liability_parties(

@@ -91,34 +91,29 @@ def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
 def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
     """Parse excluded_names and excluded_targets.people/offices from one row.
 
-    Durable exclusion decode faults propagate loud (#1897 E1).
+    Reuses durable exclusion authority in ming_sim.db (#1897 E1/C2).
     """
+    from ming_sim.db import _load_durable_json_list, _load_exclusion_targets
+
     try:
         raw_names = row["excluded_names"]
     except (KeyError, IndexError, TypeError):
         raw_names = "[]"
-    try:
-        names_list = json.loads(raw_names or "[]")
-    except (TypeError, ValueError) as exc:
-        raise ValueError("knowledge excluded_names 腐坏 JSON") from exc
-    if not isinstance(names_list, list):
-        raise ValueError("knowledge excluded_names 须为列表")
+    names_list = _load_durable_json_list(
+        raw_names, surface="knowledge excluded_names",
+    )
     excluded_names = {str(name) for name in names_list}
     try:
         raw_targets = row["excluded_targets"]
     except (KeyError, IndexError, TypeError):
-        raw_targets = None
+        raw_targets = "{}"
     if raw_targets in (None, ""):
-        targets: object = {}
-    else:
-        try:
-            targets = json.loads(raw_targets)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("knowledge excluded_targets 腐坏 JSON") from exc
-    if not isinstance(targets, dict):
-        raise ValueError("knowledge excluded_targets 须为对象")
-    people = {str(name) for name in (targets.get("people") or [])}
-    offices = {str(name) for name in (targets.get("offices") or [])}
+        raw_targets = "{}"
+    targets = _load_exclusion_targets(
+        raw_targets, surface="knowledge excluded_targets",
+    )
+    people = {str(name) for name in targets.get("people", [])}
+    offices = {str(name) for name in targets.get("offices", [])}
     return excluded_names, people, offices
 
 
@@ -342,12 +337,10 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
         if source_id.startswith("turn_report:") and not source_id.endswith(":public"):
             continue
         participants = participant_roster_names(row["participant_roster"])
-        try:
-            excluded = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError) as exc:
-            raise ValueError("knowledge excluded_names 腐坏 JSON") from exc
-        if not isinstance(excluded, list):
-            raise ValueError("knowledge excluded_names 须为列表")
+        from ming_sim.db import _load_durable_json_list
+        excluded = _load_durable_json_list(
+            row["excluded_names"], surface="knowledge excluded_names",
+        )
         # A participant-rostered source is private to its participants unless
         # an explicit exclusion says otherwise.  Empty rosters are not added
         # here: public events already have their own projection path.
