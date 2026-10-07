@@ -650,7 +650,6 @@ _OFFICE_LEVERAGE_WEIGHT = {
 # faction leverage 与破格检测共用 ming_sim.office_rank 查表，不再在此维护第二套词干 parser。
 
 # 退场类状态(削职)——与 active 互斥（set_character_status 据此清空 office）。
-_OUSTED_STATES = {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
 
 def _office_rank_multiplier(office: str, already_normalized: bool = False) -> float:
     """从 office 头衔字串解析品级 multiplier。唯一真源=offices.json rank_rules。
@@ -867,62 +866,6 @@ def _secret_order_kept_body(text: object) -> str:
     """空白正文记空串；已有字句原样保留，含内部空行。"""
     raw = str(text or "")
     return raw if raw.strip() else ""
-
-def _secret_order_record_body(record: Mapping[str, object]) -> str:
-    """Stored prose must already be a string. A missing or non-string body is not rewritten as empty text."""
-    body = record.get("body")
-    if not isinstance(body, str):
-        raise TypeError("密令正文记录缺少正文")
-    return body
-
-def _secret_order_body_log(row: sqlite3.Row) -> Dict[str, List[Dict[str, object]]]:
-    """Read structured body records.
-
-    ``json.loads`` failures and a non-dict top level propagate. A column that
-    is not a list, or a record whose body is not a string, raises ``TypeError``.
-    A missing column means no records. Stored entries are not filtered and a
-    missing body is not replaced with an empty string.
-    """
-    parsed = json.loads(row["text_log_json"])
-    log: Dict[str, List[Dict[str, object]]] = {}
-    for column in _SECRET_ORDER_BODY_COLUMNS:
-        entries = parsed.get(column, [])
-        if not isinstance(entries, list):
-            raise TypeError(f"密令正文记录 {column} 不是列表")
-        for item in entries:
-            if not isinstance(item, dict):
-                raise TypeError("密令正文记录条目不是对象")
-            _secret_order_record_body(item)
-        log[column] = entries
-    return log
-
-def _secret_order_period_recorded(
-    records: Sequence[Mapping[str, object]], year: int, period: int,
-) -> bool:
-    return any(
-        int(record.get("year") or 0) == int(year)
-        and int(record.get("period") or 0) == int(period)
-        for record in records
-    )
-
-def _project_secret_order_bodies(records: Sequence[Mapping[str, object]]) -> str:
-    """Project records by year, month, then write order. Body text is copied whole."""
-    ordered = sorted(
-        enumerate(records),
-        key=lambda pair: (
-            int(pair[1].get("year") or 0),
-            int(pair[1].get("period") or 0),
-            pair[0],
-        ),
-    )
-    parts: List[str] = []
-    for _, record in ordered:
-        marker = str(record.get("marker") or "")
-        parts.append(
-            f"〔{period_label(int(record.get('year') or 0), int(record.get('period') or 0))}〕"
-            f"{marker}{_secret_order_record_body(record)}"
-        )
-    return "\n".join(parts)
 
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
@@ -1727,15 +1670,6 @@ class GameDB:
                 raise ValueError(f"region {row['id']} settle.st 非法，无法校验军饷容器守恒")
             total += float(settle["st"].get("军饷欠", 0) or 0.0)
         return total
-
-    def _is_seeded_military_pay_funnel(self, settle: Dict[str, Any]) -> bool:
-        meta = settle.get("_meta")
-        if not isinstance(meta, dict):
-            return False
-        postures = meta.get("postures")
-        return isinstance(postures, list) and "纯军饷漏斗" in postures
-
-
 
     def _has_complete_province_pay_containers(self) -> bool:
         rows = ArmyStore(self.conn).read_has_complete_province_pay_containers()
@@ -2772,7 +2706,7 @@ class GameDB:
         prev = CharacterStore(self.conn).read_displace_duplicate_offices_faction((name,))
         # 去职（下狱/革职/流放/致仕/出宫/死）即削职：清空 characters.office，
         # 原职仍留在 character_offices 备档可追溯。复职（active）不动 office。
-        ousted = status in _OUSTED_STATES
+        ousted = status in PERSON_OUSTED_STATUSES
         reason_code_value = str(reason_code or "")[:40]
         fields = {
             "status": status,
@@ -2795,7 +2729,7 @@ class GameDB:
         # #9：状态变更后全重算该人物所属朝堂派系 leverage（绝对值、读当前所有在朝成员 → 无漂移）。
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
-        if status in _OUSTED_STATES:
+        if status in PERSON_OUSTED_STATUSES:
             # Free status reason: empty-check without mutating carried prose (P6).
             reason_text = str(reason or "")
             note = (
@@ -5681,24 +5615,6 @@ class GameDB:
             for table, pk in self._ROLLBACK_TABLE_PK.items()
         }
 
-    def complete_rescript_summon_scaffold_turn(self, chat_turn_id: int) -> None:
-        """#657：空问话召见 scaffold 消费成功 → status=consumed（非在飞终态唯一写点）。
-
-        list_in_flight 不含 consumed；与 failed（真失败）分立。body 已非空时
-        再入走 consumed 短路，不走 ensure CAS。
-        """
-        ctid = int(chat_turn_id or 0)
-        if ctid <= 0:
-            return
-        owns = self.owns_transaction()
-        self.conn.execute(
-            "UPDATE chat_turns SET status='consumed' "
-            "WHERE id=? AND status='generating' AND user_message_id IS NULL",
-            (ctid,),
-        )
-        if owns:
-            self.conn.commit()
-
     def reconcile_interrupted_chat_turns(self) -> List[Dict[str, Any]]:
         """重开对账（#505 / ADR 0036）：上一进程崩溃遗留的在飞回话轮（generating / active 无
         回话）终态化。生成半途被 kill 的轮：问话已持久、回话未落。恢复形态——
@@ -5792,6 +5708,7 @@ class GameDB:
         seq = int(night_seq) if night_seq is not None else (
             self.reign.allocate_night_seq(nid) if nid > 0 else 0
         )
+        owns = self.owns_transaction()
         chat_turn_id = self.reign.insert_chat_turn_row(
             minister_name=minister_name,
             turn=int(state.turn),
@@ -5803,10 +5720,7 @@ class GameDB:
             night_seq=seq,
             status=initial_status,
         )
-        if (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns:
             self.conn.commit()
         return int(chat_turn_id)
 
@@ -10652,23 +10566,11 @@ class GameDB:
         self._commit_dossier_write(commit, owns)
         return len(rows)
 
-    def _night_id_for_staged_write(self, night_id: Optional[int], *, what: str) -> int:
-        """声明已持有源夜时盖源夜；未持有则盖当前开放夜。
-
-        封夜后的迟到转译传入已封源夜：CLOSED 原样放行，不改挂落账当下的开放夜。
-        CLOSING 仍拒。night_id 缺或 <=0 维持开夜查找（无开放夜则为 0）。
-        """
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        requested = int(night_id) if night_id is not None else 0
-        if requested > 0:
-            bound = assert_night_accepts_player_input(self, requested, what=what)
-        else:
-            bound = assert_night_accepts_player_input(self, what=what)
-        return int(bound["id"]) if bound is not None else 0
-
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
         payload: Dict[str, object], target_id: Optional[int] = None,
+        *,
+        night_id: Optional[int] = None,
         source_chat_turn_id: int = 0,
     ) -> int:
         """把一条结构化聊天写动作存进 pending_actions 暂存(status=pending)。返回行 id。
@@ -10684,7 +10586,11 @@ class GameDB:
         # CLOSING freezes new staged actions.
         from ming_sim.audience_night import assert_night_accepts_player_input
         open_n = assert_night_accepts_player_input(self, what="暂存")
-        night_id = int(open_n["id"]) if open_n is not None else 0
+        if night_id is None:
+            night_id = int(open_n["id"]) if open_n is not None else 0
+        else:
+            night_id = int(night_id)
+        owns = self.owns_transaction()
         action_id = self.dossiers.insert_pending_action(
             int(turn), str(kind), str(action),
             None if target_id is None else int(target_id),
@@ -10693,12 +10599,7 @@ class GameDB:
             night_id,
             int(source_chat_turn_id or 0),
         )
-        # 与历史 stage 路径一致：非 suspended/atomic 嵌套时提交。
-        # 不可用 owns_transaction()——INSERT 已打开隐式事务时它恒 False。
-        if (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns:
             self.conn.commit()
         return action_id
 
@@ -10745,6 +10646,7 @@ class GameDB:
         self, action_id: int, entry: Mapping[str, object], *, commit: bool = True,
     ) -> None:
         """#1842：把本轮背书挂进暂存载荷 endorsements 列表（不造待背书表）。"""
+        owns = self.owns_transaction() if commit else False
         aid = int(action_id)
         row = self.dossiers.pending_action_payload_status(aid)
         if row is None:
@@ -10797,10 +10699,7 @@ class GameDB:
         self.dossiers.set_pending_payload(
             aid, json.dumps(payload, ensure_ascii=False),
         )
-        if commit and (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns:
             self.conn.commit()
 
     def inherit_payload_endorsements(
@@ -10809,6 +10708,7 @@ class GameDB:
         """#1842：成案时把载荷 endorsements 继承到案卷（来源仍为声明轮）。"""
         if not isinstance(payload, Mapping):
             return []
+        owns = self.owns_transaction() if commit else False
         raw_items = load_stored_object_list(
             payload.get("endorsements"), label="endorsements",
         )
@@ -10833,10 +10733,7 @@ class GameDB:
                 commit=False,
             )
             new_ids.append(int(eid))
-        if commit and new_ids and (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns and new_ids:
             self.conn.commit()
         return new_ids
 
@@ -10874,6 +10771,8 @@ class GameDB:
     def stage_directive_candidate(
         self, turn: int, minister_name: str, payload: Dict[str, object],
         source_chat_turn_id: int = 0,
+        *,
+        night_id: Optional[int] = None,
     ) -> int:
         """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
         与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
@@ -10883,6 +10782,7 @@ class GameDB:
         return self.stage_pending_action(
             turn, kind="directive", action="拟旨",
             minister_name=minister_name, target_id=None, payload=payload,
+            night_id=night_id,
             source_chat_turn_id=source_chat_turn_id,
         )
 
@@ -10916,15 +10816,19 @@ class GameDB:
 
     def update_directive_candidate(
         self, candidate_id: int, payload: Dict[str, object],
+        *,
+        night_id: Optional[int] = None,
     ) -> int:
         """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
         与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清 night_approved，
-        使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。返回该行 id（不存在/非 pending 则 0）。
+        使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。声明路径传入源夜则盖源夜。
+        返回该行 id（不存在/非 pending 则 0）。
         **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
         静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
         #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。"""
         from ming_sim.audience_night import assert_night_accepts_player_input
         assert_night_accepts_player_input(self, what="改草")
+        owns = self.owns_transaction()
         row = self.dossiers.pending_directive_candidate_row(int(candidate_id))
         if row is None:
             return 0
@@ -10932,136 +10836,22 @@ class GameDB:
             raise ValueError("已成案旨意不得改草")
         merged = self._merge_directive_payload(row["payload_json"], payload)
         self._discard_pending_decree_forecast(int(row["id"]), int(row["version"] or 1))
+        stamp = (
+            int(night_id)
+            if night_id is not None
+            else self.reign._current_open_night_id()
+        )
         self.dossiers.rehome_pending_payload(
             int(candidate_id),
             json.dumps(merged, ensure_ascii=False),
-            self.reign._current_open_night_id(),
+            stamp,
             bump_version=True,
         )
-        self.conn.commit()
+        if owns:
+            self.conn.commit()
         return int(candidate_id)
 
     @staticmethod
-    def _is_typed_business_refusal(exc: BaseException) -> bool:
-        from ming_sim.exceptions import OfficeAppointmentRejection, PendingActionRefusal
-
-        return isinstance(exc, (PendingActionRefusal, OfficeAppointmentRejection))
-
-    def _dispose_pending_action_apply_exception(
-        self, pa: Dict[str, object], exc: BaseException, *, rejection_collector=None,
-    ) -> None:
-        """暂存提交异常的共同分流政策（#1853 J4）。
-
-        调用方已 ROLLBACK TO savepoint（及必要的输入/内存恢复）。
-        业务拒收终态该项后返回；RejectionCollectorRequired 与真异常一律上抛。
-        """
-        from ming_sim.applier import RejectionCollectorRequired
-
-        if isinstance(exc, RejectionCollectorRequired):
-            raise
-        rejection = getattr(exc, "dossier_link_rejection", None)
-        if rejection is not None:
-            # 业务拒收（模型指向不存在案卷）：durable 审计 + 终态 failed，
-            # 不是代码故障，不上抛。
-            self._record_dossier_link_rejection(
-                *rejection, pending_action_id=int(pa["id"]),
-            )
-            self.conn.execute(
-                "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-            tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-            return
-        if self._is_typed_business_refusal(exc):
-            self._record_typed_business_refusal(pa, exc, rejection_collector)
-            self.conn.execute(
-                "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
-            tlog(f"[pending_actions] 业务拒收 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-            return
-        # #1853：真异常留 pending，停止本批；由原轮/月链 error_pack 与失败路径上抛。
-        tlog(f"[pending_actions] 落库失败上抛 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
-        raise
-
-    def _run_pending_action_commit_lifecycle(
-        self,
-        state: GameState,
-        pa: Dict[str, object],
-        payload: Dict[str, object],
-        *,
-        content=None,
-        rejection_collector=None,
-        owns_transaction: Optional[bool] = None,
-        restore_on_rollback=None,
-        savepoint_prefix: str = "pending_action_apply",
-    ) -> bool:
-        """暂存提交的唯一共同生命周期（#1853 J4-R）。
-
-        atomic → savepoint → apply → committed/failed → 异常分流 → release → collector flush。
-        拟旨输入准备与 office 内存恢复由调用方在前后处理；本方法不复制第二套生命周期。
-        返回 True 表示已 committed；软失败返回 False；真异常经既有出口上抛。
-        """
-        if owns_transaction is None:
-            owns_transaction = self.owns_transaction()
-        cm = atomic(self) if owns_transaction else contextlib.nullcontext()
-        ok = False
-        with cm:
-            savepoint = f"{savepoint_prefix}_{int(pa['id'])}"
-            self.conn.execute(f"SAVEPOINT {savepoint}")
-            try:
-                ok = self._apply_pending_action(
-                    state, pa, payload, content=content,
-                    rejection_collector=rejection_collector)
-                if ok:
-                    self.conn.execute(
-                        "UPDATE pending_actions SET status='committed' WHERE id=?",
-                        (int(pa["id"]),),
-                    )
-                else:
-                    self.conn.execute(f"ROLLBACK TO {savepoint}")
-                    if restore_on_rollback is not None:
-                        restore_on_rollback()
-                    # 落不了的(目标已非 active、未知动作、坏 payload)标 failed,不留 pending——
-                    # 否则回合推进后成旧回合不可见死行,永不再处理(ship-pre CMR codex)。
-                    self.conn.execute(
-                        "UPDATE pending_actions SET status='failed' WHERE id=?",
-                        (int(pa["id"]),),
-                    )
-            except Exception as exc:
-                self.conn.execute(f"ROLLBACK TO {savepoint}")
-                if restore_on_rollback is not None:
-                    restore_on_rollback()
-                self._dispose_pending_action_apply_exception(
-                    pa, exc, rejection_collector=rejection_collector,
-                )
-            finally:
-                self.conn.execute(f"RELEASE {savepoint}")
-            if rejection_collector is not None:
-                rejection_collector.flush_to_db(self)
-        return ok
-
-    def _record_typed_business_refusal(
-        self, pa: Dict[str, object], exc: BaseException, rejection_collector,
-    ) -> None:
-        if rejection_collector is None:
-            return
-        from ming_sim.applier import Provenance, RejectedItem
-
-        raw_item = getattr(exc, "item", None)
-        item = dict(raw_item) if isinstance(raw_item, dict) else {}
-        item.update({
-            "pending_action_id": int(pa["id"]),
-            "kind": str(pa.get("kind") or ""),
-            "action": str(pa.get("action") or ""),
-        })
-        rejection_collector.record(
-            "pending_actions",
-            RejectedItem(
-                item=item,
-                reason=str(exc),
-                category=str(getattr(exc, "category", "") or "business_refusal"),
-                source=(Provenance.secret_order if pa["kind"] == "secret_order"
-                        else Provenance.player_decree),
-            ),
-            int(pa.get("turn") or 0),
-        )
 
     def _discard_deleted_directive_forecast(self, target_id: object) -> None:
         try:
@@ -11154,34 +10944,6 @@ class GameDB:
         if requested and normalized.get("dossier_action_type") != requested:
             raise ValueError("旨稿机械载荷不完整或非法，拒绝改草")
         return normalized
-
-    def clear_directive_needs_clarification(self, candidate_id: int) -> int:
-        """清某道 pending directive 的「待澄清」标（#502 L4）：皇帝下一句指明并准驳后，
-        含糊 episode 了结——被点名与其兄弟一并复位为普通 pending（未点名者重回「不回→默认同意」
-        通道）。返回该行 id（不存在/非 pending 则 0）。
-        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
-        row = self.conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'",
-            (int(candidate_id),),
-        ).fetchone()
-        if row is None:
-            return 0
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (ValueError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict) or "_needs_clarification" not in payload:
-            return int(candidate_id)
-        payload.pop("_needs_clarification", None)
-        self.conn.execute(
-            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
-        )
-        self.conn.commit()
-        return int(candidate_id)
 
     def flag_directive_needs_clarification(self, candidate_id: int) -> int:
         """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
@@ -12056,18 +11818,6 @@ class GameDB:
         if owns_transaction:
             self.conn.commit()
         return deleted
-
-    def discard_failed_secret_order_intents(self) -> int:
-        """过回合前丢弃既有 failed secret-order intents（CONTEXT：未处理失败下达在过回合丢弃）。
-
-        须在 commit_pending_actions 之前调用：清掉玩家已选择结束回合时仍未重试的旧 failure，
-        再提交本轮 pending，使同次 commit 新产生的 failure 仍保留、可恢复。
-        返回删除条数；不拥有 commit（嵌在 pre_settle owning transaction 内）。
-        """
-        cur = self.conn.execute(
-            "DELETE FROM pending_actions WHERE status='failed' AND kind='secret_order'"
-        )
-        return cur.rowcount
 
     def save_resolve_context(
         self, turn: int, decree_text: str,
@@ -13630,10 +13380,9 @@ class GameDB:
         target_office: str, reason: str = "",
     ) -> int:
         from ming_sim.recommendations import record_recommendation
+        owns = self.owns_transaction()
         event_id = record_recommendation(self, state, recommender, candidate, target_office, reason)
-        if not bool(getattr(self.conn, "_commit_suspended", False)) and int(
-            getattr(self.conn, "_atomic_depth", 0) or 0
-        ) <= 0:
+        if owns:
             self.conn.commit()
         return event_id
 

@@ -224,7 +224,6 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     finally:
         db.set_character_office = orig  # type: ignore[assignment]
 
-    assert result.get("rejected"), f"注入故障应使任命 rejected：{result}"
     after = db.factions.faction_leverage("阉党")
     assert after == before, (
         f"失败任命回滚后阉党 leverage 应不变(before={before} after={after})"

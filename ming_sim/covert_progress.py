@@ -1492,7 +1492,7 @@ def apply_investigation_spoliation(
         target_name=name, fact_key=key, turn=turn, effect=effect,
         origin_ref=origin_ref, commit=False,
     )
-    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+    if owns:
         db.conn.commit()
     return {"target": name, "fact_key": key, "applied": True, "effect": str(effect),
             "knowledge_source": str(knowledge_source or "").strip(),
@@ -1741,6 +1741,7 @@ def apply_monthly_covert_actual_progress(
     才记已掌握；不再由执行态折固定增量、满统一阈自动坐实。执行态枚举对查案
     不再是必填（#1895 同批废旧查案的意愿底档），缺省只落事实投入。
     """
+    owns = db.owns_transaction() if commit else False
     orders = list(db.character_knowledge.list_secret_orders(status="active"))
     by_sel = _selection_map(selections)
     applied: List[Dict[str, object]] = []
@@ -1829,7 +1830,7 @@ def apply_monthly_covert_actual_progress(
             "contract_kind": contract.get("kind"),
             "contract_axes": list(contract.get("axes") or []),
         })
-    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+    if owns:
         db.conn.commit()
     return applied
 
@@ -2049,6 +2050,6 @@ def settle_due_secret_orders(
             "target_units": target,
             "delivered": bool(verdict["delivered"]),
         })
-    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+    if owns:
         db.conn.commit()
     return results

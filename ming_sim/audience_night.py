@@ -970,7 +970,7 @@ def _set_night_fields(db: Any, night_id: int, **fields: Any) -> None:
     owns = _should_commit(db)
     assignments = ", ".join(f"{k} = ?" for k in fields)
     db.reign.update_night(assignments, int(night_id), tuple(fields.values()))
-    _commit_if_owns(db)
+    _commit_if_owns(db, owns=owns)
 
 
 def _commit_night_approved(
@@ -1464,7 +1464,7 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
             continue
         tags.append(TAG_IN_TRANSIT)
         db.reign.set_ledger_tags(entry_id, json.dumps(tags, ensure_ascii=False))
-    if _should_commit(db):
+    if owns:
         db.conn.commit()
 
 
@@ -1490,7 +1490,7 @@ def settle_summon_origin(
         tags = [tag for tag in tags if tag != TAG_SUMMON_UNSETTLED]
         tags.append(TAG_SUMMON_SETTLED)
         db.reign.set_ledger_tags(item["entry_id"], json.dumps(tags, ensure_ascii=False))
-    if commit and _should_commit(db):
+    if owns:
         db.conn.commit()
     return True
 
@@ -2041,7 +2041,7 @@ def set_night_protagonist(
     if night is None:
         raise AudienceNightError(f"夜不存在：{nid}", code="night_not_found")
     db.reign.set_night_protagonist(nid, name)
-    if commit and _should_commit(db):
+    if owns:
         db.conn.commit()
     return name
 

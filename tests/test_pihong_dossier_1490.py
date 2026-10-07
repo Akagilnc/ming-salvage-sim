@@ -11,6 +11,7 @@ A. bind 对无能力字段的 dossier: 前缀解绑；due-commitment 同形不�
 D. 命中 allowed 后从服务端 option 重建 label/hint/能力字段，客户端只留 note。
 """
 from __future__ import annotations
+import copy
 import asyncio
 import json
 import threading
@@ -2588,50 +2589,6 @@ def test_658_mixed_ordinary_triad_and_target_rejected(game, monkeypatch):
 
 
 
-def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
-    """P3+S10(+S1)：六动作参数表真 HTTP + 真 phase2 外部结构化终局。
-
-    不含 S5/S6（独立符号）。#1490 批红 force/hold 物化由同文件既有 #1490 专测覆盖，
-    不在本符号 stub phase2 冒充。five_actions_domain_writes 保留领域写，不得标 P3。
-    """
-    from ming_sim.audience_night import TAG_ENTER
-    from ming_sim.models import TurnPhase
-    from ming_sim.rescript_draft import normalize_rescript_layer_a_option
-
-    def plant_desk():
-        db.conn.execute('DELETE FROM pending_decisions')
-        db.conn.commit()
-        db.issues.save_rescript_drafts(int(state.turn), drafts)
-        db.conn.commit()
-        db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
-        state.turn_phase = TurnPhase.AWAITING_DECISION.value
-        db.reign.save_game_state(state)
-    from ming_sim.session_write_queue import get_session_write_queue
-    get_session_write_queue(web_game.session).run_exclusive(plant_desk)
-
-    async def _get_state():
-        async with _client() as client:
-            return await client.get('/api/game/state')
-    page = asyncio.run(_get_state())
-    assert page.status_code == 200, page.text
-    rows = {str(row['title']): row for row in page.json().get('pending_decisions') or [] if row.get('kind') == 'rescript_draft'}
-    assert set(rows) == {str(d['title']) for d in drafts}, sorted(rows)
-    choices = []
-    for draft in drafts:
-        row = rows[str(draft['title'])]
-        head = row['options'][0]
-        assert _1778_roster_of(head), f"{draft['title']}：批红页缺参与名单 {head!r}"
-        if desk_action == 'midzhi':
-            choices.append({'decision_key': row['decision_key'], 'action': 'midzhi', 'label': head['label'], 'action_type': head['action_type'], 'assignee_name': head.get('assignee_name') or '', 'target_kind': head['target_kind'], 'target_id': head.get('target_id') or '', 'locality_scope': head['locality_scope'], 'region_id': head.get('region_id') or '', 'transaction_category': head.get('transaction_category') or '', 'deadline_months': head.get('deadline_months'), 'participant_roster': head['participant_roster']})
-        else:
-            choices.append({'decision_key': row['decision_key'], 'action': 'follow_draft', 'draft_capability': head['draft_capability'], 'label': head['label']})
-    before = {int(d['id']) for d in db.dossiers.list_dossiers()}
-    resp = asyncio.run(_post_resolve(choices))
-    assert resp.status_code == 200, resp.text
-    assert 'event: error' not in resp.text, resp.text
-    assert 'event: done' in resp.text, resp.text
-    created = [d for d in web_game.db.dossiers.list_dossiers() if int(d['id']) not in before]
-    return {str(d['decree_text'] or ''): d for d in created}
 
 
 
