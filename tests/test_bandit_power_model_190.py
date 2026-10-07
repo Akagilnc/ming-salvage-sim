@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 
-import json
-
-
 def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):
     """流寇头目与股分层：人物所属股的 leader 是单一 canonical 人名。"""
     db, _state, _content = read_game
@@ -31,4 +28,3 @@ def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):
     assert powers["bandit_li_zicheng"]["leader"] == "李自成"
     assert powers["bandit_zhang_xianzhong"]["leader"] == "张献忠"
     assert powers["bandit_li_zicheng"]["military_strength"] != powers["bandit_zhang_xianzhong"]["military_strength"]
-
