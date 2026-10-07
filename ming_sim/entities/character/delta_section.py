@@ -9,116 +9,20 @@
 （#1835 F1），声明若仍带旧键由 ``sanitize_delta_shape`` 逐段拒收留痕，不再静默
 翻成平行写路。
 
-项级事务边界由本编排段独占（ADR 0150 决定 3）：逐条 SAVEPOINT + 运行态快照，
-实体核 ``apply_person_changes`` 只写、不自包事务/快照/恢复。
+项级事务 / 运行态恢复由编排器 ``SettlementRun.land_person_item`` 独占
+（ADR 0150 决定 3）；本段只解析归属并经编排器落条，不自包 SAVEPOINT/快照。
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
-
-from ming_sim.applier import (
-    ItemAtomicReject,
-    Provenance,
-    RejectedItem,
-    SectionResult,
-    item_savepoint_scope,
-    register_runtime_rollback_snapshot,
-)
-
-
-def _align_person_memory_to_db(db: Any, content: Any, item: Dict[str, object]) -> None:
-    """写前把本项人物内存对齐到 DB 行，供项级快照以库为真源。"""
-    if content is None:
-        return
-    from ming_sim.entities.character.names import _person_change_name
-
-    name = str(_person_change_name(item) or "").strip()
-    if not name or name not in content.characters:
-        return
-    row = db.conn.execute(
-        "SELECT status, office, office_type, status_reason, reason_code, "
-        "transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
-        "FROM characters WHERE name=?",
-        (name,),
-    ).fetchone()
-    if row is None:
-        return
-    ch = content.characters[name]
-    ch.status = str(row["status"] or "")
-    ch.office = str(row["office"] or "")
-    ch.office_type = str(row["office_type"] or ch.office_type)
-    ch.status_reason = str(row["status_reason"] or "")
-    ch.reason_code = str(row["reason_code"] or "")
-    ch.transit_to = str(row["transit_to"] or "")
-    ch.transit_distance_remaining = row["transit_distance_remaining"]
-    ch.transit_speed_factor = row["transit_speed_factor"]
-    ch.transit_start_turn = int(row["transit_start_turn"] or 0)
-
-
-def land_person_changes_isolated(
-    db: Any,
-    state: Any,
-    changes: List[Dict[str, object]],
-    *,
-    content=None,
-    llm_config: Any = None,
-    origin_ref: str = "",
-    require_origin: bool = False,
-    source: Provenance = Provenance.system_simulation,
-) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
-    """编排侧逐条落人物变更：项级 SAVEPOINT + 共享运行态回调。
-
-    拒收整项回滚（含关联案卷副作用），合法 sibling 不受牵连。实体核只写。
-    """
-    from ming_sim.entities.character.apply import apply_person_changes
-
-    rows: List[Dict[str, object]] = []
-    rejections: List[RejectedItem] = []
-    runtime_content = content if content is not None else getattr(db, "content", None)
-    for person_change in changes:
-        item = dict(person_change)
-        refused: List[RejectedItem] = []
-        try:
-            with item_savepoint_scope(db, f"person_item_{abs(id(item)) & 0xFFFFFFFF:x}"):
-                _align_person_memory_to_db(db, runtime_content, item)
-                register_runtime_rollback_snapshot(db, state, runtime_content)
-                results, refused = apply_person_changes(
-                    db,
-                    state,
-                    [item],
-                    content=runtime_content,
-                    llm_config=llm_config,
-                    origin_ref=origin_ref,
-                    require_origin=require_origin,
-                    source=source,
-                )
-                if refused:
-                    raise ItemAtomicReject(refused[0].reason, refused[0].category)
-                if origin_ref:
-                    for result in results:
-                        result.setdefault("origin_ref", origin_ref)
-                rows.extend(results)
-        except ItemAtomicReject as exc:
-            if refused:
-                rejections.extend(refused)
-            else:
-                rejections.append(
-                    RejectedItem(
-                        item=item,
-                        reason=exc.reason,
-                        category=exc.category,
-                        source=source,
-                    )
-                )
-    return rows, rejections
+from ming_sim.applier import RejectedItem, SectionResult
 
 
 def apply_declared_person_changes(run, changes):
     """人物项逐条落账。归属非法只在写前解析处拒收。
 
-    代码异常由外层事务回滚，不记成拒收（ADR 0005）。落库核在本实体；
-    项级隔离在本编排函数。
+    代码异常由外层事务回滚，不记成拒收（ADR 0005）。落库核在实体 apply；
+    项级隔离在编排器 run.land_person_item。
     """
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
 
@@ -137,13 +41,8 @@ def apply_declared_person_changes(run, changes):
                 )
             )
             continue
-        landed, refused = land_person_changes_isolated(
-            run.db,
-            run.state,
-            [dict(person_change)],
-            source=run.ctx.source,
-            content=run.ctx.content,
-            llm_config=run.ctx.llm_config,
+        landed, refused = run.land_person_item(
+            dict(person_change),
             origin_ref=origin_ref,
             require_origin=True,
         )

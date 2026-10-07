@@ -12,7 +12,7 @@ import sqlite3
 import contextlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterator, List, Tuple
+from typing import Any, Callable, Iterator, List, Tuple
 
 
 def safe_json_dumps(value: Any, **kwargs: Any) -> str:
@@ -232,41 +232,6 @@ def item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
             raise
         else:
             db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-
-
-def register_runtime_rollback_snapshot(
-    db: Any,
-    state: Any,
-    content: Any = None,
-) -> None:
-    """Restore process memory if the surrounding DB transaction/item rolls back."""
-    conn = db.conn
-    callbacks = getattr(conn, "_runtime_rollback_callbacks", None)
-    if callbacks is None:
-        callbacks = []
-        conn._runtime_rollback_callbacks = callbacks
-    metrics_snapshot = dict(state.metrics)
-    character_objects = dict(content.characters) if content is not None else {}
-    character_attrs: Dict[str, Dict[str, object]] = {}
-    for name, character in character_objects.items():
-        character_attrs[name] = dict(vars(character))
-
-    def restore_runtime() -> None:
-        state.metrics.clear()
-        state.metrics.update(metrics_snapshot)
-        if content is not None:
-            for name in list(content.characters):
-                if name not in character_objects:
-                    del content.characters[name]
-            for name, character in character_objects.items():
-                content.characters[name] = character
-                for attr in list(vars(character)):
-                    if attr not in character_attrs[name]:
-                        delattr(character, attr)
-                for attr, value in character_attrs.get(name, {}).items():
-                    setattr(character, attr, value)
-
-    callbacks.append(restore_runtime)
 
 
 # ---------------------------------------------------------------------------

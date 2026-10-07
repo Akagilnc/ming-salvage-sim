@@ -18,7 +18,13 @@ if TYPE_CHECKING:
     from ming_sim.models import GameState
     from ming_sim.content import GameContent
 
-from ming_sim.applier import Provenance, RejectedItem, SectionResult
+from ming_sim.applier import (
+    ItemAtomicReject,
+    Provenance,
+    RejectedItem,
+    SectionResult,
+    item_savepoint_scope,
+)
 from ming_sim.settlement import registry
 from ming_sim.settlement.outcome import (
     FiscalSectionResult,
@@ -136,6 +142,25 @@ class SettlementRun:
             item for item in self.strategic_new_armies_raw
             if self.declared_new_army_event_by_item.get(id(item), "") == event_id
         ]
+
+    def land_person_item(
+        self,
+        item: Mapping[str, object],
+        *,
+        origin_ref: str = "",
+        require_origin: bool = True,
+    ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
+        """编排器项级落一条人物变更（SAVEPOINT；拒收后按 DB 对齐内存）。"""
+        return land_person_changes_isolated(
+            self.db,
+            self.state,
+            [dict(item)],
+            content=self.ctx.content if self.ctx.content is not None else self.runtime_content,
+            llm_config=self.ctx.llm_config,
+            origin_ref=origin_ref,
+            require_origin=require_origin,
+            source=self.ctx.source,
+        )
 
 # ── 编排器 ──────────────────────────────────────────────────────────────────
 
@@ -593,6 +618,110 @@ def _run_registry_after_interleave(run) -> None:
         _capture(run, spec.name, registry.load(spec)(run))
 
 
+def _align_person_memory_to_db(db: Any, content: Any, item: Mapping[str, object]) -> None:
+    """拒收回滚后按 DB 行对齐本项人物内存（不做全盘 metrics/人物快照）。"""
+    if content is None:
+        return
+    from ming_sim.entities.character.names import _person_change_name
+
+    name = str(_person_change_name(dict(item)) or "").strip()
+    if not name or name not in getattr(content, "characters", {}):
+        return
+    row = db.conn.execute(
+        "SELECT status, office, office_type, status_reason, reason_code, "
+        "transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
+        "FROM characters WHERE name=?",
+        (name,),
+    ).fetchone()
+    if row is None:
+        return
+    ch = content.characters[name]
+    ch.status = str(row["status"] or "")
+    ch.office = str(row["office"] or "")
+    ch.office_type = str(row["office_type"] or ch.office_type)
+    ch.status_reason = str(row["status_reason"] or "")
+    ch.reason_code = str(row["reason_code"] or "")
+    ch.transit_to = str(row["transit_to"] or "")
+    ch.transit_distance_remaining = row["transit_distance_remaining"]
+    ch.transit_speed_factor = row["transit_speed_factor"]
+    ch.transit_start_turn = int(row["transit_start_turn"] or 0)
+
+
+def _register_person_align_on_rollback(db: Any, content: Any, item: Mapping[str, object]) -> None:
+    """把「按 DB 对齐本项人物内存」挂到连接共享 rollback callbacks。
+
+    供本项 SAVEPOINT 失败与外层 item_savepoint_scope（如当场实况指针绑定）
+    共用；不是全盘 metrics/全人物快照。
+    """
+    callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
+    if callbacks is None:
+        callbacks = []
+        db.conn._runtime_rollback_callbacks = callbacks
+
+    def restore() -> None:
+        _align_person_memory_to_db(db, content, item)
+
+    callbacks.append(restore)
+
+
+def land_person_changes_isolated(
+    db: Any,
+    state: Any,
+    changes: List[Dict[str, object]],
+    *,
+    content=None,
+    llm_config: Any = None,
+    origin_ref: str = "",
+    require_origin: bool = False,
+    source: Provenance = Provenance.system_simulation,
+) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
+    """编排器逐条落人物变更：项级 SAVEPOINT + 单人内存对齐回调。
+
+    不做全盘 metrics/全人物运行态快照——整事务失败由最外层 atomic_and_reload
+    同源重载；本函数只服务「本项拒收或外层项级回滚、sibling 保留」的局部 undo。
+    """
+    from ming_sim.entities.character.apply import apply_person_changes
+
+    rows: List[Dict[str, object]] = []
+    rejections: List[RejectedItem] = []
+    runtime_content = content if content is not None else getattr(db, "content", None)
+    for person_change in changes:
+        item = dict(person_change)
+        refused: List[RejectedItem] = []
+        try:
+            with item_savepoint_scope(db, f"person_item_{abs(id(item)) & 0xFFFFFFFF:x}"):
+                _register_person_align_on_rollback(db, runtime_content, item)
+                results, refused = apply_person_changes(
+                    db,
+                    state,
+                    [item],
+                    content=runtime_content,
+                    llm_config=llm_config,
+                    origin_ref=origin_ref,
+                    require_origin=require_origin,
+                    source=source,
+                )
+                if refused:
+                    raise ItemAtomicReject(refused[0].reason, refused[0].category)
+                if origin_ref:
+                    for result in results:
+                        result.setdefault("origin_ref", origin_ref)
+                rows.extend(results)
+        except ItemAtomicReject as exc:
+            if refused:
+                rejections.extend(refused)
+            else:
+                rejections.append(
+                    RejectedItem(
+                        item=item,
+                        reason=exc.reason,
+                        category=exc.category,
+                        source=source,
+                    )
+                )
+    return rows, rejections
+
+
 def apply_person_changes_only(
     db: GameDB,
     state: GameState,
@@ -608,10 +737,9 @@ def apply_person_changes_only(
 
     任命授官、传召启程等单人物动作共用此口；禁止借落库编排器附带
     #652 recovery / bandit 等结算核。返回形状与 full applier 的 applied_person_changes 对齐。
-    项级隔离走 character.delta_section.land_person_changes_isolated（编排独占）。
+    项级隔离由本编排模块 land_person_changes_isolated 独占。
     """
     from ming_sim.entities.character import names as character_names
-    from ming_sim.entities.character.delta_section import land_person_changes_isolated
     from ming_sim.entities.character.normalize import normalize_person_changes
 
     runtime_content = content if content is not None else getattr(db, "content", None)
@@ -635,7 +763,6 @@ def apply_person_changes_only(
         )
 
     if caller_transaction:
-        # 借用外层事务：不提前 reload；项级 SAVEPOINT 由 land_* 承担。
         results, results_rejections = _write()
     else:
         from ming_sim.decree import atomic_and_reload

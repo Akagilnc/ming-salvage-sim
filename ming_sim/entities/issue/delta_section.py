@@ -188,14 +188,10 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             except UnauthorizedAffairOriginRef as exc:
                 reject_bucket["person_issue"].append(RejectedItem(item=dict(item), reason=str(exc), category="unauthorized_affair_origin", source=run.ctx.source))
                 continue
-            from ming_sim.entities.character.delta_section import land_person_changes_isolated
-            results, refused = land_person_changes_isolated(
-                run.db, run.state, [dict(item)],
-                content=run.ctx.content,
-                llm_config=run.ctx.llm_config,
+            results, refused = run.land_person_item(
+                dict(item),
                 origin_ref=origin_ref,
                 require_origin=True,
-                source=run.ctx.source,
             )
             bucket["person_issue"].extend(results)
             reject_bucket["person_issue"].extend(refused)

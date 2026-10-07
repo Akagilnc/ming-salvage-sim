@@ -254,7 +254,7 @@ def _apply_issue_entities(
                 person_items.append(it)
     person_changes = normalize_person_changes({"人物变更": person_items})
     if person_changes:
-        from ming_sim.entities.character.delta_section import land_person_changes_isolated
+        from ming_sim.settlement.run import land_person_changes_isolated
         results, results_rejections = land_person_changes_isolated(
             db,
             state,
@@ -535,7 +535,7 @@ def _apply_monthly_ongoing_entities(
     person_changes = normalize_person_changes({"人物变更": people})
     if person_changes:
         effective_content = content if content is not None else _ctx()
-        from ming_sim.entities.character.delta_section import land_person_changes_isolated
+        from ming_sim.settlement.run import land_person_changes_isolated
         results, results_rejections = land_person_changes_isolated(
             db,
             state,
