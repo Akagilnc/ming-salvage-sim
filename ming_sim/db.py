@@ -2849,44 +2849,13 @@ class GameDB:
 
     def _ensure_office_type_parents(self) -> None:
         """Materialize every declared/referenced office type before FK-checked writes."""
-        title_kinds = tuple(PERSON_TITLE_KINDS)
-        placeholders = ",".join("?" for _ in title_kinds)
-        if self._table_exists("character_offices"):
-            self.conn.execute(
-                f"DELETE FROM character_offices WHERE office_type IN ({placeholders})",
-                title_kinds,
-            )
-        self.conn.execute(
-            f"DELETE FROM offices WHERE office_type IN ({placeholders})",
-            title_kinds,
-        )
         for office_type in sorted(self._canonical_office_types()):
             self._ensure_office_type_parent(office_type)
-        if self._table_exists("character_offices"):
-            self.conn.execute(
-                """
-                UPDATE character_offices
-                SET office_type = (
-                    SELECT characters.office_type FROM characters
-                    WHERE characters.name = character_offices.character_name
-                )
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM offices
-                    WHERE offices.office_type = character_offices.office_type
-                )
-                  AND EXISTS (
-                    SELECT 1 FROM characters
-                    JOIN offices ON offices.office_type = characters.office_type
-                    WHERE characters.name = character_offices.character_name
-                )
-                """
-            )
 
     def _canonical_office_types(self) -> set[str]:
         # 名分（PERSON_TITLE_KINDS）按契约不入官职体系：静态 seed 人物的 office_type 可能是名分，
-        # 若混进 canonical 集，_ensure_office_type_parents 会在删除名分父行后又把它 rematerialize
-        # 成 offices 父行（#1058 接缝回归）。在唯一定义点排除，兼作 _ensure_office_type_parent 校验
-        # 的防御——名分永不是合法父类。
+        # 不得混进 canonical 集被 materialize 成 offices 父行（#1058）。在唯一定义点排除，
+        # 兼作 _ensure_office_type_parent 校验的防御——名分永不是合法父类。
         return (
             set(self.content.office_definitions)
             | {

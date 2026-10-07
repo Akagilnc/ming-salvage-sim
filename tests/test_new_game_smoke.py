@@ -1,12 +1,10 @@
-"""新档冒烟：验证财政基座、外键与关闭重开后的官类引用；构造时不调用 LLM。"""
+"""新档冒烟：验证财政基座、外键与现役官类父行/名分写端；构造时不调用 LLM。"""
 import json
-import sqlite3
 
 import pytest
 
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
-from ming_sim.db import GameDB
 import ming_sim.issues as issues_mod
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
@@ -112,32 +110,3 @@ def test_person_title_kind_does_not_materialize_office_parent(fresh_game_dir):
     assert sess.db.conn.execute(
         "SELECT 1 FROM character_offices WHERE character_name=?", (minister,)
     ).fetchone() is None
-
-
-def test_existing_office_fk_violation_is_normalized_on_reopen(fresh_game_dir):
-    sess, dbp, content = fresh_game_dir
-    character = sess.db.conn.execute(
-        "SELECT name, office_type FROM characters ORDER BY name LIMIT 1"
-    ).fetchone()
-    sess.close()
-    raw = sqlite3.connect(dbp)
-    raw.execute("PRAGMA foreign_keys=OFF")
-    raw.execute(
-        "UPDATE character_offices SET office_type='__stale_office_1026__' "
-        "WHERE character_name=?",
-        (character["name"],),
-    )
-    raw.commit()
-    raw.close()
-
-    reopened = GameDB(dbp, content=content)
-    try:
-        office = reopened.conn.execute(
-            "SELECT office_type FROM character_offices WHERE character_name=?",
-            (character["name"],),
-        ).fetchone()
-        assert office["office_type"] == character["office_type"]
-        assert reopened.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert reopened.conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    finally:
-        reopened.close()
