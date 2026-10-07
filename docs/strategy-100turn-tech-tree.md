@@ -50,8 +50,8 @@
 ### 工厂科技（buildings 可挂 output_metric/output_amount）
 
 - 现有：京营火器局 / 佛山铸炮厂（火器）、御用监织造库 / 杭州织造库（→内库）
-- **玻璃/肥皂/化肥 工厂靠诏书现建**：诏书明文「设玻璃局/办肥皂坊/开化肥厂」→ extractor 强制立
-  一条 `new_issue` 带 `effect_on_resolve: buildings:create`（prompt L183 + `issues.py:88`）→ issue 推满后真建 building，产出落库。**无需先扩 buildings.json**。
+- **玻璃/肥皂/化肥 工厂靠诏书现建**：诏书明文「设玻璃局/办肥皂坊/开化肥厂」→ 声明立
+  一条 `new_issue`，`effect_on_resolve.buildings`（create）→ 推满结案后由 `entities.issue.effects._apply_issue_buildings` 真建 building，产出落库（详见 §五；旧 extractor/`issues.py:88` 路径已退役）。
 - 化肥→挂 regions 的 grain_security/民心；玻璃肥皂→挂国库（商品收入）。建厂是一条独立 bar（办不办得成），与情势线分开。
 
 ### 科技人才（`content/characters.json`，58 人）

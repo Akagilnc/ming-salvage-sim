@@ -60,76 +60,35 @@
 
 ---
 
-## 固定月度支出（`fiscal_config`）
+## 固定月度收支（`fiscal_config` + hub）
 
-所有 base 为**季度额**，`monthly_amount(base × rate / 100)` = 月额（约 ÷3）。
+唯一定额预算源＝`flows.compute_budget_lines`（与 `apply_fixed_period_flows` 落账、UI 预算摘要同源）。
 
-### 国库支出
+- **`fiscal_config` 的 base 已是全月值**：月额＝`round(base × rate / 100)`，**没有**「季度额 ÷3」换算。
+- **国库收入**主项来自 substrate_hub 预算投影（省级起运/盐商税旁路等），不是旧 `calc_province_fiscal` 系数表。
+- **国库支出**含中央军饷拟拨、京运补拟拨，以及 `iter_budget_items()` 读出的固定科目（宗室禄米、百官俸禄、工部、赈灾备用等——以 `content/fiscal_config.json` 为准，勿把下表当第二真源）。
+- **建筑维护/产出**按 buildings 表月值与 `condition` 折算；维护账户按 category 分（内廷→内库，其余→国库）。
+- **内库皇庄**：读 `fiscal_config.皇庄_base×皇庄_rate` 全月基准；预算里没收藩田增量位 `nk_huang` 现役恒 0，**没有**「`wang_tian_transfer` × 0.57 自动加内库月收」的平行核。
 
-| 项目 | base（季） | rate | 月额（估） | 说明 |
-|------|-----------|------|----------|------|
-| 宗室禄米 | 360 | 70% | ~84万 | 最大包袱，削藩可降 |
-| 九边补给 | 270 | 90% | ~81万 | 九边粮草，非军饷 |
-| 各军军饷 | — | — | ~150万 | 按优先级逐军发放 |
-| 百官俸禄 | 90 | 100% | ~30万 | 含地方折色 |
-| 建筑维护 | — | — | ~75万 | 各省建筑月维护 |
-| 赈灾备用 | 15 | 100% | ~5万 | 制度性预留 |
-| 工部 | 15 | 100% | ~5万 | 工部日常 |
-
-**月支出合计约 430万两**
-
-### 内库支出
-
-| 项目 | base（季） | rate | 月额 |
-|------|-----------|------|------|
-| 宫廷开支 | 22 | 100% | ~7万 |
-| 内廷俸禄 | 15 | 100% | ~5万 |
-| 妃嫔供奉 | 10 | 100% | ~3万 |
-
-### 内库收入
-
-| 项目 | base（季） | rate | 月额 |
-|------|-----------|------|------|
-| 皇庄 | 60 | 100% | ~20万 |
-| 织造 | 35 | 100% | ~12万 |
-| 矿税 | 10 | 100% | ~3万 |
-
----
-
-## 开局月净
-
-| 账户 | 月收入 | 月支出 | 月净 |
-|------|--------|--------|------|
-| 国库 | ~398 | ~430 | **~-32** |
-| 内库 | ~35 | ~15 | **~+20** |
-
-国库持续亏损，逼玩家开源节流。内库正向积累，作为救急储备。
+开局盈亏以实档 `compute_budget_lines` / 国库流水为准；下文不再维护一套过时估算表。
 
 ---
 
 ## 腐败度（`corruption`）
 
-- 存储位置：`regions.fiscal` JSON，key=`corruption`，0-100
-- **读取**：`simulation.py` 把 `json_extract(fiscal,'$.corruption')` 喂进推演 payload
-- **写入**：`apply_region_deltas` 识别 `FISCAL_SCORE_FIELDS`，解析 JSON → patch → 写回
-- **声明触发**（经 `region_delta` / 局势效果，旧 `score_extractor` 已退役）：整治贪腐/巡按/抄家等叙事须落到结构化字段；引擎只 clamp 与记账
+- 存储位置：`regions.fiscal` JSON，key=`corruption`，0-100（属省域 fiscal 字段族）。
+- **写入**：声明 `region_delta` 等经领域 region 段落库；合法字段白名单见 constants / region 写核（`FISCAL_SCORE_FIELDS` 等）。
+- **读取**：材料目录 / 世界段供料按身份投影省域实况；`ming_sim/simulation.py` 现役是声明字段契约与别名模块，**不再**承担「`json_extract(fiscal,'$.corruption')` 拼推演 payload」的旧职责。
+- 整治贪腐等叙事须落到结构化声明；引擎只 clamp 与记账。
 
 ---
 
-## 藩王庄田没收
+## 藩王庄田 / 皇庄
 
-```
-execution_evaluator 输出：
-  region_delta: {"henan": {"wang_tian_transfer": 40, "reason": "查抄福王庄田"}}
-
-apply 时：
-  wang_tian -= 40
-  huang_tian += 40
-  内库月增量 += 40 × 0.57 = 23万两/月（持续）
-  同时：gentry_resistance +15，党争压力上升
-```
-
-河南（福王）、湖广（楚王）、山西（晋王）是主要藩王省份。
+- 省域可有 `wang_tian` / `huang_tian` 等 fiscal 细分字段（见上表数据来源），用于盘面与叙事。
+- **不存在**现役 `region_delta.wang_tian_transfer` 自动转田+按亩加内库月收的专用键；未知字段按 region 写核 `invalid_enum` 逐项拒收。
+- 内库皇庄月收真源＝`fiscal_config.皇庄_base`（及 rate）；裁撤/调额改 config。抄没、转庄等须用合法声明字段（`region_delta` 白名单字段、`fiscal_changes`、`economy_moves`、局势效果等）显式落账，restore 只读 DB。
+- 河南（福王）、湖广（楚王）、山西（晋王）等仍是主要藩王叙事省份，不是自动公式入口。
 
 ---
 
@@ -138,6 +97,7 @@ apply 时：
 | 功能 | 文件 | 函数/位置 |
 |------|------|---------|
 | 月度财政 tick（唯一入口） | `ming_sim/flows.py` | `apply_fixed_period_flows` |
+| 唯一定额预算源 | `ming_sim/flows.py` | `compute_budget_lines` |
 | 中央 hub 拨付 | `ming_sim/flows.py` | `_compute_substrate_hub_outbound` 等 |
 | 省级基座推进 | `ming_sim/flows.py` | `_advance_province_fiscal_substrate` |
 | 盐商税旁路 / 太仓亏空 | `ming_sim/flows.py` | `_substrate_hub_salt_commerce_income_split` 等 |

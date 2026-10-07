@@ -11,7 +11,7 @@
 
 - `level`：规模与能力，1-5。
 - `condition`：完好 0-100，**同时是产出折算系数**（实际产出 = `output_amount × condition / 100`）。
-- `maintenance`：每月维护费，整数万两，固定从国库扣。
+- `maintenance`：每月维护费，整数万两；**按 `category` 分账**——`内廷` 扣内库，其余类别扣国库。
 - `risk`：贪腐、事故、扰民、被毁的可能，0-100。
 - `output_metric` / `output_amount`：结构化产出。`output_metric` 白名单 `国库`/`内库`/`民心`/`皇威`/`""`（空串=纯叙事无结算产出）；`output_amount` 为每月产出量（国库/内库单位万两，民心/皇威为量表点数）。
 
@@ -24,7 +24,7 @@
 **日常运行纯程序化，不调 LLM。** 每月 `flows.apply_fixed_period_flows` 遍历所有建筑：
 
 - 按 `output_metric` 把折算后产出加进对应账户（国库/内库走 `economy_ledger`；民心/皇威直改量表）。
-- 从国库扣 `maintenance`（能扣多少扣多少，跟军饷同逻辑）。
+- 扣 `maintenance`：`category=="内廷"` → 内库，否则 → 国库（能扣多少扣多少，跟军饷同逻辑；与 `compute_budget_lines` 同口径）。
 
 `condition`/`risk`/`level` 是静态的，不自然漂移——只有 LLM 才改。
 

@@ -327,7 +327,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 
 ### `secret_dossier_participants` — #1252 密令案卷参与人追加
 
-密令侧私密声明字段（字段名即 provenance，与公共 `dossier_participants` **分立**，禁止共享槽位 + union 授权）。由月链密令供料 / 声明路径写入，经 `declaration_dispatch` → `settle_delta` 承接；旧五模块 `personnel_secret` extractor 包装已退役。settle 内经同一 `append_decree_dossier_participants` 写原语逐项拒收留痕（ADR 0015），不 fail-loud。
+密令侧私密**声明**字段（字段名即 provenance，与公共 `dossier_participants` **分立**，禁止共享槽位 + union 授权）。由声明 effects 经 `declaration_dispatch` → `settle_delta` → `entities.dossier.delta_section.apply_secret_dossier_participants` 消费（读本批冻结 `secret_dossier_ids_at_input`）；**不是**月链 4a 密令供料产物键，4a 不生产/不消费本段。旧五模块 extractor 包装已退役。settle 内经同一 `append_decree_dossier_participants` 写原语逐项拒收留痕（ADR 0015），不 fail-loud。
 
 | 字段 | 约束 |
 |---|---|
@@ -390,7 +390,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 > #1745 / ADR 0015-D6/D7：可拆项坏引用（未知/非在途/已结清/已撤回案卷、缺量字段、量值非法、重复）由 `record_monthly_grant_reconciliations` **逐项域级拒收留痕**；section 值非 list / 非 dict 列表项的**形状拒收**归 `sanitize_delta_shape` 独家（`invalid_shape`，item 恒 `{raw_value:…}`，含 dict 坏容器），一次归属 `dossier_reconciliations`，**不整月 abort、不双记**。拒收经外层 `RejectionCollector`（RejectedItem 四字段 item/reason/category/source）；好项与未提案目标的中位落账仍在同一 atomic。空提案（缺省/`[]`）合法——程序用中位默认；无在途目标却收到提案 → 逐项 `missing_ref`，不落假对账行。
 
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
-由月链整月密令供料（`month_chain.run_secret_orders_supply`）生产，经声明/`settle_delta` 承接；`record_monthly_dossier_progress` 消费。旧五模块 extractor 包装已退役。
+主生产路径＝月链 4a 供料（`run_secret_orders_supply`）产物，由 `_step_4a_secret_order_supply` **直接** `db.record_monthly_dossier_progress` 消费，**不经** `declaration_dispatch`/`settle_delta`。声明 effects 亦可带本段（专属写入口；`defer_monthly_secret_supply` 时延后到独立供料，不与 4a 拼成一条通用 settle 链）。旧五模块 extractor 包装已退役。
 - 每项必须带 `dossier_id`、`progress_band`、`memorial_text`；三者皆非空。
 - 可选 `origin`：承办人在该条密奏里自己声明的行动。`same_faction_blind` 为睁眼闭眼，`private_goods` 为带私货；两项都声明时用 `+` 连接。未作此选择则省略。同派或敌派不补写行动；未知记号不落成行动。落库后从该条密奏的 origin 续读。
 - 合资格集 = `decree_dossiers.status` 为 `promulgated` / `executing` 且所关联 `secret_orders.status='active'` 的案卷（读缝 `monthly_dossier_reports` / `list_monthly_dossier_progress_nudges`；#1504：不限 tag、不限期限月数）。
