@@ -238,7 +238,15 @@ def _month_fact_materials(
     for row in db.list_pending_decisions(turn):
         if str(row.get("status") or "") != "decided":
             continue
-        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        raw_choice = row.get("choice")
+        if raw_choice is None:
+            choice = {}
+        elif isinstance(raw_choice, dict):
+            choice = raw_choice
+        else:
+            raise ValueError(
+                f"pending_decisions.choice 须为对象，得 {type(raw_choice).__name__}"
+            )
         answers.append({
             "title": row.get("title") or "",
             "label": choice.get("label") or "",
@@ -289,12 +297,19 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _persisted_transit_arrivals(db: Any, turn: int) -> list:
-    """过月前半段已写入 resolve context 的本月抵达。缺键与非列表按该读口视为无抵达。"""
+    """过月前半段已写入 resolve context 的本月抵达。缺键视为无抵达；键在而错形响亮。"""
     ctx = db.get_resolve_context(int(turn)) or {}
     payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
-    if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
-        return list(payload["transit_arrivals"])
-    return []
+    if not isinstance(payload, dict):
+        return []
+    if "transit_arrivals" not in payload or payload.get("transit_arrivals") is None:
+        return []
+    arrivals = payload.get("transit_arrivals")
+    if not isinstance(arrivals, list):
+        raise ValueError(
+            f"simulator_payload.transit_arrivals 须为 list，得 {type(arrivals).__name__}"
+        )
+    return list(arrivals)
 
 
 def prepare_gazette_author_materials(db: Any, state: Any):
@@ -443,7 +458,15 @@ def continue_decree_after_answers(
         # LLM 已成功且无问后文：空后果终态，方可清问。
         db.staged_declarations.clear_questions(decree_ref)
         return
-    payload = dossier.get("payload") if isinstance(dossier.get("payload"), dict) else {}
+    raw_payload = dossier.get("payload")
+    if raw_payload is None:
+        payload = {}
+    elif isinstance(raw_payload, dict):
+        payload = raw_payload
+    else:
+        raise ValueError(
+            f"decree_dossiers.payload 须为对象，得 {type(raw_payload).__name__}"
+        )
 
     def consume(result: Any) -> None:
         candidate = _ending_from_dispatch_result(result)
@@ -1057,7 +1080,14 @@ def _enrich_eligible_dossiers_for_supply(
         if dossier is not None:
             row["decree_text"] = str(dossier.get("decree_text") or "")
             payload = dossier.get("payload")
-            row["payload"] = payload if isinstance(payload, dict) else {}
+            if payload is None:
+                row["payload"] = {}
+            elif isinstance(payload, dict):
+                row["payload"] = payload
+            else:
+                raise ValueError(
+                    f"decree_dossiers.payload 须为对象，得 {type(payload).__name__}"
+                )
             row["status"] = str(dossier.get("status") or "")
             contract = read_covert_task_contract(dossier)
             if contract is not None:
@@ -1680,7 +1710,14 @@ def _record_world_question_event_choices(
             if not event_id:
                 continue
             raw_choice = row.get("choice")
-            choice: Dict[str, object] = dict(raw_choice) if isinstance(raw_choice, dict) else {}
+            if raw_choice is None:
+                choice = {}
+            elif isinstance(raw_choice, dict):
+                choice = dict(raw_choice)
+            else:
+                raise ValueError(
+                    f"pending_decisions.choice 须为对象，得 {type(raw_choice).__name__}"
+                )
             db.record_event_petition_answer(
                 state, event_id, choice,
                 {
@@ -1710,7 +1747,15 @@ def _consume_rescript_answers(
         return
 
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
-        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        raw_choice = row.get("choice")
+        if raw_choice is None:
+            choice = {}
+        elif isinstance(raw_choice, dict):
+            choice = raw_choice
+        else:
+            raise ValueError(
+                f"pending_decisions.choice 须为对象，得 {type(raw_choice).__name__}"
+            )
         return {
             "label": str(choice.get("label") or ""),
             "hint": str(choice.get("hint") or ""),
@@ -1724,7 +1769,15 @@ def _consume_rescript_answers(
         event_id = str(row.get("event_id") or "")
         if not event_id.startswith("dossier:"):
             continue
-        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        raw_choice = row.get("choice")
+        if raw_choice is None:
+            choice = {}
+        elif isinstance(raw_choice, dict):
+            choice = raw_choice
+        else:
+            raise ValueError(
+                f"pending_decisions.choice 须为对象，得 {type(raw_choice).__name__}"
+            )
         _apply_decided_triad(db, state, row, choice, content=session.content)
 
     world_rows = [
@@ -1920,8 +1973,18 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:
     ctx = db.get_resolve_context(turn) or {}
     payload = ctx.get("simulator_payload") or {}
-    chain = payload.get(_CHAIN_KEY) if isinstance(payload, dict) else None
-    return dict(chain) if isinstance(chain, dict) else {}
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"pending_resolve_context.simulator_payload 须为对象，得 {type(payload).__name__}"
+        )
+    chain = payload.get(_CHAIN_KEY)
+    if chain is None:
+        return {}
+    if not isinstance(chain, dict):
+        raise ValueError(
+            f"month_chain 须为对象，得 {type(chain).__name__}"
+        )
+    return dict(chain)
 
 
 def _save_chain(

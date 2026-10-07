@@ -186,6 +186,8 @@ class StagedDeclarationStore:
 
     def questions_for(self, decree_ref: str) -> list:
         """该旨未作废行上的请旨；已结算行仍保留，供过月重试判断是否还在等答复。"""
+        from ming_sim.db import GameDB
+
         ref = str(decree_ref or "").strip()
         if not ref:
             return []
@@ -197,11 +199,13 @@ class StagedDeclarationStore:
         questions: list = []
         for row in rows:
             raw = row["questions_json"]
-            if not raw:
+            if raw is None or (isinstance(raw, str) and not str(raw).strip()):
                 continue
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                questions.extend(parsed)
+            questions.extend(
+                GameDB._loads_stored_json_list(
+                    raw, surface="staged_declarations.questions_json",
+                )
+            )
         return questions
 
     def forecast_text_for(self, decree_ref: str) -> str:
@@ -251,22 +255,48 @@ class StagedDeclarationStore:
         return int(cur.rowcount or 0)
 
 
-def _load_optional_json(row: Any, column: str) -> object:
+def _load_optional_object(row: Any, column: str, *, surface: str) -> dict | None:
+    """可选对象列：SQL NULL/真空→None；对象→dict；腐坏/错形响亮。"""
+    from ming_sim.db import GameDB
+
     if column not in row.keys() or row[column] is None:
         return None
-    return json.loads(row[column])
+    raw = row[column]
+    if isinstance(raw, str) and not raw.strip():
+        return None
+    return GameDB.parse_engine_payload_json(raw, surface=surface)
+
+
+def _load_optional_list(row: Any, column: str, *, surface: str) -> list | None:
+    """可选 list 列：SQL NULL/真空→None；list→list；腐坏/错形响亮。"""
+    from ming_sim.db import GameDB
+
+    if column not in row.keys() or row[column] is None:
+        return None
+    raw = row[column]
+    if isinstance(raw, str) and not raw.strip():
+        return None
+    return GameDB._loads_stored_json_list(raw, surface=surface)
 
 
 def _row_to_staged(row: Any) -> StagedDeclaration:
-    verdict = _load_optional_json(row, "verdict_json")
-    questions = _load_optional_json(row, "questions_json")
+    from ming_sim.db import GameDB
+
     forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=str(row["decree_ref"]),
-        declaration=json.loads(row["declaration_json"] or "{}"),
+        declaration=GameDB.parse_engine_payload_json(
+            row["declaration_json"], surface="staged_declarations.declaration_json",
+        ),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
-        visible_refs=json.loads(row["visible_refs_json"] or "{}"),
-        verdict=verdict if isinstance(verdict, dict) else None,
-        questions=questions if isinstance(questions, list) else None,
+        visible_refs=GameDB.parse_engine_payload_json(
+            row["visible_refs_json"], surface="staged_declarations.visible_refs_json",
+        ),
+        verdict=_load_optional_object(
+            row, "verdict_json", surface="staged_declarations.verdict_json",
+        ),
+        questions=_load_optional_list(
+            row, "questions_json", surface="staged_declarations.questions_json",
+        ),
         forecast_text=None if forecast_text is None else str(forecast_text),
     )

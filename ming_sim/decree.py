@@ -979,8 +979,13 @@ def prepare_resolve_front_half(
 
     ctx = db.get_resolve_context(int(state.turn))
     payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
-    if isinstance(payload, dict) and isinstance(payload.get("transit_arrivals"), list):
-        return list(payload["transit_arrivals"])
+    if isinstance(payload, dict) and "transit_arrivals" in payload and payload.get("transit_arrivals") is not None:
+        arrivals = payload.get("transit_arrivals")
+        if not isinstance(arrivals, list):
+            raise ValueError(
+                f"simulator_payload.transit_arrivals 须为 list，得 {type(arrivals).__name__}"
+            )
+        return list(arrivals)
     return list(transit_arrivals_box)
 
 

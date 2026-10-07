@@ -3594,7 +3594,10 @@ def _strategic_event_result_preflight_error(
                 return _noop_error("region", region_id, raw_field, value)
             return ""
         if field in FISCAL_SCORE_FIELDS:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
+            from ming_sim.db import GameDB
+            fiscal = GameDB.parse_engine_payload_json(
+                row["fiscal"], surface=f"regions.fiscal:{region_id}",
+            )
             old_value = int(fiscal.get(field, 50))
             delta = int(value)
             net_pct = int(((legacy_mods.get("regions") or {})
@@ -6763,8 +6766,11 @@ def _apply_surcharge_decrees(
         if str(row["controlled_by"] or "") != "ming":
             _reject("missing_ref", f"surcharge_decrees 非明省不可加派：{region_id!r}")
             continue
-        fiscal = json.loads(str(row["fiscal"] or "{}"))
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        from ming_sim.db import GameDB
+        fiscal = GameDB.parse_engine_payload_json(
+            row["fiscal"], surface=f"regions.fiscal:{region_id}",
+        )
+        settle = fiscal.get("settle")
         if not (isinstance(settle, dict) and isinstance(settle.get("st"), dict)
                 and isinstance(settle.get("p"), dict)):
             _reject(

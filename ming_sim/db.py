@@ -2480,7 +2480,6 @@ class GameDB:
             "decree_dossier_decisions", "affected_parties_json", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column(
             "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
-        self._migrate_legacy_reaction_severity()
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -3113,7 +3112,9 @@ class GameDB:
             return 0
         touched = 0
         for row in self.conn.execute("SELECT id, fiscal FROM regions").fetchall():
-            fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = self.parse_engine_payload_json(
+                row["fiscal"], surface=f"regions.fiscal:{row['id']}",
+            )
             old = int(fiscal.get(field, 0) or 0)
             if old <= 0:
                 continue
@@ -3298,7 +3299,9 @@ class GameDB:
         for row in self.conn.execute(
             "SELECT id, tax_per_turn, fiscal FROM regions"
         ).fetchall():
-            fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
+            fiscal = self.parse_engine_payload_json(
+                row["fiscal"], surface=f"regions.fiscal:{row['id']}",
+            )
             others = (int(fiscal.get("liao_xiang", 0) or 0)
                       + int(fiscal.get("salt_tax", 0) or 0)
                       + int(fiscal.get("commerce_tax", 0) or 0))
@@ -4181,10 +4184,12 @@ class GameDB:
         ).fetchall()
         for row in rows:
             try:
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
-            except (TypeError, ValueError) as exc:
+                fiscal = self.parse_engine_payload_json(
+                    row["fiscal"], surface=f"regions.fiscal:{row['id']}",
+                )
+            except ValueError as exc:
                 raise ValueError(f"region {row['id']} fiscal JSON 非法，无法校验军饷容器守恒") from exc
-            settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            settle = fiscal.get("settle")
             if settle is None:
                 continue
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
@@ -4310,11 +4315,11 @@ class GameDB:
         for row in rows:
             region_id = str(row["id"])
             try:
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
-            except (TypeError, ValueError) as exc:
+                fiscal = self.parse_engine_payload_json(
+                    row["fiscal"], surface=f"regions.fiscal:{region_id}",
+                )
+            except ValueError as exc:
                 raise ValueError(f"region {region_id} fiscal JSON 非法，无法校验军饷容器守恒") from exc
-            if not isinstance(fiscal, dict):
-                raise ValueError(f"region {region_id} fiscal 非字典，无法校验军饷容器守恒")
             settle = fiscal.get("settle")
             if settle is None:
                 continue
@@ -4353,7 +4358,7 @@ class GameDB:
             fiscal = self.parse_engine_payload_json(
                 region["fiscal"], surface="regions.fiscal",
             )
-            settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            settle = fiscal.get("settle")
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
                 return False
         return True
@@ -4503,12 +4508,14 @@ class GameDB:
         if str(row["controlled_by"] or "") != "ming":
             raise ValueError(f"army {army_id} pay_source_region 非明控省：{pay_source_region}")
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError) as exc:
+            fiscal = self.parse_engine_payload_json(
+                row["fiscal"], surface=f"regions.fiscal:{pay_source_region}",
+            )
+        except ValueError as exc:
             raise ValueError(
                 f"army {army_id} pay_source_region 财政基座 JSON 非法：{pay_source_region}"
             ) from exc
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        settle = fiscal.get("settle")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
             raise ValueError(f"army {army_id} pay_source_region 无 settle st/p 基座：{pay_source_region}")
@@ -5029,8 +5036,10 @@ class GameDB:
             "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
         ).fetchall()
         for row in rows:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-            settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            fiscal = self.parse_engine_payload_json(
+                row["fiscal"], surface=f"regions.fiscal:{row['id']}",
+            )
+            settle = fiscal.get("settle")
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                     or not isinstance(settle.get("p"), dict):
                 continue
@@ -5053,7 +5062,7 @@ class GameDB:
         fiscal = self.parse_engine_payload_json(
             row["fiscal"], surface="regions.fiscal",
         )
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        settle = fiscal.get("settle")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
             return
@@ -7362,7 +7371,9 @@ class GameDB:
 
                 # ── fiscal JSON 子字段（corruption 等）────────────────────────
                 if field in FISCAL_SCORE_FIELDS:
-                    fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
+                    fiscal = self.parse_engine_payload_json(
+                        row["fiscal"], surface=f"regions.fiscal:{region_id}",
+                    )
                     old_value = fiscal.get(field, 50)
                     delta = int(value)
                     # 帝国修正：该地区该字段若有 active 修正符，先放大/缩小 delta
@@ -7532,7 +7543,9 @@ class GameDB:
             if raw_field == "fiscal":
                 if not isinstance(value, dict):
                     continue
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
+                fiscal = self.parse_engine_payload_json(
+                    row["fiscal"], surface=f"regions.fiscal:{region_id}",
+                )
                 for sub_field, sub_val in value.items():
                     if sub_field not in FISCAL_SCORE_FIELDS:
                         continue
@@ -9050,10 +9063,10 @@ class GameDB:
         return json.dumps(row, ensure_ascii=False, sort_keys=True)
 
     def _json_load_row(self, raw: str) -> Dict[str, Any]:
-        if not raw:
-            return {}
-        data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
+        """Rollback row snapshot: vacuum→{}; corrupt/non-object fail loud (F39)."""
+        return self.parse_engine_payload_json(
+            raw, surface="chat_turn_rollback_items.row_json",
+        )
 
     def _table_exists(self, table: str) -> bool:
         row = self.conn.execute(
@@ -10017,10 +10030,19 @@ class GameDB:
                             "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
                             (int(target_id),),
                         ).fetchone()
-                        current = json.loads(brief[0] or "[]") if brief is not None else []
+                        current = (
+                            self._loads_stored_json_list(
+                                brief[0],
+                                surface="secret_order_briefs.origin_chat_message_ids",
+                            )
+                            if brief is not None else []
+                        )
                         pins = [pin for pin in current if int(pin) not in undone]
                     else:
-                        pins = json.loads(str(raw_pins) or "[]")
+                        pins = self._loads_stored_json_list(
+                            raw_pins,
+                            surface="secret_order_briefs.origin_chat_message_ids",
+                        )
                     self._restore_secret_order_brief_projection_in_tx(int(target_id), pins)
             else:
                 raise ValueError(f"不支持的回滚策略：{strategy}")
@@ -10504,11 +10526,9 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        timeline = json.loads(row["timeline"] or "[]")
-        if not isinstance(timeline, list):
-            raise ValueError(
-                f"ending_summary.timeline 须为 list，得 {type(timeline).__name__}"
-            )
+        timeline = self._loads_stored_json_list(
+            row["timeline"], surface="ending_summary.timeline",
+        )
         return {
             "turn": int(row["turn"]),
             "year": int(row["year"]),
@@ -10767,6 +10787,10 @@ class GameDB:
             choice = self._loads_stored_json_optional(
                 r["choice_json"], surface="pending_decisions.choice_json",
             )
+            if choice is not None and not isinstance(choice, dict):
+                raise ValueError(
+                    f"pending_decisions.choice_json 须为对象，得 {type(choice).__name__}"
+                )
             prior = self._loads_stored_json_list(
                 r["prior_options_json"], surface="pending_decisions.prior_options_json",
             )
@@ -10871,6 +10895,10 @@ class GameDB:
             choice = self._loads_stored_json_optional(
                 r["choice_json"], surface="rescript_draft.choice_json",
             )
+            if choice is not None and not isinstance(choice, dict):
+                raise ValueError(
+                    f"rescript_draft.choice_json 须为对象，得 {type(choice).__name__}"
+                )
             prior = self._loads_stored_json_list(
                 r["prior_options_json"], surface="rescript_draft.prior_options_json",
             )
@@ -10931,6 +10959,10 @@ class GameDB:
         choice = self._loads_stored_json_optional(
             r["choice_json"], surface="rescript_desk.choice_json",
         )
+        if choice is not None and not isinstance(choice, dict):
+            raise ValueError(
+                f"rescript_desk.choice_json 须为对象，得 {type(choice).__name__}"
+            )
         prior = self._loads_stored_json_list(
             r["prior_options_json"], surface="rescript_desk.prior_options_json",
         )
@@ -15466,58 +15498,6 @@ class GameDB:
     _JOINT_LIABILITY_TRIGGERS = frozenset(_EXECUTION_OUTCOME_INTENSITY)
     _INTENSITY_DOWNGRADE = {"strong": "weak", "weak": None}
 
-    @staticmethod
-    def _migrate_reaction_value(value: object) -> tuple[object, bool]:
-        """Translate only the two persisted pre-signed severity spellings."""
-        changed = False
-        if isinstance(value, dict):
-            value = dict(value)
-            severity = value.get("severity")
-            mapped = {"大怒": ("negative", "strong"), "不满": ("negative", "weak")}.get(severity)
-            if mapped is not None:
-                value.pop("severity", None)
-                value["direction"], value["intensity"] = mapped
-                changed = True
-        elif isinstance(value, list):
-            migrated = []
-            for item in value:
-                new_item, item_changed = GameDB._migrate_reaction_value(item)
-                migrated.append(new_item)
-                changed = changed or item_changed
-            value = migrated
-        return value, changed
-
-    def _migrate_legacy_reaction_severity(self) -> None:
-        """Idempotently repair persisted verdict reaction fields, never live payloads."""
-        for table, id_col, json_col in (
-            ("pending_promulgation_verdicts", "rowid", "verdict_json"),
-            ("decree_dossier_decisions", "id", "affected_parties_json"),
-        ):
-            for row in self.conn.execute(
-                f"SELECT {id_col} AS migration_id,{json_col} AS payload FROM {table}"
-            ).fetchall():
-                try:
-                    value = json.loads(str(row["payload"] or ""))
-                except ValueError as exc:
-                    logging.getLogger(__name__).warning(
-                        "跳过 %s 表迁移行 %s：%s",
-                        table, row["migration_id"], exc,
-                    )
-                    continue
-                if table == "pending_promulgation_verdicts" and isinstance(value, dict):
-                    affected, changed = self._migrate_reaction_value(value.get("affected_parties"))
-                    if changed:
-                        value = dict(value)
-                        value["affected_parties"] = affected
-                else:
-                    value, changed = self._migrate_reaction_value(value)
-                if changed:
-                    self.conn.execute(
-                        f"UPDATE {table} SET {json_col}=? WHERE {id_col}=?",
-                        (safe_json_dumps(value, ensure_ascii=False), row["migration_id"]),
-                    )
-        self.conn.commit()
-
     def _record_decree_cost(
         self, dossier_id: int, turn: int, cost_kind: str, target_kind: str,
         target_id: str, delta: int, reason: str, *, cost_identity: str,
@@ -16521,8 +16501,11 @@ class GameDB:
                 return
             if issue_disposition == "办人":
                 try:
-                    roster = json.loads(str(issue["target_roster"] or "[]"))
-                except (TypeError, ValueError) as exc:
+                    roster = self._loads_stored_json_list(
+                        issue["target_roster"],
+                        surface="issues.target_roster",
+                    )
+                except ValueError as exc:
                     raise ValueError("弹劾潮 target_roster 非法") from exc
                 if target not in roster:
                     raise ValueError("办人目标不在弹劾潮 target_roster")
@@ -18754,12 +18737,11 @@ class GameDB:
     ) -> Dict[str, object]:
         label = f"旨稿#{directive_id}" if directive_id is not None else "既有旨稿"
         try:
-            payload = json.loads(raw or "{}")
-        except (TypeError, ValueError) as exc:
+            return GameDB.parse_engine_payload_json(
+                raw, surface=f"turn_directives.dossier_payload_json:{label}",
+            )
+        except ValueError as exc:
             raise ValueError(f"{label} 结构化载荷损坏") from exc
-        if not isinstance(payload, dict):
-            raise ValueError(f"{label} 结构化载荷必须为对象")
-        return payload
 
     def read_directive_dossier_payload(self, row: object) -> Dict[str, object]:
         """Strictly decode a durable turn_directives payload at the DB read seam."""

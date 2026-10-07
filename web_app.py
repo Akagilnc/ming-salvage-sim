@@ -814,8 +814,12 @@ class WebGame:
             for name, msgs in self.db.load_all_chat_history().items():
                 self.chat_history.setdefault(name, []).extend(msgs)
             _DEFAULT_FAVORITES = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
+            from ming_sim.db import GameDB
             _fav_raw = self.db.kv_get("favorites")
-            self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
+            self.favorites: set = (
+                set(GameDB._loads_stored_json_list(_fav_raw, surface="kv.favorites"))
+                if _fav_raw else set(_DEFAULT_FAVORITES)
+            )
             if not _fav_raw:
                 self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
             # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
@@ -1032,7 +1036,11 @@ class WebGame:
                 chat_history.setdefault(name, []).extend(msgs)
             default_favorites = {"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"}
             fav_raw = candidate.db.kv_get("favorites")
-            favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
+            from ming_sim.db import GameDB
+            favorites = (
+                set(GameDB._loads_stored_json_list(fav_raw, surface="kv.favorites"))
+                if fav_raw else set(default_favorites)
+            )
             if not fav_raw:
                 candidate.db.kv_set("favorites", json.dumps(sorted(favorites)))
             candidate.db.reconcile_interrupted_chat_turns()
