@@ -80,4 +80,3 @@ def test_player_budget_payload_strips_engineering_notes(read_game):
                 assert set(item) == {"name", "amount"}
                 assert isinstance(item["name"], str)
                 assert isinstance(item["amount"], int)
-
