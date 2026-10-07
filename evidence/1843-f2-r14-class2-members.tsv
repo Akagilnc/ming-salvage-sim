@@ -1,8 +1,0 @@
-disposition	path	member	note
-FIXED	tests/test_relation_capture_633.py	3 reason person-name substring asserts	keep category+zero-write+legal-continue
-DELETE	tests/test_event_trigger_gate.py	test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome	pure content stare
-DELETE	tests/test_event_trigger_gate.py	test_mao_event_effect_uses_unified_person_change_key	pure content stare
-DELETE	tests/test_execution_pressure_654.py	test_region_id_column_present_for_dossier_write_path	PRAGMA-only duplicate
-DELETE	tests/test_army_maintenance_retire_173.py	test_armies_table_has_no_maintenance_column	PRAGMA-only internal
-RETAIN	tests/test_relation_capture_633.py	category/zero-write/legal-continue	negative behavior
-RETAIN	tests/test_person_delta_adapter.py	simulated failure reason substrings	test-injected sentinels

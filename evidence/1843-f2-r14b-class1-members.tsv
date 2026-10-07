@@ -1,2 +1,0 @@
-member
-test_decree_commitment_schema_136.py::test_existing_issues_table_gets_commitment_columns_idempotently DELETE

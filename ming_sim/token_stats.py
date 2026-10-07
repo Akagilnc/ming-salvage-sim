@@ -64,7 +64,8 @@ def _get_client_base_url(self_client_holder: object) -> str:
             return ""
         base = getattr(client, "base_url", "")
         return str(base) if base else ""
-    except Exception:
+    except Exception as exc:
+        tlog(f"[TOKEN] client base_url lookup failed: {type(exc).__name__}: {exc}")
         return ""
 
 
@@ -108,7 +109,8 @@ def install_token_stats_patch() -> None:
             return
         try:
             from openai.resources.chat.completions import Completions, AsyncCompletions  # type: ignore
-        except Exception:
+        except Exception as exc:
+            tlog(f"[TOKEN] install patch skipped: {type(exc).__name__}: {exc}")
             return
         orig_create = Completions.create
         orig_acreate = AsyncCompletions.create
@@ -121,8 +123,8 @@ def install_token_stats_patch() -> None:
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
                 _record_usage(model_id, getattr(resp, "usage", None))
-            except Exception:
-                pass
+            except Exception as exc:
+                tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         async def patched_acreate(self, *args, **kwargs):
@@ -133,8 +135,8 @@ def install_token_stats_patch() -> None:
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
                 _record_usage(model_id, getattr(resp, "usage", None))
-            except Exception:
-                pass
+            except Exception as exc:
+                tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         Completions.create = patched_create  # type: ignore

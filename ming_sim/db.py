@@ -9637,23 +9637,20 @@ class GameDB:
         name = str(minister_name or "").strip()
         if not name:
             return None
-        try:
-            if turn is not None:
-                row = self.conn.execute(
-                    "SELECT id FROM chat_messages "
-                    "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
-                    "AND turn=? ORDER BY id DESC LIMIT 1",
-                    (name, int(turn)),
-                ).fetchone()
-            else:
-                row = self.conn.execute(
-                    "SELECT id FROM chat_messages "
-                    "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
-                    "ORDER BY id DESC LIMIT 1",
-                    (name,),
-                ).fetchone()
-        except sqlite3.OperationalError:
-            return None
+        if turn is not None:
+            row = self.conn.execute(
+                "SELECT id FROM chat_messages "
+                "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
+                "AND turn=? ORDER BY id DESC LIMIT 1",
+                (name, int(turn)),
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT id FROM chat_messages "
+                "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
+                "ORDER BY id DESC LIMIT 1",
+                (name,),
+            ).fetchone()
         return int(row["id"]) if row is not None else None
 
     def _parse_origin_chat_message_id(
@@ -9738,13 +9735,10 @@ class GameDB:
 
     def _brief_origin_chat_message_ids(self, order_id: int) -> List[int]:
         """Durable oral pins already registered on this order's brief (may be empty)."""
-        try:
-            row = self.conn.execute(
-                "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
-                (int(order_id),),
-            ).fetchone()
-        except sqlite3.OperationalError:
-            return []
+        row = self.conn.execute(
+            "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+            (int(order_id),),
+        ).fetchone()
         if row is None:
             return []
         try:
@@ -9784,14 +9778,11 @@ class GameDB:
         )
 
     def _current_open_night_id(self) -> int:
-        """当前开着（open/closing）的召对夜 id；无夜或旧档无表返回 0（#498）。"""
-        try:
-            row = self.conn.execute(
-                "SELECT id FROM audience_nights "
-                "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-        except sqlite3.OperationalError:
-            return 0
+        """当前开着（open/closing）的召对夜 id；无开放夜返回 0（#498）。"""
+        row = self.conn.execute(
+            "SELECT id FROM audience_nights "
+            "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
+        ).fetchone()
         return int(row["id"]) if row is not None else 0
 
     # ── #571 旨意案卷公共接口 ──────────────────────────────────────
@@ -19147,16 +19138,12 @@ class GameDB:
                 return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
             except (TypeError, ValueError):
                 return []
-        # #883 CR R1 S2: bare ``secret_order:`` shared *sources* are no longer
-        # produced (create/update → private briefs; production disclosure →
-        # ``secret_order_disclosure:``; register gate rejects the prefix).
-        # Retained: ``record_public_knowledge_event`` still inherits exclusions
-        # by looking up secret_orders when source_id is ``secret_order:N`` —
-        # exercised by AC harness paths (test_character_knowledge_489 /
-        # test_minister_context / test_web_chat_serialization_393). Without
-        # this branch those writes lose the blacklist. session.py only DELETEs
-        # legacy sources with this prefix; no live production producer.
-        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
+        # Private briefs and public disclosure events inherit exclusions from
+        # secret_orders. Bare ``secret_order:N`` shared sources are not produced
+        # and are not a lookup key here (register gate rejects that prefix).
+        match = re.fullmatch(r"secret_order_brief:(\d+)", source)
+        if match is None:
+            match = re.fullmatch(r"secret_order_disclosure:(\d+)(?::.*)?", source)
         if match:
             order_id = int(match.group(1))
             order = self.conn.execute(
@@ -19192,9 +19179,11 @@ class GameDB:
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
-        # Private briefs and retained bare secret-order sources share the
-        # canonical exclusions persisted on secret_orders.
-        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
+        # Private briefs and public disclosure events share canonical
+        # exclusions persisted on secret_orders.
+        match = re.fullmatch(r"secret_order_brief:(\d+)", source)
+        if match is None:
+            match = re.fullmatch(r"secret_order_disclosure:(\d+)(?::.*)?", source)
         if match:
             row = self.conn.execute(
                 "SELECT excluded_targets FROM secret_orders WHERE id=?",
@@ -19284,15 +19273,12 @@ class GameDB:
         name = str(minister_name or "").strip()
         if not name:
             return False
-        try:
-            row = self.conn.execute(
-                "SELECT 1 FROM secret_order_briefs b "
-                "INNER JOIN secret_orders o ON o.id = b.order_id "
-                "WHERE b.minister_name=? AND o.status='active' LIMIT 1",
-                (name,),
-            ).fetchone()
-        except sqlite3.OperationalError:
-            return False
+        row = self.conn.execute(
+            "SELECT 1 FROM secret_order_briefs b "
+            "INNER JOIN secret_orders o ON o.id = b.order_id "
+            "WHERE b.minister_name=? AND o.status='active' LIMIT 1",
+            (name,),
+        ).fetchone()
         return row is not None
 
     def _delete_shared_knowledge_source_ids(
@@ -19344,16 +19330,13 @@ class GameDB:
         seam that can see and park those durable descendants as ``withheld``.
         """
         out: Dict[int, bool] = {}
-        try:
-            brief_rows = self.conn.execute(
-                "SELECT origin_chat_message_ids FROM secret_order_briefs"
-            ).fetchall()
-            pending_rows = self.conn.execute(
-                "SELECT payload_json FROM pending_actions "
-                "WHERE kind='secret_order' AND status IN ('pending','failed')"
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return out
+        brief_rows = self.conn.execute(
+            "SELECT origin_chat_message_ids FROM secret_order_briefs"
+        ).fetchall()
+        pending_rows = self.conn.execute(
+            "SELECT payload_json FROM pending_actions "
+            "WHERE kind='secret_order' AND status IN ('pending','failed')"
+        ).fetchall()
         for row in brief_rows:
             raw = row["origin_chat_message_ids"] if row is not None else "[]"
             try:
@@ -19381,14 +19364,11 @@ class GameDB:
                 out.setdefault(mid, False)
         if out:
             placeholders = ",".join("?" for _ in out)
-            try:
-                turns = self.conn.execute(
-                    f"SELECT user_message_id, minister_message_id FROM chat_turns "
-                    f"WHERE user_message_id IN ({placeholders})",
-                    tuple(sorted(out)),
-                ).fetchall()
-            except sqlite3.OperationalError:
-                turns = []
+            turns = self.conn.execute(
+                f"SELECT user_message_id, minister_message_id FROM chat_turns "
+                f"WHERE user_message_id IN ({placeholders})",
+                tuple(sorted(out)),
+            ).fetchall()
             for turn in turns:
                 durable = any(
                     out.get(int(raw), False)
@@ -19427,13 +19407,10 @@ class GameDB:
                 self.conn.commit()
             return []
         placeholders = ",".join("?" for _ in pins)
-        try:
-            rows = self.conn.execute(
-                f"SELECT id FROM chat_messages WHERE id IN ({placeholders})",
-                pins,
-            ).fetchall()
-        except sqlite3.OperationalError:
-            rows = []
+        rows = self.conn.execute(
+            f"SELECT id FROM chat_messages WHERE id IN ({placeholders})",
+            pins,
+        ).fetchall()
         live_ids = [int(row["id"]) for row in rows]
         source_ids: List[str] = []
         for mid in live_ids:
@@ -19510,22 +19487,19 @@ class GameDB:
         explicit_exclude = set(self._coerce_positive_message_ids(exclude_message_ids))
         protection = self._secret_origin_message_protection()
         exclude = explicit_exclude | set(protection)
-        try:
-            if name_set:
-                placeholders = ",".join("?" for _ in name_set)
-                rows = self.conn.execute(
-                    f"SELECT id, minister_name, turn, content FROM chat_messages "
-                    f"WHERE knowledge_status='held' AND minister_name IN ({placeholders}) "
-                    f"ORDER BY id",
-                    tuple(sorted(name_set)),
-                ).fetchall()
-            else:
-                rows = self.conn.execute(
-                    "SELECT id, minister_name, turn, content FROM chat_messages "
-                    "WHERE knowledge_status='held' ORDER BY id",
-                ).fetchall()
-        except sqlite3.OperationalError:
-            return 0
+        if name_set:
+            placeholders = ",".join("?" for _ in name_set)
+            rows = self.conn.execute(
+                f"SELECT id, minister_name, turn, content FROM chat_messages "
+                f"WHERE knowledge_status='held' AND minister_name IN ({placeholders}) "
+                f"ORDER BY id",
+                tuple(sorted(name_set)),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id, minister_name, turn, content FROM chat_messages "
+                "WHERE knowledge_status='held' ORDER BY id",
+            ).fetchall()
         if not rows:
             return 0
         state = self.load_state()

@@ -29,24 +29,9 @@ from ming_sim.faction_brew import (
     project_character_factions,
     select_faction_brew_targets,
 )
-from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY, MonthEndRelationBrewLeg
+from ming_sim.relation_brew import FOUNDINGS_KEY, RECENT_KEY
 from ming_sim.relations import EMPEROR_NODE
-
-
-def run_month_end_relation_brew(db, state, brew_fn, *, parallel=True, settled_turn=None, settled_year=None, settled_period=None):
-    """Test helper: drive the live Leg three-phase entry (no retired convenience wrapper)."""
-    leg = MonthEndRelationBrewLeg(
-        db, state, brew_fn,
-        settled_turn=settled_turn,
-        settled_year=settled_year,
-        settled_period=settled_period,
-        parallel=parallel,
-    )
-    if not leg.prepare():
-        return leg.report
-    leg.brew()
-    return leg.persist()
-
+from tests.test_relation_brew_636 import run_month_end_relation_brew
 
 
 def _add_edge(db, state, *, source, target, kind, context, origin):

@@ -1,2 +1,0 @@
-class2 rescan: reason person locks in test_relation_capture_633=0; content_prose_no_behavior events.json tests=0; named pragma-only deleted
-CLEAN

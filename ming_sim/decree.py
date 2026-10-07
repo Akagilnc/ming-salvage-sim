@@ -736,29 +736,18 @@ def resolve_directives(
 
 
 def _provenance_from_stored(value: object) -> Provenance:
-    """从 ctx 持久值还原 Provenance（#146 恢复路）：兼容 Provenance 实例、已存的字符串值、
-    历史误序列化的 'Provenance.<name>' 字面串、及非法/缺失值。非法/缺失回落 system_simulation。
+    """从 ctx 持久值还原 Provenance（#146 恢复路）。
 
-    防静默丢源（Sourcery + gemini + coderabbit #175 concur）：Provenance 是 (str, Enum)，
-    若曾把枚举实例 str() 落库会得到 'Provenance.player_decree'（而非值 'player_decree'），
-    Provenance(...) 不匹配 → ValueError → 丢源退回 system_simulation。故分三层：
-    ① 实例直接返回；② 纯值走 Provenance(value)；③ 'Provenance.<name>' 旧脏串剥前缀按成员名查回；
-    仍无法识别才回落 system_simulation。"""
+    接受 Provenance 实例与已存的枚举值字符串；非法/缺失回落 system_simulation。
+    写库侧见 db.save_resolve_context：一律落枚举值字符串，不落 str(member)。
+    """
     if isinstance(value, Provenance):
         return value
     text = str(value or "system_simulation")
     try:
         return Provenance(text)
     except ValueError:
-        pass
-    # 历史误序列化：str(枚举实例) 落库的 'Provenance.player_decree' 脏串——剥前缀按成员名查回，
-    # 不让旧档玩家来源静默退化成 system_simulation。
-    if text.startswith("Provenance."):
-        try:
-            return Provenance[text.split(".", 1)[1]]
-        except KeyError:
-            pass
-    return Provenance.system_simulation
+        return Provenance.system_simulation
 
 
 # 同源恢复刷新的标量字段（与 db.load_state 读盘列对齐）。metrics 单独深刷。

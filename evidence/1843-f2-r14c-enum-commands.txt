@@ -1,5 +1,0 @@
-# F2-R14c residual enum
-# Cat2: seed_guilt fidelity = DB/loader vs loaded input full object equality (no prose hardcode, no severity-only closed-set);
-#       pure schema PRAGMA/ALLOWED_COLS tests; mixed behavior tests strip redundant col-set/banned-col asserts; dead helpers
-# Cat3: buildings direct-declaration claims; economy gentry/unrest/corruption→tick coupling claims;
-#       maintenance account/condition fold; db ensure_column comments for CREATE-baseline cols

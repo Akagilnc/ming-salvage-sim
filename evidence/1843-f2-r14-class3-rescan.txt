@@ -1,2 +1,0 @@
-class3 rescan ordinary docs/config/comments: calc_province_fiscal=0 FISCAL_SCHEMA_VERSION=0 旧档保留 legacy=0 in authorized paths; CLAUDE/ADR deferred
-CLEAN

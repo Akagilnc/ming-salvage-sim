@@ -1,1 +1,0 @@
-class4: restored trailing double-spaces on docs/evidence/issue-1901-w4-1838-merge.md lines 36-37 to match 10e64fbef
