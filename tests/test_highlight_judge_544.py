@@ -228,7 +228,7 @@ def test_chat_stream_done_before_highlights_and_degrade(game, monkeypatch):
     done = next(e for e in events if e["type"] == "done")
     assert done["payload"]["answer"] == "臣陈辽饷。"
     # 回话已落库且高亮为空
-    mid = int(db.get_last_active_chat_turn("殿上", state.turn)["minister_message_id"])
+    mid = int(db.reign.get_last_active_chat_turn("殿上", state.turn)["minister_message_id"])
     assert db.chat_messages.highlights(mid) == []
     _drain(web_game)
 
@@ -311,7 +311,7 @@ def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
     hl_events = [e for e in events if e.get("type") == "highlights"]
     mid = int((hl_events[0].get("message_id") if hl_events else 0) or payload.get("minister_message_id") or 0)
     if mid <= 0:
-        row = db.get_last_active_chat_turn("殿上", state.turn)
+        row = db.reign.get_last_active_chat_turn("殿上", state.turn)
         mid = int((row or {}).get("minister_message_id") or 0)
     assert mid > 0
     assert db.chat_messages.highlights(mid) == ["辽饷"]
@@ -359,7 +359,7 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
         assert payload["answer"] == "臣遵旨。"
         # 超时封顶：done 后无有效 highlights 事件；落库亦空。
         assert not [e for e in events if e.get("type") == "highlights" and e.get("highlights")]
-        row = db.get_last_active_chat_turn("殿上", state.turn)
+        row = db.reign.get_last_active_chat_turn("殿上", state.turn)
         mid = int((row or {}).get("minister_message_id") or 0)
         if mid > 0:
             assert db.chat_messages.highlights(mid) == []

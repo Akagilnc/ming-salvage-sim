@@ -804,7 +804,7 @@ class GameSession:
         for c in self.content.characters.values():
             if not _is_summonable_court_minister(c, resolve_power_id=resolve):
                 continue
-            status, _ = self.db.get_character_status(c.name)
+            status, _ = self.db.characters.get_character_status(c.name)
             if status == "offstage":
                 continue
             views.append(MinisterView(
@@ -842,7 +842,7 @@ class GameSession:
         power_id = self.db.resolve_power_id(character)
         if power_id != "ming":
             return (False, f"{character.name}不属大明朝廷，无法召见。")
-        status, reason = self.db.get_character_status(character.name)
+        status, reason = self.db.characters.get_character_status(character.name)
         if status != "active":
             label = {
                 "offstage": "尚未登场",
@@ -1379,7 +1379,7 @@ class GameSession:
 
     def list_directives(self, include_pending: bool = True) -> List[DirectiveView]:
         statuses = ("pending", "draft") if include_pending else ("draft",)
-        rows = self.db.list_directives(self.state, statuses=statuses)
+        rows = self.db.issues.list_directives(self.state.turn, statuses=statuses)
         return [
             DirectiveView(
                 id=int(r["id"]), text=str(r["text"]), status=str(r["status"]),
@@ -1437,7 +1437,7 @@ class GameSession:
         计入 pending_actions 中 directive/office/secret_order（#1380 语义洞：
         拟旨/任免 staged 时不得假 0）。确认闸门/落库时序不动。
         """
-        n = self.db.count_pending_directives(self.state)
+        n = self.db.issues.count_pending_directives_for_turn(self.state.turn)
         pending_actions = self.db.dossiers.list_pending_actions(self.state.turn)
         n += sum(
             1 for a in pending_actions
@@ -1474,7 +1474,7 @@ class GameSession:
         # 拟诏是 preview：只据已 draft 的候选生成诏书，绝不在此把未表态 pending 默认同意成 draft
         # （#497：未表态只到真实颁诏/过回合才 default-agree；拟诏改 pending status = 制造持久副作用）。
         # 无 draft 可预览 → 响亮拒绝，不为 preview 造持久态。
-        directives = self.db.list_directives(self.state, statuses=("draft",))
+        directives = self.db.issues.list_directives(self.state.turn, statuses=("draft",))
         if not directives:
             raise ValueError("无草案不能拟诏（未表态拟旨须先准驳，或于颁诏时默认同意）。")
         decree = write_decree_with_agno(self.llm_config, self.agno_db, self.state, directives, db=self.db)
@@ -1754,7 +1754,7 @@ class GameSession:
         if not write_gate_already_held:
             self.await_translations_before_month()
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
-            self.db.list_directives(self.state, statuses=("pending",))
+            self.db.issues.list_directives(self.state.turn, statuses=("pending",))
             or any(
                 row.get("kind") == "directive"
                 for row in self.db.dossiers.list_pending_actions(self.state.turn)
@@ -1813,7 +1813,7 @@ class GameSession:
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的
         # pre_settle owning transaction 与财政等副作用一起物化。
-        for pending in self.db.list_directives(self.state, statuses=("pending",)):
+        for pending in self.db.issues.list_directives(self.state.turn, statuses=("pending",)):
             self.db.confirm_directive(int(pending["id"]), self.state)
         # #658：Web/CLI free-form draft 在真实颁诏链进入唯一成案接缝（confirm/commit
         # 已各自 ensure；本口覆盖 add_directive 直落 draft 的路径，幂等）。
@@ -2385,7 +2385,7 @@ class GameSession:
         无草案 → allow_empty_decree，source=system_simulation，仍走玩家月链
         （邸报/种子局势/议题惯性/结局判定）；16ms 快路已废。
         """
-        if self.db.list_directives(self.state, statuses=("pending", "draft")):
+        if self.db.issues.list_directives(self.state.turn, statuses=("pending", "draft")):
             return self.resolve_turn(
                 write_gate_already_held=write_gate_already_held,
             )

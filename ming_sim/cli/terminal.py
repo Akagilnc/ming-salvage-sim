@@ -97,12 +97,12 @@ def choose_minister(session: GameSession) -> Optional[Character]:
     names = [
         name for name in characters
         if _is_summonable_court_minister(characters[name], resolve_power_id=resolve)
-        and session.db.get_character_status(name)[0] != "offstage"
+        and session.db.characters.get_character_status(name)[0] != "offstage"
     ]
     print("\n可召见大臣：")
     for idx, name in enumerate(names, 1):
         c = characters[name]
-        status, _ = session.db.get_character_status(name)
+        status, _ = session.db.characters.get_character_status(name)
         tag = "" if status == "active" else f"  [{_STATUS_LABEL.get(status, status)}]"
         print(f"{idx}. {c.name}（{c.office}，{c.faction}）{tag}")
     while True:
@@ -597,8 +597,8 @@ def review_directives(session: GameSession) -> str:
                     if new_text.strip():
                         from ming_sim.cli_backend import capture_manual_directive_payload
                         row = next(
-                            r for r in session.db.list_directives(
-                                session.state, statuses=("draft",),
+                            r for r in session.db.issues.list_directives(
+                                session.state.turn, statuses=("draft",),
                             ) if int(r["id"]) == target_id
                         )
                         existing_payload = session.db.read_directive_dossier_payload(row)

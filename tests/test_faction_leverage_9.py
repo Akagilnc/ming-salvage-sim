@@ -29,9 +29,9 @@ def test_faction_leverage_drops_when_core_minister_ousted(game):
     db, state, content = game
     row = _yandang_core(db)
     assert row is not None, "阉党需有握高权官(内阁/司礼监/吏部/兵部)的在朝核心"
-    before = db.faction_leverage("阉党")
+    before = db.factions.faction_leverage("阉党")
     db.set_character_status(state, row["name"], "dismissed", reason="清算阉党")
-    after = db.faction_leverage("阉党")
+    after = db.factions.faction_leverage("阉党")
     assert after < before, f"核心退场后阉党 leverage 应联动下跌(before={before} after={after})"
 
 def test_faction_leverage_rises_back_when_minister_restored(game):
@@ -39,14 +39,14 @@ def test_faction_leverage_rises_back_when_minister_restored(game):
     db, state, content = game
     row = _yandang_core(db)
     assert row is not None
-    base = db.faction_leverage("阉党")
+    base = db.factions.faction_leverage("阉党")
     db.set_character_status(state, row["name"], "dismissed", reason="清算")
-    dropped = db.faction_leverage("阉党")
+    dropped = db.factions.faction_leverage("阉党")
     # 起复后还原其原官职（起复路真实序列：set_character_status(active) 不带回 office，
     # 再 set_character_office(原职) 才补回权重——这里手动复刻这两步，验末值对称回原）。
     db.set_character_status(state, row["name"], "active", reason="起复")
     db.set_character_office(row["name"], row["office"], row["office_type"])
-    restored = db.faction_leverage("阉党")
+    restored = db.factions.faction_leverage("阉党")
     assert dropped < base, "退场应跌"
     assert restored == base, f"起复+复职应回到原值(base={base} restored={restored})"
 
@@ -68,9 +68,9 @@ def test_non_whitelist_faction_row_leverage_not_recomputed(game):
         "SELECT name FROM characters WHERE faction='宗室' AND status='active' LIMIT 1"
     ).fetchone()
     assert row is not None, "宗室需有在朝成员（数据前提）"
-    before = db.faction_leverage("宗室")
+    before = db.factions.faction_leverage("宗室")
     db.set_character_status(state, row["name"], "dead", reason="薨")
-    after = db.faction_leverage("宗室")
+    after = db.factions.faction_leverage("宗室")
     assert after == before, "非白名单派系(宗室) leverage 不按明朝官职联动 recompute"
 
 def test_xixue_faction_in_whitelist_drops_when_member_ousted(game):
@@ -81,9 +81,9 @@ def test_xixue_faction_in_whitelist_drops_when_member_ousted(game):
         "AND office_type NOT IN ('后宫','宗藩','未仕','') LIMIT 1"
     ).fetchone()
     assert row is not None, "西学需有握明官的在朝成员"
-    before = db.faction_leverage("西学")
+    before = db.factions.faction_leverage("西学")
     db.set_character_status(state, row["name"], "dismissed", reason="逐西学")
-    after = db.faction_leverage("西学")
+    after = db.factions.faction_leverage("西学")
     assert after < before, f"西学成员退场后 leverage 应联动下跌(before={before} after={after})"
 
 def test_rank_tier_modulates_impact(game):
@@ -102,13 +102,13 @@ def test_rank_tier_modulates_impact(game):
     assert "尚书" in (chong["office"] or ""), "崔呈秀应为兵部尚书(堂官)"
     assert "职方" in (sun["office"] or ""), "孙元化应为兵部职方(属官)"
 
-    yd_before = db.faction_leverage("阉党")
+    yd_before = db.factions.faction_leverage("阉党")
     db.set_character_status(state, "崔呈秀", "dismissed", reason="清算")
-    chong_drop = yd_before - db.faction_leverage("阉党")
+    chong_drop = yd_before - db.factions.faction_leverage("阉党")
 
-    xx_before = db.faction_leverage("西学")
+    xx_before = db.factions.faction_leverage("西学")
     db.set_character_status(state, "孙元化", "dismissed", reason="清算")
-    sun_drop = xx_before - db.faction_leverage("西学")
+    sun_drop = xx_before - db.factions.faction_leverage("西学")
 
     assert chong_drop > 0 and sun_drop > 0, "两人退场都应使各自 faction 下跌"
     assert chong_drop > sun_drop, (
@@ -134,27 +134,27 @@ def test_restore_uses_new_office_weight_not_old(game):
     # 两人都退场（清各自权重），记基准
     db.set_character_status(state, name_hi, "dismissed", reason="清算")
     db.set_character_status(state, name_lo, "dismissed", reason="清算")
-    base_after_both_out = db.faction_leverage("阉党")
+    base_after_both_out = db.factions.faction_leverage("阉党")
 
     # name_lo 起复到地方(低权)
     result_lo = apply_office_appointment(
         db, state, content, name_lo, "某府知府",
         reason="起复地方", faction="阉党", region_id="henan",
     )
-    after_low = db.faction_leverage("阉党")
+    after_low = db.factions.faction_leverage("阉党")
 
     # name_hi 起复到内阁(高权)
     result_hi = apply_office_appointment(
         db, state, content, name_hi, "内阁大学士", reason="起复内阁", faction="阉党"
     )
-    after_high = db.faction_leverage("阉党")
+    after_high = db.factions.faction_leverage("阉党")
 
     # cmr R3 finding#3 防假绿：两次任命都必须真落库（未被拒）——若低职任命被拒(inc_low=0)，
     # 高职任命成功仍满足 inc_high>inc_low，本测试会假绿（没真验「加的是新职权重」）。
     assert not result_lo.get("rejected"), f"起复到地方不应被拒：{result_lo}"
     assert not result_hi.get("rejected"), f"起复到内阁不应被拒：{result_hi}"
     # 低职起复后该人应 active 且 office 含目标低职（新职权重确被计入，而非任命形同未发生）。
-    assert db.get_character_status(name_lo)[0] == "active", "低职起复后该人应 active"
+    assert db.characters.get_character_status(name_lo)[0] == "active", "低职起复后该人应 active"
     lo_office = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (name_lo,)
     ).fetchone()["office"]
@@ -183,9 +183,9 @@ def test_promotion_via_set_character_office_raises_leverage(game):
     ).fetchone()
     if row is None:
         pytest.skip("阉党无可升迁的在朝低权官（数据依赖）")
-    before = db.faction_leverage("阉党")
+    before = db.factions.faction_leverage("阉党")
     db.set_character_office(row["name"], "中极殿首辅", "内阁")
-    after = db.faction_leverage("阉党")
+    after = db.factions.faction_leverage("阉党")
     assert after > before, f"升迁到内阁后 leverage 应上升(before={before} after={after})"
 
 def test_failed_appointment_rolls_back_faction_leverage(game):
@@ -202,7 +202,7 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
     name = name["name"]
     # 先退场，制造一个「起复」场景（起复路会 set_character_status(active)→全重算→再 set_character_office）。
     db.set_character_status(state, name, "dismissed", reason="清算")
-    before = db.faction_leverage("阉党")
+    before = db.factions.faction_leverage("阉党")
 
     orig = db.set_character_office
 
@@ -218,12 +218,12 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
         db.set_character_office = orig  # type: ignore[assignment]
 
     assert result.get("rejected"), f"注入故障应使任命 rejected：{result}"
-    after = db.faction_leverage("阉党")
+    after = db.factions.faction_leverage("阉党")
     assert after == before, (
         f"失败任命回滚后阉党 leverage 应不变(before={before} after={after})"
     )
     # 人物状态也应回滚（仍 dismissed，未被中途 set_character_status(active) 残留）
-    assert db.get_character_status(name)[0] == "dismissed", "失败任命应回滚人物状态"
+    assert db.characters.get_character_status(name)[0] == "dismissed", "失败任命应回滚人物状态"
 
 def test_displaced_minister_faction_leverage_recomputed(game):
     """#9 cmr R1：顶替路也要重算【被顶替者】所属派系 leverage。
@@ -246,13 +246,13 @@ def test_displaced_minister_faction_leverage_recomputed(game):
     assert new_holder["faction"] == "东林", "孙承宗应为东林(≠阉党)"
     assert "兵部尚书" in (chong["office"] or ""), "崔呈秀应持兵部尚书(独占实职)"
 
-    before = db.faction_leverage("阉党")
+    before = db.factions.faction_leverage("阉党")
     result = apply_office_appointment(
         db, state, content, "孙承宗", "兵部尚书", reason="起复掌兵部", faction="东林"
     )
     assert not result.get("rejected"), f"任命不应被拒：{result}"
     assert result.get("displaced"), f"应顶替崔呈秀的兵部尚书：{result}"
-    after = db.faction_leverage("阉党")
+    after = db.factions.faction_leverage("阉党")
     assert after < before, (
         f"被顶替者(崔呈秀)所属阉党 leverage 应在顶替后全重算下跌(before={before} after={after})"
     )
@@ -312,11 +312,11 @@ def test_leverage_clamps_at_zero_no_negative(game):
     raw = round(offset + weight_sum)
     if raw >= 0:
         pytest.skip(f"{faction} 全退后未 clamp 值非负(raw={raw})，非下界触底场景")
-    after = db.faction_leverage(faction)
+    after = db.factions.faction_leverage(faction)
     assert after == 0, f"{faction} 全员退场(未 clamp raw={raw}<0)后 leverage 应恰 clamp 到 0(after={after})"
     # 再起复一人（不补 office，仅状态 active）：权重仍≈0，leverage 仍 clamp、不破对称（仍 == 0）
     db.set_character_status(state, members[0]["name"], "active", reason="复一人")
-    assert db.faction_leverage(faction) == 0, "起复一人(无职)后仍应恰 clamp 到 0"
+    assert db.factions.faction_leverage(faction) == 0, "起复一人(无职)后仍应恰 clamp 到 0"
 
 def test_add_character_appointment_lifts_faction_leverage(game):
     """#9 cmr R2 finding#2：经 apply_office_appointment 任命一个【不在册的新大臣】到白名单派系的握权官，
@@ -330,7 +330,7 @@ def test_add_character_appointment_lifts_faction_leverage(game):
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (new_name,)
     ).fetchone() is None, "测试用新人物不应已在册"
-    before = db.faction_leverage(faction)
+    before = db.factions.faction_leverage(faction)
     before_ws = db._faction_office_weight_sum(faction)
     result = apply_office_appointment(
         db, state, content, new_name, "翰林院侍读学士", reason="新科入翰林", faction=faction
@@ -340,7 +340,7 @@ def test_add_character_appointment_lifts_faction_leverage(game):
     # 新成员确入册且 active/ming（add_character 落库成功），权重和随之上升。
     after_ws = db._faction_office_weight_sum(faction)
     assert after_ws > before_ws, f"新建大臣应使{faction}权重和上升(before={before_ws} after={after_ws})"
-    after = db.faction_leverage(faction)
+    after = db.factions.faction_leverage(faction)
     assert after > before, (
         f"经 add_character 新建大臣加入{faction}后 leverage 应上升(before={before} after={after})"
     )
@@ -410,9 +410,9 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
     assert dirtied, "白名单派系应至少有一个在 factions 表（数据前提）"
     # 脏写已生效：每个被脏写的派系此刻读到的就是 sentinel（确证 recompute_all 之后的归位非假绿）。
     for f in dirtied:
-        assert db.faction_leverage(f) == SENTINEL, f"{f} sentinel 脏写应已落库"
+        assert db.factions.faction_leverage(f) == SENTINEL, f"{f} sentinel 脏写应已落库"
     # 此刻 leverage 是脏 sentinel（阉党还叠了 unhooked office 清空的 drift）。
-    stale = db.faction_leverage(faction)
+    stale = db.factions.faction_leverage(faction)
     # 兜底重算全部白名单派系。
     db.recompute_all_faction_leverage()
     db.conn.commit()
@@ -422,7 +422,7 @@ def test_recompute_all_reconciles_drift_from_unhooked_path(game):
     ).fetchone()["leverage_offset"]
     weight_sum = db._faction_office_weight_sum(faction)
     expected = max(0, min(100, round(offset + weight_sum)))
-    reconciled = db.faction_leverage(faction)
+    reconciled = db.factions.faction_leverage(faction)
     assert reconciled == expected, (
         f"recompute_all 后{faction} leverage 应= 公式值(stale={stale} reconciled={reconciled} expected={expected})"
     )
@@ -462,7 +462,7 @@ def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch)
         (faction,),
     )
     db.conn.commit()
-    stale = db.faction_leverage(faction)
+    stale = db.factions.faction_leverage(faction)
     assert stale >= 30, f"前提：裸 UPDATE 后 DB leverage 应残留≥30（stale={stale}）"
     before_turn = state.turn
 
@@ -473,7 +473,7 @@ def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch)
     after = db.conn.execute(
         "SELECT status FROM legacies WHERE id=?", (leg["id"],)
     ).fetchone()["status"]
-    reconciled = db.faction_leverage(faction)
+    reconciled = db.factions.faction_leverage(faction)
     assert reconciled < 30, f"前提：reconcile 后公式值应<30（reconciled={reconciled}）"
     assert after == "cleared", (
         f"阉党专权 legacy 应在本回合即 cleared（reconcile 须先于 clear_gated_legacies），"
@@ -632,9 +632,9 @@ def test_weizhongxian_ouster_drops_yandang_by_sili_weight(game):
     if row is None or row["status"] != "active":
         pytest.skip("魏忠贤 非在朝（数据依赖）")
     assert "司礼监" in (row["office"] or ""), "魏忠贤 office 应含司礼监秉笔（数据前提）"
-    before = db.faction_leverage("阉党")
+    before = db.factions.faction_leverage("阉党")
     db.set_character_status(state, "魏忠贤", "dismissed", reason="崇祯清算九千岁")
-    after = db.faction_leverage("阉党")
+    after = db.factions.faction_leverage("阉党")
     drop = before - after
     assert drop == 20, f"九千岁退场应按司礼监批红掉 20（非东厂 8）：before={before} after={after} drop={drop}"
 
@@ -646,17 +646,17 @@ def test_whitelist_faction_delta_routes_to_offset_survives_reconcile(game):
     修后：+8 进 offset → recompute_all 算出的公式值已含 +8、确认同值、不抹（绿）。"""
     db, state, content = game
     faction = "阉党"  # 白名单
-    before = db.faction_leverage(faction)
+    before = db.factions.faction_leverage(faction)
     # 经 LLM faction_delta 路给阉党 +8 influence（adjust_factions 是落库单一入口）。
     db.adjust_factions({faction: {"leverage": 8}})
-    after_apply = db.faction_leverage(faction)
+    after_apply = db.factions.faction_leverage(faction)
     assert after_apply == before + 8, (
         f"faction_delta +8 应即时体现在 leverage（before={before} after_apply={after_apply}）"
     )
     # 模拟结算尾兜底 reconcile。
     db.recompute_all_faction_leverage()
     db.conn.commit()
-    after_reconcile = db.faction_leverage(faction)
+    after_reconcile = db.factions.faction_leverage(faction)
     assert after_reconcile == before + 8, (
         f"白名单 faction_delta +8 注入 offset 后应经 reconcile 留存、不被抹回"
         f"（before={before} after_reconcile={after_reconcile}）"
@@ -671,7 +671,7 @@ def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
     互补：那条证机制、本条证生产 wiring（含 settle-tail reconcile）。"""
     db, state, content = game
     faction = "阉党"  # 白名单
-    before = db.faction_leverage(faction)
+    before = db.factions.faction_leverage(faction)
     before_turn = state.turn
 
     # faction_delta payload 真实 schema：顶层 key=faction_delta（canonical 英文；
@@ -692,7 +692,7 @@ def test_whitelist_faction_delta_survives_full_settlement(game, monkeypatch):
 
     # 结算后 turn 已推进（证明 settle-tail reconcile 在 next_period 之前已跑过整条路）。
     assert state.turn == before_turn + 1, "结算后回合应已推进（整条结算路跑完）"
-    after = db.faction_leverage(faction)
+    after = db.factions.faction_leverage(faction)
     # +8 已含进 offset → settle-tail recompute_all 算出的公式值已含 +8，不被抹回。
     assert after == before + 8, (
         f"白名单 faction_delta +8 经玩家月链（含结算尾 reconcile）后应留存、不被抹回"
@@ -707,13 +707,13 @@ def test_non_whitelist_faction_delta_direct_leverage_survives_reconcile(game):
 
     faction = "宗室"
     assert faction not in _LEVERAGE_FACTIONS, "宗室应为非白名单"
-    before = db.faction_leverage(faction)
+    before = db.factions.faction_leverage(faction)
     db.adjust_factions({faction: {"leverage": 6}})
-    after_apply = db.faction_leverage(faction)
+    after_apply = db.factions.faction_leverage(faction)
     assert after_apply == before + 6, f"非白名单 +6 应直写 leverage（after_apply={after_apply}）"
     db.recompute_all_faction_leverage()
     db.conn.commit()
-    after_reconcile = db.faction_leverage(faction)
+    after_reconcile = db.factions.faction_leverage(faction)
     assert after_reconcile == before + 6, (
         f"非白名单(宗室) leverage 不被 reconcile 动、增量留存（after_reconcile={after_reconcile}）"
     )
@@ -757,12 +757,12 @@ def test_chat_rollback_restores_faction_leverage(game):
         "SELECT name FROM characters WHERE faction='阉党' AND status='active' "
         "AND office_type NOT IN ('后宫','宗藩','未仕','') LIMIT 1"
     ).fetchone()["name"]
-    before = db.faction_leverage(faction)
+    before = db.factions.faction_leverage(faction)
 
     # chat 回滚口径：先快照，做一个会改 leverage 的动作（退场该成员），再按 diff 还原。
     before_snap = db.capture_chat_rollback_snapshot()
     db.set_character_status(state, name, "dismissed", reason="召对清算")
-    after = db.faction_leverage(faction)
+    after = db.factions.faction_leverage(faction)
     assert after < before, "退场应使 leverage 下跌（前置：动作确实改了 factions）"
     after_snap = db.capture_chat_rollback_snapshot()
 
@@ -771,7 +771,7 @@ def test_chat_rollback_restores_faction_leverage(game):
     db.reign.update_chat_turn_messages(chat_turn_id, user_message_id=1, minister_message_id=2)
     db.undo_chat_turn(chat_turn_id)
 
-    restored = db.faction_leverage(faction)
+    restored = db.factions.faction_leverage(faction)
     assert restored == before, (
         f"chat 撤回应连 factions leverage 一并还原：before={before} restored={restored}"
     )
@@ -794,12 +794,12 @@ def test_power_id_defection_drops_faction_leverage_immediately(game):
     ).fetchone()
     assert row is not None, "阉党需有握高权官的 active ming 成员"
     name = row["name"]
-    before = db.faction_leverage("阉党")
+    before = db.factions.faction_leverage("阉党")
     # 直接调 apply_character_power_changes（power_id 翻转落库入口），不走结算路
     db.apply_character_power_changes(
         [{"name": name, "new_power": "houjin", "reason": "通虏投敌"}]
     )
-    after = db.faction_leverage("阉党")
+    after = db.factions.faction_leverage("阉党")
     assert after < before, (
         f"投敌后原派系 leverage 应即时下跌（不等 reconcile）：before={before} after={after}"
     )
@@ -832,7 +832,7 @@ def test_half_weight_odd_baseline_no_round_drift(game):
     try:
         db._calibrate_faction_offsets(is_fresh_factions_seed=True)
         db.conn.commit()
-        lev = db.faction_leverage(faction)
+        lev = db.factions.faction_leverage(faction)
         assert lev == baseline, (
             f"weight_sum=2.5 + 奇数基线 {baseline} → leverage 应={baseline}（不漂），实得 {lev}"
         )

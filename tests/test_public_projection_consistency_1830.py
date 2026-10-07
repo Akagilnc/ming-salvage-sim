@@ -30,7 +30,7 @@ def _active_minister(db, content):
     for character in content.characters.values():
         if character.office_type in ("后宫", "宗藩"):
             continue
-        if db.get_character_status(character.name)[0] == "active":
+        if db.characters.get_character_status(character.name)[0] == "active":
             return character
     raise AssertionError("no active minister")
 

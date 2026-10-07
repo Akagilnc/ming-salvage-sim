@@ -8,7 +8,7 @@ persists the columns it is given.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from ming_sim.entities.column_write import bind_affair_once, checked_columns, upsert_by_pk
 
@@ -443,6 +443,53 @@ class CharacterStore:
 
     def read_get_authority(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM authority_records WHERE id=?', params).fetchone()
+
+    def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
+        row = self.read_get_authority((int(authority_id),))
+        if row is None:
+            return None
+        result = dict(row)
+        result["revoked"] = bool(result["revoked"])
+        return result
+
+    def list_active_authorities(
+        self, turn: int, *, holder_id: str = "",
+    ) -> List[Dict[str, object]]:
+        params: List[object] = [int(turn), int(turn)]
+        holder_sql = ""
+        if holder_id:
+            holder_sql = " AND holder_id=?"
+            params.append(str(holder_id))
+        rows = self.read_list_active_authorities_owned(params, holder_sql).fetchall()
+        return [{**dict(row), "revoked": False} for row in rows]
+
+    def find_authority_by_origin(
+        self, dossier_id: int, *, holder_id: str, privilege: str, scope: str,
+    ) -> Optional[Dict[str, object]]:
+        """Return the stable row for an exact grant origin, regardless of status."""
+        row = self.read_find_authority_by_origin((
+            int(dossier_id), str(holder_id).strip(), str(privilege).strip(),
+            str(scope).strip(),
+        ))
+        if row is None:
+            return None
+        result = dict(row)
+        result["revoked"] = bool(result["revoked"])
+        return result
+
+    def get_character_status(self, name: str) -> tuple[str, str]:
+        row = self.read_get_character_status((name,))
+        if row is None:
+            return ("active", "")
+        return (row["status"], row["status_reason"] or "")
+
+    def list_office_effects_for_dossier(
+        self, dossier_id: int,
+    ) -> List[Dict[str, object]]:
+        return [
+            dict(row) for row in self.read_list_office_effects_for_dossier((int(dossier_id),))
+        ]
+
 
     def read_find_authority_by_origin(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT * FROM authority_records WHERE dossier_id=? AND holder_id=? AND privilege=? AND scope=? ORDER BY id LIMIT 1', params).fetchone()

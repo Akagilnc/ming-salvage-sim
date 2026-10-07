@@ -247,7 +247,7 @@ def test_latched_loyalty_legacy_flip_preflight_rejects_strategic_envelope(game):
         }],
     })
 
-    assert not db.has_event_triggered("jisi_lubian")
+    assert not db.issues.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 22
@@ -287,7 +287,7 @@ def test_latched_loyalty_at_mutiny_cap_preflight_rejects_strategic_envelope(game
         }],
     })
 
-    assert not db.has_event_triggered("jisi_lubian")
+    assert not db.issues.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 20

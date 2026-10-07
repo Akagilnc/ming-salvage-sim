@@ -680,6 +680,41 @@ class ReignStateStore:
             (minister_name, int(night_id)),
         ).fetchall()
 
+
+    MEMORIAL_READS_KV_KEY = "memorial_reads"
+
+    def memorial_read_keys(self) -> set[str]:
+        raw = self.kv_get(self.MEMORIAL_READS_KV_KEY)
+        if not raw:
+            return set()
+        data = load_stored_list(raw, label="memorial_reads")
+        return {str(item) for item in data if str(item or "").strip()}
+
+    def mark_memorials_read(self, keys) -> None:
+        """标记奏报已读；键随存档（kv_store）持久化。"""
+        incoming = {str(k).strip() for k in keys if str(k or "").strip()}
+        if not incoming:
+            return
+        merged = sorted(self.memorial_read_keys() | incoming)
+        self.kv_set(self.MEMORIAL_READS_KV_KEY, json.dumps(merged, ensure_ascii=False))
+
+    def list_in_flight_chat_turns(
+        self,
+        *,
+        night_id: Optional[int] = None,
+        minister_name: Optional[str] = None,
+        turn: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        return [dict(r) for r in self.list_in_flight_chat_turn_rows(
+            night_id=night_id, minister_name=minister_name, turn=turn,
+        )]
+
+    def get_last_active_chat_turn(
+        self, minister_name: str, turn: int,
+    ) -> Optional[Dict[str, Any]]:
+        row = self.last_active_chat_turn_row(minister_name, int(turn))
+        return dict(row) if row is not None else None
+
     def list_in_flight_chat_turn_rows(
         self,
         *,

@@ -87,11 +87,11 @@ def test_apply_score_extraction_secret_order_update_respects_outer_transaction_r
         content=content,
     )
     assert out["secret_order_updates"][0]["order_id"] == oid
-    in_tx = db.get_secret_order(oid)
+    in_tx = db.character_knowledge.get_secret_order(oid)
     assert in_tx is not None
     db.conn.rollback()
 
-    row = db.get_secret_order(oid)
+    row = db.character_knowledge.get_secret_order(oid)
     assert row is not None
 
 

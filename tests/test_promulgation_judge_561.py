@@ -350,7 +350,7 @@ def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(g
     }
     auth_ids = second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
     assert auth_ids and all(item.isdigit() for item in auth_ids)
-    authority = db.get_authority(int(auth_ids[0]))
+    authority = db.characters.get_authority(int(auth_ids[0]))
     assert authority["dossier_id"] != dossier_id
     assert db.dossiers.authorizes_effects(int(authority["dossier_id"]))
     assert second["dossiers"][0]["held_authorities"]
@@ -378,7 +378,7 @@ def test_gate_reconsideration_resolves_missing_target_to_land_survey(game):
     assert held["target_id"] == "清丈田亩"
     auth_ids = second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
     assert auth_ids and all(item.isdigit() for item in auth_ids)
-    authority = db.get_authority(int(auth_ids[0]))
+    authority = db.characters.get_authority(int(auth_ids[0]))
     grant = db.dossiers.get(int(authority["dossier_id"]))
     assert authority["scope"] == "issue:清丈田亩"
     assert grant["target_kind"] == "issue"
@@ -420,7 +420,7 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     }]}, content=content)["authority_changes"][0]
     assert grant.get("rejected") is not True
     authority_id = int(grant["authority_id"])
-    assert db.get_authority(authority_id)["dossier_id"] == grant_dossier_id
+    assert db.characters.get_authority(authority_id)["dossier_id"] == grant_dossier_id
     assert grant_dossier_id != dossier_id
 
     stale_context = decree_mod.build_promulgation_judge_context(db, state, [stale])

@@ -339,7 +339,7 @@ def _play_one_month(
         game.session, f"着户部清核辽饷（{month_label}）。",
     )
     assert draft_id > 0, f"{month_label}: seed_manual_draft returned {draft_id}"
-    assert game.db.list_directives(game.state), f"{month_label}: directive list empty after seed"
+    assert game.db.issues.list_directives(game.state.turn), f"{month_label}: directive list empty after seed"
 
     _wait_pending_writes(game)
 

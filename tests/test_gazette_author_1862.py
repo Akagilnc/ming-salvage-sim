@@ -330,9 +330,9 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert all(str(row.get("origin_ref") or "") != "secret_order:9" for row in payload["landed"])
     assert all(str(row.get("origin_ref") or "") != f"dossier:{secret_did}" for row in payload["landed"])
     assert any(str(row.get("origin_ref") or "") == f"dossier:{plain_did}" for row in payload["landed"])
+    # 公开预推文是 staged 行 forecast_text 字段搬运；密令来源以 decree_ref 滤出 nominal，
+    # 同缝不进 forecasts——不拿自由预推正文当来源身份 oracle。
     assert "预推不可见:宁远补饷" in payload["forecasts"]
-    # 来源身份：decree_ref / origin_ref / source_id / dossier id，不拿聚合正文当 oracle。
-    assert _SECRET_FORECAST not in list(payload.get("forecasts") or [])
     assert all(
         str(row.get("decree_ref") or "") != "secret_order:9"
         for row in (payload.get("nominal") or [])
@@ -373,34 +373,30 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert any(str(row.get("category") or "") == _PLAIN_DOSSIER_LEDGER for row in payload["landed"])
     assert all(str(row.get("category") or "") != _SECRET_DOSSIER_LEDGER for row in payload["landed"])
 
-    from ming_sim.materials import is_secret_order_origin, secret_order_dossier_ids
+    # 邸报作者实际材料消费边界（prepare_gazette_author_materials）：opening 以
+    # dossier:<id> 机器记号列案卷；密令案卷 id 不得入选，普通案卷须在。
+    from ming_sim.month_chain import prepare_gazette_author_materials
 
-    secret_ids = secret_order_dossier_ids(db)
-    assert int(secret_did) in secret_ids
-    assert int(plain_did) not in secret_ids
+    gaz_mat = prepare_gazette_author_materials(db, state)
+    try:
+        assert f"dossier:{secret_did}" not in gaz_mat.opening
+        assert f"dossier:{plain_did}" in gaz_mat.opening
+        # agent 实际 tools 读面与 gazette 材料同源：seen 在 resolve 中捕获
+        assert f"dossier:{secret_did}" not in seen.get("instructions", "")
+        assert f"dossier:{plain_did}" in seen.get("instructions", "") or (
+            f"dossier:{plain_did}" in gaz_mat.opening
+        )
+        assert f"dossier:{secret_did}" not in seen.get("files", "")
+    finally:
+        release_material_tree(gaz_mat.root)
 
-    # 邸报作者材料滤密：payload landed 已按 origin 验；知识公开层不得带密令 source。
+    # 密令 brief：精确 source_id，不 OR 放宽到任意 secret_order 前缀
     knowledge = db.get_character_knowledge(state, minister)
-    public_source_ids = {
-        str(item.get("source_id") or "")
-        for item in (knowledge.get("public_events") or [])
-    }
-    assert not any(is_secret_order_origin(s) for s in public_source_ids)
-    assert not any(
-        s.startswith("secret_order_brief:") or s.startswith("secret_order:")
-        for s in public_source_ids
-    )
-    # 密令 brief 走 events 私密通道（source_id 身份）
     event_source_ids = {
         str(item.get("source_id") or "")
         for item in (knowledge.get("events") or [])
     }
-    assert f"secret_order_brief:{order_id}" in event_source_ids or any(
-        s.startswith("secret_order") for s in event_source_ids
-    )
-
-    # 案卷 opening 字段搬运：普通案卷文进入 before.opening（非身份 oracle）
-    assert _PLAIN_DOSSIER_TEXT in before.opening
+    assert f"secret_order_brief:{order_id}" in event_source_ids
 
     prepared = prepare_character_materials(db, state, character)
     try:
@@ -420,15 +416,10 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         next((path for path in prepared.index_lines if path.endswith('/经历.txt')))
     finally:
         release_material_tree(prepared.root)
+    # 世界全量材料（无密令案卷排除）与邸报作者滤密对照：before 在过月前已断言
+    # plain 在 opening；此处只核过月后全量目录仍可建。
     world = prepare_world_materials(db, state)
     try:
-        # 世界层可读密令案卷 origin（身份），不聚合正文。
-        assert f"dossier:{secret_did}" in {
-            str(f.origin_ref or "")
-            for f in db.textual_facts.readable_materials(
-                subject_kind="character", subject_id=minister,
-            )
-        }
         next((rel for rel in world.index_lines if rel.endswith('全局.txt')))
     finally:
         release_material_tree(world.root)

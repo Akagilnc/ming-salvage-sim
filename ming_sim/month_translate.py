@@ -44,7 +44,7 @@ def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
     from ming_sim.issues import _fiscal_levy_event_by_id, petition_outcome_is_admissible
 
     out: list[dict[str, object]] = []
-    for row in db.list_event_petition_records():
+    for row in db.issues.list_event_petition_records():
         event_id = str(row.get("event_id") or "")
         if not event_id or any(item["event_id"] == event_id for item in out):
             continue

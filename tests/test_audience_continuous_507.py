@@ -18,7 +18,7 @@ STANDING = "王承恩"  # 常在员额（内廷近臣全程在场）
 
 def _activate(db, state, *names: str) -> None:
     for n in names:
-        if db.get_character_status(n)[0] != "active":
+        if db.characters.get_character_status(n)[0] != "active":
             db.set_character_status(state, n, "active", reason="连场测试置在场")
 
 

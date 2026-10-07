@@ -130,7 +130,7 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     restored.close()
     final = GameDB(db_path, content)
     final_state = final.load_state()
-    record = final.get_authority(authority_id)
+    record = final.characters.get_authority(authority_id)
     assert record["revoked"] is True
     assert record["revoked_turn"] == final_state.turn
 
@@ -169,7 +169,7 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     }, content=content)
     assert again["authority_changes"][0]["reason"] == "already_revoked"
     assert again["authority_changes"][0].get("rejected") is not True
-    assert final.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
+    assert final.characters.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
     assert len(final.person_logs.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )) == 1
@@ -220,7 +220,7 @@ def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
     assert rows[1]["reason"] == "missing_dossier_source"
     assert rows[2].get("rejected") is not True
     authority_id = int(rows[2]["authority_id"])
-    assert db.get_authority(authority_id)["privilege"] == "新机构专办"
+    assert db.characters.get_authority(authority_id)["privilege"] == "新机构专办"
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
@@ -342,7 +342,7 @@ def test_same_dossier_grant_replay_returns_terminal_origin_without_regrant(
 
     assert replay["authority_changes"][0]["authority_id"] == authority_id
     assert replay["authority_changes"][0]["reason"] == "same_dossier_replay"
-    record = db.get_authority(authority_id)
+    record = db.characters.get_authority(authority_id)
     if terminal_state == "revoked":
         assert record["revoked"] is True
     else:

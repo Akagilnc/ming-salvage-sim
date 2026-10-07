@@ -32,7 +32,7 @@ def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
             continue
         if getattr(ch, "office_type", "") == "后宫":
             continue
-        if db.get_character_status(name)[0] == "active":
+        if db.characters.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("no active ming minister")
 
@@ -219,7 +219,7 @@ def test_undo_removes_unlisted_person_registration(game):
 
     night_id, chat_id = _run_round(db, state, caller, writes=_register)
 
-    assert db.get_character_status(newcomer)[0] == "active"
+    assert db.characters.get_character_status(newcomer)[0] == "active"
     assert newcomer in an.persons_present_tonight(db, night_id)
 
     db.undo_chat_turn(chat_id)

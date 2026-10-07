@@ -496,7 +496,7 @@ def test_travel_tone_updates_this_round_summon_ledger(game, monkeypatch):
     db.conn.execute(
         "UPDATE characters SET location='shaanxi', transit_to='' WHERE name=?", (person,)
     )
-    if db.get_character_status(person)[0] != "active":
+    if db.characters.get_character_status(person)[0] != "active":
         db.set_character_status(state, person, "active")
 
     class SceneAgent:

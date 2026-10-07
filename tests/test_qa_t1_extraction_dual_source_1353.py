@@ -501,7 +501,7 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     worker_published.wait()
     wt.join()
     assert not wt.is_alive()
-    assert an.list_in_flight_chat_turns(db, nid) == []
+    assert an.reign.list_in_flight_chat_turns(db, nid) == []
 
 
 def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypatch):

@@ -148,7 +148,7 @@ def _active_minister(game) -> str:
             continue
         if getattr(ch, "office_type", "") == "后宫":
             continue
-        if game.db.get_character_status(name)[0] == "active":
+        if game.db.characters.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("no active ming minister")
 

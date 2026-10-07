@@ -699,7 +699,7 @@ def visible_in_court(character: Character, db) -> bool:
         resolve_power_id=lambda c: _character_power_id(c, db),
     ):
         return False
-    if db.get_character_status(character.name)[0] == "offstage":
+    if db.characters.get_character_status(character.name)[0] == "offstage":
         return False
     return True
 
@@ -725,7 +725,7 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
         return False
     if getattr(character, "faction", "") == "流寇":
         return False
-    if db.get_character_status(character.name)[0] != "offstage":
+    if db.characters.get_character_status(character.name)[0] != "offstage":
         return False
     debut_year = int(getattr(character, "debut_year", 0) or 0)
     debut_month = int(getattr(character, "debut_month", 0) or 0)
@@ -1327,7 +1327,7 @@ class WebGame:
 
     # ── 序列化 ────────────────────────────────────────────────────────────
     def public_character(self, character: Character) -> Dict[str, Any]:
-        status, status_reason = self.db.get_character_status(character.name)
+        status, status_reason = self.db.characters.get_character_status(character.name)
         # #1683：active=官印/在事态，不得单独译成物理「在朝」；去向另投影 location/transit。
         status_label = _STATUS_LABEL_WEB.get(status, status)
         office = character.office  # 去职者已被清空，可能为空串
@@ -1392,8 +1392,7 @@ class WebGame:
             item.id for item in self.session.list_directives(include_pending=True)
         }
         return [
-            row for row in self.db.list_directives(
-                self.state, statuses=("pending", "draft"),
+            row for row in self.db.issues.list_directives(self.state.turn, statuses=("pending", "draft"),
             )
             if int(row["id"]) in visible_ids
         ]
@@ -1573,7 +1572,7 @@ class WebGame:
         return list(self.db.list_player_memorials())
 
     def mark_memorials_read(self, keys: List[str]) -> Dict[str, Any]:
-        self.db.mark_memorials_read(keys)
+        self.db.reign.mark_memorials_read(keys)
         memorials = self.memorial_payloads()
         return {
             "memorials": memorials,
@@ -1921,12 +1920,12 @@ class WebGame:
                 from ming_sim.audience_night import get_open_night
                 night = get_open_night(self.db)
                 if night is not None:
-                    return bool(self.db.list_in_flight_chat_turns(night_id=int(night["id"])))
-            return bool(self.db.list_in_flight_chat_turns(
+                    return bool(self.db.reign.list_in_flight_chat_turns(night_id=int(night["id"])))
+            return bool(self.db.reign.list_in_flight_chat_turns(
                 minister_name=minister_name, turn=int(self.state.turn),
             ))
         # 极薄兜底：旧替身无接口时不挡（与 get_last_active 语义接近）
-        existing = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
+        existing = self.db.reign.get_last_active_chat_turn(minister_name, self.state.turn)
         return existing is not None and not existing.get("minister_message_id")
 
     def _start_chat_turn(
@@ -2056,7 +2055,7 @@ class WebGame:
                 if active:
                     owner = str(active["minister_name"])
                     if owner != minister_name:
-                        owner_last = self.db.get_last_active_chat_turn(owner, self.state.turn)
+                        owner_last = self.db.reign.get_last_active_chat_turn(owner, self.state.turn)
                         if not owner_last or int(owner_last["id"]) != int(active["id"]):
                             raise HTTPException(status_code=409, detail="只能撤回全局最后一轮召对。")
                         result = self.undo_last_chat(owner, gate_held=gate_held)
@@ -2065,7 +2064,7 @@ class WebGame:
                         return result
         if self.state.turn_phase not in (TurnPhase.SUMMONING.value, TurnPhase.REVIEWING.value):
             raise HTTPException(status_code=409, detail="本回合已经进入颁诏结算，不能撤回召对。")
-        row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
+        row = self.db.reign.get_last_active_chat_turn(minister_name, self.state.turn)
         if row is None:
             raise HTTPException(status_code=404, detail="本回合没有可撤回的召对。")
         if not self.db.reign.is_global_last_active_chat_turn(int(row["id"])):
@@ -5228,7 +5227,7 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
     # （旧 turn_extractions 只由旧 settle 后半段写，新档恒空）。
     resolve_ctx = db.resolve_contexts.get(turn) or {}
     decree_text = str(resolve_ctx.get("decree_text") or "")
-    directives = db.list_directives_by_turn(turn)
+    directives = db.issues.list_directives_by_turn(turn)
     # exists：report/递话纯空白与空串同属缺席（临时 strip）；payload 仍回原文
     if (
         not str(report or "").strip()
@@ -5361,7 +5360,7 @@ async def api_audience_chat_history() -> Dict[str, Any]:
         "history": game.chat_projection(SCENE_CHAT_SPEAKER),
         "can_undo_last_chat": game.can_undo_last_chat(SCENE_CHAT_SPEAKER),
         "reply_retries": game.reply_retries(SCENE_CHAT_SPEAKER),
-        "generating_turn_ids": [int(r["id"]) for r in game.db.list_in_flight_chat_turns(
+        "generating_turn_ids": [int(r["id"]) for r in game.db.reign.list_in_flight_chat_turns(
             night_id=int(open_night["id"]) if open_night else None,
             minister_name=SCENE_CHAT_SPEAKER,
         )],

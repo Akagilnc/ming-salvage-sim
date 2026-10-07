@@ -870,7 +870,7 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
         for name, ch in content.characters.items()
         if getattr(ch, "power_id", "ming") == "ming"
         and getattr(ch, "office_type", "") != "后宫"
-        and db.get_character_status(name)[0] == "active"
+        and db.characters.get_character_status(name)[0] == "active"
     ]
     new_holder, old_holder = names[0], names[1]
     old_new = (
@@ -973,7 +973,7 @@ def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
         for name, ch in content.characters.items()
         if getattr(ch, "power_id", "ming") == "ming"
         and getattr(ch, "office_type", "") != "后宫"
-        and db.get_character_status(name)[0] == "active"
+        and db.characters.get_character_status(name)[0] == "active"
     ]
     new_holder, old_holder = names[0], names[1]
     old_new = (
@@ -1158,7 +1158,7 @@ def test_apply_score_extraction_does_not_release_non_ming_when_derived_appointme
         ch_name
         for ch_name, ch in content.characters.items()
         if getattr(ch, "power_id", "") not in {"", "ming"}
-        and db.get_character_status(ch_name)[0] == "active"
+        and db.characters.get_character_status(ch_name)[0] == "active"
     )
     old_status = content.characters[name].status
     old_office = content.characters[name].office
@@ -1228,7 +1228,7 @@ def test_apply_score_extraction_applies_person_change_disposition(game):
             content=content,
         )
 
-        assert db.get_character_status(name)[0] == "dismissed"
+        assert db.characters.get_character_status(name)[0] == "dismissed"
         assert content.characters[name].status == "dismissed"
         assert content.characters[name].office == ""
         assert "person_changes" not in applied
@@ -1253,7 +1253,7 @@ def test_apply_score_extraction_applies_person_change_banish(game):
             content=content,
         )
 
-        assert db.get_character_status(name)[0] == "dismissed"
+        assert db.characters.get_character_status(name)[0] == "dismissed"
         assert content.characters[name].status == "dismissed"
         assert content.characters[name].office == ""
         assert applied["applied_person_changes"] == [
@@ -1280,7 +1280,7 @@ def test_apply_score_extraction_rejects_banish_from_imprisoned(game):
             content=content,
         )
 
-        assert db.get_character_status(name)[0] == "imprisoned"
+        assert db.characters.get_character_status(name)[0] == "imprisoned"
         assert applied["applied_person_changes"][0]["rejected"] is True
         assert applied["applied_person_changes"][0]["category"] == "invalid_transition"
     finally:
@@ -1660,7 +1660,7 @@ def _materialize_active_prince(db, state, content):
         import pytest
         pytest.skip("基底盘面无宗藩人物")
     db.add_character(state, content.characters[name], source="测试物化")
-    assert db.get_character_status(name)[0] == "active"
+    assert db.characters.get_character_status(name)[0] == "active"
     return name
 
 def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
@@ -1672,7 +1672,7 @@ def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
         n for n, c in content.characters.items()
         if getattr(c, "power_id", "ming") == "ming"
         and getattr(c, "office_type", "") not in ("后宫", "宗藩")
-        and db.get_character_status(n)[0] == "active"
+        and db.characters.get_character_status(n)[0] == "active"
     )
     prepare_character_materials(db, state, content.characters[minister_name])
     court = {row["name"] for row in db.characters.current_court_rows(int(state.year), int(state.period))}
@@ -1736,7 +1736,7 @@ def test_create_secret_order_persists_canonical_name(game):
          if getattr(c, "power_id", "ming") == "ming"
          and c.office_type not in ("后宫", "宗藩")
          and any(a != n for a in (c.aliases or []))
-         and db.get_character_status(n)[0] == "active"),
+         and db.characters.get_character_status(n)[0] == "active"),
         None,
     )
     if target is None:
@@ -1798,7 +1798,7 @@ def test_pending_dismiss_rejects_vassal_prince(read_game):
     name = _materialize_active_prince(db, state, content)
     ok = db._commit_office_action(state, {"action": "罢免"}, {"name": name}, content)
     assert ok == set()
-    assert db.get_character_status(name)[0] == "active"  # 未被罢、状态不变
+    assert db.characters.get_character_status(name)[0] == "active"  # 未被罢、状态不变
 
 def test_person_log_normalized_not_truncated(game):
     """5b r1 PR#106（CodeRabbit Major）：person_logs.normalized 是结构化审计 JSON，须全量存可解析——
@@ -2025,7 +2025,7 @@ def test_apply_score_extraction_new_person_changes_shadow_legacy_person_keys(gam
         if name != new_name
         and getattr(ch, "power_id", "ming") == "ming"
         and getattr(ch, "office_type", "") != "后宫"
-        and db.get_character_status(name)[0] == "active"
+        and db.characters.get_character_status(name)[0] == "active"
     )
     old_new_status = content.characters[new_name].status
     old_new_office = content.characters[new_name].office
@@ -2049,8 +2049,8 @@ def test_apply_score_extraction_new_person_changes_shadow_legacy_person_keys(gam
 
         assert [item["name"] for item in applied["applied_person_changes"]] == [new_name]
         assert applied["character_status_changes"] == []
-        assert db.get_character_status(new_name)[0] == "dismissed"
-        assert db.get_character_status(legacy_name)[0] == "active"
+        assert db.characters.get_character_status(new_name)[0] == "dismissed"
+        assert db.characters.get_character_status(legacy_name)[0] == "active"
     finally:
         content.characters[new_name].status = old_new_status
         content.characters[new_name].office = old_new_office
@@ -2635,7 +2635,7 @@ def test_s15_amnesty_to_ming_then_appoint(game):
     name = next((n for n, c in content.characters.items()
                  if (db.conn.execute("SELECT power_id FROM characters WHERE name=?", (n,)).fetchone() or {"power_id": "ming"})["power_id"] not in (None, "ming")
                  and c.office_type not in ("后宫", "宗藩")
-                 and db.get_character_status(n)[0] == "active"), None)
+                 and db.characters.get_character_status(n)[0] == "active"), None)
     import pytest
     if name is None:
         pytest.skip("基底盘面无 active 敌方可招抚人物")

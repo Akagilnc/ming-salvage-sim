@@ -20,7 +20,7 @@ def _active_ming_minister(db, content) -> str:
         # #1317：未仕/后宫/宗藩非朝臣可召样本
         if getattr(ch, "office_type", "") in ("后宫", "宗藩", "未仕"):
             continue
-        if db.get_character_status(name)[0] == "active":
+        if db.characters.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("基底盘面无 active 的大明大臣")
 
@@ -100,7 +100,7 @@ def test_vassal_prince_excluded_from_court(game):
     name, ch = _materialized_prince(db, state, content)
     db.set_character_status(state, name, "active", "测试：在世")
     # 物化后 setup 真生效：DB 确为 active+ming（否则仅 office_type 短路，测不出 gate 优先于状态）
-    assert db.get_character_status(name)[0] == "active"
+    assert db.characters.get_character_status(name)[0] == "active"
     assert web_app._character_power_id(ch, db) == "ming"
     assert visible_in_court(ch, db) is False
 
@@ -137,7 +137,7 @@ def test_vassal_prince_excluded_from_talent_pool(game):
     db, state, content = game
     name, ch = _materialized_prince(db, state, content)
     db.set_character_status(state, name, "offstage", "测试")
-    assert db.get_character_status(name)[0] == "offstage"  # 物化后 setup 真生效
+    assert db.characters.get_character_status(name)[0] == "offstage"  # 物化后 setup 真生效
     assert in_talent_pool(ch, db, state.year, state.period) is False
 
 
@@ -157,7 +157,7 @@ def test_amnestied_rebel_excluded_from_talent_pool(game):
     db.set_character_status(state, name, "offstage", "测试：招抚后罢居")
     db.conn.execute("UPDATE characters SET power_id='ming' WHERE name=?", (name,))
     db.conn.commit()
-    assert db.get_character_status(name)[0] == "offstage"
+    assert db.characters.get_character_status(name)[0] == "offstage"
     assert in_talent_pool(ch, db, state.year, state.period) is False
 
 
@@ -224,7 +224,7 @@ def test_vassal_prince_chat_rejected(game, monkeypatch):
     db, state, content = game
     name, _ch = _materialized_prince(db, state, content)
     db.set_character_status(state, name, "active", "测试：在世")
-    assert db.get_character_status(name)[0] == "active"  # 物化后 setup 真生效：即便 active 也拒
+    assert db.characters.get_character_status(name)[0] == "active"  # 物化后 setup 真生效：即便 active 也拒
     _stub_game(monkeypatch, db, content)
     with pytest.raises(HTTPException) as ei:
         web_app._require_active_minister(name)
@@ -247,7 +247,7 @@ def test_active_consort_chat_not_rejected(game, monkeypatch):
     # 缺行时 set 是 no-op、status 只靠缺行默认 active 兜——gemini R4）。物化使「active 后宫过闸」可证。
     db.add_character(state, content.characters[consort], source="测试物化")
     db.set_character_status(state, consort, "active", "测试：在位")
-    assert db.get_character_status(consort)[0] == "active"
+    assert db.characters.get_character_status(consort)[0] == "active"
     _stub_game(monkeypatch, db, content)
     web_app._require_active_minister(consort)  # 不抛 = 通过（后宫未被宗藩闸误伤）
 
@@ -267,7 +267,7 @@ def test_zongfan_cannot_be_summoned_via_can_summon(game):
         pytest.skip("基底盘面无宗藩人物")
     db.add_character(state, content.characters[prince], source="测试物化")
     db.set_character_status(state, prince, "active", "测试：在世")
-    assert db.get_character_status(prince)[0] == "active"  # 即便 active 也拒
+    assert db.characters.get_character_status(prince)[0] == "active"  # 即便 active 也拒
     ok, _reason = sess.can_summon(content.characters[prince])
     assert ok is False
     # 后宫不受宗藩闸影响：active+ming 后宫仍可召
@@ -305,7 +305,7 @@ def test_enemy_active_character_cannot_be_summoned(read_game):
     db, state, content = read_game
     sess = _bare_session(db)
     enemy = _enemy_active_name(db, content)
-    assert db.get_character_status(enemy)[0] == "active"  # active 也拒
+    assert db.characters.get_character_status(enemy)[0] == "active"  # active 也拒
     ok, _reason = sess.can_summon(content.characters[enemy])
     assert ok is False
 
@@ -463,7 +463,7 @@ def test_real_court_ministers_not_collateral_damaged_by_1317(read_game):
         assert name in content.characters, f"seed 缺 {name}"
         ch = content.characters[name]
         assert ch.office_type != "未仕"
-        assert db.get_character_status(name)[0] == "active", name
+        assert db.characters.get_character_status(name)[0] == "active", name
         assert visible_in_court(ch, db) is True, name
         ok, reason = sess.can_summon(ch)
         assert ok is True, f"{name} 被误伤：{reason}"

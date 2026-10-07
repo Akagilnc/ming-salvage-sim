@@ -183,7 +183,7 @@ def test_strategic_event_unauthorized_person_origin_reaches_final_projection(gam
         }]}
 
     dispatch_month_segment(db, state, segment="戊寅虏变战果", translate_fn=translate)
-    assert db.has_event_triggered("wuyin_lubian")
+    assert db.issues.has_event_triggered("wuyin_lubian")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",),
     ).fetchone()["military_pressure"] == 35

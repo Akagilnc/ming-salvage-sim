@@ -398,7 +398,7 @@ def test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute(gam
             "SELECT 1 FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
         ).fetchone() is not None
-        assert db.has_event_triggered(ev.id)
+        assert db.issues.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
@@ -935,7 +935,7 @@ def test_mao_wenlong_event_trigger_lands_character_status(game):
         )
 
         assert out["new_issues"][0]["rejected"] is False
-        assert db.get_character_status("毛文龙")[0] == "dead"
+        assert db.characters.get_character_status("毛文龙")[0] == "dead"
         assert content.characters["毛文龙"].status == "dead"
         assert db.conn.execute(
             "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
@@ -981,7 +981,7 @@ def test_strategic_foreign_event_rejects_trigger_without_world_state_delta(game)
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
+    assert not db.issues.has_event_triggered("jisi_lubian")
 
 
 def test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta(game):
@@ -1001,7 +1001,7 @@ def test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta(
     )
 
     assert out["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
+    assert not db.issues.has_event_triggered("jisi_lubian")
 
 
 def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected(game):
@@ -1049,7 +1049,7 @@ def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta
         content=content,
     )
 
-    assert not db.has_event_triggered("lindan_xiqian")
+    assert not db.issues.has_event_triggered("lindan_xiqian")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["military_pressure"] == 27
@@ -1082,8 +1082,8 @@ def test_henan_place_policy_delta_does_not_capture_untriggered_fall_events(game,
         content=content,
     )
 
-    assert not db.has_event_triggered("luoyang_fallen")
-    assert not db.has_event_triggered("kaifeng_siege")
+    assert not db.issues.has_event_triggered("luoyang_fallen")
+    assert not db.issues.has_event_triggered("kaifeng_siege")
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id = ?", ("henan",)
     ).fetchone()["military_pressure"] == 26
@@ -1115,7 +1115,7 @@ def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(ga
         content=content,
     )
 
-    assert not db.has_event_triggered("luoyang_fallen")
+    assert not db.issues.has_event_triggered("luoyang_fallen")
     assert db.conn.execute(
         "SELECT military_strength FROM powers WHERE id = ?", ("bandit_li_zicheng",)
     ).fetchone()["military_strength"] == 49
@@ -1141,7 +1141,7 @@ def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(gam
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
+    assert not db.issues.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("shaanxi",)
     ).fetchone()["unrest"] == 79
@@ -1166,7 +1166,7 @@ def test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_eve
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
+    assert not db.issues.has_event_triggered("jisi_lubian")
     assert db.conn.execute(
         "SELECT unrest FROM regions WHERE id = ?", ("beizhili",)
     ).fetchone()["unrest"] == 79
@@ -1192,8 +1192,8 @@ def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(gam
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.get_character_status("孙传庭")[0] == "dead"
+    assert not db.issues.has_event_triggered("jisi_lubian")
+    assert db.characters.get_character_status("孙传庭")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
 
 
@@ -1216,8 +1216,8 @@ def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_eve
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("jisi_lubian")
-    assert db.get_character_status("孙传庭")[0] == "dead"
+    assert not db.issues.has_event_triggered("jisi_lubian")
+    assert db.characters.get_character_status("孙传庭")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
 
 
@@ -1240,8 +1240,8 @@ def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_eve
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("wuyin_lubian")
-    assert db.get_character_status("卢象升")[0] == "dead"
+    assert not db.issues.has_event_triggered("wuyin_lubian")
+    assert db.characters.get_character_status("卢象升")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
 
 
@@ -1316,7 +1316,7 @@ def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert db.get_character_status("孙传庭")[0] == "dead"
+    assert db.characters.get_character_status("孙传庭")[0] == "dead"
     assert out["applied_person_changes"][0].get("rejected") is not True
 
 
@@ -1348,7 +1348,7 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert db.get_character_status("孙传庭")[0] == "active"
+    assert db.characters.get_character_status("孙传庭")[0] == "active"
     assert len(out["applied_person_changes"]) == 1
     assert out["applied_person_changes"][0]["rejected"] is True
     assert all(
@@ -1402,9 +1402,9 @@ def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
         assert out["new_issues"][0]["rejected"] is False
         db.conn.rollback()
 
-        assert db.get_character_status("毛文龙")[0] == "active"
+        assert db.characters.get_character_status("毛文龙")[0] == "active"
         assert content.characters["毛文龙"].status == "active"
-        assert not db.has_event_triggered("mao_wenlong")
+        assert not db.issues.has_event_triggered("mao_wenlong")
         assert db.conn.execute(
             "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
         ).fetchone()[0] == before_logs
@@ -1432,7 +1432,7 @@ def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game
         assert content.characters["毛文龙"].status == "dead"
         db.conn.rollback()
 
-        assert db.get_character_status("毛文龙")[0] == "active"
+        assert db.characters.get_character_status("毛文龙")[0] == "active"
         assert content.characters["毛文龙"].status == "active"
 
 
@@ -1531,9 +1531,9 @@ def test_mao_wenlong_event_pool_rechecks_gate_before_effect(game):
     )
 
     assert out["new_issues"][0]["rejected"] is True
-    assert db.get_character_status("毛文龙")[0] == "active"
+    assert db.characters.get_character_status("毛文龙")[0] == "active"
     assert content.characters["毛文龙"].status == "active"
-    assert not db.has_event_triggered("mao_wenlong")
+    assert not db.issues.has_event_triggered("mao_wenlong")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
     ).fetchone()[0] == before_logs
@@ -1645,7 +1645,7 @@ def test_li_chenghai_event_opens_after_li_zicheng_historical_debut(game):
     cands = issues.gather_candidate_events(state, db)
 
     assert any(item["name"] == "李自成" for item in debuted)
-    assert db.get_character_status("李自成")[0] == "active"
+    assert db.characters.get_character_status("李自成")[0] == "active"
     assert any(ev.id == "li_chenghai" for ev in cands)
 
 
@@ -1659,7 +1659,7 @@ def test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path(ga
     debuted = db.apply_historical_debuts(state)
 
     assert any(item["name"] == "张献忠" for item in debuted)
-    assert db.get_character_status("张献忠")[0] == "active"
+    assert db.characters.get_character_status("张献忠")[0] == "active"
 
     state.year = 1639
     state.period = 5
@@ -1831,7 +1831,7 @@ def test_huabei_plague_auto_triggers_with_deterministic_core_effect(game):
     triggered = issues.auto_trigger_seed_issues(state, db)
 
     assert any(item["id"] == "huabei_plague" for item in triggered)
-    assert db.has_event_triggered("huabei_plague")
+    assert db.issues.has_event_triggered("huabei_plague")
     assert all(ev.id != "huabei_plague" for ev in issues.gather_candidate_events(state, db))
     after = db.conn.execute(
         "SELECT population, unrest FROM regions WHERE id=?",
@@ -1887,7 +1887,7 @@ def test_historical_auto_trigger_event_expires_after_latest_window(game):
         triggered = issues.auto_trigger_seed_issues(state, db)
 
         assert all(item["id"] != "__test_expiring_historical_auto__" for item in triggered)
-        assert db.event_terminal_state("__test_expiring_historical_auto__") == "expired"
+        assert db.issues.event_terminal_state("__test_expiring_historical_auto__") == "expired"
         assert IssueStore(db.conn).read_find_any_issue_by_origin(("event_pool", "__test_expiring_historical_auto__")) is None
     finally:
         content.events.remove(ev)
@@ -1937,7 +1937,7 @@ def test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effec
         "SELECT 1 FROM issues WHERE origin_kind=? AND origin_ref=?",
         ("event_pool", "huabei_plague"),
     ).fetchone() is None
-    assert not db.has_event_triggered("huabei_plague")
+    assert not db.issues.has_event_triggered("huabei_plague")
 
 
 def test_historical_situation_auto_trigger_backfills_core_effect_for_existing_soft_issue(game):
@@ -1974,7 +1974,7 @@ def test_historical_situation_auto_trigger_backfills_core_effect_for_existing_so
 
     item = next(entry for entry in triggered if entry["id"] == "huabei_plague")
     assert item["issue_id"] == existing_issue_id
-    assert db.has_event_triggered("huabei_plague")
+    assert db.issues.has_event_triggered("huabei_plague")
     after = db.conn.execute(
         "SELECT population, unrest FROM regions WHERE id=?",
         ("shanxi",),
@@ -1997,7 +1997,7 @@ def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
     triggered = issues.auto_trigger_seed_issues(state, db)
 
     assert any(item["id"] == "jingshi_plague" for item in triggered)
-    assert db.has_event_triggered("jingshi_plague")
+    assert db.issues.has_event_triggered("jingshi_plague")
     assert all(ev.id != "jingshi_plague" for ev in issues.gather_candidate_events(state, db))
     after = db.conn.execute(
         "SELECT manpower, morale FROM armies WHERE id=?",
@@ -2051,7 +2051,7 @@ def test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances(game):
 
         assert state.metrics["民心"] == 5
         assert out["new_issues"][0]["rejected"] is True
-        assert not db.has_event_triggered(ev.id)
+        assert not db.issues.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
@@ -2092,7 +2092,7 @@ def test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta(game):
 
         assert state.metrics["民心"] == 5
         assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-        assert not db.has_event_triggered(ev.id)
+        assert not db.issues.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
@@ -2142,7 +2142,7 @@ def test_event_pool_rechecks_after_advances_close_gate(game):
 
         assert state.metrics["民心"] == 5
         assert out["new_issues"][0]["rejected"] is True
-        assert not db.has_event_triggered(ev.id)
+        assert not db.issues.has_event_triggered(ev.id)
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
@@ -2204,7 +2204,7 @@ def test_event_pool_rechecks_after_prior_event_effect_closes_gate(game):
         )
 
         assert out["new_issues"][0]["rejected"] is False
-        assert db.get_character_status("袁崇焕")[0] == "dismissed"
+        assert db.characters.get_character_status("袁崇焕")[0] == "dismissed"
         assert out["new_issues"][1]["rejected"] is True
         assert db.conn.execute(
             "SELECT id FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
@@ -2530,7 +2530,7 @@ def test_apply_issue_entities_person_changes_respect_commit_false(game):
     )
     db.conn.rollback()
 
-    assert db.get_character_status("毛文龙")[0] == "active"
+    assert db.characters.get_character_status("毛文龙")[0] == "active"
     assert db.conn.execute(
         "SELECT COUNT(*) FROM person_logs WHERE person_name=?",
         ("毛文龙",),
@@ -3239,9 +3239,9 @@ def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
 
     new_issue = out["issue_summary"]["new_issues"][0]
     assert new_issue["rejected"] is True
-    assert not db.has_event_triggered("mao_wenlong")
-    assert db.get_character_status("毛文龙")[0] == "active"
-    assert db.get_character_status("袁崇焕")[0] == "dead"
+    assert not db.issues.has_event_triggered("mao_wenlong")
+    assert db.characters.get_character_status("毛文龙")[0] == "active"
+    assert db.characters.get_character_status("袁崇焕")[0] == "dead"
     assert out["applied_person_changes"][0]["status"] == "dead"
     assert out["applied_person_changes"][1]["rejected"] is True
 
@@ -3769,8 +3769,8 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("mao_wenlong")
-    assert db.get_character_status("毛文龙")[0] == "active"
+    assert not db.issues.has_event_triggered("mao_wenlong")
+    assert db.characters.get_character_status("毛文龙")[0] == "active"
     assert db.conn.execute("SELECT loyalty FROM characters WHERE name=?", ("毛文龙",)).fetchone()["loyalty"] == 70
 
 
@@ -3794,9 +3794,9 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal(game):
     )
 
     assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert not db.has_event_triggered("mao_wenlong")
-    assert db.get_character_status("毛文龙")[0] == "active"
-    assert db.get_character_status("袁崇焕")[0] == "dismissed"
+    assert not db.issues.has_event_triggered("mao_wenlong")
+    assert db.characters.get_character_status("毛文龙")[0] == "active"
+    assert db.characters.get_character_status("袁崇焕")[0] == "dismissed"
 
 
 def test_invalid_pending_person_change_does_not_block_event_gate(game):
@@ -3819,9 +3819,9 @@ def test_invalid_pending_person_change_does_not_block_event_gate(game):
         )
 
         assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-        assert db.has_event_triggered("mao_wenlong")
-        assert db.get_character_status("毛文龙")[0] == "dead"
-        assert db.get_character_status("袁崇焕")[0] == "active"
+        assert db.issues.has_event_triggered("mao_wenlong")
+        assert db.characters.get_character_status("毛文龙")[0] == "dead"
+        assert db.characters.get_character_status("袁崇焕")[0] == "active"
         assert out["applied_person_changes"][0]["rejected"] is True
         assert out["applied_person_changes"][0]["category"] == "invalid_transition"
 
@@ -3850,7 +3850,7 @@ def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
     )
 
     assert out["new_issues"][0]["rejected"] is True
-    assert db.get_character_status("毛文龙")[0] == "dead"
+    assert db.characters.get_character_status("毛文龙")[0] == "dead"
     row = db.conn.execute(
         "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
         ("mao_wenlong",),
@@ -3891,9 +3891,9 @@ def test_mao_wenlong_event_excluded_when_yuan_unavailable(game):
         )
 
         assert out["new_issues"][0]["rejected"] is True
-        assert db.get_character_status("毛文龙")[0] == "active"
+        assert db.characters.get_character_status("毛文龙")[0] == "active"
         assert content.characters["毛文龙"].status == "active"
-        assert not db.has_event_triggered("mao_wenlong")
+        assert not db.issues.has_event_triggered("mao_wenlong")
         assert db.conn.execute(
             "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
         ).fetchone()[0] == before_logs
@@ -3984,9 +3984,9 @@ def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
 
         assert out["new_issues"][0]["rejected"] is False
         assert out["new_issues"][1]["rejected"] is True
-        assert db.get_character_status("毛文龙")[0] == "dead"
+        assert db.characters.get_character_status("毛文龙")[0] == "dead"
         assert content.characters["毛文龙"].status == "dead"
-        assert db.has_event_triggered("mao_wenlong")
+        assert db.issues.has_event_triggered("mao_wenlong")
         assert db.conn.execute(
             "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
         ).fetchone()[0] == before_logs + 1
@@ -4027,7 +4027,7 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
     prepare_resolve_front_half(state, db, decree_text="", content=content)
 
     assert _power_name()["name"] == "后金"
-    assert db.event_terminal_state("huangtaiji_chengdi") is None
+    assert db.issues.event_terminal_state("huangtaiji_chengdi") is None
     assert IssueStore(db.conn).read_find_any_issue_by_origin(("event_pool", "huangtaiji_chengdi")) is None
     assert "huangtaiji_chengdi" in {
         ev.id for ev in issues.gather_candidate_events(state, db)
@@ -4048,7 +4048,7 @@ def test_huangtaiji_chengdi_lands_only_when_model_picks_it(game, monkeypatch):
     )
     applied = result.effects.applied[0]["issue_summary"]["new_issues"]
     assert [item.get("rejected") for item in applied] == [False]
-    assert db.event_terminal_state("huangtaiji_chengdi") == "triggered"
+    assert db.issues.event_terminal_state("huangtaiji_chengdi") == "triggered"
     row = _power_name()
     assert row["name"] == "大清"
     assert "后金" in row["aliases"] and "大清" in row["aliases"]

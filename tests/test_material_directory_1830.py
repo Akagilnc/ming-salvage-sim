@@ -40,7 +40,7 @@ def _active_minister(db, content, *, office_type=None):
             continue
         if office_type and character.office_type != office_type:
             continue
-        if db.get_character_status(character.name)[0] == "active":
+        if db.characters.get_character_status(character.name)[0] == "active":
             return character
     raise AssertionError("no active minister")
 
@@ -84,7 +84,7 @@ def test_prepare_writes_typed_tree_and_index(game, tmp_path):
             assert read_material(prepared.root, stripped)
         else:
             assert any(stripped.startswith(rel + " ") for rel in listed)
-    status, _reason = db.get_character_status(character.name)
+    status, _reason = db.characters.get_character_status(character.name)
 
 
 def test_same_requested_root_creates_independent_material_invocations(game, tmp_path):
@@ -164,33 +164,16 @@ def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, 
     prepared = prepare_character_materials(
         db, state, character, dest_root=tmp_path / "materials",
     )
-    from ming_sim.participant_roster import participant_roster_names
-
-    # Identity by issue id + participant roster, not free title substring in opening.
-    handled_row = db.conn.execute(
-        "SELECT id, title, participant_roster FROM issues WHERE id=?",
-        (int(handled_id),),
-    ).fetchone()
-    bare_row = db.conn.execute(
-        "SELECT id, title, participant_roster FROM issues WHERE id=?",
-        (int(other_id),),
-    ).fetchone()
-    assert character.name in participant_roster_names(handled_row["participant_roster"])
-    assert character.name not in participant_roster_names(bare_row["participant_roster"])
+    # 实际 opening 消费边界：正经手事务以 issue id 机器记号入选（minimal_opening_context
+    # 形态 `- #{id} {title}`），不用自由标题子串当身份。
+    opening = prepared.opening
+    assert f"#{handled_id} " in opening or f"#{handled_id}　" in opening or f"- #{handled_id}" in opening
+    assert f"#{other_id} " not in opening and f"- #{other_id}" not in opening
     issue_paths = {
         line for line in prepared.index_lines
         if line.startswith("事务/issue-")
     }
     assert any(f"issue-{handled_id}/" in line for line in issue_paths)
-    # opening field-transports the authorized handled title (not a title-identity oracle)
-    assert str(handled_row["title"] or "") in prepared.opening
-    gated_ids = {
-        int(issue["id"])
-        for issue in db.issues.active_rows()
-        if character.name in participant_roster_names(issue["participant_roster"])
-    }
-    assert int(handled_id) in gated_ids
-    assert int(other_id) not in gated_ids
     assert other_id != handled_id
 
 

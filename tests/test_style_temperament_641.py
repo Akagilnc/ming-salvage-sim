@@ -252,7 +252,7 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
         c for c in content.characters.values()
         if c.name != person.name
         and c.office_type not in ("后宫", "宗藩", "未仕")
-        and db.get_character_status(c.name)[0] == "active"
+        and db.characters.get_character_status(c.name)[0] == "active"
         and getattr(c, "power_id", "ming") == "ming"
     )
 
@@ -294,7 +294,7 @@ def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
         c for c in content.characters.values()
         if c.name != person.name
         and c.office_type not in ("后宫", "宗藩", "未仕")
-        and db.get_character_status(c.name)[0] == "active"
+        and db.characters.get_character_status(c.name)[0] == "active"
         and getattr(c, "power_id", "ming") == "ming"
     )
     padded_summary_founding = "  旧谊未断，朝堂仍有声气。  "

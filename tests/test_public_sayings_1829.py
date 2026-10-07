@@ -32,7 +32,7 @@ def _active_other(db, content, *, exclude: set[str]) -> str:
             continue
         if character.office_type in ("后宫", "宗藩", "未仕"):
             continue
-        if db.get_character_status(character.name)[0] != "active":
+        if db.characters.get_character_status(character.name)[0] != "active":
             continue
         return character.name
     raise AssertionError("no other active minister")
@@ -40,7 +40,7 @@ def _active_other(db, content, *, exclude: set[str]) -> str:
 
 def test_yuan_public_death_rumor_does_not_change_actual_life(game, tmp_path):
     db, state, content = game
-    status_before, _ = db.get_character_status("袁崇焕")
+    status_before, _ = db.characters.get_character_status("袁崇焕")
     assert status_before != "dead"
 
     saying_id = record_public_saying(
@@ -50,7 +50,7 @@ def test_yuan_public_death_rumor_does_not_change_actual_life(game, tmp_path):
         involved_characters=["袁崇焕"],
     )
 
-    status_after, _ = db.get_character_status("袁崇焕")
+    status_after, _ = db.characters.get_character_status("袁崇焕")
     assert status_after == status_before
     rows = list_public_sayings(db)
     assert len(rows) == 1
@@ -63,7 +63,7 @@ def test_yuan_public_death_rumor_does_not_change_actual_life(game, tmp_path):
     restored = GameDB(str(tmp_path / "save.db"), content)
     try:
         restored_state = restored.load_state()
-        restored_status, _ = restored.get_character_status("袁崇焕")
+        restored_status, _ = restored.characters.get_character_status("袁崇焕")
         assert restored_status == status_before
         restored_rows = list_public_sayings(restored)
         assert restored_rows[0]["body"] == "袁崇焕已死于宁远"
@@ -97,7 +97,7 @@ def test_absent_minister_reads_saying_not_actual_status(game):
     )
     assert saying["body"] == "袁崇焕已死于宁远"
 
-    status, _ = db.get_character_status("袁崇焕")
+    status, _ = db.characters.get_character_status("袁崇焕")
     assert status != "dead"
 
 
@@ -245,7 +245,7 @@ def test_public_saying_excluded_name_does_not_see_it_others_do(
         )
         assert len(reopened_hits) == 1
         assert reopened_hits[0]["body"] == claim
-        status, _ = reopened.get_character_status("袁崇焕")
+        status, _ = reopened.characters.get_character_status("袁崇焕")
         assert status != "dead"
         # 「单份记录」按本条说法核，不按全表行数——同表另有无排除的普通说法。
         assert [

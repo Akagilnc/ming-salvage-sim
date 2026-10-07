@@ -418,7 +418,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
             origin_ref=f"cap-fill:{idx}",
             effect_on_resolve={"metrics": {"民心": 1}},
         )
-    assert db.count_active_initiatives() >= 15
+    assert db.issues.count_active_initiatives() >= 15
     owner_before, province_before = _executing_counts(
         db, owner_name=owner_name, region_id=region_id,
     )
@@ -440,7 +440,7 @@ def test_http_manual_directive_lands_beyond_fifteen_initiatives_1790(
     assert not body.get("awaiting_decision"), body
     assert int(game.state.turn) == turn_before + 1
 
-    assert db.count_active_initiatives() >= 16
+    assert db.issues.count_active_initiatives() >= 16
     matched = [
         dict(d) for d in db.dossiers.list_dossiers()
         if str(json.loads(d.get("payload_json") or "{}").get("target_id") or "")
@@ -543,7 +543,7 @@ def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
         if name != first
         and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
         and db.resolve_power_id(ch) == "ming"
-        and db.get_character_status(name)[0] == "active"
+        and db.characters.get_character_status(name)[0] == "active"
         and str(getattr(ch, "office", "") or "").strip()
     )
 
@@ -641,7 +641,7 @@ def test_batch_combo_correction_real_wrapper(game, monkeypatch, mode):
         if name != first
         and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
         and db.resolve_power_id(ch) == "ming"
-        and db.get_character_status(name)[0] == "active"
+        and db.characters.get_character_status(name)[0] == "active"
         and str(getattr(ch, "office", "") or "").strip()
     )
 

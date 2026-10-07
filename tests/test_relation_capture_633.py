@@ -658,7 +658,7 @@ def test_interaction_then_same_batch_dismissal_still_lands(game):
     回归锚：旧实现按 apply 后 live 名册校验，会把退场者当月真实互动静默丢账
     （P1 事实账完整性缺口）；B 案以入口 canonical pre-roster 保住该向。"""
     db, state, content = game
-    assert db.get_character_status("王绍徽")[0] == "active"
+    assert db.characters.get_character_status("王绍徽")[0] == "active"
     out = apply_score_extraction(
         db, state,
         {
@@ -674,7 +674,7 @@ def test_interaction_then_same_batch_dismissal_still_lands(game):
         content=content,
     )
     # 人物变更确实生效：该员已出 post 名册（证明拒收不是守门失灵）
-    assert db.get_character_status("王绍徽")[0] == "dismissed"
+    assert db.characters.get_character_status("王绍徽")[0] == "dismissed"
     res = out["relation_edge_event_resolutions"]
     assert not any(r.get("rejected") for r in res), res
     row = _edge_rows(db, source="王绍徽", target="毕自严")[0]
@@ -688,7 +688,7 @@ def test_reinstatement_then_interaction_in_same_batch_still_lands(game):
     回归锚：任何只冻 pre roster/前移 resolver 的方案会误拒同批入场者的真实
     互动；B 案以人物变更 apply 后的 post-roster 并入并集保住该向。"""
     db, state, content = game
-    assert db.get_character_status("孙承宗")[0] != "active"
+    assert db.characters.get_character_status("孙承宗")[0] != "active"
     out = apply_score_extraction(
         db, state,
         {
@@ -704,7 +704,7 @@ def test_reinstatement_then_interaction_in_same_batch_still_lands(game):
         content=content,
     )
     # 人物变更确实生效：该员已入 post 名册（证明落库不是 pre 资格）
-    assert db.get_character_status("孙承宗")[0] == "active"
+    assert db.characters.get_character_status("孙承宗")[0] == "active"
     res = out["relation_edge_event_resolutions"]
     assert not any(r.get("rejected") for r in res), res
     row = _edge_rows(db, source="孙承宗", target="毕自严")[0]
@@ -755,7 +755,7 @@ def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     资格集之外者仍拒收——不存在「仅 live 可过而 pre∪post 不过」的通路。
     （apply_score_extraction 批内 post=live，故该构造只能经直调缝验证。）"""
     db, state, content = game
-    assert db.get_character_status("王绍徽")[0] == "active"  # live 在册
+    assert db.characters.get_character_status("王绍徽")[0] == "active"  # live 在册
     res = resolve_relation_edge_events_from_extraction(
         db, state,
         {"relation_edge_events": [{

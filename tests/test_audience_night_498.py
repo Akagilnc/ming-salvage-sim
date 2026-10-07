@@ -46,7 +46,7 @@ def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
             continue
         if getattr(ch, "office_type", "") == "后宫":
             continue
-        if db.get_character_status(name)[0] == "active":
+        if db.characters.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("no active ming minister")
 
@@ -282,7 +282,7 @@ def test_write_decree_leaves_unacted_pending_unchanged(tmp_path, content, monkey
         # 未表态 pending 原样不动（没被默认同意成 draft）
         assert db.conn.execute(
             "SELECT status FROM pending_actions WHERE id=?", (pid,)).fetchone()["status"] == "pending"
-        assert db.list_directives(state, statuses=("draft",)) == []
+        assert db.issues.list_directives(state.turn, statuses=("draft",)) == []
     finally:
         sess.close()
 
@@ -550,7 +550,7 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
 
     db, state, content = game
     character = next(c for c in content.characters.values()
-                     if db.get_character_status(c.name)[0] == "active"
+                     if db.characters.get_character_status(c.name)[0] == "active"
                      and getattr(c, "power_id", "ming") == "ming"
                      and getattr(c, "office_type", "") != "后宫")
 

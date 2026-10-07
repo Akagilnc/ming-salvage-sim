@@ -99,7 +99,7 @@ def test_capture_manual_directive_drops_ministry_name_as_participant(game, monke
     session.content = content
     dv = session.add_directive(text, dossier_payload=payload)
     assert dv.id > 0
-    assert db.list_directives(state)
+    assert db.issues.list_directives(state.turn)
     payload["assignee"] = "户部"
     db.conn.execute(
         "UPDATE turn_directives SET dossier_payload_json=? WHERE id=?",
@@ -129,7 +129,7 @@ def test_seeded_draft_accepts_ministry_subject_without_409(game, monkeypatch):
 
     assert _seed_draft(game, text) > 0
     _assert_decree_reached_backend(prompts, text)
-    rows = db.list_directives(game[1])
+    rows = db.issues.list_directives(game[1].turn)
     assert any(str(row["text"]) == text for row in rows)
     # ADR 0053 缝仍在：未知真名仍应拒——此处仅断言部院名不撞墙。
 

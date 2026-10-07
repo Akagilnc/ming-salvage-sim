@@ -540,7 +540,7 @@ def build_character_knowledge(
     public_events.extend(_source_archive_rows(db, character_name, int(state.turn)))
     # Issued directives are public by their nature.  Read them here so old
     # saves and the normal decree path need no second write hook.
-    for directive in db.list_issued_directives():
+    for directive in db.issues.list_issued_directives():
         public_events.append({
             "turn": int(directive["turn"]), "year": int(directive["year"]),
             "period": int(directive["period"]), "kind": "public",

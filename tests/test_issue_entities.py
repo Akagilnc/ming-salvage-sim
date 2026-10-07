@@ -53,7 +53,7 @@ def test_resolve_changes_character_status(game):
     I._apply_issue_entities(db, state, {
         "character_status_changes": [{"name": name, "status": "exiled", "reason": "国策清算"}],
     }, "局势#测试结案")
-    assert db.get_character_status(name)[0] == "exiled"
+    assert db.characters.get_character_status(name)[0] == "exiled"
     assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 1
     log = db.conn.execute(
         "SELECT person_name, action, payload_summary, derived_from, source "
@@ -87,7 +87,7 @@ def test_legacy_issue_status_change_uses_person_transition_matrix(game):
             content=content,
         )
 
-    assert db.get_character_status(name)[0] == "dead"
+    assert db.characters.get_character_status(name)[0] == "dead"
     assert content.characters[name].status == "dead"
 
 
@@ -117,7 +117,7 @@ def test_legacy_issue_status_change_does_not_use_month_end_active_gate(game):
             content=content,
         )
 
-        assert db.get_character_status(name)[0] == "dead"
+        assert db.characters.get_character_status(name)[0] == "dead"
         assert ch.status == "dead"
     finally:
         ch.status = old_status
@@ -571,4 +571,4 @@ def test_inertia_natural_fail_applies_entities(game):
         effect_on_fail={"character_status_changes": [{"name": name, "status": "dismissed", "reason": "局势失控问责"}]},
     )
     apply_situation_monthly_drift(db, state)   # inertia -1 把 bar 1→0 → failed
-    assert db.get_character_status(name)[0] == "dismissed"
+    assert db.characters.get_character_status(name)[0] == "dismissed"

@@ -141,7 +141,7 @@ def _apply_authority_change_item(
             raise ValueError("invalid_authority_scope")
         if not CharacterStore(db.conn).read_assert_characters_exist((holder_id,)):
             raise ValueError("授权对象不在人物档")
-        origin = db.find_authority_by_origin(
+        origin = db.characters.find_authority_by_origin(
             dossier_id, holder_id=holder_id, privilege=privilege, scope=scope,
         )
         if origin is not None:
@@ -193,7 +193,7 @@ def _apply_authority_change_item(
         raise ValueError("unknown_authority_id") from None
     if authority_id <= 0:
         raise ValueError("unknown_authority_id")
-    record = db.get_authority(authority_id)
+    record = db.characters.get_authority(authority_id)
     if record is None:
         raise ValueError("unknown_authority_id")
     if bool(record.get("revoked")):
@@ -1208,7 +1208,7 @@ def apply_petition_event_outcome(
         # 留中：本疏已答，事件未终。不写终态，也不另开一条留中账。
         # 已呈原文与原批语在 record_event_petition_answer 的 choice_json 里。
         return {"id": eid, "settled": False, "terminal_state": "", "terminal_reason": ""}
-    existing = db.event_terminal_state(eid)
+    existing = db.issues.event_terminal_state(eid)
     if existing == "triggered":
         # 一事件一裁断（ADR 0115:3 first-wins）：结局已落定即不可翻。
         return {
@@ -1932,7 +1932,7 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
         if table == "event":
             if cid not in db.content.event_by_id:
                 return None
-            values.append(1 if db.has_event_terminal_state(cid, "triggered") else 0)
+            values.append(1 if db.issues.has_event_terminal_state(cid, "triggered") else 0)
             continue
         if table == "region":
             row = db.regions.field_row(field, cid)
@@ -2131,7 +2131,7 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         ]
         origin_ref = f"commitment:{did}:deformation_exposure"
         for faction in sorted(_LEVERAGE_FACTIONS):
-            if faction in responsible_factions or db.faction_leverage(faction) < 60:
+            if faction in responsible_factions or db.factions.faction_leverage(faction) < 60:
                 continue
             situation = situations.get(faction)
             personas = personas_by_faction.get(faction, [])
@@ -2338,7 +2338,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
             continue
         if ev.event_type != "situation":
             # 非 situation（node/ending）不转 issue，仅记触发避免重复
-            if not db.has_event_triggered(ev.id):
+            if not db.issues.has_event_triggered(ev.id):
                 if ev.effect_on_trigger:
                     _apply_issue_entities(
                         db,
@@ -4095,12 +4095,12 @@ def petition_outcome_is_admissible(
     event = resolved.event_by_id.get(eid) if resolved is not None else None
     if event is None or getattr(event, "category", "") != FISCAL_LEVY_EVENT_CATEGORY:
         return False
-    if db.event_terminal_state(eid):
+    if db.issues.event_terminal_state(eid):
         return False
     return any(
         str(row.get("event_id") or "") == eid
         and not str(row.get("terminal_state") or "").strip()
-        for row in db.list_event_petition_records()
+        for row in db.issues.list_event_petition_records()
     )
 
 
@@ -4136,7 +4136,7 @@ def _preflight_declared_event_groups(
         if not _is_strategic_foreign_node_event(event):
             rejected[event_id] = f"效果归属的战略事件不存在：{event_id}"
             continue
-        if event_id not in candidates or db.event_terminal_state(event_id) or event.auto_trigger:
+        if event_id not in candidates or db.issues.event_terminal_state(event_id) or event.auto_trigger:
             rejected[event_id] = f"战略事件当前不能触发：{event_id}"
             continue
         if not any(
@@ -4598,7 +4598,7 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 标了 auto_trigger，只能程序硬触发。")
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "auto_trigger 事件仅程序可触发"})
                 continue
-            if db.event_terminal_state(ev.id) == "expired":
+            if db.issues.event_terminal_state(ev.id) == "expired":
                 print(f"[INFO] new_issue 已拒：event {event_id} 已过期终态，不再从 event_pool 立项。")
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": "事件已过期终态"})
                 continue
@@ -4616,7 +4616,7 @@ def apply_issue_tracker_output(
                     "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
                 })
                 continue
-            terminal_state = db.event_terminal_state(ev.id)
+            terminal_state = db.issues.event_terminal_state(ev.id)
             if terminal_state:
                 terminal_reason = {
                     "obsolete": "事件已作废终态",
@@ -5724,7 +5724,7 @@ def apply_office_appointment(
         if canon:
             name = canon
     in_roster = content is not None and name in content.characters
-    cur_status = db.get_character_status(name)[0] if in_roster else ""
+    cur_status = db.characters.get_character_status(name)[0] if in_roster else ""
     current_office_type = content.characters[name].office_type if in_roster else ""
     if in_roster:
         if cur_status == "dead":
@@ -6131,7 +6131,7 @@ def _apply_person_changes(
             if row is None:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
-            cur_status, _ = db.get_character_status(name)
+            cur_status, _ = db.characters.get_character_status(name)
             if item.get("legacy_gate") and cur_status != "active":
                 reject_reason = f"当前非 active（{cur_status}）"
                 if cur_status == "dead" and status != "dead":
@@ -7159,7 +7159,7 @@ def record_secret_order_disclosure(
 
     Returns True if a new public knowledge event was recorded, False otherwise.
     """
-    order = db.get_secret_order(order_id)
+    order = db.character_knowledge.get_secret_order(order_id)
     if order is None:
         return False
     # Disclosure is the only promotion from the assignee-only
@@ -8735,7 +8735,7 @@ def _apply_score_extraction_body(
             continue
         # 未知/非 active 密令的副作用写不进 → 须显式拒收，
         # 否则未知 id 被无脑记成功 = 静默报「已应用」（cmr secret-order r1 codex，#14）。
-        order = db.get_secret_order(real_id)
+        order = db.character_knowledge.get_secret_order(real_id)
         if order is None:
             applied_secret_orders.append({"order_id": real_id, "rejected": True,
                                           "category": "missing_ref", "reason": "密令不存在"})

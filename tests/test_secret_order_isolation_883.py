@@ -23,7 +23,7 @@ def _active_ministers(db, content):
         character
         for character in content.characters.values()
         if character.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(character.name)[0] == "active"
+        and db.characters.get_character_status(character.name)[0] == "active"
     ]
 
 
@@ -943,7 +943,7 @@ def test_976_non_create_stage_commit_update_withholds_oral_pin(game):
     )
     assert applied and applied[0]["kind"] == "secret_order"
 
-    order = db.get_secret_order(oid)
+    order = db.character_knowledge.get_secret_order(oid)
     assert order is not None
     assert new_content in (order.get("content") or "")
 

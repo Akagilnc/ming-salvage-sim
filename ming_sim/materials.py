@@ -685,10 +685,11 @@ def _handled_affair_lines(
 
 
 def _carryover_drafts(db: Any, state: Any) -> list[dict]:
-    if not hasattr(db, "list_directives"):
+    issues = getattr(db, "issues", None)
+    if issues is None or not hasattr(issues, "list_directives"):
         return []
     return [
-        dict(row) for row in db.list_directives(state, statuses=("draft",))
+        dict(row) for row in issues.list_directives(state.turn, statuses=("draft",))
         if int(row["turn"]) < int(state.turn)
         and db.dossiers.get_for_directive(int(row["id"])) is None
     ]
@@ -1537,7 +1538,7 @@ def _world_fiscal_levy_petitions(db: Any, state: Any) -> list:
     from ming_sim.issues import gather_fiscal_levy_petitions
 
     presented = {}
-    for row in db.list_event_petition_records():
+    for row in db.issues.list_event_petition_records():
         event_id = str(row.get("event_id") or "")
         record = row.get("petition")
         if not event_id or not isinstance(record, dict):
@@ -2116,7 +2117,7 @@ def _write_one_present_person(
 
     dossier_body = character_context_with_db(character, db, turn=int(state.turn))
     if hasattr(db, "get_character_status"):
-        status, reason = db.get_character_status(name)
+        status, reason = db.characters.get_character_status(name)
         status_text = str(status or "").strip()
         reason_text = str(reason or "")
         if status_text and status_text != "active":

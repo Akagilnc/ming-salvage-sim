@@ -66,7 +66,7 @@ def test_r4_named_characters_debut_in_historical_order(game):
         assert character.status == "offstage"
         assert character.debut_year == debut_year
         assert character.location == location
-        assert db.get_character_status(name)[0] == "offstage"
+        assert db.characters.get_character_status(name)[0] == "offstage"
     assert content.characters["汤若望"].debut_month == 0
 
     assert db.apply_historical_debuts(state) == []
@@ -74,17 +74,17 @@ def test_r4_named_characters_debut_in_historical_order(game):
     state.year, state.period = 1629, 1
     debuted = db.apply_historical_debuts(state)
     assert {"name": "李之藻", "office": "历局修历起复", "faction": "西学"} in debuted
-    assert db.get_character_status("李之藻")[0] == "active"
+    assert db.characters.get_character_status("李之藻")[0] == "active"
 
     state.year, state.period = 1630, 4
     debuted = db.apply_historical_debuts(state)
     assert {"name": "汤若望", "office": "钦天监历局修历", "faction": "西学"} in debuted
-    assert db.get_character_status("汤若望")[0] == "active"
+    assert db.characters.get_character_status("汤若望")[0] == "active"
 
     state.year, state.period = 1631, 1
     debuted = db.apply_historical_debuts(state)
     assert {"name": "张缙彦", "office": "清涧知县", "faction": "皇党"} in debuted
-    assert db.get_character_status("张缙彦")[0] == "active"
+    assert db.characters.get_character_status("张缙彦")[0] == "active"
 
 
 def test_r6_xu_yingqiu_uses_verified_ministry_line_and_opening_status():

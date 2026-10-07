@@ -72,7 +72,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
             for key, ch in game.content.characters.items()
             if getattr(ch, "office_type", "") == "户部"
             and getattr(ch, "power_id", "ming") == "ming"
-            and game.db.get_character_status(getattr(ch, "name", key))[0] == "active"
+            and game.db.characters.get_character_status(getattr(ch, "name", key))[0] == "active"
             and getattr(ch, "name", key) != "郭允厚"
         )
         agent = _HubuAgent()

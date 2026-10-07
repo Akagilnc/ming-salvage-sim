@@ -771,7 +771,7 @@ def test_archive_write_materializes_unmirrored_source_scope(game):
     ministers = [
         character for character in content.characters.values()
         if character.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(character.name)[0] == "active"
+        and db.characters.get_character_status(character.name)[0] == "active"
     ]
     knower, excluded = ministers[:2]
     secret_marker = "未镜像的受限事项"
@@ -805,7 +805,7 @@ def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
     reader = next(
         character for character in content.characters.values()
         if character.office_type not in ("后宫", "宗藩")
-        and db.get_character_status(character.name)[0] == "active"
+        and db.characters.get_character_status(character.name)[0] == "active"
     )
     public_marker = "已立来源的邸报公开事项"
     unscoped_marker = "无来源的邸报改写"
@@ -946,7 +946,7 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     other = next(
         c for c in content.characters.values()
         if c.name not in {official.name, "邹维琏", "焦源溥", "阎鸣泰", "练国事"}
-        and db.get_character_status(c.name)[0] == "active"
+        and db.characters.get_character_status(c.name)[0] == "active"
         and c.office_type not in {"地方", "督抚", "边镇"}
     )
     a1 = appoint("练国事", "巡抚", "地方", region_id="shaanxi")
@@ -956,7 +956,7 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert db.character_office_region("练国事") == "shaanxi"
     assert db.character_office_region(other.name) == "henan"
     # Cross-province same bare title must not exclusive-displace each other.
-    assert db.get_character_status("练国事")[0] == "active"
+    assert db.characters.get_character_status("练国事")[0] == "active"
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?", ("练国事",),
     ).fetchone()["office"] == "巡抚"
@@ -974,7 +974,7 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     succ = next(
         c.name for c in content.characters.values()
         if c.name not in {pred, other.name, "练国事", "邹维琏", "焦源溥", "阎鸣泰"}
-        and db.get_character_status(c.name)[0] == "active"
+        and db.characters.get_character_status(c.name)[0] == "active"
     )
     dossier_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="HENAN_SEAT_ARCHIVE",
@@ -1023,7 +1023,7 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         if c.name not in {
             official.name, idle.name, other.name, succ, "邹维琏", "焦源溥", "阎鸣泰", "练国事",
         }
-        and db.get_character_status(c.name)[0] == "active"
+        and db.characters.get_character_status(c.name)[0] == "active"
         and c.office_type not in {"地方", "督抚", "边镇"}
     )
     prior_office = db.conn.execute(
@@ -1125,7 +1125,7 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     db.conn.commit()
     helper = next(
         c for c in content.characters.values()
-        if c.name != official.name and db.get_character_status(c.name)[0] == "active"
+        if c.name != official.name and db.characters.get_character_status(c.name)[0] == "active"
     )
     from ming_sim.applier import StoredDocumentError
 
@@ -1235,7 +1235,7 @@ def _referenceable_dossier_ids(db, character_name, turn) -> set[int]:
 
 def test_multi_lead_typed_archives_reach_only_each_office_successor(game, tmp_path):
     db, state, content = game
-    people = [c for c in content.characters.values() if db.get_character_status(c.name)[0] == "active"]
+    people = [c for c in content.characters.values() if db.characters.get_character_status(c.name)[0] == "active"]
     (
         central_lead, slot_lead, central_successor, slot_successor, outsider,
         case_successor, inner_lead, inner_other, case_lead, case_helper,

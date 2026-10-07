@@ -1059,9 +1059,9 @@ def test_657_abi_mapper_matrix_a1_a12(game):
             ra.map_rescript_option_or_choice({'action_type': 'grant_allocation', 'label': '协饷', 'hint': 'h', 'grant_action': '协饷', 'amount': 100, 'account': '国库', 'purpose': '补饷', 'target_kind': 'army', 'target_id': 'no-such-army-657', 'locality_scope': 'none'}, db=db, content=content, state=state)
     p = ra.map_rescript_option_or_choice({'action_type': 'punishment', 'label': '下狱', 'hint': 'h', 'punish_action': '拿问下狱', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
     assert p['punish_action'] == '拿问下狱'
-    assert db.get_character_status(mname)[0] == 'active', 'A9 下狱前须 active'
+    assert db.characters.get_character_status(mname)[0] == 'active', 'A9 下狱前须 active'
     _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'punishment', 'label': '下狱', 'hint': 'h', 'punish_action': '拿问下狱', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none', 'assignee_name': other}, title='A9下狱')
-    assert db.get_character_status(mname)[0] == 'imprisoned', 'A9 判后须 imprisoned'
+    assert db.characters.get_character_status(mname)[0] == 'imprisoned', 'A9 判后须 imprisoned'
     db.set_character_status(state, mname, 'active', 'A9 cleanup')
     if mname in getattr(content, 'characters', {}):
         content.characters[mname].status = 'active'
@@ -1098,9 +1098,9 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     assert p['_emitted_action_type'] == 'dismiss_assignment'
     office_before_a8 = str(db.conn.execute('SELECT office FROM characters WHERE name=?', (mname,)).fetchone()['office'] or '')
     assert office_before_a8 == '兵部尚书', 'A8 前须有 A7 授官'
-    assert db.get_character_status(mname)[0] == 'active'
+    assert db.characters.get_character_status(mname)[0] == 'active'
     _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'appointment', 'label': '罢', 'hint': 'h', 'appoint_action': '罢免', 'office': '', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, title='A8罢免')
-    assert db.get_character_status(mname)[0] == 'dismissed', 'A8 判后须 dismissed'
+    assert db.characters.get_character_status(mname)[0] == 'dismissed', 'A8 判后须 dismissed'
     office8 = str(db.conn.execute('SELECT office FROM characters WHERE name=?', (mname,)).fetchone()['office'] or '')
     assert not office8.strip(), f'A8 罢免后 office 须空：{office8!r}'
     with pytest.raises(ValueError):
@@ -1109,15 +1109,15 @@ def test_657_abi_mapper_matrix_a1_a12(game):
         ra.map_rescript_option_or_choice({'action_type': 'appointment', 'label': '罢', 'hint': 'h', 'appoint_action': '罢免', 'office': '', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'appointment', 'label': '授', 'hint': 'h', 'office': '兵部尚书', 'target_kind': 'character', 'target_id': mname, 'name': mname, 'locality_scope': 'none'}, db=db, content=content, state=state)
-    if db.get_character_status(mname)[0] != 'active':
+    if db.characters.get_character_status(mname)[0] != 'active':
         db.set_character_status(state, mname, 'active', 'A8 cleanup')
     db.conn.execute("UPDATE characters SET office=COALESCE(NULLIF(office,''), '兵部尚书'), power_id='ming', status='active' WHERE name=?", (mname,))
     db.conn.commit()
     p = ra.map_rescript_option_or_choice({'action_type': 'authorization', 'label': '委任', 'hint': 'h', 'name': mname, 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi'}, db=db, content=content, state=state)
     assert p['privilege'] == '便宜行事'
-    auth_before = len(db.list_active_authorities(int(state.turn), holder_id=mname))
+    auth_before = len(db.characters.list_active_authorities(int(state.turn), holder_id=mname))
     created = _apply_mapped_choice({'action': 'follow_draft', 'action_type': 'authorization', 'label': '委任', 'hint': 'h', 'name': mname, 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi'}, title='A10授权')
-    auth_after = db.list_active_authorities(int(state.turn), holder_id=mname)
+    auth_after = db.characters.list_active_authorities(int(state.turn), holder_id=mname)
     assert len(auth_after) >= auth_before + 1
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({'action_type': 'authorization', 'label': 'x', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single'}, db=db, content=content, state=state)
@@ -2042,12 +2042,12 @@ def test_657_punishment_name_target_id_conflict_zero_writes(web_game, monkeypatc
     _657_plant_awaiting_web(web_game, drafts=[{'title': '惩处冲突', 'context': 'c', 'options': [opt_base, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}], 'actor_name': n1, 'actor_office': 'o', 'actor_faction': 'f'}])
     desk = db.issues.list_rescript_desk(int(state.turn))
     key = desk[0]['decision_key']
-    before_status = db.get_character_status(n1)[0]
+    before_status = db.characters.get_character_status(n1)[0]
     before_dossiers = db.conn.execute('SELECT COUNT(*) AS c FROM decree_dossiers').fetchone()['c']
     body = [{'decision_key': key, 'action': 'midzhi', 'label': '责', 'action_type': 'punishment', 'punish_action': '廷杖', 'name': n1, 'target_kind': 'character', 'target_id': n2, 'locality_scope': 'none'}]
     r = asyncio.run(_post_resolve(body))
     assert r.status_code == 200
-    assert db.get_character_status(n1)[0] == before_status
+    assert db.characters.get_character_status(n1)[0] == before_status
     after_dossiers = db.conn.execute('SELECT COUNT(*) AS c FROM decree_dossiers').fetchone()['c']
     assert after_dossiers == before_dossiers
     assert web_game.state.turn_phase != TurnPhase.ISSUED.value

@@ -255,7 +255,7 @@ def test_sync_restores_office_region_from_character_offices(tmp_path):
     name = next(
         n for n, ch in content.characters.items()
         if ch.office_type not in {"后宫", "宗藩"}
-        and db.get_character_status(n)[0] == "active"
+        and db.characters.get_character_status(n)[0] == "active"
     )
     db.conn.execute(
         "UPDATE characters SET office=?, office_type=? WHERE name=?",

@@ -1149,7 +1149,7 @@ def test_fiscal_levy_petition_reaches_emperor_desk_and_lands_only_after_choice(g
     assert row["event_id"] != "liao_levy_rise_1631"
     chain = month_chain._load_chain(db, int(state.turn))
     assert chain["world_question_event_bindings"][row["event_id"]] == "liao_levy_rise_1631"
-    assert db.event_terminal_state("liao_levy_rise_1631") is None
+    assert db.issues.event_terminal_state("liao_levy_rise_1631") is None
     assert _settle_payload(db, "shaanxi")["p"] == before
 
     closed_turn = int(state.turn)
@@ -1205,9 +1205,9 @@ def test_unpresented_fiscal_levy_declaration_leaves_terminal_empty(game, monkeyp
         api_key="sk-test", base_url="https://example.invalid", model="test",
     )
     session.resolve_turn(allow_empty_decree=True)
-    assert not db.event_terminal_state("liao_levy_rise_1631")
+    assert not db.issues.event_terminal_state("liao_levy_rise_1631")
     assert [
-        row for row in db.list_event_petition_records()
+        row for row in db.issues.list_event_petition_records()
         if row.get("event_id") == "liao_levy_rise_1631"
     ] == []
 
@@ -1251,9 +1251,9 @@ def test_non_event_world_question_is_not_bound_to_the_only_due_levy(game, monkey
         }],
         write_gate=session._write_gate,
     )
-    assert db.event_terminal_state("liao_levy_rise_1631") is None
+    assert db.issues.event_terminal_state("liao_levy_rise_1631") is None
     assert [
-        record for record in db.list_event_petition_records()
+        record for record in db.issues.list_event_petition_records()
         if record.get("event_id") == "liao_levy_rise_1631"
         or str((record.get("petition") or {}).get("title") or "") == "河南赈灾"
     ] == []
@@ -1282,9 +1282,9 @@ def test_rejected_levy_identity_does_not_write_a_terminal_from_a_sibling_envelop
     ]})
 
     assert any(item.category == "event_rejected" for item in result.effects.rejected)
-    assert db.event_terminal_state("liao_levy_rise_1631") is None
+    assert db.issues.event_terminal_state("liao_levy_rise_1631") is None
     assert [
-        record for record in db.list_event_petition_records()
+        record for record in db.issues.list_event_petition_records()
         if record.get("event_id") == "liao_levy_rise_1631"
     ] == []
     report = result.effects.applied[0]

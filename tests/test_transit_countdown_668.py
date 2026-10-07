@@ -106,7 +106,7 @@ def test_pre_settle_tick_before_event_terminal_reads_new_location(game):
         pre_settle(state, db, content=content)
         row = _ledger(db, name)
         assert row['location'] == 'beizhili' and row['transit_to'] == ''
-        assert not db.has_event_terminal_state('__test_transit_gate_668__', 'avoided')
+        assert not db.issues.has_event_terminal_state('__test_transit_gate_668__', 'avoided')
         from types import SimpleNamespace
         from ming_sim.applier import Provenance
         import ming_sim.month_chain as month_chain
@@ -114,7 +114,7 @@ def test_pre_settle_tick_before_event_terminal_reads_new_location(game):
             SimpleNamespace(db=db, state=state), {},
             decree_text="", source=Provenance.system_simulation,
         )
-        assert not db.has_event_terminal_state('__test_transit_gate_668__', 'avoided')
+        assert not db.issues.has_event_terminal_state('__test_transit_gate_668__', 'avoided')
     finally:
         content.events.remove(ev)
 

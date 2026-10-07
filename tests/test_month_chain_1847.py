@@ -1575,7 +1575,7 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     assert chain.get("secret_orders_supply_invalid") is True
     assert chain.get("covert_progress_done") is not True
     assert chain.get("secret_orders_supply_done") is not True
-    assert db.get_secret_order(order_id)["status"] == "active"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "active"
     assert db.conn.execute(
         "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
         (dossier_id, turn),
@@ -1599,7 +1599,7 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
     assert replaced_chain.get("secret_orders_supply_invalid") is True
     assert replaced_chain.get("secret_orders_reports_done") is not True
     assert replaced_chain.get("secret_orders_supply_done") is not True
-    assert db.get_secret_order(order_id)["status"] == "active"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "active"
     assert db.conn.execute(
         "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
         (dossier_id, turn),
@@ -1623,7 +1623,7 @@ def test_step_4a_missing_covert_fidelity_records_inline_rejection(game, monkeypa
         "SELECT COUNT(*) FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
         (dossier_id, turn),
     ).fetchone()[0] == 1
-    assert db.get_secret_order(order_id)["status"] != "active"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] != "active"
 
 
 def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, monkeypatch):
@@ -1856,7 +1856,7 @@ def test_step_4a_settles_due_secret_order(game, monkeypatch):
     assert result.stage == "gazette"
 
     # Secret order should be settled to 'done' (delivered 2.0 / target 2.0)
-    assert db.get_secret_order(order_id)["status"] == "done"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "done"
     chain = month_chain._load_chain(db, turn)
     assert chain.get("due_secret_orders_settled") is True
     assert chain.get("secret_orders_supply_done") is True

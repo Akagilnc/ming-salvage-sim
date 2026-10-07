@@ -711,3 +711,112 @@ class IssueStore:
             "WHERE status = 'pending' AND kind = 'rescript_draft' "
             "AND choice_json IS NOT NULL AND TRIM(choice_json) NOT IN ('', '{}')"
         ).fetchall()
+
+    def list_directives_by_turn(self, turn: int) -> list[dict[str, object]]:
+        """读某回合已颁诏（issued）草案，按 id 升序。"""
+        rows = self.read_list_directives_by_turn_owned((int(turn),)).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "turn": int(r["turn"]),
+                "year": int(r["year"]),
+                "period": int(r["period"]),
+                "event_id": r["event_id"] or "",
+                "event_title": r["event_title"] or "",
+                "actor": r["actor"] or "",
+                "text": r["text"] or "",
+                "source": r["source"] or "",
+                "status": r["status"] or "",
+                "notes": r["notes"] or "",
+                "created_at": r["created_at"] or "",
+                "updated_at": r["updated_at"] or "",
+            }
+            for r in rows
+        ]
+
+    def list_issued_directives(self) -> list[dict[str, object]]:
+        """读出所有已颁明发旨意，供跨回合公开见闻投影使用。"""
+        rows = self.read_list_issued_directives_owned(()).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "turn": int(r["turn"]),
+                "year": int(r["year"]),
+                "period": int(r["period"]),
+                "event_id": r["event_id"] or "",
+                "event_title": r["event_title"] or "",
+                "actor": r["actor"] or "",
+                "text": r["text"] or "",
+                "source": r["source"] or "",
+                "status": r["status"] or "",
+                "notes": r["notes"] or "",
+            }
+            for r in rows
+        ]
+
+    def list_directives(
+        self, turn: int, statuses: tuple[str, ...] = ("draft",),
+    ) -> list:
+        placeholders = ",".join("?" for _ in statuses)
+        return self.read_list_directives_owned(
+            (int(turn), int(turn), *statuses), placeholders,
+        ).fetchall()
+
+    def count_pending_directives_for_turn(self, turn: int) -> int:
+        row = self.count_pending_directives(int(turn))
+        return int(row["n"]) if row else 0
+
+    def list_commitments_for_dossier(self, dossier_id: int) -> list[dict[str, object]]:
+        rows = self.read_list_commitments_for_dossier((f"dossier:{int(dossier_id)}",))
+        return [dict(row) for row in rows]
+
+    def count_active_initiatives(self) -> int:
+        row = self.read_count_active_initiatives()
+        return int(row["n"] or 0)
+
+    def has_event_triggered(self, event_id: str) -> bool:
+        row = self.read_has_event_triggered((event_id,))
+        return row is not None
+
+    def event_terminal_state(self, event_id: str) -> str | None:
+        row = self.read_event_terminal_state((event_id,))
+        return row["terminal_state"] if row is not None else None
+
+    def has_event_terminal_state(self, event_id: str, terminal_state: str) -> bool:
+        row = self.read_has_event_terminal_state((event_id, terminal_state))
+        return row is not None
+
+    def list_event_petition_records(self) -> list[dict[str, object]]:
+        """三饷请旨的「已呈／原批语」持久读口（#1892 供料侧）。"""
+        from ming_sim.exceptions import SettlementAbort
+
+        out: list[dict[str, object]] = []
+        for r in self.read_event_petition_trigger_rows():
+            raw = str(r["choice_json"] or "").strip()
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise SettlementAbort(
+                    "event_triggers.choice_json 解析失败 "
+                    f"event_id={r['event_id']!r} rowid={r['rowid']}",
+                    turn=int(r["turn"] or 0),
+                    stage="petition_records",
+                ) from exc
+            if not isinstance(payload, dict):
+                continue
+            petition = payload.get("petition")
+            if not isinstance(petition, dict):
+                continue
+            out.append({
+                **{key: value for key, value in payload.items() if key != "petition"},
+                "event_id": str(r["event_id"] or ""),
+                "turn": int(r["turn"] or 0),
+                "year": int(r["year"] or 0),
+                "period": int(r["period"] or 0),
+                "terminal_state": str(r["terminal_state"] or ""),
+                "terminal_reason": str(r["terminal_reason"] or ""),
+                "petition": dict(petition),
+            })
+        return out

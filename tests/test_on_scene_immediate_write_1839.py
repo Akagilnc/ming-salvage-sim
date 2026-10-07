@@ -85,7 +85,7 @@ def test_kill_lands_status_and_next_materials_include_roster(game, tmp_path):
         db, state, witness, declaration, night_id=night_id,
     )
 
-    status, reason = db.get_character_status(victim)
+    status, reason = db.characters.get_character_status(victim)
     assert status == "dead"
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-kill")
@@ -177,7 +177,7 @@ def test_undo_reverses_round_on_scene_writes(game):
     assert result.presence.rejected == []
     assert result.edge_events.rejected == []
 
-    assert db.get_character_status(victim)[0] == "imprisoned"
+    assert db.characters.get_character_status(victim)[0] == "imprisoned"
     assert any(
         f.body == arm_injury
         for f in db.textual_facts.readable_materials(
@@ -195,7 +195,7 @@ def test_undo_reverses_round_on_scene_writes(game):
 
     db.undo_chat_turn(chat_id)
 
-    assert db.get_character_status(victim)[0] == "active"
+    assert db.characters.get_character_status(victim)[0] == "active"
     assert not any(
         f.body == arm_injury
         for f in db.textual_facts.readable_materials(
@@ -266,7 +266,7 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     before_sayings = db.conn.execute(
         "SELECT COUNT(*) c FROM public_sayings"
     ).fetchone()["c"]
-    before_status = db.get_character_status(other)[0]
+    before_status = db.characters.get_character_status(other)[0]
     before_listed = db.conn.execute(
         "SELECT 1 FROM characters WHERE name=?", ("李若璉夜測",),
     ).fetchone()
@@ -305,7 +305,7 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     assert after_edges == before_edges
     assert after_facts == before_facts
     assert after_sayings == before_sayings
-    assert db.get_character_status(other)[0] == before_status
+    assert db.characters.get_character_status(other)[0] == before_status
     assert db.conn.execute(
         "SELECT 1 FROM characters WHERE name=?", ("李若璉夜測",),
     ).fetchone() is before_listed

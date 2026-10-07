@@ -111,7 +111,7 @@ def test_mark_read_binds_to_row_not_dossier_and_persists(game):
     key1 = f"progress:{pid1}"
     assert db.unread_memorial_count() == 1
 
-    db.mark_memorials_read([key1])
+    db.reign.mark_memorials_read([key1])
     assert db.unread_memorial_count() == 0
     rows = db.list_player_memorials()
     assert rows[0]["key"] == key1
@@ -137,7 +137,7 @@ def test_mark_read_binds_to_row_not_dossier_and_persists(game):
         by_key = {r["key"]: r for r in restored.list_player_memorials()}
         assert by_key[key1]["unread"] is False
         assert by_key[key2]["unread"] is True
-        restored.mark_memorials_read([key2])
+        restored.reign.mark_memorials_read([key2])
         assert restored.unread_memorial_count() == 0
     finally:
         restored.close()

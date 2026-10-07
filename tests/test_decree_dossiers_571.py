@@ -474,7 +474,7 @@ def test_character_terminal_state_closes_secret_order_and_execution_slot(game):
 
     db.set_character_status(state, minister, "imprisoned", reason="下狱")
 
-    order = db.get_secret_order(order_id)
+    order = db.character_knowledge.get_secret_order(order_id)
     dossier = db.dossiers.get_for_secret_order(order_id)
     assert order["status"] == "failed"
     assert dossier["status"] == "closed"
@@ -513,10 +513,10 @@ def test_commitments_bind_explicitly_when_multiple_dossiers_share_a_turn(game):
         content=content,
     )
 
-    commitments = db.list_commitments_for_dossier(second_id)
+    commitments = db.issues.list_commitments_for_dossier(second_id)
     assert len(commitments) == 1
     assert commitments[0]["origin_ref"] == f"dossier:{second_id}"
-    assert db.list_commitments_for_dossier(first_id) == []
+    assert db.issues.list_commitments_for_dossier(first_id) == []
 
 def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejection(game):
     db, state, _content = game
@@ -941,7 +941,7 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     )
     assert [
         row["dossier_id"]
-        for row in db.list_office_effects_for_dossier(dossier["id"])
+        for row in db.characters.list_office_effects_for_dossier(dossier["id"])
     ] == [dossier["id"]]
     db.record_dossier_execution(
         dossier["id"], "fulfilled", "任事已毕", state.turn,
@@ -1083,7 +1083,7 @@ def test_manual_directive_capture_rejects_malformed_roster(
     assert terminal.review_directives(session) == "back"
 
     assert db.dossiers.list_pending_actions(state.turn) == []
-    assert db.list_directives(state) == []
+    assert db.issues.list_directives(state.turn) == []
     assert db.dossiers.list_dossiers() == []
 
 
@@ -1123,7 +1123,7 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
         session.add_directive("手工旨意", dossier_payload=payload)
 
     assert db.dossiers.list_pending_actions(state.turn) == []
-    assert db.list_directives(state) == []
+    assert db.issues.list_directives(state.turn) == []
     assert db.dossiers.list_dossiers() == []
 
 
@@ -1151,7 +1151,7 @@ def test_final_decree_edit_path_removed_no_bypass(game):
     )
     # 草案正文未被旁路改写
     assert db.dossiers.get_for_directive(directive_id) is None
-    assert db.list_directives(state)[0]["text"] == "拨十两赈济"
+    assert db.issues.list_directives(state.turn)[0]["text"] == "拨十两赈济"
 
 def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     game, monkeypatch, capsys,
@@ -1179,7 +1179,7 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     assert session.list_directives() == []
     assert terminal.review_directives(session) == "back"
     assert db.dossiers.get_for_directive(directive_id) is not None
-    assert db.list_directives(state)[0]["text"] == "着修河工"
+    assert db.issues.list_directives(state.turn)[0]["text"] == "着修河工"
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
@@ -1313,7 +1313,7 @@ def test_secret_order_progress_undo_restores_order_and_dossier_axes(game):
 
     db.undo_chat_turn(chat_turn_id)
 
-    assert db.get_secret_order(order_id)["result"] == ""
+    assert db.character_knowledge.get_secret_order(order_id)["result"] == ""
     dossier = db.dossiers.get_for_secret_order(order_id)
     assert dossier["status"] == "promulgated"
     assert dossier["execution_outcome"] == ""
@@ -1340,8 +1340,8 @@ def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypat
             "UPDATE game_state SET ending_status='caller-continued' WHERE id=1"
         )
 
-    assert db.get_secret_order(order_id)["status"] == "active"
-    assert db.get_secret_order(order_id)["result"] == ""
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "active"
+    assert db.character_knowledge.get_secret_order(order_id)["result"] == ""
     assert db.dossiers.get_for_secret_order(order_id) == dossier_before
     assert db.conn.execute(
         "SELECT ending_status FROM game_state WHERE id=1"
@@ -1361,7 +1361,7 @@ def test_secret_order_progress_rolls_back_both_axes_in_outer_atomic(game):
             )
             raise RuntimeError("rollback")
 
-    assert db.get_secret_order(order_id)["sim_note"] == ""
+    assert db.character_knowledge.get_secret_order(order_id)["sim_note"] == ""
     assert db.dossiers.get_for_secret_order(order_id)["status"] == "promulgated"
 
 @pytest.mark.parametrize(

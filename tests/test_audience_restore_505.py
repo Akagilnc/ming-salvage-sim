@@ -39,7 +39,7 @@ def _active_minister(db, content) -> str:
             continue
         if getattr(ch, "office_type", "") == "后宫":
             continue
-        if db.get_character_status(name)[0] == "active":
+        if db.characters.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("no active ming minister")
 
@@ -130,14 +130,14 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
     night = an.open_night(db, state, location="文华殿", time_of_day="午时")
     ct = _start_generating_turn(db, state, minister, "杨卿何以教朕？")
     # kill 前：该轮为在飞、大臣被判「仍在进行」。
-    assert an.list_in_flight_chat_turns(db, night["id"])
+    assert an.reign.list_in_flight_chat_turns(db, night["id"])
     db.close()
 
     db2, _state2 = _reopen(env.path, content)
     try:
         interrupted = db2.reconcile_interrupted_chat_turns()
         # 该轮被标为可重试的 interrupted（不再在飞、不阻塞续问/收夜）。
-        assert an.list_in_flight_chat_turns(db2, night["id"]) == []
+        assert an.reign.list_in_flight_chat_turns(db2, night["id"]) == []
         assert any(int(r["chat_turn_id"]) == ct for r in interrupted)
         # 问话原句保留（不删）——恢复路径永不删记录。
         proj = db2.build_chat_projection(minister)
@@ -594,7 +594,7 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
     try:
         interrupted = db2.reconcile_interrupted_chat_turns()
         assert all(int(r["chat_turn_id"]) != ct for r in interrupted)
-        assert an.list_in_flight_chat_turns(db2, night["id"]) == []
+        assert an.reign.list_in_flight_chat_turns(db2, night["id"]) == []
         assert db2.conn.execute(
             "SELECT status FROM chat_turns WHERE id=?", (ct,)
         ).fetchone()["status"] == "failed"
@@ -657,12 +657,12 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
     minister = _active_minister(game.db, game.content)
     an.open_night(game.db, game.state, location="乾清宫", time_of_day="戌时")
     ct = _start_generating_turn(game.db, game.state, minister, "剿抚孰先？")
-    assert game.db.list_in_flight_chat_turns()  # 存档前：在飞
+    assert game.db.reign.list_in_flight_chat_turns()  # 存档前：在飞
     game.save_to("orphan_save")
 
     game.load_save("orphan_save")
     # 换档重建后重开对账：孤儿轮 → interrupted，在飞判定解除、问话保留。
-    assert game.db.list_in_flight_chat_turns() == []
+    assert game.db.reign.list_in_flight_chat_turns() == []
     assert game.db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
@@ -677,7 +677,7 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
 def _657_active_minister(db, content) -> str:
     return next(
         ch.name for ch in content.characters.values()
-        if db.get_character_status(ch.name)[0] == "active"
+        if db.characters.get_character_status(ch.name)[0] == "active"
         and db.resolve_power_id(ch) == "ming"
         and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
     )

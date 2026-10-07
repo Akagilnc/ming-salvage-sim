@@ -337,7 +337,7 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     assert body.get("reason") in (None, "")
     assert body.get("_event") in (None, "done", "")
 
-    listed = game.db.list_directives(game.state, statuses=("draft",))
+    listed = game.db.issues.list_directives(game.state.turn, statuses=("draft",))
     assert any(int(r["id"]) == did for r in listed)
     _finish_month_after_gazette(game, turn)
     assert source_turn < int(game.state.turn)

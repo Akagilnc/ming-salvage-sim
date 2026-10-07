@@ -2807,12 +2807,6 @@ class GameDB:
         row = ReignStateStore(self.conn).read_has_meta_flag((key,))
         return row is not None and int(row["value"]) == 1
 
-    def get_character_status(self, name: str) -> Tuple[str, str]:
-        row = CharacterStore(self.conn).read_get_character_status((name,))
-        if row is None:
-            return ("active", "")
-        return (row["status"], row["status_reason"] or "")
-
     def resolve_power_id(self, character) -> str:
         """人物所属势力 id 的权威解析：DB 行 power_id 优先，回退内存 power_id，默认 ming。
 
@@ -3260,14 +3254,6 @@ class GameDB:
             f"{budget}账面：{account_text}。本{TURN_UNIT}收支：{period_text}。"
             f"{hub_result_text}近账：{recent_text}。"
         )
-
-    def faction_satisfaction(self, faction: str) -> int:
-        row = FactionStore(self.conn).read_faction_satisfaction((faction,))
-        return int(row["satisfaction"]) if row else 50
-
-    def faction_leverage(self, faction: str) -> int:
-        row = FactionStore(self.conn).read_faction_leverage((faction,))
-        return int(row["leverage"]) if row else 50
 
     def class_report(self, *, audience: bool = False) -> str:
         """全国汇总 + 各省紧张切片（sat<=30 且 lev>=60）。
@@ -5555,45 +5541,6 @@ class GameDB:
         if commit:
             self.conn.commit()
 
-    def list_event_petition_records(self) -> List[Dict[str, object]]:
-        """三饷请旨的「已呈／原批语」持久读口（#1892 供料侧）。
-
-        只读 ``choice_json`` 里带 petition 段的事件行；无 petition 段的行不是请旨。
-        """
-        from ming_sim.entities.issue.store import IssueStore
-        out: List[Dict[str, object]] = []
-        for r in IssueStore(self.conn).read_event_petition_trigger_rows():
-            raw = str(r["choice_json"] or "").strip()
-            if not raw:
-                continue
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                from ming_sim.exceptions import SettlementAbort
-
-                raise SettlementAbort(
-                    "event_triggers.choice_json 解析失败 "
-                    f"event_id={r['event_id']!r} rowid={r['rowid']}",
-                    turn=int(r["turn"] or 0),
-                    stage="petition_records",
-                ) from exc
-            if not isinstance(payload, dict):
-                continue
-            petition = payload.get("petition")
-            if not isinstance(petition, dict):
-                continue
-            out.append({
-                **{key: value for key, value in payload.items() if key != "petition"},
-                "event_id": str(r["event_id"] or ""),
-                "turn": int(r["turn"] or 0),
-                "year": int(r["year"] or 0),
-                "period": int(r["period"] or 0),
-                "terminal_state": str(r["terminal_state"] or ""),
-                "terminal_reason": str(r["terminal_reason"] or ""),
-                "petition": dict(petition),
-            })
-        return out
-
     def record_investigation_spoiled_fact(
         self,
         *,
@@ -5691,7 +5638,7 @@ class GameDB:
     # ----- #501 召对转译待补状态（沿用 extract_status）-----
 
     def can_undo_last_chat_turn(self, minister_name: str, turn: int) -> bool:
-        row = self.get_last_active_chat_turn(minister_name, turn)
+        row = self.reign.get_last_active_chat_turn(minister_name, turn)
         if row is None:
             return False
         if not row.get("user_message_id") or not row.get("minister_message_id"):
@@ -6257,48 +6204,6 @@ class GameDB:
                 "has_directive": bool(material.get("has_directive", False)),
             })
         return sorted(combined, key=lambda item: (int(item["turn"]), 0 if item["kind"] == "month" else int(item["night_id"])))
-
-    def list_directives_by_turn(self, turn: int) -> List[Dict[str, object]]:
-        """读某回合已颁诏（issued）草案，按 id 升序。"""
-        rows = IssueStore(self.conn).read_list_directives_by_turn_owned((int(turn),)).fetchall()
-        return [
-            {
-                "id": int(r["id"]),
-                "turn": int(r["turn"]),
-                "year": int(r["year"]),
-                "period": int(r["period"]),
-                "event_id": r["event_id"] or "",
-                "event_title": r["event_title"] or "",
-                "actor": r["actor"] or "",
-                "text": r["text"] or "",
-                "source": r["source"] or "",
-                "status": r["status"] or "",
-                "notes": r["notes"] or "",
-                "created_at": r["created_at"] or "",
-                "updated_at": r["updated_at"] or "",
-            }
-            for r in rows
-        ]
-
-    def list_issued_directives(self) -> List[Dict[str, object]]:
-        """读出所有已颁明发旨意，供跨回合公开见闻投影使用。"""
-        rows = IssueStore(self.conn).read_list_issued_directives_owned(()).fetchall()
-        return [
-            {
-                "id": int(r["id"]),
-                "turn": int(r["turn"]),
-                "year": int(r["year"]),
-                "period": int(r["period"]),
-                "event_id": r["event_id"] or "",
-                "event_title": r["event_title"] or "",
-                "actor": r["actor"] or "",
-                "text": r["text"] or "",
-                "source": r["source"] or "",
-                "status": r["status"] or "",
-                "notes": r["notes"] or "",
-            }
-            for r in rows
-        ]
 
     # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────
     def _latest_held_user_chat_message_id(
@@ -7259,29 +7164,13 @@ class GameDB:
     # 两类：dossier_reported_progress（案卷进度）+ faction_denunciations（派系检举）。
     # 密令私轨不入此面（密令面板另管）。已读键绑具体奏报行，不绑案卷。
 
-    MEMORIAL_READS_KV_KEY = "memorial_reads"
     MEMORIAL_AUTHOR_FALLBACK = "某臣"
-
-    def _memorial_read_keys(self) -> Set[str]:
-        raw = self.reign.kv_get(self.MEMORIAL_READS_KV_KEY)
-        if not raw:
-            return set()
-        data = load_stored_list(raw, label="memorial_reads")
-        return {str(item) for item in data if str(item or "").strip()}
-
-    def mark_memorials_read(self, keys: Iterable[str]) -> None:
-        """标记奏报已读；键=progress:{id}|denunciation:{id}，随存档（kv_store）持久化。"""
-        incoming = {str(k).strip() for k in keys if str(k or "").strip()}
-        if not incoming:
-            return
-        merged = sorted(self._memorial_read_keys() | incoming)
-        self.reign.kv_set(self.MEMORIAL_READS_KV_KEY, json.dumps(merged, ensure_ascii=False))
 
     def list_player_memorials(self) -> List[Dict[str, object]]:
         """玩家奏疏收件箱：进度奏报 + 派系检举，含未读位；不夹带引擎结构化字段。"""
         from ming_sim.participant_roster import resolve_dossier_owner_name
 
-        read_keys = self._memorial_read_keys()
+        read_keys = self.reign.memorial_read_keys()
         out: List[Dict[str, object]] = []
 
         progress_rows = self.dossiers.recent_reported_progress()
@@ -7435,9 +7324,9 @@ class GameDB:
         for fac in sorted(related_factions):
             situations.append({
                 "faction": fac,
-                "leverage_band": power_band(self.faction_leverage(fac)),
+                "leverage_band": power_band(self.factions.faction_leverage(fac)),
                 "satisfaction_band": satisfaction_band(
-                    self.faction_satisfaction(fac),
+                    self.factions.faction_satisfaction(fac),
                 ),
             })
 
@@ -7697,7 +7586,7 @@ class GameDB:
                 # #1260：分叉确认扩为 economy+fiscal 单源（纯 fiscal 旨外亦可立案）。
                 if not self.dossier_has_beyond_intent(dossier_id):
                     continue
-            for commitment in self.list_commitments_for_dossier(dossier_id):
+            for commitment in self.issues.list_commitments_for_dossier(dossier_id):
                 if not str(commitment.get("commitment_kind") or "").strip():
                     continue
                 cid = int(commitment["id"])
@@ -8865,11 +8754,6 @@ class GameDB:
             item["was_force_promulgated"] = bool(row["was_force_promulgated"])
             visible.append(item)
         return visible
-
-    def list_commitments_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
-        """承诺只从 issue.origin_ref 反查；案卷表不复制 commitment id。"""
-        rows = IssueStore(self.conn).read_list_commitments_for_dossier((f"dossier:{int(dossier_id)}",))
-        return [dict(row) for row in rows]
 
     def resolve_commitment_origin_ref(
         self, state: GameState, supplied_ref: str, *, origin_kind: str = "",
@@ -10249,7 +10133,7 @@ class GameDB:
             return
         if punish_action in {"放归", "昭雪"}:
             # #517：宥赦只回迁在世处置态；dead 等终态响亮拒绝，不得复活。
-            current_status, _ = self.get_character_status(target)
+            current_status, _ = self.characters.get_character_status(target)
             if current_status not in {"imprisoned", "dismissed", "exiled"}:
                 raise ValueError(
                     f"宥赦不可回迁：{target} 当前状态={current_status or '(空)'}"
@@ -11180,7 +11064,7 @@ class GameDB:
                 self.rush_secret_order(
                     int(oid), state, deadline_months=deadline, reason=str(payload.get("reason") or ""))
                 if origin_mid is not None:
-                    order = self.get_secret_order(int(oid))
+                    order = self.character_knowledge.get_secret_order(int(oid))
                     if order is not None:
                         self._classify_secret_order_audience(
                             state, int(oid), str(order["minister_name"]),
@@ -11193,7 +11077,7 @@ class GameDB:
                 ok = self.submit_secret_order_for_review(
                     int(oid), str(payload.get("claim") or ""), state.year, state.period)
                 if ok and origin_mid is not None:
-                    order = self.get_secret_order(int(oid))
+                    order = self.character_knowledge.get_secret_order(int(oid))
                     if order is not None:
                         self._classify_secret_order_audience(
                             state, int(oid), str(order["minister_name"]),
@@ -11206,7 +11090,7 @@ class GameDB:
                 ok = self.update_secret_order_progress(
                     int(oid), str(payload.get("note") or ""), state.year, state.period)
                 if ok and origin_mid is not None:
-                    order = self.get_secret_order(int(oid))
+                    order = self.character_knowledge.get_secret_order(int(oid))
                     if order is not None:
                         self._classify_secret_order_audience(
                             state, int(oid), str(order["minister_name"]),
@@ -11577,7 +11461,7 @@ class GameDB:
             # 外藩(power_id≠ming)/后宫/不在册不接(无字面 fallback,免误黜皇太极,CMR R2);
             # 再校 active,免把已故/已黜/致仕者的终态改写成 dismissed(CMR R3 codex R2)。
             key = _find_existing_minister(content, name, self)
-            if key is None or self.get_character_status(key)[0] != "active":
+            if key is None or self.characters.get_character_status(key)[0] != "active":
                 return set()
             # 宗藩（就藩宗室）非朝堂命官，不可作朝臣罢免——_find_existing_minister 仍会解析到宗藩名
             # （任命核需解到名才能显式拒），故罢免侧单独守（cmr R6 cross-section）。
@@ -11701,39 +11585,6 @@ class GameDB:
         self.conn.commit()
         return created
 
-    def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
-        row = CharacterStore(self.conn).read_get_authority((int(authority_id),))
-        if row is None:
-            return None
-        result = dict(row)
-        result["revoked"] = bool(result["revoked"])
-        return result
-
-    def list_active_authorities(
-        self, turn: int, *, holder_id: str = "",
-    ) -> List[Dict[str, object]]:
-        params: List[object] = [int(turn), int(turn)]
-        holder_sql = ""
-        if holder_id:
-            holder_sql = " AND holder_id=?"
-            params.append(str(holder_id))
-        rows = CharacterStore(self.conn).read_list_active_authorities_owned(params, holder_sql).fetchall()
-        return [{**dict(row), "revoked": False} for row in rows]
-
-    def find_authority_by_origin(
-        self, dossier_id: int, *, holder_id: str, privilege: str, scope: str,
-    ) -> Optional[Dict[str, object]]:
-        """Return the stable row for an exact grant origin, regardless of status."""
-        row = CharacterStore(self.conn).read_find_authority_by_origin((
-                int(dossier_id), str(holder_id).strip(), str(privilege).strip(),
-                str(scope).strip(),
-            ))
-        if row is None:
-            return None
-        result = dict(row)
-        result["revoked"] = bool(result["revoked"])
-        return result
-
     def find_active_authority(
         self, turn: int, *, holder_id: str, privilege: str, scope: str,
     ) -> Optional[Dict[str, object]]:
@@ -11741,7 +11592,7 @@ class GameDB:
         holder_id = str(holder_id or "").strip()
         privilege = str(privilege or "").strip()
         scope = str(scope or "").strip()
-        for row in self.list_active_authorities(turn, holder_id=holder_id):
+        for row in self.characters.list_active_authorities(turn, holder_id=holder_id):
             if (
                 str(row.get("privilege") or "") == privilege
                 and str(row.get("scope") or "") == scope
@@ -11781,7 +11632,7 @@ class GameDB:
             return []
         projected: List[Dict[str, object]] = []
         for holder_id in sorted(actors):
-            for row in self.list_active_authorities(int(turn), holder_id=holder_id):
+            for row in self.characters.list_active_authorities(int(turn), holder_id=holder_id):
                 if str(row.get("scope") or "") not in domains:
                     continue
                 projected.append({
@@ -11797,13 +11648,6 @@ class GameDB:
                 })
         projected.sort(key=lambda item: int(item["id"]))
         return projected
-
-    def list_office_effects_for_dossier(
-        self, dossier_id: int,
-    ) -> List[Dict[str, object]]:
-        return [
-            dict(row) for row in CharacterStore(self.conn).read_list_office_effects_for_dossier((int(dossier_id),))
-        ]
 
     def add_directive(
         self,
@@ -11895,13 +11739,6 @@ class GameDB:
             commit=commit,
         )
 
-    def list_directives(
-        self, state: GameState, statuses: Tuple[str, ...] = ("draft",)
-    ) -> List[sqlite3.Row]:
-        # 默认只取 draft（颁诏候选）；UI 列表传 ('pending','draft') 一起取，前端按 status 分区。
-        placeholders = ",".join("?" for _ in statuses)
-        return IssueStore(self.conn).read_list_directives_owned((state.turn, state.turn, *statuses), placeholders).fetchall()
-
     @staticmethod
     def _decode_directive_dossier_payload(
         raw: object, *, directive_id: Optional[int] = None,
@@ -11957,7 +11794,7 @@ class GameDB:
         code_fault: BaseException | None = None
         try:
             with atomic(self):
-                for row in self.list_directives(state, statuses=("draft",)):
+                for row in self.issues.list_directives(state.turn, statuses=("draft",)):
                     did = int(row["id"])
                     # 已有案卷：幂等跳过（补交重跑 ensure 时不重复建）
                     if self.dossiers.get_for_directive(did) is not None:
@@ -12019,11 +11856,6 @@ class GameDB:
             mirror_rejections_after_commit(self, collector, rejections_jsonl_path)
         return rejection_rows
 
-    def count_pending_directives(self, state: GameState) -> int:
-        """本回合待核定（pending）的大臣拟旨数。颁诏前须为 0。"""
-        row = IssueStore(self.conn).count_pending_directives(state.turn)
-        return int(row["n"]) if row else 0
-
     def update_directive_text(
         self, directive_id: int, text: str, *,
         dossier_payload: Optional[Dict[str, object]] = None,
@@ -12081,22 +11913,6 @@ class GameDB:
         if bar < 100:
             return "终前"
         return "终"
-
-    def count_active_initiatives(self) -> int:
-        row = IssueStore(self.conn).read_count_active_initiatives()
-        return int(row["n"] or 0)
-
-    def has_event_triggered(self, event_id: str) -> bool:
-        row = IssueStore(self.conn).read_has_event_triggered((event_id,))
-        return row is not None
-
-    def event_terminal_state(self, event_id: str) -> str | None:
-        row = IssueStore(self.conn).read_event_terminal_state((event_id,))
-        return row["terminal_state"] if row is not None else None
-
-    def has_event_terminal_state(self, event_id: str, terminal_state: str) -> bool:
-        row = IssueStore(self.conn).read_has_event_terminal_state((event_id, terminal_state))
-        return row is not None
 
     def mark_event_triggered(
         self,
@@ -13896,27 +13712,6 @@ class GameDB:
         tlog(f"[secret_order] rush id={order_id} old_due={old_due} due={due_turn} status={status}")
         return {"id": int(order_id), "title": row["title"], "status": status, "due_turn": due_turn}
 
-    def get_secret_order(self, order_id: int) -> Optional[Dict[str, object]]:
-        """单查一条密令（任意状态），给承办人查进度工具用。不存在返回 None。"""
-        r = CharacterKnowledgeStore(self.conn).secret_order_row(int(order_id))
-        if not r:
-            return None
-        return {
-            "id": durable_int(r["id"], label="secret_orders.id", blank=None),
-            "minister_name": r["minister_name"],
-            "title": r["title"], "content": r["content"],
-            "status": r["status"], "result": r["result"] or "",
-            "sim_note": r["sim_note"] or "",
-            "turn_issued": durable_int(
-                r["turn_issued"], label="secret_orders.turn_issued", blank=None,
-            ),
-            # due_turn 可空列：合法缺省 0（既有 int(or 0) 语义）。
-            "due_turn": durable_int(
-                r["due_turn"], label="secret_orders.due_turn", blank=0,
-            ),
-            "turn_closed": r["turn_closed"],
-        }
-
     def auto_submit_due_secret_orders(self, state: GameState) -> List[Dict[str, object]]:
         """#1504：到期只记 typed 机器事实，保持 active；玩家文字走 0058 密奏。"""
 
@@ -14384,25 +14179,6 @@ class GameDB:
             })
         return projection
 
-    def list_in_flight_chat_turns(
-        self,
-        *,
-        night_id: Optional[int] = None,
-        minister_name: Optional[str] = None,
-        turn: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        """未完成回话：generating，或 active 且尚无大臣回话。
-
-        consumed / failed / interrupted / undone 均非在飞。
-        WebGame / 收夜守卫走此接口，不直接摸 conn（测试替身可 stub）。
-        """
-        return [
-            self._row_dict(r)
-            for r in self.reign.list_in_flight_chat_turn_rows(
-                night_id=night_id, minister_name=minister_name, turn=turn,
-            )
-        ]
-
     def reconcile_interrupted_chat_turns(self) -> List[Dict[str, Any]]:
         """重开对账（#505 / ADR 0036）：上一进程崩溃遗留的在飞回话轮（generating / active 无
         回话）终态化。生成半途被 kill 的轮：问话已持久、回话未落。恢复形态——
@@ -14417,7 +14193,7 @@ class GameDB:
         「在飞」判据单一真源 = `list_in_flight_chat_turns`（无过滤 = 全库崩溃孤儿集）——
         与在飞守卫同缝，不另抄谓词。
         """
-        rows = self.list_in_flight_chat_turns()
+        rows = self.reign.list_in_flight_chat_turns()
         interrupted: List[Dict[str, Any]] = []
         with self.conn:
             for row in rows:
@@ -14625,10 +14401,6 @@ class GameDB:
             return
         self.reign.insert_rollback_item_rows(rows)
         self.conn.commit()
-
-    def get_last_active_chat_turn(self, minister_name: str, turn: int) -> Optional[Dict[str, Any]]:
-        row = self.reign.last_active_chat_turn_row(minister_name, int(turn))
-        return self._row_dict(row) if row is not None else None
 
     def persist_minister_reply(
         self,

@@ -274,7 +274,7 @@ def active_ming_character(db, content) -> str:
             continue
         if getattr(ch, "office_type", "") == "后宫":
             continue
-        if db.get_character_status(name)[0] == "active":
+        if db.characters.get_character_status(name)[0] == "active":
             return name
     raise AssertionError("找不到 active 的大明大臣")
 

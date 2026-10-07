@@ -111,7 +111,7 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
         "hint": "暂稳东江",
         "note": "姑留观后效",
     }
-    assert not db.has_event_triggered(event_id)
+    assert not db.issues.has_event_triggered(event_id)
     assert event_id not in I._event_trigger_refs(db), (
         "submit_hitl_choices 只能暂存亲裁 choice，不能在 phase2 前抢先把候选事件记成终态"
     )

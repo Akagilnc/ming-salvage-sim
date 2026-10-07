@@ -680,14 +680,14 @@ def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monk
     )
     session = make_light_session(db, state, content)
     assert session.resolve_turn(allow_empty_decree=True).stage == "gazette"
-    assert db.get_secret_order(order_id)["status"] == "failed"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "failed"
     rows = db.conn.execute(
         "SELECT section FROM rejection_reports WHERE turn=? AND section='issue_inertia.entity_rejections'",
         (turn,),
     ).fetchall()
     assert len(rows) == 1
     session.resolve_turn(allow_empty_decree=True)
-    assert db.get_secret_order(order_id)["status"] == "failed"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "failed"
     assert len(db.conn.execute(
         "SELECT id FROM rejection_reports WHERE turn=? AND section='issue_inertia.entity_rejections'",
         (turn,),
@@ -825,7 +825,7 @@ def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkey
     result = session.resolve_turn(allow_empty_decree=True)
 
     assert result.stage == "gazette"
-    assert db.get_secret_order(order_id)["status"] == "done"
+    assert db.character_knowledge.get_secret_order(order_id)["status"] == "done"
     assert db.conn.execute(
         "SELECT fidelity_state FROM dossier_actual_progress WHERE dossier_id=? AND turn=?",
         (dossier_id, int(state.turn)),

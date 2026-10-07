@@ -410,7 +410,7 @@ def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_p
         for candidate, ch in content.characters.items()
         if getattr(ch, "power_id", "ming") == "ming"
         and getattr(ch, "office_type", "") != "后宫"
-        and db.get_character_status(candidate)[0] == "active"
+        and db.characters.get_character_status(candidate)[0] == "active"
     )
     ch = content.characters[name]
     old_power = ch.power_id

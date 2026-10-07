@@ -95,7 +95,7 @@ def test_audience_admission_keeps_blank_fail_open_and_reuses_basic_qualification
     db, state, _content = game
     db.set_character_status(state, dead.name, "dead", reason="测试")
     decision = sess.admit_audience(dead)
-    status, _reason = db.get_character_status(dead.name)
+    status, _reason = db.characters.get_character_status(dead.name)
     assert status == "dead"
     assert decision.result is None
 
@@ -1181,7 +1181,7 @@ def test_fresh_summon_same_beizhili_journey_attaches_origin_without_reapply(game
     minister = next(
         ch.name for ch in content.characters.values()
         if db.resolve_power_id(ch) == "ming"
-        and db.get_character_status(ch.name)[0] == "active"
+        and db.characters.get_character_status(ch.name)[0] == "active"
         and str(getattr(ch, "office", "") or "").strip()
         and ch.name != person.name
     )

@@ -128,7 +128,7 @@ def test_require_active_minister_uses_can_summon_reason(game, monkeypatch):
     assert name is not None
     db.add_character(state, content.characters[name], source="测试物化")
     db.set_character_status(state, name, "offstage", "史实尚未登场")
-    assert db.get_character_status(name)[0] == "offstage"
+    assert db.characters.get_character_status(name)[0] == "offstage"
 
     sess = GameSession.__new__(GameSession)
     sess.db = db

@@ -217,7 +217,7 @@ def test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn(game):
     with pytest.raises(Exception) as error:
         web_game.undo_last_chat(minister_name)
     assert getattr(error.value, "status_code", None) == 409
-    assert db.get_last_active_chat_turn(minister_name, state.turn)["id"] == completed
+    assert db.reign.get_last_active_chat_turn(minister_name, state.turn)["id"] == completed
 
 
 def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
@@ -235,7 +235,7 @@ def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
         result = web_game.undo_last_chat(minister_name, gate_held=True)
 
     assert result["undone_chat_turn_id"] == turn
-    assert db.get_last_active_chat_turn(minister_name, state.turn) is None
+    assert db.reign.get_last_active_chat_turn(minister_name, state.turn) is None
 
 
 def test_current_unissued_draft_is_not_character_carryover(game):

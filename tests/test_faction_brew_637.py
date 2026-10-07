@@ -461,8 +461,8 @@ def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):
     )
     assert len(edges) == 1
     assert edges[0]["origin"].startswith(f"authority_revoke:{authority_id}")
-    assert db.get_authority(authority_id)["privilege"] == "便宜行事"
-    assert db.get_authority(authority_id)["scope"] == domain
+    assert db.characters.get_authority(authority_id)["privilege"] == "便宜行事"
+    assert db.characters.get_authority(authority_id)["scope"] == domain
 
     targets = select_faction_brew_targets(
         db, year=int(state.year), period=int(state.period),

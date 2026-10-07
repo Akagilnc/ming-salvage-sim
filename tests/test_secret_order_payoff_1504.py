@@ -385,7 +385,7 @@ def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
     row = next(r for r in out if r["order_id"] == oid)
     assert row["status"] == "failed"
     assert row["actual_units"] == 0.0
-    closed = db.get_secret_order(oid)
+    closed = db.character_knowledge.get_secret_order(oid)
     assert closed["status"] == "failed"
 
 
@@ -398,7 +398,7 @@ def test_settle_due_close_follows_surviving_memorial_and_actual(game):
     dossier = db.dossiers.get_for_secret_order(oid)
     did = int(dossier["id"])
     db.update_secret_order_progress(oid, "承办人已报进展时间线", year=state.year, period=state.period)
-    assert str(db.get_secret_order(oid)["result"] or "") == ""
+    assert str(db.character_knowledge.get_secret_order(oid)["result"] or "") == ""
     db.dossiers.record_dossier_progress(
         did, state.turn, "办成", "臣已查明全部", is_terminal=False,
     )
@@ -412,7 +412,7 @@ def test_settle_due_close_follows_surviving_memorial_and_actual(game):
 
     out = settle_due_secret_orders(db, state, commit=True)
     row = next(r for r in out if r["order_id"] == oid)
-    closed = db.get_secret_order(oid)
+    closed = db.character_knowledge.get_secret_order(oid)
     assert row["status"] == "failed"
     assert row["actual_units"] == 0.0
     assert closed["status"] == "failed"
@@ -448,7 +448,7 @@ def test_monthly_actual_then_delivered_done(game):
     row = next(r for r in out if r["order_id"] == oid)
     assert row["status"] == "done", row
     assert row["delivered"] is True
-    assert db.get_secret_order(oid)["status"] == "done"
+    assert db.character_knowledge.get_secret_order(oid)["status"] == "done"
     dossier = db.dossiers.get_for_secret_order(oid)
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "fulfilled"
@@ -478,7 +478,7 @@ def test_gap_after_months_failed(game):
     row = next(r for r in out if r["order_id"] == oid)
     assert row["status"] == "failed"
     assert row["actual_units"] < row["target_units"]
-    assert db.get_secret_order(oid)["status"] == "failed"
+    assert db.character_knowledge.get_secret_order(oid)["status"] == "failed"
 
 
 def test_n_month_deadline_yields_exactly_n_ticks(game):
@@ -542,7 +542,7 @@ def test_offstage_minister_no_progress_no_world_effects(game, off_status):
         "UPDATE characters SET status=? WHERE name=?", (off_status, name),
     )
     db.conn.commit()
-    assert db.get_secret_order(oid)["status"] == "active"
+    assert db.character_knowledge.get_secret_order(oid)["status"] == "active"
     did = int(db.dossiers.get_for_secret_order(oid)["id"])
     out = apply_monthly_covert_actual_progress(
         db, state,
@@ -622,7 +622,7 @@ def test_secret_order_closes_field_is_ignored(game):
         content=content,
     )
     assert "secret_order_closes" not in out
-    assert db.get_secret_order(oid)["status"] == "active"
+    assert db.character_knowledge.get_secret_order(oid)["status"] == "active"
 
 
 def test_auto_submit_due_no_longer_flips_pending_review(game):
@@ -636,7 +636,7 @@ def test_auto_submit_due_no_longer_flips_pending_review(game):
     db.save_state(state)
 
     submitted = db.auto_submit_due_secret_orders(state)
-    order = db.get_secret_order(oid)
+    order = db.character_knowledge.get_secret_order(oid)
     assert order["status"] == "active", order
     assert all(item.get("id") != oid or item.get("status") != "pending_review"
                for item in (submitted or [{"id": oid, "status": order["status"]}]))
@@ -703,13 +703,13 @@ def test_submit_unlimited_keeps_frozen_target(game):
     )
     contract0 = read_covert_task_contract(db.dossiers.get_for_secret_order(oid))
     assert contract0["delivery"]["target_units"] == 3.0
-    assert int(db.get_secret_order(oid)["due_turn"] or 0) == 0
+    assert int(db.character_knowledge.get_secret_order(oid)["due_turn"] or 0) == 0
     pending = settle_due_secret_orders(db, state, commit=True)
     assert all(int(row.get("order_id") or 0) != oid for row in pending)
 
     ok = db.submit_secret_order_for_review(oid, "臣已办结", state.year, state.period)
     assert ok is True
-    live = db.get_secret_order(oid)
+    live = db.character_knowledge.get_secret_order(oid)
     assert int(live["due_turn"]) == int(state.turn)
     contract = read_covert_task_contract(db.dossiers.get_for_secret_order(oid))
     assert contract["delivery"]["target_units"] == 3.0
@@ -721,7 +721,7 @@ def test_submit_unlimited_keeps_frozen_target(game):
     assert row["status"] == "failed"
     assert row["actual_units"] == 0.0
     assert not row["delivered"]
-    assert db.get_secret_order(oid)["status"] == "failed"
+    assert db.character_knowledge.get_secret_order(oid)["status"] == "failed"
 
 
 def test_rush_preserves_frozen_contract(game):
@@ -732,7 +732,7 @@ def test_rush_preserves_frozen_contract(game):
         months=0, target=3, kind="缉获人犯", unit="人犯",
     )
     db.rush_secret_order(oid, state, deadline_months=0, reason="即核")
-    live = db.get_secret_order(oid)
+    live = db.character_knowledge.get_secret_order(oid)
     assert int(live["due_turn"]) == int(state.turn)
     contract = read_covert_task_contract(db.dossiers.get_for_secret_order(oid))
     assert contract["delivery"]["target_units"] == 3.0
@@ -772,7 +772,7 @@ def test_unlimited_investigation_due_now_reads_real_acquisitions(game, due_actio
     else:
         db.rush_secret_order(oid, state, deadline_months=0, reason="即核")
 
-    live = db.get_secret_order(oid)
+    live = db.character_knowledge.get_secret_order(oid)
     assert int(live["due_turn"]) == int(state.turn)
     span = db.conn.execute(
         "SELECT deadline_span FROM secret_orders WHERE id=?", (oid,),
@@ -1246,7 +1246,7 @@ def test_no_evidence_case_opens_and_stays_empty(game):
         investigation_target=target,
     )
     did = int(db.dossiers.get_for_secret_order(oid)["id"])
-    assert db.get_secret_order(oid)["status"] == "active"  # 照开
+    assert db.character_knowledge.get_secret_order(oid)["status"] == "active"  # 照开
     state.turn += 1
     db.save_state(state)
     out = apply_monthly_covert_actual_progress(
@@ -1512,7 +1512,7 @@ def test_false_memorial_does_not_create_or_erase_evidence(game):
     apply_monthly_covert_actual_progress(
         db, state, selections=[{"order_id": oid, "effort": 0.0}], commit=True,
     )
-    state.turn = int(db.get_secret_order(oid)["due_turn"])
+    state.turn = int(db.character_knowledge.get_secret_order(oid)["due_turn"])
     db.save_state(state)
     settled = settle_due_secret_orders(db, state, commit=True)
     close = next(r for r in settled if r["order_id"] == oid)
@@ -2459,7 +2459,7 @@ def test_closed_case_blocks_same_fact_on_later_case_and_due(game):
     first = settle_due_secret_orders(db, state, commit=True)
     assert first and first[0]["status"] == "done"
     assert first[0]["target_units"] == 1.0
-    assert db.get_secret_order(oid)["status"] == "done"
+    assert db.character_knowledge.get_secret_order(oid)["status"] == "done"
 
     oid2 = _issue(
         db, state, name, "再查同人", "再查同人",
@@ -2534,7 +2534,7 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
     )
     settle_due_secret_orders(db, state, commit=True)
     assert db.dossiers.actual_progress_units(did) == 20.0
-    assert db.get_secret_order(oid)["status"] == "done"
+    assert db.character_knowledge.get_secret_order(oid)["status"] == "done"
 
     oid2 = _issue(
         db, state, name, "补发缺口", "补发饷银",
@@ -2549,7 +2549,7 @@ def test_fiscal_quantity_tracer_same_unit_done_and_gap(game):
     )
     settle_due_secret_orders(db, state, commit=True)
     assert db.dossiers.actual_progress_units(did2) == 4.0
-    assert db.get_secret_order(oid2)["status"] == "failed"
+    assert db.character_knowledge.get_secret_order(oid2)["status"] == "failed"
 
 
 @pytest.mark.parametrize("mismatch", ["region", "field"])
@@ -2649,7 +2649,7 @@ def test_purpose_liaoxiang_canonicalizes_to_other_and_counts(game):
     )
     settle_due_secret_orders(db, state, commit=True)
     assert db.dossiers.actual_progress_units(did) == 3.0
-    assert db.get_secret_order(oid)["status"] == "done"
+    assert db.character_knowledge.get_secret_order(oid)["status"] == "done"
 
 
 def test_region_monthly_progress_sums_increments_without_final_value_gate(game):

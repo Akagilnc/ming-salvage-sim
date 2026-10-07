@@ -1092,7 +1092,7 @@ def list_deliberation_candidate_ids(db: Any, content: Any) -> List[str]:
         if not _is_summonable_court_minister(ch, resolve_power_id=resolve):
             continue
         # 与 can_summon 同口径：DB 权威 status 须 active（罢/狱/流/致仕/故/未登场均排除）
-        status, _ = db.get_character_status(str(name))
+        status, _ = db.characters.get_character_status(str(name))
         if status != "active":
             continue
         names.append(str(name))

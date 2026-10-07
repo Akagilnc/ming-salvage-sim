@@ -455,6 +455,26 @@ class CharacterKnowledgeStore:
             sql += " AND status = 'active'"
         return self._conn.execute(sql, (int(order_id),)).fetchone()
 
+    def get_secret_order(self, order_id: int) -> Optional[Dict[str, object]]:
+        """单查一条密令（任意状态）。不存在返回 None。"""
+        r = self.secret_order_row(int(order_id))
+        if not r:
+            return None
+        return {
+            "id": durable_int(r["id"], label="secret_orders.id", blank=None),
+            "minister_name": r["minister_name"],
+            "title": r["title"], "content": r["content"],
+            "status": r["status"], "result": r["result"] or "",
+            "sim_note": r["sim_note"] or "",
+            "turn_issued": durable_int(
+                r["turn_issued"], label="secret_orders.turn_issued", blank=None,
+            ),
+            "due_turn": durable_int(
+                r["due_turn"], label="secret_orders.due_turn", blank=0,
+            ),
+            "turn_closed": r["turn_closed"],
+        }
+
     def set_secret_order_sim_note(self, order_id: int, value: str) -> None:
         self._conn.execute(
             "UPDATE secret_orders SET sim_note=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",

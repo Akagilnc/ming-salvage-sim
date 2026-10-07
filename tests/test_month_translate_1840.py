@@ -661,7 +661,7 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
     dispatch_month_segment(db, state, segment="己巳之变两笔战果", translate_fn=lambda r, c: {
         "effects": effects,
     })
-    assert db.has_event_triggered("jisi_lubian") is triggered
+    assert db.issues.has_event_triggered("jisi_lubian") is triggered
     assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure
     assert db.conn.execute("SELECT morale FROM armies WHERE id='jingying'").fetchone()[0] == morale
     if first_pressure in (35, 10, "非法增量") and first_reason is not None:
@@ -731,7 +731,7 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
             }],
         }],
     })
-    assert db.has_event_triggered("jisi_lubian") is False
+    assert db.issues.has_event_triggered("jisi_lubian") is False
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
 
@@ -808,7 +808,7 @@ def test_hidden_affair_new_army_does_not_block_sibling_result(game, station_regi
             }],
         }],
     })
-    assert db.has_event_triggered("jisi_lubian") is True
+    assert db.issues.has_event_triggered("jisi_lubian") is True
     assert db.conn.execute(
         "SELECT military_pressure FROM regions WHERE id='beizhili'"
     ).fetchone()[0] == pressure_before + 5
@@ -848,7 +848,7 @@ def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region):
             }],
         }],
     })
-    assert db.has_event_triggered("jisi_lubian") is False
+    assert db.issues.has_event_triggered("jisi_lubian") is False
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
@@ -881,7 +881,7 @@ def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
             }],
         }],
     })
-    assert db.has_event_triggered("jisi_lubian") is False
+    assert db.issues.has_event_triggered("jisi_lubian") is False
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
@@ -924,6 +924,6 @@ def test_final_strategic_rejection_leaves_no_owned_effects(game):
             },
         ],
     })
-    triggered = db.has_event_triggered("jisi_lubian")
+    triggered = db.issues.has_event_triggered("jisi_lubian")
     assert state.metrics["民心"] == metric_before + (-3 if triggered else 0)
     assert state.metrics["国库"] == treasury_before + (-1 if triggered else 0)

@@ -53,7 +53,7 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
     session.content = content
     dv = session.add_directive(text, dossier_payload=payload)
     assert dv.id > 0
-    assert any(int(r["id"]) == int(dv.id) for r in db.list_directives(state))
+    assert any(int(r["id"]) == int(dv.id) for r in db.issues.list_directives(state.turn))
 
 
 def test_capture_unknown_person_still_409(game, monkeypatch):
@@ -228,7 +228,7 @@ def test_seeded_draft_long_extract_still_lands_real_dossier(game, monkeypatch):
     assert directive_id > 0
     # 读回 pending/案卷：落桌与库内草案同一条，且案卷结构字段是 LLM 抽取结果，
     # 不是罩饿死后的 special_decree 兜底。
-    rows = db.list_directives(state, statuses=("pending", "draft"))
+    rows = db.issues.list_directives(state.turn, statuses=("pending", "draft"))
     row = next(item for item in rows if int(item["id"]) == directive_id)
     payload = db.read_directive_dossier_payload(row)
     assert payload.get("dossier_action_type") == "policy"

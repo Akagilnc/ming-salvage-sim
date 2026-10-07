@@ -694,7 +694,7 @@ def _allocate_seq(db: Any, night_id: int) -> int:
 
 def _character_status(db: Any, name: str) -> str:
     if hasattr(db, "get_character_status"):
-        status, _reason = db.get_character_status(name)
+        status, _reason = db.characters.get_character_status(name)
         return str(status or "")
     row = CharacterStore(db.conn).read_dead_person_core_subjects((name,))
     return str(row["status"]) if row is not None else ""
@@ -942,7 +942,7 @@ def summon_enter(
 
 
 def list_in_flight_chat_turns(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    return db.list_in_flight_chat_turns(night_id=int(night_id))
+    return db.reign.list_in_flight_chat_turns(night_id=int(night_id))
 
 
 def wait_in_flight_clear(

@@ -268,7 +268,7 @@ def held_authority_context(
     """大臣可见的在持授权定性摘要；裸 authority_records.id 永不入面。"""
     if turn is None:
         turn = int(db.load_state().turn)
-    rows = db.list_active_authorities(int(turn), holder_id=character.name)
+    rows = db.characters.list_active_authorities(int(turn), holder_id=character.name)
     if not rows:
         return ""
     labels: List[str] = []

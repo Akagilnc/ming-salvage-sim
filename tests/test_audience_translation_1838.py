@@ -34,7 +34,7 @@ from tests.conftest import note_queue_until_game_teardown, persist_and_schedule_
 
 def _activate(db, state, *names: str) -> None:
     for name in names:
-        if db.get_character_status(name)[0] != "active":
+        if db.characters.get_character_status(name)[0] != "active":
             db.set_character_status(state, name, "active", reason="1838 测试置在场")
 
 
@@ -409,10 +409,10 @@ def test_on_scene_fact_undo_via_translation_entry(game):
     )
     assert len(result.on_scene_facts.applied) == 1
     assert result.on_scene_facts.rejected == []
-    assert db.get_character_status("王绍徽")[0] == "dead"
+    assert db.characters.get_character_status("王绍徽")[0] == "dead"
 
     db.undo_chat_turn(ctid)
-    assert db.get_character_status("王绍徽")[0] == "active"
+    assert db.characters.get_character_status("王绍徽")[0] == "active"
     turn_row = db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()

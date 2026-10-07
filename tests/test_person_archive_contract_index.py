@@ -16,7 +16,7 @@ def _active_names(db, content, *, exclude=()):
         c.name
         for c in content.characters.values()
         if getattr(c, "power_id", "ming") == "ming"
-        and db.get_character_status(c.name)[0] == "active"
+        and db.characters.get_character_status(c.name)[0] == "active"
         and c.name not in exclude
     ]
 

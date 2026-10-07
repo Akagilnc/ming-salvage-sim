@@ -263,5 +263,3 @@ class PersonLogStore:
     def read_get_faction_brew_pending(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM relation_brew_pending WHERE item_kind = '派系' ORDER BY target", params).fetchall()
 
-    def read_get_relation_edge_events_owned(self, params: Any, fragment_1: str) -> Any:
-        return self._conn.execute(f'SELECT * FROM relation_edge_events {fragment_1} ORDER BY turn, id', params)

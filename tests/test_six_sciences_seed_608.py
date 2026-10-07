@@ -47,7 +47,7 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     state.year = 1628
     debuted = db.apply_historical_debuts(state)
     assert any(item["name"] == "韩一良" for item in debuted)
-    assert db.get_character_status("韩一良")[0] == "active"
+    assert db.characters.get_character_status("韩一良")[0] == "active"
     assert db._faction_office_weight_sum("中立") == before + _member_office_weight(
         "六科", "户科给事中"
     )
@@ -71,4 +71,4 @@ def test_six_sciences_censor_exit_recomputes_its_faction_leverage(game):
 
     db.set_character_status(state, censor["name"], "dismissed", reason="测试退场")
 
-    assert db.faction_leverage(censor["faction"]) == round(50 - weight)
+    assert db.factions.faction_leverage(censor["faction"]) == round(50 - weight)

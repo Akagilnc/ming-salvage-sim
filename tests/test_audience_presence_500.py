@@ -28,7 +28,7 @@ STANDING = "王承恩"  # 常在员额（信邸内官随驾 → 内廷近臣）
 def _activate(db, state, *names: str) -> None:
     """把北极星在场者置为 active（徐光启开局 offstage 罢居），供入殿账。"""
     for n in names:
-        if db.get_character_status(n)[0] != "active":
+        if db.characters.get_character_status(n)[0] != "active":
             db.set_character_status(state, n, "active", reason="召对测试置在场")
 
 
@@ -109,7 +109,7 @@ def _cli_session(db, state, content):
 def _active_minister(db, content):
     return next(
         c for c in content.characters.values()
-        if db.get_character_status(c.name)[0] == "active"
+        if db.characters.get_character_status(c.name)[0] == "active"
         and getattr(c, "power_id", "ming") == "ming"
         and getattr(c, "office_type", "") != "后宫"
     )

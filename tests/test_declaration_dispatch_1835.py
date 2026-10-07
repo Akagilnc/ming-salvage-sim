@@ -330,7 +330,7 @@ def test_on_scene_person_status_change_lands_and_rejects_nonexistent_person(game
 
     assert len(result.on_scene_facts.applied) == 1
     assert len(result.on_scene_facts.rejected) == 1
-    status, _ = db.get_character_status(minister)
+    status, _ = db.characters.get_character_status(minister)
     assert status == "imprisoned"
 
 
@@ -369,7 +369,7 @@ def test_on_scene_fact_attaches_declared_affair_and_rejects_unopened_affair(game
     })
     assert bad.on_scene_facts.applied == []
     assert len(bad.on_scene_facts.rejected) == 1
-    status, _ = db.get_character_status(other_minister)
+    status, _ = db.characters.get_character_status(other_minister)
     assert status != "imprisoned"  # 拒收在变更发生前，不留半成品
 
 
@@ -396,7 +396,7 @@ def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_t
         }],
     })
     assert len(first.on_scene_facts.applied) == 1
-    status_before, _ = db.get_character_status(minister)
+    status_before, _ = db.characters.get_character_status(minister)
     assert status_before == "imprisoned"
 
     conflicting = dispatch_declaration(db, state, {
@@ -409,7 +409,7 @@ def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_t
     assert len(conflicting.on_scene_facts.rejected) == 1
     assert conflicting.on_scene_facts.rejected[0].category == "invalid_state"
 
-    status_after, _ = db.get_character_status(minister)
+    status_after, _ = db.characters.get_character_status(minister)
     assert status_after == "imprisoned"  # 没有被冲突项的「dead」半写进去
     row = db.conn.execute(
         "SELECT affair_id FROM characters WHERE name=?", (minister,),

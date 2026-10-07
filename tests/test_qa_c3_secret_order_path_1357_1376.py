@@ -26,7 +26,7 @@ def _active_minister_name(db, content) -> str:
             continue
         if getattr(ch, "office_type", "") in ("后宫", "宗藩"):
             continue
-        if db.get_character_status(getattr(ch, "name", name))[0] == "active":
+        if db.characters.get_character_status(getattr(ch, "name", name))[0] == "active":
             return getattr(ch, "name", name)
     raise AssertionError("找不到 active 的大明大臣")
 

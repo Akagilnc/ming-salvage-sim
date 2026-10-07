@@ -149,6 +149,15 @@ class FactionStore:
     def read_faction_leverage(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT leverage FROM factions WHERE name = ?', params).fetchone()
 
+    def faction_satisfaction(self, faction: str) -> int:
+        row = self.read_faction_satisfaction((faction,))
+        return int(row["satisfaction"]) if row else 50
+
+    def faction_leverage(self, faction: str) -> int:
+        row = self.read_faction_leverage((faction,))
+        return int(row["leverage"]) if row else 50
+
+
     def read_adjust_factions(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT satisfaction, leverage FROM factions WHERE name = ?', params).fetchone()
 

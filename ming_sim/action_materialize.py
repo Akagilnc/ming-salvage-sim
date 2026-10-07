@@ -1185,7 +1185,7 @@ def _write_path_nature_ledger(
     )
     source_cid = 0
     try:
-        last = db.get_last_active_chat_turn(str(minister_name or ""), int(turn))
+        last = db.reign.get_last_active_chat_turn(str(minister_name or ""), int(turn))
     except Exception:
         last = None
     if last is not None:
@@ -1360,7 +1360,7 @@ def _resolve_unique_active_authority(
     except (TypeError, ValueError):
         aid = 0
     if aid > 0:
-        rec = db.get_authority(aid)
+        rec = db.characters.get_authority(aid)
         if rec is None or bool(rec.get("revoked")):
             return None
         try:
@@ -1383,7 +1383,7 @@ def _resolve_unique_active_authority(
         return rec
     if not holder:
         return None
-    matches = list(db.list_active_authorities(int(turn), holder_id=holder))
+    matches = list(db.characters.list_active_authorities(int(turn), holder_id=holder))
     if priv:
         matches = [
             m for m in matches if str(m.get("privilege") or "") == priv
