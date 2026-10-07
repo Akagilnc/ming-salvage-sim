@@ -9,7 +9,7 @@
 
 - **结构化载荷类**（任免 / 定额拨帑 / 授权等 payload 可机械导出且经外廷受判者）：判决后自案卷载荷物化；同类效果 extractor **禁抽**；apply 端按 origin 回指 dedup（`origin_ref: dossier:<id>` 或生产槽 `dossier_id`）。案卷须已具备可物化资格（已颁 / 执行中 / 强颁，或豁免直落）；打回、留中、未达资格不得改世界。
 - **叙事性政令**（新政 / 工程 / 改革等无结构化 payload 者）：效果经推演-extractor 链涌现；顺颁当月进推演正文，批红强颁自次月进（T+1）；打回受硬约束零效果。两路效果记录均带 origin 回指。
-- **origin 槽**：各 section 的 `origin_ref` / `dossier_id` / `origin_kind` 即回指锚（见下表各字段）；`盘面自发` 仅用于非旨意自然演化。dedup 只辖结构化类，不得误杀叙事政令的合法抽取。
+- **origin 槽**：各 section 的 `origin_ref` / `dossier_id` / `origin_kind` 即回指锚（见下表各字段）。写核 `GameDB.effect_origin_rejection` 现役合法来源＝已颁/可物化 `dossier:<id>`、本批已授权 `affair:<id>`、精确哨兵 `盘面自发`（仅非旨意自然演化）；专属更窄限制（如 `surcharge_decrees` 只认 dossier）见表内字段，不得据此把专属限制一律放宽。dedup 只辖结构化类，不得误杀叙事政令的合法抽取。
 
 ## 顶层字段（容器类型固定；与 DECLARATION_EFFECT_FIELDS 对齐）
 
@@ -66,8 +66,8 @@ C0 效果字段须用 `DECLARATION_EFFECT_FIELDS` 中的键；条目字段别名
 ## 各字段约束详表（落库守门会拒的硬规则）
 
 ### `metric_delta` — 国势变化
-- 合法 key：`国库` `内库` `民心` `皇威`
-- 值：int 增量（民心/皇威范围 0-100，国库/内库 ≥0；引擎会 `clamp()`）
+- 合法 key：仅 `民心` `皇威`（写核 `ISSUE_METRIC_KEYS`；`国库`/`内库` 不经本段，走 `economy_moves`）
+- 值：int 增量；未知键与非整数值在声明段收成 `invalid_enum` 拒收，合法键落账后由引擎对民心/皇威做范围 `clamp()`
 
 ### `economy_moves` — 一次性钱粮收支
 每条必须：
@@ -81,7 +81,7 @@ C0 效果字段须用 `DECLARATION_EFFECT_FIELDS` 中的键；条目字段别名
 | `target_kind` | `purpose=补饷` 时必填 `army` | 配合 target_id 用 |
 | `target_id` | `purpose=补饷` 时必填合法 army_id | 缺失或不存在则整条拒收不扣账 |
 | `transfer_to` | 可选，另一钱库账户 | 国库↔内库互拨只写来源负数这一项；引擎按来源实扣数在目标入同额，不再另写正数项。独立收入不填 |
-| `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发` | 案卷引用必须存在且已颁；自然演化必须写精确哨兵。缺失、伪前缀及未授权案卷逐项拒收 |
+| `origin_ref` | **必填** `dossier:<id>` / 已授权 `affair:<id>` / `盘面自发` | 案卷须存在且已颁/可物化；`affair:<id>` 须在本批授权开集内；自然演化写精确哨兵。缺失、伪前缀、未授权来源逐项拒收 |
 | `beyond_intent` | 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`） | #622 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否 |
 
 > ⚠️ **常踩坑**：建筑日常产出 / 固定月度收支 **不要写**（已由程序 `apply_fixed_period_flows` 落账）。这里只写本回合"诏书/事件导致的一次性真金白银收支"，每笔三要素「源→目标，金额」点死。
@@ -107,7 +107,7 @@ canonical 段形＝list，每条记录**同时表达两条腿**：applier 读一
 | `target` | 同上；须与 source **同 region_id**（跨省在途归 #475 预留，本契约不做） |
 | `amount` | 拟转正整数（严格 int，拒数字串/float/bool）；单位＝「人」（现役唯一口径；#1835 旧档万人分叉已退出），全线禁混刻度 |
 | `reason` | 枚举×方向矩阵：`加派`/`摊派`/`灾害`＝农民→流民；`兵灾`＝农民→流民、军户→流民；`逃亡`＝军户→流民；`回流`＝流民→农民（**仅引擎 recovery 单核可写**，extractor 申报整项拒收，#652）。方向出阵即拒 |
-| `origin_ref` | **必填** `dossier:<id>`（须存在且已颁）或精确哨兵 `盘面自发`——来源追溯契约与 `reason` 机制枚举两槽并存、职责互斥 |
+| `origin_ref` | **必填** `dossier:<id>` / 已授权 `affair:<id>` / 精确哨兵 `盘面自发`——来源追溯契约与 `reason` 机制枚举两槽并存、职责互斥 |
 
 - applier 将拟转数额封顶为当时 source 省级行实有余额，并在同一事务中 source 减、target 增同一实数额；已应用记录的 `amount` 是实际转移量。
 - 逐项拒收面（坏项留痕、同批合法项照落，ADR 0015/0008）：方向出阵、reason 枚举外、amount 非严格 int/≤0、region 未知或两侧不同省、source/target 触全国行、origin_ref 缺失/伪前缀/未颁案卷、白名单外字段（任何形式的绝对值覆写均不合法——人口只经本原语守恒变动，禁凭空造人/单侧写）。
@@ -123,7 +123,7 @@ canonical 段形＝list；中英别名：`流民投贼` / `投贼吸收`。LLM �
 | `region_id` | 须有 `流民@region_id` 省级行 |
 | `power_id` | 流寇股：`bandits` 或 `bandit_*`，须已入库 |
 | `requested_count` | 正整数（严格 int）；单位＝「人」 |
-| `origin_ref` | 必填 `dossier:<id>` 或 `盘面自发` |
+| `origin_ref` | 必填 `dossier:<id>` / 已授权 `affair:<id>` / `盘面自发` |
 
 - 流寇 `power_updates.military_strength` **正增量**整项拒收（必须走本段）；负增量（剿股）仍走 `power_updates`。
 - 现役唯一人口径「人」可写；旧档万人拒收门已随 #1835 C1 退出。
@@ -146,7 +146,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 - 无旨不入账：段空＝累积账不动；停征后入池止（出口回流归 S5 #652）。
 
 ### `region_delta` — 地区变化
-- 每个 region value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）；该字段不作为地区属性处理。
+- 每个 region value 必填 `origin_ref`（已颁 `dossier:<id>` / 已授权 `affair:<id>` / `盘面自发`）；该字段不作为地区属性处理。
 - key：region_id（如 `beizhili` / `shaanxi` / `liaodong` 等，看 `content/regions.json` id 列）
 - value：dict，字段（来自 `REGION_*` 常量）：
   - score（0-100，int）：`public_support` `unrest` `gentry_resistance` `military_pressure`
@@ -162,7 +162,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 | `key` | **必须**非空（key 在 `fiscal_config` 表里，如 `liao_xiang_rate`）|
 | `delta` | int（无损整数串 `"5"` 可）；0/缺省/null = 无操作不记拒；bool/float/坏串 → 整项拒收留痕（v0.8.x PR2-S3）|
 | `reason` | ≤120 字 |
-| `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；每次调整独立留存来源历史 |
+| `origin_ref` | **必填** `dossier:<id>` / 已授权 `affair:<id>` / `盘面自发`；每次调整独立留存来源历史 |
 | `beyond_intent` | 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）；#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否 |
 
 ### `fiscal_creates` — 新立月度收支
@@ -174,19 +174,19 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 | `init_value` | 非负 int（无损整数串 `"300"` 可）；缺省/null = 0；在场负值或非 int（bool/float/坏串）→ 整项拒收留痕（rejection_reports），不再静默 clamp（v0.8.x PR2-S3） |
 | `display` | 缺省=key 去 `_base`/`_rate` 后缀（归一 stem）|
 | `reason` | ≤120 字 |
-| `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；base/rate 两行共享此唯一来源 |
+| `origin_ref` | **必填** `dossier:<id>` / 已授权 `affair:<id>` / `盘面自发`；base/rate 两行共享此唯一来源 |
 | `beyond_intent` | 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）；#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否 |
 
 > 用于「新设关税岁额折月二十万」「新立宗藩裁革月省禄米三十万」这类**常设新增**。一次性进账（抄没/缴获）不属此类，归 `economy_moves`。
 
 ### `fiscal_removes` — 裁撤月度收支
 - `key` 非空 + `reason` ≤120
-- `origin_ref` **必填**，只能是 `dossier:<id>` 或 `盘面自发`；裁撤历史永久留存
+- `origin_ref` **必填** `dossier:<id>` / 已授权 `affair:<id>` / `盘面自发`；裁撤历史永久留存
 - `beyond_intent` 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）：#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否
 - 整项永久取消才属此类；只降税率/削禄米不算（用 `fiscal_changes`）。
 
 ### `army_delta` — 军队变化
-- 每个 army value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）。
+- 每个 army value 必填 `origin_ref`（已颁 `dossier:<id>` / 已授权 `affair:<id>` / `盘面自发`）。
 - key：army_id（看 `content/armies.json`，如 `guanning` `dadong` 等）
 - value 字段（来自 `ARMY_*` 常量）：
   - score（0-100）：`supply` `morale` `training` `equipment` `arrears` `mobility` `loyalty`
@@ -199,12 +199,12 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 - ⚠️ `maintenance_per_turn`（维护费）#173 **列已物理删除**：别名（维护费/军费）已移除，写它当非法字段逐项拒收留痕（`invalid_enum`）。月饷由引擎 `army_needed`（=`ceil(manpower × salary_rate / 10000)`，仅 ming）唯一承载；调月饷改 `manpower`。
 
 ### `new_armies` — 建军
-每项必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`），创建日志以此提供一跳反查。
+每项必填 `origin_ref`（已颁 `dossier:<id>` / 已授权 `affair:<id>` / `盘面自发`），创建日志以此提供一跳反查。
 ⚠️ **`id` 必填**（英文 army_id，如 `tianxiong`）。缺 id 该项逐项拒收留痕（落 `rejection_reports`，不再 print WARN——v0.8.x PR2-S2）。〔崇祯二年八月实测，turn 11〕
 全字段：`id`（必填）`name` `owner_power` `station` `station_region` `theater` `commander` `controller` `troop_type` `manpower`（必填）`morale` `training` `loyalty` `equipment` `supply` `mobility` `status` `pay_source_region` `province_pay_share` `central_pay_share` `is_tusi` `self_funded_pay`…（参考 `ARMY_FIELD_ALIASES`）。`station_region` 可选；非空时必须是已入库的 `regions.id`，地图不会从 `station` 文本猜驻地。普通明军（`owner_power="ming"` 且非土司/自养）必填 `pay_source_region`（明控省 region_id）+ `province_pay_share` + `central_pay_share`，两份额和必须为 1；土司/自养明军才可写 `is_tusi`/`self_funded_pay`，且饷源省为空、两份额为 0/0。#173：`maintenance_per_turn` 列已删，LLM 若仍塞维护费键当未知键忽略（不入库、不影响建军）；月饷由 `army_needed` 按 `manpower` 派生。
 
 ### `power_updates` — 外部势力变化
-- 每个 power value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）。
+- 每个 power value 必填 `origin_ref`（已颁 `dossier:<id>` / 已授权 `affair:<id>` / `盘面自发`）。
 - key：非 `ming` 的 power_id，必须来自输入盘面 `power_ids`（如 `houjin` / `mongol` / `korea` / `bandits` / `bandit_li_zicheng` / `bandit_zhang_xianzhong` 等）；禁止写 `ming`。
 - value 字段只允许三项整数增量：`威望` / `leverage`、`实力` / `military_strength`、`经济` / `supply`；其余字段一律逐项拒收留痕。
 - #190 流寇分股：李自成股 / 张献忠股等必须写各自 power_id（如 `bandit_li_zicheng`、`bandit_zhang_xianzhong`），不是全局 `bandits`。
@@ -273,7 +273,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 
 ⚠️ **kind 白名单**：落库时 `kind` 不在 `(situation, initiative)` 内会被拒。**第二次踩的坑**：`kind="reform"` 被拒（应改 `initiative`）。
 
-「每月 X 直到补齐」这类旨意承诺必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`stop_condition`，落库时会按承诺路径处理为 `inertia=0`、`cancellable="decree"`，并跳过普通国策的 resolve-effect 补全。多军合计可写 `{"army.xuan_da|jizhen.arrears.sum":"<=0"}`，人物阈值可写 `{"character.毛文龙.loyalty":">=65"}`。
+「每月 X 直到补齐」这类旨意承诺必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`stop_condition`，落库时会按承诺路径处理为 `inertia=0`、`cancellable="decree"`；`effect_on_resolve` / `effect_on_fail` / `ongoing_effects` 由声明直接交给写核承接（旧 `enrich_initiative_effects` 补全已退役）。多军合计可写 `{"army.xuan_da|jizhen.arrears.sum":"<=0"}`，人物阈值可写 `{"character.毛文龙.loyalty":">=65"}`。
 
 「连续 N 月 / 半年为限」这类时限承诺也必须建 `kind="initiative"` 的承诺 issue：带 `commitment_kind="until_stop"`、`ongoing_effects`、`end_turn`。立项公式是 `end_turn = turn + N`，且 `end_turn` 必须严格大于当前 turn；当前回合或过去回合会被拒收，避免立项即过期的持续承诺空壳。半年按 6 个回合计。若同时要求「直到补齐」，同时写 `stop_condition`；`stop_condition` 或 `end_turn` 谁先到谁停。时限到期由结算写 `issue_advances.trigger_kind="expire"` 并标 `dropped`，不要在 delta 里伪造成 `close_issues resolved/failed`，也不要给承诺补普通 resolve/fail 效果。
 
@@ -404,7 +404,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 
 ### `cancels` — 撤销 issue
 - `issue_id` int + `reason` 文本
-- 仅 `cancellable in (decree, by_progress)` 的 issue 可撤；预设 `never` 撤不动。
+- 仅 `cancellable="decree"` 的 issue 可撤成命；`never` / `by_progress`（及任何非 `decree`）不撤，转 `non_cancellable_converted`：保持 `active`、皇威 −2。`by_progress` 仍可作落库/展示标签，不是可撤通道。
 
 ### `close_issues` — 结案 issue
 - `issue_id` int + `reason`（`resolved` / `failed` / `acknowledged`）+ `narrative` 文本。
@@ -428,7 +428,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | `罢黜` | — | `reason_code` | 清职名分并落 `dismissed`；政治反应由裁判另产 |
 | `调任` | `office` | `office_type` / `faction` / `任别` | 旧职解绑、新职绑定；若目标现无职名分，执行位可归一为 `任命` |
 | `处置` | `status` | `子动作` / `reason_code` | 状态迁移：下狱、流放、致仕、放归、赐死、卒、起复、昭雪、夺情等 |
-| `易主` | `new_power` / `方式` / `反噬` | `new_title` | `方式` ∈ `主动投敌` / `被俘而降` / `主动归附`；`反噬` 为内嵌派系/势力反应；legacy 翻译才可用 `不明` |
+| `易主` | `new_power` / `方式` / `反噬` | `new_title` | `方式` ∈ `PERSON_ALLEGIANCE_CHANGE_WAYS`（`主动投敌` / `被俘而降` / `主动归附`）；`反噬` 为内嵌派系/势力反应。旧四键翻译与 `不明` 例外已随兼容层退役，不在白名单 |
 | `行止` | 非空 `transit_to` | `行程语气`、`reason_code` | 唯一 payload 为 `动作:"行止"` + `transit_to`；不得提供 `location`；语气闭合枚举 `常行`/`加急`/`星夜兼程`，默认常行；引擎据矩阵持久化剩余距离及 1.0/1.5/2.0 系数，extractor 不得提供数值 |
 
 行止任一端无法解析为 canonical region 时不产机械项、仅保留叙事；显式非法 region/语气逐项拒收。canonical 非对角矩阵值为 NaN、+∞、-∞、缺键或非正值均属于系统契约故障，写前响亮失败并由事务回滚。同 region 直接落位而不进入在途；同目的地重复幂等且不重置账；在途改道拒收。迁出 active 时完整清空在途账；抵达仅由引擎事实写路产生，不接受人物变更 payload 抵达。
