@@ -6876,12 +6876,24 @@ class GameDB:
         valid = value == "盘面自发"
         unauthorized_batch = False
         if value.startswith("dossier:"):
+            # 只把 origin 字符串的 id 形检当业务拒；案卷持久读损坏须上抛（F39）。
+            _SQL_I64_MIN, _SQL_I64_MAX = -(2 ** 63), 2 ** 63 - 1
             try:
                 dossier_id = int(value.split(":", 1)[1])
-                valid = dossier_id > 0 and self.get_decree_dossier(dossier_id) is not None \
-                    and self.dossier_authorizes_effects(dossier_id)
             except (OverflowError, TypeError, ValueError):
                 valid = False
+            else:
+                if (
+                    dossier_id <= 0
+                    or not (_SQL_I64_MIN <= dossier_id <= _SQL_I64_MAX)
+                ):
+                    valid = False
+                else:
+                    dossier = self.get_decree_dossier(dossier_id)
+                    valid = (
+                        dossier is not None
+                        and self.dossier_authorizes_effects(dossier_id)
+                    )
         elif value.startswith("affair:"):
             try:
                 from ming_sim.entities.affair.store import (
@@ -18631,11 +18643,24 @@ class GameDB:
         # 那道交办（ADR 0054：禁反向回填）。载荷里那份副本已删——同一事实两处
         # 可写，改草/迟到转译会让两者漂移。认不到行（无 pending 的直写路径）
         # 时回落载荷，仅保旧档兼容，不作为常规来源。
+        # 持久列整型：损坏是账本/代码故障，不得以 ValueError 落入 ensure 产物拒收（F39）。
         dossier_source_turn = 0
         if pending is not None:
-            dossier_source_turn = int(pending["source_chat_turn_id"] or 0)
+            raw_src = pending["source_chat_turn_id"]
+            try:
+                dossier_source_turn = int(raw_src or 0)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"pending_actions.source_chat_turn_id 持久整型损坏：{raw_src!r}"
+                ) from exc
         if dossier_source_turn <= 0:
-            dossier_source_turn = int(structured.get("source_chat_turn_id") or 0)
+            # 载荷回落仅旧档兼容；坏值仍属模型/契约产物错（ValueError）。
+            try:
+                dossier_source_turn = int(structured.get("source_chat_turn_id") or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"旨意 source_chat_turn_id 非法：{structured.get('source_chat_turn_id')!r}"
+                ) from exc
         return self.create_decree_dossiers(
             state,
             action_type=action_type,
@@ -20359,13 +20384,19 @@ class GameDB:
         if not referenced:
             return
         placeholders = ",".join("?" for _ in referenced)
-        known = {
-            str(row["name"])
-            for row in self.conn.execute(
-                f"SELECT name FROM characters WHERE name IN ({placeholders})",
-                tuple(referenced),
-            ).fetchall()
-        }
+        # 名列持久读取故障是代码/账本错，不得洗成「参与人物不存在」产物拒（F39）。
+        known: set[str] = set()
+        for row in self.conn.execute(
+            f"SELECT name FROM characters WHERE name IN ({placeholders})",
+            tuple(referenced),
+        ).fetchall():
+            try:
+                name = row["name"]
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "characters.name 持久读取失败"
+                ) from exc
+            known.add(str(name))
         from ming_sim.participant_roster import is_non_person_participant_name
 
         def _roster_ref_error(label: str, name: str) -> ValueError:

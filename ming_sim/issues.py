@@ -99,15 +99,26 @@ _AUTHORITY_REVOKE_OPS = frozenset({"收回", "revoke"})
 
 def _apply_authority_change_item(
     db: GameDB, state: GameState, item: Dict[str, object],
+    *,
+    dossier: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
-    """Apply one production-slot authority grant/revoke under the #611 contract."""
+    """Apply one production-slot authority grant/revoke under the #611 contract.
+
+    ``dossier`` 若由调用方预读传入，则不再二次 get_decree_dossier——便于调用方
+    把持久读放在产物 catch 外（F39）。
+    """
     if "dossier_id" not in item or item.get("dossier_id") in (None, ""):
         raise ValueError("missing_dossier_source")
     try:
         dossier_id = _parse_sqlite_id(item.get("dossier_id"))
     except (TypeError, ValueError):
         raise ValueError("missing_dossier_source") from None
-    if dossier_id <= 0 or db.get_decree_dossier(dossier_id) is None:
+    if dossier_id <= 0:
+        raise ValueError("missing_dossier_source")
+    # 持久读：调用方未预读时在此读；腐坏 ValueError 不得被改写成 missing_source。
+    if dossier is None:
+        dossier = db.get_decree_dossier(dossier_id)
+    if dossier is None:
         raise ValueError("missing_dossier_source")
     if not db.dossier_authorizes_effects(dossier_id):
         raise ValueError("dossier_not_effect_eligible")
@@ -7511,11 +7522,19 @@ def _apply_score_extraction_body(
                 "rejected": True, "category": "invalid_shape", "item": item,
             })
             continue
+        # 模型 id 形检与持久案卷读拆开：payload 腐坏上抛，不洗 invalid_transition（F39）。
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
+        except (TypeError, ValueError) as exc:
+            dossier_execution_results.append({
+                "rejected": True, "category": "invalid_transition",
+                "reason": str(exc), "item": item,
+            })
+            continue
+        dossier = db.get_decree_dossier(dossier_id)
+        try:
             if int(dossier_id) in _due_review_owned:
                 raise ValueError("正式复核接管：extractor 不得并行写执行格终值")
-            dossier = db.get_decree_dossier(dossier_id)
             if dossier is None or dossier["status"] != "executing":
                 raise ValueError("案卷不存在或不在 executing")
             outcome = str(item.get("outcome") or "").strip()
@@ -7578,9 +7597,21 @@ def _apply_score_extraction_body(
                 "reason": "授权变更项必须为对象",
             })
             continue
+        # 案卷持久读在产物 catch 外：payload 腐坏上抛（F39）。
+        preloaded = None
+        raw_did = item.get("dossier_id") if "dossier_id" in item else None
+        if raw_did not in (None, ""):
+            try:
+                did = _parse_sqlite_id(raw_did)
+            except (TypeError, ValueError):
+                did = 0
+            if did > 0:
+                preloaded = db.get_decree_dossier(did)
         try:
             authority_change_results.append(
-                _apply_authority_change_item(db, state, item)
+                _apply_authority_change_item(
+                    db, state, item, dossier=preloaded,
+                )
             )
         except (TypeError, ValueError, KeyError) as exc:
             reason = str(exc)

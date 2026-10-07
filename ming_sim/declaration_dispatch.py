@@ -1302,15 +1302,11 @@ def _dispatch_commissions(
                 roster = assignment.get("participant_roster")
                 if roster is not None:
                     from ming_sim.cli_backend import normalize_draft_person_roster
-                    try:
-                        roster = normalize_draft_person_roster(
-                            roster, db=db, content=db.content,
-                        )
-                    except (TypeError, ValueError) as exc:
-                        # LLM roster type/enum/ref — not durable pending payload (F39).
-                        raise DecreeMaterializationValidationError(
-                            str(exc), failed_fields=("participant_roster",),
-                        ) from exc
+                    # normalize 内模型形/名册契约抛 DecreeMaterializationValidationError；
+                    # DB 解码/引擎 TypeError·RuntimeError 原样上抛（F39）。
+                    roster = normalize_draft_person_roster(
+                        roster, db=db, content=db.content,
+                    )
                 row_id = stage_assignment_candidate(
                     db, int(state.turn), actor, text=body,
                     title=assignment.get("title", ""),

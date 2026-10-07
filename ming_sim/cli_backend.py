@@ -1813,17 +1813,29 @@ def normalize_draft_person_roster(
 ) -> List[Dict[str, object]]:
     """人物参与人：normalize → 非人滤除 → canon → ADR 0053 校验。
 
-    capture 与召对 materialize 共用；校验失败 raise ValueError（参与人物不存在…）。
+    capture 与召对 materialize 共用。
+    模型形/名册契约失败 → DecreeMaterializationValidationError（产物拒）；
+    DB 解码与引擎故障原样上抛，不在此洗成产物（F39）。
     """
-    if not isinstance(roster, list):
-        raise ValueError("参与人须为对象列表")
+    from ming_sim.action_materialize import DecreeMaterializationValidationError
 
-    canonical_roster = db._normalize_participant_roster(
-        roster, strict_structured=True,
-    )
+    if not isinstance(roster, list):
+        raise DecreeMaterializationValidationError(
+            "参与人须为对象列表", failed_fields=("participant_roster",),
+        )
+
+    try:
+        canonical_roster = db._normalize_participant_roster(
+            roster, strict_structured=True,
+        )
+    except ValueError as exc:
+        raise DecreeMaterializationValidationError(
+            str(exc), failed_fields=("participant_roster",),
+        ) from exc
     person_roster: List[Dict[str, object]] = []
     for item in canonical_roster:
         entry = dict(item)
+        # canon / DB 读：故障上抛，不转产物
         cid = _canon_person_id_key(entry.get("character_id"), db=db, content=content)
         if not cid:
             continue
@@ -1835,7 +1847,13 @@ def normalize_draft_person_roster(
             )
             entry["delegator_id"] = delegator  # None if 非人
         person_roster.append(entry)
-    db._validate_participant_roster_references(person_roster)
+    try:
+        db._validate_participant_roster_references(person_roster)
+    except ValueError as exc:
+        # 仅名册契约（人不在册等）；validate 内持久读故障已转 RuntimeError
+        raise DecreeMaterializationValidationError(
+            str(exc), failed_fields=("participant_roster",),
+        ) from exc
     return person_roster
 
 
@@ -1876,9 +1894,19 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
             "SELECT turn, year, period FROM game_state WHERE id=1"
         ).fetchone()
         if state is not None:
+            # 持久 game_state 整型损坏是账本故障，不得以 ValueError 进补交产物耗尽（F39）。
+            try:
+                turn_i = int(state["turn"])
+                year_i = int(state["year"])
+                period_i = int(state["period"])
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"game_state 时点持久整型损坏：turn={state['turn']!r} "
+                    f"year={state['year']!r} period={state['period']!r}"
+                ) from exc
             timing = (
-                f"当前结算时点：turn={int(state['turn'])}，"
-                f"{int(state['year'])}年{int(state['period'])}月。\n"
+                f"当前结算时点：turn={turn_i}，"
+                f"{year_i}年{period_i}月。\n"
             )
     head = "【pay_order_override 接地事实】"
     if lines:
@@ -1907,7 +1935,12 @@ def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dic
     row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
     if row is None:
         return result
-    current_turn = int(row["turn"])
+    try:
+        current_turn = int(row["turn"])
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"game_state.turn 持久整型损坏：{row['turn']!r}"
+        ) from exc
     if result.get("dossier_action_type") != "pay_order_override":
         return result
     for entry in result.get("entries") or []:
