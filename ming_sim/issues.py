@@ -6622,6 +6622,7 @@ def _apply_dossier_participant_items(
                 "rejected": True, "category": "invalid_shape", "item": item,
             })
             continue
+        # LLM item shape only — durable authority write faults must not land here (F39).
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             if dossier_id not in authority_set:
@@ -6644,21 +6645,6 @@ def _apply_dossier_participant_items(
                 "reason": str(exc), "item": item,
             })
             continue
-        # Durable roster decode faults must not become LLM item rejection (F39).
-        row = db.conn.execute(
-            "SELECT participant_roster FROM decree_dossiers WHERE id=?",
-            (int(dossier_id),),
-        ).fetchone()
-        if row is None:
-            results.append({
-                "rejected": True, "category": "invalid_participant_roster",
-                "reason": f"案卷不存在：{dossier_id}", "item": item,
-            })
-            continue
-        GameDB._loads_stored_json_list(
-            row["participant_roster"],
-            surface="decree_dossiers.participant_roster",
-        )
         try:
             added = db.append_decree_dossier_participants(dossier_id, [{
                 "character_id": character_id,
@@ -6666,35 +6652,38 @@ def _apply_dossier_participant_items(
                 "role": role,
                 "delegator_id": delegator_id,
             }], state=state, commit=False)
-            if not added:
-                # Exact durable duplicate is the only no-write success case.
-                existing = db.get_decree_dossier(dossier_id) or {}
-                roster = existing.get("participant_roster", [])
-                if isinstance(roster, str):
-                    roster = GameDB._loads_stored_json_list(
-                        roster, surface="decree_dossiers.participant_roster",
-                    )
-                if not any(
-                    row.get("character_id") == character_id
-                    and row.get("tier") == tier
-                    and row.get("role") == role
-                    and row.get("delegator_id") == delegator_id
-                    for row in (roster or [])
-                    if isinstance(row, dict)
-                ):
-                    raise ValueError("参与人未实际加入案卷")
-            persisted = added[0] if added else {
-                "character_id": character_id, "tier": tier,
-            }
-            results.append({
-                "dossier_id": dossier_id,
-                "character_id": persisted["character_id"], "tier": persisted["tier"],
-            })
-        except (TypeError, ValueError, KeyError) as exc:
+        except KeyError as exc:
             results.append({
                 "rejected": True, "category": "invalid_participant_roster",
                 "reason": str(exc), "item": item,
             })
+            continue
+        # ValueError/TypeError from append are durable schema/normalize/archive
+        # faults or state conflicts on the authority write — propagate (F39).
+        if not added:
+            # Exact durable duplicate is the only no-write success case.
+            existing = db.get_decree_dossier(dossier_id) or {}
+            roster = existing.get("participant_roster", [])
+            if not any(
+                entry.get("character_id") == character_id
+                and entry.get("tier") == tier
+                and entry.get("role") == role
+                and entry.get("delegator_id") == delegator_id
+                for entry in (roster or [])
+                if isinstance(entry, dict)
+            ):
+                results.append({
+                    "rejected": True, "category": "invalid_participant_roster",
+                    "reason": "参与人未实际加入案卷", "item": item,
+                })
+                continue
+        persisted = added[0] if added else {
+            "character_id": character_id, "tier": tier,
+        }
+        results.append({
+            "dossier_id": dossier_id,
+            "character_id": persisted["character_id"], "tier": persisted["tier"],
+        })
     return results
 
 

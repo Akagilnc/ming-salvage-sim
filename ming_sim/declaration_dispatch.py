@@ -1293,22 +1293,8 @@ def _dispatch_commissions(
                 _reject(rejected, item, "责成交办缺正文", "invalid_shape", source)
                 continue
             from ming_sim.action_materialize import stage_assignment_candidate
-            from ming_sim.db import GameDB
 
             actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
-            # Durable target_candidate payload faults raise (F39); do not convert
-            # them into LLM invalid_shape after the materialize call.
-            pointed = str(assignment.get("target_candidate") or "").strip()
-            if pointed.isdigit():
-                prow = db.conn.execute(
-                    "SELECT payload_json FROM pending_actions WHERE id=? AND turn=?",
-                    (int(pointed), int(state.turn)),
-                ).fetchone()
-                if prow is not None:
-                    GameDB.parse_engine_payload_json(
-                        prow["payload_json"],
-                        surface="pending_actions.payload_json",
-                    )
             try:
                 roster = assignment.get("participant_roster")
                 if roster is not None:
@@ -1333,7 +1319,11 @@ def _dispatch_commissions(
                     transaction_category=assignment.get("transaction_category", ""),
                     source_chat_turn_id=source_chat_turn_id,
                 )
-            except (DecreeMaterializationValidationError, TypeError, ValueError) as exc:
+            except DecreeMaterializationValidationError as exc:
+                # LLM materialize shape only. Durable payload ValueError propagates (F39).
+                _reject(rejected, item, str(exc), "invalid_shape", source)
+                continue
+            except TypeError as exc:
                 _reject(rejected, item, str(exc), "invalid_shape", source)
                 continue
             if row_id:
@@ -1359,7 +1349,6 @@ def _dispatch_commissions(
                 _reject(rejected, item, "撤令交办缺正文", "invalid_shape", source)
                 continue
             from ming_sim.action_materialize import stage_revoke_decree_candidate
-            from ming_sim.db import GameDB
 
             actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
             # 与其它交办载荷同缝：原旨与撤令沿同一事务关联（ADR 0154）。
@@ -1368,17 +1357,7 @@ def _dispatch_commissions(
                 db, item, payload, rejected=rejected, source=source,
             ):
                 continue
-            pointed = str(revoke.get("target_candidate") or "").strip()
-            if pointed.isdigit():
-                prow = db.conn.execute(
-                    "SELECT payload_json FROM pending_actions WHERE id=? AND turn=?",
-                    (int(pointed), int(state.turn)),
-                ).fetchone()
-                if prow is not None:
-                    GameDB.parse_engine_payload_json(
-                        prow["payload_json"],
-                        surface="pending_actions.payload_json",
-                    )
+            # Durable target_candidate faults raise from materializer (F39); no pre-read.
             row_id = stage_revoke_decree_candidate(
                 db, int(state.turn), actor,
                 text=body,

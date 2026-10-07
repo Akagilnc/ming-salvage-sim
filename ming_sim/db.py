@@ -14156,12 +14156,10 @@ class GameDB:
             ).fetchone()
             raw_keys = (
                 raw_keys_row["office_archive_keys"] if raw_keys_row is not None else None
-            ) or "[]"
-            parsed_keys = json.loads(raw_keys)
-            if not isinstance(parsed_keys, list):
-                raise ValueError(
-                    f"office_archive_keys 须为 JSON 数组：dossier {int(dossier_id)}"
-                )
+            )
+            parsed_keys = self._loads_stored_json_list(
+                raw_keys, surface="decree_dossiers.office_archive_keys",
+            )
             archive_keys = {str(item) for item in parsed_keys}
             if str(row["action_type"] or "") != "secret_order":
                 for item in added:
@@ -17279,13 +17277,16 @@ class GameDB:
             or pa.get("action") != "拟旨"
         ):
             return {"classification": "invalid"}
-        # Durable decode/normalize faults raise (F39); empty text is business invalid.
+        # Durable decode faults raise (F39). Shape/normalize failures stay business invalid.
         payload = self.parse_engine_payload_json(
             pa.get("payload_json"), surface="pending_actions.payload_json",
         )
-        payload = self._normalize_directive_dossier_payload(
-            payload, content=content, current_turn=int(state.turn),
-        )
+        try:
+            payload = self._normalize_directive_dossier_payload(
+                payload, content=content, current_turn=int(state.turn),
+            )
+        except (TypeError, ValueError):
+            return {"classification": "invalid"}
         text = str(payload.get("text") or "")
         if not text.strip():
             return {"classification": "invalid"}

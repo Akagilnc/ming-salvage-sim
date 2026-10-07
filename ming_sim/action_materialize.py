@@ -1280,7 +1280,13 @@ def stage_assignment_candidate(
     # stages_to_json 的严格串行面：非 JSON 字符串响亮 ValueError（由交办分派
     # 的既有 except 收成 durable 拒收）。全仓已无任何接缝从散文正则反推年诺。
     from ming_sim.staged_commitment import stages_to_json
-    stages_norm = json.loads(stages_to_json(stages))
+    try:
+        stages_norm = json.loads(stages_to_json(stages))
+    except (TypeError, ValueError) as exc:
+        # LLM stages input shape — not a durable pending payload fault (F39).
+        raise DecreeMaterializationValidationError(
+            str(exc), failed_fields=("stages",),
+        ) from exc
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
             staged["stop_condition"] = parsed_stop
