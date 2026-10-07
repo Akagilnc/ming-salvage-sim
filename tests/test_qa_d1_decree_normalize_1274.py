@@ -82,7 +82,6 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
         )
 
 
-
 # ── 2) #1331/#1339 起居注投影 ──────────────────────────────────────
 
 

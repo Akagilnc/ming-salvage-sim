@@ -12,7 +12,7 @@ import os
 import re
 import time
 from dataclasses import asdict, is_dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -22,7 +22,7 @@ from ming_sim.content import GameContent
 from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.cli_backend import describe_effective_model
 from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
-from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
+from ming_sim.llm_contract import abort_llm_contract
 from ming_sim.llm_model import create_chat_model, extract_agent_text
 from ming_sim.llm_transport import (
     bind_transport_sdk_budget,
@@ -35,10 +35,9 @@ from ming_sim.llm_transport import (
     transport_failure_unavailable,
 )
 from ming_sim.models import GameState, LLMConfig
-from ming_sim.token_stats import record_stream_metrics, tlog
+from ming_sim.token_stats import tlog
 
 _content: Optional[GameContent] = None
-_THINKING_STREAM_CHAR_LIMIT = max(0, int(os.environ.get("MING_SIM_THINKING_STREAM_LIMIT", "600") or "0"))
 _MINIMAX_SHORT_THINKING_PROMPT = (
     "【MiniMax 推演思考约束】\n"
     "若启用 thinking/reasoning，请极短思考：只列必要因果链，不复述题目、盘面、系统规则或历史常识；"
@@ -98,7 +97,8 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
             msgs = getattr(last, "messages", None)
             if last is not None:
                 run_src = last
-        except Exception:  # noqa: BLE001 — dump 是调试旁路，任何异常都不该断结算
+        except Exception as exc:  # noqa: BLE001 — dump 是调试旁路，不中断主路径但须留真因
+            tlog(f"[DUMP-LLM] get_last_run_output failed: {type(exc).__name__}: {exc}")
             msgs = None
     if not msgs:
         return
@@ -359,136 +359,6 @@ def _agent_run_accepts_stream(agent: object) -> bool:
     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
         return True
     return "stream" in params or "stream_events" in params
-
-
-def run_agent_stream_text(
-    agent: Agent,
-    prompt: str,
-    tag: str,
-    on_thinking: Optional[Callable[[str], None]] = None,
-    on_text: Optional[Callable[[str], None]] = None,
-) -> str:
-    """流式跑 agent，按事件实时打到 stdout（带毫秒时间戳），最终返回拼合后的纯文本。
-
-    on_thinking(chunk): 每次思考片段到达时回调（可选）。
-    on_text(chunk): 每次正文增量到达时回调（可选）。
-
-    #1465 切片①：公共流不套入 transport 重试闭环（仅真实 API 召对接缝接线）。
-    仅对签名/显式属性确证不支持流式的替身走非流；未知 TypeError 响亮上浮（0005）。
-    RunErrorEvent 走系统层 typed 出口（与 web 同构造权威）。
-    """
-    tlog(f"[{tag}] 开始流式推演（首字到达前可能等几秒）")
-    pieces: List[str] = []
-    final_output = None
-    last_print = time.monotonic()
-    chunk_buf: List[str] = []
-    chars_since_flush = 0
-    if not _agent_run_accepts_stream(agent):
-        tlog(f"[{tag}] run 未声明流式能力，走普通 run")
-        text = extract_agent_text(agent.run(prompt))
-        if on_text:
-            on_text(text)
-        return text
-    stream = agent.run(prompt, stream=True, stream_events=True)
-
-    reasoning_buf: List[str] = []
-    reasoning_chars_since_flush = 0
-    reasoning_last_print = time.monotonic()
-    reasoning_streamed_chars = 0
-    tool_calls = 0
-    for event in stream:
-        ev_type = type(event).__name__
-        if ev_type == "ToolCallStartedEvent":
-            tool = getattr(event, "tool", None)
-            tname = getattr(tool, "tool_name", "?") if tool else "?"
-            targs = getattr(tool, "tool_args", {}) if tool else {}
-            tool_calls += 1
-            tlog(f"[{tag}/工具] 调用 {tname}({targs})")
-            if on_thinking:
-                on_thinking(f"\n〔查阅 {tname} {targs}〕\n")
-            continue
-        if ev_type == "ToolCallCompletedEvent":
-            tool_res = getattr(event, "tool", None)
-            tres = str(getattr(tool_res, "result", "") or "")[:200] if tool_res else ""
-            if tres:
-                tlog(f"[{tag}/工具结果] {tres!r}")
-            continue
-        rdelta = getattr(event, "reasoning_content", None)
-        if isinstance(rdelta, str) and rdelta:
-            reasoning_buf.append(rdelta)
-            reasoning_chars_since_flush += len(rdelta)
-            now = time.monotonic()
-            if reasoning_chars_since_flush >= 120 or (now - reasoning_last_print) >= 1.5:
-                merged = "".join(reasoning_buf)
-                tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-                if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
-                    remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
-                    chunk = merged[:remaining]
-                    if chunk:
-                        on_thinking(chunk)
-                        reasoning_streamed_chars += len(chunk)
-                    if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
-                        on_thinking("\n〔思考已截断，继续推演中〕\n")
-                reasoning_buf.clear()
-                reasoning_chars_since_flush = 0
-                reasoning_last_print = now
-        is_terminal = (
-            (hasattr(event, "is_final") and getattr(event, "is_final", False))
-            or ev_type in ("RunOutput", "RunCompletedEvent")
-        )
-        err = map_run_error_event(event)
-        if err is not None:
-            raise err
-        if is_terminal:
-            final_output = event
-            continue
-        delta = getattr(event, "content", None)
-        if isinstance(delta, str) and delta:
-            pieces.append(delta)
-            chunk_buf.append(delta)
-            chars_since_flush += len(delta)
-            if on_text:
-                on_text(delta)
-            now = time.monotonic()
-            if chars_since_flush >= 80 or (now - last_print) >= 1.0:
-                merged = "".join(chunk_buf).replace("\n", " ⏎ ")
-                tlog(f"[{tag}] …{merged[-160:]}")
-                chunk_buf.clear()
-                chars_since_flush = 0
-                last_print = now
-
-    if reasoning_buf:
-        merged = "".join(reasoning_buf)
-        tlog(f"[{tag}/思考] {merged.replace(chr(10), ' ⏎ ')[-200:]}")
-        if on_thinking and reasoning_streamed_chars < _THINKING_STREAM_CHAR_LIMIT:
-            remaining = _THINKING_STREAM_CHAR_LIMIT - reasoning_streamed_chars
-            chunk = merged[:remaining]
-            if chunk:
-                on_thinking(chunk)
-                reasoning_streamed_chars += len(chunk)
-            if reasoning_streamed_chars >= _THINKING_STREAM_CHAR_LIMIT:
-                on_thinking("\n〔思考已截断，继续推演中〕\n")
-    if chunk_buf:
-        merged = "".join(chunk_buf).replace("\n", " ⏎ ")
-        tlog(f"[{tag}] …{merged[-160:]}")
-
-    streamed = "".join(pieces)
-    if streamed.strip():
-        text = streamed
-        fail_if_llm_error(text, "LLM 调用")
-    elif final_output is not None:
-        text = extract_agent_text(final_output)
-        if not text.strip():
-            abort_llm_contract(tag, "流式终结事件没有正文 content", "")
-    else:
-        abort_llm_contract(tag, "流式无内容且无终结事件", "")
-    tlog(f"[{tag}] 完成，{len(text)} 字，工具调用 {tool_calls} 次")
-    _dump_llm_messages(final_output, tag, agent=agent)
-    if final_output is not None:
-        metrics = getattr(final_output, "metrics", None)
-        model_id = getattr(getattr(agent, "model", None), "id", None) or "stream"
-        record_stream_metrics(str(model_id), metrics, caller_tag=tag)
-    return text
 
 
 def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
@@ -790,30 +660,6 @@ def _rescript_option_instructions(
     ]
 
 
-def create_rescript_draft_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
-    """#656 / ADR 0093 前半：急务分拣＋票拟生成官（phase2 fan-out 第 N+1 路，N=extractor 模块数）。一次性，不持久化。"""
-    del agno_db
-    ctx = _ctx()
-    cfg = _llm_for_role(llm_config, "extractor")
-    return Agent(
-        name="急务票拟官",
-        id="rescript-drafter",
-        model=create_chat_model(
-            cfg,
-            temperature=0.4,
-            top_p=0.9,
-            enable_thinking=False,
-            force_json_output=True,
-        ),
-        instructions=[
-            ctx.game_world_prompt,
-            ctx.rescript_draft_prompt,
-            # 初拟 payload 注入 character_targets（#1804）
-            *_rescript_option_instructions(character_targets_supplied=True),
-        ],
-        add_history_to_context=False,
-        markdown=False,
-    )
 
 
 def create_rescript_revise_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:

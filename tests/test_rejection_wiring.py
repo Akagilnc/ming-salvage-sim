@@ -37,7 +37,7 @@ def test_rejected_item_lands_in_reports_and_jsonl(game, monkeypatch, tmp_path):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "character_status_changes": [{"name": "查无此人甲", "status": "dead", "reason": "测试"}],
+        "人物变更": [{"name": "查无此人甲", "动作": "处置", "status": "dead", "reason": "测试"}],
     }, narrative="x", decree_text="y")
 
     rows = _rejection_rows(db, turn)
@@ -118,7 +118,7 @@ def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp
     with pytest.raises(RuntimeError):
         with atomic(db):
             run_settle(db, state, content, {
-                "人物状态变化": [{"name": "查无此人戊", "status": "dead", "reason": "测试"}],
+                "人物状态变化": [{"name": "查无此人戊", "动作": "处置", "status": "dead", "reason": "测试"}],
             }, narrative="x", decree_text="y")
             raise RuntimeError("outer rollback")
 
@@ -141,7 +141,7 @@ def test_attempt_derivation_failure_does_not_abort_settlement(game, monkeypatch,
     monkeypatch.setattr(decree_mod, "_next_attempt", _boom)
 
     run_settle(db, state, content, {
-        "人物状态变化": [{"name": "查无此人己", "status": "dead", "reason": "测试"}],
+        "人物状态变化": [{"name": "查无此人己", "动作": "处置", "status": "dead", "reason": "测试"}],
     }, narrative="x", decree_text="y")  # 不抛=结算完成
 
     rows = _rejection_rows(db, turn)
@@ -538,25 +538,3 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         assert rows[0]["category"] == "hallucinated_id"
     finally:
         ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type
-
-
-def test_provenance_from_stored_recovers_all_forms():
-    """#146/#175 R2（gemini + coderabbit concur）：_provenance_from_stored 三层兼容——
-    Provenance 实例、纯值字符串、历史误序列化的 'Provenance.<name>' 脏串都能还原回原来源，
-    不静默退化成 system_simulation；只有真正非法/缺失才回落。"""
-    from ming_sim.decree import _provenance_from_stored
-    from ming_sim.applier import Provenance
-
-    # ① Provenance 实例原样返回
-    assert _provenance_from_stored(Provenance.player_decree) is Provenance.player_decree
-    # ② 纯值字符串（正常持久化形态）
-    assert _provenance_from_stored("player_decree") == Provenance.player_decree
-    assert _provenance_from_stored("system_simulation") == Provenance.system_simulation
-    # ③ 历史 str(枚举实例) 脏串 'Provenance.player_decree'——剥前缀按成员名查回（本轮硬化点）
-    assert _provenance_from_stored("Provenance.player_decree") == Provenance.player_decree
-    assert _provenance_from_stored("Provenance.system_simulation") == Provenance.system_simulation
-    # ④ 非法/缺失 → system_simulation 回落
-    assert _provenance_from_stored("") == Provenance.system_simulation
-    assert _provenance_from_stored(None) == Provenance.system_simulation
-    assert _provenance_from_stored("查无此来源") == Provenance.system_simulation
-    assert _provenance_from_stored("Provenance.查无此成员") == Provenance.system_simulation

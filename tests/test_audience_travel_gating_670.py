@@ -272,35 +272,17 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, 
     unsettled = an.list_unsettled_summons(db)
     assert len(unsettled) == 2
     assert {row["origin_id"] for row in unsettled} == {origin_chat, origin_tool}
-    first_entry = next(row for row in unsettled if row["origin_id"] == origin_chat)
-    second_entry = next(row for row in unsettled if row["origin_id"] == origin_tool)
 
-    # 抵非京 → arrived 每人 1 条（最早 origin），ledger 仍 2 行。
+    # 抵非京后 ledger 仍 2 行（旧 arrived 盘面投影已退役）。
     assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"},
     ]
-    arrived = an.list_arrived_unsettled_summons(db)
-    assert arrived == [{
-        "person_name": person.name,
-        "original_destination": "henan",
-        "origin_id": origin_chat,
-        "source_entry_id": first_entry["entry_id"],
-        "required_fact": "抵原地后续赴京",
-    }]
     assert len(an.list_unsettled_summons(db)) == 2
 
     # 结清其一 origin 后另一仍未结，投影仍 1 人份。
     assert an.settle_summon_origin(db, origin_chat) is True
     remaining = an.list_unsettled_summons(db)
     assert [row["origin_id"] for row in remaining] == [origin_tool]
-    arrived_after = an.list_arrived_unsettled_summons(db)
-    assert arrived_after == [{
-        "person_name": person.name,
-        "original_destination": "henan",
-        "origin_id": origin_tool,
-        "source_entry_id": second_entry["entry_id"],
-        "required_fact": "抵原地后续赴京",
-    }]
 
     # 续赴京成功 → 同人全部 in_transit origin 结清（含尚未手结的 origin_tool）。
     from tests.test_month_chain_1843 import _prepare_player_month
@@ -316,7 +298,6 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, 
     db.save_turn_report(state, "邸报", public_body="邸报")
     session.resolve_turn(allow_empty_decree=True)
     assert an.list_unsettled_summons(db) == []
-    assert an.list_arrived_unsettled_summons(db) == []
     assert an.list_waiting_audience_summons(db) == []
 
     # waiting 消费端 dedupe：直接 capital 在途账（不依赖续程后残留 origin）。
@@ -794,8 +775,8 @@ def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch
     assert unsettled[0]["origin_id"] == "web:atomic-ok"
 
 
-def test_legacy_capital_aliases_admit_in_capital_and_migrate_on_reopen(game):
-    """#670：旧档 京师/北京/beijing/北直隶 按 beizhili 在京；重开写回 canonical。"""
+def test_capital_aliases_admit_in_capital(game):
+    """#670：京师/北京/beijing/北直隶 经 canonicalize 按 beizhili 在京（读时归一，非旧档写回）。"""
     db, state, content = game
     sess = _session(game)
     for alias in ("京师", "北京", "beijing", "北直隶"):
@@ -810,23 +791,7 @@ def test_legacy_capital_aliases_admit_in_capital_and_migrate_on_reopen(game):
         assert consumed.allowed is True
         assert an.list_unsettled_summons(db) == []
 
-    _set_place(game, "毕自严", location="京师")
-    path = db.path
-    db.close()
-    restored = GameDB(path, content)
-    try:
-        row = restored.conn.execute(
-            "SELECT location FROM characters WHERE name=?", ("毕自严",)
-        ).fetchone()
-        assert row["location"] == "beizhili"
-        assert content.characters["毕自严"].location == "beizhili"
-        rsess = GameSession.__new__(GameSession)
-        rsess.db, rsess.content, rsess.temporary_characters = restored, content, {}
-        assert rsess.admit_audience(content.characters["毕自严"]).result is (
-            AudienceAdmission.IN_CAPITAL
-        )
-    finally:
-        restored.close()
+
 
 
 
@@ -853,13 +818,6 @@ def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
     assert _arrive_at_destination(game, person.name) == [
         {"name": person.name, "location": "henan"}
     ]
-    assert an.list_arrived_unsettled_summons(db) == [{
-        "person_name": person.name,
-        "original_destination": "henan",
-        "origin_id": origin,
-        "source_entry_id": entry_id,
-        "required_fact": "抵原地后续赴京",
-    }]
 
     session = _prepare_player_month(
         db, state, content, monkeypatch, world=lambda *_a, **_k: "世界段",
@@ -873,7 +831,6 @@ def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
     session.resolve_turn(allow_empty_decree=True)
     assert _travel_row(db, person.name)["transit_to"] == "beizhili"
     assert an.list_unsettled_summons(db) == []
-    assert an.list_arrived_unsettled_summons(db) == []
 
     # 即便再强制抵京，该 origin 已结清，不得复活为候见。
     # 与上一处相同：推进后的写走本次过月 session 的写闸，不与机械尾交错。
@@ -904,7 +861,6 @@ def test_waiting_inactive_retires_on_month(game, monkeypatch):
     assert an.list_unsettled_summons(db)[0]["kind"] == "waiting"
 
     db.set_character_status(state, person.name, "dismissed", reason="测试革职")
-    assert an.list_arrived_unsettled_summons(db) == []
     assert an.list_waiting_audience_summons(db) == []
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
     # inactive 后 kind 不再 waiting（status 非 active），但仍未结直至月结 retire。
@@ -953,7 +909,6 @@ def test_waiting_active_departure_settles_and_does_not_revive(game):
         ("shaanxi", person.name),
     )
     db.conn.commit()
-    assert an.list_arrived_unsettled_summons(db) == []
 
 def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
     game, monkeypatch,
@@ -1175,60 +1130,8 @@ def test_waiting_active_departure_external_rollback_reverts_transit_and_settle(g
 
 
 
-def test_non_capital_location_aliases_migrate_on_reopen(game):
-    """#654 G / #670 merge B：非京精确别名重开时写回 canonical region_id。"""
-    db, _state, content = game
-    samples = {
-        "洪承畴": ("南京", "nanzhili"),
-        "孙传庭": ("江南", "nanzhili"),
-        "曹文诏": ("西安", "shaanxi"),
-        "卢象升": ("荆楚", "huguang"),
-        "袁崇焕": ("闽地", "fujian"),
-        "祖大寿": ("粤地", "guangdong"),
-        "赵率教": ("桂地", "guangxi"),
-    }
-    for name, (alias, _canonical) in samples.items():
-        _set_place(game, name, location=alias)
-
-    path = db.path
-    db.close()
-    restored = GameDB(path, content)
-    try:
-        for name, (_alias, canonical) in samples.items():
-            row = restored.conn.execute(
-                "SELECT location FROM characters WHERE name=?", (name,)
-            ).fetchone()
-            assert row["location"] == canonical, name
-            assert content.characters[name].location == canonical, name
-    finally:
-        restored.close()
 
 
-def test_shuntian_zhili_aliases_migrate_on_reopen(game):
-    """#654 G / #670 merge B：顺天/直隶 匹配为在京，重开写回 beizhili。"""
-    from ming_sim.matching import is_capital_location
-
-    # 匹配/在京判断仍认顺天/直隶（REGION_SPECIAL_ALIASES 保留）。
-    assert is_capital_location("顺天") is True
-    assert is_capital_location("直隶") is True
-
-    db, _state, content = game
-    samples = {"洪承畴": "顺天", "孙传庭": "直隶"}
-    for name, alias in samples.items():
-        _set_place(game, name, location=alias)
-
-    path = db.path
-    db.close()
-    restored = GameDB(path, content)
-    try:
-        for name, _alias in samples.items():
-            row = restored.conn.execute(
-                "SELECT location FROM characters WHERE name=?", (name,)
-            ).fetchone()
-            assert row["location"] == "beizhili", name
-            assert content.characters[name].location == "beizhili", name
-    finally:
-        restored.close()
 
 
 def test_inactive_person_skips_continuation_and_retires_on_month(game, monkeypatch):
@@ -1248,7 +1151,6 @@ def test_inactive_person_skips_continuation_and_retires_on_month(game, monkeypat
     # ADR 0009：非 active 清 transit；此处直接标 dismissed 并清 transit。
     db.set_character_status(state, person.name, "dismissed", reason="测试革职")
     assert _travel_row(db, person.name)["transit_to"] == ""
-    assert an.list_arrived_unsettled_summons(db) == []
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
 
     _settle_empty_month(db, state, content, monkeypatch)

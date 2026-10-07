@@ -494,6 +494,7 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     dossier = db.get_decree_dossier(dossier_id)
     assert decree_ref_for_dossier(db, dossier) == held_ref
 
+
 def test_missing_world_model_stops_before_world_commit(game, monkeypatch):
     from ming_sim.exceptions import SettlementAbort
 

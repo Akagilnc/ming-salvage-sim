@@ -469,8 +469,6 @@ def _dispatch_effects(
         person_changes = normalize_person_changes(clean)
         if person_changes:
             clean["人物变更"] = person_changes
-            for field in ("appointments", "character_status_changes", "character_power_changes", "office_changes"):
-                clean[field] = []
         clean_items.append((item, event_id, clean))
     if not has_effect:
         return SectionResult(applied=[], rejected=rejected)

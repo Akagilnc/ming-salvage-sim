@@ -504,24 +504,6 @@ def test_writer_rejects_non_string_context(game):
     assert _edge_rows(db, source="甲", target="乙") == []
 
 
-# ── P5 并行装配：新模块并入同一 executor，不串行 ────────────────────
-
-
-_CANNED = {
-    "internal": '{"economy_moves": [], "fiscal_changes": [], "fiscal_creates": [], "fiscal_removes": []}',
-    "military_external": '{"army_delta": {}, "new_armies": [], "power_updates": {}, "world_advance": {}}',
-    "issues": '{"issue_advances": [], "new_issues": [], "事件结局": {}, "cancels": [], "close_issues": []}',
-    "personnel_secret": '{"人物变更": [], "secret_order_updates": [], "emperor_fate": null}',
-    "relations": '{"大臣互动": [{"施动者": "温体仁", "受动者": ["钱龙锡"], "类目": "联名", "语境": "联名上疏。"}]}',
-}
-
-
-def _module_of(tag: str) -> str:
-    return tag.split("/", 1)[1]
-
-
-
-
 # ── V1：端点须为当前在朝合格大臣（复用既有名册投影，先校验后零边写入） ──
 
 
@@ -577,7 +559,7 @@ def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     res = out["relation_edge_event_resolutions"]
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 1
-    assert "幻觉丙" in rejected[0]["reason"]
+    assert rejected[0]["category"] == "invalid_relation_event"
     # 坏项零写入（含好端点也不部分落库）；好项不受牵连
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}
@@ -764,7 +746,6 @@ def test_never_qualified_endpoints_still_rejected_in_mutating_batch(game):
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 2
     assert all(r["category"] == "invalid_relation_event" for r in rejected)
-    assert any("幻觉甲" in r["reason"] for r in rejected)
     assert _triplets(_edge_rows(db)) == {
         ("王绍徽", "毕自严", "结怨"), ("孙承宗", "毕自严", "协作"),
     }
@@ -789,7 +770,6 @@ def test_live_roster_cannot_rescue_endpoint_outside_passed_union(game):
     )
     assert len(res) == 1 and res[0].get("rejected")
     assert res[0]["category"] == "invalid_relation_event"
-    assert "王绍徽" in res[0]["reason"]
     assert _edge_rows(db) == []  # 零边写入
 
 

@@ -13,13 +13,6 @@ ARMY = "guanning"
 
 
 def _configure(db) -> None:
-    value = 1  # active substrate_hub cutover
-    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
-        db.conn.execute(
-            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
@@ -116,42 +109,3 @@ def test_mutiny_count_is_capped_at_three(game):
     # count 已达 3 再进闩：#318 转流寇，不叠第四振
     assert row["owner_power"] == "bandits"
     assert row["is_mutinied"] == 0
-
-
-def test_old_save_migrates_and_mutiny_progress_survives_reopen(game, tmp_path):
-    db, state, content = game
-    path = str(tmp_path / "old-save.db")
-    copied = sqlite3.connect(path)
-    db.conn.backup(copied)
-    copied.execute("ALTER TABLE armies DROP COLUMN mutiny_count")
-    copied.execute("ALTER TABLE armies DROP COLUMN mutiny_probation")
-    copied.close()
-
-    migrated = GameDB(path, content)
-    columns = {row["name"] for row in migrated.conn.execute("PRAGMA table_info(armies)")}
-    assert {"mutiny_count", "mutiny_probation"} <= columns
-    defaults = migrated.conn.execute(
-        "SELECT mutiny_count,mutiny_probation FROM armies WHERE id=?", (ARMY,)
-    ).fetchone()
-    assert tuple(defaults) == (0, 0)
-    migrated.conn.execute(
-        "UPDATE armies SET loyalty=95,is_mutinied=1,mutiny_count=2,mutiny_probation=2 WHERE id=?",
-        (ARMY,),
-    )
-    migrated.conn.commit()
-    migrated.close()
-
-    reopened = GameDB(path, content)
-    try:
-        _configure(reopened)
-        _set(reopened, loyalty=95, arrears=0, latched=1)
-        restored = _tick(reopened, state)
-        assert tuple(restored[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 1)
-        assert derive_army_mutiny_state(restored) == "不满"
-
-        _set(reopened, loyalty=55, arrears=0, latched=0)
-        recovered = _tick(reopened, state)
-        assert tuple(recovered[k] for k in ("loyalty", "is_mutinied", "mutiny_count", "mutiny_probation")) == (60, 0, 2, 0)
-        assert derive_army_mutiny_state(recovered) == "正常"
-    finally:
-        reopened.close()

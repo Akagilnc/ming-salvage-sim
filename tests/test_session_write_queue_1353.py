@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
-
-from types import SimpleNamespace
 
 from ming_sim.session_write_queue import (
     SessionWriteQueue,

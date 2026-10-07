@@ -13,14 +13,6 @@ import asyncio
 import ming_sim.cli_backend as cb
 
 
-
-
-
-
-
-
-
-
 def test_default_labels_reuse_single_source_constants(monkeypatch):
     """无 env 覆盖时，默认档 label 复用 cli_backend 的默认常量，不重写字面量（单一真源）。"""
     monkeypatch.delenv("MING_SIM_CODEX_MODEL", raising=False)

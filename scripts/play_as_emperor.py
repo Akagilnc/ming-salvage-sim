@@ -322,6 +322,7 @@ def run(
     prev_hint = ""            # 上一步命中的 prompt，用于检测卡同界面
     stuck_count = 0           # 同一界面连续重复次数
     STUCK_LIMIT = 6           # 连续卡同界面上限，超则升级退出路径
+    termination_failed = False
 
     try:
         while completed_periods < turns:
@@ -510,14 +511,24 @@ def run(
             pass
 
     finally:
+        # pexpect.terminate 返回 False = 未能终止；不得当成功返回。
+        # 日志关闭仍执行（资源收尾与失败呈现分立）。
         if child.isalive():
-            child.terminate(force=True)
+            stopped = child.terminate(force=False)
+            if not stopped:
+                termination_failed = True
+                log(
+                    "[收尾失败] pexpect.terminate(force=False) 返回 False，"
+                    f"child 仍存活={child.isalive()}"
+                )
         log_file.close()
 
     print(f"\n=== 结束。完成 {completed_periods}/{turns} 月。Log: {log_path} ===")
     print("\n### 玩家(qwen) 侧 token：")
     from ming_sim.token_stats import print_token_summary
     print_token_summary()
+    if termination_failed:
+        return 1
     return 0 if completed_periods >= turns else 1
 
 

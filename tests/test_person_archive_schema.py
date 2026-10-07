@@ -2,7 +2,7 @@
 
 from ming_sim.content import load_character_content
 from ming_sim.models import Character
-from ming_sim.decree import reload_state_from_db
+from ming_sim.session import _sync_offices_from_db_impl
 
 
 def test_person_logs_accepts_audit_rows_for_existing_characters(game):
@@ -31,7 +31,6 @@ def test_person_logs_accepts_audit_rows_for_existing_characters(game):
         "source": "system_simulation",
     }
 
-
 def test_add_character_persists_transit_to(game):
     """Runtime-created characters preserve ADR 0009 travel state."""
     db, state, _ = game
@@ -59,9 +58,8 @@ def test_add_character_persists_transit_to(game):
     ).fetchone()
     assert dict(row) == {"location": "beizhili", "transit_to": "liaodong"}
 
-
 def test_reload_restores_complete_transit_ledger_from_db(game):
-    db, state, content = game
+    db, _, content = game
     name = db.conn.execute("SELECT name FROM characters LIMIT 1").fetchone()["name"]
     db.conn.execute(
         "UPDATE characters SET transit_to='liaodong', transit_distance_remaining=1.25, "
@@ -69,7 +67,7 @@ def test_reload_restores_complete_transit_ledger_from_db(game):
         (name,),
     )
 
-    reload_state_from_db(db, state, content=content)
+    _sync_offices_from_db_impl(content, db)
 
     character = content.characters[name]
     assert (

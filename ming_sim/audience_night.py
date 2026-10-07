@@ -1457,42 +1457,6 @@ def list_waiting_audience_summons(db: Any) -> List[Dict[str, Any]]:
     return _one_per_person(waiting)
 
 
-def list_arrived_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
-    """Project in-transit summons whose original non-capital journey has completed.
-
-    waiting（抵京候见）不进续程 payload；inactive 由 retire 结清，不投续程。
-    每人每阶段只向读端供一份续赴京事实；多 origin ledger 行不合并。
-    """
-    from ming_sim.matching import is_capital_location
-
-    arrived: List[Dict[str, Any]] = []
-    for item in list_unsettled_summons(db):
-        if item["kind"] != "in_transit":
-            continue
-        row = db.conn.execute(
-            "SELECT location, transit_to, status FROM characters WHERE name=?",
-            (item["person_name"],),
-        ).fetchone()
-        if row is None or str(row["transit_to"] or "").strip():
-            continue
-        status = str(row["status"] or "active").strip() or "active"
-        if status != "active":
-            continue
-        destination = str(row["location"] or "").strip()
-        if not destination:
-            continue
-        # kind=in_transit 已排除 capital waiting；此处再挡一层同地续程。
-        if is_capital_location(destination):
-            continue
-        arrived.append({
-            "person_name": item["person_name"],
-            "original_destination": destination,
-            "origin_id": item["origin_id"],
-            "source_entry_id": item["entry_id"],
-            "required_fact": "抵原地后续赴京",
-        })
-    return _one_per_person(arrived)
-
 
 def settle_applied_arrived_summons(
     db: Any, applied: Dict[str, Any],

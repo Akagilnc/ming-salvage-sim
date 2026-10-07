@@ -86,7 +86,6 @@ def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(g
         "character_id": person, "tier": "主办", "role": "", "delegator_id": None,
     }]
 
-
 @pytest.mark.parametrize("write_path", ["create", "append"])
 @pytest.mark.parametrize("delegation", ["self", "unrelated"])
 def test_dossier_roster_write_boundary_rejects_invalid_delegator(
@@ -222,13 +221,6 @@ def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch
     assert result["dossier_participants"][1]["character_id"] == good
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert [item["character_id"] for item in roster] == [lead, good]
-
-
-
-
-
-
-
 
 @pytest.mark.parametrize("authority", [None, set()])
 def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
@@ -1178,25 +1170,6 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     assert db.get_dossier_for_directive(directive_id) is not None
     assert db.list_directives(state)[0]["text"] == "着修河工"
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
-    from ming_sim.session import GameSession
-
-    db, state, _content = game
-    db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    called = []
-    session.resolve_turn = lambda **_k: called.append("resolve")
-
-    session.advance_without_decree()
-
-    assert called == ["resolve"]
-
 def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
     import ming_sim.cli.terminal as terminal
     import ming_sim.cli_backend as cli_backend
@@ -1474,7 +1447,6 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
             reopened.close()
     finally:
         session.db.close()
-
 
 def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game, monkeypatch):
     from ming_sim.decree_forecast import decree_ref_for_dossier

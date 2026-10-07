@@ -616,28 +616,3 @@ def test_month_settle_with_disaster_and_executing_relief(game, monkeypatch):
     assert result is not None and result.awaiting is False
     assert result.advanced is False
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-
-
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_legacy_population_unit_skips_absorption_and_recovery(game, monkeypatch):
-    db, state, content = game
-    db.conn.execute("DELETE FROM save_meta WHERE key='population_unit'")
-    db.conn.commit()
-    assert db.population_unit != POPULATION_UNIT_PERSONS
-
-    applied = apply_score_extraction(db, state, {
-        "bandit_absorptions": [{
-            "region_id": "shaanxi", "power_id": "bandits",
-            "requested_count": 10, "origin_ref": "盘面自发",
-        }],
-    }, content, None)
-    assert applied["bandit_absorptions"] == [] and applied["bandit_absorptions_rejections"]
-
-    assert db.get_decree_dossier(_recovery_grant(db, state, amount=10))["execution_outcome"] == "fulfilled"
-    before = _pop(db, "流民", "shaanxi")
-    _advance_canned_month(db, state, content, monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == before
-
-

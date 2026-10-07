@@ -225,27 +225,6 @@ def test_api_set_llm_config_commit_runs_on_event_loop(monkeypatch):
     assert seen["verify_thread"] is not threading.main_thread()  # verify 仍 offload 到线程池
 
 
-def test_api_set_llm_config_verify_runs_off_event_loop(monkeypatch):
-    """#56:in-game /api/llm/config 的 verify(CLI smoke ~12s)offload 出 asyncio event loop,
-    commit(落盘/重建)留在 loop。断言 verify 在非主线程跑。"""
-    import threading
-    cfg = LLMConfig(api_key="", base_url="", model="m", channel="cli",
-                    cli_runner="codex", cli_model="gpt-5.5", cli_timeout_seconds=240)
-    seen = {}
-    fake = SimpleNamespace(_write_gate=threading.Lock(), build_llm_config=lambda *a, **k: cfg, commit_llm_config=lambda c: c)
-    monkeypatch.setattr(web_app, "get_game", lambda: fake)
-
-    def rec_verify(c):
-        seen["thread"] = threading.current_thread()
-
-    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", rec_verify)
-
-    asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(channel="cli", cli_runner="codex")))
-
-    assert seen.get("thread") is not None
-    assert seen["thread"] is not threading.main_thread()
-
-
 def test_api_set_llm_config_verify_failure_skips_commit_and_passes_through_httpexception(monkeypatch):
     """#56 负路径:_verify_llm_configs_or_raise 真实抛的是已包好 detail 的 HTTPException(经
     run_in_executor 透传)。端点须原样抛(不被 except Exception 二次包裹 mangle,Gemini R2),

@@ -30,7 +30,7 @@ DENY_SNAPSHOT_FIELDS = (
     "manpower",
 )
 
-# cutover-on 饷源写缝字段（非 owner_power；owner 仍走 #318 唯一 adapter）
+# 饷源写缝字段（非 owner_power；owner 仍走 #318 唯一 adapter）
 PAY_SOURCE_DENY_FIELDS = (
     "pay_source_region",
     "province_pay_share",
@@ -62,13 +62,6 @@ PAY_SOURCE_LEGAL_DELTAS = (
 
 
 def _configure(db) -> None:
-    value = 1  # active substrate_hub cutover
-    for key in ("__army_pay_source_cutover", "__fiscal_engine"):
-        db.conn.execute(
-            "INSERT INTO fiscal_config(key,value,kind,note) VALUES (?,?,'meta','test') "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
         """UPDATE armies SET owner_power='ming', is_tusi=0, self_funded_pay=0,
@@ -463,7 +456,7 @@ def test_apply_score_extraction_respects_latched_field_gate(game):
 
 @pytest.mark.parametrize("pay_delta", PAY_SOURCE_LEGAL_DELTAS)
 def test_latched_cutover_denies_pay_source_fields(game, pay_delta):
-    """cutover-on：latched 军各组合法饷源输入一律静默 no-op（写缝入口复用 latch 门）。"""
+    """现役 hub：latched 军各组合法饷源输入一律静默 no-op（写缝入口复用 latch 门）。"""
     db, state, _ = game
     _configure(db)
     # arrears=0：各组输入在无 latch 门时均可真实落库，避免校验假绿
@@ -479,7 +472,7 @@ def test_latched_cutover_denies_pay_source_fields(game, pay_delta):
 
 
 def test_latched_cutover_rejects_invalid_pay_source_share(game):
-    """cutover-on + latched：畸形 share 须 invalid_enum 拒收留痕，不得被 latch 静默吞没。"""
+    """现役 hub + latched：畸形 share 须 invalid_enum 拒收留痕，不得被 latch 静默吞没。"""
     db, state, _ = game
     _configure(db)
     _set(db, loyalty=30, arrears=0, latched=1, mutiny_count=1)
@@ -499,7 +492,7 @@ def test_latched_cutover_rejects_invalid_pay_source_share(game):
 
 
 def test_latched_cutover_rejects_unknown_pay_source_region(game):
-    """cutover-on + latched：不存在 region 须 invalid_enum 拒收留痕，快照不变。"""
+    """现役 hub + latched：不存在 region 须 invalid_enum 拒收留痕，快照不变。"""
     db, state, _ = game
     _configure(db)
     _set(db, loyalty=30, arrears=0, latched=1, mutiny_count=1)
@@ -555,7 +548,7 @@ def test_latched_cutover_mixed_item_pay_source_deny_whitelist_apply(game, pay_de
 
 @pytest.mark.parametrize("pay_delta", PAY_SOURCE_LEGAL_DELTAS)
 def test_non_latched_cutover_pay_source_fields_still_write(game, pay_delta):
-    """对照：非 latched + cutover-on 四组合法饷源均可持久落库，防误伤生产路径。"""
+    """对照：非 latched + hub 四组合法饷源均可持久落库，防误伤生产路径。"""
     db, state, _ = game
     _configure(db)
     _set(db, loyalty=70,

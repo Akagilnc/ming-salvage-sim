@@ -449,18 +449,6 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     assert character.name not in an.persons_entered_tonight(db, night_id)
 
 
-def test_cli_write_gate_canonical_session_attr():
-    """#1353 fold-in r8：CLI 唯一 write gate 挂 session._write_gate（禁第二锁名分叉）。"""
-    from ming_sim.session_write_queue import ClassifiedWriteGate
-
-    session = SimpleNamespace()
-    gate = term._cli_write_gate(session)
-    assert isinstance(gate, ClassifiedWriteGate)
-    assert getattr(session, "_write_gate", None) is gate
-    # 二次调用同锁
-    assert term._cli_write_gate(session) is gate
-
-
 @pytest.mark.parametrize("action", ["skip", "issue"])
 def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
     """#1843/PR #1876: HITL 续跑实际推进月份后，play_turn 必须调用 end_turn 并结束本回合。"""

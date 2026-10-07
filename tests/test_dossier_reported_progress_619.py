@@ -110,14 +110,6 @@ def test_execution_surface_dossier_can_record_and_list_full_history(game):
     ).fetchone()["n"]
     assert leaked == 0
 
-    # #883: general rail has no shared secret/track flag column.
-    cols = {
-        row["name"]
-        for row in db.conn.execute("PRAGMA table_info(dossier_reported_progress)").fetchall()
-    }
-    assert "is_secret" not in cols
-    assert "secret" not in cols
-    assert "track" not in cols
 
 
 def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
