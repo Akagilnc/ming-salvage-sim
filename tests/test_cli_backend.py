@@ -128,8 +128,11 @@ def test_enrich_building_region_floor(monkeypatch):
     assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
 
 def test_enrich_backend_error_returns_empty_effects(monkeypatch):
+    # 只认 typed 模型/宿主失败 → 空效果；裸 RuntimeError 不得被补全核洗成空效果。
+    from ming_sim.exceptions import LLMUnavailable
+
     def boom(prompt, llm_config=None, tag="", *, policy=None):
-        raise RuntimeError("backend down")
+        raise LLMUnavailable("backend down", code="llm_cli_error")
     monkeypatch.setattr(cb, "_run_backend_for_config", boom)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     out = di.enrich_initiative_effects("设格致局", "")
@@ -607,7 +610,9 @@ def test_run_backend_for_config_passes_reasoning_strength_to_codex(monkeypatch):
 
 
 def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
-    """真实 runner 失败后，trace.error 须保留原故障可见诊断（非仅非空）。"""
+    """真实 runner 失败后翻 typed LLMUnavailable；trace.error 仍保留原故障诊断。"""
+    from ming_sim.exceptions import LLMUnavailable
+
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
     injected = RuntimeError("codex 挂了")
@@ -616,9 +621,10 @@ def test_run_backend_for_config_traces_on_backend_error(monkeypatch):
         raise injected
 
     _patch_runner(monkeypatch, "codex", boom)
-    with pytest.raises(RuntimeError) as ei:
+    with pytest.raises(LLMUnavailable) as ei:
         cb._run_backend_for_config("任意提示", _cli_codex_cfg(), tag="probe")
-    assert ei.value is injected
+    # 因果链可回溯到宿主原故障；不要求 RuntimeError 原样穿出（与 CliChat 同契约）
+    assert ei.value.__cause__ is injected or getattr(ei.value.__cause__, "__cause__", None) is injected
     assert len(recs) == 1
     # 可见诊断须能回溯到原故障来源，不是任意非空串
     assert recs[0].get("error") == str(injected)

@@ -966,23 +966,42 @@ def _run_backend_for_config(
     text, attempts, error = "", 0, None
 
     def _one_call() -> str:
-        if parts is None:
-            return _run_backend(prompt)[0]
-        runner, model, reasoning_strength = parts
-        return _dispatch_cli_runner(
-            runner, prompt,
-            model=model or None,
-            reasoning_strength=reasoning_strength or None,
-        )[0]
+        # 宿主执行闭包：已确证 runner 失败翻 typed（与 CliChat.invoke 同契约）；
+        # 策略/配置投影在闭包外，代码故障不得被此翻成「模型不可用」。
+        from ming_sim.exceptions import LLMUnavailable
+        from ming_sim.llm_model import cli_runner_unavailable
+        from ming_sim.llm_transport import TransportIdleTimeout
+
+        try:
+            if parts is None:
+                return _run_backend(prompt)[0]
+            runner, model, reasoning_strength = parts
+            return _dispatch_cli_runner(
+                runner, prompt,
+                model=model or None,
+                reasoning_strength=reasoning_strength or None,
+            )[0]
+        except (LLMUnavailable, TransportIdleTimeout):
+            raise
+        except Exception as exc:
+            backend = (parts[0] if parts else "") or _backend_label(llm_config)
+            raise cli_runner_unavailable(exc, backend=backend) from exc
 
     try:
+        # resolve_transport_policy 在 runner 闭包外：投影代码故障原样上浮。
+        resolved_policy = policy or resolve_transport_policy()
         text, attempt_records = run_with_transport(
-            _one_call, policy=policy or resolve_transport_policy(),
+            _one_call, policy=resolved_policy,
         )
         attempts = len(attempt_records)
         return text, attempts
     except Exception as exc:
-        error = str(exc)
+        # trace 留宿主原诊断（provider_message / __cause__），不写玩家面 typed 文案。
+        from ming_sim.exceptions import LLMUnavailable as _LLMUnavailable
+        if isinstance(exc, _LLMUnavailable) and exc.provider_message:
+            error = str(exc.provider_message)
+        else:
+            error = str(exc)
         raise
     finally:
         _trace({
@@ -1084,17 +1103,17 @@ def describe_effective_model(llm_config: Any = None) -> str:
 
 
 def cli_backend_active(llm_config: Any = None) -> bool:
-    """是否处于 CLI 后端路径：仅当运行配置显式 channel=cli 且 runner 合法时为真。"""
+    """是否处于 CLI 后端路径：仅当运行配置显式 channel=cli 且 runner 合法时为真。
+
+    资格只认 channel + runner 闭集（与 _cli_config_parts 同一权威），不 try/except
+    配置投影：未知 runner → False；投影代码故障原样上抛（不得洗成 not-active）。
+    """
     channel = _llm_channel(llm_config)
     if channel == "api":
         return False
     if channel == "cli":
-        # 显式 CLI：直接判 runner，不回落 env。否则 bogus runner 误报 active，
-        # 执行期 _run_backend_for_config 再调 _cli_config_parts 仍会崩。
-        try:
-            return _cli_config_parts(llm_config) is not None
-        except RuntimeError:
-            return False
+        runner = (getattr(llm_config, "cli_runner", "") or _DEFAULT_RUNNER).strip().lower()
+        return runner in _CLI_BACKENDS
     return False  # #1902：无显式 channel 即无 CLI 路径（env 选宿主已退役）
 
 

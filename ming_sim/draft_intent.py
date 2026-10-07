@@ -1391,8 +1391,9 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     raw = ""
     try:
         raw, _ = _cli_backend._run_backend_for_config(prompt, llm_config, tag="issue_enrich")
-    except (LLMUnavailable, RuntimeError) as exc:
-        # 模型/CLI 基础设施不可用 → 空效果，上层 floor 接；代码侧故障（AttributeError 等）必须上抛（ADR 0005）。
+    except LLMUnavailable as exc:
+        # 只认 typed 模型/宿主失败契约 → 空效果，上层 floor 接。
+        # 不以 RuntimeError 类名认定来源（策略/配置代码故障必须上抛）。
         logger.warning("国策效果补全失败：%s", exc)
     obj = _cli_backend._loads_lenient(raw) or {}
     # #1902 T3 / ADR 0005：规范化是代码侧契约故障，不得 catch 洗成原对象继续。
