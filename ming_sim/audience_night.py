@@ -1607,10 +1607,7 @@ def update_summon_travel_tone(
     tags = [t for t in tags if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)]
     tags.append(_travel_tone_tag(tone))
     db.reign.set_ledger_tags(entry_id, json.dumps(tags, ensure_ascii=False))
-    if (
-        not bool(getattr(db.conn, "_commit_suspended", False))
-        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
-    ):
+    if owns:
         db.conn.commit()
     return entry_id
 

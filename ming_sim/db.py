@@ -860,13 +860,6 @@ def payload_declares_escort(payload: object) -> bool:
         str(name or "").strip() for name in escortees
     )
 
-_SECRET_ORDER_BODY_COLUMNS = ("result", "sim_note")
-
-def _secret_order_kept_body(text: object) -> str:
-    """空白正文记空串；已有字句原样保留，含内部空行。"""
-    raw = str(text or "")
-    return raw if raw.strip() else ""
-
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -5705,10 +5698,10 @@ class GameDB:
         if initial_status not in {"active", "generating", "failed", "undone", "consumed"}:
             raise ValueError(f"unsupported chat_turn status: {initial_status!r}")
         nid = int(night_id or 0)
+        owns = self.owns_transaction()
         seq = int(night_seq) if night_seq is not None else (
             self.reign.allocate_night_seq(nid) if nid > 0 else 0
         )
-        owns = self.owns_transaction()
         chat_turn_id = self.reign.insert_chat_turn_row(
             minister_name=minister_name,
             turn=int(state.turn),
@@ -10847,8 +10840,6 @@ class GameDB:
             self.conn.commit()
         return int(candidate_id)
 
-    @staticmethod
-
     def _discard_deleted_directive_forecast(self, target_id: object) -> None:
         try:
             pending_id = int(target_id)
@@ -12380,9 +12371,7 @@ class GameDB:
             )
             return issue_id
 
-        outer_owns = bool(
-            getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction
-        )
+        outer_owns = not self.owns_transaction()
         if outer_owns or not commit:
             return _paired()
         with atomic(self):
@@ -12545,7 +12534,7 @@ class GameDB:
 
     def list_active_legacies(self, state: GameState) -> List[sqlite3.Row]:
         """当前仍生效的帝国修正，顺手把已到期的失活。"""
-        external_transaction = bool(getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction)
+        external_transaction = not self.owns_transaction()
         self.expire_legacies(state, commit=not external_transaction)
         return ReignStateStore(self.conn).read_list_active_legacies()
 
@@ -12587,7 +12576,7 @@ class GameDB:
         """
         # expire 可能改变 active 集 → 先跑。若调用方已有外层事务，不能在读修正符时提交；
         # 且该未提交 active 集不可写入缓存，否则 rollback 后会留下脏 cache。
-        cache_allowed = not (getattr(self.conn, "_commit_suspended", False) or self.conn.in_transaction)
+        cache_allowed = self.owns_transaction()
         self.expire_legacies(state, commit=cache_allowed)
         if cache_allowed and self._legacy_mod_cache is not None:
             return self._legacy_mod_cache
