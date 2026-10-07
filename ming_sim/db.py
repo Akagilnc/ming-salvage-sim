@@ -2243,14 +2243,8 @@ class GameDB:
         self._ensure_event_parents()
         # 城市等级静态分级（CREATE 已含 city_level/cannon）；此处只跑新档分级写入。
         self._apply_region_city_levels()
-        # Read-side projection is registry-driven.  Only issue rows are shared
-        # knowledge sources; #883 deliberately keeps secret orders out of it.
-        self.conn.execute(
-            "INSERT OR IGNORE INTO character_knowledge_sources "
-            "(turn,year,period,kind,title,body,source_id,participant_roster) "
-            "SELECT origin_turn, 0, 0, 'assignment', title, stage_text, "
-            "'issue:' || id, participant_roster FROM issues WHERE participant_roster <> '[]'"
-        )
+        # #1843：不再从存量 issues 回填 character_knowledge_sources。
+        # 正常 insert_issue 写端登记来源；见闻读口可按持久记录 participant_roster 发现。
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_turns_night "
             "ON chat_turns(night_id, id)"

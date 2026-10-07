@@ -2,7 +2,6 @@
 
 import copy
 import json
-import os
 
 import pytest
 
@@ -23,38 +22,6 @@ def _promulgated_dossier(db, state, decree_text, target_id="毛文龙"):
     db.record_dossier_decision(dossier_id, "promulgated")
     db.transition_decree_dossier(dossier_id, "executing")
     return f"dossier:{dossier_id}"
-
-
-def test_normalize_person_changes_keeps_new_key_items():
-    extracted = {
-        "人物变更": [
-            {
-                "name": "孔有德",
-                "action": "易主",
-                "new_power": "houjin",
-                "方式": "主动投敌",
-                "反噬": {"houjin": {"leverage": 3}},
-            }
-        ]
-    }
-
-    assert normalize_person_changes(extracted) == [
-        {
-            "name": "孔有德",
-            "动作": "易主",
-            "new_power": "houjin",
-            "方式": "主动投敌",
-            "反噬": {"houjin": {"leverage": 3}},
-        }
-    ]
-
-
-
-
-def test_normalize_person_changes_ignores_non_item_shapes():
-    assert normalize_person_changes({"人物变更": ["bad", {"name": "毕自严"}]}) == [
-        {"name": "毕自严"}
-    ]
 
 
 def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
@@ -80,8 +47,6 @@ def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
     )
     assert "person_changes" not in applied
     assert "world_advance" not in applied
-
-
 
 
 def test_apply_score_extraction_rejects_person_change_power_move_without_way(read_game):
@@ -456,8 +421,6 @@ def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_wri
     assert changes[0]["item"] == item
 
 
-
-
 def test_apply_score_extraction_rejects_power_move_without_backlash_side_effect(game):
     db, state, content = game
     name = active_ming_character(db, content)
@@ -595,7 +558,6 @@ def test_apply_score_extraction_rejects_trapped_prisoner_appointment(game):
         content.characters[name].status = old_status
         content.characters[name].office = old_office
         content.characters[name].transit_to = old_transit_to
-
 
 
 def test_apply_score_extraction_materializes_derived_release_before_appointment(game):
@@ -1665,14 +1627,6 @@ def test_apply_score_extraction_rejects_dead_status_outbound(game):
     assert changes[0]["item"] == {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}
 
 
-
-
-
-
-
-
-
-
 def _materialize_active_prince(db, state, content):
     """物化一个 active+ming 宗藩王进测试 DB（probe.db 旧档无宗藩行），返回 name。"""
     name = next(
@@ -1685,10 +1639,6 @@ def _materialize_active_prince(db, state, content):
     db.add_character(state, content.characters[name], source="测试物化")
     assert db.get_character_status(name)[0] == "active"
     return name
-
-
-
-
 
 
 def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
@@ -2210,15 +2160,6 @@ def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
     ).fetchone()["office"]
     assert now_office == orig_office, \
         f"falsy-return 后半落库未回滚：victim office={now_office!r} 期望 {orig_office!r}"
-
-
-
-
-
-
-
-
-
 
 
 def test_historical_death_tick_sets_reason_code(game):

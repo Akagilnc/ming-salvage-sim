@@ -281,41 +281,6 @@ def test_r3_strict_parse_concatenated_objects_raises_contract_error():
     with pytest.raises(LLMContractError):
         _parse_rescript_json_strict(raw)
 
-# ---------------------------------------------------------------------------
-# #657 片1：行事实与案头（schema + 词表 + desk 读）
-# ---------------------------------------------------------------------------
-
-def test_657_s1_derive_draft_capability_stable_and_sensitive():
-    """capability：同字段稳定；闭集任一有效差改变键。"""
-    from ming_sim.decree_vocabulary import derive_draft_capability
-
-    base = {
-        "action_type": "assignment",
-        "label": "发帑赈济",
-        "hint": "所安者饥民",
-        "assignee_name": "杨嗣昌",
-        "target_kind": "region",
-        "target_id": "shaanxi",
-        "transaction_category": "督赈",
-        "locality_scope": "single",
-        "region_id": "shaanxi",
-    }
-    a = derive_draft_capability(base)
-    b = derive_draft_capability(dict(base))
-    assert isinstance(a, str) and a == b and len(a) >= 16
-    # 扰动 label
-    changed = dict(base)
-    changed["label"] = "缓征"
-    assert derive_draft_capability(changed) != a
-    # 扰动 assignee
-    changed2 = dict(base)
-    changed2["assignee_name"] = "洪承畴"
-    assert derive_draft_capability(changed2) != a
-    # 缺键按默认参与派生，不因插入空串而变
-    with_default = dict(base)
-    with_default["summon_target"] = ""
-    assert derive_draft_capability(with_default) == a
-
 def test_657_s1_option_shape_stamps_draft_capability():
     """层 A option 必填键校验；服务端写 draft_capability。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option

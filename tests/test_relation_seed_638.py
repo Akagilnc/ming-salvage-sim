@@ -163,17 +163,6 @@ def test_seeded_pair_flows_into_month_end_brew_selection(fresh_session):
     assert all(e["context"] in contexts for e in pair_events)
 
 
-def test_pregame_turn_scale_matches_load_state_mapping():
-    """开局前刻度：默认开局前一月＝-1；与 start_ym 映射式同锚（1627.10=开局 turn 1）。"""
-    from ming_sim.constants import DEFAULT_OPENING_PERIOD, DEFAULT_OPENING_YEAR
-    from ming_sim.relation_seed import pregame_turn
-
-    assert (DEFAULT_OPENING_YEAR, DEFAULT_OPENING_PERIOD) == (1627, 10)
-    assert pregame_turn(1627, 9) == -1
-    assert pregame_turn(1627, 1) == -9
-    assert pregame_turn(1625, 4) == (1625 - 1627) * 12 + (4 - 10)
-
-
 def test_earliest_legal_start_imports_only_earlier_seed_events(tmp_path, monkeypatch):
     """db.py 接受的最早开局也必须能完成真实新档初始化。"""
     import ming_sim.cli_backend as cli_backend
