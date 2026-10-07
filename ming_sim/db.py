@@ -18478,19 +18478,14 @@ class GameDB:
             if raw_stage is None:
                 stage_idx = 0
             else:
-                # 显式脏分段不得洗成 0 后催错段（#1897 C1）。
+                # 分段身份：strict_int 禁 bool/有损小数改绑（#1897 C1）。
                 from ming_sim.action_materialize import DecreeMaterializationValidationError
-                if isinstance(raw_stage, bool):
-                    raise DecreeMaterializationValidationError(
-                        "stage_idx cannot be a boolean",
-                        failed_fields=("stage_idx",),
-                        category="invalid_shape",
-                    )
+                from ming_sim.strict_types import strict_int
                 try:
-                    stage_idx = int(raw_stage)
-                except (TypeError, ValueError, OverflowError) as exc:
+                    stage_idx = strict_int(raw_stage, accept_numeric_strings=False)
+                except (TypeError, ValueError) as exc:
                     raise DecreeMaterializationValidationError(
-                        "stage_idx must be a finite integer",
+                        "stage_idx must be a whole integer index",
                         failed_fields=("stage_idx",),
                         category="invalid_shape",
                     ) from exc

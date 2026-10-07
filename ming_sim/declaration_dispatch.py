@@ -915,9 +915,11 @@ def _assert_commission_grant_target_exists(
             raise KeyError(f"军队不存在：{tid}")
         return
     if kind == "issue":
+        from ming_sim.strict_types import strict_int
         try:
-            iid = int(tid)
-        except (TypeError, ValueError, OverflowError) as exc:
+            # tid 已是字符串身份；只接整数字符串，拒 "4.5" 等有损形。
+            iid = strict_int(tid, accept_numeric_strings=True)
+        except (TypeError, ValueError) as exc:
             raise KeyError(f"事项不存在：{tid}") from exc
         row = db.conn.execute("SELECT 1 FROM issues WHERE id=?", (iid,)).fetchone()
         if row is None:
@@ -1486,20 +1488,28 @@ def _dispatch_commissions(
                 continue
             from ming_sim.action_materialize import stage_punishment_candidate
             actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
-            row_id = stage_punishment_candidate(
-                db, int(state.turn), actor,
-                text=body,
-                target_id=str(punishment.get("target_id") or ""),
-                punish_action=str(punishment.get("punish_action") or ""),
-                extracted_mode=punishment.get("mode"),
-                amount=punishment.get("amount"),
-                transaction_category=punishment.get("transaction_category"),
-                backing_dossier_id=punishment.get("backing_dossier_id"),
-                issue_id=punishment.get("issue_id"),
-                issue_disposition=punishment.get("issue_disposition"),
-                night_id=staged_night,
-                source_chat_turn_id=source_chat_turn_id,
-            )
+            try:
+                row_id = stage_punishment_candidate(
+                    db, int(state.turn), actor,
+                    text=body,
+                    target_id=str(punishment.get("target_id") or ""),
+                    punish_action=str(punishment.get("punish_action") or ""),
+                    extracted_mode=punishment.get("mode"),
+                    amount=punishment.get("amount"),
+                    transaction_category=punishment.get("transaction_category"),
+                    backing_dossier_id=punishment.get("backing_dossier_id"),
+                    issue_id=punishment.get("issue_id"),
+                    issue_disposition=punishment.get("issue_disposition"),
+                    night_id=staged_night,
+                    source_chat_turn_id=source_chat_turn_id,
+                )
+            except DecreeMaterializationValidationError as exc:
+                # backing/issue 等输入校验领域拒收；写入故障不在此吞（#1897 C1）。
+                _reject(
+                    rejected, item, str(exc),
+                    getattr(exc, "category", None) or "invalid_shape", source,
+                )
+                continue
             if row_id:
                 applied.append({"id": row_id, "kind": "directive"})
             else:
@@ -1997,9 +2007,10 @@ def _stage_prohibit_covert_levy(
     from ming_sim.covert_levy import PROHIBITION_ACTION
     from ming_sim.due_review import list_due_review_scenes
 
+    from ming_sim.strict_types import strict_int
     try:
-        dossier_id = int(item["target_id"])
-    except (KeyError, TypeError, ValueError, OverflowError):
+        dossier_id = strict_int(item["target_id"], accept_numeric_strings=False)
+    except (KeyError, TypeError, ValueError):
         raise KeyError("禁摊派交办缺场面案卷 id") from None
     if not any(
         scene.get("kind") == "covert_levy_exposure"
@@ -2211,9 +2222,14 @@ def _dispatch_rushes(
     applied: List[Any] = []
     for item in items:
         target_kind = str(item.get("target_kind") or "").strip()
+        # 身份引用走 strict_int：禁 bool/有损小数改绑（#1897 C1）。
+        from ming_sim.strict_types import strict_int
         try:
-            target_id = int(item.get("target_id") or 0)
-        except (TypeError, ValueError, OverflowError):
+            raw_tid = item.get("target_id")
+            target_id = 0 if raw_tid in (None, "") else strict_int(
+                raw_tid, accept_numeric_strings=False,
+            )
+        except (TypeError, ValueError):
             target_id = 0
         if target_kind not in {"commitment", "secret_order"} or target_id <= 0:
             _reject(
@@ -2254,8 +2270,8 @@ def _dispatch_rushes(
                 )
                 continue
             try:
-                stage_idx = int(item["stage_idx"])
-            except (KeyError, TypeError, ValueError, OverflowError):
+                stage_idx = strict_int(item["stage_idx"], accept_numeric_strings=False)
+            except (KeyError, TypeError, ValueError):
                 _reject(rejected, item, "催办缺目标分段索引", "invalid_shape", source)
                 continue
             from ming_sim.staged_commitment import normalize_commitment_stages

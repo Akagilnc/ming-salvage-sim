@@ -290,9 +290,11 @@ def stage_punishment_candidate(
     if disposition in issue_dispositions_allowed() and issue_id is None:
         return 0
     if issue_id is not None:
+        # 事务身份引用：strict_int 禁 bool/有损小数改绑（#1897 C1）。
+        from ming_sim.strict_types import strict_int
         try:
-            linked_issue_id = int(issue_id)
-        except (TypeError, ValueError, OverflowError):
+            linked_issue_id = strict_int(issue_id, accept_numeric_strings=False)
+        except (TypeError, ValueError):
             return 0
         if linked_issue_id <= 0:
             return 0
@@ -372,8 +374,17 @@ def stage_punishment_candidate(
         staged["issue_disposition"] = disposition
     # #658：与 durable apply 共吃 require_backing_dossier_id，禁第二份 int/存在性分支
     # 省略时显式写 None，改草 merge 不得继承旧 backing 关联
+    # 解析/存在性失败 → 领域拒收（#1897 C1），不升格整批 ValueError 故障。
     from ming_sim.db import require_backing_dossier_id
-    backing = require_backing_dossier_id(db, backing_dossier_id)
+    try:
+        backing = require_backing_dossier_id(db, backing_dossier_id)
+    except ValueError as exc:
+        raise DecreeMaterializationValidationError(
+            str(exc),
+            failed_fields=("backing_dossier_id",),
+            category="invalid_shape" if "非法" in str(exc) or "shape" in str(exc).lower()
+            else "hallucinated_id",
+        ) from exc
     staged["backing_dossier_id"] = int(backing) if backing is not None else None
     category = str(transaction_category or "").strip()
     if linked_issue_id and disposition == "办人" and not category:
