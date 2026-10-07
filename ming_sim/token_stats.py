@@ -58,8 +58,14 @@ def _record_usage(model_id: str, usage: object, caller_tag: str = "?") -> None:
 
 def _get_client_base_url(self_client_holder: object) -> str:
     """从 openai Completions self 拿 client.base_url。"""
-    client = getattr(self_client_holder, "_client", None)
-    if client is None:
+    try:
+        client = getattr(self_client_holder, "_client", None)
+        if client is None:
+            return ""
+        base = getattr(client, "base_url", "")
+        return str(base) if base else ""
+    except Exception as exc:
+        tlog(f"[TOKEN] client base_url lookup failed: {type(exc).__name__}: {exc}")
         return ""
     base = getattr(client, "base_url", "")
     return str(base) if base else ""

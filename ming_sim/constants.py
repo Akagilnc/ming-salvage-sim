@@ -25,8 +25,8 @@ DEFAULT_OPENING_PERIOD = 10
 DOSSIER_LINK_TYPES = frozenset({"护卫", "稽核", "接应"})
 
 # #44 边军史实月饷锚点（两/兵·月）：ming 军 salary_rate<=0 非法（=白嫖）时的兜底率。单一真源——
-# 募兵默认（db._coerce_new_salary_rate）/ 结算咽喉
-# （army_pay.army_needed 对 ming+有兵+rate<=0 锚定）三处共用，避免 1.5 散落多处漂移（线上 sourcery+coderabbit）。
+# 募兵默认（db._coerce_new_salary_rate）与结算咽喉（army_pay.army_needed 对
+# ming+有兵+rate<=0 锚定）共用，避免 1.5 散落多处漂移。
 SALARY_RATE_ANCHOR = 1.5
 
 # 一回合的时段单位字。改此处即可全局切换回合语义（月/旬/季）；
@@ -251,6 +251,9 @@ EXIT_COMMANDS = {"exit", "退出游戏", "退出", "exit game"}
 # #526 / #471 S10：收夜高置信封闭集（口令档确定性层；含「今日且到此」）
 # 单一真源：前端/CLI 不得另复制词表或语义旁路。
 COURT_BREAK_COMMANDS = {"q", "quit", "退朝", "下朝", "今日且到此"}
+# 留侍／含糊收夜词表已退役（#1812 第5项）：走普通场景演绎与转译，不再代码识别。
+MINISTER_DISMISS_COMMANDS = {"done", "退下", "跪安", "退了", "下去"}
+
 # 经济流水（economy_ledger）支出条目的结构化标签。
 # 仅对支出（delta<0）有效；收入条目（税收/抄家入帑/纳贡）三项一律 NULL。
 # flows 月固定支出（宗禄/官俸/工部/各军军饷/宫廷/建筑维护等）也一律 NULL，

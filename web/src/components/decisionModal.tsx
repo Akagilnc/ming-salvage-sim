@@ -1,6 +1,6 @@
 import React from "react";
 import type {
-  DecisionChoice, PendingActionFailure, PendingDecision,
+  DecisionChoice, PendingActionFailure, PendingDecision, RescriptDeskAction,
 } from "../types";
 
 function isCheatConsoleTarget(target: EventTarget | null): boolean {
@@ -17,12 +17,10 @@ function decisionKeyOf(d: PendingDecision, fallbackIdx: number): string | undefi
 
 export function DecisionModal({
   decisions,
-  failures = [],
   onResolve,
   busy = "",
 }: {
   decisions: PendingDecision[];
-  failures?: PendingActionFailure[];
   onResolve: (choices: DecisionChoice[]) => void;
   /** truthy 时禁用票拟/亲批/翻页与落印，handler 入口短路——禁二提交。 */
   busy?: string;
@@ -155,9 +153,6 @@ export function DecisionModal({
           </span>
           <h2 id="decision-page-title" className="decision-title">奏疏批红</h2>
         </div>
-        {failures.length ? <div className="decision-failure-list" role="alert">
-          {failures.map((failure) => <div className="decision-failure-item" key={failure.id}>{failure.message}</div>)}
-        </div> : null}
         <section aria-labelledby="decision-document-title">
           <div className="decision-document-section">
             <span className="decision-section-label">疏文</span>

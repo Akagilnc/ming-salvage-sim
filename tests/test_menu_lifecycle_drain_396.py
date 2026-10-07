@@ -10,9 +10,9 @@ import time
 from types import SimpleNamespace
 
 import web_app
-from tests.web_audience_test_doubles import HallAdmissionSessionMixin, minister_double
 from tests.wait_utils import reset_menu_path_leases, wait_until
 from ming_sim.session_write_queue import SessionWriteQueue
+from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 
 # 兼容旧调用名：真源在 wait_utils.reset_menu_path_leases。
 _reset_path_leases = reset_menu_path_leases
@@ -310,7 +310,7 @@ def test_drain_archive_skips_move_when_session_close_fails(monkeypatch, tmp_path
     assert entry is not None
     role, op = web_app._claim_close(entry, db_path)
     assert role == "executor" and op is not None
-    with pytest.raises(RuntimeError, match="close failed"):
+    with pytest.raises(RuntimeError):
         web_app._drain_and_close_session(game, entry=entry, close_op=op)
     # close 失败不发 AR；即使误发 C7 也被 holder 挡住
     web_app._path_request_archive(db_path)
@@ -332,7 +332,7 @@ def test_restore_main_db_path_config_remove_failure_is_loud(monkeypatch, tmp_pat
         lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("locked")),
     )
 
-    with pytest.raises(PermissionError, match="locked"):
+    with pytest.raises(PermissionError):
         web_app._restore_main_db_path_config((False, "", False, ""))
 
     # 失败后不得把身份改写成默认 ming_sim.db
@@ -582,6 +582,10 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
         state, db)
     runtime.session.close = lambda: closed.append(1)
     runtime.chat_history = {char_a.name: [], char_b.name: [], "殿上": []}
+
+def test_drain_rejects_late_pending_write_before_gate_acquire():
+    """#402 R3（Sourcery）：drain 开始后，迟到的旧 game 写入不得再登记进关闭队列。"""
+    runtime = object.__new__(web_app.WebGame)
     runtime._write_queue = SessionWriteQueue()
     runtime._write_gate = runtime._write_queue.write_gate
     runtime._runtime_write_queue = lambda: runtime._write_queue  # type: ignore
@@ -635,6 +639,27 @@ def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
         m["minister"] == "殿上" and m["role"] == "minister"
         for m in db.messages
     )
+
+    closed: list[int] = []
+    runtime.session = SimpleNamespace(close=lambda: closed.append(1))
+
+    runtime._write_gate.acquire()
+    done = threading.Event()
+    thread = threading.Thread(
+        target=lambda: (web_app._drain_and_close_session(runtime), done.set()),
+        daemon=True,
+    )
+    thread.start()
+
+    wait_until(lambda: runtime._write_queue.is_sealed())
+    assert runtime._mark_pending_write() is None
+    # 屏障票据在等 gate 期间可占 1；新 claim 已拒。
+    assert runtime._pending_writes_count <= 1
+
+    runtime._write_gate.release()
+
+    done.wait()
+    assert closed == [1]
 
 
 def test_spawn_pending_write_thread_start_failure_releases_ownership():

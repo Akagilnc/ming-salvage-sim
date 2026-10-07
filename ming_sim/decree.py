@@ -54,6 +54,11 @@ TIMEOUT_TURN = 240
 
 # 逐旨／世界段请旨解析工具位于 ming_sim.settlement_payload，不从邸报抽取。
 # 此处 re-import 保 `from ming_sim.decree import X` 公开表面 + decree 内部调用点不变。
+from ming_sim.settlement_payload import (  # noqa: E402
+    _DECISION_RE,
+    bind_decision_options,
+    parse_decision_blocks,
+)
 
 
 @dataclass
@@ -144,6 +149,11 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
     except (TypeError, ValueError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
+    """#658：stalled 廷议不进颁布集合（判官/stub/校验/消费共用）。"""
+    return str(_dossier_payload_dict(dossier).get("deliberation_state") or "") == "stalled"
 
 
 def build_promulgation_judge_context(
@@ -571,6 +581,54 @@ def _rescript_decisions(
     return decisions
 
 
+def write_decree_with_agno(
+    llm_config: LLMConfig,
+    agno_db: SqliteDb,
+    state: GameState,
+    directives: List[sqlite3.Row],
+    db: Optional[GameDB] = None,
+) -> str:
+    if not directives:
+        raise LLMContractError("无草案不能拟诏。")
+    # 已办结密令的 result 作为实质证据清单注入——皇帝下旨拿人/定罪时可引为依据。
+    closed_evidence: List[Dict[str, object]] = []
+    if db is not None:
+        for o in db.list_secret_orders(status="done"):
+            if o.get("result"):
+                closed_evidence.append({
+                    "id": int(o["id"]), "title": o["title"],
+                    "assignee": o["minister_name"], "evidence": o["result"],
+                })
+    # #1769：跨月未成案 draft 在既有 directives 投影上标 admission_status（输入侧；
+    # 不新建通知；不另抽 helper）。
+    current_turn = int(state.turn)
+    directive_feed: List[Dict[str, object]] = []
+    for row in directives:
+        item: Dict[str, object] = {"text": str(row["text"] or "")}
+        if int(row["turn"]) < current_turn:
+            item["admission_status"] = "上月未入档"
+        directive_feed.append(item)
+    payload = {
+        "turn": {"year": state.year, "period": state.period, "turn": state.turn},
+        "directives": directive_feed,
+        "closed_secret_orders": closed_evidence,
+        "instruction": "合并成一份正式诏书正文。closed_secret_orders 是已办结密令查得的实证，"
+                       "若草案据某密令查办之事拿人定罪，可在诏书里引该实证为据，使罪名落到实处。",
+    }
+    try:
+        agent = create_decree_writer_agent(llm_config, agno_db)
+        run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        _dump_llm_messages(run_output, "拟诏", agent=agent)
+        text = extract_agent_text(run_output)
+    except LLMUnavailable:
+        raise
+    except Exception as error:
+        raise llm_unavailable_from_error(error, "拟诏") from error
+    if not text.strip():
+        raise LLMContractError("拟诏输出为空。")
+    return text.strip()
+
+
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     """Whether the month has durable work that must enter resolve_directives.
 
@@ -698,9 +756,9 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameS
     嵌套 atomic 内禁止 reload：depth>0 时 rollback 尚未发生（flat 语义，最外层才回滚），
     load_state 同连接会读到未提交脏写——把脏数据当真相刷进 state（cmr S5 r1 claude）。
     """
-    if getattr(db.conn, "_atomic_depth", 0) > 0:
+    if not db.owns_transaction():
         raise RuntimeError(
-            "reload_state_from_db 在 atomic 事务内禁止：回滚尚未发生，会把未提交脏写"
+            "reload_state_from_db 在外层事务内禁止：回滚尚未发生，会把未提交脏写"
             "当 DB 真相刷进内存。最外层 atomic 拥有者负责真回滚后再 reload。"
         )
     fresh = db.load_state()
@@ -716,7 +774,7 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameS
         from ming_sim.session import _sync_offices_from_db_impl
         # llm_config 必传（restore 各调用点同款）：缺省 None 会让 LLM 自创官职的
         # office_type 推断降级成「待铨」，reload 后内存又与 DB 分叉（cmr S5 r3 双家）。
-        _sync_offices_from_db_impl(content, db, getattr(db, "llm_config", None))
+        _sync_offices_from_db_impl(content, db, db.llm_config)
     return state
 
 
@@ -744,10 +802,11 @@ def atomic_and_reload(
 
     语义（逐处保真）：
     - body 包进 `with atomic(db)`，正常退出由 atomic 统一提交（嵌套时由最外层落定）。
-    - body 抛 BaseException 时：先（若有）调 on_error(exc)，再仅当 `_atomic_depth==0`（本层
-      即最外层、atomic 已真回滚）调 reload_state_from_db 把脏内存按 DB 刷净；嵌套（depth>0）
-      跳过 reload（回滚尚未发生，load_state 会读未提交脏写）。reload 自身再炸不顶替原异常，
-      链上抛 `raise exc from reload_exc`。最后原样 re-raise 原异常（fail-loud，ADR 0005）。
+    - body 抛 BaseException 时：先（若有）调 on_error(exc)，再仅当本层即最外层、
+      atomic 已真回滚（owns_transaction）时调 reload_state_from_db 把脏内存按 DB 刷净；
+      仍在外层事务内则跳过 reload（回滚尚未发生，load_state 会读未提交脏写）。
+      reload 自身再炸不顶替原异常，链上抛 `raise exc from reload_exc`。最后原样
+      re-raise 原异常（fail-loud，ADR 0005）。
 
     on_error 在 reload 之前触发（DB 行随回滚消失，
     内存缓冲须同步清场）。settle 的中断透传 / 错误包 / SettlementAbort 包装等**特殊** except
@@ -760,7 +819,7 @@ def atomic_and_reload(
     except BaseException as exc:
         if on_error is not None:
             on_error(exc)
-        if getattr(db.conn, "_atomic_depth", 0) == 0:
+        if db.owns_transaction():
             try:
                 reload_state_from_db(db, state, content=content)
             except BaseException as reload_exc:
@@ -871,7 +930,7 @@ def prepare_resolve_front_half(
             # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
             placeholder_payload = {
                 "transit_arrivals": list(transit_arrivals_box),
-                "open_affairs": db.affairs.input_brief(getattr(db, "textual_facts", None)),
+                "open_affairs": db.affairs.input_brief(db.textual_facts),
             }
             # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
             #（同 turn 占位重入时尤甚）。
@@ -1023,8 +1082,8 @@ def _collect_inline_rejections(
     一层 dict-of-list（issue_summary 的 new_issues/cancels 等）也要下探——new_issues
     正是实测最常被拒的段，跳过它聚合就失明（cmr S0 r1）。
     item_json 的取值（ship-pre r3/r4）：迁约 producer（S1-S3 已迁全部）在 wrapper 里
-    携原始 delta 项（'item' 键）→ 桥接解包存原件；仅未迁 legacy section
-    （office_changes/secret_order_* 等）无 'item' 键时才兜底存 wrapper 回显记录。
+    携原始 delta 项（'item' 键）→ 桥接解包存原件；仅未迁 section
+    （secret_order_* 等）无 'item' 键时才兜底存 wrapper 回显记录。
     """
     def _scan(section: str, items: list) -> None:
         for item in items:

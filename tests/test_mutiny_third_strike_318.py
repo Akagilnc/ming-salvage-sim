@@ -318,7 +318,7 @@ def test_transfer_to_ming_rejects_mutiny_count_ge_3(game):
 
 
 def test_transfer_to_ming_requires_d6_pay_source(game):
-    """DB adapter 事实契约：外军 mutiny<3 同条须合法 D6 饷源才可回明。"""
+    """DB adapter 事实契约：外军 mutiny<3 同条合法 D6→ming。"""
     db, state, _ = game
     _configure(db)
     db.conn.execute(
@@ -385,7 +385,7 @@ def test_hub_excluded_zero_manpower_latched_clears_once(game, identity):
         db, loyalty=10, arrears=0, latched=1,
         mutiny_count=2, mutiny_probation=3, manpower=0,
     )
-    # 豁免军双累加器/份额须为 0（cutover 守恒）；本测只钉清闩，不测发饷
+    # 豁免军双累加器/份额须为 0（hub 守恒）；本测只钉清闩，不测发饷
     db.conn.execute(
         """UPDATE armies SET is_tusi=?, self_funded_pay=?,
            pay_source_region='', province_pay_share=0, central_pay_share=0,

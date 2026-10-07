@@ -1,6 +1,6 @@
-"""#648（[#477 S1]）：人口单位「人」迁移＋流民第八阶级 seed。
+"""#648（[#477 S1]）：人口单位「人」＋流民第八阶级 seed。
 
-canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2：
+canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2（#1843 旧档万人双口径已退役）：
 - F1：extractor class 写面只收 satisfaction/leverage，population 更新面删除；
 - F2：机面 TSV 裸人 / 玩家面 LLM 输入投影「约N万口」（正向 prompt，零删改）；
 - F3：流民冻结 seed 表（陕西15万/河南5万/内地其余省0；#659 辽东/东江边镇切片0；
@@ -11,6 +11,8 @@ canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2：
 """
 
 from __future__ import annotations
+
+import pytest
 
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.issues import (
@@ -103,14 +105,6 @@ def test_new_save_regions_seed_persons_scale(game):
     assert row["population"] == BEIZHILI_POP_PERSONS
 
 
-def test_new_save_persistent_population_unit_marker(game):
-    """F4：新档 DB 落持久单位标「人」；判别只读存档 DB，不读 content 元信息。"""
-    db, _, _ = game
-    assert db.population_unit == POPULATION_UNIT_PERSONS
-    row = db.conn.execute(
-        "SELECT value FROM save_meta WHERE key='population_unit'"
-    ).fetchone()
-    assert row is not None and row["value"] == POPULATION_UNIT_PERSONS
 
 
 # ── 五项 mutation 验收矩阵（AC4+AC8 合并，逐项钉期望口径）──────────────

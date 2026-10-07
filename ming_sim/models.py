@@ -407,9 +407,9 @@ def is_vassal_prince(character: "Character") -> bool:
 
     **规则边界（玩家动作 vs 世界事件，cmr R7 拍）**：守的是「皇帝把宗室当朝堂命官来召见/任免/
     罢免/下密令」这类玩家动作面。**世界段叙事处置故意不守**——宗室可因世界事件
-    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），转译产生的 人物变更
-    罢黜/处置路应允许改宗藩状态；况且 dismiss/dead 不改
-    office_type，宗藩照旧不入任何 roster。勿在叙事处置路加宗藩闸（会掐掉合法 diegetic 事件）。
+    死/被俘/废为庶人（史实如福王 1641 被李自成所杀），转译产生的「人物变更」罢黜/处置路
+    （issues 人物变更落库）应允许改宗藩状态；况且 dismiss/dead 不改 office_type，宗藩照旧
+    不入任何 roster。勿在叙事处置路加宗藩闸（会掐掉合法 diegetic 事件）。
 
     容 None（防御，R3 gemini）：传 None 返 False，使本判据不比调用点的存在性检查更严。"""
     return character is not None and character.office_type == VASSAL_PRINCE_OFFICE_TYPE

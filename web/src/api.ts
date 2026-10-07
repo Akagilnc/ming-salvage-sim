@@ -30,9 +30,6 @@ export const normalizeApiError = (error: any, fallback: string): ApiErrorDetail 
       provider_message: detail.provider_message,
       status_code: detail.status_code,
       turn: Number.isFinite(turnNum) ? turnNum : undefined,
-      pending_action_failures: Array.isArray(detail.pending_action_failures)
-        ? detail.pending_action_failures
-        : undefined,
     };
   }
   return { message: String(detail || fallback) };

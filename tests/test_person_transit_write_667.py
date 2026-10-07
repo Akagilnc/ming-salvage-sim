@@ -168,9 +168,11 @@ def test_status_exit_clears_complete_transit_ledger(game, exit_path):
         assert appointed == "新任测试官"
         assert displaced == name
     else:
-        assert db._commit_office_action(
-            state, {"action": "罢免"}, {"name": name}, content,
-        ) == {name}
+        dossier_id = db.create_decree_dossier(
+            state, action_type="dismiss_assignment", decree_text="罢免", target_kind="character", target_id=name,
+            payload={"name": name, "_office_action": "罢免"},
+        )
+        db.apply_dossier_promulgation(state, dossier_id, "promulgated", content=content)
 
     row = db.conn.execute(
         "SELECT status, transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "

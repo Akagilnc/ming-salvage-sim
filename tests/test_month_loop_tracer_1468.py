@@ -154,9 +154,9 @@ def _get_state(client: TestClient) -> dict:
 
 def _pending_payload(client: TestClient) -> dict:
 
-    """#1842：待补投影唯一真源 = list_pending_translations → chat.translation_retries。"""
-    resp = client.get("/api/audience/chat")
-    _assert_not_bare_500(resp, step="GET /api/audience/chat")
+    """#1842/#1853：待补投影唯一真源 = list_pending_translations → scroll.translation_retries。"""
+    resp = client.get("/api/audience/scroll")
+    _assert_not_bare_500(resp, step="GET /api/audience/scroll")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     retries = list(body.get("translation_retries") or [])
@@ -224,10 +224,20 @@ def _post_issue_stream(
     )
 
 
-# ── 主 tracer：两整月（起点十一月 → 真跨年） ────────────────────────────
+def _resolve_decisions_via_stream(
+    client: TestClient, decisions: list, *, step: str,
+) -> None:
+    """亲裁续跑：按 {label,hint?} 契约提交，消费 resolve SSE 到 done。"""
+    choices = _choices_from_decisions(decisions)
+    resolve = client.post(
+        "/api/decree/resolve_decisions/stream",
+        json={"choices": choices},
+    )
+    _assert_not_bare_500(resolve, step=step)
+    assert resolve.status_code == 200, f"{step} → {resolve.status_code}: {resolve.text}"
+    assert "event: error" not in resolve.text, f"{step} error SSE: {resolve.text}"
+    assert "event: done" in resolve.text, f"{step} missing done: {resolve.text}"
 
-
-# ── #1353 fold-in：带欠账一次过月成功 + 死透失败单源 ─────────────────────
 
 
 def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:

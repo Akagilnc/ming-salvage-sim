@@ -3,7 +3,6 @@ import pytest
 from ming_sim.models import effect_dict_has_work
 import ming_sim.issues as I
 
-
 def _promulgated_commitment_origin(db, state) -> str:
     dossier_id = db.create_decree_dossier(
         state, action_type="policy", decree_text="测试辽饷承诺",
@@ -32,7 +31,6 @@ def _promulgated_commitment_origin(db, state) -> str:
 def test_effect_dict_has_work_ignores_empty_or_invalid_payloads(payload):
     assert effect_dict_has_work(payload) is False
 
-
 @pytest.mark.parametrize(
     "payload",
     [
@@ -52,7 +50,6 @@ def test_effect_dict_has_work_ignores_empty_or_invalid_payloads(payload):
 )
 def test_effect_dict_has_work_recognizes_schema_effects(payload):
     assert effect_dict_has_work(payload) is True
-
 
 def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
     db, state, _content = game
@@ -85,7 +82,6 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
     assert dict(log) == {"old_value": building["name"], "field": "remove"}
     assert result["closes"][0]["building_ops"][0]["removed"] is True
 
-
 def test_insert_issue_persists_commitment_deadline_columns(game):
     db, state, _ = game
 
@@ -108,7 +104,6 @@ def test_insert_issue_persists_commitment_deadline_columns(game):
         "commitment_kind": "until_stop",
     }
 
-
 def test_insert_issue_serializes_structured_stop_condition_as_json(game):
     db, state, _ = game
 
@@ -125,7 +120,6 @@ def test_insert_issue_serializes_structured_stop_condition_as_json(game):
         "SELECT stop_condition FROM issues WHERE id=?", (issue_id,)
     ).fetchone()
     assert row["stop_condition"] == '{"army.guanning.arrears":"<=0"}'
-
 
 def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     db, state, _ = game
@@ -154,7 +148,6 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     assert row["stop_condition"] == '{"army.guanning.arrears":"<=0"}'
     assert row["resolve_condition"] == ""
     assert row["commitment_kind"] == "until_stop"
-
 
 def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read_game):
     db, state, _ = read_game

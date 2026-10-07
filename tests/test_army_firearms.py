@@ -9,9 +9,7 @@ simulator 看得见、软性加权判战；引擎只 clamp、不算胜负。
 
 from __future__ import annotations
 
-
 from ming_sim.constants import ARMY_SCORE_FIELDS
-
 
 def _pay_source():
     return {
@@ -39,7 +37,6 @@ def test_new_army_defaults_zero_firearm(game):
     assert row["firearm_equipment"] == 0
     assert row["cannon_equipment"] == 0
 
-
 def test_apply_army_delta_sets_firearm(saved_game):
     db, state, _ = saved_game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
@@ -54,7 +51,6 @@ def test_apply_army_delta_sets_firearm(saved_game):
     assert row["firearm_equipment"] == 40
     assert row["cannon_equipment"] == 10
 
-
 def test_firearm_clamped_0_100(game):
     db, state, _ = game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()["id"]
@@ -64,7 +60,6 @@ def test_firearm_clamped_0_100(game):
         "SELECT firearm_equipment FROM armies WHERE id=?", (aid,)
     ).fetchone()[0]
     assert val == 100
-
 
 def test_cannon_clamped_to_12(game):
     """部队随军大炮 clamp 0-12。"""
@@ -76,7 +71,6 @@ def test_cannon_clamped_to_12(game):
         "SELECT cannon_equipment FROM armies WHERE id=?", (aid,)
     ).fetchone()[0]
     assert val == 12
-
 
 def test_create_army_with_firearm(game):
     db, state, _ = game
@@ -91,7 +85,6 @@ def test_create_army_with_firearm(game):
     assert row["firearm_equipment"] == 70
     assert row["cannon_equipment"] == 12
 
-
 def test_create_army_cannon_count_clamped(game):
     """建军时大炮门数超 12 上限也截到 12。"""
     db, state, _ = game
@@ -105,7 +98,6 @@ def test_create_army_cannon_count_clamped(game):
     ).fetchone()[0]
     assert val == 12
 
-
 def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):
     """新档 seed 必须贯通火器（非全 0）。"""
     from ming_sim.db import GameDB
@@ -116,7 +108,6 @@ def test_fresh_seed_wires_firearm_not_all_zero(content, tmp_path):
     assert rows
     assert any(int(r["firearm_equipment"]) > 0 for r in rows)
     db.conn.close()
-
 
 def test_create_army_cannon_nonint_rejected_not_crash(read_game):
     """建军 cannon_equipment 非 int → 逐项拒收，不崩不静默 0。"""
@@ -131,7 +122,6 @@ def test_create_army_cannon_nonint_rejected_not_crash(read_game):
     ).fetchone()[0] == 0
     rej = [c for c in created if c.get("rejected")]
     assert len(rej) == 1 and rej[0]["category"] == "invalid_enum"
-
 
 def test_apply_army_delta_chinese_keys(game):
     """extractor 中文词干 火器/随军大炮 也能落库。"""

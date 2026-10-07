@@ -23,6 +23,10 @@ def _pay_source():
     }
 
 
+# ── schema：列已物理删除 ──────────────────────────────────────────────
+
+
+
 # ── 建军：manpower 唯一必填，维护费不再是字段 ──────────────────────────
 
 def test_new_army_maintenance_key_ignored(game):

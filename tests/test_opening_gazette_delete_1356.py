@@ -24,7 +24,6 @@ def test_new_game_t0_previous_summary_strictly_empty(game):
     summary = db.previous_turn_summary(state)
     assert summary == ""
 
-
 def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
     """r5：t0 无上月报 → previous_reign_period_label 与空 summary 同口径（禁九月残留）。"""
     db, state, _content = game

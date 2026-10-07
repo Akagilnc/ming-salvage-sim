@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from typing import Any, Mapping
+
 DOSSIER_ACTION_TYPES = frozenset({
     "policy", "appointment", "acting_appointment",
     "assignment", "military_order",
@@ -23,12 +27,85 @@ DOSSIER_ACTION_TYPES = frozenset({
 DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
 
 # #1778 决定 2（owner「1」）：批红可路由七类闭集整体取消——票拟/中旨 action_type
+# 值域＝库级全集 DOSSIER_ACTION_TYPES（机器必须懂的形状检查仍在，ADR 0040）。
+# 本集只钉「原七类 → 落库类型」的映射终点：罢免在 choice 上仍用 appointment +
+# appoint_action=罢免，emitted 为 dismiss_assignment（#657 §C C.1）。
+RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES = frozenset({
+    "assignment", "military_order", "grant_allocation", "appointment",
+    "dismiss_assignment",  # 罢免支
+    "punishment", "authorization", "pacification",
+})
+assert RESCRIPT_EMITTED_DOSSIER_ACTION_TYPES <= DOSSIER_ACTION_TYPES
+
+# C.4 capability 派生闭集（全键 · 仅此表）。缺键按协议默认（""/0）参与派生。
+_DRAFT_CAPABILITY_KEYS: tuple[tuple[str, Any], ...] = (
+    ("action_type", ""),
+    ("label", ""),
+    ("hint", ""),
+    ("assignee_name", ""),
+    ("name", ""),
+    ("target_kind", ""),
+    ("target_id", ""),
+    ("transaction_category", ""),
+    ("locality_scope", ""),
+    ("region_id", ""),
+    ("title", ""),
+    ("commitment_kind", ""),
+    ("stop_condition", ""),
+    ("end_turn", 0),
+    ("deadline_months", 0),
+    ("station", ""),
+    ("due_turn", 0),
+    ("office", ""),
+    ("grant_action", ""),
+    ("account", ""),
+    ("purpose", ""),
+    ("amount", 0),
+    ("cadence", ""),
+    ("execution_surface", ""),
+    ("appoint_action", ""),
+    ("appointment_tenure", ""),
+    ("punish_action", ""),
+    ("privilege", ""),
+    ("summon_target", ""),
+)
 
 # #1778 决定 3：参与名单（ADR 0053 三档、主办可多人）是票拟的结构化载荷键——
 # 由拟票大臣写进 option，随落桌呈皇帝，成案时钉进案卷。形状真源＝
 # GameDB._normalize_participant_roster；此处只登记键名与 capability 派生方式。
 PARTICIPANT_ROSTER_KEY = "participant_roster"
 
+# C.4 capability 结构化键（非 str/int）：按 canonical JSON 参与派生，
+# 换人/换档同样变键（与上表同一闭集，禁另开第二份 capability 真源）。
+_DRAFT_CAPABILITY_JSON_KEYS: tuple[tuple[str, Any], ...] = (
+    (PARTICIPANT_ROSTER_KEY, []),
+)
+
+
+def derive_draft_capability(fields: Mapping[str, Any] | None) -> str:
+    """#657 C.4：闭集键 canonical JSON + sha256 截断。同字段⇒同键；任一有效差变键。"""
+    src = fields or {}
+    canonical: dict[str, Any] = {}
+    for key, default in _DRAFT_CAPABILITY_JSON_KEYS:
+        raw = src.get(key, default)
+        canonical[key] = json.dumps(
+            default if raw is None else raw,
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
+        )
+    for key, default in _DRAFT_CAPABILITY_KEYS:
+        raw = src.get(key, default)
+        if isinstance(default, int):
+            if isinstance(raw, bool) or raw is None or raw == "":
+                canonical[key] = 0
+            else:
+                try:
+                    canonical[key] = int(raw)
+                except (TypeError, ValueError):
+                    canonical[key] = 0
+        else:
+            canonical[key] = "" if raw is None else str(raw)
+    blob = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
 
 
 # Ming #654 / owner A：旨意 target_kind 唯一八值真源（含结构目标 dossier）。
@@ -134,6 +211,17 @@ DOSSIER_OUTCOME_CN = {
     "transformed": "变形",
 }
 
+# 奏报轨终值旁路：定性 band 与承办人假象，不回填判官真值。
+_TERMINAL_REPORT_FACADE_BAND = {
+    "transformed": "已竣",
+    "degraded": "将结",
+}
+_TERMINAL_REPORT_FACADE_MEMORIAL = {
+    "transformed": "所委各节均已依限办结，并无违误。",
+    "degraded": "所委已有成数，余事容再陈。",
+}
+
+
 def format_public_progress_disclosure(progress_rows: object) -> str:
     """公开披露面：progress_band + memorial_text 的 join 渲染（#622 AC6 面2 单源）。"""
     return "\n".join(
@@ -141,6 +229,34 @@ def format_public_progress_disclosure(progress_rows: object) -> str:
         for item in (progress_rows or [])
     )
 
+
+def terminal_report_facade(
+    outcome: object,
+    *,
+    prior_reports: object = None,
+) -> tuple[str, str]:
+    """终值奏报行的（progress_band, memorial_text）假象面。
+
+    变形案必须载承办人假象（奏报说兑现），不得回填判官真值；
+    progress_band 一律定性中文。
+    """
+    key = str(outcome or "").strip()
+    band = _TERMINAL_REPORT_FACADE_BAND.get(key, "办结")
+    memorial = _TERMINAL_REPORT_FACADE_MEMORIAL.get(
+        key, "所委诸事已有回奏。",
+    )
+    # 变形：优先复用末次非终值月报陈词作假象载体（仍须成功口径）。
+    if key == "transformed" and prior_reports:
+        for item in reversed(list(prior_reports)):
+            if not isinstance(item, dict):
+                continue
+            if item.get("is_terminal"):
+                continue
+            text = str(item.get("memorial_text") or "")
+            if text.strip():
+                memorial = text
+                break
+    return band, memorial
 
 def qualitative_dossier_status(value: object) -> str:
     key = str(value or "").strip()
@@ -234,7 +350,7 @@ def render_referenceable_dossier_brief(candidates) -> str:
             continue
         title = str(
             row.get("secret_title") or row.get("decree_text") or row.get("action_type") or ""
-        )
+        ).strip()
         status_cn = qualitative_dossier_status(row.get("status"))
         decision_cn = qualitative_promulgation_slot(row)
         outcome_cn = qualitative_dossier_outcome(

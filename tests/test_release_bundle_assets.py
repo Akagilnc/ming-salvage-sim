@@ -1,11 +1,11 @@
-"""发行包资产：portrait 扫 dist 回退 + spec 装配结果（不重复打 public）。
+"""发行包资产：portrait 扫 dist 回退。
 
-#1185：不变式落在 spec 真实执行出的 datas 结构化装配结果上，不扫源码写法。
-#1721：requirements.txt 须装入 bundled root（frozen ROOT_DIR），否则新开局先抛 FileNotFoundError。
+#1721：bundled root 下 portraits 路径须可被 next_pool_portrait_id 读到。
 """
 
 from pathlib import Path
 import sqlite3
+
 
 from ming_sim import paths
 from ming_sim.db import GameDB

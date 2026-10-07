@@ -51,7 +51,7 @@ def test_resolve_changes_character_status(game):
     name = active_ming_character(db, content)
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
     I._apply_issue_entities(db, state, {
-        "人物变更": [{"动作": "处置", "name": name, "status": "exiled", "reason": "国策清算"}],
+        "人物变更": [{"name": name, "动作": "处置", "status": "exiled", "reason": "国策清算"}],
     }, "局势#测试结案")
     assert db.get_character_status(name)[0] == "exiled"
     assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 1
@@ -68,7 +68,8 @@ def test_resolve_changes_character_status(game):
     }
 
 
-def test_issue_status_change_uses_person_transition_matrix(game):
+def test_issue_entities_rejects_dead_to_dismissed_transition(game):
+    """结案入口：亡故人物不可再迁往 dismissed（转移矩阵非法迁移 → ValueError）。"""
     db, state, content = game
     name = active_ming_character(db, content)
     db.set_character_status(state, name, "dead", "前置死亡")
@@ -80,7 +81,7 @@ def test_issue_status_change_uses_person_transition_matrix(game):
             state,
             {
                 "人物变更": [
-                    {"动作": "处置", "name": name, "status": "dismissed", "reason": "误写罢黜"}
+                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "亡故后再罢黜"}
                 ]
             },
             "局势#测试结案",
@@ -91,7 +92,8 @@ def test_issue_status_change_uses_person_transition_matrix(game):
     assert content.characters[name].status == "dead"
 
 
-def test_issue_status_change_allows_imprisoned_to_dead(game):
+def test_issue_entities_allows_imprisoned_to_dead_disposal(game):
+    """结案入口：在押→赐死为合法处置，须真落库。"""
     db, state, content = game
     name = active_ming_character(db, content)
     ch = content.characters[name]
@@ -110,7 +112,7 @@ def test_issue_status_change_allows_imprisoned_to_dead(game):
             state,
             {
                 "人物变更": [
-                    {"动作": "处置", "name": name, "status": "dead", "reason": "结案赐死"}
+                    {"name": name, "动作": "处置", "status": "dead", "reason": "结案赐死"}
                 ]
             },
             "局势#测试结案",
@@ -145,7 +147,7 @@ def test_resolve_character_status_syncs_content_travel_state(game):
             state,
             {
                 "人物变更": [
-                    {"动作": "处置", "name": name, "status": "dismissed", "reason": "局势失败问责"}
+                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "局势失败问责"}
                 ]
             },
             "局势#测试结案",
@@ -282,7 +284,7 @@ def test_unknown_character_raises(read_game):
     db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
-            "人物变更": [{"动作": "处置", "name": "查无此人张三", "status": "dead"}],
+            "人物变更": [{"name": "查无此人张三", "动作": "处置", "status": "dead"}],
         }, "局势#测试")
 
 
@@ -291,7 +293,7 @@ def test_bad_status_raises(read_game):
     name = active_ming_character(db, content)
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
-            "人物变更": [{"动作": "处置", "name": name, "status": "升仙"}],
+            "人物变更": [{"name": name, "动作": "处置", "status": "升仙"}],
         }, "局势#测试")
 
 
@@ -390,7 +392,7 @@ def test_army_delta_unknown_army_raises(read_game):
 
 
 def test_non_dict_person_change_item_raises(read_game):
-    """人物变更 含非 dict 项 → 抛错，不静默丢（全局严格，CMR F7）。"""
+    """人物变更 含非 dict 项 → 抛错，不静默丢（docstring 称全局严格，CMR F7）。"""
     db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
@@ -559,7 +561,7 @@ def test_inertia_natural_fail_applies_entities(game):
     db.insert_issue(
         state, kind="situation", title="自然失败人物测试",
         bar_value=1, inertia=-1,
-        effect_on_fail={"人物变更": [{"动作": "处置", "name": name, "status": "dismissed", "reason": "局势失控问责"}]},
+        effect_on_fail={"人物变更": [{"name": name, "动作": "处置", "status": "dismissed", "reason": "局势失控问责"}]},
     )
     apply_situation_monthly_drift(db, state)   # inertia -1 把 bar 1→0 → failed
     assert db.get_character_status(name)[0] == "dismissed"

@@ -95,7 +95,7 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
             try:
                 _os.remove(_os.path.join(saves_dir, stale))
             except OSError:
-                pass
+                logger.exception("prune_auto_saves failed removing %s", stale)
 
 
 # TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；
@@ -142,13 +142,6 @@ class ChatTurnResult:
     refresh_ministers: List[str] = field(default_factory=list)
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
-    pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
-    # #502 AC5：多道并存时口头准驳含糊 → 结构化含糊态（含候选集），驱动大臣当场追问哪一道。
-    directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
-    # Typed decree validation recovery (failed_fields + LLM report); sync/retry must project it.
-    decree_validation_failure: Optional[Dict[str, Any]] = None
-    # #1765：密令落不了库 → 大臣揣摩/追问（landing_gaps + report）；与拟旨 recovery 同投影缝。
-    secret_order_landing_recovery: Optional[Dict[str, Any]] = None
     # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
     # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
     pending_audience_translation: Optional[Dict[str, Any]] = None
@@ -361,19 +354,16 @@ def _appointment_intent_is_current_office_noop(
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
     归一到在册原始名，再查当前 office。"""
-    conn = getattr(db, "conn", None)
+    # #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
-    if conn is None or not clean_name or not desired:
+    if not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?",
-            (canonical,),
-        ).fetchone()
-    except sqlite3.Error:
-        return False
+    row = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name = ?",
+        (canonical,),
+    ).fetchone()
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -906,7 +896,7 @@ class GameSession:
 
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
-        """#526：同步识别现役收夜控制命令。纯封闭集匹配，无 Future/宽降级。"""
+        """同步识别显式退朝口令。纯封闭集匹配，无 Future/宽降级。"""
         from ming_sim.audience_night import (
             normalize_audience_command_verdict,
             recognize_audience_command,
@@ -1064,8 +1054,11 @@ class GameSession:
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
 
+        # 显式退朝口令：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收。
+        # 留侍／含糊收夜词表已退役——走普通场景演绎与转译。
+        audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
-        if self._recognize_audience_command_verdict(message_text) == CMD_CLOSE_NIGHT:
+        if audience_command_verdict == CMD_CLOSE_NIGHT:
             ctid = int(chat_turn_id or 0)
             # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
             # ctid==0 的当场收夜分支随同步转译一并删除。
@@ -1116,14 +1109,12 @@ class GameSession:
                     )
                     xuan_ctid = int(chat_turn_id or 0)
                     if xuan_ctid > 0:
+                        owns = connection_owns_transaction(self.db.conn)
                         self.db.conn.execute(
                             "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
                             (target.name, xuan_ctid),
                         )
-                        if (
-                            not bool(getattr(self.db.conn, "_commit_suspended", False))
-                            and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
-                        ):
+                        if owns:
                             self.db.conn.commit()
                     if on_protagonist_changed is not None:
                         on_protagonist_changed()
@@ -1827,8 +1818,16 @@ class GameSession:
         return result
 
     def pending_decisions(self) -> List[Dict[str, object]]:
-        """玩家案头：本月 decision（含 0055 案卷三选）。"""
-        return list(self.db.list_rescript_desk(int(self.state.turn)))
+        """玩家案头：急务 ∪ 本月 decision。已应用改票锚不是新待裁。
+
+        原始行仍在 list_rescript_desk，供同 body 重交核对。
+        """
+        from ming_sim.rescript_actions import row_is_applied_return_revise
+
+        return [
+            row for row in self.db.list_rescript_desk(int(self.state.turn))
+            if not row_is_applied_return_revise(row)
+        ]
 
     def _assert_awaiting_decision_submit(self) -> None:
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
@@ -1836,13 +1835,39 @@ class GameSession:
 
     def prepare_rescript_prewrite(
         self, choices: List[Dict[str, object]],
-    ):
-        """批红 PREWRITE（gate 外）：validate_all；失败零写。返回 ValidatedBatch。"""
+    ) -> Dict[str, object]:
+        """#657 PREWRITE（gate 外）：validate_all + run_prewrite_llms；失败零写。"""
         from ming_sim import rescript_actions as ra
+        from ming_sim.agents import (
+            create_rescript_deliberate_agent,
+            create_rescript_revise_agent,
+        )
+        from ming_sim.rescript_draft import (
+            _assert_army_targets_grounded,
+            _parse_rescript_json_strict,
+            normalize_rescript_layer_a_option,
+        )
 
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
+        ctx = self.db.get_resolve_context(self.state.turn)
+        # #389 / #1900 J20：只采信本回合候选快照内的显式 event_id（及合法 dossier:）；
+        # 标题不补绑。迁自旧 submit_decisions 的绑定步；scope 同旧
+        # list_pending_decisions 只收 kind='decision'，rescript_draft 行不动。
+        if ctx is not None:
+            from ming_sim.settlement_payload import bind_decisions_to_candidate_events
+            decision_rows = [r for r in desk if str(r.get("kind") or "") == "decision"]
+            other_rows = [r for r in desk if str(r.get("kind") or "") != "decision"]
+            desk = other_rows + bind_decisions_to_candidate_events(
+                decision_rows, ctx.get("simulator_payload"),
+            )
+        # #1589：位置补键/猜绑协议已删——choice 须显式携带 decision_key；
+        # 缺键/重复键/desk 外键/非 object 项由 validate_request_keys（内存）
+        # 在领域写前整批拒，此处不再静默丢非 object 项。
         req = list(choices)
+        # C1.1：① 已落 decided、③ phase2 崩溃重入——
+        # list_rescript_desk 只 pending，须把请求键对应 decided 行并入 desk
+        # 供 validate already_applied；已落选择不再二次写。
         desk_keys = {str(r.get("decision_key") or "") for r in desk}
         missing_keys = [
             str(c.get("decision_key") or "").strip()
@@ -1853,27 +1878,245 @@ class GameSession:
         ]
         if missing_keys:
             desk.extend(self.db.get_rescript_desk_rows_by_keys(missing_keys))
-        return ra.validate_all(desk, req)
+        def _rescript_can_summon(name: str):
+            """validate_all 唯一资格出口：str→Character→can_summon；成功回 canonical。"""
+            raw = str(name or "").strip()
+            if not raw:
+                return False, "summon_target 为空"
+            canon = _find_existing_minister(self.content, raw, self.db)
+            character = None
+            if canon and canon in self.content.characters:
+                character = self.content.characters[canon]
+            elif raw in self.content.characters:
+                character = self.content.characters[raw]
+                canon = raw
+            else:
+                for key, ch in self.content.characters.items():
+                    if raw in (getattr(ch, "aliases", None) or []):
+                        character = ch
+                        canon = key
+                        break
+            if character is None:
+                return False, f"人物未建档，无法召见：{raw}"
+            ok, reason = self.can_summon(character)
+            if not ok:
+                return False, reason or f"不可召见：{raw}"
+            return True, str(canon or character.name)
 
-    def commit_rescript_phase1(self, batch) -> None:
-        """① 短写（调用方已持 write_gate）：C1 apply。"""
-        from ming_sim import rescript_actions as ra
-
-        ra.apply_rescript_batch(
-            self.db, self.state, batch, content=self.content,
+        batch = ra.validate_all(
+            desk, req, default_hold_missing=True, can_summon=_rescript_can_summon,
         )
 
-    def finish_rescript_phase2(self, *, cheat_directive: str = "") -> str:
-        """③ 短写（调用方已持 write_gate）：phase2。"""
+        def _revise_runner(item: ra.ValidatedItem) -> List[Dict[str, object]]:
+            # 单行改票：专用 agent + 唯一 {"options":[...]} shape；禁 monthly items[] / drafts[0]
+            agent = create_rescript_revise_agent(self.llm_config, self.agno_db)
+            army_targets = [
+                dict(row) for row in self.db.conn.execute(
+                    "SELECT id, name, station FROM armies WHERE owner_power='ming' ORDER BY name"
+                )
+            ]
+            payload = {
+                "mode": "single_row_revise",
+                "title": item.row.get("title"),
+                "context": item.row.get("context"),
+                "prior_options": item.row.get("options"),
+                "note": item.choice.get("note") or "",
+                "army_targets": army_targets,
+            }
+            from ming_sim.agents import run_agent_text
+            raw = run_agent_text(
+                agent, json.dumps(payload, ensure_ascii=False), tag="rescript-revise",
+            )
+            data = _parse_rescript_json_strict(raw)
+            if not isinstance(data, dict) or "items" in data:
+                raise ValueError("改票 LLM 须输出 {\"options\":[...]}，禁 monthly items[]")
+            options_raw = data.get("options")
+            if not isinstance(options_raw, list) or not options_raw:
+                raise ValueError("改票 LLM 未产出非空 options")
+            options = [
+                normalize_rescript_layer_a_option(opt, generation_admission=True)
+                for opt in options_raw
+            ]
+            _assert_army_targets_grounded(
+                [{"options": options}], {str(row["id"]) for row in army_targets},
+            )
+            return options
+
+        def _deliberate_runner(item: ra.ValidatedItem) -> Dict[str, object]:
+            # #658：站台意愿 + typed supporter_ids；读关系账/派系态势切片，禁第二 roster
+            from ming_sim.agents import run_agent_text
+            from ming_sim.relation_read import project_relation_ledger
+            candidates = ra.list_deliberation_candidate_ids(self.db, self.content)
+            relation_slice = project_relation_ledger(self.db, viewer=None)
+            # 仅保留候选相关边，避免整账灌入
+            cand_set = set(candidates)
+            relation_slice = [
+                row for row in relation_slice
+                if str(row.get("source") or "") in cand_set
+                or str(row.get("target") or "") in cand_set
+            ]
+            # #658：派系态势只保留候选人物 canonical faction 相关行，不灌全表
+            characters = getattr(self.content, "characters", {}) or {}
+            cand_factions = {
+                str(getattr(characters.get(name), "faction", "") or "").strip()
+                for name in candidates
+            }
+            cand_factions.discard("")
+            faction_rows = [
+                row for row in self.db.get_faction_stance_summaries()
+                if str(row.get("faction") or "") in cand_factions
+            ]
+            agent = create_rescript_deliberate_agent(self.llm_config, self.agno_db)
+            prompt = (
+                "请为以下急务拟定下部议/廷议站台（JSON："
+                "{\"title\":\"...\",\"body\":\"...\",\"stance\":\"...\","
+                "\"supporter_ids\":[\"...\"]}）。\n"
+                f"标题：{item.row.get('title')}\n语境：{item.row.get('context')}\n"
+                f"批语：{item.choice.get('note') or ''}\n"
+                f"候选大臣（只可从中选 supporter_ids，可空）：{json.dumps(candidates, ensure_ascii=False)}\n"
+                f"关系账切片：{json.dumps(relation_slice, ensure_ascii=False)}\n"
+                f"派系态势：{json.dumps(faction_rows, ensure_ascii=False)}"
+            )
+            raw = run_agent_text(agent, prompt, tag="rescript-deliberate")
+            obj = _parse_rescript_json_strict(str(raw or ""))
+            if not isinstance(obj, dict):
+                raise ValueError("deliberate LLM 意愿须为 object")
+            title = str(obj.get("title") or "").strip()
+            body = str(obj.get("body") or "").strip()
+            stance = str(obj.get("stance") or "").strip()
+            if not (title and body and stance):
+                raise ValueError("deliberate LLM 意愿缺 title/body/stance")
+            # shape 初检；身份合法性在 apply 事务内再核（整批零写）
+            supporters = obj.get("supporter_ids", [])
+            if supporters is None:
+                supporters = []
+            if not isinstance(supporters, list):
+                raise ValueError("deliberate supporter_ids 须为数组")
+            return {
+                "title": title, "body": body, "stance": stance,
+                "supporter_ids": supporters,
+            }
+
+        prewrite = ra.run_prewrite_llms(
+            batch,
+            revise_runner=_revise_runner if any(i.needs_revise_llm for i in batch.items) else None,
+            deliberate_runner=_deliberate_runner if any(i.needs_deliberate_llm for i in batch.items) else None,
+        )
+        return {
+            "batch": batch,
+            "prewrite": prewrite,
+            "desk": desk,
+            "choices": req,
+        }
+
+    def commit_rescript_phase1(self, prewrite_state: Dict[str, object]) -> Dict[str, object]:
+        """#657 ① 短写（调用方已持 write_gate）：C1 apply + 召见入殿事实账。
+
+        #1838 reopen：召见只落入殿账，不建旁白对话轮、不 start scene。
+        """
+        from ming_sim import rescript_actions as ra
+        from ming_sim.audience_night import (
+            prepare_rescript_summon_scaffold,
+            rescript_summon_origin_ref,
+        )
+
+        batch: ra.ValidatedBatch = prewrite_state["batch"]  # type: ignore[assignment]
+        prewrite: ra.PrewriteResults = prewrite_state["prewrite"]  # type: ignore[assignment]
+        apply = ra.apply_rescript_batch(
+            self.db, self.state, batch, prewrite, content=self.content,
+        )
+
+        summons: List[Dict[str, object]] = []
+        for key in apply.summon_keys:
+            item = next((i for i in batch.items if i.decision_key == key), None)
+            if item is None:
+                continue
+            target = str(item.choice.get("summon_target") or "").strip()
+            origin = rescript_summon_origin_ref(
+                item.source_turn, item.idx, int(item.row.get("revision_round") or 0),
+            )
+            entry = prepare_rescript_summon_scaffold(
+                self.db, self.state,
+                person_name=target,
+                origin_ref=origin,
+            )
+            summons.append({
+                "decision_key": key,
+                "origin_ref": origin,
+                "target": target,
+                **entry,
+            })
+        return {
+            "apply": apply,
+            "summons": summons,
+            "revise_keys": list(apply.revise_keys),
+            "batch": batch,
+        }
+
+    def join_rescript_summons(
+        self, phase1_state: Dict[str, object],
+    ) -> Dict[str, object]:
+        """#1838 reopen：召见无旁白 Future 可等；原样透传 phase1 summons。"""
+        if phase1_state.get("ready_replay"):
+            return {"joined": [], "ready_replay": True}
+        return {"joined": list(phase1_state.get("summons") or []), "ready_replay": False}
+
+
+    def finish_rescript_phase2(
+        self,
+        phase1_state: Dict[str, object],
+        join_state: Dict[str, object],
+        *,
+        cheat_directive: str = "",
+    ) -> str:
+        """#657 ③ 短写（调用方已持 write_gate）：召见消费门闩 + phase2。
+
+        #1838 reopen：已消费 ≔ origin_ref + TAG_ENTER；不再读取旁白正文。
+        """
+        if not phase1_state.get("ready_replay"):
+            from ming_sim.audience_night import rescript_summon_origin_consumed
+            unconsumed: List[str] = []
+            seen_origins: set[str] = set()
+            for item in join_state.get("joined") or []:
+                origin = str(item.get("origin_ref") or "")
+                if origin:
+                    seen_origins.add(origin)
+                row = self.db.conn.execute(
+                    "SELECT tags FROM story_ledger_entries WHERE origin_ref = ?",
+                    (origin,),
+                ).fetchone()
+                entry = {"tags": str(row["tags"] or "[]")} if row is not None else None
+                if not rescript_summon_origin_consumed(entry):
+                    unconsumed.append(
+                        f"{item.get('decision_key')}:{item.get('target') or ''}:{origin}"
+                    )
+            for fact in self._iter_unconsumed_decided_summons():
+                origin = str(fact.get("origin_ref") or "")
+                if origin in seen_origins:
+                    continue
+                unconsumed.append(
+                    f"{fact.get('decision_key')}:{fact.get('target') or ''}:{origin}"
+                )
+            if unconsumed:
+                raise ValueError(
+                    "召见尚未消费，不得推进 phase2：" + "; ".join(unconsumed)
+                )
+
         if not (self.last_decree or "").strip():
             ctx0 = self.db.get_resolve_context(self.state.turn)
             if ctx0 is not None:
                 self.last_decree = str(ctx0.get("decree_text") or "")
 
+        before_turn = int(self.state.turn)
         report = resolve_decisions_phase2(
             self.state, self.db, self.agno_db, self.llm_config,
             content=self.content,
             cheat_directive=cheat_directive,
+        )
+        self.state.turn_phase = (
+            TurnPhase.ISSUED.value
+            if int(self.state.turn) != before_turn or self.state.ended
+            else TurnPhase.SETTLING.value
         )
         self.db.save_state(self.state)
         return report
@@ -1885,14 +2128,21 @@ class GameSession:
         write_gate: Any,
         cheat_directive: str = "",
     ) -> str:
-        """keyed 批红唯一编排出口：PRE 锁外 → 持 gate apply → 再持 gate phase2。"""
+        """#657 急务/keyed 唯一编排出口。
+
+        PRE 锁外 → ① 持 write_gate → ② 无锁 join → ③ 再持同一 write_gate。
+        调用方只注入既有 write_gate；禁平行复制本配方。
+        """
         if write_gate is None:
             raise ValueError("resolve_rescript_decisions 须注入既有 write_gate")
-        batch = self.prepare_rescript_prewrite(choices)
+        pre = self.prepare_rescript_prewrite(choices)
         with write_gate:
-            self.commit_rescript_phase1(batch)
+            p1 = self.commit_rescript_phase1(pre)
+        joined = self.join_rescript_summons(p1)
         with write_gate:
-            return self.finish_rescript_phase2(cheat_directive=cheat_directive)
+            return self.finish_rescript_phase2(
+                p1, joined, cheat_directive=cheat_directive,
+            )
 
     def submit_hitl_choices(
         self,
@@ -1967,7 +2217,7 @@ class GameSession:
     def auto_save(self, tag: str) -> Optional[str]:
         """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。
         文件名 auto_<campaign_id>_<year>_<period>_<turn>_<tag>.db；prune 只动同 campaign 的自动档，
-        不碰用户手动存档。失败静默（自动存档不应阻断游戏）。"""
+        不碰用户手动存档。失败非致命（不阻断月链），但必须留异常真因（ADR 0005）。"""
         try:
             import os as _os
             saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
@@ -1985,6 +2235,7 @@ class GameSession:
             prune_auto_saves(saves_dir, campaign_id)
             return target
         except Exception:
+            logger.exception("auto_save failed tag=%s", tag)
             return None
 
     def close(self, *, write_gate_already_held: bool = False) -> None:
