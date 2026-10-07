@@ -353,10 +353,11 @@ def _payload_owned_person_duplicate(
 
 
 def _issue_condition_text(raw: object) -> str:
+    """验空与原样搬运分离：空白记空串，已有字句（含首尾空白）原样保留。"""
     if raw is None:
         return ""
     if isinstance(raw, str):
-        return raw.strip()
+        return raw if raw.strip() else ""
     if isinstance(raw, (dict, list)):
         return json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
     return str(raw)
@@ -4980,11 +4981,10 @@ def apply_issue_tracker_output(
             ) > 0
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
-        legacy_resolve_text = _issue_condition_text(ni.get("resolve_condition"))
-        if not legacy_resolve_text and isinstance(stop_condition_raw, str):
-            legacy_resolve_text = stop_condition
         legacy_resolve_commitment_shape = (
-            commitment_condition_role(legacy_resolve_text).get("condition_role")
+            commitment_condition_role(
+                _issue_condition_text(ni.get("resolve_condition"))
+            ).get("condition_role")
             == "commitment_stop_condition"
         )
         commitment_shape_without_marker = (
@@ -5127,8 +5127,6 @@ def apply_issue_tracker_output(
             })
             continue
         resolve_condition = _issue_condition_text(ni.get("resolve_condition"))
-        if not resolve_condition and isinstance(ni.get("stop_condition"), str):
-            resolve_condition = stop_condition
         # A structured roster is an item-level contract.  In particular a
         # mapping is not an iterable roster: iterating it would persist its
         # keys (\"character_id\", \"tier\") as phantom participants.

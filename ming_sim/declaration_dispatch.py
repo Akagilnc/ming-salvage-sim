@@ -940,12 +940,6 @@ def _commission_grant_payload(
     from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 
     grant_action = str(grant.get("grant_action") or grant.get("action") or "").strip()
-    # 兼容 C0 旧形：未写 grant_action 但给了协饷五字段 → 视作协饷。
-    if not grant_action:
-        if any(grant.get(k) not in (None, "") for k in (
-            "amount", "account", "purpose", "target_kind", "target_id",
-        )):
-            grant_action = "协饷"
     if grant_action not in (GRANT_ACTIONS - {"无"}):
         raise DecreeMaterializationValidationError(
             f"拨帑 grant_action 非法或缺失：{grant_action!r}",
