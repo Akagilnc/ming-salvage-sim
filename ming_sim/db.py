@@ -9837,7 +9837,7 @@ class GameDB:
                 due_turn = int(current_turn) + deadline
             station = str(normalized.get("station") or "")  # Free prose place name F21
             has_deadline_intent = due_turn > 0 or deadline > 0
-            requires_due = not station  # 限期出战：无调驻面，due 为限期载体
+            requires_due = not station.strip()  # 判空用副本；原串照存
             if due_turn > int(current_turn or 0):
                 normalized["due_turn"] = due_turn
                 normalized.pop("deadline_months", None)
@@ -11076,8 +11076,6 @@ class GameDB:
             if not fork_state["fork"]:
                 continue
             case_summary = str(row["decree_text"] or "")  # Free prose F21
-            if len(case_summary) > 48:
-                case_summary = str(case_summary or "")
             # 物理事实：奏报面 / 执行格 / 旨外——直接复用 fork 读端（类型已保证）
             forked_dossiers.append({
                 "dossier_id": dossier_id,
@@ -14160,8 +14158,9 @@ class GameDB:
         时只改人读字段，region 保持原值（禁止从 station 文本反推）。
         """
         dest = str(station or "")  # Free prose place name F21
+        dest_present = bool(dest.strip())
         dest_region = str(station_region or "").strip()
-        if not dest and not dest_region:
+        if not dest_present and not dest_region:
             return
         if not army_id:
             raise ValueError("军令调驻缺少军队 target")
@@ -14178,7 +14177,7 @@ class GameDB:
             urgency=0, severity=0, credibility=100, interests=[], audiences=[],
         )
         delta: Dict[str, object] = {"reason": str(reason or "")}
-        if dest:
+        if dest_present:
             delta["station"] = dest
         if dest_region:
             delta["station_region"] = dest_region
@@ -14552,7 +14551,7 @@ class GameDB:
         真缺锚时 title 为空串——caller 复用既有 execution failed 接缝，保留案卷与正文。
         """
         title = str(payload.get("title") or "")  # Free prose F21
-        if not title:
+        if not title.strip():
             title = str(payload.get("target_id") or "").strip()
         body = str(payload.get("text") or row.get("decree_text") or "")  # Free prose F21
         return title, body

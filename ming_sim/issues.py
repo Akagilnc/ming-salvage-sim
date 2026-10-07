@@ -2768,8 +2768,6 @@ def _pending_person_changes_block_event_gate(
                     continue
             if status not in PERSON_STATUSES:
                 continue
-            if item.get("legacy_gate") and cur_status != "active":
-                continue
             transition = resolve_person_transition(
                 cur_status,
                 action,
@@ -3179,9 +3177,6 @@ def _apply_issue_entities(
                 # 全局严格（不静默）：非 dict 项直接抛错，不无声丢（CMR F7）。
                 raise ValueError(f"{label} character_status_changes 含非法非 dict 项：{it!r}")
         status_person_changes = normalize_person_changes({"character_status_changes": csc})
-        for item in status_person_changes:
-            if isinstance(item, dict):
-                item.pop("legacy_gate", None)
         results = _apply_person_changes(
             db,
             state,
@@ -6064,19 +6059,6 @@ def _apply_person_changes(
                 applied.append(rejected(item, "非既有人物", "hallucinated_id", status=status))
                 continue
             cur_status, _ = db.get_character_status(name)
-            if item.get("legacy_gate") and cur_status != "active":
-                reject_reason = f"当前非 active（{cur_status}）"
-                if cur_status == "dead" and status != "dead":
-                    reject_reason = "dead 无 status 出边"
-                applied.append(
-                    rejected(
-                        item,
-                        reject_reason,
-                        "invalid_transition",
-                        status=status,
-                    )
-                )
-                continue
             reason_code = normalize_reason_code(item.get("reason_code"))
             transition = resolve_person_transition(
                 cur_status,
