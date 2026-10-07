@@ -1957,20 +1957,15 @@ def _split_at_question(text: str) -> tuple[str, List[dict]]:
 
 
 def _load_chain(db: Any, turn: int) -> Dict[str, Any]:
+    from ming_sim.db import GameDB
+
+    # get_resolve_context 已由 parse_engine_payload_json 保证 simulator_payload 为对象。
     ctx = db.get_resolve_context(turn) or {}
     payload = ctx.get("simulator_payload") or {}
-    if not isinstance(payload, dict):
-        raise ValueError(
-            f"pending_resolve_context.simulator_payload 须为对象，得 {type(payload).__name__}"
-        )
     chain = payload.get(_CHAIN_KEY)
     if chain is None:
         return {}
-    if not isinstance(chain, dict):
-        raise ValueError(
-            f"month_chain 须为对象，得 {type(chain).__name__}"
-        )
-    return dict(chain)
+    return dict(GameDB.optional_object(chain, surface="month_chain") or {})
 
 
 def _save_chain(

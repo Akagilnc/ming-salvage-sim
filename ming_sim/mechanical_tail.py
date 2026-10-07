@@ -411,15 +411,20 @@ def retry_failed_mechanical_tail(session: Any) -> bool:
     if failure is None:
         return False
     turn, tail = failure
+    # 必要读取（含 ending_outcome 形状）须先于 pending 写；失败态/真因/重试归属
+    # 在读取失败时不得被 _set_tail_status 洗失。
+    settled_year = int(tail.get("settled_year") or 0)
+    settled_period = int(tail.get("settled_period") or 0)
+    ending_outcome = GameDB.optional_object(
+        tail.get("ending_outcome"), surface="month_chain.mechanical_tail.ending_outcome",
+    )
     _set_tail_status(session.db, turn, _TAIL_STATUS_PENDING,
                      source=Provenance.system_simulation)
     return _submit_tail(
         session, closed_turn=turn,
-        settled_year=int(tail.get("settled_year") or 0),
-        settled_period=int(tail.get("settled_period") or 0),
-        ending_outcome=GameDB.optional_object(
-            tail.get("ending_outcome"), surface="month_chain.mechanical_tail.ending_outcome",
-        ),
+        settled_year=settled_year,
+        settled_period=settled_period,
+        ending_outcome=ending_outcome,
         source=Provenance.system_simulation,
     )
 

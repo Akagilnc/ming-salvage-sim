@@ -72,16 +72,16 @@ def apply_levy_driven_transfers(
             )
         except ValueError as exc:
             raise ValueError(f"{region_id}.fiscal 持久 JSON 损坏，无法结算加派账") from exc
-        settle = fiscal.get("settle")
         # 财政月效的动态成员只包括已有 settle 基座的明省；legacy/内容扩展中
         # 合法的无基座省自然出列，不能让任意 delta apply 因此失败。
+        settle = GameDB.optional_object(
+            fiscal.get("settle"), surface=f"{region_id}.fiscal.settle",
+        )
         if settle is None:
             continue
-        if not isinstance(settle, dict):
-            raise ValueError(f"{region_id}.fiscal.settle 必须是 object，无法结算加派账")
-        meta = settle.get("_meta")
-        if meta is not None and not isinstance(meta, dict):
-            raise ValueError(f"{region_id}.fiscal.settle._meta 必须是 object，无法结算加派账")
+        meta = GameDB.optional_object(
+            settle.get("_meta"), surface=f"{region_id}.fiscal.settle._meta",
+        )
         raw = meta.get(SETTLE_META_JIAPIAI_KEY, 0) if meta is not None else 0
         if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(float(raw)):
             raise ValueError(f"{region_id}.settle._meta.{SETTLE_META_JIAPIAI_KEY} 必须是有限数值")

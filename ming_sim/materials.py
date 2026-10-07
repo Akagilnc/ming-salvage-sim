@@ -1730,7 +1730,8 @@ def _write_world_tree(
         index.append(facts_rel)
 
     for army_id in _world_subject_ids(db, "armies", "army"):
-        rel = f"{_ARMY_DIR}/{army_id}/按月实况.txt"
+        # 路径片段走 _safe_segment；subject_id 仍用原对象身份供文字事实投影。
+        rel = f"{_ARMY_DIR}/{_safe_segment(army_id)}/按月实况.txt"
         _write_text(tmp / rel, _textual_facts_text(
             textual_facts, subject_kind="army", subject_id=army_id,
             include_fact=include_fact,
@@ -1738,7 +1739,7 @@ def _write_world_tree(
         index.append(rel)
 
     for region_id in _world_subject_ids(db, "regions", "region"):
-        rel = f"{_REGION_DIR}/{region_id}/按月实况.txt"
+        rel = f"{_REGION_DIR}/{_safe_segment(region_id)}/按月实况.txt"
         _write_text(tmp / rel, _textual_facts_text(
             textual_facts, subject_kind="region", subject_id=region_id,
             include_fact=include_fact,
@@ -2189,8 +2190,8 @@ def _write_one_present_person(
     多人叠写会后写覆盖先写（#1836 审回）。场景目录改为每人一棵私有子树。
     """
     name = str(getattr(character, "name", "") or "")
-    # 场景人物路径是玩家可见索引；名称仍保持可读，只替换路径非法字符。
-    seg = _UNSAFE.sub("_", name).strip() or "未名"
+    # 路径片段与世界/人物材料同一权威；对象身份仍用原 name 投影正文。
+    seg = _safe_segment(name)
     base = f"{_PERSON_DIR}/{seg}"
     index: list[str] = []
 

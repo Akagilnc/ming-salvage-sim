@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ming_sim.db import GameDB
 from ming_sim.materials import (
+    _safe_segment,
     list_materials, prepare_world_materials,
     world_materials_root,
 )
@@ -109,17 +110,12 @@ def test_character_army_region_textual_facts_reach_world_directory(game, tmp_pat
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "m3")
     names = list_materials(prepared.root)
 
-    character_rel = next(
-        (p for p in names if p.startswith("人物/") and p.endswith("/按月实况.txt") and character_name in p),
-        None,
+    character_rel = f"人物/{_safe_segment(character_name)}/按月实况.txt"
+    army_rel = f"军队/{_safe_segment(army_id)}/按月实况.txt"
+    region_rel = f"地区/{_safe_segment(region_id)}/按月实况.txt"
+    assert character_rel in names and army_rel in names and region_rel in names, (
+        "三类对象的按月实况文件均应在世界目录里"
     )
-    army_rel = next(
-        (p for p in names if p.startswith(f"军队/{army_id}/按月实况.txt")), None,
-    )
-    region_rel = next(
-        (p for p in names if p.startswith(f"地区/{region_id}/按月实况.txt")), None,
-    )
-    assert character_rel and army_rel and region_rel, "三类对象的按月实况文件均应在世界目录里"
 
 
 def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
@@ -246,9 +242,8 @@ def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(g
 
     prepared = prepare_world_materials(db, state, dest_root=tmp_path / "world-facts")
     names = list_materials(prepared.root)
-    from ming_sim.materials import _safe_segment
     assert f"人物/{_safe_segment(name)}/按月实况.txt" in names
-    assert f"地区/{region['id']}/按月实况.txt" in names
+    assert f"地区/{_safe_segment(region['id'])}/按月实况.txt" in names
     assert not any(p.startswith("事实/") for p in names)
     # typed store still reachable for the written subjects
     assert db.textual_facts.readable_materials(subject_kind="character", subject_id=name)

@@ -9666,15 +9666,11 @@ class GameDB:
                             ) from exc
                     else:
                         decoded = None
-                if decoded is not None and not isinstance(decoded, dict):
-                    tlog(
-                        f"[agno_runs.run_data] 非对象，拒绝静默：{type(decoded).__name__}"
-                    )
-                    raise ValueError(
-                        f"agno_runs.run_data 须为对象，得 {type(decoded).__name__}"
-                    )
-                if isinstance(decoded, dict):
-                    payload = dict(decoded)
+                obj = self.optional_object(
+                    decoded, surface="agno_runs.run_data",
+                )
+                if obj is not None:
+                    payload = dict(obj)
                     payload["run_id"] = str(rid)
             out.append(payload)
         return out
@@ -10784,13 +10780,12 @@ class GameDB:
             options = self._loads_stored_json_list(
                 r["options_json"], surface="pending_decisions.options_json",
             )
-            choice = self._loads_stored_json_optional(
-                r["choice_json"], surface="pending_decisions.choice_json",
+            choice = self.optional_object(
+                self._loads_stored_json_optional(
+                    r["choice_json"], surface="pending_decisions.choice_json",
+                ),
+                surface="pending_decisions.choice_json",
             )
-            if choice is not None and not isinstance(choice, dict):
-                raise ValueError(
-                    f"pending_decisions.choice_json 须为对象，得 {type(choice).__name__}"
-                )
             prior = self._loads_stored_json_list(
                 r["prior_options_json"], surface="pending_decisions.prior_options_json",
             )
@@ -10892,13 +10887,12 @@ class GameDB:
             options = self._loads_stored_json_list(
                 r["options_json"], surface="rescript_draft.options_json",
             )
-            choice = self._loads_stored_json_optional(
-                r["choice_json"], surface="rescript_draft.choice_json",
+            choice = self.optional_object(
+                self._loads_stored_json_optional(
+                    r["choice_json"], surface="rescript_draft.choice_json",
+                ),
+                surface="rescript_draft.choice_json",
             )
-            if choice is not None and not isinstance(choice, dict):
-                raise ValueError(
-                    f"rescript_draft.choice_json 须为对象，得 {type(choice).__name__}"
-                )
             prior = self._loads_stored_json_list(
                 r["prior_options_json"], surface="rescript_draft.prior_options_json",
             )
@@ -10956,13 +10950,12 @@ class GameDB:
         options = self._loads_stored_json_list(
             r["options_json"], surface="rescript_desk.options_json",
         )
-        choice = self._loads_stored_json_optional(
-            r["choice_json"], surface="rescript_desk.choice_json",
+        choice = self.optional_object(
+            self._loads_stored_json_optional(
+                r["choice_json"], surface="rescript_desk.choice_json",
+            ),
+            surface="rescript_desk.choice_json",
         )
-        if choice is not None and not isinstance(choice, dict):
-            raise ValueError(
-                f"rescript_desk.choice_json 须为对象，得 {type(choice).__name__}"
-            )
         prior = self._loads_stored_json_list(
             r["prior_options_json"], surface="rescript_desk.prior_options_json",
         )
@@ -11643,10 +11636,10 @@ class GameDB:
             out.get("extension_json"),
             surface=f"decree_dossiers#{did}.extension_json",
         )
-        signal = extension.get("execution_signal")
-        if signal is not None and not isinstance(signal, dict):
-            raise ValueError(f"案卷#{did} execution_signal 非对象")
-        out["execution_signal"] = signal
+        out["execution_signal"] = cls.optional_object(
+            extension.get("execution_signal"),
+            surface=f"decree_dossiers#{did}.execution_signal",
+        )
         return out
 
     # #619 / ADR 0073 reported-progress origin namespace (ID-11 open append).
