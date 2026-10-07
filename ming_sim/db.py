@@ -11675,7 +11675,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise ValueError("密令不存在")
-        reports = json.loads(row["dossier_progress_json"] or "[]")
+        reports = self._loads_stored_json_list(
+            row["dossier_progress_json"],
+            surface="secret_orders.dossier_progress_json",
+        )
         existing = next((item for item in reports if not item.get("is_terminal")
                          and int(item.get("turn", 0)) == int(turn)), None)
         if existing is None or is_terminal:
@@ -14536,7 +14539,10 @@ class GameDB:
                     or bool(row["was_force_promulgated"])
                     or int(row["id"]) in known_dossier_ids
                     or reader_archive_key in set(
-                        json.loads(row["office_archive_keys"] or "[]")
+                        self._loads_stored_json_list(
+                            row["office_archive_keys"],
+                            surface="decree_dossiers.office_archive_keys",
+                        )
                     )
                 )
             ) or (
@@ -19163,9 +19169,13 @@ class GameDB:
             raw = str(r["choice_json"] or "").strip()
             if not raw:
                 continue
+            # Top-level object via authority (F39). Missing petition = not a petition
+            # record (legal skip). Present-but-non-object petition is shape fault.
             try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError as exc:
+                payload = self.parse_engine_payload_json(
+                    raw, surface=f"event_triggers.choice_json#{r['event_id']}",
+                )
+            except ValueError as exc:
                 from ming_sim.exceptions import SettlementAbort
 
                 raise SettlementAbort(
@@ -19174,11 +19184,14 @@ class GameDB:
                     turn=int(r["turn"] or 0),
                     stage="petition_records",
                 ) from exc
-            if not isinstance(payload, dict):
+            if "petition" not in payload:
                 continue
-            petition = payload.get("petition")
+            petition = payload["petition"]
             if not isinstance(petition, dict):
-                continue
+                raise ValueError(
+                    f"event_triggers.choice_json#{r['event_id']}.petition "
+                    f"须为对象，得 {type(petition).__name__}"
+                )
             # 答案字段（label/hint/note）与 petition 段同级摊平返回：供料侧要一次
             # 读到「呈疏记录」和「皇帝原批语」，不必自己再拆一层。
             out.append({
@@ -21482,7 +21495,9 @@ class GameDB:
                 "minister_name": r["minister_name"],
                 "title": r["title"],
                 "content": r["content"],
-                "tags": json.loads(r["tags"] or "[]"),
+                "tags": self._loads_stored_json_list(
+                    r["tags"], surface="secret_orders.tags",
+                ),
                 "importance": int(r["importance"]),
                 "status": r["status"],
                 "result": r["result"] or "",
@@ -21495,8 +21510,19 @@ class GameDB:
                     if (dossier := self.get_dossier_for_secret_order(int(r["id"])))
                     else []
                 ),
-                "excluded_names": json.loads(r["excluded_names"] or "[]") if "excluded_names" in r.keys() else [],
-                "excluded_targets": json.loads(r["excluded_targets"] or "{}") if "excluded_targets" in r.keys() else {},
+                "excluded_names": (
+                    self._loads_stored_json_list(
+                        r["excluded_names"], surface="secret_orders.excluded_names",
+                    )
+                    if "excluded_names" in r.keys() else []
+                ),
+                "excluded_targets": (
+                    self.parse_engine_payload_json(
+                        r["excluded_targets"],
+                        surface="secret_orders.excluded_targets",
+                    )
+                    if "excluded_targets" in r.keys() else {}
+                ),
                 "turn_closed": r["turn_closed"],
             }
             for r in rows

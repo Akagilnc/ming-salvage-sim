@@ -1292,7 +1292,9 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     ).fetchall()
     projected: List[Dict[str, Any]] = []
     for row in rows:
-        tags = json.loads(row["tags"] or "[]")
+        # Story-ledger list columns: reuse _json_list → _loads_stored_json_list (F39).
+        # Wrong object shape must not become empty unsettled-summon facts.
+        tags = _json_list(row["tags"])
         if TAG_SUMMON_UNSETTLED not in tags or TAG_SUMMON_SETTLED in tags:
             continue
         origin = next(
@@ -1300,7 +1302,7 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
              if str(tag).startswith(_SUMMON_ORIGIN_PREFIX)),
             "",
         )
-        names = json.loads(row["person_names"] or "[]")
+        names = _json_list(row["person_names"])
         if not origin or not names:
             continue
         person_name = str(names[0])
@@ -1398,7 +1400,7 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
         ).fetchone()
         if row is None:
             continue
-        tags = json.loads(row["tags"] or "[]")
+        tags = _json_list(row["tags"])
         if TAG_IN_TRANSIT in tags:
             continue
         tags.append(TAG_IN_TRANSIT)
@@ -1430,7 +1432,7 @@ def settle_summon_origin(
         row = db.conn.execute(
             "SELECT tags FROM story_ledger_entries WHERE id=?", (item["entry_id"],)
         ).fetchone()
-        tags = json.loads(row["tags"] or "[]")
+        tags = _json_list(row["tags"])
         tags = [tag for tag in tags if tag != TAG_SUMMON_UNSETTLED]
         tags.append(TAG_SUMMON_SETTLED)
         db.conn.execute(
@@ -1559,7 +1561,7 @@ def update_summon_travel_tone(
     ).fetchone()
     if row is None:
         raise KeyError(f"传召账不存在：{entry_id}")
-    tags = [str(t) for t in json.loads(row["tags"] or "[]")]
+    tags = [str(t) for t in _json_list(row["tags"])]
     tags = [t for t in tags if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)]
     tags.append(_travel_tone_tag(tone))
     db.conn.execute(

@@ -60,6 +60,8 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
         raw = getattr(ev, "audiences", None)
 
     if isinstance(raw, str):
+        # Content/event audience supplement: keep JSONDecodeError/TypeError surface
+        # already locked by material-entry fail-loud cases (not an empty-facts wash).
         raw = json.loads(raw)
     if not isinstance(raw, list):
         raise TypeError(

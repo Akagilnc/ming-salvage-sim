@@ -67,11 +67,10 @@ def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
     """
     roster = dossier.get("participant_roster") or []
     if isinstance(roster, str):
-        roster = json.loads(roster) if roster.strip() else []
-        if not isinstance(roster, list):
-            raise ValueError(
-                f"participant_roster 须为 list，得 {type(roster).__name__}"
-            )
+        from ming_sim.db import GameDB
+        roster = GameDB._loads_stored_json_list(
+            roster, surface="participant_roster",
+        )
     if isinstance(roster, list):
         for entry in roster:
             if not isinstance(entry, dict):
@@ -95,11 +94,10 @@ def participant_roster_names(raw: object) -> set[str]:
     elif raw is None or raw == "":
         roster = []
     elif isinstance(raw, str):
-        roster = json.loads(raw) if raw.strip() else []
-        if not isinstance(roster, list):
-            raise ValueError(
-                f"participant_roster 须为 list，得 {type(roster).__name__}"
-            )
+        from ming_sim.db import GameDB
+        roster = GameDB._loads_stored_json_list(
+            raw, surface="participant_roster",
+        )
     else:
         raise TypeError(
             f"participant_roster 类型非法：{type(raw).__name__}"
