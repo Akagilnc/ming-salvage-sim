@@ -78,14 +78,17 @@ class TestTimedBarIntegration:
         assert progress_wall["months_elapsed"] == 2
         assert commitment_timed_bar_value(progress_wall, row) == 50
 
-    def test_origin_turn_unset_falls_back_to_state_turn(self, game):
+    def test_origin_turn_null_or_zero_falls_back_to_state_turn(self, game):
+        """合法 NULL/0 回落当前 turn；字段必须在场（完整行契约，非缺字段兼容）。"""
         db, state, _content = game
         state.turn = 7
         base = {
             "id": -1, "commitment_kind": "until_stop", "end_turn": 0,
             "ongoing_effects": "{}", "stop_condition": "", "resolve_condition": "",
         }
-        for row in ({**base, "origin_turn": None}, {**base, "origin_turn": 0}, dict(base)):
-            progress = commitment_progress_payload(db, state, row)
+        for origin_turn in (None, 0):
+            progress = commitment_progress_payload(
+                db, state, {**base, "origin_turn": origin_turn},
+            )
             assert progress is not None
             assert progress["months_elapsed"] == 0

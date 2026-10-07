@@ -39,10 +39,6 @@ _AUDIENCE_LANE_URGE = "urge"
 _AUDIENCE_LANE_COVERT_LEVY = "covert_levy"
 _AUDIENCE_LANE_UNKNOWN = "unknown"
 
-# #624 四缝白名单钉：仅 staged 进 due-review 终裁（由分派矩阵派生，非平行谓词）
-DUE_REVIEW_ENTRY_KIND_WHITELIST = frozenset({ENTRY_KIND_STAGED})
-
-
 def normalize_audience_entry_kind(entry_kind: object) -> str:
     text = str(entry_kind or ENTRY_KIND_STAGED).strip()
     return text or ENTRY_KIND_STAGED
@@ -60,11 +56,6 @@ def audience_todo_lane(entry_kind: object) -> str:
     if kind == "covert_levy_exposure":
         return _AUDIENCE_LANE_COVERT_LEVY
     return _AUDIENCE_LANE_UNKNOWN
-
-
-def is_due_review_entry_kind(entry_kind: object) -> bool:
-    """#624 四缝：仅 staged 可投影/apply/占接管窗为到期复核。"""
-    return audience_todo_lane(entry_kind) == _AUDIENCE_LANE_STAGED
 
 
 _TERMINAL_OUTCOMES = frozenset({"fulfilled", "degraded", "failed", "transformed"})

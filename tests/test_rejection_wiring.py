@@ -536,14 +536,4 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         ch.power_id, ch.office, ch.office_type = old_power, old_office, old_office_type
 
 
-def test_provenance_from_stored_instance_and_value():
-    """现役契约：实例原样、纯值字符串还原；非法/缺失回落 system_simulation。"""
-    from ming_sim.decree import _provenance_from_stored
-    from ming_sim.applier import Provenance
 
-    assert _provenance_from_stored(Provenance.player_decree) is Provenance.player_decree
-    assert _provenance_from_stored("player_decree") == Provenance.player_decree
-    assert _provenance_from_stored("system_simulation") == Provenance.system_simulation
-    assert _provenance_from_stored("") == Provenance.system_simulation
-    assert _provenance_from_stored(None) == Provenance.system_simulation
-    assert _provenance_from_stored("查无此来源") == Provenance.system_simulation

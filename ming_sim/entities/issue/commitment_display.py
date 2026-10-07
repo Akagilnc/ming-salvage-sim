@@ -9,13 +9,6 @@ from ming_sim.db import GameDB
 from ming_sim.models import GameState
 
 
-def _row_get(row: object, name: str, default: object = None) -> object:
-    """sqlite 行直读列；dict 合成读模型可省略字段（合法缺席，非旧档缺列）。"""
-    if isinstance(row, dict):
-        return row.get(name, default)
-    return row[name]
-
-
 def commitment_progress_payload(
     db: GameDB,
     state: GameState,
@@ -30,13 +23,13 @@ def commitment_progress_payload(
         _commitment_stop_gate,
         _latest_commitment_paid_total,
     )
-    if not str(_row_get(row, "commitment_kind") or "").strip():
+    # 完整 issues 行契约直读；合法 NULL/0 语义保留，不做缺字段兼容。
+    if not str(row["commitment_kind"] or "").strip():
         return None
     gate = _commitment_stop_gate(row)
     remaining = _commitment_remaining_from_gate(gate, state, db) if gate else None
     paid_total = _latest_commitment_paid_total(db, int(row["id"])) + max(0, int(paid_this_month))
-    # origin_turn：持久行合法 NULL/0 或合成读模型省略 → 回落当前 turn。
-    origin_turn_raw = _row_get(row, "origin_turn")
+    origin_turn_raw = row["origin_turn"]
     if origin_turn_raw is None:
         origin_turn = int(state.turn)
     else:
@@ -73,9 +66,9 @@ def commitment_display_text(progress: Dict[str, object], row: sqlite3.Row) -> st
         _monthly_ongoing_effects_has_work,
     )
     from ming_sim.models import loads_effect_dict
-    ongoing = loads_effect_dict(_row_get(row, "ongoing_effects") or {})
-    end_turn = int(_row_get(row, "end_turn") or 0)
-    origin_turn_raw = _row_get(row, "origin_turn")
+    ongoing = loads_effect_dict(row["ongoing_effects"] or {})
+    end_turn = int(row["end_turn"] or 0)
+    origin_turn_raw = row["origin_turn"]
     if origin_turn_raw is None:
         origin_turn = 0
     else:
@@ -121,15 +114,15 @@ def commitment_timed_bar_value(progress: Dict[str, object], row: sqlite3.Row) ->
         _monthly_ongoing_effects_has_work,
     )
     from ming_sim.models import loads_effect_dict
-    end_turn = int(_row_get(row, "end_turn") or 0)
+    end_turn = int(row["end_turn"] or 0)
     if end_turn <= 0:
         return None
     if _commitment_stop_gate(row):
         return None
-    ongoing = loads_effect_dict(_row_get(row, "ongoing_effects") or {})
+    ongoing = loads_effect_dict(row["ongoing_effects"] or {})
     if not _monthly_ongoing_effects_has_work(ongoing):
         return None
-    origin_turn_raw = _row_get(row, "origin_turn")
+    origin_turn_raw = row["origin_turn"]
     if origin_turn_raw is None:
         origin_turn = 0
     else:
