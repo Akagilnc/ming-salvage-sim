@@ -1456,17 +1456,25 @@ def _dispatch_commissions(
                 db, item, payload, rejected=rejected, source=source,
             ):
                 continue
-            row_id = stage_revoke_decree_candidate(
-                db, int(state.turn), actor,
-                text=body,
-                target_id=revoke.get("target_id", ""),
-                target_kind=revoke.get("target_kind", ""),
-                target_candidate=revoke.get("target_candidate"),
-                extracted_mode=revoke.get("mode", item.get("mode")),
-                affair_declaration=payload.get("affair_declaration"),
-                night_id=staged_night,
-                source_chat_turn_id=source_chat_turn_id,
-            )
+            try:
+                row_id = stage_revoke_decree_candidate(
+                    db, int(state.turn), actor,
+                    text=body,
+                    target_id=revoke.get("target_id", ""),
+                    target_kind=revoke.get("target_kind", ""),
+                    target_candidate=revoke.get("target_candidate"),
+                    extracted_mode=revoke.get("mode", item.get("mode")),
+                    affair_declaration=payload.get("affair_declaration"),
+                    night_id=staged_night,
+                    source_chat_turn_id=source_chat_turn_id,
+                )
+            except DecreeMaterializationValidationError as exc:
+                # 与 assignment 同缝：续办身份等 typed 领域拒收只拒该项（#1897 C1）。
+                _reject(
+                    rejected, item, str(exc),
+                    getattr(exc, "category", None) or "invalid_shape", source,
+                )
+                continue
             if row_id:
                 applied.append({"id": row_id, "kind": "directive"})
             else:

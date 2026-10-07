@@ -186,9 +186,15 @@ def stages_to_json(stages: object) -> str:
 
 
 def stages_source_from_issue_item(ni: Dict[str, object]) -> object:
-    """Single stages key fallback for new_issues items (stages | stages_json)."""
+    """Single stages key fallback for new_issues items (stages | stages_json).
+
+    仅真正缺省（None/""）与合法空数组回落 stages_json；显式 ``{}`` 等坏形
+    原样交给 ``stages_to_json`` 拒收，不得当缺省洗白（#1897 C1）。
+    """
     stages = ni.get("stages")
-    if stages not in (None, "", [], (), {}):
+    if stages not in (None, "", [], ()):
+        return stages
+    if stages in ([], ()):
         return stages
     return ni.get("stages_json")
 
