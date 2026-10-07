@@ -37,7 +37,7 @@ def minister_speaker_role(
 
     ch = character
     if not isinstance(ch, Character) and db is not None:
-        content = getattr(db, "content", None)
+        content = db.content
         roster = getattr(content, "characters", None) if content is not None else None
         if isinstance(roster, dict):
             found = roster.get(str(minister_name or "").strip())
@@ -628,7 +628,7 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
     row = db.conn.execute("SELECT id FROM armies WHERE id=?", (tid,)).fetchone()
     if row is not None:
         return str(row["id"])
-    content = getattr(db, "content", None)
+    content = db.content
     armies = getattr(content, "armies", None) if content is not None else None
     if armies:
         from ming_sim.matching import canonical_army_id_exact
@@ -1054,8 +1054,11 @@ def parse_responsible_bodies(raw: object) -> List[str]:
 
 
 def character_person_names(db: Any) -> set[str]:
-    """既有人物档名集合（禁新建机关词表；个人名比对复用此源）。"""
-    if db is None or not hasattr(db, "conn"):
+    """既有人物档名集合（禁新建机关词表；个人名比对复用此源）。
+
+    #1853 J8-R：db 可缺（调用方未供）是业务空集；有 db 则必备 conn 直调。
+    """
+    if db is None:
         return set()
     return {
         str(row["name"]).strip()

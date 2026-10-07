@@ -318,7 +318,6 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
       json: async () => ({
         state: advancedMonthState,
         advanced: true,
-        pending_action_failures: [],
       }),
     }));
     vi.stubGlobal("fetch", fetchMock);
@@ -418,11 +417,6 @@ describe("#1351/#1560 useSettlementFlow — advanceWithoutEdict 令牌与 409 �
       json: async () => ({
         detail: {
           message: FAIL_MSG,
-          pending_action_failures: [{
-            action_id: "a1",
-            minister_name: "袁崇焕",
-            summary: "落库失败",
-          }],
         },
       }),
     })));
@@ -463,7 +457,6 @@ describe("#1433 useSettlementFlow — 退朝 awaiting 消费面（禁盲 reload 
               state: awaitingState,
               awaiting_decision: true,
               decisions: [validDecision],
-              pending_action_failures: [],
             }),
           };
         }

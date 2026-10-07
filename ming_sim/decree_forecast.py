@@ -485,15 +485,15 @@ def _submit_snapshot_job(
     def run() -> None:
         snapshot: Optional[Dict[str, Any]] = None
         try:
-            if write_lock is None:
-                snapshot = queue.run(ticket, snapshot_fn)
-            else:
-                with write_lock:
-                    snapshot = queue.run(ticket, snapshot_fn)
-            if snapshot is None:
-                return
-            snapshot["ticket"] = ticket
             try:
+                if write_lock is None:
+                    snapshot = queue.run(ticket, snapshot_fn)
+                else:
+                    with write_lock:
+                        snapshot = queue.run(ticket, snapshot_fn)
+                if snapshot is None:
+                    return
+                snapshot["ticket"] = ticket
                 _forecast(session, snapshot, write_lock=write_lock)
             except Exception as exc:
                 if _call_exhausted(exc):

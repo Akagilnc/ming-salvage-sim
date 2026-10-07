@@ -344,24 +344,6 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
     assert rejection["reason"]
 
 
-def test_scene_stay_attend_uses_actual_protagonist_not_virtual_speaker(game, monkeypatch):
-    from ming_sim.audience_night import (
-        SCENE_CHAT_SPEAKER, list_ledger, set_night_protagonist, summon_enter,
-    )
-
-    db, state, content = game
-    person = _hong_name(db, content)
-    night = open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    summon_enter(db, night_id, person)
-    set_night_protagonist(db, night_id, person, reason="test")
-    result = _sess(db, state, content, monkeypatch).scene_chat(
-        "留下听着", minister_name=SCENE_CHAT_SPEAKER,
-    )
-    assert result.court_action == "stay_attend"
-    assert list_ledger(db, night_id)[-1]["person_names"] == [person]
-
-
 def test_appointment_and_relief_through_scene_chat_then_close_and_settle(game, monkeypatch):
     """AC1：scene_chat 转译 → 一条组合暂存 → 应允收夜 → 任免与拨帑两类效果全。
 
@@ -708,7 +690,7 @@ def test_unhandleable_commission_rejected_as_fact_no_forced_ask(game):
 
 
 def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch):
-    """转译调用失败 ≠ 成功空声明：不进分派、真因经 pending_action_failures 回场。"""
+    """转译调用失败 ≠ 成功空声明：不进分派、真因经 story_extract pending 水位回场。"""
     db, state, content = game
     open_night(db, state, location="乾清宫", time_of_day="夜")
     before = db.conn.execute(
@@ -731,11 +713,8 @@ def test_translate_call_failure_is_not_empty_success_dispatch(game, monkeypatch)
     result = sess.scene_chat("边饷如何？", chat_turn_id=ctid)
     fut = persist_and_schedule_scene(sess, db, result)
     assert fut is not None
-    try:
+    with pytest.raises(RuntimeError, match="simulated translate transport failure"):
         fut.result(timeout=30)
-        raise AssertionError("expected translation failure")
-    except Exception:
-        pass
     assert result.answer == "臣在。"
     after = db.conn.execute(
         "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
@@ -763,10 +742,6 @@ def test_translate_empty_success_still_dispatches_without_failure(game, monkeypa
     )
     result = sess.scene_chat("边事如何？")
     assert result.answer == "臣在。"
-    assert not any(
-        f.get("category") == "translate_failed"
-        for f in (result.pending_action_failures or [])
-    )
 
 
 def test_appointment_without_text_is_rejected_not_templated(game):

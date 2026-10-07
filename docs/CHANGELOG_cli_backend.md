@@ -114,4 +114,4 @@ MING_SIM_LLM_BACKEND=agy MING_SIM_DB=data/probe.db \
 - `cli_backend` 新增 `cursor` / `kimi` / `grok` 三 runner（opencode **不**入清单，走 api 通道）。
 - 名单单源：`_CLI_BACKENDS` / `GATE_CLI_RUNNERS`；月末多 extractor 并发对所有 runner 一视同仁（无按模型串行白名单）。
 - 四闸脚本 `--channel api|cli` + choices 共享；ds-flash 群友基线走 OpenCode Go `https://opencode.ai/zen/v1`。
-- 用法与基线纪律见 [`LLM_BACKEND_BENCH.md` §十三](LLM_BACKEND_BENCH.md)；端点核实 [`evidence/issue-1256-opencode-go-ds-flash-api.json`](evidence/issue-1256-opencode-go-ds-flash-api.json)。
+- 用法与基线纪律见 [`LLM_BACKEND_BENCH.md` §十三](LLM_BACKEND_BENCH.md)。

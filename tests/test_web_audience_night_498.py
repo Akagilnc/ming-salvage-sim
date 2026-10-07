@@ -172,7 +172,7 @@ def test_persisted_reply_before_translation_admission_has_no_retry_button(web_ga
 
     async def scenario():
         async with _client() as client:
-            before = (await client.get("/api/audience/chat")).json()
+            before = (await client.get("/api/audience/scroll")).json()
             retry = await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
             return before, retry
 
@@ -255,7 +255,7 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
         async with _client() as client:
             return await client.post("/api/audience/chat/stream", json={"message": "边饷如何？"})
 
-    async def inspect():
+    async def inspect_chat():
         async with _client() as client:
             return (await client.get("/api/audience/chat")).json()
 
@@ -268,29 +268,28 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
     if failure in {"503", "timeout"}:
         try:
             assert retry_waiting.wait(3)
-            early = asyncio.run(inspect())
+            early = asyncio.run(inspect_scroll())
             assert len(early["translation_retries"]) == 1
             assert all(not row["retryable"] for row in early["translation_retries"])
         finally:
             resume_retry.set()
     assert game._runtime_write_queue().wait_idle()
 
-    failed = asyncio.run(inspect())
+    failed = asyncio.run(inspect_scroll())
+    failed_chat = asyncio.run(inspect_chat())
     if failure != "code":
         assert calls, failed
     assert len(failed["translation_retries"]) == 1
     ctid = failed["translation_retries"][0]["chat_turn_id"]
     assert failed["translation_retries"][0]["retryable"] is True
     assert failed["translation_retries"][0]["error_pack_path"]
-    scroll = asyncio.run(inspect_scroll())
-    assert scroll["translation_retries"] == failed["translation_retries"]
     if failure != "code":
         assert calls == ([0.0] if failure == "429" else [0.0, 5.0, 10.0])
         assert waits == ([] if failure == "429" else [5.0, 5.0])
     if failure == "code":
         source_positions = [
             (index, item["role"], item["chat_turn_id"])
-            for index, item in enumerate(failed["history"])
+            for index, item in enumerate(failed_chat["history"])
             if item.get("chat_turn_id") == ctid
         ]
         assert source_positions
@@ -307,13 +306,14 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
         game = web_app.WebGame(fresh=False)
         request.addfinalizer(game.session.close)
         monkeypatch.setattr(web_app, "web_game", game)
-        reopened = asyncio.run(inspect())
+        reopened = asyncio.run(inspect_chat())
+        reopened_scroll = asyncio.run(inspect_scroll())
         assert [
             (index, item["role"], item["chat_turn_id"])
             for index, item in enumerate(reopened["history"])
             if item.get("chat_turn_id") == ctid
         ] == source_positions
-        assert [row["chat_turn_id"] for row in reopened["translation_retries"]] == [ctid]
+        assert [row["chat_turn_id"] for row in reopened_scroll["translation_retries"]] == [ctid]
         assert game._runtime_write_queue().wait_idle()
     turns_before_retry = _count(game.db, "chat_turns")
 
@@ -340,15 +340,16 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
                     release.set()
                 retry = await retry_task
                 retracted = (await client.get("/api/audience/chat")).json()
+                retracted_scroll = (await client.get("/api/audience/scroll")).json()
                 stale = await client.post(
                     "/api/audience/translation/retry", json={"chat_turn_id": ctid},
                 )
-                return undo, retry, retracted, stale
+                return undo, retry, retracted, retracted_scroll, stale
 
-        undo, retry, retracted, stale = asyncio.run(undo_during_retry())
+        undo, retry, retracted, retracted_scroll, stale = asyncio.run(undo_during_retry())
         assert undo.status_code == 200
         assert retry.status_code == 200
-        assert retracted["translation_retries"] == []
+        assert retracted_scroll["translation_retries"] == []
         assert all(item.get("chat_turn_id") != ctid for item in retracted["history"])
         assert _count(game.db, "chat_turns") == turns_before_retry
         assert game.db.conn.execute(
@@ -366,14 +367,14 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
     async def retry_and_undo():
         async with _client() as client:
             retry = await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
-            healed = (await client.get("/api/audience/chat")).json()
+            healed = (await client.get("/api/audience/scroll")).json()
             turns_after_retry = _count(game.db, "chat_turns")
             source_segments_after_retry = game.db.conn.execute(
                 "SELECT body FROM story_ledger_entries WHERE source_chat_turn_id=?",
                 (ctid,),
             ).fetchall()
             undo = await client.post("/api/audience/chat/undo")
-            retracted = (await client.get("/api/audience/chat")).json()
+            retracted = (await client.get("/api/audience/scroll")).json()
             stale = await client.post("/api/audience/translation/retry", json={"chat_turn_id": ctid})
             return retry, healed, turns_after_retry, source_segments_after_retry, undo, retracted, stale
 

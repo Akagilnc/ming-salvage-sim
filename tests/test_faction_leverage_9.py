@@ -198,10 +198,13 @@ def test_promotion_via_set_character_office_raises_leverage(game):
 
 
 def test_failed_appointment_rolls_back_faction_leverage(game):
-    """#9 finding#2 事务回滚：失败的 apply_office_appointment（走 _restore_person_write_state）后，
-    该 faction leverage 与调用前一致（中途全重算被回滚、不漂移）。"""
+    """#9 finding#2 事务回滚：代码故障上抛前走 _restore_person_write_state，
+    faction leverage 与调用前一致（中途全重算被回滚、不漂移）。
+
+    #1853：schema/code 故障不得洗成业务 rejected（ADR 0005）；注入 RuntimeError
+    必须响亮上抛，同时仍完成快照还原。
+    """
     db, state, content = game
-    # 构造失败：起复一个在册阉党成员，但 set_character_office 抛错（授个会让 infer 报错的非法链）。
     # 更稳的失败注入：monkeypatch set_character_office 抛错，验回滚还原 leverage。
     name = db.conn.execute(
         "SELECT name FROM characters WHERE faction='阉党' AND status='active' "
@@ -220,13 +223,16 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
 
     db.set_character_office = _boom  # type: ignore[assignment]
     try:
-        result = apply_office_appointment(
-            db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党"
-        )
+        try:
+            apply_office_appointment(
+                db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党"
+            )
+            raise AssertionError("代码故障必须上抛，不得洗成业务 rejected")
+        except RuntimeError as exc:
+            assert "注入故障：授官落库失败" in str(exc)
     finally:
         db.set_character_office = orig  # type: ignore[assignment]
 
-    assert result.get("rejected"), f"注入故障应使任命 rejected：{result}"
     after = db.faction_leverage("阉党")
     assert after == before, (
         f"失败任命回滚后阉党 leverage 应不变(before={before} after={after})"
