@@ -1066,19 +1066,20 @@ def _attach_commission_affair(
 ) -> bool:
     """校验声明并暂存；事务仅在收夜案卷接缝物化。
 
-    解析与 peek 同在逐项拒收边界内：超界/坏形 affair_id 在 declaration_from_payload
-    即 ValueError，不得逃出 helper 带走同批（#1897 C1；撤令与普通交办共吃）。
+    解析领域失败（超界/坏形）→ 逐项 invalid_shape；不存在 → hallucinated_id。
+    解析完成后的 getter 真故障原样上抛，不洗成拒收（#1897 C1 / ADR0005）。
     """
     try:
         raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
-        if raw_affair is None:
-            return True
+    except (TypeError, ValueError, OverflowError) as exc:
+        _reject(rejected, item, str(exc), "invalid_shape", source)
+        return False
+    if raw_affair is None:
+        return True
+    try:
         db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_BIRTH)
     except KeyError as exc:
         _reject(rejected, item, str(exc), "hallucinated_id", source)
-        return False
-    except (TypeError, ValueError, OverflowError) as exc:
-        _reject(rejected, item, str(exc), "invalid_shape", source)
         return False
     payload["affair_declaration"] = raw_affair
     return True
@@ -2539,12 +2540,13 @@ def _dispatch_promises(
 
 
 def _assert_textual_fact_subject_exists(db: Any, subject_kind: str, subject_id: str) -> None:
-    """不存在的引用 → KeyError（分类 hallucinated_id）；格式坏/超界 id → ValueError
-    走 invalid_shape，两类不混同一个异常类型（#1897 C1）。"""
+    """存在性查询：不存在 → KeyError（hallucinated_id）。
+
+    affair 路径要求 ``subject_id`` 已是通过 ``parse_positive_affair_id`` 的正整数
+    （领域形状拒收在调用方解析步完成）。getter 真故障不在此捕获（#1897 C1）。
+    """
     if subject_kind == "affair":
-        from ming_sim.entities.affair import parse_positive_affair_id
-        # 先过 SQLite 身份权威，再 get；超界不逃成 OverflowError 带走同批。
-        db.affairs.get(parse_positive_affair_id(subject_id))
+        db.affairs.get(int(subject_id))
         return
     table_column = _TEXTUAL_FACT_EXISTENCE_TABLES.get(subject_kind)
     if table_column is None:
@@ -2588,7 +2590,7 @@ def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, st
 
     无声明 → (None, None)；声明合法 → (affair_id, None)；引用不存在事务 →
     (None, "hallucinated_id")；声明本身形状坏 → (None, "invalid_shape")。
-    解析期异常进入本项拒收边界，不冒出分派器。
+    解析期领域失败进拒收；peek/get 真故障原样上抛（#1897 C1 / ADR0005）。
     """
     try:
         raw_affair = declaration_from_payload(item, allowed=ATTACH_EXPERIENCE)
@@ -2600,8 +2602,6 @@ def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, st
         affair_id = db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_EXPERIENCE)
     except KeyError:
         return None, "hallucinated_id"
-    except ValueError:
-        return None, "invalid_shape"
     return affair_id, None
 
 
@@ -2637,13 +2637,18 @@ def _dispatch_textual_facts(
             continue
         subject_kind = str(item.get("subject_kind") or "").strip()
         subject_id = str(item.get("subject_id") or "").strip()
+        if subject_kind == "affair":
+            from ming_sim.entities.affair import parse_positive_affair_id
+            try:
+                # 领域形状/超界在查询前拒收；随后 getter 真故障保持响亮。
+                subject_id = str(parse_positive_affair_id(subject_id))
+            except (TypeError, ValueError) as exc:
+                _reject(rejected, item, str(exc), "invalid_shape", source)
+                continue
         try:
             _assert_textual_fact_subject_exists(db, subject_kind, subject_id)
         except KeyError as exc:
             _reject(rejected, item, str(exc), "hallucinated_id", source)
-            continue
-        except ValueError as exc:
-            _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
         origin_ref, error_category = _resolve_affair_origin_ref(db, item)
         if error_category is not None:
