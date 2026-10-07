@@ -498,11 +498,16 @@ def _iter_cli_process_lines(
 
     def _raise_stream_error() -> None:
         err = result.stream_error
-        if err is not None:
-            # 已确证的宿主管道 I/O 失败 → typed；非本机命令构造代码故障。
+        if err is None:
+            return
+        # 线程传错保留原异常：仅 OSError 族为已确证宿主管道 I/O → typed；
+        # AttributeError/RecursionError/SystemExit 等代码与控制异常原样上浮，
+        # 不得因 stream_error 槽非空改写成宿主不可用。
+        if isinstance(err, OSError):
             from ming_sim.llm_model import cli_runner_unavailable
             host_exc = RuntimeError(f"CLI 管道读取失败：{err}")
             raise cli_runner_unavailable(host_exc, backend="cli") from err
+        raise err
 
     try:
         while open_streams > 0:
@@ -833,12 +838,16 @@ def _iter_cli_runner_text(
         # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
         # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
         if outcome.stdin_error is not None:
-            # 已确证：子进程未收到 prompt（宿主 I/O），非命令构造代码故障。
-            from ming_sim.llm_model import cli_runner_unavailable
-            host_exc = RuntimeError(
-                f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
-            )
-            raise cli_runner_unavailable(host_exc, backend=runner) from outcome.stdin_error
+            # 生产者只记 OSError/ValueError；OSError=已确证宿主 I/O → typed；
+            # 其余（如 ValueError 载荷类型）原样上浮，不以槽非空改写类别。
+            err = outcome.stdin_error
+            if isinstance(err, OSError):
+                from ming_sim.llm_model import cli_runner_unavailable
+                host_exc = RuntimeError(
+                    f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{err}"
+                )
+                raise cli_runner_unavailable(host_exc, backend=runner) from err
+            raise err
         # 管道读失败已在 _iter_cli_process_lines 即时升格；本生成器完整消费该泵，
         # 不另加上层同因兜底（#1902 REDUNDANT-CLI-STREAM-ERROR-FALLBACK）。
         # #1902 T2 / 锚定宪法：交付保留宿主原正文，不以 strip 改写呈现；

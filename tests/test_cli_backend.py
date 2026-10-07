@@ -545,7 +545,7 @@ def test_run_agy_nonzero_exit_is_terminal_and_runs_once(monkeypatch):
     state = _agy_popen(monkeypatch, [("", 1)])
     with pytest.raises(LLMUnavailable) as ei:
         cb._dispatch_cli_runner("agy", "p")
-    assert "退出码" in str(ei.value.provider_message or "")
+    assert str(ei.value.code or "").startswith("llm_cli_")
     assert state["agy"] == 1
 
 class _RcProc:
@@ -566,7 +566,7 @@ def test_run_runner_fail_loud_on_bad_exit(monkeypatch, runner, proc):
     _capture_run(monkeypatch, lambda cmd, **kw: proc())
     with pytest.raises(LLMUnavailable) as ei:
         cb._dispatch_cli_runner(runner, "p")
-    assert "退出码" in str(ei.value.provider_message or "")
+    assert str(ei.value.code or "").startswith("llm_cli_")
 
 def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
     """rc=0 但零输出 = 可重试 typed 空输出（交 transport 再试），不是确定性失败。"""
@@ -807,7 +807,7 @@ def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
     _capture_run(monkeypatch, _RcProc(stderr="auth failed", returncode=1))
     with pytest.raises(LLMUnavailable) as ei:
         cb._dispatch_cli_runner(runner, "p")
-    assert "退出码" in str(ei.value.provider_message or "")
+    assert str(ei.value.code or "").startswith("llm_cli_")
 
 # ── #1256 S2 gate LLM args / config / evidence ──
 
