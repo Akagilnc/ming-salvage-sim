@@ -147,7 +147,7 @@ def mark_turn_translation_done(
 ) -> None:
     """水位单真源：源轮 extract_status → done（控制口令早退与转译落账共用）。"""
     ctid = int(chat_turn_id or 0)
-    if ctid <= 0 or not hasattr(db, "conn"):
+    if ctid <= 0:
         return
     db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' "
@@ -208,7 +208,7 @@ def _observe_finished_future(
 
 def _mark_translation_pending(db: Any, chat_turn_id: int, write_gate: Any) -> None:
     ctid = int(chat_turn_id or 0)
-    if ctid <= 0 or not hasattr(db, "mark_story_extraction_pending"):
+    if ctid <= 0:
         return
     # 失败路径短持：与 job 内读写同属转译持闸类（ClassifiedWriteGate kind）。
     with _translation_write_cm(write_gate):
@@ -222,9 +222,8 @@ def list_pending_translations(
     """玩家可重试的转译失败：仅明确失败的 pending，不含刚落库的空水位。
 
     可按夜 / 源轮收窄。返回行附结构化系统提示态（供 0158 决定 6 投影，不做页面）。
+    无待补 → 正常空列表；直接引用真实库契约。
     """
-    if not hasattr(db, "list_unextracted_replies"):
-        return []
     rows = list(db.list_unextracted_replies(night_id=night_id) or [])
     want = int(chat_turn_id) if chat_turn_id is not None else None
     out: List[Dict[str, Any]] = []
@@ -278,7 +277,7 @@ def run_turn_translation_job(
     # 死轮 / 未落定回话 / 已 done：闸内短读后早退（禁持非重入锁再嵌套写）。
     # ADR 0155 / 0036：转译真源 = 已持久化回话；generating 或无 minister_message_id 拒绝。
     already_done = False
-    if ctid > 0 and hasattr(db, "conn"):
+    if ctid > 0:
         with _gate_cm():
             row = db.conn.execute(
                 "SELECT status, minister_message_id FROM chat_turns WHERE id=?",
@@ -297,11 +296,8 @@ def run_turn_translation_job(
                 raise AudienceTranslateError(
                     f"源轮回话未落定：chat_turn_id={ctid} status={status}"
                 )
-            already_done = (
-                hasattr(db, "get_story_extract_status")
-                and db.get_story_extract_status(ctid) == "done"
-            )
-            if not already_done and hasattr(db, "mark_story_extraction_pending"):
+            already_done = db.get_story_extract_status(ctid) == "done"
+            if not already_done:
                 db.mark_story_extraction_pending(ctid)
         if already_done:
             from ming_sim.applier import SectionResult
@@ -354,7 +350,7 @@ def run_turn_translation_job(
             raise AudienceTranslateError("说话人分段未逐字覆盖源轮回话")
         with _gate_cm():
             # 落账临界区复查源轮仍存活（ADR 0038：后台写入前须校验目标轮仍存活）。
-            if ctid > 0 and hasattr(db, "conn"):
+            if ctid > 0:
                 live = db.conn.execute(
                     "SELECT status FROM chat_turns WHERE id=?", (ctid,),
                 ).fetchone()
@@ -370,7 +366,7 @@ def run_turn_translation_job(
             )
     except Exception as exc:
         _mark_translation_pending(db, ctid, write_gate)
-        if ctid > 0 and hasattr(db, "set_chat_turn_error_pack"):
+        if ctid > 0:
             from ming_sim.exceptions import LLMUnavailable
             if not isinstance(exc, LLMUnavailable):
                 from ming_sim.audience_night import write_audience_error_pack
@@ -539,7 +535,7 @@ def _load_emperor_message_for_turn(
 ) -> str:
     """读源轮皇帝原话。查询成功且缺行 → 空串；SQL/连接/Row 形状异常响亮上抛。"""
     ctid = int(chat_turn_id or 0)
-    if ctid <= 0 or not hasattr(db, "conn"):
+    if ctid <= 0:
         return ""
     with _translation_write_cm(write_gate):
         trow = db.conn.execute(

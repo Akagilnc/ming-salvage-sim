@@ -390,7 +390,7 @@ def test_cli_retry_finds_hall_owned_interrupted_turn(game, monkeypatch):
         name for name, c in content.characters.items() if c.status == "active"
     )
     turn = GameSession.begin_audience_chat_turn(
-        session, "边饷如何？", message_speaker=minister, agno_session_id="cli:殿上",
+        session, "边饷如何？", message_speaker=minister,
     )
     assert db.list_hall_chat_turns(int(turn.night_id))[0]["id"] == turn.chat_turn_id
     _mark_interrupted(db, turn.chat_turn_id)

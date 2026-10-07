@@ -1136,20 +1136,17 @@ class GameSession:
 
         #1902 T4：Web 建局／rebuild 与 CLI 起手／读档重建曾各抄同一两句；生命周期
         归本会话核，入口只在适当时机调用。宿主资源（写闸／呈现缓存）仍由入口适配。
+        GameSession 恒持真实 GameDB；无 conn 壳旁路已清退。
         """
-        if not hasattr(self.db, "conn"):
-            return
         self.db.reconcile_interrupted_chat_turns()
         self.db.reconcile_post_reply_recovery()
 
     def list_startup_translation_catch_up(self) -> List[Any]:
-        """启动恢复：是否仍有未承接转译的已持久回话（#1902 T4 共核取数）。"""
-        if not hasattr(self.db, "conn"):
-            return []
-        list_fn = getattr(self.db, "list_unextracted_replies", None)
-        if list_fn is None:
-            return []
-        return list(list_fn() or [])
+        """启动恢复：是否仍有未承接转译的已持久回话（#1902 T4 共核取数）。
+
+        无待补 → 正常空列表；直接走持久库契约，不经可选方法／缺 conn 壳。
+        """
+        return list(self.db.list_unextracted_replies() or [])
 
     def run_startup_translation_catch_up(
         self, *,
@@ -1174,9 +1171,18 @@ class GameSession:
             write_queue=write_queue,
         )
 
+    def scene_model_session_anchor(self, night_id: int) -> tuple[str, int]:
+        """现役夜的模型会话身份与实际历史前像水位——生成／建轮／恢复唯一真源。
+
+        #1902 SCENE-ANCHOR：入口不得自行拼名、独立取水位或无事实默认；
+        真实夜确定后只由此核提供，与 ``_resolve_scene_agent`` 共用同一公式。
+        """
+        session_id = f"scene-night-{int(night_id)}"
+        return session_id, int(self.db.agno_runs_length(session_id))
+
     def begin_audience_chat_turn(
         self, message: str, *, message_speaker: str = "",
-        agno_session_id: str = "", runs_before: int = 0, ensure_summon: str = "",
+        ensure_summon: str = "",
     ) -> AudienceChatTurn:
         """建一轮召对：确保开夜 → 建 chat_turn → 落问话。返回句柄供收口/回滚。
 
@@ -1187,6 +1193,9 @@ class GameSession:
           Web 打开即丢出殿上历史），两端事实也就不一致了。
         - ``message_speaker`` 是 chat_messages 的归属（CLI 挂被召大臣名，与
           修前语义同）；Web 留空 = 与建轮同为「殿上」。
+
+        模型会话身份与前像水位由 ``scene_model_session_anchor`` 在真实夜确定后
+        提供，入口不再传入。
 
         ``ensure_summon`` 非空时按「宣 X」同入口补入殿账。问话原文在此落库，
         入口不再自行 append。
@@ -1214,12 +1223,13 @@ class GameSession:
         if not night_was_open:
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
+        agno_session_id, runs_before = self.scene_model_session_anchor(night_id)
         with atomic(self.db):
             chat_turn_id = self.db.create_chat_turn(
                 self.state,
                 owner,
-                agno_session_id or owner,
-                int(runs_before or 0),
+                agno_session_id,
+                runs_before,
                 night_id=night_id,
                 status="generating",
             )
@@ -1260,22 +1270,21 @@ class GameSession:
         ``schedule_translation=False`` 给在闸内、须自行安排转译时机的调用方
         （Web 流式/重试：转译要挂在闸外），落库与回滚差异仍同一条路。
         Web 外层若已持有 ``atomic``，这里的内层是扁平嵌套，由外层提交。
-        """
-        if turn.chat_turn_id:
-            from ming_sim.applier import atomic
 
-            with atomic(self.db):
-                minister_message_id = int(self.db.persist_minister_reply(
-                    message_speaker, turn.accepted_turn, reply, turn.chat_turn_id,
-                ) or 0)
-                self.db.record_chat_turn_rollback_diffs(
-                    turn.chat_turn_id, turn.before_snapshot,
-                    self.db.capture_chat_rollback_snapshot(),
-                )
-        else:
-            minister_message_id = int(self.db.append_chat_message(
-                message_speaker, turn.accepted_turn, "minister", reply,
+        须已建持久轮；零轮 append 旁路已清退（生产消费者均走 durable turn）。
+        """
+        if not turn.chat_turn_id:
+            return 0
+        from ming_sim.applier import atomic
+
+        with atomic(self.db):
+            minister_message_id = int(self.db.persist_minister_reply(
+                message_speaker, turn.accepted_turn, reply, turn.chat_turn_id,
             ) or 0)
+            self.db.record_chat_turn_rollback_diffs(
+                turn.chat_turn_id, turn.before_snapshot,
+                self.db.capture_chat_rollback_snapshot(),
+            )
         if result is not None and schedule_translation:
             self.schedule_pending_scene_translation(result)
         return minister_message_id
@@ -1361,9 +1370,10 @@ class GameSession:
         chat_turn_id: Optional[int] = None,
         write_queue: Any = None,
     ) -> List[Dict[str, Any]]:
-        """转译待补投影；真源 audience_translation.list_pending_translations。"""
-        if not hasattr(self.db, "conn"):
-            return []
+        """转译待补投影；真源 audience_translation.list_pending_translations。
+
+        无待补 → 正常空列表；直接引用真实库，不经缺 conn 壳。
+        """
         from ming_sim.audience_translation import list_pending_translations
 
         return list_pending_translations(
@@ -1408,11 +1418,7 @@ class GameSession:
         still = self.list_pending_translation_retries(
             chat_turn_id=ctid, write_queue=write_queue,
         )
-        status = (
-            self.db.get_story_extract_status(ctid)
-            if hasattr(self.db, "get_story_extract_status")
-            else ("pending" if still else "done")
-        )
+        status = self.db.get_story_extract_status(ctid)
         return {
             "chat_turn_id": ctid,
             "extract_status": status,
@@ -1652,9 +1658,7 @@ class GameSession:
                         self, pending_id, night_id=int(open_night_row["id"]),
                     )
         self.refresh_runtime_after_chat_rollback()
-        campaign_id = ""
-        if hasattr(self.db, "kv_get"):
-            campaign_id = str(self.db.kv_get("campaign_id") or "")
+        campaign_id = str(self.db.kv_get("campaign_id") or "")
         return AudienceChatUndoResult(
             minister_name=target,
             night_id=int(row.get("night_id") or 0),
@@ -1775,7 +1779,6 @@ class GameSession:
         from ming_sim.audience_night import (
             CMD_CLOSE_NIGHT,
             SCENE_CHAT_SPEAKER,
-            close_night,
             ensure_summon_enter,
             get_open_night,
             open_night,
@@ -1804,19 +1807,10 @@ class GameSession:
         result = ChatTurnResult(answer="")
         if audience_command_verdict == CMD_CLOSE_NIGHT:
             ctid = int(chat_turn_id or 0)
-            # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
-            # ctid==0 的当场收夜分支随同步转译一并删除。
+            # 生产：退朝只标 court_break，由 epilogue／schedule_close_night 收夜。
+            # 零轮当场 close_night 旁路已清退（注释曾称已删、代码残留）。
             if ctid > 0:
                 self._mark_control_turn_translation_done(ctid)
-                result.court_action = "court_break"
-                return result
-            close_night(
-                self.db, self.state,
-                content=getattr(self, "content", None),
-                llm_config=getattr(self, "llm_config", None),
-                write_gate=getattr(self, "_write_gate", None),
-                write_queue=self._write_queue,
-            )
             result.court_action = "court_break"
             return result
 
@@ -1918,14 +1912,18 @@ class GameSession:
         return result
 
     def _resolve_scene_agent(self, prepared: Any, *, night_id: int) -> Any:
-        """生产 create_scene_agent；测试经 monkeypatch 此工厂缝注入，禁实例双桩属性。"""
+        """生产 create_scene_agent；测试经 monkeypatch 此工厂缝注入，禁实例双桩属性。
+
+        session_id 与建轮／恢复同一 ``scene_model_session_anchor`` 事实。
+        """
         llm_config = getattr(self, "llm_config", None)
+        session_id, _runs_before = self.scene_model_session_anchor(night_id)
         return create_scene_agent(
             llm_config,
             prepared,
             agno_db=getattr(self, "agno_db", None),
             content=getattr(self, "content", None),
-            session_id=f"scene-night-{night_id}",
+            session_id=session_id,
         )
 
     def _run_scene_agent_transport(

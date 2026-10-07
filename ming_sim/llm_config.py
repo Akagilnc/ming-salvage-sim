@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import getpass
 import json
+import logging
 import os
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 from ming_sim.models import (
     LLMConfig,
@@ -507,15 +510,29 @@ def for_role(cfg: LLMConfig, role: str) -> LLMConfig:
 
 
 def load_runtime_llm() -> Dict[str, object]:
-    """读 data/runtime_llm.json。缺/坏返回空 dict。"""
+    """读 data/runtime_llm.json。
+
+    缺档／合法空 → {}（入口可按既有契约回落）。
+    读／解析失败与缺档分判：保留真实原因并明示后，仍回落 {}——不另立 fail-fast，
+    也不新增整档校验／修档／迁移或第二配置。
+    """
     if not os.path.isfile(RUNTIME_LLM_PATH):
         return {}
     try:
         with open(RUNTIME_LLM_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        # 坏档 ≠ 缺档：明示真因后再回落，禁无痕洗成空配置。
+        logger.warning(
+            "runtime_llm load failed path=%s err_type=%s err=%s",
+            RUNTIME_LLM_PATH, type(exc).__name__, exc,
+        )
         return {}
     if not isinstance(data, dict):
+        logger.warning(
+            "runtime_llm load failed path=%s err_type=TypeError err=top-level %s, expected dict",
+            RUNTIME_LLM_PATH, type(data).__name__,
+        )
         return {}
     return _normalize_runtime_llm(data)
 

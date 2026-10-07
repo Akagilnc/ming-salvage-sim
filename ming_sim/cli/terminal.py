@@ -153,8 +153,6 @@ def choose_minister(session: GameSession) -> Optional[Character]:
 
 def _record_audience_exit(session: GameSession, name: str) -> None:
     """CLI「退下」控制口令：落空正文告退账（#1838 reopen：无旁白调用）。"""
-    if not hasattr(session.db, "conn"):
-        return
     from ming_sim.audience_night import dismiss_from_audience
     dismiss_from_audience(session.db, name)
 
@@ -333,9 +331,8 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         chat_turn = GameSession.begin_audience_chat_turn(
             session, question,
             # 建轮归「殿上」（与 Web 同、殿上历史读得到）；问话/回话挂大臣名
-            # （与修前 CLI 语义同）。
+            # （与修前 CLI 语义同）。模型会话身份／前像水位由会话核按真实夜提供。
             message_speaker=character.name,
-            agno_session_id="cli:殿上",
             ensure_summon=(
                 character.name if question == f"宣{character.name}" else ""
             ),

@@ -515,7 +515,7 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     sess.content = content
     turn = GameSession.begin_audience_chat_turn(
         sess, question,
-        message_speaker=character.name, agno_session_id=f"cli:{character.name}",
+        message_speaker=character.name,
     )
     ct = int(turn.chat_turn_id)
     assert db.list_hall_chat_turns(night_id)[0]["id"] == ct

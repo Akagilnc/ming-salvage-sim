@@ -889,7 +889,10 @@ def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
     """
     game = web_game
     minister = _active_minister(game.db, game.content)
-    sid = game._minister_agno_session_id(minister)
+    # 先建一轮以确定真实夜，再按会话核锚点取身份（与生产同源）。
+    from ming_sim.audience_night import get_open_night, open_night
+    night = get_open_night(game.db) or open_night(game.db, game.state)
+    sid, _ = game.session.scene_model_session_anchor(int(night["id"]))
     # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
     _seed_agno_v3_runs(game.db, sid, run_count=1)
     assert game.db.agno_runs_length(sid) == 1

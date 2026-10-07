@@ -1742,10 +1742,8 @@ class WebGame:
         # 序：核账期（含停住，ADR 0149 点即入）→ settlement；夜未收 → audience；其余 → month。
         # 点退朝后收夜前并存窗：快照已立，开夜不得覆盖核账落点。
         reopen_landing = "month"
-        open_night = None
-        if hasattr(self.db, "conn"):
-            from ming_sim.audience_night import get_open_night
-            open_night = get_open_night(self.db)
+        from ming_sim.audience_night import get_open_night
+        open_night = get_open_night(self.db)
         if settlement_display:
             reopen_landing = "settlement"
         elif open_night is not None:
@@ -1838,15 +1836,6 @@ class WebGame:
             SCENE_CHAT_SPEAKER, int(night["id"]) if night else 0,
         )
 
-    def _minister_agno_session_id(self, minister_name: str) -> str:
-        # 所有 Web 召对都由场景 agent 生成；chat_turn 与 agent 必须绑同一 Agno session。
-        del minister_name
-        from ming_sim.audience_night import get_open_night
-        night = get_open_night(self.db)
-        if night is not None:
-            return f"scene-night-{int(night['id'])}"
-        return f"scene-night-pending-turn-{int(self.state.turn)}"
-
     def can_undo_last_chat(self, minister_name: str) -> bool:
         """#1902 J3：资格在会话共核；Web 只转发。"""
         return bool(self.session.can_undo_last_audience_chat(minister_name))
@@ -1872,12 +1861,11 @@ class WebGame:
         走 ``GameSession.begin_audience_chat_turn`` 的未绑定真方法（而非
         ``self.session.begin_...``）：召对话轮生命周期是共核，测试壳只替 LLM 缝，
         不必各自再抄一份建轮（#13 禁测试自建被测行为）。
+        模型会话身份／前像水位由会话核在真实夜确定后提供，入口不再拼名取水位。
         """
-        agno_session_id = self._minister_agno_session_id(minister_name)
+        del minister_name
         turn = GameSession.begin_audience_chat_turn(
             self.session, message,
-            agno_session_id=agno_session_id,
-            runs_before=self.db.agno_runs_length(agno_session_id),
         )
         return turn.chat_turn_id, turn.before_snapshot
 
@@ -2536,9 +2524,8 @@ class WebGame:
         # must close the durable turn and pending owner through the same terminal path as a
         # worker failure, rather than escaping this SSE generator.
         try:
-            if hasattr(self.db, "kv_get"):
-                identity["campaign_id"] = str(self.db.kv_get("campaign_id") or "")
-            if chat_turn_id and hasattr(self.db, "conn"):
+            identity["campaign_id"] = str(self.db.kv_get("campaign_id") or "")
+            if chat_turn_id:
                 from ming_sim.audience_night import get_open_night
                 open_night = get_open_night(self.db)
                 identity["night_id"] = int(open_night["id"]) if open_night else 0
@@ -2911,15 +2898,13 @@ def _auto_close_open_night_gate_free(
     无真实 game.db.conn 的 legacy 替身跳过。
     #1353 fold-in r5：欠账补跑内部静默，不并入过月 SSE。
     #1353 r12：write_gate 可由调用方注入（advance 注入非阻塞短持适配；默认 runtime 闸）。
+    # #1902：无 conn legacy 替身跳过已清退；WebGame 恒持真实 GameDB。
     """
-    db = getattr(game, "db", None)
-    if db is None or not hasattr(db, "conn"):
-        return
     from ming_sim.audience_night import auto_close_open_night
 
     session = getattr(game, "session", None)
     auto_close_open_night(
-        db,
+        game.db,
         game.state,
         content=getattr(game, "content", None),
         llm_config=getattr(session, "llm_config", None) if session is not None else None,
@@ -4997,7 +4982,7 @@ async def api_audience_chat_history() -> Dict[str, Any]:
     """Live audience state belongs to the open scene, never to a roster member."""
     game = get_game()
     from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
-    open_night = get_open_night(game.db) if hasattr(game.db, "conn") else None
+    open_night = get_open_night(game.db)
     return {
         "minister": {
             "name": SCENE_CHAT_SPEAKER, "office": "一夜一卷", "office_type": "scene",

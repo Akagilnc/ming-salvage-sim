@@ -1,23 +1,33 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from ming_sim import llm_config
 
 
-def test_load_runtime_llm_missing_file_keeps_empty_dict_contract(tmp_path, monkeypatch):
+def test_load_runtime_llm_missing_file_keeps_empty_dict_contract(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(tmp_path / "missing.json"))
 
-    assert llm_config.load_runtime_llm() == {}
+    with caplog.at_level(logging.WARNING, logger="ming_sim.llm_config"):
+        assert llm_config.load_runtime_llm() == {}
+    # 缺档是合法空，不是读／解析故障——不得冒记 fault。
+    assert not any("load failed" in r.getMessage() for r in caplog.records)
 
 
-def test_load_runtime_llm_malformed_json_returns_empty(tmp_path, monkeypatch):
-    """坏 JSON(语法错)走 json.JSONDecodeError 防御分支 → {}(Sourcery R2)。"""
+def test_load_runtime_llm_malformed_json_surfaces_fault_then_falls_back(
+    tmp_path, monkeypatch, caplog,
+):
+    """坏 JSON：与缺档分判——明示 JSONDecodeError 后仍可按契约回落 {}。"""
     path = tmp_path / "runtime_llm.json"
     path.write_text("{not valid json,,,", encoding="utf-8")
     monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
 
-    assert llm_config.load_runtime_llm() == {}
+    with caplog.at_level(logging.WARNING, logger="ming_sim.llm_config"):
+        assert llm_config.load_runtime_llm() == {}
+    fault_records = [r for r in caplog.records if "load failed" in r.getMessage()]
+    assert fault_records
+    assert any("JSONDecodeError" in r.getMessage() for r in fault_records)
 
 
 def test_load_runtime_llm_coerces_stringified_numeric_fields(tmp_path, monkeypatch):
@@ -73,13 +83,18 @@ def test_load_runtime_llm_ignores_legacy_max_tokens_key(tmp_path, monkeypatch):
     assert "max_tokens" not in out
 
 
-def test_load_runtime_llm_non_dict_payload_returns_empty(tmp_path, monkeypatch):
-    """合法 JSON 但顶层非 dict(list / 字符串 / 数字)走 isinstance 防御分支 → {}。"""
+def test_load_runtime_llm_non_dict_payload_surfaces_fault_then_falls_back(
+    tmp_path, monkeypatch, caplog,
+):
+    """合法 JSON 但顶层非 dict：与缺档分判，明示后仍可回落 {}。"""
     for payload in ("[1, 2, 3]", '"just a string"', "42"):
         path = tmp_path / "runtime_llm.json"
         path.write_text(payload, encoding="utf-8")
         monkeypatch.setattr(llm_config, "RUNTIME_LLM_PATH", str(path))
-        assert llm_config.load_runtime_llm() == {}, f"payload={payload!r} 应回落空 dict"
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="ming_sim.llm_config"):
+            assert llm_config.load_runtime_llm() == {}, f"payload={payload!r} 应回落空 dict"
+        assert any("load failed" in r.getMessage() for r in caplog.records)
 
 
 def test_save_runtime_llm_persists_channel_slots(tmp_path, monkeypatch):
