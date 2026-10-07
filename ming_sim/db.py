@@ -14357,7 +14357,6 @@ class GameDB:
         return dossier_id
 
     @staticmethod
-    @staticmethod
     def _validate_dossier_delegations(
         roster: Iterable[Dict[str, object]],
         *,
@@ -14560,6 +14559,8 @@ class GameDB:
             existing_raw, strict_structured=True,
         )
         self._validate_participant_roster_references(existing, as_durable=True)
+        # 旧名册委派链：同一权威规则，内部故障出口（裸 ValueError），不跳过。
+        self._validate_dossier_delegations(existing)
 
         # —— 3. 合并：冲突/委派只归责追加项 ——
         by_character = {str(item["character_id"]): item for item in existing}
@@ -14577,7 +14578,7 @@ class GameDB:
             by_character[character_id] = item
             added.append(item)
         merged = existing + added
-        # 只检查追加项的委派链；旧成员腐坏委派不在此冒充新声明错。
+        # 追加项委派相对合并后主协办集；领域拒收（DMVE）。
         self._validate_dossier_delegations(
             merged, only=added, as_declaration=True,
         )
