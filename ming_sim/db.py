@@ -16805,7 +16805,7 @@ class GameDB:
         def _load(text: str, default, label: str):
             try:
                 return json.loads(text) if text else default
-            except Exception as exc:
+            except (json.JSONDecodeError, TypeError) as exc:
                 tlog(f"[db] resolve_context {label} JSON 损坏，回退默认、恢复将丢该段（turn={turn}）：{exc}")  # #14 surface
                 return default
         attendant_message = str(row["attendant_message"] or "")
