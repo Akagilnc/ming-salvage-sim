@@ -310,19 +310,71 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", run_agent)
 
-    # 捕获 resolve 链上邸报作者材料实际传入 opening 的 dossier_facts 结构化 id。
+    # 只观察 resolve 上「邸报作者」那一次 prepare 的结构化消费入参，不扫任意 prepare 调用。
     import ming_sim.materials as materials_mod
+    import ming_sim.month_chain as month_chain_mod
 
-    captured_dossiers: dict[str, object] = {"calls": []}
+    author_capture: dict[str, object] = {
+        "dossier_ids": None,
+        "fact_origins_kept": [],
+        "event_ok": [],
+        "prepared": None,
+        "agent_prepared": None,
+    }
+    real_prepare = month_chain_mod.prepare_gazette_author_materials
     real_world_opening = materials_mod._world_opening_text
+    real_gpf = month_chain_mod._gazette_public_fact
+    real_gpe = month_chain_mod._gazette_public_event
+    real_create = None
+    try:
+        from ming_sim import agents as agents_mod
+        real_create = agents_mod.create_gazette_author_agent
+    except Exception:
+        agents_mod = None
+
+    depth = {"n": 0}
 
     def _spy_world_opening(state_arg, board_text, affair_lines, dossier_facts, **kwargs):
-        captured_dossiers["calls"].append([int(f["id"]) for f in dossier_facts])
+        if depth["n"] > 0:
+            author_capture["dossier_ids"] = [int(f["id"]) for f in dossier_facts]
         return real_world_opening(
             state_arg, board_text, affair_lines, dossier_facts, **kwargs,
         )
 
-    monkeypatch.setattr(materials_mod, "_world_opening_text", _spy_world_opening)
+    def _spy_gpf(fact, secret_dossier_ids=None):
+        ok = real_gpf(fact, secret_dossier_ids)
+        if depth["n"] > 0 and ok:
+            origin = getattr(fact, "origin_ref", None)
+            if origin is None and isinstance(fact, dict):
+                origin = fact.get("origin_ref")
+            author_capture["fact_origins_kept"].append(str(origin or ""))
+        return ok
+
+    def _spy_gpe(event):
+        ok = real_gpe(event)
+        if depth["n"] > 0:
+            author_capture["event_ok"].append(bool(ok))
+        return ok
+
+    def _spy_prepare(db_arg, state_arg):
+        depth["n"] += 1
+        try:
+            monkeypatch.setattr(materials_mod, "_world_opening_text", _spy_world_opening)
+            monkeypatch.setattr(month_chain_mod, "_gazette_public_fact", _spy_gpf)
+            monkeypatch.setattr(month_chain_mod, "_gazette_public_event", _spy_gpe)
+            prepared = real_prepare(db_arg, state_arg)
+            author_capture["prepared"] = prepared
+            return prepared
+        finally:
+            depth["n"] -= 1
+
+    def _spy_create(llm_config, prepared, *a, **k):
+        author_capture["agent_prepared"] = prepared
+        return real_create(llm_config, prepared, *a, **k)
+
+    monkeypatch.setattr(month_chain_mod, "prepare_gazette_author_materials", _spy_prepare)
+    if real_create is not None:
+        monkeypatch.setattr(agents_mod, "create_gazette_author_agent", _spy_create)
 
     before = prepare_world_materials(db, state)
     try:
@@ -388,13 +440,20 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert any(str(row.get("category") or "") == _PLAIN_DOSSIER_LEDGER for row in payload["landed"])
     assert all(str(row.get("category") or "") != _SECRET_DOSSIER_LEDGER for row in payload["landed"])
 
-    # resolve 链上至少一次材料 prepare 按邸报作者滤密：含普通案卷、不含密令案卷。
-    gaz_calls = [
-        set(ids) for ids in (captured_dossiers.get("calls") or [])
-        if int(plain_did) in ids and int(secret_did) not in ids
-    ]
-    assert gaz_calls, captured_dossiers.get("calls")
-    # agent 在 resolve 中确实接了材料 tools（消费发生）
+    # 作者 prepare 与 agent 接缝绑定同一 prepared；dossier 身份在该次 opening 入参上。
+    assert author_capture.get("prepared") is not None
+    assert author_capture.get("agent_prepared") is author_capture.get("prepared")
+    gaz_ids = set(author_capture.get("dossier_ids") or [])
+    assert int(secret_did) not in gaz_ids
+    assert int(plain_did) in gaz_ids
+    # 事实筛选：作者 prepare 保留 origin 含公开、不含密令/密令案卷
+    kept = set(author_capture.get("fact_origins_kept") or [])
+    assert f"affair:{affair.id}" in kept
+    assert f"dossier:{plain_did}" in kept
+    assert "secret_order:9" not in kept
+    assert f"dossier:{secret_did}" not in kept
+    assert all(not str(o).startswith("secret_order:") for o in kept)
+    # agent 实际 tools 消费发生，且 agent 接到的是作者 prepare 同一份
     assert str(seen.get("files") or "").strip() != ""
     assert str(seen.get("instructions") or "").strip() != ""
 

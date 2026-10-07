@@ -499,18 +499,16 @@ class CharacterKnowledgeStore:
         self,
         status: str | None = None,
         minister_name: str | None = None,
-        *,
-        with_dossier_progress: bool = True,
     ) -> list[dict[str, object]]:
         from ming_sim.applier import durable_int, load_stored_list, load_stored_object
         from ming_sim.entities.dossier.store import DossierStore
 
         rows = self.secret_order_rows(status, minister_name)
-        dossiers = DossierStore(self._conn) if with_dossier_progress else None
+        dossiers = DossierStore(self._conn)
         out: list[dict[str, object]] = []
         for r in rows:
             oid = durable_int(r["id"], label="secret_orders.id", blank=None)
-            dossier = dossiers.get_for_secret_order(oid) if dossiers is not None else None
+            dossier = dossiers.get_for_secret_order(oid)
             out.append({
                 "id": oid,
                 "turn_issued": durable_int(
@@ -540,7 +538,7 @@ class CharacterKnowledgeStore:
                 "sim_note": r["sim_note"] or "",
                 "dossier_progress": (
                     dossiers.list_dossier_progress(int(dossier["id"]))
-                    if dossiers is not None and dossier is not None else []
+                    if dossier is not None else []
                 ),
                 "excluded_names": load_stored_list(
                     r["excluded_names"], label="excluded_names",

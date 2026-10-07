@@ -13404,10 +13404,6 @@ class GameDB:
                 raise
         tlog(f"[secret_order] close id={order_id} status={status}")
 
-    def _current_game_turn(self, fallback: int = 0) -> int:
-        row = ReignStateStore(self.conn).read_current_settle_turn()
-        return int(row["turn"]) if row is not None else int(fallback)
-
     def _note_secret_order_report(
         self, order_id: int, text: str, *, band: str, origin: str,
     ) -> bool:
@@ -13425,7 +13421,7 @@ class GameDB:
         if dossier is None:
             return False
         self.dossiers.record_dossier_progress(
-            int(dossier["id"]), self._current_game_turn(), band, raw,
+            int(dossier["id"]), self.reign.current_settle_turn(), band, raw,
             origin=origin, commit=False,
         )
         return True
@@ -13440,7 +13436,7 @@ class GameDB:
         row = CharacterKnowledgeStore(self.conn).read_submit_secret_order_for_review((int(order_id),))
         if not row or row["status"] != "active":
             return False
-        current_turn = self._current_game_turn(
+        current_turn = self.reign.current_settle_turn(
             durable_int(
                 row["turn_issued"], label="secret_orders.turn_issued", blank=None,
             ),

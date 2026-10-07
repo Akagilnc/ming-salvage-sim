@@ -331,29 +331,27 @@ class ReignStateStore:
             "timeline": timeline,
         }
 
-    def current_settle_turn(self) -> int:
+    def current_settle_turn(self, fallback: int = 0) -> int:
+        """Current absolute turn from game_state; missing row uses fallback."""
         row = self.read_current_settle_turn()
-        return int(row["turn"]) if row is not None and row["turn"] is not None else 0
+        if row is None or row["turn"] is None:
+            return int(fallback)
+        return int(row["turn"])
 
     def has_meta_flag(self, key: str) -> bool:
         row = self.read_has_meta_flag((key,))
         return row is not None and int(row["value"]) == 1
 
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
+        """Ledger rows for one dossier; beyond_intent via sole coerce_beyond_intent_flag."""
+        from ming_sim.db import GameDB
+
         rows: List[Dict[str, object]] = []
         for row in self.read_list_economy_moves_for_dossier((f"dossier:{int(dossier_id)}",)):
             item = dict(row)
-            raw = item.get("beyond_intent")
-            if isinstance(raw, bool):
-                flag = raw
-            elif raw in (None, ""):
-                flag = False
-            else:
-                try:
-                    flag = bool(int(raw))
-                except (TypeError, ValueError):
-                    flag = bool(raw)
-            item["beyond_intent"] = flag
+            item["beyond_intent"] = bool(
+                GameDB.coerce_beyond_intent_flag(item.get("beyond_intent"))
+            )
             rows.append(item)
         return rows
 
