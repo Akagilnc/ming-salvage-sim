@@ -719,15 +719,14 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     def capture(agent, _message, **_kwargs):
         tools = {tool.__name__: tool for tool in agent.tools}
         listing = tools["list_materials"]("")
-        index = tools["read_material"]("INDEX.txt")
-        board = tools["read_material"]("盘面/全局.txt")
+        # 路径可读（生产工具结果）；不采集 index/board 正文作断言（#1897 T1）。
+        tools["read_material"]("INDEX.txt")
+        tools["read_material"]("盘面/全局.txt")
         materials_dir = getattr(agent.model, "materials_dir", "")
         seen.append({
             "listing": listing,
-            "index": index,
-            "board": board,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
-            "instructions": [str(part) for part in agent.instructions],
+            "instructions": list(agent.instructions),
         })
         return "静"
 
@@ -740,8 +739,6 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     catalog = [line for line in seen[0]["listing"].splitlines() if line]
     assert "INDEX.txt" in catalog
     assert any(line != "INDEX.txt" for line in catalog)
-    # 目录／材料树身份与 API／CLI 通道；不锁 index/board 正文 type 或跨字段正文通道（#1897 T1）。
-    assert "index" in seen[0] and "board" in seen[0]
     assert seen[0]["dir_has_index"] is False
     # 开场通道＝prepare 交回的那一份（对象身份），不跨字段比正文。
     assert openings[0] is not None
@@ -750,7 +747,6 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     month_chain.run_world_segment_text(db, state, cli)
     assert seen[1]["dir_has_index"] is True
-    assert "index" in seen[1]
 
 
 def test_month_chain_lands_specialized_facts_before_due_and_gazette(game, monkeypatch):

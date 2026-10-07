@@ -1883,7 +1883,7 @@ def compose_unknown_participant_inworld_report(
 
     产文失败 → typed LLMUnavailable（#1299/#1310/#1452
     失败单源 CLI_RUNNER_PLAYER_MESSAGE），玩家重下这道点名。
-    speaker_role：大臣口吻时接 minister_speaker_role 客观档料（0033）；不在此复制档料。
+    speaker_role：客观档料由调用方给出（0033）；不在此复制档料。
     """
     cleaned = _normalize_unknown_participant_names(names)
     if voice == "minister":
@@ -1902,54 +1902,6 @@ def compose_unknown_participant_inworld_report(
         prompt,
         llm_config=llm_config,
         tag="participant_escalate_report",
-    )
-
-
-def compose_decree_validation_recovery(
-    failed_fields: Optional[List[str]] = None,
-    *,
-    speaker_name: str = "",
-    speaker_role: str = "",
-    emperor_words: str = "",
-    prior_output: str = "",
-    llm_config: Any = None,
-) -> str:
-    """Turn typed decree rejection facts into a player-facing retry cue via the LLM.
-
-    #1765：接皇帝原话与原产出；零形式约束（禁句数/句式硬限，ADR 0033）。
-    speaker_role：接 minister_speaker_role 客观档料；不在此复制人物/党派材料。
-    """
-    field_groups = {
-        "银两数目": {"amount"},
-        "款项来源": {"account"},
-        "用途": {"purpose"},
-        "旨意正文": {"text", "body", "decree_text"},
-        "所指对象": {"target_kind", "target_id"},
-        "所指地域": {"region_id", "locality_scope"},
-        "承办人": {"assignee", "assignee_id", "assignee_name"},
-        "拨付节奏": {"cadence"},
-        "办理方式": {"action_type", "dossier_action_type", "transaction_category"},
-    }
-    failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
-    features = [label for label, keys in field_groups.items() if failed & keys]
-    feature = "、".join(features) if features else "旨意所指对象或必需内容"
-    role = str(speaker_role or "").strip()
-    if not role:
-        name = str(speaker_name or "").strip()
-        role = name or "大臣"
-    prompt = (
-        f"你是{role}。一份拟旨在记录前校验未通过，"
-        f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
-        "补充或改说所需信息后重拟。"
-    )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
-        prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
-        prompt += f"\n【原产出】{prior}"
-    return _compose_inworld_fact_report(
-        prompt, llm_config=llm_config, tag="decree_validation_recovery",
     )
 
 
@@ -3471,15 +3423,6 @@ def resubmit_draft_admission_payload(
     return payload
 
 
-def _matched_prefix(message: str, prefixes) -> Optional[str]:
-    """消息命中某前缀则返回前缀后的正文（玩家那句意图），否则 None。"""
-    pm = (message or "").strip()
-    for pre in prefixes:
-        if pm.startswith(pre):
-            return pm[len(pre):].strip()
-    return None
-
-
 def _scan_outside_strings(text: str, handle) -> str:
     """逐字扫描 text，字符串内部（含转义）原样输出；字符串外的字符交给
     handle(text, i, out, n) -> next_i 处理（append 想保留的到 out、返回下一位置）。
@@ -3634,76 +3577,7 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     }
 
 
-_CLI_RECOMMENDATION_CALL = re.compile(
-    r"\n?\[\[recommend_person:(\{.*?\})\]\]\s*$", re.DOTALL,
-)
-_CLI_RECOMMENDATION_PREFIX = "[[recommend_person:"
-
-
-def _cli_prompt(
-    messages: List[Message], response_format: object, tools: object,
-    *,
-    materials_dir: Optional[str] = None,
-) -> str:
-    """Build one CLI prompt, including instructions derived from offered tools."""
-    prompt = _messages_to_prompt(messages, response_format, materials_dir=materials_dir)
-    recommendation_schema = next(
-        (tool.get("function", tool) for tool in (tools or [])
-         if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
-        None,
-    )
-    if recommendation_schema:
-        prompt += (
-            "\n\n【荐人调用】只有确要调用此工具时，回答末尾追加"
-            f"[[recommend_person:<arguments JSON>]]；arguments 须严格符合以下已提供的工具 schema：{json.dumps(recommendation_schema.get('parameters') or {}, ensure_ascii=False)}"
-        )
-    return prompt
-
-
-def _cli_stream_safe_prefix(text: str) -> tuple[str, str]:
-    """Release text that cannot belong to a trailing recommendation envelope."""
-    marker_at = text.rfind(_CLI_RECOMMENDATION_PREFIX)
-    if marker_at >= 0:
-        return text[:marker_at], text[marker_at:]
-    keep = 0
-    for length in range(1, min(len(text), len(_CLI_RECOMMENDATION_PREFIX) - 1) + 1):
-        if text.endswith(_CLI_RECOMMENDATION_PREFIX[:length]):
-            keep = length
-    return (text[:-keep], text[-keep:]) if keep else (text, "")
-
-
-def _cli_recommendation_call(text: str, tools: object) -> tuple[str, list[ChatCompletionMessageFunctionToolCall]]:
-    """Adapt an explicit CLI recommendation envelope into the existing tool seam."""
-    offered = next(
-        (tool.get("function", tool) for tool in (tools or [])
-         if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
-        None,
-    )
-    match = _CLI_RECOMMENDATION_CALL.search(text) if offered else None
-    if not match:
-        return text, []
-    try:
-        payload = json.loads(match.group(1))
-    except (TypeError, ValueError):
-        return text, []
-    schema = offered.get("parameters") or {}
-    required = schema.get("required") or []
-    properties = schema.get("properties") or {}
-    if (not isinstance(payload, dict)
-            or any(not str(payload.get(key) or "").strip() for key in required)
-            or any(key not in properties for key in payload)):
-        return text, []
-    call = ChatCompletionMessageFunctionToolCall(
-        id="cli-recommendation",
-        type="function",
-        function=ToolFunction(name=offered["name"], arguments=json.dumps(payload, ensure_ascii=False)),
-    )
-    return text[:match.start()].rstrip(), [call]
-
-
-def _fake_completion(
-    text: str, model_id: str, tool_calls: list[ChatCompletionMessageFunctionToolCall] | None = None,
-) -> ChatCompletion:
+def _fake_completion(text: str, model_id: str) -> ChatCompletion:
     """把纯文本包成 OpenAI ChatCompletion 交给 agno 解析。"""
     msg = ChatCompletionMessage(role="assistant", content=text)
     choice = Choice(index=0, message=msg, finish_reason="stop")
