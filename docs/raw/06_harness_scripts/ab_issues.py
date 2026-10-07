@@ -6,13 +6,13 @@ from ming_sim import cli_backend as cb
 prompt = open("/tmp/issues_prompt.txt").read()
 
 def parse_new_issues(raw):
-    # 复用项目宽松解析
+    # Strict stdlib JSON object decode; contract failure → empty.
     try:
-    obj = json.loads(raw)
-except Exception:
-    obj = {}
-if not isinstance(obj, dict):
-    obj = {}
+        obj = json.loads(raw)
+    except Exception:
+        obj = {}
+    if not isinstance(obj, dict):
+        obj = {}
     ni = obj.get("新立局势") or obj.get("new_issues") or []
     return obj, ni
 
