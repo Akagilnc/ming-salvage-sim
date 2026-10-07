@@ -118,11 +118,22 @@ def _ctx() -> GameContent:
 
 
 def _canonical_issue_origin(db: GameDB, row: sqlite3.Row) -> str:
-    """Resolve and authorize one parent issue origin before applying its children."""
+    """Resolve and authorize one parent issue origin before applying its children.
+
+    Propagate a stored origin_ref when it already authorizes (dossier:/affair:/
+    盘面自发). Otherwise follow the issue's affair pointer — ADR 0154: consequences
+    without a dossier point at the affair directly. Only true board-spontaneous
+    when neither parent is available. No dossier-only rewrite bridge.
+    """
     stored_ref = str(row["origin_ref"] or "").strip()
-    # Durable dossier references remain exact; legacy/event issues predate dossier
-    # provenance and canonically represent simulation-originated consequences.
-    origin_ref = stored_ref if stored_ref.startswith("dossier:") else "盘面自发"
+    if stored_ref and db.effect_origin_rejection(stored_ref) is None:
+        return stored_ref
+    keys = row.keys() if hasattr(row, "keys") else ()
+    affair_id = int(row["affair_id"] or 0) if "affair_id" in keys else 0
+    if affair_id:
+        origin_ref = db.affairs.origin_ref(affair_id)
+    else:
+        origin_ref = "盘面自发"
     rejection = db.effect_origin_rejection(origin_ref)
     if rejection:
         raise ValueError(f"issue #{row['id']} canonical origin 非法：{rejection['reason']}")
