@@ -6622,7 +6622,8 @@ def _apply_dossier_participant_items(
                 "rejected": True, "category": "invalid_shape", "item": item,
             })
             continue
-        # LLM item shape only — durable authority write faults must not land here (F39).
+        # 1) LLM item shape / refs — per-item reject. 2) Durable load uses its
+        # result for conflict checks; decode/normalize faults raise (F39).
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             if dossier_id not in authority_set:
@@ -6639,47 +6640,73 @@ def _apply_dossier_participant_items(
             # Free prose role（职分文字）：preserve raw; emptiness on local copy (#1834 F21).
             role_raw = str(item.get("role") or "")
             role = role_raw if role_raw.strip() else ""
+            addition = db._normalize_participant_roster(
+                [{
+                    "character_id": character_id,
+                    "tier": tier,
+                    "role": role,
+                    "delegator_id": delegator_id,
+                }],
+                strict_structured=True,
+            )
+            db._validate_participant_roster_references(addition)
         except (TypeError, ValueError, KeyError) as exc:
             results.append({
                 "rejected": True, "category": "invalid_participant_roster",
                 "reason": str(exc), "item": item,
             })
             continue
+        row = db.conn.execute(
+            "SELECT participant_roster FROM decree_dossiers WHERE id=?",
+            (int(dossier_id),),
+        ).fetchone()
+        if row is None:
+            results.append({
+                "rejected": True, "category": "invalid_participant_roster",
+                "reason": f"案卷不存在：{dossier_id}", "item": item,
+            })
+            continue
+        # Durable roster — faults raise; result drives conflict / duplicate.
+        existing = db._normalize_participant_roster(
+            GameDB._loads_stored_json_list(
+                row["participant_roster"],
+                surface="decree_dossiers.participant_roster",
+            ),
+        )
+        add_item = addition[0]
+        prior = next(
+            (
+                entry for entry in existing
+                if str(entry.get("character_id") or "") == str(add_item.get("character_id") or "")
+            ),
+            None,
+        )
+        if prior is not None:
+            if prior != add_item:
+                results.append({
+                    "rejected": True, "category": "invalid_participant_roster",
+                    "reason": f"参与人物已在案且机械档不同：{add_item.get('character_id')}",
+                    "item": item,
+                })
+                continue
+            results.append({
+                "dossier_id": dossier_id,
+                "character_id": prior["character_id"], "tier": prior["tier"],
+            })
+            continue
         try:
-            added = db.append_decree_dossier_participants(dossier_id, [{
-                "character_id": character_id,
-                "tier": tier,
-                "role": role,
-                "delegator_id": delegator_id,
-            }], state=state, commit=False)
-        except KeyError as exc:
+            GameDB._validate_dossier_delegations(existing + addition)
+        except ValueError as exc:
             results.append({
                 "rejected": True, "category": "invalid_participant_roster",
                 "reason": str(exc), "item": item,
             })
             continue
-        # ValueError/TypeError from append are durable schema/normalize/archive
-        # faults or state conflicts on the authority write — propagate (F39).
-        if not added:
-            # Exact durable duplicate is the only no-write success case.
-            existing = db.get_decree_dossier(dossier_id) or {}
-            roster = existing.get("participant_roster", [])
-            if not any(
-                entry.get("character_id") == character_id
-                and entry.get("tier") == tier
-                and entry.get("role") == role
-                and entry.get("delegator_id") == delegator_id
-                for entry in (roster or [])
-                if isinstance(entry, dict)
-            ):
-                results.append({
-                    "rejected": True, "category": "invalid_participant_roster",
-                    "reason": "参与人未实际加入案卷", "item": item,
-                })
-                continue
-        persisted = added[0] if added else {
-            "character_id": character_id, "tier": tier,
-        }
+        # Authority write: durable archive/payload faults still propagate (F39).
+        added = db.append_decree_dossier_participants(
+            dossier_id, addition, state=state, commit=False,
+        )
+        persisted = added[0] if added else add_item
         results.append({
             "dossier_id": dossier_id,
             "character_id": persisted["character_id"], "tier": persisted["tier"],
