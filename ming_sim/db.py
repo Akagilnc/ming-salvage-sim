@@ -2563,22 +2563,11 @@ class GameDB:
         # 开局负面帝国修正：clear_gate(机器消除条件)、legacy_key(对应 opening_legacies.key，开局修正去重用)
         self.ensure_column("legacies", "clear_gate", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
-        # #9 派系势力 offset 锚点：leverage = clamp(offset + 在朝官职权重和)。开局校准时
-        # offset = 钦定基线 − 开局权重和（见 _calibrate_faction_offsets）。老档缺省 0，由该校准回填。
-        # #9 cmr R3：记下「本次 init 是否刚 ADD 该列」——老档反推 offset 只许在列刚迁移那一次跑，
-        # 之后每次 load 不再碰 offset（否则 leverage 被 clamp 后再 load，offset 被重锚成
-        # round(clamped − weight_sum)≠原值 → 基线永久腐蚀）。该 flag 传给 _calibrate_faction_offsets。
-        self._leverage_offset_col_added = self.ensure_column(
+        # #9 派系势力 offset：leverage = clamp(offset + 在朝官职权重和)。
+        # 新档 seed 时由 _calibrate_faction_offsets 按 content 基线写入；幂等靠 metrics 持久标记。
+        self.ensure_column(
             "factions", "leverage_offset", "REAL NOT NULL DEFAULT 0"
         )
-        # #9 线上 R3（codex P2）crash-safety：单靠「列刚 ADD」内存 flag 不够——若上次进程崩在
-        # 『ensure_column 已 ADD 列、_calibrate_faction_offsets 未执行』之间，重启见列已存在 →
-        # ensure_column 返 False → flag False → 跳过校准 → offset 全留 0 → 下次 reconcile 把白名单
-        # leverage 重写成裸权重和(非锚定钦定基线)=平衡崩。故另立**持久校准标记**(metrics 表的
-        # __leverage_offsets_calibrated)：校准成功时由 _calibrate_faction_offsets 写入；开档时只要
-        # 标记缺失就补校准（与 flag 取或）。标记写入与 offset/leverage 写入同事务提交(见 1041 行的
-        # commit)——崩在校准中途则标记未落、下次开档重做，二者全有或全无(原子)。
-        self._leverage_offsets_calibrated = self._has_meta_flag("__leverage_offsets_calibrated")
         # 拒收 provenance source（#144 / ADR 0008 决定 5）：崩溃恢复重放须用原始来源，否则玩家
         # 来源(player_decree/hitl)的拒收被恢复路记成 system_simulation、静默不提示。老档缺省
         # 'system_simulation'（旧档缺来源时的默认值）。
@@ -3640,11 +3629,8 @@ class GameDB:
                 )
         self._initialize_army_pay_source_spine(is_fresh_armies_seed)
         self._apply_region_city_levels()  # 新档 region 此时才 INSERT 完，按史实补 city_level
-        # #9：派系势力 offset 校准。此刻 factions + characters 均已 INSERT。
-        # cmr R3：传 offset 列「本次是否刚 ADD」——老档反推只在迁移那次跑，常规 load 不碰 offset。
-        self._calibrate_faction_offsets(
-            is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
-        )
+        # #9：新档派系 offset 校准（factions + characters 已 INSERT）。
+        self._calibrate_faction_offsets(is_fresh_factions_seed)
         self.conn.commit()
 
     def list_office_vacancies(self) -> List[Dict[str, object]]:
@@ -4938,15 +4924,11 @@ class GameDB:
             self.recompute_faction_leverage(faction)
 
 
-    def _calibrate_faction_offsets(
-        self, is_fresh_factions_seed: bool, offset_col_added: bool = False
-    ) -> None:
+    def _calibrate_faction_offsets(self, is_fresh_factions_seed: bool) -> None:
         """新档 offset 校准：offset = content 钦定基线 − 开局权重和。
 
-        只服务 canonical 新档 seed；不在开库时反推/恢复旧表示。
+        只服务 canonical 新档 seed；幂等靠 __leverage_offsets_calibrated 持久标记。
         """
-        del offset_col_added  # 旧档加列反推已退出；保留形参以免 seed 调用改签名
-        self._leverage_offset_col_added = False
         if not is_fresh_factions_seed:
             return
         if self._has_meta_flag("__leverage_offsets_calibrated"):
@@ -4968,12 +4950,10 @@ class GameDB:
             )
             self.recompute_faction_leverage(faction)
         self._set_meta_flag("__leverage_offsets_calibrated")
-        self._leverage_offsets_calibrated = True
 
 
     def _has_meta_flag(self, key: str) -> bool:
-        """查 metrics 表里某持久标记是否存在（#9 R3 crash-safe 迁移标记用）。metrics 在 init_schema
-        建表脚本里已建，故此调用安全。值约定 1=已置位。"""
+        """查 metrics 表里某持久标记是否存在。值约定 1=已置位。"""
         row = self.conn.execute(
             "SELECT value FROM metrics WHERE key=?", (key,)
         ).fetchone()

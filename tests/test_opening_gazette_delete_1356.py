@@ -1,48 +1,12 @@
-"""#1356/#1292：删除固定开局邸报（P7）。
+"""#1356/#1292：开局不写固定邸报（P7）。
 
-钉测只保四个票面行为：
+钉测现役契约：
 1. t0 previous_summary 严格空
-2. 旧 seed 精确清且真实报保留（含三短语反例：真报含短语不被删）
-3. 空壳可关闭（前端 vitest）
-4. 首月真报出现
+2. t0 previous_reign_period_label 与空 summary 同口径
+3. Web state_payload 开局 previous_summary 严格空
 """
 
 from __future__ import annotations
-
-from pathlib import Path
-
-import pytest
-
-from ming_sim.session import GameSession
-
-ROOT = Path(__file__).resolve().parents[1]
-
-# 三短语仅作反例材料（真报可含之）；purge 不得靠它们 substring 删行
-_SEED_PHRASES = (
-    "天启七年九月邸报",
-    "待办未解（开局三事）",
-    "信王于乾清宫即皇帝位",
-)
-
-
-def _seed_text() -> str:
-    return (ROOT / "content" / "opening_gazette.md").read_text(encoding="utf-8").strip()
-
-
-def _canned_settle(monkeypatch, narrative: str) -> None:
-    from tests.settlement_seam_helpers import canned_full_settlement
-    canned_full_settlement(monkeypatch, narrative=narrative)
-
-
-def _session(db, state, content) -> GameSession:
-    session = GameSession.__new__(GameSession)
-    session.db, session.state, session.content = db, state, content
-    session.registry = session.llm_config = session.agno_db = None
-    session.deaths_this_turn, session.debuts_this_turn = [], []
-    session.last_decree = session.last_report = ""
-    session._decree_draft_fingerprint = ()
-    session.auto_save = lambda *a, **k: None
-    return session
 
 
 def test_new_game_t0_previous_summary_strictly_empty(game):
@@ -56,7 +20,6 @@ def test_new_game_t0_previous_summary_strictly_empty(game):
 
     summary = db.previous_turn_summary(state)
     assert summary == ""
-    # 固定空态文案不得回流
 
 
 def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
@@ -67,13 +30,6 @@ def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
     assert db.previous_turn_summary(state) == ""
     label = db.previous_turn_reign_period_label(state)
     assert label == ""
-
-
-
-
-
-
-
 
 
 def test_state_payload_t0_previous_summary_empty(game):
