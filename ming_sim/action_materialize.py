@@ -412,9 +412,12 @@ def _grant_shape_value_error(
     field: str,
     current: object = None,
     expected: object = None,
-) -> ValueError:
-    """ValueError carrying failed shape field + structured fact; callers catching ValueError unchanged."""
-    exc = ValueError(message)
+) -> "DecreeMaterializationValidationError":
+    """Typed domain shape fault at the pure-input grant boundary (#1897 E1)."""
+    exc = DecreeMaterializationValidationError(
+        message, failed_fields=(field,), category="invalid_shape",
+    )
+    # rescript_draft heal path still reads .field; keep structured fact attrs.
     exc.field = field  # type: ignore[attr-defined]
     exc.current = current  # type: ignore[attr-defined]
     exc.expected = expected  # type: ignore[attr-defined]
@@ -460,7 +463,7 @@ def require_grant_allocation_shape(
     #1620：层 A 上桌与 rescript mapper 共用——禁平行第二套规则。
     顺序：action 闭集 → account（resolve_grant_account）→ amount（本函数独掌）。
     返回 grant_action、account；非 honorific 另含正 int amount。
-    校验失败仍 raise ValueError；附 field 属性供物化缝转 typed 拒收（#1730）。
+    校验失败 raise DecreeMaterializationValidationError（纯输入领域拒收，#1897 E1）。
     """
     from ming_sim.strict_types import strict_int
 

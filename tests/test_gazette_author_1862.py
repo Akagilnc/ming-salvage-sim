@@ -372,11 +372,15 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert secret_did in seen["treasury_options"]["exclude_dossier_ids"]
     from ming_sim.materials import _safe_segment
     fact_rel = f"事实/character-{_safe_segment(minister)}.txt"
-    # 供料键在目录中；不锁事实/经历正文子串
+    # 供料键在目录中；不锁事实/经历正文子串（#1897 T1）
     assert fact_rel in seen["author_files"]
     assert f"人物/{_safe_segment(minister)}/经历.txt" in seen["author_files"]
-    # 归档契约由下方 source_id / turn 可见性承担；不空壳断言 archive 键存在
-    assert any(int(row["turn"]) == turn for row in db.list_turn_reports())
+    # 作者返回题名／正文原样进归档（自由字段原样运输，非正文关键词哨兵）
+    archive = db.get_turn_report_archive(turn)
+    assert archive["title"] == _TITLE
+    assert archive["report"] == _REPORT
+    listed = next(row for row in db.list_turn_reports() if int(row["turn"]) == turn)
+    assert listed["title"] == _TITLE
     payload = json.loads(seen["prompt"])
     assert any(row.get("category") == "宁远补饷" for row in payload["landed"])
     assert all(str(row.get("origin_ref") or "") != "secret_order:9" for row in payload["landed"])
@@ -429,24 +433,19 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         assert any(
             path.startswith("公开说法/邸报/") for path in list_materials(prepared.root)
         )
-        # 亲历载体：本人经历.txt 在册且非空。旧账在正文里找 `_SECRET_BRIEF`
-        # 等哨兵串，已删（大理寺 553d581fb）：那是对人读正文做子串推断，人读
-        # 正文不是记录身份，一次合法改写即假红。密令简报确以 typed 来源落在
-        # 本人见闻里，由上一条来源 ID 承担。
-        experience = next(path for path in list_materials(prepared.root) if path.endswith("/经历.txt"))
-        # 路径身份在册即可；不锁正文非空／strip（#1897 T1）。
-        assert experience.endswith("/经历.txt")
+        # 亲历载体：本人经历.txt 在册。旧账正文哨兵已删；路径存在性由 next 承担，
+        # 不重复 endswith 自证（#1897 T1 C4）。
+        next(path for path in list_materials(prepared.root) if path.endswith("/经历.txt"))
     finally:
         release_material_tree(prepared.root)
     world_tree = prepare_world_materials(db, state)
     try:
-        # 世界目录：亲历／盘面路径键在册；不锁正文真值。
+        # 世界目录：亲历／盘面路径键在册；不锁正文真值，不重复 endswith 自证。
         world_experience = [
             rel for rel in list_materials(world_tree.root) if rel.endswith("/经历.txt")
         ]
         assert world_experience
-        board = next(rel for rel in list_materials(world_tree.root) if rel.endswith("全局.txt"))
-        assert board.endswith("全局.txt")
+        next(rel for rel in list_materials(world_tree.root) if rel.endswith("全局.txt"))
     finally:
         release_material_tree(world_tree.root)
 
@@ -493,5 +492,7 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
     ).fetchone()[0] == 1
-    # 重试后当月归档已落：以 list_turn_reports 的 turn 身份核，不空壳 archive 键
-    assert any(int(row["turn"]) == turn for row in db.list_turn_reports())
+    # 重试后作者返回题名／正文原样进归档
+    archive = db.get_turn_report_archive(turn)
+    assert archive["title"] == _TITLE
+    assert archive["report"] == _REPORT

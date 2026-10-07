@@ -1627,8 +1627,18 @@ class GameSession:
                 continue
             try:
                 bad_payload = self.db.read_directive_dossier_payload(row)
-            except ValueError:
-                continue
+            except ValueError as durable_exc:
+                # 已持久载荷损坏：系统故障，不得跳过进补交空 carry（#1897 E1）。
+                pack_path = write_error_pack(
+                    self.db, self.state, exc=durable_exc,
+                    extracted=None, resolve_ctx=None,
+                )
+                raise SettlementAbort(
+                    settlement_abort_message(pack_path),
+                    turn=int(self.state.turn),
+                    stage="directive_admission_resubmit",
+                    error_pack_path=pack_path,
+                ) from durable_exc
             reason = str(item.get("reason") or "")
             prior = carried.get(did)
             if prior is not None:

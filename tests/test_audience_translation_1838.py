@@ -160,9 +160,8 @@ def test_presence_enter_exit_from_translation(game):
         (nid,),
     ).fetchall()
     presence_rows = [r for r in rows if r["source_chat_turn_id"] == ctid]
-    # 在场进出效果序；不锁 body 戏文（#1897 T1）。
+    # 在场进出效果序；不锁 body 戏文。筛选谓词已保证 source 身份，不重复 all 自证（#1897 T1）。
     assert [r["presence_effect"] for r in presence_rows] == ["enter", "exit"]
-    assert all(int(r["source_chat_turn_id"]) == int(ctid) for r in presence_rows)
 
 
 def _scene_session(db, state, content, monkeypatch):

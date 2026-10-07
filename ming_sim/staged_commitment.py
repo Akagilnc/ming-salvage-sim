@@ -130,38 +130,13 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
 def stages_to_json(stages: object) -> str:
     """Serialize stages for durable DB write.
 
-    Designed string surface: JSON array string is parsed, not char-iterated.
-    Invalid non-empty strings raise ValueError (never silently store ``[]``).
-    ``None`` / empty / ``[]`` → ``"[]"``.
-    写口逐段严格准入，不经读侧跳过面洗白坏段（#1897 C1）。
+    顶层缺省／JSON 解码／数组准入唯一权威 = ``normalize_commitment_stages``；
+    本口只序列化其结果（#1897 K2）。``None`` / empty / ``[]`` → ``"[]"``。
     """
-    if stages is None:
+    normalized = normalize_commitment_stages(stages)
+    if not normalized:
         return "[]"
-    if isinstance(stages, str):
-        text = stages.strip()
-        # 仅缺省空串 / 空数组是合法无段；"{}" 等非数组显式坏形不得洗成 []（#1897 C1）。
-        if not text or text == "[]":
-            return "[]"
-        try:
-            data = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"stages_json 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
-            ) from exc
-        if not isinstance(data, (list, tuple)):
-            raise ValueError(
-                f"stages_json 须为 JSON 数组，得 {type(data).__name__}"
-            )
-        if len(data) == 0:
-            return "[]"
-        normalized = _stages_for_write(data)
-        return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
-    if isinstance(stages, (list, tuple)):
-        if not stages:
-            return "[]"
-        normalized = _stages_for_write(list(stages))
-        return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
-    raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
+    return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
 
 
 

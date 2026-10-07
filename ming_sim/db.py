@@ -19573,8 +19573,9 @@ class GameDB:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。
 
         #654 r3-C.2 路3：每道旨独立 SAVEPOINT；单旨产物错记 rejection、保持 draft，不波及他旨。
-        #1769：产物错（ValueError，含 PayOrderKeyError）逐项留痕；真代码故障不得洗成
-        locality_fanout_failed——回滚后写错误包并 SettlementAbort（0005/0008 D1/D6）。
+        #1769/#1897 E1：产物错（ValueError，含 DMVE/PayOrderKeyError）逐项留痕；
+        已持久载荷损坏与真代码故障不得洗成 locality_fanout_failed——回滚后写错误包
+        并 SettlementAbort（0005/0008 D1/D6）。
         #1778：create 不再 collector-only 返回零案卷；未成案形状＝抛 ValueError，
         保持 draft、进返回列表供补交、终态落痕。
         record_rejections=False：仅探测供补交，不落 rejection_reports（拒只在
@@ -19602,12 +19603,25 @@ class GameDB:
                     sp = f"ensure_directive_{did}"
                     self.conn.execute(f"SAVEPOINT {sp}")
                     try:
+                        # 已持久载荷读失败是系统接缝，不得进产物拒收／补交（#1897 E1）。
+                        try:
+                            payload = self.read_directive_dossier_payload(row)
+                        except ValueError as durable_exc:
+                            self.conn.execute(f"ROLLBACK TO {sp}")
+                            code_fault = durable_exc
+                            tlog(
+                                f"[ensure_dossiers] 旨#{did} 持久载荷损坏：{durable_exc}"
+                            )
+                            raise
                         self._ensure_directive_dossier(
                             state, did, str(row["text"]),
-                            self.read_directive_dossier_payload(row), commit=False,
+                            payload, commit=False,
                         )
                     except ValueError as exc:
                         # 产物/契约错：逐项隔离留痕，保持 draft（#1769 补交/耗尽入口）
+                        # 含 DecreeMaterializationValidationError（ValueError 子类）。
+                        if code_fault is not None:
+                            raise
                         self.conn.execute(f"ROLLBACK TO {sp}")
                         reason = str(exc)
                         rejection_rows.append({"directive_id": did, "reason": reason})
