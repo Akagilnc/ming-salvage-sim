@@ -245,7 +245,9 @@ def build_promulgation_judge_context(
         "FROM decree_dossier_decisions d JOIN decree_dossiers x ON x.id=d.dossier_id "
         "ORDER BY d.turn,d.dossier_id,d.id"
     ).fetchall():
-        payload = json.loads(str(item["payload_json"] or "{}"))
+        payload = GameDB.parse_engine_payload_json(
+            item["payload_json"], surface="decree_dossiers.payload_json",
+        )
         mode = str(payload.get("mode") or "ordinary")
         rescript_action = str(item["rescript_action"] or "")
         forced = rescript_action == "force_promulgated"
@@ -521,7 +523,10 @@ def validate_promulgation_verdicts(
     for dossier in proposed_dossiers:
         payload = dossier.get("payload")
         if not isinstance(payload, dict):
-            payload = json.loads(str(dossier.get("payload_json") or "{}"))
+            payload = GameDB.parse_engine_payload_json(
+                dossier.get("payload_json"),
+                surface="decree_dossiers.payload_json",
+            )
         action_type = dossier.get("action_type")
         external_review = (
             dossier_action_policy(action_type, payload)["external_review"]
@@ -663,7 +668,10 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     for row in db.list_decree_dossiers(status="executing"):
         payload = row.get("payload")
         if not isinstance(payload, dict):
-            payload = json.loads(str(row.get("payload_json") or "{}"))
+            payload = GameDB.parse_engine_payload_json(
+                row.get("payload_json"),
+                surface="decree_dossiers.payload_json",
+            )
         # Non-terminal executing dossiers remain simulator continuation context.
         if dossier_action_policy(row.get("action_type"), payload)["execution_surface"] != "terminal":
             executing_work = True

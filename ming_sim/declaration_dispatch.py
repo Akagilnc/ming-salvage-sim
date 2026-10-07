@@ -59,6 +59,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
+from ming_sim.db import GameDB
 from ming_sim.action_materialize import (
     DecreeMaterializationValidationError,
     _assignment_absolute_end_turn,
@@ -2175,9 +2176,9 @@ def _dispatch_promises(
             ):
                 _reject(rejected, item, "只有新建密令可用非空 typed new_content 修改", "invalid_shape", source)
                 continue
-            payload = json.loads(row["payload_json"] or "{}")
-            if not isinstance(payload, dict):
-                raise ValueError("密令候选载荷损坏")
+            payload = dict(GameDB.parse_engine_payload_json(
+                row["payload_json"], surface="pending_actions.payload_json",
+            ))
             payload["content"] = new_content
             db.conn.execute(
                 "UPDATE pending_actions SET payload_json=?, night_approved=0 WHERE id=?",
@@ -2212,9 +2213,9 @@ def _dispatch_promises(
             else:
                 changed = False
                 if kind == "directive" and declared_mode is not None:
-                    payload = json.loads(row["payload_json"] or "{}")
-                    if not isinstance(payload, dict):
-                        raise ValueError("拟旨候选载荷损坏")
+                    payload = dict(GameDB.parse_engine_payload_json(
+                        row["payload_json"], surface="pending_actions.payload_json",
+                    ))
                     if payload.get("mode", "ordinary") != declared_mode:
                         payload["mode"] = declared_mode
                         if int(row["night_approved"] or 0):

@@ -11588,39 +11588,32 @@ class GameDB:
         if out.get("secret_order_id") is not None:
             out["secret_order_id"] = int(out["secret_order_id"])
         out["rescript_pending"] = bool(out.get("rescript_pending"))
-        try:
-            payload = json.loads(out.get("payload_json") or "{}")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} payload_json 无效") from exc
-        if not isinstance(payload, dict):
-            raise ValueError(f"案卷#{out['id']} payload_json 非对象")
+        # Material/history consumers share this row decode — reuse object/list
+        # authorities (F39); no parallel bare json.loads that can wash shape.
+        did = out["id"]
+        payload = cls.parse_engine_payload_json(
+            out.get("payload_json"),
+            surface=f"decree_dossiers#{did}.payload_json",
+        )
         out["payload"] = payload
         out["mode"] = cls._normalize_dossier_mode(
             payload["mode"] if "mode" in payload else "ordinary"
         )
-        try:
-            stigma = json.loads(out.get("stigma_json") or "[]")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} stigma_json 无效") from exc
-        if not isinstance(stigma, list):
-            raise ValueError(f"案卷#{out['id']} stigma_json 非列表")
-        out["stigma"] = stigma
-        try:
-            roster = json.loads(out.get("participant_roster") or "[]")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} participant_roster 无效") from exc
-        if not isinstance(roster, list):
-            raise ValueError(f"案卷#{out['id']} participant_roster 非列表")
-        out["participant_roster"] = roster
-        try:
-            extension = json.loads(out.get("extension_json") or "{}")
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{out['id']} extension_json 无效") from exc
-        if not isinstance(extension, dict):
-            raise ValueError(f"案卷#{out['id']} extension_json 非对象")
+        out["stigma"] = cls._loads_stored_json_list(
+            out.get("stigma_json"),
+            surface=f"decree_dossiers#{did}.stigma_json",
+        )
+        out["participant_roster"] = cls._loads_stored_json_list(
+            out.get("participant_roster"),
+            surface=f"decree_dossiers#{did}.participant_roster",
+        )
+        extension = cls.parse_engine_payload_json(
+            out.get("extension_json"),
+            surface=f"decree_dossiers#{did}.extension_json",
+        )
         signal = extension.get("execution_signal")
         if signal is not None and not isinstance(signal, dict):
-            raise ValueError(f"案卷#{out['id']} execution_signal 非对象")
+            raise ValueError(f"案卷#{did} execution_signal 非对象")
         out["execution_signal"] = signal
         return out
 
@@ -11813,7 +11806,10 @@ class GameDB:
                 return []
             return [
                 self._coerce_dossier_progress_row(item, dossier_id=int(dossier_id))
-                for item in json.loads(row["dossier_progress_json"] or "[]")
+                for item in self._loads_stored_json_list(
+                    row["dossier_progress_json"],
+                    surface="secret_orders.dossier_progress_json",
+                )
             ]
         rows = self.conn.execute(
             """
@@ -13187,7 +13183,9 @@ class GameDB:
             "WHERE status='proposed' AND action_type='appointment'"
         ).fetchall()
         for row in rows:
-            payload = json.loads(str(row["payload_json"] or "{}"))
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="decree_dossiers.payload_json",
+            )
             if "break_rank" in payload:
                 continue
             payload["break_rank"] = appointment_break_rank(
@@ -14712,14 +14710,17 @@ class GameDB:
             item["id"] = int(item["id"])
             item["dossier_id"] = int(item["dossier_id"])
             item["turn"] = int(item["turn"])
-            item["primary_opponents"] = json.loads(
-                str(item.pop("primary_opponents_json") or "[]")
+            item["primary_opponents"] = self._loads_stored_json_list(
+                item.pop("primary_opponents_json"),
+                surface="decree_dossier_decisions.primary_opponents_json",
             )
-            item["criteria_snapshot"] = json.loads(
-                str(item.pop("criteria_snapshot_json") or "{}")
+            item["criteria_snapshot"] = self.parse_engine_payload_json(
+                item.pop("criteria_snapshot_json"),
+                surface="decree_dossier_decisions.criteria_snapshot_json",
             )
-            item["affected_parties"] = json.loads(
-                str(item.pop("affected_parties_json") or "[]")
+            item["affected_parties"] = self._loads_stored_json_list(
+                item.pop("affected_parties_json"),
+                surface="decree_dossier_decisions.affected_parties_json",
             )
             item["midzhi_unpromulgatable"] = bool(
                 item["midzhi_unpromulgatable"]
@@ -14785,8 +14786,9 @@ class GameDB:
         ).fetchall()
         visible = []
         for row in rows:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            policy = dossier_action_policy(row["action_type"], payload)
+            # Decode once via _dossier_row authorities (F39); no bare loads + second pass.
+            decoded = self._dossier_row(row)
+            policy = dossier_action_policy(row["action_type"], decoded.get("payload"))
             # Admission-owned effects never run through the simulator again.
             # An in-transit dossier remains visible as execution context until
             # its execution verdict closes it, however.
@@ -14796,7 +14798,7 @@ class GameDB:
                 policy["effect_owner"] != "immediate"
                 or str(row["status"]) == "executing"
             ):
-                visible.append(self._dossier_row(row))
+                visible.append(decoded)
         return visible
 
     def transition_decree_dossier(
@@ -14815,7 +14817,9 @@ class GameDB:
         if new_status not in self._DOSSIER_TRANSITIONS[old_status]:
             raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
         if old_status == "promulgated" and new_status == "closed":
-            payload = json.loads(str(row["payload_json"] or "{}"))
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="decree_dossiers.payload_json",
+            )
             if self._dossier_has_execution_surface(row["action_type"], payload):
                 raise ValueError("带执行判定面的案卷不得从 promulgated 直接 closed")
             if not str(row["execution_outcome"] or ""):
@@ -14982,11 +14986,15 @@ class GameDB:
             raise ValueError(f"执行 outcome 非法：{outcome}")
         if outcome == "executing" and close:
             raise ValueError("executing 是非终态，必须以 close=False 记录")
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            payload = self.parse_engine_payload_json(
+                row.get("payload_json"), surface="decree_dossiers.payload_json",
+            )
         immediate = (
             row["status"] == "promulgated"
             and not self._dossier_has_execution_surface(
-                row["action_type"],
-                json.loads(str(row.get("payload_json") or "{}")),
+                row["action_type"], payload,
             )
         )
         if row["status"] != "executing" and not immediate:
@@ -15111,9 +15119,9 @@ class GameDB:
                 self._append_midzhi_stigma(
                     dossier_id, decision="promulgated", turn=state.turn, commit=False,
                 )
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            if not isinstance(payload, dict):
-                raise ValueError("案卷 payload 非对象")
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="decree_dossiers.payload_json",
+            )
             policy = dossier_action_policy(row["action_type"], payload)
             signal = row.get("execution_signal") or {}
             if (
@@ -20130,14 +20138,23 @@ class GameDB:
                     f"SELECT {columns} FROM {table} WHERE affair_id=? ORDER BY {order}", (target,),
                 ).fetchall()]
             for row in history["issues"]:
-                for field, empty in (
-                    ("tags", "[]"), ("participants", "[]"),
-                    ("participant_roster", "[]"), ("target_roster", "[]"),
-                    ("ongoing_effects", "{}"), ("cancel_cost", "{}"),
-                    ("effect_on_resolve", "{}"), ("effect_on_fail", "{}"),
-                    ("stages_json", "[]"),
+                # Durable history supply: one authority per shape duty (F39).
+                # Bare json.loads washes wrong-shape values (e.g. effect '[]') into
+                # normal empty facts for material consumers — refuse here instead.
+                for field in (
+                    "tags", "participants", "participant_roster",
+                    "target_roster", "stages_json",
                 ):
-                    row[field] = json.loads(row[field] or empty)
+                    row[field] = self._loads_stored_json_list(
+                        row[field], surface=f"issues.{field}",
+                    )
+                for field in (
+                    "ongoing_effects", "effect_on_resolve", "effect_on_fail",
+                ):
+                    row[field] = loads_effect_dict(row[field])
+                row["cancel_cost"] = self.parse_engine_payload_json(
+                    row["cancel_cost"], surface="issues.cancel_cost",
+                )
                 # The numeric stop gate is an execution detail, not a second
                 # explanation of the issue's human resolve/fail conditions.
                 row.pop("stop_condition", None)

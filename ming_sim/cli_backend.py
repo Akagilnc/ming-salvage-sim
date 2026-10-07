@@ -874,12 +874,8 @@ def _iter_cli_runner_text(
         returncode = int(outcome.returncode or 0)
         stderr = outcome.stderr or ""
         stdout_text = "".join(pieces)
-        # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
-        # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
-        if outcome.stdin_error is not None:
-            raise RuntimeError(
-                f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
-            ) from outcome.stdin_error
+        # stdin/stream/terminate 最终故障只由 _iter_cli_process_lines finally 消费
+        # （#1834 F48）；此处不复制第二份判定。途中 json 放流仍看 stdin_error 停供。
         # #1834 F16/F26/F27 / ADR 0142 / #671：
         # - 成功正文保原文；strip 只作判空副本
         # - 不从正文词表猜认证/连接故障
@@ -2233,11 +2229,15 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
     lines: List[str] = []
     for row in rows or []:
         try:
-            payload = row.get("payload") if isinstance(row.get("payload"), dict) else None
-            if payload is None:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
+            # list_decree_dossiers already decoded payload (F39). Wrong shape raises;
+            # do not skip-wash stalled candidates into empty fact blocks.
+            payload = row.get("payload")
             if not isinstance(payload, dict):
-                continue
+                from ming_sim.db import GameDB
+                payload = GameDB.parse_engine_payload_json(
+                    row.get("payload_json"),
+                    surface="decree_dossiers.payload_json",
+                )
             if str(payload.get("deliberation_state") or "") != "stalled":
                 continue
             did = int(row["id"])

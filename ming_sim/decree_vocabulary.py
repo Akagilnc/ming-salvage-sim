@@ -167,7 +167,13 @@ def dossier_action_policy(action_type: object, payload=None):
     action = str(action_type or "")
     policy = dict(DOSSIER_ACTION_POLICY[action])
     if action == "grant_allocation":
-        payload = payload or {}
+        # Missing payload → legal empty object. Wrong shape must not wash to {} (F39).
+        if payload is None:
+            payload = {}
+        elif not isinstance(payload, dict):
+            raise ValueError(
+                f"dossier payload 须为对象，得 {type(payload).__name__}"
+            )
         grant_action = str(payload.get("grant_action") or "").strip()
         cadence = str(payload.get("cadence") or "").strip()
         if grant_action in {"加衔", "荫叙"}:
