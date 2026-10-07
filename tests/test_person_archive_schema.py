@@ -1,10 +1,6 @@
 """ADR 0009 person archive schema contract."""
 
-import json
-import sqlite3
-
 from ming_sim.content import load_character_content
-from ming_sim.db import GameDB
 from ming_sim.models import Character
 from ming_sim.session import _sync_offices_from_db_impl
 

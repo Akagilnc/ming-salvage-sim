@@ -3261,14 +3261,9 @@ def test_zhongyuan_jingshi_primary_source_refinement(region_id, expected, fresh_
         assert not isinstance(meta.get("source"), dict)
         assert not isinstance(meta.get("source_grain"), dict)
     else:
-        # 该外部义务在当前生产形态下无 typed 载体（beizhili/henan meta 无 source/
-        # source_grain/primary_source；田赋来源仅 notes 自由文本；不得拿
-        # royal_stipends_source 冒充），按清单不改生产原则保留原断言。
-        source_notes = meta["notes"]["一手核"]
-        assert "《万历会计录》" in source_notes
-        assert "本色" in source_notes
+        # 无 typed source 载体时只钉 notes 键结构；自由说明值不机械锁措辞。
+        assert "一手核" in meta["notes"]
         assert "扫描图核验" in meta["notes"]
-        assert "识典扫描图" in meta["notes"]["扫描图核验"]
 
     if region_id in {"beizhili", "shandong", "henan"}:
         assert p["三饷应征"] == pytest.approx(

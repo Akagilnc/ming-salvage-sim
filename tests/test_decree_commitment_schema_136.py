@@ -1,11 +1,9 @@
 
 from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
-import sqlite3
 
 import pytest
 
-from ming_sim.db import GameDB
 from ming_sim.models import effect_dict_has_work
 
 

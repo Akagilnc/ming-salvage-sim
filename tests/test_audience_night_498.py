@@ -10,7 +10,6 @@
 from __future__ import annotations
 from tests.conftest import open_hall_turn
 
-import sqlite3
 from pathlib import Path
 
 import pytest
