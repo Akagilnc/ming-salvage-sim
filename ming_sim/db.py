@@ -11041,12 +11041,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             return []
-        try:
-            parsed = json.loads(row["origin_chat_message_ids"] or "[]")
-        except (TypeError, ValueError):
-            return []
-        if not isinstance(parsed, list):
-            return []
+        parsed = self._loads_stored_json_list(
+            row["origin_chat_message_ids"],
+            surface="secret_order_briefs.origin_chat_message_ids",
+        )
         return self._coerce_positive_message_ids(parsed)
 
     def _classify_secret_order_audience(
@@ -20493,10 +20491,13 @@ class GameDB:
             (source, source),
         ).fetchone()
         if row is not None:
-            try:
-                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
-            except (TypeError, ValueError):
-                return []
+            return [
+                str(name)
+                for name in self._loads_stored_json_list(
+                    row["excluded_names"],
+                    surface="character_knowledge_events.excluded_names",
+                )
+            ]
         # #883 CR R1 S2: bare ``secret_order:`` shared *sources* are no longer
         # produced (create/update → private briefs; production disclosure →
         # ``secret_order_disclosure:``; register gate rejects the prefix).
@@ -20513,10 +20514,13 @@ class GameDB:
                 "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,)
             ).fetchone()
             if order is not None:
-                try:
-                    return [str(name) for name in json.loads(order["excluded_names"] or "[]")]
-                except (TypeError, ValueError):
-                    return []
+                return [
+                    str(name)
+                    for name in self._loads_stored_json_list(
+                        order["excluded_names"],
+                        surface="secret_orders.excluded_names",
+                    )
+                ]
         # #1829 reopen：公开说法排除名单与正文同表，按 public_saying:<id> 回查。
         match = re.fullmatch(r"public_saying:(\d+)", source)
         if match:
@@ -20525,23 +20529,37 @@ class GameDB:
                 (int(match.group(1)),),
             ).fetchone()
             if saying is not None:
-                try:
-                    return [str(name) for name in json.loads(saying["excluded_names"] or "[]")]
-                except (TypeError, ValueError):
-                    return []
+                return [
+                    str(name)
+                    for name in self._loads_stored_json_list(
+                        saying["excluded_names"],
+                        surface="public_sayings.excluded_names",
+                    )
+                ]
             return []
         row = self.conn.execute(
             "SELECT excluded_names FROM character_knowledge_sources WHERE source_id=?", (source,)
         ).fetchone()
         if row is not None:
-            try:
-                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
-            except (TypeError, ValueError):
-                return []
+            return [
+                str(name)
+                for name in self._loads_stored_json_list(
+                    row["excluded_names"],
+                    surface="character_knowledge_sources.excluded_names",
+                )
+            ]
         return []
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
+
+        def _people_offices(raw: object, *, surface: str) -> Dict[str, List[str]]:
+            payload = self.parse_engine_payload_json(raw, surface=surface)
+            return {
+                "people": [str(x) for x in payload.get("people", [])],
+                "offices": [str(x) for x in payload.get("offices", [])],
+            }
+
         # Private briefs and retained bare secret-order sources share the
         # canonical exclusions persisted on secret_orders.
         match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
@@ -20550,12 +20568,10 @@ class GameDB:
                 "SELECT excluded_targets FROM secret_orders WHERE id=?",
                 (int(match.group(1)),),
             ).fetchone()
-            try:
-                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            return {"people": [str(x) for x in payload.get("people", [])],
-                    "offices": [str(x) for x in payload.get("offices", [])]}
+            return _people_offices(
+                row["excluded_targets"] if row is not None else "{}",
+                surface="secret_orders.excluded_targets",
+            )
         # #1829 reopen：公开说法排除目标与正文同表。
         match = re.fullmatch(r"public_saying:(\d+)", source)
         if match:
@@ -20563,23 +20579,19 @@ class GameDB:
                 "SELECT excluded_targets FROM public_sayings WHERE id=?",
                 (int(match.group(1)),),
             ).fetchone()
-            try:
-                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            return {"people": [str(x) for x in payload.get("people", [])],
-                    "offices": [str(x) for x in payload.get("offices", [])]}
+            return _people_offices(
+                row["excluded_targets"] if row is not None else "{}",
+                surface="public_sayings.excluded_targets",
+            )
         row = self.conn.execute(
             "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)
         ).fetchone()
         if row is None:
             return {"people": [], "offices": []}
-        try:
-            payload = json.loads(row["excluded_targets"] or "{}")
-        except (TypeError, ValueError):
-            payload = {}
-        return {"people": [str(x) for x in payload.get("people", [])],
-                "offices": [str(x) for x in payload.get("offices", [])]}
+        return _people_offices(
+            row["excluded_targets"],
+            surface="character_knowledge_sources.excluded_targets",
+        )
 
     def record_participation_record(
         self, state: GameState, record: Mapping[str, object], *, kind: str,
@@ -20682,12 +20694,9 @@ class GameDB:
         ).fetchall()
         for row in brief_rows:
             raw = row["origin_chat_message_ids"] if row is not None else "[]"
-            try:
-                parsed = json.loads(raw or "[]")
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(parsed, list):
-                continue
+            parsed = self._loads_stored_json_list(
+                raw, surface="secret_order_briefs.origin_chat_message_ids",
+            )
             for item in parsed:
                 try:
                     mid = int(item)
@@ -20696,12 +20705,10 @@ class GameDB:
                 if mid > 0:
                     out[mid] = True
         for row in pending_rows:
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(payload, dict):
-                continue
+            payload = self.parse_engine_payload_json(
+                row["payload_json"],
+                surface="pending_actions.payload_json",
+            )
             mid = self._parse_origin_chat_message_id(payload)
             if mid is not None:
                 out.setdefault(mid, False)

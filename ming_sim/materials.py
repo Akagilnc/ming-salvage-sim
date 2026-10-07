@@ -2003,12 +2003,9 @@ def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
 
 
 def _json_list_field(raw: object) -> list[str]:
-    try:
-        value = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        return []
-    if not isinstance(value, list):
-        return []
+    from ming_sim.db import GameDB
+
+    value = GameDB._loads_stored_json_list(raw, surface="characters.json_list_field")
     return [str(item) for item in value if str(item).strip()]
 
 

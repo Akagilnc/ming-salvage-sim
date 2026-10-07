@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -217,12 +218,12 @@ def _month_fact_materials(
         ):
             if not include_secret_sources and str(row["source"] or "") == "secret_order":
                 continue
-            from ming_sim.db import GameDB
-
-            item = GameDB.parse_engine_payload_json(
-                row["item_json"],
-                surface="rejection_reports.item_json",
-            )
+            # 拒收原件可为任意 JSON（标量／null／list／object）；只禁腐坏，不限对象。
+            raw_item = row["item_json"]
+            if raw_item is None or str(raw_item).strip() == "":
+                item = None
+            else:
+                item = json.loads(raw_item)
             if not include_secret_sources and (
                 _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
             ):

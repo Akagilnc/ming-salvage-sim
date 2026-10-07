@@ -119,22 +119,18 @@ def public_layer_events(db: Any, *, for_public_feed: bool = False) -> list[dict[
 
 
 def _json_name_list(raw: object) -> list[str]:
-    try:
-        values = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        values = []
-    if not isinstance(values, list):
-        values = []
+    from ming_sim.db import GameDB
+
+    values = GameDB._loads_stored_json_list(raw, surface="public_sayings.excluded_names")
     return [str(name) for name in values if str(name).strip()]
 
 
 def _json_target_map(raw: object) -> dict[str, list[str]]:
-    try:
-        payload = json.loads(raw or "{}")
-    except (TypeError, ValueError):
-        payload = {}
-    if not isinstance(payload, dict):
-        return {}
+    from ming_sim.db import GameDB
+
+    payload = GameDB.parse_engine_payload_json(
+        raw, surface="public_sayings.excluded_targets",
+    )
     result: dict[str, list[str]] = {}
     for key, values in payload.items():
         names = (

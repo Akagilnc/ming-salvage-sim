@@ -91,24 +91,33 @@ def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
 
 def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
     """Parse excluded_names and excluded_targets.people/offices from one row."""
+    from ming_sim.db import GameDB
+
     try:
+        raw_names = row["excluded_names"]
+    except (KeyError, IndexError, TypeError):
+        raw_names = None
+    if isinstance(raw_names, (list, set, tuple)):
+        excluded_names = {str(name) for name in raw_names}
+    else:
         excluded_names = {
-            str(name) for name in json.loads(row["excluded_names"] or "[]")
+            str(name)
+            for name in GameDB._loads_stored_json_list(
+                raw_names, surface="knowledge.excluded_names",
+            )
         }
-    except (TypeError, ValueError, KeyError, IndexError):
-        excluded_names = set()
-    targets: object = {}
     try:
         raw_targets = row["excluded_targets"]
     except (KeyError, IndexError, TypeError):
         raw_targets = None
-    if raw_targets:
-        try:
-            targets = json.loads(raw_targets or "{}")
-        except (TypeError, ValueError):
-            targets = {}
-    if not isinstance(targets, dict):
+    if isinstance(raw_targets, dict):
+        targets = raw_targets
+    elif raw_targets in (None, ""):
         targets = {}
+    else:
+        targets = GameDB.parse_engine_payload_json(
+            raw_targets, surface="knowledge.excluded_targets",
+        )
     people = {str(name) for name in (targets.get("people") or [])}
     offices = {str(name) for name in (targets.get("offices") or [])}
     return excluded_names, people, offices
@@ -335,12 +344,11 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
                 or re.fullmatch(r"settlement:narrative:\d+", source_id)):
             continue
         participants = participant_roster_names(row["participant_roster"])
-        try:
-            excluded = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError):
-            excluded = []
-        if not isinstance(excluded, list):
-            excluded = []
+        from ming_sim.db import GameDB
+
+        excluded = list(GameDB._loads_stored_json_list(
+            row["excluded_names"], surface="character_knowledge_sources.excluded_names",
+        ))
         # A participant-rostered source is private to its participants unless
         # an explicit exclusion says otherwise.  Empty rosters are not added
         # here: public events already have their own projection path.
@@ -747,11 +755,16 @@ def build_character_knowledge(
             character_name,
         ):
             continue
+        from ming_sim.db import GameDB
+
         try:
-            target_roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (KeyError, TypeError, ValueError):
-            target_roster = []
-        if issue["origin_kind"] != "impeachment_surge" or not isinstance(target_roster, list):
+            raw_roster = issue["target_roster"]
+        except (KeyError, IndexError, TypeError):
+            raw_roster = None
+        target_roster = GameDB._loads_stored_json_list(
+            raw_roster, surface="issues.target_roster",
+        )
+        if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
         target_roster = [str(target).strip() for target in target_roster if str(target).strip()]
         visible_issues.append({
