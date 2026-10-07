@@ -239,17 +239,12 @@ def _now_iso() -> str:
 
 
 def _json_list(value: Any) -> List[Any]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value or "[]")
-        except (TypeError, ValueError):
-            return []
-        return parsed if isinstance(parsed, list) else []
-    return []
+    """Durable ledger list JSON: vacuum→[]; corrupt/non-list raise (F39)."""
+    from ming_sim.db import GameDB
+
+    return list(
+        GameDB._loads_stored_json_list(value, surface="story_ledger_entries.json_list")
+    )
 
 
 def _row_dict(row: Any) -> Dict[str, Any]:
@@ -2106,17 +2101,7 @@ def rescript_summon_origin_consumed(
     """
     if entry is None:
         return False
-    tags_raw = entry.get("tags")
-    if isinstance(tags_raw, str):
-        try:
-            tags_list = json.loads(tags_raw or "[]")
-        except Exception:
-            tags_list = []
-    elif isinstance(tags_raw, (list, tuple)):
-        tags_list = list(tags_raw)
-    else:
-        tags_list = []
-    tags = [str(t) for t in tags_list]
+    tags = [str(t) for t in _json_list(entry.get("tags"))]
     return TAG_ENTER in tags
 
 

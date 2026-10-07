@@ -377,11 +377,9 @@ def _own_affair_lines(
     it mirrors the existing participant/audience "handling" gate already
     applied to ordinary (non-linked) issues, checked against whichever linked
     issue points here — the #1830 opening min-set's established criterion,
-    unchanged by this fix. `AffairStore.declare_closed` (ADR 0154 decision
-    key `affair-close-requires-no-active-linked-issues`) rejects closing an
-    affair that still has an active linked issue, so "closed affair with a
-    still-active linked issue" cannot occur — this function does not need to
-    special-case it.
+    unchanged by this fix. ADR 0154 retired declare-closed; historical
+    closed rows remain readable, and this projection does not invent a
+    natural-close algorithm.
     """
     from ming_sim.knowledge import _issue_audience_case_events, _reader_in_issue_audience
     from ming_sim.participant_roster import participant_roster_names

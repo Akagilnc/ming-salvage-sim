@@ -683,17 +683,17 @@ def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, o
 
 
 def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
+    from ming_sim.db import GameDB
+
     row = db.conn.execute(
         "SELECT payload_json FROM decree_dossiers WHERE id=?",
         (int(dossier_id),),
     ).fetchone()
     if row is None:
         return {}
-    try:
-        payload = json.loads(str(row["payload_json"] or "{}"))
-    except (TypeError, ValueError):
-        return {}
-    return dict(payload) if isinstance(payload, Mapping) else {}
+    return GameDB.parse_engine_payload_json(
+        row["payload_json"], surface="decree_dossiers.payload_json",
+    )
 
 
 def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
@@ -796,12 +796,11 @@ def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     for row in rows:
         if skip and int(row["id"] or 0) == skip:
             continue
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, Mapping):
-            continue
+        from ming_sim.db import GameDB
+
+        payload = GameDB.parse_engine_payload_json(
+            row["payload_json"], surface="decree_dossiers.payload_json",
+        )
         for lane in _lanes_from_payload(payload):
             if lane.get("mastered"):
                 used.add(str(lane["fact_key"]))

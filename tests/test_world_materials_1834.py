@@ -141,7 +141,11 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         dossier_id, state.turn, units=2, fidelity_state="partial",
         floor_state="partial", note="余饷未交付",
     )
-    db.affairs.declare_closed(affair.id, turn=state.turn)
+    db.conn.execute(
+        "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
+        (int(state.turn), int(affair.id)),
+    )
+    db.conn.commit()
     path = str(db.path)
     db.close()
 

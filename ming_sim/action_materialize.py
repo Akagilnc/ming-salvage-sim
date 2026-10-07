@@ -204,12 +204,11 @@ def stage_pacification_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
+        from ming_sim.db import GameDB
+
+        payload = GameDB.parse_engine_payload_json(
+            row.get("payload_json"), surface="pending_actions.payload_json",
+        )
         if str(payload.get("dossier_action_type") or "").strip() != "pacification":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -361,12 +360,11 @@ def stage_punishment_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
+        from ming_sim.db import GameDB
+
+        payload = GameDB.parse_engine_payload_json(
+            row.get("payload_json"), surface="pending_actions.payload_json",
+        )
         if str(payload.get("dossier_action_type") or "").strip() != "punishment":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -881,11 +879,11 @@ def _list_pending_office_rows(
 
 
 def _office_payload(row: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    from ming_sim.db import GameDB
+
+    return GameDB.parse_engine_payload_json(
+        row.get("payload_json"), surface="pending_actions.payload_json",
+    )
 
 
 def _match_office_row_by_name_office(

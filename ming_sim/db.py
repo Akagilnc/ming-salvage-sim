@@ -3153,8 +3153,10 @@ class GameDB:
         for row in rows:
             region_id = str(row["id"])
             try:
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
-                if isinstance(fiscal, dict) and "settle" not in fiscal:
+                fiscal = self.parse_engine_payload_json(
+                    row["fiscal"], surface=f"regions.fiscal:{region_id}",
+                )
+                if "settle" not in fiscal:
                     continue
                 result = self._settle_province_tick_from_fiscal(
                     region_id,
@@ -4341,10 +4343,9 @@ class GameDB:
             ).fetchone()
             if region is None or str(region["controlled_by"] or "") != "ming":
                 return False
-            try:
-                fiscal = json.loads(str(region["fiscal"] or "{}"))
-            except (TypeError, ValueError):
-                return False
+            fiscal = self.parse_engine_payload_json(
+                region["fiscal"], surface="regions.fiscal",
+            )
             settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
                 return False
@@ -5042,10 +5043,9 @@ class GameDB:
         ).fetchone()
         if row is None:
             return
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError):
-            return
+        fiscal = self.parse_engine_payload_json(
+            row["fiscal"], surface="regions.fiscal",
+        )
         settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
@@ -5340,10 +5340,9 @@ class GameDB:
         for name in ("袁可立", "袁崇焕"):
             row = self.conn.execute("SELECT aliases FROM characters WHERE name=?", (name,)).fetchone()
             if row:
-                try:
-                    aliases = json.loads(row["aliases"] or "[]")
-                except (TypeError, ValueError):
-                    aliases = []
+                aliases = list(self._loads_stored_json_list(
+                    row["aliases"], surface="characters.aliases",
+                ))
                 aliases = [alias for alias in aliases if alias != "袁巡抚"]
                 self.conn.execute("UPDATE characters SET aliases=? WHERE name=?",
                                   (json.dumps(aliases, ensure_ascii=False), name))
@@ -10354,12 +10353,10 @@ class GameDB:
         # source_projection of the same source_id must not replace it.
         public_kept: set[str] = set()
         for row in rows:
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
-            if not isinstance(excluded_names, list):
-                excluded_names = []
+            excluded_names = self._loads_stored_json_list(
+                row["excluded_names"],
+                surface="character_knowledge_events.excluded_names",
+            )
             key = str(row["source_id"] or "")
             is_public = str(row["kind"] or "") == "public"
             if key and key in public_kept and not is_public:
@@ -10383,18 +10380,14 @@ class GameDB:
         character_names = {str(row["name"]) for row in characters}
         for row in source_rows:
             participants = participant_roster_names(row["participant_roster"])
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
-            if not isinstance(excluded_names, list):
-                excluded_names = []
-            try:
-                excluded_targets = json.loads(row["excluded_targets"] or "{}")
-            except (TypeError, ValueError):
-                excluded_targets = {}
-            if not isinstance(excluded_targets, dict):
-                excluded_targets = {}
+            excluded_names = self._loads_stored_json_list(
+                row["excluded_names"],
+                surface="character_knowledge_sources.excluded_names",
+            )
+            excluded_targets = self.parse_engine_payload_json(
+                row["excluded_targets"],
+                surface="character_knowledge_sources.excluded_targets",
+            )
             target_people = {
                 str(name) for name in excluded_targets.get("people", [])
             }
@@ -11741,13 +11734,9 @@ class GameDB:
                 int(dossier_id), int(secret_order_id), int(turn), band, text,
                 is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
             )
-        payload = {}
-        try:
-            loaded = json.loads(str(dossier.get("payload_json") or "{}"))
-            if isinstance(loaded, dict):
-                payload = loaded
-        except (TypeError, ValueError):
-            payload = {}
+        payload = self.parse_engine_payload_json(
+            dossier.get("payload_json"), surface="decree_dossiers.payload_json",
+        )
         if not self._dossier_has_execution_surface(dossier.get("action_type"), payload):
             raise ValueError("非执行面案卷不可挂奏报")
         return self._record_general_dossier_progress(
@@ -11861,12 +11850,9 @@ class GameDB:
         out: List[Dict[str, object]] = []
         for row in rows:
             dossier_id = int(row["id"])
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="decree_dossiers.payload_json",
+            )
             item: Dict[str, object] = {
                 "dossier_id": dossier_id,
                 "secret_order_id": int(row["secret_order_id"]),
@@ -11963,12 +11949,9 @@ class GameDB:
         ).fetchall()
         targets: List[Dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(str(row["payload_json"] or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="decree_dossiers.payload_json",
+            )
             policy = dossier_action_policy("grant_allocation", payload)
             if policy.get("execution_surface") != "in_transit":
                 continue
@@ -12524,12 +12507,9 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="faction_denunciations.payload_json",
+            )
             out.append({
                 "id": int(row["id"]),
                 "turn": int(row["turn"]),
@@ -12887,12 +12867,10 @@ class GameDB:
                 (accuser, dossier_id, origin),
             ).fetchone()
             if prior_row is not None:
-                try:
-                    prev_payload = json.loads(prior_row["payload_json"] or "{}")
-                except (TypeError, ValueError):
-                    prev_payload = {}
-                if not isinstance(prev_payload, dict):
-                    prev_payload = {}
+                prev_payload = self.parse_engine_payload_json(
+                    prior_row["payload_json"],
+                    surface="faction_denunciations.payload_json",
+                )
                 if not denunciation_case_upgraded(prev_payload, fork_state):
                     continue
 
@@ -14128,12 +14106,9 @@ class GameDB:
             return None
         out = self._dossier_row(row)
         # 读缝附 payload 对象，避免调用方只认 payload 键时踩空
-        try:
-            out["payload"] = json.loads(str(out.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            out["payload"] = {}
-        if not isinstance(out["payload"], dict):
-            out["payload"] = {}
+        out["payload"] = self.parse_engine_payload_json(
+            out.get("payload_json"), surface="decree_dossiers.payload_json",
+        )
         return out
 
     def append_decree_dossier_participants(
@@ -14148,13 +14123,11 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        try:
-            existing_raw = json.loads(row["participant_roster"] or "[]")
-        except (TypeError, ValueError):
-            existing_raw = []
-        existing = self._normalize_participant_roster(
-            existing_raw if isinstance(existing_raw, list) else []
+        existing_raw = self._loads_stored_json_list(
+            row["participant_roster"],
+            surface="decree_dossiers.participant_roster",
         )
+        existing = self._normalize_participant_roster(existing_raw)
         additions = self._normalize_participant_roster(participants, strict_structured=True)
         self._validate_participant_roster_references(additions)
         by_character = {str(item["character_id"]): item for item in existing}
@@ -14868,7 +14841,9 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         if row["status"] == "proposed":
             raise ValueError("待判案卷不能绕过颁布格直接结案")
-        payload = json.loads(str(row.get("payload_json") or "{}"))
+        payload = self.parse_engine_payload_json(
+            row.get("payload_json"), surface="decree_dossiers.payload_json",
+        )
         immediate = not self._dossier_has_execution_surface(row["action_type"], payload)
         if row["status"] == "promulgated" and not immediate:
             raise ValueError("带执行判定面的案卷必须先进入 executing 并填写执行格")
@@ -16895,12 +16870,9 @@ class GameDB:
             raise KeyError(f"暂存动作不存在：{aid}")
         if str(row["status"] or "") != "pending":
             raise ValueError(f"暂存动作状态不可挂背书：{row['status']}")
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = self.parse_engine_payload_json(
+            row["payload_json"], surface="pending_actions.payload_json",
+        )
         form = str(entry.get("form") or "").strip()
         endorser_id = str(entry.get("endorser_id") or "").strip()
         imperial = bool(entry.get("imperial", False))
@@ -17185,11 +17157,14 @@ class GameDB:
     ) -> Dict[str, object]:
         """把新 payload 与旧 payload 里的下划线控制键（`_` 前缀）合并：新 payload 为主，
         旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态闸（#502 L5）。"""
-        try:
-            old = json.loads(existing_json or "{}") if not isinstance(
-                existing_json, (dict, list)) else existing_json
-        except (ValueError, TypeError):
-            old = {}
+        if isinstance(existing_json, dict):
+            old = existing_json
+        elif isinstance(existing_json, list):
+            old = existing_json
+        else:
+            old = GameDB.parse_engine_payload_json(
+                existing_json, surface="pending_actions.payload_json",
+            )
         merged: Dict[str, object] = dict(new_payload or {})
         if isinstance(old, dict):
             for k, v in old.items():
@@ -17300,15 +17275,13 @@ class GameDB:
             or pa.get("action") != "拟旨"
         ):
             return {"classification": "invalid"}
-        try:
-            payload = json.loads(str(pa.get("payload_json") or "{}"))
-            if not isinstance(payload, dict):
-                return {"classification": "invalid"}
-            payload = self._normalize_directive_dossier_payload(
-                payload, content=content, current_turn=int(state.turn),
-            )
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return {"classification": "invalid"}
+        # Durable decode/normalize faults raise (F39); empty text is business invalid.
+        payload = self.parse_engine_payload_json(
+            pa.get("payload_json"), surface="pending_actions.payload_json",
+        )
+        payload = self._normalize_directive_dossier_payload(
+            payload, content=content, current_turn=int(state.turn),
+        )
         text = str(payload.get("text") or "")
         if not text.strip():
             return {"classification": "invalid"}
@@ -17530,12 +17503,10 @@ class GameDB:
                 if committed is not None:
                     applied.append(committed)
                 continue
-            try:
-                payload = json.loads(pa["payload_json"] or "{}")
-                if not isinstance(payload, dict):
-                    payload = {}
-            except (ValueError, TypeError):
-                payload = {}
+            # Durable payload faults raise into the batch (F39); do not wash to {}.
+            payload = self.parse_engine_payload_json(
+                pa["payload_json"], surface="pending_actions.payload_json",
+            )
             office_memory_key = None
             office_memory_before = None
             office_memory_had_key = False
@@ -18032,12 +18003,9 @@ class GameDB:
         for row in dossiers:
             if str(row.get("action_type") or "") != "appointment":
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = self.parse_engine_payload_json(
+                row.get("payload_json"), surface="decree_dossiers.payload_json",
+            )
             if payload.get("recommendation") is None:
                 continue
             minister = str(payload.get("_minister_name") or "")
@@ -18481,10 +18449,9 @@ class GameDB:
             actors.add(executor_id)
         roster = dossier.get("participant_roster") or []
         if isinstance(roster, str):
-            try:
-                roster = json.loads(roster)
-            except (TypeError, ValueError):
-                roster = []
+            roster = self._loads_stored_json_list(
+                roster, surface="decree_dossiers.participant_roster",
+            )
         if isinstance(roster, list):
             for entry in roster:
                 if not isinstance(entry, dict):
@@ -21322,18 +21289,12 @@ class GameDB:
         persisted_title = title
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
-        try:
-            prior_targets = json.loads(row["excluded_targets"] or "{}")
-        except (TypeError, ValueError):
-            prior_targets = {}
-        if not isinstance(prior_targets, dict):
-            prior_targets = {}
-        try:
-            legacy_people = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError):
-            legacy_people = []
-        if not isinstance(legacy_people, list):
-            legacy_people = []
+        prior_targets = self.parse_engine_payload_json(
+            row["excluded_targets"], surface="secret_orders.excluded_targets",
+        )
+        legacy_people = self._loads_stored_json_list(
+            row["excluded_names"], surface="secret_orders.excluded_names",
+        )
         people, offices = canonical_secret_order_exclusions(
             self.content, [*legacy_people, *prior_targets.get("people", [])],
             prior_targets.get("offices", []),
@@ -21369,15 +21330,15 @@ class GameDB:
             )
             dossier = self.get_dossier_for_secret_order(int(order_id))
             if dossier is not None:
-                try:
-                    payload = json.loads(str(dossier.get("payload_json") or "{}"))
-                except (TypeError, ValueError):
-                    payload = {}
-                if not isinstance(payload, dict):
-                    payload = {}
+                payload = self.parse_engine_payload_json(
+                    dossier.get("payload_json"),
+                    surface="decree_dossiers.payload_json",
+                )
                 payload["title"] = persisted_title
                 payload["content"] = content
-                payload["tags"] = json.loads(tags_json)
+                payload["tags"] = self._loads_stored_json_list(
+                    tags_json, surface="secret_orders.tags",
+                )
                 self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
         self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)

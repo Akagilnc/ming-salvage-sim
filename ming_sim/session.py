@@ -522,26 +522,17 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
         office_type = infer_office_type_from_office(
             row["office"], row["office_type"], llm_config, use_llm=False
         )
-        import json as _json
+        from ming_sim.db import GameDB
 
-        try:
-            aliases = _json.loads(row["aliases"] or "[]")
-        except (TypeError, ValueError):
-            aliases = []
-        if not isinstance(aliases, list):
-            aliases = []
-        try:
-            personal_skills = _json.loads(row["personal_skills"] or "[]")
-        except (TypeError, ValueError):
-            personal_skills = []
-        if not isinstance(personal_skills, list):
-            personal_skills = []
-        try:
-            seed_guilt = _json.loads(row["seed_guilt"] or "{}")
-        except (TypeError, ValueError):
-            seed_guilt = {}
-        if not isinstance(seed_guilt, dict):
-            seed_guilt = {}
+        aliases = GameDB._loads_stored_json_list(
+            row["aliases"], surface="characters.aliases",
+        )
+        personal_skills = GameDB._loads_stored_json_list(
+            row["personal_skills"], surface="characters.personal_skills",
+        )
+        seed_guilt = GameDB.parse_engine_payload_json(
+            row["seed_guilt"], surface="characters.seed_guilt",
+        )
         characters[name] = Character(
             name=name,
             office=row["office"],

@@ -1,8 +1,7 @@
-"""Affair records: identity, birth, close-by-declaration, pointers (ADR 0154)."""
+"""Affair records: identity, birth, pointers (ADR 0154). No declare-closed action."""
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -11,9 +10,7 @@ from ming_sim.strict_types import strict_int
 
 _ATTACH_NEW = "new"
 _ATTACH_EXISTING = "existing"
-_ATTACH_CLOSE = "close"
 ATTACH_BIRTH = frozenset({_ATTACH_NEW, _ATTACH_EXISTING})
-ATTACH_RESULT_CLOSE = frozenset({_ATTACH_CLOSE})
 ATTACH_EXPERIENCE = frozenset({_ATTACH_EXISTING})
 _ORIGIN_AFFAIR = "affair"
 _ORIGIN_DOSSIER = "dossier"
@@ -144,18 +141,6 @@ class AffairStore:
         ).fetchall()
         return tuple(_row_to_affair(row) for row in rows)
 
-    def declare_closed(self, affair_id: int, *, turn: int) -> Affair:
-        """LLM-declared close. No conditions, no dossier-status checks."""
-        self.get(affair_id)
-        owns = connection_owns_transaction(self._conn)
-        self._conn.execute(
-            "UPDATE affairs SET status='closed', closed_turn=? WHERE id=?",
-            (int(turn), int(affair_id)),
-        )
-        if owns:
-            self._conn.commit()
-        return self.get(affair_id)
-
     def resolve_declaration(
         self,
         declaration: Mapping[str, object],
@@ -206,28 +191,6 @@ class AffairStore:
             "SELECT id FROM affairs WHERE birth_key=?", (key,),
         ).fetchone()
         return None if row is None else int(row["id"])
-
-    def close_from_declaration(
-        self,
-        declaration: Mapping[str, object],
-        *,
-        turn: int,
-        authorized_ids: set[int],
-    ) -> int:
-        """Close only a visible affair without an active linked issue."""
-        parsed = parse_affair_declaration(
-            declaration, allowed=ATTACH_RESULT_CLOSE,
-        )
-        affair_id = int(parsed["affair_id"])
-        if affair_id not in authorized_ids:
-            raise UnauthorizedAffairOriginRef()
-        active_issue = self._conn.execute(
-            "SELECT 1 FROM issues WHERE affair_id=? AND status='active' LIMIT 1",
-            (affair_id,),
-        ).fetchone()
-        if active_issue is not None:
-            raise ValueError("事务尚有未了局势")
-        return self.declare_closed(affair_id, turn=turn).id
 
     def attach_from_declaration(
         self,
@@ -439,21 +402,17 @@ class AffairStore:
             + ") OR origin_ref LIKE ? ORDER BY id",
             (*refs, f"{affair_ref}/%"),
         ).fetchall()
+        from ming_sim.db import GameDB
+
         out: list[dict[str, object]] = []
         for row in rows:
             origin = str(row["origin_ref"] or "").strip()
-            try:
-                tags = json.loads(row["tags"] or "[]")
-            except (TypeError, ValueError):
-                tags = []
-            if not isinstance(tags, list):
-                tags = []
-            try:
-                people = json.loads(row["person_names"] or "[]")
-            except (TypeError, ValueError):
-                people = []
-            if not isinstance(people, list):
-                people = []
+            tags = GameDB._loads_stored_json_list(
+                row["tags"], surface="story_ledger_entries.tags",
+            )
+            people = GameDB._loads_stored_json_list(
+                row["person_names"], surface="story_ledger_entries.person_names",
+            )
             out.append({
                 "id": int(row["id"]),
                 "body": str(row["body"] or ""),
@@ -481,12 +440,8 @@ def parse_affair_declaration(
     if not isinstance(raw, Mapping):
         raise ValueError("事务声明须为对象")
     attach = str(raw.get("attach") or "").strip()
-    permitted = ATTACH_BIRTH | ATTACH_RESULT_CLOSE if allowed is None else allowed
+    permitted = ATTACH_BIRTH if allowed is None else allowed
     if attach not in permitted:
-        if attach == _ATTACH_CLOSE:
-            raise ValueError("本阶段不能了结事务")
-        if attach in ATTACH_BIRTH and permitted == ATTACH_RESULT_CLOSE:
-            raise ValueError("顶层事务声明只接受了结")
         raise ValueError("事务声明 attach 不在本阶段")
     if attach == _ATTACH_NEW:
         # Affair name/origin are free prose on the materials board: preserve bytes.
@@ -505,9 +460,7 @@ def parse_affair_declaration(
     try:
         affair_id = parse_positive_affair_id(raw.get("affair_id"))
     except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "了结须有 affair_id" if attach == _ATTACH_CLOSE else "接到已开事务须有 affair_id"
-        ) from exc
+        raise ValueError("接到已开事务须有 affair_id") from exc
     return {"attach": attach, "affair_id": affair_id}
 
 

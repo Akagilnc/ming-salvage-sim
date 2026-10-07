@@ -38,15 +38,15 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
         return []
     data = raw
     if isinstance(raw, str):
-        text = raw.strip()
-        if not text or text in ("[]", "{}"):
-            return []
-        try:
-            data = json.loads(text)
-        except (TypeError, ValueError):
-            return []
+        from ming_sim.db import GameDB
+
+        data = GameDB._loads_stored_json_list(
+            raw, surface="commitments.stages_json",
+        )
     if not isinstance(data, (list, tuple)):
-        return []
+        raise ValueError(
+            f"commitments.stages_json 须为 list，得 {type(data).__name__}"
+        )
     out: List[Dict[str, object]] = []
     for idx, item in enumerate(data):
         if not isinstance(item, dict):
@@ -234,12 +234,11 @@ def list_due_grant_report_dossiers_for_scan(
     for row in rows:
         if str(row["execution_outcome"] or "").strip():
             continue
-        try:
-            payload = _json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        from ming_sim.db import GameDB
+
+        payload = GameDB.parse_engine_payload_json(
+            row["payload_json"], surface="decree_dossiers.payload_json",
+        )
         # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         did = int(row["id"])
         due_turn = int(row["due_turn"] or 0)

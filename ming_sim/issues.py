@@ -239,12 +239,11 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     row = db.get_decree_dossier(dossier_id)
     if row is None or not db.dossier_authorizes_effects(dossier_id):
         return None
-    try:
-        payload = row.get("payload") or json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        return None
+    payload = row.get("payload")
     if not isinstance(payload, dict):
-        return None
+        payload = GameDB.parse_engine_payload_json(
+            row.get("payload_json"), surface="decree_dossiers.payload_json",
+        )
     if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
         return None
     return {**row, "payload": payload}
@@ -553,10 +552,9 @@ def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
         (issue_id,),
     ).fetchall()
     for row in rows:
-        try:
-            payload = json.loads(str(row["metric_delta"] or "{}"))
-        except (TypeError, ValueError):
-            continue
+        payload = GameDB.parse_engine_payload_json(
+            row["metric_delta"], surface="economy_flows.metric_delta",
+        )
         progress = payload.get("commitment_progress") if isinstance(payload, dict) else None
         if isinstance(progress, dict):
             try:
@@ -1055,20 +1053,9 @@ def _fiscal_levy_base_transport(
 def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> Optional[dict]:
     if isinstance(raw_fiscal, dict):
         return raw_fiscal
-    if raw_fiscal is None or raw_fiscal == "":
-        raw_fiscal = "{}"
-    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    try:
-        fiscal = json.loads(raw_fiscal)
-    except (TypeError, ValueError) as exc:
-        tlog(f"[fiscal-levy] {region_id} fiscal 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
-        return None
-    if not isinstance(fiscal, dict):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    return fiscal
+    return GameDB.parse_engine_payload_json(
+        raw_fiscal, surface=f"regions.fiscal:{region_id}",
+    )
 
 
 def _fiscal_levy_event_by_id(event_id: str) -> Optional[Event]:
@@ -2007,11 +1994,10 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         # #622/#1260 单源：仅有旨外 durable 的变形才构成 deformation_exposure。
         if not db.dossier_has_beyond_intent(did):
             continue
-        try:
-            roster = json.loads(str(row["participant_roster"] or "[]"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(roster, list) or not roster:
+        roster = GameDB._loads_stored_json_list(
+            row["participant_roster"], surface="decree_dossiers.participant_roster",
+        )
+        if not roster:
             continue
         participant_ids = [
             str(item.get("character_id") or "").strip()
@@ -6408,14 +6394,12 @@ def _apply_person_changes(
                         )
                         continue
                     if action_type == "pacification":
-                        try:
-                            payload = dossier.get("payload") or json.loads(
-                                str(dossier.get("payload_json") or "{}")
-                            )
-                        except (TypeError, ValueError):
-                            payload = {}
+                        payload = dossier.get("payload")
                         if not isinstance(payload, dict):
-                            payload = {}
+                            payload = GameDB.parse_engine_payload_json(
+                                dossier.get("payload_json"),
+                                surface="decree_dossiers.payload_json",
+                            )
                         bound_target = str(
                             payload.get("target_id") or dossier.get("target_id") or ""
                         ).strip()
@@ -8140,23 +8124,6 @@ def _apply_score_extraction_body(
         defer_event_trigger_ids=strategic_event_pool_ids,
         open_affair_ids_at_input=authorized_open_affairs)
 
-    # Affair closure observes the batch's final issue state. In particular, a
-    # same-batch linked issue must prevent closure rather than leave a closed
-    # affair pointing at active work.
-    for raw in extracted.get("affair_declarations") or []:
-        try:
-            if not isinstance(raw, dict):
-                raise ValueError("事务声明须为对象")
-            db.affairs.close_from_declaration(
-                raw,
-                turn=int(state.turn),
-                authorized_ids=frozen_open_affairs,
-            )
-        except (TypeError, ValueError, KeyError) as exc:
-            validate_rejections.append(
-                ("affair_declarations", {"raw_value": raw}, str(exc)),
-            )
-
     def _ordered_strategic_items(field: str, event_id: str) -> list[tuple[str, object]]:
         items = ordered_deltas.get(field) or []
         return [
@@ -8910,10 +8877,9 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     ).fetchall()
     cleared: List[str] = []
     for row in rows:
-        try:
-            gate = json.loads(str(row["clear_gate"] or "{}"))
-        except (ValueError, TypeError):
-            gate = {}
+        gate = GameDB.parse_engine_payload_json(
+            row["clear_gate"], surface="legacies.clear_gate",
+        )
         if not gate:
             continue
         if _gate_passed(gate, state.metrics, db):

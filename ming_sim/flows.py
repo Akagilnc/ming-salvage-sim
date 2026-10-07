@@ -96,27 +96,13 @@ def _fixed_flow_scalars_are_numeric(region_id: str, fiscal: dict) -> bool:
 
 
 def _load_region_fiscal_for_fixed_flow(region_id: str, raw_fiscal: object) -> Optional[dict]:
-    """固定财政旧路径的宽容 fiscal 读取。
-
-    Shadow substrate 自己有 fail-loud+隔离日志；固定税收不能因为一个省的 fiscal JSON
-    坏态掀翻整月 pre_settle，也不能把坏 payload 当空 fiscal 继续造钱。坏省当月
-    固定税收出列，并让后续 substrate bridge 再记录精确隔离原因。
-    """
+    """Durable region fiscal read. Corrupt JSON raises (F39); non-numeric scalars still skip."""
     if isinstance(raw_fiscal, dict):
-        return raw_fiscal if _fixed_flow_scalars_are_numeric(region_id, raw_fiscal) else None
-    if raw_fiscal is None or raw_fiscal == "":
-        raw_fiscal = "{}"
-    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
-        tlog(f"[province-fiscal] {region_id} fiscal 非字典，本{TURN_UNIT}固定税收出列")
-        return None
-    try:
-        fiscal = json.loads(raw_fiscal)
-    except (TypeError, ValueError) as exc:
-        tlog(f"[province-fiscal] {region_id} fiscal 解析失败，本{TURN_UNIT}固定税收出列：{type(exc).__name__}: {exc}")
-        return None
-    if not isinstance(fiscal, dict):
-        tlog(f"[province-fiscal] {region_id} fiscal 非字典，本{TURN_UNIT}固定税收出列")
-        return None
+        fiscal = raw_fiscal
+    else:
+        fiscal = GameDB.parse_engine_payload_json(
+            raw_fiscal, surface=f"regions.fiscal:{region_id}",
+        )
     if not _fixed_flow_scalars_are_numeric(region_id, fiscal):
         return None
     return fiscal
@@ -238,8 +224,10 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True
     ).fetchall()
     for row in rows:
         try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError) as exc:
+            fiscal = GameDB.parse_engine_payload_json(
+                row["fiscal"], surface=f"regions.fiscal:{row['id']}",
+            )
+        except ValueError as exc:
             if not strict:
                 continue
             raise ValueError(f"region {row['id']} fiscal JSON 非法，无法汇总盐商旁路") from exc
@@ -266,10 +254,9 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
     ).fetchall()
     for row in rows:
         region_id = str(row["id"])
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运") from exc
+        fiscal = GameDB.parse_engine_payload_json(
+            row["fiscal"], surface=f"regions.fiscal:{region_id}",
+        )
         if not isinstance(fiscal, dict):
             raise ValueError(f"region {region_id!r} fiscal 非字典，无法投影起运")
         if "settle" not in fiscal:
@@ -548,10 +535,9 @@ def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
     ).fetchall()
     for row in rows:
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError):
-            continue
+        fiscal = GameDB.parse_engine_payload_json(
+            row["fiscal"], surface=f"regions.fiscal:{row['id']}",
+        )
         settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
         p = settle.get("p") if isinstance(settle, dict) else None
         if not isinstance(p, dict):

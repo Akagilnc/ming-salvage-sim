@@ -1678,6 +1678,22 @@ def _dispatch_endorsements(
                 "invalid_shape", source,
             )
             continue
+        elif db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (endorser_id,),
+        ).fetchone() is None:
+            _reject(
+                rejected, item, "背书人物不存在",
+                "hallucinated_id", source,
+            )
+            continue
+        if ctid > 0 and db.conn.execute(
+            "SELECT 1 FROM chat_turns WHERE id=?", (ctid,),
+        ).fetchone() is None:
+            _reject(
+                rejected, item, "背书来源对话轮不存在",
+                "missing_ref", source,
+            )
+            continue
         row = db.conn.execute(
             "SELECT id, night_id, status, payload_json FROM pending_actions "
             "WHERE id=? AND turn=?",
@@ -1697,12 +1713,14 @@ def _dispatch_endorsements(
         }
         status = str(row["status"] or "")
         if status == "pending":
+            # LLM item shape already checked above. Durable payload decode and
+            # residual validation faults must raise (F39), not become invalid_item.
             try:
                 db.attach_pending_action_endorsement(
                     action_id, entry, commit=False,
                 )
-            except (TypeError, ValueError, KeyError) as exc:
-                _reject(rejected, item, str(exc), "invalid_item", source)
+            except KeyError as exc:
+                _reject(rejected, item, str(exc), "missing_ref", source)
                 continue
         elif status == "committed":
             drow = db.conn.execute(

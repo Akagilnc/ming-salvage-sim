@@ -272,24 +272,18 @@ def test_fiscal_levy_capstone_golden_all_seeded_provinces(
 
 
 
-def test_fiscal_levy_skips_malformed_region_fiscal_without_blocking_fiscal_levy_pass(game, monkeypatch):
+def test_fiscal_levy_malformed_region_fiscal_fails_loud(game, monkeypatch):
     db, state, content = game
     issues.bind_content(content)
     state.year = 1631
     state.period = 1
     db.save_state(state)
     _emperor_decides(db, state, ("liao_levy_rise_1631", "已准"))
-    before_huguang = _settle_payload(db, "huguang")["p"]["三饷应征"]
-    msgs = []
-    monkeypatch.setattr(issues, "tlog", lambda msg: msgs.append(msg))
     db.conn.execute("UPDATE regions SET fiscal = ? WHERE id = ?", ("{bad", "shaanxi"))
     db.conn.commit()
 
-    apply_historical_fiscal_rates(state, db)
-
-    assert msgs
-    huguang = _settle_payload(db, "huguang")
-    assert huguang["p"]["三饷应征"] > before_huguang
+    with pytest.raises(ValueError):
+        apply_historical_fiscal_rates(state, db)
 
 
 @pytest.mark.parametrize(

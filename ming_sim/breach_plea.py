@@ -92,17 +92,15 @@ def encode_plea_meta(meta: Dict[str, object]) -> str:
 
 
 def decode_plea_meta(origin_context: object) -> Dict[str, object]:
+    from ming_sim.db import GameDB
+
     text = str(origin_context or "").strip()
     if not text.startswith(_META_PREFIX):
         return {}
     raw = text[len(_META_PREFIX):]
-    try:
-        data = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return data
+    return GameDB.parse_engine_payload_json(
+        raw, surface="breach_plea.origin_context_meta",
+    )
 
 
 def commitment_natural_due_turn(row: Any) -> int:
@@ -156,11 +154,12 @@ def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
 
 
 def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
+    from ming_sim.db import GameDB
+
     names: List[str] = []
-    try:
-        roster = json.loads(row["participant_roster"] or "[]")
-    except (TypeError, ValueError):
-        roster = []
+    roster = GameDB._loads_stored_json_list(
+        row["participant_roster"], surface="decree_dossiers.participant_roster",
+    )
     if isinstance(roster, list):
         for item in roster:
             if isinstance(item, dict) and item.get("tier") == "主办":
@@ -206,11 +205,12 @@ def _dedicated_accounts(row: Any) -> List[str]:
     except Exception:
         keys = []
 
+    from ming_sim.db import GameDB
+
     tags_raw = row["tags"] if "tags" in keys else "[]"
-    try:
-        tags = json.loads(tags_raw or "[]")
-    except (TypeError, ValueError):
-        tags = []
+    tags = GameDB._loads_stored_json_list(
+        tags_raw, surface="story_ledger_entries.tags",
+    )
     if isinstance(tags, list):
         for tag in tags:
             t = str(tag or "").strip()
@@ -1077,11 +1077,13 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
         current_office = str(co["office_title"] or current_office).strip() or current_office
 
     # 承诺 roster 上记录的 role/office 快照
+    from ming_sim.db import GameDB
+
     expected = ""
-    try:
-        roster = json.loads(commitment_row["participant_roster"] or "[]")
-    except (TypeError, ValueError):
-        roster = []
+    roster = GameDB._loads_stored_json_list(
+        commitment_row["participant_roster"],
+        surface="commitments.participant_roster",
+    )
     if isinstance(roster, list):
         for item in roster:
             if not isinstance(item, dict):
@@ -1106,16 +1108,14 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
                 (int(did),),
             ).fetchone()
             if drow is not None and str(drow["executor_id"] or "") == name:
-                try:
-                    payload = json.loads(drow["payload_json"] or "{}")
-                except (TypeError, ValueError):
-                    payload = {}
-                if isinstance(payload, dict):
-                    expected = str(
-                        payload.get("executor_office")
-                        or payload.get("office")
-                        or ""
-                    ).strip()
+                payload = GameDB.parse_engine_payload_json(
+                    drow["payload_json"], surface="decree_dossiers.payload_json",
+                )
+                expected = str(
+                    payload.get("executor_office")
+                    or payload.get("office")
+                    or ""
+                ).strip()
 
     # office_change_records：有调任记录且当前 office 与最早/承诺侧不一致
     oc = db.conn.execute(

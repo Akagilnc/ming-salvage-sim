@@ -33,20 +33,14 @@ from ming_sim.person_archive_contract import PERSON_ACTIONS
 
 
 def loads_effect_dict(raw: object) -> Dict[str, object]:
-    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口（#117）：
-    - 已是 dict（调用方传解析过的对象）→ 原样返回；
-    - JSON 字符串 → 解析；解析失败或真值非 dict（脏库/历史写路径/标量）→ {}。
-    所有 effect-列读取统一经此，下游 .get/.items 永不在非 dict 上崩回合。放 models（leaf，只依赖 json）
-    避免 db↔issues 循环——db / issues / simulation / web_app 都从这里取（cmr #117 R4）。"""
-    if isinstance(raw, dict):
-        return raw
-    if not raw:  # None / 空串等常见空值：快速返 {}，免 json.loads 解析开销（gemini PR#127 R2）
-        return {}
-    try:
-        v = json.loads(raw)
-    except (ValueError, TypeError):
-        return {}
-    return v if isinstance(v, dict) else {}
+    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口。
+
+    真空→{}；腐坏/非对象响亮 ValueError（#1834 F39，不得洗成空 effect）。
+    放 models 避免 db↔issues 循环——调用方 lazy 取 GameDB 解析助手。
+    """
+    from ming_sim.db import GameDB
+
+    return GameDB.parse_engine_payload_json(raw, surface="effect_json")
 
 
 def _nonzero_int(raw: object) -> bool:
