@@ -1687,16 +1687,14 @@ class GameSession:
         else:
             outcomes = [_llm_one(jobs[0])]
 
-        # DB 相串行：已分类 ValueError 子类耗尽该旨；裸 ValueError／其它异常中止。
-        def _typed_domain_value_error(exc: BaseException) -> bool:
-            return isinstance(exc, ValueError) and type(exc) is not ValueError
+        # DB 相串行：仅既有领域契约异常耗尽；未识别异常错误包中止（#1897 E1）。
+        from ming_sim.action_materialize import is_declaration_domain_error
 
         next_carry: Dict[int, Dict[str, object]] = {}
         for job, new_payload, exc in outcomes:
             did = int(job["directive_id"])
             if exc is not None:
-                if _typed_domain_value_error(exc):
-                    # 本轮重写自身的产物错：DB 载荷未动，把本次失败事实带到下轮。
+                if is_declaration_domain_error(exc):
                     logger.warning(
                         "[1769] draft#%s admission resubmit product exhaust: %s",
                         did, exc,
@@ -1724,8 +1722,7 @@ class GameSession:
                     replace_payload=True,
                 )
             except Exception as write_exc:
-                if _typed_domain_value_error(write_exc):
-                    # 写回领域拒：本次产物 + 写回拒因带进下一次重写。
+                if is_declaration_domain_error(write_exc):
                     logger.warning(
                         "[1769] draft#%s admission resubmit write-back rejected: %s",
                         did, write_exc,

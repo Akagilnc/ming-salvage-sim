@@ -3012,7 +3012,11 @@ def extract_draft_intent(
         # #529 与多旨同：署理交回既有人事候选链，不经草案 acting_appointment。
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     if dossier_action not in DRAFT_ACTION_TYPES:
-        raise ValueError(f"动作类型非法：{dossier_action!r}")
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        raise DecreeMaterializationValidationError(
+            f"动作类型非法：{dossier_action!r}",
+            failed_fields=("dossier_action_type",),
+        )
     _tk_raw = _projected.get("target_kind") if dossier_action == "grant_allocation" else obj.get("目标类型")
     target_kind = (
         str(_tk_raw or "").strip()
@@ -3072,7 +3076,11 @@ def extract_draft_intent(
     if dossier_action == "pay_order_override" and (
         not isinstance(mechanical["entries"], list) or not mechanical["entries"]
     ):
-        raise ValueError("pay_order_override 须有非空 entries 清单")
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        raise DecreeMaterializationValidationError(
+            "pay_order_override 须有非空 entries 清单",
+            failed_fields=("entries",),
+        )
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
         if _supplement_mode:
@@ -3147,9 +3155,14 @@ from ming_sim.execution_pressure import normalize_locality_scope as _normalize_l
 
 def _coerce_draft_target_kind(raw: object) -> str:
     """#654 r3-B.2：非法 target_kind fail-loud，废除静默改 policy。"""
+    from ming_sim.action_materialize import DecreeMaterializationValidationError
+
     kind = str(raw or "").strip()
     if kind not in _VALID_DRAFT_TARGET_KINDS:
-        raise ValueError(f"目标类型非法：{kind!r}")
+        raise DecreeMaterializationValidationError(
+            f"目标类型非法：{kind!r}",
+            failed_fields=("target_kind",),
+        )
     return kind
 
 

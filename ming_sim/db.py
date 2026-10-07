@@ -14109,12 +14109,19 @@ class GameDB:
         # prepare_pay_order_entries 同一验形（禁两套漂移）。
         if action == "pay_order_override":
             from ming_sim.pay_order import prepare_pay_order_entries
+            from ming_sim.action_materialize import DecreeMaterializationValidationError
             entries = normalized_payload.get("entries")
             if not isinstance(entries, list) or not entries:
-                raise ValueError("pay_order_override 案卷 payload.entries 须为非空列表")
+                raise DecreeMaterializationValidationError(
+                    "pay_order_override 案卷 payload.entries 须为非空列表",
+                    failed_fields=("entries",),
+                )
             for entry in entries:
                 if not isinstance(entry, dict):
-                    raise ValueError(f"pay_order_override entry 非字典：{entry!r}")
+                    raise DecreeMaterializationValidationError(
+                        f"pay_order_override entry 非字典：{entry!r}",
+                        failed_fields=("entries",),
+                    )
             prepare_pay_order_entries(self, entries)
         # #1503：拨饷类成案即规范化补饷载荷（缺字段 fail-loud）。
         if action == "grant_allocation":
@@ -19607,40 +19614,37 @@ class GameDB:
                     sp = f"ensure_directive_{did}"
                     self.conn.execute(f"SAVEPOINT {sp}")
                     try:
-                        # 已分类领域异常（ValueError 子类：DMVE/PayOrderKeyError…）→
-                        # 逐项拒收／补交；裸 ValueError＝未分类或嵌套持久读损坏 → 响亮（#1897 E1）。
+                        from ming_sim.action_materialize import is_declaration_domain_error
+
+                        # 仅既有领域契约异常进逐项拒收；未识别异常（含标准库
+                        # Unicode/JSON 解码子类）默认传播（#1897 E1）。
                         self._ensure_directive_dossier(
                             state, did, str(row["text"]),
                             self.read_directive_dossier_payload(row), commit=False,
                         )
-                    except ValueError as exc:
-                        if type(exc) is ValueError:
-                            self.conn.execute(f"ROLLBACK TO {sp}")
+                    except Exception as exc:
+                        self.conn.execute(f"ROLLBACK TO {sp}")
+                        if is_declaration_domain_error(exc):
+                            reason = str(exc)
+                            rejection_rows.append(
+                                {"directive_id": did, "reason": reason},
+                            )
+                            if record_rejections:
+                                collector.record(
+                                    "directive_locality",
+                                    RejectedItem(
+                                        item={"directive_id": did},
+                                        reason=reason,
+                                        category="locality_fanout_failed",
+                                        source=Provenance.player_decree,
+                                    ),
+                                    int(state.turn),
+                                )
+                            tlog(f"[ensure_dossiers] 旨#{did} 成案产物错：{exc}")
+                        else:
                             code_fault = exc
                             tlog(f"[ensure_dossiers] 旨#{did} 成案系统故障：{exc}")
                             raise
-                        self.conn.execute(f"ROLLBACK TO {sp}")
-                        reason = str(exc)
-                        rejection_rows.append({"directive_id": did, "reason": reason})
-                        # P6：rejection 只存 directive_id，不裁剪/快照 LLM 旨文
-                        if record_rejections:
-                            collector.record(
-                                "directive_locality",
-                                RejectedItem(
-                                    item={"directive_id": did},
-                                    reason=reason,
-                                    category="locality_fanout_failed",
-                                    source=Provenance.player_decree,
-                                ),
-                                int(state.turn),
-                            )
-                        tlog(f"[ensure_dossiers] 旨#{did} 成案产物错：{exc}")
-                    except Exception as exc:
-                        # 真代码故障：回滚后响亮（0005）
-                        self.conn.execute(f"ROLLBACK TO {sp}")
-                        code_fault = exc
-                        tlog(f"[ensure_dossiers] 旨#{did} 成案系统故障：{exc}")
-                        raise
                     finally:
                         self.conn.execute(f"RELEASE {sp}")
                 if record_rejections:

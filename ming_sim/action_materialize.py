@@ -583,6 +583,25 @@ class DecreeMaterializationValidationError(ValueError):
         super().__init__(message)
 
 
+def is_declaration_domain_error(exc: BaseException) -> bool:
+    """True only for existing typed domain contracts — never all ValueError subclasses.
+
+    Consumers must not treat UnicodeDecodeError/JSONDecodeError/etc. as product
+    reject just because they subclass ValueError (#1897 E1).
+    """
+    from ming_sim.pay_order import PayOrderKeyError
+    from ming_sim.structured_decree import StructuredDecreeCombinationError
+
+    return isinstance(
+        exc,
+        (
+            DecreeMaterializationValidationError,
+            PayOrderKeyError,
+            StructuredDecreeCombinationError,
+        ),
+    )
+
+
 class IncompleteXiexangPayloadError(DecreeMaterializationValidationError):
     def __init__(
         self,
