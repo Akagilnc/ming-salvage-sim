@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 
 import pytest
 
@@ -322,6 +323,26 @@ def test_faction_apply_db_error_propagates_loudly_not_disguised(game):
 
 
 # ------------------------------- P5：关系与派系同批条目并行不串行
+
+def test_relation_and_faction_items_share_single_batch_in_parallel(game):
+    db, state, _ = game
+    _add_edge(db, state, source="毕自严", target="王绍徽", kind="站台",
+              context="毕自严当面替王绍徽担名。", origin="audience:turn-1")
+    # 同批 3 条工作项（1 关系＋2 派系）必须并行进入调用缝。
+    barrier = threading.Barrier(3)
+    threads: list = []
+
+    def parallel_brew(payload_json: str) -> str:
+        payload = json.loads(payload_json)
+        threads.append(threading.current_thread().name)
+        barrier.wait()  # 串行实现会在第 2/3 条处超时破裂
+        if payload.get("view") == VIEW_FACTION_STANCE:
+            return json.dumps({STANCE_KEY: "朝局如常。"}, ensure_ascii=False)
+        return json.dumps(_relation_script(recent="毕王有站台之谊。"), ensure_ascii=False)
+
+    report = run_month_end_relation_brew(db, state, parallel_brew)
+    assert len(report["brewed"]) == 3
+    assert len(set(threads)) == 3
 
 
 # -------------------- F3 零写观察面：factions 数值列负向断言（机械）
