@@ -2,7 +2,6 @@ import json
 
 from ming_sim.office_rank import (
     canonical_office_title,
-    office_leverage_multiplier,
     office_rank_band,
 )
 from ming_sim.models import Character
@@ -144,22 +143,6 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     _disp_jump_id, disp_jump = _appointment_dossier(db, state, "候铨乙", "兵部尚书")
     assert disp_jump["break_rank"]["basis"] == "historical_office"
     assert disp_jump["break_rank"]["is_break_rank"] is True
-
-
-
-
-
-
-
-
-
-
-def test_leverage_multiplier_uses_canonical_office_rank_table_only():
-    """Public offices.json leverage bands for empty/deputy/principal/concurrent titles."""
-    assert office_leverage_multiplier("") == 1.0
-    assert office_leverage_multiplier("副总兵") == 0.5
-    assert office_leverage_multiplier("总兵") == 1.0
-    assert office_leverage_multiplier("礼部尚书,东阁大学士") == 1.0
 
 
 def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(game):

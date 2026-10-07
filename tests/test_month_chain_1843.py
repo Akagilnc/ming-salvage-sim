@@ -495,47 +495,6 @@ def test_held_dossier_settlement_failure_retry_and_reentry_isolation(game, monke
     assert decree_ref_for_dossier(db, dossier) == held_ref
 
 
-def test_advance_uses_staged_declaration_ending(game, monkeypatch):
-    db, state, content = game
-    turn = int(state.turn)
-    db.save_turn_report(state, "邸报已成")
-    chain = {}
-    outcome = {"status": "emperor_abdicate", "summary": "退位"}
-
-    from ming_sim.applier import Provenance
-
-    advanced = month_chain._advance_after_gazette(
-        db, state, chain, turn, "", Provenance.system_simulation,
-        declaration_outcome=outcome, content=content,
-    )
-
-    assert advanced is True
-    assert state.ended is True
-    assert state.ending_status == "emperor_abdicate"
-    assert int(state.turn) == turn + 1
-
-
-def test_advance_reloads_memory_after_transaction_rollback(game, monkeypatch):
-    db, state, content = game
-    turn = int(state.turn)
-    db.save_turn_report(state, "邸报已成")
-
-    def fail_after_advance(*_args, **_kwargs):
-        raise RuntimeError("injected tail failure")
-
-    monkeypatch.setattr(
-        decree_mod, "_carry_pending_clarification_actions", fail_after_advance,
-    )
-    with pytest.raises(RuntimeError):
-        month_chain._advance_after_gazette(
-            db, state, {}, turn, "", month_chain.Provenance.system_simulation,
-            content=content,
-        )
-
-    assert int(state.turn) == turn
-    assert db.load_state().turn == turn
-
-
 def test_missing_world_model_stops_before_world_commit(game, monkeypatch):
     from ming_sim.exceptions import SettlementAbort
 

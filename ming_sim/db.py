@@ -7979,11 +7979,12 @@ class GameDB:
         if initial_status not in {"active", "generating", "failed", "undone", "consumed"}:
             raise ValueError(f"unsupported chat_turn status: {initial_status!r}")
         nid = int(night_id or 0)
+        # 首次写入（含 allocate_night_seq）前取归属：外层 BEGIN/atomic 不抢提交；
+        # 无外层时本方法落盘（避免 close 回滚吞 generating 孤儿轮）。
+        owns = self.owns_transaction()
         seq = int(night_seq) if night_seq is not None else (
             self.allocate_night_seq(nid) if nid > 0 else 0
         )
-        # allocate_night_seq 可能已打开隐式事务；外层 atomic/暂停时不抢提交，
-        # 其余路径必须落盘（否则 close 回滚会吞掉 generating 孤儿轮）。
         cur = self.conn.execute(
             """
             INSERT INTO chat_turns
@@ -8003,10 +8004,7 @@ class GameDB:
                 initial_status,
             ),
         )
-        if (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns:
             self.conn.commit()
         return int(cur.lastrowid)
 

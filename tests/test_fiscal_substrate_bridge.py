@@ -1340,9 +1340,7 @@ def test_substrate_hub_display_name_collision_books_user_fiscal_exact(fresh_game
 
     budget = flows_mod.compute_budget_lines(db, state)
     colliding = [row for row in budget["国库"]["income"] if row["name"] == display]
-    # hub 投影行与用户 fiscal_item 可同名并存；若投影折叠为单行仍须能落用户定额。
-    assert len(colliding) >= 1
-    assert any(int(row.get("amount") or 0) == 7 for row in colliding) or len(colliding) >= 1
+    assert len(colliding) == 2  # hub 投影行 + 用户 fiscal_item 行
 
     flows_mod.apply_fixed_period_flows(db, state)
 
