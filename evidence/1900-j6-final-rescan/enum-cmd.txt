@@ -1,3 +1,0 @@
-cd $REPO && python3 evidence/1900-j6-final-rescan/j6_enum.py
-# tracked test files=248 hits=99 core=25
-# predicate covers末份 J6 boundary全文; not raises-keyword count

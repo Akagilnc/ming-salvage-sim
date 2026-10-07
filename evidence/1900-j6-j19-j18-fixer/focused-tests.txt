@@ -1,8 +1,0 @@
-BASELINE_BEFORE=a9136d3e011cec4b96cae75b2d4158f06021d157
-CMD=MING_SIM_{AGY,CODEX,CLAUDE,CURSOR,KIMI,GROK,PI}_BIN=/usr/bin/false python3 -m pytest -q tests/test_menu_lifecycle_drain_396.py tests/test_escort_route_1900.py tests/test_audience_translate_1837.py tests/test_audience_background.py tests/test_audience_travel_gating_670.py tests/test_grant_reconciliation_567.py
-........................................................................ [ 92%]
-......                                                                   [100%]
-78 passed in 3.04s
-real 3.58
-user 2.36
-sys 0.94

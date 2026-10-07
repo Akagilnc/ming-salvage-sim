@@ -1,5 +1,0 @@
-M1 J17 disable _validated_settlement_origin: 2 failed; restore 2 passed
-M2 raw held save boom: invalid (fixture save_state) — superseded
-M2b held arm after resolve_directives: 1 failed (ARMED_RESOLVE_CALLS=1); restore 1 passed
-M3 J20 restore title bind: 2 failed / 3 passed; restore 5 passed
-M4 J19 strict string → ValueError; loose → 知情

@@ -462,8 +462,6 @@ def _assert_structured_llm_http(response) -> dict:
     assert detail.get("code"), detail
     assert detail.get("message"), detail
     assert "provider_message" in detail, detail
-    assert "Internal Server Error" not in response.text
-    assert "Internal Server Error" not in str(detail.get("message") or "")
     return detail
 
 

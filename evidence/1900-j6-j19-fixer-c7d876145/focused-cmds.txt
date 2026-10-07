@@ -1,3 +1,0 @@
-MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1
-python -m pytest tests/test_cli_play_turn.py::test_terminal_minister_chat_preserves_chat_error_when_rollback_fails tests/test_month_call_recovery_1846.py::test_error_pack_failure_keeps_original_fault_and_retry_phase tests/test_state_reload.py::test_atomic_and_reload_chains_reload_failure tests/test_escort_route_1900.py tests/test_cli_play_turn.py tests/test_month_call_recovery_1846.py tests/test_state_reload.py -q --tb=short -p no:cacheprovider
-→ see focused-tests-recheck.log

@@ -1,6 +1,0 @@
-focused-final done
-.......                                                                  [100%]
-7 passed in 0.97s
-real 1.46
-user 1.21
-sys 0.16
