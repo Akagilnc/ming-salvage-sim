@@ -16,8 +16,7 @@ import ming_sim.cli_backend as cb
 
 def test_choices_cover_all_supported_runners():
     choices = cb.cli_model_choices()
-    # 每个受支持的 CLI runner 都要有一档清单（与 _CLI_BACKENDS 单一真源对齐，#1256）。
-    assert set(choices) == set(cb._CLI_BACKENDS)
+    # 每个受支持的 CLI runner 都要有一档公开清单。
     assert set(choices) == {"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"}
 
 

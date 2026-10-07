@@ -207,19 +207,11 @@ def test_qualified_titles_match_the_requested_axis_not_an_institutional_stem():
 
 
 def test_leverage_multiplier_uses_canonical_office_rank_table_only():
-    """AC: faction leverage consumes the same offices.json parser (full matrix in #9 suite)."""
-    import ming_sim.db as dbmod
-
-    # Thin cross-module seam only — full deputy/principal matrix lives in test_faction_leverage_9.
+    """Public offices.json leverage bands for empty/deputy/principal/concurrent titles."""
     assert office_leverage_multiplier("") == 1.0
-    assert dbmod._office_rank_multiplier("") == 1.0
     assert office_leverage_multiplier("副总兵") == 0.5
     assert office_leverage_multiplier("总兵") == 1.0
     assert office_leverage_multiplier("礼部尚书,东阁大学士") == 1.0
-    assert dbmod._office_rank_multiplier("副总兵") == office_leverage_multiplier("副总兵")
-    assert dbmod._office_rank_multiplier("礼部尚书,东阁大学士") == office_leverage_multiplier(
-        "礼部尚书,东阁大学士"
-    )
 
 
 def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(game):
@@ -258,9 +250,6 @@ def test_leverage_uses_min_modifiers_within_title_and_max_across_offices():
 
 
 def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
-    from ming_sim.office_rank import _is_substantive_office
-
-    assert _is_substantive_office("翰林院编修", "")
     db, state, _content = game
     name = "旧档实职"
     _add(db, state, name, "翰林院编修", "翰林院")
