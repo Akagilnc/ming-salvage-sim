@@ -133,15 +133,15 @@ def test_mark_todo_pending_to_consumed_is_idempotent(game):
     }]
     _insert_staged_commitment(db, state, content, stages=stages)
     write_due_staged_commitment_todos(db, state)
-    todos = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    todos = db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
     assert len(todos) == 1
     todo_id = int(todos[0]["id"])
 
-    assert db.mark_next_audience_todo_status(todo_id, TODO_STATUS_CONSUMED) is True
-    assert db.mark_next_audience_todo_status(todo_id, TODO_STATUS_CONSUMED) is False
-    row = db.list_next_audience_todos(commitment_ref=int(todos[0]["commitment_ref"]))[0]
+    assert db.dossiers.mark_next_audience_todo_status(todo_id, TODO_STATUS_CONSUMED) is True
+    assert db.dossiers.mark_next_audience_todo_status(todo_id, TODO_STATUS_CONSUMED) is False
+    row = db.dossiers.list_next_audience_todos(commitment_ref=int(todos[0]["commitment_ref"]))[0]
     assert row["status"] == TODO_STATUS_CONSUMED
-    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
+    assert db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
 def test_consumed_todo_does_not_resurrect_on_rescan(game):
@@ -156,13 +156,13 @@ def test_consumed_todo_does_not_resurrect_on_rescan(game):
     }]
     _insert_staged_commitment(db, state, content, stages=stages)
     write_due_staged_commitment_todos(db, state)
-    todo_id = int(db.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]["id"])
-    db.mark_next_audience_todo_status(todo_id, TODO_STATUS_CONSUMED)
+    todo_id = int(db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]["id"])
+    db.dossiers.mark_next_audience_todo_status(todo_id, TODO_STATUS_CONSUMED)
 
     n = write_due_staged_commitment_todos(db, state)
     assert n == 0
-    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
-    assert len(db.list_next_audience_todos(status=TODO_STATUS_CONSUMED)) == 1
+    assert db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
+    assert len(db.dossiers.list_next_audience_todos(status=TODO_STATUS_CONSUMED)) == 1
 
 
 def test_unconsumed_todo_rolls_across_settles_and_restore(game):
@@ -178,7 +178,7 @@ def test_unconsumed_todo_rolls_across_settles_and_restore(game):
     _insert_staged_commitment(db, state, content, stages=stages)
     # 只写 todo，不走 apply_pending（直接写端）——滚存面
     write_due_staged_commitment_todos(db, state)
-    pending = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    pending = db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
     assert len(pending) == 1
     origin_context = pending[0]["origin_context"]
 
@@ -186,7 +186,7 @@ def test_unconsumed_todo_rolls_across_settles_and_restore(game):
     # 先把 apply 路径旁路：直接推进并断言 list 仍可读
     state.turn += 1
     db.save_state(state)
-    still = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    still = db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
     assert len(still) == 1
     assert still[0]["origin_context"] == origin_context
 
@@ -196,7 +196,7 @@ def test_unconsumed_todo_rolls_across_settles_and_restore(game):
     db.conn.close()
     db2 = GameDB(path)
     state2 = db2.load_state()
-    todos2 = db2.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    todos2 = db2.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
     assert len(todos2) == 1
     assert todos2[0]["origin_context"] == origin_context
     assert int(state2.turn) == int(state.turn)
@@ -277,7 +277,7 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
     )
     # 过月写 todo（中段到期）→ 次回合落格
     _settle_empty_month(db, state, content, monkeypatch)
-    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    assert db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
     scenes = list_due_review_scenes(db, state)
     assert scenes and scenes[0]["origin_context"] == "三年火器见眉目"
 
@@ -288,7 +288,7 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
     assert dossier["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
     # todo 已消费
-    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
+    assert db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
 def test_dossier_branch_negative_does_not_open_parallel_slot(game):
@@ -362,7 +362,7 @@ def test_no_dossier_branch_only_scene_no_forged_dossier(game):
     assert after_count == before_count + 1  # +1 是 origin 那条已存在的
     # 不改已结案卷执行格为第二真源
     assert db.dossiers.get(did)["status"] == "closed"
-    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
+    assert db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
 def test_no_dossier_branch_negative_does_not_create_dossier(game):
@@ -528,12 +528,12 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
 
     # beat0: 未到期
     _settle_empty_month(db, state, content, monkeypatch)
-    assert db.list_next_audience_todos() == []
+    assert db.dossiers.list_next_audience_todos() == []
     assert not list_due_review_scenes(db, state)
 
     # beat1: 过月写 todo
     _settle_empty_month(db, state, content, monkeypatch)
-    todos = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    todos = db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
     assert len(todos) == 1
     # 落格尚未发生
     assert db.dossiers.get(dossier_id)["execution_outcome"] in ("", None)
@@ -544,7 +544,7 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     # beat3: 下一过月落格 + 消费
     _settle_empty_month(db, state, content, monkeypatch)
     assert db.dossiers.get(dossier_id)["execution_outcome"]
-    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
+    assert db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
 def test_due_review_settle_does_not_pause_or_decision(game, monkeypatch):
@@ -583,7 +583,7 @@ def test_input_closed_set_degrades_when_sources_missing(game):
     }]
     _insert_staged_commitment(db, state, content, stages=stages)
     write_due_staged_commitment_todos(db, state)
-    todo = db.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
+    todo = db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
     inp = build_due_review_input(db, todo)
     # 缺源降级：催办空列表不崩；监督史无在场行时亦为空（#625 建轨后仍可空）
     assert inp["urge_history"] == []
@@ -682,7 +682,7 @@ def test_due_month_extractor_blocked_before_todo_write(game):
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
     )
     # 故意不写 todo：模拟 settle 内 extract 早于 write_due 的窗
-    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
+    assert db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
     owned = dossiers_with_pending_due_review(db, state)
     assert dossier_id in owned
 

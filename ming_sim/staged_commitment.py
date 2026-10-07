@@ -318,7 +318,7 @@ def write_due_staged_commitment_todos(db: Any, state: Any, *, commit: bool = Tru
         return 0
     written = 0
     for item in due_stages:
-        created = db.insert_next_audience_todo(
+        created = db.dossiers.insert_next_audience_todo(
             commitment_ref=int(item["commitment_ref"]),
             stage_idx=int(item["stage_idx"]),
             due_turn=int(item["due_turn"]),

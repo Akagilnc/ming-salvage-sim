@@ -99,7 +99,7 @@ def collect_new_edge_events_for_faction(
     （皇帝端与表外党籍显式 None，不猜不建映射）。"""
     projection = project_character_factions(db)
     enriched: List[Dict[str, Any]] = []
-    for row in db.get_relation_edge_events():
+    for row in db.person_logs.get_relation_edge_events():
         if int(row["id"]) <= int(watermark):
             continue
         if faction not in (projection.get(row["source"]), projection.get(row["target"])):

@@ -273,7 +273,7 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     # 执行格判词观察槽：督办复核读取监督事实
     _insert_staged(db, state, content, dossier_id=sub_m, due_turn=state.turn)
     write_due_staged_commitment_todos(db, state)
-    todo = db.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
+    todo = db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
     inp = build_due_review_input(db, todo)
     assert inp["supervision_history"]
     assert inp["transformation_tendency_facts"]["longest_consecutive_presence_months"] >= 1
@@ -401,7 +401,7 @@ def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
     )
     _insert_staged(db, state, content, dossier_id=subject_id, due_turn=state.turn)
     write_due_staged_commitment_todos(db, state)
-    todo = db.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
+    todo = db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
     inp = build_due_review_input(db, todo)
     assert inp["supervision_history"] != []
     assert inp["supervision_history"][0]["auditor_name"] == str(auditor_row["name"])

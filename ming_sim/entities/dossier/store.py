@@ -16,7 +16,9 @@ from ming_sim.applier import (
     durable_int,
     load_stored_list,
     load_stored_object,
+    parse_engine_payload_json,
     safe_json_dumps,
+    sanitize_sqlite_text,
 )
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import dossier_action_policy
@@ -587,16 +589,73 @@ class DossierStore:
 
     # ── payload / participants / links ────────────────────────────
 
-    def insert_audience_todo(self, params: Any) -> Any:
-        return self._conn.execute(
-            "INSERT OR IGNORE INTO next_audience_todos "
-            "(commitment_ref, stage_idx, due_turn, criterion_text, origin_context, "
-            "status, entry_kind, created_turn, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", params,
+    @staticmethod
+    def _coerce_todo_payload_json(payload_json: object) -> str:
+        """#624：引擎侧 payload_json 序列化；非法非空响亮拒绝，禁静默丢底。"""
+        if payload_json is not None and not isinstance(payload_json, (str, dict)):
+            raise ValueError(
+                f"next_audience_todos.payload_json 类型非法：{type(payload_json).__name__}"
+            )
+        data = load_stored_object(payload_json, label="next_audience_todos.payload_json")
+        return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _parse_todo_payload_json(raw: object) -> dict[str, object]:
+        return parse_engine_payload_json(
+            raw, surface="next_audience_todos.payload_json",
         )
 
-    def audience_todos(
-        self, *, status: str | None = None, commitment_ref: int | None = None,
-    ) -> Any:
+    def insert_next_audience_todo(
+        self,
+        *,
+        commitment_ref: int,
+        stage_idx: int,
+        due_turn: int,
+        criterion_text: str = "",
+        origin_context: str = "",
+        status: str = "pending",
+        entry_kind: str = "staged_commitment",
+        created_turn: int = 0,
+        payload_json: object = None,
+        commit: bool = True,
+    ) -> int:
+        """#620 P2：次回合召对待办写端。UNIQUE(commitment_ref, stage_idx, entry_kind) 去重。
+
+        #624：payload_json 引擎侧列（真伪底）；默认 '{}'。
+        返回新建行 id；已存在则返回 0（幂等，不覆盖）。
+        """
+        owns = self._owns()
+        payload_blob = self._coerce_todo_payload_json(payload_json)
+        cur = self._conn.execute(
+            "INSERT OR IGNORE INTO next_audience_todos "
+            "(commitment_ref, stage_idx, due_turn, criterion_text, origin_context, "
+            "status, entry_kind, created_turn, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                int(commitment_ref),
+                int(stage_idx),
+                int(due_turn),
+                sanitize_sqlite_text(str(criterion_text or "")),
+                sanitize_sqlite_text(str(origin_context or "")),
+                sanitize_sqlite_text(str(status or "pending") or "pending"),
+                sanitize_sqlite_text(
+                    str(entry_kind or "staged_commitment") or "staged_commitment"
+                ),
+                int(created_turn or 0),
+                sanitize_sqlite_text(payload_blob),
+            ),
+        )
+        self._commit(commit, owns)
+        if cur.rowcount <= 0:
+            return 0
+        return int(cur.lastrowid)
+
+    def list_next_audience_todos(
+        self,
+        *,
+        status: str | None = None,
+        commitment_ref: int | None = None,
+    ) -> list[dict[str, object]]:
+        """下一召对回合可读的待办条目（restore 只读 DB 接续）。"""
         clauses: list[str] = []
         params: list[object] = []
         if status is not None:
@@ -606,27 +665,89 @@ class DossierStore:
             clauses.append("commitment_ref=?")
             params.append(int(commitment_ref))
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        return self._conn.execute(
+        rows = self._conn.execute(
             "SELECT id, commitment_ref, stage_idx, due_turn, criterion_text, origin_context, "
             "status, entry_kind, created_turn, payload_json FROM next_audience_todos "
-            f"{where} ORDER BY due_turn, commitment_ref, stage_idx, id", tuple(params),
+            f"{where} ORDER BY due_turn, commitment_ref, stage_idx, id",
+            tuple(params),
         ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "commitment_ref": int(r["commitment_ref"]),
+                "stage_idx": int(r["stage_idx"]),
+                "due_turn": int(r["due_turn"]),
+                "criterion_text": str(r["criterion_text"] or ""),
+                "origin_context": str(r["origin_context"] or ""),
+                "status": str(r["status"] or ""),
+                "entry_kind": str(r["entry_kind"] or ""),
+                "created_turn": int(r["created_turn"] or 0),
+                "payload_json": self._parse_todo_payload_json(r["payload_json"]),
+            }
+            for r in rows
+        ]
 
     def audience_todo(self, todo_id: int) -> Any:
         return self._conn.execute(
             "SELECT id, status, payload_json FROM next_audience_todos WHERE id=?", (todo_id,),
         ).fetchone()
 
-    def set_audience_todo_status(self, todo_id: int, status: str, payload: str | None = None) -> Any:
-        assignments = "status=?"
-        params: list[Any] = [status]
-        if payload is not None:
-            assignments += ", payload_json=?"
-            params.append(payload)
-        return self._conn.execute(
-            f"UPDATE next_audience_todos SET {assignments} WHERE id=? AND status='pending'",
-            [*params, todo_id],
-        )
+    def mark_next_audience_todo_status(
+        self,
+        todo_id: int,
+        status: str,
+        *,
+        payload_patch: object = None,
+        commit: bool = True,
+    ) -> bool:
+        """#621 P3：待办消费单写口 pending→consumed/rolled。
+
+        幂等：目标态已是 status 且无 payload_patch，或非 pending 源态 → False。
+        payload_patch：可选 dict，并入既有 payload_json；允许 pending 原位落判决痕迹。
+        commit=False 可入外层事务。
+        """
+        allowed = {"consumed", "rolled", "pending"}
+        new_status = str(status or "").strip()
+        if new_status not in allowed:
+            raise ValueError(f"next_audience_todos status 非法：{new_status}")
+        patch: dict[str, object] | None = None
+        if payload_patch is not None:
+            if not isinstance(payload_patch, dict):
+                raise ValueError(
+                    "next_audience_todos payload_patch 须为对象，得 "
+                    f"{type(payload_patch).__name__}"
+                )
+            patch = dict(payload_patch)
+        row = self.audience_todo(int(todo_id))
+        if row is None:
+            return False
+        current = str(row["status"] or "")
+        if current == new_status and patch is None:
+            return False
+        # pending 原位更新只用于在同一 durable todo 落 payload 事实；无 patch 不复活。
+        if new_status == "pending" and current != "pending":
+            return False
+        if current != "pending":
+            return False
+        owns = self._owns()
+        if patch is not None:
+            existing = self._parse_todo_payload_json(row["payload_json"])
+            merged = dict(existing)
+            merged.update(patch)
+            payload_blob = self._coerce_todo_payload_json(merged)
+            cur = self._conn.execute(
+                "UPDATE next_audience_todos SET status=?, payload_json=? "
+                "WHERE id=? AND status='pending'",
+                (new_status, sanitize_sqlite_text(payload_blob), int(todo_id)),
+            )
+        else:
+            cur = self._conn.execute(
+                "UPDATE next_audience_todos SET status=? "
+                "WHERE id=? AND status='pending'",
+                (new_status, int(todo_id)),
+            )
+        self._commit(commit, owns)
+        return int(cur.rowcount or 0) > 0
 
     def set_audience_todo_origin(self, todo_id: int, origin: str) -> None:
         self._conn.execute(
@@ -2631,7 +2752,15 @@ class DossierStore:
         turn: int,
         minister_name: str,
         action_ids: Optional[Iterable[int]] = None,
+        *,
+        commit: bool = True,
     ) -> int:
+        """#525 留中：点名候选移出 status=pending 活跃集，同表 durable 留中档。
+
+        不删行；commit_pending_actions 只读 pending，故默认提交自然跳过、不成案。
+        返回更新条数。action_ids 非空=只留中指定 id（#502 点名粒度）。
+        """
+        owns = self._owns()
         params: list[object] = [int(turn), str(minister_name)]
         where = "turn=? AND minister_name=? AND status='pending'"
         if action_ids is not None:
@@ -2646,7 +2775,10 @@ class DossierStore:
             f"WHERE {where}",
             tuple(params),
         )
-        return int(cur.rowcount or 0)
+        updated = int(cur.rowcount or 0)
+        if updated:
+            self._commit(commit, owns)
+        return updated
 
     def withdraw_pending_action_row(self, action_id: int, turn: int) -> Any:
         return self._conn.execute(

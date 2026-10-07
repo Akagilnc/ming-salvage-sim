@@ -48,7 +48,7 @@ def load_relation_history_before(
         raise ValueError(f"before_period must be 1..12, got {bp}")
     prior = [
         dict(event)
-        for event in db.get_relation_edge_events(source=str(source), target=str(target))
+        for event in db.person_logs.get_relation_edge_events(source=str(source), target=str(target))
         if (int(event["year"]), int(event["period"])) < (by, bp)
     ]
     prior.sort(key=lambda event: (int(event["year"]), int(event["period"]), int(event["id"])))
@@ -76,7 +76,7 @@ def project_relation_ledger(db: Any, *, viewer: str | None) -> List[Dict[str, st
             )
     pairs = {
         (str(row["source"]), str(row["target"]))
-        for row in db.get_relation_summaries()
+        for row in db.person_logs.get_relation_summaries()
     }
     for row in PersonLogStore(db.conn).read_project_relation_ledger():
         pairs.add((str(row["source"]), str(row["target"])))
@@ -91,8 +91,8 @@ def _relation_dto(db: Any, source: str, target: str) -> Dict[str, str]:
     只消费 #636 两段式存储（relation_summaries）与边事件流水，不建平行表。
     摘要两段逐字拼接零改写（P6/ADR 0142）；时点一律走 reign_period_label
     纪年语义标识，不裸出 turn/水位。"""
-    summary_row = db.get_relation_summary(source, target)
-    events = db.get_relation_edge_events(source=source, target=target)
+    summary_row = db.person_logs.get_relation_summary(source, target)
+    events = db.person_logs.get_relation_edge_events(source=source, target=target)
 
     summary_parts: List[str] = []
     if summary_row is not None:

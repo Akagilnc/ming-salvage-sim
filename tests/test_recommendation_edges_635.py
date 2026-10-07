@@ -41,7 +41,7 @@ def _commit_and_promulgate(db, state, content, action_id):
 
 
 def _recommendation_origins(db):
-    return [e for e in db.get_relation_edge_events()
+    return [e for e in db.person_logs.get_relation_edge_events()
             if str(e["origin"]).startswith("recommendation:")]
 
 
@@ -65,7 +65,7 @@ def test_approved_recommendation_writes_both_edges_atomically(game):
 
     # 恰两条边：荐主→被荐人(恩义) ＋ 君(EMPEROR_NODE)→荐主(知遇)，
     # origin 全串精确断言（含写口自动追加的 |round:{turn} 后缀）。
-    legs = [e for e in db.get_relation_edge_events()
+    legs = [e for e in db.person_logs.get_relation_edge_events()
             if str(e["origin"]).startswith(f"recommendation:{event['id']}:")]
     assert len(legs) == 2
     by_origin = {e["origin"]: e for e in legs}
@@ -85,7 +85,7 @@ def test_approved_recommendation_writes_both_edges_atomically(game):
     restored = db.load_state()
     restored_char = content.characters[row["name"]]
     assert restored_char.office == "巡盐御史"
-    restored_legs = [e for e in db.get_relation_edge_events()
+    restored_legs = [e for e in db.person_logs.get_relation_edge_events()
                      if str(e["origin"]).startswith(f"recommendation:{event['id']}:")]
     assert len(restored_legs) == 2
     assert {e["event_kind"] for e in restored_legs} == {"恩义", "知遇"}
@@ -145,7 +145,7 @@ def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
 
     # 全回滚零残留：不落任命、不落荐人事件、零边。
     assert db.list_recommendation_events(state, recommender.name) == []
-    assert db.get_relation_edge_events() == []
+    assert db.person_logs.get_relation_edge_events() == []
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
     assert char_row["office"] != "巡盐御史"
@@ -164,7 +164,7 @@ def test_real_entry_persists_raw_reason_verbatim(game):
 
     event = db.list_recommendation_events(state, recommender.name)[0]
     assert event["reason"] == reason
-    legs = [e for e in db.get_relation_edge_events()
+    legs = [e for e in db.person_logs.get_relation_edge_events()
             if str(e["origin"]).startswith(f"recommendation:{event['id']}:")]
     assert len(legs) == 2
     assert all(e["context"] == reason for e in legs)
@@ -189,7 +189,7 @@ def test_replay_same_event_with_changed_reason_stays_two_rows(game):
         db, state, recommender.name, row["name"], 501, reason2)
 
     assert (grace1, zhiyu1) == (grace2, zhiyu2)
-    legs = [e for e in db.get_relation_edge_events()
+    legs = [e for e in db.person_logs.get_relation_edge_events()
             if str(e["origin"]).startswith("recommendation:501:")]
     assert len(legs) == 2
     assert {e["event_kind"] for e in legs} == {"恩义", "知遇"}

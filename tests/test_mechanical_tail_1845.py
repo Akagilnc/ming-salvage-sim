@@ -409,7 +409,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
         assert session.resolve_turn(allow_empty_decree=True).advanced is True
         assert state.ended is True
         assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "pending"
-        assert db.get_ending_summary() is None
+        assert db.reign.get_ending_summary() is None
         from types import SimpleNamespace
         from web_app import WebGame
         pending_payload = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
@@ -430,7 +430,7 @@ def test_ending_summary_runs_in_mechanical_tail_after_advance(
     assert all(tail_reads_under_gate)
     tail = month_chain._load_chain(db, closed_turn)["mechanical_tail"]
     assert tail["status"] == tail_status
-    ending = db.get_ending_summary()
+    ending = db.reign.get_ending_summary()
     landed = WebGame.ending_payload(SimpleNamespace(db=db, state=state))
     assert landed is not None
     assert landed["summary_pending"] is False
@@ -497,7 +497,7 @@ def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
         assert "body" in row and row["body"]
         # 模型输入每期正文只一份，不另带 gazette 重复键
         assert "gazette" not in row
-    ending = db.get_ending_summary()
+    ending = db.reign.get_ending_summary()
     assert ending is not None
     for row in ending["timeline"]:
         assert "gazette" in row
@@ -564,6 +564,6 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     assert get_session_write_queue(session).wait_idle(timeout_s=5)
     chain = month_chain._load_chain(db, closed_turn)
     assert chain["mechanical_tail"]["status"] == "done"
-    ending = db.get_ending_summary()
+    ending = db.reign.get_ending_summary()
     assert ending is not None
     assert ending["summary"] == "补配后总评"

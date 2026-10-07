@@ -1717,7 +1717,7 @@ class WebGame:
             return None
         from ming_sim.context import ENDING_LABELS
         from ming_sim.mechanical_tail import ending_summary_pending
-        row = self.db.get_ending_summary() or {}
+        row = self.db.reign.get_ending_summary() or {}
         summary = row.get("summary", "") or ""
         return {
             "status": self.state.ending_status,

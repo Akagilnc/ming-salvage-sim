@@ -1264,7 +1264,7 @@ def test_no_evidence_case_opens_and_stays_empty(game):
 
 def _relation_informer(db, source, target, *, context="通风报信之路"):
     """取与目标真有 0081 关系边的人；无则先落一条真实边（知情须有真实关系可循）。"""
-    for edge in db.get_relation_edge_events(person=target):
+    for edge in db.person_logs.get_relation_edge_events(person=target):
         who = str(edge["source"]) if str(edge["target"]) == target else str(edge["target"])
         if who and who != target:
             return who
@@ -1304,10 +1304,10 @@ def test_spoliation_requires_real_knowledge_source(game):
             "SELECT name FROM characters WHERE status='active' AND name NOT IN (?,?)",
             (name, target),
         ).fetchall()
-        if not db.get_relation_edge_events(person=target)
+        if not db.person_logs.get_relation_edge_events(person=target)
         or all(
             str(e["source"]) != row["name"] and str(e["target"]) != row["name"]
-            for e in db.get_relation_edge_events(person=target)
+            for e in db.person_logs.get_relation_edge_events(person=target)
         )
     )
     out = apply_investigation_spoliation(

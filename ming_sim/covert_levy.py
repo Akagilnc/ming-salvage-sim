@@ -77,7 +77,7 @@ def army_pay_fact_for_dossier(db: Any, dossier_id: int) -> Dict[str, object] | N
 def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping[str, object]) -> int:
     """只凭 canonical applier 已成功落库的结果消费待办。"""
     consumed = 0
-    for todo in db.list_next_audience_todos(status="pending"):
+    for todo in db.dossiers.list_next_audience_todos(status="pending"):
         if todo.get("entry_kind") != ENTRY_KIND:
             continue
         payload = todo.get("payload_json") or {}
@@ -86,7 +86,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
         if payload.get("decision") == "禁摊派":
             pay_fact = army_pay_fact_for_dossier(db, did) or {}
             if float(pay_fact.get("arrears") or 0) <= 0:
-                db.mark_next_audience_todo_status(int(todo["id"]), "consumed", commit=False)
+                db.dossiers.mark_next_audience_todo_status(int(todo["id"]), "consumed", commit=False)
                 consumed += 1
             continue
         if payload.get("decision"):
@@ -148,7 +148,7 @@ def settle_exposure_from_canonical_actions(db: Any, state: Any, applied: Mapping
             decision == "禁摊派" and float(pay_fact.get("arrears") or 0) > 0
         )
         status = "pending" if reopened else "consumed"
-        db.mark_next_audience_todo_status(
+        db.dossiers.mark_next_audience_todo_status(
             int(todo["id"]), status,
             payload_patch={"decision": decision, "decided_turn": int(state.turn),
                            "shortfall_reopened": reopened}, commit=False,
@@ -201,7 +201,7 @@ def write_exposure_todos(
         issue_id = _issue_for_dossier(db, did)
         if issue_id <= 0:
             continue
-        created = db.insert_next_audience_todo(
+        created = db.dossiers.insert_next_audience_todo(
             commitment_ref=issue_id, stage_idx=did, due_turn=int(state.turn),
             criterion_text="暗渠摊派揭破待裁", origin_context="案卷实况与奏报有异",
             entry_kind=ENTRY_KIND, created_turn=int(state.turn),

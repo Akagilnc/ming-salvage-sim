@@ -40,7 +40,7 @@ def test_exposure_uses_single_dispatcher_and_projects_exact_case(game, monkeypat
         (did, did),
     )
     assert write_exposure_todos(db, state) == 1
-    todo = db.list_next_audience_todos(status="pending")[0]
+    todo = db.dossiers.list_next_audience_todos(status="pending")[0]
     assert audience_todo_lane(ENTRY_KIND) == "covert_levy"
     scene = list_due_review_scenes(db, state)[0]
     assert scene["kind"] == ENTRY_KIND
@@ -72,7 +72,7 @@ def test_same_segment_denunciation_creates_exposure_todo(game, monkeypatch):
         visible_refs={"dossiers": {did}},
     )
     assert db.dossiers.denunciations(target_dossier_id=did)
-    todos = db.list_next_audience_todos(status="pending")
+    todos = db.dossiers.list_next_audience_todos(status="pending")
     assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
 
 
@@ -91,7 +91,7 @@ def test_empty_effect_month_rechecks_persisted_exposure(game, monkeypatch):
     )
     session = _prepare_player_month(db, state, content, monkeypatch)
     session.resolve_turn(allow_empty_decree=True)
-    todos = db.list_next_audience_todos(status="pending")
+    todos = db.dossiers.list_next_audience_todos(status="pending")
     assert any(t["entry_kind"] == ENTRY_KIND for t in todos)
 
 
@@ -114,7 +114,7 @@ def test_rejected_canonical_results_neither_consume_nor_create_channel(game, mon
         "population_transfers": [{"rejected": True, "origin_ref": f"dossier:{did}", "reason": "摊派"}],
     }
     assert settle_exposure_from_canonical_actions(db, state, rejected) == 0
-    assert db.list_next_audience_todos(status="pending")
+    assert db.dossiers.list_next_audience_todos(status="pending")
     # With no audit/denunciation, a rejected transfer cannot manufacture unrest exposure.
     db.conn.execute("DELETE FROM next_audience_todos")
     db.conn.execute("DELETE FROM decree_dossier_links")
@@ -163,7 +163,7 @@ def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatc
     other = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND name<>? LIMIT 1", (executor,)
     ).fetchone()[0]
-    todo_id = int(db.list_next_audience_todos(status="pending")[0]["id"])
+    todo_id = int(db.dossiers.list_next_audience_todos(status="pending")[0]["id"])
 
     # 查办：关系代价单独成功仍不结算。
     dispatch_declaration(
@@ -175,7 +175,7 @@ def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatc
         source=Provenance.player_decree,
         visible_refs={"dossiers": {did}},
     )
-    assert any(int(t["id"]) == todo_id for t in db.list_next_audience_todos(status="pending"))
+    assert any(int(t["id"]) == todo_id for t in db.dossiers.list_next_audience_todos(status="pending"))
 
     # 两腿同段齐备 → 经 dispatch 后待办 consumed。
     dispatch_declaration(
@@ -192,7 +192,7 @@ def test_dispositions_consume_only_real_canonical_complete_legs(game, monkeypatc
         source=Provenance.player_decree,
         visible_refs={"dossiers": {did}},
     )
-    pending_ids = {int(t["id"]) for t in db.list_next_audience_todos(status="pending")}
+    pending_ids = {int(t["id"]) for t in db.dossiers.list_next_audience_todos(status="pending")}
     assert todo_id not in pending_ids
     consumed = db.conn.execute(
         "SELECT status, payload_json FROM next_audience_todos WHERE id=?", (todo_id,),
@@ -242,7 +242,7 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
     did2, _, _, _ = _bound_case(db, state)
     _exposed_todo(db, state, monkeypatch, did2)
     origin2 = f"dossier:{did2}"
-    todo2 = int(db.list_next_audience_todos(status="pending")[-1]["id"])
+    todo2 = int(db.dossiers.list_next_audience_todos(status="pending")[-1]["id"])
     from ming_sim.applier import Provenance
     from ming_sim.declaration_dispatch import dispatch_declaration
 
@@ -262,7 +262,7 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
         source=Provenance.player_decree,
         visible_refs={"dossiers": {did2}},
     )
-    assert any(int(t["id"]) == todo2 for t in db.list_next_audience_todos(status="pending"))
+    assert any(int(t["id"]) == todo2 for t in db.dossiers.list_next_audience_todos(status="pending"))
 
     db.conn.execute("UPDATE classes SET population=1 WHERE name='农民' AND region_id='shaanxi'")
     dispatch_declaration(
@@ -270,7 +270,7 @@ def test_tacit_and_prohibition_use_real_canonical_identity_and_are_idempotent(ga
         source=Provenance.player_decree,
         visible_refs={"dossiers": {did2}},
     )
-    pending_ids = {int(t["id"]) for t in db.list_next_audience_todos(status="pending")}
+    pending_ids = {int(t["id"]) for t in db.dossiers.list_next_audience_todos(status="pending")}
     assert todo2 not in pending_ids
     row = db.conn.execute(
         "SELECT status, payload_json FROM next_audience_todos WHERE id=?", (todo2,),
@@ -287,7 +287,7 @@ def test_prohibition_consumes_immediately_when_arrears_are_already_zero(game, mo
     _promulgated_prohibition(db, state, did)
 
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    assert db.list_next_audience_todos(status="pending") == []
+    assert db.dossiers.list_next_audience_todos(status="pending") == []
 
 
 def test_prohibition_reminder_is_consumed_after_later_payoff(game, monkeypatch):
@@ -300,7 +300,7 @@ def test_prohibition_reminder_is_consumed_after_later_payoff(game, monkeypatch):
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
     db.conn.execute("UPDATE armies SET province_pay_arrears=0, central_pay_arrears=0 WHERE id=?", (army_id,))
     assert settle_exposure_from_canonical_actions(db, state, {}) == 1
-    assert db.list_next_audience_todos(status="pending") == []
+    assert db.dossiers.list_next_audience_todos(status="pending") == []
 
 
 def test_prohibition_blocks_every_covert_write_but_preserves_ordinary_legs(game):
@@ -573,5 +573,5 @@ def test_population_transfer_is_the_self_grown_unrest_channel(game, monkeypatch)
     db.conn.execute("UPDATE classes SET population=1 WHERE name='农民' AND region_id='shaanxi'")
     real = apply_score_extraction(db, state, extracted, content, None, dossier_ids_at_input={did})
     assert write_exposure_todos(db, state, real) == 1
-    todo = db.list_next_audience_todos(status="pending")[0]
+    todo = db.dossiers.list_next_audience_todos(status="pending")[0]
     assert todo["payload_json"]["channels"] == ["民变自长"]

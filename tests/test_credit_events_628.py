@@ -153,7 +153,7 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
         reason="罢主办试既有", target_dossier_id=did, commit=True,
     )
     todo = next(
-        t for t in db.list_next_audience_todos(status="pending")
+        t for t in db.dossiers.list_next_audience_todos(status="pending")
         if int(t["id"]) == todo_id
     )
     before = len(_credit_edges(db, event_kind="辜负", target=holder))
@@ -296,7 +296,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
     cid_g = _insert_commitment(
         db, state, title="乞宽限案", origin_ref=f"dossier:{did_g}", host="倪元璐",
     )
-    db.insert_next_audience_todo(
+    db.dossiers.insert_next_audience_todo(
         commitment_ref=cid_g, stage_idx=0, due_turn=state.turn + 2,
         criterion_text="乞恩宽限", origin_context="催紧",
         entry_kind=ENTRY_KIND_GRACE_PLEA, created_turn=state.turn - 1,
@@ -309,7 +309,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
     cid_rg = _insert_commitment(
         db, state, title="拒宽限案", origin_ref=f"dossier:{did_rg}", host="徐光启",
     )
-    db.insert_next_audience_todo(
+    db.dossiers.insert_next_audience_todo(
         commitment_ref=cid_rg, stage_idx=0, due_turn=state.turn + 2,
         criterion_text="乞恩宽限", origin_context="再催",
         entry_kind=ENTRY_KIND_GRACE_PLEA, created_turn=state.turn - 1,
@@ -322,7 +322,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
     cid_rr = _insert_commitment(
         db, state, title="斥退谏案", origin_ref=f"dossier:{did_rr}", host="黄道周",
     )
-    db.insert_next_audience_todo(
+    db.dossiers.insert_next_audience_todo(
         commitment_ref=cid_rr, stage_idx=0, due_turn=state.turn + 1,
         criterion_text="期限过急，恐难如期", origin_context="急催",
         entry_kind=ENTRY_KIND_RUSH_REMONSTRANCE, created_turn=state.turn - 1,

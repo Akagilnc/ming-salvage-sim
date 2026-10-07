@@ -134,7 +134,7 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert record["revoked"] is True
     assert record["revoked_turn"] == final_state.turn
 
-    edges = final.get_relation_edge_events(
+    edges = final.person_logs.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )
     assert len(edges) == 1
@@ -170,7 +170,7 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert again["authority_changes"][0]["reason"] == "already_revoked"
     assert again["authority_changes"][0].get("rejected") is not True
     assert final.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
-    assert len(final.get_relation_edge_events(
+    assert len(final.person_logs.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )) == 1
 

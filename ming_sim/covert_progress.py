@@ -777,7 +777,7 @@ def live_investigation_fact_keys(db: Any, target: str) -> List[str]:
     row = CharacterStore(db.conn).read_live_investigation_fact_keys((name,))
     if row is not None and seed_guilt_counts_as_debt(row["seed_guilt"]):
         keys.append(name)
-    for edge in db.get_relation_edge_events(person=name, evidence=True):
+    for edge in db.person_logs.get_relation_edge_events(person=name, evidence=True):
         keys.append(str(int(edge["id"])))
     return keys
 
@@ -963,7 +963,7 @@ def investigation_fact_difficulty(
     # （ADR 0108 per-character 阴谋能力，#1896 一并交付该列）——见下。
     edges = 0
     seen_others: set[str] = set()
-    for edge in db.get_relation_edge_events(person=name, evidence=True):
+    for edge in db.person_logs.get_relation_edge_events(person=name, evidence=True):
         other = str(edge["target"]) if str(edge["source"]) == name else str(edge["source"])
         other = str(other or "").strip()
         if not other or other == name or other in seen_others:
@@ -1428,7 +1428,7 @@ def _investigation_knowledge_known(
         return False
     return any(
         str(edge["source"]) == who or str(edge["target"]) == who
-        for edge in db.get_relation_edge_events(person=name)
+        for edge in db.person_logs.get_relation_edge_events(person=name)
     )
 
 

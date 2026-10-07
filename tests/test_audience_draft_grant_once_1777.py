@@ -240,7 +240,7 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
         )
         assert advanced.advanced is True
         assert int(game.state.turn) == closed + 1
-        assert game.db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        assert game.db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
         scenes = list_due_review_scenes(game.db, game.state)
         due_scenes = [
             s for s in scenes

@@ -130,7 +130,7 @@ def test_fresh_seed_summary_is_readable_with_seed_event_clock(fresh_session):
     from ming_sim.relation_read import project_relation_ledger
 
     sess, _content = fresh_session
-    summary = sess.db.get_relation_summary("皇帝", "王承恩")
+    summary = sess.db.person_logs.get_relation_summary("皇帝", "王承恩")
     assert int(summary["last_event_id"]) == 0
     for viewer in (None, "皇帝"):
         dto = next(
@@ -148,7 +148,7 @@ def test_seeded_pair_flows_into_month_end_brew_selection(fresh_session):
     sess, _content = fresh_session
     state = sess.state
     pair_events = [
-        e for e in sess.db.get_relation_edge_events()
+        e for e in sess.db.person_logs.get_relation_edge_events()
         if e["source"] == "魏忠贤" and e["target"] == "杨涟"
     ]
     assert pair_events, "样例 seed 缺魏忠贤→杨涟奠基边"
@@ -204,7 +204,7 @@ def test_earliest_legal_start_imports_only_earlier_seed_events(tmp_path, monkeyp
     )
     try:
         assert (int(sess.state.year), int(sess.state.period)) == (1627, 1)
-        events = sess.db.get_relation_edge_events()
+        events = sess.db.person_logs.get_relation_edge_events()
         assert events
         assert all((int(row["year"]), int(row["period"])) < (1627, 1) for row in events)
     finally:
@@ -235,7 +235,7 @@ def test_missing_bundled_seed_fails_new_save_and_retry_imports(tmp_path, monkeyp
     sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
     try:
         assert sess.db.reign.exists() is True
-        assert sess.db.get_relation_edge_events()
+        assert sess.db.person_logs.get_relation_edge_events()
     finally:
         sess.close()
 
@@ -259,7 +259,7 @@ def test_invalid_bundled_seed_rolls_back_new_save_and_can_retry(tmp_path, monkey
     sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
     try:
         # 恢复合法 seed 后同 DB 可重试；盖印把柄为游戏/野史边，不得 evidence:true。
-        cover = sess.db.get_relation_edge_events(source="崔呈秀", target="田尔耕")
+        cover = sess.db.person_logs.get_relation_edge_events(source="崔呈秀", target="田尔耕")
         assert cover and all(row["evidence"] is False for row in cover)
         assert any(row["event_kind"] == "把柄" for row in cover)
     finally:
@@ -316,7 +316,7 @@ def test_seed_failure_rolls_back_new_save_and_retry_imports(tmp_path, monkeypatc
     sess = GameSession(db_path=db_path, llm_config=cfg, content=content)
     try:
         assert sess.db.reign.exists() is True
-        assert sess.db.get_relation_edge_events()
+        assert sess.db.person_logs.get_relation_edge_events()
     finally:
         sess.close()
 
@@ -325,7 +325,7 @@ def test_new_save_imports_sample_seed_ledger_queryable_and_pregame(fresh_session
     """新开档导入样例 seed：流水可查、时间戳早于开局（验收条①前半）。"""
     sess, _content = fresh_session
     state = sess.state
-    events = sess.db.get_relation_edge_events()
+    events = sess.db.person_logs.get_relation_edge_events()
     assert events, "新开档样例 seed 未导入：边事件流水为空"
     opening = (int(state.year), int(state.period))
     for event in events:
@@ -348,7 +348,7 @@ def test_reverse_chronological_seed_keeps_latest_event_readable(fresh_session):
          "origin": "seed:earlier", "evidence": False, "year": 1625, "period": 2},
     ]}
     import_relationship_seed(sess.db, doc, opening_year=1627, opening_period=10)
-    rows = sess.db.get_relation_edge_events(source="甲", target="乙")
+    rows = sess.db.person_logs.get_relation_edge_events(source="甲", target="乙")
     assert [(row["year"], row["period"]) for row in rows] == [(1625, 2), (1626, 2)]
     dto = next(row for row in project_relation_ledger(sess.db, viewer=None) if row["source"] == "甲")
     # Preserve injected context without locking the appended presentation wording.
@@ -374,10 +374,10 @@ def test_repeated_import_is_idempotent_no_double_write(fresh_session):
     """导入幂等：同一文档重复导入不双写（验收条③）。"""
     sess, _content = fresh_session
     state = sess.state
-    events_before = [dict(row) for row in sess.db.get_relation_edge_events()]
+    events_before = [dict(row) for row in sess.db.person_logs.get_relation_edge_events()]
     summaries_before = {
         (row["source"], row["target"]): dict(row)
-        for row in sess.db.get_relation_summaries()
+        for row in sess.db.person_logs.get_relation_summaries()
     }
 
     from ming_sim.relation_seed import (
@@ -392,11 +392,11 @@ def test_repeated_import_is_idempotent_no_double_write(fresh_session):
     assert report["events_imported"] == 0, f"重复导入新写了边事件：{report}"
     assert report["events_total"] == len(events_before)
 
-    events_after = [dict(row) for row in sess.db.get_relation_edge_events()]
+    events_after = [dict(row) for row in sess.db.person_logs.get_relation_edge_events()]
     assert events_after == events_before, "重复导入后流水发生变化"
     summaries_after = {
         (row["source"], row["target"]): dict(row)
-        for row in sess.db.get_relation_summaries()
+        for row in sess.db.person_logs.get_relation_summaries()
     }
     # 奠基段字节不变（updated_at 变化不在比较面：dict 含该键，逐字段比内容）。
     for key, before_row in summaries_before.items():
@@ -412,14 +412,14 @@ def test_seed_replay_does_not_overwrite_later_brew_summary(fresh_session):
 
     sess, _content = fresh_session
     source, target = "皇帝", "王承恩"
-    old = sess.db.get_relation_summary(source, target)
+    old = sess.db.person_logs.get_relation_summary(source, target)
     sess.db.apply_relation_brew_result(
         source=source, target=target, dimension=old["dimension"],
         founding_segment=str(old["founding_segment"]) + "\n后添奠基。",
         recent_segment="后来近况。", last_event_id=17,
         turn=8, year=1628, period=5,
     )
-    before = sess.db.get_relation_summary(source, target)
+    before = sess.db.person_logs.get_relation_summary(source, target)
     doc = {
         "events": [{
             "source": source, "target": target, "event_kind": "恩义", "context": "信邸旧事。",
@@ -428,11 +428,11 @@ def test_seed_replay_does_not_overwrite_later_brew_summary(fresh_session):
         "summaries": [{"source": source, "target": target, "founding_lines": ["信邸旧事。"]}],
     }
     first = import_relationship_seed(sess.db, doc, opening_year=1627, opening_period=10)
-    events_after_first = len(sess.db.get_relation_edge_events())
+    events_after_first = len(sess.db.person_logs.get_relation_edge_events())
     second = import_relationship_seed(sess.db, doc, opening_year=1627, opening_period=10)
     assert first["summaries_written"] == second["summaries_written"] == 0
-    assert len(sess.db.get_relation_edge_events()) == events_after_first
-    assert sess.db.get_relation_summary(source, target) == before
+    assert len(sess.db.person_logs.get_relation_edge_events()) == events_after_first
+    assert sess.db.person_logs.get_relation_summary(source, target) == before
 
 
 def test_existing_save_is_never_touched_by_seed_import(game, monkeypatch):
@@ -478,7 +478,7 @@ def test_new_save_seed_founding_events_enter_founding_segment(fresh_session):
     """新开档导入样例 seed：奠基事件入摘要奠基段（验收条①后半）。"""
     sess, _content = fresh_session
     summaries = {
-        (row["source"], row["target"]): row for row in sess.db.get_relation_summaries()
+        (row["source"], row["target"]): row for row in sess.db.person_logs.get_relation_summaries()
     }
     # 样例 seed 自带可选初始摘要（皇帝→王承恩 信邸君臣边）；奠基段必须非空。
     assert ("皇帝", "王承恩") in summaries, "样例 seed 初始摘要未入摘要层"
@@ -493,7 +493,7 @@ def test_new_save_seed_founding_events_enter_founding_segment(fresh_session):
 def test_issue_639_seed_owner_audit_corrections(fresh_session):
     """#639 owner 裁决：史料确错改正；野史可留但不得 evidence:true；根本冲突删除。"""
     sess, _content = fresh_session
-    events = [dict(row) for row in sess.db.get_relation_edge_events()]
+    events = [dict(row) for row in sess.db.person_logs.get_relation_edge_events()]
 
     def by_origin_prefix(prefix: str) -> dict:
         matches = [row for row in events if str(row["origin"]).startswith(prefix)]

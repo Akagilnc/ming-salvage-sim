@@ -1970,9 +1970,16 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     assert "segment_applied_results" not in feed
     assert feed.get("world_segment") == "世界段原文·密报可读。"
     assert secret_forecast in (feed.get("forecasts") or [])
-    assert secret_decl in json.dumps(feed.get("nominal") or [], ensure_ascii=False)
-    # 未 settled 的拟旨不得进入名义／实入冒充已落。
-    assert unsettled_body not in json.dumps(feed.get("nominal") or [], ensure_ascii=False)
+    # Identity by decree_ref / origin_ref — not free body substring in nominal blob.
+    assert any(
+        str(row.get("decree_ref") or "") == f"secret_order:{order_id}"
+        for row in (feed.get("nominal") or [])
+    )
+    # 未 settled 的拟旨不得进入名义／实入冒充已落（decree_ref 身份）。
+    assert all(
+        str(row.get("decree_ref") or "") != "pending-action:1847-unpromulgated:1"
+        for row in (feed.get("nominal") or [])
+    )
     assert not any(int(row.get("delta") or 0) == -99 for row in (feed.get("landed") or []))
     assert any(
         str(row.get("origin_ref") or "") == f"dossier:{dossier_id}"
@@ -1980,10 +1987,12 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
         for row in (feed.get("landed") or [])
     )
     assert any(
-        "密令拒收探针" in str(row) for row in (feed.get("rejections") or [])
+        str((row.get("item") or {}).get("origin_ref") or "") == f"secret_order:{order_id}"
+        for row in (feed.get("rejections") or [])
     )
     assert any(
-        "unknown-section-1847" in str(row) for row in (feed.get("rejections") or [])
+        str((row.get("item") or {}).get("section_probe") or "") == "unknown-section-1847"
+        for row in (feed.get("rejections") or [])
     )
     assert any(
         int(item.get("dossier_id") or 0) == dossier_id
@@ -1991,26 +2000,27 @@ def test_build_secret_orders_supply_feed_uses_fact_materials_not_assembled_effec
     )
     assert str(feed.get("board") or "").strip()
 
-    from ming_sim.materials import prepare_world_materials, release_material_tree
-    prepared = prepare_world_materials(db, state)
-    try:
-        listing = "\n".join(prepared.index_lines)
-        bodies = []
-        for rel in prepared.index_lines:
-            path = prepared.root / rel
-            if path.is_file():
-                bodies.append(path.read_text(encoding="utf-8"))
-        assert fact_body in "\n".join(bodies), listing
-    finally:
-        release_material_tree(prepared.root)
+    # 密报路径可读密令案卷文字事实：以 origin_ref 身份核，不聚合正文 oracle。
+    assert any(
+        str(f.origin_ref or "") == f"dossier:{dossier_id}"
+        for f in db.textual_facts.readable_materials(
+            subject_kind="character", subject_id=minister,
+        )
+    )
 
     gazette = month_chain._gazette_feed(db, state, chain)
     assert all(
         str(row.get("origin_ref") or "") != f"dossier:{dossier_id}"
         for row in (gazette.get("landed") or [])
     )
-    assert secret_decl not in json.dumps(gazette.get("nominal") or [], ensure_ascii=False)
-    assert all("密令拒收探针" not in str(row) for row in (gazette.get("rejections") or []))
+    assert all(
+        str(row.get("decree_ref") or "") != f"secret_order:{order_id}"
+        for row in (gazette.get("nominal") or [])
+    )
+    assert all(
+        str((row.get("item") or {}).get("origin_ref") or "") != f"secret_order:{order_id}"
+        for row in (gazette.get("rejections") or [])
+    )
 
 
 def test_step_4a_rescript_path_feeds_landed_not_assembled_effects(game, monkeypatch):

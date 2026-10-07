@@ -191,7 +191,7 @@ def import_relationship_seed(
     )
     summaries_written = 0
     for summary in validated["summaries"]:
-        existing = db.get_relation_summary(summary["source"], summary["target"])
+        existing = db.person_logs.get_relation_summary(summary["source"], summary["target"])
         if existing is None:
             db.apply_seed_founding_segment(
                 source=summary["source"],

@@ -2106,7 +2106,7 @@ def _dispatch_promises(
             if kind != "directive":
                 _reject(rejected, item, "仅拟旨候选可留中", "invalid_shape", source)
                 continue
-            db.hold_over_pending_actions(
+            db.dossiers.hold_over_pending_actions(
                 int(state.turn), str(row["minister_name"]), [action_id],
             )
         elif decision == "修改":

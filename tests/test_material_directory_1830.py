@@ -164,16 +164,33 @@ def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, 
     prepared = prepare_character_materials(
         db, state, character, dest_root=tmp_path / "materials",
     )
-    opening = prepared.opening
-    # Contract: handled title enters opening; bare issue stays out. No '#N' presentation lock.
-    assert "经手事项" in opening
-    assert "无人承办事项" not in opening
+    from ming_sim.participant_roster import participant_roster_names
+
+    # Identity by issue id + participant roster, not free title substring in opening.
+    handled_row = db.conn.execute(
+        "SELECT id, title, participant_roster FROM issues WHERE id=?",
+        (int(handled_id),),
+    ).fetchone()
+    bare_row = db.conn.execute(
+        "SELECT id, title, participant_roster FROM issues WHERE id=?",
+        (int(other_id),),
+    ).fetchone()
+    assert character.name in participant_roster_names(handled_row["participant_roster"])
+    assert character.name not in participant_roster_names(bare_row["participant_roster"])
     issue_paths = {
         line for line in prepared.index_lines
         if line.startswith("事务/issue-")
     }
     assert any(f"issue-{handled_id}/" in line for line in issue_paths)
-    # other may still appear in the authorized directory tree; opening is the handled gate
+    # opening field-transports the authorized handled title (not a title-identity oracle)
+    assert str(handled_row["title"] or "") in prepared.opening
+    gated_ids = {
+        int(issue["id"])
+        for issue in db.issues.active_rows()
+        if character.name in participant_roster_names(issue["participant_roster"])
+    }
+    assert int(handled_id) in gated_ids
+    assert int(other_id) not in gated_ids
     assert other_id != handled_id
 
 

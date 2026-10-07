@@ -10,7 +10,7 @@ callers.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Optional
 from ming_sim.entities.column_write import upsert_by_pk
 
 
@@ -202,11 +202,60 @@ class PersonLogStore:
     def write_apply_faction_brew_result(self, params: Any = ()) -> Any:
         return self._conn.execute("DELETE FROM relation_brew_pending WHERE item_kind = '派系' AND target = ?", params)
 
-    def read_get_relation_summary(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM relation_summaries WHERE source = ? AND target = ?', params).fetchone()
+    def get_relation_summary(self, source: str, target: str) -> Optional[Dict[str, Any]]:
+        row = self._conn.execute(
+            "SELECT * FROM relation_summaries WHERE source = ? AND target = ?",
+            (str(source), str(target)),
+        ).fetchone()
+        return dict(row) if row is not None else None
 
-    def read_get_relation_summaries(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT * FROM relation_summaries ORDER BY source, target', params).fetchall()
+    def get_relation_summaries(self) -> List[Dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM relation_summaries ORDER BY source, target",
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_relation_edge_events(
+        self,
+        *,
+        person: Optional[str] = None,
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+        event_kind: Optional[str] = None,
+        evidence: Optional[bool] = None,
+    ) -> List[Dict[str, Any]]:
+        """Filter + assemble relation edge rows; evidence column is bool."""
+        from ming_sim.relations import normalize_evidence, validate_edge_kind
+
+        clauses: list[str] = []
+        params: list[Any] = []
+        if person is not None:
+            clauses.append("(source = ? OR target = ?)")
+            params.extend([str(person), str(person)])
+        if source is not None:
+            clauses.append("source = ?")
+            params.append(str(source))
+        if target is not None:
+            clauses.append("target = ?")
+            params.append(str(target))
+        if event_kind is not None:
+            clauses.append("event_kind = ?")
+            params.append(validate_edge_kind(event_kind))
+        if evidence is not None:
+            clauses.append("evidence = ?")
+            params.append(int(normalize_evidence(evidence)))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self._conn.execute(
+            f"SELECT * FROM relation_edge_events {where} ORDER BY turn, id",
+            params,
+        ).fetchall()
+        return [
+            {
+                **dict(row),
+                "evidence": bool(row["evidence"]),
+            }
+            for row in rows
+        ]
 
     def read_get_relation_brew_pending(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM relation_brew_pending WHERE item_kind = '关系' ORDER BY source, target", params).fetchall()

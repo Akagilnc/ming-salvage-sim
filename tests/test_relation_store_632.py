@@ -29,10 +29,10 @@ def test_directed_edge_events_are_stored_and_queryable(game):
     )
 
     assert forward_id != reverse_id
-    assert [row["source"] for row in db.get_relation_edge_events(source="毕自严", target="王绍徽")] == ["毕自严"]
-    assert db.get_relation_edge_events(source="王绍徽", target="毕自严")[0]["target"] == "毕自严"
-    assert db.get_relation_edge_events(source="毕自严", target="王绍徽")[0]["origin_round"] == 2
-    assert db.get_relation_edge_events(source="王绍徽", target="毕自严")[0]["origin_round"] == 3
+    assert [row["source"] for row in db.person_logs.get_relation_edge_events(source="毕自严", target="王绍徽")] == ["毕自严"]
+    assert db.person_logs.get_relation_edge_events(source="王绍徽", target="毕自严")[0]["target"] == "毕自严"
+    assert db.person_logs.get_relation_edge_events(source="毕自严", target="王绍徽")[0]["origin_round"] == 2
+    assert db.person_logs.get_relation_edge_events(source="王绍徽", target="毕自严")[0]["origin_round"] == 3
 
 
 def test_edge_event_kind_and_evidence_are_fail_closed(game):
@@ -68,7 +68,7 @@ def test_edge_event_kind_and_evidence_are_fail_closed(game):
         turn=state.turn,
         evidence=True,
     )
-    row = db.get_relation_edge_events()[0]
+    row = db.person_logs.get_relation_edge_events()[0]
     assert row["id"] == row_id
     assert row["evidence"] is True
     assert "round:" in row["origin"]
@@ -142,7 +142,7 @@ def test_relation_edges_survive_restore(game, tmp_path):
         origin="audience:turn-1:round-7",
         turn=state.turn,
     )
-    edge = db.get_relation_edge_events(source="杨嗣昌", target="徐光启")[0]
+    edge = db.person_logs.get_relation_edge_events(source="杨嗣昌", target="徐光启")[0]
     db.apply_relation_brew_result(
         source="杨嗣昌", target="徐光启", dimension="大臣",
         founding_segment="徐杨相发明奠基。",
@@ -150,13 +150,13 @@ def test_relation_edges_survive_restore(game, tmp_path):
         last_event_id=int(edge["id"]),
         turn=int(state.turn), year=int(state.year), period=int(state.period),
     )
-    summary = db.get_relation_summary("杨嗣昌", "徐光启")
+    summary = db.person_logs.get_relation_summary("杨嗣昌", "徐光启")
     path = db.path
     db.close()
 
     restored = GameDB(path, content)
     try:
-        rows = restored.get_relation_edge_events(source="杨嗣昌", target="徐光启")
+        rows = restored.person_logs.get_relation_edge_events(source="杨嗣昌", target="徐光启")
         assert len(rows) == 1
         assert rows[0]["context"] == "二人当面相发明。"
         assert rows[0]["origin_round"] == 7
@@ -165,7 +165,7 @@ def test_relation_edges_survive_restore(game, tmp_path):
             "year", "period", "turn",
         ):
             assert rows[0][key] == edge[key]
-        summary2 = restored.get_relation_summary("杨嗣昌", "徐光启")
+        summary2 = restored.person_logs.get_relation_summary("杨嗣昌", "徐光启")
         for key in (
             "founding_segment", "recent_segment", "last_event_id",
             "last_brewed_year", "last_brewed_period", "dimension",
@@ -192,7 +192,7 @@ def test_distinct_pipe_origins_are_never_merged(game):
         origin="foo|b", turn=state.turn,
     )
     assert first_id != second_id
-    rows = db.get_relation_edge_events(source="毕自严", target="王绍徽")
+    rows = db.person_logs.get_relation_edge_events(source="毕自严", target="王绍徽")
     assert len(rows) == 2
     assert {row["origin"] for row in rows} == {"foo|a|round:%d" % int(state.turn),
                                                 "foo|b|round:%d" % int(state.turn)}

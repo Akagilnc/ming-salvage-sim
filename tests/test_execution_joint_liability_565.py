@@ -76,7 +76,7 @@ def test_fulfilled_writes_zero_joint_liability_rows(game):
     assert _cost_events(db, dossier_id) == []
     assert _sat(db, "东林") == before_donglin
     assert _sat(db, "西学") == before_xixue
-    assert db.get_relation_edge_events(event_kind="连坐") == []
+    assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []
 
 
 @pytest.mark.parametrize(
@@ -118,7 +118,7 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
     assert sat == expected
 
     edges = [
-        e for e in db.get_relation_edge_events(event_kind="连坐")
+        e for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     ]
     targets = {e["target"] for e in edges}
@@ -140,7 +140,7 @@ def test_adapter_replay_is_idempotent_on_joint_liability_rows(game):
     _close_via_adapter(db, state, content, dossier_id, "failed", note="初结")
     first = _cost_events(db, dossier_id)
     first_edges = [
-        e for e in db.get_relation_edge_events(event_kind="连坐")
+        e for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     ]
     assert first  # 确有连坐落账
@@ -153,7 +153,7 @@ def test_adapter_replay_is_idempotent_on_joint_liability_rows(game):
 
     assert _cost_events(db, dossier_id) == first
     second_edges = [
-        e for e in db.get_relation_edge_events(event_kind="连坐")
+        e for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     ]
     assert second_edges == first_edges
@@ -181,7 +181,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     dossier = db.dossiers.get(dossier_id)
     assert dossier["execution_outcome"] == "failed"
     assert _cost_events(db, dossier_id) == []
-    assert db.get_relation_edge_events(event_kind="连坐") == []
+    assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []
 
 
 def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
@@ -201,7 +201,7 @@ def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
     # 委派人在世，failed→次责 weak 仍落
     assert _sat(db, "西学") == max(0, before_xixue - 4)
     edges = {
-        e["target"] for e in db.get_relation_edge_events(event_kind="连坐")
+        e["target"] for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert "倪元璐" not in edges
@@ -289,7 +289,7 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     assert sat == {("faction", "东林", -8), ("faction", "西学", -4)}
 
     edges = {
-        e["target"] for e in db.get_relation_edge_events(event_kind="连坐")
+        e["target"] for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert edges == {"倪元璐", "徐光启"}
@@ -329,7 +329,7 @@ def test_dual_role_lead_and_delegator_primary_wins(game):
     assert sat == {("faction", "东林", -8), ("faction", "西学", -8)}
 
     edges = {
-        e["target"] for e in db.get_relation_edge_events(event_kind="连坐")
+        e["target"] for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert edges == {"倪元璐", "徐光启"}
@@ -380,7 +380,7 @@ def test_living_offstage_delegator_still_charged(game):
 
     assert _sat(db, "西学") == max(0, before - 4)
     targets = {
-        e["target"] for e in db.get_relation_edge_events(event_kind="连坐")
+        e["target"] for e in db.person_logs.get_relation_edge_events(event_kind="连坐")
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert "徐光启" in targets
@@ -422,4 +422,4 @@ def test_direct_record_dossier_execution_does_not_trigger_joint_liability(game):
         dossier_id, "failed", "直写终值", state.turn, close=True,
     )
     assert _cost_events(db, dossier_id) == []
-    assert db.get_relation_edge_events(event_kind="连坐") == []
+    assert db.person_logs.get_relation_edge_events(event_kind="连坐") == []

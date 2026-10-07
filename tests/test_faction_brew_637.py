@@ -456,7 +456,7 @@ def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):
     assert revoke_result.get("rejected") is not True
 
     # DB 里确实落了 holder→EMPEROR 的结怨边；人话 context 不锁（issues.py 拼装）。
-    edges = db.get_relation_edge_events(
+    edges = db.person_logs.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )
     assert len(edges) == 1

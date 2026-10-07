@@ -133,6 +133,22 @@ def load_stored_object(raw: object, *, label: str) -> dict:
     return value
 
 
+def parse_engine_payload_json(
+    raw: object, *, surface: str = "payload_json",
+) -> dict:
+    """#624 / ADR 0005：引擎侧 payload 读路单一助手。
+
+    真空/缺省 → {}；腐坏 JSON 或非对象 → 响亮 tlog + StoredDocumentError。
+    """
+    from ming_sim.token_stats import tlog
+
+    try:
+        return dict(load_stored_object(raw, label=surface))
+    except StoredDocumentError as exc:
+        tlog(f"[{surface}] {exc}")
+        raise
+
+
 def load_stored_list(raw: object, *, label: str) -> list:
     """Durable JSON list. Blank is []. A present non-list raises."""
     value = load_stored_json(raw, label=label, blank=[])

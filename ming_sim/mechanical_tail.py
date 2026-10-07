@@ -144,7 +144,7 @@ def generate_ending_summary_for_tail(
         }
         for row in reports
     ]
-    save = save_fn or db.save_ending_summary
+    save = save_fn or db.reign.save_ending_summary
 
     def _save():
         save(

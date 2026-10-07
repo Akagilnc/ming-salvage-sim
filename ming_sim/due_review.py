@@ -286,7 +286,7 @@ def list_due_review_scenes(
     单一分派：staged → 复命场面；breach_plea → 哭谏场面；
     urge（谏/宽限）走 #624 list_urge_audience_scenes；未知跳过。
     """
-    todos = db.list_next_audience_todos(status=status)
+    todos = db.dossiers.list_next_audience_todos(status=status)
     # list_next_audience_todos 已按 due_turn, commitment_ref, stage_idx, id 排序
     scenes: List[Dict[str, object]] = []
     for todo in todos:
@@ -320,7 +320,7 @@ def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
     turn = int(getattr(state, "turn", 0) or 0)
     owned: set[int] = set()
 
-    for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
+    for todo in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING):
         # 仅 staged 占接管窗（breach_plea / urge / unknown 均不占）
         if not is_due_review_entry_kind(todo.get("entry_kind")):
             continue
@@ -335,7 +335,7 @@ def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
     # 非 pending（consumed/rolled）段键：到期扫描不再预占（仅 staged 键）
     finished_keys = {
         (int(t["commitment_ref"]), int(t["stage_idx"]))
-        for t in db.list_next_audience_todos()
+        for t in db.dossiers.list_next_audience_todos()
         if str(t.get("status") or "") != TODO_STATUS_PENDING
         and is_due_review_entry_kind(t.get("entry_kind"))
     }
@@ -543,7 +543,7 @@ def apply_due_review_for_todo(
             "outcome": None,
         }
 
-    consumed = db.mark_next_audience_todo_status(
+    consumed = db.dossiers.mark_next_audience_todo_status(
         int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
     )
     if commit:
@@ -570,7 +570,7 @@ def apply_pending_due_reviews(
     """
     turn = int(getattr(state, "turn", 0) or 0)
     results: List[Dict[str, object]] = []
-    pending = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+    pending = db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
     for todo in pending:
         if int(todo.get("created_turn") or 0) >= turn:
             continue

@@ -6161,35 +6161,6 @@ class GameDB:
             by_source.setdefault(source_text, item)
         return [*unkeyed, *by_source.values()]
 
-    # ── 结局总结 ──
-
-    def save_ending_summary(
-        self, state: GameState, ending_status: str, summary: str, timeline: List[Dict[str, object]]
-    ) -> None:
-        ReignStateStore(self.conn).write_save_ending_summary((
-                state.turn, state.year, state.period, str(ending_status or ""),
-                str(summary or ""), json.dumps(timeline or [], ensure_ascii=False),
-            ))
-        self.conn.commit()
-
-    def get_ending_summary(self) -> Optional[Dict[str, object]]:
-        """取最近一条结局总结（单库一局，按 turn 取最大）。无则 None。"""
-        row = ReignStateStore(self.conn).read_get_ending_summary()
-        if row is None:
-            return None
-        timeline = load_stored_json(
-            row["timeline"], label=f"结局 timeline turn={row['turn']}", blank=[],
-        )
-        if not isinstance(timeline, list):
-            raise ValueError(f"结局 timeline 必须为名单（turn={row['turn']}）")
-        return {
-            "turn": int(row["turn"]),
-            "year": int(row["year"]),
-            "period": int(row["period"]),
-            "ending_status": row["ending_status"],
-            "summary": row["summary"] or "",
-            "timeline": timeline,
-        }
 
     def list_monthly_archives(self) -> List[Dict[str, object]]:
         """每回合至多一条月档；召对场次绝不扩增月度时间线。"""
@@ -7681,7 +7652,7 @@ class GameDB:
 
         # ① 事废判决：persist 既判结构化痕迹 ∧ 承诺 closed_turn 一拍差
         # 总纲：不从 consumed 反推；不读 execution_note 子串。
-        for todo in self.list_next_audience_todos(status="consumed"):
+        for todo in self.dossiers.list_next_audience_todos(status="consumed"):
             if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
                 continue
             payload = todo.get("payload_json") or {}
@@ -11644,25 +11615,6 @@ class GameDB:
             self.conn.commit()
         return deleted > 0
 
-    def hold_over_pending_actions(
-        self, turn: int, minister_name: str,
-        action_ids: Optional[Iterable[int]] = None,
-    ) -> int:
-        """#525 留中：点名候选移出 status=pending 活跃集，同表 durable 留中档 (held_over)。
-        不删行；commit_pending_actions 只读 pending，故默认提交自然跳过、不成案。
-        返回更新条数。action_ids 非空=只留中指定 id（#502 点名粒度）。"""
-        owns_transaction = not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-            or self.conn.in_transaction
-        )
-        updated = self.dossiers.hold_over_pending_actions(
-            int(turn), str(minister_name), action_ids,
-        )
-        if owns_transaction and updated:
-            self.conn.commit()
-        return updated
-
     def drop_pending_actions_for_minister(
         self, turn: int, minister_name: str, kind_filter_exclude: Optional[str] = None,
         action_ids: Optional[Iterable[int]] = None,
@@ -12213,148 +12165,6 @@ class GameDB:
         IssueStore(self.conn).write_record_event_decision_choice((eid, state.turn, state.year, state.period, source, label, payload))
         if commit:
             self.conn.commit()
-
-    @staticmethod
-    def _coerce_todo_payload_json(payload_json: object) -> str:
-        """#624：引擎侧 payload_json 序列化；非法非空响亮拒绝，禁静默丢底。"""
-        if payload_json is not None and not isinstance(payload_json, (str, dict)):
-            raise ValueError(f"next_audience_todos.payload_json 类型非法：{type(payload_json).__name__}")
-        data = load_stored_object(payload_json, label="next_audience_todos.payload_json")
-        return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-
-    @staticmethod
-    def parse_engine_payload_json(
-        raw: object, *, surface: str = "payload_json",
-    ) -> Dict[str, object]:
-        """#624 / ADR 0005：引擎侧 payload 读路单一助手。
-
-        真空/缺省 → {}；腐坏 JSON 或非对象 → 响亮 tlog + ValueError（禁静默吞成空底）。
-        """
-        try:
-            return dict(load_stored_object(raw, label=surface))
-        except StoredDocumentError as exc:
-            tlog(f"[{surface}] {exc}")
-            raise
-
-    @classmethod
-    def _parse_todo_payload_json(cls, raw: object) -> Dict[str, object]:
-        return cls.parse_engine_payload_json(
-            raw, surface="next_audience_todos.payload_json",
-        )
-
-    def insert_next_audience_todo(
-        self,
-        *,
-        commitment_ref: int,
-        stage_idx: int,
-        due_turn: int,
-        criterion_text: str = "",
-        origin_context: str = "",
-        status: str = "pending",
-        entry_kind: str = "staged_commitment",
-        created_turn: int = 0,
-        payload_json: object = None,
-        commit: bool = True,
-    ) -> int:
-        """#620 P2：次回合召对待办写端。UNIQUE(commitment_ref, stage_idx, entry_kind) 去重。
-
-        #624：payload_json 引擎侧列（真伪底）；默认 '{}'。
-        返回新建行 id；已存在则返回 0（幂等，不覆盖）。
-        """
-        payload_blob = self._coerce_todo_payload_json(payload_json)
-        cur = self.dossiers.insert_audience_todo(
-            (
-                int(commitment_ref),
-                int(stage_idx),
-                int(due_turn),
-                sanitize_sqlite_text(str(criterion_text or "")),
-                sanitize_sqlite_text(str(origin_context or "")),
-                sanitize_sqlite_text(str(status or "pending") or "pending"),
-                sanitize_sqlite_text(str(entry_kind or "staged_commitment") or "staged_commitment"),
-                int(created_turn or 0),
-                sanitize_sqlite_text(payload_blob),
-            ),
-        )
-        if commit:
-            self.conn.commit()
-        if cur.rowcount <= 0:
-            return 0
-        return int(cur.lastrowid)
-
-    def list_next_audience_todos(
-        self,
-        *,
-        status: str | None = None,
-        commitment_ref: int | None = None,
-    ) -> List[Dict[str, object]]:
-        """下一召对回合可读的待办条目（restore 只读 DB 接续）。"""
-        rows = self.dossiers.audience_todos(status=status, commitment_ref=commitment_ref)
-        return [
-            {
-                "id": int(r["id"]),
-                "commitment_ref": int(r["commitment_ref"]),
-                "stage_idx": int(r["stage_idx"]),
-                "due_turn": int(r["due_turn"]),
-                "criterion_text": str(r["criterion_text"] or ""),
-                "origin_context": str(r["origin_context"] or ""),
-                "status": str(r["status"] or ""),
-                "entry_kind": str(r["entry_kind"] or ""),
-                "created_turn": int(r["created_turn"] or 0),
-                "payload_json": self._parse_todo_payload_json(r["payload_json"]),
-            }
-            for r in rows
-        ]
-
-    def mark_next_audience_todo_status(
-        self,
-        todo_id: int,
-        status: str,
-        *,
-        payload_patch: object = None,
-        commit: bool = True,
-    ) -> bool:
-        """#621 P3：待办消费单写口 pending→consumed/rolled。
-
-        幂等：目标态已是 status 且无 payload_patch，或非 pending 源态 → False。
-        payload_patch：可选 dict，并入既有 payload_json；允许 pending 原位落判决痕迹。
-        commit=False 可入外层事务。
-        """
-        allowed = {"consumed", "rolled", "pending"}
-        new_status = str(status or "").strip()
-        if new_status not in allowed:
-            raise ValueError(f"next_audience_todos status 非法：{new_status}")
-        patch: Dict[str, object] | None = None
-        if payload_patch is not None:
-            if not isinstance(payload_patch, dict):
-                raise ValueError(
-                    "next_audience_todos payload_patch 须为对象，得 "
-                    f"{type(payload_patch).__name__}"
-                )
-            patch = dict(payload_patch)
-        row = self.dossiers.audience_todo(int(todo_id))
-        if row is None:
-            return False
-        current = str(row["status"] or "")
-        if current == new_status and patch is None:
-            return False
-        # pending 原位更新只用于在同一 durable todo 落 payload 事实；无 patch 不复活。
-        if new_status == "pending" and current != "pending":
-            return False
-        if current != "pending":
-            return False
-        if patch is not None:
-            existing = self._parse_todo_payload_json(row["payload_json"])
-            merged = dict(existing)
-            merged.update(patch)
-            payload_blob = self._coerce_todo_payload_json(merged)
-            cur = self.dossiers.set_audience_todo_status(
-                int(todo_id), new_status, sanitize_sqlite_text(payload_blob),
-            )
-        else:
-            cur = self.dossiers.set_audience_todo_status(int(todo_id), new_status)
-        if commit:
-            self.conn.commit()
-        return int(cur.rowcount or 0) > 0
 
     def insert_issue(
         self,
@@ -14188,42 +13998,6 @@ class GameDB:
     write_relation_edge_event = record_relation_edge_event
     insert_relation_edge_event = record_relation_edge_event
 
-    def get_relation_edge_events(
-        self,
-        *,
-        person: Optional[str] = None,
-        source: Optional[str] = None,
-        target: Optional[str] = None,
-        event_kind: Optional[str] = None,
-        evidence: Optional[bool] = None,
-    ) -> List[Dict[str, Any]]:
-        clauses: list[str] = []
-        params: list[Any] = []
-        if person is not None:
-            clauses.append("(source = ? OR target = ?)")
-            params.extend([str(person), str(person)])
-        if source is not None:
-            clauses.append("source = ?")
-            params.append(str(source))
-        if target is not None:
-            clauses.append("target = ?")
-            params.append(str(target))
-        if event_kind is not None:
-            clauses.append("event_kind = ?")
-            params.append(validate_edge_kind(event_kind))
-        if evidence is not None:
-            clauses.append("evidence = ?")
-            params.append(int(normalize_evidence(evidence)))
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        rows = PersonLogStore(self.conn).read_get_relation_edge_events_owned(params, where).fetchall()
-        return [
-            {
-                **dict(row),
-                "evidence": bool(row["evidence"]),
-            }
-            for row in rows
-        ]
-
     # ------------------------------------------------------------------
     # #636 关系摘要层 S5：两段式存储＋月末增量重酿腿的持久化接缝。
     # 摘要文本机械原样存取（LLM 自由文本零删改，CLAUDE.md P6/ADR 0142）；
@@ -14250,14 +14024,6 @@ class GameDB:
         PersonLogStore(self.conn).write_apply_seed_founding_segment((str(source), str(target), dimension, str(founding_segment)))
         if owns:
             self.conn.commit()
-
-    def get_relation_summary(self, source: str, target: str) -> Optional[Dict[str, Any]]:
-        row = PersonLogStore(self.conn).read_get_relation_summary((str(source), str(target)))
-        return dict(row) if row is not None else None
-
-    def get_relation_summaries(self) -> List[Dict[str, Any]]:
-        rows = PersonLogStore(self.conn).read_get_relation_summaries()
-        return [dict(row) for row in rows]
 
     def apply_relation_brew_result(
         self,

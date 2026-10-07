@@ -201,7 +201,7 @@ def test_breach_skips_dead_but_records_living_offstage_relations(game):
     db.set_character_status(state, "毕自严", "offstage", reason="在世非现任")
 
     assert db.breach_decree_dossier(state, dossier_id) is True
-    targets = {row["target"] for row in db.get_relation_edge_events(event_kind="辜负")}
+    targets = {row["target"] for row in db.person_logs.get_relation_edge_events(event_kind="辜负")}
     assert "徐光启" not in targets
     assert "毕自严" in targets
     assert _sat(db, "factions", dead_faction) == max(0, before_dead_faction - 4)
@@ -413,7 +413,7 @@ def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued
     issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": active}]})
     assert _cost_events(db, issued) == []
     plea = next(
-        t for t in db.list_next_audience_todos(status="pending")
+        t for t in db.dossiers.list_next_audience_todos(status="pending")
         if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
         and int(t["commitment_ref"]) == int(active)
     )
@@ -425,7 +425,7 @@ def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued
     # 未颁发案卷：cancel 可写挽留，但坚持时 0056 不得落（无合法颁发源）
     issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": excluded}]})
     never_pleas = [
-        t for t in db.list_next_audience_todos(status="pending")
+        t for t in db.dossiers.list_next_audience_todos(status="pending")
         if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
         and int(t["commitment_ref"]) == int(excluded)
     ]
@@ -448,7 +448,7 @@ def test_breach_charges_authority_ministers_and_related_factions_once(game):
     assert db.breach_decree_dossier(state, dossier_id, reason="撤回成命") is True
     assert db.breach_decree_dossier(state, dossier_id, reason="重复撤回") is False
     assert state.metrics["皇威"] == max(0, authority - 5)
-    edges = db.get_relation_edge_events(event_kind="辜负")
+    edges = db.person_logs.get_relation_edge_events(event_kind="辜负")
     assert {e["target"] for e in edges if e["origin"].startswith(f"dossier:{dossier_id}:breach")} == {
         "倪元璐", "徐光启", "毕自严",
     }

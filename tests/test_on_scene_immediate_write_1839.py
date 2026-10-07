@@ -186,7 +186,7 @@ def test_undo_reverses_round_on_scene_writes(game):
     )
     assert list_public_sayings(db, involved_character=victim)
     assert victim not in an.present_names_at(db, night_id)
-    edges_before = db.get_relation_edge_events(source=partner, target=victim)
+    edges_before = db.person_logs.get_relation_edge_events(source=partner, target=victim)
     assert edges_before
 
     # 白名单审计：本轮直写须落在第四类，不得越权咬住
@@ -205,7 +205,7 @@ def test_undo_reverses_round_on_scene_writes(game):
     assert not list_public_sayings(db, involved_character=victim)
     # 告退账随源轮删 → 在场复原
     assert victim in an.present_names_at(db, night_id)
-    assert not db.get_relation_edge_events(source=partner, target=victim)
+    assert not db.person_logs.get_relation_edge_events(source=partner, target=victim)
     # 对话轮标 undone，消息已删
     turn_row = db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (chat_id,),

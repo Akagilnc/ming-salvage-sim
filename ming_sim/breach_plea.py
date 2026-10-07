@@ -211,7 +211,7 @@ def find_pending_plea(
 ) -> Optional[Dict[str, object]]:
     """返回匹配的 pending 哭谏条；breach_kind 非空时按 primary∪absorbed 认。"""
     want = str(breach_kind or "").strip()
-    for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
+    for todo in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING):
         if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
             continue
         if int(todo.get("commitment_ref") or 0) != int(commitment_ref):
@@ -236,7 +236,7 @@ def has_pending_plea(
 def _find_pending_plea_same_turn(
     db: Any, commitment_ref: int, turn: int,
 ) -> Optional[Dict[str, object]]:
-    for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
+    for todo in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING):
         if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
             continue
         if int(todo.get("commitment_ref") or 0) != int(commitment_ref):
@@ -352,7 +352,7 @@ def write_breach_plea_todo(
         for k, v in extra.items():
             if k not in meta:
                 meta[k] = v
-    todo_id = db.insert_next_audience_todo(
+    todo_id = db.dossiers.insert_next_audience_todo(
         commitment_ref=int(commitment_ref),
         stage_idx=turn,  # 法：触发当回合 turn
         due_turn=int(due_turn),
@@ -710,7 +710,7 @@ def finalize_persist(
                 year=state.year, period=state.period,
             )
 
-    consumed = db.mark_next_audience_todo_status(
+    consumed = db.dossiers.mark_next_audience_todo_status(
         int(todo["id"]), TODO_STATUS_CONSUMED,
         payload_patch={PLEA_VERDICT_KEY: PLEA_VERDICT_PERSIST},
         commit=False,
@@ -742,7 +742,7 @@ def finalize_regret(
     """反悔：两轨零落账，承诺续跑，消费 todo。不写信用边（票面钉零落账）。"""
     meta = decode_plea_meta(todo.get("origin_context"))
     commitment_ref = int(todo["commitment_ref"])
-    consumed = db.mark_next_audience_todo_status(
+    consumed = db.dossiers.mark_next_audience_todo_status(
         int(todo["id"]), TODO_STATUS_CONSUMED,
         payload_patch={PLEA_VERDICT_KEY: PLEA_VERDICT_REGRET},
         commit=False,
@@ -765,13 +765,13 @@ def expire_breach_pleas_on_due(
     """承诺 due 到 → 挽留条目 consumed/失效；不走坚持撤分档、不补 0056/事轴倒退。"""
     turn = int(getattr(state, "turn", 0) or 0)
     results: List[Dict[str, object]] = []
-    for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
+    for todo in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING):
         if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
             continue
         commitment_ref = int(todo["commitment_ref"])
         row = IssueStore(db.conn).row(int(commitment_ref))
         if row is None or str(row["status"] or "") != "active":
-            db.mark_next_audience_todo_status(
+            db.dossiers.mark_next_audience_todo_status(
                 int(todo["id"]), TODO_STATUS_CONSUMED,
                 payload_patch={PLEA_VERDICT_KEY: PLEA_VERDICT_EXPIRED},
                 commit=False,
@@ -784,7 +784,7 @@ def expire_breach_pleas_on_due(
             continue
         natural_due = commitment_natural_due_turn(row)
         if natural_due > 0 and natural_due <= turn:
-            db.mark_next_audience_todo_status(
+            db.dossiers.mark_next_audience_todo_status(
                 int(todo["id"]), TODO_STATUS_CONSUMED,
                 payload_patch={PLEA_VERDICT_KEY: PLEA_VERDICT_EXPIRED},
                 commit=False,
@@ -1094,7 +1094,7 @@ def scan_and_write_breach_pleas(
 
 def _pending_breach_pleas(db: Any) -> List[Dict[str, object]]:
     return [
-        t for t in db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
         if str(t.get("entry_kind") or "") == ENTRY_KIND_BREACH_PLEA
     ]
 

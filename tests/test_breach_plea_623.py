@@ -124,7 +124,7 @@ def _insert_commitment(
 
 def _pending_pleas(db):
     return [
-        t for t in db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
         if str(t.get("entry_kind") or "") == ENTRY_KIND_BREACH_PLEA
     ]
 
@@ -586,7 +586,7 @@ def test_kind_gate_apply_only_finalizes_staged(game):
     assert staged_done or any(
         str(t.get("entry_kind")) == ENTRY_KIND_STAGED
         and str(t.get("status")) == TODO_STATUS_CONSUMED
-        for t in db.list_next_audience_todos()
+        for t in db.dossiers.list_next_audience_todos()
     )
     assert plea_skip
     assert _pending_pleas(db), "哭谏须仍 pending"
@@ -632,7 +632,7 @@ def test_breach_plea_survives_restore(game):
     db2 = GameDB(path)
     state2 = db2.load_state()
     pleas = [
-        t for t in db2.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        t for t in db2.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
         if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
     ]
     assert len(pleas) == 1

@@ -261,14 +261,62 @@ class ReignStateStore:
     def read_household_ledger_balance(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT balance FROM economy_accounts WHERE account='国库'", params).fetchone()
 
-    def write_save_ending_summary(self, params: Any = ()) -> Any:
-        return self._conn.execute('\n            INSERT INTO ending_summary (turn, year, period, ending_status, summary, timeline)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ON CONFLICT(turn) DO UPDATE SET\n                year = excluded.year, period = excluded.period,\n                ending_status = excluded.ending_status,\n                summary = excluded.summary, timeline = excluded.timeline\n            ', params)
-
     def write_expire_legacies(self, params: Any = ()) -> Any:
         return self._conn.executemany("UPDATE legacies SET status='expired' WHERE id=?", params)
 
-    def read_get_ending_summary(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT turn, year, period, ending_status, summary, timeline FROM ending_summary ORDER BY turn DESC LIMIT 1', params).fetchone()
+    def save_ending_summary(
+        self,
+        state: Any,
+        ending_status: str,
+        summary: str,
+        timeline: List[Dict[str, object]],
+        *,
+        commit: bool = True,
+    ) -> None:
+        """Persist one ending summary row (serialize timeline; upsert by turn)."""
+        from ming_sim.applier import connection_owns_transaction
+
+        owns = connection_owns_transaction(self._conn)
+        self._conn.execute(
+            """
+            INSERT INTO ending_summary (turn, year, period, ending_status, summary, timeline)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(turn) DO UPDATE SET
+                year = excluded.year, period = excluded.period,
+                ending_status = excluded.ending_status,
+                summary = excluded.summary, timeline = excluded.timeline
+            """,
+            (
+                int(state.turn), int(state.year), int(state.period),
+                str(ending_status or ""),
+                str(summary or ""),
+                json.dumps(timeline or [], ensure_ascii=False),
+            ),
+        )
+        if commit and owns:
+            self._conn.commit()
+
+    def get_ending_summary(self) -> Optional[Dict[str, object]]:
+        """取最近一条结局总结（单库一局，按 turn 取最大）。无则 None。"""
+        row = self._conn.execute(
+            "SELECT turn, year, period, ending_status, summary, timeline "
+            "FROM ending_summary ORDER BY turn DESC LIMIT 1",
+        ).fetchone()
+        if row is None:
+            return None
+        timeline = load_stored_json(
+            row["timeline"], label=f"结局 timeline turn={row['turn']}", blank=[],
+        )
+        if not isinstance(timeline, list):
+            raise ValueError(f"结局 timeline 必须为名单（turn={row['turn']}）")
+        return {
+            "turn": int(row["turn"]),
+            "year": int(row["year"]),
+            "period": int(row["period"]),
+            "ending_status": row["ending_status"],
+            "summary": row["summary"] or "",
+            "timeline": timeline,
+        }
 
     def read_is_pending_source_round_owned(self, params: Any) -> Any:
         return self._conn.execute("SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 WHERE t.id=? AND t.night_id=? AND t.status='active' AND t.minister_message_id>0 AND t.extract_status='pending' AND g.turn=?", params)

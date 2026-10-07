@@ -27,7 +27,7 @@ from ming_sim.simulation import (
 
 
 def _edge_rows(db, **kw):
-    return db.get_relation_edge_events(**kw)
+    return db.person_logs.get_relation_edge_events(**kw)
 
 
 def _triplets(rows):

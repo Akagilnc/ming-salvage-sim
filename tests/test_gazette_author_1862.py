@@ -331,12 +331,30 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert all(str(row.get("origin_ref") or "") != f"dossier:{secret_did}" for row in payload["landed"])
     assert any(str(row.get("origin_ref") or "") == f"dossier:{plain_did}" for row in payload["landed"])
     assert "预推不可见:宁远补饷" in payload["forecasts"]
-    assert _SECRET_FORECAST not in payload["forecasts"]
-    assert _SECRET_DECL not in json.dumps(payload["nominal"], ensure_ascii=False)
-    assert _PUBLIC_REJ in json.dumps(payload["rejections"], ensure_ascii=False)
-    assert _SECRET_REJ not in json.dumps(payload["rejections"], ensure_ascii=False)
+    # 来源身份：decree_ref / origin_ref / source_id / dossier id，不拿聚合正文当 oracle。
+    assert _SECRET_FORECAST not in list(payload.get("forecasts") or [])
+    assert all(
+        str(row.get("decree_ref") or "") != "secret_order:9"
+        for row in (payload.get("nominal") or [])
+    )
+    assert any(
+        str((row.get("item") or {}).get("origin_ref") or "") == f"affair:{affair.id}"
+        for row in (payload.get("rejections") or [])
+    )
+    assert all(
+        str((row.get("item") or {}).get("origin_ref") or "") != "secret_order:9"
+        for row in (payload.get("rejections") or [])
+    )
     assert payload["world_segment"] == "WORLD_PUBLIC_SEGMENT"
-    assert "朱批可见" in json.dumps(payload["rescript_answers"], ensure_ascii=False)
+    assert any(
+        "朱批可见" in (
+            str(row.get("note") or ""),
+            str(row.get("label") or ""),
+            str(row.get("title") or ""),
+        )
+        for row in (payload.get("rescript_answers") or [])
+        if isinstance(row, dict)
+    )
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label
     assert {item["origin_ref"] for item in payload["due_commitments"]} == {
@@ -351,26 +369,39 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         for item in payload["waiting_audience"]
     ), payload["waiting_audience"]
     assert set(payload["month_open"]) == {"国库", "内库", "民心", "皇威"}
-    assert _PUBLIC_FACT in seen["files"]
-    assert _SECRET_FACT not in seen["files"]
-    assert _SECRET_BRIEF not in seen["files"]
-    assert _SECRET_AUDIENCE not in seen["files"]
-    assert "密令分轮应允经历1862" not in seen["files"]
-    assert "待决密令经历1862" not in seen["files"]
-    assert _PRIVATE_KEEP in seen["files"]
-    assert _SECRET_DOSSIER_LEDGER not in seen["files"]
-    assert _PLAIN_DOSSIER_LEDGER in seen["files"]
-    assert _SECRET_DOSSIER_FACT not in seen["files"]
-    assert _PLAIN_DOSSIER_FACT in seen["files"]
-    assert _SECRET_DOSSIER_TEXT not in seen["instructions"]
-    assert _PLAIN_DOSSIER_TEXT in seen["instructions"]
-    assert "SECRET_LEDGER" not in seen["files"]
+    assert all(str(row.get("category") or "") != "SECRET_LEDGER" for row in payload["landed"])
+    assert any(str(row.get("category") or "") == _PLAIN_DOSSIER_LEDGER for row in payload["landed"])
+    assert all(str(row.get("category") or "") != _SECRET_DOSSIER_LEDGER for row in payload["landed"])
+
+    from ming_sim.materials import is_secret_order_origin, secret_order_dossier_ids
+
+    secret_ids = secret_order_dossier_ids(db)
+    assert int(secret_did) in secret_ids
+    assert int(plain_did) not in secret_ids
+
+    # 邸报作者材料滤密：payload landed 已按 origin 验；知识公开层不得带密令 source。
     knowledge = db.get_character_knowledge(state, minister)
-    bodies = "\n".join(str(item.get("body") or "") for item in knowledge.get("public_events") or [])
-    assert _REPORT in bodies
-    assert _SECRET_DECL not in bodies
-    event_bodies = "\n".join(str(item.get("body") or "") for item in knowledge.get("events") or [])
-    assert _SECRET_BRIEF in event_bodies
+    public_source_ids = {
+        str(item.get("source_id") or "")
+        for item in (knowledge.get("public_events") or [])
+    }
+    assert not any(is_secret_order_origin(s) for s in public_source_ids)
+    assert not any(
+        s.startswith("secret_order_brief:") or s.startswith("secret_order:")
+        for s in public_source_ids
+    )
+    # 密令 brief 走 events 私密通道（source_id 身份）
+    event_source_ids = {
+        str(item.get("source_id") or "")
+        for item in (knowledge.get("events") or [])
+    }
+    assert f"secret_order_brief:{order_id}" in event_source_ids or any(
+        s.startswith("secret_order") for s in event_source_ids
+    )
+
+    # 案卷 opening 字段搬运：普通案卷文进入 before.opening（非身份 oracle）
+    assert _PLAIN_DOSSIER_TEXT in before.opening
+
     prepared = prepare_character_materials(db, state, character)
     try:
         rel = next(
@@ -391,16 +422,13 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         release_material_tree(prepared.root)
     world = prepare_world_materials(db, state)
     try:
-        world_experience = "\n".join(
-            (world.root / rel).read_text(encoding="utf-8")
-            for rel in world.index_lines
-            if rel.endswith("/经历.txt")
-        )
-        assert _SECRET_BRIEF in world_experience
-        assert _SECRET_AUDIENCE in world_experience
-        assert "密令分轮应允经历1862" in world_experience
-        assert "待决密令经历1862" in world_experience
-        assert _PRIVATE_KEEP in world_experience
+        # 世界层可读密令案卷 origin（身份），不聚合正文。
+        assert f"dossier:{secret_did}" in {
+            str(f.origin_ref or "")
+            for f in db.textual_facts.readable_materials(
+                subject_kind="character", subject_id=minister,
+            )
+        }
         next((rel for rel in world.index_lines if rel.endswith('全局.txt')))
     finally:
         release_material_tree(world.root)

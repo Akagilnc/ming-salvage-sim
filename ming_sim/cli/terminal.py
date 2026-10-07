@@ -13,7 +13,6 @@ from typing import List, Optional
 from ming_sim.constants import (
     COURT_BREAK_COMMANDS,
     EXIT_COMMANDS,
-    STAY_ATTEND_COMMANDS,
     TURN_UNIT,
 )
 from ming_sim.assets import wrap
@@ -173,12 +172,6 @@ def _handle_court_command(
         raise ExitGame
     if lowered in COURT_BREAK_COMMANDS or raw in COURT_BREAK_COMMANDS:
         return "court_break"
-
-    # #526：留侍口令（确定性封闭集；落叙事账、在场不变）
-    if raw in STAY_ATTEND_COMMANDS or lowered in STAY_ATTEND_COMMANDS:
-        from ming_sim.audience_night import stay_attend_in_audience
-        stay_attend_in_audience(session.db, current.name)
-        return "handled"
 
     # 退下（短句正则，不误伤长对话）
     if re.fullmatch(
@@ -757,7 +750,7 @@ def _printed_ending_summary(session: GameSession) -> str:
     from ming_sim.session_write_queue import get_session_write_queue
 
     get_session_write_queue(session).wait_idle()
-    ending = session.db.get_ending_summary()
+    ending = session.db.reign.get_ending_summary()
     if ending and ending.get("summary"):
         return str(ending["summary"])
     return ""

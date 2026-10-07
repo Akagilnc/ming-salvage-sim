@@ -40,21 +40,30 @@ def test_scene_recap_quotes_public_dialogue_within_presence_interval(game):
     an.summon_enter(db, nid, "毕自严")            # 毕自严侍立区间起点
     an.summon_enter(db, nid, "徐光启")
     heard = _public(db, nid, "徐光启", "徐光启奏：宜用洪承畴督师陕西。")
-    private_body = "此人跋扈"
     whisper = an.append_ledger_entry(
-        db, nid, person_names=[STANDING], body=private_body,
+        db, nid, person_names=[STANDING], body="此人跋扈",
         audibility=AUDIBILITY_PRIVATE,
     )
 
+    # 可闻性/私语排除：以账条目 id + audibility 为身份，不拿正文当 oracle。
+    audible_ids = {r["id"] for r in an.audible_entries_for(db, nid, "毕自严")}
+    assert heard in audible_ids
+    assert whisper not in audible_ids
+    assert all(
+        r.get("audibility") == AUDIBILITY_PUBLIC
+        for r in an.audible_entries_for(db, nid, "毕自严")
+    )
     recap = an.audience_scene_recap(db, "毕自严", night_id=nid)
-    # 正向：侍立区间内殿上公开对话可被引用（区间取数）
-    assert "徐光启奏：宜用洪承畴督师陕西。" in recap
-    # 负向：御前低语不流入侍立者组装输入
-    assert private_body not in recap
-    _ = (heard, whisper)
+    # 正向：侍立区间内公开账进入 recap 读面（正文为字段搬运，非身份）
+    heard_body = next(
+        str(e.get("body") or "")
+        for e in an.list_ledger(db, nid) if int(e["id"]) == heard
+    )
+    assert heard_body in recap
 
     # 负向（AC3）：从未入殿者的组装输入不含殿内对话，取空
     assert an.audience_scene_recap(db, "洪承畴", night_id=nid) == ""
+    assert an.audible_entries_for(db, nid, "洪承畴") == []
 
 
 def test_scene_recap_excludes_dialogue_before_person_entered(game):
@@ -65,13 +74,18 @@ def test_scene_recap_excludes_dialogue_before_person_entered(game):
     nid = int(night["id"])
 
     an.summon_enter(db, nid, "毕自严")
-    _public(db, nid, "毕自严", "毕自严先奏钱粮九边。")   # 徐光启入殿前
+    before_id = _public(db, nid, "毕自严", "毕自严先奏钱粮九边。")  # 徐光启入殿前
     an.summon_enter(db, nid, "徐光启")                # 徐光启侍立区间起点
-    _public(db, nid, "徐光启", "徐光启方入奏水利。")
+    within_id = _public(db, nid, "徐光启", "徐光启方入奏水利。")
 
-    recap = an.audience_scene_recap(db, "徐光启", night_id=nid)
-    assert "徐光启方入奏水利" in recap            # 正向：区间内
-    assert "毕自严先奏钱粮九边" not in recap       # 负向：入殿前不闻
+    audible_ids = {r["id"] for r in an.audible_entries_for(db, nid, "徐光启")}
+    assert within_id in audible_ids                 # 正向：区间内
+    assert before_id not in audible_ids             # 负向：入殿前不闻（条目身份）
+    within_body = next(
+        str(e.get("body") or "")
+        for e in an.list_ledger(db, nid) if int(e["id"]) == within_id
+    )
+    assert within_body in an.audience_scene_recap(db, "徐光启", night_id=nid)
 
 
 

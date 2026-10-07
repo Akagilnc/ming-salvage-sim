@@ -375,7 +375,7 @@ def test_relation_edge_events_do_not_mutate_style(game):
     )
     res = out["relation_edge_event_resolutions"]
     assert not any(r.get("rejected") for r in res), res
-    rows = db.get_relation_edge_events(source=source, target=target)
+    rows = db.person_logs.get_relation_edge_events(source=source, target=target)
     assert len(rows) == 1
     assert _style_row(db, source) == before_db[source]
     assert _style_row(db, target) == before_db[target]

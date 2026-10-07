@@ -16,7 +16,7 @@ from ming_sim.entities.issue.store import IssueStore
 import json
 from typing import Any, Dict, List, Optional
 
-from ming_sim.applier import durable_int,  load_stored_list
+from ming_sim.applier import durable_int, load_stored_list, parse_engine_payload_json
 
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
@@ -70,9 +70,9 @@ def derive_opportunity_band(durable_effects: object) -> str:
 
 
 def _parse_payload(raw: object) -> Dict[str, object]:
-    """催办史 payload 读路：与 GameDB.parse_engine_payload_json 合一；腐坏响亮。"""
+    """催办史 payload 读路：与 parse_engine_payload_json 合一；腐坏响亮。"""
     from ming_sim.db import GameDB
-    return GameDB.parse_engine_payload_json(
+    return parse_engine_payload_json(
         raw, surface="pending_actions.payload_json",
     )
 
@@ -340,7 +340,7 @@ def list_urge_audience_scenes(
     db: Any, state: Any = None, *, status: str = TODO_STATUS_PENDING,
 ) -> List[Dict[str, object]]:
     """次回合召对顶出：谏/宽限 pending（不进 due-review 白名单、不占接管窗）。"""
-    todos = db.list_next_audience_todos(status=status)
+    todos = db.dossiers.list_next_audience_todos(status=status)
     scenes: List[Dict[str, object]] = []
     for todo in todos:
         if not is_urge_audience_entry_kind(todo.get("entry_kind")):
@@ -359,12 +359,12 @@ def consume_pending_urge_audience_todos(
     """
     turn = int(getattr(state, "turn", 0) or 0)
     results: List[Dict[str, object]] = []
-    for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
+    for todo in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING):
         if not is_urge_audience_entry_kind(todo.get("entry_kind")):
             continue
         if int(todo.get("created_turn") or 0) >= turn:
             continue
-        ok = db.mark_next_audience_todo_status(
+        ok = db.dossiers.mark_next_audience_todo_status(
             int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
         )
         results.append({

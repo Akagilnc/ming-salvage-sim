@@ -124,7 +124,7 @@ def _seed_halfway(db, state, *, did: int, bar: int = 45):
 def _pending_pleas(db):
     from ming_sim.breach_plea import ENTRY_KIND_BREACH_PLEA
     return [
-        t for t in db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
         if str(t.get("entry_kind") or "") == ENTRY_KIND_BREACH_PLEA
     ]
 
@@ -496,7 +496,7 @@ def test_ac3_regret_then_resolve_no_breach_verdict_hammer(game):
     assert result["decision"] == "regret"
     assert result["commitment_continues"] is True
     stamped = next(
-        t for t in db.list_next_audience_todos(status="consumed")
+        t for t in db.dossiers.list_next_audience_todos(status="consumed")
         if int(t["id"]) == todo_id
     )
     assert stamped["payload_json"].get(PLEA_VERDICT_KEY) == PLEA_VERDICT_REGRET
@@ -604,7 +604,7 @@ def test_ac3_plea_due_expire_then_commitment_expire_no_hammer(game):
     assert expired
     assert expired[0]["reason"] == "commitment_due"
     stamped = next(
-        t for t in db.list_next_audience_todos(status="consumed")
+        t for t in db.dossiers.list_next_audience_todos(status="consumed")
         if int(t["id"]) == todo_id
     )
     assert stamped["payload_json"].get(PLEA_VERDICT_KEY) == PLEA_VERDICT_EXPIRED
@@ -654,7 +654,7 @@ def test_ac3_persist_stamps_verdict_and_still_triggers(game):
     todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
     finalize_persist(db, state, todo, commit=True)
     stamped = next(
-        t for t in db.list_next_audience_todos(status="consumed")
+        t for t in db.dossiers.list_next_audience_todos(status="consumed")
         if int(t["id"]) == todo_id
     )
     assert stamped["payload_json"].get(PLEA_VERDICT_KEY) == PLEA_VERDICT_PERSIST

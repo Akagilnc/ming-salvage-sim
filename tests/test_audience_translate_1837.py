@@ -350,9 +350,10 @@ def test_summons_translation_does_not_apply_monthly_effects_at_night(game):
     assert rejection["reason"]
 
 
-def test_scene_stay_attend_uses_actual_protagonist_not_virtual_speaker(game, monkeypatch):
+def test_typed_stay_attend_records_named_person_not_virtual_speaker(game):
+    """#1812 第5项：口令旧路退役后，typed 留侍写缝仍按实名人落账（非殿上虚名）。"""
     from ming_sim.audience_night import (
-        SCENE_CHAT_SPEAKER, list_ledger, set_night_protagonist, summon_enter,
+        list_ledger, set_night_protagonist, stay_attend_in_audience, summon_enter,
     )
 
     db, state, content = game
@@ -361,10 +362,8 @@ def test_scene_stay_attend_uses_actual_protagonist_not_virtual_speaker(game, mon
     night_id = int(night["id"])
     summon_enter(db, night_id, person)
     set_night_protagonist(db, night_id, person, reason="test")
-    result = _sess(db, state, content, monkeypatch).scene_chat(
-        "留下听着", minister_name=SCENE_CHAT_SPEAKER,
-    )
-    assert result.court_action == "stay_attend"
+    stay_id = stay_attend_in_audience(db, person, night_id=night_id)
+    assert stay_id is not None
     assert list_ledger(db, night_id)[-1]["person_names"] == [person]
 
 

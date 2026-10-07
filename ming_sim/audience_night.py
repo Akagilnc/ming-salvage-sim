@@ -142,11 +142,9 @@ TAG_STAY_ATTEND = "留侍"
 
 # #526 结构化口令判词（引擎只认判词，不重解析散文；非 ACTION_CLUSTERS）
 CMD_CLOSE_NIGHT = "close_night"
-CMD_AMBIGUOUS_CLOSE = "ambiguous_close"
-CMD_STAY_ATTEND = "stay_attend"
 CMD_NONE = "none"
 _CMD_VERDICTS = frozenset({
-    CMD_CLOSE_NIGHT, CMD_AMBIGUOUS_CLOSE, CMD_STAY_ATTEND, CMD_NONE,
+    CMD_CLOSE_NIGHT, CMD_NONE,
 })
 
 METHOD_XUANRU = "宣入"
@@ -1853,8 +1851,9 @@ def stay_attend_in_audience(
     night_id: Optional[int] = None,
     origin_chat_turn_id: int = 0,
 ) -> Optional[int]:
-    """「留下听着」口令：确定性落留侍叙事账，在场态不变（#526 / #500 口径）。
+    """显式 typed 留侍写缝：落留侍叙事账，在场态不变（#526 / #500 口径）。
 
+    #1812 第5项：不再由代码识别「留下听着」口令；本写缝供转译/显式声明调用。
     不在场者 = 幂等 no-op（不落账、返 None）；名不填 → 响亮 empty_person。
     标签 TAG_STAY_ATTEND 不进 _presence_delta——不得制造进出事件。
     """
@@ -1888,28 +1887,20 @@ def normalize_audience_command_verdict(raw: Any) -> str:
 
 
 def recognize_audience_command(message: str) -> str:
-    """收夜/留侍口令结构化判词（#526）。
+    """收夜控制口令结构化判词（#526 / #1812 第5项）。
 
-    确定性封闭集（COURT_BREAK / AMBIGUOUS_CLOSE / STAY_ATTEND）；引擎不重解析散文。
+    确定性封闭集仅 COURT_BREAK（q/quit/退朝/下朝/今日且到此）。
+    「留下听着」「今日就到这里吧」不再代码识别——走场景模型与转译。
     不进 ACTION_CLUSTERS；非第二 parser（无自由散文正则启发）。
-    无耗时软判——同步直调即可；坏 shape 由 normalize 归一，不在此宽吞异常。
     """
-    from ming_sim.constants import (
-        AMBIGUOUS_CLOSE_COMMANDS,
-        COURT_BREAK_COMMANDS,
-        STAY_ATTEND_COMMANDS,
-    )
+    from ming_sim.constants import COURT_BREAK_COMMANDS
 
     text = str(message or "").strip()
     if not text:
         return CMD_NONE
     lowered = text.lower()
-    if text in STAY_ATTEND_COMMANDS or lowered in STAY_ATTEND_COMMANDS:
-        return CMD_STAY_ATTEND
     if lowered in COURT_BREAK_COMMANDS or text in COURT_BREAK_COMMANDS:
         return CMD_CLOSE_NIGHT
-    if text in AMBIGUOUS_CLOSE_COMMANDS or lowered in AMBIGUOUS_CLOSE_COMMANDS:
-        return CMD_AMBIGUOUS_CLOSE
     return CMD_NONE
 
 

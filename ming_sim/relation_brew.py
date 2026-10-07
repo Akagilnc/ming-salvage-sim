@@ -67,7 +67,7 @@ def select_brew_targets(db: Any, *, year: int, period: int) -> List[Dict[str, An
     事件（庭裁 r3 F1② fresh claim→durable pending 缝）重启后仍是新事件，仍被
     选中。既无本月新事件又无 pending 的关系不入选（TD-3 无事不变）。"""
     summaries = {
-        (row["source"], row["target"]): row for row in db.get_relation_summaries()
+        (row["source"], row["target"]): row for row in db.person_logs.get_relation_summaries()
     }
     pending = {
         (row["source"], row["target"]): row for row in db.get_relation_brew_pending()
@@ -100,7 +100,7 @@ def collect_new_edge_events(db: Any, *, source: str, target: str, watermark: int
     """水位之上的新边事件（TD-4：重酿输入必含新事件；翻转可回溯的依据）。"""
     return [
         row
-        for row in db.get_relation_edge_events(source=source, target=target)
+        for row in db.person_logs.get_relation_edge_events(source=source, target=target)
         if int(row["id"]) > int(watermark)
     ]
 

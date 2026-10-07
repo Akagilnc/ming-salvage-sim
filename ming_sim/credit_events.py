@@ -567,7 +567,7 @@ def _pending_urge_todos(db: Any, state: Any) -> List[Dict[str, object]]:
     turn = int(getattr(state, "turn", 0) or 0)
     kinds = {ENTRY_KIND_GRACE_PLEA, ENTRY_KIND_RUSH_REMONSTRANCE}
     return [
-        t for t in db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        t for t in db.dossiers.list_next_audience_todos(status=TODO_STATUS_PENDING)
         if str(t.get("entry_kind") or "") in kinds
         and int(t.get("created_turn") or 0) < turn
     ]
@@ -654,7 +654,7 @@ def _resolve_one_urge_todo(
         context=context,
         origin=origin,
     )
-    consumed = db.mark_next_audience_todo_status(
+    consumed = db.dossiers.mark_next_audience_todo_status(
         int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
     )
     return {
