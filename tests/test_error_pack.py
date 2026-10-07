@@ -143,19 +143,8 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
         return "".join(chunks)
 
     serialized = asyncio.run(_consume())
-    events = []
-    for block in serialized.strip().split("\n\n"):
-        if not block.strip():
-            continue
-        ev_name = ""
-        data_raw = ""
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                ev_name = line.split(":", 1)[1].strip()
-            elif line.startswith("data:"):
-                data_raw += line.split(":", 1)[1].strip()
-        if ev_name and data_raw:
-            events.append((ev_name, json.loads(data_raw)))
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
+    events = _parse_sse(serialized)
     assert events, serialized
     assert events[-1][0] == "error", events[-1]
     detail = events[-1][1]

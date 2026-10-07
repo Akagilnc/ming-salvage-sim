@@ -1055,7 +1055,7 @@ def test_final_decree_edit_path_removed_no_bypass(game):
     assert db.list_directives(state)[0]["text"] == "拨十两赈济"
 
 def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
-    game, monkeypatch, capsys,
+    game, monkeypatch,
 ):
     import ming_sim.cli.terminal as terminal
     from ming_sim.session import GameSession

@@ -422,15 +422,20 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ac
         def end_turn(self):
             self.calls.append("end")
 
+    printed: list = []
     monkeypatch.setattr(term, "review_directives", lambda s: action)
     monkeypatch.setattr(term, "_print_header", lambda s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
+    monkeypatch.setattr(
+        term, "_print_pending_action_failures",
+        lambda fails: printed.extend(fails),
+    )
     session = Session()
 
     term.play_turn(session)
 
-    failed = session.db.list_pending_actions(session.state.turn, status="failed")
-    assert any(int(row.get("id") or -1) == 42 for row in failed)
+    # CLI 经真实 _new_secret_order_failure_payloads 把失败 id 交给打印缝。
+    assert any(int(row.get("id") or -1) == 42 for row in printed)
     if action == "skip":
         assert session.calls == ["begin", "advance"]
     else:
@@ -530,15 +535,19 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
             self.calls.append("advance")
 
     actions = iter(["issue", "skip"])
+    printed: list = []
     monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
+    monkeypatch.setattr(
+        term, "_print_pending_action_failures",
+        lambda fails: printed.extend(fails),
+    )
     session = Session()
 
     term.play_turn(session)
 
-    failed = session.db.list_pending_actions(session.state.turn, status="failed")
-    assert any(int(row.get("id") or -1) == 42 for row in failed)
+    assert any(int(row.get("id") or -1) == 42 for row in printed)
     assert session.calls == ["begin", "resolve", "advance"]
 
 

@@ -11,7 +11,6 @@ from __future__ import annotations
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
 import asyncio
-import json
 import threading
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -21,8 +20,7 @@ import pytest
 import web_app
 from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
-
-
+from tests.test_chat_stream_failpaths_393 import _parse_sse
 from tests.test_enter_settlement_period_1235 import _click_before
 
 def _runtime(db, state):
@@ -55,25 +53,6 @@ def _runtime(db, state):
     runtime._settlement_entry_lock = threading.Lock()
     runtime._settlement_entry_inflight = 0
     return runtime
-
-
-def _parse_sse(text: str) -> list[tuple[str, object]]:
-    """SSE 事件名 + data 字段；不把整流正文当断言载体。"""
-    events: list[tuple[str, object]] = []
-    for block in text.strip().split("\n\n"):
-        if not block.strip():
-            continue
-        ev_name = ""
-        data_raw = ""
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                ev_name = line.split(":", 1)[1].strip()
-            elif line.startswith("data:"):
-                data_raw += line.split(":", 1)[1].strip()
-        if not ev_name or not data_raw:
-            continue
-        events.append((ev_name, json.loads(data_raw)))
-    return events
 
 
 async def _drain_resolve_sse(choices):

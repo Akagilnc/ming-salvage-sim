@@ -611,22 +611,10 @@ def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch
     t.join()
     assert "err" not in b_result, b_result.get("err")
     assert b_result.get("status") == 200, b_result
-    # SSE 事件字段；不扫整流正文。
-    body = b_result.get("body") or ""
-    events = []
-    for block in body.strip().split("\n\n"):
-        if not block.strip():
-            continue
-        ev_name = ""
-        data_raw = ""
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                ev_name = line.split(":", 1)[1].strip()
-            elif line.startswith("data:"):
-                data_raw += line.split(":", 1)[1].strip()
-        if ev_name and data_raw:
-            events.append(ev_name)
-    assert events and events[-1] == "error", events
+    # SSE 事件字段；复用既有解析，不扫整流正文。
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
+    events = _parse_sse(b_result.get("body") or "")
+    assert events and events[-1][0] == "error", events
     # B 进 resolve 后 session 再创建了孤儿快照
     assert saw["session_reaccept"] is True
     # B finally 须清掉该孤儿（created_display=False 不得再跳过 exit）

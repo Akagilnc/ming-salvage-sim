@@ -135,9 +135,7 @@ def test_cli_initial_selection_records_remote_summon_without_returning_minister(
     sess.state = state
     _set_place(game, "洪承畴", location="shaanxi")
     answers = iter(["洪承畴", "quit"])
-    notices = []
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    monkeypatch.setattr("builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))))
 
     assert terminal.choose_minister(sess) is None
     assert [(row["person_name"], row["origin_id"]) for row in an.list_unsettled_summons(db)] == [
@@ -155,11 +153,7 @@ def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeyp
     unknown = "乌有先生甲"
     assert unknown not in sess.content.characters
     answers = iter([unknown, "quit"])
-    notices: list[str] = []
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    monkeypatch.setattr(
-        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
-    )
 
     assert terminal.choose_minister(sess) is None
     assert unknown not in sess.temporary_characters
@@ -567,7 +561,7 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
     assert {row["origin_id"] for row in unsettled} == {origin_a, origin_b}
 
 
-def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatch):
+def test_cli_midflow_summon_consumes_admission_without_entering(game):
     """#670 T3：夜内「传X来」场外只打印闸文，不返 summon:、不入殿。"""
     from ming_sim.cli import terminal
 
@@ -576,10 +570,6 @@ def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatc
     sess.state = state
     current = _set_place(game, "毕自严", location="beizhili")
     _set_place(game, "洪承畴", location="shaanxi")
-    notices: list[str] = []
-    monkeypatch.setattr(
-        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
-    )
 
     outcome = terminal._handle_court_command(sess, "传洪承畴来", current)
 

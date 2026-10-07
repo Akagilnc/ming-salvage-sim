@@ -17,8 +17,6 @@ from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
 from ming_sim.knowledge import build_character_knowledge
 from ming_sim.materials import list_materials, prepare_character_materials, read_material
-from tests.test_army_card_status_1501 import _assert_ming_register
-
 ARMY = "guanning"
 
 
