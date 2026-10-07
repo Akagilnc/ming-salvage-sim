@@ -373,18 +373,10 @@ def stage_punishment_candidate(
         staged["issue_id"] = linked_issue_id
         staged["issue_disposition"] = disposition
     # #658：与 durable apply 共吃 require_backing_dossier_id，禁第二份 int/存在性分支
-    # 省略时显式写 None，改草 merge 不得继承旧 backing 关联
-    # 解析/存在性失败 → 领域拒收（#1897 C1），不升格整批 ValueError 故障。
+    # 省略时显式写 None，改草 merge 不得继承旧 backing 关联。
+    # 权威已抛结构化 DecreeMaterializationValidationError；调用侧不接文案、不吞读故障。
     from ming_sim.db import require_backing_dossier_id
-    try:
-        backing = require_backing_dossier_id(db, backing_dossier_id)
-    except ValueError as exc:
-        raise DecreeMaterializationValidationError(
-            str(exc),
-            failed_fields=("backing_dossier_id",),
-            category="invalid_shape" if "非法" in str(exc) or "shape" in str(exc).lower()
-            else "hallucinated_id",
-        ) from exc
+    backing = require_backing_dossier_id(db, backing_dossier_id)
     staged["backing_dossier_id"] = int(backing) if backing is not None else None
     category = str(transaction_category or "").strip()
     if linked_issue_id and disposition == "办人" and not category:

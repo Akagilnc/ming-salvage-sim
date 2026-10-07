@@ -521,13 +521,33 @@ def parse_backing_dossier_id(raw: object) -> Optional[int]:
 
 
 def require_backing_dossier_id(db: object, raw: object) -> Optional[int]:
-    """解析 + 存在性：有值则案卷必须在册；供 stage 首写与 apply 复用。"""
-    backing = parse_backing_dossier_id(raw)
+    """解析 + 存在性：有值则案卷必须在册；供 stage 首写与 apply 复用。
+
+    形状／不存在 → 结构化领域拒收（#1897 C1）；getter 真读故障原样上抛，
+    不按 ValueError 文案猜类别。
+    """
+    from ming_sim.action_materialize import DecreeMaterializationValidationError
+
+    try:
+        backing = parse_backing_dossier_id(raw)
+    except ValueError as exc:
+        raise DecreeMaterializationValidationError(
+            str(exc),
+            failed_fields=("backing_dossier_id",),
+            category="invalid_shape",
+        ) from exc
     if backing is None:
         return None
     getter = getattr(db, "get_decree_dossier", None)
-    if getter is None or getter(backing) is None:
-        raise ValueError(f"backing_dossier_id 所指案卷不存在：{backing}")
+    if getter is None:
+        raise RuntimeError("db missing get_decree_dossier")
+    dossier = getter(backing)  # 读故障不包装
+    if dossier is None:
+        raise DecreeMaterializationValidationError(
+            f"backing_dossier_id 所指案卷不存在：{backing}",
+            failed_fields=("backing_dossier_id",),
+            category="hallucinated_id",
+        )
     return backing
 
 
