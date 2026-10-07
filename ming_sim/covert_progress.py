@@ -20,7 +20,7 @@ import json
 import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from ming_sim.applier import load_stored_object
+from ming_sim.applier import StoredDocumentError, load_stored_object
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
 from ming_sim.materials import secret_order_origin
 from ming_sim.person_archive_contract import PERSON_ACTIONS, PERSON_LEGAL_REASON_CODES
@@ -155,21 +155,13 @@ _DEBT_SEVERITIES = frozenset({"轻", "中", "重"})
 def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
     """真相底只收结构化罪情。severity ∈ {轻, 中, 重} 才入罪谱。
 
-    crime 是说明散文，不承重。解析失败、非对象、severity 为空或「无」，都不造罪。
+    crime 是说明散文，不承重。合法空白/severity 为空或「无」不造罪；
+    持久损坏走 load_stored_object（StoredDocumentError），不洗成无罪。
     """
     if isinstance(seed_guilt, Mapping):
-        guilt: object = seed_guilt
+        guilt = seed_guilt
     else:
-        text = str(seed_guilt or "").strip()
-        if not text:
-            return False
-        try:
-            parsed = json.loads(text)
-        except (TypeError, ValueError):
-            return False
-        if not isinstance(parsed, Mapping):
-            return False
-        guilt = parsed
+        guilt = load_stored_object(seed_guilt, label="seed_guilt")
     severity = str(guilt.get("severity") or "").strip()
     return severity in _DEBT_SEVERITIES
 
@@ -807,17 +799,21 @@ def _seed_guilt_severity(db: Any, target: str) -> str:
         return ""
     raw = row["seed_guilt"]
     if isinstance(raw, Mapping):
-        return str(raw.get("severity") or "").strip()
-    text = str(raw or "").strip()
-    if not text:
-        return ""
+        guilt = raw
+    else:
+        guilt = load_stored_object(raw, label="seed_guilt")
+    return str(guilt.get("severity") or "").strip()
+
+
+
+def _lane_number(item: Mapping[str, object], key: str, caster, default):
+    """缺省 → default；键在场但损坏 → StoredDocumentError（与合法 0 区分）。"""
+    if key not in item or item[key] is None or item[key] == "":
+        return default
     try:
-        parsed = json.loads(text)
-    except (TypeError, ValueError):
-        return ""
-    if isinstance(parsed, Mapping):
-        return str(parsed.get("severity") or "").strip()
-    return ""
+        return caster(item[key])
+    except (TypeError, ValueError) as exc:
+        raise StoredDocumentError(f"fact_lanes.{key} 损坏") from exc
 
 
 def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]]:
@@ -837,18 +833,9 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
             if not key or key in seen:
                 continue
             seen.add(key)
-            try:
-                effort = float(item.get("effort") or 0.0)
-            except (TypeError, ValueError):
-                effort = 0.0
-            try:
-                difficulty = float(item.get("difficulty") or 0.0)
-            except (TypeError, ValueError):
-                difficulty = 0.0
-            try:
-                months = int(item.get("months") or 0)
-            except (TypeError, ValueError):
-                months = 0
+            effort = _lane_number(item, "effort", float, 0.0)
+            difficulty = _lane_number(item, "difficulty", float, 0.0)
+            months = _lane_number(item, "months", int, 0)
             lanes.append({
                 "fact_key": key,
                 "effort": max(0.0, effort),

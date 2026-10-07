@@ -1153,27 +1153,9 @@ def _fiscal_levy_base_transport(
     return max(0.0, seed_transport - liao_seed)
 
 
-def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> Optional[dict]:
-    """省级 fiscal 持久文档。空白是空对象；损坏/非字典则本月该省饷率通道出列。"""
-    if isinstance(raw_fiscal, dict):
-        return raw_fiscal
-    if raw_fiscal is None or raw_fiscal == "":
-        raw_fiscal = "{}"
-    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    try:
-        fiscal = json.loads(raw_fiscal)
-    except (TypeError, ValueError) as exc:
-        tlog(
-            f"[fiscal-levy] {region_id} fiscal 解析失败，本{TURN_UNIT}饷率通道出列："
-            f"{type(exc).__name__}: {exc}"
-        )
-        return None
-    if not isinstance(fiscal, dict):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    return fiscal
+def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> dict:
+    """省级 fiscal 持久文档。空白是空对象；损坏/非对象走既有 StoredDocumentError 读缝。"""
+    return load_stored_object(raw_fiscal, label=f"{region_id}.fiscal")
 
 
 def _fiscal_levy_event_by_id(event_id: str) -> Optional[Event]:
@@ -1359,36 +1341,26 @@ def _apply_fiscal_levy_targets(
     for row in RegionStore(db.conn).read_apply_fiscal_levy_targets():
         region_id = str(row["id"])
         fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
-        if fiscal is None:
-            denominator_complete = False
+        # 合法缺 settle：省不参与本月饷率通道。对象内 settle 基座损坏响亮失败。
+        if "settle" not in fiscal:
             continue
-        try:
-            if "settle" not in fiscal:
-                continue
-            settle = fiscal.get("settle")
-            if not isinstance(settle, dict):
-                raise ValueError(f"{region_id}.settle 非字典")
-            p = settle.get("p")
-            st = settle.get("st")
-            if not isinstance(p, dict):
-                raise ValueError(f"{region_id}.settle.p 非字典")
-            if not isinstance(st, dict):
-                raise ValueError(f"{region_id}.settle.st 非字典")
-            meta_raw = settle.get("_meta") or {}
-            if not isinstance(meta_raw, dict):
-                raise ValueError(f"{region_id}.settle._meta 非字典")
-            meta = dict(meta_raw)
-            liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
-            land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
-            base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
-            _validate_fiscal_levy_share_meta(meta, region_id)
-        except ValueError as exc:
-            denominator_complete = False
-            tlog(
-                f"[fiscal-levy] {region_id} settle 解析失败，本{TURN_UNIT}饷率通道出列："
-                f"{type(exc).__name__}: {exc}"
-            )
-            continue
+        settle = fiscal.get("settle")
+        if not isinstance(settle, dict):
+            raise ValueError(f"{region_id}.settle 非字典")
+        p = settle.get("p")
+        st = settle.get("st")
+        if not isinstance(p, dict):
+            raise ValueError(f"{region_id}.settle.p 非字典")
+        if not isinstance(st, dict):
+            raise ValueError(f"{region_id}.settle.st 非字典")
+        meta_raw = settle.get("_meta") or {}
+        if not isinstance(meta_raw, dict):
+            raise ValueError(f"{region_id}.settle._meta 非字典")
+        meta = dict(meta_raw)
+        liao_seed = _fiscal_levy_liao_seed(meta, p, region_id)
+        land = _as_float(st.get("官民田"), ctx=f"{region_id}.settle.st.官民田")
+        base_transport = _fiscal_levy_base_transport(meta, p, liao_seed, region_id)
+        _validate_fiscal_levy_share_meta(meta, region_id)
         region_entries.append({
             "region_id": region_id,
             "fiscal": fiscal,

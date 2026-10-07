@@ -19,6 +19,7 @@ import pytest
 from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
 from tests.test_month_chain_1843 import _prepare_player_month
+from ming_sim.applier import StoredDocumentError
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extraction
 import ming_sim.issues as issues
@@ -350,7 +351,7 @@ def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
         db.conn.execute("DELETE FROM classes WHERE name='流民' AND region_id='shaanxi'")
     db.conn.commit()
 
-    with pytest.raises((ValueError, SettlementAbort)):
+    with pytest.raises((ValueError, SettlementAbort, StoredDocumentError)):
         _settle_month(state, db, {}, before_turn=state.turn, content=content, monkeypatch=monkeypatch)
 
 

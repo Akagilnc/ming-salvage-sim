@@ -224,12 +224,16 @@ def _originate_catches(db, state, content, dossier_id, names):
 
 
 def test_seed_guilt_structured_clean_vs_debt():
-    # 现约：只收结构化 severity∈{轻,中,重}；裸散文／解析失败不造罪（W4/#1896）。
+    # 现约：只收结构化 severity∈{轻,中,重}；合法空白/「无」不造罪；
+    # 持久损坏（裸散文/坏 JSON）走 StoredDocumentError，不洗成无罪。
+    from ming_sim.applier import StoredDocumentError
+
     assert not seed_guilt_counts_as_debt("")
     assert not seed_guilt_counts_as_debt(None)
     assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
     assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
-    assert not seed_guilt_counts_as_debt("血债")
+    with pytest.raises(StoredDocumentError):
+        seed_guilt_counts_as_debt("血债")
     assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
 
 
@@ -453,7 +457,7 @@ def test_monthly_actual_then_delivered_done(game):
 def test_gap_after_months_failed(game):
     db, state, content = game
     name = _minister(db)
-    _set_axes(db, name, loyalty=15, identity=85, seed_guilt="旧案")
+    _set_axes(db, name, loyalty=15, identity=85, seed_guilt="")
     oid = _issue(db, state, name, "必败密查", "无人真办", months=2, target=2)
     did = int(db.dossiers.get_for_secret_order(oid)["id"])
     # 两月有 origin 实物，执行态反噬仍不产生实进度（跳过发令月）
@@ -645,7 +649,7 @@ def test_monthly_actual_progress_preserves_selected_fidelity_in_sqlite(game):
     db, state, _ = game
     name = _minister(db)
     # The old loyalty-derived floor must not rewrite the selected execution state.
-    _set_axes(db, name, loyalty=20, identity=80, seed_guilt="x")
+    _set_axes(db, name, loyalty=20, identity=80, seed_guilt="")
     oid = _issue(db, state, name, "执行态由推演者决定", "本月执行态由推演者决定", months=2, target=2)
     state.turn += 1
     db.save_state(state)

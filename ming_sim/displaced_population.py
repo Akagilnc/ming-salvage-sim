@@ -57,12 +57,7 @@ def apply_levy_driven_transfers(
     rows = db.regions.read_apply_levy_driven_transfers(())
     for row in rows:
         region_id = str(row["id"])
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{region_id}.fiscal 持久 JSON 损坏，无法结算加派账") from exc
-        if not isinstance(fiscal, dict):
-            raise ValueError(f"{region_id}.fiscal 必须是 object，无法结算加派账")
+        fiscal = load_stored_object(row["fiscal"], label=f"{region_id}.fiscal")
         settle = fiscal.get("settle")
         # 财政月效的动态成员只包括已有 settle 基座的明省；legacy/内容扩展中
         # 合法的无基座省自然出列，不能让任意 delta apply 因此失败。

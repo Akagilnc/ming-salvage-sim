@@ -27,6 +27,7 @@ from ming_sim.army_pay import (
 )
 from ming_sim.assets import format_wanliang_amount
 from ming_sim.constants import TURN_UNIT
+from ming_sim.applier import load_stored_object
 from ming_sim.db import GameDB
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
 from ming_sim.exceptions import SettlementAbort
@@ -93,16 +94,9 @@ def _substrate_hub_salt_commerce_income_split(db: GameDB, *, strict: bool = True
     commerce_total = 0.0
     rows = RegionStore(db.conn).read_province_army_pay_container_total()
     for row in rows:
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError) as exc:
-            if not strict:
-                continue
-            raise ValueError(f"region {row['id']} fiscal JSON 非法，无法汇总盐商旁路") from exc
-        if not isinstance(fiscal, dict):
-            if not strict:
-                continue
-            raise ValueError(f"region {row['id']} fiscal 非字典，无法汇总盐商旁路")
+        fiscal = load_stored_object(
+            row["fiscal"], label=f"region {row['id']} fiscal",
+        )
         salt_total += _as_finite_nonnegative_float(
             f"region {row['id']} fiscal.salt_tax", fiscal.get("salt_tax", 0)
         )
@@ -120,12 +114,9 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
     rows = RegionStore(db.conn).read_settle_ming_province_substrate_ticks()
     for row in rows:
         region_id = str(row["id"])
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"region {region_id!r} fiscal JSON 非法，无法投影起运") from exc
-        if not isinstance(fiscal, dict):
-            raise ValueError(f"region {region_id!r} fiscal 非字典，无法投影起运")
+        fiscal = load_stored_object(
+            row["fiscal"], label=f"region {region_id} fiscal",
+        )
         if "settle" not in fiscal:
             continue
         settle = fiscal.get("settle")
@@ -356,22 +347,29 @@ def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
     due_by_region: Dict[str, float] = {}
     rows = RegionStore(db.conn).read_province_army_pay_container_total()
     for row in rows:
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError):
+        region_id = str(row["id"])
+        fiscal = load_stored_object(
+            row["fiscal"], label=f"region {region_id} fiscal",
+        )
+        # 合法缺 settle/p：该省无京运补需求。对象内基座损坏响亮失败。
+        if "settle" not in fiscal:
             continue
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
-        p = settle.get("p") if isinstance(settle, dict) else None
+        settle = fiscal.get("settle")
+        if not isinstance(settle, dict):
+            raise ValueError(f"region {region_id} settle 非字典")
+        if "p" not in settle:
+            continue
+        p = settle.get("p")
         if not isinstance(p, dict):
-            continue
+            raise ValueError(f"region {region_id} settle.p 非字典")
         raw = p.get("拨付gross", 0)
         if raw is None:
             continue
         amount = _as_settle_param_nonnegative_float(
-            f"region {row['id']} settle.p.拨付gross",
+            f"region {region_id} settle.p.拨付gross",
             raw,
         )
-        due_by_region[str(row["id"])] = amount
+        due_by_region[region_id] = amount
     return due_by_region
 
 
@@ -816,7 +814,7 @@ def _central_dues_with_haircut(
 def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, object]]:
     """月度财政 tick：固定收支（compute_budget_lines 定额）+ 军饷逐军 + 建筑逐项落账，LLM 推演前完成。"""
     if not getattr(db.conn, "_commit_suspended", False):
-        from ming_sim.applier import atomic
+        from ming_sim.applier import atomic, load_stored_object
         metrics_before = dict(state.metrics)
         try:
             with atomic(db):
