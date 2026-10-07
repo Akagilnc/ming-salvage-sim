@@ -216,9 +216,8 @@ def test_pure_audience_zero_ledger_turn_survives_reopen(restore_env):
     try:
         db2.reconcile_interrupted_chat_turns()
         proj = db2.build_chat_projection(minister)
-        roles = {(m["role"], int(m["chat_turn_id"])) for m in proj if m.get("chat_turn_id")}
-        assert ("user", ct) in roles
-        assert ("minister", ct) in roles
+        assert "四轮问对之一" in [m["content"] for m in proj if m["role"] == "user"]
+        assert "臣愚见如此。" in [m["content"] for m in proj if m["role"] == "minister"]
     finally:
         db2.close()
 
@@ -291,17 +290,18 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     db.reconcile_interrupted_chat_turns()
 
     rt = _retry_runtime(db, state, minister)
-    rt.retry_interrupted_reply(minister, ct)
+    payload = rt.retry_interrupted_reply(minister, ct)
+    assert payload["answer"] == "臣重奏：剿为先。"
 
-    # 记录无重复句：问话仍只两条，回话新落一条（按角色计数，不锁正文）。
+    # 记录无重复句：问话/回话正文原样运输。
     users = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_messages WHERE role='user'"
-    ).fetchone()["c"]
+        "SELECT content FROM chat_messages WHERE role='user'"
+    ).fetchall()
     replies = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_messages WHERE role='minister'"
-    ).fetchone()["c"]
-    assert users == 2
-    assert replies == 1
+        "SELECT content FROM chat_messages WHERE role='minister'"
+    ).fetchall()
+    assert [r["content"] for r in users] == ["剿抚孰先？", "续问军情？"]
+    assert [r["content"] for r in replies] == ["臣重奏：剿为先。"]
     # 轮完成：generating/interrupted → active，回话已链接。
     row = db.conn.execute(
         "SELECT status, minister_message_id FROM chat_turns WHERE id=?", (ct,)
@@ -334,9 +334,9 @@ def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env
     rt.retry_interrupted_reply(minister, ct)
     assert calls == ["court_break"]
     assert rt.reply_retries(minister) == []
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_messages WHERE role='minister'"
-    ).fetchone()["c"] == 1
+    assert [r["content"] for r in db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='minister'"
+    )] == ["臣遵旨。"]
 
 
 
@@ -448,23 +448,25 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM chat_messages WHERE role='user' AND id=?", (int(uid),)
     ).fetchone()["c"] == 1
-    assert db.conn.execute(
-        "SELECT COUNT(*) c FROM chat_messages WHERE role='user'"
-    ).fetchone()["c"] == 1
+    assert [
+        r["content"] for r in db.conn.execute(
+            "SELECT content FROM chat_messages WHERE role='user'"
+        ).fetchall()
+    ] == ["剿抚孰先？"]
     # 消费后无残留 rollback_items（否则将来重试成功→撤回会双还原）。
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM chat_turn_rollback_items WHERE chat_turn_id=?", (ct,)
     ).fetchone()["c"] == 0
 
-    # 再重试成功：问话仍只一条、回话新落一条（记录无重复句；不锁 mock 正文）。
+    # 再重试成功：问话仍只一条、回话新落一条（正文原样）。
     rt.session = _RetrySession(db, state, minister)
-    rt.retry_interrupted_reply(minister)
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_messages WHERE role='user'"
-    ).fetchone()["c"] == 1
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_messages WHERE role='minister'"
-    ).fetchone()["c"] == 1
+    payload = rt.retry_interrupted_reply(minister)
+    assert payload["answer"] == "臣重奏：剿为先。"
+    assert [
+        r["content"] for r in db.conn.execute(
+            "SELECT content FROM chat_messages WHERE role='user'"
+        ).fetchall()
+    ] == ["剿抚孰先？"]
 
 
 # ── finding3：reopen CAS——未赢的并发/双击重试不落第二条大臣回话 ─────────────
