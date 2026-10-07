@@ -1,9 +1,0 @@
-# command (seven BIN explicit):
-# env MING_SIM_AGY_BIN=/usr/bin/false MING_SIM_CODEX_BIN=/usr/bin/false MING_SIM_CLAUDE_BIN=/usr/bin/false MING_SIM_CURSOR_BIN=/usr/bin/false MING_SIM_KIMI_BIN=/usr/bin/false MING_SIM_GROK_BIN=/usr/bin/false MING_SIM_PI_BIN=/usr/bin/false PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python3 -m pytest -q -p no:cacheprovider tests/test_cli_backend.py tests/test_cli_transport_1465.py tests/test_cli_entry_1902.py tests/test_web_entry_1902.py tests/test_audience_restore_505.py tests/test_applier_contract.py tests/test_web_court_visibility.py tests/test_qa_s2_copy_prompts_1356_1402.py tests/test_cli_play_turn.py tests/test_web_chat_serialization_393.py tests/test_chat_stream_failpaths_393.py tests/test_settlement_write_guard_393.py tests/test_audience_background.py tests/test_cli_runner_error_typed_1299.py tests/test_declaration_dispatch_1835.py tests/test_commitment_display_348.py tests/test_rescript_draft_656.py tests/test_rescript_option_field_heal_1746.py
-........................................................................ [ 17%]
-........................................................................ [ 35%]
-........................................................................ [ 52%]
-........................................................................ [ 70%]
-........................................................................ [ 87%]
-...................................................                      [100%]
-411 passed in 8.29s

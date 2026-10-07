@@ -1,8 +1,0 @@
-1:PASS M1_cas_lost_returns_None: out=None
-2:PASS M2_web_retry_keyerror_fail_closed: raised=KeyError:'mut scene missing'; status=interrupted
-3:PASS M3a_fail_snapshot_loud_original_cause: raised=RuntimeError:snap boom; recorded=0; status=generating
-45:PASS M3b_fail_snapshot_unrestorable_honest: loyalty0=45 loyalty1=85 delta=40 status=generating rollback_items=0 raised=RuntimeError:重试 LLM 失败 capture_calls=2 note=host_snapshot_fault_unrestorable_not_safe_rollback
-46:PASS M3c_control_fail_retry_rolls_back_when_snapshot_ok: loyalty0=45 loyalty1=45
-48:PASS M4_terminate_no_kill: calls=['terminate', ('wait', 5)]
-49:PASS M5_canonicalize_loud_via_enrich: loud=True
-50:SUMMARY 7 / 7

@@ -1,7 +1,0 @@
-M4b pexpect terminate(force=False) in code: PASS
-M4c no executable child.close()/with spawn/terminate(force=True): PASS
-M4d close() default force=True documented+banned: PASS
-T5 helper defs absent + successors present: PASS
-T5 unique per-item reasons (==kept), each has 入口/断言, no generic phrase: PASS
-focus pytest 650 passed, 1 skipped: PASS
-SUMMARY: 6 / 6

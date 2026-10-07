@@ -1,3 +1,0 @@
-S2_FULL py=2976 web=317 total=3293 class_counts={'EXTERNAL_REAL_ENTRY': 3186, 'INPUT_ADAPT_OR_DOMAIN_FIRST_WRITE': 107}
-provisional={'EXTERNAL_REAL_ENTRY': 3152, 'INTERNAL_SHAPE_CANDIDATE': 68, 'HELPER_TOUCH_REVIEW': 39, 'EXTERNAL_OR_MIXED': 34}
-NO FOCUS whitelist; full TSV=s123-s2-full.tsv; classification=s123-s2-classification.md
