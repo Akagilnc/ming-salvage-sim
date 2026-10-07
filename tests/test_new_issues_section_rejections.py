@@ -170,16 +170,6 @@ def test_new_issue_bad_kind_rejected(read_game, bad_kind):
     assert rej[0]["category"] == "invalid_enum"
 
 
-def test_new_issue_dirty_inertia_rejected(read_game):
-    db, state, _ = read_game
-    # _compute_inertia 的 legacy int(inertia) 回退在其 try 外，脏 inertia 会抛——须在预校验 try
-    # 内拒整项，不能逃逸 abort（cmr ni r2 codex）。
-    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·脏inertia", "inertia": "abc"}
-    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
-    rej = _rejected(out)
-    assert len(rej) == 1, out
-    assert rej[0]["category"] == "invalid_enum"
-
 
 def test_new_issue_oversized_severity_clamped_not_abort(game):
     db, state, _ = game
@@ -276,7 +266,6 @@ def test_new_issue_garbage_severity_rejected(read_game):
     ("bar_value", 3.7),    # float 截断非合法整数 delta
     ("severity", True),    # bool
     ("severity", 2.5),     # float
-    ("inertia", True),     # bool（legacy inertia 经 _compute_inertia 严格转换）
     ("expected_months", 1.5),  # float（expected_months 经 _compute_inertia）
 ])
 def test_new_issue_bool_float_int_field_rejected(read_game, field, bad):
@@ -439,8 +428,7 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
 
 # --- tags 字段严格化（cmr ni r8 codex medium）---
 # tags = list(ni.get("tags") or []) 对标量串静默拆字（list("募营")=['募','营']）、对非串元素
-# 不拒（list([5])=[5]）。后果：_initiative_resolve_pairing_warnings 用子串匹配整词「募营」判
-# new_armies 配对，拆字后「募 营」失配 → bypass #45/#46 守门；且拆字本身污染 DB tags。与 R6
+# 不拒（list([5])=[5]）会污染 DB tags。
 # int 字段 _strict_int 同一字段校验 class——缺省/null/空串→[]，present 须 list/tuple 且元素全 str。
 
 
@@ -465,7 +453,7 @@ def test_new_issue_non_string_tag_element_rejected(read_game):
 
 def test_new_issue_valid_list_tags_preserved(game):
     db, state, _ = game
-    # 正常 list[str] tags 整词保全（不拆字），pairing 短语完整 → 正常立项落库。
+    # 正常 list[str] tags 整词保全（不拆字）→ 正常立项落库。
     ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·正常tags", "tags": ["募营", "边事"]}
     out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
     created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]

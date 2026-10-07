@@ -418,9 +418,10 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before + 1
 
 
-def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
-    """CLI 后端国策 enrich 没补出 resolve（或抛错）时，floor 兜最小回报，绝不入空壳（codexB）。"""
+def test_initiative_empty_resolve_accepted_when_enrich_empty(game, monkeypatch):
+    """CLI 后端国策 enrich 空回报时合法稀疏入库，不硬造民心地板。"""
     import ming_sim.cli_backend as _cb
+    import json as _j
     db, state, _ = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(_cb, "enrich_initiative_effects",
@@ -430,13 +431,12 @@ def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
     })
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='空回报国策'").fetchone()
-    assert row is not None                         # 国策入库了
-    import json as _j
-    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}   # floor 生效，非空壳
+    assert row is not None
+    assert _j.loads(row["effect_on_resolve"]) == {}
 
 
-def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypatch):
-    """runtime CLI 通道无 env 时，月末国策空回报也要走 CLI floor，不能落空壳。"""
+def test_runtime_cli_initiative_empty_resolve_without_backend_env(game, monkeypatch):
+    """runtime CLI 通道无 env 时，空回报仍可入库，不硬造地板。"""
     import json as _j
     from ming_sim.models import LLMConfig
     import ming_sim.cli_backend as _cb
@@ -462,7 +462,7 @@ def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypa
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='runtime空回报国策'").fetchone()
     assert row is not None
-    assert _j.loads(row["effect_on_resolve"]) == {"metrics": {"民心": 1}}
+    assert _j.loads(row["effect_on_resolve"]) == {}
 
 
 def test_api_channel_initiative_does_not_use_backend_env_floor(game, monkeypatch):

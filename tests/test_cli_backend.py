@@ -95,15 +95,6 @@ def test_enrich_army_parsed_and_normalized(monkeypatch):
     assert armies[0]["manpower"] == 20000
 
 
-def test_enrich_building_region_floor(monkeypatch):
-    canned = json.dumps({
-        "effect_on_resolve": {"buildings": [{"action": "create", "name": "格致局", "category": "科技"}]},
-        "ongoing_effects": {}, "effect_on_fail": {},
-    }, ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_agy", lambda prompt, **kw: (canned, 1))
-    out = cb.enrich_initiative_effects("设格致局", "")
-    assert out["effect_on_resolve"]["buildings"][0]["region_id"] == "beizhili"
-
 
 def test_enrich_backend_error_returns_empty_effects(monkeypatch):
     monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))

@@ -3503,25 +3503,17 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
         norm = _canonical_item_fields(obj) if obj else {}
     except Exception:
         norm = obj
-    # isinstance 守门：norm 或其子段被 LLM 给成非 dict 时归 {}，不让 dict("乱填") 抛错
-    # 越过上层 floor、把空壳国策放进库（CMR codexB）。
+    # isinstance 守门：norm 或其子段被 LLM 给成非 dict 时归 {}，不让 dict("乱填") 抛错。
     def _d(v):
         return v if isinstance(v, dict) else {}
     norm = _d(norm)
     resolve = _d(norm.get("effect_on_resolve"))
-    # 建筑 create 缺 region_id 兜底，免得静默落不了地。
-    # isinstance 守卫：LLM 可能把 buildings 给成真值非 list（true/数字/字符串），`or []` 兜不住
-    # （字符串还会逐字符迭代），`for b in 它` 抛 TypeError 崩回合（#117）——同文件 tags 的 list 守卫风格。
+    # isinstance 守卫：LLM 可能把 buildings 给成真值非 list；重置成 []，不补造 region_id。
     _bld = resolve.get("buildings")
     if not isinstance(_bld, list):
-        # 非 list 脏值（true/数字/字符串）：不仅跳迭代，还在源头把 resolve 里重置成 []，免脏值落库
-        # （PR#127 gemini：源头清洗，下游虽有守卫但不该存非规范值）。键不存在则不引入。
         _bld = []
         if "buildings" in resolve:
             resolve["buildings"] = _bld
-    for b in _bld:
-        if isinstance(b, dict) and str(b.get("action") or "").lower() == "create" and not b.get("region_id"):
-            b["region_id"] = "beizhili"
 
     return {
         "effect_on_resolve": resolve,

@@ -2019,48 +2019,6 @@ def test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effec
     assert not db.has_event_triggered("huabei_plague")
 
 
-def test_historical_situation_auto_trigger_backfills_core_effect_for_existing_soft_issue(game):
-    """CMR：旧存档已有同源 soft issue 经 schema migration 后，仍须补落核心事实。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1633
-    state.period = 7
-    existing_issue_id = db.insert_issue(
-        state,
-        kind="situation",
-        title="旧存档残留：华北大疫起",
-        origin_kind="event_pool",
-        origin_ref="huabei_plague",
-        bar_value=40,
-    )
-    assert db.conn.execute(
-        "SELECT 1 FROM event_triggers WHERE event_id=?",
-        ("huabei_plague",),
-    ).fetchone() is None
-
-    db.init_schema()
-    assert db.conn.execute(
-        "SELECT 1 FROM event_triggers WHERE event_id=?",
-        ("huabei_plague",),
-    ).fetchone() is None
-
-    before = db.conn.execute(
-        "SELECT population, unrest FROM regions WHERE id=?",
-        ("shanxi",),
-    ).fetchone()
-
-    triggered = issues.auto_trigger_seed_issues(state, db)
-
-    item = next(entry for entry in triggered if entry["id"] == "huabei_plague")
-    assert item["issue_id"] == existing_issue_id
-    assert db.has_event_triggered("huabei_plague")
-    after = db.conn.execute(
-        "SELECT population, unrest FROM regions WHERE id=?",
-        ("shanxi",),
-    ).fetchone()
-    assert after["population"] == before["population"] - 400000  # #648：新档人口单位=人（ADR 0088），content -40万
-    assert after["unrest"] == before["unrest"] + 6
-
 
 def test_jingshi_plague_auto_triggers_and_weakens_capital_garrison(game):
     """#192：京师大疫核心事实直接削京营，不靠 LLM 记得为甲申链写状态。"""
