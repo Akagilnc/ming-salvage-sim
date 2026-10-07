@@ -11,7 +11,6 @@ from __future__ import annotations
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
 import asyncio
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -71,24 +70,16 @@ def _body(expected_turn: int | None, *, cheat: str = ""):
 
 
 async def _issue_stream_terminal(body: web_app.IssueDecreeRequest) -> tuple[str, dict]:
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
     response = await web_app.api_issue_decree_stream(body)
     chunks = [
         chunk.decode() if isinstance(chunk, bytes) else chunk
         async for chunk in response.body_iterator
     ]
     serialized = "".join(chunks)
-    event = None
-    data_raw = None
-    for line in serialized.strip().splitlines():
-        if line.startswith("event:"):
-            event = line.split(":", 1)[1].strip()
-        elif line.startswith("data:"):
-            data_raw = line.split(":", 1)[1].strip()
-    assert event, serialized
-    try:
-        data = json.loads(data_raw or "{}")
-    except json.JSONDecodeError:
-        data = {"message": data_raw}
+    events = _parse_sse(serialized)
+    assert events, serialized
+    event, data = events[-1]
     return event, data if isinstance(data, dict) else {"message": data}
 
 

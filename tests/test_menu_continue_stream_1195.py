@@ -3,34 +3,16 @@ from __future__ import annotations
 
 from ming_sim.session_write_queue import ClassifiedWriteGate
 
-import json
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 import web_app
+from tests.test_chat_stream_failpaths_393 import _parse_sse
 from tests.wait_utils import reset_menu_path_leases, wait_until
 
 # 兼容旧调用名：真源在 wait_utils.reset_menu_path_leases。
 _reset_path_leases = reset_menu_path_leases
-
-
-def _parse_sse(text: str) -> list[tuple[str, dict]]:
-    events: list[tuple[str, dict]] = []
-    for block in text.strip().split("\n\n"):
-        if not block.strip():
-            continue
-        ev_name = ""
-        data_raw = ""
-        for line in block.splitlines():
-            if line.startswith("event: "):
-                ev_name = line[7:].strip()
-            elif line.startswith("data: "):
-                data_raw += line[6:]
-        if not ev_name or not data_raw:
-            continue
-        events.append((ev_name, json.loads(data_raw)))
-    return events
 
 
 def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):

@@ -6,7 +6,6 @@ ADR 0036/0006 机制零动。
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 from types import SimpleNamespace
 
@@ -150,6 +149,7 @@ class _ResolveGame:
 
 async def _consume_resolve_sse() -> list[tuple[str, object]]:
     """Drain the whole SSE; return [(event, payload), ...] in order."""
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
     response = await web_app.api_resolve_decisions_stream(
         web_app.ResolveDecisionsRequest(choices=[{"label": "发帑"}])
     )
@@ -157,22 +157,7 @@ async def _consume_resolve_sse() -> list[tuple[str, object]]:
         chunk.decode() if isinstance(chunk, bytes) else chunk
         async for chunk in response.body_iterator
     ]
-    serialized = "".join(chunks)
-    events: list[tuple[str, object]] = []
-    for block in serialized.strip().split("\n\n"):
-        if not block.strip():
-            continue
-        ev_name = ""
-        data_raw = ""
-        for line in block.splitlines():
-            if line.startswith("event: "):
-                ev_name = line[len("event: "):].strip()
-            elif line.startswith("data: "):
-                data_raw += line[len("data: "):]
-        if not ev_name or not data_raw:
-            continue
-        events.append((ev_name, json.loads(data_raw)))
-    return events
+    return _parse_sse("".join(chunks))
 
 
 def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):

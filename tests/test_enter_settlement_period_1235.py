@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import time
 from types import SimpleNamespace
 
@@ -282,18 +281,10 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
     status, body = asyncio.run(go())
     # #1842：转译耗尽 → SettlementAbort → SSE error + typed stage
     assert status == 200, body
-    terminal = None
-    for block in (body or "").strip().split("\n\n"):
-        cur: dict = {}
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                cur["event"] = line[len("event:"):].strip()
-            elif line.startswith("data:"):
-                cur["data"] = line[len("data:"):].strip()
-        if cur.get("event"):
-            terminal = cur
-    assert terminal and terminal.get("event") == "error", body
-    detail = json.loads(terminal.get("data") or "{}")
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
+    events = _parse_sse(body or "")
+    assert events and events[-1][0] == "error", events
+    detail = events[-1][1]
     assert isinstance(detail, dict), detail
     assert detail.get("stage") == "audience_translation_exhausted", detail
     assert detail.get("error_pack_path"), detail

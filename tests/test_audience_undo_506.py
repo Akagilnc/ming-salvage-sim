@@ -349,7 +349,7 @@ def test_undo_restores_staging_row_deleted_by_verbal_reject(game):
         "SELECT status, payload_json FROM pending_actions WHERE id = ?", (action_id,)
     ).fetchone()
     assert row is not None and row["status"] == "pending"
-    assert "蓟辽总督" in row["payload_json"]
+    assert json.loads(row["payload_json"])["office"] == "蓟辽总督"
 
 
 # ── AC12：已落地密令撤回后其全部结构化字段记录一并消失（无幽灵排除）──────────────

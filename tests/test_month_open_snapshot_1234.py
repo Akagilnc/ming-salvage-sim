@@ -350,15 +350,10 @@ def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
         return "".join(chunks)
 
     serialized = asyncio.run(_consume())
-    event = None
-    data_raw = None
-    for line in serialized.strip().splitlines():
-        if line.startswith("event:"):
-            event = line.split(":", 1)[1].strip()
-        elif line.startswith("data:"):
-            data_raw = line.split(":", 1)[1].strip()
-    assert event == "decisions", serialized
-    result = json.loads(data_raw or "{}")
+    from tests.test_chat_stream_failpaths_393 import _parse_sse
+    events = _parse_sse(serialized)
+    assert events and events[-1][0] == "decisions", events
+    result = events[-1][1]
     # stream 终态无 awaiting_decision 键；以 decisions 非空列表作外部结构等价钉。
     assert isinstance(result.get("decisions"), list), result
     assert len(result["decisions"]) == 1, result

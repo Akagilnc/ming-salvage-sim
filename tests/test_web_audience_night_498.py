@@ -381,18 +381,7 @@ def test_translation_failure_retry_and_undo_through_audience_http(web_game, monk
     assert stale.status_code == 404
 
 
-def _parse_sse(text: str) -> list[dict]:
-    events: list[dict] = []
-    for block in text.strip().split("\n\n"):
-        cur: dict = {}
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                cur["event"] = line[len("event:"):].strip()
-            elif line.startswith("data:"):
-                cur["data"] = line[len("data:"):].strip()
-        if cur:
-            events.append(cur)
-    return events
+from tests.test_chat_stream_failpaths_393 import _parse_sse
 
 
 async def _await_event_or_task(ev: threading.Event, task: asyncio.Task) -> None:
@@ -502,7 +491,7 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
     events = asyncio.run(scenario())
 
     # 相位拒绝：SSE error + 零新夜/新 chat（wire 无 phase code；不改生产协议）。
-    assert events and events[-1]["event"] == "error"
+    assert events and events[-1][0] == "error"
     assert _count(game.db, "audience_nights") == nights0
     assert _count(game.db, "chat_turns") == turns0
 
@@ -613,7 +602,7 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     night, chat_events, issue_events = asyncio.run(scenario())
 
     # 回话 done 先于流结束；end 表示回话尾随写入已 join。
-    assert chat_events[-1]["event"] == "end"
+    assert chat_events[-1][0] == "end"
     # 回话真实入档 + 对话轮升 active（#1849 reopen：殿上唯一入口）
     assert game.db.conn.execute(
         "SELECT COUNT(*) AS c FROM chat_messages WHERE minister_name=? AND role='minister'",
@@ -621,7 +610,7 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     assert game.db.conn.execute(
         "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "active"
     # 颁诏成功（done）+ 真实结算核：收夜封夜 + 推进回合 + 持久化
-    assert issue_events[-1]["event"] == "done"
+    assert issue_events[-1][0] == "done"
     assert an.get_night(game.db, night["id"])["status"] == "closed"
     assert int(game.state.turn) == turn_before + 1
     assert int(game.db.load_state().turn) == turn_before + 1
@@ -649,8 +638,8 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
 
     events = asyncio.run(scenario())
 
-    assert events[-1]["event"] == "done"
-    assert not ({"confirm", "reject", "pending_review"} & {event["event"] for event in events})
+    assert events[-1][0] == "done"
+    assert not ({"confirm", "reject", "pending_review"} & {name for name, _ in events})
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
     assert int(game.state.turn) == turn_before + 1
     assert not game.db.list_night_approved_pending(int(night["id"]), kind="directive")
@@ -774,9 +763,9 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
 
     night, issue_events, chat_events = asyncio.run(scenario())
     assert night is not None
-    assert chat_events[-1]["event"] == "end"
+    assert chat_events[-1][0] == "end"
     # 非伪造 in-flight：等待期间 issue 未完成（scenario 内）；工人终态后续跑成功。
-    assert issue_events[-1]["event"] == "done", issue_events
+    assert issue_events[-1][0] == "done", issue_events
     assert an.get_night(game.db, night["id"])["status"] == "closed"
     assert int(game.state.turn) == turn_before + 1
     assert int(game.db.load_state().turn) == turn_before + 1

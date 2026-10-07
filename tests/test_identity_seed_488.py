@@ -110,11 +110,16 @@ def test_required_dig_7_seed_roster_entries_are_persisted(game):
 def test_identity_and_seed_guilt_never_enter_minister_context(game):
     db, state, content = game
     from ming_sim.context import character_context
+    from ming_sim.qualitative import qualitative_character_axes
 
-    rendered = character_context(content.characters["王承恩"])
-    assert "identity" not in rendered
-    assert "seed_guilt" not in rendered
-    assert "95" not in rendered
+    character = content.characters["王承恩"]
+    axes = qualitative_character_axes(character)
+    # 读面只吃定性轴，不含 identity/seed_guilt 结构键或原始数值。
+    assert set(axes) == {"忠诚", "能力", "清廉", "胆略", "党派认同", "阴谋"}
+    assert all(isinstance(v, str) and not str(v).isdigit() for v in axes.values())
+    rendered = character_context(character)
+    for label, value in axes.items():
+        assert value in rendered, label
 
 
 def test_roster_has_no_cross_faction_aliases():

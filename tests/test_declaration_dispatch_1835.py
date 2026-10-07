@@ -228,7 +228,7 @@ def test_reference_to_nonexistent_entity_is_rejected_without_killing_sibling_ite
     assert len(rows) == 1
     assert rows[0]["section"] == "textual_facts"
     assert rows[0]["category"] == "hallucinated_id"
-    assert "子虚乌有之人" in rows[0]["item_json"]
+    assert json.loads(rows[0]["item_json"])["subject_id"] == "子虚乌有之人"
 
 
 def test_unknown_top_level_section_is_rejected_durably_without_dropping_sibling(game):
@@ -753,7 +753,7 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
     assert len(rows) == 1
     assert rows[0]["section"] == "textual_facts"
     assert rows[0]["category"] == "hallucinated_id"
-    assert "子虚乌有之人" in rows[0]["item_json"]
+    assert json.loads(rows[0]["item_json"])["subject_id"] == "子虚乌有之人"
 
     # 幂等：再结算一次不重复落账、不重复拒收。
     again = settle_staged_declarations_in_decree_order(db, state, ["decree:3", "decree:1"])

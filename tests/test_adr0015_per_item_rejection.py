@@ -20,9 +20,15 @@ def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(ga
         state.turn,
     )
     collector.flush_to_db(db)
-    row = db.conn.execute("SELECT item_json FROM rejection_reports").fetchone()
-    assert "中文" in row["item_json"]
-    assert "\\ud800" in row["item_json"]
+    row = db.conn.execute(
+        "SELECT item_json, reason, category, source FROM rejection_reports"
+    ).fetchone()
+    item = json.loads(row["item_json"])
+    # 内容身份：坏 surrogate 经 sanitize 后字段值含转义序列；不钉 JSON 载体字面编码。
+    assert item["title"] == "中文\\ud800"
+    assert row["reason"] == "坏"
+    assert row["category"] == "invalid_enum"
+    assert row["source"] == "player_decree"
 
 
 
@@ -50,15 +56,35 @@ def test_sqlite_text_sanitization_covers_issue_rows_and_advances(game):
         resolve_condition=bad_text,
         fail_condition=bad_text,
     )
-    issue_row = db.conn.execute("SELECT title, tags, ongoing_effects, effect_on_fail FROM issues WHERE id=?", (issue_id,)).fetchone()
-    assert "\\ud800" in issue_row["title"]
-    assert "\\ud800" in issue_row["tags"]
-    assert "中文" in issue_row["effect_on_fail"]
+    issue_row = db.conn.execute(
+        "SELECT title, tags, ongoing_effects, effect_on_fail FROM issues WHERE id=?",
+        (issue_id,),
+    ).fetchone()
+    # 纯文本列与 JSON 列均核字段值，不扫序列化载体字面。
+    escaped = "中文\\ud800"
+    assert issue_row["title"] == escaped
+    assert json.loads(issue_row["tags"]) == [escaped]
+    assert json.loads(issue_row["effect_on_fail"]) == {"metrics": {"民心": -1}, "note": escaped}
 
-    db.advance_issue(state, issue_id, trigger_kind=bad_text, trigger_ref=bad_text, stage_text=bad_text, narrative=bad_text, metric_delta={"note": bad_text})
-    adv_row = db.conn.execute("SELECT trigger_kind, trigger_ref, to_stage_text, narrative, metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id DESC", (issue_id,)).fetchone()
-    assert all("中文" in adv_row[col] and "\\ud800" in adv_row[col] for col in adv_row.keys() if isinstance(adv_row[col], str))
+    db.advance_issue(
+        state, issue_id,
+        trigger_kind=bad_text, trigger_ref=bad_text, stage_text=bad_text,
+        narrative=bad_text, metric_delta={"note": bad_text},
+    )
+    adv_row = db.conn.execute(
+        "SELECT trigger_kind, trigger_ref, to_stage_text, narrative, metric_delta "
+        "FROM issue_advances WHERE issue_id=? ORDER BY id DESC",
+        (issue_id,),
+    ).fetchone()
+    assert adv_row["trigger_kind"] == escaped
+    assert adv_row["trigger_ref"] == escaped
+    assert adv_row["to_stage_text"] == escaped
+    assert adv_row["narrative"] == escaped
+    assert json.loads(adv_row["metric_delta"]) == {"note": escaped}
 
     db.close_issue(state, issue_id, reason="failed", narrative=bad_text)
-    close_row = db.conn.execute("SELECT narrative FROM issue_advances WHERE issue_id=? ORDER BY id DESC", (issue_id,)).fetchone()
-    assert "中文" in close_row["narrative"] and "\\ud800" in close_row["narrative"]
+    close_row = db.conn.execute(
+        "SELECT narrative FROM issue_advances WHERE issue_id=? ORDER BY id DESC",
+        (issue_id,),
+    ).fetchone()
+    assert close_row["narrative"] == escaped

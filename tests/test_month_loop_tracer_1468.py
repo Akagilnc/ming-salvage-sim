@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -194,19 +193,7 @@ def _pending_payload(client: TestClient) -> dict:
 
 
 
-def _parse_sse(text: str) -> list[dict]:
-    """解析 SSE 文本为 [{event, data}, ...]（与仓内其他 ASGI tracer 同形）。"""
-    events: list[dict] = []
-    for block in (text or "").strip().split("\n\n"):
-        cur: dict = {}
-        for line in block.splitlines():
-            if line.startswith("event:"):
-                cur["event"] = line[len("event:"):].strip()
-            elif line.startswith("data:"):
-                cur["data"] = line[len("data:"):].strip()
-        if cur:
-            events.append(cur)
-    return events
+from tests.test_chat_stream_failpaths_393 import _parse_sse
 
 
 
@@ -229,13 +216,9 @@ def _post_issue_stream(
     # 流式入口 HTTP 层 200；业务失败走 event:error（含 409 令牌/锁语义）。
     events = _parse_sse(resp.text)
     assert events, f"{step}: empty SSE body={resp.text!r}"
-    terminal = events[-1]
-    ev = terminal.get("event")
-    raw = terminal.get("data") or "{}"
-    try:
-        data = json.loads(raw) if isinstance(raw, str) else raw
-    except json.JSONDecodeError:
-        data = {"message": raw}
+    ev, data = events[-1]
+    if not isinstance(data, dict):
+        data = {"message": data}
     if ev == "error":
         status = data.get("status_code") if isinstance(data, dict) else None
         assert status != 409, (
