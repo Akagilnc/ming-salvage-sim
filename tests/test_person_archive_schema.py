@@ -6,10 +6,6 @@ from ming_sim.models import Character
 from ming_sim.session import _sync_offices_from_db_impl
 
 
-def _column_info(db, table):
-    return {row["name"]: dict(row) for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
 def test_person_logs_accepts_audit_rows_for_existing_characters(game):
     """The audit table is not only present; it can persist an ADR 0009 log row."""
     db, state, _ = game

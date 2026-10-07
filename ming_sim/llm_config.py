@@ -415,6 +415,8 @@ def load_runtime_llm() -> Dict[str, object]:
         with open(RUNTIME_LLM_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except json.JSONDecodeError:
+        # Documented safe empty-config fallback; leave cause via existing logger.
+        logger.exception("load_runtime_llm JSON corrupt path=%s", RUNTIME_LLM_PATH)
         return {}
     except OSError:
         logger.exception("load_runtime_llm failed path=%s", RUNTIME_LLM_PATH)

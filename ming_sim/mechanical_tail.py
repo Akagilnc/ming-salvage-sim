@@ -93,21 +93,20 @@ def generate_ending_summary_for_tail(
 
     def _load_gazettes():
         loaded = []
-        if hasattr(db, "list_turn_reports"):
-            for row in db.list_turn_reports():
-                turn = int(row.get("turn") or 0)
-                if turn > int(closed_state.turn):
-                    continue
-                body = str(row.get("report") or row.get("body") or "")
-                if not body:
-                    continue
-                # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
-                loaded.append({
-                    "turn": turn,
-                    "year": int(row.get("year") or 0),
-                    "period": int(row.get("period") or 0),
-                    "body": body,
-                })
+        for row in db.list_turn_reports():
+            turn = int(row.get("turn") or 0)
+            if turn > int(closed_state.turn):
+                continue
+            body = str(row.get("report") or row.get("body") or "")
+            if not body:
+                continue
+            # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
+            loaded.append({
+                "turn": turn,
+                "year": int(row.get("year") or 0),
+                "period": int(row.get("period") or 0),
+                "body": body,
+            })
         return loaded
 
     reports = under(_load_gazettes)

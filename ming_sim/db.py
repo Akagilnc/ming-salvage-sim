@@ -2309,12 +2309,6 @@ class GameDB:
 
         cols = "(key, value, kind, note, budget_role, account, direction, display, sort_order)"
 
-        cur_ver_row = self.conn.execute(
-            "SELECT value FROM fiscal_config WHERE key = '__schema_version'"
-        ).fetchone()
-        if cur_ver_row is not None:
-            return  # 已有版本行：玩家科目神圣，不碰
-
         # 全新库：整体 seed 一次。
         self.conn.executemany(
             f"INSERT INTO fiscal_config {cols} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -2525,10 +2519,12 @@ class GameDB:
     # 字段才真生效——否则只动目录不动钱（账目与叙事脱节）。
     #   田赋无独立字段（=tax_per_turn 减其余三税的残差），裁撤走 tax_per_turn 压低；
     #   皇庄收入真读 fiscal_config.皇庄_base，裁撤/调额改 config 即生效，不在本表。
+    # Live salt/commerce side channels only. 辽饷 is catalogue/settle driven;
+    # do not write retired regions.fiscal.liao_xiang from scale/remove.
     _DYNAMIC_REGION_FIELD = {
-        "辽饷": "liao_xiang", "盐税": "salt_tax", "商税": "commerce_tax",
+        "盐税": "salt_tax", "商税": "commerce_tax",
     }
-    _SIDE_CHANNEL_REGION_FIELD = _DYNAMIC_REGION_FIELD  # #1899 alias
+    _SIDE_CHANNEL_REGION_FIELD = _DYNAMIC_REGION_FIELD
 
     def _stem_of(self, key: str) -> str:
         # 单层剥后缀;剥后仍带后缀 = 多重后缀垃圾 key（田赋_rate_base），返 "" 标记
@@ -8888,12 +8884,15 @@ class GameDB:
         # source_projection of the same source_id must not replace it.
         public_kept: set[str] = set()
         for row in rows:
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
+            raw_excluded = row["excluded_names"]
+            if raw_excluded in (None, ""):
                 excluded_names = []
+            else:
+                excluded_names = json.loads(raw_excluded)
             if not isinstance(excluded_names, list):
-                excluded_names = []
+                raise ValueError(
+                    f"excluded_names must be a JSON list, got {type(excluded_names).__name__}"
+                )
             key = str(row["source_id"] or "")
             is_public = str(row["kind"] or "") == "public"
             if key and key in public_kept and not is_public:
@@ -8917,18 +8916,24 @@ class GameDB:
         character_names = {str(row["name"]) for row in characters}
         for row in source_rows:
             participants = participant_roster_names(row["participant_roster"])
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
+            raw_excluded = row["excluded_names"]
+            if raw_excluded in (None, ""):
                 excluded_names = []
+            else:
+                excluded_names = json.loads(raw_excluded)
             if not isinstance(excluded_names, list):
-                excluded_names = []
-            try:
-                excluded_targets = json.loads(row["excluded_targets"] or "{}")
-            except (TypeError, ValueError):
+                raise ValueError(
+                    f"excluded_names must be a JSON list, got {type(excluded_names).__name__}"
+                )
+            raw_targets = row["excluded_targets"]
+            if raw_targets in (None, ""):
                 excluded_targets = {}
+            else:
+                excluded_targets = json.loads(raw_targets)
             if not isinstance(excluded_targets, dict):
-                excluded_targets = {}
+                raise ValueError(
+                    f"excluded_targets must be a JSON object, got {type(excluded_targets).__name__}"
+                )
             target_people = {
                 str(name) for name in excluded_targets.get("people", [])
             }
@@ -18617,6 +18622,30 @@ class GameDB:
                 result.append((table, columns))
         return result
 
+
+    @staticmethod
+    def _load_persistent_name_list(raw: object, *, field: str) -> List[str]:
+        """Parse a durable JSON name list. Empty/missing is empty; corrupt raises."""
+        if raw in (None, ""):
+            return []
+        parsed = json.loads(raw) if not isinstance(raw, (list, tuple)) else list(raw)
+        if not isinstance(parsed, list):
+            raise ValueError(f"{field} must be a JSON list, got {type(parsed).__name__}")
+        return [str(name) for name in parsed]
+
+    @staticmethod
+    def _load_persistent_exclusion_targets(raw: object, *, field: str) -> Dict[str, List[str]]:
+        """Parse durable excluded_targets. Empty/missing is empty; corrupt raises."""
+        if raw in (None, ""):
+            return {"people": [], "offices": []}
+        payload = json.loads(raw) if not isinstance(raw, dict) else raw
+        if not isinstance(payload, dict):
+            raise ValueError(f"{field} must be a JSON object, got {type(payload).__name__}")
+        return {
+            "people": [str(x) for x in payload.get("people", [])],
+            "offices": [str(x) for x in payload.get("offices", [])],
+        }
+
     def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
         """Return explicit exclusions attached to a source.
 
@@ -18624,6 +18653,7 @@ class GameDB:
         participant deny-list snapshot; read explicit exclusions from its
         source instead. A projection supplied without a registered source
         has no synthesized roster boundary and retains its explicit list.
+        Corrupt persistent exclusion JSON must not become an empty allow-all.
         """
         source = str(source_id or "")
         row = self.conn.execute(
@@ -18634,10 +18664,9 @@ class GameDB:
             (source, source),
         ).fetchone()
         if row is not None:
-            try:
-                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
-            except (TypeError, ValueError):
-                return []
+            return self._load_persistent_name_list(
+                row["excluded_names"], field="character_knowledge_events.excluded_names",
+            )
         # Private briefs and public disclosure events inherit exclusions from
         # secret_orders. Bare ``secret_order:N`` shared sources are not produced
         # and are not a lookup key here (register gate rejects that prefix).
@@ -18650,10 +18679,9 @@ class GameDB:
                 "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,)
             ).fetchone()
             if order is not None:
-                try:
-                    return [str(name) for name in json.loads(order["excluded_names"] or "[]")]
-                except (TypeError, ValueError):
-                    return []
+                return self._load_persistent_name_list(
+                    order["excluded_names"], field="secret_orders.excluded_names",
+                )
         # #1829 reopen：公开说法排除名单与正文同表，按 public_saying:<id> 回查。
         match = re.fullmatch(r"public_saying:(\d+)", source)
         if match:
@@ -18662,19 +18690,17 @@ class GameDB:
                 (int(match.group(1)),),
             ).fetchone()
             if saying is not None:
-                try:
-                    return [str(name) for name in json.loads(saying["excluded_names"] or "[]")]
-                except (TypeError, ValueError):
-                    return []
+                return self._load_persistent_name_list(
+                    saying["excluded_names"], field="public_sayings.excluded_names",
+                )
             return []
         row = self.conn.execute(
             "SELECT excluded_names FROM character_knowledge_sources WHERE source_id=?", (source,)
         ).fetchone()
         if row is not None:
-            try:
-                return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
-            except (TypeError, ValueError):
-                return []
+            return self._load_persistent_name_list(
+                row["excluded_names"], field="character_knowledge_sources.excluded_names",
+            )
         return []
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
@@ -18689,12 +18715,10 @@ class GameDB:
                 "SELECT excluded_targets FROM secret_orders WHERE id=?",
                 (int(match.group(1)),),
             ).fetchone()
-            try:
-                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            return {"people": [str(x) for x in payload.get("people", [])],
-                    "offices": [str(x) for x in payload.get("offices", [])]}
+            return self._load_persistent_exclusion_targets(
+                row["excluded_targets"] if row is not None else None,
+                field="secret_orders.excluded_targets",
+            )
         # #1829 reopen：公开说法排除目标与正文同表。
         match = re.fullmatch(r"public_saying:(\d+)", source)
         if match:
@@ -18702,23 +18726,18 @@ class GameDB:
                 "SELECT excluded_targets FROM public_sayings WHERE id=?",
                 (int(match.group(1)),),
             ).fetchone()
-            try:
-                payload = json.loads((row["excluded_targets"] if row else "{}") or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            return {"people": [str(x) for x in payload.get("people", [])],
-                    "offices": [str(x) for x in payload.get("offices", [])]}
+            return self._load_persistent_exclusion_targets(
+                row["excluded_targets"] if row is not None else None,
+                field="public_sayings.excluded_targets",
+            )
         row = self.conn.execute(
             "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)
         ).fetchone()
         if row is None:
             return {"people": [], "offices": []}
-        try:
-            payload = json.loads(row["excluded_targets"] or "{}")
-        except (TypeError, ValueError):
-            payload = {}
-        return {"people": [str(x) for x in payload.get("people", [])],
-                "offices": [str(x) for x in payload.get("offices", [])]}
+        return self._load_persistent_exclusion_targets(
+            row["excluded_targets"], field="character_knowledge_sources.excluded_targets",
+        )
 
     def record_participation_record(
         self, state: GameState, record: Mapping[str, object], *, kind: str,
@@ -18825,13 +18844,10 @@ class GameDB:
             "WHERE kind='secret_order' AND status IN ('pending','failed')"
         ).fetchall()
         for row in brief_rows:
-            raw = row["origin_chat_message_ids"] if row is not None else "[]"
-            try:
-                parsed = json.loads(raw or "[]")
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(parsed, list):
-                continue
+            raw = row["origin_chat_message_ids"] if row is not None else None
+            parsed = self._load_persistent_name_list(
+                raw, field="secret_order_briefs.origin_chat_message_ids",
+            )
             for item in parsed:
                 try:
                     mid = int(item)
@@ -18840,12 +18856,15 @@ class GameDB:
                 if mid > 0:
                     out[mid] = True
         for row in pending_rows:
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                continue
+            raw_payload = row["payload_json"]
+            if raw_payload in (None, ""):
+                payload = {}
+            else:
+                payload = json.loads(raw_payload)
             if not isinstance(payload, dict):
-                continue
+                raise ValueError(
+                    f"pending_actions.payload_json must be a JSON object, got {type(payload).__name__}"
+                )
             mid = self._parse_origin_chat_message_id(payload)
             if mid is not None:
                 out.setdefault(mid, False)
@@ -19431,18 +19450,24 @@ class GameDB:
         persisted_title = title
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
-        try:
-            prior_targets = json.loads(row["excluded_targets"] or "{}")
-        except (TypeError, ValueError):
+        raw_prior = row["excluded_targets"]
+        if raw_prior in (None, ""):
             prior_targets = {}
+        else:
+            prior_targets = json.loads(raw_prior)
         if not isinstance(prior_targets, dict):
-            prior_targets = {}
-        try:
-            legacy_people = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError):
+            raise ValueError(
+                f"secret_order excluded_targets must be a JSON object, got {type(prior_targets).__name__}"
+            )
+        raw_legacy = row["excluded_names"]
+        if raw_legacy in (None, ""):
             legacy_people = []
+        else:
+            legacy_people = json.loads(raw_legacy)
         if not isinstance(legacy_people, list):
-            legacy_people = []
+            raise ValueError(
+                f"secret_order excluded_names must be a JSON list, got {type(legacy_people).__name__}"
+            )
         people, offices = canonical_secret_order_exclusions(
             self.content, [*legacy_people, *prior_targets.get("people", [])],
             prior_targets.get("offices", []),
@@ -19478,12 +19503,15 @@ class GameDB:
             )
             dossier = self.get_dossier_for_secret_order(int(order_id))
             if dossier is not None:
-                try:
-                    payload = json.loads(str(dossier.get("payload_json") or "{}"))
-                except (TypeError, ValueError):
+                raw_payload = dossier.get("payload_json")
+                if raw_payload in (None, ""):
                     payload = {}
+                else:
+                    payload = json.loads(str(raw_payload))
                 if not isinstance(payload, dict):
-                    payload = {}
+                    raise ValueError(
+                        f"decree_dossier payload_json must be a JSON object, got {type(payload).__name__}"
+                    )
                 payload["title"] = persisted_title
                 payload["content"] = content
                 payload["tags"] = json.loads(tags_json)

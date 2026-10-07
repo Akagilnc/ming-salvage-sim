@@ -89,25 +89,36 @@ def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
 
 
 def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
-    """Parse excluded_names and excluded_targets.people/offices from one row."""
+    """Parse excluded_names and excluded_targets.people/offices from one row.
+
+    Corrupt persistent exclusion JSON must not become empty permissions.
+    Missing columns still mean no list; malformed JSON propagates.
+    """
     try:
-        excluded_names = {
-            str(name) for name in json.loads(row["excluded_names"] or "[]")
-        }
-    except (TypeError, ValueError, KeyError, IndexError):
-        excluded_names = set()
-    targets: object = {}
+        raw_names = row["excluded_names"]
+    except (KeyError, IndexError, TypeError):
+        raw_names = None
+    if raw_names in (None, ""):
+        excluded_names: set[str] = set()
+    else:
+        parsed_names = json.loads(raw_names)
+        if not isinstance(parsed_names, list):
+            raise ValueError(
+                f"excluded_names must be a JSON list, got {type(parsed_names).__name__}"
+            )
+        excluded_names = {str(name) for name in parsed_names}
     try:
         raw_targets = row["excluded_targets"]
     except (KeyError, IndexError, TypeError):
         raw_targets = None
-    if raw_targets:
-        try:
-            targets = json.loads(raw_targets or "{}")
-        except (TypeError, ValueError):
-            targets = {}
+    if raw_targets in (None, ""):
+        targets: object = {}
+    else:
+        targets = json.loads(raw_targets)
     if not isinstance(targets, dict):
-        targets = {}
+        raise ValueError(
+            f"excluded_targets must be a JSON object, got {type(targets).__name__}"
+        )
     people = {str(name) for name in (targets.get("people") or [])}
     offices = {str(name) for name in (targets.get("offices") or [])}
     return excluded_names, people, offices
@@ -333,12 +344,15 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
         if source_id.startswith("turn_report:") and not source_id.endswith(":public"):
             continue
         participants = participant_roster_names(row["participant_roster"])
-        try:
-            excluded = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError):
+        raw_excluded = row["excluded_names"]
+        if raw_excluded in (None, ""):
             excluded = []
+        else:
+            excluded = json.loads(raw_excluded)
         if not isinstance(excluded, list):
-            excluded = []
+            raise ValueError(
+                f"source excluded_names must be a JSON list, got {type(excluded).__name__}"
+            )
         # A participant-rostered source is private to its participants unless
         # an explicit exclusion says otherwise.  Empty rosters are not added
         # here: public events already have their own projection path.

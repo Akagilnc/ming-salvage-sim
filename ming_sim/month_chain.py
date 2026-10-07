@@ -327,14 +327,8 @@ def _month_fact_materials(
     ).fetchall()
     for row in rows:
         decree_ref = str(row["decree_ref"] or "")
-        try:
-            declaration = json.loads(row["declaration_json"] or "{}")
-        except json.JSONDecodeError:
-            declaration = {}
-        try:
-            visible = json.loads(row["visible_refs_json"] or "{}")
-        except json.JSONDecodeError:
-            visible = {}
+        declaration = json.loads(row["declaration_json"] or "{}")
+        visible = json.loads(row["visible_refs_json"] or "{}")
         if not include_secret_sources and (
             _decree_ref_is_secret(db, decree_ref)
             or _secret_sourced(declaration)
@@ -376,10 +370,7 @@ def _month_fact_materials(
         ):
             if not include_secret_sources and str(row["source"] or "") == "secret_order":
                 continue
-            try:
-                item = json.loads(row["item_json"] or "{}")
-            except json.JSONDecodeError:
-                item = {}
+            item = json.loads(row["item_json"] or "{}")
             if not include_secret_sources and (
                 _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
             ):

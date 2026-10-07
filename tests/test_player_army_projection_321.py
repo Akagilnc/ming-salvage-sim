@@ -10,7 +10,6 @@ import web_app
 from ming_sim.db import (
     GameDB,
     _player_army_situation,
-    mutiny_loyalty_cap,
 )
 from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
@@ -230,7 +229,6 @@ def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
         assert int(row["loyalty"]) == 95
         assert float(row["arrears"]) == pytest.approx(0)
         assert int(row["manpower"]) == 10000
-        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
         assert derive_army_mutiny_state(row) == "哗变"
         pay = reopened._army_pay(row)
         sit_before = _player_army_situation(row, pay)
@@ -253,7 +251,6 @@ def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):
         assert int(after["redemption_count"]) == 1
         assert float(after["arrears"]) == pytest.approx(0)
         assert int(after["manpower"]) == 10000
-        assert mutiny_loyalty_cap(2, redemption_count=1) == 70
         assert derive_army_mutiny_state(after) == "不满"
         sit_after = _player_army_situation(after, reopened._army_pay(after))
         assert sit_after["mutiny_tier"] == "不满"
