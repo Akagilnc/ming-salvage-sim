@@ -1,6 +1,6 @@
-"""#656 急务票面写口／desk 契约（phase2 票拟 generate/select 已随 F2 退役）。
+"""#656 急务 desk／读口契约（phase2 票拟 generate/select 与批量覆写写口已随 F2 退役）。
 
-覆盖 pending_decisions kind 扩列、票拟行覆写与跨月留存、层 A option 形状辅助。
+覆盖 pending_decisions kind 隔离、跨月留存读口、层 A option 形状辅助。
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from ming_sim.db import GameDB
 
 # #1778 决定 3：生成批次的票拟必带参与名单（ADR 0053 三档，至少一名主办）。
 _ROSTER = [{"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None}]
+
 
 def _layer_a_opt(label: str = "拟", hint: str = "h", **kw) -> dict:
     """#657 生产层 A option 夹具（层 A option 夹具）。"""
@@ -30,98 +31,94 @@ def _layer_a_opt(label: str = "拟", hint: str = "h", **kw) -> dict:
     base.update(kw)
     return base
 
+
 def _two_opts(a: str = "甲", ha: str = "h1", b: str = "乙", hb: str = "h2", **kw) -> list:
     return [_layer_a_opt(label=a, hint=ha, **kw), _layer_a_opt(label=b, hint=hb, **kw)]
 
-# ---------------------------------------------------------------------------
-# F2.1/F2.2 载体与字段映射
-# ---------------------------------------------------------------------------
 
-def test_save_and_list_rescript_drafts_roundtrip(game):
+def _insert_draft_row(
+    db,
+    turn: int,
+    *,
+    idx: int,
+    title: str,
+    context: str = "",
+    options: list | None = None,
+    event_id: str = "",
+    actor_name: str = "",
+    actor_office: str = "",
+    actor_faction: str = "",
+    status: str = "pending",
+    revision_round: int = 0,
+    prior_options_json: str = "[]",
+) -> None:
+    """测试夹具：直接落一条 rescript_draft 行（非生产写口，非旧批量覆写算法）。"""
+    eid = event_id or f"urgent:{int(turn)}:{int(idx)}"
+    db.conn.execute(
+        "INSERT INTO pending_decisions\n"
+        " (turn, idx, event_id, title, context, options_json, choice_json,\n"
+        "  status, kind, actor_name, actor_office, actor_faction,\n"
+        "  revision_round, prior_options_json)\n"
+        " VALUES (?, ?, ?, ?, ?, ?, '', ?, 'rescript_draft', ?, ?, ?, ?, ?)",
+        (
+            int(turn),
+            int(idx),
+            eid,
+            title,
+            context,
+            json.dumps(options or [], ensure_ascii=False),
+            status,
+            actor_name,
+            actor_office,
+            actor_faction,
+            int(revision_round),
+            prior_options_json,
+        ),
+    )
+
+
+def test_list_rescript_drafts_projects_planted_rows(game):
+    """读口契约：list_rescript_drafts 投影既有 rescript_draft 行字段。"""
     db, state, _content = game
     turn = state.turn
-    db.save_rescript_drafts(turn, [
-        {
-            "event_id": "issue:42",
-            "title": "陕西告饥",
-            "context": "秦地赤旱千里，臣愚以为赈济不可缓。",
-            "options": [{"label": "发帑赈济", "hint": "所安者饥民"}],
-            "actor_name": "测试首辅", "actor_office": "内阁首辅", "actor_faction": "阉党",
-        },
-        {"title": "无局急务", "context": "", "options": [
-            {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""},
-        ]},
-    ])
+    _insert_draft_row(
+        db, turn, idx=0, event_id="issue:42", title="陕西告饥",
+        context="秦地赤旱千里，臣愚以为赈济不可缓。",
+        options=[{"label": "发帑赈济", "hint": "所安者饥民"}],
+        actor_name="测试首辅", actor_office="内阁首辅", actor_faction="阉党",
+    )
+    _insert_draft_row(
+        db, turn, idx=1, title="无局急务",
+        options=[{"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}],
+    )
+    db.conn.commit()
     drafts = db.list_rescript_drafts()
     assert [d["title"] for d in drafts] == ["陕西告饥", "无局急务"]
     first = drafts[0]
-    assert first["event_id"] == "issue:42"          # 权威 issue 回指原样保留
+    assert first["event_id"] == "issue:42"
     assert first["context"] == "秦地赤旱千里，臣愚以为赈济不可缓。"
     assert first["options"] == [{"label": "发帑赈济", "hint": "所安者饥民"}]
     assert first["status"] == "pending"
     assert first["actor_name"] == "测试首辅"
     assert first["actor_office"] == "内阁首辅"
     assert first["actor_faction"] == "阉党"
-    second = drafts[1]
-    # 无对应 issue 的急务＝确定性合成 id urgent:{turn}:{idx}
-    assert second["event_id"] == f"urgent:{turn}:1"
+    assert drafts[1]["event_id"] == f"urgent:{turn}:1"
 
-def test_rescript_draft_idx_continues_after_decision_rows(game):
-    db, state, _content = game
-    turn = state.turn
-    db.save_pending_decisions(turn, [
-        {"title": "抉择一", "context": "c", "options": [
-            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
-        {"title": "抉择二", "context": "c", "options": [
-            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
-    ])
-    db.save_rescript_drafts(turn, [
-        {"title": "急务", "context": "", "options": [
-            {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
-    ])
-    rows = db.list_pending_decisions(turn)
-    # A6 后 HITL 缝只回 decision 行；draft 续编经 list_rescript_drafts 验证
-    assert [r["idx"] for r in rows] == [0, 1]
-    assert all(r["kind"] == "decision" for r in rows)
-    drafts = db.list_rescript_drafts()
-    assert [d["idx"] for d in drafts] == [2]  # 与 decision 行共占 (turn, idx) 主键续编
-
-def test_clear_pending_decisions_keeps_rescript_drafts(game):
-    """F2.4 定音点：phase2 清除只清 decision 行；rescript_draft 跨月留存。"""
-    db, state, _content = game
-    turn = state.turn
-    db.save_pending_decisions(turn, [
-        {"title": "抉择", "context": "c", "options": [
-            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
-    ])
-    db.save_rescript_drafts(turn, [
-        {"title": "急务", "context": "", "options": [
-            {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
-    ])
-    db.clear_pending_decisions(turn)
-    # decision 行清；draft 行仍在案头（跨月留存）。A6 后 draft 不经
-    # list_pending_decisions 读，直接验表。
-    rows = db.conn.execute(
-        "SELECT kind FROM pending_decisions WHERE turn=?", (turn,)
-    ).fetchall()
-    assert [r["kind"] for r in rows] == ["rescript_draft"]
-    assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]
 
 def test_save_pending_decisions_keeps_rescript_drafts(game):
-    """判修 C2（run 01a02d20）：save_pending_decisions 与 clear/save_rescript_drafts
-    同款按 kind 收窄——decision 盘面覆写只清只写 kind='decision'。
-    生产危险路：phase1 落 decision → phase2 落票拟 → 同回合重结算再覆
-    decision 盘面，旧写者不得连带清除 rescript_draft 行（F2/A6 不变式闭合）。"""
+    """save_pending_decisions 只清只写 kind='decision'，不连带清除 rescript_draft。"""
     db, state, _content = game
     turn = state.turn
     db.save_pending_decisions(turn, [
         {"title": "抉择", "context": "c", "options": [
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
     ])
-    db.save_rescript_drafts(turn, [
-        {"title": "急务", "context": "待票拟", "options": [
-            {"label": "甲", "hint": "一"}, {"label": "乙", "hint": "二"}]},
-    ])
+    _insert_draft_row(
+        db, turn, idx=1, title="急务", context="待票拟",
+        options=[{"label": "甲", "hint": "一"}, {"label": "乙", "hint": "二"}],
+        event_id=f"urgent:{turn}:1",
+    )
+    db.conn.commit()
     draft_before = db.list_rescript_drafts()[0]
     db.save_pending_decisions(turn, [
         {"title": "抉择改一", "context": "c2", "options": [
@@ -129,7 +126,6 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
         {"title": "抉择改二", "context": "c3", "options": [
             {"label": "c", "hint": ""}, {"label": "d", "hint": ""}]},
     ])
-    # decision 由一条增长为两条时仍完整覆写；draft 行重排但身份和内容不变。
     rows = db.list_pending_decisions(turn)
     assert [r["title"] for r in rows] == ["抉择改一", "抉择改二"]
     assert [r["idx"] for r in rows] == [0, 1]
@@ -139,54 +135,9 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
     for field in ("event_id", "title", "context", "options"):
         assert draft_after[field] == draft_before[field]
 
-def test_save_rescript_drafts_overwrites_not_duplicates(game):
-    db, state, _content = game
-    turn = state.turn
-    for _ in range(2):
-        db.save_rescript_drafts(turn, [
-            {"title": "急务", "context": "", "options": [
-                {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
-        ])
-    assert len(db.list_rescript_drafts()) == 1
-
-def test_repeated_overwrite_keeps_stable_synthetic_ids(game):
-    """A3 判词：先删后算 idx——相同 decision 盘面重复覆写得到相同 idx 与
-    `urgent:{turn}:{idx}` 合成身份，不随被删旧行漂移；无 UUID/映射账。"""
-    db, state, _content = game
-    turn = state.turn
-    db.save_pending_decisions(turn, [
-        {"title": "抉择一", "context": "c", "options": [
-            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
-        {"title": "抉择二", "context": "c", "options": [
-            {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
-    ])
-
-    def _drafts(title_a: str, title_b: str) -> list:
-        return [
-            {"title": title_a, "context": "导语甲", "options": [
-                {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
-            {"title": title_b, "context": "导语乙", "options": [
-                {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}]},
-        ]
-
-    db.save_rescript_drafts(turn, _drafts("急务甲", "急务乙"))
-    first = db.list_rescript_drafts()
-    assert [d["event_id"] for d in first] == [f"urgent:{turn}:2", f"urgent:{turn}:3"]
-    # 同盘面覆写：行被替换、合成身份不变
-    db.save_rescript_drafts(turn, _drafts("改拟甲", "改拟乙"))
-    second = db.list_rescript_drafts()
-    assert [d["title"] for d in second] == ["改拟甲", "改拟乙"]  # 确证替换发生
-    assert [d["event_id"] for d in second] == [f"urgent:{turn}:2", f"urgent:{turn}:3"]
-    # decision 行 idx 不受影响
-    decisions = db.list_pending_decisions(turn)
-    assert [d["idx"] for d in decisions] == [0, 1]
-
-# ---------------------------------------------------------------------------
-# F1.3/F2.5 崩溃恢复：不重跑票拟步（持久层读回）＋restore 往返无损
-# ---------------------------------------------------------------------------
 
 def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game, tmp_path):
-    """F2.5 restore 断言（AWAITING 暂停态存档点）：phase1 暂停时尚无票拟行，restore 后同形。"""
+    """AWAITING 暂停态：仅有 decision 行时 restore 后同形。"""
     db, state, content = game
     turn = state.turn
     db.save_pending_decisions(turn, [
@@ -205,19 +156,20 @@ def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game, tmp_path):
     finally:
         restored.close()
 
-# ---------------------------------------------------------------------------
-# 票拟与本月上下文同存（#1846 已删 ready 降级）
-# ---------------------------------------------------------------------------
 
-def _ready_with_drafts(db, state, drafts):
-    if drafts:
-        db.save_rescript_drafts(state.turn, drafts)
-
-def _draft_rows(title: str) -> list:
-    return [{"title": title, "context": "旧导语", "options": [
-        {"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}],
-        "actor_name": "测试首辅", "actor_office": "内阁首辅", "actor_faction": "阉党",
-    }]
+def _plant_draft(db, state, title: str) -> None:
+    turn = int(state.turn)
+    row = db.conn.execute(
+        "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
+        (turn,),
+    ).fetchone()
+    idx = int(row[0] or 0)
+    _insert_draft_row(
+        db, turn, idx=idx, title=title, context="旧导语",
+        options=[{"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}],
+        actor_name="测试首辅", actor_office="内阁首辅", actor_faction="阉党",
+    )
+    db.conn.commit()
 
 def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
     """A6+#657：list_pending_decisions 仍只回 decision；批红案头 desk 合并投影含急务。
@@ -234,8 +186,7 @@ def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
         {"title": "抉择", "context": "c", "options": [
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
     ])
-    _ready_with_drafts(db, state, _draft_rows("急务"))
-    # 本月上下文 + decision 与 draft 同回合并存
+    _plant_draft(db, state, "急务")
 
     rows = db.list_pending_decisions(turn)
     assert [r["kind"] for r in rows] == ["decision"]
@@ -417,12 +368,11 @@ def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
             json.dumps([[{"label": "旧甲", "hint": "oh"}]], ensure_ascii=False),
         ),
     )
-    db.save_rescript_drafts(turn, [{
-        "title": "本月急务",
-        "context": "当月",
-        "options": _two_opts("丙", "h3", "丁", "h4"),
-        "actor_name": "次辅", "actor_office": "内阁次辅", "actor_faction": "阉党",
-    }])
+    _insert_draft_row(
+        db, turn, idx=0, title="本月急务", context="当月",
+        options=_two_opts("丙", "h3", "丁", "h4"),
+        actor_name="次辅", actor_office="内阁次辅", actor_faction="阉党",
+    )
     db.save_pending_decisions(turn, [{
         "title": "本月抉择",
         "context": "decision",
@@ -470,7 +420,9 @@ def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
     decisions = db.list_pending_decisions(turn)
     assert all("revision_round" in d for d in decisions)
 
-    # #656 不变式：clear/save decision 不碰 rescript_draft
-    db.clear_pending_decisions(turn)
+    # #656 不变式：save_pending_decisions 不碰 rescript_draft
+    db.save_pending_decisions(turn, [{
+        "title": "抉择再写", "context": "c", "options": _two_opts("准", "", "驳", ""),
+    }])
     assert any(d["title"] == "本月急务" for d in db.list_rescript_drafts())
     assert any(d["title"] == "旧急务甲" for d in db.list_rescript_desk(turn))

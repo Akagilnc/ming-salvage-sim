@@ -17,6 +17,35 @@ from tests.test_month_loop_tracer_1468 import (  # noqa: F401
     tracer_client,
 )
 
+def _plant_drafts(db, turn, drafts):
+    """测试夹具：插入 rescript_draft 行（非生产批量覆写口）。"""
+    turn = int(turn)
+    row = db.conn.execute(
+        "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
+        (turn,),
+    ).fetchone()
+    idx = int(row[0] or 0)
+    for d in drafts:
+        event_id = str(d.get("event_id") or "").strip() or f"urgent:{turn}:{idx}"
+        db.conn.execute(
+            """INSERT INTO pending_decisions
+               (turn, idx, event_id, title, context, options_json, choice_json,
+                status, kind, actor_name, actor_office, actor_faction)
+               VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)""",
+            (
+                turn, idx, event_id,
+                str(d.get("title") or ""),
+                str(d.get("context") or ""),
+                json.dumps(d.get("options") or [], ensure_ascii=False),
+                str(d.get("actor_name") or ""),
+                str(d.get("actor_office") or ""),
+                str(d.get("actor_faction") or ""),
+            ),
+        )
+        idx += 1
+
+
+
 # #1778 决定 3：拟票大臣把参与名单写进票拟（主办可多人）；代码不按职司表配人。
 _OWNER_ROSTER = [
     {"character_id": "毕自严", "tier": "主办", "role": "总核赈务", "delegator_id": None},
@@ -151,7 +180,7 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
     alt = normalize_rescript_layer_a_option({
         **_OWNER_OPTION, "label": "缓征", "hint": "b", "transaction_category": "钱粮",
     })
-    db.save_rescript_drafts(int(state.turn), [{
+    _plant_drafts(db, int(state.turn), [{
         "title": "陕西告饥",
         "context": "秦地赤旱",
         "options": [opt, alt],

@@ -74,7 +74,12 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
     db.save_state(state)
 
     def _phase2(_state, _db, *_args, **_kwargs):
-        _db.clear_pending_decisions(turn)
+        # 对抗性清理：验证亲裁选择已落入事件账，不依赖已退役的 clear 写口。
+        _db.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (int(turn),),
+        )
+        _db.conn.commit()
         return "ok"
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)

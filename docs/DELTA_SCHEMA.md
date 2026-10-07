@@ -262,7 +262,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 | `expected_months` | int |
 | `end_turn` | int，硬时限承诺到期回合；默认 0 |
 | `commitment_kind` | 空或 `"until_stop"`；承诺 issue 专用标记，不能只靠 `origin_kind=decree` 区分 |
-| `resolve_condition` | 文本；旧结案条件 / 兼容字段 |
+| `resolve_condition` | 文本；普通 issue 叙事结案条件（承诺停止条件只认 `stop_condition`） |
 | `stop_condition` | dict；落库到 `issues.stop_condition` 时以 JSON 字符串保存。条件 dict 用 `{"army.guanning.arrears":"<=0"}` 这种形态：key 带表/对象/字段，operator 写在 value 内 |
 | `bar_good_meaning` / `bar_bad_meaning` | 文案 |
 | `ongoing_effects` / `effect_on_resolve` / `effect_on_fail` | dict，月度持续/结案/失败效果 |

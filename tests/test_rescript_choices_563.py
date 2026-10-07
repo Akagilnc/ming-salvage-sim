@@ -6,6 +6,36 @@ import ming_sim.cli_backend as cli_backend
 from tests.dossier_test_helpers import rejected_verdict
 
 
+def _plant_drafts(db, turn, drafts):
+    """测试夹具：插入 rescript_draft 行（非生产批量覆写口）。"""
+    turn = int(turn)
+    row = db.conn.execute(
+        "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
+        (turn,),
+    ).fetchone()
+    idx = int(row[0] or 0)
+    for d in drafts:
+        event_id = str(d.get("event_id") or "").strip() or f"urgent:{turn}:{idx}"
+        db.conn.execute(
+            """INSERT INTO pending_decisions
+               (turn, idx, event_id, title, context, options_json, choice_json,
+                status, kind, actor_name, actor_office, actor_faction)
+               VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)""",
+            (
+                turn, idx, event_id,
+                str(d.get("title") or ""),
+                str(d.get("context") or ""),
+                json.dumps(d.get("options") or [], ensure_ascii=False),
+                str(d.get("actor_name") or ""),
+                str(d.get("actor_office") or ""),
+                str(d.get("actor_faction") or ""),
+            ),
+        )
+        idx += 1
+
+
+
+
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
     return db.create_decree_dossier(
         state,
@@ -379,7 +409,7 @@ def test_657_capability_revalidate_on_follow(game):
         "transaction_category": "督赈",
     })
     assert opt["draft_capability"] == derive_draft_capability(opt)
-    db.save_rescript_drafts(int(state.turn), [{
+    _plant_drafts(db, int(state.turn), [{
         "title": "急", "context": "c",
         "options": [opt, {"label": "备", "hint": "b",
                            "draft_capability": derive_draft_capability({"label": "备"})}],
