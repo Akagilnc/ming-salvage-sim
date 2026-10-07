@@ -13421,20 +13421,6 @@ class GameDB:
             self.conn.commit()
         return triggered
 
-    def merge_grant_reconciliation_into_execution_note(
-        self, dossier_id: int, *, commit: bool = True,
-    ) -> Optional[str]:
-        """S10 结案消费对账真源：经 merge_execution_note 单一写口增补说明。"""
-        history = self.list_dossier_reconciliations(int(dossier_id))
-        if not history:
-            return None
-        latest = history[-1]
-        fragment = (
-            f"押解对账：应解{int(latest['ordered_amount'])}两，"
-            f"实抵{int(latest['arrived_amount'])}两"
-        )
-        return self.merge_execution_note(int(dossier_id), fragment, commit=commit)
-
     def _backfill_proposed_appointment_break_ranks(self) -> None:
         """Idempotently upgrade in-flight pre-#562 appointment dossiers."""
         from ming_sim.office_rank import appointment_break_rank
@@ -15986,39 +15972,6 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         return project_execution_liability_parties(dossier.get("participant_roster"))
 
-    def merge_execution_note(
-        self, dossier_id: int, fragment: str, *, commit: bool = True,
-    ) -> str:
-        """下游说明片段合并写口（#565；S12/#567 消费方）。
-
-        初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
-        """
-        owns_transaction = self.owns_transaction() if commit else False
-        text = str(fragment or "").strip()
-        if not text:
-            raise ValueError("说明片段不能为空")
-        row = self.get_decree_dossier(dossier_id)
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        existing = str(row.get("execution_note") or "").strip()
-        if text in existing.split("；"):
-            merged = existing
-        elif existing:
-            merged = f"{existing}；{text}"
-        else:
-            merged = text
-        if merged != existing:
-            self.conn.execute(
-                """
-                UPDATE decree_dossiers
-                SET execution_note=?, updated_at=CURRENT_TIMESTAMP
-                WHERE id=?
-                """,
-                (merged, int(dossier_id)),
-            )
-            self._commit_dossier_write(commit, owns_transaction=owns_transaction)
-        return merged
-
     def validate_joint_liability_affected_parties(
         self, affected_parties: object, outcome: str,
     ) -> None:
@@ -16068,7 +16021,9 @@ class GameDB:
             return False
         primary_intensity = self._EXECUTION_OUTCOME_INTENSITY[outcome]
         secondary_intensity = self._INTENSITY_DOWNGRADE[primary_intensity]
-        reason_text = str(reason or "执行连坐").strip() or "执行连坐"
+        # reason 常承接 execution_note 原文：空白只判定，落边/费用语境不 strip。
+        reason_raw = str(reason or "")
+        reason_text = reason_raw if reason_raw.strip() else "执行连坐"
         identity = self._JOINT_LIABILITY_COST_IDENTITY
         origin = f"dossier:{int(dossier_id)}:{identity}"
 
@@ -16093,29 +16048,27 @@ class GameDB:
                 str(row["name"])
                 for row in self.conn.execute("SELECT name FROM factions")
             }
-            note_names: List[str] = []
             # 投影已先定档后去重（primary 胜）；同派系 UNIQUE 保留主责额度。
+            # #1900：连坐归属留在 list_execution_liability_parties / 关系边结构化账，
+            # 不向 execution_note 模板增补（P6 / ADR 0142 原文零删改）。
             for party in project_execution_liability_parties(
                 dossier.get("participant_roster"),
             ):
                 person = str(party["character_id"])
                 if party["responsibility"] == "primary":
                     intensity = primary_intensity
-                    role_label = "主办"
                 else:
                     intensity = secondary_intensity
-                    role_label = "委派"
                 row = self.conn.execute(
                     "SELECT faction,status FROM characters WHERE name=?", (person,),
                 ).fetchone()
                 if row is None:
                     continue
-                note_names.append(f"{person}（{role_label}）")
                 if str(row["status"] or "") == "dead":
                     logging.getLogger(__name__).warning("跳过已故连坐责任人%s", person)
                     continue
                 if intensity is None:
-                    # 执行人已是 weak 时次责无更低档→零机械扣、仍进走样说明。
+                    # 执行人已是 weak 时次责无更低档→零机械扣。
                     continue
                 magnitude = self._REACTION_INTENSITY[intensity]
                 delta = self._REACTION_SIGN["negative"] * magnitude
@@ -16133,14 +16086,6 @@ class GameDB:
                         self.adjust_factions(
                             {faction: {"satisfaction": delta}}, commit=False,
                         )
-
-            if note_names:
-                # P4：只写定性人名归属，不落 weak/strong/枚举裸词。
-                self.merge_execution_note(
-                    dossier_id,
-                    "连坐归属：" + "、".join(note_names),
-                    commit=False,
-                )
         return True
 
     def save_pending_promulgation_verdicts(

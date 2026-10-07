@@ -5,7 +5,7 @@ Seams:
 - grant_arrival_bounds（引擎既有押解折损范围；护行界严于无护行）
 - list_dossier_reconciliations（被护案卷×回合键控，restore 无损）
 - 玩家月链对账与案卷月度写口
-- dossier_executions 适配器经 merge_execution_note 合并对账说明（S10 单写）
+- dossier_executions 结案后核账事实留 list_dossier_reconciliations（不改 execution_note 原文）
 - 不改 economy_moves / 国库二次扣
 
 #1900：沿途损耗归引擎核算；本文件实抵取护行口径区间中位，不接提案入参。
@@ -132,8 +132,8 @@ def test_escort_progress_stays_on_the_secret_order_and_survives_restore(game):
     reopened.close()
 
 
-def test_close_merges_recon_note_without_second_treasury_debit(game):
-    """S10 结案后对账行在账上；不二次扣库、不改原流水。"""
+def test_close_keeps_recon_structured_without_second_treasury_debit(game):
+    """S10 结案后对账行在结构化账上；不二次扣库、不改原流水、不改 execution_note。"""
     db, state, content = game
     before_inner = int(state.metrics["内库"])
     gid = _in_transit_grant(db, state, amount=ORDERED)
@@ -145,18 +145,20 @@ def test_close_merges_recon_note_without_second_treasury_debit(game):
     assert int(state.metrics["内库"]) == after_grant_inner
     assert db.list_economy_moves_for_dossier(gid) == moves_before
 
+    note = "  赈银押解到达\n"
     result = issue_engine.apply_score_extraction(
         db, state,
         {"dossier_executions": [{
             "dossier_id": gid,
             "outcome": "fulfilled",
-            "note": "赈银押解到达",
+            "note": note,
         }]},
         content=content,
     )
     assert result["dossier_executions"] == [{"dossier_id": gid, "outcome": "fulfilled"}]
     closed = db.get_decree_dossier(gid)
     assert closed["status"] == "closed"
+    assert closed["execution_note"] == note  # 原文零删改，无核账模板增补
     row = db.list_dossier_reconciliations(gid)[-1]
     assert row["ordered_amount"] == ORDERED
     assert row["loss_amount"] == ORDERED - row["arrived_amount"]

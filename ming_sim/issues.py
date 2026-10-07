@@ -2206,7 +2206,7 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
                 "responsible_faction_ids": responsible_factions,
                 "dossier_id": did,
                 "decree_text": str(row["decree_text"] or "").strip(),
-                "execution_note": str(row["execution_note"] or "").strip(),
+                "execution_note": str(row["execution_note"] or ""),
                 "execution_outcome": str(row["execution_outcome"] or "").strip(),
                 "beyond_intent": True,
                 "reported_bands": list(fork_state.get("reported_bands") or []),
@@ -7787,8 +7787,10 @@ def _apply_score_extraction_body(
                 raise ValueError(
                     "执行结果必须为 fulfilled/degraded/failed/transformed"
                 )
-            note = str(item.get("note") or "").strip()
-            if not note:
+            # P6 / ADR 0142：执行说明自由文本零删改——空白只在副本上判定非空，
+            # 落库一律存原文（与 dossier link note 同形）。
+            note = str(item.get("note") or "")
+            if not note.strip():
                 raise ValueError("执行说明不能为空")
             # #565：显式 affected_parties 仅校验门闩（契约§5），不驱动机械写路。
             raw_parties = (
@@ -7802,10 +7804,8 @@ def _apply_score_extraction_body(
             db.record_dossier_execution(
                 dossier_id, outcome, note, state.turn, close=True, commit=False,
             )
-            # #567：S10 结案同源读被护侧对账，经 merge_execution_note 增补（单写口）。
-            db.merge_grant_reconciliation_into_execution_note(
-                dossier_id, commit=False,
-            )
+            # #567 / #1900：核账事实留在 list_dossier_reconciliations 结构化账，
+            # 不向 execution_note 模板增补或覆盖原文。
             # #619/#622：表报终值旁路——仅 degraded/transformed 挂奏报行；
             # 变形案载承办人假象（不得回填判官真值）；progress_band 定性中文。
             if outcome in {"degraded", "transformed"}:
