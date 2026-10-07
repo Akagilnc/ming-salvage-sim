@@ -127,12 +127,12 @@ _SUMMON_TRAVEL_TONE_PREFIX = "行程语气:"
 
 
 def _travel_tone_tag(value: object) -> str:
-    from ming_sim.settlement.preflight import normalize_travel_tone
+    from ming_sim.entities.character.transit import normalize_travel_tone
     return f"{_SUMMON_TRAVEL_TONE_PREFIX}{normalize_travel_tone(value)}"
 
 
 def _travel_tone_from_tags(tags: Sequence[Any]) -> str:
-    from ming_sim.settlement.preflight import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
+    from ming_sim.entities.character.transit import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
     tones = [
         normalize_travel_tone(str(tag)[len(_SUMMON_TRAVEL_TONE_PREFIX):])
         for tag in tags if str(tag).startswith(_SUMMON_TRAVEL_TONE_PREFIX)
@@ -1710,7 +1710,7 @@ def update_summon_travel_tone(
     name = str(person_name or "").strip()
     if not name:
         raise DeclarationDataError("传召人名不能为空")
-    from ming_sim.settlement.preflight import normalize_travel_tone
+    from ming_sim.entities.character.transit import normalize_travel_tone
     tone = normalize_travel_tone(travel_tone)
     target = None
     for item in list_unsettled_summons(db):
@@ -1875,7 +1875,7 @@ def commit_fresh_summons_for_night(
                 for item in items:
                     origins.append(str(item["origin_id"]))
                 continue
-            from ming_sim.settlement.preflight import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
+            from ming_sim.entities.character.transit import TRAVEL_SPEED_BY_TONE, normalize_travel_tone
             travel_tone = max(
                 (normalize_travel_tone(item.get("travel_tone")) for item in items),
                 key=TRAVEL_SPEED_BY_TONE.__getitem__,

@@ -1,9 +1,0 @@
-[PASS] C6_fixed_cue_absent: ask_in_session=False; normalize(mutated)='none'
-[PASS] C7_preserve_vs_strip: preserved='  按模型声明条件办结  \n' stripped='按模型声明条件办结'
-[PASS] C7_mutation_red_restore_green: mutated='按模型声明条件办结' restored='  按模型声明条件办结  \n'
-[PASS] C2_no_nest_in_source: extend_present=True
-[PASS] C1_month_chain_wired: ok
-[PASS] C4_frozen_red: FrozenInstanceError
-[PASS] C5_no_declare_closed_in_section: ok
----
-7/7 probes passed

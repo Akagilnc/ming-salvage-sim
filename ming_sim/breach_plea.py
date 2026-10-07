@@ -56,21 +56,8 @@ _BREACH_KINDS_TRIGGER_0056 = frozenset({
     BREACH_KIND_POLICY_REVERSAL,
 })
 
-FOUNDATION_JUST_STARTED = "just_started"
-FOUNDATION_HALFWAY = "halfway"
-FOUNDATION_ROOTED = "rooted"
-
-# 根基档界具名阈值（禁裸字面量；非完成度数值列）
-_BAR_ROOTED = 70
-_BAR_MID_LOW = 30
-_SPENT_AMOUNT_HALFWAY = 1  # 已投入金额达此即有资格入中档（与进度/段数合判）
-
 # 断供：当月实拨低于承诺月供的此比例 → 欠额达阈
 _FUNDING_ARREARS_RATIO = 0.5
-
-# 办到一半国势倒退：0014 涌现缝 seed 事件 id（供承诺反噬等松手机制引用；
-# 撤诺 finalize_persist 不再代写此后果——归模型声明）。
-HALFWAY_SETBACK_EVENT_ID = "breach_halfway_setback"
 
 
 _DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)(?::.*)?$")
@@ -429,74 +416,6 @@ def project_breach_plea_scene(
         "absorbed_breach_kinds": list(meta.get("absorbed_breach_kinds") or []),
         "channel": "audience_pending",
     }
-
-
-def _stages_passed_from_records(db: Any, commitment_ref: int, n_stages: int) -> int:
-    """已过段数：读 staged consumed todo 实际段结算记录（禁 bar 算术）。"""
-    if n_stages <= 0:
-        return 0
-    row = db.conn.execute(
-        """
-        SELECT COUNT(*) AS c FROM next_audience_todos
-        WHERE commitment_ref=? AND entry_kind=? AND status=?
-        """,
-        (int(commitment_ref), ENTRY_KIND_STAGED, TODO_STATUS_CONSUMED),
-    ).fetchone()
-    return min(n_stages, max(0, int(row["c"] or 0)))
-
-
-def _spent_amount_and_fiscal_count(
-    db: Any, row: Any,
-) -> Tuple[int, int]:
-    """已投入：金额（economy 负流水绝对值）与 fiscal 条数分账。"""
-    spent_amount = 0
-    fiscal_count = 0
-    origin = str(row["origin_ref"] or "")
-    did = parse_dossier_id(origin)
-    if did is not None:
-        for mv in db.list_economy_moves_for_dossier(int(did)):
-            delta = int(mv.get("delta") or 0)
-            if delta < 0:
-                spent_amount += -delta
-        fiscal_count += len(db.list_fiscal_effects_for_dossier(int(did)))
-    if origin:
-        for r in db.conn.execute(
-            "SELECT delta FROM economy_ledger WHERE origin_ref=? AND delta<0",
-            (origin,),
-        ).fetchall():
-            # list_economy_moves 已按 dossier 计；此处仅补非 dossier origin
-            if did is None:
-                spent_amount += abs(int(r["delta"] or 0))
-    return spent_amount, fiscal_count
-
-
-def assess_foundation_tier(db: Any, commitment_ref: int) -> str:
-    """根基三档：只读实况（已过段数 / 已投入 / bar），不读奏报 progress_band。
-
-    ADR 0073：奏报永不改世界账。反噬分档是世界后果门，不得吃 reported rail。
-    """
-    row = _issue_row(db, int(commitment_ref))
-    if row is None:
-        return FOUNDATION_JUST_STARTED
-    stages = normalize_commitment_stages(
-        row["stages_json"] if "stages_json" in row.keys() else None
-    )
-    n_stages = len(stages)
-    bar = int(row["bar_value"] or 0)
-    stages_passed = _stages_passed_from_records(db, int(commitment_ref), n_stages)
-    spent_amount, _fiscal_count = _spent_amount_and_fiscal_count(db, row)
-
-    if bar >= _BAR_ROOTED:
-        return FOUNDATION_ROOTED
-    if n_stages >= 2 and stages_passed >= n_stages:
-        return FOUNDATION_ROOTED
-    if (
-        (_BAR_MID_LOW <= bar < _BAR_ROOTED)
-        or (n_stages >= 2 and 0 < stages_passed < n_stages)
-        or (spent_amount >= _SPENT_AMOUNT_HALFWAY and bar >= _BAR_MID_LOW)
-    ):
-        return FOUNDATION_HALFWAY
-    return FOUNDATION_JUST_STARTED
 
 
 def reclaim_bundled_authorities(

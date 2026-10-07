@@ -109,7 +109,6 @@ class SettlementOutcome:
     breach_plea: SectionResult = field(default_factory=lambda: SectionResult([], []))
     credit_event: SectionResult = field(default_factory=lambda: SectionResult([], []))
     relation_edge: SectionResult = field(default_factory=lambda: SectionResult([], []))
-    affair: SectionResult = field(default_factory=lambda: SectionResult([], []))
 
     # 结局判定不是落库段，上浮编排器（ADR 0150 §4.3）。
     victory_status: Optional[Dict[str, object]] = None
@@ -139,7 +138,6 @@ class SettlementOutcome:
             "breach_plea_resolutions": self.breach_plea,
             "credit_event_resolutions": self.credit_event,
             "relation_edge_event_resolutions": self.relation_edge,
-            "affair_declarations": self.affair,
         }
         if self.fiscal is not None:
             flat["fiscal_removes"] = self.fiscal.removes

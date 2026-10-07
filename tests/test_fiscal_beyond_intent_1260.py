@@ -1,7 +1,7 @@
 """#1260 fiscal 三表 beyond_intent 全链 + 读端单源化 + 嵌套别名。
 
 S1 写端 tracer（三族 + 负向）
-S2 纯 fiscal 旨外 → 终裁/fork/反噬接通
+S2 纯 fiscal 旨外 → 终裁/fork
 S3 嵌套通道「旨外恶果」别名 → ledger=1
 """
 
@@ -9,11 +9,6 @@ from __future__ import annotations
 
 import json
 
-from ming_sim.commitment_backlash import (
-    BACKLASH_ORIGIN_KIND,
-    SOURCE_DEFORMATION_EXPOSURE,
-    backlash_origin_ref,
-)
 from ming_sim.due_review import apply_pending_due_reviews
 from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
@@ -267,33 +262,11 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     dossier = db.get_decree_dossier(did)
     assert dossier["execution_outcome"] == "transformed"
 
-    # Backlash gate: pure fiscal beyond_intent qualifies
-    # Re-open a fresh dossier path for backlash (execution already closed above).
-    # Use the same closed transformed dossier + halfway foundation.
-    # Foundation needs spend; use plain (non-beyond) economy so fiscal remains the beyond source.
-    db.record_issue_economy_move(
-        state, "国库", -25, "投入", "半途根基",
-        origin_ref=origin, beyond_intent=0, commit=True,
-    )
-    cid = _insert_commitment(
-        db, state, title="借旨新税反噬诺", origin_ref=origin, bar_value=45,
-    )
-    # Ensure closed_turn is in the past relative to trigger turn
-    state.turn = int(state.turn) + 1
-    hits = db.trigger_commitment_backlashes(state, commit=True)
-    assert any(
-        h.get("source_kind") == SOURCE_DEFORMATION_EXPOSURE
-        and h.get("trigger_ref") == f"issue:{cid}"
-        for h in hits
-    ), hits
-    assert db.find_any_issue_by_origin(
-        BACKLASH_ORIGIN_KIND,
-        backlash_origin_ref(cid, SOURCE_DEFORMATION_EXPOSURE),
-    ) is not None
 
 
-def test_s2_pure_fiscal_without_beyond_intent_fulfilled_no_backlash(game, content):
-    """无旨外 fiscal 效果 → 终裁 fulfilled；transformed 无 beyond → 不立案。"""
+
+def test_s2_pure_fiscal_without_beyond_intent_fulfilled(game, content):
+    """无旨外 fiscal 效果 → 终裁 fulfilled。"""
     db, state, _ = game
     did = _executing_policy(db, state, token="s2-neg")
     origin = f"dossier:{did}"
@@ -307,29 +280,7 @@ def test_s2_pure_fiscal_without_beyond_intent_fulfilled_no_backlash(game, conten
     )
     assert result["verdict"]["outcome"] == "fulfilled", result
 
-    # Separate dossier: transformed text without beyond → no backlash
-    did2 = _executing_policy(db, state, token="s2-neg2")
-    origin2 = f"dossier:{did2}"
-    db.record_issue_economy_move(
-        state, "国库", -25, "投入", "半途根基2",
-        origin_ref=origin2, beyond_intent=0, commit=True,
-    )
-    # fiscal effect present but no beyond flag
-    settle_delta(state, db, {'fiscal_creates': [{'key': '无旗税目', 'account': '国库', 'direction': 'income', 'init_value': 5, 'reason': '无旗', 'origin_ref': origin2}]}, SettlementContext(content=content))
-    cid = _insert_commitment(
-        db, state, title="无分叉变形诺", origin_ref=origin2, bar_value=45,
-    )
-    db.record_dossier_execution(
-        did2, "transformed", "名实已乖（无旨外账）", int(state.turn),
-        close=True, commit=True,
-    )
-    state.turn = int(state.turn) + 1
-    hits = db.trigger_commitment_backlashes(state, commit=True)
-    assert not any(
-        h.get("source_kind") == SOURCE_DEFORMATION_EXPOSURE
-        and h.get("trigger_ref") == f"issue:{cid}"
-        for h in hits
-    ), hits
+
 
 
 # ── S3：嵌套通道别名 ────────────────────────────────────────────────

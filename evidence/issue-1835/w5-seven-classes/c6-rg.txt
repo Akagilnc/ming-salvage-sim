@@ -1,7 +1,0 @@
-tests/test_fiscal_substrate_bridge.py:3613:    assert "纯军饷漏斗" not in (liaodong["_meta"].get("postures") or [])
-tests/test_fiscal_substrate_bridge.py:3622:    assert "纯军饷漏斗" not in (dongjiang["_meta"].get("postures") or [])
-tests/test_fiscal_substrate_bridge.py:3636:        assert "纯军饷漏斗" not in (settle.get("_meta") or {}).get("postures", [])
-ming_sim/db.py:4799:            meta.pop("standalone_military_pay_due", None)
-ming_sim/db.py:4800:            meta.pop("standalone_military_pay_arrears", None)
-ming_sim/db.py:4999:            meta.pop("standalone_military_pay_due", None)
-ming_sim/db.py:5000:            meta.pop("standalone_military_pay_arrears", None)

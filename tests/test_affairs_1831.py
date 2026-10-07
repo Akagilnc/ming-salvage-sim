@@ -100,9 +100,9 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
 
 
 
-def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
+def test_same_name_affairs_are_not_merged(game):
+    """同名事务不合并；顶层 affair_declarations 已随退休协议退出，不另立专用段。"""
     db, state, _ = game
-    minister = _minister(db)
     first = db.affairs.open(
         name=NINGYUAN, origin=ORIGIN,
         year=state.year, period=state.period, turn=state.turn,
@@ -112,63 +112,47 @@ def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
         year=state.year, period=state.period, turn=state.turn,
     )
     assert first.id != second.id
-    before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    settle_delta(state, db, {'affair_declarations': [_declaration()]}, SettlementContext(open_affair_ids_at_input=set()))
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
-    try:
-        db.create_decree_dossiers(
-            state,
-            action_type="assignment",
-            decree_text="调洪承畴赴宁远",
-            target_kind="issue",
-            target_id="ningyuan-general",
-            executor_kind="character",
-            executor_id=minister,
-            payload={
-                "assignee_id": minister,
-                "affair_declaration": _declaration(attach="close", affair_id=first.id),
-            },
-        )
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("expected birth close to fail")
     assert db.affairs.get(first.id).status == "open"
-    for bad_id in (True, 1.5):
-        closed = settle_delta(state, db, {'affair_declarations': [{'attach': 'close', 'affair_id': bad_id}]}, SettlementContext(open_affair_ids_at_input={first.id}))
-        assert db.affairs.get(first.id).status == "open"
-        assert any(
-            row.category == "invalid_shape"
-            and isinstance(row.item, dict)
-            and row.item.get("raw_value") == {"attach": "close", "affair_id": bad_id}
-            for row in closed.affair.rejected
-        )
+    assert db.affairs.get(second.id).status == "open"
 
 
 
 
 
 
-def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
+def test_typed_affair_new_issues_share_provenance(game):
+    """嵌套出生/关联仍经现役契约落账；不经已删顶层了结段。"""
     db, state, content = game
     existing = db.affairs.open(
         name=NINGYUAN, origin=ORIGIN,
         year=state.year, period=state.period, turn=state.turn,
     )
-    result = settle_delta(state, db, {'affair_declarations': [_declaration(attach='close', affair_id=existing.id)], 'new_issues': [{'origin_kind': 'decree', 'kind': 'situation', 'title': '护送仍在途中', 'affair_declaration': _declaration(attach='existing', affair_id=existing.id)}, {'origin_kind': 'decree', 'kind': 'situation', 'title': '推演另起风波', 'affair_declaration': _declaration(identity='new-storm')}]}, SettlementContext(content=content, open_affair_ids_at_input={existing.id}))
+    result = settle_delta(
+        state,
+        db,
+        {
+            'new_issues': [
+                {
+                    'origin_kind': 'decree',
+                    'kind': 'situation',
+                    'title': '护送仍在途中',
+                    'affair_declaration': _declaration(attach='existing', affair_id=existing.id),
+                },
+                {
+                    'origin_kind': 'decree',
+                    'kind': 'situation',
+                    'title': '推演另起风波',
+                    'affair_declaration': _declaration(identity='new-storm'),
+                },
+            ]
+        },
+        SettlementContext(content=content, open_affair_ids_at_input={existing.id}),
+    )
     created = issue_rows(result, "new_issues")
     assert len(created) == 2
     assert db.affairs.affair_id_for_issue(created[0]["issue_id"]) == existing.id
     assert db.affairs.affair_id_for_issue(created[1]["issue_id"]) != existing.id
     assert db.affairs.get(existing.id).status == "open"
-    assert any(
-        row.category == "invalid_shape"
-        and isinstance(row.item, dict)
-        and isinstance(row.item.get("raw_value"), dict)
-        and row.item["raw_value"].get("attach") == "close"
-        and row.item["raw_value"].get("affair_id") == existing.id
-        for row in result.affair.rejected
-    )
 
 
 

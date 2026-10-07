@@ -1,8 +1,0 @@
-[09:27:01.045] [pending_actions.payload_json] 腐坏 JSON，拒绝静默等同空底：'['
-PASS {'name': 'G3_symbols_gone', 'ok': True}
-PASS {'name': 'G3_rejected_allegiance_power', 'ok': True, 'before': 75, 'after': 74, 'delta': -1}
-PASS {'name': 'G2_pending_payload_loud', 'ok': True, 'raised': "pending_actions.payload_json 腐坏 JSON：'['"}
-PASS {'name': 'G2_decl_shape_reject_or_return', 'ok': True, 'type': 'DeclarationDispatchResult'}
-PASS {'name': 'G5_pre_settle_clean', 'ok': True, 'bad': []}
-PASS {'name': 'G1_finalize_clean', 'ok': True, 'bad': []}
-ALL_OK True

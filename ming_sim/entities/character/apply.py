@@ -140,7 +140,7 @@ def apply_person_changes(
     )
     from ming_sim.strict_types import _parse_sqlite_id
     from ming_sim.entities.character.appointment import _payload_owned_person_duplicate
-    from ming_sim.settlement.preflight import _admit_transit_departure, _load_pending_gate_valid_regions
+    from ming_sim.entities.character.transit import admit_transit_departure as _admit_transit_departure, load_valid_regions as _load_pending_gate_valid_regions
 
     def rejected(item, reason, category, *, status=None) -> RejectedItem:
         return RejectedItem(item=item, reason=reason, category=category, source=source)

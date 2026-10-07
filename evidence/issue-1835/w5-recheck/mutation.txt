@@ -1,6 +1,0 @@
-[09:27:32.798] [pending_actions.payload_json] 腐坏 JSON，拒绝静默等同空底：'['
-[09:27:32.798] [pending_actions.payload_json] 腐坏 JSON，拒绝静默等同空底：'['
-PASS {'name': 'G3_amnesty_mutation', 'mut_red_blocked': True, 'strength_after_mut': 55, 'strength_after_cur': 48, 'ok': True}
-PASS {'name': 'G2_wash_mutation', 'current_loud': True, 'mut_washes': True, 'ok': True}
-PASS {'name': 'G5_pre_settle_mutation', 'current_clean': True, 'live_in_month_chain': True, 'injected_in_decree_false': True, 'ok': True}
-ALL_OK True

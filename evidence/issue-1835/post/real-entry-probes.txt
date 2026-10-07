@@ -1,3 +1,0 @@
-Traceback (most recent call last):
-  File "<stdin>", line 11, in <module>
-ImportError: cannot import name 'make_game' from 'tests.conftest' (/Users/akagilnc/WorkSpace/Ming_LLM-1835-w5/tests/conftest.py)

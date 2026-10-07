@@ -1,8 +1,0 @@
-PASS G1_mutation_force_close_RED status=closed
-PASS G1_current_no_close_GREEN status=executing
-[09:19:16.595] [pending_actions.payload_json] 腐坏 JSON，拒绝静默等同空底：'['
-PASS G2_current_raise_GREEN pending_actions.payload_json 腐坏 JSON：'['
-PASS G2_mutation_wash_empty_RED payload={}
-PASS G5_current_no_pre_settle_event_GREEN hit=[]
-PASS G5_mutation_dual_path_RED fnames=['apply_event_terminal_states', 'auto_trigger_seed_issues']
-SUMMARY 6/6 PASS

@@ -1033,13 +1033,13 @@ def pre_settle(
     state: GameState, db: GameDB, *, content=None,
     transit_arrivals_out: Optional[List[Dict[str, object]]] = None,
 ) -> List[Dict[str, object]]:
-    """确定性结算「前括号」：固定月度财政 tick、在途抵达、承诺反噬扫描、密令到期戳。
+    """确定性结算「前括号」：固定月度财政 tick、在途抵达、密令到期戳。
 
-    返回本回合程序硬触发清单（现仅 commitment_backlash 项；世界事件终态与 seed
-    硬触发不在此步，见 month_chain._consume_event_gates_after_edicts）。
+    返回空清单（世界事件终态与 seed 硬触发不在此步，见
+    month_chain._consume_event_gates_after_edicts）。
     content 供 office(任免)暂存动作落库。
 
-    ADR 0008 S4：整段（暂存动作 commit + 固定财政 + 反噬扫描 + 到期密令呈递）包成
+    ADR 0008 S4：整段（暂存动作 commit + 固定财政 + 到期密令呈递）包成
     **自己的单事务**——崩在内部=全回滚=相位未变=重进时干净重跑前半段。完成时**同事务内**
     落中间相位 settling（写 state.turn_phase + save_state）：只意味着「前半段已完成，不再
     重跑 pre_settle」，不意味着后半段就绪（恢复入口的消费分流是 S7 的活，本切片只立相位机械）。
@@ -1116,23 +1116,7 @@ def pre_settle(
             # 稽核人派系操守等事实仍留在 dossier_supervision_presence 与
             # build_supervision_judge_surface 供料面；是否反制、采取何种行动由
             # #1861 逐旨推演／#1843 世界段 run 依人物可及事实自选。
-            # #626：承诺所系反噬——事废/烂尾/变形暴露状态驱动，#625 同格挂点。
-            # 事件终态／seed 硬触发已归逐旨后世界段接缝；此处只跑承诺反噬。
             auto_triggered: list = []
-            backlash_hits = db.trigger_commitment_backlashes(state, commit=False)
-            if backlash_hits:
-                auto_triggered = [
-                    {
-                        "id": item.get("origin_ref"),
-                        "title": f"commitment_backlash:{item.get('source_kind')}",
-                        "issue_id": item.get("issue_id"),
-                        "source": "commitment_backlash",
-                        "trigger_ref": item.get("trigger_ref"),
-                    }
-                    for item in backlash_hits
-                ]
-            if auto_triggered:
-                tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
             # #1504：到期密令只打期限戳，保持 active；结案在 settle 尾部机械对账。
             # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
             due_orders = db.auto_submit_due_secret_orders(state)

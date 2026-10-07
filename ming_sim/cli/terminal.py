@@ -617,26 +617,6 @@ def review_directives(session: GameSession) -> str:
         print("未识别操作。")
 
 
-def _submit_first_cli_decisions(session: GameSession, result) -> str:
-    """CLI 暂无亲裁 UI：所有结算入口共用同一首选项续跑策略。
-
-    #657：经 session.submit_hitl_choices 唯一编排；注入既有 `_cli_write_gate`。
-    首选项投影走 ``project_preferred_hitl_choice`` 唯一真源（急务=follow_draft+capability）。
-    """
-    if result is None or not result.awaiting:
-        return "" if result is None else result.report
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
-
-    print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
-    # result.decisions 已是合并 desk；若空则回读 session.pending_decisions
-    decisions = list(result.decisions or []) or list(session.pending_decisions())
-    choices = []
-    for decision in decisions:
-        item = project_preferred_hitl_choice(decision)
-        print(f"  · {decision.get('title')} → {item.get('label', '（无）')}")
-        choices.append(item)
-    return session.submit_hitl_choices(choices, write_gate=_cli_write_gate(session))
-
 
 def play_turn(session: GameSession) -> None:
     """一回合 CLI 驱动：召见 → 审阅 → 颁诏推演。"""
@@ -679,7 +659,7 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.advance_without_decree()
-                report = _submit_first_cli_decisions(session, result)
+                report = "" if result is None else str(getattr(result, "report", None) or "")
             except (DeclarationDataError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
@@ -709,7 +689,7 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.resolve_turn()
-                report = _submit_first_cli_decisions(session, result)
+                report = "" if result is None else str(getattr(result, "report", None) or "")
             except (DeclarationDataError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）/ 契约失败（#1700）：打印指引后留在
                 # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。

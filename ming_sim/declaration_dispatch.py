@@ -2113,7 +2113,7 @@ def _dispatch_travel_tones(
 ) -> SectionResult:
     """传召行程语气声明 → 本轮传召账；已有口令账则更新它。"""
     from ming_sim.audience_night import record_summon_fresh, update_summon_travel_tone
-    from ming_sim.settlement.preflight import normalize_travel_tone
+    from ming_sim.entities.character.transit import normalize_travel_tone
 
     items, rejected = _section_items(raw, label="行程语气声明", source=source)
     if int(night_id or 0) <= 0 or source_turn_error:

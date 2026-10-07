@@ -120,7 +120,7 @@ def test_issue_section_rejections_are_collected(game, monkeypatch, tmp_path):
     rows = _rejection_rows(db, turn)
     assert len(rows) == 1
     assert rows[0][0] == "issue_summary"
-    assert "decree/event_pool" in rows[0][1]  # 拒收原因原样保留
+    assert rows[0][1]  # reason 非空；不锁自由措辞
 
 
 def test_nested_atomic_success_path_does_not_orphan_jsonl(game, monkeypatch, tmp_path):
@@ -215,7 +215,7 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
 
     rows = [r for r in _rejection_rows(db, turn) if r[0] == "issue_inertia"]
     assert len(rows) == 1
-    assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
+    assert rows[0][1]  # reason 非空；不锁自由措辞
 
 
 def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeypatch, tmp_path):

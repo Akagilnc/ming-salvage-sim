@@ -508,7 +508,6 @@ def _build_outcome(run) -> SettlementOutcome:
         breach_plea=placed("breach_plea"),
         credit_event=placed("credit_event"),
         relation_edge=placed("relation_edge"),
-        affair=placed("affair"),
     )
     run.state.clamp()
     victory = _resolve_victory(run)

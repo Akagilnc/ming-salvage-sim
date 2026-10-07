@@ -1,2 +1,0 @@
-tests/test_on_scene_immediate_write_1839.py:95:    roster_paths = [p for p in listed if p.endswith("朝臣名册.txt")]
-tests/test_gazette_author_1862.py:458:        board = next(rel for rel in list_materials(world_tree.root) if rel.endswith("全局.txt"))

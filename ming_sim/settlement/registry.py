@@ -84,8 +84,6 @@ _SECTIONS: Tuple[SectionSpec, ...] = (
     SectionSpec("issue", "ming_sim.entities.issue.delta_section",
                 "apply",
                 ("issue_advances", "new_issues", "close_issues", "cancels")),
-    SectionSpec("affair", "ming_sim.entities.affair.delta_section",
-                "apply", ("affair_declarations",)),
     SectionSpec("person_post", "ming_sim.entities.character.delta_section",
                 "apply_post_issue", ("人物变更",)),
     SectionSpec("fiscal_removes", "ming_sim.entities.fiscal.delta_section",

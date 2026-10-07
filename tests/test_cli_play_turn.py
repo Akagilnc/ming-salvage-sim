@@ -14,7 +14,7 @@ import pytest
 
 import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
-from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
+from ming_sim.exceptions import DeclarationDataError, LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
 from ming_sim.session import GameSession, TurnPhase
 from ming_sim import audience_night as an
@@ -63,7 +63,7 @@ class _Sess:
 
 
 @pytest.mark.parametrize("exc", [
-    ValueError("有 pending 拟旨待处理，请先处理再颁诏。"),
+    DeclarationDataError("有 pending 拟旨待处理，请先处理再颁诏。"),
     SettlementAbort("本月结算失败，进度已保存，可重试。", turn=1, stage="extract"),
     # 现役 LLM 通路的失败与结算中止同形——留本回合可重按。
     LLMUnavailable(CLI_RUNNER_PLAYER_MESSAGE, code="llm_error"),
@@ -112,8 +112,6 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
-
     term.play_turn(sess)
 
     call_name = "resolve" if action == "issue" else "advance"
@@ -655,8 +653,8 @@ def test_cli_write_gate_canonical_session_attr():
 
 
 @pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
-    """#1843/PR #1876: HITL 续跑实际推进月份后，play_turn 必须调用 end_turn 并结束本回合。"""
+def test_play_turn_awaiting_without_auto_preferred_stays(game, monkeypatch, action):
+    """#1812：CLI 不再自动首选续跑；awaiting 时不推进月份、不 end_turn。"""
     from tests.month_chain_helpers import make_light_session
 
     db, state, content = game
@@ -676,19 +674,18 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
 
     session = make_light_session(db, state, content)
 
-    # 中和外部 LLM 边界，推演主链与亲裁续跑全走真实逻辑
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr("ming_sim.month_translate.translate_month_segment", lambda *a, **k: {"effects": {}})
 
-    # 单次操作迭代器：未正确 end_turn + return 时若重入交互循环，next 会抛 StopIteration
-    actions = iter([action])
+    # 两次操作：第一次 issue/skip 得 awaiting 不推进；第二次 skip 仍 awaiting 也不推进；
+    # 用有限 actions 证明不因自动首选跳出循环。
+    actions = iter([action, "skip"])
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
 
-    term.play_turn(session)
+    with pytest.raises(StopIteration):
+        term.play_turn(session)
 
-    # 验证月份已真实推进，且 end_turn 已被调用将 turn_phase 重置为 summoning
-    assert int(session.state.turn) == turn_before + 1
-    assert session.current_phase() == TurnPhase.SUMMONING
-    assert db.load_state().turn_phase == TurnPhase.SUMMONING.value
+    assert int(session.state.turn) == turn_before
+    assert session.current_phase() == TurnPhase.AWAITING_DECISION

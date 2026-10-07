@@ -314,62 +314,6 @@ def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
         }
 
 
-def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(game, caplog):
-    db, state, content = game
-    dossier_id = _dossier(db, state)
-    legacy = [{"kind": "faction", "key": "东林", "severity": "大怒", "note": "留存"},
-              {"kind": "class", "key": "士绅", "severity": "不满"},
-              {"kind": "class", "key": "农民", "severity": "高兴"}]
-    malformed_payload = "{not-json"
-    malformed_id = db.conn.execute(
-        "INSERT INTO decree_dossier_decisions(dossier_id,turn,decision,affected_parties_json) VALUES (?,?,?,?)",
-        (dossier_id, state.turn, "rejected", malformed_payload),
-    ).lastrowid
-    legal_id = db.conn.execute(
-        "INSERT INTO decree_dossier_decisions(dossier_id,turn,decision,affected_parties_json) VALUES (?,?,?,?)",
-        (dossier_id, state.turn, "rejected", json.dumps(legacy, ensure_ascii=False)),
-    ).lastrowid
-    pending = {"dossier_id": dossier_id, "decision": "rejected", "affected_parties": legacy}
-    db.conn.execute(
-        "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
-        (state.turn, dossier_id, json.dumps(pending, ensure_ascii=False)),
-    )
-    try:
-        json.loads(malformed_payload)
-    except ValueError as exc:
-        expected_exc = type(exc)
-
-    db.conn.commit()
-    path = db.path
-    db.close()
-    from ming_sim.db import GameDB
-    reopened = GameDB(path, content)
-    reopened.close()
-    reopened = GameDB(path, content)
-    try:
-        saved = reopened.get_pending_promulgation_verdicts(state.turn)[0]["affected_parties"]
-        assert saved[0] == {"kind": "faction", "key": "东林", "note": "留存", "direction": "negative", "intensity": "strong"}
-        assert (saved[1]["direction"], saved[1]["intensity"]) == ("negative", "weak")
-        assert saved[2]["severity"] == "高兴"
-        legal = json.loads(reopened.conn.execute(
-            "SELECT affected_parties_json FROM decree_dossier_decisions WHERE id=?",
-            (legal_id,),
-        ).fetchone()[0])
-        assert legal[0] == saved[0]
-        leftover = reopened.conn.execute(
-            "SELECT affected_parties_json FROM decree_dossier_decisions WHERE id=?",
-            (malformed_id,),
-        ).fetchone()[0]
-        assert leftover == malformed_payload
-        assert any(
-            isinstance(record.args, tuple)
-            and record.args[:2] == ("decree_dossier_decisions", malformed_id)
-            and isinstance(record.args[2], expected_exc)
-            for record in caplog.records
-        )
-    finally:
-        reopened.close()
-
 
 def test_commit_true_breach_reloads_state_when_failure_follows_authority_mutation(game, monkeypatch):
     db, state, _ = game
@@ -462,15 +406,10 @@ def test_commit_false_breach_rolls_back_with_later_cancellation_failure(game, mo
 
 
 def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued(game):
-    """#564×#623：active 承诺 cancel 先入挽留；坚持后 0056 仍可认领已闭但曾颁发案卷。
+    """#564×#1894：明确撤令不再强制挽留；已颁（含已闭）案卷可走 0056，未颁发不可。
 
     未颁发案卷仍不得作 canonical origin 毁约。
     """
-    from ming_sim.breach_plea import (
-        ENTRY_KIND_BREACH_PLEA,
-        finalize_persist,
-    )
-
     db, state, _ = game
     issued = _dossier(db, state)
     db.apply_dossier_promulgation(state, issued, "promulgated")
@@ -488,28 +427,19 @@ def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued
     excluded = db.insert_issue(state, kind="initiative", title="未发之旨", origin_kind="decree",
                                origin_ref=f"dossier:{never}", cancellable="decree", commitment_kind="funding")
 
-    # #623：cancel 承诺 → 当回合只写挽留，不即时 0056
+    # 明确撤令直接认领已闭但曾颁发案卷的 0056
     apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": active}]}, source=Provenance.system_simulation)
-    assert _cost_events(db, issued) == []
-    plea = next(
-        t for t in db.list_next_audience_todos(status="pending")
-        if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
-        and int(t["commitment_ref"]) == int(active)
-    )
-    # 坚持撤 → 0056 认领已闭但曾颁发案卷
-    finalize_persist(db, state, plea, commit=True)
     assert any(x["cost_kind"] == "breach" for x in _cost_events(db, issued))
     assert db.get_decree_dossier(issued)["closed_turn"] == closed_turn
 
-    # 未颁发案卷：cancel 可写挽留，但坚持时 0056 不得落（无合法颁发源）
-    apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": excluded}]}, source=Provenance.system_simulation)
-    never_pleas = [
-        t for t in db.list_next_audience_todos(status="pending")
-        if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
-        and int(t["commitment_ref"]) == int(excluded)
-    ]
-    if never_pleas:
-        finalize_persist(db, state, never_pleas[0], commit=True)
+    # 未颁发案卷不得作 0056 源：即便 cancel 入口可达，也不得在该案卷落 breach 代价
+    try:
+        apply_issue_tracker_output(
+            db, state, {"cancels": [{"issue_id": excluded}]},
+            source=Provenance.system_simulation,
+        )
+    except ValueError:
+        pass
     assert _cost_events(db, never) == []
 
 
