@@ -917,7 +917,7 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert db.project_office_identity(
         "河南巡抚", "地方", character_name=official.name, location="fujian",
     )["region_ids"] == ("henan",)
-    assert db.character_office_region(official.name) == "henan"
+    assert db.characters.office_region(official.name) == "henan"
 
     # Explicit content office_region seed; location override still ignored.
     seeded = (
@@ -932,7 +932,7 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         ).fetchone()
         assert row is not None and row["office"] == title and row["office_type"] == kind
         assert content.characters[name].office_region == region
-        assert db.character_office_region(name) == region
+        assert db.characters.office_region(name) == region
         view = db.get_character_knowledge(state, name)
         assert view["scope"]["region_ids"] == (region,), name
         assert "regional" in view["world"]
@@ -953,8 +953,8 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     a2 = appoint(other.name, "巡抚", "地方", region_id="henan")
     assert a1 and not a1[0].get("rejected"), a1
     assert a2 and not a2[0].get("rejected"), a2
-    assert db.character_office_region("练国事") == "shaanxi"
-    assert db.character_office_region(other.name) == "henan"
+    assert db.characters.office_region("练国事") == "shaanxi"
+    assert db.characters.office_region(other.name) == "henan"
     # Cross-province same bare title must not exclusive-displace each other.
     assert db.characters.get_character_status("练国事")[0] == "active"
     assert db.conn.execute(

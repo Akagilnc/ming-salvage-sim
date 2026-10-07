@@ -447,7 +447,7 @@ def test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi(fresh_db)
     assert tusi["province_pay_arrears"] == pytest.approx(0.0)
     assert tusi["central_pay_arrears"] == pytest.approx(0.0)
     assert tusi["arrears"] == pytest.approx(0.0)
-    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+    assert fresh_db.fiscal_containers.value("central_army_pay_arrears") == pytest.approx(
         _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
     )
 
@@ -677,10 +677,10 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
     assert row["arrears"] == pytest.approx(
         row["province_pay_arrears"] + row["central_pay_arrears"]
     )
-    assert db.get_central_army_pay_arrears_container() == pytest.approx(3.5)
+    assert db.fiscal_containers.value("central_army_pay_arrears") == pytest.approx(3.5)
     _province_total, central_total, army_total = _non_self_funded_pay_arrears(db)
-    assert db.get_central_army_pay_arrears_container() == pytest.approx(central_total)
-    assert _province_container_total(db) + db.get_central_army_pay_arrears_container() == pytest.approx(
+    assert db.fiscal_containers.value("central_army_pay_arrears") == pytest.approx(central_total)
+    assert _province_container_total(db) + db.fiscal_containers.value("central_army_pay_arrears") == pytest.approx(
         army_total
     )
 
@@ -795,7 +795,7 @@ def test_fixed_flows_substrate_hub_central_capacity_reduces_current_central_arre
     assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(5)
     assert rows["guanning"]["arrears"] == pytest.approx(5)
     assert rows["shaanxi_army"]["arrears"] == pytest.approx(5)
-    assert db.get_central_army_pay_arrears_container() == pytest.approx(10)
+    assert db.fiscal_containers.value("central_army_pay_arrears") == pytest.approx(10)
 
 
 def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_grants(fresh_game):
@@ -901,7 +901,7 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
     assert rows["shaanxi_army"]["central_pay_arrears"] == pytest.approx(7)
     assert rows["guanning"]["arrears"] == pytest.approx(7)
     assert rows["shaanxi_army"]["arrears"] == pytest.approx(7)
-    assert db.get_central_army_pay_arrears_container() == pytest.approx(14)
+    assert db.fiscal_containers.value("central_army_pay_arrears") == pytest.approx(14)
     ledger_snapshot = _hub_ledger_snapshot(db, turn=state.turn)
     container_snapshot = _hub_container_snapshot(db)
     outbound = {
@@ -2346,7 +2346,7 @@ def test_army_delta_owner_power_from_ming_clears_pay_source_arrears(fresh_db):
     assert row["province_pay_arrears"] == pytest.approx(0)
     assert row["central_pay_arrears"] == pytest.approx(0)
     assert row["arrears"] == pytest.approx(0)
-    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+    assert fresh_db.fiscal_containers.value("central_army_pay_arrears") == pytest.approx(
         _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
     )
     logs = fresh_db.conn.execute(
@@ -2422,7 +2422,7 @@ def test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff(fresh_d
     assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )
-    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+    assert fresh_db.fiscal_containers.value("central_army_pay_arrears") == pytest.approx(
         _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
     )
 
@@ -2490,7 +2490,7 @@ def test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio(f
     assert _province_pay_arrears(fresh_db, "shaanxi") == pytest.approx(
         before_province - expected_province_pay, abs=1e-6
     )
-    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+    assert fresh_db.fiscal_containers.value("central_army_pay_arrears") == pytest.approx(
         _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
     )
 
@@ -2769,7 +2769,7 @@ def test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army(fresh_d
     assert _read_settle(fresh_db, "shaanxi")["st"]["军饷欠"] == pytest.approx(
         _province_pay_arrears(fresh_db, "shaanxi"), abs=1e-6
     )
-    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+    assert fresh_db.fiscal_containers.value("central_army_pay_arrears") == pytest.approx(
         _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
     )
 
@@ -2805,7 +2805,7 @@ def test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt(fresh
     assert row["arrears"] == pytest.approx(0)
     assert not any(change["field"] == "arrears" and not change.get("rejected") for change in changes)
     assert _province_pay_arrears(fresh_db, "shaanxi") == pytest.approx(0)
-    assert fresh_db.get_central_army_pay_arrears_container() == pytest.approx(
+    assert fresh_db.fiscal_containers.value("central_army_pay_arrears") == pytest.approx(
         _non_self_funded_pay_arrears(fresh_db)[1], abs=1e-6
     )
 

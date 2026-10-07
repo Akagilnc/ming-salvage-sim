@@ -394,7 +394,7 @@ def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:
     ctid = game.db.create_chat_turn(game.state, minister, sess_tag, 0, night_id=nid)
     game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿肩起此事。", ctid)
 
-    assert int(len(game.db.list_unextracted_replies(night_id=nid)) or 0) >= 1
+    assert int(len(game.db.reign.list_unextracted_replies(night_id=nid)) or 0) >= 1
 
     return int(ctid)
 

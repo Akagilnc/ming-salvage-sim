@@ -268,7 +268,7 @@ def test_sync_restores_office_region_from_character_offices(tmp_path):
     _sync_offices_from_db_impl(content, db, _cli_cfg())
     assert name in content.characters
     assert content.characters[name].office_region == "henan"
-    assert db.character_office_region(name) == "henan"
+    assert db.characters.office_region(name) == "henan"
 
 
 def test_appointment_seat_identity_reuses_local_and_strips_central(game):
@@ -295,8 +295,8 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
         new_office_type="督抚", region_id="henan", reason="seat-b",
     )
     assert not r2.get("rejected")
-    assert db.character_office_region(a) == "shaanxi"
-    assert db.character_office_region(b) == "henan"
+    assert db.characters.office_region(a) == "shaanxi"
+    assert db.characters.office_region(b) == "henan"
 
     # Same-office local continuation omits region → reuse shaanxi; henan intact.
     r3 = apply_office_appointment(
@@ -307,10 +307,10 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
     assert not r3.get("displaced"), r3
     assert content.characters[a].office == "巡抚"
     assert content.characters[a].office_region == "shaanxi"
-    assert db.character_office_region(a) == "shaanxi"
+    assert db.characters.office_region(a) == "shaanxi"
     assert content.characters[b].office == "巡抚"
     assert content.characters[b].office_region == "henan"
-    assert db.character_office_region(b) == "henan"
+    assert db.characters.office_region(b) == "henan"
 
     # Central identity ignores caller-stuffed region on canonical tuple + write.
     canon = _canonical_appointment_fields({
@@ -322,5 +322,5 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
         new_office_type="户部", region_id="henan", reason="central-noise-region",
     )
     assert not r4.get("rejected")
-    assert db.character_office_region(a) == ""
+    assert db.characters.office_region(a) == ""
     assert content.characters[a].office_region == ""

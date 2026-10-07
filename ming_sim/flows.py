@@ -129,19 +129,13 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
 
 
 def _fiscal_container_value(db: GameDB, key: str) -> float:
-    row = FiscalContainerStore(db.conn).read_get_central_army_pay_arrears_container((key,))
-    return float(row["value"] or 0.0) if row is not None else 0.0
+    return FiscalContainerStore(db.conn).value(key)
 
 
 def _fiscal_container_values_when_complete(
     db: GameDB, keys: Tuple[str, ...]
 ) -> Optional[Dict[str, float]]:
-    rows = FiscalContainerStore(db.conn).values_for(keys)
-    if len(rows) != len(keys):
-        return None
-    values = {key: 0.0 for key in keys}
-    values.update({str(row["key"]): float(row["value"] or 0.0) for row in rows})
-    return values
+    return FiscalContainerStore(db.conn).values_when_complete(keys)
 
 
 def _fiscal_config_rate(db: GameDB, key: str) -> float:

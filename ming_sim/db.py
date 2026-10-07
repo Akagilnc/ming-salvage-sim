@@ -1622,10 +1622,6 @@ class GameDB:
         self._reconcile_central_army_pay_arrears_container()
         self.assert_army_pay_source_container_conservation()
 
-    def get_central_army_pay_arrears_container(self) -> float:
-        row = FiscalContainerStore(self.conn).read_get_central_army_pay_arrears_container((_CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY,))
-        return float(row["value"] or 0.0) if row is not None else 0.0
-
     def _reconcile_central_army_pay_arrears_container(self) -> float:
         total = ArmyStore(self.conn).read_reconcile_central_army_pay_arrears_container()["total"]
         value = float(total or 0.0)
@@ -1680,7 +1676,9 @@ class GameDB:
                 str(province_source["pay_source_region"] or ""),
                 region_source="durable",
             )
-        central_container = self.get_central_army_pay_arrears_container()
+        central_container = self.fiscal_containers.value(
+            _CENTRAL_ARMY_PAY_ARREARS_CONTAINER_KEY,
+        )
         row = ArmyStore(self.conn).read_assert_army_pay_source_container_conservation_COALESCE_SUM_province_pay_arrears_0_AS_province_total_COALESCE_SU()
         province_total = float(row["province_total"] or 0.0)
         central_total = float(row["central_total"] or 0.0)
@@ -7044,25 +7042,6 @@ class GameDB:
             self.conn.commit()
         return {"exposure_written": exposure_written, "turn": turn_i}
 
-    def record_monthly_supervision_facts(
-        self, turn: int, *, commit: bool = False,
-    ) -> Dict[str, object]:
-        """兼容组合：在场扫描 + 对账暴露派生（测试/restore 便捷口）。
-
-        生产 settle 节拍应分调两单职责函数（origin 前 / 对账后）。
-        """
-        presence = self.record_monthly_supervision_presence(turn, commit=False)
-        exposure = self.record_monthly_loophole_exposures_from_reconciliations(
-            turn, commit=False,
-        )
-        if commit:
-            self.conn.commit()
-        return {
-            "presence_written": int(presence.get("presence_written") or 0),
-            "exposure_written": int(exposure.get("exposure_written") or 0),
-            "turn": int(turn),
-        }
-
     def record_loophole_exposure(
         self,
         dossier_id: int,
@@ -8586,15 +8565,6 @@ class GameDB:
         }
         return frozenset(catalog - self._NON_CENTRAL_ARCHIVE_OFFICE_TYPES)
 
-    def character_office_region(self, character_name: object) -> str:
-        """Jurisdiction of the character's current appointment (一次任职)."""
-        name = str(character_name or "").strip()
-        if not name:
-            return ""
-        # Required table: empty name / no row stay business-empty; schema faults surface.
-        row = CharacterStore(self.conn).read_character_office_region((name,))
-        return str(row["region_id"] or "").strip() if row is not None else ""
-
     def project_office_identity(
         self,
         office: object,
@@ -8625,7 +8595,7 @@ class GameDB:
 
         rid = str(region_id or "").strip()
         if not rid and character_name:
-            rid = self.character_office_region(character_name)
+            rid = self.characters.office_region(character_name)
 
         region_ids: tuple[str, ...] = (rid,) if rid else ()
         archive_key = ""
@@ -13344,6 +13314,7 @@ class GameDB:
         turn_closed: int,
         *,
         commit: bool = True,
+        append_terminal_memorial: bool = True,
     ) -> None:
         owns = self.owns_transaction()
 
@@ -13361,19 +13332,16 @@ class GameDB:
                     self.dossiers.transition(
                         int(dossier["id"]), "executing", commit=False,
                     )
-                # 仅当结案正文是新增玩家叙事时追加终奏；不复写/复制既有 0058 奏报（P7）
-                if has_progress_chain and close_text.strip():
-                    last_memorial = ""
-                    for item in reversed(reports):
-                        text = str(item.get("memorial_text") or "")
-                        if text:
-                            last_memorial = text
-                            break
-                    if close_text.strip() != last_memorial:
-                        self.dossiers.record_dossier_progress(
-                            int(dossier["id"]), int(turn_closed), "结案",
-                            close_text, is_terminal=True, commit=False,
-                        )
+                # 新增终奏由入口声明；到期入口选用既有奏报时不复写入库（#1889 R13）
+                if (
+                    append_terminal_memorial
+                    and has_progress_chain
+                    and close_text.strip()
+                ):
+                    self.dossiers.record_dossier_progress(
+                        int(dossier["id"]), int(turn_closed), "结案",
+                        close_text, is_terminal=True, commit=False,
+                    )
                 self.record_dossier_execution(
                     int(dossier["id"]),
                     "fulfilled" if str(status) == "done" else "failed",
@@ -14071,46 +14039,6 @@ class GameDB:
                     self.reign.set_chat_turn_status(ctid, "failed")
         return interrupted
 
-    def get_interrupted_reply_retries(
-        self, minister_name: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """待重试的中断回话轮（status='interrupted'，问话已落、回话未落）——恢复提示 / 重试取数。"""
-        rows = self.reign.list_interrupted_chat_turn_rows(minister_name)
-        out: List[Dict[str, Any]] = []
-        for row in rows:
-            question = self.chat_messages.content_of(int(row["user_message_id"]))
-            if question is None:
-                continue
-            out.append({
-                "chat_turn_id": int(row["id"]),
-                "minister_name": str(row["minister_name"]),
-                "turn": int(row["turn"]),
-                "question": question,
-                "error_pack_path": str(row["error_pack_path"] or ""),
-            })
-        return out
-
-    def get_post_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
-        """已落回话的尾随失败：保留原轮身份与错误包，不回到生成态。"""
-        rows = self.reign.list_post_reply_retry_rows(minister_name)
-        out: List[Dict[str, Any]] = []
-        for row in rows:
-            question = self.chat_messages.content_of(int(row["user_message_id"]))
-            answer = self.chat_messages.content_of(int(row["minister_message_id"]))
-            if question is None or answer is None:
-                continue
-            out.append({
-                "chat_turn_id": int(row["id"]),
-                "minister_name": str(row["minister_name"]),
-                "turn": int(row["turn"]),
-                "question": question,
-                "answer": answer,
-                "minister_message_id": int(row["minister_message_id"]),
-                "recovery_phase": str(row["post_reply_recovery"]),
-                "error_pack_path": str(row["post_reply_error_pack_path"] or ""),
-            })
-        return out
-
     def restore_interrupted_after_failed_retry(self, chat_turn_id: int) -> List[int]:
         """重试再失败的善后（#505 finding1）：回滚本次重试在 session.chat 落下的副作用
         （dismiss 账 / 拟旨 / 任免候选等，已由调用方 record_chat_turn_rollback_diffs 记为
@@ -14275,22 +14203,4 @@ class GameDB:
             self.reign.link_minister_reply(int(chat_turn_id), int(message_id))
         return message_id
 
-    def list_unextracted_replies(
-        self, *, night_id: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        """已持久化完整回话但账未抽（''/'pending'）的对话轮——补跑抽取的重试真源（ADR 0036）。
-
-        完整回话 = minister_message_id 已链接且轮未 failed/undone。带回话正文与源轮夜内时序，
-        供补跑落回原时序。挂夜（night_id>0）轮才进抽取链；未挂夜的旧路径不涉。
-        """
-        rows = self.reign.list_unextracted_chat_turn_rows(night_id)
-        out: List[Dict[str, Any]] = []
-        for row in rows:
-            reply = self.chat_messages.content_of(int(row["minister_message_id"]))
-            if reply is None:
-                continue
-            item = self._row_dict(row)
-            item.pop("minister_message_id", None)
-            item["reply"] = reply
-            out.append(item)
-        return out
+    

@@ -77,7 +77,7 @@ def test_reopen_webgame_catches_up_pending_translation(tmp_path, monkeypatch):
     with _open_webgame(fresh=False) as reopened:
         # 排空走队列唯一真源 wait_idle（禁另造轮询/sleep 排空）。
         assert reopened._runtime_write_queue().wait_idle(), "重开补跑票据未排空"
-        assert reopened.db.get_story_extract_status(ctid) == "done"
+        assert reopened.db.reign.get_story_extract_status(ctid) == "done"
         assert _ledger_rows(reopened, nid, ctid) >= 1
 
     # 再次重开不增副本（恢复是补跑，不是重复落账）。

@@ -329,6 +329,15 @@ class CharacterStore:
     def read_character_office_region(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT region_id FROM character_offices WHERE character_name=?', params).fetchone()
 
+    def office_region(self, character_name: object) -> str:
+        """Jurisdiction of the character's current appointment (一次任职)."""
+        name = str(character_name or "").strip()
+        if not name:
+            return ""
+        # Required table: empty name / no row stay business-empty; schema faults surface.
+        row = self.read_character_office_region((name,))
+        return str(row["region_id"] or "").strip() if row is not None else ""
+
     def read_list_referenceable_dossiers(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT office,office_type,location FROM characters WHERE name=?', params).fetchone()
 

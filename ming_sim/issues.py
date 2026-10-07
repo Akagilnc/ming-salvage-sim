@@ -5410,7 +5410,7 @@ def _displace_duplicate_offices(
         # Seat-aware exclusive collision: resolved local seat only bumps the
         # same seat; empty resolved seat is central identity (title-only).
         if new_seat:
-            holder_seat = db.character_office_region(row["name"])
+            holder_seat = db.characters.office_region(row["name"])
             if holder_seat != new_seat:
                 continue
         conflicting = [p for p in holder_parts if p in new_parts]
@@ -5436,7 +5436,7 @@ def _displace_duplicate_offices(
         # 全顶替 → 听用候铨，历史实职备档保留；部分保留 → 余职 + 原 seat 入 record。
         # 内存 seat 必须以备档真源对齐（record 后可能因非地方 office_type 钳空）。
         retained_seat = "" if fully_displaced else str(
-            db.character_office_region(row["name"]) or ""
+            db.characters.office_region(row["name"]) or ""
         ).strip()
         if fully_displaced:
             db.characters.update(row["name"], {
@@ -5454,7 +5454,7 @@ def _displace_duplicate_offices(
         db._record_character_office(
             row["name"], new_holder_office, new_type, "被顶替", region_id=retained_seat,
         )
-        archived_seat = str(db.character_office_region(row["name"]) or "").strip()
+        archived_seat = str(db.characters.office_region(row["name"]) or "").strip()
         if content is not None and row["name"] in content.characters:
             ch = content.characters[row["name"]]
             ch.office = new_holder_office
@@ -5789,7 +5789,7 @@ def apply_office_appointment(
                 if commit:
                     db.conn.commit()
             # Prefer post-write authority; never fall back to caller raw region.
-            seat = db.character_office_region(name) or seat
+            seat = db.characters.office_region(name) or seat
             displaced_parts = _displace_duplicate_offices(
                 db, content, name, new_office, region_id=seat, commit=commit,
             )
@@ -5859,7 +5859,7 @@ def apply_office_appointment(
             # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
             # displaced 统一取 _displace_duplicate_offices 的 List[str](apply_appointment 的单名
             # displaced 在去 replaces 后恒空,留着会让本字段时而 str 时而 list,故弃)(线上 gemini)。
-            seat = db.character_office_region(appointed) or seat
+            seat = db.characters.office_region(appointed) or seat
             displaced_parts = _displace_duplicate_offices(
                 db, content, appointed, new_office, region_id=seat, commit=commit,
             )

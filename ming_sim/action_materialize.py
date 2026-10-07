@@ -1184,10 +1184,7 @@ def _write_path_nature_ledger(
         + f" · pending:{int(pending_id)}"
     )
     source_cid = 0
-    try:
-        last = db.reign.get_last_active_chat_turn(str(minister_name or ""), int(turn))
-    except Exception:
-        last = None
+    last = db.reign.get_last_active_chat_turn(str(minister_name or ""), int(turn))
     if last is not None:
         source_cid = int(last.get("id") or 0)
     persons = [name] if name else ([minister_name] if minister_name else [])

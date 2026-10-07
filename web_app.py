@@ -2234,9 +2234,9 @@ class WebGame:
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
         测试替身无 conn/该接口时返回空（无中断可重试）。"""
-        if not hasattr(self.db, "get_interrupted_reply_retries"):
+        if not hasattr(self.db, "reign"):
             return []
-        return self.db.get_interrupted_reply_retries(minister_name)
+        return self.db.reign.get_interrupted_reply_retries(minister_name)
 
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night
@@ -2248,11 +2248,11 @@ class WebGame:
                 ids = {int(row["id"]) for row in turns}
                 return sorted([retry for speaker in speakers
                                for retry in (self.interrupted_reply_retries(speaker)
-                                             + self.db.get_post_reply_retries(speaker))
+                                             + self.db.reign.get_post_reply_retries(speaker))
                                if int(retry["chat_turn_id"]) in ids],
                               key=lambda item: int(item["chat_turn_id"]))
         interrupted = self.interrupted_reply_retries(minister_name)
-        post_reply = self.db.get_post_reply_retries(minister_name) if hasattr(self.db, "get_post_reply_retries") else []
+        post_reply = self.db.reign.get_post_reply_retries(minister_name) if hasattr(self.db, "reign") else []
         return sorted([*interrupted, *post_reply], key=lambda item: int(item["chat_turn_id"]))
 
     def _resume_post_reply(self, minister_name: str, target: Dict[str, Any]) -> Dict[str, Any]:
@@ -2679,10 +2679,10 @@ class WebGame:
         """
         if not hasattr(self.db, "conn"):
             return
-        if not hasattr(self.db, "list_unextracted_replies"):
+        if not hasattr(self.db, "reign"):
             return
         with self._runtime_write_gate():
-            pending = self.db.list_unextracted_replies() or []
+            pending = self.db.reign.list_unextracted_replies() or []
         if not pending:
             return
         self._spawn_pending_write_thread(
@@ -2742,7 +2742,7 @@ class WebGame:
         )
         status = (
             self.db.reign.get_story_extract_status(ctid)
-            if hasattr(self.db, "get_story_extract_status")
+            if hasattr(getattr(self.db, "reign", None), "get_story_extract_status")
             else ("pending" if still else "done")
         )
         return {
@@ -5327,7 +5327,7 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
         + [message["speaker"] for message in messages if message["role"] in {"minister", "attendant"} and message["speaker"]]
     ))
     characters = getattr(getattr(game, "content", None), "characters", {})
-    pending_replies = game.db.list_unextracted_replies(night_id=int(night["id"]))
+    pending_replies = game.db.reign.list_unextracted_replies(night_id=int(night["id"]))
 
     return {
         "night_id": int(night["id"]),

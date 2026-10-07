@@ -130,20 +130,20 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
     night = an.open_night(db, state, location="文华殿", time_of_day="午时")
     ct = _start_generating_turn(db, state, minister, "杨卿何以教朕？")
     # kill 前：该轮为在飞、大臣被判「仍在进行」。
-    assert an.reign.list_in_flight_chat_turns(db, night["id"])
+    assert an.list_in_flight_chat_turns(db, night["id"])
     db.close()
 
     db2, _state2 = _reopen(env.path, content)
     try:
         interrupted = db2.reconcile_interrupted_chat_turns()
         # 该轮被标为可重试的 interrupted（不再在飞、不阻塞续问/收夜）。
-        assert an.reign.list_in_flight_chat_turns(db2, night["id"]) == []
+        assert an.list_in_flight_chat_turns(db2, night["id"]) == []
         assert any(int(r["chat_turn_id"]) == ct for r in interrupted)
         # 问话原句保留（不删）——恢复路径永不删记录。
         proj = db2.build_chat_projection(minister)
         assert [m["content"] for m in proj if m["role"] == "user"] == ["杨卿何以教朕？"]
         # 待重试面板取数：带问话原文。
-        retries = db2.get_interrupted_reply_retries(minister)
+        retries = db2.reign.get_interrupted_reply_retries(minister)
         assert [r["question"] for r in retries] == ["杨卿何以教朕？"]
     finally:
         db2.close()
@@ -309,7 +309,7 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert row["status"] == "active"
     assert row["minister_message_id"]
     # 重试后该轮不再挂在待重试面板。
-    assert [r["chat_turn_id"] for r in db.get_interrupted_reply_retries(minister)] == [later]
+    assert [r["chat_turn_id"] for r in db.reign.get_interrupted_reply_retries(minister)] == [later]
 
 
 def test_post_reply_failure_resumes_close_without_regenerating_reply(restore_env):
@@ -435,7 +435,7 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     ).fetchone()["error_pack_path"])
     assert (pack / "traceback.txt").is_file()
     assert (pack / "save_backup.db").is_file()
-    assert [r["question"] for r in db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
+    assert [r["question"] for r in db.reign.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
     assert [
         r["content"] for r in db.conn.execute(
             "SELECT content FROM chat_messages WHERE role='user'"
@@ -594,11 +594,11 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
     try:
         interrupted = db2.reconcile_interrupted_chat_turns()
         assert all(int(r["chat_turn_id"]) != ct for r in interrupted)
-        assert an.reign.list_in_flight_chat_turns(db2, night["id"]) == []
+        assert an.list_in_flight_chat_turns(db2, night["id"]) == []
         assert db2.conn.execute(
             "SELECT status FROM chat_turns WHERE id=?", (ct,)
         ).fetchone()["status"] == "failed"
-        assert db2.get_interrupted_reply_retries(minister) == []
+        assert db2.reign.get_interrupted_reply_retries(minister) == []
     finally:
         db2.close()
 
@@ -666,7 +666,7 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
     assert game.db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
-    assert [r["question"] for r in game.db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
+    assert [r["question"] for r in game.db.reign.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
 
 
 # ---------------------------------------------------------------------------

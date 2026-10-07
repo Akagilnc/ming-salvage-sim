@@ -27,7 +27,7 @@ def test_engine_close_night_drains_pending_success(game, monkeypatch):
     minister = _minister(db, content)
     nid, ctid = _open_night_with_persisted_reply(db, state, minister, reply="臣作保。")
 
-    assert len(db.list_unextracted_replies(night_id=nid)) == 1
+    assert len(db.reign.list_unextracted_replies(night_id=nid)) == 1
 
 
     def translate_fn(prompt, llm_config):
@@ -68,6 +68,6 @@ def test_engine_close_night_without_deps_keeps_pending_no_fail_closed(
     nid, ctid = _open_night_with_persisted_reply(db, state, minister)
     an.close_night(db, state, night_id=nid)
 
-    assert len(db.list_unextracted_replies(night_id=nid)) >= 1
+    assert len(db.reign.list_unextracted_replies(night_id=nid)) >= 1
 
     assert str(db.reign.get_story_extract_status(ctid) or "") in ("", "pending")

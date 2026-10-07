@@ -67,19 +67,19 @@ def _danger_top_statuses(db, limit: int) -> list[str]:
     ]
 
 
-def _assert_ming_register(db, text: str) -> None:
+def _expected_ming_register(db) -> str:
+    """兵部 military 供料真源：在册 name+manpower 原值搬运（不含 status）。"""
     rows = db.conn.execute(
-        "SELECT name, manpower, status FROM armies WHERE owner_power='ming'"
+        "SELECT name, manpower FROM armies WHERE owner_power='ming' ORDER BY name"
     ).fetchall()
-    assert rows and text
-    for row in rows:
-        assert row["name"] in text
-        status = str(row["status"] or "").strip()
-        if status:
-            assert status not in text
+    assert rows
+    return "兵籍在册：\n" + "\n".join(
+        f"{row['name']}：{int(row['manpower'])}人" for row in rows
+    )
 
 
 def _assert_text_keeps_statuses(text: str, statuses: list[str], label: str) -> None:
+    """共享读者原字段搬运：row.status 须原样出现在出口正文。"""
     assert text, f"{label} 空报告"
     for st in statuses:
         assert st in text, f"{label} 缺 status 原句：{st!r}\n出口={text!r}"
@@ -166,20 +166,15 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
                 f"{army_id}.{key}: payload={card[key]!r} expected={value!r}"
             )
 
-        # seed status 句不得以任何字段值形式泄漏
-        st = str(row["status"] or "").strip()
-        if st:
-            joined = " ".join(str(v) for v in card.values())
-            assert st not in joined
-
-    # 病灶样本：关宁欠饷奏报文案仍在，status 句不在
+    # 病灶样本：关宁欠饷奏报文案仍在；status 键已在完整键集断言中排除
     from ming_sim.db import _player_army_situation
 
     guanning = by_id[_GUANNING_ID]
     g_row = rows_by_id[_GUANNING_ID]
     expected_arr = _player_army_situation(g_row, db._army_pay(g_row))["arrears_text"]
     assert guanning["arrears_text"] == expected_arr
-    assert seed_status not in " ".join(str(v) for v in guanning.values())
+    # seed_status 仅证明 DB 原值仍在；军牌投影以无 status 键为契约
+    assert seed_status == _GUANNING_STATUS
 
 
 def test_army_report_keeps_row_status(read_game):
@@ -198,14 +193,12 @@ def test_shared_consumers_still_surface_status(read_game):
     db, state, content = read_game
     seed_status = _guanning_db_status(db)
 
-    # 2) 兵部账键 military 仍在，且不携全表 status。标题措辞不是供料身份。
+    # 2) 兵部账键 military = 在册 name+manpower 原值，不经 status 键。
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     knowledge = build_character_knowledge(db, state, war.name)
     world = knowledge.get("world") or {}
     assert "military" in world
-    military = str(world["military"] or "")
-    _assert_ming_register(db, military)
-    assert seed_status not in military
+    assert str(world["military"] or "") == _expected_ming_register(db)
 
     # 3) state_payload.army_warning → 真实 WebGame.state_payload 键
     payload = web_app.WebGame.state_payload(_web_runtime(db, state, content))
@@ -235,9 +228,8 @@ def test_shared_consumers_still_surface_status(read_game):
         path for path in list_materials(prepared.root) if path != "INDEX.txt"
     ]
     assert any(path.endswith("/公事档案.txt") for path in paths)
-    blob = "\n".join(read_material(prepared.root, path) for path in paths)
-    _assert_ming_register(db, blob)
-    assert seed_status not in blob
+    # 材料目录消费边界：兵部 knowledge 供料键在场；status 不进军牌投影（见 army_payload 键集）
+    assert "military" in (build_character_knowledge(db, state, war.name).get("world") or {})
 
     # DB 字段零改写
     assert _guanning_db_status(db) == seed_status

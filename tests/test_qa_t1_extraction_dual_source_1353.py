@@ -159,7 +159,7 @@ def test_closing_restore_path_still_catches_up(game, tmp_path, monkeypatch):
     _close_with_gate(db, state, night_id=nid, translate_fn=translate_fn)
 
     assert len(calls) == 1, calls
-    assert db.get_story_extract_status(ctid) == "done"
+    assert db.reign.get_story_extract_status(ctid) == "done"
 
 
 def test_partial_heal_single_source_pending_only_fresh(
@@ -501,7 +501,7 @@ def test_wait_in_flight_releases_on_worker_terminal(game, tmp_path, monkeypatch)
     worker_published.wait()
     wt.join()
     assert not wt.is_alive()
-    assert an.reign.list_in_flight_chat_turns(db, nid) == []
+    assert an.list_in_flight_chat_turns(db, nid) == []
 
 
 def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypatch):

@@ -2036,12 +2036,14 @@ def settle_due_secret_orders(
             "origin_context": secret_order_origin(oid),
         })
         player_text = player_facing_secret_order_close_text(order, reports)
+        # 到期入口正文来自既有 result/奏报身份，不把选用原文再当新终奏入库（#1889 R13）
         db.close_secret_order(
             oid,
             str(verdict["status"]),
             player_text,
             int(state.turn),
             commit=False,
+            append_terminal_memorial=False,
         )
         results.append({
             "order_id": oid,

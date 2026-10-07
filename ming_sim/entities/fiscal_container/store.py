@@ -48,5 +48,19 @@ class FiscalContainerStore:
     def read_get_central_army_pay_arrears_container(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT value FROM fiscal_containers WHERE key = ?', params).fetchone()
 
+    def value(self, key: str) -> float:
+        """Scalar container read: missing row → 0.0."""
+        row = self.read_get_central_army_pay_arrears_container((str(key),))
+        return float(row["value"] or 0.0) if row is not None else 0.0
+
+    def values_when_complete(self, keys: tuple[str, ...]) -> dict[str, float] | None:
+        """All-or-nothing multi-key scalar map; incomplete key set → None."""
+        rows = self.values_for(keys)
+        if len(rows) != len(keys):
+            return None
+        values = {key: 0.0 for key in keys}
+        values.update({str(row["key"]): float(row["value"] or 0.0) for row in rows})
+        return values
+
     def read_treasury_hub_result(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            SELECT key, value FROM fiscal_containers\n            WHERE key IN ('hub_京运实拨', 'hub_中央军饷实拨', 'hub_京运损耗')\n            ", params).fetchall()

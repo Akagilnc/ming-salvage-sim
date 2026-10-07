@@ -216,9 +216,9 @@ def list_pending_translations(
 
     可按夜 / 源轮收窄。返回行附结构化系统提示态（供 0158 决定 6 投影，不做页面）。
     """
-    if not hasattr(db, "list_unextracted_replies"):
+    if not hasattr(db, "reign"):
         return []
-    rows = list(db.list_unextracted_replies(night_id=night_id) or [])
+    rows = list(db.reign.list_unextracted_replies(night_id=night_id) or [])
     want = int(chat_turn_id) if chat_turn_id is not None else None
     out: List[Dict[str, Any]] = []
     for row in rows:
@@ -562,7 +562,7 @@ def catch_up_pending_translations(
     不洗成空原话继续转译。
     """
     # 恢复真源比玩家可重试投影宽：崩溃在回话落库与任务登记之间时，'' 也须补跑。
-    rows = list(db.list_unextracted_replies(night_id=night_id) or [])
+    rows = list(db.reign.list_unextracted_replies(night_id=night_id) or [])
     if chat_turn_id is not None:
         rows = [r for r in rows if int(r.get("chat_turn_id") or 0) == int(chat_turn_id)]
     extracted = 0

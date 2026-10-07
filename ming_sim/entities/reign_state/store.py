@@ -753,6 +753,68 @@ class ReignStateStore:
         row = self.last_active_chat_turn_row(minister_name, int(turn))
         return dict(row) if row is not None else None
 
+    def get_interrupted_reply_retries(
+        self, minister_name: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """中断回话轮 DTO：轮行 + 问话原文；缺消息行跳过。"""
+        from ming_sim.entities.record_store import ChatMessageStore
+
+        messages = ChatMessageStore(self._conn)
+        out: List[Dict[str, Any]] = []
+        for row in self.list_interrupted_chat_turn_rows(minister_name):
+            question = messages.content_of(int(row["user_message_id"]))
+            if question is None:
+                continue
+            out.append({
+                "chat_turn_id": int(row["id"]),
+                "minister_name": str(row["minister_name"]),
+                "turn": int(row["turn"]),
+                "question": question,
+                "error_pack_path": str(row["error_pack_path"] or ""),
+            })
+        return out
+
+    def get_post_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
+        """已落回话尾随失败 DTO：轮行 + 问/答原文；缺消息行跳过。"""
+        from ming_sim.entities.record_store import ChatMessageStore
+
+        messages = ChatMessageStore(self._conn)
+        out: List[Dict[str, Any]] = []
+        for row in self.list_post_reply_retry_rows(minister_name):
+            question = messages.content_of(int(row["user_message_id"]))
+            answer = messages.content_of(int(row["minister_message_id"]))
+            if question is None or answer is None:
+                continue
+            out.append({
+                "chat_turn_id": int(row["id"]),
+                "minister_name": str(row["minister_name"]),
+                "turn": int(row["turn"]),
+                "question": question,
+                "answer": answer,
+                "minister_message_id": int(row["minister_message_id"]),
+                "recovery_phase": str(row["post_reply_recovery"]),
+                "error_pack_path": str(row["post_reply_error_pack_path"] or ""),
+            })
+        return out
+
+    def list_unextracted_replies(
+        self, *, night_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """完整回话未抽取轮 DTO：轮行 + 回话原文；缺消息行跳过。"""
+        from ming_sim.entities.record_store import ChatMessageStore
+
+        messages = ChatMessageStore(self._conn)
+        out: List[Dict[str, Any]] = []
+        for row in self.list_unextracted_chat_turn_rows(night_id):
+            reply = messages.content_of(int(row["minister_message_id"]))
+            if reply is None:
+                continue
+            item = dict(row)
+            item.pop("minister_message_id", None)
+            item["reply"] = reply
+            out.append(item)
+        return out
+
     def list_in_flight_chat_turn_rows(
         self,
         *,
