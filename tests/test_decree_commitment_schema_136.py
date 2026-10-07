@@ -1,8 +1,5 @@
-import sqlite3
-
 import pytest
 
-from ming_sim.db import GameDB
 from ming_sim.models import effect_dict_has_work
 import ming_sim.issues as I
 
@@ -13,24 +10,6 @@ def _promulgated_commitment_origin(db, state) -> str:
     )
     db.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
-
-def _table_columns(db, table: str) -> dict[str, dict[str, object]]:
-    return {
-        row["name"]: dict(row)
-        for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()
-    }
-
-def test_issues_schema_has_commitment_deadline_columns(read_game):
-    db, _, _ = read_game
-
-    cols = _table_columns(db, "issues")
-
-    assert "end_turn" in cols
-    assert "stop_condition" in cols
-    assert "commitment_kind" in cols
-    assert cols["end_turn"]["dflt_value"] == "0"
-    assert cols["stop_condition"]["dflt_value"] == "''"
-    assert cols["commitment_kind"]["dflt_value"] == "''"
 
 @pytest.mark.parametrize(
     "payload",

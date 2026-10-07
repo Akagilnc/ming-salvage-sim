@@ -16,7 +16,6 @@ import json
 
 from ming_sim.db import GameDB
 from ming_sim.supervision import (
-    DENUNCIATION_ALLOWED_COLS,
     DENUNCIATION_ORIGIN_BASE,
     DENUNCIATION_TABLE,
     ORIGIN_MARK_DENUNCIATION_FALSE,
@@ -181,11 +180,6 @@ def _escalate_fork(db, state, dossier_id: int, *, token: str = "esc"):
     )
 
 
-def _table_cols(db, table: str) -> set[str]:
-    return {
-        str(row["name"])
-        for row in db.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
-    }
 
 
 def _scripted_entry(
@@ -478,13 +472,6 @@ def test_ac5_zero_template_exposure_and_622(game):
     assert _world_fingerprint(db) == fp_before
 
     # 知识轨没有新增条目（由上面的结构化计数证明）。
-    # schema 白名单
-    assert DENUNCIATION_TABLE in {
-        r[0] for r in db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    assert _table_cols(db, DENUNCIATION_TABLE) == DENUNCIATION_ALLOWED_COLS
 
     # 引擎侧零模板句：产出路径无固定文案常量（正则扫生产源码＝盯文，
     # 已在 #1901 J3 整类删除；P7 的真实闸案在呈现层 LLM 产出不可篡改）

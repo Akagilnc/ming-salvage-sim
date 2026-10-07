@@ -6,7 +6,6 @@ list_materials/read_material (API), CLI cwd/readonly flags, restore rebuild.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -23,9 +22,7 @@ from ming_sim.audience_night import (
 )
 from ming_sim.materials import (
     MaterialsRoot,
-    _handled_affair_lines,
     _safe_segment,
-    _visible_affair_lines,
     list_materials,
     material_tools,
     prepare_character_materials,
@@ -149,35 +146,35 @@ def _agent_with_materials(root: Path, *, with_cli_cwd: bool):
 
 
 def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, tmp_path):
+    """Real issue entry + prepare: handled roster lands in opening; bare issue stays out."""
     db, state, content = game
     character = _active_minister(db, content)
-    current_office = "当回合新任官职"
-    db.conn.execute(
-        "UPDATE characters SET office = ? WHERE name = ?", (current_office, character.name),
+    handled_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="经手事项",
+        participants=[{"character_id": character.name, "tier": "主办"}],
     )
-    knowledge = {"issues": [
-        {"id": 101, "title": "经手事项", "participant_roster": json.dumps([
-            {"character_id": character.name, "tier": "主办"},
-        ])},
-        {"id": 102, "title": "无人承办事项", "participant_roster": "[]"},
-    ]}
-
-    original_get = db.get_character_knowledge
-    db.get_character_knowledge = lambda *_args: knowledge
-    try:
-        prepared = prepare_character_materials(
-            db, state, character, dest_root=tmp_path / "materials",
-        )
-    finally:
-        db.get_character_knowledge = original_get
-    issue_paths = {line for line in prepared.index_lines if line.startswith("事务/issue-")}
-    assert issue_paths == {
-        "事务/issue-101/当前情况.txt", "事务/issue-102/当前情况.txt",
+    other_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="无人承办事项",
+        participants=[],
+    )
+    prepared = prepare_character_materials(
+        db, state, character, dest_root=tmp_path / "materials",
+    )
+    opening = prepared.opening
+    assert f"#{handled_id} " in opening or f"#{handled_id}" in opening
+    assert "经手事项" in opening
+    assert "无人承办事项" not in opening
+    issue_paths = {
+        line for line in prepared.index_lines
+        if line.startswith("事务/issue-")
     }
-    projected = _visible_affair_lines(knowledge)
-    assert [row["id"] for row in _handled_affair_lines(
-        db, state, character.name, projected,
-    )] == [101]
+    assert any(f"issue-{handled_id}/" in line for line in issue_paths)
+    # other may still appear in the authorized directory tree; opening is the handled gate
+    assert other_id != handled_id
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):

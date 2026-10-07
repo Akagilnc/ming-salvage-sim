@@ -878,10 +878,11 @@ def stage_grant_allocation_candidate(
     if absolute_due > int(turn):
         staged["due_turn"] = absolute_due
         # 题名真源贯到 staged（0076 场面/判据可读）；优先用途/拨帑动作中文锚
+        # Free title default from structured label: empty-check only (P6).
         if not str(staged.get("title") or "").strip():
             label = purpose or action
-            if label:
-                staged["title"] = str(label).strip()
+            if label and str(label).strip():
+                staged["title"] = str(label)
     # #1783+#1778：承办人/名单来自分类器或后置抽取，挂本案；不把当前大臣填成主办。
     lead = str(assignee or "").strip()
     if lead:
@@ -1430,9 +1431,12 @@ def stage_assignment_candidate(
         raise DecreeMaterializationValidationError(
             "交办旨意缺少正文", failed_fields=("text",),
         )
-    # 题名只认结构化锚；不得从正文/皇帝散文截取
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
-    if not matter_title:
+    # 题名只认结构化锚；不得从正文/皇帝散文截取。
+    # Free title: empty-check without mutating carried value (P6).
+    matter_title = str(title or "")
+    if not matter_title.strip():
+        matter_title = str(target_id or "").strip()
+    if not matter_title.strip():
         raise DecreeMaterializationValidationError(
             "交办旨意缺少结构化题名（title 或 target_id）",
             failed_fields=("title",),
@@ -1642,8 +1646,11 @@ def stage_referral_candidate(
         raise DecreeMaterializationValidationError(
             "下议旨意缺少正文", failed_fields=("text",),
         )
-    matter_title = str(title or "").strip() or str(target_id or "").strip()
-    if not matter_title:
+    # Free title: empty-check without mutating carried value (P6).
+    matter_title = str(title or "")
+    if not matter_title.strip():
+        matter_title = str(target_id or "").strip()
+    if not matter_title.strip():
         raise DecreeMaterializationValidationError(
             "下议旨意缺少结构化题名（title 或 target_id）",
             failed_fields=("title",),

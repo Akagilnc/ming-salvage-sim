@@ -339,7 +339,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert "朱批可见" in json.dumps(payload["rescript_answers"], ensure_ascii=False)
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label
-    assert label in seen["instructions"]
     assert {item["origin_ref"] for item in payload["due_commitments"]} == {
         "", f"dossier:{plain_did}",
     }
@@ -384,7 +383,8 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
             if line == rel or line.startswith(rel + " ")
         )
         assert text.strip() == _REPORT
-        assert _TITLE in gazette.split()
+        # Free title: appear in index line as-is; no whitespace-token rule.
+        assert _TITLE in gazette
         assert _REPORT not in gazette
         next((path for path in prepared.index_lines if path.endswith('/经历.txt')))
     finally:

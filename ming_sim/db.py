@@ -7653,7 +7653,8 @@ class GameDB:
             # P7：硬门只落结构化事实；标题仅链接源承诺既有事实，不拼装新成句。
             # 玩家 stage/narrative 由叙事 LLM 步从特征化输入长出；bar 端标故意留空，
             # web 空串不渲染（#626 甲：不开 bar 写口）。
-            title_c = str(crow["title"] if crow is not None else "").strip()
+            # Free title from source commitment: carry as-is (P6).
+            title_c = str(crow["title"] if crow is not None else "")
             # 一锤子：复用既有 _apply_metric_dict（ISSUE_METRIC_KEYS），不自建 clamp。
             applied_metrics = _apply_metric_dict(
                 state, dict(BACKLASH_NAMED_METRICS), db=self,
@@ -11224,10 +11225,11 @@ class GameDB:
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
-                title = str(payload.get("title") or "").strip()
+                # Free title/body: empty-check without mutating carried values (P6).
+                title = str(payload.get("title") or "")
                 content_text = str(payload.get("content") or "")
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
-                if not title or not content_text.strip() or not assignee:
+                if not title.strip() or not content_text.strip() or not assignee:
                     return False
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []

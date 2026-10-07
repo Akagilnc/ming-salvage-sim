@@ -964,11 +964,12 @@ class GameSession:
     @staticmethod
     def _ensure_close_night_confirm_cue(answer: str) -> str:
         """含糊收夜：大臣戏内确认（不出戏），不直接收夜。"""
-        text = (answer or "").strip()
+        # Free minister prose: empty-check without mutating carried body (P6).
+        text = answer or ""
         ask = "陛下是要退朝么？"
         if ask in text:
             return text or ask
-        if not text:
+        if not text.strip():
             return ask
         return text + "\n" + ask
 
@@ -1109,8 +1110,9 @@ class GameSession:
         )
         from ming_sim.llm_model import extract_agent_text
 
-        message_text = str(message or "").strip()
-        if not message_text:
+        # Free chat body: empty-check without mutating carried prose (P6).
+        message_text = str(message or "")
+        if not message_text.strip():
             raise ValueError("问话不能为空。")
         from ming_sim.decree_forecast import bind_forecast_owner
         bind_forecast_owner(self)
