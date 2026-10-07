@@ -9,6 +9,7 @@ import json
 import pytest
 
 from ming_sim.db import GameDB
+from tests.rescript_test_helpers import sql_rescript_draft
 
 # #1778 决定 3：生成批次的票拟必带参与名单（ADR 0053 三档，至少一名主办）。
 _ROSTER = [{"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None}]
@@ -36,57 +37,17 @@ def _two_opts(a: str = "甲", ha: str = "h1", b: str = "乙", hb: str = "h2", **
     return [_layer_a_opt(label=a, hint=ha, **kw), _layer_a_opt(label=b, hint=hb, **kw)]
 
 
-def _insert_draft_row(
-    db,
-    turn: int,
-    *,
-    idx: int,
-    event_id: str,
-    title: str,
-    context: str = "",
-    options: list | None = None,
-    actor_name: str = "",
-    actor_office: str = "",
-    actor_faction: str = "",
-    status: str = "pending",
-    revision_round: int = 0,
-    prior_options_json: str = "[]",
-) -> None:
-    """最短 SQL 行夹具：调用方显式给 idx 与 event_id，无自动续编/身份合成。"""
-    db.conn.execute(
-        "INSERT INTO pending_decisions\n"
-        " (turn, idx, event_id, title, context, options_json, choice_json,\n"
-        "  status, kind, actor_name, actor_office, actor_faction,\n"
-        "  revision_round, prior_options_json)\n"
-        " VALUES (?, ?, ?, ?, ?, ?, '', ?, 'rescript_draft', ?, ?, ?, ?, ?)",
-        (
-            int(turn),
-            int(idx),
-            str(event_id),
-            title,
-            context,
-            json.dumps(options or [], ensure_ascii=False),
-            status,
-            actor_name,
-            actor_office,
-            actor_faction,
-            int(revision_round),
-            prior_options_json,
-        ),
-    )
-
-
 def test_list_rescript_drafts_projects_planted_rows(game):
     """读口契约：list_rescript_drafts 投影既有 rescript_draft 行字段。"""
     db, state, _content = game
     turn = state.turn
-    _insert_draft_row(
+    sql_rescript_draft(
         db, turn, idx=0, event_id="issue:42", title="陕西告饥",
         context="秦地赤旱千里，臣愚以为赈济不可缓。",
         options=[{"label": "发帑赈济", "hint": "所安者饥民"}],
         actor_name="测试首辅", actor_office="内阁首辅", actor_faction="阉党",
     )
-    _insert_draft_row(
+    sql_rescript_draft(
         db, turn, idx=1, event_id="issue:no-board", title="无局急务",
         options=[{"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}],
     )
@@ -112,7 +73,7 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
         {"title": "抉择", "context": "c", "options": [
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
     ])
-    _insert_draft_row(
+    sql_rescript_draft(
         db, turn, idx=1, event_id="draft:急务", title="急务", context="待票拟",
         options=[{"label": "甲", "hint": "一"}, {"label": "乙", "hint": "二"}],
     )
@@ -158,7 +119,7 @@ def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game, tmp_path):
 def _plant_draft(db, state, title: str, *, idx: int = 10) -> None:
     """显式 idx/event_id 种入；调用方保证不与 decision 行冲突。"""
     turn = int(state.turn)
-    _insert_draft_row(
+    sql_rescript_draft(
         db, turn, idx=idx, event_id=f"draft:{title}", title=title, context="旧导语",
         options=[{"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}],
         actor_name="测试首辅", actor_office="内阁首辅", actor_faction="阉党",
@@ -348,21 +309,22 @@ def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
     db, state, _content = game
     turn = int(state.turn)
     prior = turn - 1 if turn > 0 else 0
-    # 跨月急务（prior turn）
+    # 跨月急务（prior turn）；案体所需 revision/prior 在真源种行后点更新
+    sql_rescript_draft(
+        db, prior, idx=0, event_id="urgent:old:0", title="旧急务甲", context="跨月",
+        options=_two_opts("甲", "h1", "乙", "h2"),
+        actor_name="首辅", actor_office="内阁首辅", actor_faction="东林",
+    )
     db.conn.execute(
-        "INSERT INTO pending_decisions\n"
-        " (turn, idx, event_id, title, context, options_json, choice_json,\n"
-        "  status, kind, actor_name, actor_office, actor_faction,\n"
-        "  revision_round, prior_options_json)\n"
-        " VALUES (?, 0, 'urgent:old:0', '旧急务甲', '跨月', ?, '',\n"
-        "  'pending', 'rescript_draft', '首辅', '内阁首辅', '东林', 2, ?)",
+        "UPDATE pending_decisions SET revision_round=2, prior_options_json=? "
+        "WHERE turn=? AND idx=? AND kind='rescript_draft'",
         (
-            prior,
-            json.dumps(_two_opts("甲", "h1", "乙", "h2"), ensure_ascii=False),
             json.dumps([[{"label": "旧甲", "hint": "oh"}]], ensure_ascii=False),
+            prior,
+            0,
         ),
     )
-    _insert_draft_row(
+    sql_rescript_draft(
         db, turn, idx=0, event_id="draft:本月急务", title="本月急务", context="当月",
         options=_two_opts("丙", "h3", "丁", "h4"),
         actor_name="次辅", actor_office="内阁次辅", actor_faction="阉党",
@@ -374,13 +336,13 @@ def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
         "event_id": "ev-1",
     }])
     # 已 decided 的急务不得入 desk
+    sql_rescript_draft(
+        db, prior, idx=99, event_id="urgent:done", title="已决急务",
+    )
     db.conn.execute(
-        "INSERT INTO pending_decisions\n"
-        " (turn, idx, event_id, title, context, options_json, choice_json,\n"
-        "  status, kind, revision_round, prior_options_json)\n"
-        " VALUES (?, 99, 'urgent:done', '已决急务', '', '[]', '{}',\n"
-        "  'decided', 'rescript_draft', 0, '[]')",
-        (prior,),
+        "UPDATE pending_decisions SET choice_json='{}', status='decided' "
+        "WHERE turn=? AND idx=? AND kind='rescript_draft'",
+        (prior, 99),
     )
     db.conn.commit()
 
