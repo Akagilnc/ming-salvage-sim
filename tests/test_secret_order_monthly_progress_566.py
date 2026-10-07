@@ -86,13 +86,18 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         "dossier_id": dossier_id, "progress_band": "核账",
         "memorial_text": marker,
     })
-    assert marker not in str(db._character_knowledge_events(""))
+    public_before = db._character_knowledge_events("")
+    before_ids = {str(item.get("source_id") or "") for item in public_before}
+    assert not any(
+        sid.startswith(f"secret_order_disclosure:{order_id}:") for sid in before_ids
+    )
 
     apply_score_extraction(db, state, {"secret_order_updates": [{
         "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
     }]}, content=content)
     public = db._character_knowledge_events("")
-    next((item for item in public if str(item.get('source_id') or '').startswith(f'secret_order_disclosure:{order_id}:')))
+    after_ids = {str(item.get('source_id') or '') for item in public}
+    assert any(sid.startswith(f'secret_order_disclosure:{order_id}:') for sid in after_ids)
 
 
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):

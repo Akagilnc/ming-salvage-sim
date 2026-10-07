@@ -97,14 +97,6 @@ class FiscalConfigStore:
         for key in keys:
             self.delete(key)
 
-    def latest_origin(self, keys: tuple[str, ...]) -> str:
-        placeholders = ",".join("?" for _ in keys)
-        row = self._conn.execute(
-            f"SELECT origin_ref FROM fiscal_config_changes WHERE key IN ({placeholders}) "
-            "ORDER BY id DESC LIMIT 1", keys,
-        ).fetchone()
-        return str(row["origin_ref"] or "") if row is not None else ""
-
     def creation_count(self, origin: str) -> int:
         return int(self._conn.execute(
             "SELECT COUNT(*) FROM fiscal_config_creations WHERE origin_ref=?", (origin,),

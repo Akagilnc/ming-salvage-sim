@@ -18,10 +18,7 @@ from typing import Any, Dict, List
 
 from ming_sim import audience_night as an
 from ming_sim.db import GameDB
-from ming_sim.highlight_judge import (
-    DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
-    run_highlight_judge,
-)
+from ming_sim.highlight_judge import run_highlight_judge
 
 
 # ── 解析 / 单次调用降级 ──────────────────────────────────────────────────
@@ -355,7 +352,6 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
         if mid > 0:
             assert db.chat_messages.highlights(mid) == []
         # 生产 timeout_s 输入保留；旁侧 elapsed 墙钟证据删除（接缝无「N 秒内完成」契约）。
-        assert DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S > 0
     finally:
         # chat/断言失败路径仍须放行 _Slow，再 drain 后台。
         release.set()

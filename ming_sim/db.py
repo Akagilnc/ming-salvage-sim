@@ -12983,13 +12983,6 @@ class GameDB:
             source, excluded_names, commit=commit,
         )
 
-    def _is_active_secret_order_assignee(self, minister_name: str) -> bool:
-        """True when this minister holds an active/pending private secret brief."""
-        name = str(minister_name or "").strip()
-        if not name:
-            return False
-        return self.character_knowledge.has_active_secret_brief(name)
-
     def _coerce_positive_message_ids(
         self, message_ids: Optional[Iterable[Any]] = None,
     ) -> List[int]:

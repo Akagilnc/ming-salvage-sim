@@ -2388,13 +2388,6 @@ class DossierStore:
             (int(action_id),),
         ).fetchone()
 
-    def pending_directive_pending_row(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'",
-            (int(action_id),),
-        ).fetchone()
-
     def pending_directive_version_row(self, action_id: int) -> Any:
         return self._conn.execute(
             "SELECT version FROM pending_actions WHERE id=? AND kind='directive'",
@@ -2840,24 +2833,6 @@ class DossierStore:
         cur = self._conn.execute(
             f"DELETE FROM pending_actions WHERE {where}",
             tuple(params),
-        )
-        return int(cur.rowcount or 0)
-
-    def pending_directive_ids_for_turn(self, turn: int) -> list[int]:
-        return [
-            int(row["id"])
-            for row in self._conn.execute(
-                "SELECT id FROM pending_actions "
-                "WHERE turn=? AND kind='directive' AND status='pending'",
-                (int(turn),),
-            ).fetchall()
-        ]
-
-    def delete_pending_directives_for_turn(self, turn: int) -> int:
-        cur = self._conn.execute(
-            "DELETE FROM pending_actions "
-            "WHERE turn=? AND kind='directive' AND status='pending'",
-            (int(turn),),
         )
         return int(cur.rowcount or 0)
 

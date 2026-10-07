@@ -212,14 +212,6 @@ class CharacterKnowledgeStore:
             (order_id,),
         ).fetchall()
 
-    def has_active_secret_brief(self, minister_name: str) -> bool:
-        return self._conn.execute(
-            "SELECT 1 FROM secret_order_briefs b INNER JOIN secret_orders o ON o.id=b.order_id "
-            "WHERE b.minister_name=? AND o.status='active' LIMIT 1", (minister_name,),
-        ).fetchone() is not None
-
-    # ── write port ───────────────────────────────────────────────
-
     def record_participation(
         self, *, turn: int, year: int, period: int, participants: Iterable[str],
         kind: str, title: str, body: str = "", source_id: str = "",

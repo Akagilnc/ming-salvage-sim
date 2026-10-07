@@ -128,10 +128,6 @@ def _project_substrate_hub_remittance(db: GameDB) -> float:
     return remittance_total
 
 
-def _fiscal_container_value(db: GameDB, key: str) -> float:
-    return FiscalContainerStore(db.conn).value(key)
-
-
 def _fiscal_container_values_when_complete(
     db: GameDB, keys: Tuple[str, ...]
 ) -> Optional[Dict[str, float]]:

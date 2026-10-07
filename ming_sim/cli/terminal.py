@@ -232,7 +232,8 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     成功且 court_action 为 court_break 时返回 typed 'court_break'，供 minister_chat
     退出对话进入 play_turn 审阅；收夜失败仍返回 None，留在原对话。
     """
-    retries = session.db.reign.get_interrupted_reply_retries(minister_name) or []
+    db = session.db
+    retries = db.reign.get_interrupted_reply_retries(minister_name) or []
     if not retries:
         print(f"{minister_name}没有待重试的中断回话。\n")
         return
@@ -240,10 +241,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     chat_turn_id = int(target["chat_turn_id"])
     question = str(target["question"])
     accepted_turn = int(target.get("turn") or session.state.turn)
-    before_snapshot = (
-        db.capture_chat_rollback_snapshot()
-        if hasattr(db, "capture_chat_rollback_snapshot") else {}
-    )
+    before_snapshot = db.capture_chat_rollback_snapshot()
     if not db.reign.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
@@ -253,14 +251,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             minister_name=minister_name,
         )
         answer = str(getattr(result, "answer", "") or "")
-        if hasattr(db, "persist_minister_reply"):
-            db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
-        else:
-            mid = db.chat_messages.insert(
-                minister_name=minister_name, turn=accepted_turn, role="minister", content=answer,
-            )
-            db.conn.commit()
-            db.reign.update_chat_turn_messages(chat_turn_id, minister_message_id=int(mid))
+        db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
         # #1842：回话落定后起后台转译（ADR 0155 / 0036）。
         session.schedule_pending_scene_translation(result)
         db.record_chat_turn_rollback_diffs(
