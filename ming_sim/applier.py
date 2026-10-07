@@ -92,9 +92,12 @@ def durable_float(
         value = float(raw)
     except (TypeError, ValueError) as exc:
         raise StoredDocumentError(f"{label} 损坏") from exc
-    if not allow_nonfinite and not math.isfinite(value):
-        raise StoredDocumentError(f"{label} 损坏")
-    return float(value)
+    if math.isfinite(value):
+        return float(value)
+    # 仅合法 +inf（gone 事实难度）；NaN / −inf 仍是损坏。
+    if allow_nonfinite and value == float("inf"):
+        return float(value)
+    raise StoredDocumentError(f"{label} 损坏")
 
 
 def load_stored_json(raw: object, *, label: str, blank: object = None) -> object:

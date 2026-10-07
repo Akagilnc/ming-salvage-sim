@@ -800,6 +800,21 @@ def _seed_guilt_severity(db: Any, target: str) -> str:
 
 
 
+
+def _durable_object_list(raw: object, *, label: str) -> list[dict[str, object]]:
+    """持久对象名单：缺省空；在场非名单/非对象成员 → StoredDocumentError。"""
+    if raw is None or raw == "":
+        return []
+    if not isinstance(raw, list):
+        raise StoredDocumentError(f"{label} 必须为名单")
+    out: list[dict[str, object]] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise StoredDocumentError(f"{label} 成员须为对象")
+        out.append(dict(item))
+    return out
+
+
 def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]]:
     """lane 集读口：投入累计、逐条难度、已掌握。
 
@@ -834,10 +849,13 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
             item["months"] if "months" in item else None,
             label="fact_lanes.months", blank=0,
         )
+        # effort 合法非负；difficulty 允许 +inf（gone），不把 NaN/−inf 洗成 0。
         lanes.append({
             "fact_key": key,
             "effort": max(0.0, effort),
-            "difficulty": max(0.0, difficulty),
+            "difficulty": (
+                difficulty if difficulty == float("inf") else max(0.0, difficulty)
+            ),
             "months": max(0, months),
             "mastered": bool(item.get("mastered")),
         })
@@ -890,8 +908,7 @@ def _append_investigation_log(
     截尾会让跨月的知情／因果承接读不到上月记录（也是 R5 的一半病根）。
     """
     payload = _dossier_payload_map(db, dossier_id)
-    raw = payload.get(key)
-    items = list(raw) if isinstance(raw, list) else []
+    items = _durable_object_list(payload.get(key), label=str(key))
     items.append(dict(entry))
     payload[key] = items
     db.dossiers.update_payload(int(dossier_id), payload)
@@ -1102,9 +1119,9 @@ def record_investigation_source_clue(
     if not key:
         return  # 无指针的开案不是一条来源线索，不造
     payload = _dossier_payload_map(db, int(dossier_id))
-    clues = payload.get(INVESTIGATION_CLUES_KEY)
-    if not isinstance(clues, list):
-        clues = []
+    clues = _durable_object_list(
+        payload.get(INVESTIGATION_CLUES_KEY), label="investigation_clues",
+    )
     clues.append({
         "pending_action_id": 0,
         "origin_chat_message_ids": [],
@@ -1164,17 +1181,10 @@ def investigation_lane_actual_units(db: Any, dossier_id: int) -> float:
 
 def investigation_clue_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
     """案卷已并入的真实线索（各源汇案），含是否已被本月核算消费。"""
-    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_CLUES_KEY)
-    if raw is None or raw == "":
-        return []
-    if not isinstance(raw, list):
-        raise StoredDocumentError("investigation_clues 必须为名单")
-    out: List[Dict[str, object]] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
-            raise StoredDocumentError("investigation_clues 成员须为对象")
-        out.append(dict(item))
-    return out
+    return _durable_object_list(
+        _dossier_payload_map(db, dossier_id).get(INVESTIGATION_CLUES_KEY),
+        label="investigation_clues",
+    )
 
 
 def _route_pointerless_clue(lanes: List[Dict[str, object]], target: str) -> str:
@@ -1453,10 +1463,10 @@ def _investigation_tips(db: Any, dossier_id: int, target: str) -> List[Dict[str,
 def _tip_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
     if not int(dossier_id or 0):
         return []
-    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_TIPS_KEY)
-    if not isinstance(raw, list):
-        return []
-    return [dict(x) for x in raw if isinstance(x, Mapping)]
+    return _durable_object_list(
+        _dossier_payload_map(db, dossier_id).get(INVESTIGATION_TIPS_KEY),
+        label="investigation_tips",
+    )
 
 
 def investigation_tip_records(db: Any, dossier_id: int) -> List[Dict[str, object]]:
@@ -1468,10 +1478,10 @@ def investigation_action_records(db: Any, dossier_id: int) -> List[Dict[str, obj
     """4a 供料读口：本案已落账的人物真实行动声明（查法／压案）。"""
     if not int(dossier_id or 0):
         return []
-    raw = _dossier_payload_map(db, dossier_id).get(INVESTIGATION_ACTS_KEY)
-    if not isinstance(raw, list):
-        return []
-    return [dict(x) for x in raw if isinstance(x, Mapping)]
+    return _durable_object_list(
+        _dossier_payload_map(db, dossier_id).get(INVESTIGATION_ACTS_KEY),
+        label="investigation_acts",
+    )
 
 
 def apply_investigation_spoliation(
@@ -1569,9 +1579,10 @@ def merge_investigation_confirmation(
     did = int(dossier["id"])
     payload = _dossier_payload_map(db, did)
     turn = int(getattr(state, "turn", 0) or 0)
-    sources = payload.get(INVESTIGATION_PROVENANCE_KEY)
-    if not isinstance(sources, list):
-        sources = []
+    sources = _durable_object_list(
+        payload.get(INVESTIGATION_PROVENANCE_KEY),
+        label="investigation_provenance",
+    )
     sources.append({
         "pending_action_id": int(pending_action_id or 0),
         "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],
@@ -1580,9 +1591,9 @@ def merge_investigation_confirmation(
     payload[INVESTIGATION_PROVENANCE_KEY] = sources
     key = str(fact_key or "").strip()
     if key:
-        clues = payload.get(INVESTIGATION_CLUES_KEY)
-        if not isinstance(clues, list):
-            clues = []
+        clues = _durable_object_list(
+            payload.get(INVESTIGATION_CLUES_KEY), label="investigation_clues",
+        )
         clues.append({
             "pending_action_id": int(pending_action_id or 0),
             "origin_chat_message_ids": [int(x) for x in origin_chat_message_ids],

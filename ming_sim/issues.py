@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
-from ming_sim.applier import atomic, connection_owns_transaction, durable_int, load_stored_list, load_stored_object
+from ming_sim.applier import StoredDocumentError, atomic, connection_owns_transaction, durable_int, load_stored_list, load_stored_object
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
@@ -571,12 +571,15 @@ def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
     for row in rows:
         payload = load_stored_object(row["metric_delta"], label="metric_delta")
         progress = payload.get("commitment_progress")
-        if isinstance(progress, dict):
-            return durable_int(
-                progress.get("paid_total"),
-                label="commitment_progress.paid_total",
-                blank=0,
-            )
+        if progress is None:
+            continue
+        if not isinstance(progress, dict):
+            raise StoredDocumentError("commitment_progress 必须为对象")
+        return durable_int(
+            progress.get("paid_total"),
+            label="commitment_progress.paid_total",
+            blank=0,
+        )
     return 0
 
 
