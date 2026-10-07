@@ -101,11 +101,12 @@ def _apply_authority_change_item(
     db: GameDB, state: GameState, item: Dict[str, object],
     *,
     dossier: Optional[Dict[str, object]] = None,
+    dossier_loaded: bool = False,
 ) -> Dict[str, object]:
     """Apply one production-slot authority grant/revoke under the #611 contract.
 
-    ``dossier`` 若由调用方预读传入，则不再二次 get_decree_dossier——便于调用方
-    把持久读放在产物 catch 外（F39）。
+    dossier_loaded=True：调用方已完成唯一一次 get_decree_dossier（含 None=不存在），
+    本方法不再二次查询（F39 禁重复预读）。
     """
     if "dossier_id" not in item or item.get("dossier_id") in (None, ""):
         raise ValueError("missing_dossier_source")
@@ -115,8 +116,7 @@ def _apply_authority_change_item(
         raise ValueError("missing_dossier_source") from None
     if dossier_id <= 0:
         raise ValueError("missing_dossier_source")
-    # 持久读：调用方未预读时在此读；腐坏 ValueError 不得被改写成 missing_source。
-    if dossier is None:
+    if not dossier_loaded:
         dossier = db.get_decree_dossier(dossier_id)
     if dossier is None:
         raise ValueError("missing_dossier_source")
@@ -4740,16 +4740,37 @@ def apply_issue_tracker_output(
                     stop_condition = ""
                 else:
                     stop_condition = _validate_commitment_stop_condition(stop_condition_raw, state, db)
-                origin_ref = db.resolve_commitment_origin_ref(
-                    state, origin_ref, origin_kind=str(ni.get("origin_kind") or ""),
-                )
-                origin_error = db.effect_origin_rejection(origin_ref)
-                if origin_error:
-                    raise ValueError(str(origin_error["reason"]))
             except (TypeError, ValueError, OverflowError) as exc:
                 applied_new.append({
                     "rejected": True, "category": "invalid_enum",
                     "reason": f"new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：{exc}",
+                    "item": ni, "title": title,
+                })
+                continue
+            # 来源案卷持久读在产物 catch 外：payload 腐坏上抛，不得 invalid_enum（F39）。
+            try:
+                origin_ref = db.resolve_commitment_origin_ref(
+                    state, origin_ref, origin_kind=str(ni.get("origin_kind") or ""),
+                )
+            except ValueError as exc:
+                # resolve 的契约错（id 非法/不存在）仍逐项拒；JSON 腐坏带 JSONDecodeError cause 上抛
+                cause: BaseException | None = exc
+                while cause is not None:
+                    if type(cause).__name__ == "JSONDecodeError":
+                        raise
+                    cause = cause.__cause__  # type: ignore[assignment]
+                applied_new.append({
+                    "rejected": True, "category": "invalid_enum",
+                    "reason": f"new_issue commitment 字段非法（origin_ref/ongoing_effects/stop_condition）：{exc}",
+                    "item": ni, "title": title,
+                })
+                continue
+            origin_error = db.effect_origin_rejection(origin_ref)
+            if origin_error:
+                applied_new.append({
+                    "rejected": True,
+                    "category": str(origin_error.get("category") or "invalid_enum"),
+                    "reason": str(origin_error.get("reason") or ""),
                     "item": ni, "title": title,
                 })
                 continue
@@ -7531,6 +7552,7 @@ def _apply_score_extraction_body(
                 "reason": str(exc), "item": item,
             })
             continue
+        # 持久案卷读在产物 catch 外（F39）。
         dossier = db.get_decree_dossier(dossier_id)
         try:
             if int(dossier_id) in _due_review_owned:
@@ -7555,15 +7577,22 @@ def _apply_score_extraction_body(
                 and outcome in GameDB._JOINT_LIABILITY_TRIGGERS
             ):
                 db.validate_joint_liability_affected_parties(raw_parties, outcome)
+        except (TypeError, ValueError, KeyError) as exc:
+            dossier_execution_results.append({
+                "rejected": True, "category": "invalid_transition",
+                "reason": str(exc), "item": item,
+            })
+            continue
+        # 写与后续持久读不在产物 catch 内；SAVEPOINT 保证读失败回滚本项写入（F39）。
+        sp_exec = f"dossier_exec_{int(dossier_id)}"
+        db.conn.execute(f"SAVEPOINT {sp_exec}")
+        try:
             db.record_dossier_execution(
                 dossier_id, outcome, note, state.turn, close=True, commit=False,
             )
-            # #567：S10 结案同源读被护侧对账，经 merge_execution_note 增补（单写口）。
             db.merge_grant_reconciliation_into_execution_note(
                 dossier_id, commit=False,
             )
-            # #619/#622：表报终值旁路——仅 degraded/transformed 挂奏报行；
-            # 变形案载承办人假象（不得回填判官真值）；progress_band 定性中文。
             if outcome in {"degraded", "transformed"}:
                 prior = list(db.list_dossier_progress(int(dossier_id)))
                 band, memorial = terminal_report_facade(
@@ -7575,19 +7604,17 @@ def _apply_score_extraction_body(
                     origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
                     commit=False,
                 )
-            # 连坐挂载点＝本适配器落终值笔；禁对 execution_outcome 列事后扫描。
-            # 触发过滤由 apply 内 _JOINT_LIABILITY_TRIGGERS 单一真源承担。
             db.apply_execution_joint_liability(
                 state, dossier_id, outcome, reason=note, commit=False,
             )
-            dossier_execution_results.append({
-                "dossier_id": dossier_id, "outcome": outcome,
-            })
-        except (TypeError, ValueError, KeyError) as exc:
-            dossier_execution_results.append({
-                "rejected": True, "category": "invalid_transition",
-                "reason": str(exc), "item": item,
-            })
+            db.conn.execute(f"RELEASE {sp_exec}")
+        except Exception:
+            db.conn.execute(f"ROLLBACK TO {sp_exec}")
+            db.conn.execute(f"RELEASE {sp_exec}")
+            raise
+        dossier_execution_results.append({
+            "dossier_id": dossier_id, "outcome": outcome,
+        })
 
     authority_change_results: List[Dict[str, object]] = []
     for item in extracted.get("authority_changes") or []:
@@ -7597,20 +7624,32 @@ def _apply_score_extraction_body(
                 "reason": "授权变更项必须为对象",
             })
             continue
-        # 案卷持久读在产物 catch 外：payload 腐坏上抛（F39）。
-        preloaded = None
-        raw_did = item.get("dossier_id") if "dossier_id" in item else None
-        if raw_did not in (None, ""):
-            try:
-                did = _parse_sqlite_id(raw_did)
-            except (TypeError, ValueError):
-                did = 0
-            if did > 0:
-                preloaded = db.get_decree_dossier(did)
+        # 模型 id 形检；案卷只读一次，在产物 catch 外（F39，禁重复预读）。
+        if "dossier_id" not in item or item.get("dossier_id") in (None, ""):
+            authority_change_results.append({
+                "rejected": True, "category": "missing_dossier_source",
+                "reason": "missing_dossier_source", "item": item,
+            })
+            continue
+        try:
+            did = _parse_sqlite_id(item.get("dossier_id"))
+        except (TypeError, ValueError):
+            authority_change_results.append({
+                "rejected": True, "category": "missing_dossier_source",
+                "reason": "missing_dossier_source", "item": item,
+            })
+            continue
+        if did <= 0:
+            authority_change_results.append({
+                "rejected": True, "category": "missing_dossier_source",
+                "reason": "missing_dossier_source", "item": item,
+            })
+            continue
+        dossier = db.get_decree_dossier(did)
         try:
             authority_change_results.append(
                 _apply_authority_change_item(
-                    db, state, item, dossier=preloaded,
+                    db, state, item, dossier=dossier, dossier_loaded=True,
                 )
             )
         except (TypeError, ValueError, KeyError) as exc:

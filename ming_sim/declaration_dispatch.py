@@ -2294,12 +2294,11 @@ def _peek_affair_id(db: Any, item: Mapping[str, object]) -> Tuple[int | None, st
         return None, "invalid_shape"
     if raw_affair is None:
         return None, None
+    # 声明形检已完成；peek/get 持久损坏上抛，不洗 invalid_shape（F39）。
     try:
         affair_id = db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_EXPERIENCE)
     except KeyError:
         return None, "hallucinated_id"
-    except ValueError:
-        return None, "invalid_shape"
     return affair_id, None
 
 

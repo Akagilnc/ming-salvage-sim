@@ -6895,24 +6895,32 @@ class GameDB:
                         and self.dossier_authorizes_effects(dossier_id)
                     )
         elif value.startswith("affair:"):
+            from ming_sim.entities.affair.store import (
+                UnauthorizedAffairOriginRef,
+                parse_origin_ref,
+            )
+            # origin 字符串形检与事务持久读拆开：get 损坏上抛（F39）。
             try:
-                from ming_sim.entities.affair.store import (
-                    UnauthorizedAffairOriginRef,
-                    parse_origin_ref,
-                )
                 kind, affair_id = parse_origin_ref(value)
+            except (OverflowError, TypeError, ValueError):
+                valid = False
+            else:
                 if kind == "affair" and affair_id is not None:
-                    self.affairs.get(int(affair_id))
-                    authorized = getattr(self, "_batch_authorized_open_affair_ids", None)
-                    if authorized is not None and affair_id not in authorized:
+                    try:
+                        self.affairs.get(int(affair_id))
+                    except KeyError:
                         valid = False
-                        unauthorized_batch = True
                     else:
-                        valid = True
+                        authorized = getattr(
+                            self, "_batch_authorized_open_affair_ids", None,
+                        )
+                        if authorized is not None and affair_id not in authorized:
+                            valid = False
+                            unauthorized_batch = True
+                        else:
+                            valid = True
                 else:
                     valid = False
-            except (KeyError, OverflowError, TypeError, ValueError):
-                valid = False
         if valid:
             return None
         if unauthorized_batch:
@@ -12072,7 +12080,10 @@ class GameDB:
     def list_dossier_reconciliations(
         self, dossier_id: int,
     ) -> List[Dict[str, object]]:
-        """被护案卷侧对账真源读缝（逐路×回合，restore 同源）。"""
+        """被护案卷侧对账真源读缝（逐路×回合，restore 同源）。
+
+        整段 fetch/列解码失败为账本故障（ValueError 上抛），调用方不得洗成产物拒。
+        """
         rows = self.conn.execute(
             """
             SELECT * FROM decree_dossier_reconciliations
@@ -12080,8 +12091,9 @@ class GameDB:
             """,
             (int(dossier_id),),
         ).fetchall()
-        return [
-            {
+        out: List[Dict[str, object]] = []
+        for row in rows:
+            out.append({
                 "id": int(row["id"]),
                 "dossier_id": int(row["dossier_id"]),
                 "turn": int(row["turn"]),
@@ -12095,9 +12107,8 @@ class GameDB:
                 ),
                 "relation_type": str(row["relation_type"] or ""),
                 "note": str(row["note"] or ""),
-            }
-            for row in rows
-        ]
+            })
+        return out
 
     def record_monthly_grant_reconciliations(
         self, turn: int, generated: object = None, *,
@@ -18425,14 +18436,20 @@ class GameDB:
         self.conn.commit()
 
     def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
-        row = self.conn.execute(
-            "SELECT * FROM authority_records WHERE id=?", (int(authority_id),)
-        ).fetchone()
-        if row is None:
-            return None
-        result = dict(row)
-        result["revoked"] = bool(result["revoked"])
-        return result
+        # 整段 fetch/解码为持久缝：失败上抛，不得被外层收成 invalid_authority_change（F39）。
+        try:
+            row = self.conn.execute(
+                "SELECT * FROM authority_records WHERE id=?", (int(authority_id),)
+            ).fetchone()
+            if row is None:
+                return None
+            result = dict(row)
+            result["revoked"] = bool(result["revoked"])
+            return result
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"authority_records#{authority_id} 持久读失败"
+            ) from exc
 
     def list_active_authorities(
         self, turn: int, *, holder_id: str = "",
@@ -18442,30 +18459,38 @@ class GameDB:
         if holder_id:
             holder_sql = " AND holder_id=?"
             params.append(str(holder_id))
-        rows = self.conn.execute(
-            "SELECT * FROM authority_records WHERE revoked=0 "
-            "AND effective_turn<=? AND (expires_turn IS NULL OR expires_turn>=?)"
-            f"{holder_sql} ORDER BY id", params,
-        ).fetchall()
-        return [{**dict(row), "revoked": False} for row in rows]
+        try:
+            rows = self.conn.execute(
+                "SELECT * FROM authority_records WHERE revoked=0 "
+                "AND effective_turn<=? AND (expires_turn IS NULL OR expires_turn>=?)"
+                f"{holder_sql} ORDER BY id", params,
+            ).fetchall()
+            return [{**dict(row), "revoked": False} for row in rows]
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("authority_records 在手列表持久读失败") from exc
 
     def find_authority_by_origin(
         self, dossier_id: int, *, holder_id: str, privilege: str, scope: str,
     ) -> Optional[Dict[str, object]]:
         """Return the stable row for an exact grant origin, regardless of status."""
-        row = self.conn.execute(
-            "SELECT * FROM authority_records WHERE dossier_id=? AND holder_id=? "
-            "AND privilege=? AND scope=? ORDER BY id LIMIT 1",
-            (
-                int(dossier_id), str(holder_id).strip(), str(privilege).strip(),
-                str(scope).strip(),
-            ),
-        ).fetchone()
-        if row is None:
-            return None
-        result = dict(row)
-        result["revoked"] = bool(result["revoked"])
-        return result
+        try:
+            row = self.conn.execute(
+                "SELECT * FROM authority_records WHERE dossier_id=? AND holder_id=? "
+                "AND privilege=? AND scope=? ORDER BY id LIMIT 1",
+                (
+                    int(dossier_id), str(holder_id).strip(), str(privilege).strip(),
+                    str(scope).strip(),
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            result = dict(row)
+            result["revoked"] = bool(result["revoked"])
+            return result
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "authority_records 来源查询持久读失败"
+            ) from exc
 
     def find_active_authority(
         self, turn: int, *, holder_id: str, privilege: str, scope: str,
@@ -18562,14 +18587,44 @@ class GameDB:
             directive_id = int(cursor.lastrowid)
         return directive_id
 
+    def _load_directive_pending_source(
+        self, directive_id: int,
+    ) -> Tuple[int, int]:
+        """持久读 turn_directives→pending 来源身份；(pending_action_id, source_chat_turn_id)。
+
+        整段查询与列解码任一失败均为账本/代码故障（RuntimeError），不得落入
+        ensure 产物 ValueError 捕获（F39）。无 pending 关联 → (0, 0)。
+        """
+        try:
+            pending = self.conn.execute(
+                """
+                SELECT pa.id, pa.source_chat_turn_id
+                FROM turn_directives td
+                JOIN pending_actions pa ON pa.id = td.source_pending_action_id
+                WHERE td.id = ?
+                ORDER BY pa.id DESC LIMIT 1
+                """,
+                (int(directive_id),),
+            ).fetchone()
+            if pending is None:
+                return 0, 0
+            return int(pending["id"]), int(pending["source_chat_turn_id"] or 0)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"旨稿#{directive_id} pending 来源持久读失败"
+            ) from exc
+
     def _ensure_directive_dossier(
         self, state: GameState, directive_id: int, text: str,
-        payload: Optional[Dict[str, object]] = None, *, commit: bool = True,
+        payload: Optional[Dict[str, object]] = None, *,
+        pending_source: Optional[Tuple[int, int]] = None,
+        commit: bool = True,
     ) -> List[int]:
         """旧式/新式旨稿共用的幂等成案口；返回已成案 dossier id 列表（#1778 起 national 亦单行）。
 
         #658：payload.target_dossier_id 指向 stalled 廷议时，复用该案卷并落御笔手敕，
         不新建第二案卷。directive identity = directive:<id>。
+        pending_source：ensure 批缝在产物 catch 外预读的 (pending_id, source_turn)。
         """
         owns_transaction = self.owns_transaction() if commit else False
         structured = dict(payload or {})
@@ -18628,31 +18683,10 @@ class GameDB:
         if not target_kind or not target_id:
             raise ValueError("普通旨意缺少受控目标，拒绝成案")
         executor_kind, executor_id = self._directive_executor(action_type, structured)
-        pending = self.conn.execute(
-            """
-            SELECT pa.id, pa.source_chat_turn_id
-            FROM turn_directives td
-            JOIN pending_actions pa ON pa.id = td.source_pending_action_id
-            WHERE td.id = ?
-            ORDER BY pa.id DESC LIMIT 1
-            """,
-            (int(directive_id),),
-        ).fetchone()
-        # #1890：来源轮只认 pending_actions.source_chat_turn_id 这一列（交办的
-        # 统一身份），并按 turn_directives.source_pending_action_id 从新指旧找到
-        # 那道交办（ADR 0054：禁反向回填）。载荷里那份副本已删——同一事实两处
-        # 可写，改草/迟到转译会让两者漂移。认不到行（无 pending 的直写路径）
-        # 时回落载荷，仅保旧档兼容，不作为常规来源。
-        # 持久列整型：损坏是账本/代码故障，不得以 ValueError 落入 ensure 产物拒收（F39）。
-        dossier_source_turn = 0
-        if pending is not None:
-            raw_src = pending["source_chat_turn_id"]
-            try:
-                dossier_source_turn = int(raw_src or 0)
-            except (TypeError, ValueError) as exc:
-                raise RuntimeError(
-                    f"pending_actions.source_chat_turn_id 持久整型损坏：{raw_src!r}"
-                ) from exc
+        # pending 来源由 ensure 批缝在产物 catch 外预读传入（F39）；无预读时再读一次。
+        if pending_source is None:
+            pending_source = self._load_directive_pending_source(int(directive_id))
+        pending_action_id, dossier_source_turn = pending_source
         if dossier_source_turn <= 0:
             # 载荷回落仅旧档兼容；坏值仍属模型/契约产物错（ValueError）。
             try:
@@ -18670,7 +18704,7 @@ class GameDB:
             executor_kind=executor_kind,
             executor_id=executor_id,
             source_chat_turn_id=dossier_source_turn,
-            pending_action_id=0 if pending is None else int(pending["id"]),
+            pending_action_id=pending_action_id,
             directive_id=int(directive_id),
             payload=structured,
             due_turn=int(structured.get("due_turn") or 0),
@@ -18777,15 +18811,15 @@ class GameDB:
                     # 已有案卷：幂等跳过（补交重跑 ensure 时不重复建）
                     if self.get_dossier_for_directive(did) is not None:
                         continue
-                    # 持久读在产物 ValueError 捕获之外：腐坏/代码故障走外层
-                    # SettlementAbort（0005），不得洗成 locality_fanout_failed（F39）。
+                    # 持久读全部在产物 ValueError 捕获之外（F39）：载荷、pending 来源。
                     payload = self.read_directive_dossier_payload(row)
+                    pending_source = self._load_directive_pending_source(did)
                     sp = f"ensure_directive_{did}"
                     self.conn.execute(f"SAVEPOINT {sp}")
                     try:
                         self._ensure_directive_dossier(
                             state, did, str(row["text"]),
-                            payload, commit=False,
+                            payload, pending_source=pending_source, commit=False,
                         )
                     except ValueError as exc:
                         # 成案产物/契约错（非持久读）：逐项隔离留痕，保持 draft
@@ -20384,19 +20418,17 @@ class GameDB:
         if not referenced:
             return
         placeholders = ",".join("?" for _ in referenced)
-        # 名列持久读取故障是代码/账本错，不得洗成「参与人物不存在」产物拒（F39）。
-        known: set[str] = set()
-        for row in self.conn.execute(
-            f"SELECT name FROM characters WHERE name IN ({placeholders})",
-            tuple(referenced),
-        ).fetchall():
-            try:
-                name = row["name"]
-            except (TypeError, ValueError) as exc:
-                raise RuntimeError(
-                    "characters.name 持久读取失败"
-                ) from exc
-            known.add(str(name))
+        # 整段名册 fetch/解码为持久缝：任一失败→代码故障，不洗成「人不在册」（F39）。
+        try:
+            known = {
+                str(row["name"])
+                for row in self.conn.execute(
+                    f"SELECT name FROM characters WHERE name IN ({placeholders})",
+                    tuple(referenced),
+                ).fetchall()
+            }
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("characters 名册持久读失败") from exc
         from ming_sim.participant_roster import is_non_person_participant_name
 
         def _roster_ref_error(label: str, name: str) -> ValueError:

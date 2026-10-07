@@ -1890,24 +1890,18 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
             lines.append(f"{name}=@{rid}")
     timing = ""
     if db is not None:
-        state = db.conn.execute(
-            "SELECT turn, year, period FROM game_state WHERE id=1"
-        ).fetchone()
-        if state is not None:
-            # 持久 game_state 整型损坏是账本故障，不得以 ValueError 进补交产物耗尽（F39）。
-            try:
-                turn_i = int(state["turn"])
-                year_i = int(state["year"])
-                period_i = int(state["period"])
-            except (TypeError, ValueError) as exc:
-                raise RuntimeError(
-                    f"game_state 时点持久整型损坏：turn={state['turn']!r} "
-                    f"year={state['year']!r} period={state['period']!r}"
-                ) from exc
-            timing = (
-                f"当前结算时点：turn={turn_i}，"
-                f"{year_i}年{period_i}月。\n"
-            )
+        # 整段 game_state 时点读为持久缝：fetch/解码任一失败→代码故障（F39）。
+        try:
+            state = db.conn.execute(
+                "SELECT turn, year, period FROM game_state WHERE id=1"
+            ).fetchone()
+            if state is not None:
+                timing = (
+                    f"当前结算时点：turn={int(state['turn'])}，"
+                    f"{int(state['year'])}年{int(state['period'])}月。\n"
+                )
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("game_state 时点持久读失败") from exc
     head = "【pay_order_override 接地事实】"
     if lines:
         head += "地区只能直接使用下列 canonical id，禁别名/自造：\n" + "、".join(lines) + "\n"
@@ -1932,15 +1926,13 @@ def _pay_order_grounding_facts(content: Any, db: Any = None) -> str:
 
 def _ground_relative_pay_order_deadlines(result: Dict[str, Any], db: Any) -> Dict[str, Any]:
     """在既有抽取适配缝把结构化相对月数落成 active-through 绝对 turn。"""
-    row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
-    if row is None:
-        return result
     try:
+        row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
+        if row is None:
+            return result
         current_turn = int(row["turn"])
     except (TypeError, ValueError) as exc:
-        raise RuntimeError(
-            f"game_state.turn 持久整型损坏：{row['turn']!r}"
-        ) from exc
+        raise RuntimeError("game_state.turn 持久读失败") from exc
     if result.get("dossier_action_type") != "pay_order_override":
         return result
     for entry in result.get("entries") or []:
@@ -2261,39 +2253,31 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
     rows = db.list_decree_dossiers(status="proposed")
     lines: List[str] = []
     for row in rows or []:
-        try:
-            # list_decree_dossiers → _dossier_row 已保证 payload 为对象。
-            payload = row.get("payload") or {}
-            if str(payload.get("deliberation_state") or "") != "stalled":
-                continue
-            did = int(row["id"])
-            issue = db.conn.execute(
-                "SELECT id, title FROM issues WHERE origin_ref=? AND status='active' "
-                "LIMIT 1",
-                (f"dossier:{did}",),
-            ).fetchone()
-            if issue is None:
-                continue
-            # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
-            # 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
-            # Free prose title/body supply: preserve raw; emptiness on copy (#1834 F21).
-            title = str(
-                payload.get("title")
-                or payload.get("target_id")
-                or issue["title"]
-                or ""
-            )
-            body = str(
-                payload.get("text") or row.get("decree_text") or ""
-            )
-            # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
-            lines.append(
-                f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
-            )
-        except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
-            # #1849：坏项隔离留痕（ADR 0005：只拒该项、不带走整批，但必须记原因）。
-            _log(f"强推案卷事实跳过坏行（dossier={row.get('id')!r}）：{exc}")
+        # 已落盘事实供料：持久/查询解码失败上抛，不得吞成空串（F39）。
+        # list_decree_dossiers → _dossier_row 已保证 payload 为对象。
+        payload = row.get("payload") or {}
+        if str(payload.get("deliberation_state") or "") != "stalled":
             continue
+        did = int(row["id"])
+        issue = db.conn.execute(
+            "SELECT id, title FROM issues WHERE origin_ref=? AND status='active' "
+            "LIMIT 1",
+            (f"dossier:{did}",),
+        ).fetchone()
+        if issue is None:
+            continue
+        title = str(
+            payload.get("title")
+            or payload.get("target_id")
+            or issue["title"]
+            or ""
+        )
+        body = str(
+            payload.get("text") or row.get("decree_text") or ""
+        )
+        lines.append(
+            f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
+        )
     if not lines:
         return ""
     return (
