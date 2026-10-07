@@ -2620,8 +2620,15 @@ class GameDB:
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
         if status in _OUSTED_STATES:
+            # Free status reason: empty-check without mutating carried prose (P6).
+            reason_text = str(reason or "")
+            note = (
+                f"人物终态：{status}；{reason_text}"
+                if reason_text.strip()
+                else f"人物终态：{status}"
+            )
             self.interrupt_dossiers_for_character(
-                state, name, f"人物终态：{status}；{reason}".rstrip("；"),
+                state, name, note,
                 commit=False,
             )
         if commit:
@@ -3474,8 +3481,9 @@ class GameDB:
         Used for dynastic/name changes such as houjin 后金 -> 大清.
         """
         power_id = str(power_id or "").strip()
-        new_name = str(new_name or "").strip()
-        if not power_id or not new_name:
+        # Free display name: empty-check without mutating carried value (P6).
+        new_name = str(new_name or "")
+        if not power_id or not new_name.strip():
             return None
         row = PowerStore(self.conn).read_apply_power_rename((power_id,))
         if row is None:

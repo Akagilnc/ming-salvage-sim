@@ -22,7 +22,8 @@ from ming_sim.constants import (
     RECOVERY_OUTCOME_FACTORS,
     RECOVERY_PERSONS_PER_WAN,
 )
-from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
+from ming_sim.applier import load_stored_object
+from ming_sim.db import GameDB
 from ming_sim.flows import _apply_population_transfers
 from ming_sim.models import GameState
 
@@ -52,8 +53,6 @@ def apply_levy_driven_transfers(
     （reason=加派；累积账月效统一使用 `盘面自发`，不伪归最后一道改账旨）。基线 ≤0 或折算后
     ≤0 的省零入池——停加派/蠲免后入池止（AC5；出口回流归 S5 #652）。
     """
-    if db.population_unit != POPULATION_UNIT_PERSONS:
-        return [], []
     records: List[Dict[str, object]] = []
     rows = db.regions.read_apply_levy_driven_transfers(())
     for row in rows:
@@ -148,8 +147,6 @@ def apply_recovery_driven_transfers(
     再经执行 outcome 成色折减；经 _apply_population_transfers reason=回流 唯一落库。
     幂等键 (dossier_id, turn)：同键不双扣池。立即开仓/#522 pacification 不在此列。
     """
-    if db.population_unit != POPULATION_UNIT_PERSONS:
-        return [], []
     turn = int(state.turn)
     # 月份推进事务只执行一次；同一案在本次扫描内仅回流一次。
     seen_keys: set[tuple[int, int]] = set()
@@ -161,16 +158,11 @@ def apply_recovery_driven_transfers(
         dossier_id = int(row["id"])
         if (dossier_id, turn) in seen_keys:
             continue
-        # payload_json 是引擎自己写的持久列，解析失败＝账本腐值，必须响亮失败
-        # 交外层事务回滚；静默 continue 会让这案赈济回流无声消失。
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"dossier {dossier_id}.payload_json 持久 JSON 损坏，无法结算回流"
-            ) from exc
-        if not isinstance(payload, dict):
-            continue
+        # Durable payload: reuse strict object read (StoredDocumentError on corrupt/non-object).
+        payload = load_stored_object(
+            row["payload_json"],
+            label=f"dossier {dossier_id}.payload_json",
+        )
         grant_action = str(payload.get("grant_action") or "").strip()
         if grant_action not in RECOVERY_GRANT_ACTIONS:
             continue

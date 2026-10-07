@@ -11,7 +11,7 @@ from ming_sim.entities.faction.store import FactionStore
 from ming_sim.entities.issue.store import IssueStore
 from ming_sim.entities.power.store import PowerStore
 from ming_sim.entities.region.store import RegionStore
-from ming_sim.entities.reign_state.store import POPULATION_UNIT_PERSONS, ReignStateStore
+from ming_sim.entities.reign_state.store import ReignStateStore
 
 import copy
 import json
@@ -2542,7 +2542,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         _apply_issue_entities(
             db,
             state,
-            _content_population_effect_for_save(db, ev.effect_on_trigger),
+            ev.effect_on_trigger,
             f"事件#{ev.id}触发",
             content=_ctx(),
         )
@@ -3149,38 +3149,6 @@ def _spawn_legacy_from_effect(
     return summary
 
 
-def _content_population_effect_for_save(
-    db: GameDB, effect: Dict[str, object]
-) -> Dict[str, object]:
-    """#648（ADR 0088/F4）：content 静态人口量已全线「人」，落本档前按存档口径换算。
-
-    新档（人）原样；无标旧档（万人）region_delta.population ÷10⁴（迁移后 content
-    人口值均为 10⁴ 整倍数，整除无损）。只换算 region_delta.*.population，其余段浅拷贝透传。
-    只用于 content 事件真源（effect_on_trigger / event_to_issue 持久化）；LLM 产 delta
-    已按本档口径写，不得经此换算。"""
-    region_delta = effect.get("region_delta")
-    if not isinstance(region_delta, dict) or not region_delta:
-        return effect
-    if db.population_unit == POPULATION_UNIT_PERSONS:
-        return effect
-    scaled: Dict[str, object] = {**effect}
-    scaled_region_delta: Dict[str, object] = {}
-    for rid, fields in region_delta.items():
-        if isinstance(fields, dict) and "population" in fields:
-            scaled_fields = {**fields}
-            try:
-                scaled_fields["population"] = db.scale_content_population_to_save_unit(
-                    fields["population"]
-                )
-            except (TypeError, ValueError):
-                pass  # 非整人口值交由下游 apply_region_deltas 既有拒收留痕，不在此静默改写
-            scaled_region_delta[rid] = scaled_fields
-        else:
-            scaled_region_delta[rid] = fields
-    scaled["region_delta"] = scaled_region_delta
-    return scaled
-
-
 def _apply_issue_entities(
     db: GameDB,
     state: GameState,
@@ -3249,8 +3217,9 @@ def _apply_issue_entities(
             if not isinstance(item, dict):
                 raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：第 {idx} 项非 dict")
             power_id = str(item.get("power_id") or "").strip()
-            new_name = str(item.get("new_name") or "").strip()
-            if not power_id or not new_name:
+            # Free display name: empty-check without mutating carried value (P6).
+            new_name = str(item.get("new_name") or "")
+            if not power_id or not new_name.strip():
                 raise ValueError(f"{label} power_renames 非法（全局严格，不静默）：power_id/new_name 缺失")
             if PowerStore(db.conn).read_apply_issue_entities((power_id,)) is None:
                 raise ValueError(f"{label} power_renames 引用未入库势力 '{power_id}'")
@@ -4773,7 +4742,7 @@ def apply_issue_tracker_output(
                     _apply_issue_entities(
                         db,
                         state,
-                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        ev.effect_on_trigger,
                         f"事件#{ev.id}触发",
                         content=runtime_content,
                         llm_config=llm_config,
@@ -6886,9 +6855,6 @@ def _apply_surcharge_decrees(
                 "missing_ref",
                 f"surcharge_decrees {region_id!r} 无 settle 财政基座，逐省累积账无处落",
             )
-            continue
-        if db.population_unit != POPULATION_UNIT_PERSONS:
-            _reject("missing_ref", "surcharge_decrees 仅适用于 population_unit='人' 的人口池档")
             continue
         if _surcharge_population_pool_members(db, region_id) != {"农民", "流民"}:
             _reject("missing_ref", f"surcharge_decrees {region_id!r} 缺农民/流民省级人口池")
