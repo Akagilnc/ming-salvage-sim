@@ -8,7 +8,7 @@ from dataclasses import replace
 import pytest
 
 from ming_sim.knowledge import project_issue_materials
-from ming_sim.materials import list_materials, prepare_character_materials
+from ming_sim.materials import _safe_segment, list_materials, prepare_character_materials
 
 
 AUDIENCE_NAME = "郭允厚"
@@ -27,7 +27,7 @@ def _issue_row(db):
 
 
 def _issue_paths(prepared, issue_id: int) -> set[str]:
-    expected = f"事务/issue-{issue_id}/当前情况.txt"
+    expected = f"事务/{_safe_segment(f'issue-{issue_id}')}/当前情况.txt"
     return {path for path in list_materials(prepared.root) if path == expected}
 
 
@@ -55,8 +55,9 @@ def test_issue_materials_keep_knowledge_visibility_without_audience_veto(game, t
     outsider = prepare_character_materials(
         db, state, content.characters[NON_AUDIENCE_NAME], dest_root=tmp_path / "outsider",
     )
-    assert _issue_paths(audience, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
-    assert _issue_paths(outsider, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+    expected = {f"事务/{_safe_segment(f'issue-{issue_id}')}/当前情况.txt"}
+    assert _issue_paths(audience, issue_id) == expected
+    assert _issue_paths(outsider, issue_id) == expected
 
 
 def test_empty_audience_is_empty_supplement_not_knowledge_veto(game, tmp_path):
@@ -78,7 +79,9 @@ def test_empty_audience_is_empty_supplement_not_knowledge_veto(game, tmp_path):
     prepared = prepare_character_materials(
         db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
     )
-    assert _issue_paths(prepared, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+    assert _issue_paths(prepared, issue_id) == {
+        f"事务/{_safe_segment(f'issue-{issue_id}')}/当前情况.txt"
+    }
 
 
 def test_audience_supplement_grants_originating_issue_outside_knowledge(game, tmp_path):
@@ -108,7 +111,9 @@ def test_audience_supplement_grants_originating_issue_outside_knowledge(game, tm
     outsider = prepare_character_materials(
         db, state, content.characters[NON_AUDIENCE_NAME], dest_root=tmp_path / "outsider",
     )
-    assert _issue_paths(audience, issue_id) == {f"事务/issue-{issue_id}/当前情况.txt"}
+    assert _issue_paths(audience, issue_id) == {
+        f"事务/{_safe_segment(f'issue-{issue_id}')}/当前情况.txt"
+    }
     assert _issue_paths(outsider, issue_id) == set()
 
 

@@ -79,9 +79,11 @@ def write_identity_materials(
         if row is None:
             continue  # 不是真人物（如「某类人」式题名）：没有身份材料，不编
         character = SimpleNamespace(**dict(row))
-        knowledge, issue_materials = _character_material_projection(db, state, character)
+        knowledge = db.get_character_knowledge(state, name)
+        # Same affair-authority projection as scene materials (F45 / ADR 0154).
+        matter_lines = _character_affair_lines(db, state, name, knowledge)
         rel = identity_material_rel(name)
-        _write_tree((root / rel).parent, db, state, character, knowledge, issue_materials)
+        _write_tree((root / rel).parent, db, state, character, knowledge, matter_lines)
         written.append(rel)
     if written:
         index_path = root / _INDEX_NAME
@@ -406,9 +408,14 @@ def _own_affair_lines(
         linked_material.setdefault(linked_affair_id, []).append(text)
 
     for issue in knowledge.get("issues") or []:
+        raw_id = issue.get("id")
+        if raw_id is None or raw_id == "":
+            continue
         try:
-            issue_id = int(issue.get("id"))
-        except (TypeError, ValueError):
+            issue_id = int(raw_id)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"knowledge issue id 非法：{raw_id!r}") from exc
+        if issue_id <= 0:
             continue
         _collect_linked(
             issue_id, str(issue.get("title") or ""),
@@ -503,9 +510,15 @@ def _character_affair_lines(
     lines: list[tuple[str, str, str, str, bool]] = []
     seen: set[str] = set()
     for issue in knowledge.get("issues") or []:
+        raw_id = issue.get("id")
+        if raw_id is None or raw_id == "":
+            continue
         try:
-            issue_id = int(issue.get("id"))
-        except (TypeError, ValueError):
+            issue_id = int(raw_id)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            # Knowledge projection fault at material entry — fail loud (not skip).
+            raise ValueError(f"knowledge issue id 非法：{raw_id!r}") from exc
+        if issue_id <= 0:
             continue
         if _issue_linked_affair_id(db, issue_id):
             continue
@@ -560,31 +573,6 @@ def _character_affair_lines(
             continue
         seen.add(dir_key)
         lines.append((dir_key, title, directory_text, opening_text, is_handling))
-    return lines
-
-
-def _visible_affair_lines(knowledge: dict) -> list[dict[str, object]]:
-    """Material matters are exactly the already-authorized knowledge projection."""
-    lines: list[dict[str, object]] = []
-    for issue in knowledge.get("issues") or []:
-        issue_id = int(issue.get("id") or 0)
-        title = str(issue.get("title") or "")
-        if issue_id <= 0 or not title.strip():
-            continue
-        stage = str(issue.get("stage_text") or "")
-        resolve = str(issue.get("resolve_condition") or "")
-        fail = str(issue.get("fail_condition") or "")
-        lines.append({
-            "id": issue_id,
-            "affair_id": int(issue.get("affair_id") or 0),
-            "title": title,
-            "situation": stage if stage.strip() else "见目录。",
-            "resolve_condition": resolve if resolve.strip() else "",
-            "fail_condition": fail if fail.strip() else "",
-            "source_id": str(issue.get("source_id") or f"issue:{issue_id}"),
-            "audience_names": tuple(issue.get("audience_names") or ()),
-            "participant_roster": issue.get("participant_roster") or "[]",
-        })
     return lines
 
 
@@ -646,18 +634,6 @@ def _opening_affair_lines(
     return handled
 
 
-def _handled_affair_lines(
-    db: Any, state: Any, character_name: str, issue_materials: Sequence[dict[str, object]],
-) -> list[dict[str, object]]:
-    """Filter canonical visible issue materials to matters this character handles."""
-    from ming_sim.participant_roster import participant_roster_names
-
-    return [
-        item for item in issue_materials
-        if character_name in participant_roster_names(item.get("participant_roster"))
-    ]
-
-
 def _carryover_drafts(db: Any, state: Any) -> list[dict]:
     return [
         dict(row) for row in db.list_directives(state, statuses=("draft",))
@@ -670,10 +646,14 @@ def minimal_opening_context(
     character: Any,
     state: Any,
     present: Sequence[str],
-    affairs: Sequence[dict[str, object]],
+    affairs: Sequence[tuple[str, str]],
     spoken: str,
 ) -> str:
-    """Canonical minimal opening: identity/office, present, date, affairs, spoken."""
+    """Canonical minimal opening: identity/office, present, date, affairs, spoken.
+
+    ``affairs`` is the same (title, situation) pairs as scene opening
+    (``_opening_affair_lines``) — one authority projection (F45).
+    """
     name = str(getattr(character, "name", "") or "")
     office = str(getattr(character, "office", "") or "")
     parts = [
@@ -683,10 +663,7 @@ def minimal_opening_context(
     ]
     if affairs:
         parts.append("正经手事务：")
-        parts.extend(
-            f"- #{item['id']} {item['title']}：{item['situation']}"
-            for item in affairs
-        )
+        parts.extend(f"- {title}：{situation}" for title, situation in affairs)
     else:
         parts.append("正经手事务：（无）")
     parts.append("本场已说的话：")
@@ -742,7 +719,7 @@ def _write_recommendation_file(tmp: Path, db: Any, state: Any, character: Any) -
 
 def _write_textual_fact_files(
     tmp: Path, db: Any, character: Any, knowledge: dict,
-    issue_materials: Sequence[dict[str, object]],
+    matter_lines: Sequence[tuple[str, str, str, str, bool]],
 ) -> list[str]:
     readable = db.textual_facts.readable_materials
     subjects: list[tuple[str, str, str]] = []
@@ -767,10 +744,15 @@ def _write_textual_fact_files(
             aname = str(row["name"] or aid)
             if aid:
                 subjects.append(("army", aid, aname))
-    for item in issue_materials:
-        affair_id = int(item.get("affair_id") or 0)
+    for dir_key, title, _directory_text, _opening_text, _is_handling in matter_lines:
+        if not str(dir_key).startswith("affair-"):
+            continue
+        try:
+            affair_id = int(str(dir_key).split("-", 1)[1])
+        except (TypeError, ValueError, IndexError):
+            continue
         if affair_id > 0:
-            subjects.append(("affair", str(affair_id), str(item.get("title") or affair_id)))
+            subjects.append(("affair", str(affair_id), str(title or affair_id)))
     index: list[str] = []
     seen: set[tuple[str, str]] = set()
     for kind, subject_id, label in subjects:
@@ -881,8 +863,11 @@ def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> 
 
 def _write_tree(
     tmp: Path, db: Any, state: Any, character: Any, knowledge: dict,
-    issue_materials: Sequence[dict[str, object]],
+    matter_lines: Sequence[tuple[str, str, str, str, bool]],
 ) -> list[str]:
+    """Person materials tree. Matter carriers use the same ``_character_affair_lines``
+    keys as scene materials (affair-N / unlinked issue-N / draft-N) — F45.
+    """
     name = str(getattr(character, "name", "") or "")
     index: list[str] = []
 
@@ -906,19 +891,17 @@ def _write_tree(
     # _write_character_public_layer（公开说法/ 与 公开说法/邸报/），亲历走 经历.txt，
     # 职门底账走 公事档案.txt，人事走 _court_roster_text。删掉重复投影，不另造新载体。
 
-    for item in issue_materials:
-        segment = f"issue-{int(item['id'])}"
-        affair_dir = tmp / _AFFAIR_DIR / segment
-        details = [
-            f"事项ID：{item['id']}",
-            f"事务ID：{item['affair_id']}" if item["affair_id"] else "",
-            f"标题：{item['title']}",
-            f"当前情况：{item['situation']}",
-            f"办结条件：{item['resolve_condition']}" if item["resolve_condition"] else "",
-            f"失败条件：{item['fail_condition']}" if item["fail_condition"] else "",
-        ]
-        _write_text(affair_dir / "当前情况.txt", "\n".join(x for x in details if x))
-        index.append(f"{_AFFAIR_DIR}/{segment}/当前情况.txt")
+    for dir_key, title, directory_text, _opening_text, _is_handling in matter_lines:
+        matter_seg = _safe_segment(dir_key)
+        if title and "\n" in directory_text:
+            body = f"{title}\n{directory_text}"
+        elif title and directory_text:
+            body = f"{title}：{directory_text}"
+        else:
+            body = title or directory_text
+        rel = f"{_AFFAIR_DIR}/{matter_seg}/当前情况.txt"
+        _write_text(tmp / rel, body)
+        index.append(rel)
 
     public_events = knowledge.get("public_events") or []
     index.extend(_write_character_public_layer(tmp, public_events, db))
@@ -929,7 +912,7 @@ def _write_tree(
     recommend_rel = _write_recommendation_file(tmp, db, state, character)
     if recommend_rel:
         index.append(recommend_rel)
-    index.extend(_write_textual_fact_files(tmp, db, character, knowledge, issue_materials))
+    index.extend(_write_textual_fact_files(tmp, db, character, knowledge, matter_lines))
     index.extend(_write_region_detail_files(tmp, db, knowledge))
     index.extend(_write_army_detail_files(tmp, db, knowledge))
 
@@ -1050,15 +1033,6 @@ def _write_character_public_layer(
     return index
 
 
-def _character_material_projection(db: Any, state: Any, character: Any) -> tuple[dict, list]:
-    from ming_sim.knowledge import project_issue_materials
-
-    name = str(getattr(character, "name", "") or "")
-    knowledge = db.get_character_knowledge(state, name)
-    issues = _visible_affair_lines({"issues": project_issue_materials(db, name, knowledge)})
-    return knowledge, issues
-
-
 def prepare_character_materials(
     db: Any,
     state: Any,
@@ -1067,22 +1041,17 @@ def prepare_character_materials(
     dest_root: Optional[Path] = None,
 ) -> PreparedMaterials:
     name = str(getattr(character, "name", "") or "")
-    knowledge, issue_materials = _character_material_projection(db, state, character)
+    knowledge = db.get_character_knowledge(state, name)
+    # One authority projection with scene materials (F45 / ADR 0154).
+    matter_lines = _character_affair_lines(db, state, name, knowledge)
 
     dest = _publish_material_tree(
         dest_root,
         character_materials_root(db, state, character),
-        lambda tmp: _write_tree(tmp, db, state, character, knowledge, issue_materials),
+        lambda tmp: _write_tree(tmp, db, state, character, knowledge, matter_lines),
     )
 
-    affairs = _handled_affair_lines(db, state, name, issue_materials)
-    for row in _carryover_drafts(db, state):
-        title = f"尚未入档旨稿#{int(row['id'])}"
-        body = str(row.get("text") or "")
-        affairs.append({
-            "id": f"draft-{int(row['id'])}", "title": title,
-            "situation": f"{body}（尚未入档）" if body.strip() else "尚未入档",
-        })
+    affairs = _opening_affair_lines(db, name, matter_lines)
     from types import SimpleNamespace
     from ming_sim.knowledge import current_character_office
 

@@ -9573,16 +9573,45 @@ class GameDB:
         )
 
     def _decode_agno_runs(self, raw: Any) -> Tuple[List[Any], bool]:
+        """Decode durable ``agno_sessions.runs`` blob.
+
+        Vacuum/missing → empty list. Corrupt JSON or non-list payload is a
+        durable fault and raises (F39) — never wash into length 0.
+        """
         if raw in (None, ""):
             return [], False
-        try:
-            decoded = json.loads(raw)
-            encoded_as_string = isinstance(decoded, str)
-            if encoded_as_string:
-                decoded = json.loads(decoded or "[]")
-            return (decoded if isinstance(decoded, list) else []), encoded_as_string
-        except (TypeError, ValueError):
+        if isinstance(raw, list):
+            return list(raw), False
+        text = str(raw).strip()
+        if not text or text == "[]":
             return [], False
+        try:
+            decoded = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            tlog(f"[agno_sessions.runs] 腐坏 JSON，拒绝静默等同空 list：{text[:80]!r}")
+            raise ValueError(f"agno_sessions.runs 腐坏 JSON：{text[:80]!r}") from exc
+        encoded_as_string = isinstance(decoded, str)
+        if encoded_as_string:
+            inner = str(decoded).strip()
+            if not inner or inner == "[]":
+                return [], True
+            try:
+                decoded = json.loads(inner)
+            except (TypeError, ValueError) as exc:
+                tlog(
+                    f"[agno_sessions.runs] 双重编码内层腐坏 JSON，拒绝静默：{inner[:80]!r}"
+                )
+                raise ValueError(
+                    f"agno_sessions.runs 腐坏 JSON：{inner[:80]!r}"
+                ) from exc
+        if not isinstance(decoded, list):
+            tlog(
+                f"[agno_sessions.runs] 非 list，拒绝静默等同空：{type(decoded).__name__}"
+            )
+            raise ValueError(
+                f"agno_sessions.runs 须为 list，得 {type(decoded).__name__}"
+            )
+        return list(decoded), encoded_as_string
 
     def _encode_agno_runs(self, runs: List[Any], encoded_as_string: bool) -> str:
         if encoded_as_string:
@@ -9608,10 +9637,29 @@ class GameDB:
             payload: Dict[str, Any] = {"run_id": str(rid)}
             raw = row["run_data"]
             if raw not in (None, ""):
-                try:
-                    decoded = json.loads(raw) if isinstance(raw, str) else raw
-                except (TypeError, ValueError):
-                    decoded = None
+                if isinstance(raw, dict):
+                    decoded = raw
+                else:
+                    text = str(raw).strip()
+                    if text and text != "{}":
+                        try:
+                            decoded = json.loads(text)
+                        except (TypeError, ValueError) as exc:
+                            tlog(
+                                f"[agno_runs.run_data] 腐坏 JSON，拒绝静默：{text[:80]!r}"
+                            )
+                            raise ValueError(
+                                f"agno_runs.run_data 腐坏 JSON：{text[:80]!r}"
+                            ) from exc
+                    else:
+                        decoded = None
+                if decoded is not None and not isinstance(decoded, dict):
+                    tlog(
+                        f"[agno_runs.run_data] 非对象，拒绝静默：{type(decoded).__name__}"
+                    )
+                    raise ValueError(
+                        f"agno_runs.run_data 须为对象，得 {type(decoded).__name__}"
+                    )
                 if isinstance(decoded, dict):
                     payload = dict(decoded)
                     payload["run_id"] = str(rid)

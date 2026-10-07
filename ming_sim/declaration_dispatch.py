@@ -1104,8 +1104,10 @@ def _dispatch_commissions(
                     )
                 )
             except KeyError as exc:
+                # Missing target / no matching exposure scene — business state.
                 _reject(rejected, item, str(exc), "invalid_state", source)
-            except (TypeError, ValueError) as exc:
+            except DecreeMaterializationValidationError as exc:
+                # LLM item shape only. Durable todo/dossier ValueError propagates (F39).
                 _reject(rejected, item, str(exc), "invalid_shape", source)
             continue
 
@@ -1796,6 +1798,13 @@ def _stage_prohibit_covert_levy(
         dossier_id = int(item["target_id"])
     except (KeyError, TypeError, ValueError):
         raise KeyError("禁摊派交办缺场面案卷 id") from None
+    body = _declared_prose(item.get("text"))
+    if body is None:
+        # LLM item shape — not a durable read fault (F39 ownership split).
+        raise DecreeMaterializationValidationError(
+            "禁摊派交办缺正文", failed_fields=("text",),
+        )
+    # Durable todo/dossier payload faults raise from list_due_review_scenes (F39).
     if not any(
         scene.get("kind") == "covert_levy_exposure"
         and not scene.get("decision")
@@ -1803,9 +1812,6 @@ def _stage_prohibit_covert_levy(
         for scene in list_due_review_scenes(db, state)
     ):
         raise KeyError(f"当前无待裁的暗渠摊派暴露案卷：{dossier_id}")
-    body = _declared_prose(item.get("text"))
-    if body is None:
-        raise ValueError("禁摊派交办缺正文")
     actor = str(minister_name or "").strip() or _commission_fallback_actor(db)
     payload = {
         "text": body,

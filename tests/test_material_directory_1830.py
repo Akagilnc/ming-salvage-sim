@@ -115,16 +115,11 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
     ]
 
 
-def test_matter_carriers_follow_the_real_knowledge_projection(game, tmp_path):
-    """事务载体路径集合恰等于该角色真实可见投影内每条事务的唯一载体。
+def test_matter_carriers_follow_affair_authority_not_parallel_issue_projection(game, tmp_path):
+    """人物材料事务载体与场景共用 affair 权威投影（F45），不再平行 issue 业务路。
 
-    经手关系经 `issues.participant_roster` + `record_character_participation`
-    两条真实写口建立，可见性取自 `db.get_character_knowledge` 真实投影；
-    不替换知识输入，也不另调内部 helper 把投影重算一遍当证据。
-
-    开场「正经手事务」只列经手事务这半条不在本文件承担：`PreparedMaterials`
-    只导出 root/opening，开场里没有事务号的结构化出口，而解析
-    开场正文去认段头措辞正是本类禁止的盯文。按票面不为此新增生产测试钩子。
+    经手关系经真实写口建立。未挂靠事务的 issue 仍是合法机械载体（issue-N）；
+    已挂靠的只出 affair-N，不并写第二份 issue 身份。路径段与场景同形（_safe_segment）。
     """
     db, state, content = game
     character = _active_minister(db, content)
@@ -142,16 +137,28 @@ def test_matter_carriers_follow_the_real_knowledge_projection(game, tmp_path):
         source_id=f"issue:{handled_id}",
     )
 
+    # Link visible_id to a durable affair — mechanical carrier folds into affair-N.
+    linked = db.affairs.open(
+        name=str(rows[1]["title"]), origin=f"issue:{visible_id}",
+        year=state.year, period=state.period, turn=state.turn,
+    )
+    db.conn.execute(
+        "UPDATE issues SET affair_id=? WHERE id=?", (int(linked.id), visible_id),
+    )
+    db.conn.commit()
+
     prepared = prepare_character_materials(
         db, state, character, dest_root=tmp_path / "materials",
     )
-    # 经手的那条与只是可见的那条都在真实可见投影内，各有唯一载体路径。
-    visible_ids = {
-        int(row["id"]) for row in db.get_character_knowledge(state, character.name)["issues"]
+    matter_paths = {
+        path for path in list_materials(prepared.root) if path.startswith("事务/")
     }
-    assert {handled_id, visible_id} <= visible_ids
-    issue_paths = {path for path in list_materials(prepared.root) if path.startswith("事务/issue-")}
-    assert issue_paths == {f"事务/issue-{i}/当前情况.txt" for i in visible_ids}
+    handled_path = f"事务/{_safe_segment(f'issue-{handled_id}')}/当前情况.txt"
+    folded_issue_path = f"事务/{_safe_segment(f'issue-{visible_id}')}/当前情况.txt"
+    affair_path = f"事务/{_safe_segment(f'affair-{int(linked.id)}')}/当前情况.txt"
+    assert handled_path in matter_paths
+    assert folded_issue_path not in matter_paths
+    assert affair_path in matter_paths
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):

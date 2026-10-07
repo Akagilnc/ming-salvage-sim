@@ -266,20 +266,16 @@ def project_court_roster_rows(
 
     The complete roster remains an internal query result.  A personnel-domain
     capability may expose it; otherwise only the reader's current role roster
-    and people named in already-authorized events cross the output boundary.
+    crosses the output boundary. Free-prose name hits in event bodies are not
+    an admission grant (ADR 0142 / #1834 F46).
     """
     world = knowledge.get("world") or {}
     if "personnel" in world:
         return list(rows)
     current_office_type = str(knowledge.get("office_type") or office_type or "")
-    visible_event_text = "\n".join(
-        "：".join(str(value) for value in (item.get("title"), item.get("body")) if value)
-        for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
-    )
     return [
         row for row in rows
         if str(row["office_type"] or "") == current_office_type
-        or str(row["name"] or "") in visible_event_text
     ]
 
 

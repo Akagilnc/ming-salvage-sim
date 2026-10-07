@@ -1016,16 +1016,28 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
         assert "materials" not in order[side]
         visible = {int(row["id"]) for row in db.get_character_knowledge(state, who)["issues"]}
         paths = captured["paths"][who]
-        assert {path for path in paths if path.startswith("事务/issue-")} == {
-            f"事务/issue-{i}/当前情况.txt" for i in visible
+        # Identity tree shares affair-authority carriers with scene (F45); unlinked
+        # issues keep issue-N keys via the same _safe_segment path scheme.
+        from ming_sim.materials import _safe_segment
+        expected_issues = {
+            f"事务/{_safe_segment(f'issue-{i}')}/当前情况.txt"
+            for i in visible
+            if int(db.affairs.affair_id_for_issue(i) or 0) == 0
         }
+        assert {
+            path for path in paths
+            if path.startswith("事务/") and "/issue-" in path
+        } == expected_issues
         assert any(path.endswith("/经历.txt") for path in paths)
         assert any(path.endswith("/公事档案.txt") for path in paths)
         assert not any(path.startswith("盘面/") for path in paths)
-    assert f"事务/issue-{issue_rows[0]['id']}/当前情况.txt" in captured["paths"][name]
-    assert f"事务/issue-{issue_rows[0]['id']}/当前情况.txt" not in captured["paths"][target]
-    assert f"事务/issue-{issue_rows[1]['id']}/当前情况.txt" in captured["paths"][target]
-    assert f"事务/issue-{issue_rows[1]['id']}/当前情况.txt" not in captured["paths"][name]
+    from ming_sim.materials import _safe_segment as _seg
+    path0 = f"事务/{_seg(f'issue-{issue_rows[0]["id"]}')}/当前情况.txt"
+    path1 = f"事务/{_seg(f'issue-{issue_rows[1]["id"]}')}/当前情况.txt"
+    assert path0 in captured["paths"][name]
+    assert path0 not in captured["paths"][target]
+    assert path1 in captured["paths"][target]
+    assert path1 not in captured["paths"][name]
     assert not roots[-1].exists()
 
     # 在身份写手读取公事档案时注入失败，仍走真实 4a 生命周期。

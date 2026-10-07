@@ -87,7 +87,11 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
 
 
 
-def test_same_name_affairs_are_not_merged_and_close_declaration_is_retired(game):
+def test_same_name_affairs_are_not_merged_and_close_attach_is_rejected(game):
+    """Same display name does not merge; retired close attach stays a generic illegal enum/ref.
+
+    Does not re-prove the retired declare_closed / close_from_declaration methods (F44).
+    """
     db, state, _ = game
     minister = _minister(db)
     first = db.affairs.open(
@@ -99,7 +103,6 @@ def test_same_name_affairs_are_not_merged_and_close_declaration_is_retired(game)
         year=state.year, period=state.period, turn=state.turn,
     )
     assert first.id != second.id
-    # Top-level declare-closed channel is retired (ADR 0154 / #1834 F44).
     before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
     apply_score_extraction(
         db, state, {"affair_declarations": [_declaration(attach="close", affair_id=first.id)]},
@@ -122,8 +125,6 @@ def test_same_name_affairs_are_not_merged_and_close_declaration_is_retired(game)
             },
         )
     assert db.affairs.get(first.id).status == "open"
-    assert not hasattr(db.affairs, "declare_closed")
-    assert not hasattr(db.affairs, "close_from_declaration")
 
 
 
