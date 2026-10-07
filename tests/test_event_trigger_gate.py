@@ -1338,7 +1338,12 @@ def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
 
 
 def test_rejected_strategic_event_does_not_land_substitute_commander_person_delta(game):
-    """#189 CMR R3：替补将也是战事软判结果；重复/拒收事件不得单独杀人。"""
+    """#189 CMR R3：替补将也是战事软判结果；重复/拒收事件不得单独杀人。
+
+    经真实声明入口承接：事件归属信封在 C3 预检整封拒收，替补将人事不得落账。
+    """
+    from ming_sim.declaration_dispatch import dispatch_declaration
+
     db, state, content = game
     issues.bind_content(content)
     state.year = 1641
@@ -1346,33 +1351,34 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
     db.mark_event_triggered(state, "songshan_battle")
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "孙传庭"))
 
-    out = issues.apply_score_extraction(
+    result = dispatch_declaration(
         db,
         state,
         {
-            "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
-            "人物变更": [
-                {"origin_ref": "盘面自发", "affair_declaration": {"attach": "new"}},
-                {"origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置", "status": "dead", "reason": "松锦替补战死"},
+            "effects": [
+                {
+                    "event_id": "songshan_battle",
+                    "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
+                    "人物变更": [
+                        {
+                            "origin_ref": "盘面自发",
+                            "name": "孙传庭",
+                            "动作": "处置",
+                            "status": "dead",
+                            "reason": "松锦替补战死",
+                        },
+                    ],
+                },
             ],
         },
-        content=content,
-        ordered_deltas={
-            "army_delta": [], "region_delta": [], "power_updates": [],
-            "new_armies": [],
-        },
-        ordered_effect_event_ids={"人物变更": ["", "songshan_battle"]},
     )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is True
-    assert db.get_character_status("孙传庭")[0] == "active"
-    assert len(out["applied_person_changes"]) == 1
-    assert out["applied_person_changes"][0]["rejected"] is True
-    assert all(
-        "_effect_event_id" not in rejection["item"]
-        for rejection in out["validate_shape_rejections"]
-        if isinstance(rejection.get("item"), dict)
+    assert any(
+        getattr(item, "category", "") == "event_rejected"
+        for item in result.effects.rejected
     )
+    assert db.get_character_status("孙传庭")[0] == "active"
+    assert result.effects.applied == []
 
 
 def test_pending_gate_uses_same_place_canonical_terminal_state(game):

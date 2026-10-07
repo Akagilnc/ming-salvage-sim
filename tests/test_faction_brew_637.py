@@ -13,15 +13,23 @@
 
 from __future__ import annotations
 
+import json
+import threading
 
 from ming_sim.faction_brew import (
+    STANCE_KEY,
+    VIEW_FACTION_STANCE,
     build_faction_brew_input,
     collect_new_edge_events_for_faction,
     project_character_factions,
     select_faction_brew_targets,
 )
 from ming_sim.exceptions import LLMUnavailable
-from ming_sim.relation_brew import MonthEndRelationBrewLeg
+from ming_sim.relation_brew import (
+    FOUNDINGS_KEY,
+    MonthEndRelationBrewLeg,
+    RECENT_KEY,
+)
 from ming_sim.relations import EMPEROR_NODE
 
 
@@ -211,6 +219,33 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
 
 
 # ---- 送修口二负例 (b)：重试月场景，prompt 不把旧事件称作本月 ----
+
+def test_relation_and_faction_items_share_single_batch_in_parallel(game):
+    """同批 1 关系＋2 派系必须并行进入调用缝（P5）；接现役 prepare／brew／persist。"""
+    db, state, _ = game
+    _add_edge(db, state, source="毕自严", target="王绍徽", kind="站台",
+              context="毕自严当面替王绍徽担名。", origin="audience:turn-1")
+    barrier = threading.Barrier(3)
+    threads: list = []
+
+    def parallel_brew(payload_json: str) -> str:
+        payload = json.loads(payload_json)
+        threads.append(threading.current_thread().name)
+        barrier.wait()  # 串行实现会在第 2/3 条处超时破裂
+        if payload.get("view") == VIEW_FACTION_STANCE:
+            return json.dumps({STANCE_KEY: "朝局如常。"}, ensure_ascii=False)
+        return json.dumps(
+            {FOUNDINGS_KEY: [], RECENT_KEY: "毕王有站台之谊。"},
+            ensure_ascii=False,
+        )
+
+    leg = MonthEndRelationBrewLeg(db, state, parallel_brew)
+    assert leg.prepare()
+    leg.brew()
+    report = leg.persist()
+    assert len(report["brewed"]) == 3
+    assert len(set(threads)) == 3
+
 
 def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_month(game):
     """负例(b) 机械可验：复刻重试月场景（水位之上含旧月事件），断言 prompt 渲染措辞不把旧事件称作本月。

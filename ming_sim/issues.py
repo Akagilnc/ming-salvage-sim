@@ -4092,138 +4092,6 @@ def _declared_levy_outcome_attribution_error(item: dict, event_id: str) -> str:
     return ""
 
 
-def _preflight_items_from_merged_extraction(
-    extracted: Dict[str, object],
-    ordered_deltas: Dict[str, list[tuple[str, object]]],
-    ordered_effect_event_ids: dict[str, list[str]] | None,
-) -> list[tuple[str, dict]]:
-    """把字段级 event_id 归属重组成信封形，供既有 C3 预检复用（非第二套规则）。"""
-    by_event: dict[str, dict] = {}
-    declared = ordered_effect_event_ids or {}
-
-    def _env(event_id: str) -> dict:
-        return by_event.setdefault(event_id, {})
-
-    for field in _ORDERED_DELTA_FIELDS:
-        pairs = list(ordered_deltas.get(field) or [])
-        ids = list(declared.get(field) or [])
-        for index, (key, value) in enumerate(pairs):
-            event_id = str(ids[index] if index < len(ids) else "").strip()
-            if not event_id:
-                continue
-            bucket = _env(event_id).setdefault(field, {})
-            if isinstance(bucket, dict):
-                bucket[key] = value
-    for field in ("new_armies", "人物变更", "new_issues"):
-        raw_items = extracted.get(field) or []
-        if not isinstance(raw_items, list):
-            continue
-        ids = list(declared.get(field) or [])
-        for index, item in enumerate(raw_items):
-            event_id = str(ids[index] if index < len(ids) else "").strip()
-            if not event_id and field == "new_issues" and isinstance(item, dict):
-                if str(item.get("origin_kind") or "").lower() == "event_pool":
-                    event_id = str(item.get("id") or item.get("origin_ref") or "").strip()
-            if not event_id:
-                continue
-            _env(event_id).setdefault(field, []).append(item)
-    outcomes = extracted.get("事件结局")
-    if isinstance(outcomes, dict):
-        for raw_id, label in outcomes.items():
-            event_id = str(raw_id or "").strip()
-            if not event_id:
-                continue
-            _env(event_id).setdefault("事件结局", {})[event_id] = label
-    return [(event_id, env) for event_id, env in by_event.items()]
-
-
-def _strip_rejected_event_ownership(
-    extracted: Dict[str, object],
-    ordered_deltas: Dict[str, list[tuple[str, object]]],
-    ordered_effect_event_ids: dict[str, list[str]],
-    rejected_event_ids: set[str],
-    *,
-    reasons_by_event: Mapping[str, str] | None = None,
-) -> tuple[list[dict], list[dict]]:
-    """预检拒收的事件信封整封退出序列；返回 (拒收 new_issues 投影, 拒收人物投影)。"""
-    rejected_issues: list[dict] = []
-    rejected_persons: list[dict] = []
-    if not rejected_event_ids:
-        return rejected_issues, rejected_persons
-    reasons = reasons_by_event or {}
-    for field in _ORDERED_DELTA_FIELDS:
-        pairs = list(ordered_deltas.get(field) or [])
-        ids = list(ordered_effect_event_ids.get(field) or [])
-        kept_pairs: list[tuple[str, object]] = []
-        kept_ids: list[str] = []
-        for index, pair in enumerate(pairs):
-            event_id = str(ids[index] if index < len(ids) else "").strip()
-            if event_id in rejected_event_ids:
-                continue
-            kept_pairs.append(pair)
-            kept_ids.append(event_id)
-        ordered_deltas[field] = kept_pairs
-        ordered_effect_event_ids[field] = kept_ids
-        if field in extracted and isinstance(extracted.get(field), dict):
-            extracted[field] = {key: value for key, value in kept_pairs}
-    for field in ("new_armies", "人物变更", "new_issues"):
-        raw_items = extracted.get(field) or []
-        if not isinstance(raw_items, list):
-            continue
-        ids = list(ordered_effect_event_ids.get(field) or [])
-        kept_items: list[object] = []
-        kept_ids: list[str] = []
-        for index, item in enumerate(raw_items):
-            event_id = str(ids[index] if index < len(ids) else "").strip()
-            if not event_id and field == "new_issues" and isinstance(item, dict):
-                if str(item.get("origin_kind") or "").lower() == "event_pool":
-                    event_id = str(item.get("id") or item.get("origin_ref") or "").strip()
-            if event_id in rejected_event_ids:
-                reason = str(reasons.get(event_id) or "事件效果预检拒收")
-                if field == "new_issues" and isinstance(item, dict):
-                    rejected_issues.append({
-                        **dict(item),
-                        "id": str(item.get("id") or event_id),
-                        "rejected": True,
-                        "category": "event_rejected",
-                        "reason": reason,
-                    })
-                elif field == "人物变更" and isinstance(item, dict):
-                    rejected_persons.append({
-                        "name": _person_change_name(item),
-                        "动作": str(item.get("动作") or item.get("action") or "").strip(),
-                        "rejected": True,
-                        "category": "event_rejected",
-                        "reason": reason,
-                        "item": dict(item),
-                    })
-                continue
-            kept_items.append(item)
-            if ids:
-                kept_ids.append(event_id if index < len(ids) else "")
-        extracted[field] = kept_items
-        if field in ordered_effect_event_ids or kept_ids:
-            ordered_effect_event_ids[field] = kept_ids[:len(kept_items)]
-    outcomes = extracted.get("事件结局")
-    if isinstance(outcomes, dict):
-        extracted["事件结局"] = {
-            key: value for key, value in outcomes.items()
-            if str(key or "").strip() not in rejected_event_ids
-        }
-    # 无 new_issues 声明、仅库存归属被拒时仍投影事件拒收行。
-    seen_issue_ids = {str(item.get("id") or "") for item in rejected_issues}
-    for event_id in sorted(rejected_event_ids):
-        if event_id in seen_issue_ids:
-            continue
-        rejected_issues.append({
-            "id": event_id,
-            "rejected": True,
-            "category": "event_rejected",
-            "reason": str(reasons.get(event_id) or "事件效果预检拒收"),
-        })
-    return rejected_issues, rejected_persons
-
-
 def preflight_declared_event_effects(
     db: GameDB, state: GameState, items: list[tuple[str, dict]],
     open_affair_ids: set[int] | None = None,
@@ -7613,10 +7481,8 @@ def _apply_score_extraction_body(
                 kept.append(stamped)
             extracted[field] = kept
 
-    # 调用方提供序列＝正式入口已预检。缺省派生单步统一编排；若含显式事件归属，
-    # 复用同一 preflight_declared_event_effects，拒收整封退出后再 admit。
-    preflight_rejected_issues: list[dict] = []
-    preflight_rejected_persons: list[dict] = []
+    # 调用方提供序列＝正式入口已预检并整封准入。缺省派生单步；不再把字段级
+    # 库存归属重组为第二套信封／剥离编排（C3 只活在声明入口）。
     if effect_sequence is not None:
         stamped_sequence = []
         for step_extracted, step_ordered, step_event_ids in effect_sequence:
@@ -7632,48 +7498,8 @@ def _apply_score_extraction_body(
             stamped_sequence.append((stamped_step, step_ordered, step_event_ids))
         effect_sequence = stamped_sequence
     else:
-        step_event_ids = dict(ordered_effect_event_ids or {})
-        # 仅当声明了事件库存归属时走完整 C3；纯 event_pool 立项仍交 tracker。
-        stock_owned = any(
-            str(event_id or "").strip()
-            for field in (
-                "region_delta", "army_delta", "power_updates", "new_armies", "人物变更",
-            )
-            for event_id in (step_event_ids.get(field) or [])
-        )
-        if stock_owned:
-            preflight_items = _preflight_items_from_merged_extraction(
-                extracted, ordered_deltas, step_event_ids,
-            )
-            if preflight_items:
-                rejected_by_index = preflight_declared_event_effects(
-                    db, state, preflight_items,
-                    open_affair_ids=authorized_open_affairs,
-                )
-                reasons_by_event: dict[str, str] = {}
-                rejected_event_ids: set[str] = set()
-                for index, reason in rejected_by_index.items():
-                    if 0 <= index < len(preflight_items):
-                        event_id, env = preflight_items[index]
-                        eid = str(event_id)
-                        rejected_event_ids.add(eid)
-                        reasons_by_event[eid] = str(reason)
-                        validate_rejections.append(
-                            (
-                                "event_effects",
-                                {"event_id": eid, **dict(env)},
-                                str(reason),
-                            ),
-                        )
-                stripped_issues, stripped_persons = _strip_rejected_event_ownership(
-                    extracted, ordered_deltas, step_event_ids, rejected_event_ids,
-                    reasons_by_event=reasons_by_event,
-                )
-                preflight_rejected_issues.extend(stripped_issues)
-                preflight_rejected_persons.extend(stripped_persons)
-                ordered_effect_event_ids = step_event_ids
         effect_sequence = [
-            (extracted, ordered_deltas, step_event_ids),
+            (extracted, ordered_deltas, dict(ordered_effect_event_ids or {})),
         ]
 
     def _origin_ref_from_result_item(item: Mapping[str, object] | None) -> str:
@@ -7929,12 +7755,12 @@ def _apply_score_extraction_body(
             explicit_title = str(item.get("new_title") or item.get("title") or "").strip()
             if explicit_title and explicit_title not in PERSON_IDENTITY_TITLES:
                 continue
-            # Same-period amnesty claims the old stock even if the LLM forgot to put
-            # the weakening in 反噬; a top-level update would be suppression ledgering.
+            # 流寇同股同信封：招安已占用该股（即使反噬为空），同信封顶层
+            # power_updates 再写即双削。外势与跨信封独立效果不在此列。
+            if not _is_bandit_power_id(old_power):
+                continue
             power_ids.add(old_power)
         return power_ids
-
-    amnesty_conflict_power_ids = _amnesty_conflict_power_ids(person_changes)
 
     applied_person_changes: List[Dict[str, object]] = []
 
@@ -8523,8 +8349,10 @@ def _apply_score_extraction_body(
         step_event_ids: dict[str, list[str]] | None = None,
         *,
         apply_event_owned: bool = False,
+        amnesty_powers: set[str] | None = None,
     ) -> None:
         event_ids_map = step_event_ids if step_event_ids is not None else ordered_effect_event_ids
+        conflict_powers = amnesty_powers or set()
         for index, (power_id, raw_changes) in enumerate(pairs or []):
             event_owned = bool(_effect_event_ids(
                 "power_updates", index, strategic_event_referenced_ids, event_ids_map,
@@ -8545,12 +8373,12 @@ def _apply_score_extraction_body(
                     origin_ref=origin_ref, require_origin=True,
                 ))
                 continue
-            if power_id in amnesty_conflict_power_ids:
+            if power_id in conflict_powers:
                 power_changes.append({
                     "power_id": power_id,
                     "rejected": True,
                     "category": "invalid_transition",
-                    "reason": "同一股同一时段已有招安易主，拒绝顶层 power_updates 剿股；削股须随易主反噬一处落账",
+                    "reason": "同一股同一信封已有招安易主，拒绝顶层 power_updates 剿股；削股须随易主反噬一处落账",
                     "item": {"power_id": power_id, "changes": raw_changes},
                 })
                 continue
@@ -8612,10 +8440,17 @@ def _apply_score_extraction_body(
         _apply_surcharge_items(step_extracted.get("surcharge_decrees") or [])
         _apply_population_transfer_items(step_extracted.get("population_transfers") or [])
         _apply_bandit_absorption_items(step_extracted.get("bandit_absorptions") or [])
+        # 流寇同股同信封双削：只看本笔人物招安，不跨批/跨信封扩大。
+        step_person_raw = step_extracted.get("人物变更") or []
+        step_amnesty_powers = _amnesty_conflict_power_ids(
+            [item for item in step_person_raw if isinstance(item, dict)]
+            if isinstance(step_person_raw, list) else []
+        )
         _apply_power_update_pairs(
             step_ordered.get("power_updates") or [],
             step_event_ids=step_event_ids,
             apply_event_owned=apply_event_owned,
+            amnesty_powers=step_amnesty_powers,
         )
 
     economy_index_base = 0
@@ -8666,12 +8501,6 @@ def _apply_score_extraction_body(
         defer_event_trigger_ids=strategic_event_pool_ids,
         open_affair_ids_at_input=authorized_open_affairs,
         pre_admitted_event_ids=landed_event_stock_ids)
-    if preflight_rejected_issues:
-        merged_new = list(issue_summary.get("new_issues") or [])
-        merged_new.extend(preflight_rejected_issues)
-        issue_summary = {**issue_summary, "new_issues": merged_new}
-    if preflight_rejected_persons:
-        applied_person_changes.extend(preflight_rejected_persons)
 
     # Affair closure observes the batch's final issue state. In particular, a
     # same-batch linked issue must prevent closure rather than leave a closed
