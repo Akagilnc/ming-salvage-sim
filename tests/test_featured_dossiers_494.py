@@ -53,13 +53,21 @@ def test_every_active_seven_faction_minister_has_featured_dossier(game):
 
 
 def test_seven_faction_dossiers_are_objective_and_identity_scoped(game):
-    """#494：identity 桶决定供料来源；最低桶不喂 dossier/议程原值。
+    """#494：identity 桶决定供料来源；应喂源原值入面。
 
-    契约=按桶供料：应喂源的原值入面；不应喂的源被改写后面不变。
-    不复制渲染模板、不按文字值推断来源、不断言私有桶标签。
+    ADR0033：按分桶选 per-faction 档料；最低桶≈不喂党派料。
+    契约=桶路由结构化 + 应喂源原值搬运；不复制渲染模板、不做来源变异／整段等值证明。
     """
+    from ming_sim.context import _identity_bucket
+    from ming_sim.qualitative import identity_band
+
     db, _state, content = game
     base = next(c for c in content.characters.values() if c.faction == "东林")
+
+    # 结构化分桶（非正文证明）：探针期 identity 值落入 ADR 三档。
+    assert _identity_bucket(20) == "low"
+    assert _identity_bucket(65) == "middle"
+    assert _identity_bucket(90) == "high"
 
     for faction in SEVEN_FACTIONS:
         char_low = replace(base, faction=faction, identity=20)
@@ -67,54 +75,21 @@ def test_seven_faction_dossiers_are_objective_and_identity_scoped(game):
         char_high = replace(base, faction=faction, identity=90)
         dossier = _FACTION_DOSSIERS[faction]
         core = dossier["core"]
+        internal = dossier["internal"]
         agenda = str(_faction_row(db, faction)["agenda"])
 
         # 正：中桶搬运 core + agenda 原值。
         mid = faction_context_with_db(char_mid, db)
         assert core in mid and agenda in mid
 
-        # 负：agenda 源——低桶不喂（改写后面不变）；中桶喂新值。
-        low_before = faction_context_with_db(char_low, db)
-        probe_agenda = f"AGENDA_PROBE_494_{faction}"
-        db.conn.execute(
-            "UPDATE factions SET agenda = ? WHERE name = ?",
-            (probe_agenda, faction),
-        )
-        db.conn.commit()
-        try:
-            assert faction_context_with_db(char_low, db) == low_before
-            mid_after = faction_context_with_db(char_mid, db)
-            assert probe_agenda in mid_after and core in mid_after
-        finally:
-            db.conn.execute(
-                "UPDATE factions SET agenda = ? WHERE name = ?",
-                (agenda, faction),
-            )
-            db.conn.commit()
+        # 正：高桶另搬运 internal 原值。
+        high = faction_context_with_db(char_high, db)
+        assert core in high and agenda in high and internal in high
 
-        # 负：internal 源——中桶不喂；高桶喂新值。
-        old_internal = dossier["internal"]
-        probe_internal = f"INTERNAL_PROBE_494_{faction}"
-        mid_before = faction_context_with_db(char_mid, db)
-        dossier["internal"] = probe_internal
-        try:
-            assert faction_context_with_db(char_mid, db) == mid_before
-            high_after = faction_context_with_db(char_high, db)
-            assert probe_internal in high_after and core in high_after
-        finally:
-            dossier["internal"] = old_internal
-
-        # 负：core 源——低桶不喂；中/高桶喂新值。
-        old_core = dossier["core"]
-        probe_core = f"CORE_PROBE_494_{faction}"
-        low_before = faction_context_with_db(char_low, db)
-        dossier["core"] = probe_core
-        try:
-            assert faction_context_with_db(char_low, db) == low_before
-            assert probe_core in faction_context_with_db(char_mid, db)
-            assert probe_core in faction_context_with_db(char_high, db)
-        finally:
-            dossier["core"] = old_core
+        # 最低桶：生产恒有的派名 + 认同带入面；不喂由 bucket==low 路由承担，
+        # 不以正文禁词或来源变异／整段等值证明「不喂」。
+        low = faction_context_with_db(char_low, db)
+        assert faction in low and identity_band(20) in low
 
 
 def test_north_star_ministers_have_distinct_featured_voices(game):

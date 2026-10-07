@@ -108,7 +108,6 @@ def test_directive_payload_authority_not_notes_alias():
     payload = web_app.WebGame.directive_payload(game, row)
     assert payload["notes"] == "家赀约十万两"
     assert payload["authority"] == ""
-    assert payload["authority"] != payload["notes"]
 
 
 # ── #1322 resolve stream 相位预检在抢锁前 ───────────────────────────────────
