@@ -11436,7 +11436,8 @@ class GameDB:
     def _normalize_directive_dossier_payload(
         self, payload: Dict[str, object], *, content=None, current_turn: int = 0,
     ) -> Dict[str, object]:
-        """机械旨意的唯一结构边界；不完整载荷响亮拒绝。"""
+        """机械旨意的唯一结构边界；领域不完整 → DMVE；真实读取故障原样上抛。"""
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         # #658：纯御笔强推不经 ordinary triad 归一（prepare/commit/ensure 共吃）。
         # text/actor 等会话字段须保留——pending payload 以它们为成案正文真源。
         if classify_directive_structured_kind(payload) == "push":
@@ -11471,26 +11472,31 @@ class GameDB:
                 if purpose and not field_population_allowed(
                     "grant_allocation", "purpose", normalized,
                 ):
-                    raise ValueError(f"非协饷拨帑不得夹带 purpose={purpose}")
+                    raise DecreeMaterializationValidationError(f"非协饷拨帑不得夹带 purpose={purpose}")
                 # #1716：amount/account 唯一验形；分类默认 grant_action=「无」时只借金钱动作过 shape，不回写。
                 # 普通/legacy fallback（缺/空 grant_action）须显式非空 account，禁默认国库。
                 shape_ga = grant_action if grant_action not in {"", "无"} else "赏赉"
                 if grant_action in {"", "无"}:
                     account_raw = normalized.get("account")
                     if account_raw is None or not str(account_raw).strip():
-                        raise ValueError("拨帑旨意缺少 account")
-                shaped = require_grant_allocation_shape(
-                    grant_action=shape_ga,
-                    amount=normalized.get("amount"),
-                    account=normalized.get("account"),
-                )
+                        raise DecreeMaterializationValidationError("拨帑旨意缺少 account")
+                try:
+                    shaped = require_grant_allocation_shape(
+                        grant_action=shape_ga,
+                        amount=normalized.get("amount"),
+                        account=normalized.get("account"),
+                    )
+                except DecreeMaterializationValidationError:
+                    raise
+                except ValueError as exc:
+                    raise DecreeMaterializationValidationError(str(exc)) from exc
                 normalized["amount"] = int(shaped["amount"])
                 normalized["account"] = str(shaped["account"])
                 surface = str(
                     normalized.get("execution_surface") or "in_transit"
                 ).strip()
                 if surface not in {"immediate", "in_transit"}:
-                    raise ValueError("拨帑旨意 execution_surface 非法")
+                    raise DecreeMaterializationValidationError("拨帑旨意 execution_surface 非法")
                 normalized["execution_surface"] = surface
                 normalized.pop("delta", None)
         elif action == "pay_order_override":
@@ -11498,7 +11504,7 @@ class GameDB:
             # 仍由成案点与物化点共 prepare_pay_order_entries 同一验形，不在此重复）。
             entries = normalized.get("entries")
             if not isinstance(entries, list) or not entries:
-                raise ValueError("pay_order_override 旨意缺少 entries 结构化载荷")
+                raise DecreeMaterializationValidationError("pay_order_override 旨意缺少 entries 结构化载荷")
         elif action in {
             "assignment", "authorization", "secret_authorization", "military_order",
         }:
@@ -11512,7 +11518,7 @@ class GameDB:
                 from ming_sim.session import _find_existing_minister
                 assignee = _find_existing_minister(content, assignee, self) or ""
             if not assignee and action in {"authorization", "secret_authorization"}:
-                raise ValueError(f"{action} 旨意缺少 canonical assignee")
+                raise DecreeMaterializationValidationError(f"{action} 旨意缺少 canonical assignee")
             if assignee:
                 normalized["assignee_id"] = assignee
             else:
@@ -11530,7 +11536,7 @@ class GameDB:
             if priv in {"", "无"}:
                 priv = "便宜行事"
             if priv not in AUTHORITY_PRIVILEGE_SET:
-                raise ValueError("委任授权 privilege 非法")
+                raise DecreeMaterializationValidationError("委任授权 privilege 非法")
             normalized["privilege"] = priv
             scope = str(normalized.get("scope") or "").strip()
             if not scope or ":" not in scope:
@@ -11542,7 +11548,7 @@ class GameDB:
                     scope = f"{t_kind}:{t_id}"
             kind, separator, target = scope.partition(":")
             if not separator or not kind.strip() or not target.strip():
-                raise ValueError("委任授权缺少典范 scope")
+                raise DecreeMaterializationValidationError("委任授权缺少典范 scope")
             normalized["scope"] = f"{kind.strip()}:{target.strip()}"
             normalized["target_kind"] = kind.strip()
             normalized["target_id"] = target.strip()
@@ -11553,7 +11559,7 @@ class GameDB:
                 or ""
             ).strip()
             if not holder:
-                raise ValueError("委任授权缺少 holder_id")
+                raise DecreeMaterializationValidationError("委任授权缺少 holder_id")
             normalized["holder_id"] = holder
             normalized["name"] = holder
             normalized["assignee_id"] = holder
@@ -11566,7 +11572,7 @@ class GameDB:
             except (TypeError, ValueError):
                 aid = 0
             if aid <= 0:
-                raise ValueError("收权旨意缺少 authority_id")
+                raise DecreeMaterializationValidationError("收权旨意缺少 authority_id")
             normalized["authority_id"] = aid
             holder = str(
                 normalized.get("holder_id")
@@ -11594,7 +11600,7 @@ class GameDB:
             # #523：目标仅承诺/旨意；纯授权不得入撤回成命。
             raw_target = str(normalized.get("target_id") or "").strip()
             if raw_target.startswith("authority:"):
-                raise ValueError("撤回成命目标不得为纯授权")
+                raise DecreeMaterializationValidationError("撤回成命目标不得为纯授权")
             revoke_did = 0
             revoke_iid = 0
             try:
@@ -11625,7 +11631,7 @@ class GameDB:
                 except (TypeError, ValueError):
                     tid = 0
                 if tid <= 0:
-                    raise ValueError("撤回成命缺少目标成命标识")
+                    raise DecreeMaterializationValidationError("撤回成命缺少目标成命标识")
                 if kind == "issue":
                     revoke_iid = tid
                 else:
@@ -11653,13 +11659,13 @@ class GameDB:
                     and issue_disposition not in issue_dispositions_allowed()
                 )
             ):
-                raise ValueError(
+                raise DecreeMaterializationValidationError(
                     f"惩处旨意 punish_action 非法或缺失：{punish_action or '(空)'}"
                 )
             if issue_disposition == "办人" and punish_action != "拿问下狱":
-                raise ValueError("弹劾潮办人须使用 canonical 拿问下狱动作")
+                raise DecreeMaterializationValidationError("弹劾潮办人须使用 canonical 拿问下狱动作")
             if issue_disposition == "压下" and punish_action != "无":
-                raise ValueError("弹劾潮压下须使用 canonical 无动作")
+                raise DecreeMaterializationValidationError("弹劾潮压下须使用 canonical 无动作")
             normalized["punish_action"] = punish_action
             # #517 r2：罚俸须正数 amount，成案前响亮拒绝（不得归零暂存后判后才炸）。
             if punish_action == "罚俸":
@@ -11670,7 +11676,7 @@ class GameDB:
                 except ValueError:
                     amount = 0
                 if amount <= 0:
-                    raise ValueError("罚俸旨意缺少正数 amount")
+                    raise DecreeMaterializationValidationError("罚俸旨意缺少正数 amount")
                 normalized["amount"] = amount
         if action == "military_order":
             # #521 r1：仅限期出战（无 station 调驻面）强制未来 due_turn；
@@ -11695,7 +11701,7 @@ class GameDB:
                 normalized["due_turn"] = due_turn
                 normalized.pop("deadline_months", None)
             elif requires_due or has_deadline_intent:
-                raise ValueError("军令缺少有效未来 due_turn/deadline_months")
+                raise DecreeMaterializationValidationError("军令缺少有效未来 due_turn/deadline_months")
             else:
                 # 无期限调驻/移镇：不写虚假 due
                 normalized.pop("due_turn", None)
@@ -11710,17 +11716,24 @@ class GameDB:
             )
             for banned in ("owner", "assignee", "assignee_id"):
                 if str(normalized.get(banned) or "").strip():
-                    raise ValueError(f"下议旨意不得携带 {banned}")
+                    raise DecreeMaterializationValidationError(f"下议旨意不得携带 {banned}")
             cleaned = parse_responsible_bodies(normalized.get("responsible_bodies"))
             if not cleaned:
-                raise ValueError("下议旨意缺少 responsible_bodies")
-            assert_responsible_bodies_org_only(
-                cleaned,
-                known_person_names=character_person_names(self),
-                current_minister=str(
-                    normalized.get("actor") or normalized.get("minister_name") or ""
-                ),
-            )
+                raise DecreeMaterializationValidationError("下议旨意缺少 responsible_bodies")
+            # 名册读取在领域断言外；查询故障不得洗成 DMVE（#1897 E1）。
+            known_names = character_person_names(self)
+            try:
+                assert_responsible_bodies_org_only(
+                    cleaned,
+                    known_person_names=known_names,
+                    current_minister=str(
+                        normalized.get("actor") or normalized.get("minister_name") or ""
+                    ),
+                )
+            except DecreeMaterializationValidationError:
+                raise
+            except ValueError as exc:
+                raise DecreeMaterializationValidationError(str(exc)) from exc
             normalized["responsible_bodies"] = cleaned
             try:
                 end_turn = strict_int(
@@ -11739,7 +11752,7 @@ class GameDB:
                 if months > 0:
                     end_turn = int(current_turn) + months
             if end_turn <= int(current_turn or 0):
-                raise ValueError("下议缺少有效未来 end_turn/deadline_months")
+                raise DecreeMaterializationValidationError("下议缺少有效未来 end_turn/deadline_months")
             normalized["end_turn"] = end_turn
             normalized.pop("deadline_months", None)
         target_kind = str(normalized.get("target_kind") or "").strip()
@@ -11756,17 +11769,17 @@ class GameDB:
             normalized["target_id"] = target_id
         else:
             normalized.pop("target_id", None)
-            raise ValueError("旨意缺少 canonical target")
+            raise DecreeMaterializationValidationError("旨意缺少 canonical target")
         if action == "military_order":
             # #521 r2：成案前验 target_kind=army 且军队存在（含无 station 催战）。
             # 不得静默改写错误 target_kind；不得等到判后才发现虚假 id。
             if target_kind != "army":
-                raise ValueError("军令 target_kind 须为 army")
+                raise DecreeMaterializationValidationError("军令 target_kind 须为 army")
             existing_army = self.conn.execute(
                 "SELECT id FROM armies WHERE id = ?", (target_id,),
             ).fetchone()
             if existing_army is None:
-                raise ValueError(
+                raise DecreeMaterializationValidationError(
                     f"军令引用未入库军队 '{target_id}'（成案前须存在）"
                 )
             normalized["target_kind"] = "army"
@@ -11776,7 +11789,7 @@ class GameDB:
         from ming_sim.execution_pressure import normalize_locality_scope
         final_kind = str(normalized.get("target_kind") or "").strip()
         if final_kind not in TARGET_KINDS:
-            raise ValueError(f"target_kind 非法：{final_kind!r}")
+            raise DecreeMaterializationValidationError(f"target_kind 非法：{final_kind!r}")
         normalized["target_kind"] = final_kind
         normalized["locality_scope"] = normalize_locality_scope(
             normalized.get("locality_scope"),
@@ -17991,17 +18004,20 @@ class GameDB:
             or pa.get("action") != "拟旨"
         ):
             return {"classification": "invalid"}
-        # 已持久候选 JSON 腐坏响亮上抛；领域归一失败才归 invalid（#1897 E1）。
+        # 已持久候选 JSON 腐坏响亮上抛（#1897 E1）。
         payload = self.parse_engine_payload_json(
             pa.get("payload_json"), surface="pending_actions.payload_json",
         )
+        if payload.get("_needs_clarification") and not allow_clarification:
+            return {"classification": "needs_clarification"}
+        # 归一内真实查询／未分类故障原样上抛；仅 typed 领域拒收归 invalid
+        # （与 _apply_pending_action / _commit_conversational_draft 同缝，#1897 E1）。
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         try:
-            if payload.get("_needs_clarification") and not allow_clarification:
-                return {"classification": "needs_clarification"}
             payload = self._normalize_directive_dossier_payload(
                 payload, content=content, current_turn=int(state.turn),
             )
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except DecreeMaterializationValidationError:
             return {"classification": "invalid"}
         text = str(payload.get("text") or "")
         if not text.strip():
