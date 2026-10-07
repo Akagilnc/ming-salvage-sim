@@ -67,7 +67,7 @@
 - **`fiscal_config` 的 base 已是全月值**：月额＝`round(base × rate / 100)`，**没有**「季度额 ÷3」换算。
 - **国库收入**主项来自 substrate_hub 预算投影（省级起运/盐商税旁路等），不是旧 `calc_province_fiscal` 系数表。
 - **国库支出**含中央军饷拟拨、京运补拟拨，以及 `iter_budget_items()` 读出的固定科目（宗室禄米、百官俸禄、工部、赈灾备用等——以 `content/fiscal_config.json` 为准，勿把下表当第二真源）。
-- **建筑维护/产出**按 buildings 表月值与 `condition` 折算；维护账户按 category 分（内廷→内库，其余→国库）。
+- **建筑产出**按 `output_amount × condition / 100` 折算；**维护**按表中 `maintenance` 月值原额（不乘 condition）；维护账户按 category 分（内廷→内库，其余→国库）。
 - **内库皇庄**：读 `fiscal_config.皇庄_base×皇庄_rate` 全月基准；预算里没收藩田增量位 `nk_huang` 现役恒 0，**没有**「`wang_tian_transfer` × 0.57 自动加内库月收」的平行核。
 
 开局盈亏以实档 `compute_budget_lines` / 国库流水为准；下文不再维护一套过时估算表。
