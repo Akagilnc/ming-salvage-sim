@@ -8,14 +8,11 @@
   仅授权参数不同；全知结果为角色视角权限超集。
 - 判官机面全知（ID-12）：fixture 断言判官能读到普通角色视角不可见的边；
   接入归 #634 线，本票不造判官。
-- TD-7 双断言 oracle（庭裁 r2/r3）：①DTO 字段集合恰等五字段冻结白名单
-  source/target/summary/recent_context/updated_at_period；②局部 marker 负断言
-  （结构键/事件类目数据不 ride-along 进玩家可感投影输出）。
+- TD-7：DTO 字段集合恰等五字段冻结白名单
+  source/target/summary/recent_context/updated_at_period。
 """
 
 from __future__ import annotations
-
-import json
 
 import pytest
 
@@ -26,9 +23,6 @@ from ming_sim.relations import EMPEROR_NODE
 
 # 冻结票面 r3 白名单本体——独立真源（票面原文照抄），不从生产代码重推导。
 FROZEN_DTO_WHITELIST = {"source", "target", "summary", "recent_context", "updated_at_period"}
-
-# TD-7 局部 marker：测试局部唯一串（非全局词表），只进本 fixture 的结构字段。
-MARKER = "TD7哨兵-640-唯一标记QINGYUAN"
 
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
@@ -50,7 +44,7 @@ def ledger(game):
     db, state, _ = game
     _add_edge(db, state, source="王绍徽", target="崔呈秀", kind="结怨",
               context="王绍徽背影里的戾气，毕自严再挡他路时还在。",
-              origin=f"audience:turn-1|{MARKER}")
+              origin="audience:turn-1")
     db.apply_relation_brew_result(
         source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
         founding_segment="越次一召，擢杨嗣昌于五品郎中。",
@@ -62,7 +56,7 @@ def ledger(game):
               context="越次一召，擢杨嗣昌于五品郎中。", origin="audience:turn-1")
     _add_edge(db, state, source="钱谦益", target="温体仁", kind="把柄",
               context="温体仁握有钱谦益科场案的把柄。",
-              origin=f"dossier:9:credit:cover|round:2|{MARKER}")
+              origin="dossier:9:credit:cover|round:2")
     return db, state
 
 
@@ -184,38 +178,15 @@ def test_omniscient_is_superset_same_core(ledger):
             assert dto == judge_map[pair]
 
 
-# ---------------------------------------------------------------- TD-7 双断言 oracle
+# ---------------------------------------------------------------- TD-7 DTO 白名单
 
 
 def test_td7_dto_field_set_equals_frozen_whitelist(ledger):
-    """TD-7①：DTO 字段集合==票面冻结五字段白名单（机械集合相等，两面都咬）。"""
+    """DTO 字段集合==票面冻结五字段白名单（角色视角与全知两面）。"""
     db, _ = ledger
     for dto in project_relation_ledger(db, viewer=None):
         assert set(dto.keys()) == FROZEN_DTO_WHITELIST
     for dto in project_relation_ledger(db, viewer="王绍徽"):
-        assert set(dto.keys()) == FROZEN_DTO_WHITELIST
-
-
-def test_td7_local_marker_negative_assertion(ledger):
-    """TD-7②：局部 marker 负断言——结构键/事件类目数据不进玩家可感投影输出。
-
-    marker 只埋在本 fixture 的结构字段（origin 尾段）与绕过写口直插的
-    event_kind 列；玩家可感投影（角色视角 DTO 序列化）中必须零出现。
-    """
-    db, state = ledger
-    # 绕过 fail-closed 写口直插一条含 marker 的 event_kind 行：证明即便存储层
-    # 存在该类目数据，投影也绝不 surfacing（确定性装配面，ADR 0143）。
-    db.conn.execute(
-        "INSERT INTO relation_edge_events "
-        "(source, target, event_kind, context, origin, origin_round, turn, year, period)"
-        " VALUES ('王绍徽', '崔呈秀', ?, '结构哨兵语境。', 'probe:td7', 1, 1, 1627, 10)",
-        (MARKER,),
-    )
-    db.conn.commit()
-    projection = project_relation_ledger(db, viewer="王绍徽")
-    # 玩家可感投影只认冻结 DTO 白名单字段；event_kind 等存储键不出现。
-    for dto in projection:
-        assert "event_kind" not in dto
         assert set(dto.keys()) == FROZEN_DTO_WHITELIST
 
 

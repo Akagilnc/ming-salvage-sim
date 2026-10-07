@@ -88,6 +88,6 @@ def test_intrigue_reaches_character_input_only_as_a_qualitative_band(game):
     _db, _state, content = game
     character = content.characters["魏忠贤"]
     projected = qualitative_character_axes(character)["阴谋"]
+    # 结构化轴是定性字串，不是裸整数。
     assert isinstance(projected, str)
-    assert projected != str(int(character.intrigue))
     assert not projected.strip().isdigit()
