@@ -446,7 +446,6 @@ def test_settlement_recovery_projects_month_call_failure(
     recovery_again = web_game.state_payload().get("settlement_recovery")
     assert isinstance(recovery_again, dict)
     assert recovery_again.get("error_pack_path") == ""
-    assert recovery_again.get("error_pack_path") != first_pack
     chain_again = (db.get_resolve_context(turn) or {}).get("simulator_payload", {}).get(
         "month_chain", {},
     )

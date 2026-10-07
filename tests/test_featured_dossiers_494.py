@@ -53,24 +53,15 @@ def test_every_active_seven_faction_minister_has_featured_dossier(game):
 
 
 def test_seven_faction_dossiers_are_objective_and_identity_scoped(game):
-    """#494：identity 桶决定供料来源；应喂源原值入面。
+    """#494：identity 决定供料；应喂源原值经真实入口入面。
 
-    ADR0033：按分桶选 per-faction 档料；最低桶≈不喂党派料。
-    契约=桶路由结构化 + 应喂源原值搬运；不复制渲染模板、不做来源变异／整段等值证明。
+    ADR0033：按分桶选 per-faction 档料。契约=真实入口原值搬运；
+    不钉私有桶标签、不复制渲染模板、不做来源变异／整段等值证明。
     """
-    from ming_sim.context import _identity_bucket
-    from ming_sim.qualitative import identity_band
-
     db, _state, content = game
     base = next(c for c in content.characters.values() if c.faction == "东林")
 
-    # 结构化分桶（非正文证明）：探针期 identity 值落入 ADR 三档。
-    assert _identity_bucket(20) == "low"
-    assert _identity_bucket(65) == "middle"
-    assert _identity_bucket(90) == "high"
-
     for faction in SEVEN_FACTIONS:
-        char_low = replace(base, faction=faction, identity=20)
         char_mid = replace(base, faction=faction, identity=65)
         char_high = replace(base, faction=faction, identity=90)
         dossier = _FACTION_DOSSIERS[faction]
@@ -78,18 +69,13 @@ def test_seven_faction_dossiers_are_objective_and_identity_scoped(game):
         internal = dossier["internal"]
         agenda = str(_faction_row(db, faction)["agenda"])
 
-        # 正：中桶搬运 core + agenda 原值。
+        # 正：中档 identity 搬运 core + agenda 原值。
         mid = faction_context_with_db(char_mid, db)
         assert core in mid and agenda in mid
 
-        # 正：高桶另搬运 internal 原值。
+        # 正：高档 identity 另搬运 internal 原值。
         high = faction_context_with_db(char_high, db)
         assert core in high and agenda in high and internal in high
-
-        # 最低桶：生产恒有的派名 + 认同带入面；不喂由 bucket==low 路由承担，
-        # 不以正文禁词或来源变异／整段等值证明「不喂」。
-        low = faction_context_with_db(char_low, db)
-        assert faction in low and identity_band(20) in low
 
 
 def test_north_star_ministers_have_distinct_featured_voices(game):

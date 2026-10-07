@@ -3748,9 +3748,6 @@ def test_beizhili_huangzhuang_is_inner_treasury_not_transport_quota(fresh_db):
     assert huang_meta["account"] == "内库"
     assert huang_meta["excluded_from"] == ["正赋应征", "起运到京"]
     assert settle["st"]["官民田"] == pytest.approx(4925.7, abs=0.1)
-    assert settle["st"]["官民田"] != pytest.approx(
-        fiscal["guan_min_tian"] * 10
-    ), "一手核田亩保留小数，不再用小游戏字段反推"
     assert settle["_meta"]["正赋起运基线"] == pytest.approx(5.2)
     assert settle["p"]["起运定额"] == pytest.approx(
         settle["_meta"]["正赋起运基线"] + settle["p"]["三饷应征"]

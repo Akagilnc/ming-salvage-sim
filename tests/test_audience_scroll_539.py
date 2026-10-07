@@ -266,7 +266,6 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
         "soft_boundary", "beat", "highlights", "container",
         "chat_turn_id", "record_id",
     }
-    forbidden_character_stats = {"loyalty", "ability", "importance", "influence", "power", "favor"}
     assert messages
     base_message_fields = allowed_message_fields - {"chat_turn_id", "record_id"}
     for message in messages:
@@ -275,8 +274,6 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
             expected_fields.add("chat_turn_id")
             assert message["chat_turn_id"] > 0
         assert set(message) == expected_fields
-        assert forbidden_character_stats.isdisjoint(message)
-        assert forbidden_character_stats.isdisjoint(message["container"])
         assert set(message["container"]) == {"time_of_day", "location", "audience_type"}
 
 

@@ -177,15 +177,11 @@ def test_omniscient_is_superset_same_core(ledger):
 
 
 def test_td7_dto_field_set_equals_frozen_whitelist(ledger):
-    """TD-7：DTO 字段集合==票面冻结五字段白名单；event_kind 等类目键不出 DTO。
-
-    白名单集合相等已承接结构来源隔离；不另造专属哨兵或绕过写口直插。
-    """
+    """TD-7：DTO 字段集合==票面冻结五字段白名单（集合相等承接 event_kind 等类目键缺席）。"""
     db, _ = ledger
     for viewer in (None, "王绍徽"):
         for dto in project_relation_ledger(db, viewer=viewer):
             assert set(dto.keys()) == FROZEN_DTO_WHITELIST
-            assert "event_kind" not in dto
 
 
 def test_missing_viewer_rejected(ledger):

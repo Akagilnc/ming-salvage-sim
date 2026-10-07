@@ -109,7 +109,6 @@ def test_canonical_and_alias_same_event_do_not_double_count_positive(game):
     changes = _apply(db, state, {"loyalty": 50, "军心": 50})
 
     assert _loyalty(db) == 85
-    assert _loyalty(db) != 100
     loyalty_changes = [c for c in changes if c.get("field") == "loyalty" and not c.get("rejected")]
     assert len(loyalty_changes) == 1
     assert loyalty_changes[0]["delta"] == 15
@@ -125,7 +124,6 @@ def test_canonical_and_alias_same_event_do_not_double_count_negative(game):
     changes = _apply(db, state, {"loyalty": -50, "军心": -50})
 
     assert _loyalty(db) == 55
-    assert _loyalty(db) != 40
     loyalty_changes = [c for c in changes if c.get("field") == "loyalty" and not c.get("rejected")]
     assert len(loyalty_changes) == 1
     assert loyalty_changes[0]["delta"] == -15

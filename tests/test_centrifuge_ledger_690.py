@@ -144,7 +144,6 @@ def test_t2_kinship_uses_unrounded_formula(game):
     rows = {r["kind"]: r for r in _log_rows(db) if r["idem_key"].startswith("t2|kinship|")}
     assert int(rows["direct"]["amount"]) == 2
     assert int(rows["kinship"]["amount"]) == 1
-    assert int(rows["kinship"]["amount"]) != 0
 
 
 def test_t2b_legitimacy_uses_raw_for_amounts(game):
@@ -382,9 +381,6 @@ def test_t8_detection_wariness_only_kinship(game):
     assert len(rows) == 1
     assert rows[0]["kind"] == "kinship"
     assert int(rows[0]["legitimacy_pct"]) == 100
-    assert rows[0]["kind"] != "direct"
-    assert all(r["kind"] != "overdraw" for r in rows)
-    assert all(r["kind"] != "direct" for r in rows)
 
     for kwargs in (
         {"penalty_type": "抄家"},
