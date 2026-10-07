@@ -7,8 +7,9 @@ F2.1 既有真源的**本回合分量**（禁把长期存量误作本回合事�
   ① regions.fiscal settle st/p（明控省）：三饷当月加派流（加派量＝
     max(0, 三饷应征−民欠新增)）、赈济未敷 unmet_relief（settle_tick 每 tick 落进 st 的当月流量，
     §9 口径）、省内池折发免除额的 Due 基数；合法 fiscal dict 缺 settle key 的省不属
-    动态成员、直接出列；坏 fiscal JSON/容器及存在但畸形的 settle 基座仍 ValueError
-    响亮失败（ADR 0005）。
+    动态成员、直接出列；坏 fiscal JSON/容器经 strict object loader 报
+    StoredDocumentError；对象内存在但畸形的 settle 基座仍 ValueError 响亮失败
+    （ADR 0005/0015：按异常来源接缝分流，不以类型标签自动认作产品坏项）。
   ② armies.province_pay_arrears/central_pay_arrears（0023 per-source 双累加器）：
     分源欠饷月数＝ceil(分源现欠/月需)——双累加器本身即分源持久投影面（F2.2 备选
     口径，禁 source-agnostic 总 arrears 伪窗口）；零分母短路（月需=0 不计、不做

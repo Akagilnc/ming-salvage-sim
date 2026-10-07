@@ -509,11 +509,11 @@ def test_new_event_fields_are_pure_data_no_prose_composition(game):
         assert isinstance(item["source"], str) and isinstance(item["target"], str)
 
 
-# ---- 送修口一负例 (a)：source_faction/target_faction 与现算投影逐项相等、皇帝端 null、表外 null 且无拼接串 ----
+# ---- 送修口一负例 (a)：source_faction/target_faction 与现算投影逐项相等、皇帝端/表外 null ----
 
-def test_source_faction_target_faction_equals_current_projection_and_nulls_and_no_concatenation(game):
-    """负例(a) 机械可验：每项 source_faction/target_faction == project_character_factions 现算投影；
-    皇帝端显式 None、表外党籍显式 None；无任何拼接串（ADR 0142/P6）。"""
+def test_source_faction_target_faction_equals_current_projection_and_nulls(game):
+    """负例(a)：每项 source_faction/target_faction == project_character_factions 现算投影；
+    皇帝端显式 None、表外党籍显式 None。对照原 source/target 身份，不禁自由正文。"""
     db, state, _ = game
     projection = project_character_factions(db)
     # 皇帝端不在映射、表外党籍不在映射（前提校验）
@@ -529,7 +529,6 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
     _add_edge(db, state, source="温体仁", target=EMPEROR_NODE, kind="结怨",
               context="温体仁面斥皇帝。", origin="audience:turn-1b")
     # 表外角色：直接落边（select 不会选中表外派，但 build 現算投影应给 null）
-    # 用 build 的显式投影路径直接验证表外 null
     fake_event_out_of_table = {
         "event_kind": "结怨",
         "context": "皇太极讦温体仁。",
@@ -558,31 +557,17 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
             period=int(state.period), summary=target["summary"],
             new_events=events, has_pending=target["has_pending"],
         )
-        # build 透传与现算投影逐项相等
+        # build 透传：身份字段与 collect 原行相等，派系与现算投影相等
         assert len(payload["new_events"]) == len(events)
         for projected, row in zip(payload["new_events"], events, strict=True):
+            assert projected["source"] == row["source"]
+            assert projected["target"] == row["target"]
             assert projected["source_faction"] == projection.get(row["source"])
             assert projected["target_faction"] == projection.get(row["target"])
-            # 皇帝端显式 null
             if row["source"] == EMPEROR_NODE:
                 assert projected["source_faction"] is None
             if row["target"] == EMPEROR_NODE:
                 assert projected["target_faction"] is None
-            # 纯数据字段：无任何拼接串
-            for key in ("source", "target", "source_faction", "target_faction"):
-                val = projected[key]
-                if val is not None:
-                    assert isinstance(val, str)
-                    assert "(" not in val and "（" not in val and "与" not in val or val in (projected["source"], projected["target"], projected["source_faction"], projected["target_faction"])
-            # 严禁出现 "{source}({faction})与{target}" 式拼接串在任何字符串字段
-            dumped = json.dumps(projected, ensure_ascii=False)
-            # 若字段为拼接串，必含 source 与 faction 同串
-            if projected["source_faction"] is not None:
-                assert f"{projected['source']}({projected['source_faction']})" not in dumped
-                assert f"{projected['source']}（{projected['source_faction']}）" not in dumped
-            if projected["target_faction"] is not None:
-                assert f"{projected['target']}({projected['target_faction']})" not in dumped
-                assert f"{projected['target']}（{projected['target_faction']}）" not in dumped
 
     # 表外党籍显式 null：经 build 显式投影路径验证（不经 select）
     payload_out = build_faction_brew_input(
@@ -590,6 +575,8 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
         summary=None, new_events=[fake_event_out_of_table], has_pending=False,
         character_factions=projection,
     )
+    assert payload_out["new_events"][0]["source"] == "皇太极"
+    assert payload_out["new_events"][0]["target"] == "温体仁"
     assert payload_out["new_events"][0]["source_faction"] is None  # 皇太极表外
     assert payload_out["new_events"][0]["target_faction"] == projection.get("温体仁")
     # db 路径亦同
@@ -598,6 +585,8 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
         summary=None, new_events=[fake_event_out_of_table], has_pending=False,
         db=db,
     )
+    assert payload_out_db["new_events"][0]["source"] == "皇太极"
+    assert payload_out_db["new_events"][0]["target"] == "温体仁"
     assert payload_out_db["new_events"][0]["source_faction"] is None
     assert payload_out_db["new_events"][0]["target_faction"] == "皇党"
 

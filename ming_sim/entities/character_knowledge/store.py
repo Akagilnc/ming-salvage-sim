@@ -209,8 +209,9 @@ class CharacterKnowledgeStore:
 
         One source produces one row per participant, so re-recording the same
         event is idempotent (the unique key is character+kind+source).
+        Identity is the explicit source_id only — never derived from free title.
         """
-        source = str(source_id or f"{kind}:{int(turn)}:{title}")
+        source = str(source_id or "")
         excluded = safe_json_dumps(
             _names(excluded_names), ensure_ascii=False)
         written = 0
@@ -234,8 +235,11 @@ class CharacterKnowledgeStore:
         source_id: str = "", excluded_names: Optional[Iterable[str]] = None,
         kind: str = "public", commit: bool = True,
     ) -> None:
-        """Record one event in the public lane (character_name='')."""
-        source = str(source_id or f"public:{int(turn)}:{title}")
+        """Record one event in the public lane (character_name='').
+
+        Identity is the explicit source_id only — never derived from free title.
+        """
+        source = str(source_id or "")
         self._conn.execute(
             "INSERT OR REPLACE INTO character_knowledge_events "
             "(turn,year,period,character_name,kind,title,body,source_id,excluded_names) "
@@ -257,8 +261,11 @@ class CharacterKnowledgeStore:
         excluded_targets: Optional[Mapping[str, Iterable[str]]] = None,
         commit: bool = True,
     ) -> str:
-        """Register a durable shared source and the characters who know it."""
-        source = str(source_id or f"{kind}:{int(turn)}:{title}")
+        """Register a durable shared source and the characters who know it.
+
+        Identity is the explicit source_id only — never derived from free title.
+        """
+        source = str(source_id or "")
         roster = [
             dict(item) for item in participant_roster
             if item.get("character_id") or item.get("name")

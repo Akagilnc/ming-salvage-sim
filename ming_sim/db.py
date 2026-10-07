@@ -13537,7 +13537,7 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> None:
-        source_id = source_id or f"public:{state.turn}:{title}"
+        source_id = str(source_id or "")
         inherited = self.knowledge_exclusions_for_source(source_id)
         merged_exclusions = list(dict.fromkeys(
             [*inherited, *(str(name).strip() for name in (excluded_names or []) if str(name).strip())]
