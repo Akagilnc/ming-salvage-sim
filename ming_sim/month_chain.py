@@ -1603,20 +1603,11 @@ def world_question_event_bindings(
 ) -> Dict[str, str]:
     """读推送时钉死的「案头行身份 → 事件身份」。缺表时补钉一次，已钉的不再重算。
 
-    合法缺省（缺键/None）补钉；合法空对象 {} 保持已钉；错形响亮，不洗成 {}。
+    形检与补钉只在 ``_pin_world_question_event_bindings`` 一次完成；本读口委托
+    该入口后直接消费其保证的对象（含合法空 {}），不再重验。
     """
-    from ming_sim.db import GameDB
-
-    pinned = GameDB.optional_object(
-        chain.get("world_question_event_bindings"),
-        surface="month_chain.world_question_event_bindings",
-    )
-    if pinned is None:
-        _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
-        pinned = GameDB.optional_object(
-            chain.get("world_question_event_bindings"),
-            surface="month_chain.world_question_event_bindings",
-        ) or {}
+    _pin_world_question_event_bindings(chain, db=db, state=state, turn=turn)
+    pinned = chain.get("world_question_event_bindings") or {}
     return {
         str(key): str(value)
         for key, value in pinned.items()
@@ -1634,11 +1625,13 @@ def _pin_world_question_event_bindings(
     ``gather_fiscal_levy_petitions`` 快照的 event_id。只从 origin_ref 填进来的
     id 不是这份快照。没有这份身份的请旨保持非事件身份：剩余数量不能证明它属于
     某一到期事项，也不按标题猜配。钉完之后快照再变也不改这张表。
+
+    本入口是绑定表形状的唯一必要读取：缺键/None 补钉；合法 {} 已钉不重算；
+    错形响亮且不覆盖原值。读口与其它调用方均委托此处，不平行再验。
     """
     from ming_sim.db import GameDB
     from ming_sim.issues import gather_fiscal_levy_petitions
 
-    # 已钉（含合法空 {}）不重算；错形响亮，不覆盖原值。
     if GameDB.optional_object(
         chain.get("world_question_event_bindings"),
         surface="month_chain.world_question_event_bindings",
