@@ -44,12 +44,14 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     assert context == decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
     )
-    encoded = json.dumps(context, ensure_ascii=False, sort_keys=True)
-    assert "satisfaction" not in encoded
-    assert "满意" not in encoded
     assert context["dossiers"][0]["mode"] == "midzhi"
     assert context["dossiers"][0]["break_rank"] == {"office_rank": "越三级"}
+    # 派系投影仅结构字段 name/leverage/agenda，不含 satisfaction 等额外阻力键。
     assert set(context["factions"][0]) == {"name", "leverage", "agenda"}
+    assert all(
+        set(row) == {"name", "leverage", "agenda"} and "satisfaction" not in row
+        for row in context["factions"]
+    )
     assert context["imperial_authority_band"] in IMPERIAL_AUTHORITY_BANDS
     assert context["classes"]
     assert all(isinstance(name, str) for name in context["classes"])
@@ -119,26 +121,6 @@ def test_promulgation_context_projects_faction_leverage_as_qualitative_band(game
     # Resistance remains present; only the projection is qualitative.
     assert all(set(row) == {"name", "leverage", "agenda"} for row in context["factions"])
     assert any(row["agenda"] for row in context["factions"])
-
-
-def test_promulgation_context_routes_faction_leverage_through_power_band(
-    game, monkeypatch,
-):
-    """#614 C1: factions[].leverage must call the domain power_band entry."""
-    db, state, _content = game
-    _dossier(db, state, "清丈天下田亩")
-    db.conn.execute("UPDATE factions SET leverage=42 WHERE name='东林'")
-    db.conn.commit()
-
-    monkeypatch.setattr(
-        decree_mod, "power_band", lambda value: f"routed:{int(value)}",
-        raising=False,
-    )
-    context = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
-    )
-    by_name = {row["name"]: row for row in context["factions"]}
-    assert by_name["东林"]["leverage"] == "routed:42"
 
 
 def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):

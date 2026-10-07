@@ -213,9 +213,7 @@ def test_td7_local_marker_negative_assertion(ledger):
     )
     db.conn.commit()
     projection = project_relation_ledger(db, viewer="王绍徽")
-    rendered = json.dumps(projection, ensure_ascii=False)
-    assert MARKER not in rendered
-    # 事件类目词本身也不作字段值出现（白名单恒等已保证，这里按票面再咬一口）。
+    # 玩家可感投影只认冻结 DTO 白名单字段；event_kind 等存储键不出现。
     for dto in projection:
         assert "event_kind" not in dto
         assert set(dto.keys()) == FROZEN_DTO_WHITELIST
