@@ -63,11 +63,8 @@ from ming_sim.token_stats import tlog
 
 # 人物行程规则真源在 entities.character.transit；战略信封编排从此取用，不持有实现。
 from ming_sim.entities.character.transit import (  # noqa: E402
-    TRAVEL_SPEED_BY_TONE,
-    TravelTone,
-    admit_transit_departure as _admit_transit_departure,
-    load_valid_regions as _load_pending_gate_valid_regions,
-    normalize_travel_tone,
+    admit_transit_departure,
+    load_valid_regions,
 )
 
 
@@ -607,10 +604,10 @@ def _strategic_event_result_preflight_error(
                 (name,),
             ).fetchone()
             if row is not None:
-                departure, departure_error = _admit_transit_departure(
+                departure, departure_error = admit_transit_departure(
                     item,
                     dict(row),
-                    _load_pending_gate_valid_regions(db),
+                    load_valid_regions(db),
                 )
                 if departure_error is None and departure is not None and not departure["material"]:
                     return _noop_error("person", name, action, departure)

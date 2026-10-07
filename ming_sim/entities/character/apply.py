@@ -140,7 +140,7 @@ def apply_person_changes(
     )
     from ming_sim.strict_types import _parse_sqlite_id
     from ming_sim.entities.character.appointment import _payload_owned_person_duplicate
-    from ming_sim.entities.character.transit import admit_transit_departure as _admit_transit_departure, load_valid_regions as _load_pending_gate_valid_regions
+    from ming_sim.entities.character.transit import admit_transit_departure, load_valid_regions
 
     def rejected(item, reason, category, *, status=None) -> RejectedItem:
         return RejectedItem(item=item, reason=reason, category=category, source=source)
@@ -686,8 +686,8 @@ def apply_person_changes(
                 and not prior_transit
                 and is_capital_location(prior_location)
             )
-            valid_regions = _load_pending_gate_valid_regions(db)
-            departure, error = _admit_transit_departure(item, dict(row), valid_regions)
+            valid_regions = load_valid_regions(db)
+            departure, error = admit_transit_departure(item, dict(row), valid_regions)
             if error is not None:
                 rejections.append(rejected(item, error[0], error[1]))
                 continue

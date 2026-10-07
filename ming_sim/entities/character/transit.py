@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, Literal, Optional
+from typing import Dict, Optional
 
 from ming_sim.db import GameDB
 from ming_sim.distance import DistanceMatrix
@@ -15,7 +15,6 @@ from ming_sim.paths import bundled_path
 
 
 TRAVEL_SPEED_BY_TONE = {"常行": 1.0, "加急": 1.5, "星夜兼程": 2.0}
-TravelTone = Literal[*TRAVEL_SPEED_BY_TONE]
 
 
 def load_valid_regions(db: GameDB) -> set[str]:
@@ -76,7 +75,3 @@ def admit_transit_departure(
         ),
     }, None
 
-
-# 兼容旧私名：领域内曾用下划线前缀；现役消费者改径时允许同义导入。
-_load_pending_gate_valid_regions = load_valid_regions
-_admit_transit_departure = admit_transit_departure

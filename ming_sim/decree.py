@@ -1061,7 +1061,6 @@ def pre_settle(
         return []
     if transit_arrivals_out is not None:
         transit_arrivals_out.clear()
-    auto_triggered: List[Dict[str, object]] = []
     # #498：颁诏遇开夜 → 顺势自动收夜（王承恩代宣）；在飞回话 fail-closed 中止，不进 settling。
     # 放在 atomic 外：收夜提交与错误包独立；成功后 pre_settle 事务内 commit_pending 仍幂等。
     # #503：收夜 beat 生产路径接通编排缝。
@@ -1116,7 +1115,6 @@ def pre_settle(
             # 稽核人派系操守等事实仍留在 dossier_supervision_presence 与
             # build_supervision_judge_surface 供料面；是否反制、采取何种行动由
             # #1861 逐旨推演／#1843 世界段 run 依人物可及事实自选。
-            auto_triggered: list = []
             # #1504：到期密令只打期限戳，保持 active；结案在 settle 尾部机械对账。
             # 推演前的确定性写，挪入前半段事务（原在 resolve_directives，ADR 0008 S4）。
             due_orders = db.auto_submit_due_secret_orders(state)
@@ -1130,7 +1128,7 @@ def pre_settle(
         raise_fixed_period_flow_abort_if_needed(db, state, exc, in_fixed_fiscal=in_fixed_fiscal)
         raise
     mirror_rejections_after_commit(db, collector, rejections_jsonl_path)
-    return auto_triggered
+    return []
 
 
 
