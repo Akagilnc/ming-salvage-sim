@@ -575,8 +575,7 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
     row = db.conn.execute("SELECT id FROM armies WHERE id=?", (tid,)).fetchone()
     if row is not None:
         return str(row["id"])
-    content = getattr(db, "content", None)
-    armies = getattr(content, "armies", None) if content is not None else None
+    armies = getattr(db.content, "armies", None)
     if armies:
         from ming_sim.matching import canonical_army_id_exact
         matched = canonical_army_id_exact(tid, armies)
@@ -830,7 +829,7 @@ def parse_responsible_bodies(raw: object) -> List[str]:
 
 def character_person_names(db: Any) -> set[str]:
     """既有人物档名集合（禁新建机关词表；个人名比对复用此源）。"""
-    if db is None or not hasattr(db, "conn"):
+    if db is None:
         return set()
     return {
         str(row["name"]).strip()

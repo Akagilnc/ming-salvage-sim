@@ -420,43 +420,6 @@ def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_mar
     assert _issue_by_title(db, "字符串停止条件但无月度动作") is None
 
 
-def test_legacy_resolve_condition_person_commitment_rejects_without_marker(read_game, monkeypatch):
-    db, state, content = read_game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-
-    out = I.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [
-                {
-                    "origin_kind": "decree",
-                    "kind": "initiative",
-                    "title": "旧形状安抚毛文龙",
-                    "stage_text": "旧 payload 用 resolve_condition 表达人物承诺阈值。",
-                    "resolve_condition": "character.毛文龙.loyalty >= 65",
-                    "ongoing_effects": {
-                        "人物变更": [
-                            {
-                                "name": "毛文龙",
-                                "动作": "评定",
-                                "loyalty": 2,
-                                "reason": "每月安抚",
-                            }
-                        ]
-                    },
-                }
-            ]
-        },
-        content=content,
-    )
-
-    created = out["issue_summary"]["new_issues"][0]
-    assert created["rejected"] is True
-    assert created["category"] == "invalid_enum"
-    assert _issue_by_title(db, "旧形状安抚毛文龙") is None
-
-
 def test_until_stop_commitment_requires_initiative_kind(read_game, monkeypatch):
     db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)

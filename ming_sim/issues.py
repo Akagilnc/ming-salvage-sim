@@ -498,40 +498,17 @@ def _apply_issue_buildings(
     return applied
 
 
-def commitment_condition_role(resolve_condition: object, commitment_kind: object = "") -> Dict[str, str]:
-    if str(commitment_kind or "").strip():
-        return {
-            "condition_role": "commitment_stop_condition",
-            "condition_note": "承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
-        }
-    text = str(resolve_condition or "").strip()
-    if re.fullmatch(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+", text):
-        return {
-            "condition_role": "commitment_stop_condition",
-            "condition_note": "人物承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
-        }
-    return {}
-
-
-def _legacy_commitment_stop_gate(resolve_condition: object) -> Dict[str, str]:
-    text = str(resolve_condition or "").strip()
-    match = re.fullmatch(r"(character\.[^.]+\.loyalty)\s*((?:>=|>)\s*\d+)", text)
-    if not match:
-        return {}
-    return {match.group(1): match.group(2).replace(" ", "")}
-
-
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
+    """显式 stop_condition JSON 门；不从 resolve_condition 正文推停止条件。"""
     keys = row.keys() if hasattr(row, "keys") else []
     raw = row["stop_condition"] if "stop_condition" in keys else ""
-    if raw:
-        try:
-            gate = json.loads(str(raw))
-        except (TypeError, ValueError):
-            gate = {}
-        if isinstance(gate, dict) and gate:
-            return gate
-    return _legacy_commitment_stop_gate(row["resolve_condition"] if "resolve_condition" in keys else "")
+    if not raw:
+        return {}
+    try:
+        gate = json.loads(str(raw))
+    except (TypeError, ValueError):
+        return {}
+    return gate if isinstance(gate, dict) else {}
 
 
 def _commitment_remaining_from_gate(
@@ -4683,20 +4660,11 @@ def apply_issue_tracker_output(
             ) > 0
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
-        legacy_resolve_text = _issue_condition_text(ni.get("resolve_condition"))
-        # Empty-check on local strip copy; persist path keeps raw (#1834 F34).
-        if not legacy_resolve_text.strip() and isinstance(stop_condition_raw, str):
-            legacy_resolve_text = stop_condition
-        legacy_resolve_commitment_shape = (
-            commitment_condition_role(legacy_resolve_text).get("condition_role")
-            == "commitment_stop_condition"
-        )
         commitment_shape_without_marker = (
             not commitment_kind
             and kind == "initiative"
             and (
                 end_turn_marker_shape
-                or legacy_resolve_commitment_shape
                 or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
                 or (
                     isinstance(stop_condition_raw, str)
@@ -5041,11 +5009,7 @@ def apply_issue_tracker_output(
             reason in ("resolved", "failed")
             and chk is not None
             and chk["status"] == "active"
-            and (
-                chk["commitment_kind"]
-                or commitment_condition_role(chk["resolve_condition"] or "").get("condition_role")
-                == "commitment_stop_condition"
-            )
+            and str(chk["commitment_kind"] or "").strip()
         ):
             applied_closes.append({
                 "rejected": True,

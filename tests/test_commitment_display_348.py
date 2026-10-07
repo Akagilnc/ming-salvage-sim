@@ -37,7 +37,7 @@ class TestCommitmentTimedBarValue:
         assert commitment_timed_bar_value(
             _progress(3),
             _row(end_turn=20, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}},
-                 resolve_condition="character.毛文龙.loyalty >= 65"),
+                 stop_condition=json.dumps({"character.毛文龙.loyalty": ">=65"})),
         ) is None
         assert commitment_timed_bar_value(
             _progress(3, remaining_arrears=80),

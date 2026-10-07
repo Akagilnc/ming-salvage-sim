@@ -1159,7 +1159,13 @@ def test_976_retryable_failed_secret_pin_stays_withheld_during_other_commit(game
     assert db.commit_pending_actions(
         state, minister_name=assignee.name, action_ids={failed_id}, content=content,
     ) == []
-    assert db.list_failed_secret_order_actions(assignee.name)[0]["id"] == failed_id
+    failed_rows = [
+        row for row in db.list_pending_actions(
+            state.turn, status="failed", minister_name=assignee.name,
+        )
+        if row["kind"] == "secret_order"
+    ]
+    assert failed_rows[0]["id"] == failed_id
 
     mid_committed, committed_id = _stage_new_secret(
         db, state, assignee.name, committed_marker,

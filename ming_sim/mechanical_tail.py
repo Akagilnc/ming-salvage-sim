@@ -93,22 +93,21 @@ def generate_ending_summary_for_tail(
 
     def _load_gazettes():
         loaded = []
-        if hasattr(db, "list_turn_reports"):
-            for row in db.list_turn_reports():
-                turn = int(row.get("turn") or 0)
-                if turn > int(closed_state.turn):
-                    continue
-                # Free prose gazette body: preserve raw; strip only emptiness (#1834 F16).
-                body = str(row.get("report") or row.get("body") or "")
-                if not body.strip():
-                    continue
-                # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
-                loaded.append({
-                    "turn": turn,
-                    "year": int(row.get("year") or 0),
-                    "period": int(row.get("period") or 0),
-                    "body": body,
-                })
+        for row in db.list_turn_reports():
+            turn = int(row.get("turn") or 0)
+            if turn > int(closed_state.turn):
+                continue
+            # Free prose gazette body: preserve raw; strip only emptiness (#1834 F16).
+            body = str(row.get("report") or row.get("body") or "")
+            if not body.strip():
+                continue
+            # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
+            loaded.append({
+                "turn": turn,
+                "year": int(row.get("year") or 0),
+                "period": int(row.get("period") or 0),
+                "body": body,
+            })
         return loaded
 
     reports = under(_load_gazettes)
@@ -346,7 +345,7 @@ def schedule_mechanical_tail_after_advance(
     source: Provenance = Provenance.system_simulation,
     pending_already_marked: bool = False,
 ) -> None:
-    """#1843 主链推进后启动本月机械尾；无会话写队列则只保留 pending。"""
+    """#1843 主链推进后启动本月机械尾；接线异常沿现役出口上抛。"""
     if not pending_already_marked:
         mark_mechanical_tail_pending(
             session.db, closed_turn,
@@ -355,10 +354,7 @@ def schedule_mechanical_tail_after_advance(
             ending_outcome=ending_outcome,
             source=source,
         )
-    try:
-        get_session_write_queue(session)
-    except Exception:
-        return
+    get_session_write_queue(session)
     _submit_tail(
         session,
         closed_turn=closed_turn,
@@ -370,11 +366,8 @@ def schedule_mechanical_tail_after_advance(
 
 
 def _resolve_context_turns(db: Any, current_turn: int) -> list[int]:
-    """有月链记录的回合。无连接的替身才退回 0..current。"""
-    conn = getattr(db, "conn", None)
-    if conn is None:
-        return list(range(0, int(current_turn) + 1))
-    rows = conn.execute(
+    """有月链记录的回合（现役 GameDB.conn）。"""
+    rows = db.conn.execute(
         "SELECT turn FROM pending_resolve_context ORDER BY turn"
     ).fetchall()
     return [int(row["turn"]) for row in rows]
@@ -437,10 +430,7 @@ def ending_summary_pending(db: Any, state: Any) -> bool:
 def ensure_mechanical_tails(session: Any) -> None:
     """重开或下次过月前：按 DB pending 续接未完尾（claim_if_absent 防重复执行）。"""
     db = session.db
-    try:
-        get_session_write_queue(session)
-    except Exception:
-        return
+    get_session_write_queue(session)
     current = int(getattr(session.state, "turn", 0) or 0)
     pending_turns = _pending_mechanical_tails(db, current_turn=current)
 

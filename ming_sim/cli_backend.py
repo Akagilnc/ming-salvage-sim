@@ -2099,11 +2099,7 @@ def _draft_intent_open_affair_facts(db: Any) -> str:
     """Structured open-affair list so existing.affair_id is chosen from input, not guessed."""
     if db is None:
         return ""
-    store = getattr(db, "affairs", None)
-    list_open = getattr(store, "list_open", None)
-    if not callable(list_open):
-        return ""
-    rows = list_open()
+    rows = db.affairs.list_open()
     if not rows:
         return ""
     lines = [
@@ -2803,7 +2799,7 @@ def project_draft_extract_to_directive_payload(
     pre_kind = classify_directive_structured_kind(payload)
     if pre_kind not in {"push", "empty"} and payload.get("target_kind") not in (None, ""):
         regions_content = getattr(content, "regions", None) if content is not None else None
-        conn = getattr(db, "conn", None) if db is not None else None
+        conn = None if db is None else db.conn
         assembled = assemble_structured_decree(
             payload,
             conn=conn,

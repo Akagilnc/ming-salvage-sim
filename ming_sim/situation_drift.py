@@ -363,8 +363,8 @@ def apply_situation_monthly_drift(
         bar = int(row["bar_value"])
         inertia = int(row["inertia"])
         commitment_kind = str(row["commitment_kind"] if "commitment_kind" in row.keys() else "").strip()
-        commitment_stop_gate = _commitment_stop_gate(row)
-        is_commitment = bool(commitment_kind or commitment_stop_gate)
+        is_commitment = bool(commitment_kind)
+        commitment_stop_gate = _commitment_stop_gate(row) if is_commitment else {}
         parent_origin_ref: Optional[str] = None
 
         # 1) inertia 漂移：每月对所有进行中 issue 都走一格

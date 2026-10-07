@@ -106,9 +106,6 @@ def _army_owner_transition_pay_kwargs(normalized: Mapping[str, object]) -> Dict[
         key: (normalized[key] if key in normalized else _SENTINEL)
         for key in _ARMY_OWNER_TRANSITION_PAY_KEYS
     }
-_COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
-
-
 def mutiny_loyalty_cap(mutiny_count: int, redemption_count: int = 0) -> int:
     """ADR 0025 D6 唯一军心上限真源。"""
     return max(60, min(100, 100 - 20 * int(mutiny_count) + 10 * int(redemption_count)))
@@ -465,10 +462,6 @@ def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
     }
 
 
-def _is_commitment_stop_condition(resolve_condition: object) -> bool:
-    return bool(_COMMITMENT_STOP_CONDITION_RE.fullmatch(str(resolve_condition or "").strip()))
-
-
 def _has_stop_condition(stop_condition: object) -> bool:
     if isinstance(stop_condition, (dict, list)):
         return bool(stop_condition)
@@ -526,8 +519,7 @@ def require_backing_dossier_id(db: object, raw: object) -> Optional[int]:
     backing = parse_backing_dossier_id(raw)
     if backing is None:
         return None
-    getter = getattr(db, "get_decree_dossier", None)
-    if getter is None or getter(backing) is None:
+    if db.get_decree_dossier(backing) is None:
         raise ValueError(f"backing_dossier_id 所指案卷不存在：{backing}")
     return backing
 
@@ -748,10 +740,7 @@ def _office_type_from_table(text: str) -> str:
 def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     """表查不中（生造/罕见官名）时，CLI 后端在场则交 LLM 判 office_type（取 allowed_types）。
     否则返回 ''。结果按官名缓存，避免重复调用。"""
-    try:
-        from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
-    except Exception:
-        return ""
+    from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
     if not cli_backend_active(llm_config):
         return ""
     if text in _OFFICE_TYPE_LLM_CACHE:
@@ -763,13 +752,9 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
         "只输出一个类型词（不要任何别的字），必须严格取自：" + "、".join(allowed) + "。\n"
         "官名：" + text + "\n类型："
     )
-    out = ""
-    try:
-        raw, _ = _run_backend_for_config(prompt, llm_config, tag="office_infer")
-        cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
-        out = cand if cand in allowed_set else ""
-    except Exception:
-        out = ""
+    raw, _ = _run_backend_for_config(prompt, llm_config, tag="office_infer")
+    cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
+    out = cand if cand in allowed_set else ""
     _OFFICE_TYPE_LLM_CACHE[text] = out
     return out
 
@@ -3381,12 +3366,9 @@ class GameDB:
 
     def _migrate_next_audience_todos_drop_issue_fk(self) -> None:
         """#1783：next_audience_todos 去 issues FK，允案卷 due 直挂 commitment_ref=0。"""
-        try:
-            fks = self.conn.execute(
-                "PRAGMA foreign_key_list(next_audience_todos)"
-            ).fetchall()
-        except Exception:
-            return
+        fks = self.conn.execute(
+            "PRAGMA foreign_key_list(next_audience_todos)"
+        ).fetchall()
         if not fks:
             return
         self.conn.execute("PRAGMA foreign_keys=OFF")
@@ -17341,33 +17323,6 @@ class GameDB:
             for r in rows
         ]
 
-    def list_failed_secret_order_actions(
-        self, minister_name: Optional[str] = None,
-    ) -> List[Dict[str, object]]:
-        sql = (
-            "SELECT id, turn, kind, action, target_id, minister_name, payload_json, status "
-            "FROM pending_actions WHERE status='failed' AND kind='secret_order'"
-        )
-        params: tuple[object, ...] = ()
-        if minister_name is not None:
-            sql += " AND minister_name=?"
-            params = (str(minister_name),)
-        sql += " ORDER BY turn DESC, id"
-        rows = self.conn.execute(sql, params).fetchall()
-        return [
-            {
-                "id": int(r["id"]),
-                "turn": int(r["turn"]),
-                "kind": r["kind"],
-                "action": r["action"],
-                "target_id": None if r["target_id"] is None else int(r["target_id"]),
-                "minister_name": r["minister_name"],
-                "payload_json": r["payload_json"],
-                "status": r["status"],
-            }
-            for r in rows
-        ]
-
     def _prepare_pending_directive(
         self, state: GameState, pa: Dict[str, object], *, content=None,
     ) -> Dict[str, object]:
@@ -19703,7 +19658,6 @@ class GameDB:
         commitment_stop_condition = (
             bool(row["commitment_kind"])
             or has_stop_condition
-            or _is_commitment_stop_condition(row["resolve_condition"])
         )
         if to_value >= 100 and not commitment_stop_condition:
             new_status = "resolved"

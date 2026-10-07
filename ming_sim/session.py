@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 import threading
 import time
 import uuid
@@ -372,19 +371,15 @@ def _appointment_intent_is_current_office_noop(
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
     归一到在册原始名，再查当前 office。"""
-    conn = getattr(db, "conn", None)
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
-    if conn is None or not clean_name or not desired:
+    if not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?",
-            (canonical,),
-        ).fetchone()
-    except sqlite3.Error:
-        return False
+    row = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name = ?",
+        (canonical,),
+    ).fetchone()
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -496,27 +491,6 @@ def apply_appointment(
 
 
 
-
-
-def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
-    """把落库失败的暂存动作翻成可给玩家看的失败状态。"""
-    kind = str(pa.get("kind") or "")
-    action = str(pa.get("action") or "")
-    noun = {
-        "secret_order": "密令",
-        "office": "任免",
-        "directive": "拟旨",
-    }.get(kind, "政务动作")
-    # #1765 ②：坏 payload 重放入口已删——系统层只报「未落库」这一件事，
-    # 不再承诺重试、也不按失败来源分类交代（0046 薄系统层）。
-    message = f"{noun}未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。"
-    return {
-        "id": int(pa.get("id") or 0),
-        "kind": kind,
-        "action": action,
-        "minister_name": str(pa.get("minister_name") or ""),
-        "message": message,
-    }
 
 
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
@@ -2421,25 +2395,22 @@ class GameSession:
     def auto_save(self, tag: str) -> Optional[str]:
         """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。
         文件名 auto_<campaign_id>_<year>_<period>_<turn>_<tag>.db；prune 只动同 campaign 的自动档，
-        不碰用户手动存档。失败静默（自动存档不应阻断游戏）。"""
-        try:
-            import os as _os
-            saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
-            saves_dir = _os.path.dirname(saves_dir)
-            campaign_id = (self.db.kv_get("campaign_id") or "").strip()
-            if not campaign_id:
-                campaign_id = uuid.uuid4().hex[:12]
-                self.db.kv_set("campaign_id", campaign_id)
-            fname = (
-                f"{AUTO_SAVE_PREFIX}{campaign_id}_{self.state.year:04d}_"
-                f"{self.state.period:02d}_t{self.state.turn:04d}_{tag}.db"
-            )
-            target = _os.path.join(saves_dir, fname)
-            self.db.backup_to(target)
-            prune_auto_saves(saves_dir, campaign_id)
-            return target
-        except Exception:
-            return None
+        不碰用户手动存档。备份／路径故障沿现役异常出口上抛。"""
+        import os as _os
+        saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
+        saves_dir = _os.path.dirname(saves_dir)
+        campaign_id = (self.db.kv_get("campaign_id") or "").strip()
+        if not campaign_id:
+            campaign_id = uuid.uuid4().hex[:12]
+            self.db.kv_set("campaign_id", campaign_id)
+        fname = (
+            f"{AUTO_SAVE_PREFIX}{campaign_id}_{self.state.year:04d}_"
+            f"{self.state.period:02d}_t{self.state.turn:04d}_{tag}.db"
+        )
+        target = _os.path.join(saves_dir, fname)
+        self.db.backup_to(target)
+        prune_auto_saves(saves_dir, campaign_id)
+        return target
 
     def close(self, *, write_gate_already_held: bool = False) -> None:
         """排空本会话已受理工作，再关闭全部数据库资源。"""
