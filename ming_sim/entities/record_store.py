@@ -62,8 +62,9 @@ class ChatMessageStore:
         for item in data:
             if not isinstance(item, str):
                 raise ValueError("奏对高亮成员须为文字")
+            # Free phrase: empty-check without mutating stored member (P6).
             if item.strip():
-                out.append(item.strip())
+                out.append(item)
         return out
 
     def highlights(self, message_id: int) -> List[str]:

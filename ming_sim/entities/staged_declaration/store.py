@@ -213,11 +213,12 @@ class StagedDeclarationStore:
             "AND forecast_text IS NOT NULL ORDER BY id",
             (ref,),
         ).fetchall()
-        parts = [
-            str(row["forecast_text"]).strip()
-            for row in rows
-            if str(row["forecast_text"] or "").strip()
-        ]
+        # Free body: empty-check without mutating stored forecast prose (P6).
+        parts: list[str] = []
+        for row in rows:
+            text = str(row["forecast_text"] or "")
+            if text.strip():
+                parts.append(text)
         return "\n".join(parts)
 
     def clear_questions(self, decree_ref: str) -> int:

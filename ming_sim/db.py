@@ -5110,9 +5110,9 @@ class GameDB:
         for item in list(phrases or []):
             if not isinstance(item, str):
                 continue
-            phrase = item.strip()
-            if phrase:
-                clean.append(phrase)
+            # Free phrase: empty-check without mutating stored member (P6).
+            if item.strip():
+                clean.append(item)
         payload = json.dumps(clean, ensure_ascii=False)
         self.chat_messages.set_highlights_json(int(message_id), payload)
         self.conn.commit()

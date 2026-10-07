@@ -2181,8 +2181,9 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
                 "responsible_person_ids": responsible_ids,
                 "responsible_faction_ids": responsible_factions,
                 "dossier_id": did,
-                "decree_text": str(row["decree_text"] or "").strip(),
-                "execution_note": str(row["execution_note"] or "").strip(),
+                # Free prose: carry stored text as-is (P6); empty-check is elsewhere.
+                "decree_text": str(row["decree_text"] or ""),
+                "execution_note": str(row["execution_note"] or ""),
                 "execution_outcome": str(row["execution_outcome"] or "").strip(),
                 "beyond_intent": True,
                 "reported_bands": list(fork_state.get("reported_bands") or []),

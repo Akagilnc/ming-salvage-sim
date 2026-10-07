@@ -2761,7 +2761,8 @@ def extract_draft_intent(
             if not isinstance(value, dict):
                 invalid_batch = True
                 break
-            text = str(value.get("正文") or "").strip()
+            # Free 正文: empty-check later without mutating stored body (P6).
+            text = str(value.get("正文") or "")
             action = str(value.get("动作类型") or "").strip()
             if action == "grant_allocation":
                 projected = _normalize_grant_transport(value)
@@ -2795,7 +2796,7 @@ def extract_draft_intent(
             except ValueError:
                 invalid_batch = True
                 break
-            if not text or mode is None or text in seen_texts or structured_kind == "empty":
+            if not text.strip() or mode is None or text in seen_texts or structured_kind == "empty":
                 invalid_batch = True
                 break
             seen_texts.add(text)
@@ -3302,13 +3303,14 @@ def build_draft_admission_resubmit_feedback(
     """
     payload_json = json.dumps(dict(bad_payload or {}), ensure_ascii=False, sort_keys=True)
     reason = str(failure_reason or "").strip() or "（未给出具体拒因）"
-    text = str(decree_text or "").strip()
+    # Free decree body must be carried as-is when re-fed (P6 / 勿改旨文).
+    text = str(decree_text or "")
     parts = [
         "【成案校验失败，请按失败事实与原产物整份重交结构化字段（勿改旨文正文）】\n",
         f"失败事实：{reason}\n",
         f"原产物：{payload_json}\n",
     ]
-    if text:
+    if text.strip():
         parts.append(f"原旨正文（不得改写）：{text}\n")
     return "".join(parts)
 
@@ -3417,8 +3419,9 @@ def resubmit_draft_admission_payload(
     （原抽 + 重写 2 = 总计 3）。与 extract 内 heal_retries（组合/名册）独立——
     内部 heal 不冒充成案补交次数。不在引擎侧改写 LLM 输出（0142）。
     """
-    text = str(decree_text or "").strip()
-    if not text:
+    # Free decree body: empty-check without mutating when re-feeding LLM (P6).
+    text = str(decree_text or "")
+    if not text.strip():
         raise ValueError("补交缺旨文正文")
     feedback = build_draft_admission_resubmit_feedback(
         failure_reason=failure_reason,

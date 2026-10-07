@@ -99,10 +99,11 @@ def generate_ending_summary_for_tail(
                 turn = int(row.get("turn") or 0)
                 if turn > int(closed_state.turn):
                     continue
-                body = str(row.get("report") or row.get("body") or "").strip()
-                if not body:
+                body = str(row.get("report") or row.get("body") or "")
+                if not body.strip():
                     continue
                 # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
+                # Free body: empty-check without mutating stored gazette prose (P6).
                 loaded.append({
                     "turn": turn,
                     "year": int(row.get("year") or 0),

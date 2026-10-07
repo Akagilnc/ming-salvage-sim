@@ -41,9 +41,9 @@ def parse_highlight_judge_output(raw: str) -> List[str]:
     for item in items:
         if not isinstance(item, str):
             continue
-        phrase = item.strip()
-        if phrase:
-            out.append(phrase)
+        # Free phrase from judge: empty-check without mutating (P6).
+        if item.strip():
+            out.append(item)
     return out
 
 
@@ -55,8 +55,9 @@ def run_highlight_judge(
     timeout_s: float = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
 ) -> List[str]:
     """同通道短调用；超时/坏输出/判官失败 → []（一层带日志边界，零副作用）。"""
-    reply = str(minister_reply or "").strip()
-    if not reply:
+    # Free minister prose: empty-check without mutating carried body (P6).
+    reply = str(minister_reply or "")
+    if not reply.strip():
         return []
     try:
         timeout = float(timeout_s)

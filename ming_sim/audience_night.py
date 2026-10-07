@@ -2101,8 +2101,9 @@ def audience_scene_recap(
         nid = int(open_n["id"])
     bodies: List[str] = []
     for entry in audible_entries_for(db, int(nid), name):
-        body = str(entry.get("body") or "").strip()
-        if body:
+        # Free body: empty-check without stripping stored ledger prose (P6).
+        body = str(entry.get("body") or "")
+        if body.strip():
             bodies.append(body)
     if not bodies:
         return ""
