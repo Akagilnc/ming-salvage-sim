@@ -1,7 +1,7 @@
 """动作档 FieldSpec 登记表（#515 / #1871）。
 
 唯一真源：ACTION_CLUSTERS（由 action_materialize.install 装入）。
-提供 kind/fields 枚举与 shape 校验；分类器候选链与 materialize_fn 已删。
+提供 kind/fields 枚举、shape 校验与 prompt 投影；分类器候选链与 materialize_fn 已删。
 
 范围（ADR 0039 / #513）：机械聚类挂点，不是 25 词语义表。
 """
@@ -23,18 +23,14 @@ class FieldSpec:
     zh: str
     allowed: Optional[FrozenSet[str]] = None
     default: Any = ""
-    max_len: Optional[int] = None
     as_int: bool = False
     int_lo: int = 0  # symmetric lower bound; >0 marks positive integer
     int_hi: int = 10**9
     quantity_unit: Optional[str] = None
-    season_option: bool = False
     # Optional per-enum execution metadata lives on the canonical field row.
     execution_coverage: Optional[Mapping[str, Optional[str]]] = None
     # Field is populated only when another canonical field has one of these values.
     populated_when: Optional[Tuple[str, FrozenSet[str]]] = None
-    # A controller value may narrow this enum's effective allowed values.
-    allowed_when: Optional[Tuple[str, str, FrozenSet[str]]] = None
 
 
 @dataclass(frozen=True)
@@ -129,59 +125,6 @@ def cluster_by_kind(kind: str) -> Optional[ActionCluster]:
     return None
 
 
-def season_option_fields(kind: str) -> Tuple[str, ...]:
-    """Typed season-option keys projected from the canonical action row."""
-    cluster = cluster_by_kind(kind)
-    if cluster is None:
-        return ()
-    return ("action_type", *(f.name for f in cluster.fields if f.season_option))
-
-
-def _season_specs(kind: str) -> Tuple[FieldSpec, ...]:
-    cluster = cluster_by_kind(kind)
-    return tuple(f for f in cluster.fields if f.season_option) if cluster else ()
-
-
-def validate_season_option(option: Mapping[str, object]) -> str:
-    """Validate a typed season option and return its canonical action type."""
-    from ming_sim.strict_types import strict_int
-
-    has_action_type = "action_type" in option
-    action_type = str(option.get("action_type") or "").strip()
-    _ensure_catalog()
-    has_typed_fields = any(
-        spec.season_option and spec.name in option
-        for cluster in ACTION_CLUSTERS
-        for spec in cluster.fields
-    )
-    if has_action_type and not action_type:
-        raise ValueError("choice.action_type 不可空")
-    if not has_action_type and has_typed_fields:
-        raise ValueError("choice.action_type 不可空")
-    if action_type and not _season_specs(action_type):
-        raise ValueError(f"choice.action_type 非法：{action_type!r}")
-    for spec in _season_specs(action_type):
-        if spec.name not in option:
-            raise ValueError(f"choice.{spec.name} 不可空")
-        if spec.as_int and spec.default is None and option[spec.name] is None:
-            raise ValueError(f"choice.{spec.name} 不可空")
-        if not field_population_allowed(action_type, spec.name, option):
-            raise ValueError(f"choice.{spec.name} 不适用于当前选项")
-        value = option[spec.name]
-        if spec.allowed is None and not spec.as_int and (
-            not isinstance(value, str) or not value.strip()
-        ):
-            raise ValueError(f"choice.{spec.name} 不可空")
-        allowed = effective_field_allowed(spec, option)
-        if allowed is not None and value not in allowed:
-            raise ValueError(f"choice.{spec.name} 非法：{value!r}")
-        if spec.as_int:
-            number = strict_int(value, accept_numeric_strings=False)
-            if number < spec.int_lo or number > spec.int_hi:
-                raise ValueError(f"choice.{spec.name} 超出范围：{number!r}")
-    return action_type
-
-
 def cluster_fields_prompt(kind: str) -> str:
     """Render one catalog row's extraction fields without a parallel schema."""
     cluster = cluster_by_kind(kind)
@@ -210,11 +153,6 @@ def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
         if _field_raw(obj, spec) is not None else spec.default
         for spec in cluster.fields
     }
-
-
-def cluster_effect(kind: str) -> str:
-    c = cluster_by_kind(kind)
-    return c.effect if c else EFFECT_NOOP
 
 
 class ActionCandidateShapeError(ValueError):
@@ -280,17 +218,6 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
     return True, ""
 
 
-def effective_field_allowed(
-    spec: FieldSpec, candidate: Mapping[str, Any],
-) -> Optional[FrozenSet[str]]:
-    """Project the enum values allowed for this candidate from one field row."""
-    if spec.allowed_when is not None:
-        controller, controller_value, allowed = spec.allowed_when
-        if str(candidate.get(controller) or "").strip() == controller_value:
-            return allowed
-    return spec.allowed
-
-
 def field_population_allowed(
     kind: str, field_name: str, candidate: Mapping[str, Any],
 ) -> bool:
@@ -340,11 +267,9 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             if isinstance(raw, (dict, list, tuple)):
                 s = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
             else:
-                # Canonical generated body is transport, not user-entered metadata:
-                # preserve the extractor's bytes (including edge whitespace).
-                s = str(raw or "") if name == "new_content" else str(raw or "").strip()
-            if spec.max_len is not None:
-                s = s[: spec.max_len]
+                # Non-enum values are transported verbatim; identities are
+                # normalized by their consumers, not by trimming every string.
+                s = str(raw or "")
             out[name] = s
     if "draft_text" in obj:
         out["draft_text"] = obj.get("draft_text")
@@ -360,4 +285,3 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
             if key in obj and obj.get(key) not in (None, ""):
                 out[key if key != "承办人" else "assignee"] = obj.get(key)
     return out
-

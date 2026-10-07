@@ -215,6 +215,12 @@ class _RetrySession:
 
     temporary_characters: set = set()
 
+    def schedule_close_night_after_chat_if_needed(self, court_action, *, write_gate=None):
+        from ming_sim.session import GameSession
+        return GameSession.schedule_close_night_after_chat_if_needed(
+            self, court_action, write_gate=write_gate,
+        )
+
     def __init__(self, db, state, minister):
         self.db = db
         self.state = state
@@ -243,12 +249,6 @@ class _RetrySession:
         from ming_sim.session import GameSession
         return GameSession.schedule_pending_scene_translation(self, result)
 
-    def schedule_close_night_after_chat_if_needed(self, court_action, *, write_gate=None):
-        # #1853：入口直调核心 schedule；轻壳委托同缝（非 court_break 为空操作）。
-        from ming_sim.session import GameSession
-        return GameSession.schedule_close_night_after_chat_if_needed(
-            self, court_action, write_gate=write_gate,
-        )
 
 def _retry_runtime(db, state, minister, *, session=None):
     """Web retry 入口唯一装配壳。session 默认轻量 _RetrySession；可注入生产 chat session。"""
@@ -514,19 +514,6 @@ def _seed_agno_v3_runs(db, session_id: str, run_count: int) -> None:
         )
     db.conn.commit()
 
-
-def _insert_agno_table_run(db, session_id: str, run_id: str, run_index: int) -> None:
-    """Insert one Agno 3 table run row (shared by transport failpath fixtures)."""
-    _ensure_agno_runs_table(db)
-    db.conn.execute(
-        "INSERT INTO agno_runs "
-        "(run_id, session_id, run_type, status, run_index, run_data, created_at) "
-        "VALUES (?, ?, 'agent', 'FAILED', ?, ?, ?)",
-        (run_id, session_id, run_index, json.dumps({"run_id": run_id}), run_index + 1),
-    )
-    db.conn.commit()
-
-
 def test_reconcile_truncates_agno_runs_to_turn_start(restore_env):
     env = restore_env
     db, state, content = env.db, env.state, env.content
@@ -602,26 +589,28 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
 
 def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
-    """#1716：fresh Agno 3 首轮已落 run 后，公开 chat_stream 第二轮须受理。
+    """#1716：fresh Agno 3 首轮已落 run 后，生产 _start_chat_turn 第二轮须受理。
 
-    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送读 runs 长度；
+    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送在 _start_chat_turn 读 runs 长度；
     旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
     断言第二轮 create 成功且 agno_runs_before=既有 run 数。
     """
     game = web_game
-    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="戌时")
-    sid = f"scene-night-{int(night['id'])}"
+    minister = _active_minister(game.db, game.content)
+    sid = game._minister_agno_session_id(minister)
+    # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
     _seed_agno_v3_runs(game.db, sid, run_count=1)
     assert game.db.agno_runs_length(sid) == 1
 
-    events = list(game.chat_stream(an.SCENE_CHAT_SPEAKER, "剿抚孰先？"))
-    assert any(ev.get("type") == "accepted" for ev in events)
+    chat_turn_id, _snapshot = game._start_chat_turn(minister)
     row = game.db.conn.execute(
-        "SELECT agno_session_id, agno_runs_before FROM chat_turns ORDER BY id DESC LIMIT 1"
+        "SELECT agno_session_id, agno_runs_before, status FROM chat_turns WHERE id=?",
+        (chat_turn_id,),
     ).fetchone()
     assert row is not None
     assert row["agno_session_id"] == sid
     assert int(row["agno_runs_before"]) == 1
+    assert row["status"] == "generating"
 
 
 def test_load_save_reconciles_interrupted_orphan(web_game):
@@ -641,107 +630,3 @@ def test_load_save_reconciles_interrupted_orphan(web_game):
         "SELECT status FROM chat_turns WHERE id=?", (ct,)
     ).fetchone()["status"] == "interrupted"
     assert [r["question"] for r in game.db.get_interrupted_reply_retries(minister)] == ["剿抚孰先？"]
-
-
-# ---------------------------------------------------------------------------
-# #657 片3 S11–S15：同库三轮 + CAS + 空冲突
-# ---------------------------------------------------------------------------
-
-
-def _657_active_minister(db, content) -> str:
-    return next(
-        ch.name for ch in content.characters.values()
-        if db.get_character_status(ch.name)[0] == "active"
-        and db.resolve_power_id(ch) == "ming"
-        and getattr(ch, "office_type", "") not in ("后宫", "宗藩")
-    )
-
-
-def test_657_rescript_summon_writes_enter_fact_and_is_idempotent(game):
-    """#1838 reopen：批红召见只落入殿事实账；已消费=origin+TAG_ENTER；幂等复用。"""
-    from ming_sim.audience_night import (
-        TAG_ENTER,
-        list_ledger,
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_consumed,
-        rescript_summon_origin_ref,
-    )
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 50, 0)
-
-    sc = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    assert sc["consumed"] is True
-    night = an.get_open_night(db)
-    entry = next(
-        row for row in list_ledger(db, int(night["id"]))
-        if str(row.get("origin_ref") or "") == origin
-    )
-    assert rescript_summon_origin_consumed(entry)
-    assert TAG_ENTER in entry["tags"]
-    assert str(entry.get("body") or "") == ""
-    assert int(sc["entry_id"]) == int(entry["id"])
-
-    again = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    assert again["consumed"] is True
-    assert int(again["entry_id"]) == int(sc["entry_id"])
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
-        (origin,),
-    ).fetchone()["c"] == 1
-
-
-def test_657_rescript_summon_no_chat_turn_scaffold(game):
-    """#1838 reopen：不再建 generating 对话轮等待旁白。"""
-    from ming_sim.audience_night import (
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_ref,
-    )
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 51, 0)
-    sc = prepare_rescript_summon_scaffold(
-        db, state, person_name=minister, origin_ref=origin,
-    )
-    assert int(sc.get("chat_turn_id") or 0) == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE agno_session_id=?",
-        (f"rescript-summon:{origin}",),
-    ).fetchone()["c"] == 0
-
-
-def test_657_rescript_summon_atomic_on_enter_failure(game, monkeypatch):
-    """prepare 中途入殿失败 → 零孤儿 origin 行。"""
-    from ming_sim.audience_night import (
-        prepare_rescript_summon_scaffold,
-        rescript_summon_origin_ref,
-        summon_enter as real_summon_enter,
-    )
-    import ming_sim.audience_night as an
-
-    db, state, content = game
-    minister = _657_active_minister(db, content)
-    origin = rescript_summon_origin_ref(int(state.turn), 52, 0)
-
-    def _boom(*a, **k):
-        raise RuntimeError("inject summon_enter fail")
-
-    monkeypatch.setattr(an, "summon_enter", _boom)
-    with pytest.raises(RuntimeError):
-        prepare_rescript_summon_scaffold(
-            db, state, person_name=minister, origin_ref=origin,
-        )
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE origin_ref=?",
-        (origin,),
-    ).fetchone()["c"] == 0
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE agno_session_id=?",
-        (f"rescript-summon:{origin}",),
-    ).fetchone()["c"] == 0

@@ -494,11 +494,6 @@ def _apply_issue_buildings(
 
 
 # 创建期拒收：resolve_condition 文本不得冒充承诺停止条件（正式停止条件只认 stop_condition dict）。
-_FORBIDDEN_COMMITMENT_RESOLVE_SHAPE = re.compile(
-    r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+"
-)
-
-
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     """只读显式 stop_condition JSON；不再从 resolve_condition 散文解码。"""
     keys = row.keys() if hasattr(row, "keys") else []
@@ -4514,24 +4509,6 @@ def apply_issue_tracker_output(
                 applied_person_changes=issue_person_changes,
                 entity_rejections=entity_rejections,
             )
-            if issue_id is not None and ev.effect_on_trigger:
-                # #1893：模型选中即触发——事件自带的核心后果（如 huangtaiji_chengdi 的
-                # 改国号）随这一次写口落定，不另按日期旁路补。situation 类事件的
-                # effect_on_trigger 历来只在 auto_trigger 硬触发路应用（见
-                # _auto_trigger_seed_issues_in_atomic），模型选中路原缺这一步，属改
-                # 触发方式后漏接的既有核心后果。
-                entity_rejections.extend(
-                    _apply_issue_entities(
-                        db,
-                        state,
-                        ev.effect_on_trigger,
-                        f"事件#{ev.id}触发",
-                        content=runtime_content,
-                        llm_config=llm_config,
-                        applied_person_changes=issue_person_changes,
-                        commit=commit_now,
-                    )
-                )
             if issue_id is None:
                 # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
                 # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、
@@ -4585,18 +4562,11 @@ def apply_issue_tracker_output(
             ) > 0
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
-        resolve_text_for_shape = _issue_condition_text(ni.get("resolve_condition"))
-        if not resolve_text_for_shape and isinstance(stop_condition_raw, str):
-            resolve_text_for_shape = stop_condition
-        forbidden_resolve_commitment_shape = bool(
-            _FORBIDDEN_COMMITMENT_RESOLVE_SHAPE.fullmatch(str(resolve_text_for_shape or "").strip())
-        )
         commitment_shape_without_marker = (
             not commitment_kind
             and kind == "initiative"
             and (
                 end_turn_marker_shape
-                or forbidden_resolve_commitment_shape
                 or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
                 or (
                     isinstance(stop_condition_raw, str)
@@ -7420,19 +7390,7 @@ def _apply_score_extraction_body(
             )
             # #567 / #1900：核账事实留在 list_dossier_reconciliations 结构化账，
             # 不向 execution_note 模板增补或覆盖原文。
-            # #619/#622：表报终值旁路——仅 degraded/transformed 挂奏报行；
-            # 变形案载承办人假象（不得回填判官真值）；progress_band 定性中文。
-            if outcome in {"degraded", "transformed"}:
-                prior = list(db.list_dossier_progress(int(dossier_id)))
-                band, memorial = terminal_report_facade(
-                    outcome, prior_reports=prior,
-                )
-                db.record_dossier_progress(
-                    dossier_id, state.turn, band, memorial,
-                    is_terminal=True,
-                    origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-                    commit=False,
-                )
+            # 执行格真值只落 record_dossier_execution；不代人物拼终值奏报。
             # 连坐挂载点＝本适配器落终值笔；禁对 execution_outcome 列事后扫描。
             # 触发过滤由 apply 内 _JOINT_LIABILITY_TRIGGERS 单一真源承担。
             db.apply_execution_joint_liability(

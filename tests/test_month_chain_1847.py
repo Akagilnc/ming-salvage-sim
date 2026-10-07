@@ -17,8 +17,7 @@ from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import TurnPhase
 from tests.month_chain_helpers import make_light_session
-from tests.rescript_test_helpers import sql_rescript_draft
-from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
+from tests.test_month_chain_1843 import _stage_edict
 from ming_sim.supervision import (
     ORIGIN_MARK_PRIVATE_GOODS,
     ORIGIN_MARK_SAME_FACTION_BLIND,
@@ -573,40 +572,6 @@ def test_missing_model_does_not_mark_world_continued(game, monkeypatch):
     chain = month_chain._load_chain(db, closed_turn)
     assert chain.get("world_continued") is True
     assert chain.get("world_questions") in (None, [], ())
-
-
-def test_cross_month_pending_draft_opens_rescript_desk(game, monkeypatch):
-    """本月零请旨时，既有跨月急务仍走同一案头，不得直接交邸报。"""
-    db, state, content = game
-    closed_turn = int(state.turn)
-    prior = closed_turn - 1
-    sql_rescript_draft(
-        db, prior, idx=0, event_id="urgent:old:0", title="旧急务甲", context="跨月待批",
-        options=[
-            {"label": "发帑", "hint": "饥民"},
-            {"label": "留中", "hint": "待查"},
-        ],
-        actor_name="首辅", actor_office="内阁首辅", actor_faction="东林",
-    )
-    db.conn.commit()
-    _forbid_extractor(monkeypatch)
-    monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr(
-        month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}},
-    )
-    session = make_light_session(db, state, content)
-
-    result = session.resolve_turn(allow_empty_decree=True)
-
-    assert result.awaiting is True
-    assert result.stage == "rescript"
-    assert result.advanced is False
-    assert int(state.turn) == closed_turn
-    assert session.state.turn_phase == TurnPhase.AWAITING_DECISION.value
-    titles = [row["title"] for row in session.pending_decisions()]
-    assert titles == ["旧急务甲"]
-    assert session.pending_decisions()[0]["kind"] == "rescript_draft"
-
 
 def test_decree_continuation_keeps_forecast_and_lands_affair_effect(game, monkeypatch):
     """问后续推读已存问前段与请旨语境，并以冻结引用落下 affair 来源效果。"""
@@ -1747,7 +1712,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
         return real_save(db_, turn_, chain_, **kwargs)
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="injected chain save failure"):
         _settle_edicts(sess, chain=chain)
     assert not db.staged_declarations.is_settled(ref_2)
 
@@ -2194,7 +2159,7 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
         raise RuntimeError("injected disclosure save failure")
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="injected disclosure save failure"):
         _settle_edicts(sess, chain=chain)
 
     assert not db.staged_declarations.is_settled(ref)
