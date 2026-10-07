@@ -205,7 +205,7 @@ def test_ming_power_update_rejected_with_trace(game):
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
     item = json.loads(rows[0][4])
-    assert item.get("power_id") == "ming" or item.get("id") == "ming" or "ming" in item
+    assert item == {"power_id": "ming", "changes": {"leverage": 5}}
 
 
 def test_float_and_bool_power_values_rejected(game):

@@ -236,4 +236,4 @@ def test_issue_effect_faction_rejection_reaches_reports(game):
     rows = [r for r in rows if r[2] == "missing_ref"]
     assert len(rows) == 1, rows
     item = json.loads(rows[0][4])
-    assert item.get("faction") == "查无此派系" or item.get("name") == "查无此派系" or "查无此派系" in item
+    assert item == {"查无此派系": {"satisfaction": 9}}

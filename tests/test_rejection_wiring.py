@@ -121,14 +121,12 @@ def test_issue_summary_nested_rejections_are_collected(game, monkeypatch, tmp_pa
     rows = _rejection_rows(db, turn)
     assert len(rows) == 1
     assert rows[0][0] == "issue_summary.new_issues"
-    assert rows[0][2]  # category 留痕
-    # 坏项身份在 item_json；不锁 reason 措辞。
     item_row = db.conn.execute(
         "SELECT item_json, category, source FROM rejection_reports WHERE turn=?",
         (turn,),
     ).fetchone()
     item = json.loads(item_row["item_json"])
-    assert item.get("title") == "臆造局势"
+    assert item["title"] == "臆造局势"
     assert item_row["category"]
     assert item_row["source"]
 
@@ -227,14 +225,16 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
     rows = [r for r in _rejection_rows(db, turn)
             if r[0] == "issue_inertia.entity_rejections"]
     assert len(rows) == 1
-    assert rows[0][2] == "invalid_enum" or rows[0][2]
+    assert rows[0][2] == "invalid_enum"
     item_row = db.conn.execute(
-        "SELECT item_json, category FROM rejection_reports "
+        "SELECT item_json, category, source FROM rejection_reports "
         "WHERE turn=? AND section='issue_inertia.entity_rejections'",
         (turn,),
     ).fetchone()
     item = json.loads(item_row["item_json"])
-    assert item.get("field") == "士气大振" or "士气大振" in item
+    assert item == {"army_id": aid, "field": "士气大振", "value": 9}
+    assert item_row["category"] == "invalid_enum"
+    assert item_row["source"]
 
 
 def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeypatch, tmp_path):

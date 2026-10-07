@@ -643,7 +643,9 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
     assert len(rows) == 1
     assert rows[0][2] == "invalid_enum"
     item = json.loads(rows[0][4])
-    assert item.get("field") == "士气大振" or "士气大振" in item
+    assert item["field"] == "士气大振"
+    assert item["value"] == 9
+    assert item["army_id"] == aid
 
 
 def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
