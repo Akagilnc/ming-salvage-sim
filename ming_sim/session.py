@@ -331,7 +331,7 @@ def register_unlisted_person_record(
 
     register_runtime_outcome_callbacks(db, on_rollback=_drop_runtime_registration)
     # SAVEPOINT：add_character 写前已完成 seat 校验，但 characters + character_offices
-    # 仍须整项原子；外层 _item_savepoint_scope / atomic 嵌套仍合法。commit 必须在
+    # 仍须整项原子；外层 item_savepoint_scope / atomic 嵌套仍合法。commit 必须在
     # RELEASE 之后、且仅当本核拥有事务时发生——否则 SAVEPOINT 期内 commit 会把
     # 整个事务提前提交，随后 RELEASE 无点。
     owns_transaction = connection_owns_transaction(db.conn)
@@ -1269,7 +1269,7 @@ class GameSession:
 
         """场景 agent 的 transport 流式核——零动作工具；材料只读工具不进 court_action。"""
 
-        from ming_sim.llm_model import extract_agent_text, fail_if_llm_error
+        from ming_sim.llm_model import extract_agent_text
         from ming_sim.llm_transport import (
             bind_transport_sdk_budget,
             empty_output_failure,
@@ -1309,8 +1309,6 @@ class GameSession:
                 extracted = extract_agent_text(run_output)
                 if not answer:
                     answer = extracted
-            else:
-                fail_if_llm_error(answer, "LLM 调用")
             if not answer:
                 raise transport_failure_unavailable(
                     empty_output_failure(), attempts=1, exhausted=False,

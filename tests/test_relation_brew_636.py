@@ -360,7 +360,7 @@ def test_brew_batch_runs_items_in_parallel_not_serialized(game):
         _add_edge(db, state, source=source, target=target, kind="协作",
                   context=f"{source}与{target}当场协作。", origin=f"audience:{source}{target}")
 
-    barrier = threading.Barrier(len(pairs))
+    barrier = threading.Barrier(len(pairs), timeout=2.0)
     threads: list = []
 
     def parallel_brew(payload_json: str) -> str:
@@ -648,7 +648,7 @@ def test_batch_of_five_relations_all_enter_call_seam_concurrently(game):
         _add_edge(db, state, source=source, target=target, kind="协作",
                   context=f"{source}与{target}当场协作。", origin=f"audience:{source}{target}")
 
-    barrier = threading.Barrier(len(pairs))
+    barrier = threading.Barrier(len(pairs), timeout=2.0)
     threads: list = []
 
     def parallel_brew(payload_json: str) -> str:

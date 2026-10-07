@@ -826,11 +826,6 @@ def _reject(
     ))
 
 
-# 项级隔离真源在 applier；本模块保留旧私有名作调用点别名。
-_ItemAtomicReject = ItemAtomicReject
-_item_savepoint_scope = item_savepoint_scope
-
-
 def _commission_appointment_fields(
     appointment: object, *, source: Provenance,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[RejectedItem]]:
@@ -927,13 +922,7 @@ def _commission_grant_payload(
         write_locality_scope_for_target_kind,
     )
 
-    grant_action = str(grant.get("grant_action") or grant.get("action") or "").strip()
-    # 兼容 C0 旧形：未写 grant_action 但给了协饷五字段 → 视作协饷。
-    if not grant_action:
-        if any(grant.get(k) not in (None, "") for k in (
-            "amount", "account", "purpose", "target_kind", "target_id",
-        )):
-            grant_action = "协饷"
+    grant_action = str(grant.get("grant_action") or "").strip()
     if grant_action not in (GRANT_ACTIONS - {"无"}):
         raise DecreeMaterializationValidationError(
             f"拨帑 grant_action 非法或缺失：{grant_action!r}",
@@ -2342,7 +2331,7 @@ def _attach_character_affair_pointer(db: Any, name: str, affair_id: int) -> None
     配置主键列（`characters` → `name`），语义（未绑可绑一次、同一事务幂等、
     绑别的事务响亮拒绝）与其它指针表完全一致，直接复用、不再单独实现
     （#1831）。只在人物变更 / 入册已经进入同一原子块之后调用——绑定失败时由
-    调用方的 :func:`_item_savepoint_scope` 连同人物变更一起回滚，不留半写；
+    调用方的 :func:`item_savepoint_scope` 连同人物变更一起回滚，不留半写；
     调用方把异常信息原样带回结果，不吞。"""
     db.affairs.attach_pointer("characters", name, affair_id)
 
@@ -2485,16 +2474,16 @@ def _dispatch_on_scene_facts(
             db.affairs.origin_ref(affair_id) if affair_id is not None else "转译声明"
         )
         try:
-            with _item_savepoint_scope(db, f"on_scene_fact_{int(state.turn)}_{id(item)}"):
+            with item_savepoint_scope(db, f"on_scene_fact_{int(state.turn)}_{id(item)}"):
                 outcome = apply_person_changes_only(
                     db, state, [item], content=db.content, origin_ref=origin_ref,
                 source=source)
                 refusals = outcome.rejected
                 if refusals:
-                    raise _ItemAtomicReject(refusals[0].reason, refusals[0].category)
+                    raise ItemAtomicReject(refusals[0].reason, refusals[0].category)
                 results = list(outcome.applied)
                 if not results:
-                    raise _ItemAtomicReject("人物变更未产生结果", "invalid_shape")
+                    raise ItemAtomicReject("人物变更未产生结果", "invalid_shape")
                 result = results[0]
                 if affair_id is not None:
                     name = str(result.get("name") or "").strip()
@@ -2502,8 +2491,8 @@ def _dispatch_on_scene_facts(
                         _attach_character_affair_pointer(db, name, affair_id)
                     except (DeclarationDataError, DeclarationReferenceError) as exc:
                         category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
-                        raise _ItemAtomicReject(str(exc), category) from exc
-        except _ItemAtomicReject as exc:
+                        raise ItemAtomicReject(str(exc), category) from exc
+        except ItemAtomicReject as exc:
             _reject(rejected, item, exc.reason, exc.category, source)
             continue
         applied.append(result)
@@ -2686,7 +2675,7 @@ def _dispatch_edge_events(
     空 source/target/context 等形状问题 = invalid_shape——不拿宽 catch 一律
     冒称实体幻觉。各自所属事务：`relation_edge_events` 是整数 id 主键，直接
     复用 AffairStore 通用指针（`attach_pointer`）；写事件与绑指针放进同一个
-    :func:`_item_savepoint_scope` 块，指针冲突时整块回滚（该项进 rejected，
+    :func:`item_savepoint_scope` 块，指针冲突时整块回滚（该项进 rejected，
     不留半写的「有边事件没有所属事务」状态）；用 SAVEPOINT 而非直接嵌套
     `atomic(db)`，理由同 :func:`_dispatch_on_scene_facts`。
 
@@ -2722,7 +2711,7 @@ def _dispatch_edge_events(
             _reject(rejected, item, "事务声明未指向已开事务", error_category, source)
             continue
         try:
-            with _item_savepoint_scope(db, f"edge_event_{int(state.turn)}_{id(item)}"):
+            with item_savepoint_scope(db, f"edge_event_{int(state.turn)}_{id(item)}"):
                 try:
                     event_id = db.record_relation_edge_event(
                         source=source_name, target=target_name, event_kind=event_kind,
@@ -2730,14 +2719,14 @@ def _dispatch_edge_events(
                         turn=int(state.turn), year=int(state.year), period=int(state.period),
                     )
                 except DeclarationDataError as exc:
-                    raise _ItemAtomicReject(str(exc), "invalid_shape") from exc
+                    raise ItemAtomicReject(str(exc), "invalid_shape") from exc
                 if affair_id is not None:
                     try:
                         db.affairs.attach_pointer("relation_edge_events", event_id, affair_id)
                     except (DeclarationDataError, DeclarationReferenceError) as exc:
                         category = "hallucinated_id" if isinstance(exc, KeyError) else "invalid_state"
-                        raise _ItemAtomicReject(str(exc), category) from exc
-        except _ItemAtomicReject as exc:
+                        raise ItemAtomicReject(str(exc), category) from exc
+        except ItemAtomicReject as exc:
             _reject(rejected, item, exc.reason, exc.category, source)
             continue
         applied.append({"id": event_id, "source": source_name, "target": target_name})
@@ -2787,7 +2776,7 @@ def _dispatch_registrations(
     typed 任所（`region_id` / `任所` / `office_region`）原样传给共享写核，不从
     官名或 location 推断。地方/督抚/边镇缺 seat 或未知 region 时，
     `db.add_character` 抛 `OfficeAppointmentRejection`；本函数按项捕获其
-    `category` 记入拒收真源。每项落在 :func:`_item_savepoint_scope` 内：失败项的
+    `category` 记入拒收真源。每项落在 :func:`item_savepoint_scope` 内：失败项的
     characters / character_offices / 内存 roster 全回滚，合法 sibling 继续
     （#1835 AC3）。事务引用在真正登记之前先校验，引用不存在事务的项在产生
     副作用前就被拒收。"""
@@ -2845,7 +2834,7 @@ def _dispatch_registrations(
             )
             continue
         try:
-            with _item_savepoint_scope(db, f"registration_{int(state.turn)}_{id(item)}"):
+            with item_savepoint_scope(db, f"registration_{int(state.turn)}_{id(item)}"):
                 character = register_unlisted_person_record(
                     db, state, db.content,
                     name=name, office=office, office_type=office_type,
@@ -2859,10 +2848,10 @@ def _dispatch_registrations(
                 )
                 if character is None:
                     # 字段已在上面校验过非空，到这里返回 None 只可能是姓名/别名已在册。
-                    raise _ItemAtomicReject(f"人物已在册：{name}", "invalid_state")
+                    raise ItemAtomicReject(f"人物已在册：{name}", "invalid_state")
                 if affair_id is not None:
                     _attach_character_affair_pointer(db, character.name, affair_id)
-        except _ItemAtomicReject as exc:
+        except ItemAtomicReject as exc:
             _reject(rejected, item, exc.reason, exc.category, source)
             continue
         except OfficeAppointmentRejection as exc:

@@ -101,7 +101,7 @@ def test_barrier_waits_multiple_prior_tickets():
     b = q.claim()
     assert a is not None and b is not None
     release = threading.Event()
-    both_waiting = threading.Barrier(3)  # a, b, main
+    both_waiting = threading.Barrier(3, timeout=2.0)  # a, b, main
 
     def fin(name: str, ticket: WriteTicket) -> None:
         both_waiting.wait()

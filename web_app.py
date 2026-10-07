@@ -77,7 +77,6 @@ from ming_sim.llm_transport import (
     transport_attempts_public,
     transport_failure_unavailable,
 )
-from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.entities.issue.commitment_display import (
     commitment_display_text,
     commitment_progress_payload,

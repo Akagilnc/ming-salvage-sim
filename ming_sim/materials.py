@@ -1288,13 +1288,6 @@ def secret_order_origin(order_id: object) -> str:
     return f"{SECRET_ORDER_ORIGIN_PREFIX}{int(order_id)}"
 
 
-def dossier_id_in_origin(origin: object) -> Optional[int]:
-    """兼容旧名：权威实现见 ``breach_plea.parse_dossier_id``。"""
-    from ming_sim.breach_plea import parse_dossier_id
-
-    return parse_dossier_id(origin)
-
-
 def _candidate_event_fact(ev: Any) -> dict[str, object]:
     """一个候选事件的结构化事实（ADR 0014 触发门已由 gather 判过，这里只转述事实）。
 

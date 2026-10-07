@@ -1155,14 +1155,18 @@ def resolve_breach_pleas_from_extraction(
     *,
     commit: bool = False,
     source: Provenance = Provenance.system_simulation,
-) -> List[Dict[str, object]]:
-    """召对/结算 extraction 真入口：既有键识别反悔或坚持后消费哭谏条。
+) -> Tuple[List[Dict[str, object]], List[object]]:
+    """召对/结算 extraction 真入口：既有结构化引用识别反悔或坚持后消费哭谏条。
 
     坚持：cancels/close_issues 命中承诺（primary∪absorbed 含改弦即结该 merged 条）/
           revoke 类目标命中案卷 / dossier_executions failed
-    反悔：economy 续拨 / issue_advances 推进 / fiscal_creates 加拨本承诺
+    反悔：issue_advances 推进本承诺（结构化 issue 引用）
     沉默：不在此函数出现 → pending 保留
+
+    不读取未经验证的 economy/fiscal 申报金额或目的——金额规则只在领域段核算；
+    消费层不得抢先 int()/重算并落副作用（#1835 J11）。
     """
+    del source  # 入口签名与段适配器对齐；本函数不按 source 分叉。
     if not isinstance(extracted, dict):
         return [], []
     results: List[Dict[str, object]] = []
@@ -1188,64 +1192,6 @@ def resolve_breach_pleas_from_extraction(
     advance_ids = _extract_ref_ids(
         extracted.get("issue_advances"), prefixes=("issue",),
     )
-    fund_origins: Set[str] = set()
-    fund_issue_ids: Set[int] = set()
-
-    def _note_funding_item(it: Dict[str, object]) -> None:
-        oref = str(it.get("origin_ref") or "").strip()
-        if oref:
-            fund_origins.add(oref)
-            m = _ISSUE_REF_RE.match(oref)
-            if m:
-                fund_issue_ids.add(int(m.group(1)))
-        tid = str(it.get("target_id") or "")
-        if tid.startswith("issue:"):
-            try:
-                fund_issue_ids.add(int(tid.split(":", 1)[1]))
-            except (TypeError, ValueError):
-                pass
-        for key in ("issue_id", "commitment_ref"):
-            raw = it.get(key)
-            if raw in (None, ""):
-                continue
-            try:
-                fund_issue_ids.add(int(raw))
-            except (TypeError, ValueError):
-                pass
-
-    for it in extracted.get("economy_moves") or []:
-        if not isinstance(it, dict):
-            continue
-        raw_delta = it.get("delta")
-        if raw_delta in (None, ""):
-            delta = 0
-        else:
-            delta = int(raw_delta)
-        purpose = str(it.get("purpose") or "")
-        if delta != 0 or purpose in {"履行承诺", "续拨", "加拨"}:
-            _note_funding_item(it)
-
-    # 反悔：fiscal_creates 加拨/复供本承诺
-    for it in extracted.get("fiscal_creates") or []:
-        if not isinstance(it, dict):
-            continue
-        _note_funding_item(it)
-    for it in extracted.get("fiscal_changes") or []:
-        if not isinstance(it, dict):
-            continue
-        # 加拨：new_value > old_value 或 delta>0；在场坏 delta/新旧值上抛，不洗成 0。
-        raw_delta = it.get("delta")
-        if raw_delta in (None, ""):
-            delta = 0
-        else:
-            delta = int(raw_delta)
-        old_v = it.get("old_value")
-        new_v = it.get("new_value")
-        if old_v is not None and new_v is not None:
-            if int(new_v) > int(old_v):
-                delta = max(delta, int(new_v) - int(old_v))
-        if delta > 0 or str(it.get("reason") or "") in {"加拨", "续拨", "复供"}:
-            _note_funding_item(it)
 
     for todo in pending:
         cid = int(todo["commitment_ref"])
@@ -1263,12 +1209,8 @@ def resolve_breach_pleas_from_extraction(
             decision = "persist"
         elif origin and parse_dossier_id(origin) in revoke_dossiers:
             decision = "persist"
-        # 反悔
-        elif cid in advance_ids or cid in fund_issue_ids:
-            decision = "regret"
-        elif origin and origin in fund_origins:
-            decision = "regret"
-        elif f"issue:{cid}" in fund_origins:
+        # 反悔：只认结构化 issue_advances，不预解析未验经济/财政申报
+        elif cid in advance_ids:
             decision = "regret"
 
         if decision == "persist":

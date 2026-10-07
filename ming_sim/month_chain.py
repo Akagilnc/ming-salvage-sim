@@ -67,12 +67,13 @@ def run_world_segment_text(
 
 
 def _gazette_public_fact(fact: Any, secret_dossier_ids: Optional[set[int]] = None) -> bool:
-    from ming_sim.materials import dossier_id_in_origin, is_secret_order_origin
+    from ming_sim.breach_plea import parse_dossier_id
+    from ming_sim.materials import is_secret_order_origin
 
     origin = str(getattr(fact, "origin_ref", "") or "")
     if is_secret_order_origin(origin):
         return False
-    dossier_id = dossier_id_in_origin(origin)
+    dossier_id = parse_dossier_id(origin)
     return dossier_id is None or dossier_id not in (secret_dossier_ids or set())
 
 
@@ -110,9 +111,9 @@ def _secret_sourced(value: object) -> bool:
 
 
 def _origin_is_secret_dossier(origin: object, secret_dossiers: set[int]) -> bool:
-    from ming_sim.materials import dossier_id_in_origin
+    from ming_sim.breach_plea import parse_dossier_id
 
-    dossier_id = dossier_id_in_origin(origin)
+    dossier_id = parse_dossier_id(origin)
     return dossier_id is not None and dossier_id in secret_dossiers
 
 
@@ -1842,7 +1843,7 @@ def _advance_after_gazette(
         )
         chain = _load_chain(db, turn)
         db.mark_directives_issued(state)
-        clear_return_revise_choice_anchors(db, None)
+        clear_return_revise_choice_anchors(db)
         # #652：刚结束的月份的执行判定和实付已落定；下月任何吸收前回流。
         from ming_sim.entities.population.recovery import _apply_recovery_driven_transfers
         _apply_recovery_driven_transfers(db, state)

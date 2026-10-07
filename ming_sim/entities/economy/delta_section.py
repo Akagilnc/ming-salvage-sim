@@ -14,17 +14,15 @@ from typing import List
 from ming_sim.applier import SectionResult
 
 
-def apply(run, moves: List[object] | None = None, *, index_base: int = 0) -> SectionResult:
+def apply(run, moves: List[object] | None = None) -> SectionResult:
     """落 ``economy_moves``。
 
-    ``moves`` 缺省读当前笔的 ``economy_moves``。``index_base`` 保留给逐笔调用方，
-    本段不再自建 savepoint。
+    ``moves`` 缺省读当前笔的 ``economy_moves``。本段不再自建 savepoint。
     """
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
     from ming_sim.entities.economy.apply import _apply_economy_list
     from ming_sim.entities.authority.apply import _payload_owned_dossier_for_origin
 
-    del index_base
     if moves is None:
         moves = list(run.current_extracted.get("economy_moves") or [])
 

@@ -743,18 +743,12 @@ def test_run_agy_success_single_subprocess(monkeypatch):
     assert state["warm"] >= 1  # 暖 keychain 是操作步骤，不是重试策略
 
 
-@pytest.mark.parametrize(
-    "banner", ["Authentication required", "authentication timed out"],
-)
-def test_run_agy_auth_race_is_retryable_typed_without_private_loop(monkeypatch, banner):
-    """#1465 切片③：agy auth race 抛可重试 typed，**一次子进程**——
-    重试次数归 llm_transport，runner 内不得再自转 4 次。"""
-    from ming_sim.exceptions import LLMUnavailable
-
-    state = _agy_popen(monkeypatch, [(banner, 0)])
-    with pytest.raises(LLMUnavailable) as ei:
-        cb._run_agy("p")
-    assert ei.value.code == "llm_connection_error"
+def test_run_agy_success_body_with_authentication_word_is_not_connection_error(monkeypatch):
+    """#1835 J10：returncode=0 的成功正文含 authentication 不得冒判连接失败。"""
+    body = "洋人手札原文含 authentication 一词。\n"
+    state = _agy_popen(monkeypatch, [(body, 0)])
+    out, attempts = cb._run_agy("p")
+    assert out == body and attempts == 1
     assert state["agy"] == 1
 
 

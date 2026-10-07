@@ -2721,8 +2721,8 @@ def test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback(g
     ).fetchone()[0] == 0
 
 
-def test_apply_issue_entities_person_changes_respect_commit_false(game):
-    """post-merge CMR R6：_apply_issue_entities(commit=False) 的人物 DB 写入不得自行提交。"""
+def test_apply_score_extraction_person_changes_respect_outer_transaction_rollback(game):
+    """顶层人物变更不得自行提交外层事务（真实 settle_delta 入口，非 helper 自持生命周期）。"""
     db, state, content = game
     issues.bind_content(content)
     db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "毛文龙"))
@@ -2732,19 +2732,25 @@ def test_apply_issue_entities_person_changes_respect_commit_false(game):
         ("毛文龙",),
     ).fetchone()[0]
 
-    import ming_sim.entities.issue.effects as issue_effects
-
-    issue_effects._apply_issue_entities(
+    db.conn.execute("BEGIN")
+    out = _land(
         db,
         state,
         {
             "人物变更": [
-                {"origin_ref": "盘面自发", "name": "毛文龙", "动作": "处置", "status": "dismissed", "reason": "测试 helper no-commit"}
+                {
+                    "origin_ref": "盘面自发",
+                    "name": "毛文龙",
+                    "动作": "处置",
+                    "status": "dismissed",
+                    "reason": "测试外层人物回滚",
+                }
             ]
         },
-        "测试 helper no-commit",
         content=content,
     )
+    assert view(out, "applied_person_changes")
+    assert db.get_character_status("毛文龙")[0] == "dismissed"
     db.conn.rollback()
 
     assert db.get_character_status("毛文龙")[0] == "active"

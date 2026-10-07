@@ -439,7 +439,6 @@ def _run_effect_sequence(run) -> None:
     from ming_sim.entities.region import delta_section as region_section
 
     assert run.effect_sequence is not None
-    economy_index_base = 0
     for step_extracted, step_ordered, step_event_ids in run.effect_sequence:
         run.current_extracted = step_extracted
         run.current_ordered = step_ordered
@@ -451,10 +450,7 @@ def _run_effect_sequence(run) -> None:
         _capture(run, "region_changes", region_section.apply(run))
         _capture(run, "army_changes", army_section.apply_deltas(run))
         step_moves = list(step_extracted.get("economy_moves") or [])
-        _capture(run, "economy", economy_section.apply(
-            run, step_moves, index_base=economy_index_base,
-        ))
-        economy_index_base += len(step_moves)
+        _capture(run, "economy", economy_section.apply(run, step_moves))
     run.current_extracted = run.extracted
     run.current_ordered = run.ordered_deltas
     run.current_event_ids = run.ordered_effect_event_ids

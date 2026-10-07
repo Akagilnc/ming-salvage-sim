@@ -1970,11 +1970,11 @@ def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):
     db.conn.execute("UPDATE pending_decisions SET choice_json=?, revision_round=1 WHERE turn=? AND idx=? AND kind='rescript_draft'", ('{not-json', int(urgent['source_turn'] or urgent['turn']), int(urgent['idx'])))
     db.conn.commit()
     with pytest.raises(ValueError):
-        ra.clear_return_revise_choice_anchors(db, None)
+        ra.clear_return_revise_choice_anchors(db)
     db.conn.execute("UPDATE pending_decisions SET choice_json=? WHERE turn=? AND idx=? AND kind='rescript_draft'", ('[1,2]', int(urgent['source_turn'] or urgent['turn']), int(urgent['idx'])))
     db.conn.commit()
     with pytest.raises(ValueError):
-        ra.clear_return_revise_choice_anchors(db, None)
+        ra.clear_return_revise_choice_anchors(db)
 
 def test_657_default_hold_preserves_red_pen_note(game):
     """⑤ 默认 hold 保留朱笔 note。"""
