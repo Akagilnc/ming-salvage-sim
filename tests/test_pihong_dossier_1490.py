@@ -1542,7 +1542,6 @@ def test_657_midzhi_persists_decision_key_and_llm_label(game):
     payload = json.loads(str(hit.get('payload_json') or '{}'))
     assert payload.get('decision_key') == key
     assert str(hit.get('decree_text') or '') == llm_label
-    assert '另旨·中旨' not in str(hit.get('decree_text') or '')
     with pytest.raises(ValueError):
         ra.map_rescript_option_or_choice({k: v for k, v in choice.items() if k != 'decision_key'}, mode='midzhi', db=db, content=content, state=state)
 

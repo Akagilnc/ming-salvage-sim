@@ -170,7 +170,6 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "dossier_executions": [],
     "dossier_participants": [],
     "secret_dossier_participants": [],
-    "dossier_reconciliations": [],
     "faction_denunciations": [],
     "authority_changes": [],
     "dossier_progress_reports": [],

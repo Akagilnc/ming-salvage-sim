@@ -153,6 +153,56 @@ def decision_has_rescript_capability(decision: object) -> bool:
     return False
 
 
+def bind_decisions_to_candidate_events(
+    decisions: List[Dict[str, object]],
+    simulator_payload: object,
+) -> List[Dict[str, object]]:
+    """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389 / ADR 0115).
+
+    Binding is by structured identity only（绑定由构造保证，非由文本捞回）:
+    - A simulator-echoed event_id is trusted ONLY if it belongs to this turn's
+      candidate snapshot.
+    - A missing id stays unbound; an off-snapshot id is stripped. Titles are
+      presentation and never used to invent or rescue an event_id (#1900 J20).
+    - Non-event HITL decisions keep no event_id. dossier: prefixes with full
+      rescript capability fields are retained (#1490/#1492 A).
+    """
+    if not decisions:
+        return []
+    if not isinstance(simulator_payload, dict):
+        return [dict(d) for d in decisions]
+    raw_candidates = simulator_payload.get("candidate_events")
+    if not isinstance(raw_candidates, list):
+        return [dict(d) for d in decisions]
+
+    candidate_ids: set[str] = set()
+    for item in raw_candidates:
+        if not isinstance(item, dict):
+            continue
+        event_id = str(item.get("id") or "").strip()
+        if event_id:
+            candidate_ids.add(event_id)
+
+    bound: List[Dict[str, object]] = []
+    for decision in decisions:
+        out = dict(decision)
+        explicit = str(out.get("event_id") or "").strip()
+        if explicit and explicit in candidate_ids:
+            bound.append(out)  # 回显 id 确属本回合候选 → 采信
+            continue
+        # #1490/#1492 A：仅当 options 带齐 dossier_id+dossier_decision 时保留
+        # dossier: 前缀（真批红待裁）。裸 origin_ref 回填 / LLM 幻觉行照旧解绑。
+        if explicit.startswith("dossier:") and decision_has_rescript_capability(out):
+            bound.append(out)
+            continue
+        if explicit:
+            # off-snapshot 回显 id → 解绑，不保留非候选 id（否则 submit_decisions
+            # 会当 triggered 写进事件账，污染终态）。
+            out.pop("event_id", None)
+        bound.append(out)
+    return bound
+
+
 def list_due_commitments(db: GameDB, state: GameState) -> List[Dict[str, object]]:
     """到期的 form③ 一次性承诺供邸报作者读取；不自动结案。"""
     rows = db.conn.execute(

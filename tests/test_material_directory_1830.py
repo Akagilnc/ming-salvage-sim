@@ -155,18 +155,21 @@ def test_matter_carriers_follow_the_real_knowledge_projection(game, tmp_path):
 
 
 def test_prepare_fails_loud_when_dossier_read_breaks(game, tmp_path):
+    """dossier 读失败响亮上抛；来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, content = game
     character = _active_minister(db, content)
 
+    fault = RuntimeError("dossier boom")
+
     def boom(*_a, **_k):
-        raise RuntimeError("dossier boom")
+        raise fault
 
     db.list_referenceable_dossiers = boom
     try:
         prepare_character_materials(db, state, character, dest_root=tmp_path / "m")
         raise AssertionError("expected fail loud")
     except RuntimeError as exc:
-        assert "dossier boom" in str(exc)
+        assert exc is fault
 
 
 def test_read_material_stays_inside_directory(game, tmp_path):
@@ -276,11 +279,14 @@ def test_secret_order_materials_keep_full_content_and_fail_loud_on_db_error(
     tools = {tool.__name__: tool for tool in material_tools(prepared.root)}
     assert original in tools["read_material"](secret_path)
 
+    fault = RuntimeError("secret-order-db-boom")
+
     def boom(_name):
-        raise RuntimeError("secret-order-db-boom")
+        raise fault
 
     monkeypatch.setattr(db, "get_active_secret_orders_for_minister", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as ei:
         prepare_character_materials(
             db, state, character, dest_root=tmp_path / "secret-fail",
         )
+    assert ei.value is fault

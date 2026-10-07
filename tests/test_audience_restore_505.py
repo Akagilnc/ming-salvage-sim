@@ -255,6 +255,13 @@ class _RetrySession:
         from ming_sim.session import GameSession
         return GameSession.schedule_pending_scene_translation(self, result)
 
+    def schedule_close_night_after_chat_if_needed(self, court_action, *, write_gate=None):
+        # #1853：入口直调核心 schedule；轻壳委托同缝（非 court_break 为空操作）。
+        from ming_sim.session import GameSession
+        return GameSession.schedule_close_night_after_chat_if_needed(
+            self, court_action, write_gate=write_gate,
+        )
+
 def _retry_runtime(db, state, minister, *, session=None):
     """Web retry 入口唯一装配壳。session 默认轻量 _RetrySession；可注入生产 chat session。"""
     rt = object.__new__(web_app.WebGame)
@@ -628,28 +635,26 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
 
 def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
-    """#1716：fresh Agno 3 首轮已落 run 后，生产 _start_chat_turn 第二轮须受理。
+    """#1716：fresh Agno 3 首轮已落 run 后，公开 chat_stream 第二轮须受理。
 
-    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送在 _start_chat_turn 读 runs 长度；
+    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送读 runs 长度；
     旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
     断言第二轮 create 成功且 agno_runs_before=既有 run 数。
     """
     game = web_game
-    minister = _active_minister(game.db, game.content)
-    sid = game._minister_agno_session_id(minister)
-    # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="戌时")
+    sid = f"scene-night-{int(night['id'])}"
     _seed_agno_v3_runs(game.db, sid, run_count=1)
     assert game.db.agno_runs_length(sid) == 1
 
-    chat_turn_id, _snapshot = game._start_chat_turn(minister)
+    events = list(game.chat_stream(an.SCENE_CHAT_SPEAKER, "剿抚孰先？"))
+    assert any(ev.get("type") == "accepted" for ev in events)
     row = game.db.conn.execute(
-        "SELECT agno_session_id, agno_runs_before, status FROM chat_turns WHERE id=?",
-        (chat_turn_id,),
+        "SELECT agno_session_id, agno_runs_before FROM chat_turns ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert row is not None
     assert row["agno_session_id"] == sid
     assert int(row["agno_runs_before"]) == 1
-    assert row["status"] == "generating"
 
 
 def test_load_save_reconciles_interrupted_orphan(web_game):
@@ -689,10 +694,10 @@ def test_657_rescript_summon_writes_enter_fact_and_is_idempotent(game):
     """#1838 reopen：批红召见只落入殿事实账；已消费=origin+TAG_ENTER；幂等复用。"""
     from ming_sim.audience_night import (
         TAG_ENTER,
+        list_ledger,
         prepare_rescript_summon_scaffold,
         rescript_summon_origin_consumed,
         rescript_summon_origin_ref,
-        _ledger_by_origin_ref,
     )
 
     db, state, content = game
@@ -703,8 +708,11 @@ def test_657_rescript_summon_writes_enter_fact_and_is_idempotent(game):
         db, state, person_name=minister, origin_ref=origin,
     )
     assert sc["consumed"] is True
-    entry = _ledger_by_origin_ref(db, origin)
-    assert entry is not None
+    night = an.get_open_night(db)
+    entry = next(
+        row for row in list_ledger(db, int(night["id"]))
+        if str(row.get("origin_ref") or "") == origin
+    )
     assert rescript_summon_origin_consumed(entry)
     assert TAG_ENTER in entry["tags"]
     assert str(entry.get("body") or "") == ""

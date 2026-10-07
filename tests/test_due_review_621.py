@@ -731,17 +731,20 @@ def test_due_month_extractor_blocked_before_todo_write(game):
 
 
 def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
-    """C3：所有权查询抛错不得 fail-open 放行 extractor 终值。"""
+    """C3：所有权查询抛错不得 fail-open 放行 extractor 终值。
+    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, content = game
     dossier_id = _executing_policy_dossier(db, state, token="fail-closed")
 
+    fault = RuntimeError("ownership lookup boom")
+
     def _boom(*_a, **_k):
-        raise RuntimeError("ownership lookup boom")
+        raise fault
 
     monkeypatch.setattr(
         "ming_sim.due_review.dossiers_with_pending_due_review", _boom,
     )
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as ei:
         issue_engine.apply_score_extraction(
             db, state,
             {
@@ -753,6 +756,7 @@ def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
             },
             content=content,
         )
+    assert ei.value is fault
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == "executing"
     assert dossier["execution_outcome"] in ("", None)

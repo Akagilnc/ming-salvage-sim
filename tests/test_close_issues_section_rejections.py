@@ -158,14 +158,19 @@ def test_scalar_item_rejection_preserves_original_in_reports(game):
 
 def test_close_issue_code_exception_propagates(read_game, monkeypatch):
     db, state, _ = read_game
-    def _boom(*a, **k):
-        raise RuntimeError("模拟 close_issue 落库代码异常")
-    monkeypatch.setattr(type(db), "close_issue", _boom)
     # 代码/DB 异常不再被 WARN 吞 → 上抛（上层 applier.atomic 据此 SettlementAbort）。
-    with pytest.raises(RuntimeError):
+    # 来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。
+    fault = RuntimeError("模拟 close_issue 落库代码异常")
+
+    def _boom(*a, **k):
+        raise fault
+
+    monkeypatch.setattr(type(db), "close_issue", _boom)
+    with pytest.raises(RuntimeError) as ei:
         I.apply_issue_tracker_output(
             db, state, {"close_issues": [{"issue_id": 1, "reason": "resolved"}]}
         )
+    assert ei.value is fault
 
 
 def test_close_valid_issue_still_succeeds(game):

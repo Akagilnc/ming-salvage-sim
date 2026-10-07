@@ -93,10 +93,13 @@ def _credit_origin(scope: str, scope_id: int, *parts: str) -> str:
 
 
 def _narrative_context(*parts: object) -> str:
-    """承接 extraction 真叙事字段；首个非空即用。禁固定句式模板。"""
+    """承接 extraction 真叙事字段；首个非空即用。禁固定句式模板。
+
+    P6 / ADR 0142：自由文本原样承接——空白只在副本上判定，返回原文不 strip。
+    """
     for part in parts:
-        text = str(part or "").strip()
-        if text:
+        text = str(part or "")
+        if text.strip():
             return text
     return ""
 
@@ -138,13 +141,14 @@ def write_credit_event(
     """四字段薄记录写口：方向由 CREDIT_DIRECTION 决定，落 record_relation_edge_event。"""
     person = str(person or "").strip()
     kind = str(event_kind or "").strip()
-    context = str(context or "").strip()
+    # context 可承接 execution_note 等自由文本：空白只判定，落库原样（P6）。
+    context = str(context or "")
     origin = str(origin or "").strip()
     if not person:
         raise ValueError("信用事件缺少当事人")
     if kind not in _WRITE_KINDS:
         raise ValueError(f"非本片信用事件类目: {kind!r}")
-    if not context:
+    if not context.strip():
         raise ValueError("信用事件语境不能为空")
     if not origin:
         raise ValueError("信用事件 origin 不能为空")

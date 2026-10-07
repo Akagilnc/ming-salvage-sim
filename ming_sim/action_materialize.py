@@ -37,7 +37,7 @@ def minister_speaker_role(
 
     ch = character
     if not isinstance(ch, Character) and db is not None:
-        content = getattr(db, "content", None)
+        content = db.content
         roster = getattr(content, "characters", None) if content is not None else None
         if isinstance(roster, dict):
             found = roster.get(str(minister_name or "").strip())
@@ -163,6 +163,7 @@ def _apply_existing_appointment_hit(
     origin_chat_turn_id: int = 0,
     annotate: bool = False,
     recommendation_fields: Optional[Dict[str, Any]] = None,
+    night_id: Optional[int] = None,
 ) -> int:
     """既有命中唯一合并点：原地更新（mode 可升可降、字段可补）→ 同一 id。
 
@@ -188,6 +189,7 @@ def _apply_existing_appointment_hit(
                 region_id=region_id,
                 minister_name=minister_name,
                 turn=turn,
+                night_id=night_id,
             )
             if pending_id:
                 resolved = int(pending_id)
@@ -224,6 +226,7 @@ def stage_pacification_candidate(
     extracted_mode: object = None,
     source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+    night_id: Optional[int] = None,
 ) -> int:
     """Shared pacification candidate write: mode + same-target update.
 
@@ -275,10 +278,11 @@ def stage_pacification_candidate(
         "mode": mode,
     }
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
     return db.stage_directive_candidate(
         int(turn), minister_name, payload=staged,
         source_chat_turn_id=int(source_chat_turn_id or 0),
+        night_id=night_id,
     )
 
 
@@ -347,6 +351,7 @@ def stage_punishment_candidate(
     issue_disposition: object = None,
     source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+    night_id: Optional[int] = None,
 ) -> int:
     """Shared punishment candidate write: mode + same-target update.
 
@@ -468,10 +473,11 @@ def stage_punishment_candidate(
     elif n > 0:
         staged["amount"] = n
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
     return db.stage_directive_candidate(
         int(turn), minister_name, payload=staged,
         source_chat_turn_id=int(source_chat_turn_id or 0),
+        night_id=night_id,
     )
 
 
@@ -622,7 +628,7 @@ def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:
     row = db.conn.execute("SELECT id FROM armies WHERE id=?", (tid,)).fetchone()
     if row is not None:
         return str(row["id"])
-    content = getattr(db, "content", None)
+    content = db.content
     armies = getattr(content, "armies", None) if content is not None else None
     if armies:
         from ming_sim.matching import canonical_army_id_exact
@@ -1048,8 +1054,11 @@ def parse_responsible_bodies(raw: object) -> List[str]:
 
 
 def character_person_names(db: Any) -> set[str]:
-    """既有人物档名集合（禁新建机关词表；个人名比对复用此源）。"""
-    if db is None or not hasattr(db, "conn"):
+    """既有人物档名集合（禁新建机关词表；个人名比对复用此源）。
+
+    #1853 J8-R：db 可缺（调用方未供）是业务空集；有 db 则必备 conn 直调。
+    """
+    if db is None:
         return set()
     return {
         str(row["name"]).strip()
@@ -1165,6 +1174,7 @@ def _annotate_office_pending_path(
     region_id: str = "",
     minister_name: str = "",
     turn: int = 0,
+    night_id: Optional[int] = None,
 ) -> int:
     """原地改写 office pending：typed mode 可升可降；署理只写 任别；任所可后补。
 
@@ -1210,7 +1220,7 @@ def _annotate_office_pending_path(
     if not changed:
         return pending_id
 
-    updated = db.update_office_candidate_payload(pending_id, payload)
+    updated = db.update_office_candidate_payload(pending_id, payload, night_id=night_id)
     if updated:
         _write_path_nature_ledger(
             db,
@@ -1488,6 +1498,7 @@ def stage_assignment_candidate(
     transaction_category: object = "",
     source_chat_turn_id: object = 0,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+    night_id: Optional[int] = None,
 ) -> int:
     """Shared assignment candidate write (#520 / #502).
 
@@ -1604,10 +1615,11 @@ def stage_assignment_candidate(
             staged["commitment_kind"] = staged.get("commitment_kind") or "until_stop"
             # 段派生 end_turn（max due）不写入候选/DB（#620 勿驱动 expire）
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
+        return db.update_directive_candidate(existing_id, staged, night_id=night_id)
     return db.stage_directive_candidate(
         int(turn), minister_name, payload=staged,
         source_chat_turn_id=origin_cid,
+        night_id=night_id,
     )
 
 def stage_authorization_candidate(

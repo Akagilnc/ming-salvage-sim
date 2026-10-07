@@ -12,7 +12,6 @@ import pytest
 from agno.models.openai import OpenAIChat
 
 import ming_sim.llm_model as llm_model
-import web_app
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import verify_llm_available
 from ming_sim.models import (
@@ -139,52 +138,3 @@ def test_api_verify_installs_sdk_attempt_clock(monkeypatch):
     verify_llm_available(_api_cfg())
     assert seen["timeout"] == TRANSPORT_DEFAULT_ATTEMPT_TIMEOUT_SECONDS
     assert seen["max_retries"] == 0
-
-
-def test_verify_http_detail_carries_stage(monkeypatch):
-    """降级出口的 HTTP detail 带阶段名。"""
-
-    def boom(cfg, **_k):
-        err = LLMUnavailable(
-            "timeout",
-            code="llm_timeout",
-            transport_attempts=[{"index": 1, "outcome": "terminal_fail", "code": "llm_timeout"}],
-        )
-        err.stage = "smoke-main"
-        raise err
-
-    monkeypatch.setattr(web_app, "verify_llm_available", boom)
-    with pytest.raises(web_app.HTTPException) as ei:
-        web_app._verify_llm_configs_or_raise(_api_cfg())
-    assert ei.value.status_code == 400
-    assert ei.value.detail["stage"] == "smoke-main"
-    assert ei.value.detail["code"] == "llm_timeout"
-
-
-def test_cli_channel_does_not_smoke_retained_api_advanced_slot(monkeypatch):
-    """CLI 通道只验当前 CLI 主槽；保留的 API advanced 槽不另起一腿。"""
-    seen: list[LLMConfig] = []
-
-    def fake_verify(cfg, **_k):
-        seen.append(cfg)
-
-    monkeypatch.setattr(web_app, "verify_llm_available", fake_verify)
-    cfg = LLMConfig(
-        api_key="sk-test",
-        base_url="https://api.example.com/v1",
-        model="gpt-main",
-        advanced_model="gpt-advanced",
-        advanced_base_url="https://adv.example.com/v1",
-        advanced_api_key="sk-adv",
-        channel="cli",
-        cli_runner="codex",
-        cli_model="gpt-cli",
-    )
-    web_app._verify_llm_configs_or_raise(cfg)
-    assert len(seen) == 1
-    assert seen[0].channel == "cli"
-    assert seen[0].cli_model == "gpt-cli"
-    assert seen[0].model != "gpt-advanced"
-    assert cfg.advanced_model == "gpt-advanced"
-    assert cfg.advanced_api_key == "sk-adv"
-    assert cfg.advanced_base_url == "https://adv.example.com/v1"

@@ -372,28 +372,34 @@ def test_historical_events_alone_do_not_select_in_later_month(game):
 
 def test_prepare_claim_db_error_propagates_loudly(game):
     """认领 DB 失败不得伪装成 LLM 降级：无 durable claim 就开酿会让失败月失去恢复
-    凭据（庭裁 r3 F1②缝），必须响亮上抛（ADR 0005/0008）。"""
+    凭据（庭裁 r3 F1②缝），必须响亮上抛（ADR 0005/0008）。
+    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
+    fault = sqlite3.OperationalError("认领库不可写")
+
     def boom(*args, **kwargs):
-        raise sqlite3.OperationalError("认领库不可写")
+        raise fault
 
     db.claim_relation_brew_targets = boom
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, _brew_fn_factory([]))
+    assert ei.value is fault
 
 
 def test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure(game):
     """apply 落定的 DB/schema 错误是落库侧错（ADR 0005）：响亮上抛，不走单条降级、
-    不再重复 mark 补降级。"""
+    不再重复 mark 补降级。来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, _ = game
     _add_edge(db, state, source="毕自严", target="王绍徽", kind="站台",
               context="毕自严当面替王绍徽担名。", origin="audience:turn-1")
 
+    fault = sqlite3.OperationalError("落定库不可写")
+
     def boom(*args, **kwargs):
-        raise sqlite3.OperationalError("落定库不可写")
+        raise fault
 
     db.apply_relation_brew_result = boom
     marked: list = []
@@ -404,14 +410,15 @@ def test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure(game):
         return original_mark(**kwargs)
 
     db.mark_relation_brew_pending = spy_mark
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, _brew_fn_factory([]))
+    assert ei.value is fault
     assert marked == []  # 宽吞与重复补降级已删
 
 
 def test_mark_failure_after_llm_failure_propagates_loudly(game):
     """LLM 单条失败（声明类型 LLMUnavailable）本身合法降级，但降级留痕的 pending
-    写若遇 DB 错误同样响亮上抛。"""
+    写若遇 DB 错误同样响亮上抛。来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
@@ -419,27 +426,33 @@ def test_mark_failure_after_llm_failure_propagates_loudly(game):
     def failing_brew(payload_json: str) -> str:
         raise LLMUnavailable("酿制裁判接口不可用")
 
+    fault = sqlite3.OperationalError("pending 库不可写")
+
     def boom(*args, **kwargs):
-        raise sqlite3.OperationalError("pending 库不可写")
+        raise fault
 
     db.mark_relation_brew_pending = boom
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, failing_brew)
+    assert ei.value is fault
 
 
 def test_brew_program_error_propagates_loudly_not_degraded(game):
     """判词残留项②：_brew_one 宽吞拆类——brew_fn 内的程序错（KeyError 等非 LLM
     失败声明类型）不得被吞成单条降级留痕，必须响亮上抛（ADR 0005）；durable
-    claim 已在册，恢复凭据不丢。"""
+    claim 已在册，恢复凭据不丢。来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
-    def buggy_brew(payload_json: str) -> str:
-        raise KeyError("酿制手程序错误")
+    fault = KeyError("酿制手程序错误")
 
-    with pytest.raises(KeyError):
+    def buggy_brew(payload_json: str) -> str:
+        raise fault
+
+    with pytest.raises(KeyError) as ei:
         run_month_end_relation_brew(db, state, buggy_brew)
+    assert ei.value is fault
     # 响亮上扑而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
         ("温体仁", "周延儒")
@@ -450,16 +463,19 @@ def test_brew_fn_value_error_is_program_error_propagates_loudly(game):
     """判词机械反例（确认庭 r5 残余）：_brew_fn 自身抛出的裸 ValueError 是程序错
     ——降级面按结构位置分界而非异常类型，LLM 调用缝只收声明类型 LLMUnavailable，
     调用段的 ValueError/KeyError 等一律响亮上抛（ADR 0005），不得吞成单条降级；
-    durable claim 已在册，恢复凭据不丢。"""
+    durable claim 已在册，恢复凭据不丢。来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
-    def buggy_brew(payload_json: str) -> str:
-        raise ValueError("酿制手程序错误")
+    fault = ValueError("酿制手程序错误")
 
-    with pytest.raises(ValueError):
+    def buggy_brew(payload_json: str) -> str:
+        raise fault
+
+    with pytest.raises(ValueError) as ei:
         run_month_end_relation_brew(db, state, buggy_brew)
+    assert ei.value is fault
     # 响亮上抛而非降级：无 degraded 留痕；认领先行的 pending 凭据已持久在册。
     assert [(row["source"], row["target"]) for row in db.get_relation_brew_pending()] == [
         ("温体仁", "周延儒")

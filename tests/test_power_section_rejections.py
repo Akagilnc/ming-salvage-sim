@@ -71,35 +71,43 @@ def test_illegal_power_field_rejected(game):
     assert rows[0][1]  # reason 非空
 
 def test_power_deltas_code_exception_aborts_settlement(game, monkeypatch):
-    """apply_power_deltas 内代码异常原样上抛，原子分派回滚整批。"""
+    """apply_power_deltas 内代码异常原样上抛，原子分派回滚整批。
+    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
 
     db, state, content = game
     good = _valid_power_id(db)
 
+    fault = AttributeError("code bug in apply_power_deltas")
+
     def _boom(self, *a, **k):
-        raise AttributeError("code bug in apply_power_deltas")
+        raise fault
+
     monkeypatch.setattr(type(db), "apply_power_deltas", _boom)
 
-    with pytest.raises(AttributeError):
+    with pytest.raises(AttributeError) as ei:
         run_settle(db, state, content, {
             "power_updates": {good: {"leverage": 3}},
         }, narrative="x", decree_text="y")
+    assert ei.value is fault
 
 # ---- section 9b: character_power_changes(人物易主) ----
 
 def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeypatch):
-    """Canonical 人物变更 writer 的代码异常必须上抛；legacy aliases 不再有第二写路。"""
+    """Canonical 人物变更 writer 的代码异常必须上抛；legacy aliases 不再有第二写路。
+    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, content = game
     target_power = _valid_power_id(db)
     name = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()[0]
 
+    fault = KeyError("canonical person power writer bug")
+
     def _boom(self, *args, **kwargs):
-        raise KeyError("canonical person power writer bug")
+        raise fault
 
     monkeypatch.setattr(type(db), "apply_character_power_changes", _boom)
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError) as ei:
         import ming_sim.issues as issues
         issues.apply_score_extraction(db, state, {
             "人物变更": [{
@@ -107,6 +115,7 @@ def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeyp
                 "new_power": target_power, "reason": "叛", "origin_ref": "盘面自发",
             }],
         }, content=content)
+    assert ei.value is fault
 
 
 

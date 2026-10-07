@@ -17,7 +17,8 @@ import pytest
 # ── 1) #1391 泛称闭集 ──────────────────────────────────────────────
 
 
-def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
+@pytest.mark.parametrize("name", ["大臣", "群臣", "边将", "朝鲜边军", "陛下", "皇帝"])
+def test_capture_drops_dachen_generic_no_409(game, monkeypatch, name):
     """#1391：参与人「大臣」不进 roster、零 409，草案可落库。"""
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
@@ -30,7 +31,7 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
         "目标类型": "issue",
         "目标ID": "border-pay",
         "参与人": [
-            {"character_id": "大臣", "tier": "主办"},
+            {"character_id": name, "tier": "主办"},
             {"character_id": "毕自严", "tier": "协办"},
         ],
     }
@@ -43,7 +44,7 @@ def test_capture_drops_dachen_generic_no_409(game, monkeypatch):
         text, None, db=db, content=content,
     )
     ids = [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
-    assert "大臣" not in ids
+    assert name not in ids
     assert ids == ["毕自严"]
 
     session = GameSession.__new__(GameSession)
@@ -90,7 +91,6 @@ def test_night_archive_involved_people_drops_non_persons(game):
 
     db, state, _ = game
     night = an.open_night(db, state)  # 默认时辰须为更次口径
-    assert night["time_of_day"] != "此时"
     assert night["time_of_day"] == an.DEFAULT_TIME_OF_DAY
 
     an.summon_enter(db, night["id"], "杨嗣昌", method=an.METHOD_XUANRU)

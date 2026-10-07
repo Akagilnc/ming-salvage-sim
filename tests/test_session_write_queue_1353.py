@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -512,3 +513,26 @@ def test_get_session_write_queue_wiring_fail_loud_no_broad_swallow():
     assert owner.session._write_queue is q1
     assert owner._write_gate is q1.write_gate
     assert owner.session._write_gate is q1.write_gate
+
+
+def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
+    """单一权威负向：wait_idle=False 与队列异常均须报红，不得被调用方洗白。"""
+    stuck = SessionWriteQueue()
+    ticket = stuck.claim(key=("teardown-stuck", 1))
+    assert ticket is not None
+    try:
+        with pytest.raises(AssertionError):
+            wait_pending_writes(SimpleNamespace(_write_queue=stuck), timeout_s=0.05)
+    finally:
+        stuck.complete(ticket)
+
+    boom = SessionWriteQueue()
+    fault = RuntimeError("queue boom")
+
+    def _raise(*, timeout_s=None):
+        raise fault
+
+    monkeypatch.setattr(boom, "wait_idle", _raise)
+    with pytest.raises(RuntimeError) as ei:
+        wait_pending_writes(SimpleNamespace(_write_queue=boom), timeout_s=0.05)
+    assert ei.value is fault

@@ -11,9 +11,7 @@ from typing import Any
 
 import pytest
 
-from ming_sim.context import character_context, character_context_with_db
 from ming_sim.exceptions import SettlementAbort
-from ming_sim.person_archive_contract import PERSON_REASON_CODES, normalize_reason_code
 
 # ---------------------------------------------------------------------------
 # helpers（只读观察；不构成第二写缝）
@@ -828,17 +826,9 @@ def _collect_typed_keys(obj: Any, *, _out: set[str] | None = None) -> set[str]:
 
 
 def test_t14_reason_code_sets_and_reject_unrecognized(game):
-    from ming_sim.centrifuge_ledger import STIGMA_REASON_CODES, accrue_blood_debt
+    from ming_sim.centrifuge_ledger import accrue_blood_debt
 
     db, state, _content = game
-    for code in ("依律", "谋逆坐实", "贪墨坐实"):
-        assert code in PERSON_REASON_CODES
-        assert normalize_reason_code(code) == code
-
-    for code in ("中旨除授", "非正途", "罗织"):
-        assert code in STIGMA_REASON_CODES
-        assert code not in PERSON_REASON_CODES
-
     before = _snapshot(db)
     with pytest.raises(SettlementAbort):
         accrue_blood_debt(

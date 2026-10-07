@@ -4,6 +4,7 @@ from ming_sim.content import load_character_content
 from ming_sim.models import Character
 from ming_sim.session import _sync_offices_from_db_impl
 
+
 def test_person_logs_accepts_audit_rows_for_existing_characters(game):
     """The audit table is not only present; it can persist an ADR 0009 log row."""
     db, state, _ = game
@@ -75,6 +76,7 @@ def test_reload_restores_complete_transit_ledger_from_db(game):
         character.transit_speed_factor,
         character.transit_start_turn,
     ) == ("liaodong", 1.25, 1.5, 7)
+
 
 def test_north_star_named_figures_are_seeded_with_identity_metadata():
     """ADR 0009 can reject no named target used by north-star scenes/prompts."""

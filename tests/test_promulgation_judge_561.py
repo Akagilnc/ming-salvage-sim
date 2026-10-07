@@ -6,7 +6,7 @@ import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
 from ming_sim.exceptions import LLMContractError
 from ming_sim.models import LLMConfig
-from ming_sim.qualitative import power_band, qualitative_character_axis
+from ming_sim.qualitative import qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
 from tests.dossier_test_helpers import rejected_verdict
 
@@ -105,8 +105,6 @@ def test_promulgation_context_projects_faction_leverage_as_qualitative_band(game
     assert by_name["阉党"] == {
         "name": "阉党", "leverage": "强盛", "agenda": "附议清丈",
     }
-    assert by_name["东林"]["leverage"] == power_band(5)
-    assert by_name["阉党"]["leverage"] == power_band(95)
     assert all(
         isinstance(row["leverage"], str)
         and not isinstance(row["leverage"], bool)
@@ -289,7 +287,7 @@ def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(g
     ).fetchone()["status"] == "dismissed"
     second_factions = {row["name"]: row for row in second["factions"]}
     assert second_factions["东林"] == {
-        "name": "东林", "leverage": power_band(5),
+        "name": "东林", "leverage": "极弱",
         "agenda": "失去许誉卿封驳支点，转入复议",
     }
     assert {

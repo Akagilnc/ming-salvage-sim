@@ -5,7 +5,7 @@ import pytest
 import ming_sim.content as content_module
 from ming_sim.assets import load_json_asset
 from ming_sim.content import load_character_content
-from ming_sim.session import _sync_offices_from_db_impl
+from ming_sim.decree import reload_state_from_db
 
 def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     """DB seed_guilt 与已加载 content 输入结构化全等（不硬编码 crime 散文）。"""
@@ -32,7 +32,7 @@ def test_identity_and_seed_guilt_survive_restore(game):
     ).fetchone()
     content.characters["魏忠贤"].identity = 0
     content.characters["魏忠贤"].seed_guilt = {}
-    _sync_offices_from_db_impl(content, db)
+    reload_state_from_db(db, state, content=content)
     after = db.conn.execute(
         "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
     ).fetchone()
