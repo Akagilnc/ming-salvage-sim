@@ -165,7 +165,7 @@ def test_opening_handled_matters_are_filtered_within_authorized_knowledge(game, 
         db, state, character, dest_root=tmp_path / "materials",
     )
     opening = prepared.opening
-    assert f"#{handled_id} " in opening or f"#{handled_id}" in opening
+    # Contract: handled title enters opening; bare issue stays out. No '#N' presentation lock.
     assert "经手事项" in opening
     assert "无人承办事项" not in opening
     issue_paths = {

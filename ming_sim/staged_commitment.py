@@ -87,21 +87,24 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
             stage_idx = int(item.get("stage_idx", idx))
         except (TypeError, ValueError):
             stage_idx = idx
+        # Free criterion/origin_context: empty-check without mutating carried prose (P6).
         criterion = str(
             item.get("criterion_text") or item.get("criterion") or ""
-        ).strip()
+        )
         origin_context = str(
-            item.get("origin_context") or item.get("origin") or criterion or ""
-        ).strip()
-        if not criterion and origin_context:
+            item.get("origin_context") or item.get("origin") or ""
+        )
+        if not criterion.strip() and origin_context.strip():
             criterion = origin_context
-        if not criterion:
+        if not origin_context.strip():
+            origin_context = criterion
+        if not criterion.strip():
             continue
         out.append({
             "stage_idx": stage_idx,
             "due_turn": due_turn,
             "criterion_text": criterion,
-            "origin_context": origin_context or criterion,
+            "origin_context": origin_context,
         })
     out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
     return out

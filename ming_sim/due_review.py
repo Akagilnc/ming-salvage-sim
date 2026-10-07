@@ -378,13 +378,16 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     mid = bool(review_input.get("mid_stage"))
     effects = list(review_input.get("durable_effects") or [])
     reports = list(review_input.get("progress_reports") or [])
-    criterion = str(review_input.get("criterion_text") or "").strip() or "所约之事"
-    origin = str(review_input.get("origin_context") or "").strip()
+    # Free criterion/origin: empty-check without mutating when embedding into note (P6).
+    criterion = str(review_input.get("criterion_text") or "")
+    if not criterion.strip():
+        criterion = "所约之事"
+    origin = str(review_input.get("origin_context") or "")
     distortion = dict(review_input.get("distortion_tendency") or {})
 
     if mid:
         note = f"中段复核：{criterion}仍在办理"
-        if origin:
+        if origin.strip():
             note = f"中段复核（{origin}）：{criterion}仍在办理"
         return {
             "outcome": "executing",
@@ -408,7 +411,7 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     else:
         outcome = "failed"
         note = f"到期复核：{criterion}届期无实绩"
-    if origin:
+    if origin.strip():
         note = f"{note}（原诺：{origin}）"
     return {
         "outcome": outcome,

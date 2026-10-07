@@ -7291,9 +7291,8 @@ class GameDB:
                 continue
             if not fork_state["fork"]:
                 continue
+            # Free decree body supply: carry full text as-is (P6); no length crop.
             case_summary = str(row["decree_text"] or "")
-            if len(case_summary) > 48:
-                case_summary = case_summary[:48]
             # 物理事实：奏报面 / 执行格 / 旨外——直接复用 fork 读端（类型已保证）
             forked_dossiers.append({
                 "dossier_id": dossier_id,
@@ -7442,10 +7441,11 @@ class GameDB:
                 continue
             # 仅 canonical / ITEM_FIELD_ALIASES 背书键（检举人/被检举人→*_name）
             accuser = str(raw.get("accuser_name") or "").strip()
+            # Free memorial body: empty-check without mutating carried prose (P6).
             memorial = str(
                 raw.get("memorial_text") or raw.get("body") or ""
-            ).strip()
-            if not accuser or not memorial:
+            )
+            if not accuser or not memorial.strip():
                 continue
             try:
                 dossier_id = int(
