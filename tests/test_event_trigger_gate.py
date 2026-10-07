@@ -1,4 +1,3 @@
-import ming_sim.settlement.run as settlement_run
 """#12（M1 P0）：历史锚定事件结构化前提门。
 
 `trigger_gate` + `_gate_passed`（能查 character/faction/army/region/metric 真实字段）此前只接
@@ -1414,40 +1413,9 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
 
 
 def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
-    """post-merge CMR：event trigger 写入不得提前提交外层普通事务。"""
-    db, state, content = game
-    issues.bind_content(content)
-    state.year = 1629
-    state.period = 6
-    db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
+    """event trigger 写入不得提前提交；外层 atomic_and_reload 回滚后 DB 与内存同源恢复。"""
+    from ming_sim.decree import atomic_and_reload
 
-    with _restore_yuan_as_guanning_commander(db, content):
-        db.conn.commit()
-        before_logs = db.conn.execute(
-            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
-        ).fetchone()[0]
-
-        db.conn.execute("BEGIN")
-        settlement_run._register_runtime_rollback_snapshot(db, state, content)
-        out = apply_issue_tracker_output(
-            db,
-            state,
-            {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
-            content=content,
-        source=Provenance.system_simulation)
-        assert "rejected" not in out.new_issues[0]
-        db.conn.rollback()
-
-        assert db.get_character_status("毛文龙")[0] == "active"
-        assert content.characters["毛文龙"].status == "active"
-        assert not db.has_event_triggered("mao_wenlong")
-        assert db.conn.execute(
-            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
-        ).fetchone()[0] == before_logs
-
-
-def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game):
-    """review R3：content 省略时也要 snapshot bind_content() 的人物内存。"""
     db, state, content = game
     issues.bind_content(content)
     state.year = 1629
@@ -1457,38 +1425,28 @@ def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game
 
     with _restore_yuan_as_guanning_commander(db, content):
         db.conn.commit()
+        before_logs = db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0]
 
-        db.conn.execute("BEGIN")
-        settlement_run._register_runtime_rollback_snapshot(db, state, content)
-        out = apply_issue_tracker_output(
-            db,
-            state,
-            {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
-        source=Provenance.system_simulation)
-        assert "rejected" not in out.new_issues[0]
-        assert content.characters["毛文龙"].status == "dead"
-        db.conn.rollback()
+        with pytest.raises(RuntimeError, match="force-rollback"):
+            with atomic_and_reload(db, state, content=content):
+                out = apply_issue_tracker_output(
+                    db,
+                    state,
+                    {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+                    content=content,
+                    source=Provenance.system_simulation,
+                )
+                assert "rejected" not in out.new_issues[0]
+                raise RuntimeError("force-rollback")
 
         assert db.get_character_status("毛文龙")[0] == "active"
         assert content.characters["毛文龙"].status == "active"
-
-
-def test_issue_tracker_rollback_removes_dynamic_character_attrs(game):
-    """online R3 Gemini：事务中新添的人物动态属性也要随 runtime rollback 清掉。"""
-    db, state, content = game
-    issues.bind_content(content)
-    character = content.characters["毛文龙"]
-    if hasattr(character, "_test_runtime_ghost_attr"):
-        delattr(character, "_test_runtime_ghost_attr")
-    db.conn.commit()
-
-    db.conn.execute("BEGIN")
-    settlement_run._register_runtime_rollback_snapshot(db, state, content)
-    apply_issue_tracker_output(db, state, {"advances": []}, content=content, source=Provenance.system_simulation)
-    character._test_runtime_ghost_attr = "ghost"
-    db.conn.rollback()
-
-    assert not hasattr(character, "_test_runtime_ghost_attr")
+        assert not db.has_event_triggered("mao_wenlong")
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0] == before_logs
 
 
 def test_apply_score_extraction_metric_delta_restores_runtime_via_outer_reload(game):

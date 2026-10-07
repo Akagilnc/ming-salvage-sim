@@ -2467,16 +2467,10 @@ def _dispatch_on_scene_facts(
 
     夜上下文源轮缺失/不属本夜时整项 missing_ref（第四类统一源轮校验）。
 
-    各自所属事务：人物变更与事务指针绑定放进同一个 :func:`_item_savepoint_scope`
-    块逐项处理（不再整批调用 `apply_person_changes_only`）——指针绑定失败时
-    整块回滚，该项进 rejected、不产生任何副作用；`apply_person_changes_only`
-    在既有事务内运行时会自行注册运行时快照（`_register_runtime_rollback_snapshot`），
-    `_item_savepoint_scope` 在本项失败时手动回放该快照的 undo 闭包，回滚会
-    连带撤销它对 `content.characters` 做的内存态更改，不会出现「DB 已回滚、
-    内存态却留着」的半写状态（详见 :func:`_item_savepoint_scope` 文档）。用
-    SAVEPOINT 而非直接嵌套 `atomic(db)`：本函数可能被 `dispatch_declaration`
-    自己的外层事务（直接分派或暂存结算）调用，SAVEPOINT 才能在共享事务内做
-    本项独立回滚而不牵连同批 sibling。"""
+    各自所属事务：人物变更与事务指针绑定放进同一个 :func:`item_savepoint_scope`
+    块逐项处理——指针绑定失败时整块回滚，该项进 rejected、不产生任何副作用。
+    人物落账本身的项级隔离在 `land_person_changes_isolated`（编排侧）；本块再包
+    一层以覆盖指针绑定。失败时回放本项新增的运行态回调，DB 与内存一致。"""
     items, rejected = _section_items(raw, label="当场实况声明", source=source)
     applied: List[Any] = []
     for item in items:

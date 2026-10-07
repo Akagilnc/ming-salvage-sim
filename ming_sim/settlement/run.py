@@ -18,12 +18,7 @@ if TYPE_CHECKING:
     from ming_sim.models import GameState
     from ming_sim.content import GameContent
 
-from ming_sim.applier import (
-    Provenance,
-    RejectedItem,
-    SectionResult,
-    register_runtime_rollback_snapshot,
-)
+from ming_sim.applier import Provenance, RejectedItem, SectionResult
 from ming_sim.settlement import registry
 from ming_sim.settlement.outcome import (
     FiscalSectionResult,
@@ -598,10 +593,6 @@ def _run_registry_after_interleave(run) -> None:
         _capture(run, spec.name, registry.load(spec)(run))
 
 
-# 兼容旧测试/调用方对私有名的引用；真源在 applier。
-_register_runtime_rollback_snapshot = register_runtime_rollback_snapshot
-
-
 def apply_person_changes_only(
     db: GameDB,
     state: GameState,
@@ -617,27 +608,22 @@ def apply_person_changes_only(
 
     任命授官、传召启程等单人物动作共用此口；禁止借落库编排器附带
     #652 recovery / bandit 等结算核。返回形状与 full applier 的 applied_person_changes 对齐。
+    项级隔离走 character.delta_section.land_person_changes_isolated（编排独占）。
     """
     from ming_sim.entities.character import names as character_names
+    from ming_sim.entities.character.delta_section import land_person_changes_isolated
     from ming_sim.entities.character.normalize import normalize_person_changes
 
     runtime_content = content if content is not None else getattr(db, "content", None)
     caller_transaction = db.conn.in_transaction
-    # 本入口是人物单笔的事务主人：外层已开事务时只登记回滚快照；
-    # 否则快照 + atomic，成功提交、失败整笔回滚（含候见离京四侧）。
     changes = character_names._canonicalize_person_change_names(
         normalize_person_changes({"人物变更": list(person_changes or [])}),
         runtime_content,
         db,
     )
-    from ming_sim.entities.character.apply import apply_person_changes
 
-    def _write(*, register_outer_runtime_snapshot: bool):
-        # 外层事务内：快照供项级 SAVEPOINT 恢复（保护合法 sibling）；本入口为
-        # 事务主人时改走同源重载，不再用整批内存快照顶替。
-        if register_outer_runtime_snapshot:
-            register_runtime_rollback_snapshot(db, state, runtime_content)
-        return apply_person_changes(
+    def _write():
+        return land_person_changes_isolated(
             db,
             state,
             changes,
@@ -645,13 +631,15 @@ def apply_person_changes_only(
             llm_config=llm_config,
             origin_ref=origin_ref,
             require_origin=require_origin,
-        source=source)
+            source=source,
+        )
 
     if caller_transaction:
-        results, results_rejections = _write(register_outer_runtime_snapshot=True)
+        # 借用外层事务：不提前 reload；项级 SAVEPOINT 由 land_* 承担。
+        results, results_rejections = _write()
     else:
         from ming_sim.decree import atomic_and_reload
 
         with atomic_and_reload(db, state, content=runtime_content):
-            results, results_rejections = _write(register_outer_runtime_snapshot=False)
+            results, results_rejections = _write()
     return SectionResult(applied=results, rejected=results_rejections)

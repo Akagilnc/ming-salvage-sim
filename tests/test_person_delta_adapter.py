@@ -494,29 +494,45 @@ def test_apply_score_extraction_materializes_derived_release_before_appointment(
         content.characters[name].office = old_office
 
 
-def test_rejected_derived_appointment_durably_restores_complete_person_state(game, monkeypatch):
+def test_rejected_derived_appointment_durably_restores_person_and_executor_dossier(game):
+    """真实 missing_ref 拒收：人物全行与执行中案卷均保持拒收前态（编排项级隔离）。"""
     import sqlite3
 
     db, state, content = game
     name = active_ming_character(db, content)
-    db.set_character_status(state, name, "imprisoned", "旧案在押", reason_code="下狱")
+    db.set_character_status(
+        state, name, "imprisoned", "旧案在押", reason_code="下狱", content=content,
+    )
     db.set_character_transit(
         name, transit_to="liaodong", distance_remaining=1.25,
         speed_factor=1.5, start_turn=7, content=content,
     )
+    did = db.create_decree_dossier(
+        state, action_type="policy", decree_text="旧案",
+        target_kind="army", target_id="guanning",
+        executor_kind="character", executor_id=name,
+    )
+    db.record_dossier_decision(did, "promulgated")
+    db.transition_decree_dossier(did, "executing")
     before = tuple(db.conn.execute(
         "SELECT status, office, office_type, status_reason, status_changed_turn, reason_code, "
         "transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
         "FROM characters WHERE name=?", (name,),
     ).fetchone())
-    monkeypatch.setattr(office_appointment, "apply_office_appointment", lambda *args, **kwargs: RejectedItem(
-        item={"name": name},
-        reason="appointment_rejected",
-        category="invalid_transition",
-        source=Provenance.system_simulation,
-    ))
+    dossier_before = db.conn.execute(
+        "SELECT status FROM decree_dossiers WHERE id=?", (did,),
+    ).fetchone()["status"]
+    assert dossier_before == "executing"
 
-    settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi'}]}, SettlementContext(content=content))
+    out = settle_delta(
+        state, db,
+        {"人物变更": [{
+            "name": name, "origin_ref": "盘面自发", "动作": "任命",
+            "office": "陕西总督", "office_type": "地方",
+            "region_id": "missing_region",
+        }]},
+        SettlementContext(content=content),
+    )
 
     path = db.conn.execute("PRAGMA database_list").fetchone()[2]
     other = sqlite3.connect(path)
@@ -526,9 +542,13 @@ def test_rejected_derived_appointment_durably_restores_complete_person_state(gam
             "transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
             "FROM characters WHERE name=?", (name,),
         ).fetchone()
+        dossier_after = other.execute(
+            "SELECT status FROM decree_dossiers WHERE id=?", (did,),
+        ).fetchone()[0]
     finally:
         other.close()
     assert tuple(durable) == before
+    assert dossier_after == "executing"
     character = content.characters[name]
     assert (
         character.status, character.office, character.office_type,
@@ -536,6 +556,8 @@ def test_rejected_derived_appointment_durably_restores_complete_person_state(gam
         character.transit_distance_remaining, character.transit_speed_factor,
         character.transit_start_turn,
     ) == (before[0], before[1], before[2], before[3], before[5], *before[6:])
+    refused = list(out.person.rejected)
+    assert refused and refused[0].category == "missing_ref"
 
 
 def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_change(game):
@@ -1661,43 +1683,6 @@ def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
     assert ch.status == "dismissed", f"回滚后内存 status 未还原：{ch.status!r}"
     assert ch.status_reason == "旧削籍缘由", f"回滚后内存 status_reason 未还原：{ch.status_reason!r}"
     assert ch.reason_code == "获罪削籍", f"回滚后内存 reason_code 未还原：{ch.reason_code!r}"
-
-
-def test_disposition_manual_rollback_restores_memory_reason_fields(game, monkeypatch):
-    """5b（PR#106 R2 gemini medium）：处置级人工回滚（issues.py，apply_office_appointment 返回
-    rejected 且带 derive_label 时触发）此前只把内存 Character 的 status/office/office_type/transit_to
-    还原回快照，漏 status_reason/reason_code——同处 DB 侧回滚 UPDATE 已还原全 7 字段，内存须对称
-    还原才守三面同步（决定6），否则任一前置步刷过内存缘由后此路回滚就留脏值。"""
-    db, state, content = game
-    name = active_ming_character(db, content)
-    # DB 快照基线：dismissed + 缘由/码（row 由 character_row 从 DB 读到这些）。
-    db.set_character_status(state, name, "dismissed", "DB原缘由", reason_code="获罪削籍")
-    # 内存预置成与 DB 背离的「脏」缘由：回滚若漏还原这两字段，内存就滞留脏值。
-    ch = content.characters[name]
-    ch.status = "dismissed"
-    ch.status_reason = "脏内存缘由"
-    ch.reason_code = "脏内存码"
-
-    # 逼 apply_office_appointment 返回 rejected（非抛错），走处置级人工回滚（该路不自还原内存）。
-    def reject(*_a, **_k):
-        return RejectedItem(
-            item={"name": name, "new_office": "陕西总督"},
-            reason="forced reject",
-            category="invalid_transition",
-            source=Provenance.system_simulation,
-        )
-    monkeypatch.setattr(office_appointment, "apply_office_appointment", reject)
-
-    settle_delta(state, db, {'人物变更': [{'name': name, 'origin_ref': '盘面自发', '动作': '任命', 'office': '陕西总督', 'office_type': '地方', 'region_id': 'shaanxi', 'reason': '起用'}]}, SettlementContext(content=content))
-
-    row = db.conn.execute(
-        "SELECT status_reason, reason_code FROM characters WHERE name=?", (name,)
-    ).fetchone()
-    ch = content.characters[name]
-    assert ch.status_reason == (row["status_reason"] or ""), \
-        f"处置回滚漏还原内存 status_reason：内存={ch.status_reason!r} != DB {row['status_reason']!r}"
-    assert ch.reason_code == (row["reason_code"] or ""), \
-        f"处置回滚漏还原内存 reason_code：内存={ch.reason_code!r} != DB {row['reason_code']!r}"
 
 
 def test_unified_appointment_resolves_alias_before_hallucinated_guard(game):

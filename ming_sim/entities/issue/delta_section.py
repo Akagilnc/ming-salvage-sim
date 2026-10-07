@@ -112,7 +112,6 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
         apply_army_delta_with_cannon_transfer,
     )
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
-    from ming_sim.entities.character.apply import apply_person_changes
     from ming_sim.issues import apply_event_cascading_invalidations
     from ming_sim.settlement.preflight import _strategic_event_outcome_label_or_error
 
@@ -189,16 +188,15 @@ def _resolve_strategic_events(run, issue_summary) -> Dict[str, SectionResult]:
             except UnauthorizedAffairOriginRef as exc:
                 reject_bucket["person_issue"].append(RejectedItem(item=dict(item), reason=str(exc), category="unauthorized_affair_origin", source=run.ctx.source))
                 continue
-            results, refused = apply_person_changes(
+            from ming_sim.entities.character.delta_section import land_person_changes_isolated
+            results, refused = land_person_changes_isolated(
                 run.db, run.state, [dict(item)],
                 content=run.ctx.content,
                 llm_config=run.ctx.llm_config,
                 origin_ref=origin_ref,
                 require_origin=True,
-            source=run.ctx.source)
-            if origin_ref:
-                for result in results:
-                    result.setdefault("origin_ref", origin_ref)
+                source=run.ctx.source,
+            )
             bucket["person_issue"].extend(results)
             reject_bucket["person_issue"].extend(refused)
         for power_id, raw_changes in run.ordered_strategic_items("power_updates", event_id):
