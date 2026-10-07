@@ -14138,8 +14138,24 @@ class GameDB:
             row["participant_roster"],
             surface="decree_dossiers.participant_roster",
         )
+        # Durable existing before input: no soft-drop of empty objects; refs/relations
+        # loud. Legacy bare-name strings remain legal historical form (F39).
+        if isinstance(existing_raw, list):
+            for idx, value in enumerate(existing_raw):
+                if isinstance(value, Mapping):
+                    cid = str(
+                        value.get("character_id") or value.get("name") or ""
+                    ).strip()
+                    if not cid:
+                        raise ValueError(
+                            f"既有参与人[{idx}]缺人物身份"
+                        )
+                elif value is None or (
+                    isinstance(value, str) and not str(value).strip()
+                ):
+                    raise ValueError(f"既有参与人[{idx}]缺人物身份")
         existing = self._normalize_participant_roster(existing_raw)
-        # Existing durable structure alone must be sound before input is judged.
+        self._validate_participant_roster_references(existing)
         self._validate_dossier_delegations(existing)
         try:
             additions = self._normalize_participant_roster(
@@ -14166,10 +14182,9 @@ class GameDB:
             added.append(item)
         merged = existing + added
         try:
+            # existing refs/relations already proven; remaining failures are input-side.
             self._validate_dossier_delegations(merged)
-            self._validate_participant_roster_references(merged)
         except ValueError as exc:
-            # existing already validated alone; remaining failures are input-side.
             raise PendingActionRefusal(
                 str(exc), category="invalid_participant_roster",
             ) from exc

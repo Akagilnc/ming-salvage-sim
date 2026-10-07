@@ -6673,28 +6673,10 @@ def _apply_dossier_participant_items(
             })
             continue
         # Durable ValueError/TypeError from append propagate (F39).
-        if not added:
-            # Exact durable duplicate: authority write returned no new rows.
-            existing = db.get_decree_dossier(dossier_id) or {}
-            roster = existing.get("participant_roster", [])
-            if not any(
-                entry.get("character_id") == character_id
-                and entry.get("tier") == tier
-                and entry.get("role") == role
-                and entry.get("delegator_id") == delegator_id
-                for entry in (roster or [])
-                if isinstance(entry, dict)
-            ):
-                results.append({
-                    "rejected": True, "category": "invalid_participant_roster",
-                    "reason": "参与人未实际加入案卷", "item": item,
-                })
-                continue
-            persisted = {
-                "character_id": character_id, "tier": tier,
-            }
-        else:
-            persisted = added[0]
+        # Empty added = authority-recognized exact duplicate; no second confirmation read.
+        persisted = added[0] if added else {
+            "character_id": character_id, "tier": tier,
+        }
         results.append({
             "dossier_id": dossier_id,
             "character_id": persisted["character_id"], "tier": persisted["tier"],
