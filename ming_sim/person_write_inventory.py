@@ -14,30 +14,6 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "开局 seed 不产 RejectedItem，ADR 0009 明确豁免。",
     },
     {
-        "location": "ming_sim/db.py:_migrate_legacy_office_pollution",
-        "owner": "migration",
-        "disposition": "adr0009_exempt",
-        "reason": "决定9/L94 一次性老档数据清洗（init 时跑、幂等），属豁免路径，不产 RejectedItem。",
-    },
-    {
-        "location": "ming_sim/db.py:_backfill_person_core_character_static_fields",
-        "owner": "migration",
-        "disposition": "adr0009_exempt",
-        "reason": "#191 旧档静态字段补丁（init 时幂等，仅补缺省值），不产 RejectedItem。",
-    },
-    {
-        "location": "ming_sim/db.py:_migrate_character_identity_seed",
-        "owner": "migration",
-        "disposition": "adr0009_exempt",
-        "reason": "#488 旧档身份/污点补丁（init 时幂等，仅补未初始化字段及缺失名册），不产 RejectedItem。",
-    },
-    {
-        "location": "ming_sim/db.py:_backfill_bandit_power_split",
-        "owner": "migration",
-        "disposition": "adr0009_exempt",
-        "reason": "#190 旧档流寇分股静态补丁（init 时幂等，仅迁移 legacy bandits/空值），不产 RejectedItem。",
-    },
-    {
         "location": "ming_sim/db.py:set_character_status",
         "owner": "legacy_person_path",
         "disposition": "migrate_to_person_applier",

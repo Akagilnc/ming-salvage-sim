@@ -26,8 +26,8 @@ DEFAULT_OPENING_PERIOD = 10
 DOSSIER_LINK_TYPES = frozenset({"护卫", "稽核", "接应"})
 
 # #44 边军史实月饷锚点（两/兵·月）：ming 军 salary_rate<=0 非法（=白嫖）时的兜底率。单一真源——
-# 募兵默认（db._coerce_new_salary_rate）/ 旧档迁移兜底（db._backfill_salary_rate）/ 结算咽喉
-# （army_pay.army_needed 对 ming+有兵+rate<=0 锚定）三处共用，避免 1.5 散落多处漂移（线上 sourcery+coderabbit）。
+# 募兵默认（db._coerce_new_salary_rate）与结算咽喉（army_pay.army_needed 对
+# ming+有兵+rate<=0 锚定）共用，避免 1.5 散落多处漂移。
 SALARY_RATE_ANCHOR = 1.5
 
 # 一回合的时段单位字。改此处即可全局切换回合语义（月/旬/季）；
@@ -252,10 +252,7 @@ EXIT_COMMANDS = {"exit", "退出游戏", "退出", "exit game"}
 # #526 / #471 S10：收夜高置信封闭集（口令档确定性层；含「今日且到此」）
 # 单一真源：前端/CLI 不得另复制词表或语义旁路。
 COURT_BREAK_COMMANDS = {"q", "quit", "退朝", "下朝", "今日且到此"}
-# #526：含糊收夜封闭集——戏内确认、不直接收夜（与高置信集互斥）
-AMBIGUOUS_CLOSE_COMMANDS = {"今日就到这里吧？", "今日就到这里吧"}
-# #526：留侍口令封闭集（叙事账、在场不变；「令退下」归 #500）
-STAY_ATTEND_COMMANDS = {"留下听着"}
+# 留侍／含糊收夜词表已退役（#1812 第5项）：走普通场景演绎与转译，不再代码识别。
 MINISTER_DISMISS_COMMANDS = {"done", "退下", "跪安", "退了", "下去"}
 
 # 经济流水（economy_ledger）支出条目的结构化标签。
@@ -284,7 +281,7 @@ POPULATION_TRANSFER_REASONS: dict[str, frozenset[tuple[str, str]]] = {
 POPULATION_TRANSFER_FIELDS = frozenset({"source", "target", "amount", "reason", "origin_ref"})
 
 # 0089 明渠：加派→流民月折算率（人/(万两·月)，民心归零基准；确定性口径，#650 AC2）。
-# 实际入池 = 加派基线(万两) × 本率 × (100 − 该省民心)/100，随存档 population_unit 换算、
+# 实际入池 = 加派基线(万两) × 本率 × (100 − 该省民心)/100，单位「人」、
 # 钳到农民余额（代码只 clamp 不判胜负，P6/0087 applier 机械转移）。
 LEVY_DISPLACEMENT_RATE = 2000.0
 

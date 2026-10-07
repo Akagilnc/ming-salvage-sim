@@ -201,12 +201,8 @@ describe("#1726 StateModal 奏疏收件箱", () => {
     // 奏疏面不借局势布局；不以 issue.title 散文作负向哨兵（#1897 T1）。
     expect(doc!.querySelector(".situation-panel")).toBeNull();
     expect(doc!.querySelector(".situation-row")).toBeNull();
-    expect(doc!.querySelector(".issue-row")).toBeNull();
-    expect(doc!.querySelector(".issue-board")).toBeNull();
     expect(doc!.textContent).toContain("杨嗣昌");
-    expect(doc!.querySelector("pre.memorial-text")).not.toBeNull();
-    expect(doc!.textContent).not.toContain("progress:7");
-    expect(doc!.textContent).not.toContain("progress_band");
+    expect(doc!.querySelector("pre.memorial-text")?.textContent).toBe(body);
     expect(doc!.querySelector(".empty-note")).toBeNull();
     cleanup();
   });

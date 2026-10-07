@@ -92,12 +92,17 @@ class _FakeSession(HallAdmissionSessionMixin):
         return GameSession.can_summon(self, character)
 
 
+_FAKE_NIGHT = {"id": 1, "status": "open"}
+
+
 class _RecordingDB:
     def __init__(self, settlement_holding: threading.Event):
         self.settlement_holding = settlement_holding
         self.messages = []
         self.overlapped_minister_commit = False
         self._next_id = 1
+        # conn=None：配合 _atomic_connless_test_shell_compat；夜查询由测试补丁现役接口。
+        self.conn = None
 
     def agno_runs_length(self, session_id: str) -> int:
         return 0
@@ -105,7 +110,7 @@ class _RecordingDB:
     def capture_chat_rollback_snapshot(self):
         return {}
 
-    def create_chat_turn(self, state, minister_name, agno_session_id, agno_runs_before):
+    def create_chat_turn(self, state, minister_name, agno_session_id, agno_runs_before, **_kw):
         return 7
 
     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
@@ -138,7 +143,7 @@ class _RecordingDB:
     def list_in_flight_chat_turns(self, *, night_id=None, minister_name=None, turn=None):
         return []
 
-    def build_chat_projection(self, minister_name: str):
+    def build_chat_projection(self, minister_name: str, night_id: int = 0):
         # #499 单一投影出口（无读心记录的最小实现，供 done payload 装配）
         return [
             {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
@@ -175,7 +180,20 @@ class _RecordingDB:
         return []
 
 
-def _runtime_for_stream_race():
+def _patch_stub_night(monkeypatch):
+    import ming_sim.audience_night as an
+    monkeypatch.setattr(an, "get_open_night", lambda _db: dict(_FAKE_NIGHT))
+    monkeypatch.setattr(
+        an, "ensure_open_night_for_audience", lambda _db, _state: dict(_FAKE_NIGHT),
+    )
+    monkeypatch.setattr(
+        an, "assert_night_accepts_player_input",
+        lambda _db, *a, **k: dict(_FAKE_NIGHT),
+    )
+
+
+def _runtime_for_stream_race(monkeypatch):
+    _patch_stub_night(monkeypatch)
     allow_finish = threading.Event()
     settlement_attempting = threading.Event()
     settlement_holding = threading.Event()
@@ -209,12 +227,13 @@ def _runtime_for_stream_race():
 
 
 @pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
-def test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn():
-    runtime, minister_name, allow_finish, settlement_attempting, settlement = _runtime_for_stream_race()
+def test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn(monkeypatch):
+    runtime, minister_name, allow_finish, settlement_attempting, settlement = _runtime_for_stream_race(monkeypatch)
 
     stream = runtime.chat_stream("殿上", "请奏")
     first = next(stream)
-    assert first.get("type") == "delta"  # 控序：先 delta；不锁流式散文
+    assert first["type"] == "accepted"
+    assert next(stream) == {"type": "delta", "content": "臣已知悉。"}
 
     settlement_thread = threading.Thread(target=settlement)
     settlement_thread.start()
@@ -225,8 +244,12 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     done_collected = threading.Event()
 
     def _take_done() -> None:
-        done_box.append(next(stream))
-        done_collected.set()
+        while True:
+            item = next(stream)
+            if item.get("type") == "done":
+                done_box.append(item)
+                done_collected.set()
+                return
 
     threading.Thread(target=_take_done, daemon=True).start()
     allow_finish.set()
@@ -246,8 +269,8 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     assert runtime.state.turn == 2
 
 
-def test_identity_setup_failure_preserves_question_and_releases_pending_owner():
-    runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
+def test_identity_setup_failure_preserves_question_and_releases_pending_owner(monkeypatch):
+    runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race(monkeypatch)
     failed = []
     completed = []
     runtime.db.kv_get = lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed"))
@@ -263,15 +286,6 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner():
     user_msgs = [m for m in runtime.db.messages if m["role"] == "user"]
     assert len(user_msgs) == 1  # 失败仍保留问话轮；角色条数结构，不锁问话散文
     assert completed == [True]
-
-
-@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
-def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature():
-    runtime, minister_name, allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
-    stream = runtime.chat_stream("殿上", "请奏")
-    assert next(stream)["type"] == "delta"
-    allow_finish.set()
-    assert next(stream)["type"] == "done"
 
 
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):

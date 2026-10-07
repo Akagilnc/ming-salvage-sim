@@ -57,8 +57,6 @@ def close_night_dossier(db, state, content, pending_id):
     )
 
 
-_stage_punishment = stage_punishment
-_close_night_dossier = close_night_dossier
 
 
 def close_office_to_dossier(db, state, content, pending_id):
@@ -94,7 +92,3 @@ def yuan_row(db, name="袁崇焕"):
         "transit_speed_factor, transit_start_turn FROM characters WHERE name=?",
         (name,),
     ).fetchone()
-
-
-_close_office_to_dossier = close_office_to_dossier
-_yuan_row = yuan_row

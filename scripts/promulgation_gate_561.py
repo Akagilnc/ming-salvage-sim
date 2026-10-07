@@ -281,18 +281,31 @@ def _arm_pool_size(_cfg: LLMConfig, job_count: int) -> int:
     return int(job_count)
 
 
+def _judgments_at_turn(
+    db: GameDB, turn: int, dossier_ids: dict[str, int] | list[int] | tuple[int, ...],
+) -> list[dict]:
+    """Turn-scoped judgments from decree_dossier_decisions (live owner)."""
+    if isinstance(dossier_ids, dict):
+        id_list = sorted(int(v) for v in dossier_ids.values())
+    else:
+        id_list = sorted(int(v) for v in dossier_ids)
+    out: list[dict] = []
+    for dossier_id in id_list:
+        for row in db.list_decree_dossier_decisions(dossier_id):
+            if int(row["turn"]) == int(turn) and not row.get("rescript_action"):
+                out.append(row)
+    return out
+
+
 def _resolve_arm_verdicts(
     db: GameDB, *, resolve_turn: int, awaiting: bool, ids: dict[str, int],
 ) -> list[dict]:
-    """Pending while awaiting; else applied history at the pre-resolve turn."""
+    """Awaiting or settled: read applied/batch judgments at the pre-resolve turn."""
     if awaiting:
-        return db.get_pending_promulgation_verdicts(resolve_turn)
+        return _judgments_at_turn(db, resolve_turn, ids)
     verdicts = []
     for dossier_id in sorted(ids.values()):
-        history = [
-            row for row in db.list_decree_dossier_decisions(dossier_id)
-            if int(row["turn"]) == resolve_turn and not row.get("rescript_action")
-        ]
+        history = _judgments_at_turn(db, resolve_turn, [dossier_id])
         verdicts.append(_select_second_verdict(False, dossier_id, [], history))
     return verdicts
 
@@ -385,8 +398,7 @@ def _run_resolve_arm(
         proposed = db.list_decree_dossiers(status="proposed")
         context = build_promulgation_judge_context(db, state, proposed)
         label = decree_label or name
-        # Capture turn before resolve: non-awaiting settlement advances state.turn
-        # and consumes pending_promulgation_verdicts.
+        # Capture turn before resolve: non-awaiting settlement advances state.turn.
         resolve_turn = state.turn
         result = resolve_directives(
             state, db, agno, cfg, [object()], label, content=content,
@@ -423,7 +435,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         if not first_result.awaiting:
             raise RuntimeError("real gate expected rejected dossiers to reach rescript")
         first_turn = state.turn
-        first_verdicts = db.get_pending_promulgation_verdicts(first_turn)
+        first_verdicts = _judgments_at_turn(db, first_turn, ids)
         choices = _choose_rescripts(
             db, first_turn, ids["hostile"], ids["vital_midzhi"], ids["appointment"],
         )
@@ -439,11 +451,8 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         second_result = resolve_directives(
             state, db, agno, cfg, [], "留中案下月重判", content=content,
         )
-        second_pending = db.get_pending_promulgation_verdicts(second_turn)
-        second_history = [
-            row for row in db.list_decree_dossier_decisions(ids["hostile"])
-            if int(row["turn"]) == second_turn and not row.get("rescript_action")
-        ]
+        second_pending = _judgments_at_turn(db, second_turn, ids)
+        second_history = _judgments_at_turn(db, second_turn, [ids["hostile"]])
         second_verdict = _select_second_verdict(
             second_result.awaiting, ids["hostile"], second_pending, second_history,
         )

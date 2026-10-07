@@ -73,7 +73,6 @@ export function EdictModal({
   onSaveDirective,
   onDeleteDirective,
   onIssueDecree,
-  onAdvanceWithoutEdict,
 }: {
   state: GameState;
   editingDirectiveId: number | null;
@@ -91,8 +90,6 @@ export function EdictModal({
   onDeleteDirective: (directiveId: number) => void;
   /** #1277/#1560：有可结算工作（草案或 resolve_turn 可消费 pending）时主钮走盖玺颁诏；真空禁用。 */
   onIssueDecree: () => void;
-  /** #1560：failed-only 确认后退朝；复用既有 advance_without_edict 客户端接缝。 */
-  onAdvanceWithoutEdict: () => void;
 }) {
   // Conversational directives are approved when the audience turn settles (ADR 0049).
   // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
@@ -109,25 +106,15 @@ export function EdictModal({
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const hasPendingSecretOrders = (state.pending_secret_order_count ?? 0) > 0;
-  const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
-  // draft/pending/cased 走 issue/stream；failed-only 另开确认后退朝；真空禁用。
+  // draft/pending/cased 走 issue/stream；真空禁用。
   // #1764：已成案·待盖玺亦是可结算工作（list_directives 滤掉后仍须能盖玺）。
+  // #1853 J5：终态业务拒收不再以 failed 计数开启退朝确认支线。
   const hasSettleWork =
     hasDrafts || hasCased || hasPendingConversationalDraft || hasNonEdictPendingActions || hasPendingSecretOrders;
-  const failedOnly = !hasSettleWork && hasFailedSecretOrders;
   // 请求按钮禁重复点击：全局 busy 或任一卡在飞。
   const requestLocked =
     !!busy || localDirectives.some((item) => item.phase === "inflight");
-  // #1732 B：failed-only 页脚就地条，补退朝语义；取消零请求。
-  const [confirmAdvance, setConfirmAdvance] = React.useState(false);
-  React.useEffect(() => {
-    if (!failedOnly) setConfirmAdvance(false);
-  }, [failedOnly]);
-  const onFooterClick = hasSettleWork
-    ? onIssueDecree
-    : failedOnly
-      ? () => setConfirmAdvance(true)
-      : undefined;
+  const onFooterClick = hasSettleWork ? onIssueDecree : undefined;
 
   const renderBody = (text: string, bodyId: string, notes?: string) => (
     <>
@@ -272,32 +259,14 @@ export function EdictModal({
       {error && <div className="error-line" role="alert">{error}</div>}
 
       <div className="desk-footer">
-        {/* #1560：真空禁用；draft/pending 走 issue；failed-only 确认后 advance。 */}
-        {failedOnly && confirmAdvance ? (
-          <div className="edict-footer-confirm" role="group" aria-label="退朝确认">
-            <div className="edict-footer-confirm-title">退朝确认</div>
-            <div className="edict-footer-confirm-body">
-              本月无可颁诏草案，仍有失败密令未处理。确认不经盖玺颁诏、直接退朝结束本月？
-            </div>
-            <div className="edict-footer-confirm-actions">
-              {/* 纯本地取消：只收起确认条，不发请求，不吃 requestLocked。 */}
-              <button type="button" className="seal-btn-compose" onClick={() => setConfirmAdvance(false)}>
-                取消
-              </button>
-              <button type="button" className="seal-btn-issue" disabled={requestLocked} onClick={onAdvanceWithoutEdict}>
-                退朝结束本月
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            className={hasSettleWork || failedOnly ? "seal-btn-issue" : "seal-btn-compose"}
-            onClick={onFooterClick}
-            disabled={requestLocked || (!hasSettleWork && !failedOnly)}
-          >
-            {hasSettleWork ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
-          </button>
-        )}
+        {/* #1560：真空禁用；draft/pending 走 issue。#1853 J5：清退 failed-only 退朝确认。 */}
+        <button
+          className={hasSettleWork ? "seal-btn-issue" : "seal-btn-compose"}
+          onClick={onFooterClick}
+          disabled={requestLocked || !hasSettleWork}
+        >
+          {hasSettleWork ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
+        </button>
       </div>
     </div>
   );

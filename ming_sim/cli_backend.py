@@ -235,6 +235,7 @@ def _login_shell_path() -> Optional[str]:
         if m:
             discovered = m.group(1).strip()
     except Exception:
+        logger.exception("login shell PATH discovery failed")
         discovered = ""
     _DISCOVERED_LOGIN_PATH = discovered
     return discovered or None
@@ -321,25 +322,6 @@ def _log(msg: str) -> None:
         print(f"[cli_backend] {msg}", flush=True)
 
 
-def _infer_tag(prompt: str) -> str:
-    """从 prompt（含 system 段）猜是哪个 agent 在调用，方便复盘。
-
-    兼容无显式 tag 的调用日志；按专属标识推断，避免邸报正文的词污染分类。
-    """
-    p = prompt
-    if "扮演被皇帝召见" in p or "大臣扮演" in p:
-        return "minister"
-    if "module_allowed_fields" in p or "score_extractor" in p or "本月结算抽取" in p:
-        return "extractor"
-    if "simulator_payload" in p:
-        return "simulator"
-    if "诏书" in p and "拟" in p:
-        return "decree"
-    if "只输出合法 JSON" in p or "整理" in p:
-        return "sanitizer"
-    return "other"
-
-
 def _trace(record: Dict[str, Any]) -> None:
     if _TRACE_DISABLED:
         return
@@ -360,8 +342,8 @@ def _trace(record: Dict[str, Any]) -> None:
             _trace_announced = True
         if announce:
             print(f"[cli_backend] LLM trace → {_TRACE_PATH}", flush=True)
-    except Exception as exc:  # trace 永不应中断游戏
-        _log(f"trace 写盘失败：{exc}")
+    except Exception:  # trace 永不应中断游戏，但必须留真因（ADR 0005）
+        logger.exception("LLM trace write failed path=%s", _TRACE_PATH)
 
 
 def _warm_keychain() -> None:
@@ -372,7 +354,7 @@ def _warm_keychain() -> None:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
         )
     except Exception:
-        pass
+        logger.exception("keychain warm failed")
 
 
 # CLI 子进程读循环轮询步长（秒）：只决定「多快发现静默/退出」，不是任何超时预算。
@@ -410,16 +392,9 @@ def _cli_idle_seconds() -> float:
 
 
 def _terminate_cli_process(proc: Any) -> None:
-    """收尾子进程：已退时 terminate 是 no-op；否则 terminate→kill 兜底，防泄漏。"""
-    try:
-        proc.terminate()
-        proc.wait(timeout=5)
-    except Exception:
-        try:
-            proc.kill()
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+    """收尾子进程：已退时 terminate 是 no-op；否则 SIGTERM 后等待退出，失败原样上抛。"""
+    proc.terminate()
+    proc.wait()
 
 
 def _iter_cli_process_lines(
@@ -433,10 +408,11 @@ def _iter_cli_process_lines(
 ) -> Iterator[str]:
     """CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。
 
-    - 新字节即活动，刷新活动时刻；静默 ≥ idle 预算 → TransportIdleTimeout（可重试）
-      并 kill 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
+    - 新字节即活动，刷新活动时刻；静默 ≥ idle 预算 → TransportIdleTimeout（可重试）；
+      finally 以 SIGTERM 收尾该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
     - idle 只认 transport 策略（`_cli_idle_seconds`）= 设置页那一格的静默判死阈值。
-    - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀。
+    - **不设 attempt 总墙钟，收尾不做 SIGKILL 升级（宪法 #9）**：只要还有新字节就不判死；
+      收尾只 terminate + wait，失败原样上抛。
     - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
     - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
     所有 runner 共用本读法；禁各自复制一套 idle 循环。clock 可注入（受控推进）。
@@ -480,7 +456,7 @@ def _iter_cli_process_lines(
                     break
                 chunks.put((kind, chunk))
         except (OSError, ValueError) as exc:
-            # 判死 kill 后管道会在读中途关掉（ValueError: closed file / OSError），
+            # 收尾 terminate 后管道会在读中途关掉（ValueError: closed file / OSError），
             # 是收尾正常形状；只窄捕获这一类并留痕，其余错原样上抛（ADR 0005）。
             logger.debug("CLI %s 管道读中断（子进程已收尾）：%s", kind, exc)
         finally:
@@ -1054,7 +1030,7 @@ def _run_backend_for_config(
     直接编程路径（职官分类/各 extractor/国策补全/连通性 verify）的唯一咽喉：
     每次调用 try/finally 写一条 trace，谁调都记，不靠各调用方自觉手写。
     （agno 游戏路径走 CliChat.invoke 自有 trace，与此咽喉不重叠。）
-    tag 空时退回 _infer_tag(prompt)。
+    tag 空时记 "other"（须由调用方显式传入；不从自由 prompt 猜测分类）。
 
     #1465 切片③：本入口是结算/拟旨等非 Agent CLI extractor 的**次数入口**——
     在此包一次 run_with_transport，operation 调单次子进程；runner 内禁私有重试。"""
@@ -1089,7 +1065,7 @@ def _run_backend_for_config(
     finally:
         _trace({
             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "seq": -1, "tag": tag or _infer_tag(prompt),
+            "seq": -1, "tag": tag or "other",
             "backend": _backend_label(llm_config), "model_id": model_id,
             "dur_s": round(time.monotonic() - t0, 1), "attempts": attempts,
             "wants_json": False,
@@ -2259,11 +2235,7 @@ def _draft_intent_open_affair_facts(db: Any) -> str:
     """Structured open-affair list so existing.affair_id is chosen from input, not guessed."""
     if db is None:
         return ""
-    store = getattr(db, "affairs", None)
-    list_open = getattr(store, "list_open", None)
-    if not callable(list_open):
-        return ""
-    rows = list_open()
+    rows = db.affairs.list_open()
     if not rows:
         return ""
     lines = [
@@ -3339,7 +3311,7 @@ def project_draft_extract_to_directive_payload(
     pre_kind = classify_directive_structured_kind(payload)
     if pre_kind not in {"push", "empty"} and payload.get("target_kind") not in (None, ""):
         regions_content = getattr(content, "regions", None) if content is not None else None
-        conn = getattr(db, "conn", None) if db is not None else None
+        conn = db.conn if db is not None else None
         assembled = assemble_structured_decree(
             payload,
             conn=conn,
@@ -3599,7 +3571,7 @@ class CliChat(OpenAIChat):
 
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
         """一次子进程。等多久算死归 transport 策略（设置页那一格的静默判死阈值）：
-        出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。"""
+        不设 attempt 总墙钟；只有静默超阈值才判死重试，收尾只 SIGTERM。"""
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
         return _dispatch_cli_runner(
             self.backend,
@@ -3630,7 +3602,7 @@ class CliChat(OpenAIChat):
         with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
             _seq += 1
             seq = _seq
-        tag = _infer_tag(prompt)
+        tag = str(getattr(self, "trace_tag", "") or "").strip() or "other"
         t0 = time.monotonic()
         error = None
         text = ""

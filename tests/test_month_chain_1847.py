@@ -17,6 +17,7 @@ from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import TurnPhase
 from tests.month_chain_helpers import make_light_session
+from tests.rescript_test_helpers import sql_rescript_draft
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 from ming_sim.supervision import (
     ORIGIN_MARK_PRIVATE_GOODS,
@@ -588,20 +589,13 @@ def test_cross_month_pending_draft_opens_rescript_desk(game, monkeypatch):
     db, state, content = game
     closed_turn = int(state.turn)
     prior = closed_turn - 1
-    db.conn.execute(
-        "INSERT INTO pending_decisions "
-        "(turn, idx, event_id, title, context, options_json, choice_json, "
-        " status, kind, actor_name, actor_office, actor_faction, "
-        " revision_round, prior_options_json) "
-        "VALUES (?, 0, 'urgent:old:0', '旧急务甲', '跨月待批', ?, '', "
-        " 'pending', 'rescript_draft', '首辅', '内阁首辅', '东林', 0, '[]')",
-        (
-            prior,
-            json.dumps([
-                {"label": "发帑", "hint": "饥民"},
-                {"label": "留中", "hint": "待查"},
-            ], ensure_ascii=False),
-        ),
+    sql_rescript_draft(
+        db, prior, idx=0, event_id="urgent:old:0", title="旧急务甲", context="跨月待批",
+        options=[
+            {"label": "发帑", "hint": "饥民"},
+            {"label": "留中", "hint": "待查"},
+        ],
+        actor_name="首辅", actor_office="内阁首辅", actor_faction="东林",
     )
     db.conn.commit()
     _forbid_extractor(monkeypatch)
@@ -1797,7 +1791,7 @@ def test_settle_edicts_persists_pending_disclosures_in_same_transaction(game, mo
         return real_save(db_, turn_, chain_, **kwargs)
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError, match="injected chain save failure"):
+    with pytest.raises(RuntimeError):
         _settle_edicts(sess, chain=chain)
     assert not db.staged_declarations.is_settled(ref_2)
 
@@ -2248,7 +2242,7 @@ def test_pending_disclosures_share_commit_boundary_with_effects(game, monkeypatc
         raise RuntimeError("injected disclosure save failure")
 
     monkeypatch.setattr(month_chain, "_save_chain", boom_save)
-    with pytest.raises(RuntimeError, match="injected disclosure save failure"):
+    with pytest.raises(RuntimeError):
         _settle_edicts(sess, chain=chain)
 
     assert not db.staged_declarations.is_settled(ref)

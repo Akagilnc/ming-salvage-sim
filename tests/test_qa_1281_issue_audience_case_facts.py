@@ -183,8 +183,10 @@ def test_malformed_knowledge_issue_id_fails_loud_from_material_entry(game, tmp_p
 
 
 def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path):
+    """audience 账本读失败须从材料入口冒出；来源保真：原异常对象，不锁诊断措辞。"""
     db, state, content = game
     real_conn = db.conn
+    fault = RuntimeError("audience ledger read failed")
 
     class FailingEventAudienceConnection:
         def __getattr__(self, name):
@@ -192,15 +194,16 @@ def test_event_audience_read_failure_escapes_material_preparation(game, tmp_path
 
         def execute(self, sql, parameters=()):
             if "SELECT audiences FROM events" in sql:
-                raise RuntimeError("audience ledger read failed")
+                raise fault
             return real_conn.execute(sql, parameters)
 
     db.conn = FailingEventAudienceConnection()
     try:
-        with pytest.raises(RuntimeError, match="audience ledger read failed"):
+        with pytest.raises(RuntimeError) as ei:
             prepare_character_materials(
                 db, state, content.characters[AUDIENCE_NAME], dest_root=tmp_path / "materials",
             )
+        assert ei.value is fault
     finally:
         db.conn = real_conn
 

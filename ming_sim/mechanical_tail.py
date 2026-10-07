@@ -93,21 +93,20 @@ def generate_ending_summary_for_tail(
 
     def _load_gazettes():
         loaded = []
-        if hasattr(db, "list_turn_reports"):
-            for row in db.list_turn_reports():
-                turn = int(row.get("turn") or 0)
-                if turn > int(closed_state.turn):
-                    continue
-                body = str(row.get("report") or row.get("body") or "").strip()
-                if not body:
-                    continue
-                # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
-                loaded.append({
-                    "turn": turn,
-                    "year": int(row.get("year") or 0),
-                    "period": int(row.get("period") or 0),
-                    "body": body,
-                })
+        for row in db.list_turn_reports():
+            turn = int(row.get("turn") or 0)
+            if turn > int(closed_state.turn):
+                continue
+            body = str(row.get("report") or row.get("body") or "").strip()
+            if not body:
+                continue
+            # 模型输入每期只保留一个正文键 body（与 ending_summary prompt 一致）。
+            loaded.append({
+                "turn": turn,
+                "year": int(row.get("year") or 0),
+                "period": int(row.get("period") or 0),
+                "body": body,
+            })
         return loaded
 
     reports = under(_load_gazettes)
@@ -357,6 +356,7 @@ def schedule_mechanical_tail_after_advance(
     try:
         get_session_write_queue(session)
     except Exception:
+        logger.exception("schedule_mechanical_tail: write queue unavailable")
         return
     _submit_tail(
         session,
@@ -369,11 +369,9 @@ def schedule_mechanical_tail_after_advance(
 
 
 def _resolve_context_turns(db: Any, current_turn: int) -> list[int]:
-    """有月链记录的回合。无连接的替身才退回 0..current。"""
-    conn = getattr(db, "conn", None)
-    if conn is None:
-        return list(range(0, int(current_turn) + 1))
-    rows = conn.execute(
+    """有月链记录的回合。空表返回 []（不再用无 conn 替身回退 0..current）。"""
+    _ = current_turn
+    rows = db.conn.execute(
         "SELECT turn FROM pending_resolve_context ORDER BY turn"
     ).fetchall()
     return [int(row["turn"]) for row in rows]
@@ -439,6 +437,7 @@ def ensure_mechanical_tails(session: Any) -> None:
     try:
         get_session_write_queue(session)
     except Exception:
+        logger.exception("ensure_mechanical_tails: write queue unavailable")
         return
     current = int(getattr(session.state, "turn", 0) or 0)
     pending_turns = _pending_mechanical_tails(db, current_turn=current)

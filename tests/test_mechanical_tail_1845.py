@@ -198,8 +198,12 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
     _archive_and_stub_world(db, state, monkeypatch)
     monkeypatch.setattr("ming_sim.agents.create_relation_brew_agent", lambda *a: object())
     monkeypatch.setattr("ming_sim.agents.create_faction_brew_agent", lambda *a: object())
+    # 诊断来源保真：可见 error 须等于真实失败异常的 str(exc)；不锁生产中文固定字句。
+    brew_fault = LLMUnavailable("酿制耗尽", stage="relation-brew")
+
     def exhausted(*_a, **_k):
-        raise LLMUnavailable("酿制耗尽", stage="relation-brew")
+        raise brew_fault
+
     monkeypatch.setattr("ming_sim.agents.run_agent_text", exhausted)
     session = make_light_session(db, state, content)
     session.llm_config = object()
@@ -212,7 +216,7 @@ def test_real_brew_failure_reaches_tail_failure_and_retry(game, monkeypatch):
             with pytest.raises(LLMUnavailable):
                 _run_deferred(executor)
     failure = WebGame.mechanical_tail_failure(SimpleNamespace(db=db, state=state))
-    assert failure["error"] == "酿制耗尽"
+    assert failure["error"] == str(brew_fault)
     assert failure["error_pack_path"]
     assert month_chain._load_chain(db, closed_turn)["mechanical_tail"]["status"] == "failed"
     from ming_sim.mechanical_tail import retry_failed_mechanical_tail
@@ -510,9 +514,15 @@ def test_chapter_memory_retired_from_three_readers(game, monkeypatch):
 
 
 def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
-    """缺模型配置：机械尾失败，错误落在失败尾上，可点重试。"""
+    """缺模型配置：机械尾失败，错误落在失败尾上，可点重试。
+
+    诊断来源保真：可见 error 须等于真实失败异常的 str(exc)；不锁生产中文固定字句。
+    走生产缺配置路径，仅包装捕获原异常身份（LLMUnavailable / stage / code）。
+    """
+    from ming_sim.exceptions import LLMUnavailable
     from ming_sim.mechanical_tail import (
         failed_mechanical_tail,
+        generate_ending_summary_for_tail,
         retry_failed_mechanical_tail,
         schedule_mechanical_tail_after_advance,
     )
@@ -523,6 +533,23 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     session.llm_config = None
     session.agno_db = None
     executor = _install_deferred(monkeypatch)
+
+    # 本案带 ending_outcome：首个可见失败源须来自结局总评缺配置路径（非关系酿制）。
+    # 包装真实生产路径捕获异常；同义改写生产中文不构成契约，无关替换存储须红。
+    seen: dict = {}
+    orig_ending = generate_ending_summary_for_tail
+
+    def _capture_ending(db_, closed_state, outcome, **kw):
+        try:
+            return orig_ending(db_, closed_state, outcome, **kw)
+        except BaseException as exc:
+            seen["exc"] = exc
+            raise
+
+    monkeypatch.setattr(
+        "ming_sim.mechanical_tail.generate_ending_summary_for_tail",
+        _capture_ending,
+    )
 
     schedule_mechanical_tail_after_advance(
         session,
@@ -541,7 +568,11 @@ def test_mechanical_tail_missing_llm_config_surfaces_retry(game, monkeypatch):
     turn, tail = failure
     assert turn == closed_turn
     assert tail["status"] == "failed"
-    assert str(tail.get("error") or "").strip()
+    raised = seen.get("exc")
+    assert isinstance(raised, LLMUnavailable)
+    assert raised.stage == "ending_summary"
+    assert raised.code == "llm_unavailable"
+    assert tail.get("error") == str(raised)
     assert tail.get("error_pack_path")
 
     monkeypatch.setattr(

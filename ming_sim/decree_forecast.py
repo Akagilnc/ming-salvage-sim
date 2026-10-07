@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 from ming_sim import agents, audience_translation, decree
 from ming_sim.audience_translate import build_translation_target_grounding
+from ming_sim.db import payload_declares_escort
 from ming_sim.declaration_dispatch import (
     held_dossier_decree_ref,
     pending_action_decree_ref,
@@ -152,7 +153,18 @@ def forecast_snapshot(
     prepared = prepare_world_materials(db, state, dest_root=dest_parent)
     try:
         grounding, refs = _frozen_effect_refs(db, turn, payload)
+        # 夜里拨银还没有案卷。目录与本旨身份用这道暂存自己的 decree_ref，
+        # 不用 MAX(id)+1 猜号——两道同夜预推会猜到同一个未来号，落账时串路。
+        # 猜号只留在判官候选的整数 id 上（批红契约要正整数），不进护送目录。
+        catalog_token = _uncased_grant_catalog_token(db, body, decree_ref)
+        if catalog_token and payload_declares_escort(payload):
+            grounding = _append_this_decree_escort_grounding(
+                grounding, body, catalog_token,
+            )
         this_decree = _this_decree_fact(body, decree_text=text, db=db)
+        if catalog_token:
+            this_decree = dict(this_decree)
+            this_decree["id"] = catalog_token
     except BaseException:
         release_material_tree(prepared.root)
         raise
@@ -245,6 +257,52 @@ def _held_snapshot(session: Any, dossier_id: int) -> Optional[Dict[str, Any]]:
     )
     snapshot["dossier_id"] = int(dossier_id)
     return snapshot
+
+
+def _uncased_grant_catalog_token(
+    db: Any, candidate: Dict[str, Any], decree_ref: str,
+) -> Optional[str]:
+    """尚未成案的拨银用自己的暂存标识当目录行；已经有案卷则不再补行。"""
+    if str(candidate.get("action_type") or "") != "grant_allocation":
+        return None
+    token = str(decree_ref or "")
+    if not token:
+        return None
+    try:
+        pending_id = int(candidate.get("pending_action_id"))
+    except (TypeError, ValueError):
+        return None
+    if pending_id <= 0 or not hasattr(db, "conn"):
+        return None
+    existing = db.conn.execute(
+        "SELECT id FROM decree_dossiers "
+        "WHERE action_type='grant_allocation' AND pending_action_id=? LIMIT 1",
+        (pending_id,),
+    ).fetchone()
+    if existing is not None:
+        return None
+    return token
+
+
+def _append_this_decree_escort_grounding(
+    grounding: str, candidate: Dict[str, Any], token: str,
+) -> str:
+    """本旨尚未成案，全局目录没有它的行。目录身份是暂存 decree_ref，不是猜号。
+
+    #1900 J18：已撤销的暗护双载体 escort_link 目录行不再写入；仅保留本旨自带押解标记。
+    """
+    kind = str(candidate.get("target_kind") or "")
+    target_id = str(candidate.get("target_id") or "")
+    payload = candidate.get("payload") if isinstance(candidate.get("payload"), dict) else {}
+    declared = payload_declares_escort(payload)
+    extra = (
+        f"dossier\t{token}\t{kind}:{target_id}\t本旨"
+        + ("\t自带押解" if declared else "")
+    )
+    body = grounding.rstrip("\n")
+    if not body:
+        return extra + "\n"
+    return body + "\n" + extra + "\n"
 
 
 def _frozen_effect_refs(
@@ -427,15 +485,15 @@ def _submit_snapshot_job(
     def run() -> None:
         snapshot: Optional[Dict[str, Any]] = None
         try:
-            if write_lock is None:
-                snapshot = queue.run(ticket, snapshot_fn)
-            else:
-                with write_lock:
-                    snapshot = queue.run(ticket, snapshot_fn)
-            if snapshot is None:
-                return
-            snapshot["ticket"] = ticket
             try:
+                if write_lock is None:
+                    snapshot = queue.run(ticket, snapshot_fn)
+                else:
+                    with write_lock:
+                        snapshot = queue.run(ticket, snapshot_fn)
+                if snapshot is None:
+                    return
+                snapshot["ticket"] = ticket
                 _forecast(session, snapshot, write_lock=write_lock)
             except Exception as exc:
                 if _call_exhausted(exc):

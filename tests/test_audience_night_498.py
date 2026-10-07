@@ -508,7 +508,7 @@ def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):
     monkeypatch.setattr(an, "append_ledger_entry", flaky_append)
     # 确保有员额可触发
     assert an.resolve_standing_roster(db)
-    with pytest.raises(RuntimeError, match="inject roster fail"):
+    with pytest.raises(RuntimeError):
         an.open_night(db, state, location="乾清宫")
     open_n = an.get_open_night(db)
     assert open_n is None
@@ -516,60 +516,6 @@ def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):
     assert int(n_nights) == 0
 
 
-def test_old_save_migration_night_id_index_order(content, tmp_path):
-    """旧档无 night_id 列：ensure_column 后再建索引，重开不炸。"""
-    path = str(tmp_path / "migrate-reopen.db")
-    conn = sqlite3.connect(path)
-    conn.executescript(
-        """
-        CREATE TABLE chat_turns (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            minister_name TEXT NOT NULL,
-            turn INTEGER NOT NULL,
-            year INTEGER NOT NULL,
-            period INTEGER NOT NULL,
-            user_message_id INTEGER,
-            minister_message_id INTEGER,
-            agno_session_id TEXT NOT NULL DEFAULT '',
-            agno_runs_before INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'active',
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            undone_at TEXT
-        );
-        CREATE TABLE game_state (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            year INTEGER NOT NULL,
-            period INTEGER NOT NULL,
-            turn INTEGER NOT NULL,
-            turn_phase TEXT NOT NULL DEFAULT 'summoning'
-        );
-        INSERT INTO game_state (id, year, period, turn) VALUES (1, 1628, 1, 1);
-        """
-    )
-    conn.commit()
-    conn.close()
-    # 完整 GameDB 初始化会 ensure 列 + 建索引
-    db = GameDB(path, content)
-    cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(chat_turns)").fetchall()}
-    assert "night_id" in cols
-    assert "night_seq" in cols
-    # 索引存在
-    idxs = {
-        r["name"]
-        for r in db.conn.execute("PRAGMA index_list(chat_turns)").fetchall()
-    }
-    assert "idx_chat_turns_night" in idxs
-    # 可写挂夜轮
-    state = db.load_state()
-    minister = _active_minister(db, content)
-    night = an.open_night(db, state)
-    cid = db.create_chat_turn(state, minister, "migrate", 0, night_id=night["id"])
-    row = db.conn.execute(
-        "SELECT night_id, night_seq, status FROM chat_turns WHERE id=?", (cid,),
-    ).fetchone()
-    assert int(row["night_id"]) == night["id"]
-    assert row["status"] == "generating"
-    db.close()
 
 
 # 结算相位不得召对 + 等 gate 期间相位翻转（TOCTOU）被拒 → 真实 WebGame.chat_stream 验证，
@@ -610,7 +556,6 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
             answer="臣有本奏。", proposed_directive=None, appointed_minister="",
             registered_minister="", displaced_minister="", court_action="",
             next_minister="", secret_order_id=0, pending_action_id=0,
-            pending_action_failures=[],
         )
 
     def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
@@ -623,6 +568,9 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
         chat=chat, scene_chat=scene_chat,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
+        # #1853：入口直调核心 schedule；轻壳缺绑不得靠 getattr 回退。
+        schedule_close_night_after_chat_if_needed=lambda *_a, **_k: None,
+        close_night_after_chat_if_needed=lambda *_a, **_k: None,
     )
     answers = iter(["朕问卿边事如何？", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))

@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import json
 import threading
 from tests.wait_utils import wait_until
-import types
 from types import SimpleNamespace
 
 import pytest
 
-import ming_sim.cli_backend as cb
-from ming_sim.exceptions import LLMUnavailable
-from ming_sim.materials import prepare_character_materials
 from ming_sim.session import GameSession
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
 from tests.conftest import (
@@ -86,6 +80,8 @@ class _FakeSession(HallAdmissionSessionMixin):
             "_recognize_audience_command_verdict",
             "summon_character",
             "schedule_pending_scene_translation",
+            "close_night_after_chat_if_needed",
+            "schedule_close_night_after_chat_if_needed",
         ):
             if hasattr(GameSession, _name):
                 setattr(self, _name, _types.MethodType(getattr(GameSession, _name), self))
@@ -172,30 +168,6 @@ def _assert_next_accepted(stream) -> None:
 
 
 
-def test_chat_reload_exposes_retryable_failed_secret_order(game):
-    db, state, content = game
-    minister_name = "毕自严"
-    web_game = _web_game(db, state, content, _FakeAgent())
-    secret_id = db.stage_pending_action(
-        state.turn, kind="secret_order", action="新建", minister_name=minister_name, target_id=None,
-        payload={"title": "暗查辽饷", "content": "密查辽饷去向", "assignee": minister_name},
-    )
-    db.stage_pending_action(
-        state.turn, kind="office", action="任命", minister_name=minister_name, target_id=None,
-        payload={"text": "测试任免原文", "name": "测试新臣", "office": "太常寺卿"},
-    )
-    db.conn.execute("UPDATE pending_actions SET status='failed'")
-    db.conn.commit()
-
-    failures = web_game.pending_action_failures_for(minister_name)
-
-    assert len(failures) == 1
-    assert failures[0]["id"] == secret_id
-    assert failures[0]["kind"] == "secret_order"
-
-
-
-
 def test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn(game):
     db, state, content = game
     minister_name = "毕自严"
@@ -232,28 +204,6 @@ def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
 
     assert result["undone_chat_turn_id"] == turn
     assert db.get_last_active_chat_turn(minister_name, state.turn) is None
-
-
-def test_current_unissued_draft_is_not_character_carryover(game):
-    """本回合未明发草案不应绕过见闻投影，注入未参与大臣的召对提示。
-
-    #1769 只放行**跨月**未入档旨稿（上月已随颁诏发出、仅未落档）；本回合刚拟、
-    还在御案上的草案仍是密事，不得越过排除边界。
-    """
-    db, state, _content = game
-    db.add_directive(
-        state, None, "着户部清核辽饷。", "player-decree-test",
-        dossier_payload={
-            "dossier_action_type": "policy", "target_kind": "issue",
-            "target_id": "liaoxiang-audit", "locality_scope": "none",
-        },
-    )
-    from ming_sim.materials import _carryover_drafts
-    assert _carryover_drafts(db, state) == []
-
-
-
-
 
 
 

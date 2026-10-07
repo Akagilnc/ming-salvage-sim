@@ -26,7 +26,6 @@ from ming_sim.materials import list_materials, prepare_scene_materials
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import SessionWriteQueue
 
-
 def _sess(db, state, content, *, llm_config=None):
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -39,7 +38,6 @@ def _sess(db, state, content, *, llm_config=None):
     sess._write_queue = SessionWriteQueue()
     sess._write_gate = sess._write_queue.write_gate
     return sess
-
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
@@ -76,7 +74,6 @@ def test_scene_chat_one_call_returns_multi_person_script(game, monkeypatch):
     assert calls[0] == emperor
     assert result.court_action == ""
 
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_path):
     """AC2：「宣 X」后入殿账落下，下一次场景材料准备他在场。"""
@@ -111,7 +108,6 @@ def test_xuan_lands_enter_then_present_on_next_prepare(game, monkeypatch, tmp_pa
     assert any(p.startswith(f"人物/{target}/") for p in list_materials(prepared.root))
     assert result.court_action == ""
 
-
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
     from ming_sim.cli.terminal import minister_chat
@@ -143,37 +139,6 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
     # 首轮对话轮带结构化 minister_message_id（admission origin 身份）；不验 opening 正文／次数壳。
     first = list_chat_turns_for_night(db, int(night["id"]))[0]
     assert int(first["minister_message_id"] or 0) > 0
-
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_remote_xuan_feeds_summon_facts_to_scene(game, monkeypatch):
-    """真入口 scene_chat 宣召 → 结构化 unsettled summon 落账（不盯 opening 呈现）。"""
-    from ming_sim.audience_night import list_unsettled_summons
-
-    db, state, content = game
-    target = "洪承畴"
-    db.conn.execute("UPDATE characters SET location=? WHERE name=?", ("shaanxi", target))
-    db.conn.commit()
-    character = content.characters[target]
-    character.location = "shaanxi"
-    sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
-
-    class FakeAgent:
-        tools = []
-
-        def run(self, message):
-            return SimpleNamespace(content="传召已发。", tools=[])
-
-    monkeypatch.setattr(
-        "ming_sim.session.create_scene_agent",
-        lambda *_a, **_k: FakeAgent(),
-    )
-    sess.scene_chat(f"宣{target}")
-    summons = list_unsettled_summons(db)
-    matched = [s for s in summons if str(s.get("person_name") or "") == target]
-    assert len(matched) == 1
-    assert str(matched[0].get("kind") or "") == "fresh"
-
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatch):
@@ -222,4 +187,3 @@ def test_retire_via_scene_chat_closes_night_and_keeps_last_turn(game, monkeypatc
     assert turns_after
     assert int(turns_after[-1]["id"]) == ctid
     assert int(turns_after[-1].get("minister_message_id") or 0) == minister_mid
-

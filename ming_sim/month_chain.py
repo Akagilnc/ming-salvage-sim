@@ -132,7 +132,7 @@ def _decree_ref_is_secret(db: Any, decree_ref: str) -> bool:
     if not str(decree_ref).startswith(prefix):
         return False
     raw = str(decree_ref)[len(prefix):].split(":", 1)[0]
-    if not raw.isdigit() or not hasattr(db, "conn"):
+    if not raw.isdigit():
         return False
     row = db.conn.execute(
         "SELECT kind FROM pending_actions WHERE id=?", (int(raw),),
@@ -157,107 +157,101 @@ def _month_fact_materials(
     secret_dossiers = secret_order_dossier_ids(db) if not include_secret_sources else set()
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
-    if hasattr(db, "conn"):
-        rows = db.conn.execute(
-            "SELECT decree_ref, declaration_json, forecast_text, visible_refs_json "
-            "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
-            (turn,),
-        ).fetchall()
-        for row in rows:
-            decree_ref = str(row["decree_ref"] or "")
-            # 已结算声明是内部机械事实；腐坏响亮，不得当空声明供料（#1897 E1/K2）。
-            try:
-                declaration = json.loads(row["declaration_json"] or "{}")
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"settled declaration_json 无效：{decree_ref}"
-                ) from exc
-            if not isinstance(declaration, dict):
-                raise ValueError(
-                    f"settled declaration_json 非对象：{decree_ref}"
-                )
-            try:
-                visible = json.loads(row["visible_refs_json"] or "{}")
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"settled visible_refs_json 无效：{decree_ref}"
-                ) from exc
-            if not isinstance(visible, dict):
-                raise ValueError(
-                    f"settled visible_refs_json 非对象：{decree_ref}"
-                )
-            if not include_secret_sources and (
-                _decree_ref_is_secret(db, decree_ref)
-                or _secret_sourced(declaration)
-                or _secret_sourced(visible)
-            ):
-                continue
-            nominal.append({"decree_ref": decree_ref, "declaration": declaration})
-            forecast = row["forecast_text"]
-            if isinstance(forecast, str) and forecast.strip():
-                forecasts.append(forecast)
+    rows = db.conn.execute(
+        "SELECT decree_ref, declaration_json, forecast_text, visible_refs_json "
+        "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
+        (turn,),
+    ).fetchall()
+    for row in rows:
+        decree_ref = str(row["decree_ref"] or "")
+        # 已结算声明是内部机械事实；腐坏响亮，不得当空声明供料（#1897 E1/K2）。
+        try:
+            declaration = json.loads(row["declaration_json"] or "{}")
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"settled declaration_json 无效：{decree_ref}"
+            ) from exc
+        if not isinstance(declaration, dict):
+            raise ValueError(
+                f"settled declaration_json 非对象：{decree_ref}"
+            )
+        try:
+            visible = json.loads(row["visible_refs_json"] or "{}")
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"settled visible_refs_json 无效：{decree_ref}"
+            ) from exc
+        if not isinstance(visible, dict):
+            raise ValueError(
+                f"settled visible_refs_json 非对象：{decree_ref}"
+            )
+        if not include_secret_sources and (
+            _decree_ref_is_secret(db, decree_ref)
+            or _secret_sourced(declaration)
+            or _secret_sourced(visible)
+        ):
+            continue
+        nominal.append({"decree_ref": decree_ref, "declaration": declaration})
+        forecast = row["forecast_text"]
+        if isinstance(forecast, str) and forecast.strip():
+            forecasts.append(forecast)
     landed: List[Dict[str, Any]] = []
-    if hasattr(db, "conn"):
+    for row in db.conn.execute(
+        "SELECT account, delta, category, reason, origin_ref FROM economy_ledger "
+        "WHERE turn=? ORDER BY id",
+        (turn,),
+    ):
+        origin = str(row["origin_ref"] or "")
+        if not include_secret_sources and (
+            is_secret_order_origin(origin)
+            or _origin_is_secret_dossier(origin, secret_dossiers)
+        ):
+            continue
+        landed.append({
+            "account": row["account"],
+            "delta": int(row["delta"]),
+            "category": row["category"],
+            "reason": row["reason"],
+            "origin_ref": origin,
+        })
+    rejections: List[Dict[str, Any]] = []
+    exists = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
+    ).fetchone()
+    if exists is not None:
         for row in db.conn.execute(
-            "SELECT account, delta, category, reason, origin_ref FROM economy_ledger "
+            "SELECT section, item_json, reason, category, source FROM rejection_reports "
             "WHERE turn=? ORDER BY id",
             (turn,),
         ):
-            origin = str(row["origin_ref"] or "")
+            if not include_secret_sources and str(row["source"] or "") == "secret_order":
+                continue
+            try:
+                item = json.loads(row["item_json"] or "{}")
+            except json.JSONDecodeError:
+                item = {}
             if not include_secret_sources and (
-                is_secret_order_origin(origin)
-                or _origin_is_secret_dossier(origin, secret_dossiers)
+                _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
             ):
                 continue
-            landed.append({
-                "account": row["account"],
-                "delta": int(row["delta"]),
-                "category": row["category"],
+            rejections.append({
+                "section": row["section"],
+                "item": item,
                 "reason": row["reason"],
-                "origin_ref": origin,
+                "category": row["category"],
             })
-    rejections: List[Dict[str, Any]] = []
-    if hasattr(db, "conn"):
-        exists = db.conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
-        ).fetchone()
-        if exists is not None:
-            for row in db.conn.execute(
-                "SELECT section, item_json, reason, category, source FROM rejection_reports "
-                "WHERE turn=? ORDER BY id",
-                (turn,),
-            ):
-                if not include_secret_sources and str(row["source"] or "") == "secret_order":
-                    continue
-                try:
-                    item = json.loads(row["item_json"] or "{}")
-                except json.JSONDecodeError:
-                    item = {}
-                if not include_secret_sources and (
-                    _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
-                ):
-                    continue
-                rejections.append({
-                    "section": row["section"],
-                    "item": item,
-                    "reason": row["reason"],
-                    "category": row["category"],
-                })
     answers: List[Dict[str, Any]] = []
-    if hasattr(db, "list_pending_decisions"):
-        for row in db.list_pending_decisions(turn):
-            if str(row.get("status") or "") != "decided":
-                continue
-            choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
-            answers.append({
-                "title": row.get("title") or "",
-                "label": choice.get("label") or "",
-                "note": choice.get("note") or "",
-                "event_id": row.get("event_id") or "",
-            })
-    snapshot = None
-    if hasattr(db, "get_month_open_snapshot"):
-        snapshot = db.get_month_open_snapshot(turn)
+    for row in db.list_pending_decisions(turn):
+        if str(row.get("status") or "") != "decided":
+            continue
+        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        answers.append({
+            "title": row.get("title") or "",
+            "label": choice.get("label") or "",
+            "note": choice.get("note") or "",
+            "event_id": row.get("event_id") or "",
+        })
+    snapshot = db.get_month_open_snapshot(turn)
     return {
         "nominal": nominal,
         "landed": landed,
@@ -719,12 +713,9 @@ def _abort_month_call(
     turn = int(state.turn)
     # 事务已回滚时，失败记录只叠在已提交链上。调用方链在 alongside 里改过的
     # 内存相位（world_committed 等）不随失败写回。
-    if (
-        kind == "code_exception"
-        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
-    ):
+    if kind == "code_exception" and db.owns_transaction():
         from ming_sim.decree import reload_state_from_db
-        reload_state_from_db(db, state, content=getattr(db, "content", None))
+        reload_state_from_db(db, state, content=db.content)
     committed = _load_chain(db, turn)
     escape_armed = False
     if kind == "model_exhausted" and step in _TRANSLATE_ESCAPE_STEPS:
@@ -1070,7 +1061,7 @@ def _enrich_eligible_dossiers_for_supply(
     for item in candidates:
         row = dict(item)
         dossier_id = int(item.get("dossier_id") or 0)
-        dossier = db.get_decree_dossier(dossier_id) if dossier_id and hasattr(db, "get_decree_dossier") else None
+        dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
         if dossier is not None:
             secret_order_id = int(
                 dossier.get("secret_order_id") or item.get("secret_order_id") or 0
@@ -1222,7 +1213,7 @@ def build_secret_orders_supply_feed(
 ) -> Dict[str, Any]:
     """整月密报供料：沿邸报作者本月材料读口，但不滤密令来源；另附密令对象与盘面。
 
-    不拼装「已生效效果」清单，也不另造逐段实际结果账本。
+    不拼装「已生效效果」清单，也不另造逐段实际结果账本；专用逐路实况账本已退役（#1900 J18）。
     """
     from ming_sim.covert_progress import _is_issuance_turn
     from ming_sim.materials import _world_board_text, actual_progress_notes
@@ -1248,7 +1239,10 @@ def build_secret_orders_supply_feed(
         )
     materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
     return {
-        "instruction": "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。",
+        "instruction": (
+            "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。"
+            "逐路汇总执行状态时据案卷关联与核账事实读，别拿整条密令的成败反推。"
+        ),
         "turn": turn,
         "eligible_dossiers": eligible,
         "active_secret_orders": active_orders,
@@ -1468,9 +1462,7 @@ def _run_month_drift(
     collector = RejectionCollector()
     with atomic(db):
         db.record_monthly_supervision_presence(turn, commit=False)
-        db.record_monthly_grant_reconciliations(
-            turn, [], rejection_collector=collector, source=source,
-        )
+        db.record_monthly_grant_reconciliations(turn)
         db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         retire_unsettled_summons_for_inactive(db)
         # #651：漂移只承接不依赖本段 applied 的持久态（已决「禁摊派」欠饷是否再开口）。

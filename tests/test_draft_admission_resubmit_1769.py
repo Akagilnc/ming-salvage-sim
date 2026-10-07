@@ -144,9 +144,16 @@ def _queue_backend(monkeypatch, captures: list) -> None:
     monkeypatch.setattr(cb, "_run_backend_for_config", fake_backend)
 
 
-def _spy_resubmit_kwargs(monkeypatch) -> list[dict]:
-    """截获补交结构化入参（failure_reason / bad_payload），不扫 prompt 文本。"""
+def _spy_resubmit_kwargs(monkeypatch) -> tuple[list[dict], list[str]]:
+    """截获补交结构化入参与本轮产物失败事实（failure_reason 源），不扫 prompt。
+
+    返回 (calls, product_faults)：
+    - calls[i]["failure_reason"] = 实际回喂给 LLM 的诊断
+    - product_faults = 各次 resubmit 自身抛出的 ValueError 原文（carry_over 源）
+    来源保真：下一轮 failure_reason 必须等于对应 product_fault，不得只验非空/次数。
+    """
     calls: list[dict] = []
+    product_faults: list[str] = []
     real = cb.resubmit_draft_admission_payload
 
     def wrapper(decree_text, *, bad_payload, failure_reason, **kwargs):
@@ -155,15 +162,45 @@ def _spy_resubmit_kwargs(monkeypatch) -> list[dict]:
             "bad_payload": dict(bad_payload or {}),
             "decree_text": str(decree_text or ""),
         })
-        return real(
-            decree_text,
-            bad_payload=bad_payload,
-            failure_reason=failure_reason,
-            **kwargs,
-        )
+        try:
+            return real(
+                decree_text,
+                bad_payload=bad_payload,
+                failure_reason=failure_reason,
+                **kwargs,
+            )
+        except ValueError as exc:
+            product_faults.append(str(exc))
+            raise
 
     monkeypatch.setattr(cb, "resubmit_draft_admission_payload", wrapper)
-    return calls
+    return calls, product_faults
+
+
+def _spy_ensure_rejection_reasons(monkeypatch, game) -> list[list[tuple[int, str]]]:
+    """按轮截获 ensure_dossiers 拒因（directive_id, reason），作回喂源真值。"""
+    rounds: list[list[tuple[int, str]]] = []
+    real = game.db.ensure_dossiers_for_draft_directives
+
+    def wrapper(state, record_rejections=False):
+        result = real(state, record_rejections=record_rejections)
+        rounds.append([
+            (int(item["directive_id"]), str(item.get("reason") or ""))
+            for item in (result or [])
+            if item.get("directive_id") is not None
+        ])
+        return result
+
+    monkeypatch.setattr(game.db, "ensure_dossiers_for_draft_directives", wrapper)
+    return rounds
+
+
+def _reason_for_directive(
+    round_rows: list[tuple[int, str]], directive_id: int,
+) -> str:
+    matched = [reason for did, reason in round_rows if did == int(directive_id)]
+    assert matched, f"ensure 轮次无 directive#{directive_id} 拒因"
+    return matched[0]
 
 
 _ENSURE_FAULT_MARK = "simulated ensure code fault #1769"
@@ -257,7 +294,8 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     game = admission_game
     # 原抽 + 重写1 仍坏；重写2 才成案（owner：总计 3）
     _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _GOOD_XIEANG])
-    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -275,15 +313,23 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     _post_issue_stream(client, expected_turn=turn, step="1769 resubmit")
     assert _turn_of(_get_state(client)) == turn + 1
 
-    # 两次 LLM 重写；入参含失败事实 + 原产物（结构化字段，不扫 prompt）
+    # 两次 LLM 重写；failure_reason 绑定本轮 ensure 拒因（写回成功无 carry）
     assert len(resubmit_calls) == 2
-    assert resubmit_calls[0]["failure_reason"]
+    assert len(ensure_rounds) >= 2
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[0], draft_id,
+    )
+    assert resubmit_calls[1]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[1], draft_id,
+    )
+    assert not product_faults  # 本路两轮写回成功，源=ensure 而非产物 ValueError
     assert resubmit_calls[0]["bad_payload"].get("dossier_action_type") == "pay_order_override"
     assert any(
         isinstance(e, dict) and e.get("key") == "arrears_priority_军饷"
         for e in (resubmit_calls[0]["bad_payload"].get("entries") or [])
     )
-    assert resubmit_calls[1]["failure_reason"]
+    assert resubmit_calls[0]["decree_text"] == _DECREE_TEXT
+    assert resubmit_calls[1]["decree_text"] == _DECREE_TEXT
 
     dossier = game.db.get_dossier_for_directive(draft_id)
     assert dossier is not None
@@ -293,6 +339,7 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     assert projected.get("grant_action") == _GOOD_XIEANG["恩赏拨帑"] == "协饷"
     assert projected.get("amount") == _GOOD_XIEANG["金额"] == 15
     assert projected.get("account") == _GOOD_XIEANG["账户"] == "国库"
+    assert projected.get("purpose") == _GOOD_XIEANG["用途"]
     assert projected.get("target_kind") == "army"
     assert projected.get("target_id") == "guanning"
     assert projected.get("dossier_action_type", dossier["action_type"]) != "pay_order_override"
@@ -311,7 +358,8 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     game = admission_game
     # 原抽 + 两次重写皆坏（总计 3）；变异把重写预算改回 1 时本案须红（calls==2）
     _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER, _BAD_PAY_ORDER])
-    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -323,6 +371,15 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     body = _post_issue_stream(client, expected_turn=turn, step="1769 exhaust")
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
+    assert len(ensure_rounds) >= 2
+    # 两轮写回成功：回喂源=各轮 ensure 拒因，丢源/替换不能假绿
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[0], did,
+    )
+    assert resubmit_calls[1]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[1], did,
+    )
+    assert not product_faults
     row = game.db.get_directive(did)
     assert row is not None and str(row["status"]) == "draft"
     assert game.db.get_dossier_for_directive(did) is None
@@ -340,22 +397,15 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     _finish_month_after_gazette(game, turn)
     assert source_turn < int(game.state.turn)
 
-    # 跨月未入档旨稿进入现役角色材料供料；按结构化 id/正文核对，
-    # 不锁召对提示词。当前回合尚未跨月的草案仍被 carryover 边界排除。
-    from ming_sim.materials import _carryover_drafts
-    assert any(
-        int(d["id"]) == did
-        for d in _carryover_drafts(game.db, game.state)
-    )
-
     # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
+    # （跨月未入档边界的外部可见契约；不直调私有 _carryover_drafts）
     payloads = _write_decree_capture_payloads(monkeypatch, game)
     assert payloads
-    feed_items = [
+    feed_item = next(
         d for d in payloads[0]["directives"]
-        if d.get("admission_status") == "上月未入档"
-    ]
-    assert feed_items  # 跨月未入档旨以 admission_status 闸进入供料；不锁正文
+        if str(d.get("text") or "") == str(row["text"] or "")
+    )
+    assert feed_item.get("admission_status") == "上月未入档"
 
     # 刷新/恢复：同库重开身份一致、无重复案卷
     db_path = str(game.db.path)
@@ -392,7 +442,8 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     _queue_backend(monkeypatch, [
         _GOOD_XIEANG, _BAD_PAY_ORDER, _BAD_UNKNOWN_PARTICIPANT,
     ])
-    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -415,10 +466,14 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
     assert not _rejection_rows(game, good_id)
     # 名册产物错未被当成系统故障：无错误包、月已推进（上方断言）
     assert not latest_error_pack_for_turn(game.db.path, turn)
-    # 首轮拒因来自原产物；第二次重写听见的是第一次重写自己的失败事实
+    # 来源保真：首轮=ensure 原 pay_order 拒因；次轮=第一次重写自身产物失败事实
+    # （carry_over）。丢 carry / 旧拒因冒充 / 无关诊断替换须红；合法别名仍绿。
     assert len(resubmit_calls) == 2
-    assert _UNKNOWN_NAME not in resubmit_calls[0]["failure_reason"]
-    assert _UNKNOWN_NAME in resubmit_calls[1]["failure_reason"]
+    assert product_faults, "第一次重写须留下本轮产物失败事实"
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[0], bad_id,
+    )
+    assert resubmit_calls[1]["failure_reason"] == product_faults[0]
 
 
 def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monkeypatch):
@@ -491,7 +546,8 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     _queue_backend(monkeypatch, [
         _BAD_PAY_ORDER, _NO_INTENT_REWRITE, _NO_INTENT_REWRITE,
     ])
-    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -504,6 +560,12 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     _post_issue_stream(client, expected_turn=turn, step="1769 non-intent rewrite")
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
+    # 两轮重写皆无拟旨意图 → 产物 ValueError；次轮须听见首轮自身失败事实
+    assert product_faults, "无拟旨意图重写须留下产物失败事实"
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[0], did,
+    )
+    assert resubmit_calls[1]["failure_reason"] == product_faults[0]
 
     row = game.db.get_directive(did)
     assert row is not None and str(row["status"]) == "draft"
@@ -526,7 +588,8 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     # pending 已带结构化坏载荷（召对核定前）；issue 时 confirm 翻 draft 后走 ensure+resubmit。
     # 模型供料只服务补交重写（原抽已在 payload 里）。
     _queue_backend(monkeypatch, [_BAD_PAY_ORDER, _BAD_PAY_ORDER])
-    resubmit_calls = _spy_resubmit_kwargs(monkeypatch)
+    resubmit_calls, product_faults = _spy_resubmit_kwargs(monkeypatch)
+    ensure_rounds = _spy_ensure_rejection_reasons(monkeypatch, game)
     client = TestClient(web_app.app)
     turn = int(game.state.turn)
 
@@ -555,6 +618,15 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
     assert body.get("_event") in (None, "done", "")
     assert _turn_of(_get_state(client)) == turn + 1
     assert len(resubmit_calls) == 2
+    assert len(ensure_rounds) >= 2
+    # pending 翻 draft 后走 ensure 源回喂；写回成功则源=ensure 拒因
+    assert resubmit_calls[0]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[0], did,
+    )
+    assert resubmit_calls[1]["failure_reason"] == _reason_for_directive(
+        ensure_rounds[1], did,
+    )
+    assert not product_faults
 
     row = game.db.get_directive(did)
     assert row is not None

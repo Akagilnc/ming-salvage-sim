@@ -5,8 +5,13 @@
 ## 一、两条入口
 
 ```text
+册外入册（须先于任命）
+  转译/月链声明 registrations
+    → declaration_dispatch._dispatch_registrations
+    → session.register_unlisted_person_record
+
 召对任免
-  propose_appointment / 口头任免分类
+  转译声明 commission.appointment / 口头任免分类
     → pending_actions(kind=office)
     → 玩家确认或结束回合默认同意
     → commit_pending_actions：只成任免案卷，不授官
@@ -19,16 +24,16 @@
             → outer commit 后 registry.project_outcome
 
 月末人物变化
-  extractor 的「人物变更」
-    → apply_score_extraction
+  月链声明段「人物变更」
+    → declaration_dispatch → apply_score_extraction
     → ADR 0009 人物 applier
 ```
 
-旧 `appointments` / `office_changes` / `character_status_changes` / `character_power_changes` 只为历史 delta 重放保留，由 sanitize 层翻译；新内容只写 `人物变更`，字段与动作见 ADR 0009 和 `docs/DELTA_SCHEMA.md`。
+人物写只认 canonical 键 `人物变更`（ADR 0009 / [`DELTA_SCHEMA`](DELTA_SCHEMA.md)）；旧四 key 与 legacy 翻译层已退役，不得再经 sanitize 重放。
 
 ## 二、召对任免
 
-`propose_appointment` 返回任免候选；`GameSession._stage_appointment_candidate` 将其写入 `pending_actions`，与口头任免共用确认闸。候选在这里尚未授官。
+召对转译声明的任免载荷（`commission.appointment` 等）经现役 stage 写入 `pending_actions(kind=office)`，与口头任免共用确认闸。候选在这里尚未授官，也不能因该候选获得新职或传召资格。册外新人须先走上一节 `registrations` 入册，不得假定已退役的 `propose_appointment` 工具仍存在。
 
 候选载荷的核心字段：
 

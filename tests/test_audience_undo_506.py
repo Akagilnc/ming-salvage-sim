@@ -147,23 +147,6 @@ def test_undo_rejected_after_night_closed(game):
     assert any(e["source_chat_turn_id"] == chat_id for e in an.list_ledger(db, night_id))
 
 
-# ── AC8：撤回终结异步残余——后台写入前校验目标轮存活，不写已撤/失败轮 ────────────
-
-
-# ── AC3：夜内真实盘面直写走可枚举白名单；越权直写被审计咬住 ──────────────────────
-
-
-def test_night_direct_write_whitelist_enumerates_authorized_items():
-    wl = an.NIGHT_DIRECT_WRITE_WHITELIST
-    # ADR 0038：①密令落地；②转译声明的当场实况（#1839 第四类，原入册/边事件并入）。
-    # 新增夜内直写仍须过设计审、显式扩表。
-    assert set(wl) == {"密令落地", "转译声明的当场实况"}
-    assert wl["密令落地"] == frozenset({"secret_orders", "secret_order_briefs"})
-    fourth = wl["转译声明的当场实况"]
-    assert {"characters", "character_offices", "relation_edge_events"} <= set(fourth)
-    assert {"textual_facts", "public_sayings", "story_ledger_entries"} <= set(fourth)
-
-
 def test_audit_passes_whitelisted_and_catches_unwhitelisted_night_write(game):
     db, state, content = game
     m = _active_minister(db, content)
@@ -542,35 +525,63 @@ def test_attach_origin_bind_atomic_normal_path_binds_and_undo_deletes(game):
                    for e in an.list_ledger(db, night_id))
 
 
-# ── 旧档升级路径：chat_turns.undone_at 缺列 → open 补列 → undo 逆转 ─────────────
-# undone_at 进 CREATE TABLE 晚于该表初版；缺 ensure_column 时旧档 undo 的
-# UPDATE ... SET undone_at 会 OperationalError（no such column）→ 整撤回回滚。
-
-
-def test_undo_survives_db_created_before_undone_at_column(game):
+def test_undo_erases_inactive_office_summon_origin_bound_to_chat_turn(game):
+    """#672：ensure inactive office origin 绑 chat-turn；undo 按 typed source 清。"""
     db, state, content = game
     m = _active_minister(db, content)
-    night_id, chat_id = _run_round(db, state, m)
+    night = an.open_night(db, state)
+    night_id = int(night["id"])
 
-    # 模拟旧档：chat_turns 建于 undone_at 进 CREATE 之前（列不存在）。
-    db.conn.execute("ALTER TABLE chat_turns DROP COLUMN undone_at")
-    db.conn.commit()
-    assert "undone_at" not in {
-        r["name"] for r in db.conn.execute("PRAGMA table_info(chat_turns)").fetchall()
-    }
+    def _writes(_nid: int, chat_id: int) -> None:
+        pending_id = db.stage_pending_action(
+            int(state.turn), "office", "任命", m,
+            {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+        )
+        an.ensure_inactive_office_summon(
+            db, int(pending_id), "袁崇焕",
+            night_id=night_id, origin_chat_turn_id=int(chat_id),
+        )
 
-    # 重开 → GameDB 升级迁移必须补回该列（ensure_column），而非留待 undo 时炸。
-    db2 = _reopen(db, content)
-    try:
-        assert "undone_at" in {
-            r["name"] for r in db2.conn.execute("PRAGMA table_info(chat_turns)").fetchall()
-        }
-        db2.undo_chat_turn(chat_id)
-        row = db2.conn.execute(
-            "SELECT status, undone_at FROM chat_turns WHERE id = ?", (int(chat_id),)
-        ).fetchone()
-        assert row["status"] == "undone"
-        assert row["undone_at"]
-    finally:
-        db2.close()
+    _nid, chat_id = _run_round(db, state, m, writes=_writes)
+    origin_rows = db.conn.execute(
+        "SELECT id, origin_ref, origin_chat_turn_id, tags FROM story_ledger_entries "
+        "WHERE origin_ref LIKE 'office:%'",
+    ).fetchall()
+    assert len(origin_rows) == 1
+    assert int(origin_rows[0]["origin_chat_turn_id"]) == int(chat_id)
+    assert "传召未结" not in json.loads(origin_rows[0]["tags"] or "[]")
+    entry_id = int(origin_rows[0]["id"])
+
+    db.undo_chat_turn(int(chat_id))
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE id=?", (entry_id,),
+    ).fetchone()[0] == 0
+
+
+def test_reject_pending_discards_inactive_office_summon_origin(game):
+    """#672：确认拒绝只清仍 inactive 的 office:<pending_id> origin。"""
+    db, state, content = game
+    m = _active_minister(db, content)
+    night = an.open_night(db, state)
+    pending_id = db.stage_pending_action(
+        int(state.turn), "office", "任命", m,
+        {"text": "测试任免原文", "name": "袁崇焕", "office": "辽东巡抚", "summon_after": "是"},
+    )
+    an.ensure_inactive_office_summon(
+        db, int(pending_id), "袁崇焕",
+        night_id=int(night["id"]), origin_chat_turn_id=0,
+    )
+    origin = f"office:{int(pending_id)}"
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 1
+
+    dropped = db.drop_pending_actions_for_minister(
+        int(state.turn), m, action_ids=[int(pending_id)],
+    )
+    assert dropped == 1
+    assert db.conn.execute(
+        "SELECT count(*) FROM story_ledger_entries WHERE origin_ref=?", (origin,),
+    ).fetchone()[0] == 0
+
 

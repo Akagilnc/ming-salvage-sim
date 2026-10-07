@@ -57,8 +57,6 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     直接读表：``list_pending_actions`` 投影不含 night_id / night_approved，
     转译必须看见本夜归属与应允态，不能靠那条呈现投影。
     """
-    if not hasattr(db, "conn"):
-        return []
     params: list[Any] = [int(turn)]
     sql = (
         "SELECT id, kind, action, payload_json, night_id, night_approved "
@@ -100,7 +98,7 @@ def build_night_said_so_far(
     该轮的已说；本轮正文只走【本轮皇帝】【本轮回话】，不在此重复；亦不读后续
     已持久化轮（下一句不等转译时可能已落库）。
     """
-    if int(night_id or 0) <= 0 or not hasattr(db, "conn"):
+    if int(night_id or 0) <= 0:
         return []
     from ming_sim.audience_night import list_chat_turns_for_night, list_ledger
 
@@ -204,8 +202,6 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     只读 DB 真源；查询失败按 ADR 0005 上抛，不得静默退化为空目录。
     不猜、不从正文匹配改写模型输出。
     """
-    if not hasattr(db, "conn"):
-        return ""
     lines: List[str] = []
     for row in db.conn.execute(
         "SELECT id, name FROM regions ORDER BY id"
@@ -236,6 +232,16 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         lines.append(
             f"secret_order\t{int(row['id'])}\t{str(row['status'] or '')}\t"
             f"{str(row['title'] or '')}"
+        )
+    # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
+    for row in db.conn.execute(
+        "SELECT id, action_type, target_kind, target_id FROM decree_dossiers "
+        "WHERE status='executing' AND action_type='grant_allocation' ORDER BY id"
+    ).fetchall():
+        declared = db.dossier_declares_escort(int(row["id"]))
+        lines.append(
+            f"dossier\t{int(row['id'])}\t{str(row['target_kind'] or '')}:{str(row['target_id'] or '')}"
+            + ("\t自带押解" if declared else "")
         )
     if state is not None:
         from ming_sim.due_review import list_due_review_scenes
@@ -293,7 +299,10 @@ def build_c0_declaration_shape() -> str:
         '        "amount": 正整数万两, "account": "国库|内库",\n'
         '        "purpose": "补饷（仅协饷）",\n'
         f'        "target_kind": "{target_kind_hint}",\n'
-        '        "target_id": "目标 id", "cadence": "一次性|每月"\n'
+        '        "target_id": "目标 id", "cadence": "一次性|每月",\n'
+        '        "escort": {"escortees": [{"character_id": "押解人名", '
+        '"tier": "主办|协办|知情", "role": "职分文字", '
+        '"delegator_id": "委派人名或空"}], "note": "押解护送缘由原句"}\n'
         "      },\n"
         '      "punishment": {"target_id": "处置人名（压下时可空）", '
         '"punish_action": "惩处动作（压下时为无）", "issue_id": "弹劾事项 id（有则填）", '
@@ -445,6 +454,11 @@ def build_audience_translate_prompt(
         "- 皇帝交代近侍查某事 → inquiries；只有点名【权威目标目录】里某一条密令时才填该行精确 order_id，"
         "未点名则省略 order_id，只记委派、不拉取密令月报；不得从查访散文猜测密令。"
         "催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
+        "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
+        "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令，"
+        "在该 commissions 项的 grant.escort.escortees 按 ADR 0053 参与人条目写押解人"
+        "（character_id／tier 机械档／role 职分／delegator_id 委派人，无委派留空），"
+        "此人即进本案参与人名单。\n"
         f"{grounding_block}"
         f"【本场已说的话】\n{said_block}\n"
         f"【本夜暂存清单】{pending_block}\n"

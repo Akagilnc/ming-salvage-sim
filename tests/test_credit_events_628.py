@@ -631,4 +631,3 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
         assert {r["target"] for r in r_edges} == {"倪元璐", "徐光启"}
     finally:
         restored.close()
-

@@ -159,16 +159,15 @@ def bind_decisions_to_candidate_events(
     decisions: List[Dict[str, object]],
     simulator_payload: object,
 ) -> List[Dict[str, object]]:
-    """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389 / #1897).
+    """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389 / #1897 / ADR 0115).
 
-    The candidate snapshot — not the simulator's free-text echo — is the source of
-    truth. Only explicit structured ids are trusted:
+    Binding is by structured identity only（绑定由构造保证，非由文本捞回）:
     - A simulator-echoed event_id is trusted ONLY if it belongs to this turn's
       candidate snapshot.
-    - Rescript desk rows with ``dossier:`` prefix keep their id when options carry
-      rescript capability fields (#1490/#1492 A).
-    - Missing or off-snapshot ids are UNBOUND (event_id removed). Presentation
-      titles are never used to invent or rebind event_id (#1897 K2 / ADR0142).
+    - A missing id stays unbound; an off-snapshot id is stripped. Titles are
+      presentation and never used to invent or rescue an event_id (#1897 K2 / #1900 J20 / ADR0142).
+    - Non-event HITL decisions keep no event_id. dossier: prefixes with full
+      rescript capability fields are retained (#1490/#1492 A).
     """
     if not decisions:
         return []
@@ -183,9 +182,8 @@ def bind_decisions_to_candidate_events(
         if not isinstance(item, dict):
             continue
         event_id = str(item.get("id") or "").strip()
-        if not event_id:
-            continue
-        candidate_ids.add(event_id)
+        if event_id:
+            candidate_ids.add(event_id)
 
     bound: List[Dict[str, object]] = []
     for decision in decisions:
@@ -195,15 +193,13 @@ def bind_decisions_to_candidate_events(
             bound.append(out)  # 回显 id 确属本回合候选 → 采信
             continue
         # #1490/#1492 A：仅当 options 带齐 dossier_id+dossier_decision 时保留
-        # dossier: 前缀（真批红待裁）。裸 origin_ref 回填 / LLM 幻觉行照旧解绑，
-        # 否则 due-commitment 同形会空对空过先验 → phase2 批红卡死。
+        # dossier: 前缀（真批红待裁）。裸 origin_ref 回填 / LLM 幻觉行照旧解绑。
         if explicit.startswith("dossier:") and decision_has_rescript_capability(out):
             bound.append(out)
             continue
         if explicit:
-            # off-snapshot 回显 id → 解绑，不保留这个非候选 id（留着会被
-            # submit_decisions 当 'triggered' 写进事件账）。选择仍在
-            # pending_decisions.choice_json，不污染终态账。
+            # off-snapshot 回显 id → 解绑，不保留非候选 id（否则 submit_decisions
+            # 会当 triggered 写进事件账，污染终态）。
             out.pop("event_id", None)
         bound.append(out)
     return bound

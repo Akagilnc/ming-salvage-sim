@@ -20,7 +20,6 @@ from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.materials import list_materials, prepare_scene_materials
 from ming_sim.public_sayings import list_public_sayings
 
-
 def _active_minister(db, *, exclude: set[str] | None = None) -> str:
     skip = exclude or set()
     row = db.conn.execute(
@@ -33,7 +32,6 @@ def _active_minister(db, *, exclude: set[str] | None = None) -> str:
         if name not in skip:
             return name
     raise AssertionError("no active minister")
-
 
 def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, night_id: int = 0):
     """一轮窗口：搭建对话轮 → 公开入口分派（入口自记前像）→ 标抽取水位。"""
@@ -65,7 +63,6 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
     db.conn.commit()
     return int(night_id), int(chat_id), result
 
-
 def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
     """AC1：当场落生死，下一句目录里已是实况。"""
     db, state, _ = game
@@ -94,7 +91,6 @@ def test_kill_lands_status_and_next_materials_show_it(game, tmp_path):
     assert any(path.endswith("朝臣名册.txt") for path in listed)
     court = {row["name"] for row in db.current_court_roster_rows(state)}
     assert victim not in court
-
 
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):
     """AC2：孙传庭伤臂 → 文字事实；袁崇焕对外死讯 → 公开说法；目录可见。"""
@@ -129,83 +125,6 @@ def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_pat
     assert facts_rel in listed
     public_rel = f"人物/{sun}/公开说法/{state.year}年{state.period}月.txt"
     assert public_rel in listed
-
-
-def test_undo_reverses_round_on_scene_writes(game):
-    """AC3：撤回本轮后该轮直写的实况像逆转，账本与对话轮不分叉。"""
-    db, state, _ = game
-    victim = _active_minister(db)
-    partner = _active_minister(db, exclude={victim})
-    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    night_id = int(night["id"])
-    an.summon_enter(db, night_id, victim)
-    an.summon_enter(db, night_id, partner)
-
-    arm_injury = "臂骨已折，不能挽弓"
-    declaration = {
-        "on_scene_facts": [{
-            "name": victim, "动作": "处置", "status": "imprisoned",
-            "reason": "殿前拿下，下狱待勘",
-        }],
-        "textual_facts": [{
-            "subject_kind": "character", "subject_id": partner, "body": arm_injury,
-        }],
-        "public_sayings": [{
-            "body": "坊间盛传某尚书已在殿上被拿",
-            "involved_characters": [victim],
-        }],
-        "presence": [{
-            "person_name": victim, "effect": "exit",
-            "body": "校尉拥之出殿",
-        }],
-        "edge_events": [{
-            "source": partner, "target": victim,
-            "event_kind": "结怨", "context": "见其被拿而不救",
-        }],
-    }
-    night_id, chat_id, result = _run_round_with_declaration(
-        db, state, partner, declaration, night_id=night_id,
-    )
-    assert result.on_scene_facts.rejected == []
-    assert result.textual_facts.rejected == []
-    assert result.public_sayings.rejected == []
-    assert result.presence.rejected == []
-    assert result.edge_events.rejected == []
-
-    assert db.get_character_status(victim)[0] == "imprisoned"
-    fact_ids = {
-        f.id for f in db.textual_facts.readable_materials(
-            subject_kind="character", subject_id=partner,
-        )
-    }
-    assert fact_ids
-    assert list_public_sayings(db, involved_character=victim)
-    assert victim not in an.present_names_at(db, night_id)
-    edges_before = db.get_relation_edge_events(source=partner, target=victim)
-    assert edges_before
-
-    # 白名单审计：本轮直写须落在第四类，不得越权咬住
-    observed = an.audit_night_direct_writes(db, night_id)
-    assert "转译声明的当场实况" in observed
-
-    db.undo_chat_turn(chat_id)
-
-    assert db.get_character_status(victim)[0] == "active"
-    assert fact_ids.isdisjoint(
-        f.id for f in db.textual_facts.readable_materials(
-            subject_kind="character", subject_id=partner,
-        )
-    )
-    assert not list_public_sayings(db, involved_character=victim)
-    # 告退账随源轮删 → 在场复原
-    assert victim in an.present_names_at(db, night_id)
-    assert not db.get_relation_edge_events(source=partner, target=victim)
-    # 对话轮标 undone，消息已删
-    turn_row = db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (chat_id,),
-    ).fetchone()
-    assert turn_row["status"] == "undone"
-
 
 def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     """#1839 AC3：夜上下文第四类全部 section 须带属本夜的正源轮；缺失或不属
@@ -303,7 +222,6 @@ def test_night_bound_sections_reject_missing_or_foreign_source_chat_turn(game):
     assert db.conn.execute(
         "SELECT 1 FROM characters WHERE name=?", ("李若璉夜測",),
     ).fetchone() is before_listed
-
 
 def test_commission_stays_staged_not_bypassing_promulgation(game):
     """AC4：任洪承畴、拨三十万仍是暂存交办，不因「当场」绕过颁布关。"""

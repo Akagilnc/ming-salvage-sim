@@ -1,10 +1,11 @@
-"""#641 人物固有层 `性情` 写核。
+"""#641 人物固有层 `性情` 写核 + 召对人物上下文接关系账。
 
-验收锚（owner A / 大理寺 continue / #1897 T1 补修）：
-1. 领域拒收：rejected／category／applied 与未写 person_logs（不比 style 散文）
-2. relation_edge_events 落边不写性情日志；性情写不写边
-不恢复 style before/after 列等值（末判：style before/after 不是结构身份）。
-不另造 character_context／reload／rollback style 专属壳。
+验收锚（owner A / 大理寺 continue）：
+1. apply_score_extraction 后 DB / content / person_logs 一致
+2. 同事务后段故障 → DB+运行态旧 style；提交后 reload 可读新 style
+3. 查无人物、空/非字符串 style 结构化拒收
+4. character_context_with_db 含自身 style，关系仅经 project_relation_ledger(viewer=name)
+5. relation_edge_events 落边不改 style；性情改 style 不写边
 """
 
 from __future__ import annotations
@@ -12,18 +13,20 @@ from __future__ import annotations
 import pytest
 
 import ming_sim.issues as issues
-
+from ming_sim.content import GameContent
+from ming_sim.decree import reload_state_from_db
+from ming_sim.situation_drift import apply_situation_monthly_drift
+from ming_sim.person_archive_contract import format_person_actions
 
 PERSON = "毛文龙"
 NEW_STYLE = "旧恨未消，却更沉得住气，临事少作张扬。"
+# 含首尾空白与内嵌换行：写核/读面须原串透传，不得 strip 改写。
+PADDED_STYLE = "  沉得住气\n少作张扬。  "
 
-
-def _temperament_logs(db, name=PERSON):
+def _style_row(db, name=PERSON):
     return db.conn.execute(
-        "SELECT COUNT(*) AS c FROM person_logs WHERE person_name=? AND action=?",
-        (name, "性情"),
-    ).fetchone()["c"]
-
+        "SELECT style FROM characters WHERE name=?", (name,)
+    ).fetchone()["style"]
 
 def _temperament_item(**overrides):
     item = {
@@ -36,21 +39,161 @@ def _temperament_item(**overrides):
     item.update(overrides)
     return item
 
-
-def test_temperament_blank_style_rejected_keeps_prior(game):
-    """闸：纯空白 style 拒收；未写性情日志。"""
+def test_inertia_natural_resolve_applies_temperament_style(game):
+    """生产入口：issue 自然结案 effect_on_resolve 性情 → DB/runtime/person_logs 一致。"""
     db, state, content = game
-    before_logs = _temperament_logs(db)
+    issues.bind_content(content)  # 防他测漂移 _content；inertia 路 content=None→_ctx()
+    before_db = _style_row(db)
+    before_rt = content.characters[PERSON].style
+    before_logs = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM person_logs WHERE person_name=? AND action=?",
+        (PERSON, "性情"),
+    ).fetchone()["c"]
+
+    db.insert_issue(
+        state,
+        kind="situation",
+        title="自然结案性情测试",
+        bar_value=99,
+        inertia=1,
+        effect_on_resolve={"人物变更": [_temperament_item()]},
+    )
+    apply_situation_monthly_drift(db, state)
+
+    assert before_db == before_rt
+    assert _style_row(db) == NEW_STYLE
+    assert content.characters[PERSON].style == NEW_STYLE
+    assert NEW_STYLE != before_db
+    after_logs = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM person_logs WHERE person_name=? AND action=?",
+        (PERSON, "性情"),
+    ).fetchone()["c"]
+    assert after_logs == before_logs + 1
+    log = db.conn.execute(
+        "SELECT action, payload_summary FROM person_logs "
+        "WHERE person_name=? AND action=? ORDER BY id DESC LIMIT 1",
+        (PERSON, "性情"),
+    ).fetchone()
+    assert log["action"] == "性情"
+    assert log["payload_summary"] == "经事锤炼，固有层改写"
+
+def test_apply_score_extraction_writes_temperament_style_and_log(game):
+    db, state, content = game
+    before = _style_row(db)
+    before_rt = content.characters[PERSON].style
+    assert before_rt == before
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [_temperament_item()]},
+        content=content,
+    )
+
+    after = _style_row(db)
+    assert after == NEW_STYLE
+    assert content.characters[PERSON].style == NEW_STYLE
+    assert applied["applied_person_changes"] == [
+        {
+            "name": PERSON,
+            "origin_ref": "盘面自发",
+            "动作": "性情",
+            "style": NEW_STYLE,
+            "old_style": before,
+            "new_style": NEW_STYLE,
+            "reason": "经事锤炼，固有层改写",
+        }
+    ]
+    log = db.conn.execute(
+        "SELECT action, payload_summary FROM person_logs "
+        "WHERE person_name=? ORDER BY id DESC LIMIT 1",
+        (PERSON,),
+    ).fetchone()
+    assert log["action"] == "性情"
+    assert log["payload_summary"] == "经事锤炼，固有层改写"
+
+def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
+    """自由文本 style 只判空、不改写：DB/runtime/applied/log normalized 与输入原串逐字节相等。"""
+    import json
+
+    db, state, content = game
+    before = _style_row(db)
+    assert PADDED_STYLE != PADDED_STYLE.strip()
+
+    applied = issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [_temperament_item(style=PADDED_STYLE)]},
+        content=content,
+    )
+
+    assert _style_row(db) == PADDED_STYLE
+    assert content.characters[PERSON].style == PADDED_STYLE
+    change = applied["applied_person_changes"][0]
+    assert change == {
+        "name": PERSON,
+        "origin_ref": "盘面自发",
+        "动作": "性情",
+        "style": PADDED_STYLE,
+        "old_style": before,
+        "new_style": PADDED_STYLE,
+        "reason": "经事锤炼，固有层改写",
+    }
+    log = db.conn.execute(
+        "SELECT action, normalized FROM person_logs "
+        "WHERE person_name=? AND action=? ORDER BY id DESC LIMIT 1",
+        (PERSON, "性情"),
+    ).fetchone()
+    assert log["action"] == "性情"
+    normalized = json.loads(log["normalized"])
+    assert normalized["style"] == PADDED_STYLE
+    assert normalized["old_style"] == before
+    assert normalized["new_style"] == PADDED_STYLE
+
+    # 纯空白仍拒收（契约保留）。
+    blank_before = _style_row(db)
     blank_out = issues.apply_score_extraction(
         db,
         state,
         {"人物变更": [_temperament_item(style="   \n\t  ")]},
         content=content,
     )
-    assert _temperament_logs(db) == before_logs
+    assert _style_row(db) == blank_before
+    assert content.characters[PERSON].style == PADDED_STYLE
     assert blank_out["applied_person_changes"][0]["rejected"] is True
     assert blank_out["applied_person_changes"][0]["category"] == "invalid_enum"
 
+def test_temperament_outer_tx_rollback_restores_db_and_runtime(game):
+    db, state, content = game
+    before_db = _style_row(db)
+    before_rt = content.characters[PERSON].style
+
+    db.conn.execute("BEGIN")
+    issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [_temperament_item()]},
+        content=content,
+    )
+    # 事务内可见脏写；回滚后须 DB 与运行态同回旧值。
+    assert content.characters[PERSON].style == NEW_STYLE
+    db.conn.rollback()
+
+    assert _style_row(db) == before_db
+    assert content.characters[PERSON].style == before_rt
+
+def test_temperament_committed_style_survives_reload(game):
+    db, state, content = game
+    issues.apply_score_extraction(
+        db,
+        state,
+        {"人物变更": [_temperament_item()]},
+        content=content,
+    )
+    reload_state_from_db(db, state, content=content)
+
+    assert _style_row(db) == NEW_STYLE
+    assert content.characters[PERSON].style == NEW_STYLE
 
 @pytest.mark.parametrize(
     ("item", "category"),
@@ -65,6 +208,8 @@ def test_temperament_blank_style_rejected_keeps_prior(game):
 )
 def test_apply_score_extraction_rejects_invalid_temperament(game, item, category):
     db, state, content = game
+    before = _style_row(db)
+    before_rt = content.characters[PERSON].style if PERSON in content.characters else None
     before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0]
 
     applied = issues.apply_score_extraction(
@@ -74,6 +219,9 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
         content=content,
     )
 
+    assert _style_row(db) == before
+    if before_rt is not None:
+        assert content.characters[PERSON].style == before_rt
     assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
     changes = applied["applied_person_changes"]
     assert len(changes) == 1
@@ -81,13 +229,21 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
     assert changes[0]["origin_ref"] == "盘面自发"
     assert changes[0]["动作"] == "性情"
     assert changes[0]["rejected"] is True
+    assert changes[0]["reason"]
     assert changes[0]["category"] == category
     assert changes[0]["item"] == item
-
 
 def test_relation_edge_events_do_not_mutate_style(game):
     db, state, content = game
     source, target = "毕自严", "王绍徽"
+    before_db = {
+        source: _style_row(db, source),
+        target: _style_row(db, target),
+    }
+    before_rt = {
+        source: content.characters[source].style,
+        target: content.characters[target].style,
+    }
     before_temperament_logs = db.conn.execute(
         "SELECT COUNT(*) AS c FROM person_logs WHERE action=?",
         ("性情",),
@@ -111,19 +267,21 @@ def test_relation_edge_events_do_not_mutate_style(game):
     assert not any(r.get("rejected") for r in res), res
     rows = db.get_relation_edge_events(source=source, target=target)
     assert len(rows) == 1
+    assert _style_row(db, source) == before_db[source]
+    assert _style_row(db, target) == before_db[target]
+    assert content.characters[source].style == before_rt[source]
+    assert content.characters[target].style == before_rt[target]
     after_temperament_logs = db.conn.execute(
         "SELECT COUNT(*) AS c FROM person_logs WHERE action=?",
         ("性情",),
     ).fetchone()["c"]
     assert after_temperament_logs == before_temperament_logs
 
-
 def test_temperament_does_not_write_relation_edges(game):
     db, state, content = game
     before_edges = db.conn.execute(
         "SELECT COUNT(*) AS c FROM relation_edge_events"
     ).fetchone()["c"]
-    before_logs = _temperament_logs(db)
 
     issues.apply_score_extraction(
         db,
@@ -136,4 +294,4 @@ def test_temperament_does_not_write_relation_edges(game):
         "SELECT COUNT(*) AS c FROM relation_edge_events"
     ).fetchone()["c"]
     assert after_edges == before_edges
-    assert _temperament_logs(db) == before_logs + 1
+    assert _style_row(db) == NEW_STYLE
