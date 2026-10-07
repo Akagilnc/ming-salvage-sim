@@ -487,14 +487,16 @@ def _iter_cli_process_lines(
                     break
                 chunks.put((kind, chunk))
         except Exception as exc:
-            # 活动期真异常归 outcome，禁洗成成功 EOF / 仅落线程 excepthook（F48）。
-            # 收尾 terminate 后的管道关闭不记 stream_error。
-            if not shutting_down.is_set():
+            # 正常关流契约例外：仅收尾中的管道关闭形状（OSError/ValueError）。
+            # shutting_down 只证明进入 finally，不是任意 Exception 的正常化凭据（#1834 F48）；
+            # RuntimeError/TypeError 等未知代码故障无论阶段都记 stream_error。
+            normal_close = shutting_down.is_set() and isinstance(exc, (OSError, ValueError))
+            if normal_close:
+                logger.debug("CLI %s 管道读中断（收尾关流）：%s", kind, exc)
+            else:
                 if result.stream_error is None:
                     result.stream_error = exc
                 logger.warning("CLI %s 管道读失败：%s", kind, exc)
-            else:
-                logger.debug("CLI %s 管道读中断（收尾中）：%s", kind, exc)
         finally:
             # 哨兵必发：否则读循环等不到 EOF，会把收尾误当静默。
             chunks.put((kind, None))
