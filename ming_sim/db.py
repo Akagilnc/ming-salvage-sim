@@ -4575,7 +4575,7 @@ class GameDB:
                     bar_good_meaning=ev.bar_good_meaning or "已平",
                     bar_bad_meaning=ev.bar_bad_meaning or "失控",
                     inertia=inertia,
-                    stage_text=ev.stage_text or ev.summary[:80],
+                    stage_text=ev.stage_text or ev.str(summary or ""),
                     severity=int(ev.severity),
                     region_hint=ev.region_hint,
                     faction_hint=",".join(ev.interests[:2]),
@@ -4820,10 +4820,10 @@ class GameDB:
                 state.period,
                 person_name,
                 action,
-                str(payload_summary or "")[:200],
-                str(derived_from or "")[:120],
+                str(payload_summary or ""),
+                str(derived_from or ""),
                 normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
-                str(source or "")[:80],
+                str(source or ""),
                 str(origin_ref or ""),
             ),
         )
@@ -4884,7 +4884,7 @@ class GameDB:
                 continue
             name = str(raw.get("name") or raw.get("姓名") or "").strip()
             new_power = str(raw.get("new_power") or raw.get("新势力") or "").strip()
-            reason = str(raw.get("reason") or raw.get("原因") or "")[:120]
+            reason = str(raw.get("reason") or raw.get("原因") or "")
             if not name or not new_power:
                 applied.append({
                     "rejected": True, "category": "invalid_enum",
@@ -7157,7 +7157,7 @@ class GameDB:
             (
                 building_id,
                 region_id,
-                name.strip()[:60] or "无名建筑",
+                str(name or "").strip() or "无名建筑",
                 category,
                 max(1, min(5, int(level))),
                 max(0, min(100, int(condition))),
@@ -7176,7 +7176,7 @@ class GameDB:
             (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
             VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房', ?)
             """,
-            (state.turn, state.year, state.period, building_id, name.strip()[:60], "诏书新立建筑", origin_ref),
+            (state.turn, state.year, state.period, building_id, str(name or "").strip(), "诏书新立建筑", origin_ref),
         )
         if commit:
             self.conn.commit()
@@ -7501,16 +7501,14 @@ class GameDB:
 
     @staticmethod
     def _parse_highlights_json(raw: Any) -> List[str]:
-        try:
-            data = json.loads(raw or "[]")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
-            return []
+        data = GameDB._loads_stored_json_list(
+            raw, surface="chat_messages.highlights_json",
+        )
         out: List[str] = []
         for item in data:
+            # Free prose highlight phrases: preserve raw; strip only emptiness (#1834 F21).
             if isinstance(item, str) and item.strip():
-                out.append(item.strip())
+                out.append(item)
         return out
 
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
@@ -8854,12 +8852,10 @@ class GameDB:
         # source_projection of the same source_id must not replace it.
         public_kept: set[str] = set()
         for row in rows:
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
-            if not isinstance(excluded_names, list):
-                excluded_names = []
+            excluded_names = self._loads_stored_json_list(
+                row["excluded_names"],
+                surface="character_knowledge_events.excluded_names",
+            )
             key = str(row["source_id"] or "")
             is_public = str(row["kind"] or "") == "public"
             if key and key in public_kept and not is_public:
@@ -8883,18 +8879,14 @@ class GameDB:
         character_names = {str(row["name"]) for row in characters}
         for row in source_rows:
             participants = participant_roster_names(row["participant_roster"])
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-            except (TypeError, ValueError):
-                excluded_names = []
-            if not isinstance(excluded_names, list):
-                excluded_names = []
-            try:
-                excluded_targets = json.loads(row["excluded_targets"] or "{}")
-            except (TypeError, ValueError):
-                excluded_targets = {}
-            if not isinstance(excluded_targets, dict):
-                excluded_targets = {}
+            excluded_names = self._loads_stored_json_list(
+                row["excluded_names"],
+                surface="character_knowledge_sources.excluded_names",
+            )
+            excluded_targets = self.parse_engine_payload_json(
+                row["excluded_targets"],
+                surface="character_knowledge_sources.excluded_targets",
+            )
             target_people = {
                 str(name) for name in excluded_targets.get("people", [])
             }
@@ -8956,11 +8948,9 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        try:
-            timeline = json.loads(row["timeline"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] timeline JSON 损坏，回空：{exc}")  # #14 surface
-            timeline = []
+        timeline = self._loads_stored_json_list(
+            row["timeline"], surface="ending_summary.timeline",
+        )
         return {
             "turn": int(row["turn"]),
             "year": int(row["year"]),
@@ -10958,12 +10948,9 @@ class GameDB:
         raw = self.kv_get(self.MEMORIAL_READS_KV_KEY)
         if not raw:
             return set()
-        try:
-            data = json.loads(raw)
-        except (TypeError, ValueError):
-            return set()
-        if not isinstance(data, list):
-            return set()
+        data = self._loads_stored_json_list(
+            raw, surface="kv_store.memorial_reads",
+        )
         return {str(item) for item in data if str(item or "").strip()}
 
     def mark_memorials_read(self, keys: Iterable[str]) -> None:
@@ -11080,7 +11067,7 @@ class GameDB:
                 continue
             case_summary = str(row["decree_text"] or "").strip()
             if len(case_summary) > 48:
-                case_summary = case_summary[:48]
+                case_summary = str(case_summary or "")
             # 物理事实：奏报面 / 执行格 / 旨外——直接复用 fork 读端（类型已保证）
             forked_dossiers.append({
                 "dossier_id": dossier_id,
@@ -11658,7 +11645,7 @@ class GameDB:
             "expense",
             display,
             int(amount),
-            note=str(payload.get("reason") or text or display)[:240],
+            note=str(payload.get("reason") or text or display),
             origin_ref=f"dossier:{int(dossier_id)}",
             turn=int(state.turn),
             beyond_intent=0,
@@ -12509,7 +12496,14 @@ class GameDB:
         self, dossier_id: int, participants: Iterable[object], *,
         state: Optional[GameState] = None, commit: bool = True,
     ) -> List[Dict[str, object]]:
-        """Append ADR 0053 roster entries without replacing durable members."""
+        """Append ADR 0053 roster entries without replacing durable members.
+
+        Durable roster/archive faults raise ValueError/KeyError (F39).
+        LLM addition shape/ref/conflict/delegation faults raise
+        PendingActionRefusal so callers can isolate the bad item (ADR 0005).
+        """
+        from ming_sim.exceptions import PendingActionRefusal
+
         owns_transaction = self.owns_transaction() if commit else False
         row = self.conn.execute(
             "SELECT participant_roster,action_type,decree_text FROM decree_dossiers WHERE id=?",
@@ -12517,15 +12511,38 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        try:
-            existing_raw = json.loads(row["participant_roster"] or "[]")
-        except (TypeError, ValueError):
-            existing_raw = []
-        existing = self._normalize_participant_roster(
-            existing_raw if isinstance(existing_raw, list) else []
+        existing_raw = self._loads_stored_json_list(
+            row["participant_roster"],
+            surface="decree_dossiers.participant_roster",
         )
-        additions = self._normalize_participant_roster(participants, strict_structured=True)
-        self._validate_participant_roster_references(additions)
+        # Durable existing before input: no soft-drop of empty objects; refs/relations
+        # loud. Legacy bare-name strings remain legal historical form (F39).
+        if isinstance(existing_raw, list):
+            for idx, value in enumerate(existing_raw):
+                if isinstance(value, Mapping):
+                    cid = str(
+                        value.get("character_id") or value.get("name") or ""
+                    ).strip()
+                    if not cid:
+                        raise ValueError(
+                            f"既有参与人[{idx}]缺人物身份"
+                        )
+                elif value is None or (
+                    isinstance(value, str) and not str(value).strip()
+                ):
+                    raise ValueError(f"既有参与人[{idx}]缺人物身份")
+        existing = self._normalize_participant_roster(existing_raw)
+        self._validate_participant_roster_references(existing)
+        self._validate_dossier_delegations(existing)
+        try:
+            additions = self._normalize_participant_roster(
+                participants, strict_structured=True,
+            )
+            self._validate_participant_roster_references(additions)
+        except ValueError as exc:
+            raise PendingActionRefusal(
+                str(exc), category="invalid_participant_roster",
+            ) from exc
         by_character = {str(item["character_id"]): item for item in existing}
         added: List[Dict[str, object]] = []
         for item in additions:
@@ -12533,13 +12550,21 @@ class GameDB:
             prior = by_character.get(character_id)
             if prior is not None:
                 if prior != item:
-                    raise ValueError(f"参与人物已在案且机械档不同：{character_id}")
+                    raise PendingActionRefusal(
+                        f"参与人物已在案且机械档不同：{character_id}",
+                        category="invalid_participant_roster",
+                    )
                 continue
             by_character[character_id] = item
             added.append(item)
         merged = existing + added
-        self._validate_dossier_delegations(merged)
-        self._validate_participant_roster_references(merged)
+        try:
+            # existing refs/relations already proven; remaining failures are input-side.
+            self._validate_dossier_delegations(merged)
+        except ValueError as exc:
+            raise PendingActionRefusal(
+                str(exc), category="invalid_participant_roster",
+            ) from exc
         if added:
             archive_keys: set[str] = set()
             raw_keys_row = self.conn.execute(
@@ -12548,12 +12573,10 @@ class GameDB:
             ).fetchone()
             raw_keys = (
                 raw_keys_row["office_archive_keys"] if raw_keys_row is not None else None
-            ) or "[]"
-            parsed_keys = json.loads(raw_keys)
-            if not isinstance(parsed_keys, list):
-                raise ValueError(
-                    f"office_archive_keys 须为 JSON 数组：dossier {int(dossier_id)}"
-                )
+            )
+            parsed_keys = self._loads_stored_json_list(
+                raw_keys, surface="decree_dossiers.office_archive_keys",
+            )
             archive_keys = {str(item) for item in parsed_keys}
             if str(row["action_type"] or "") != "secret_order":
                 for item in added:
@@ -13068,14 +13091,17 @@ class GameDB:
             item["id"] = int(item["id"])
             item["dossier_id"] = int(item["dossier_id"])
             item["turn"] = int(item["turn"])
-            item["primary_opponents"] = json.loads(
-                str(item.pop("primary_opponents_json") or "[]")
+            item["primary_opponents"] = self._loads_stored_json_list(
+                item.pop("primary_opponents_json"),
+                surface="decree_dossier_decisions.primary_opponents_json",
             )
-            item["criteria_snapshot"] = json.loads(
-                str(item.pop("criteria_snapshot_json") or "{}")
+            item["criteria_snapshot"] = self.parse_engine_payload_json(
+                item.pop("criteria_snapshot_json"),
+                surface="decree_dossier_decisions.criteria_snapshot_json",
             )
-            item["affected_parties"] = json.loads(
-                str(item.pop("affected_parties_json") or "[]")
+            item["affected_parties"] = self._loads_stored_json_list(
+                item.pop("affected_parties_json"),
+                surface="decree_dossier_decisions.affected_parties_json",
             )
             item["midzhi_unpromulgatable"] = bool(
                 item["midzhi_unpromulgatable"]
@@ -14432,7 +14458,7 @@ class GameDB:
 
         reason = str(
             payload.get("text") or row.get("decree_text") or "撤回成命"
-        )[:400]
+        )
 
         # #1894：撤旨照常过外廷。外廷（0055 颁布判决）准行即当月落实，
         # 不再把撤令延后到下一次召对等一场挽留——旧 ADR 0075「先顶哭谏、
@@ -14914,7 +14940,7 @@ class GameDB:
             turn=int(state.turn),
             entries=entries,
             origin_ref=f"dossier:{int(dossier_id)}",
-            reason=str(row["decree_text"] or "")[:240],
+            reason=str(row["decree_text"] or ""),
             commit=False,
         )
         # 终局由 dispatcher 尾部通用 terminal 分支统一写（fulfilled 颁布即终局），
@@ -17357,7 +17383,7 @@ class GameDB:
             ON CONFLICT(event_id) DO UPDATE SET
                 {self._event_terminal_upgrade_assignments(fill_triggered_reason=True)}
             """,
-            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")[:200]),
+            (event_id, state.turn, state.year, state.period, source, str(terminal_reason or "")),
         )
         if commit:
             self.conn.commit()
@@ -17543,7 +17569,7 @@ class GameDB:
             return
         self._ensure_event_parent(eid)
         payload = json.dumps(choice if isinstance(choice, dict) else {}, ensure_ascii=False)
-        label = str((choice or {}).get("label") or "")[:200] if isinstance(choice, dict) else ""
+        label = str((choice or {}).get("label") or "") if isinstance(choice, dict) else ""
         self.conn.execute(
             """
             INSERT INTO event_triggers
@@ -18144,12 +18170,12 @@ class GameDB:
                 start_month, duration_months, status, clear_gate, legacy_key)
                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
             (
-                str(name)[:60], source_issue_id,
+                str(name or ""), source_issue_id,
                 json.dumps(modifiers, ensure_ascii=False),
-                str(narrative_hint)[:200],
+                str(narrative_hint or ""),
                 start_month, int(duration_months),
                 json.dumps(clear_gate or {}, ensure_ascii=False),
-                str(legacy_key)[:60],
+                str(legacy_key or ""),
             ),
         )
         if commit:
@@ -18518,7 +18544,7 @@ class GameDB:
             """,
             (
                 target, key, int(turn or 0), int(year or 0), int(period or 0),
-                eff, str(origin_ref or "")[:120],
+                eff, str(origin_ref or ""),
             ),
         )
         if owns:
@@ -18847,7 +18873,9 @@ class GameDB:
         # test_minister_context / test_web_chat_serialization_393). Without
         # this branch those writes lose the blacklist. session.py only DELETEs
         # legacy sources with this prefix; no live production producer.
-        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
+        match = re.fullmatch(r"secret_order_brief:(\d+)", source)
+        if match is None:
+            match = re.fullmatch(r"secret_order_disclosure:(\d+)(?::.*)?", source)
         if match:
             order_id = int(match.group(1))
             order = self.conn.execute(
@@ -18902,7 +18930,9 @@ class GameDB:
 
         # Private briefs and retained bare secret-order sources share the
         # canonical exclusions persisted on secret_orders.
-        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
+        match = re.fullmatch(r"secret_order_brief:(\d+)", source)
+        if match is None:
+            match = re.fullmatch(r"secret_order_disclosure:(\d+)(?::.*)?", source)
         if match:
             row = self.conn.execute(
                 "SELECT excluded_targets FROM secret_orders WHERE id=?",
@@ -19745,7 +19775,9 @@ class GameDB:
                 "minister_name": r["minister_name"],
                 "title": r["title"],
                 "content": r["content"],
-                "tags": json.loads(r["tags"] or "[]"),
+                "tags": self._loads_stored_json_list(
+                    r["tags"], surface="secret_orders.tags",
+                ),
                 "importance": int(r["importance"]),
                 "status": r["status"],
                 "result": r["result"] or "",
@@ -19758,8 +19790,19 @@ class GameDB:
                     if (dossier := self.get_dossier_for_secret_order(int(r["id"])))
                     else []
                 ),
-                "excluded_names": json.loads(r["excluded_names"] or "[]") if "excluded_names" in r.keys() else [],
-                "excluded_targets": json.loads(r["excluded_targets"] or "{}") if "excluded_targets" in r.keys() else {},
+                "excluded_names": (
+                    self._loads_stored_json_list(
+                        r["excluded_names"], surface="secret_orders.excluded_names",
+                    )
+                    if "excluded_names" in r.keys() else []
+                ),
+                "excluded_targets": (
+                    self.parse_engine_payload_json(
+                        r["excluded_targets"],
+                        surface="secret_orders.excluded_targets",
+                    )
+                    if "excluded_targets" in r.keys() else {}
+                ),
                 "turn_closed": r["turn_closed"],
             }
             for r in rows
@@ -20143,14 +20186,6 @@ class GameDB:
 
     # ── 调试用通用 CRUD（仅限白名单核心表）──────────────────────
     # 表名 → 主键列。只暴露核心几张，防误删元数据/日志表。
-    ADMIN_TABLES: Dict[str, str] = {
-        "game_state": "id",        # 局势
-        "metrics": "key",          # 国家修正（国库/内库/民心/皇威）
-        "regions": "id",           # 地区
-        "armies": "id",            # 军队
-        "characters": "name",      # 人物
-        "buildings": "id",         # 建筑
-    }
 
     def record_relation_edge_event(
         self,

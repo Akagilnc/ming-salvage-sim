@@ -2293,7 +2293,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                     _apply_issue_entities(
                         db,
                         state,
-                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        (ev.effect_on_trigger),
                         f"事件#{ev.id}触发",
                         content=c,
                     )
@@ -2317,7 +2317,7 @@ def _auto_trigger_seed_issues_in_atomic(state: GameState, db: GameDB) -> List[Di
                 _apply_issue_entities(
                     db,
                     state,
-                    _content_population_effect_for_save(db, ev.effect_on_trigger),
+                    (ev.effect_on_trigger),
                     f"事件#{ev.id}触发",
                     content=c,
                 )
@@ -2432,9 +2432,9 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
     if ev.effect_on_resolve:
         # #648：content 真源人口量已「人」，持久化进 issue 行前按本档口径换算，
         # 使后续结案/失败落账（读行内 effect）天然按档口径，无需在读取端再换算。
-        effect_resolve = _content_population_effect_for_save(db, ev.effect_on_resolve)
+        effect_resolve = (ev.effect_on_resolve)
     if ev.effect_on_fail:
-        effect_fail = _content_population_effect_for_save(db, ev.effect_on_fail)
+        effect_fail = (ev.effect_on_fail)
     # insert 的代码/DB 真异常上抛（ADR 0008 决定1 / ADR 0005 fail-loud），与 decree 路径
     # （apply_issue_tracker_output 的 new_issues 段）一致；旧 `except Exception: WARN; return None`
     # 把真异常吞成 None、调用方记普通 rejected，正是 #14/#63 catalog「该落没落无人知」实例
@@ -2469,7 +2469,7 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         _apply_issue_entities(
             db,
             state,
-            _content_population_effect_for_save(db, ev.effect_on_trigger),
+            (ev.effect_on_trigger),
             f"事件#{ev.id}触发",
             content=_ctx(),
         )
@@ -3081,12 +3081,6 @@ def _spawn_legacy_from_effect(
     return summary
 
 
-def _content_population_effect_for_save(
-    db: GameDB, effect: Dict[str, object]
-) -> Dict[str, object]:
-    """#648 / #1843：content 与存档人口口径均为「人」，无需换算。"""
-    del db  # 保留签名，调用方仍传 db
-    return effect
 
 
 def _apply_issue_entities(
@@ -4563,7 +4557,7 @@ def apply_issue_tracker_output(
                         _apply_issue_entities(
                             db,
                             state,
-                            _content_population_effect_for_save(db, ev.effect_on_trigger),
+                            (ev.effect_on_trigger),
                             f"事件#{ev.id}触发",
                             content=runtime_content,
                             llm_config=llm_config,
@@ -4589,7 +4583,7 @@ def apply_issue_tracker_output(
                     _apply_issue_entities(
                         db,
                         state,
-                        _content_population_effect_for_save(db, ev.effect_on_trigger),
+                        (ev.effect_on_trigger),
                         f"事件#{ev.id}触发",
                         content=runtime_content,
                         llm_config=llm_config,
@@ -7664,15 +7658,9 @@ def _apply_score_extraction_body(
         candidate_event_ids_at_input = {candidate.id for candidate in gather_candidate_events(state, db)}
     else:
         candidate_event_ids_at_input = set(candidate_event_ids_at_input)
-    new_person_changes = normalize_person_changes({"人物变更": extracted.get("人物变更") or []})
-    legacy_person_changes = [] if new_person_changes else normalize_person_changes({
-        "appointments": extracted.get("appointments") or [],
-        "character_status_changes": extracted.get("character_status_changes") or [],
-        "character_power_changes": extracted.get("character_power_changes") or [],
-        "office_changes": extracted.get("office_changes") or [],
-    })
+    # #1812/#1834：人物变更唯一入口；旧 appointments/status/power/office 键不再旁路。
     person_changes = _canonicalize_person_change_names(
-        new_person_changes or legacy_person_changes,
+        normalize_person_changes({"人物变更": extracted.get("人物变更") or []}),
         runtime_content,
         db,
     )
@@ -7685,8 +7673,8 @@ def _apply_score_extraction_body(
         id(item): army_ids[index] if index < len(army_ids) else ""
         for index, item in enumerate(extracted.get("new_armies") or [])
     }
-    use_legacy_person_keys = not person_changes
-    legacy_person_mode = bool(legacy_person_changes)
+    use_legacy_person_keys = False
+    legacy_person_mode = False
     strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(extracted, runtime_content)
     strategic_event_result_delta_event_ids = _event_result_delta_event_ids(
         set(_STRATEGIC_FOREIGN_NODE_OUTCOME_TARGETS),
