@@ -393,17 +393,9 @@ def _cli_idle_seconds() -> float:
 
 
 def _terminate_cli_process(proc: Any) -> None:
-    """收尾子进程：已退时 terminate 是 no-op；否则 terminate→kill 兜底，防泄漏。"""
-    try:
-        proc.terminate()
-        proc.wait(timeout=5)
-    except Exception:
-        logger.exception("CLI process terminate failed; escalating to kill")
-        try:
-            proc.kill()
-            proc.wait(timeout=5)
-        except Exception:
-            logger.exception("CLI process kill failed")
+    """收尾子进程：已退时 terminate 是 no-op；否则 SIGTERM 后等待退出，失败原样上抛。"""
+    proc.terminate()
+    proc.wait()
 
 
 def _iter_cli_process_lines(
@@ -417,10 +409,11 @@ def _iter_cli_process_lines(
 ) -> Iterator[str]:
     """CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。
 
-    - 新字节即活动，刷新活动时刻；静默 ≥ idle 预算 → TransportIdleTimeout（可重试）
-      并 kill 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
+    - 新字节即活动，刷新活动时刻；静默 ≥ idle 预算 → TransportIdleTimeout（可重试）；
+      finally 以 SIGTERM 收尾该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
     - idle 只认 transport 策略（`_cli_idle_seconds`）= 设置页那一格的静默判死阈值。
-    - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀。
+    - **不设 attempt 总墙钟，收尾不做 SIGKILL 升级（宪法 #9）**：只要还有新字节就不判死；
+      收尾只 terminate + wait，失败原样上抛。
     - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
     - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
     所有 runner 共用本读法；禁各自复制一套 idle 循环。clock 可注入（受控推进）。
@@ -464,7 +457,7 @@ def _iter_cli_process_lines(
                     break
                 chunks.put((kind, chunk))
         except (OSError, ValueError) as exc:
-            # 判死 kill 后管道会在读中途关掉（ValueError: closed file / OSError），
+            # 收尾 terminate 后管道会在读中途关掉（ValueError: closed file / OSError），
             # 是收尾正常形状；只窄捕获这一类并留痕，其余错原样上抛（ADR 0005）。
             logger.debug("CLI %s 管道读中断（子进程已收尾）：%s", kind, exc)
         finally:
@@ -4379,7 +4372,7 @@ class CliChat(OpenAIChat):
 
     def _call_cli(self, prompt: str) -> Tuple[str, int]:
         """一次子进程。等多久算死归 transport 策略（设置页那一格的静默判死阈值）：
-        出字的子进程不被任何总墙钟 SIGKILL，只有静默超阈值才判死重试。"""
+        不设 attempt 总墙钟；只有静默超阈值才判死重试，收尾只 SIGTERM。"""
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
         return _dispatch_cli_runner(
             self.backend,

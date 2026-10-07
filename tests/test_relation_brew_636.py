@@ -665,4 +665,3 @@ def test_batch_of_five_relations_all_enter_call_seam_concurrently(game):
         assert db.get_relation_summary(source, target)["recent_segment"] == (
             f"{source}与{target}协作在案。"
         )
-

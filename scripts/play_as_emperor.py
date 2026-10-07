@@ -511,7 +511,7 @@ def run(
 
     finally:
         if child.isalive():
-            child.terminate(force=True)
+            child.terminate(force=False)
         log_file.close()
 
     print(f"\n=== 结束。完成 {completed_periods}/{turns} 月。Log: {log_path} ===")
