@@ -255,12 +255,8 @@ def stage_pacification_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
+        # 已持久候选解码故障响亮，不静默跳过另造新单（#1897 E1）。
+        payload = _pending_payload_dict(row)
         if str(payload.get("dossier_action_type") or "").strip() != "pacification":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -414,12 +410,8 @@ def stage_punishment_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
+        # 已持久候选解码故障响亮，不静默跳过另造新单（#1897 E1）。
+        payload = _pending_payload_dict(row)
         if str(payload.get("dossier_action_type") or "").strip() != "punishment":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -980,15 +972,30 @@ def _assignment_absolute_end_turn(
     - 显式期限月数优先：deadline_months=N → turn+N
     - end_turn 已严格大于当前 turn → 视为绝对回合
     - 否则 0<end_turn≤turn → 视为相对月数 turn+end_turn
+
+    缺省/空 → 0；可辨识 LLM 脏数字（bool/非数/非有限）领域拒收，不洗成 0 成功
+    （#1897 C1 / ADR 0015）。
     """
-    try:
-        et = int(end_turn or 0)
-    except (TypeError, ValueError):
-        et = 0
-    try:
-        months = int(deadline_months or 0)
-    except (TypeError, ValueError):
-        months = 0
+    def _finite_int(raw: object, *, field: str, default: int) -> int:
+        if raw is None or raw == "":
+            return int(default)
+        if isinstance(raw, bool):
+            raise DecreeMaterializationValidationError(
+                f"{field} cannot be a boolean",
+                failed_fields=(field,),
+                category="invalid_shape",
+            )
+        try:
+            return int(raw)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise DecreeMaterializationValidationError(
+                f"{field} must be a finite integer",
+                failed_fields=(field,),
+                category="invalid_shape",
+            ) from exc
+
+    et = _finite_int(end_turn, field="end_turn", default=0)
+    months = _finite_int(deadline_months, field="deadline_months", default=0)
     cur = int(turn)
     if months > 0:
         return cur + months
@@ -999,29 +1006,7 @@ def _assignment_absolute_end_turn(
     return 0
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # 纯授权案卷归收权·罢差（ADR 0041/0071）；不得入撤回成命目标域。
-
-
-
-
-
 
 
 _RESPONSIBLE_BODY_SPLIT = re.compile(r"[,，、/;／|]")
@@ -1311,9 +1296,6 @@ def _write_path_nature_ledger(
     )
 
 
-_PURE_AUTHORITY_DOSSIER_ACTIONS = frozenset({
-    "authorization", "secret_authorization",
-})
 
 
 def _authorization_privilege(raw: object) -> str:
