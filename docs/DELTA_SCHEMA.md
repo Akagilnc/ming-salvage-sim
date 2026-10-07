@@ -427,20 +427,20 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | `罢黜` | — | `reason_code` | 清职名分并落 `dismissed`；政治反应由裁判另产 |
 | `调任` | `office` | `office_type` / `faction` / `任别` | 旧职解绑、新职绑定；若目标现无职名分，执行位可归一为 `任命` |
 | `处置` | `status` | `子动作` / `reason_code` | 状态迁移：下狱、流放、致仕、放归、赐死、卒、起复、昭雪、夺情等 |
-| `易主` | `new_power` / `方式` / `反噬` | `new_title` | `方式` ∈ `主动投敌` / `被俘而降` / `主动归附`；`反噬` 为内嵌派系/势力反应；legacy 翻译才可用 `不明` |
+| `易主` | `new_power` / `方式` / `反噬` | `new_title` | `方式` ∈ `主动投敌` / `被俘而降` / `主动归附`；`反噬` 为内嵌派系/势力反应；`不明` 不在白名单 |
 | `行止` | 非空 `transit_to` | `行程语气`、`reason_code` | 唯一 payload 为 `动作:"行止"` + `transit_to`；不得提供 `location`；语气闭合枚举 `常行`/`加急`/`星夜兼程`，默认常行；引擎据矩阵持久化剩余距离及 1.0/1.5/2.0 系数，extractor 不得提供数值 |
 
 行止任一端无法解析为 canonical region 时不产机械项、仅保留叙事；显式非法 region/语气逐项拒收。canonical 非对角矩阵值为 NaN、+∞、-∞、缺键或非正值均属于系统契约故障，写前响亮失败并由事务回滚。同 region 直接落位而不进入在途；同目的地重复幂等且不重置账；在途改道拒收。迁出 active 时完整清空在途账；抵达仅由引擎事实写路产生，不接受人物变更 payload 抵达。
 | `评定` | `loyalty` | — | 人物忠诚软判增量（integer，非新值），用于安抚/离心等叙事裁判后的结构化数值变化 |
 | `性情` | `style`(非空 str) | — | 人物固有层完整替换；关系变化禁止写入 style，改走关系边事件 |
 
-`任别` 只收 `真除` / `署理` / `兼署` / `加衔`；缺省按 `真除`，用于兼容旧档且不重判历史任命。非法值逐项拒收留痕。
+`任别` 只收 `真除` / `署理` / `兼署` / `加衔`；缺省按 `真除`。非法值逐项拒收留痕。
 
 状态白名单（DB 全集 7 态）：`active` / `offstage` / `dismissed` / `imprisoned` / `exiled` / `retired` / `dead`。其中 **`处置.status` 只可直迁 6 态**（不含 `active`，由 `任命` 级联或 applier 起复派生达成；直接 `处置(status=active)` 被拒 `invalid_transition`，见 `issues.py` `disposition_statuses`）。死人没有 status 出边；追谥、追赠等身后事不进 `人物变更`。
 
 #190 流寇招安：`易主(new_power:"ming", 方式:"主动归附")` 的 `反噬` 若写势力削弱，只能指向该人物当前原势力股；写到其它流寇股会整条拒收，防「招张献忠却削李自成」。头目已死时不能 `易主`，其遗留孤儿股只能走 `power_updates` 剿股。
 
-> **旧四 key（appointments / character_status_changes / character_power_changes / office_changes）不在本契约文档化**（ADR 0009 决定11「alias 保留但不写文档」）：新产出的 delta 只写 `人物变更`；旧 key 仅作历史 delta / ready=1 重试真源的内部兼容翻译层，永不获得新能力（`行止` / `方式` 仅新 key；`reason_code` 系 处置/罢黜 通用辅助字段，legacy `character_status_changes` 翻译保真带过、非新增能力），自然枯死。翻译保真（执行序、spillover 殿后、legacy_gate/legacy_partial 注记）由 `ming_sim/person_delta_adapter.py` + `tests/test_person_delta_adapter.py` 覆盖，不在用户面 schema 重复。
+> **只认 `人物变更`**：appointments / character_status_changes / character_power_changes / office_changes 四旧 key 已随 #1812／#1891／#1899 退役，不再有内部翻译层。`person_delta_adapter.normalize_person_changes` 只规范化 `人物变更`。
 
 ### `secret_order_updates` / `covert_exec_selections`
 - updates：`order_id` int + `sim_note`（本月推进实况）+ 可选 `impact` + 可选布尔 `disclosed`（中文键 `泄漏结论`；可省略）。`disclosed`/`泄漏结论`：密令情节已**实际公开**才为 true（被目击、闹至公堂、承办人被拿获、目标公开反击、明发上谕、科道公开参劾等）；为 true 时触发 `secret_order_disclosure:` 公开知识事件（简报升公共面的唯一闸）。风声/警觉/暴露风险仍为不填或 false。
