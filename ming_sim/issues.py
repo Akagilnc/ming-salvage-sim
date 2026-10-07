@@ -2747,15 +2747,6 @@ def event_to_issue(
     return issue_id
 
 
-_CHARACTER_TEXT_GATE_RE = re.compile(r"^character\.([^.]+)\.([A-Za-z_][A-Za-z0-9_]*)$")
-_PENDING_PERSON_GATE_FIELDS = {
-    "status", "status_reason", "reason_code", "location", "transit_to", "power_id", "office", "office_type",
-}
-_PENDING_POWER_GATE_FIELDS = {"leverage", "military_strength", "supply"}
-_TEXT_CONDITION_RE = re.compile(r"^\s*(==|!=)\s*([^\s]+)\s*$")
-_NUMERIC_CONDITION_RE = re.compile(r"^\s*(>=|<=|>|<|==)\s*(-?\d+)\s*$")
-
-
 def _register_runtime_rollback_snapshot(
     db: GameDB,
     state: GameState,
@@ -2794,36 +2785,6 @@ def _register_runtime_rollback_snapshot(
                     setattr(character, attr, value)
 
     callbacks.append(restore_runtime)
-
-
-def _load_pending_gate_shadow_rows(db: GameDB) -> Dict[str, Dict[str, str]]:
-    shadow_rows: Dict[str, Dict[str, str]] = {}
-    for row in db.conn.execute(
-        "SELECT name, status, status_reason, reason_code, location, transit_to, "
-        "power_id, office, office_type FROM characters"
-    ).fetchall():
-        shadow_rows[str(row["name"])] = {
-            "status": str(row["status"] or "active"),
-            "status_reason": str(row["status_reason"] or ""),
-            "reason_code": str(row["reason_code"] or ""),
-            "location": str(row["location"] or ""),
-            "transit_to": str(row["transit_to"] or ""),
-            "power_id": str(row["power_id"] or "ming"),
-            "office": str(row["office"] or ""),
-            "office_type": str(row["office_type"] or ""),
-        }
-    return shadow_rows
-
-
-def _load_pending_gate_power_shadow_rows(db: GameDB) -> Dict[str, Dict[str, int]]:
-    power_shadow_rows: Dict[str, Dict[str, int]] = {}
-    for row in db.conn.execute("SELECT id, leverage, military_strength, supply FROM powers").fetchall():
-        power_shadow_rows[str(row["id"])] = {
-            "leverage": int(row["leverage"] or 0),
-            "military_strength": int(row["military_strength"] or 0),
-            "supply": int(row["supply"] or 0),
-        }
-    return power_shadow_rows
 
 
 def _load_pending_gate_valid_regions(db: GameDB) -> set[str]:
@@ -2887,320 +2848,136 @@ def _admit_transit_departure(
     }, None
 
 
+def _pending_person_change_origin_ref(
+    db: GameDB,
+    state: GameState,
+    item: Mapping[str, object],
+    *,
+    authorized_ids: set[int] | None = None,
+) -> str | None:
+    """Resolve item origin the same way durable person writes do.
+
+    Returns None when the item is outside the frozen authorized set (will not
+    admit). Empty string remains a missing-origin signal for the write core.
+    """
+    from ming_sim.entities.affair import UnauthorizedAffairOriginRef
+
+    try:
+        return db.affairs.origin_ref_from_result_item(
+            item,
+            year=int(state.year),
+            period=int(state.period),
+            turn=int(state.turn),
+            # Copy so a dry-run birth cannot widen the live authorized set.
+            authorized_ids=None if authorized_ids is None else set(authorized_ids),
+        )
+    except UnauthorizedAffairOriginRef:
+        return None
+
+
+def _dry_run_apply_person_changes(
+    db: GameDB,
+    state: GameState,
+    changes: List[Dict[str, object]],
+    *,
+    content: Optional[GameContent] = None,
+    llm_config: Any = None,
+    require_origin: bool = True,
+    keep_applied: bool = False,
+) -> List[Dict[str, object]]:
+    """Run person write-core under SAVEPOINT.
+
+    Default rolls back so the world is unchanged. ``keep_applied=True`` leaves
+    admitted writes visible until the caller rolls back its own savepoint —
+    used when a consumer must read the resulting gate/DB state.
+    """
+    if not changes:
+        return []
+    from ming_sim.entities.affair import UnauthorizedAffairOriginRef
+
+    authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+    content_rows = _snapshot_content_character_rows(content)
+    savepoint = "person_write_core_probe"
+    owns_savepoint = not keep_applied
+    if owns_savepoint:
+        db.conn.execute(f"SAVEPOINT {savepoint}")
+    applied: List[Dict[str, object]] = []
+    try:
+        for raw in changes:
+            if not isinstance(raw, dict):
+                continue
+            item = dict(raw)
+            origin_ref = _pending_person_change_origin_ref(
+                db, state, item, authorized_ids=authorized,
+            )
+            if origin_ref is None:
+                applied.append({
+                    "name": str(item.get("name") or "").strip(),
+                    "动作": str(item.get("动作") or item.get("action") or "").strip(),
+                    "rejected": True,
+                    "category": "unauthorized_affair_origin",
+                    "reason": str(UnauthorizedAffairOriginRef()),
+                    "item": item,
+                })
+                continue
+            applied.extend(
+                _apply_person_changes(
+                    db,
+                    state,
+                    [item],
+                    content=content,
+                    llm_config=llm_config,
+                    external_transaction=True,
+                    origin_ref=origin_ref,
+                    require_origin=require_origin,
+                )
+            )
+        return applied
+    finally:
+        if owns_savepoint:
+            db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            _restore_content_character_rows(content, content_rows)
+
+
 def _pending_person_changes_block_event_gate(
     ev: Event,
     pending_person_changes: List[Dict[str, object]],
     db: GameDB,
     *,
+    state: Optional[GameState] = None,
     content: Optional[GameContent] = None,
-    shadow_rows: Optional[Dict[str, Dict[str, str]]] = None,
-    power_shadow_rows: Optional[Dict[str, Dict[str, int]]] = None,
-    valid_regions: Optional[set[str]] = None,
+    llm_config: Any = None,
 ) -> bool:
-    """Re-check character status gates against accepted same-turn person changes.
+    """Re-check event gates against person write-core admission results.
 
-    Status-changing person writes intentionally remain post-issue to preserve settlement
-    ordering, but event_pool must not ignore a same-turn removal of an event actor.
+    Post-issue person writes stay ordered after issues, but event_pool must see
+    only changes the unique person write core would actually admit — not an
+    independent overlay of identity/clamp/source rules.
     """
-    if not pending_person_changes or not ev.trigger_gate:
+    if not pending_person_changes or not ev.trigger_gate or state is None:
         return False
-    pending_fields: Dict[str, Dict[str, str]] = {}
-    pending_power_fields: Dict[str, Dict[str, int]] = {}
-    shadow_rows = (
-        _load_pending_gate_shadow_rows(db)
-        if shadow_rows is None
-        else {name: dict(row) for name, row in shadow_rows.items()}
-    )
-    power_shadow_rows = (
-        _load_pending_gate_power_shadow_rows(db)
-        if power_shadow_rows is None
-        else {power_id: dict(row) for power_id, row in power_shadow_rows.items()}
-    )
-    valid_regions = _load_pending_gate_valid_regions(db) if valid_regions is None else set(valid_regions)
-
-    def row_value(row: Dict[str, str], field: str, default: str = "") -> str:
-        return str(row.get(field) or default)
-
-    def character_row(name: str) -> Optional[Dict[str, str]]:
-        return shadow_rows.get(name)
-
-    def overlay(name: str, field: str, value: object) -> None:
-        value_text = str(value or "").strip()
-        pending_fields.setdefault(name, {})[field] = value_text
-        if name in shadow_rows:
-            shadow_rows[name][field] = value_text
-
-    def power_row(power_id: str) -> Optional[Dict[str, int]]:
-        return power_shadow_rows.get(power_id)
-
-    def overlay_power_delta(power_id: object, raw_changes: object) -> None:
-        pid = str(power_id or "").strip()
-        if not pid or not isinstance(raw_changes, dict):
-            return
-        row = power_row(pid)
-        if row is None:
-            return
-        for raw_field, value in raw_changes.items():
-            field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-            if field in {"reason", "last_action"}:
-                continue
-            if field not in _PENDING_POWER_GATE_FIELDS:
-                continue
-            try:
-                if isinstance(value, bool) or isinstance(value, float):
-                    raise ValueError("非整数 delta")
-                delta = int(value)
-            except (TypeError, ValueError):
-                continue
-            old_value = int(row[field])
-            new_value = max(0, min(100, old_value + delta))
-            if new_value == old_value:
-                continue
-            row[field] = new_value
-            pending_power_fields.setdefault(pid, {})[field] = new_value
-
-    def pending_power_gate_value(key: str) -> Optional[int]:
-        parts = key.split(".")
-        if not parts or parts[0] != "power":
-            return None
-        agg = None
-        if parts[-1] in _GATE_AGG_FUNCS:
-            agg = parts[-1]
-            parts = parts[:-1]
-        if len(parts) != 3:
-            return None
-        _, id_segment, raw_field = parts
-        field = _gate_sql_field("power", raw_field, key, kind="numeric")
-        if field not in _PENDING_POWER_GATE_FIELDS:
-            return None
-        ids = [pid for pid in id_segment.split("|") if pid]
-        if not ids or not any(field in pending_power_fields.get(pid, {}) for pid in ids):
-            return None
-        values: List[int] = []
-        for pid in ids:
-            row = power_row(pid)
-            if row is None:
-                return None
-            values.append(int(row[field]))
-        if len(values) == 1:
-            return values[0]
-        if agg is None:
-            agg = "min"
-        return int(_GATE_AGG_FUNCS[agg](values))
-
-    def current_title_kind(row: Dict[str, str]) -> str:
-        current_office = row_value(row, "office").strip()
-        current_office_type = row_value(row, "office_type").strip()
-        if (
-            not current_office
-            or current_office_type == "身名分"
-            or current_office in PERSON_IDENTITY_TITLES
-        ):
-            return "身名分"
-        return "职名分"
-
-    def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
-        title = str(item.get("new_title") or item.get("title") or "").strip()
-        if title:
-            return title if title in PERSON_IDENTITY_TITLES else ""
-        way = str(item.get("方式") or item.get("way") or "").strip()
-        if new_power == "ming" or way == "主动归附":
-            return "归附"
-        return "降臣"
-
-    for item in pending_person_changes:
-        name = str(item.get("name") or "").strip()
-        action = str(item.get("动作") or "").strip()
-        if not name:
-            continue
-        if content is not None:
-            from ming_sim.session import _find_existing_minister
-            canon = _find_existing_minister(content, name, db)
-            if canon:
-                name = canon
-        row = character_row(name)
-        if row is None:
-            continue
-        cur_status = row_value(row, "status", "active")
-        if action in {"罢黜", "处置"}:
-            reason_text = str(item.get("reason") or item.get("status_reason") or "")
-            reason_code = normalize_reason_code(item.get("reason_code"))
-            if action == "罢黜":
-                status = "dismissed"
-            else:
-                status = str(item.get("status") or "").strip()
-                if status in {"active"}:
-                    continue
-            if status not in PERSON_STATUSES:
-                continue
-            transition = resolve_person_transition(
-                cur_status,
-                action,
-                reason_code=normalize_reason_code(item.get("reason_code")),
-            )
-            if transition.startswith("reject:"):
-                continue
-            overlay(name, "status", status)
-            overlay(name, "status_reason", reason_text)
-            overlay(name, "reason_code", reason_code if reason_code else "")
-            overlay(name, "office", "")
-            overlay(name, "transit_to", "")
-        elif action == "行止":
-            departure, _error = _admit_transit_departure(item, row, valid_regions)
-            if departure is None:
-                continue
-            overlay(name, "location", departure["location"])
-            overlay(name, "transit_to", departure["transit_to"])
-        elif action == "易主":
-            way = str(item.get("方式") or item.get("way") or "").strip()
-            backlash = item.get("反噬", item.get("backlash"))
-            if not way:
-                continue
-            if way not in PERSON_ALLEGIANCE_CHANGE_WAYS:
-                continue
-            if not isinstance(backlash, dict):
-                continue
-            if any(not isinstance(raw_changes, dict) for raw_changes in backlash.values()):
-                continue
-            new_power = str(item.get("new_power") or "").strip()
-            if not new_power:
-                continue
-            if new_power not in power_shadow_rows:
-                continue
-            if row_value(row, "power_id", "ming").strip() == new_power:
-                continue
-            transition = resolve_person_transition(
-                cur_status,
-                action,
-                reason_code=str(row_value(row, "reason_code") or item.get("reason_code") or ""),
-            )
-            if transition.startswith("reject:"):
-                continue
-            new_title = identity_title_for_allegiance(item, new_power)
-            if not new_title:
-                continue
-            overlay(name, "power_id", new_power)
-            overlay(name, "status", "active")
-            overlay(name, "status_reason", str(item.get("reason") or ""))
-            overlay(name, "reason_code", "")
-            overlay(name, "office", new_title)
-            overlay(name, "office_type", "身名分")
-            overlay(name, "transit_to", "")
-            for power_id, raw_changes in backlash.items():
-                overlay_power_delta(power_id, raw_changes)
-        elif action in {"任命", "调任"}:
-            new_office = str(item.get("office") or item.get("new_office") or "").strip()
-            if not new_office:
-                continue
-            normalized_office = normalize_office(new_office)
-            if content is not None:
-                character = content.characters.get(name)
-                if character is None or is_vassal_prince(character):
-                    continue
-            transition = resolve_person_transition(
-                cur_status,
-                action,
-                reason_code=str(row_value(row, "reason_code") or item.get("reason_code") or ""),
-                current_title_kind=current_title_kind(row),
-            )
-            if transition.startswith("reject:"):
-                continue
-            if row_value(row, "power_id", "ming") not in {"", "ming"}:
-                continue
-            overlay(name, "status", "active")
-            if cur_status == "active":
-                overlay(name, "status_reason", "")
-            else:
-                overlay(name, "status_reason", str(item.get("reason") or "") or "诏书任命")
-            overlay(name, "reason_code", "")
-            overlay(name, "office", normalized_office)
-            # 显式名分透传（#1059 codex 同族）：事件闸预览的 overlay 须与真实 apply 一致，
-            # 显式名分（office='诸生'）不得被 infer 反推成 '生员'，否则 shadow 盘面与落库分岔。
-            overlay(
-                name,
-                "office_type",
-                resolve_office_type_preserving_title(
-                    normalized_office,
-                    str(item.get("office_type") or item.get("new_office_type") or ""),
-                    row_value(row, "office_type"),
-                    db.llm_config,
-                ),
-            )
-            overlay(name, "transit_to", "")
-            new_parts = [p for p in normalized_office.split(",") if _is_exclusive_office(p)]
-            if new_parts:
-                for other_name in set(shadow_rows):
-                    if other_name == name:
-                        continue
-                    other_row = character_row(other_name)
-                    if other_row is None:
-                        continue
-                    if row_value(other_row, "status", "active") != "active":
-                        continue
-                    if row_value(other_row, "power_id", "ming") not in {"", "ming"}:
-                        continue
-                    current_parts = [p.strip() for p in row_value(other_row, "office").split(",") if p.strip()]
-                    kept = [p for p in current_parts if p not in new_parts]
-                    if len(kept) == len(current_parts):
-                        continue
-                    displaced_office = "听用候铨" if not kept else ",".join(kept)
-                    old_type = row_value(other_row, "office_type")
-                    displaced_type = (
-                        "身名分"
-                        if not kept
-                        else infer_office_type_from_office(displaced_office, old_type, db.llm_config)
-                    )
-                    overlay(other_name, "office", displaced_office)
-                    overlay(other_name, "office_type", displaced_type)
-                    if not kept:
-                        overlay(other_name, "status_reason", "被顶替")
-                        overlay(other_name, "reason_code", "被顶替")
-                        overlay(other_name, "transit_to", "")
-        else:
-            continue
-
-    if not pending_fields and not pending_power_fields:
+    if not _gate_passed(ev.trigger_gate, state.metrics, db):
+        # Already failing on live DB; pending person writes are not the cause.
         return False
-    for key, cond in ev.trigger_gate.items():
-        match = _CHARACTER_TEXT_GATE_RE.fullmatch(str(key))
-        if not match:
-            continue
-        name, field = match.groups()
-        if field not in _PENDING_PERSON_GATE_FIELDS:
-            continue
-        fields = pending_fields.get(name)
-        if not fields or field not in fields:
-            continue
-        cond_match = _TEXT_CONDITION_RE.fullmatch(str(cond))
-        if cond_match is None:
-            continue
-        op, expected = cond_match.groups()
-        actual = fields[field]
-        if op == "==" and actual != expected:
-            return True
-        if op == "!=" and actual == expected:
-            return True
-    for key, cond in ev.trigger_gate.items():
-        actual = pending_power_gate_value(str(key))
-        if actual is None:
-            continue
-        cond_match = _NUMERIC_CONDITION_RE.fullmatch(str(cond))
-        if cond_match is None:
-            continue
-        op, expected_text = cond_match.groups()
-        expected = int(expected_text)
-        if op == ">=" and not actual >= expected:
-            return True
-        if op == "<=" and not actual <= expected:
-            return True
-        if op == ">" and not actual > expected:
-            return True
-        if op == "<" and not actual < expected:
-            return True
-        if op == "==" and not actual == expected:
-            return True
-    return False
-
+    content_rows = _snapshot_content_character_rows(content)
+    savepoint = "pending_person_gate_probe"
+    db.conn.execute(f"SAVEPOINT {savepoint}")
+    try:
+        _dry_run_apply_person_changes(
+            db,
+            state,
+            pending_person_changes,
+            content=content,
+            llm_config=llm_config,
+            require_origin=True,
+            keep_applied=True,
+        )
+        return not _gate_passed(ev.trigger_gate, state.metrics, db)
+    finally:
+        db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+        db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        _restore_content_character_rows(content, content_rows)
 
 
 
@@ -4216,7 +3993,9 @@ def _preflight_declared_event_groups(
             [person for item in group for person in (item.get("人物变更") or [])], content, db,
         )
         new_armies = [army for item in group for army in (item.get("new_armies") or [])]
-        if _pending_person_changes_block_event_gate(event, people, db, content=content):
+        if _pending_person_changes_block_event_gate(
+            event, people, db, state=state, content=content, llm_config=db.llm_config,
+        ):
             _reject(pending, f"战略事件被同项人物变更阻断：{event_id}")
             continue
         if not (region_items or army_items or power_items or people or new_armies):
@@ -4328,18 +4107,6 @@ def apply_issue_tracker_output(
     consumed_event_ids: set[str] = set()
     current_candidate_event_ids: set[str] = set()
     candidates_dirty = True
-    shared_shadow_rows: Optional[Dict[str, Dict[str, str]]] = None
-    shared_power_shadow_rows: Optional[Dict[str, Dict[str, int]]] = None
-    shared_valid_regions: Optional[set[str]] = None
-    has_event_pool_new_issue = any(
-        isinstance(item, dict) and str(item.get("origin_kind") or "").lower() == "event_pool"
-        for item in (tracker_output.get("new_issues", []) or [])
-    )
-    if pending_person_changes_for_gates and has_event_pool_new_issue:
-        shared_shadow_rows = _load_pending_gate_shadow_rows(db)
-        shared_power_shadow_rows = _load_pending_gate_power_shadow_rows(db)
-        shared_valid_regions = _load_pending_gate_valid_regions(db)
-
     # 1) advances（ADR 0008 决定1：LLM 脏数据逐项拒收留痕，不裸 continue 静默丢；db.advance_issue
     #    的代码/DB 异常上抛 SettlementAbort，同 close_issues / new_issues 段，#63）
     for adv in tracker_output.get("advances", []) or []:
@@ -4640,10 +4407,9 @@ def apply_issue_tracker_output(
                     ev,
                     pending_person_changes_for_gates or [],
                     db,
+                    state=state,
                     content=runtime_content,
-                    shadow_rows=shared_shadow_rows,
-                    power_shadow_rows=shared_power_shadow_rows,
-                    valid_regions=shared_valid_regions,
+                    llm_config=llm_config,
                 ):
                     print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
                     applied_new.append({
@@ -7712,54 +7478,29 @@ def _apply_score_extraction_body(
     strategic_person_result_changes = strategic_pre_issue_person_changes + strategic_post_issue_person_changes
 
     def _amnesty_conflict_power_ids(changes: List[Dict[str, object]]) -> set[str]:
+        """Same-envelope bandit dual-cut set from person write-core results only."""
         power_ids: set[str] = set()
-        for item in changes:
-            if str(item.get("动作") or "").strip() != "易主":
+        results = _dry_run_apply_person_changes(
+            db,
+            state,
+            list(changes or []),
+            content=content,
+            llm_config=llm_config,
+            require_origin=True,
+        )
+        for result in results:
+            if not isinstance(result, dict) or result.get("rejected"):
                 continue
-            if str(item.get("方式") or item.get("way") or "").strip() != "主动归附":
+            if str(result.get("动作") or "").strip() != "易主":
                 continue
-            if str(item.get("new_power") or "").strip() != "ming":
+            if str(result.get("方式") or result.get("way") or "").strip() != "主动归附":
                 continue
-            backlash = item.get("反噬", item.get("backlash"))
-            if not isinstance(backlash, dict):
+            if str(result.get("new_power") or "").strip() != "ming":
                 continue
-            if any(not isinstance(raw_changes, dict) for raw_changes in backlash.values()):
-                continue
-            name = str(item.get("name") or "").strip()
-            if content is not None:
-                from ming_sim.session import _find_existing_minister
-                name = _find_existing_minister(content, name, db) or name
-            row = db.conn.execute(
-                "SELECT status, power_id, reason_code FROM characters WHERE name=?",
-                (name,),
-            ).fetchone()
-            if row is None:
-                continue
-            old_power = str(row["power_id"] or "").strip()
-            if old_power in {"", "ming"}:
-                continue
-            transition = resolve_person_transition(
-                str(row["status"] or "active"),
-                "易主",
-                reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
-            )
-            if transition.startswith("reject:"):
-                continue
-            backlash_power_ids = {
-                str(power_id).strip()
-                for power_id in backlash.keys()
-                if str(power_id).strip()
-            }
-            if any(power_id != old_power for power_id in backlash_power_ids):
-                continue
-            explicit_title = str(item.get("new_title") or item.get("title") or "").strip()
-            if explicit_title and explicit_title not in PERSON_IDENTITY_TITLES:
-                continue
-            # 流寇同股同信封：招安已占用该股（即使反噬为空），同信封顶层
-            # power_updates 再写即双削。外势与跨信封独立效果不在此列。
-            if not _is_bandit_power_id(old_power):
-                continue
-            power_ids.add(old_power)
+            old_power = str(result.get("old_power") or "").strip()
+            # 流寇同股同信封：写核已接纳的招安占用该股；外势与跨信封不在此列。
+            if _is_bandit_power_id(old_power):
+                power_ids.add(old_power)
         return power_ids
 
     applied_person_changes: List[Dict[str, object]] = []
@@ -8500,23 +8241,6 @@ def _apply_score_extraction_body(
         defer_event_trigger_ids=strategic_event_pool_ids,
         open_affair_ids_at_input=authorized_open_affairs,
         pre_admitted_event_ids=landed_event_stock_ids)
-
-    # Affair closure observes the batch's final issue state. In particular, a
-    # same-batch linked issue must prevent closure rather than leave a closed
-    # affair pointing at active work.
-    for raw in extracted.get("affair_declarations") or []:
-        try:
-            if not isinstance(raw, dict):
-                raise ValueError("事务声明须为对象")
-            db.affairs.close_from_declaration(
-                raw,
-                turn=int(state.turn),
-                authorized_ids=frozen_open_affairs,
-            )
-        except (TypeError, ValueError, KeyError) as exc:
-            validate_rejections.append(
-                ("affair_declarations", {"raw_value": raw}, str(exc)),
-            )
 
     def _ordered_strategic_items(field: str, event_id: str) -> list[tuple[str, object]]:
         items = ordered_deltas.get(field) or []

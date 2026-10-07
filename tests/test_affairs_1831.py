@@ -83,7 +83,7 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
 
 
 
-def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
+def test_same_name_affairs_are_not_merged_and_close_attach_is_not_a_birth(game):
     db, state, _ = game
     minister = _minister(db)
     first = db.affairs.open(
@@ -118,26 +118,23 @@ def test_same_name_affairs_are_not_merged_and_birth_close_is_rejected(game):
     except ValueError:
         pass
     else:
-        raise AssertionError("expected birth close to fail")
+        raise AssertionError("expected birth close attach to fail")
     assert db.affairs.get(first.id).status == "open"
-    for bad_id in (True, 1.5):
-        closed = apply_score_extraction(
-            db, state,
-            {"affair_declarations": [{"attach": "close", "affair_id": bad_id}]},
-            open_affair_ids_at_input={first.id},
-        )
-        assert db.affairs.get(first.id).status == "open"
-        assert any(
-            row.get("report_section") == "affair_declarations"
-            for row in closed["validate_shape_rejections"]
-        )
+    # Retired close protocol: top-level affair_declarations are no longer consumed.
+    ignored = apply_score_extraction(
+        db, state,
+        {"affair_declarations": [{"attach": "close", "affair_id": first.id}]},
+        open_affair_ids_at_input={first.id},
+    )
+    assert db.affairs.get(first.id).status == "open"
+    assert ignored.get("validate_shape_rejections") in (None, [], ())
 
 
 
 
 
 
-def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
+def test_typed_affair_new_issues_share_provenance(game):
     db, state, content = game
     existing = db.affairs.open(
         name=NINGYUAN, origin=ORIGIN,
@@ -146,9 +143,6 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
     result = apply_score_extraction(
         db, state,
         {
-            "affair_declarations": [
-                _declaration(attach="close", affair_id=existing.id),
-            ],
             "new_issues": [
                 {
                     "origin_kind": "decree", "kind": "situation",
@@ -171,11 +165,6 @@ def test_typed_affair_new_issues_share_provenance_and_close_final_state(game):
     assert db.affairs.affair_id_for_issue(created[0]["issue_id"]) == existing.id
     assert db.affairs.affair_id_for_issue(created[1]["issue_id"]) != existing.id
     assert db.affairs.get(existing.id).status == "open"
-    assert any(
-        row["report_section"] == "affair_declarations"
-        and row["category"] == "invalid_shape"
-        for row in result["validate_shape_rejections"]
-    )
 
 
 

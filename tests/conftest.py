@@ -32,7 +32,6 @@ def clear_pending_rows(db, turn):
 
 def clear_resolve_rows(db, turn):
     db.conn.execute("DELETE FROM pending_resolve_context WHERE turn=?", (turn,))
-    db.conn.execute("DELETE FROM pending_promulgation_verdicts WHERE turn=?", (turn,))
     db.conn.commit()
 
 

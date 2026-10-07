@@ -318,11 +318,9 @@ def _own_affair_lines(
     it mirrors the existing participant/audience "handling" gate already
     applied to ordinary (non-linked) issues, checked against whichever linked
     issue points here — the #1830 opening min-set's established criterion,
-    unchanged by this fix. `AffairStore.declare_closed` (ADR 0154 decision
-    key `affair-close-requires-no-active-linked-issues`) rejects closing an
-    affair that still has an active linked issue, so "closed affair with a
-    still-active linked issue" cannot occur — this function does not need to
-    special-case it.
+    unchanged by this fix. Affairs become past without an LLM close action
+    (ADR 0154 post-ruling); this directory reader does not special-case a
+    closed affair that still points at an active linked issue.
     """
     from ming_sim.knowledge import _issue_audience_case_events, _reader_in_issue_audience
     from ming_sim.participant_roster import participant_roster_names
