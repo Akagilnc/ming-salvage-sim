@@ -331,8 +331,8 @@ def test_issue_write_path_projects_participants_across_restore(game):
     )
 
     row = db.conn.execute("SELECT participants FROM issues WHERE id=?", (issue_id,)).fetchone()
-    # Contract: participant identity is stored; do not lock raw JSON spacing/escapes.
-    assert minister.name in json.loads(row["participants"])
+    # Decoded set equality — not raw JSON spacing/escapes.
+    assert json.loads(row["participants"]) == [minister.name]
     before = db.get_character_knowledge(state, minister.name)
 
     restored = db.load_state()
@@ -496,8 +496,8 @@ def test_issue_roster_is_structured_and_read_side_projection_needs_no_write_hook
         ]
     )
     row = db.conn.execute("SELECT participants, participant_roster FROM issues WHERE id=?", (issue_id,)).fetchone()
-    # Contract: names + structured roster fields; not raw JSON presentation.
-    assert minister.name in json.loads(row["participants"])
+    # Decoded full participant set + structured roster fields; not raw JSON presentation.
+    assert json.loads(row["participants"]) == [minister.name]
     roster = json.loads(row["participant_roster"])
     assert any(
         entry.get("character_id") == minister.name and entry.get("tier") == "主办"
@@ -1301,10 +1301,6 @@ def test_central_ledgers_and_unbounded_household_history_reach_final_materials(g
     household = next(c for c in content.characters.values() if c.office_type == "户部")
     war = next(c for c in content.characters.values() if c.office_type == "兵部")
     personnel = next(c for c in content.characters.values() if c.office_type == "吏部")
-    for index in range(31):
-        db.record_issue_economy_move(
-            state, "国库", 1, "旧账", f"ledger_move_{index}",
-        )
     # Knowledge scope by office: treasury / military / personnel buckets — not archive prose.
     household_view = db.get_character_knowledge(state, household.name)
     war_view = db.get_character_knowledge(state, war.name)
