@@ -100,7 +100,10 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
 
     assert live["night_id"] == closed["night_id"] == night_id
     assert [set(message) for message in live["messages"]] == [set(message) for message in closed["messages"]]
-    # 消息字段键集合一致即可；不跨投影等值 content 自由正文。
+    # live/closed 同合同：角色身份 + 正文原样运输（#1897 T1）
+    assert [message["content"] for message in live["messages"]] == [
+        message["content"] for message in closed["messages"]
+    ]
     assert [(m.get("role"), m.get("speaker"), m.get("chat_turn_id")) for m in live["messages"]] == [
         (m.get("role"), m.get("speaker"), m.get("chat_turn_id")) for m in closed["messages"]
     ]
@@ -199,6 +202,7 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     before = client.get("/api/audience/scroll").json()["messages"]
     before_turn = [m for m in before if m.get("chat_turn_id") == turn_id]
     assert before_turn
+    assert [m["content"] for m in before if m.get("chat_turn_id") == turn_id][-1] == story
     assert (before_turn[-1]["role"], before_turn[-1]["speaker"], before_turn[-1]["highlights"]) == ("scene", "", [])
     assert client.get("/api/audience/scroll").json()["translation_pending"] is True
 
@@ -212,22 +216,17 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     after = client.get("/api/audience/scroll").json()["messages"]
     assert client.get("/api/audience/scroll").json()["translation_pending"] is False
     segments = [m for m in after if m.get("chat_turn_id") == turn_id and m["role"] != "user"]
-    segment_struct = [
-        (m["role"], m["speaker"], m.get("audibility"), m.get("beat")) for m in segments
+    assert [(m["role"], m["speaker"], m["content"]) for m in segments] == [
+        ("minister", "杨嗣昌", "臣领旨。"),
+        ("attendant", "王承恩", "王承恩低语。"),
+        ("scene", "", "殿内烛影摇曳。"),
     ]
-    assert segment_struct == [
-        ("minister", "杨嗣昌", "殿上公开", "dialogue"),
-        ("attendant", "王承恩", "御前低语", "aside"),
-        ("scene", "", "殿上公开", "dialogue"),
-    ]
-    # 夜卷轴再读只比结构化投影，不整对象锁 content 正文（#1897 T1）。
+    assert "".join(m["content"] for m in segments) == story
     again = [
         m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"]
         if m.get("chat_turn_id") == turn_id and m["role"] != "user"
     ]
-    assert [
-        (m["role"], m["speaker"], m.get("audibility"), m.get("beat")) for m in again
-    ] == segment_struct
+    assert again == segments
 
 
 def test_unnamed_speaker_scene_facts_are_item_rejected(game, monkeypatch):

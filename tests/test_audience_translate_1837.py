@@ -941,17 +941,29 @@ def test_pure_office_dossier_uses_payload_text_not_template(game):
     assert pa["kind"] == "office"
     pending_id = int(pa["id"])
 
+    payload = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?",
+            (pending_id,),
+        ).fetchone()["payload_json"]
+    )
+    # 输入 edict 原样进 pending payload.text（#1897 T1 运输）
+    assert payload["text"] == edict
+
     db.mark_pending_night_approved([pending_id], night_id=night_id)
     close_night(db, state, content=content)
 
     dossier = db.conn.execute(
-        "SELECT action_type, status "
+        "SELECT action_type, status, decree_text, payload_json "
         "FROM decree_dossiers WHERE pending_action_id=? "
         "AND action_type='appointment' ORDER BY id DESC LIMIT 1",
         (pending_id,),
     ).fetchone()
     assert dossier is not None, "纯任免应收夜成 appointment 案卷"
     assert dossier["action_type"] == "appointment"
+    assert dossier["decree_text"] == edict
+    dossier_payload = json.loads(dossier["payload_json"] or "{}")
+    assert dossier_payload.get("text") == edict
 
 
 def test_appointment_region_id_stages_into_pending_payload(game):
@@ -984,6 +996,7 @@ def test_appointment_region_id_stages_into_pending_payload(game):
             (int(pa["id"]),),
         ).fetchone()["payload_json"]
     )
+    assert payload.get("text") == edict
     assert payload.get("region_id") == region
 
 

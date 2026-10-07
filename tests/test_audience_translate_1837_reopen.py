@@ -288,6 +288,8 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
     assert payload["office"] == "巡盐御史"
     assert payload["recommendation"]["recommender"] == recommender.name
     assert payload["recommendation"]["candidate"]["name"] == same_faction.name
+    # 荐语 reason 输入→payload.reason 原样运输（#1897 T1）
+    assert payload["reason"] == reason
     approval = _scene_declaration(db, state, content, monkeypatch, "准", {
         "promises": [{"action_id": result.commissions.applied[0]["id"], "decision": "应允"}],
     })
@@ -581,6 +583,7 @@ def test_rush_commitment_stages_pending_催办(game, monkeypatch):
     payload = json.loads(row["payload_json"])
     assert int(payload["stage_idx"]) == 1
     assert int(payload["deadline_months"]) == 1
+    assert payload.get("reason") == reason  # 催办 reason 原样运输
     db.commit_pending_actions(state, content=content)
     from ming_sim.staged_commitment import normalize_commitment_stages
     stages = normalize_commitment_stages(db.conn.execute(
