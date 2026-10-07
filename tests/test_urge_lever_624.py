@@ -164,19 +164,15 @@ def test_rush_staged_commitment_advances_due_and_fills_urge_history(game):
 
 
 def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
-    """#1895：同一实况下，催办压力与 integrity 都不再改写到期复核判词。
+    """#1895 / #1835 J18：催办压力不代判终值；终值只经模型声明写格。
 
-    旧契约是 derive_distortion_tendency 按 integrity＋催办压力算出失真档，
-    apply_distortion_to_verdict 再把判词只往更重方向推（fulfilled→degraded→
-    failed/transformed）。此测试钉相反行为：人物肯不肯办归模型自选，代码只按
-    实况账（旨外标记／durable_effects／progress_reports）判终值。
+    催办史仍作事实素材供模型；apply_due_review 不机械选 degraded/failed。
     """
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
     dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
     _set_integrity(db, "倪元璐", 25)
-    # 单段末段终裁面（多段会走 mid_stage=executing）
     stages = [{
         "stage_idx": 0,
         "due_turn": state.turn + 24,
@@ -187,7 +183,6 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
         title="失真对照之诺",
     )
-    # 有表报无实账 → 基线 degraded
     db.record_dossier_progress(
         dossier_id, state.turn, "在办", "表报已陈，实绩未充",
         is_terminal=False, commit=True,
@@ -219,10 +214,12 @@ def test_urge_no_longer_rewrites_verdict_ac1_1895(game):
     # 催办史仍作事实素材落进输入（世界因果保留）。
     assert len(rushed_inp["urge_history"]) > len(base_inp["urge_history"])
 
-    # 落库路径只认实况：重催不把执行格改写成 failed/transformed。
+    # 无模型终值：不机械替判，保留 pending。
     applied = apply_due_review_for_todo(db, state, todo, commit=True)
-    assert applied["verdict"]["outcome"] == "degraded"
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "degraded"
+    assert applied.get("consumed") is False
+    assert (applied.get("execution") or {}).get("waiting_model") is True
+    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"] in ("", None, "executing")
 
 # ── AC6 求宽限真伪底落 payload、玩家面零裸露 ─────────────────────────
 

@@ -4329,8 +4329,8 @@ class GameDB:
         state = GameState(
             year=int(row["year"]), period=int(row["period"]), turn=int(row["turn"]),
             turn_phase=str(row["turn_phase"] or "summoning"),
-            ended=bool(row["ended"]) if "ended" in row.keys() else False,
-            ending_status=str(row["ending_status"] or "") if "ending_status" in row.keys() else "",
+            ended=bool(row["ended"]),
+            ending_status=str(row["ending_status"] or ""),
         )
         if metrics:
             # 只接当前 GameState 默认 dict 里有的 key，避免旧 DB 残留废弃 metric 灌入。
@@ -9467,8 +9467,8 @@ class GameDB:
             "event_id": r["event_id"],
             "title": r["title"],
             "context": r["context"],
-            "rejection_reason": r["rejection_reason"] if "rejection_reason" in r.keys() else "",
-            "opposition": r["opposition"] if "opposition" in r.keys() else "",
+            "rejection_reason": r["rejection_reason"] or "",
+            "opposition": r["opposition"] or "",
             "options": options,
             "choice": choice,
             "status": r["status"],
@@ -19786,7 +19786,7 @@ class GameDB:
         covert_task: Optional[Mapping[str, object]] = None,
     ) -> Tuple[int, bool]:
         """同一承办大臣已有 active 密令 → 更新其要旨(title/content/tags/限期)并记一条
-        「奉旨更新」进展；否则新建。返回 (order_id, was_update)。
+        否则新建。返回 (order_id, was_update)。
         补 CLI 后端无 function-calling 的缺口：原靠大臣 function-call 改密令，现失效；
         再次下密令给同一承办人即更新已有条，而非建重复（限期=0 表示不动原限期）。"""
         existing = self.conn.execute(
@@ -19816,7 +19816,7 @@ class GameDB:
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
     ) -> bool:
-        """按**精确 id** 更新 active 密令要旨（title/content/tags/限期），记一条「奉旨更新」进展。
+        """按**精确 id** 更新 active 密令要旨（title/content/tags/限期）。
         返回是否更新（id 存在且状态为 active）。
 
         与 upsert_secret_order 的区别：upsert 按「该大臣最新 active」改，会话动作「更新」已解析出
@@ -19883,7 +19883,8 @@ class GameDB:
                 payload["tags"] = json.loads(tags_json)
                 self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
         tlog(f"[secret_order] update id={order_id} title={title}")
-        self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)
+        # 要旨已落 secret_orders/dossier 结构化字段；人物陈词只经模型报告轨，
+        # 不把代码拼句写入 result/进展（#1835 J14）。
         return True
 
     def list_secret_orders(
@@ -19907,8 +19908,8 @@ class GameDB:
             {
                 "id": int(r["id"]),
                 "turn_issued": int(r["turn_issued"]),
-                "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
-                "deadline_span": int(r["deadline_span"] if "deadline_span" in r.keys() else 0),
+                "due_turn": int(r["due_turn"] or 0),
+                "deadline_span": int(r["deadline_span"] or 0),
                 "year_issued": int(r["year_issued"]),
                 "period_issued": int(r["period_issued"]),
                 "minister_name": r["minister_name"],
@@ -19918,7 +19919,7 @@ class GameDB:
                 "importance": int(r["importance"]),
                 "status": r["status"],
                 "result": r["result"] or "",
-                "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
+                "sim_note": (r["sim_note"] or ""),
                 # Emperor-facing secret-order payload is an authorized private
                 # product seam; expose the same canonical monthly rail used by
                 # the personnel extractor and future dossier inquiry.
@@ -19927,8 +19928,8 @@ class GameDB:
                     if (dossier := self.get_dossier_for_secret_order(int(r["id"])))
                     else []
                 ),
-                "excluded_names": json.loads(r["excluded_names"] or "[]") if "excluded_names" in r.keys() else [],
-                "excluded_targets": json.loads(r["excluded_targets"] or "{}") if "excluded_targets" in r.keys() else {},
+                "excluded_names": json.loads(r["excluded_names"] or "[]"),
+                "excluded_targets": json.loads(r["excluded_targets"] or "{}"),
                 "turn_closed": r["turn_closed"],
             }
             for r in rows
@@ -20203,36 +20204,24 @@ class GameDB:
             months = max(0, min(int(deadline_months), 36))
         target_turn = int(state.turn) + months
         old_due = int(row["due_turn"] or 0)
-        why = reason if str(reason or "").strip() else "奉旨加急"
-        body_row = self._load_secret_order_body_row(int(order_id), active_only=True)
-        records = _secret_order_body_log(body_row)["result"] if body_row is not None else []
+        # 催办只改 due_turn/deadline_span 结构化事实；不把代码模板写入 result
+        # （result 是承办回报/执行结果陈词载体，#1835 J14）。reason 供调用方/催办史。
+        _ = reason  # 保留形参供上游催办史；本写口不落人物陈词。
         with atomic(self):
             if months <= 0:
-                records.append({
-                    "year": int(state.year),
-                    "period": int(state.period),
-                    "marker": "[奉旨即核] ",
-                    "body": f"{why}；本月到期按实进度对账。",
-                })
                 due_turn = int(state.turn)
-                self._write_secret_order_body(
-                    int(order_id), "result", records,
-                    extra_assignments="due_turn = ?, deadline_span = 0",
-                    extra_params=(due_turn,),
+                self.conn.execute(
+                    "UPDATE secret_orders SET due_turn = ?, deadline_span = 0, "
+                    "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (due_turn, int(order_id)),
                 )
                 status = "active"
             else:
                 due_turn = target_turn if old_due <= 0 else min(old_due, target_turn)
-                records.append({
-                    "year": int(state.year),
-                    "period": int(state.period),
-                    "marker": "[奉旨加急] ",
-                    "body": f"{why}；御限改为 {months} 个月内核议。",
-                })
-                self._write_secret_order_body(
-                    int(order_id), "result", records,
-                    extra_assignments="due_turn = ?, deadline_span = ?",
-                    extra_params=(due_turn, max(int(due_turn) - int(state.turn), 0)),
+                self.conn.execute(
+                    "UPDATE secret_orders SET due_turn = ?, deadline_span = ?, "
+                    "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (due_turn, max(int(due_turn) - int(state.turn), 0), int(order_id)),
                 )
                 status = "active"
             self.mark_secret_order_in_progress(int(order_id), commit=False)
@@ -20250,9 +20239,9 @@ class GameDB:
             "id": int(r["id"]), "minister_name": r["minister_name"],
             "title": r["title"], "content": r["content"],
             "status": r["status"], "result": r["result"] or "",
-            "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
+            "sim_note": (r["sim_note"] or ""),
             "turn_issued": int(r["turn_issued"]),
-            "due_turn": int(r["due_turn"] if "due_turn" in r.keys() else 0),
+            "due_turn": int(r["due_turn"] or 0),
             "turn_closed": r["turn_closed"],
         }
 

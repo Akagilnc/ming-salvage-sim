@@ -91,11 +91,12 @@ def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
 
 def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
     """Parse excluded_names and excluded_targets.people/offices from one row."""
-    raw_names = row["excluded_names"] if "excluded_names" in row.keys() else None
+    raw_names = row["excluded_names"]
     names = json.loads(raw_names or "[]")
     if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
         raise ValueError("持久排除人物须为字符串列表")
     excluded_names = set(names)
+    # events 表无 excluded_targets 列；sources/密令有。多表共用本读法，非旧档缺列回落。
     raw_targets = row["excluded_targets"] if "excluded_targets" in row.keys() else None
     targets = json.loads(raw_targets) if raw_targets else {}
     if not isinstance(targets, dict):
@@ -175,7 +176,7 @@ def knowledge_row_visible_to(
     # A private source's roster is a positive capability, not a deny-list
     # snapshot.  Enforce it at read time so characters created after archival
     # cannot inherit old participant-private material.
-    source_id = str(row["source_id"] or "") if "source_id" in row.keys() else ""
+    source_id = str(row["source_id"] or "")
     source = db.conn.execute(
         "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
         (source_id,),
@@ -183,7 +184,10 @@ def knowledge_row_visible_to(
     # A public event is a new disclosure capability even when it deliberately
     # retains the private source id for provenance.  It keeps its own explicit
     # people/office exclusions above, but must not inherit the source roster.
-    event_is_public = "kind" in row.keys() and str(row["kind"] or "") == "public"
+    # 多表共用：events 有 kind；部分只读行无此列。
+    event_is_public = (
+        "kind" in row.keys() and str(row["kind"] or "") == "public"
+    )
     if not event_is_public and source is not None and str(source["kind"] or "") != "public":
         participants = participant_roster_names(source["participant_roster"])
         if participants and character_name not in participants:

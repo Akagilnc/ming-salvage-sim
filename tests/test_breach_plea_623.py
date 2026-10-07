@@ -509,13 +509,11 @@ def test_kind_gate_apply_only_finalizes_staged(game):
     before_plea = _pending_pleas(db)
     assert before_plea
     results = apply_pending_due_reviews(db, state, commit=True)
-    staged_done = [r for r in results if r.get("entry_kind") == ENTRY_KIND_STAGED and r.get("consumed")]
+    # staged 由本函数处理（有终值则消费，无则 waiting_model）；哭谏 skip 保留
+    staged_handled = [r for r in results if r.get("entry_kind") == ENTRY_KIND_STAGED]
     plea_skip = [r for r in results if r.get("entry_kind") == ENTRY_KIND_BREACH_PLEA and r.get("skipped")]
-    assert staged_done or any(
-        str(t.get("entry_kind")) == ENTRY_KIND_STAGED
-        and str(t.get("status")) == TODO_STATUS_CONSUMED
-        for t in db.list_next_audience_todos()
-    )
+    assert staged_handled, results
+    assert all(r.get("rejected") is not True for r in staged_handled), staged_handled
     assert plea_skip
     assert _pending_pleas(db), "哭谏须仍 pending"
     # 非 staged 未连坐 did2

@@ -15,16 +15,13 @@ import json
 
 from ming_sim.db import GameDB
 from tests.dossier_test_helpers import create_test_secret_order
-from ming_sim.due_review import (
-    apply_pending_due_reviews,
-    decide_due_review_verdict,
-)
+from ming_sim.due_review import apply_pending_due_reviews
 from ming_sim.entities.economy.apply import _apply_economy_list
 from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import issue_rows, view
+from ming_sim.settlement.views import issue_rows, rejected_view, view
 
 
 # ── shared helpers ────────────────────────────────────────────────────
@@ -54,7 +51,11 @@ def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     return int(created["issue_id"])
 
 
-def _prime_and_apply_due_review(db, state, content, *, dossier_id: int, title: str):
+def _prime_and_apply_due_review(
+    db, state, content, *, dossier_id: int, title: str,
+    outcome: str, note: str,
+):
+    """模型声明写执行格后，正式复核只消费 todo（#1835 J18）。"""
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
     _insert_final_stage(db, state, content, dossier_id=dossier_id, title=title)
@@ -64,8 +65,19 @@ def _prime_and_apply_due_review(db, state, content, *, dossier_id: int, title: s
         (state.turn - 1,),
     )
     db.conn.commit()
+    written = settle_delta(
+        state, db,
+        {"dossier_executions": [{
+            "dossier_id": int(dossier_id),
+            "outcome": outcome,
+            "note": note,
+        }]},
+        SettlementContext(content=content),
+    )
+    assert not rejected_view(written, "dossier_executions"), written
     results = apply_pending_due_reviews(db, state, commit=True)
     assert results and results[0].get("branch") == "dossier"
+    assert results[0].get("consumed") is True
     return results[0]
 
 
@@ -119,11 +131,12 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
 
     result_xf = _prime_and_apply_due_review(
         db, state, content, dossier_id=xf_id, title="变形对照·清丈",
+        outcome="transformed", note="名实已乖，借清丈行私",
     )
     xf_dossier = db.get_decree_dossier(xf_id)
     assert xf_dossier["execution_outcome"] == "transformed"
     assert xf_dossier["status"] == "closed"
-    assert result_xf["verdict"]["outcome"] == "transformed"
+    assert (result_xf.get("execution") or {}).get("outcome") == "transformed"
     # 连坐走既有挂载点
     assert len(_cost_liability(db, xf_id)) == 1
 
@@ -158,38 +171,14 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     # 无 durable beyond_intent 效果——仅表报
     assert db.list_economy_moves_for_dossier(deg_id) == []
 
-    # 单元对照：decide_due_review_verdict 仅标记不同
-    base_input = {
-        "mid_stage": False,
-        "criterion_text": "清丈见成数",
-        "origin_context": "清丈畿辅田亩",
-        "progress_reports": [{"progress_band": "在办", "memorial_text": "已办十之八九"}],
-        "durable_effects": [{
-            "origin_ref": "dossier:0",
-            "delta": 12,
-            "beyond_intent": False,
-        }],
-    }
-    # 有实况无旨外 → fulfilled（对照树完整性）
-    assert decide_due_review_verdict(base_input)["outcome"] == "fulfilled"
-    marked = dict(base_input)
-    marked["durable_effects"] = [{
-        "origin_ref": "dossier:0",
-        "delta": 12,
-        "beyond_intent": True,
-    }]
-    assert decide_due_review_verdict(marked)["outcome"] == "transformed"
-    # 无实况有表报 → degraded（与 transformed 对照）
-    no_effects = dict(base_input)
-    no_effects["durable_effects"] = []
-    assert decide_due_review_verdict(no_effects)["outcome"] == "degraded"
-
+    # 模型声明 degraded：有表报无旨外实绩的分叉由声明写格，不由代码代判
     result_deg = _prime_and_apply_due_review(
         db, state, content, dossier_id=deg_id, title="打折对照·清丈",
+        outcome="degraded", note="表报有之、实绩未充",
     )
     deg_dossier = db.get_decree_dossier(deg_id)
     assert deg_dossier["execution_outcome"] == "degraded"
-    assert result_deg["verdict"]["outcome"] == "degraded"
+    assert (result_deg.get("execution") or {}).get("outcome") == "degraded"
     deg_progress = db.list_dossier_progress(deg_id)
     assert deg_progress, "prior reported progress must remain"
     assert all(not r.get("is_terminal") for r in deg_progress)
@@ -282,22 +271,6 @@ def test_coerce_beyond_intent_flag_closed_affirmative_world():
     # 畸形：非标量 + 垃圾串 + 空串 —— 一律 0（不得捏造肯定）
     for value in ([], {}, [False], {"a": 1}, "null", "None", "0.0", "", "  ", "maybe", "garbage"):
         assert coerce(value) == 0, value
-
-
-def test_decide_due_review_malformed_beyond_intent_stays_fulfilled():
-    """durable_effects 带 beyond_intent=[] 畸形标记须判 fulfilled 而非 transformed。"""
-    review_input = {
-        "mid_stage": False,
-        "criterion_text": "清丈见成数",
-        "origin_context": "清丈畿辅田亩",
-        "progress_reports": [{"progress_band": "在办", "memorial_text": "已办十之八九"}],
-        "durable_effects": [{
-            "origin_ref": "dossier:0",
-            "delta": 12,
-            "beyond_intent": [],
-        }],
-    }
-    assert decide_due_review_verdict(review_input)["outcome"] == "fulfilled"
 
 
 # ── ⑥ 补饷路由 seam：beyond_intent 不得因 purpose 分叉丢键（#622 r3）──

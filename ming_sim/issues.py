@@ -140,24 +140,19 @@ def _canonical_issue_origin(db: GameDB, row: sqlite3.Row) -> str:
     return origin_ref
 
 
-def commitment_condition_role(resolve_condition: object, commitment_kind: object = "") -> Dict[str, str]:
+def commitment_condition_role(resolve_condition: object = "", commitment_kind: object = "") -> Dict[str, str]:
+    """仅 typed commitment_kind 标承诺停止条件；resolve_condition 散文不再回落识别（#1835 J17）。"""
+    _ = resolve_condition
     if str(commitment_kind or "").strip():
         return {
             "condition_role": "commitment_stop_condition",
             "condition_note": "承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
         }
-    text = str(resolve_condition or "").strip()
-    if re.fullmatch(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+", text):
-        return {
-            "condition_role": "commitment_stop_condition",
-            "condition_note": "人物承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
-        }
     return {}
 
 
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
-    keys = row.keys() if hasattr(row, "keys") else []
-    raw = row["stop_condition"] if "stop_condition" in keys else ""
+    raw = row["stop_condition"] or ""
     if not raw:
         return {}
     gate = json.loads(str(raw))

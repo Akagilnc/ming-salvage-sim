@@ -1,19 +1,19 @@
-"""#621 / ADR 0076 到期复核——执行格判官的正式触发形态。
+"""#621 / ADR 0076 到期复核——实况供料与场面顶出；终值经模型声明写格。
 
-不另立第三判官：到期复核并入既有执行填值路径（record_dossier_execution 适配器），
-结算内不新增串行 LLM 步、不置 AWAITING_DECISION / <<DECISION>>。
+不另立第三判官，不机械替判终值（#1835 J18 / #1895）：到期复核建输入闭集、
+顶出复命场面；执行格终值只经既有 dossier_executions 声明写口。结算内不新增
+串行 LLM 步、不置 AWAITING_DECISION / <<DECISION>>。
 
 三拍时序（P4）：
 1. settle(T) 确定性写/刷新 next_audience_todos（#620 写端）
 2. 次回合召对顶出复命场面（本模块 list_due_review_scenes）
-3. settle(T+1) apply_pending_due_reviews 落格并消费 todo
+3. 模型经声明写执行格；settle 侧 apply_pending_due_reviews 仅在已有终值时消费 todo
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from ming_sim.db import GameDB
 from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
     parse_dossier_id as parse_dossier_id_from_origin,
@@ -176,7 +176,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         durable_effects = list(
             db.list_dossier_durable_effects(int(branch["dossier_id"]))
         )
-        # #625：监督事实底只读注入（解 A）；不改 decide_due_review_verdict。
+        # #625：监督事实底只读注入（解 A）。
         supervision_pack = unpack_supervision_surface(
             db.build_supervision_judge_surface(int(branch["dossier_id"]))
         )
@@ -309,14 +309,11 @@ def _add_owned_dossier(
 
 
 def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
-    """接管窗：到期目标案卷仅正式复核可写终值（防 extractor 第二真源）。
+    """当前到期复核所涉案卷集合（场面/供料查询用）。
 
-    覆盖两段窗：
-    1) 已有 pending staged todo（含本 settle 刚写、created_turn == turn）——召对前后至 apply；
-    2) 本拍将写 todo 的到期段——extract 早于 write_due，须预占，
-       已 consumed/rolled 的段不再占窗（中段复核后还权）。
-
-    kind 分派法：midcourse_breach_plea / 其它 kind **不计入**接管窗。
+    #1835 J18：不再作「排斥模型写终值」的接管窗；终值经 dossier_executions 声明写口。
+    仍枚举 pending staged todo 与本拍将写的到期段，供场面与测试观察。
+    kind 分派：breach_plea / urge 等不计入。
     """
     turn = int(getattr(state, "turn", 0) or 0)
     owned: set[int] = set()
@@ -351,131 +348,27 @@ def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
     return owned
 
 
-def effect_has_beyond_intent(effect: object) -> bool:
-    """#622：效果行同列「旨外恶果/受益」标记（#558 origin 同一载体，非平行轨）。
-
-    #1260：别名读取收敛 simulation 单源（禁手抄 旨外 子集）。
-    """
-    if not isinstance(effect, dict):
-        return False
-    from ming_sim.simulation import read_beyond_intent_raw
-    raw = read_beyond_intent_raw(effect)
-    return bool(GameDB.coerce_beyond_intent_flag(raw))
-
-
-def durable_effects_beyond_intent(effects: object) -> bool:
-    return any(effect_has_beyond_intent(item) for item in (effects or []))
-
-
-def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, object]:
-    """确定性裁决（不新增 LLM 步）。中段过程态 vs 末段四终值。
-
-    #1895：终值只由实况账判——有旨外恶果/受益 → transformed；有实况无旨外 →
-    fulfilled；无实况有表报 → degraded；皆无 → failed。代码不再由承办人
-    integrity／催办压力派生「失真档」并把判词只往更重方向改写；人物办不办、
-    办得多重归模型按其可及事实自己选（#1816 人物场景／月末 run）。
-    #622 旨外标记口径不变；0118 对账不翻因。禁另立第二裁决函数。
-    """
-    mid = bool(review_input.get("mid_stage"))
-    effects = list(review_input.get("durable_effects") or [])
-    reports = list(review_input.get("progress_reports") or [])
-    criterion = str(review_input.get("criterion_text") or "").strip() or "所约之事"
-    origin = str(review_input.get("origin_context") or "").strip()
-
-    if mid:
-        note = f"中段复核：{criterion}仍在办理"
-        if origin:
-            note = f"中段复核（{origin}）：{criterion}仍在办理"
-        return {
-            "outcome": "executing",
-            "note": note[:200],
-            "close": False,
-            "is_terminal": False,
-            "mid_stage": True,
-        }
-
-    # 末段终裁：机械读旨外标记（0072 分界；0118 对账不翻因）
-    if durable_effects_beyond_intent(effects):
-        outcome = "transformed"
-        note = f"到期复核：{criterion}名实已乖"
-    elif effects:
-        outcome = "fulfilled"
-        note = f"到期复核：{criterion}已见实绩生根"
-    elif reports:
-        # 有表报无实账 → 打折走样（果可见缺口，不翻因）
-        outcome = "degraded"
-        note = f"到期复核：{criterion}表报有之、实绩未充"
-    else:
-        outcome = "failed"
-        note = f"到期复核：{criterion}届期无实绩"
-    if origin:
-        note = f"{note}（原诺：{origin}）"
-    return {
-        "outcome": outcome,
-        "note": note[:200],
-        "close": True,
-        "is_terminal": True,
-        "mid_stage": False,
-    }
-
-
-def _apply_dossier_verdict(
-    db: Any,
-    state: Any,
-    *,
-    dossier_id: int,
-    verdict: Dict[str, object],
-) -> Dict[str, object]:
-    """经既有 record_dossier_execution + 连坐挂载点（仅终值）。"""
-    outcome = str(verdict["outcome"])
-    note = str(verdict["note"])
-    close = bool(verdict["close"])
-    is_terminal = bool(verdict["is_terminal"])
-
+def _dossier_terminal_snapshot(db: Any, dossier_id: int) -> Dict[str, object]:
+    """读已有执行格终值；不代判。"""
     existing = db.get_decree_dossier(int(dossier_id))
     if existing is None:
         return {"rejected": True, "reason": "案卷不存在"}
-    # 已有终值且已结案：零重复落账 / 不二次连坐
     prev_outcome = str(existing.get("execution_outcome") or "")
-    if (
-        existing.get("status") == "closed"
-        and prev_outcome in _TERMINAL_OUTCOMES
-    ):
+    if existing.get("status") == "closed" and prev_outcome in _TERMINAL_OUTCOMES:
         return {
             "dossier_id": int(dossier_id),
             "outcome": prev_outcome,
             "noop": True,
             "reason": "已有终值",
+            "is_terminal": True,
         }
-    if existing.get("status") != "executing":
-        return {
-            "rejected": True,
-            "reason": f"案卷不在 executing：{existing.get('status')}",
-        }
-
-    db.record_dossier_execution(
-        int(dossier_id), outcome, note, int(state.turn),
-        close=close, commit=False,
-    )
-    # 人物奏报只经模型声明/既有存储写入；复核落执行格，不代写奏报行。
-    if is_terminal and outcome in GameDB._JOINT_LIABILITY_TRIGGERS:
-        db.apply_execution_joint_liability(
-            state, int(dossier_id), outcome, reason=note, commit=False,
-        )
-    # #628 / 0079：到期复核兑付写信用事件（与 extraction 共调 record_fulfillment_credit）
-    credit_rows: list = []
-    if is_terminal and outcome == "fulfilled":
-        from ming_sim.credit_events import record_fulfillment_credit
-        credit_rows = record_fulfillment_credit(
-            db, state, dossier_id=int(dossier_id),
-        )
     return {
         "dossier_id": int(dossier_id),
-        "outcome": outcome,
-        "close": close,
-        "is_terminal": is_terminal,
-        "noop": False,
-        "credit_events": credit_rows,
+        "outcome": prev_outcome or None,
+        "noop": True,
+        "reason": "等待模型声明写格",
+        "is_terminal": False,
+        "status": existing.get("status"),
     }
 
 
@@ -486,7 +379,11 @@ def apply_due_review_for_todo(
     *,
     commit: bool = False,
 ) -> Dict[str, object]:
-    """单条正式复核：仅 staged 落格+消费；其它 lane 按分派闸。"""
+    """单条正式复核生命周期：供料/场面已另口；本函数只衔接模型已写终值后的 todo 消费。
+
+    #1835 J18：不机械选终值、不代写执行格；终值只经 dossier_executions 声明写口。
+    中段：消费 todo（场面已呈，不关案）。末段无终值：保留 pending，等模型写格。
+    """
     kind = normalize_audience_entry_kind(todo.get("entry_kind"))
     lane = audience_todo_lane(kind)
     if lane == _AUDIENCE_LANE_BREACH_PLEA:
@@ -509,32 +406,56 @@ def apply_due_review_for_todo(
         }
 
     inp = build_due_review_input(db, todo)
-    verdict = decide_due_review_verdict(inp)
     scene = project_due_review_scene(db, todo, review_input=inp)
     branch = str(inp.get("branch") or "no_dossier")
+    mid_stage = bool(inp.get("mid_stage"))
     exec_result: Dict[str, object] = {}
-    if branch == "dossier" and inp.get("dossier_id") is not None:
-        exec_result = _apply_dossier_verdict(
-            db, state, dossier_id=int(inp["dossier_id"]), verdict=verdict,
-        )
+    consumed = False
+    dossier_id = inp.get("dossier_id")
+
+    if dossier_id is not None:
+        # 模型可能已关案：branch 会成 no_dossier，仍按终值快照衔接消费。
+        exec_result = _dossier_terminal_snapshot(db, int(dossier_id))
+        if exec_result.get("is_terminal"):
+            branch = "dossier"
+            consumed = bool(db.mark_next_audience_todo_status(
+                int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+            ))
+        elif mid_stage:
+            # 中段只消费场面待办，不关案、不写终值。
+            consumed = bool(db.mark_next_audience_todo_status(
+                int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+            ))
+        elif branch == "dossier":
+            # 末段仍在 executing 且无模型终值：保留 pending，不机械替判。
+            consumed = False
+            exec_result = {
+                **exec_result,
+                "waiting_model": True,
+            }
+        else:
+            # 案卷已不在 executing 且无终值（如中断态）：只消费待办，不代写。
+            consumed = bool(db.mark_next_audience_todo_status(
+                int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+            ))
     else:
         exec_result = {
             "branch": "no_dossier",
             "forged_dossier": False,
             "outcome": None,
         }
+        # 无案卷桥：只消费待办，不伪造案卷终值。
+        consumed = bool(db.mark_next_audience_todo_status(
+            int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+        ))
 
-    consumed = db.mark_next_audience_todo_status(
-        int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
-    )
     if commit:
         db.conn.commit()
     return {
         "todo_id": int(todo["id"]),
         "entry_kind": kind,
         "branch": branch,
-        "mid_stage": bool(verdict.get("mid_stage")),
-        "verdict": verdict,
+        "mid_stage": mid_stage,
         "execution": exec_result,
         "scene": scene,
         "consumed": bool(consumed),
@@ -544,10 +465,11 @@ def apply_due_review_for_todo(
 def apply_pending_due_reviews(
     db: Any, state: Any, *, commit: bool = False,
 ) -> List[Dict[str, object]]:
-    """消费 created_turn < 当前 turn 的 pending todo（经召对窗后的 settle 落格）。
+    """处理 created_turn < 当前 turn 的 pending todo（召对窗后的生命周期衔接）。
 
-    单一分派：staged 终裁+连坐；breach_plea skip 保留（入 results）；
+    单一分派：staged 接模型已写终值后消费；breach_plea skip 保留（入 results）；
     urge 交给 #624 consume_pending_urge_audience_todos（本函数不扫）；未知负向闸。
+    不机械替判终值（#1835 J18）。
     """
     turn = int(getattr(state, "turn", 0) or 0)
     results: List[Dict[str, object]] = []

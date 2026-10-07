@@ -40,19 +40,16 @@ def apply_secret_dossier_participants(run):
 
 
 def apply_executions(run):
-    """执行格终值。
+    """执行格终值：模型声明经本段正式写格。
 
-    #621 接管窗：正式复核所辖案卷禁并行终值（防第二真源）；所有权查询失败须
-    响亮上抛，不得 fail-open 成空集放行（ADR 0005 / 0076）。
+    #1835 J18：到期复核只供事实/场面，不排斥模型终值；终值唯一真源＝本声明写口。
     """
     from ming_sim.db import GameDB
-    from ming_sim.due_review import dossiers_with_pending_due_review
     from ming_sim.strict_types import _parse_sqlite_id
 
     applied: List[object] = []
     rejected: List[RejectedItem] = []
     source = run.ctx.source
-    due_review_owned = dossiers_with_pending_due_review(run.db, run.state)
 
     def _refuse(item: object, reason: str, category: str = "invalid_transition") -> None:
         rejected.append(RejectedItem(
@@ -79,9 +76,6 @@ def apply_executions(run):
             raw_parties = item["affected_parties"] if has_parties else None
         except (TypeError, ValueError, KeyError) as exc:
             _refuse(item, str(exc))
-            continue
-        if int(dossier_id) in due_review_owned:
-            _refuse(item, "正式复核接管：extractor 不得并行写执行格终值")
             continue
         dossier = run.db.get_decree_dossier(dossier_id)
         if dossier is None or dossier["status"] != "executing":

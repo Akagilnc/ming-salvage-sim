@@ -209,15 +209,22 @@ def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_mar
     assert _issue_by_title(db, "字符串停止条件但无月度动作") is None
 
 
-def test_legacy_resolve_condition_person_commitment_rejects_without_marker(read_game, monkeypatch):
-    db, state, content = read_game
+def test_resolve_condition_loyalty_expression_is_ordinary_initiative(game, monkeypatch):
+    """resolve_condition 忠诚表达式不再被旧表示识别为承诺形态（#1835 J17）。
+
+    无 commitment_kind 时按普通 initiative 落库；停止条件只认 typed commitment_kind/stop_condition。
+    """
+    db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
-    out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'kind': 'initiative', 'title': '旧形状安抚毛文龙', 'stage_text': '旧 payload 用 resolve_condition 表达人物承诺阈值。', 'resolve_condition': 'character.毛文龙.loyalty >= 65', 'ongoing_effects': {'人物变更': [{'name': '毛文龙', '动作': '评定', 'loyalty': 2, 'reason': '每月安抚'}]}}]}, SettlementContext(content=content))
+    origin = _promulgated_commitment_origin(db, state, "ordinary-loyalty-resolve")
+    # 仅 resolve_condition 忠诚表达式：不得再被旧表示认成承诺形态而索 commitment_kind
+    out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': '安抚毛文龙', 'stage_text': '普通 initiative 可带 resolve_condition 文本。', 'resolve_condition': 'character.毛文龙.loyalty >= 65'}]}, SettlementContext(content=content))
 
-    created = rejected_view(out, "issue_summary")[0]
-    assert created.category == "invalid_enum"
-    assert _issue_by_title(db, "旧形状安抚毛文龙") is None
+    assert not rejected_view(out, "issue_summary"), out
+    row = _issue_by_title(db, "安抚毛文龙")
+    assert row is not None
+    assert not row["commitment_kind"]
 
 
 def test_until_stop_commitment_requires_initiative_kind(read_game, monkeypatch):

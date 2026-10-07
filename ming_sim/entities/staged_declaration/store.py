@@ -240,7 +240,8 @@ class StagedDeclarationStore:
 
 
 def _load_optional_json(row: Any, column: str) -> object:
-    if column not in row.keys() or row[column] is None:
+    # 列在 CREATE 内；仅合法 NULL 回落，不做缺列旧档兼容（#1835 J17）。
+    if row[column] is None:
         return None
     return json.loads(row[column])
 
@@ -248,7 +249,7 @@ def _load_optional_json(row: Any, column: str) -> object:
 def _row_to_staged(row: Any) -> StagedDeclaration:
     verdict = _load_optional_json(row, "verdict_json")
     questions = _load_optional_json(row, "questions_json")
-    forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
+    forecast_text = row["forecast_text"]
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=str(row["decree_ref"]),
         declaration=json.loads(row["declaration_json"] or "{}"),

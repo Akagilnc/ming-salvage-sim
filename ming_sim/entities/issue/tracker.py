@@ -398,17 +398,11 @@ def apply_issue_tracker_output(
                 source=source,
             ))
             continue
-        legacy_resolve_text = issues._issue_condition_text(ni.get("resolve_condition"))
-        legacy_resolve_commitment_shape = (
-            issues.commitment_condition_role(legacy_resolve_text).get("condition_role")
-            == "commitment_stop_condition"
-        )
         commitment_shape_without_marker = (
             not commitment_kind
             and kind == "initiative"
             and (
                 end_turn_marker_shape
-                or legacy_resolve_commitment_shape
                 or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
                 or (
                     isinstance(stop_condition_raw, str)
@@ -701,11 +695,7 @@ def apply_issue_tracker_output(
             reason in ("resolved", "failed")
             and chk is not None
             and chk["status"] == "active"
-            and (
-                chk["commitment_kind"]
-                or issues.commitment_condition_role(chk["resolve_condition"] or "").get("condition_role")
-                == "commitment_stop_condition"
-            )
+            and bool(chk["commitment_kind"])
         ):
             entity_rejections.append(RejectedItem(item=cl, reason=f"close_issues 对承诺型 issue {issue_id} 误判 {reason}（须走专门完成闭环）", category="invalid_enum", source=source))
             continue

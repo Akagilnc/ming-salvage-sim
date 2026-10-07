@@ -1,12 +1,12 @@
-"""#621 到期复核判官（0076）——复命触发形态。
+"""#621 到期复核（0076）——实况供料与场面；终值经模型声明写格。
 
 Seams:
 - next_audience_todos 消费单写口 pending→consumed（幂等 / 滚存 / restore）
 - list_due_review_scenes 次回合召对复命场面（P4 定性、含 origin_context）
-- apply_pending_due_reviews → record_dossier_execution 适配器（有案卷桥）
-- 无案卷分支：只场面+奏报，不伪造案卷
-- 中段 executing+close=False 不连坐 vs 末段终值+close+至多一次连坐
-- 接管：到期目标 extractor 重复终值拒收
+- 模型 dossier_executions 写执行格；apply_pending_due_reviews 仅消费已终值 todo
+- 无案卷分支：只场面，不伪造案卷
+- 中段不关案不连坐；末段终值+连坐由声明写口触发
+- #1835 J18：不排斥模型终值、不机械替判
 """
 
 from __future__ import annotations
@@ -31,6 +31,20 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import issue_rows, rejected_view
+
+
+def _model_write_execution(db, state, content, dossier_id, outcome, note):
+    out = settle_delta(
+        state, db,
+        {"dossier_executions": [{
+            "dossier_id": int(dossier_id),
+            "outcome": outcome,
+            "note": note,
+        }]},
+        SettlementContext(content=content),
+    )
+    assert not rejected_view(out, "dossier_executions"), out
+    return out
 
 
 # ── fixtures ──────────────────────────────────────────────────────────
@@ -283,11 +297,10 @@ def test_dossier_branch_writes_execution_slot_via_adapter(game, monkeypatch):
 
     _settle_empty_month(db, state, content, monkeypatch)
     dossier = db.get_decree_dossier(dossier_id)
-    # 中段：过程态 executing，不结案
-    assert dossier["execution_outcome"] == "executing"
+    # 中段：不写终值、不结案、不连坐；todo 已消费
     assert dossier["status"] == "executing"
+    assert dossier["execution_outcome"] in ("", None, "executing")
     assert _cost_events(db, dossier_id) == []
-    # todo 已消费
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
@@ -356,12 +369,16 @@ def test_no_dossier_branch_only_scene_no_forged_dossier(game):
 
     results = apply_pending_due_reviews(db, state, commit=True)
     assert results
-    assert all(r.get("branch") == "no_dossier" for r in results)
+    # 已有终值：只 noop 消费，不另写执行格、不伪造新案卷
+    assert all((r.get("execution") or {}).get("is_terminal") for r in results)
+    assert all((r.get("execution") or {}).get("noop") for r in results)
+    assert all(r.get("consumed") for r in results)
     after_count = db.conn.execute("SELECT COUNT(*) AS c FROM decree_dossiers").fetchone()["c"]
     # 不新建案卷
     assert after_count == before_count + 1  # +1 是 origin 那条已存在的
     # 不改已结案卷执行格为第二真源
     assert db.get_decree_dossier(did)["status"] == "closed"
+    assert db.get_decree_dossier(did)["execution_outcome"] == "fulfilled"
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
@@ -435,13 +452,15 @@ def test_mid_stage_no_close_no_joint_liability(game):
         (state.turn - 1,),
     )
     db.conn.commit()
-    apply_pending_due_reviews(db, state, commit=True)
+    first = apply_pending_due_reviews(db, state, commit=True)
+    assert first and first[0].get("consumed") is True
+    assert first[0].get("mid_stage") is True
 
     dossier = db.get_decree_dossier(dossier_id)
-    assert dossier["execution_outcome"] == "executing"
+    # 中段不写终值、不关案、不连坐、不代写奏报
     assert dossier["status"] == "executing"
+    assert dossier["execution_outcome"] in ("", None, "executing")
     assert _cost_events(db, dossier_id) == []
-    # 中段复核只落执行格，不代写人物奏报
     assert db.list_dossier_progress(dossier_id) == []
 
 
@@ -465,22 +484,27 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
         (state.turn - 1,),
     )
     db.conn.commit()
-    apply_pending_due_reviews(db, state, commit=True)
+    # 无模型终值：保留 pending，不机械替判
+    waiting = apply_pending_due_reviews(db, state, commit=True)
+    assert waiting and waiting[0].get("consumed") is False
+    assert (waiting[0].get("execution") or {}).get("waiting_model") is True
+    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+
+    # 模型声明 failed → 关案 + 连坐；复核只消费 todo
+    _model_write_execution(
+        db, state, content, dossier_id, "failed", "届期无实绩",
+    )
+    first = apply_pending_due_reviews(db, state, commit=True)
+    assert first and first[0].get("consumed") is True
 
     dossier = db.get_decree_dossier(dossier_id)
-    assert dossier["execution_outcome"] in {"fulfilled", "degraded", "failed", "transformed"}
+    assert dossier["execution_outcome"] == "failed"
     assert dossier["status"] == "closed"
-    # 无实账无表报 → failed ∈ 连坐触发集；整笔幂等门闩 cost_kind=liability 恰一行
     costs = _cost_events(db, dossier_id)
     liability_gates = [c for c in costs if c.get("cost_kind") == "liability"]
     assert len(liability_gates) == 1
 
-    # 幂等腿：恢复 todo pending + created_turn < turn，并回退案卷 executing
-    # （resolve 仅对 executing 走 dossier 枝），使二次真正再入 _apply_dossier_verdict/连坐
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='executing' WHERE id=?",
-        (int(dossier_id),),
-    )
+    # 幂等腿：已终值再入只 noop 消费，不二次连坐
     db.conn.execute(
         "UPDATE next_audience_todos SET status=?, created_turn=?",
         (TODO_STATUS_PENDING, state.turn - 1),
@@ -490,6 +514,7 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     assert second, "幂等腿须真正再入正式复核"
     assert second[0].get("branch") == "dossier", second
     assert (second[0].get("execution") or {}).get("rejected") is not True, second
+    assert (second[0].get("execution") or {}).get("noop") is True, second
     costs_after = _cost_events(db, dossier_id)
     assert costs_after == costs
     liability_after = [c for c in costs_after if c.get("cost_kind") == "liability"]
@@ -539,9 +564,12 @@ def test_three_beat_timing_todo_then_scene_then_slot(game, monkeypatch):
     scenes = list_due_review_scenes(db, state)
     assert len(scenes) == 1
 
-    # beat3: 下一过月落格 + 消费
+    # beat3: 模型声明写格后，过月复核消费 todo（不机械替判）
+    _model_write_execution(
+        db, state, content, dossier_id, "failed", "届期无实绩",
+    )
     _settle_empty_month(db, state, content, monkeypatch)
-    assert db.get_decree_dossier(dossier_id)["execution_outcome"]
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "failed"
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
 
 
@@ -614,53 +642,28 @@ def test_formal_review_blocks_extractor_second_terminal(game):
         (state.turn - 1,),
     )
     db.conn.commit()
+    # 模型经正式写格落终值；复核消费 todo
+    _model_write_execution(
+        db, state, content, dossier_id, "failed", "届期无实绩",
+    )
     apply_pending_due_reviews(db, state, commit=True)
     first = db.get_decree_dossier(dossier_id)
-    assert first["execution_outcome"] in {
-        "fulfilled", "degraded", "failed", "transformed", "executing",
-    }
-    outcome_before = first["execution_outcome"]
-    note_before = first["execution_note"]
+    assert first["execution_outcome"] == "failed"
+    assert first["status"] == "closed"
 
-    # 若已终值结案，extractor 重写应拒；若仍 executing（单段终裁应已结），强制终值路径：
-    if first["status"] == "closed":
-        # 重开 executing 模拟 extractor 抢写
-        db.conn.execute(
-            "UPDATE decree_dossiers SET status='executing' WHERE id=?",
-            (dossier_id,),
-        )
-        db.conn.commit()
-
-    # 放回一条 pending due-review 标记（接管窗）
-    db.conn.execute(
-        """
-        UPDATE next_audience_todos
-        SET status='pending', created_turn=?
-        WHERE commitment_ref IN (
-            SELECT id FROM issues WHERE origin_ref=?
-        )
-        """,
-        (state.turn - 1, f"dossier:{dossier_id}"),
-    )
-    db.conn.commit()
-
-    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'transformed', 'note': 'extractor 抢写第二真源'}]}, SettlementContext(content=content))
+    # 已结案后再声明终值：案卷不在 executing → 拒收，不覆盖既有终值
+    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'transformed', 'note': '二次抢写'}]}, SettlementContext(content=content))
     assert rejected_view(result, "dossier_executions")
-
-    # 正式复核终值不被 extractor 覆盖（若仍 closed 则 outcome 不变；重开后亦拒写）
     dossier = db.get_decree_dossier(dossier_id)
-    if outcome_before in {"fulfilled", "degraded", "failed", "transformed"}:
-        # 拒收后不应变成 extractor 的 transformed（除非本来就是）
-        if outcome_before != "transformed":
-            assert dossier["execution_outcome"] != "transformed" or dossier["execution_note"] == note_before
+    assert dossier["execution_outcome"] == "failed"
 
 
-def test_due_month_extractor_blocked_before_todo_write(game):
-    """C2：到期当月 extract（todo 尚未写）亦不得抢写终值——正式复核唯一终值写口。"""
+def test_due_month_model_execution_lands_before_todo_write(game):
+    """到期当月模型声明终值可落格；todo 尚未写时 dossiers 集合仍可观察。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
-    dossier_id = _executing_policy_dossier(db, state, token="due-month-takeover")
+    dossier_id = _executing_policy_dossier(db, state, token="due-month-model")
     stages = [{
         "stage_idx": 0,
         "due_turn": state.turn,
@@ -670,7 +673,7 @@ def test_due_month_extractor_blocked_before_todo_write(game):
     _insert_staged_commitment(
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
     )
-    # 故意不写 todo：模拟 settle 内 extract 早于 write_due 的窗
+    # 故意不写 todo：模拟 settle 内声明早于 write_due 的窗
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
     owned = dossiers_with_pending_due_review(db, state)
     assert dossier_id in owned
@@ -679,35 +682,17 @@ def test_due_month_extractor_blocked_before_todo_write(game):
     assert before["status"] == "executing"
     assert before["execution_outcome"] in ("", None)
 
-    result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'fulfilled', 'note': 'extractor 到期月抢写终值'}]}, SettlementContext(content=content))
-    item = rejected_view(result, "dossier_executions")[0]
-    assert item.category == "invalid_transition"
+    _model_write_execution(
+        db, state, content, dossier_id, "fulfilled", "已见实绩生根",
+    )
 
     after = db.get_decree_dossier(dossier_id)
-    assert after["status"] == "executing"
-    assert after["execution_outcome"] in ("", None)
-
-
-def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
-    """C3：所有权查询抛错不得 fail-open 放行 extractor 终值。"""
-    db, state, content = game
-    dossier_id = _executing_policy_dossier(db, state, token="fail-closed")
-
-    def _boom(*_a, **_k):
-        raise RuntimeError("ownership lookup boom")
-
-    monkeypatch.setattr(
-        "ming_sim.due_review.dossiers_with_pending_due_review", _boom,
-    )
-    with pytest.raises(RuntimeError):
-        settle_delta(state, db, {'dossier_executions': [{'dossier_id': dossier_id, 'outcome': 'failed', 'note': '应被守卫响亮挡住'}]}, SettlementContext(content=content))
-    dossier = db.get_decree_dossier(dossier_id)
-    assert dossier["status"] == "executing"
-    assert dossier["execution_outcome"] in ("", None)
+    assert after["status"] == "closed"
+    assert after["execution_outcome"] == "fulfilled"
 
 
 def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
-    """生根：履行期已逐月落完 → 复核零重复落账。"""
+    """生根：履行期已逐月落完 → 模型写 fulfilled 不重复落经济账。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -734,6 +719,9 @@ def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
         (state.turn - 1,),
     )
     db.conn.commit()
+    _model_write_execution(
+        db, state, content, dossier_id, "fulfilled", "已见实绩生根",
+    )
     apply_pending_due_reviews(db, state, commit=True)
 
     dossier = db.get_decree_dossier(dossier_id)

@@ -144,7 +144,7 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
                 cid = str(item.get("character_id") or "").strip()
                 if cid:
                     names.append(cid)
-    origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
+    origin_ref = row["origin_ref"] or ""
     did = parse_dossier_id(origin_ref)
     if did is not None:
         dossier = db.get_decree_dossier(int(did))
