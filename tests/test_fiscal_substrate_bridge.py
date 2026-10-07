@@ -2290,6 +2290,9 @@ def test_army_delta_rejects_unknown_owner_power_without_clearing_arrears(fresh_d
 
 
 def test_army_delta_rejects_pay_source_without_ming_settle_substrate(fresh_db):
+    """目标省在册且明控，但财政 settle 基座损坏：配置/持久故障，非产品枚举拒收。"""
+    from ming_sim.applier import StoredDocumentError
+
     state = fresh_db.load_state()
     event = SimpleNamespace(id="test", title="移饷源")
     fresh_db.conn.execute(
@@ -2297,26 +2300,25 @@ def test_army_delta_rejects_pay_source_without_ming_settle_substrate(fresh_db):
     )
     fresh_db.conn.commit()
 
-    rejected = fresh_db.apply_army_deltas(
-        state,
-        event,
-        None,
-        "测试",
-        {
-            "shaanxi_army": {
-                "pay_source_region": "taiwan",
-                "province_pay_share": 1.0,
-                "central_pay_share": 0.0,
-            }
-        },
-        commit=False,
-    )
+    with pytest.raises(StoredDocumentError):
+        fresh_db.apply_army_deltas(
+            state,
+            event,
+            None,
+            "测试",
+            {
+                "shaanxi_army": {
+                    "pay_source_region": "taiwan",
+                    "province_pay_share": 1.0,
+                    "central_pay_share": 0.0,
+                }
+            },
+            commit=False,
+        )
 
     row = fresh_db.conn.execute(
         "SELECT pay_source_region FROM armies WHERE id = 'shaanxi_army'"
     ).fetchone()
-    assert rejected and rejected[0]["rejected"] is True
-    assert "pay_source_region" in rejected[0]["reason"]
     assert row["pay_source_region"] == "shaanxi"
 
 

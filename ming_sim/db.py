@@ -1605,7 +1605,9 @@ class GameDB:
                     army_id, owner, source, province_share, central_share,
                     False, False, 0.0, 0.0,
                 )
-                self._require_valid_pay_source_region(army_id, source)
+                self._require_valid_pay_source_region(
+                    army_id, source, region_source="declared",
+                )
                 province_arrears = old_arrears * province_share
                 central_arrears = old_arrears * central_share
             self.armies.update(
@@ -1681,6 +1683,7 @@ class GameDB:
             self._require_valid_pay_source_region(
                 str(province_source["id"]),
                 str(province_source["pay_source_region"] or ""),
+                region_source="durable",
             )
         central_container = self.get_central_army_pay_arrears_container()
         row = ArmyStore(self.conn).read_assert_army_pay_source_container_conservation_COALESCE_SUM_province_pay_arrears_0_AS_province_total_COALESCE_SU()
@@ -1740,20 +1743,47 @@ class GameDB:
         if abs((province_share + central_share) - 1.0) > 1e-9:
             raise ValueError(f"army {army_id} 饷源比例和必须为 1")
 
-    def _require_valid_pay_source_region(self, army_id: str, pay_source_region: str) -> None:
+    def _require_valid_pay_source_region(
+        self, army_id: str, pay_source_region: str, *,
+        region_source: str = "declared",
+    ) -> None:
+        """校验饷源省资格与财政基座。
+
+        region_source:
+          - declared：产品输入的地区 id/资格错误 → ValueError（逐项 invalid_enum）
+          - durable：旧军行上的引用 → 未入库为 StoredDocumentError；控制权属世界态，
+            失地不在此判损坏；财政文档/settle 子结构损坏恒为 StoredDocumentError。
+        """
+        if region_source not in {"declared", "durable"}:
+            raise ValueError(f"region_source 非法：{region_source!r}")
         row = RegionStore(self.conn).read_apply_surcharge_decrees((pay_source_region,))
         if row is None:
-            raise ValueError(f"army {army_id} pay_source_region 未入库：{pay_source_region}")
-        if str(row["controlled_by"] or "") != "ming":
-            raise ValueError(f"army {army_id} pay_source_region 非明控省：{pay_source_region}")
+            msg = f"army {army_id} pay_source_region 未入库：{pay_source_region}"
+            if region_source == "durable":
+                raise StoredDocumentError(msg)
+            raise ValueError(msg)
+        controlled = str(row["controlled_by"] or "")
+        if controlled != "ming":
+            if region_source == "durable":
+                # 引用仍在，控制权是当前世界；不把失地当成产品幻觉或列损坏。
+                return
+            raise ValueError(
+                f"army {army_id} pay_source_region 非明控省：{pay_source_region}"
+            )
         fiscal = load_stored_object(
             row["fiscal"],
             label=f"army {army_id} pay_source_region {pay_source_region} fiscal",
         )
         settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
-        if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
-                or not isinstance(settle.get("p"), dict):
-            raise ValueError(f"army {army_id} pay_source_region 无 settle st/p 基座：{pay_source_region}")
+        if (
+            not isinstance(settle, dict)
+            or not isinstance(settle.get("st"), dict)
+            or not isinstance(settle.get("p"), dict)
+        ):
+            raise StoredDocumentError(
+                f"army {army_id} pay_source_region 财政 settle st/p 基座损坏："
+                f"{pay_source_region}"
+            )
 
     def transition_army_owner_power(
         self,
@@ -1894,7 +1924,14 @@ class GameDB:
                 is_tusi_val, self_funded_val, province_arrears, central_arrears,
             )
             if pay_source_region_val:
-                self._require_valid_pay_source_region(army_id, pay_source_region_val)
+                self._require_valid_pay_source_region(
+                    army_id, pay_source_region_val,
+                    region_source=(
+                        "durable" if pay_source_region is _SENTINEL else "declared"
+                    ),
+                )
+        except StoredDocumentError:
+            raise
         except ValueError as exc:
             changes.append({
                 "army": row["name"], "field": "pay_source",
@@ -2145,7 +2182,14 @@ class GameDB:
                 is_tusi, self_funded, province_arrears, central_arrears,
             )
             if pay_source_region:
-                self._require_valid_pay_source_region(army_id, pay_source_region)
+                self._require_valid_pay_source_region(
+                    army_id, pay_source_region,
+                    region_source=(
+                        "declared" if "pay_source_region" in normalized else "durable"
+                    ),
+                )
+        except StoredDocumentError:
+            raise
         except ValueError as exc:
             changes.append({
                 "army": row["name"], "field": "pay_source",
@@ -4767,7 +4811,11 @@ class GameDB:
                     is_tusi, self_funded_pay, province_pay_arrears, central_pay_arrears,
                 )
                 if pay_source_region:
-                    self._require_valid_pay_source_region(aid, pay_source_region)
+                    self._require_valid_pay_source_region(
+                        aid, pay_source_region, region_source="declared",
+                    )
+            except StoredDocumentError:
+                raise
             except (TypeError, ValueError) as exc:
                 created.append({
                     "id": aid, "rejected": True, "category": "invalid_enum",
