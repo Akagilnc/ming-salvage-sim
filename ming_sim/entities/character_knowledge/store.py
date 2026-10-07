@@ -78,17 +78,22 @@ _SECRET_ORDER_SOURCE = re.compile(r"secret_order_brief:(\d+)")
 _PUBLIC_SAYING_SOURCE = re.compile(r"public_saying:(\d+)")
 
 
+def source_is_blank(source_id: object = "") -> bool:
+    """True only when source_id has no non-whitespace content."""
+    return not str(source_id or "").strip()
+
+
 def source_identity(source_id: str = "") -> str:
     """Durable source identity for knowledge writes.
 
-    Explicit non-empty source_id is kept as-is (same-id writes stay idempotent).
-    A blank id is not a shared key and must not collapse unrelated records or
-    secrecy boundaries: mint a unique structured token. Never derive identity
-    from free title/body text.
+    Explicit identity (any non-blank string) is returned byte-for-byte so write
+    and delete/lookup stay on the same key. Only a blank id is replaced: mint a
+    unique structured token. Never derive identity from free title/body, and
+    never strip or rewrite a provided non-blank id.
     """
-    text = str(source_id or "").strip()
-    if text:
-        return text
+    raw = str(source_id or "")
+    if not source_is_blank(raw):
+        return raw
     return f"knowledge:{uuid4().hex}"
 
 
@@ -469,9 +474,9 @@ class CharacterKnowledgeStore:
 
     def public_kind_for_source(self, source_id: str) -> Optional[str]:
         """The public-lane kind already recorded for this source, if any."""
-        source = str(source_id or "").strip()
-        if not source:
+        if source_is_blank(source_id):
             return None
+        source = str(source_id or "")
         row = self._conn.execute(
             "SELECT kind FROM character_knowledge_events "
             "WHERE character_name='' AND source_id=?",
@@ -509,9 +514,9 @@ class CharacterKnowledgeStore:
 
     def source_by_id(self, source_id: str) -> Optional[Dict[str, object]]:
         """One registered shared source, or None."""
-        source = str(source_id or "").strip()
-        if not source:
+        if source_is_blank(source_id):
             return None
+        source = str(source_id or "")
         row = self._conn.execute(
             "SELECT source_id, kind, participant_roster, excluded_names, excluded_targets "
             "FROM character_knowledge_sources WHERE source_id=?",
@@ -554,12 +559,11 @@ class CharacterKnowledgeStore:
 
     def has_event_for_source(self, source_id: str) -> bool:
         """Whether any event row carries this source (event rows outrank source rows)."""
-        source = str(source_id or "").strip()
-        if not source:
+        if source_is_blank(source_id):
             return False
         return self._conn.execute(
             "SELECT 1 FROM character_knowledge_events WHERE source_id=? LIMIT 1",
-            (source,),
+            (str(source_id or ""),),
         ).fetchone() is not None
 
     def exclusions_for_source(self, source_id: str) -> List[str]:
@@ -569,10 +573,11 @@ class CharacterKnowledgeStore:
         record of who may not see this. Private briefs and public sayings keep
         their exclusions on their own tables (resolved by the caller, which owns
         those ledgers). A blank source_id is not an identity — no shared boundary.
+        Non-blank ids are matched exactly (no strip rewrite).
         """
-        source = str(source_id or "").strip()
-        if not source:
+        if source_is_blank(source_id):
             return []
+        source = str(source_id or "")
         row = self._conn.execute(
             "SELECT excluded_names FROM character_knowledge_events "
             "WHERE source_id=? ORDER BY id LIMIT 1",
@@ -588,9 +593,9 @@ class CharacterKnowledgeStore:
 
     def exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         """People/offices excluded from a shared source."""
-        source = str(source_id or "").strip()
-        if not source:
+        if source_is_blank(source_id):
             return {}
+        source = str(source_id or "")
         row = self._conn.execute(
             "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?",
             (source,),

@@ -5984,28 +5984,29 @@ class GameDB:
         by_source: Dict[str, Dict[str, object]] = {}
         # An explicit public row is the payload for that source. A later
         # source_projection of the same source_id must not replace it.
-        # Blank source_id is not an identity: each durable row keeps its own bucket.
+        # Blank source_id is not an identity: keep those rows unmerged and never
+        # invent a key that collides with real source_id strings or other tables.
+        unkeyed: List[Dict[str, object]] = []
         public_kept: set[str] = set()
-        from ming_sim.entities.character_knowledge.store import _load_list, _load_targets
-
-        def _aggregate_key(row: Mapping[str, object]) -> str:
-            key = str(row.get("source_id") or "").strip()
-            if key:
-                return key
-            return f"row:{int(row['id'])}"
+        from ming_sim.entities.character_knowledge.store import (
+            _load_list, _load_targets, source_is_blank,
+        )
 
         for row in rows:
             excluded_names = _load_list(row["excluded_names"])
-            key = _aggregate_key(row)
-            is_public = str(row["kind"] or "") == "public"
-            source_text = str(row["source_id"] or "").strip()
-            if source_text and source_text in public_kept and not is_public:
-                continue
-            by_source[key] = {
+            item = {
                 "title": row["title"], "body": row["body"],
                 "source_id": row["source_id"], "excluded_names": excluded_names,
             }
-            if source_text and is_public:
+            source_text = str(row["source_id"] or "")
+            if source_is_blank(source_text):
+                unkeyed.append(item)
+                continue
+            is_public = str(row["kind"] or "") == "public"
+            if source_text in public_kept and not is_public:
+                continue
+            by_source[source_text] = item
+            if is_public:
                 public_kept.add(source_text)
 
         source_rows = self.character_knowledge.sources_for_turn(int(turn))
@@ -6036,16 +6037,21 @@ class GameDB:
                     [*(str(name) for name in excluded_names),
                      *(sorted(character_names - participants))]
                 ))
+            item = {
+                "title": row["title"], "body": row["body"],
+                "source_id": row["source_id"], "excluded_names": excluded_names,
+            }
+            source_text = str(row["source_id"] or "")
+            if source_is_blank(source_text):
+                unkeyed.append(item)
+                continue
             # An explicit public event can describe a source after it becomes
             # public (for example, a disclosed secret order).  It is more
             # specific than the source's original private payload, so never
             # let archive materialization overwrite it merely because both
             # share provenance.
-            by_source.setdefault(_aggregate_key(row), {
-                "title": row["title"], "body": row["body"],
-                "source_id": row["source_id"], "excluded_names": excluded_names,
-            })
-        return list(by_source.values())
+            by_source.setdefault(source_text, item)
+        return [*unkeyed, *by_source.values()]
 
     # ── 结局总结 ──
 
@@ -13171,9 +13177,11 @@ class GameDB:
 
     def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
         """Return the durable secrecy boundary attached to a source record."""
-        source = str(source_id or "").strip()
-        if not source:
+        from ming_sim.entities.character_knowledge.store import source_is_blank
+
+        if source_is_blank(source_id):
             return []
+        source = str(source_id or "")
         if self.character_knowledge.has_event_for_source(source):
             return self.character_knowledge.exclusions_for_source(source)
         order_id = self.character_knowledge.secret_order_id_in(source)
@@ -13195,11 +13203,11 @@ class GameDB:
         return self.character_knowledge.exclusions_for_source(source)
 
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
-        from ming_sim.entities.character_knowledge.store import _load_targets
+        from ming_sim.entities.character_knowledge.store import _load_targets, source_is_blank
 
-        source = str(source_id or "").strip()
-        if not source:
+        if source_is_blank(source_id):
             return {"people": [], "offices": []}
+        source = str(source_id or "")
         # Private briefs inherit canonical exclusions persisted on secret_orders.
         order_id = self.character_knowledge.secret_order_id_in(source)
         if order_id is not None:
@@ -13246,16 +13254,21 @@ class GameDB:
             if value:
                 participants.append(str(value))
         roster = [{"character_id": name} for name in dict.fromkeys(participants) if name]
+        from ming_sim.entities.character_knowledge.store import source_identity
+
+        # One logical record → one source identity for both the shared source row
+        # and the per-participant projections. Resolve once at this adapter entry.
+        source = source_identity(source_id or str(record.get("source_id") or ""))
         self.register_character_knowledge_source(
             state, roster, kind, str(record.get("title") or kind),
             str(record.get("body") or record.get("content") or ""),
-            source_id or str(record.get("source_id") or ""), excluded_names=excluded_names,
+            source, excluded_names=excluded_names,
             commit=commit,
         )
         self.record_character_participation(
             state, participants, kind, str(record.get("title") or kind),
             str(record.get("body") or record.get("content") or ""),
-            source_id or str(record.get("source_id") or ""), excluded_names, commit=commit,
+            source, excluded_names, commit=commit,
         )
 
     def _is_active_secret_order_assignee(self, minister_name: str) -> bool:
