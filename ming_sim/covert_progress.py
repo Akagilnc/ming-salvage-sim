@@ -861,12 +861,13 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
             item.get("difficulty", 0.0), f"fact_lanes[{idx}].difficulty", allow_inf=True,
         )
         months = _lane_nonneg_int(item.get("months", 0), f"fact_lanes[{idx}].months")
+        mastered = _lane_bool(item.get("mastered", False), f"fact_lanes[{idx}].mastered")
         lanes.append({
             "fact_key": key,
             "effort": max(0.0, effort),
             "difficulty": max(0.0, difficulty),
             "months": months,
-            "mastered": bool(item.get("mastered")),
+            "mastered": mastered,
         })
     return lanes
 
@@ -875,6 +876,8 @@ def _lane_number(raw: object, label: str, *, allow_inf: bool) -> float:
     """缺省/空 → 0；显式非数字或 NaN 响亮；+inf 仅 difficulty 合法。"""
     if raw is None or raw == "":
         return 0.0
+    if isinstance(raw, bool):
+        raise ValueError(f"{label} 须为数字")
     try:
         value = float(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError) as exc:
@@ -889,15 +892,30 @@ def _lane_number(raw: object, label: str, *, allow_inf: bool) -> float:
 
 
 def _lane_nonneg_int(raw: object, label: str) -> int:
+    """缺省/空 → 0；整数复用 strict_int（拒 bool/float 截断）。"""
     if raw is None or raw == "":
         return 0
+    from ming_sim.strict_types import strict_int
+
     try:
-        value = int(raw)  # type: ignore[arg-type]
+        value = strict_int(raw, accept_numeric_strings=True)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{label} 须为整数") from exc
     if value < 0:
         raise ValueError(f"{label} 须为非负整数")
     return value
+
+
+def _lane_bool(raw: object, label: str) -> bool:
+    """缺省/空 → False；收真 bool 或 JSON 数字 0/1；拒字符串等强制转换。"""
+    if raw is None or raw == "":
+        return False
+    if isinstance(raw, bool):
+        return raw
+    # SQLite json_set 等可能落 0/1 整型；bool 是 int 子类，上面已先收。
+    if type(raw) is int and raw in (0, 1):
+        return bool(raw)
+    raise ValueError(f"{label} 须为布尔")
 
 
 def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:

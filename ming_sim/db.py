@@ -14357,16 +14357,32 @@ class GameDB:
         return dossier_id
 
     @staticmethod
-    def _validate_dossier_delegations(roster: Iterable[Dict[str, object]]) -> None:
+    @staticmethod
+    def _validate_dossier_delegations(
+        roster: Iterable[Dict[str, object]],
+        *,
+        only: Optional[Iterable[Dict[str, object]]] = None,
+        as_declaration: bool = False,
+    ) -> None:
+        """委派链校验。only 限定检查对象（追加项）；as_declaration 时抛 DMVE。"""
         entries = list(roster)
         responsible = {
             str(item.get("character_id") or "") for item in entries
             if item.get("tier") in {"主办", "协办"}
         }
-        for item in entries:
+        checked = list(only) if only is not None else entries
+        for item in checked:
             delegator = str(item.get("delegator_id") or "")
             character = str(item.get("character_id") or "")
             if delegator and (delegator == character or delegator not in responsible):
+                if as_declaration:
+                    from ming_sim.action_materialize import (
+                        DecreeMaterializationValidationError,
+                    )
+                    raise DecreeMaterializationValidationError(
+                        "委派人须为同案主办/协办且不得自委派",
+                        category="invalid_participant_roster",
+                    )
                 raise ValueError("委派人须为同案主办/协办且不得自委派")
 
     def _validate_dossier_endorsement(
@@ -14521,20 +14537,31 @@ class GameDB:
     ) -> List[Dict[str, object]]:
         """Append ADR 0053 roster entries without replacing durable members.
 
-        已持久名册经 get_decree_dossier 响亮读取；腐坏不得当空名册覆写（#1897 E1/K2）。
+        来源分界（#1897 E1/K2 / ADR0005）：
+        - 本次追加项领域错误 → DMVE（调用方可逐项拒收）
+        - 已持久名册 schema/引用腐坏 → 裸 ValueError（内部故障，不记声明拒收）
         """
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+
+        # —— 1. 本次追加项准入（声明侧）——
+        additions = self._normalize_participant_roster(
+            participants, strict_structured=True,
+        )
+        self._validate_participant_roster_references(additions)
+
+        # —— 2. 已持久名册响亮读取（内部）——
         dossier = self.get_decree_dossier(int(dossier_id))
         if dossier is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
         existing_raw = dossier.get("participant_roster") or []
         if not isinstance(existing_raw, list):
             raise ValueError(f"案卷#{dossier_id} participant_roster 非列表")
-        # 已持久成员严格归一：坏旧项上抛，不得跳过洗成空名册。
         existing = self._normalize_participant_roster(
             existing_raw, strict_structured=True,
         )
-        additions = self._normalize_participant_roster(participants, strict_structured=True)
-        self._validate_participant_roster_references(additions)
+        self._validate_participant_roster_references(existing, as_durable=True)
+
+        # —— 3. 合并：冲突/委派只归责追加项 ——
         by_character = {str(item["character_id"]): item for item in existing}
         added: List[Dict[str, object]] = []
         for item in additions:
@@ -14542,13 +14569,18 @@ class GameDB:
             prior = by_character.get(character_id)
             if prior is not None:
                 if prior != item:
-                    raise ValueError(f"参与人物已在案且机械档不同：{character_id}")
+                    raise DecreeMaterializationValidationError(
+                        f"参与人物已在案且机械档不同：{character_id}",
+                        category="invalid_participant_roster",
+                    )
                 continue
             by_character[character_id] = item
             added.append(item)
         merged = existing + added
-        self._validate_dossier_delegations(merged)
-        self._validate_participant_roster_references(merged)
+        # 只检查追加项的委派链；旧成员腐坏委派不在此冒充新声明错。
+        self._validate_dossier_delegations(
+            merged, only=added, as_declaration=True,
+        )
         if added:
             archive_keys: set[str] = set()
             raw_keys_row = self.conn.execute(
@@ -21098,9 +21130,14 @@ class GameDB:
         return roster
 
     def _validate_participant_roster_references(
-        self, roster: Iterable[Mapping[str, object]],
+        self, roster: Iterable[Mapping[str, object]], *,
+        as_durable: bool = False,
     ) -> None:
-        """Enforce ADR 0053 character primary-key references at the DB write seam."""
+        """Enforce ADR 0053 character primary-key references at the DB write seam.
+
+        as_durable=True：已持久名册坏引用 → 裸 ValueError（内部故障）；
+        False：本次声明项 → DMVE（领域拒收）。二者不混（#1897 E1/K2）。
+        """
         entries = list(roster)
         referenced = {
             str(value).strip()
@@ -21122,20 +21159,21 @@ class GameDB:
 
         def _roster_ref_error(label: str, name: str):
             # #1380：拒「皇帝」等非人通称时给人话提示，禁裸「参与人物不存在：皇帝」
-            # #654：名册拒收是领域终态 → typed 错误，commit 标 failed；不得用裸 ValueError
-            # 与 #1897 真故障（保留 pending 可补跑）混淆。
-            from ming_sim.action_materialize import DecreeMaterializationValidationError
-            if is_non_person_participant_name(name):
-                return DecreeMaterializationValidationError(
-                    f"{label}不存在：{name}。"
-                    f"人物参与人须为朝堂名册中的大臣姓名，"
-                    f"不可填「{name}」等非人通称或机构名。",
-                    category="invalid_state",
-                )
-            return DecreeMaterializationValidationError(
+            msg = (
                 f"{label}不存在：{name}。"
-                f"请填写朝堂名册中已有的大臣姓名。",
-                category="invalid_state",
+                + (
+                    f"人物参与人须为朝堂名册中的大臣姓名，"
+                    f"不可填「{name}」等非人通称或机构名。"
+                    if is_non_person_participant_name(name)
+                    else f"请填写朝堂名册中已有的大臣姓名。"
+                )
+            )
+            if as_durable:
+                return ValueError(f"已持久名册{msg}")
+            # #654：声明侧名册拒收是领域终态 → typed 错误
+            from ming_sim.action_materialize import DecreeMaterializationValidationError
+            return DecreeMaterializationValidationError(
+                msg, category="invalid_state",
             )
 
         for item in entries:
