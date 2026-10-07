@@ -111,7 +111,7 @@ def generate_ending_summary_for_tail(
         return loaded
 
     reports = under(_load_gazettes)
-    ending_agent = create_ending_summary_agent(llm_config, agno_db)
+    ending_agent = create_ending_summary_agent(llm_config)
     payload = {
         "ending": {
             "status": outcome.get("status"),
@@ -181,9 +181,9 @@ def _brew_fn_for_session(session: Any):
     def _brew(payload_json: str) -> str:
         payload = json.loads(payload_json)
         agent = (
-            create_faction_brew_agent(llm_config, agno_db)
+            create_faction_brew_agent(llm_config)
             if payload.get("view") == VIEW_FACTION_STANCE
-            else create_relation_brew_agent(llm_config, agno_db)
+            else create_relation_brew_agent(llm_config)
         )
         try:
             return run_agent_text(agent, payload_json, tag="relation-brew")

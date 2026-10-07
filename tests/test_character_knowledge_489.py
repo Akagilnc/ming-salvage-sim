@@ -1071,7 +1071,7 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     assert scoped["scope"]["region_ids"] == ("henan",)
     assert "regional" in scoped["world"] and "construction" in scoped["world"]
     assert db.project_office_identity(
-        "河南巡抚", "地方", character_name=official.name, location="fujian",
+        "河南巡抚", "地方", character_name=official.name,
     )["region_ids"] == ("henan",)
     assert db.character_office_region(official.name) == "henan"
 
@@ -1093,7 +1093,7 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
         assert view["scope"]["region_ids"] == (region,), name
         assert "regional" in view["world"]
         proj = db.project_office_identity(
-            title, kind, character_name=name, location="beizhili",
+            title, kind, character_name=name,
         )
         assert proj["region_ids"] == (region,)
         assert proj["archive_key"] == f"slot:{title}@{region}"
@@ -1161,12 +1161,12 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     )
     db.conn.commit()
     idle_proj = db.project_office_identity(
-        "闲住", "未仕", character_name=idle.name, location=regions[0],
+        "闲住", "未仕", character_name=idle.name,
     )
     assert idle_proj["region_ids"] == ()
     assert idle_proj["archive_key"] == ""
     assert db.get_character_knowledge(state, idle.name)["scope"]["region_ids"] == ()
-    inner_proj = db.project_office_identity("内廷随侍", "内廷", location=regions[1])
+    inner_proj = db.project_office_identity("内廷随侍", "内廷")
     assert inner_proj["region_ids"] == ()
     assert inner_proj["archive_key"] == ""
 
@@ -1214,7 +1214,7 @@ def test_structured_person_scope_replaces_role_wide_world_reports(game):
     )
     db.conn.commit()
     attached = db.project_office_identity(
-        "新设巡抚", "地方", character_name=bare.name, location="henan",
+        "新设巡抚", "地方", character_name=bare.name,
     )
     assert attached["region_ids"] == ("jiangxi",)
     assert attached["archive_key"] == "slot:新设巡抚@jiangxi"

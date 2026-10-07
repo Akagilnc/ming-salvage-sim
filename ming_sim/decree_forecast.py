@@ -251,7 +251,7 @@ def _frozen_effect_refs(
     db: Any, turn: int, payload: Dict[str, Any],
 ) -> tuple[str, dict]:
     """#1840：转译输入与暂存落账共用这一份可见引用，不另建账。"""
-    refs = _visible_effect_refs(db, turn, payload)
+    refs = _visible_effect_refs(db, turn)
     return build_translation_target_grounding(db) + _effect_ref_grounding(refs), refs
 
 

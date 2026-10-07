@@ -40,11 +40,10 @@ def _session_owner(db: Any, state: Any, llm_config: Any, agno_db: Any, content: 
 
 
 def run_world_segment_text(
-    db: Any, state: Any, llm_config: Any, agno_db: Any = None,
+    db: Any, state: Any, llm_config: Any,
     cheat_directive: str = "",
 ) -> str:
     """落账后的盘面只推演一次；缺模型时停在本段，不伪造已完成。"""
-    del agno_db
     if llm_config is None:
         from ming_sim.exceptions import LLMUnavailable
         raise LLMUnavailable("世界段缺少模型配置", stage="world_text")
@@ -493,13 +492,11 @@ def run_player_month_chain(
     llm_config: Any,
     *,
     decree_text: str = "",
-    before_turn: int = 0,
     content: Any = None,
     source: Provenance = Provenance.system_simulation,
     cheat_directive: str = "",
 ) -> Any:
     """从现有过月入口继续。已落的旨不动，未落的按序接着落。"""
-    del before_turn
     from ming_sim.exceptions import LLMUnavailable, SettlementAbort
     from ming_sim.mechanical_tail import ensure_mechanical_tails
 
@@ -969,7 +966,7 @@ def _run_world_segment(
     if not chain.get("world_text_ready"):
         def _push() -> str:
             return run_world_segment_text(
-                db, state, session.llm_config, session.agno_db,
+                db, state, session.llm_config,
                 cheat_directive=str(chain.get("cheat_directive") or ""),
             )
 

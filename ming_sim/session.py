@@ -2031,7 +2031,7 @@ class GameSession:
 
         def _revise_runner(item: ra.ValidatedItem) -> List[Dict[str, object]]:
             # 单行改票：专用 agent + 唯一 {"options":[...]} shape；禁 monthly items[] / drafts[0]
-            agent = create_rescript_revise_agent(self.llm_config, self.agno_db)
+            agent = create_rescript_revise_agent(self.llm_config)
             army_targets = [
                 dict(row) for row in self.db.conn.execute(
                     "SELECT id, name, station FROM armies WHERE owner_power='ming' ORDER BY name"
@@ -2088,7 +2088,7 @@ class GameSession:
                 row for row in self.db.get_faction_stance_summaries()
                 if str(row.get("faction") or "") in cand_factions
             ]
-            agent = create_rescript_deliberate_agent(self.llm_config, self.agno_db)
+            agent = create_rescript_deliberate_agent(self.llm_config)
             prompt = (
                 "请为以下急务拟定下部议/廷议站台（JSON："
                 "{\"title\":\"...\",\"body\":\"...\",\"stance\":\"...\","

@@ -317,7 +317,7 @@ def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatc
     assert captured[-1].get("default_headers") == headers
 
     before = len(captured)
-    create_rescript_draft_agent(cfg, db)
+    create_rescript_draft_agent(cfg)
     assert len(captured) == before + 1, "拟诏入口须再构造一次 OpenAIChat"
     assert captured[-1].get("default_headers") == headers
 
@@ -844,13 +844,13 @@ def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
         ("create_world_segment_agent", lambda: agents_mod.create_world_segment_agent(
             cfg, SimpleNamespace(root="", opening="盘面"),
         )),
-        ("create_decree_writer_agent", lambda: agents_mod.create_decree_writer_agent(cfg, object())),
+        ("create_decree_writer_agent", lambda: agents_mod.create_decree_writer_agent(cfg)),
         ("create_promulgation_judge_agent", lambda: agents_mod.create_promulgation_judge_agent(
             cfg, object(),
             session_id="promulgation-judge-turn-test",
             num_history_runs=4,
         )),
-        ("create_ending_summary_agent", lambda: agents_mod.create_ending_summary_agent(cfg, object())),
+        ("create_ending_summary_agent", lambda: agents_mod.create_ending_summary_agent(cfg)),
     ]
     factory_names = [name for name, _ in factories]
     assert len(factory_names) == len(set(factory_names))

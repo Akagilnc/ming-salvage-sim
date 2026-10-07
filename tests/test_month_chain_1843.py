@@ -90,8 +90,8 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
     world_calls = []
     translate_calls = []
 
-    def world(db_, state_, llm_config, agno_db=None, cheat_directive=""):
-        del llm_config, agno_db, cheat_directive
+    def world(db_, state_, llm_config, cheat_directive=""):
+        del llm_config, cheat_directive
         from ming_sim.materials import prepare_world_materials, release_material_tree
         prepared = prepare_world_materials(db_, state_)
         try:

@@ -321,9 +321,6 @@ def canonicalize_economy_purpose(raw: object) -> str:
 
 def build_covert_task_contract(
     *,
-    deadline_span: int = 0,
-    due_turn: int = 0,
-    tags: object = None,
     axes: object = None,
     direction: object = None,
     delivery_target_units: object = None,
@@ -345,7 +342,6 @@ def build_covert_task_contract(
     investigation_fact: object = None,
 ) -> Dict[str, object]:
     """确认闸一次生成可被 canonical applier 接受的 typed contract。缺字段响亮失败。"""
-    del tags, deadline_span, due_turn
     extracted = covert_task_from_payload(
         {"covert_task": covert_task} if covert_task is not None else {},
     )

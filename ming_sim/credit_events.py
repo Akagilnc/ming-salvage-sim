@@ -670,7 +670,7 @@ def resolve_credit_events_from_extraction(
     commit: bool = False,
     source: Provenance = Provenance.system_simulation,
 ) -> Dict[str, List[Dict[str, object]]]:
-    """召对/结算 extraction 真入口同缝（resolve_breach_pleas_from_extraction 先例）。
+    """召对/结算 extraction 真入口同缝（与既有 credit 写口同批）。
 
     调用方须在 applier 校验之后传入未 rejected 落格项；本轴只写不读。
     不重复实现 #623 挽留回绝辜负。

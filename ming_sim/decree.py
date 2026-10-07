@@ -675,7 +675,7 @@ def write_decree_with_agno(
                        "若草案据某密令查办之事拿人定罪，可在诏书里引该实证为据，使罪名落到实处。",
     }
     try:
-        agent = create_decree_writer_agent(llm_config, agno_db)
+        agent = create_decree_writer_agent(llm_config)
         run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         _dump_llm_messages(run_output, "拟诏", agent=agent)
         text = extract_agent_text(run_output)
@@ -759,8 +759,6 @@ def resolve_directives(
     # 前括号之后按旨序核算，再跑世界段。批红、邸报与推进是后续阶段的交接，
     # 不在本入口用 extractor 落账。
 
-    before_turn = state.turn
-
     # 草案内容已由拟诏合并进 decree_text；月链沿已保存的旨意继续。
 
     # 1) 前括号确定性结算：玩家月链的唯一准备入口。
@@ -775,7 +773,6 @@ def resolve_directives(
     return run_player_month_chain(
         state, db, agno_db, llm_config,
         decree_text=decree_text,
-        before_turn=before_turn,
         content=content,
         source=source,
         cheat_directive=cheat_directive,

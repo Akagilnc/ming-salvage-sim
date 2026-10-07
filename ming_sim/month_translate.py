@@ -22,9 +22,8 @@ from ming_sim.declaration_dispatch import (
 )
 
 
-def _visible_effect_refs(db: Any, turn: int, decree_payload: Mapping[str, object]) -> dict[str, list[int]]:
+def _visible_effect_refs(db: Any, turn: int) -> dict[str, list[int]]:
     """Freeze the same reference rosters supplied to this segment's translation."""
-    del decree_payload  # 密令案卷写权改由案卷自身 secret_order_id 判定（#1862 reopen）
     from ming_sim.materials import secret_order_dossier_ids
 
     return {
@@ -61,10 +60,7 @@ def petition_verdict_grounding(db: Any, state: Any) -> list[dict[str, object]]:
     return out
 
 
-def _petition_verdict_block(
-    db: Any, state: Any, decree_payload: Mapping[str, object],
-) -> str:
-    del decree_payload
+def _petition_verdict_block(db: Any, state: Any) -> str:
     if state is None:
         return ""
     items = petition_verdict_grounding(db, state)
@@ -220,13 +216,13 @@ def _translate_month_segment_front(
     candidates: Optional[Mapping[str, object]] = None,
 ) -> tuple[dict[str, object], dict[str, list[int]]]:
     """过月段转译前半：冻结可见引用、拼 grounding、一次转出 C0 声明。"""
-    refs = _visible_effect_refs(db, turn, decree_payload)
+    refs = _visible_effect_refs(db, turn)
     declaration = translate_month_segment(
         segment=segment,
         target_grounding=(
             build_translation_target_grounding(db, state)
             + _effect_ref_grounding(refs)
-            + _petition_verdict_block(db, state, decree_payload)
+            + _petition_verdict_block(db, state)
         ),
         decree_payload=decree_payload,
         llm_config=llm_config,

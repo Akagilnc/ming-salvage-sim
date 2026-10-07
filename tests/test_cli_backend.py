@@ -54,7 +54,7 @@ def test_typed_secret_exclusions_canonicalize_roster_alias_and_office(game):
     alias = character.aliases[0]
     office = character.office_type
     people, offices = canonical_secret_order_exclusions(
-        content, [alias], [office], "勿使玩家散文成为第二输入源",
+        content, [alias], [office],
     )
     assert people == [character.name]
     assert offices == [office]

@@ -280,16 +280,13 @@ def _canonical_secret_exclusion_target(
 
 
 def canonical_secret_order_exclusions(
-    content: Any, explicit_people: Iterable[str], explicit_offices: Iterable[str], text: object,
+    content: Any, explicit_people: Iterable[str], explicit_offices: Iterable[str],
 ) -> tuple[List[str], List[str]]:
     """Canonicalize structured extractor targets before staging or DB.
 
     Player prose is not a machine contract.  Only typed people/offices reach
     this boundary; roster aliases and office titles are canonicalized here.
-    ``text`` remains accepted for callers that also pass the order body, but is
-    deliberately not consumed.
     """
-    del text
     people = _snapshot_secret_order_people(content, explicit_people, [])
     office_types = {str(character.office_type).strip() for character in getattr(content, "characters", {}).values()
                     if character.office_type}
@@ -645,7 +642,7 @@ def _office_rank_multiplier(office: str, already_normalized: bool = False) -> fl
 
     text = office or ""
     normalized = text if already_normalized else normalize_office(text)
-    return office_leverage_multiplier(normalized, already_normalized=True)
+    return office_leverage_multiplier(normalized)
 
 
 def _member_office_weight(office_type: str, office: str) -> float:
@@ -12370,7 +12367,6 @@ class GameDB:
                     continue
                 key = self._office_archive_key(
                     lead["office"], lead["office_type"],
-                    location=lead["location"] if "location" in lead.keys() else "",
                     character_name=lead_name,
                 )
                 if key:
@@ -12630,7 +12626,6 @@ class GameDB:
                         continue
                     key = self._office_archive_key(
                         lead["office"], lead["office_type"],
-                        location=lead["location"] if "location" in lead.keys() else "",
                         character_name=lead_name,
                     )
                     if key:
@@ -12827,7 +12822,6 @@ class GameDB:
         office: object,
         office_type: object,
         *,
-        location: object = "",
         region_id: object = "",
         character_name: object = "",
     ) -> Dict[str, object]:
@@ -12837,10 +12831,8 @@ class GameDB:
         Local jurisdiction binds to one appointment/seat identity: prefer the
         caller's typed ``region_id``, else the holder's ``character_offices.region_id``.
         Never derive from Character.location, free-text titles, or office_slots
-        (same bare 巡抚 in two provinces must not collide). ``location`` remains
-        accepted for call-site stability and is ignored.
+        (same bare 巡抚 in two provinces must not collide).
         """
-        del location  # physical presence ≠ posting jurisdiction
         title = normalize_office(str(office or ""))
         kind = str(office_type or "").strip()
 
@@ -12865,7 +12857,6 @@ class GameDB:
         office: object,
         office_type: object,
         *,
-        location: object = "",
         region_id: object = "",
         character_name: object = "",
     ) -> str:
@@ -12873,7 +12864,6 @@ class GameDB:
         projected = self.project_office_identity(
             office,
             office_type,
-            location=location,
             region_id=region_id,
             character_name=character_name,
         )
@@ -12907,7 +12897,6 @@ class GameDB:
         reader_archive_key = (
             self._office_archive_key(
                 office_row["office"], office_row["office_type"],
-                location=office_row["location"] if "location" in office_row.keys() else "",
                 character_name=name,
             )
             if office_row is not None else ""
@@ -19655,7 +19644,7 @@ class GameDB:
         if active_count >= 20:
             raise ValueError(f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。")
         raw_excluded_names, excluded_offices = canonical_secret_order_exclusions(
-            self.content, excluded_names or [], excluded_offices or [], f"{title}\n{content}",
+            self.content, excluded_names or [], excluded_offices or [],
         )
         # Institution-level secrecy is resolved at issuance.  The current
         # office/type is only a lookup key; retaining the matched people makes
@@ -19856,7 +19845,6 @@ class GameDB:
         people, offices = canonical_secret_order_exclusions(
             self.content, [*legacy_people, *prior_targets.get("people", [])],
             prior_targets.get("offices", []),
-            f"{title}\n{content}",
         )
         excluded_names = _snapshot_secret_order_people(self.content, people, offices)
         excluded_targets = _secret_order_exclusion_targets(people, offices)

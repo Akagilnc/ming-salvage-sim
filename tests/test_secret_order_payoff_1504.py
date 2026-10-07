@@ -253,16 +253,12 @@ def test_decide_settlement_delivery_gap_bidirectional():
 
 def test_task_specific_contract_from_explicit_fields_not_tags():
     audit = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
         kind="补发饷银", axes=["既得利益"], direction=1,
         delivery_unit="万两", delivery_target_units=3, effect_sign=-1,
-        purpose="其它", category="密令差务", account="内库",
-    )
+        purpose="其它", category="密令差务", account="内库")
     catch = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
         kind="缉获人犯", axes=["实务事功"], direction=1,
-        delivery_unit="人犯", delivery_target_units=3, effect_sign=1, person_action="处置",
-    )
+        delivery_unit="人犯", delivery_target_units=3, effect_sign=1, person_action="处置")
     assert audit["kind"] == "补发饷银" and audit["axes"] == ["既得利益"]
     assert audit["delivery"]["unit"] == "万两"
     assert audit["delivery"]["target_units"] == 3.0
@@ -270,11 +266,9 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
     assert catch["delivery"]["target_units"] == 3.0
 
 
-def test_task_specific_contract_rejects_tags_without_explicit_fields():
+def test_task_specific_contract_rejects_empty_without_typed_fields():
     with pytest.raises(CovertContractError):
-        build_covert_task_contract(
-            deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
-        )
+        build_covert_task_contract()
 
 
 @pytest.mark.parametrize(
@@ -293,8 +287,7 @@ def test_confirmation_rejects_incomplete_delivery_identity(unit, identity, sign)
     with pytest.raises(CovertContractError):
         build_covert_task_contract(
             kind="差务", axes=["实务事功"], direction=1,
-            delivery_unit=unit, delivery_target_units=1, effect_sign=sign, **identity,
-        )
+            delivery_unit=unit, delivery_target_units=1, effect_sign=sign, **identity)
 
 
 def test_confirm_persists_task_specific_contract_absent_before(game):
@@ -2620,15 +2613,13 @@ def test_purpose_liaoxiang_canonicalizes_to_other_and_counts(game):
     frozen = build_covert_task_contract(
         kind="核发辽饷", axes=["实务事功"], direction=1,
         delivery_unit="万两", delivery_target_units=3, effect_sign=-1,
-        purpose="辽饷", category="密令差务", account="内库",
-    )
+        purpose="辽饷", category="密令差务", account="内库")
     assert frozen["delivery"]["purpose"] == "其它"
     with pytest.raises(CovertContractError):
         build_covert_task_contract(
             kind="核发辽饷", axes=["实务事功"], direction=1,
             delivery_unit="万两", delivery_target_units=3,
-            purpose="辽饷", category="密令差务", account="内库",
-        )
+            purpose="辽饷", category="密令差务", account="内库")
     oid = db.create_secret_order(
         state, name, "核发辽饷", "核发辽饷", [],
         deadline_months=1, covert_task=frozen,
@@ -2691,15 +2682,13 @@ def test_positive_inflow_does_not_freeze_purpose_and_counts(game):
     frozen = build_covert_task_contract(
         kind="抄家入帑", axes=["实务事功"], direction=1,
         delivery_unit="万两", delivery_target_units=1, effect_sign=1,
-        purpose="其它", category="密令差务", account="内库",
-    )
+        purpose="其它", category="密令差务", account="内库")
     assert "purpose" not in frozen["delivery"]
     with pytest.raises(CovertContractError):
         build_covert_task_contract(
             kind="抄家入帑", axes=["实务事功"], direction=1,
             delivery_unit="万两", delivery_target_units=1, effect_sign=1,
-            purpose="补饷", category="密令差务", account="内库",
-        )
+            purpose="补饷", category="密令差务", account="内库")
     oid = db.create_secret_order(
         state, name, "抄家入帑", "入内库", [],
         deadline_months=1, covert_task=frozen,
