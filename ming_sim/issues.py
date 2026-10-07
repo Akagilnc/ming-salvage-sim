@@ -128,8 +128,7 @@ def _canonical_issue_origin(db: GameDB, row: sqlite3.Row) -> str:
     stored_ref = str(row["origin_ref"] or "").strip()
     if stored_ref and db.effect_origin_rejection(stored_ref) is None:
         return stored_ref
-    keys = row.keys() if hasattr(row, "keys") else ()
-    affair_id = int(row["affair_id"] or 0) if "affair_id" in keys else 0
+    affair_id = int(row["affair_id"] or 0)
     if affair_id:
         origin_ref = db.affairs.origin_ref(affair_id)
     else:
@@ -138,17 +137,6 @@ def _canonical_issue_origin(db: GameDB, row: sqlite3.Row) -> str:
     if rejection:
         raise ValueError(f"issue #{row['id']} canonical origin 非法：{rejection['reason']}")
     return origin_ref
-
-
-def commitment_condition_role(resolve_condition: object = "", commitment_kind: object = "") -> Dict[str, str]:
-    """仅 typed commitment_kind 标承诺停止条件；resolve_condition 散文不再回落识别（#1835 J17）。"""
-    _ = resolve_condition
-    if str(commitment_kind or "").strip():
-        return {
-            "condition_role": "commitment_stop_condition",
-            "condition_note": "承诺停止条件；不要按 resolve_condition 达标自动结案，自动完成属于 #136。",
-        }
-    return {}
 
 
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:

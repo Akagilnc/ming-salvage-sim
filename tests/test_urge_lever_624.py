@@ -20,7 +20,6 @@ from ming_sim.due_review import (
     apply_due_review_for_todo,
     apply_pending_due_reviews,
     build_due_review_input,
-    dossiers_with_pending_due_review,
     list_due_review_scenes,
     project_due_review_scene,
 )
@@ -406,11 +405,7 @@ def test_remonstrance_not_projected_applied_or_takeover(game):
     # 1) 不投影为 due-review 场面
     assert list_due_review_scenes(db, state) == []
 
-    # 2) 不占接管窗
-    owned = dossiers_with_pending_due_review(db, state)
-    assert dossier_id not in owned
-
-    # 3) apply 不消费、不落格、不连坐
+    # 2) apply 不消费、不落格、不连坐（催办 lane 不走 due-review）
     before_outcome = db.get_decree_dossier(dossier_id)["execution_outcome"]
     results = apply_pending_due_reviews(db, state, commit=True)
     assert results == []
@@ -525,9 +520,8 @@ def test_urge_audience_project_and_consume_path(game):
     assert ENTRY_KIND_RUSH_REMONSTRANCE in kinds
     for s in scenes:
         assert "payload_json" not in s
-    # 不进 due-review、不占接管窗
+    # 不进 due-review 场面
     assert list_due_review_scenes(db, state) == []
-    assert dossier_id not in dossiers_with_pending_due_review(db, state)
 
     # 消费路径：created_turn < 下回合 → consumed
     state.turn = int(state.turn) + 1

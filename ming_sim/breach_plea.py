@@ -6,7 +6,6 @@ stage_idx = 触发当回合 turn（同承诺先后两次松手各得独立哭谏
 kind 分派矩阵（法）：
 - list_due_review_scenes：投影哭谏场面
 - apply_pending_due_reviews：禁当 staged 终裁；沉默保留 pending
-- dossiers_with_pending_due_review：不计入接管窗
 """
 
 from __future__ import annotations
@@ -95,15 +94,14 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
 
 
 def commitment_natural_due_turn(row: Any) -> int:
-    """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。"""
-    keys = row.keys()
-    stages_raw = row["stages_json"] if "stages_json" in keys else (
-        row.get("stages_json") if isinstance(row, dict) else None
-    )
-    stages = normalize_commitment_stages(stages_raw)
+    """承诺自身 due：段表 max due，否则 end_turn；0=无到期上限。
+
+    issues 行契约列在 CREATE 内；合法空 stages/end_turn=0 非缺列回落。
+    """
+    stages = normalize_commitment_stages(row["stages_json"])
     if stages:
         return max(int(s["due_turn"]) for s in stages)
-    end_turn = int(row["end_turn"] or 0) if "end_turn" in keys else 0
+    end_turn = int(row["end_turn"] or 0)
     return end_turn if end_turn > 0 else 0
 
 
@@ -175,9 +173,7 @@ def _dedicated_accounts(row: Any) -> List[str]:
             seen.add(acc)
             accounts.append(acc)
 
-    keys = row.keys()
-    tags_raw = row["tags"] if "tags" in keys else "[]"
-    tags = json.loads(tags_raw or "[]")
+    tags = json.loads(row["tags"] or "[]")
     if not isinstance(tags, list):
         raise ValueError("持久承诺标签须为列表")
     if isinstance(tags, list):
@@ -186,8 +182,7 @@ def _dedicated_accounts(row: Any) -> List[str]:
             if t.startswith("专款:"):
                 _add(t.split(":", 1)[1].strip())
 
-    ongoing_raw = row["ongoing_effects"] if "ongoing_effects" in keys else "{}"
-    ongoing = loads_effect_dict(ongoing_raw or "{}")
+    ongoing = loads_effect_dict(row["ongoing_effects"] or "{}")
     economy = ongoing.get("economy") if isinstance(ongoing, dict) else None
     if isinstance(economy, list):
         for item in economy:
@@ -944,9 +939,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
 
     # 案卷 executor office 快照
     if not expected:
-        did = parse_dossier_id(
-            commitment_row["origin_ref"] if "origin_ref" in commitment_row.keys() else ""
-        )
+        did = parse_dossier_id(commitment_row["origin_ref"] or "")
         if did is not None:
             drow = db.conn.execute(
                 "SELECT executor_id, payload_json FROM decree_dossiers WHERE id=?",
@@ -983,10 +976,7 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
             if oc is not None:
                 # 有任何调任记录且 status active → 调
                 # 过宽；要求 dossier 绑承诺同源
-                did = parse_dossier_id(
-                    commitment_row["origin_ref"]
-                    if "origin_ref" in commitment_row.keys() else ""
-                )
+                did = parse_dossier_id(commitment_row["origin_ref"] or "")
                 if did is not None:
                     linked = db.conn.execute(
                         """

@@ -25,7 +25,6 @@ from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
-    list_due_stages_for_scan,
     normalize_commitment_stages,
 )
 
@@ -298,54 +297,6 @@ def list_due_review_scenes(
             scenes.append(project_breach_plea_scene(db, todo))
         # urge / unknown：不投影为 due-review 场面
     return scenes
-
-
-def _add_owned_dossier(
-    owned: set[int], db: Any, origin_ref: object,
-) -> None:
-    branch = resolve_due_review_branch(db, origin_ref)
-    if branch["branch"] == "dossier" and branch["dossier_id"] is not None:
-        owned.add(int(branch["dossier_id"]))
-
-
-def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
-    """当前到期复核所涉案卷集合（场面/供料查询用）。
-
-    #1835 J18：不再作「排斥模型写终值」的接管窗；终值经 dossier_executions 声明写口。
-    仍枚举 pending staged todo 与本拍将写的到期段，供场面与测试观察。
-    kind 分派：breach_plea / urge 等不计入。
-    """
-    turn = int(getattr(state, "turn", 0) or 0)
-    owned: set[int] = set()
-
-    for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
-        # 仅 staged 占接管窗（breach_plea / urge / unknown 均不占）
-        if not is_due_review_entry_kind(todo.get("entry_kind")):
-            continue
-        cid = int(todo.get("commitment_ref") or 0)
-        if cid > 0:
-            meta = _issue_meta(db, cid)
-            origin = str(meta.get("origin_ref") or "")
-        else:
-            origin = _todo_origin_ref(todo)
-        _add_owned_dossier(owned, db, origin)
-
-    # 非 pending（consumed/rolled）段键：到期扫描不再预占（仅 staged 键）
-    finished_keys = {
-        (int(t["commitment_ref"]), int(t["stage_idx"]))
-        for t in db.list_next_audience_todos()
-        if str(t.get("status") or "") != TODO_STATUS_PENDING
-        and is_due_review_entry_kind(t.get("entry_kind"))
-    }
-    from ming_sim.staged_commitment import list_due_grant_report_dossiers_for_scan
-    scan_items = list(list_due_stages_for_scan(db, turn))
-    scan_items.extend(list_due_grant_report_dossiers_for_scan(db, turn))
-    for item in scan_items:
-        key = (int(item["commitment_ref"]), int(item["stage_idx"]))
-        if key in finished_keys:
-            continue
-        _add_owned_dossier(owned, db, item.get("origin_ref"))
-    return owned
 
 
 def _dossier_terminal_snapshot(db: Any, dossier_id: int) -> Dict[str, object]:

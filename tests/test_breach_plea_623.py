@@ -3,8 +3,7 @@
 Seams:
 - ENTRY_KIND_BREACH_PLEA 写端（stage_idx=触发 turn）
 - list_due_review_scenes 哭谏场面（召对待裁通道）
-- apply_pending_due_reviews 仅 staged 终裁；哭谏 pending 保留
-- dossiers_with_pending_due_review 不含挽留
+- apply_pending_due_reviews 仅 staged；哭谏 pending 保留
 - revoke 拦截：当回合无损 + 写挽留 todo
 - finalize_persist 写口；领域 cancel 实入后 tracker 坚持撤
 - 沉默滚存 / 承诺到期失效
@@ -35,7 +34,6 @@ from ming_sim.breach_plea import (
 from tests.test_due_review_621 import _settle_empty_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
-    dossiers_with_pending_due_review,
     list_due_review_scenes,
 )
 
@@ -518,24 +516,6 @@ def test_kind_gate_apply_only_finalizes_staged(game):
     assert _pending_pleas(db), "哭谏须仍 pending"
     # 非 staged 未连坐 did2
     assert _cost_events(db, did2, identity="连坐") == []
-
-
-def test_takeover_window_excludes_breach_plea(game):
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-    did, _ = _executing_policy_dossier(db, state, token="takeover-ex")
-    cid, _ = _insert_commitment(
-        db, state, title="不占接管窗", origin_ref=f"dossier:{did}",
-        bar_value=20, end_turn=state.turn + 10,
-    )
-    write_breach_plea_todo(
-        db, state, commitment_ref=cid,
-        breach_kind=BREACH_KIND_POLICY_REVERSAL, reason="欲撤",
-        target_dossier_id=did, commit=True,
-    )
-    owned = dossiers_with_pending_due_review(db, state)
-    assert did not in owned
 
 
 def test_breach_plea_survives_restore(game):

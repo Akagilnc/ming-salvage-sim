@@ -19,7 +19,6 @@ from tests.test_month_chain_1843 import _prepare_player_month
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     build_due_review_input,
-    dossiers_with_pending_due_review,
     list_due_review_scenes,
     project_due_review_scene,
 )
@@ -675,8 +674,6 @@ def test_due_month_model_execution_lands_before_todo_write(game):
     )
     # 故意不写 todo：模拟 settle 内声明早于 write_due 的窗
     assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
-    owned = dossiers_with_pending_due_review(db, state)
-    assert dossier_id in owned
 
     before = db.get_decree_dossier(dossier_id)
     assert before["status"] == "executing"
