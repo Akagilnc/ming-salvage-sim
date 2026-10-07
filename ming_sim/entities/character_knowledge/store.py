@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from uuid import uuid4
 
 from ming_sim.applier import (
     StoredDocumentError,
@@ -75,6 +76,20 @@ CREATE INDEX IF NOT EXISTS idx_character_knowledge_sources_turn
 # Source-id shapes that identify a private brief.
 _SECRET_ORDER_SOURCE = re.compile(r"secret_order_brief:(\d+)")
 _PUBLIC_SAYING_SOURCE = re.compile(r"public_saying:(\d+)")
+
+
+def source_identity(source_id: str = "") -> str:
+    """Durable source identity for knowledge writes.
+
+    Explicit non-empty source_id is kept as-is (same-id writes stay idempotent).
+    A blank id is not a shared key and must not collapse unrelated records or
+    secrecy boundaries: mint a unique structured token. Never derive identity
+    from free title/body text.
+    """
+    text = str(source_id or "").strip()
+    if text:
+        return text
+    return f"knowledge:{uuid4().hex}"
 
 
 def ensure_schema(conn: Any) -> None:
@@ -209,9 +224,10 @@ class CharacterKnowledgeStore:
 
         One source produces one row per participant, so re-recording the same
         event is idempotent (the unique key is character+kind+source).
-        Identity is the explicit source_id only — never derived from free title.
+        Identity is explicit source_id, or a fresh structured token when omitted
+        — never free title, never a shared empty string.
         """
-        source = str(source_id or "")
+        source = source_identity(source_id)
         excluded = safe_json_dumps(
             _names(excluded_names), ensure_ascii=False)
         written = 0
@@ -237,9 +253,10 @@ class CharacterKnowledgeStore:
     ) -> None:
         """Record one event in the public lane (character_name='').
 
-        Identity is the explicit source_id only — never derived from free title.
+        Identity is explicit source_id, or a fresh structured token when omitted
+        — never free title, never a shared empty string.
         """
-        source = str(source_id or "")
+        source = source_identity(source_id)
         self._conn.execute(
             "INSERT OR REPLACE INTO character_knowledge_events "
             "(turn,year,period,character_name,kind,title,body,source_id,excluded_names) "
@@ -263,9 +280,10 @@ class CharacterKnowledgeStore:
     ) -> str:
         """Register a durable shared source and the characters who know it.
 
-        Identity is the explicit source_id only — never derived from free title.
+        Identity is explicit source_id, or a fresh structured token when omitted
+        — never free title, never a shared empty string.
         """
-        source = str(source_id or "")
+        source = source_identity(source_id)
         roster = [
             dict(item) for item in participant_roster
             if item.get("character_id") or item.get("name")
@@ -378,7 +396,7 @@ class CharacterKnowledgeStore:
         """The public lane for one month, oldest first."""
         return [
             dict(row) for row in self._conn.execute(
-                "SELECT turn, year, period, kind, title, body, source_id, excluded_names "
+                "SELECT id, turn, year, period, kind, title, body, source_id, excluded_names "
                 "FROM character_knowledge_events WHERE character_name='' AND turn=? "
                 "ORDER BY id",
                 (int(turn),),
@@ -442,7 +460,7 @@ class CharacterKnowledgeStore:
         """Shared sources registered in one month, oldest first."""
         return [
             dict(row) for row in self._conn.execute(
-                "SELECT turn, year, period, title, body, source_id, "
+                "SELECT id, turn, year, period, title, body, source_id, "
                 "participant_roster, excluded_names, excluded_targets "
                 "FROM character_knowledge_sources WHERE turn=? ORDER BY id",
                 (int(turn),),
@@ -451,10 +469,13 @@ class CharacterKnowledgeStore:
 
     def public_kind_for_source(self, source_id: str) -> Optional[str]:
         """The public-lane kind already recorded for this source, if any."""
+        source = str(source_id or "").strip()
+        if not source:
+            return None
         row = self._conn.execute(
             "SELECT kind FROM character_knowledge_events "
             "WHERE character_name='' AND source_id=?",
-            (str(source_id or ""),),
+            (source,),
         ).fetchone()
         return None if row is None else str(row["kind"] or "")
 
@@ -488,10 +509,13 @@ class CharacterKnowledgeStore:
 
     def source_by_id(self, source_id: str) -> Optional[Dict[str, object]]:
         """One registered shared source, or None."""
+        source = str(source_id or "").strip()
+        if not source:
+            return None
         row = self._conn.execute(
             "SELECT source_id, kind, participant_roster, excluded_names, excluded_targets "
             "FROM character_knowledge_sources WHERE source_id=?",
-            (str(source_id or ""),),
+            (source,),
         ).fetchone()
         return None if row is None else dict(row)
 
@@ -530,9 +554,12 @@ class CharacterKnowledgeStore:
 
     def has_event_for_source(self, source_id: str) -> bool:
         """Whether any event row carries this source (event rows outrank source rows)."""
+        source = str(source_id or "").strip()
+        if not source:
+            return False
         return self._conn.execute(
             "SELECT 1 FROM character_knowledge_events WHERE source_id=? LIMIT 1",
-            (str(source_id or ""),),
+            (source,),
         ).fetchone() is not None
 
     def exclusions_for_source(self, source_id: str) -> List[str]:
@@ -541,9 +568,11 @@ class CharacterKnowledgeStore:
         The event row wins over the source row: the narrower, more specific
         record of who may not see this. Private briefs and public sayings keep
         their exclusions on their own tables (resolved by the caller, which owns
-        those ledgers).
+        those ledgers). A blank source_id is not an identity — no shared boundary.
         """
-        source = str(source_id or "")
+        source = str(source_id or "").strip()
+        if not source:
+            return []
         row = self._conn.execute(
             "SELECT excluded_names FROM character_knowledge_events "
             "WHERE source_id=? ORDER BY id LIMIT 1",
@@ -559,9 +588,12 @@ class CharacterKnowledgeStore:
 
     def exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         """People/offices excluded from a shared source."""
+        source = str(source_id or "").strip()
+        if not source:
+            return {}
         row = self._conn.execute(
             "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?",
-            (str(source_id or ""),),
+            (source,),
         ).fetchone()
         if row is None:
             return {}
