@@ -87,10 +87,10 @@ def test_conflicting_affair_declaration_on_existing_dossier_fails_loud(game):
 
 
 
-def test_same_name_affairs_are_not_merged_and_close_attach_is_rejected(game):
-    """Same display name does not merge; retired close attach stays a generic illegal enum/ref.
+def test_same_name_affairs_are_not_merged_and_illegal_attach_is_rejected(game):
+    """Same display name does not merge; illegal attach enum/ref fails loud and does not write.
 
-    Does not re-prove the retired declare_closed / close_from_declaration methods (F44).
+    Keeps generic create_decree_dossiers negative only — no exclusive retired-close proof (F44).
     """
     db, state, _ = game
     minister = _minister(db)
@@ -104,12 +104,6 @@ def test_same_name_affairs_are_not_merged_and_close_attach_is_rejected(game):
     )
     assert first.id != second.id
     before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    apply_score_extraction(
-        db, state, {"affair_declarations": [_declaration(attach="close", affair_id=first.id)]},
-        open_affair_ids_at_input={first.id},
-    )
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
-    assert db.affairs.get(first.id).status == "open"
     with pytest.raises(ValueError):
         db.create_decree_dossiers(
             state,
@@ -124,6 +118,7 @@ def test_same_name_affairs_are_not_merged_and_close_attach_is_rejected(game):
                 "affair_declaration": _declaration(attach="close", affair_id=first.id),
             },
         )
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
     assert db.affairs.get(first.id).status == "open"
 
 

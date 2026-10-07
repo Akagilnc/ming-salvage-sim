@@ -503,12 +503,10 @@ def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     raw = row["stop_condition"] if "stop_condition" in keys else ""
     if not raw:
         return {}
-    gate = json.loads(str(raw))
-    if not isinstance(gate, dict):
-        raise ValueError(
-            f"stop_condition 须为 JSON object，得 {type(gate).__name__}"
-        )
-    return gate
+    gate = GameDB.parse_engine_payload_json(
+        raw, surface="issues.stop_condition",
+    )
+    return {str(k): str(v) for k, v in gate.items()}
 
 
 def _commitment_remaining_from_gate(
@@ -557,10 +555,16 @@ def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
         )
         progress = payload.get("commitment_progress") if isinstance(payload, dict) else None
         if isinstance(progress, dict):
-            try:
-                return int(progress.get("paid_total") or 0)
-            except (TypeError, ValueError):
+            # Missing/empty paid_total → 0 (legal default). Present non-int is durable shape fault (F39).
+            raw = progress.get("paid_total", 0)
+            if raw is None or raw == "":
                 return 0
+            try:
+                return int(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"commitment_progress.paid_total 非整数：{raw!r}"
+                ) from exc
     return 0
 
 

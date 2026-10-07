@@ -384,11 +384,13 @@ def _cli_process_clock() -> float:
 
 @dataclass
 class _CliProcessOutcome:
-    """子进程收尾事实（退出码 / stderr 诊断 / stdin 写错），由增量读循环回填。"""
+    """子进程收尾事实（退出码 / stderr 诊断 / stdin·管道·终止错），由增量读循环回填。"""
 
     returncode: Optional[int] = None
     stderr: str = ""
     stdin_error: Optional[BaseException] = None
+    stream_error: Optional[BaseException] = None
+    terminate_error: Optional[BaseException] = None
 
 
 def _cli_idle_seconds() -> float:
@@ -403,17 +405,23 @@ def _cli_idle_seconds() -> float:
     return float(resolve_transport_policy().idle_timeout_seconds)
 
 
-def _terminate_cli_process(proc: Any) -> None:
-    """收尾子进程：已退时 terminate 是 no-op；否则 terminate→kill 兜底，防泄漏。"""
+def _terminate_cli_process(proc: Any, *, outcome: Optional[_CliProcessOutcome] = None) -> None:
+    """收尾子进程：已退时 no-op；否则只 terminate + 有界 wait。
+
+    禁 SIGKILL 升级（共享硬规 #9 / #1834 F47）。终止真异常记入 outcome，
+    交调用方响亮失败（#1834 F48），不在此处吞掉。
+    """
+    if getattr(proc, "poll", lambda: None)() is not None:
+        return
     try:
         proc.terminate()
         proc.wait(timeout=5)
-    except Exception:
-        try:
-            proc.kill()
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+    except Exception as exc:
+        if outcome is not None:
+            if outcome.terminate_error is None:
+                outcome.terminate_error = exc
+            return
+        raise
 
 
 def _iter_cli_process_lines(
@@ -428,11 +436,12 @@ def _iter_cli_process_lines(
     """CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。
 
     - 新字节即活动，刷新活动时刻；静默 ≥ idle 预算 → TransportIdleTimeout（可重试）
-      并 kill 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
+      并 terminate 该子进程（空转判据走 llm_transport.check_idle_budget，禁平行实现）。
     - idle 只认 transport 策略（`_cli_idle_seconds`）= 设置页那一格的静默判死阈值。
-    - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀。
+    - **不设 attempt 总墙钟（宪法 #9）**：只要还有新字节，跨 300s 也不杀；收尾禁 SIGKILL。
     - stderr 并发抽干：否则 codex 等把 stderr 写满 OS pipe 会反压死 stdout。
     - stdin 另起线程喂：大 prompt 超 pipe 缓冲时不与读 stdout 互锁。
+    - 活动期 stdout/stderr 真异常与终止真异常记入 outcome，调用方响亮失败（#1834 F48）。
     所有 runner 共用本读法；禁各自复制一套 idle 循环。clock 可注入（受控推进）。
     """
     from ming_sim.llm_transport import TransportPolicy, check_idle_budget
@@ -455,6 +464,8 @@ def _iter_cli_process_lines(
     chunks: "queue.Queue[Tuple[str, Optional[bytes]]]" = queue.Queue()
     stderr_parts: List[str] = []
     workers: List[threading.Thread] = []
+    # 收尾开始后管道关闭属正常；活动期读错必须落 outcome（#1834 F48）。
+    shutting_down = threading.Event()
 
     def _read_chunk(stream: Any) -> bytes:
         # read1：已到达的字节立刻交付，不要求凑成一行。无 read1 时退到 read。
@@ -473,10 +484,15 @@ def _iter_cli_process_lines(
                 if not chunk:
                     break
                 chunks.put((kind, chunk))
-        except (OSError, ValueError) as exc:
-            # 判死 kill 后管道会在读中途关掉（ValueError: closed file / OSError），
-            # 是收尾正常形状；只窄捕获这一类并留痕，其余错原样上抛（ADR 0005）。
-            logger.debug("CLI %s 管道读中断（子进程已收尾）：%s", kind, exc)
+        except Exception as exc:
+            # 活动期真异常归 outcome，禁洗成成功 EOF / 仅落线程 excepthook（F48）。
+            # 收尾 terminate 后的管道关闭不记 stream_error。
+            if not shutting_down.is_set():
+                if result.stream_error is None:
+                    result.stream_error = exc
+                logger.warning("CLI %s 管道读失败：%s", kind, exc)
+            else:
+                logger.debug("CLI %s 管道读中断（收尾中）：%s", kind, exc)
         finally:
             # 哨兵必发：否则读循环等不到 EOF，会把收尾误当静默。
             chunks.put((kind, None))
@@ -516,6 +532,9 @@ def _iter_cli_process_lines(
     pending_out = ""
     try:
         while open_streams > 0:
+            if result.stream_error is not None:
+                # 活动期管道真异常：不再等静默/收尾当成功（#1834 F48）。
+                break
             try:
                 kind, chunk = chunks.get(timeout=_CLI_POLL_SECONDS)
             except queue.Empty:
@@ -549,17 +568,29 @@ def _iter_cli_process_lines(
                 line, pending_out = pending_out[: nl + 1], pending_out[nl + 1 :]
                 yield line
         # 管道已 EOF 但进程未退：静默同样计入 idle 预算，仍无总墙钟。
-        while proc.poll() is None:
+        # 已有 stream_error 则直接收尾上抛，不把后续零退出洗成成功。
+        while proc.poll() is None and result.stream_error is None:
             check_idle_budget(
                 last_activity_at=last_activity, policy=policy, clock=tick,
             )
             time.sleep(_CLI_POLL_SECONDS)
     finally:
-        _terminate_cli_process(proc)
+        shutting_down.set()
+        _terminate_cli_process(proc, outcome=result)
         for worker in workers:
             worker.join(timeout=5)
         result.stderr = "".join(stderr_parts)
         result.returncode = proc.poll()
+    # 活动期管道/终止真异常：在正常收尾契约之外响亮上抛（F48）。
+    # stdin_error 仍由 runner 成功出口统一处理（现役路径）。
+    if result.stream_error is not None:
+        raise RuntimeError(
+            f"CLI 管道读失败：{result.stream_error}"
+        ) from result.stream_error
+    if result.terminate_error is not None:
+        raise RuntimeError(
+            f"CLI 子进程终止失败：{result.terminate_error}"
+        ) from result.terminate_error
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
     if reasoning_strength is None:
@@ -1422,108 +1453,6 @@ def _person_ids_from_extract_result(result: Dict[str, Any]) -> List[str]:
     return ids
 
 
-_MIN_PERSON_PREFIX_LEN = 2
-
-
-def _grounding_source_text(
-    player_message: Optional[str],
-    failed_slot_refs: Optional[List[str]] = None,
-) -> str:
-    """自愈同人接地输入面（ADR 0142）：玩家输入 + 结构化首抽失败槽原始串。
-
-    禁 minister_reply / LLM 自由散文作机械判定输入；窄规则（子串/唯一前缀）
-    只扫本函数拼出的源。
-    """
-    parts: List[str] = []
-    # Free prose player_message: preserve raw; strip only emptiness (#1834 F16).
-    text = str(player_message or "")
-    if text.strip():
-        parts.append(text)
-    for raw in failed_slot_refs or []:
-        ref = str(raw or "").strip()
-        if ref:
-            parts.append(ref)
-    return "\n".join(parts)
-
-
-def _roster_identity_forms(canon: str, *, content: Any) -> List[str]:
-    """名册事实：规范名 + aliases（与 #1428 事实块同源，机械列表）。"""
-    forms: List[str] = []
-    name = str(canon or "").strip()
-    if name:
-        forms.append(name)
-    ch = None
-    if content is not None:
-        chars = getattr(content, "characters", None) or {}
-        ch = chars.get(name)
-    for raw in getattr(ch, "aliases", None) or []:
-        alias = str(raw or "").strip()
-        if alias and alias not in forms:
-            forms.append(alias)
-    return forms
-
-
-def _all_roster_identity_forms(*, content: Any) -> Dict[str, List[str]]:
-    """canon → 规范名+别名列表；供截断前缀唯一性判定。"""
-    out: Dict[str, List[str]] = {}
-    chars = getattr(content, "characters", None) or {} if content is not None else {}
-    for key, ch in chars.items():
-        canon = str(key or "").strip()
-        if not canon:
-            continue
-        forms = [canon]
-        for raw in getattr(ch, "aliases", None) or []:
-            alias = str(raw or "").strip()
-            if alias and alias not in forms:
-                forms.append(alias)
-        out[canon] = forms
-    return out
-
-
-def _person_grounded_in_source(
-    person_id: str,
-    source_text: str,
-    *,
-    db: Any,
-    content: Any,
-    roster_forms: Optional[Dict[str, List[str]]] = None,
-) -> bool:
-    """窄确定性同人接地：原文出现该人规范名/别名，或可截断前缀且唯一落此人。
-
-    禁散文关键词/第二套抽取语义；只做名册事实上的子串与前缀机械判定。
-    """
-    text = str(source_text or "")
-    if not text:
-        return False
-    canon = _canon_person_id_key(person_id, db=db, content=content)
-    if not canon:
-        return False
-    forms_index = roster_forms if roster_forms is not None else _all_roster_identity_forms(
-        content=content,
-    )
-    my_forms = forms_index.get(canon) or _roster_identity_forms(canon, content=content)
-    for form in my_forms:
-        if form and form in text:
-            return True
-    # 可截断前缀：form 的真前缀（长≥2）出现在原文，且全名册仅此人的 form 命中该前缀
-    for form in my_forms:
-        if len(form) <= _MIN_PERSON_PREFIX_LEN:
-            continue
-        for n in range(_MIN_PERSON_PREFIX_LEN, len(form)):
-            prefix = form[:n]
-            if prefix not in text:
-                continue
-            owners: set[str] = set()
-            for other_canon, other_forms in forms_index.items():
-                for other in other_forms:
-                    if other == prefix or other.startswith(prefix):
-                        owners.add(other_canon)
-                        break
-            if owners == {canon}:
-                return True
-    return False
-
-
 def _known_person_canon(raw: Any, *, db: Any, content: Any) -> Optional[str]:
     """名册内人物 → 规范名；不在册 / 非人 → None。
 
@@ -1607,18 +1536,17 @@ def _patch_roster_slots_one_to_one(
     baseline_roster: Any,
     correction_roster: Any,
     *,
-    player_message: Optional[str],
-    failed_slot_refs: Optional[List[str]],
     db: Any,
     content: Any,
 ) -> Optional[List[Any]]:
     """可证明一一对应的结构化槽级修补；对应不明 → None（调用方 escalate）。
 
     - baseline 形状/顺序/tier/role 冻结
-    - 同下标对应：合法槽必须仍是同一人；失败槽取同位置纠错名（须接地）
+    - 同下标对应：合法槽必须仍是同一人；失败槽取同位置纠错名（须已过结构化人物引用校验）
     - 禁聚合候选池按序回填（增人/重排可静默换人）
-    - 未接地增人可忽略；接地增人计入「新人数」，与失败槽数不等 → 不明
+    - 纠错新人计入「新人数」，与失败槽数不等 → 不明
     - 多失败槽（含 validator 首错即停只报一个）→ 不明
+    - 不把自由正文姓名/别名/前缀子串当身份准入（#1834 F46）
     """
     base_entries = _roster_dict_entries(baseline_roster)
     corr_entries = _roster_dict_entries(correction_roster)
@@ -1631,9 +1559,6 @@ def _patch_roster_slots_one_to_one(
                 cid = str(raw or "").strip()
                 if cid and not _is_non_person_participant_name(cid):
                     return None
-
-    source = _grounding_source_text(player_message, failed_slot_refs)
-    forms_index = _all_roster_identity_forms(content=content)
 
     prior_valid: set[str] = set()
     failed_slots: List[tuple[int, str]] = []  # (entry_idx, field)
@@ -1654,20 +1579,16 @@ def _patch_roster_slots_one_to_one(
     if not failed_slots:
         return [dict(e) for e in base_entries]
 
-    # 纠错轮全部人物中的「接地新人」；未接地增人忽略，接地增人绝不可多于失败槽
+    # 纠错轮新人：只认结构化名册引用（_known_person_canon），不扫玩家正文。
     corr_all_ids = _collect_corr_person_ids(corr_entries, db=db, content=content)
-    grounded_newcomers: List[str] = []
+    newcomers: List[str] = []
     seen_new: set[str] = set()
     for pid in corr_all_ids:
         if pid in prior_valid or pid in seen_new:
             continue
-        if not _person_grounded_in_source(
-            pid, source, db=db, content=content, roster_forms=forms_index,
-        ):
-            continue
         seen_new.add(pid)
-        grounded_newcomers.append(pid)
-    if len(grounded_newcomers) != len(failed_slots):
+        newcomers.append(pid)
+    if len(newcomers) != len(failed_slots):
         return None
 
     out: List[Any] = []
@@ -1686,15 +1607,8 @@ def _patch_roster_slots_one_to_one(
             ).strip()
             corr_known = _known_person_canon(corr_raw, db=db, content=content)
             if base_known is None:
-                # 失败槽：同位置必须是唯一接地新人
-                if (
-                    corr_known is None
-                    or corr_known not in seen_new
-                    or not _person_grounded_in_source(
-                        corr_known, source, db=db, content=content,
-                        roster_forms=forms_index,
-                    )
-                ):
+                # 失败槽：同位置必须是唯一结构化新人
+                if corr_known is None or corr_known not in seen_new:
                     return None
                 entry[field] = corr_known
                 if field == "delegator_id":
@@ -1715,8 +1629,6 @@ def _backfill_healed_participant_refs(
     baseline: Dict[str, Any],
     correction: Dict[str, Any],
     *,
-    pending_unknown: List[str],
-    player_message: Optional[str],
     db: Any,
     content: Any,
 ) -> Optional[Dict[str, Any]]:
@@ -1725,6 +1637,7 @@ def _backfill_healed_participant_refs(
     非参与人字段一律保首抽；纠错轮增人/重排/改档不落库。
     失败槽不变式：顶层 roster 人物失败槽须恰好为 1
     （机构/泛称按 normalize 口径排除）；≠1 → None；唯一失败槽同下标修补。
+    人物身份只复用结构化引用校验，不扫自由正文（#1834 F46）。
     """
     # 全局闸：复用 _count_failed_person_slots（禁第三套扫描器）
     if _count_failed_person_slots(baseline, db=db, content=content) != 1:
@@ -1735,8 +1648,6 @@ def _backfill_healed_participant_refs(
         patched = _patch_roster_slots_one_to_one(
             base_roster,
             correction.get("participant_roster"),
-            player_message=player_message,
-            failed_slot_refs=pending_unknown,
             db=db,
             content=content,
         )
@@ -2267,7 +2178,7 @@ def extract_draft_intent_with_roster_heal(
         # 亦禁有替换时顺手抹掉本轮已在册的合法参与人。
         # prior 侧须过与 validated 同一条归一后再比（别名→规范名），
         # 禁生/熟键空间错位误杀自愈。
-        # 替换须原始输入+名册事实窄确定性同人接地；接不上唯一同人 → escalate。
+        # 替换只认结构化人物引用校验；不扫自由正文姓名子串（#1834 F46）。
         if pending_unknown:
             new_ids = _person_ids_from_extract_result(validated)
             prior_raw = [
@@ -2284,14 +2195,12 @@ def extract_draft_intent_with_roster_heal(
             if lost_prior_valid or removal_only:
                 raise UnknownParticipantEscalate(pending_unknown)
             assert baseline_result is not None
-            # 一一对应槽级修补（禁聚合候选池）；对应不明（增人接地/重排/多未知）→ escalate
+            # 一一对应槽级修补（禁聚合候选池）；对应不明（增人/重排/多未知）→ escalate
             # 纠错轮用原形 result（保留机构槽位形），禁 validated 压缩后再对下标——
             # 机构/泛称被 normalize 丢掉会错位。人物合法性已由 validated 闸证明。
             backfilled = _backfill_healed_participant_refs(
                 baseline_result,
                 result,
-                pending_unknown=pending_unknown,
-                player_message=player_message,
                 db=db,
                 content=content,
             )
