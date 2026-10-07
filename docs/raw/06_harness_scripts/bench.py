@@ -35,20 +35,13 @@ def run_agy(_model):
     return {"dur": time.time()-t0, "err": "", "raw": out}
 
 def balanced(raw):
-    out=[]; depth=0; start=None
-    for i,ch in enumerate(raw):
-        if ch=='{':
-            if depth==0: start=i
-            depth+=1
-        elif ch=='}':
-            depth-=1
-            if depth==0 and start is not None:
-                try:
-                    o=json.loads(raw[start:i+1])
-                    if isinstance(o,dict): out.append(o)
-                except: pass
-                start=None
-    return out
+    """Strict stdlib JSON object decode; no brace-crop / first-object pick."""
+    try:
+        o = json.loads(raw)
+    except Exception:
+        return []
+    return [o] if isinstance(o, dict) else []
+
 
 def quality(raw):
     objs=[o for o in balanced(raw) if '新立局势' in o or '局势推进' in o]

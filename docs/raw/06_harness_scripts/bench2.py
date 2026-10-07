@@ -51,20 +51,13 @@ def codex_final(raw):
     return '\n'.join(lines).strip()
 
 def balanced(raw):
-    out=[];d=0;s=None
-    for i,c in enumerate(raw):
-        if c=='{':
-            if d==0:s=i
-            d+=1
-        elif c=='}':
-            d-=1
-            if d==0 and s is not None:
-                try:
-                    o=json.loads(raw[s:i+1])
-                    if isinstance(o,dict):out.append(o)
-                except:pass
-                s=None
-    return out
+    """Strict stdlib JSON object decode; no brace-crop / first-object pick."""
+    try:
+        o = json.loads(raw)
+    except Exception:
+        return []
+    return [o] if isinstance(o, dict) else []
+
 
 def judge_struct(text):
     objs=balanced(text)

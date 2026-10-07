@@ -1433,108 +1433,6 @@ def _person_ids_from_extract_result(result: Dict[str, Any]) -> List[str]:
     return ids
 
 
-_MIN_PERSON_PREFIX_LEN = 2
-
-
-def _grounding_source_text(
-    player_message: Optional[str],
-    failed_slot_refs: Optional[List[str]] = None,
-) -> str:
-    """自愈同人接地输入面（ADR 0142）：玩家输入 + 结构化首抽失败槽原始串。
-
-    禁 minister_reply / LLM 自由散文作机械判定输入；窄规则（子串/唯一前缀）
-    只扫本函数拼出的源。
-    """
-    parts: List[str] = []
-    # #1847 N6：玩家原文运输不得 strip；判空用局部副本。
-    text = str(player_message or "")
-    if text.strip():
-        parts.append(text)
-    for raw in failed_slot_refs or []:
-        ref = str(raw or "")
-        if ref.strip():
-            parts.append(ref)
-    return "\n".join(parts)
-
-
-def _roster_identity_forms(canon: str, *, content: Any) -> List[str]:
-    """名册事实：规范名 + aliases（与 #1428 事实块同源，机械列表）。"""
-    forms: List[str] = []
-    name = str(canon or "").strip()
-    if name:
-        forms.append(name)
-    ch = None
-    if content is not None:
-        chars = getattr(content, "characters", None) or {}
-        ch = chars.get(name)
-    for raw in getattr(ch, "aliases", None) or []:
-        alias = str(raw or "").strip()
-        if alias and alias not in forms:
-            forms.append(alias)
-    return forms
-
-
-def _all_roster_identity_forms(*, content: Any) -> Dict[str, List[str]]:
-    """canon → 规范名+别名列表；供截断前缀唯一性判定。"""
-    out: Dict[str, List[str]] = {}
-    chars = getattr(content, "characters", None) or {} if content is not None else {}
-    for key, ch in chars.items():
-        canon = str(key or "").strip()
-        if not canon:
-            continue
-        forms = [canon]
-        for raw in getattr(ch, "aliases", None) or []:
-            alias = str(raw or "").strip()
-            if alias and alias not in forms:
-                forms.append(alias)
-        out[canon] = forms
-    return out
-
-
-def _person_grounded_in_source(
-    person_id: str,
-    source_text: str,
-    *,
-    db: Any,
-    content: Any,
-    roster_forms: Optional[Dict[str, List[str]]] = None,
-) -> bool:
-    """窄确定性同人接地：原文出现该人规范名/别名，或可截断前缀且唯一落此人。
-
-    禁散文关键词/第二套抽取语义；只做名册事实上的子串与前缀机械判定。
-    """
-    text = str(source_text or "")
-    if not text:
-        return False
-    canon = _canon_person_id_key(person_id, db=db, content=content)
-    if not canon:
-        return False
-    forms_index = roster_forms if roster_forms is not None else _all_roster_identity_forms(
-        content=content,
-    )
-    my_forms = forms_index.get(canon) or _roster_identity_forms(canon, content=content)
-    for form in my_forms:
-        if form and form in text:
-            return True
-    # 可截断前缀：form 的真前缀（长≥2）出现在原文，且全名册仅此人的 form 命中该前缀
-    for form in my_forms:
-        if len(form) <= _MIN_PERSON_PREFIX_LEN:
-            continue
-        for n in range(_MIN_PERSON_PREFIX_LEN, len(form)):
-            prefix = form[:n]
-            if prefix not in text:
-                continue
-            owners: set[str] = set()
-            for other_canon, other_forms in forms_index.items():
-                for other in other_forms:
-                    if other == prefix or other.startswith(prefix):
-                        owners.add(other_canon)
-                        break
-            if owners == {canon}:
-                return True
-    return False
-
-
 def _known_person_canon(raw: Any, *, db: Any, content: Any) -> Optional[str]:
     """名册内人物 → 规范名；不在册 / 非人 → None。
 
@@ -1623,18 +1521,17 @@ def _patch_roster_slots_one_to_one(
     baseline_roster: Any,
     correction_roster: Any,
     *,
-    player_message: Optional[str],
-    failed_slot_refs: Optional[List[str]],
     db: Any,
     content: Any,
 ) -> Optional[List[Any]]:
     """可证明一一对应的结构化槽级修补；对应不明 → None（调用方 escalate）。
 
     - baseline 形状/顺序/tier/role 冻结
-    - 同下标对应：合法槽必须仍是同一人；失败槽取同位置纠错名（须接地）
+    - 同下标对应：合法槽必须仍是同一人；失败槽取同位置在册纠错名
     - 禁聚合候选池按序回填（增人/重排可静默换人）
-    - 未接地增人可忽略；接地增人计入「新人数」，与失败槽数不等 → 不明
+    - 新人（纠错轮在册且非 prior）数须等于失败槽数；否则不明
     - 多失败槽（含 validator 首错即停只报一个）→ 不明
+    - 不扫玩家自由措辞作同人资格门（ADR 0142）
     """
     base_entries = _roster_dict_entries(baseline_roster)
     corr_entries = _roster_dict_entries(correction_roster)
@@ -1647,9 +1544,6 @@ def _patch_roster_slots_one_to_one(
                 cid = str(raw or "").strip()
                 if cid and not _is_non_person_participant_name(cid):
                     return None
-
-    source = _grounding_source_text(player_message, failed_slot_refs)
-    forms_index = _all_roster_identity_forms(content=content)
 
     prior_valid: set[str] = set()
     failed_slots: List[tuple[int, str]] = []  # (entry_idx, field)
@@ -1670,20 +1564,16 @@ def _patch_roster_slots_one_to_one(
     if not failed_slots:
         return [dict(e) for e in base_entries]
 
-    # 纠错轮全部人物中的「接地新人」；未接地增人忽略，接地增人绝不可多于失败槽
+    # 纠错轮在册新人；人数须恰好等于失败槽
     corr_all_ids = _collect_corr_person_ids(corr_entries, db=db, content=content)
-    grounded_newcomers: List[str] = []
+    newcomers: List[str] = []
     seen_new: set[str] = set()
     for pid in corr_all_ids:
         if pid in prior_valid or pid in seen_new:
             continue
-        if not _person_grounded_in_source(
-            pid, source, db=db, content=content, roster_forms=forms_index,
-        ):
-            continue
         seen_new.add(pid)
-        grounded_newcomers.append(pid)
-    if len(grounded_newcomers) != len(failed_slots):
+        newcomers.append(pid)
+    if len(newcomers) != len(failed_slots):
         return None
 
     out: List[Any] = []
@@ -1702,15 +1592,8 @@ def _patch_roster_slots_one_to_one(
             ).strip()
             corr_known = _known_person_canon(corr_raw, db=db, content=content)
             if base_known is None:
-                # 失败槽：同位置必须是唯一接地新人
-                if (
-                    corr_known is None
-                    or corr_known not in seen_new
-                    or not _person_grounded_in_source(
-                        corr_known, source, db=db, content=content,
-                        roster_forms=forms_index,
-                    )
-                ):
+                # 失败槽：同位置必须是唯一在册新人
+                if corr_known is None or corr_known not in seen_new:
                     return None
                 entry[field] = corr_known
                 if field == "delegator_id":
@@ -1731,8 +1614,6 @@ def _backfill_healed_participant_refs(
     baseline: Dict[str, Any],
     correction: Dict[str, Any],
     *,
-    pending_unknown: List[str],
-    player_message: Optional[str],
     db: Any,
     content: Any,
 ) -> Optional[Dict[str, Any]]:
@@ -1751,8 +1632,6 @@ def _backfill_healed_participant_refs(
         patched = _patch_roster_slots_one_to_one(
             base_roster,
             correction.get("participant_roster"),
-            player_message=player_message,
-            failed_slot_refs=pending_unknown,
             db=db,
             content=content,
         )
@@ -1781,8 +1660,6 @@ def _backfill_healed_participant_refs(
                 patched = _patch_roster_slots_one_to_one(
                     base_item_roster,
                     corr_item.get("participant_roster"),
-                    player_message=player_message,
-                    failed_slot_refs=pending_unknown,
                     db=db,
                     content=content,
                 )
@@ -2486,7 +2363,7 @@ def extract_draft_intent_with_roster_heal(
         # 亦禁有替换时顺手抹掉本轮已在册的合法参与人。
         # prior 侧须过与 validated 同一条归一后再比（别名→规范名），
         # 禁生/熟键空间错位误杀自愈。
-        # 替换须原始输入+名册事实窄确定性同人接地；接不上唯一同人 → escalate。
+        # 纠错轮须以在册 ID 替换未知槽；除名/只删不改 → escalate。
         if pending_unknown:
             new_ids = _person_ids_from_extract_result(validated)
             prior_raw = [
@@ -2503,14 +2380,12 @@ def extract_draft_intent_with_roster_heal(
             if lost_prior_valid or removal_only:
                 raise UnknownParticipantEscalate(pending_unknown)
             assert baseline_result is not None
-            # 一一对应槽级修补（禁聚合候选池）；对应不明（增人接地/重排/多未知）→ escalate
+            # 一一对应槽级修补（禁聚合候选池）；对应不明（增人/重排/多未知）→ escalate
             # 纠错轮用原形 result（保留机构槽位形），禁 validated 压缩后再对下标——
             # 机构/泛称被 normalize 丢掉会错位。人物合法性已由 validated 闸证明。
             backfilled = _backfill_healed_participant_refs(
                 baseline_result,
                 result,
-                pending_unknown=pending_unknown,
-                player_message=player_message,
                 db=db,
                 content=content,
             )
