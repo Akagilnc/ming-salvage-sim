@@ -17,22 +17,6 @@ ARMY = "guanning"
 BANDIT_POWERS = frozenset({"bandits", "bandit_li_zicheng"})
 
 
-def _simulator_army_dicts(payload_armies):
-    """Normalize simulator armies payload (dict-rows or col/row matrix) to dict list."""
-    if isinstance(payload_armies, dict) and "rows" in payload_armies:
-        cols = payload_armies.get("cols") or payload_armies.get("columns") or []
-        return [dict(zip(cols, row)) for row in payload_armies["rows"]]
-    return list(payload_armies)
-
-
-def _find_simulator_army(rows, army_id: str = ARMY):
-    return next(
-        r
-        for r in rows
-        if "关宁" in str(r.get("name", "")) or str(r.get("id", "")) == army_id
-    )
-
-
 def _configure(db) -> None:
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
@@ -212,7 +196,7 @@ def test_zero_manpower_latched_clears_before_continue_no_third_strike(game):
 
 
 def test_empty_source_delta_cannot_defect_latched_first_or_second_strike(game):
-    """DB adapter 事实契约（apply_army_deltas）：禁止 text 直写旁路。"""
+    """DB adapter 事实契约（apply_army_deltas）：空来源不得改 latched 军归属。"""
     db, state, _ = game
     _configure(db)
     for count in (1, 2):
@@ -288,7 +272,7 @@ def test_non_latched_generic_owner_change_still_works_via_adapter(game):
 
 
 def test_transfer_to_ming_rejects_mutiny_count_ge_3(game):
-    """DB adapter 事实契约（apply_army_deltas）。"""
+    """DB adapter 事实契约（apply_army_deltas）：mutiny_count≥3 拒收回明。"""
     db, state, _ = game
     _configure(db)
     db.conn.execute(
@@ -394,7 +378,7 @@ def test_hub_excluded_zero_manpower_latched_clears_once(game, identity):
         db, loyalty=10, arrears=0, latched=1,
         mutiny_count=2, mutiny_probation=3, manpower=0,
     )
-    # 豁免军双累加器/份额须为 0（cutover 守恒）；本测只钉清闩，不测发饷
+    # 豁免军双累加器/份额须为 0（hub 守恒）；本测只钉清闩，不测发饷
     db.conn.execute(
         """UPDATE armies SET is_tusi=?, self_funded_pay=?,
            pay_source_region='', province_pay_share=0, central_pay_share=0,

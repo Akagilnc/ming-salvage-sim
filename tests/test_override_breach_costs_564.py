@@ -316,6 +316,7 @@ def test_midzhi_apply_omits_guessed_parties_and_keeps_satisfaction(game):
 
 
 
+
 def test_commit_true_breach_reloads_state_when_failure_follows_authority_mutation(game, monkeypatch):
     db, state, _ = game
     dossier_id = _dossier(db, state, roster=[

@@ -17,6 +17,7 @@ from ming_sim.declaration_dispatch import pending_action_decree_ref
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import TurnPhase
 from tests.month_chain_helpers import make_light_session
+from tests.rescript_test_helpers import sql_rescript_draft
 from tests.test_month_chain_1843 import _forbid_extractor, _stage_edict
 from ming_sim.supervision import (
     ORIGIN_MARK_PRIVATE_GOODS,
@@ -586,20 +587,13 @@ def test_cross_month_pending_draft_opens_rescript_desk(game, monkeypatch):
     db, state, content = game
     closed_turn = int(state.turn)
     prior = closed_turn - 1
-    db.conn.execute(
-        "INSERT INTO pending_decisions "
-        "(turn, idx, event_id, title, context, options_json, choice_json, "
-        " status, kind, actor_name, actor_office, actor_faction, "
-        " revision_round, prior_options_json) "
-        "VALUES (?, 0, 'urgent:old:0', '旧急务甲', '跨月待批', ?, '', "
-        " 'pending', 'rescript_draft', '首辅', '内阁首辅', '东林', 0, '[]')",
-        (
-            prior,
-            json.dumps([
-                {"label": "发帑", "hint": "饥民"},
-                {"label": "留中", "hint": "待查"},
-            ], ensure_ascii=False),
-        ),
+    sql_rescript_draft(
+        db, prior, idx=0, event_id="urgent:old:0", title="旧急务甲", context="跨月待批",
+        options=[
+            {"label": "发帑", "hint": "饥民"},
+            {"label": "留中", "hint": "待查"},
+        ],
+        actor_name="首辅", actor_office="内阁首辅", actor_faction="东林",
     )
     db.conn.commit()
     _forbid_extractor(monkeypatch)

@@ -28,12 +28,10 @@ NEW_STYLE = "旧恨未消，却更沉得住气，临事少作张扬。"
 # 含首尾空白与内嵌换行：写核/读面须原串透传，不得 strip 改写。
 PADDED_STYLE = "  沉得住气\n少作张扬。  "
 
-
 def _style_row(db, name=PERSON):
     return db.conn.execute(
         "SELECT style FROM characters WHERE name=?", (name,)
     ).fetchone()["style"]
-
 
 def _temperament_item(**overrides):
     item = {
@@ -45,7 +43,6 @@ def _temperament_item(**overrides):
     }
     item.update(overrides)
     return item
-
 
 def test_inertia_natural_resolve_applies_temperament_style(game):
     """生产入口：issue 自然结案 effect_on_resolve 性情 → DB/runtime/person_logs 一致。"""
@@ -85,7 +82,6 @@ def test_inertia_natural_resolve_applies_temperament_style(game):
     assert log["action"] == "性情"
     assert log["payload_summary"] == "经事锤炼，固有层改写"
 
-
 def test_apply_score_extraction_writes_temperament_style_and_log(game):
     db, state, content = game
     before = _style_row(db)
@@ -115,7 +111,6 @@ def test_apply_score_extraction_writes_temperament_style_and_log(game):
     ).fetchone()
     assert log["action"] == "性情"
     assert log["payload_summary"] == "经事锤炼，固有层改写"
-
 
 def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
     """自由文本 style 只判空、不改写：DB/runtime/applied/log normalized 与输入原串逐字节相等。"""
@@ -157,7 +152,6 @@ def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
     assert content.characters[PERSON].style == PADDED_STYLE
     assert rejected_view(blank_out, "applied_person_changes")[0].category == "invalid_enum"
 
-
 def test_temperament_outer_tx_rollback_restores_db_and_runtime(game):
     db, state, content = game
     before_db = _style_row(db)
@@ -172,7 +166,6 @@ def test_temperament_outer_tx_rollback_restores_db_and_runtime(game):
     assert _style_row(db) == before_db
     assert content.characters[PERSON].style == before_rt
 
-
 def test_temperament_committed_style_survives_reload(game):
     db, state, content = game
     settle_delta(state, db, {'人物变更': [_temperament_item()]}, SettlementContext(content=content))
@@ -180,7 +173,6 @@ def test_temperament_committed_style_survives_reload(game):
 
     assert _style_row(db) == NEW_STYLE
     assert content.characters[PERSON].style == NEW_STYLE
-
 
 @pytest.mark.parametrize(
     ("item", "category"),
@@ -330,7 +322,6 @@ def test_relation_edge_events_do_not_mutate_style(game):
         ("性情",),
     ).fetchone()["c"]
     assert after_temperament_logs == before_temperament_logs
-
 
 def test_temperament_does_not_write_relation_edges(game):
     db, state, content = game

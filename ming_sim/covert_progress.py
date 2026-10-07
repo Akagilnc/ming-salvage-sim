@@ -572,15 +572,6 @@ def contract_target_units(contract: Mapping[str, object]) -> float:
     return target
 
 
-def contract_axes_direction(
-    contract: Mapping[str, object],
-) -> tuple[list[str], int]:
-    axes = normalize_axes(contract.get("axes"))
-    if not axes:
-        raise CovertContractError("typed contract 缺少价值轴")
-    return axes, normalize_direction(contract.get("direction"), default=1)
-
-
 def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[str, object]:
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
@@ -635,65 +626,6 @@ def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
         (str(minister_name or "").strip(),),
     ).fetchone()
     return row is not None
-
-
-def _current_game_turn(db: Any, turn: object = None) -> int:
-    if turn is not None:
-        return int(turn)
-    row = db.conn.execute("SELECT turn FROM game_state WHERE id=1").fetchone()
-    if row is not None:
-        return int(row["turn"])
-    return 0
-
-
-def build_secret_covert_effect_briefs(
-    db: Any,
-    orders: Sequence[Mapping[str, object]] | None = None,
-    *,
-    turn: object = None,
-) -> List[Dict[str, object]]:
-    """internal 档房私密输入：typed 合同 + origin，不含密令正文（#883）。"""
-    rows = list(orders or [])
-    if not rows:
-        rows = list(db.list_secret_orders(status="active"))
-    current_turn = _current_game_turn(db, turn)
-    out: List[Dict[str, object]] = []
-    for order in rows:
-        if not isinstance(order, Mapping):
-            continue
-        if str(order.get("status") or "active") != "active":
-            continue
-        if _is_issuance_turn(order, current_turn):
-            continue
-        oid = int(order.get("id") or 0)
-        if oid <= 0:
-            continue
-        dossier = db.get_dossier_for_secret_order(oid)
-        if dossier is None:
-            continue
-        contract = require_covert_task_contract(dossier)
-        delivery = contract.get("delivery") if isinstance(contract.get("delivery"), Mapping) else {}
-        unit = str(delivery.get("unit") or "")
-        fields = canonical_fields_for_delivery(unit=unit)
-        owner = "internal"
-        if fields == ["人物变更"]:
-            owner = "personnel_secret"
-        prior_units = float(db.sum_dossier_actual_progress_units(int(dossier["id"])))
-        target_units = contract_target_units(contract)
-        remaining_units = max(0.0, target_units - prior_units)
-        out.append({
-            "origin_ref": f"dossier:{int(dossier['id'])}",
-            "order_id": oid,
-            "kind": str(contract.get("kind") or ""),
-            "axes": list(contract.get("axes") or []),
-            "direction": int(contract.get("direction") or 1),
-            "delivery": copy.deepcopy(dict(delivery)),
-            "effect_owner": owner,
-            "canonical_fields": fields,
-            "prior_actual_units": prior_units,
-            "remaining_units": remaining_units,
-        })
-    return out
 
 
 def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:
@@ -1498,6 +1430,7 @@ def apply_investigation_spoliation(
     经真实传话声明知情（knowledge_source）——未知情不替其毁证，知情也不强制毁证。
     'gone' 之后该事实永不可查——关案重开、另起新案都不恢复（真源在 (target, fact_key)）。
     """
+    owns = db.owns_transaction() if commit else False
     name = str(target or "").strip()
     key = str(fact_key or "").strip()
     if not name or not key:
@@ -1516,7 +1449,7 @@ def apply_investigation_spoliation(
         target_name=name, fact_key=key, turn=turn, effect=effect,
         origin_ref=origin_ref, commit=False,
     )
-    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+    if owns:
         db.conn.commit()
     return {"target": name, "fact_key": key, "applied": True, "effect": str(effect),
             "knowledge_source": str(knowledge_source or "").strip(),
@@ -1758,6 +1691,7 @@ def apply_monthly_covert_actual_progress(
     only_supplied: bool = False,
     source: Provenance = Provenance.system_simulation,
 ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
+    owns = db.owns_transaction() if commit else False
     """当月实况轨落笔：推演者声明的真实投入/效果 → dossier_actual_progress。
 
     不发明人物/钱粮/地区固定套餐；奏报永不入 apply。
@@ -1861,7 +1795,7 @@ def apply_monthly_covert_actual_progress(
             "contract_kind": contract.get("kind"),
             "contract_axes": list(contract.get("axes") or []),
         })
-    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+    if owns:
         db.conn.commit()
     return applied, rejections
 
@@ -2040,6 +1974,7 @@ def settle_due_secret_orders(
     commit: bool = False,
     source: Provenance = Provenance.system_simulation,
 ) -> tuple[List[Dict[str, object]], List[RejectedItem]]:
+    owns = db.owns_transaction() if commit else False
     results: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
     for order in list_due_secret_orders_for_settlement(db, state):
@@ -2088,7 +2023,7 @@ def settle_due_secret_orders(
             "target_units": target,
             "delivered": bool(verdict["delivered"]),
         })
-    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
+    if owns:
         db.conn.commit()
     return results, rejections
 

@@ -48,13 +48,6 @@ from ming_sim.issues import apply_historical_fiscal_rates, clear_gated_legacies,
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import imperial_authority_band, power_band, qualitative_character_axis
-from ming_sim.appointment_tenure import (
-    DEFAULT_APPOINTMENT_TENURE,
-    command_power_rank,
-    execution_distortion_weight,
-    normalize_appointment_tenure,
-)
-from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.decree_vocabulary import (
     dossier_action_policy,
 )
@@ -73,7 +66,6 @@ TIMEOUT_TURN = 240
 from ming_sim.settlement_payload import (  # noqa: E402
     _DECISION_RE,
     bind_decision_options,
-    bind_decisions_to_candidate_events,
     parse_decision_blocks,
 )
 
@@ -149,13 +141,14 @@ PROMULGATION_VERDICT_HEAL_RETRIES = 3
 
 def stub_promulgation_verdicts(
     dossiers: Sequence[Dict[str, object]],
+    state: object = None,
 ) -> List[Dict[str, object]]:
     """Deterministic auto-promulgation for exempt dossiers and explicit test fixtures."""
+    del state
     return [
         {"dossier_id": int(row["id"]), "decision": "promulgated"}
         for row in dossiers
     ]
-
 
 def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
     payload = row.get("payload")
@@ -808,9 +801,9 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameS
     嵌套 atomic 内禁止 reload：depth>0 时 rollback 尚未发生（flat 语义，最外层才回滚），
     load_state 同连接会读到未提交脏写——把脏数据当真相刷进 state（cmr S5 r1 claude）。
     """
-    if getattr(db.conn, "_atomic_depth", 0) > 0:
+    if not db.owns_transaction():
         raise RuntimeError(
-            "reload_state_from_db 在 atomic 事务内禁止：回滚尚未发生，会把未提交脏写"
+            "reload_state_from_db 在外层事务内禁止：回滚尚未发生，会把未提交脏写"
             "当 DB 真相刷进内存。最外层 atomic 拥有者负责真回滚后再 reload。"
         )
     fresh = db.load_state()
@@ -826,7 +819,7 @@ def reload_state_from_db(db: GameDB, state: GameState, *, content=None) -> GameS
         from ming_sim.session import _sync_offices_from_db_impl
         # llm_config 必传（restore 各调用点同款）：缺省 None 会让 LLM 自创官职的
         # office_type 推断降级成「待铨」，reload 后内存又与 DB 分叉（cmr S5 r3 双家）。
-        _sync_offices_from_db_impl(content, db, getattr(db, "llm_config", None))
+        _sync_offices_from_db_impl(content, db, db.llm_config)
     return state
 
 
@@ -854,10 +847,11 @@ def atomic_and_reload(
 
     语义（逐处保真）：
     - body 包进 `with atomic(db)`，正常退出由 atomic 统一提交（嵌套时由最外层落定）。
-    - body 抛 BaseException 时：先（若有）调 on_error(exc)，再仅当 `_atomic_depth==0`（本层
-      即最外层、atomic 已真回滚）调 reload_state_from_db 把脏内存按 DB 刷净；嵌套（depth>0）
-      跳过 reload（回滚尚未发生，load_state 会读未提交脏写）。reload 自身再炸不顶替原异常，
-      链上抛 `raise exc from reload_exc`。最后原样 re-raise 原异常（fail-loud，ADR 0005）。
+    - body 抛 BaseException 时：先（若有）调 on_error(exc)，再仅当本层即最外层、
+      atomic 已真回滚（owns_transaction）时调 reload_state_from_db 把脏内存按 DB 刷净；
+      仍在外层事务内则跳过 reload（回滚尚未发生，load_state 会读未提交脏写）。
+      reload 自身再炸不顶替原异常，链上抛 `raise exc from reload_exc`。最后原样
+      re-raise 原异常（fail-loud，ADR 0005）。
 
     on_error 在 reload 之前触发（DB 行随回滚消失，
     内存缓冲须同步清场）。settle 的中断透传 / 错误包 / SettlementAbort 包装等**特殊** except
@@ -870,7 +864,7 @@ def atomic_and_reload(
     except BaseException as exc:
         if on_error is not None:
             on_error(exc)
-        if getattr(db.conn, "_atomic_depth", 0) == 0:
+        if db.owns_transaction():
             try:
                 reload_state_from_db(db, state, content=content)
             except BaseException as reload_exc:
@@ -981,7 +975,7 @@ def prepare_resolve_front_half(
             # #668：transit_arrivals 与 ready=0 占位同外层 atomic 写入。
             placeholder_payload = {
                 "transit_arrivals": list(transit_arrivals_box),
-                "open_affairs": db.affairs.input_brief(getattr(db, "textual_facts", None)),
+                "open_affairs": db.affairs.input_brief(db.textual_facts),
             }
             # #671：占位 upsert 不得以默认空串覆盖已持久 attendant_message
             #（同 turn 占位重入时尤甚）。
@@ -1109,6 +1103,58 @@ def pre_settle(
     return []
 
 
+
+
+def _collect_inline_rejections(
+    collector: RejectionCollector,
+    applied: Dict[str, object],
+    turn: int,
+    source: Provenance,
+) -> None:
+    """把 apply 结果里各 section 内嵌的拒收项收进收集器（PR2-S0 桥接）。
+
+    约定：section 结果列表中 `{"rejected": True, ...}` 即拒收项；`reason` 为人读原因，
+    `category` 为机读类别（未迁契约的 section 没有此键 → 兜底 "legacy_inline"）。
+    一层 dict-of-list（issue_summary 的 new_issues/cancels 等）也要下探——new_issues
+    正是实测最常被拒的段，跳过它聚合就失明（cmr S0 r1）。
+    item_json 的取值（ship-pre r3/r4）：迁约 producer（S1-S3 已迁全部）在 wrapper 里
+    携原始 delta 项（'item' 键）→ 桥接解包存原件；仅未迁 section
+    （secret_order_* 等）无 'item' 键时才兜底存 wrapper 回显记录。
+    """
+    def _scan(section: str, items: list) -> None:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if item.get("rejected"):
+                report_section = str(item.get("report_section") or section)
+                collector.record(report_section, RejectedItem(
+                    # item_json = 原始 delta 项（ADR 决定 5「原 item 原样保留」）：迁约
+                    # producer 在 wrapper 里带原件（'item' 键）则解包,否则兜底存 wrapper
+                    # （ship-pre r3——存整个 wrapper 会让重放分析消费到嵌套形状）。
+                    # 按 'item' 键**存在性**解包（非值类型）：原 isinstance(dict/list/str) 判会把
+                    # 标量/null 原件（如 close_issues:[null]/[42] 的非 dict 拒收）误存成 wrapper、
+                    # 丢原件保真——key 在即解包，覆盖标量原件（cmr close-issues r5 codex）。
+                    item=item["item"] if "item" in item else item,
+                    # ADR「拒收行必带人读原因」在此集中守门：producer 漏给则合成非空兜底
+                    # ——规则写一处，新 section 免疫同类缺陷（fix-coverage 处方，cmr S0 r3）。
+                    reason=str(item.get("reason") or "") or f"拒收（{report_section} 未注明原因）",
+                    category=str(item.get("report_category") or item.get("category") or "legacy_inline"),
+                    source=source,
+                ), turn)
+            for subkey, subvalue in item.items():
+                if isinstance(subvalue, list):
+                    nested_section = f"{section}.{subkey}"
+                    if nested_section == "issue_summary.closes.applied_person_changes":
+                        continue
+                    _scan(nested_section, subvalue)
+
+    for section, value in applied.items():
+        if isinstance(value, list):
+            _scan(section, value)
+        elif isinstance(value, dict):
+            for subkey, subvalue in value.items():
+                if isinstance(subvalue, list):
+                    _scan(f"{section}.{subkey}", subvalue)
 
 
 def resolve_decisions_phase2(

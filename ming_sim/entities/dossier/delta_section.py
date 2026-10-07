@@ -90,8 +90,7 @@ def apply_executions(run):
         run.db.record_dossier_execution(
             dossier_id, outcome, note, run.state.turn, close=True, commit=False,
         )
-        # #567：S10 结案同源读被护侧对账，经 merge_execution_note 增补（单写口）。
-        run.db.merge_grant_reconciliation_into_execution_note(dossier_id, commit=False)
+        # #1900：对账金额落 reconciliations 结构化行；不向 execution_note 灌核账模板。
         # 连坐挂载点＝本段落终值笔；禁对 execution_outcome 列事后扫描。
         # 人物奏报只经模型声明/既有存储写入，执行格不代写奏报行。
         run.db.apply_execution_joint_liability(

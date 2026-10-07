@@ -352,13 +352,14 @@ def test_rush_without_issue_fail_closed_no_remonstrance(game):
     db, state, content = game
     before_issues = db.conn.execute("SELECT COUNT(*) AS c FROM issues").fetchone()["c"]
     # 直接对不存在的 commitment_ref 应响亮失败或 no-op 不造 issue
-    with pytest.raises(ValueError):
+    with pytest.raises(PendingActionRefusal) as exc:
         rush_staged_commitment_stage(
             db, state, commitment_ref=9_999_999, stage_idx=0,
             deadline_months=1, reason="幽灵",
         )
     after_issues = db.conn.execute("SELECT COUNT(*) AS c FROM issues").fetchone()["c"]
     assert after_issues == before_issues
+    assert exc.value.category == "missing_commitment"
 
 
 # ── 四缝白名单 + 接管窗对称 ──────────────────────────────────────────

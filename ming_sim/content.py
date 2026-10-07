@@ -57,6 +57,8 @@ from ming_sim.models import (
 # --- 单项加载器（保留原签名，便于复用与单测）---
 
 def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
+    from ming_sim.person_archive_contract import PERSON_OUSTED_STATUSES
+
     data = require_dict(load_json_asset("characters.json"), "characters.json")
     factions: Dict[str, Faction] = {}
     for idx, raw in enumerate(require_list(data.get("factions"), "characters.json.factions"), 1):
@@ -115,10 +117,19 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             seed_guilt = {}
         if name in characters:
             raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
+        status = str(item.get("status") or "active")
+        office_type = str_field(item, "office_type", f"characters.json.characters[{idx}]")
+        status_reason = str(item.get("status_reason") or "").strip()
+        # ADR 0009：在事者 office 必非空。离事者现职以 characters.json 为名分真源
+        # （允许空 office 合法读取）；不在装载时二次洗职，也不解析 status_reason。
+        if status in PERSON_OUSTED_STATUSES:
+            office = str(item.get("office") or "").strip()
+        else:
+            office = str_field(item, "office", f"characters.json.characters[{idx}]")
         characters[name] = Character(
             name=name,
-            office=str_field(item, "office", f"characters.json.characters[{idx}]"),
-            office_type=str_field(item, "office_type", f"characters.json.characters[{idx}]"),
+            office=office,
+            office_type=office_type,
             faction=str_field(item, "faction", f"characters.json.characters[{idx}]"),
             aliases=string_list(item.get("aliases", []), f"characters.json.characters[{idx}].aliases"),
             personal_skills=string_list(item.get("personal_skills"), f"characters.json.characters[{idx}].personal_skills"),
@@ -136,8 +147,8 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             historical_death_month=int(item.get("historical_death_month") or 0),
             debut_year=int(item.get("debut_year") or 0),
             debut_month=int(item.get("debut_month") or 0),
-            status=str(item.get("status") or "active"),
-            status_reason=str(item.get("status_reason") or "").strip(),
+            status=status,
+            status_reason=status_reason,
             reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
@@ -700,7 +711,6 @@ class GameContent:
     decree_writer_prompt: str = ""
     gazette_author_prompt: str = ""
     ending_summary_prompt: str = ""
-    rescript_draft_prompt: str = ""
     relation_brew_prompt: str = ""
     faction_brew_prompt: str = ""
 
@@ -738,7 +748,6 @@ class GameContent:
             decree_writer_prompt=load_text_asset("prompts/decree_writer.md"),
             gazette_author_prompt=load_text_asset("prompts/gazette_author.md"),
             ending_summary_prompt=load_text_asset("prompts/ending_summary.md"),
-            rescript_draft_prompt=load_text_asset("prompts/rescript_draft.md"),
             relation_brew_prompt=load_text_asset("prompts/relation_brew.md"),
             faction_brew_prompt=load_text_asset("prompts/faction_brew.md"),
         )

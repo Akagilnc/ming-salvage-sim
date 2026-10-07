@@ -30,22 +30,6 @@ def _pay_source():
 
 # ── schema：列已物理删除 ──────────────────────────────────────────────
 
-def test_armies_table_has_no_maintenance_column(read_game):
-    db, _state, _ = read_game
-    cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(armies)").fetchall()}
-    assert "maintenance_per_turn" not in cols, "维护费列应已物理删除"
-
-
-
-
-def test_new_army_needs_manpower_and_pay_source(game):
-    db, state, _ = game
-    created, created_rejections = db.create_armies_from_extraction(state, [{
-        "id": "qin_army_x", "name": "秦军营", "owner_power": "ming", "manpower": 8000,
-        **_pay_source(),
-    }], source=Provenance.system_simulation)
-    assert created and created_rejections == [], created
-    assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_x'").fetchone() is not None
 
 
 def test_new_army_maintenance_key_ignored(game):

@@ -515,6 +515,14 @@ def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):
 
 
 
+
+# 结算相位不得召对 + 等 gate 期间相位翻转（TOCTOU）被拒 → 真实 WebGame.chat_stream 验证，
+# 见 tests/test_web_audience_night_498.py::test_phase_flip_while_waiting_gate_is_rejected。
+
+
+# ── 负向 ─────────────────────────────────────────────────────────────
+
+
 def test_bad_audibility_and_append_after_close(game):
     db, state, content = game
     night = an.open_night(db, state)
@@ -546,7 +554,6 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
             answer="臣有本奏。", proposed_directive=None, appointed_minister="",
             registered_minister="", displaced_minister="", court_action="",
             next_minister="", secret_order_id=0, pending_action_id=0,
-            pending_action_failures=[],
         )
 
     def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
@@ -559,6 +566,9 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
         chat=chat, scene_chat=scene_chat,
         # #1842：persist 尾必调；轻壳无 pending 时 no-op。
         schedule_pending_scene_translation=lambda result: None,
+        # #1853：入口直调核心 schedule；轻壳缺绑不得靠 getattr 回退。
+        schedule_close_night_after_chat_if_needed=lambda *_a, **_k: None,
+        close_night_after_chat_if_needed=lambda *_a, **_k: None,
     )
     answers = iter(["朕问卿边事如何？", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))

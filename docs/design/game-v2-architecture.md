@@ -319,7 +319,7 @@ owner 2026-09-10 就「邸报到底有哪些内容，哪些强烈依赖引擎，
 | 角色见闻 | `ming_sim/registry.py`：`create_minister_agent`；`ming_sim/knowledge.py` | 已有个人与公开信息的供料，旧 handoff「视野层根本不存在」过强，应撤回该判断 |
 | 连续场景与跨月差务 | `ming_sim/audience_night.py`、`ming_sim/due_review.py` | 有可复用的场景、复命能力；架构不能只剩人物状态表 |
 | 补军饷 | `ming_sim/db.py`：`_apply_army_pay_grant_effect`；`ming_sim/flows.py`：`_apply_economy_list` | 当前扣库并销欠，不等于已经经过赈灾的押解实抵链 |
-| 赈灾拨款 | `ming_sim/db.py`：`grant_arrival_bounds`、`clamp_grant_arrival_amount` | 已有面额、护送及实际抵达的计算，不借重构重写同一机制 |
+| 赈灾拨款 | `ming_sim/db.py`：`grant_arrival_bounds`、`record_monthly_grant_reconciliations` | 已有面额、护送及实际抵达的计算，不借重构重写同一机制（0054 的 `clamp_grant_arrival_amount` 软判口已于 #1900 退役：沿途损耗归引擎） |
 | 当前偏离线索 | `ming_sim/covert_progress.py`：`compute_willingness_floor`、`clamp_fidelity_to_floor` | 已发现按指标钳制忠实程度的代码，和本轮判断权方向不一致；#1820 Q5 明确未选此形状（人物自选量归 LLM、引擎只 clamp），清理归 #1815；本轮未修改代码 |
 
 owner 最后对财政的提醒（03:14:55Z）：

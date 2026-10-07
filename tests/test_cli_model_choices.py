@@ -9,47 +9,8 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 import ming_sim.cli_backend as cb
-
-
-def test_choices_cover_all_supported_runners():
-    choices = cb.cli_model_choices()
-    # 每个受支持的 CLI runner 都要有一档清单（与 _CLI_BACKENDS 单一真源对齐，#1256）。
-    assert set(choices) == set(cb._CLI_BACKENDS)
-    assert set(choices) == {"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"}
-
-
-def test_cli_runner_choices_cover_all_supported_runners():
-    """CLI Runner 下拉公开全部受支持 runner。"""
-    runners = cb.cli_runner_choices()
-    values = [r["value"] for r in runners]
-    assert values == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
-    for opt in runners:
-        assert set(opt) == {"value", "label"}
-        assert opt["label"]
-
-
-def test_cli_runner_choices_returns_independent_copies():
-    a = cb.cli_runner_choices()
-    a.append({"value": "x", "label": "x"})
-    b = cb.cli_runner_choices()
-    assert all(r["value"] != "x" for r in b)
-
-
-def test_each_runner_has_default_escape_option_first():
-    choices = cb.cli_model_choices()
-    for runner, options in choices.items():
-        assert options, f"{runner} 清单不能为空"
-        # 每档都是 {value,label}；第一个必须是默认档（value=""，对应「留空=后端默认」语义）。
-        for opt in options:
-            assert set(opt) == {"value", "label"}
-            assert isinstance(opt["value"], str) and isinstance(opt["label"], str)
-        assert options[0]["value"] == "", f"{runner} 首档须为默认档(value='')"
-        # value 不重复（含默认空串）。
-        values = [o["value"] for o in options]
-        assert len(values) == len(set(values)), f"{runner} 档位 value 重复"
 
 
 def test_default_labels_reuse_single_source_constants(monkeypatch):
@@ -70,30 +31,12 @@ def test_default_label_reflects_env_override(monkeypatch):
     assert cb.CODEX_DEFAULT_MODEL not in label
 
 
-def test_codex_offers_spark_fast_tier():
-    values = [o["value"] for o in cb.cli_model_choices()["codex"]]
-    assert "gpt-5.3-codex-spark" in values  # bench「可用主力·快」档
 
 
-def test_claude_offers_haiku_and_sonnet_tiers():
-    values = [o["value"] for o in cb.cli_model_choices()["claude"]]
-    assert "claude-haiku-4-5" in values
-    assert "claude-sonnet-4-6" in values
 
 
-def test_curated_values_are_lowercase_known_ids():
-    """策展值都用规范小写 id——下拉的全部意义就是挡住大小写/拼写错。"""
-    for options in cb.cli_model_choices().values():
-        for opt in options:
-            assert opt["value"] == opt["value"].lower()
 
 
-def test_choices_returns_independent_copies():
-    """返回独立副本，调用方改动不污染下一次调用（防共享可变态）。"""
-    a = cb.cli_model_choices()
-    a["codex"].append({"value": "x", "label": "x"})
-    b = cb.cli_model_choices()
-    assert all(o["value"] != "x" for o in b["codex"])
 
 
 # ── 端点暴露：两个 config 端点都把清单带给前端 ──

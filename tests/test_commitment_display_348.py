@@ -12,13 +12,12 @@ from ming_sim.entities.issue.commitment_display import (
 )
 
 
-def _row(*, end_turn, origin_turn, ongoing_effects=None, stop_condition="", resolve_condition=""):
+def _row(*, end_turn, origin_turn, ongoing_effects=None, stop_condition=""):
     return {
         "end_turn": end_turn,
         "origin_turn": origin_turn,
         "ongoing_effects": json.dumps(ongoing_effects or {}),
         "stop_condition": stop_condition,
-        "resolve_condition": resolve_condition,
     }
 
 
@@ -38,11 +37,6 @@ class TestCommitmentTimedBarValue:
             _row(end_turn=0, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}}),
         ) is None
         # 仅 resolve_condition 串不再冒充 typed stop_gate；有 end_turn+ongoing 仍走时限条。
-        assert commitment_timed_bar_value(
-            _progress(3),
-            _row(end_turn=20, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}},
-                 resolve_condition="character.毛文龙.loyalty >= 65"),
-        ) == 20
         assert commitment_timed_bar_value(
             _progress(3, remaining_arrears=80),
             _row(end_turn=20, origin_turn=5,

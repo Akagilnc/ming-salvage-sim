@@ -7,10 +7,10 @@
 from __future__ import annotations
 
 import threading
+import time
+from types import SimpleNamespace
 
 import pytest
-
-from types import SimpleNamespace
 
 from ming_sim.session_write_queue import (
     SessionWriteQueue,
@@ -527,10 +527,12 @@ def test_wait_pending_writes_fail_loud_on_false_and_exception(monkeypatch):
         stuck.complete(ticket)
 
     boom = SessionWriteQueue()
+    fault = RuntimeError("queue boom")
 
     def _raise(*, timeout_s=None):
-        raise RuntimeError("queue boom")
+        raise fault
 
     monkeypatch.setattr(boom, "wait_idle", _raise)
     with pytest.raises(RuntimeError):
         wait_pending_writes(SimpleNamespace(_write_queue=boom), timeout_s=0.05)
+    assert ei.value is fault

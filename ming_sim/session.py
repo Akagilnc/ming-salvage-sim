@@ -79,13 +79,6 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
 
     if not _os.path.isdir(saves_dir):
         return
-    legacy_auto = _re.compile(rf"^{_re.escape(AUTO_SAVE_PREFIX)}\d{{4}}_\d{{2}}_t\d{{4}}_.+\.db$")
-    for f in _os.listdir(saves_dir):
-        if legacy_auto.match(f):
-            try:
-                _os.remove(_os.path.join(saves_dir, f))
-            except OSError:
-                pass
     campaign_id = (campaign_id or "").strip()
     if not campaign_id:
         return
@@ -106,7 +99,7 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
             try:
                 _os.remove(_os.path.join(saves_dir, stale))
             except OSError:
-                pass
+                logger.exception("prune_auto_saves failed removing %s", stale)
 
 
 # TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；
@@ -162,13 +155,6 @@ class ChatTurnResult:
     refresh_ministers: List[str] = field(default_factory=list)
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
-    pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
-    # #502 AC5：多道并存时口头准驳含糊 → 结构化含糊态（含候选集），驱动大臣当场追问哪一道。
-    directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
-    # Typed decree validation recovery (failed_fields + LLM report); sync/retry must project it.
-    decree_validation_failure: Optional[Dict[str, Any]] = None
-    # #1765：密令落不了库 → 大臣揣摩/追问（landing_gaps + report）；与拟旨 recovery 同投影缝。
-    secret_order_landing_recovery: Optional[Dict[str, Any]] = None
     # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
     # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
     pending_audience_translation: Optional[Dict[str, Any]] = None
@@ -383,10 +369,10 @@ def _appointment_intent_is_current_office_noop(
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
     归一到在册原始名，再查当前 office。"""
-    conn = getattr(db, "conn", None)
+    # #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
-    if conn is None or not clean_name or not desired:
+    if not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
     row = conn.execute(
@@ -503,30 +489,6 @@ def apply_appointment(
 
 
 
-
-
-
-
-
-def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
-    """把落库失败的暂存动作翻成可给玩家看的失败状态。"""
-    kind = str(pa.get("kind") or "")
-    action = str(pa.get("action") or "")
-    noun = {
-        "secret_order": "密令",
-        "office": "任免",
-        "directive": "拟旨",
-    }.get(kind, "政务动作")
-    # #1765 ②：坏 payload 重放入口已删——系统层只报「未落库」这一件事，
-    # 不再承诺重试、也不按失败来源分类交代（0046 薄系统层）。
-    message = f"{noun}未能正式落库，已记录为失败；若暂不处理，也不会阻断继续召对。"
-    return {
-        "id": int(pa.get("id") or 0),
-        "kind": kind,
-        "action": action,
-        "minister_name": str(pa.get("minister_name") or ""),
-        "message": message,
-    }
 
 
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
@@ -1127,28 +1089,27 @@ class GameSession:
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
 
-        # 收夜口令。先兑现既有确定性效果，再把无需转译的源轮标 done：
-        # - 退朝：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收
+        # 显式退朝口令：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收。
+        # 留侍／含糊收夜词表已退役——走普通场景演绎与转译。
         audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
-        if audience_command_verdict and audience_command_verdict != CMD_NONE:
+        if audience_command_verdict == CMD_CLOSE_NIGHT:
             ctid = int(chat_turn_id or 0)
-            if audience_command_verdict == CMD_CLOSE_NIGHT:
-                # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
-                # ctid==0 的当场收夜分支随同步转译一并删除。
-                if ctid > 0:
-                    self._mark_control_turn_translation_done(ctid)
-                    result.court_action = "court_break"
-                    return result
-                close_night(
-                    self.db, self.state,
-                    content=getattr(self, "content", None),
-                    llm_config=getattr(self, "llm_config", None),
-                    write_gate=getattr(self, "_write_gate", None),
-                    write_queue=self._write_queue,
-                )
+            # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
+            # ctid==0 的当场收夜分支随同步转译一并删除。
+            if ctid > 0:
+                self._mark_control_turn_translation_done(ctid)
                 result.court_action = "court_break"
                 return result
+            close_night(
+                self.db, self.state,
+                content=getattr(self, "content", None),
+                llm_config=getattr(self, "llm_config", None),
+                write_gate=getattr(self, "_write_gate", None),
+                write_queue=self._write_queue,
+            )
+            result.court_action = "court_break"
+            return result
 
         # 「宣 X」→ 确定性落入殿账，再起场景调用（X 开不开口由 LLM 演）。
         xuan_fragment = recognize_xuan_command(message_text)
@@ -1183,14 +1144,12 @@ class GameSession:
                     )
                     xuan_ctid = int(chat_turn_id or 0)
                     if xuan_ctid > 0:
+                        owns = connection_owns_transaction(self.db.conn)
                         self.db.conn.execute(
                             "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
                             (target.name, xuan_ctid),
                         )
-                        if (
-                            not bool(getattr(self.db.conn, "_commit_suspended", False))
-                            and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
-                        ):
+                        if owns:
                             self.db.conn.commit()
                     if on_protagonist_changed is not None:
                         on_protagonist_changed()
@@ -1971,10 +1930,9 @@ class GameSession:
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
         ctx = self.db.get_resolve_context(self.state.turn)
-        # #389：event_id 缺失/回显越权（越出本回合候选快照）时以候选快照重绑——
-        # 迁自旧 submit_decisions 的绑定步（与 choices[idx] 位置写协议无关，非
-        # 猜绑，唯一权威仍是 bind_decisions_to_candidate_events）；scope 与旧
-        # list_pending_decisions 同款只收 kind='decision'，rescript_draft 行不动。
+        # #389 / #1900 J20：只采信本回合候选快照内的显式 event_id（及合法 dossier:）；
+        # 标题不补绑。迁自旧 submit_decisions 的绑定步；scope 同旧
+        # list_pending_decisions 只收 kind='decision'，rescript_draft 行不动。
         if ctx is not None:
             from ming_sim.settlement_payload import bind_decisions_to_candidate_events
             decision_rows = [r for r in desk if str(r.get("kind") or "") == "decision"]
@@ -2415,7 +2373,7 @@ class GameSession:
     def auto_save(self, tag: str) -> Optional[str]:
         """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。
         文件名 auto_<campaign_id>_<year>_<period>_<turn>_<tag>.db；prune 只动同 campaign 的自动档，
-        不碰用户手动存档。备份失败留痕但不阻断游戏。"""
+        不碰用户手动存档。失败非致命（不阻断月链），但必须留异常真因（ADR 0005）。"""
         try:
             import os as _os
             saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
@@ -2433,7 +2391,7 @@ class GameSession:
             prune_auto_saves(saves_dir, campaign_id)
             return target
         except Exception:
-            logger.exception("automatic backup failed")
+            logger.exception("auto_save failed tag=%s", tag)
             return None
 
     def close(self, *, write_gate_already_held: bool = False) -> None:

@@ -191,9 +191,9 @@ def _get_state(client: TestClient) -> dict:
 
 def _pending_payload(client: TestClient) -> dict:
 
-    """#1842：待补投影唯一真源 = list_pending_translations → chat.translation_retries。"""
-    resp = client.get("/api/audience/chat")
-    _assert_not_bare_500(resp, step="GET /api/audience/chat")
+    """#1842/#1853：待补投影唯一真源 = list_pending_translations → scroll.translation_retries。"""
+    resp = client.get("/api/audience/scroll")
+    _assert_not_bare_500(resp, step="GET /api/audience/scroll")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     retries = list(body.get("translation_retries") or [])
@@ -299,91 +299,6 @@ def _resolve_decisions_via_stream(
     assert "event: error" not in resolve.text, f"{step} error SSE: {resolve.text}"
     assert "event: done" in resolve.text, f"{step} missing done: {resolve.text}"
 
-
-def _play_one_month(
-    client: TestClient,
-    monkeypatch,
-    *,
-    minister: str,
-    month_label: str,
-) -> int:
-    """召对 → 拟旨 → 流式颁诏结算。返回推进后的 turn。"""
-    state = _get_state(client)
-    turn_before = _turn_of(state)
-    assert state["turn"]["phase"] not in (
-        "settling", "awaiting_decision",
-    ), f"{month_label}: unexpected phase before month play: {state['turn']!r}"
-
-    game = web_app.web_game
-    assert game is not None
-
-    chat = client.post(
-        "/api/audience/chat",
-        json={"message": f"边饷如何？本月{month_label}召对。"},
-    )
-    _assert_not_bare_500(chat, step=f"{month_label} chat")
-    assert chat.status_code == 200, (
-        f"{month_label} chat → {chat.status_code}: {chat.text}"
-    )
-    answer = str((chat.json() or {}).get("answer") or "")
-    assert answer, f"{month_label}: empty minister answer"
-
-    # 顺序 tracer 只验证真实入口和结构化月推进结果。
-    _wait_pending_writes(game)
-
-    # #1849：独立手拟新增 Web 口已退役；经现行 capture 核 + session 落草案
-    # （与召对拟旨同一条 turn_directives 写入）。本 tracer 被测的是月推进。
-    from tests.directive_seed_helpers import seed_manual_draft
-
-    draft_id = seed_manual_draft(
-        game.session, f"着户部清核辽饷（{month_label}）。",
-    )
-    assert draft_id > 0, f"{month_label}: seed_manual_draft returned {draft_id}"
-    assert game.db.list_directives(game.state), f"{month_label}: directive list empty after seed"
-
-    _wait_pending_writes(game)
-
-    body = _post_issue_stream(
-        client, expected_turn=turn_before, step=f"{month_label} issue/stream",
-    )
-    # 若 simulator canned 仍吐决策点，最短续跑：空批不得卡死主链。
-    if body.get("awaiting_decision"):
-        decisions = body.get("decisions") or []
-        assert decisions, (
-            f"{month_label}: awaiting_decision with empty decisions: {body!r}"
-        )
-        _resolve_decisions_via_stream(
-            client, decisions, step=f"{month_label} resolve_decisions",
-        )
-    _wait_pending_writes(game)
-    after = _get_state(client)
-    turn_after = _turn_of(after)
-    assert turn_after == turn_before + 1, (
-        f"{month_label}: turn {turn_before} → {turn_after}, expected +1; "
-        f"phase={after.get('turn')!r}"
-    )
-    # 闸/账双向等量：成功过月后 count == len(pending) == 0（漏账或残债均红）。
-    pending = _pending_payload(client)
-    pending_list = pending.get("pending") or []
-    count = int(pending.get("count") or 0)
-    assert count == len(pending_list) == 0, (
-        f"{month_label}: post-month pending not empty/eq: "
-        f"count={count} len={len(pending_list)} body={pending!r}"
-    )
-    # 夜应收：无跨月开夜
-    open_after = an.get_open_night(game.db)
-    assert open_after is None or str(open_after.get("status")) == an.NIGHT_STATUS_CLOSED, (
-        f"{month_label}: night still blocking after month advance: {open_after!r}"
-    )
-    return turn_after
-
-
-# ── 主 tracer：两整月（起点十一月 → 真跨年） ────────────────────────────
-
-
-
-
-# ── #1353 fold-in：带欠账一次过月成功 + 死透失败单源 ─────────────────────
 
 
 def _plant_extraction_debt(game, minister: str, *, sess_tag: str) -> int:

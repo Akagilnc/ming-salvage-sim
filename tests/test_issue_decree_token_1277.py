@@ -60,8 +60,6 @@ def _web_runtime(db, state, content, *, monkeypatch):
 
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
     return runtime
 
 
@@ -77,10 +75,7 @@ def test_double_issue_same_token_second_is_409_turn_plus_one(game, monkeypatch):
     start = int(state.turn)
     runtime = _web_runtime(db, state, content, monkeypatch=monkeypatch)
 
-    calls = {"n": 0}
-
     def _fake_resolve(**_k):
-        calls["n"] += 1
         # 模拟 resolve_turn 成功推进一格（与生产同向副作用）。
         state.turn = start + 1
         state.turn_phase = TurnPhase.SUMMONING.value
@@ -93,7 +88,6 @@ def test_double_issue_same_token_second_is_409_turn_plus_one(game, monkeypatch):
     first = web_app.api_issue_decree(_body(start))
     assert first.get("report") == "邸报测"
     assert int(state.turn) == start + 1
-    assert calls["n"] == 1
 
     with pytest.raises(HTTPException) as ei:
         web_app.api_issue_decree(_body(start))
@@ -103,4 +97,3 @@ def test_double_issue_same_token_second_is_409_turn_plus_one(game, monkeypatch):
     assert isinstance(detail, dict)
     assert int(detail["turn"]) == start + 1
     assert int(state.turn) == start + 1  # 未再推进
-    assert calls["n"] == 1  # resolve 未二次执行

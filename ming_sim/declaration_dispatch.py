@@ -407,8 +407,9 @@ def _persist_specialized_extraction(
 ) -> None:
     """转译契约仍收的专属案卷字段，交既有写入口，不在通用 applier 里再写一份。
 
-    密奏须先有本回合稽核在场扫描，origin 才带得上同派标记。对账只落本段提案，
-    未提案目标的中位默认留到月末一次补，避免后段中位覆盖前段实抵。
+    密奏先落本回合稽核在场事实；origin 只承接密奏里已经声明的行动，不按派系补写。
+    月度拨帑核账走 ``record_monthly_grant_reconciliations``（引擎中位实抵，#1900），
+    本口不接 dossier_reconciliations 提案。
 
     过月主链（ADR 0157 步骤 4a）整月密奏与执行态由独立供料 run 落账；
     ``defer_monthly_secret_supply`` 时不把逐段字段拼成整月义务。
@@ -421,11 +422,6 @@ def _persist_specialized_extraction(
     denunciations = extraction.get("faction_denunciations") or []
     if isinstance(denunciations, list) and denunciations:
         db.accept_faction_denunciations(state, denunciations, commit=False)
-    proposals = extraction.get("dossier_reconciliations") or []
-    if isinstance(proposals, list) and proposals:
-        db.record_monthly_grant_reconciliations(
-            int(turn), proposals, rejection_collector=collector, source=source,
-        )
     if not defer_monthly_secret_supply:
         selections = extraction.get("covert_exec_selections") or []
         if isinstance(selections, list) and selections:
@@ -433,7 +429,8 @@ def _persist_specialized_extraction(
 
             rows, rows_rejections = apply_monthly_covert_actual_progress(
                 db, state, selections=selections, only_supplied=True, commit=False,
-            source=source)
+                source=source,
+            )
             for item in rows_rejections:
                 collector.record("covert_exec_selections", item, int(turn))
 

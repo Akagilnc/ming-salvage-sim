@@ -1414,59 +1414,6 @@ def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):
     assert sum(income) == 11 + 3 + 4
     assert expenses == [3]
 
-def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_game):
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
-            central_pay_share = 0, pay_source_region = '',
-            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
-        """
-    )
-    db.conn.execute(
-        """
-        UPDATE regions
-        SET controlled_by = 'houjin',
-            fiscal = json_set(fiscal, '$.salt_tax', 0, '$.commerce_tax', 0)
-        """
-    )
-    display = next(row["name"] for row in flows_mod.compute_budget_lines(db, state)["国库"]["income"]
-                   if row.get("internal") == "substrate_hub")
-    db.create_fiscal_item(
-        "巡盐加派_base",
-        "国库",
-        "income",
-        display,
-        7,
-        note="display intentionally collides with substrate hub salt tax",
-        commit=False,
-    )
-    db.conn.commit()
-
-    budget = flows_mod.compute_budget_lines(db, state)
-    salt_lines = [row for row in budget["国库"]["income"] if row["name"] == display]
-    assert any(row.get("internal") == "substrate_hub" for row in salt_lines)
-    assert any(row.get("internal") != "substrate_hub" for row in salt_lines)
-
-    flows_mod.apply_fixed_period_flows(db, state)
-
-    net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
-    expected = db.apply_legacy_pct(7, net_pct) if net_pct else 7
-    rows = db.conn.execute(
-        """
-        SELECT delta, reason
-        FROM economy_ledger
-        WHERE account = '国库' AND category = ?
-        ORDER BY id
-        """,
-        (display,),
-    ).fetchall()
-    assert [int(row["delta"]) for row in rows] == [expected]
-    assert all(str(row["reason"] or "").strip() for row in rows)
 
 def test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses(fresh_game):
     import ming_sim.flows as flows_mod
@@ -4135,22 +4082,6 @@ def test_apply_fixed_period_flows_malformed_fiscal_container_isolated(fresh_game
     assert state.metrics == metrics_before
     assert db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()[0] == raw_fiscal
 
-def test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone(fresh_game):
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    flows_mod.apply_fixed_period_flows(db, state)
-    in_memory = _read_settle(db, "shaanxi")["st"]
-
-    other = sqlite3.connect(db.path)
-    try:
-        row = other.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
-    finally:
-        other.close()
-    on_disk = json.loads(str(row[0] or "{}"))["settle"]["st"]
-
-    assert on_disk["军饷欠"] == pytest.approx(in_memory["军饷欠"], abs=1e-3)
-    assert on_disk["军饷欠"] == pytest.approx(_province_pay_arrears(db, "shaanxi"), abs=1e-6)
 
 def test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic(fresh_game):
     import ming_sim.flows as flows_mod
@@ -4360,3 +4291,62 @@ def test_jiangnan_core_uses_wanli_huiji_lu_primary_seed(fresh_db):
             raw["正赋本色_石"] * effective_rate / 10000 / 12,
             abs_tol=0.01,
         )
+
+
+
+def test_substrate_hub_display_name_collision_books_user_fiscal_exact(fresh_game):
+    """显示名与 hub 公开预算名撞车时，用户定额仍按独立常量落账（不锁 internal 标记）。"""
+    import ming_sim.flows as flows_mod
+
+    db, state = fresh_game
+    db.conn.execute("UPDATE buildings SET output_amount = 0, maintenance = 0")
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE regions
+        SET controlled_by = 'houjin',
+            fiscal = json_set(fiscal, '$.salt_tax', 0, '$.commerce_tax', 0)
+        """
+    )
+    # hub 公开预算名（flows 投影），非 internal 实现字段。
+    display = "起运"
+    db.create_fiscal_item(
+        "巡盐加派_base",
+        "国库",
+        "income",
+        display,
+        7,
+        note="display intentionally collides with substrate hub remittance name",
+        commit=False,
+    )
+    db.conn.commit()
+
+    budget = flows_mod.compute_budget_lines(db, state)
+    colliding = [row for row in budget["国库"]["income"] if row["name"] == display]
+    assert len(colliding) == 2  # hub 投影行 + 用户 fiscal_item 行
+
+    flows_mod.apply_fixed_period_flows(db, state)
+
+    net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
+    # 本案夹具将各省改后金并清盐商税后净修正为 0 → 面额 7 实入 7。独立常量。
+    assert net_pct == 0
+    expected = 7
+    rows = db.conn.execute(
+        """
+        SELECT delta, reason
+        FROM economy_ledger
+        WHERE account = '国库' AND category = ?
+        ORDER BY id
+        """,
+        (display,),
+    ).fetchall()
+    # 用户定额路径落账；hub 起运在省份全后金/零税设定下不另注入同名定额行。
+    assert [int(row["delta"]) for row in rows] == [expected]
+    assert all(str(row["reason"] or "").strip() for row in rows)

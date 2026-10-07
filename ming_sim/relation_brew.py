@@ -433,30 +433,3 @@ class MonthEndRelationBrewLeg:
             report["brewed"].append({"source": source, "target": target})
             tlog(f"[relation-brew] {source}→{target} 酿制落定（pending 同事务清除）")
         return report
-
-
-def run_month_end_relation_brew(
-    db: Any,
-    state: GameState,
-    brew_fn: Callable[[str], str],
-    *,
-    parallel: bool = True,
-    settled_turn: Optional[int] = None,
-    settled_year: Optional[int] = None,
-    settled_period: Optional[int] = None,
-) -> Dict[str, Any]:
-    """月末增量重酿腿（三段顺序合跑：prepare→brew→persist，直调/测试便利入口）。
-
-    生产机械尾直接持有 Leg 三段生命周期，并将失败交给尾任务的重试入口。
-    本直调入口返回机械报告。"""
-    leg = MonthEndRelationBrewLeg(
-        db, state, brew_fn,
-        settled_turn=settled_turn,
-        settled_year=settled_year,
-        settled_period=settled_period,
-        parallel=parallel,
-    )
-    if not leg.prepare():
-        return leg.report
-    leg.brew()
-    return leg.persist()

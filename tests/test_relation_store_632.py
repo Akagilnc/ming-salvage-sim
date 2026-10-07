@@ -5,7 +5,6 @@ import sqlite3
 import pytest
 
 from ming_sim.db import GameDB
-from ming_sim.relations import EMPEROR_NODE, credit_events_as_edges
 
 
 def test_directed_edge_events_are_stored_and_queryable(game):
@@ -74,61 +73,6 @@ def test_edge_event_kind_and_evidence_are_fail_closed(game):
     assert "round:" in row["origin"]
 
 
-def test_credit_contract_fixture_reads_as_semantic_directed_edges():
-    fixture = [
-        {
-            "person": "杨嗣昌",
-            "event_kind": "兑现所托",
-            "context": "奉诏清丈，按期复命。",
-            "origin": "credit:fixture:兑现所托",
-            "turn": 4,
-        },
-        {
-            "person": "毕自严",
-            "event_kind": "辜负",
-            "context": "帝面却毕自严泣血之谏。",
-            "origin": "credit:fixture:辜负",
-            "turn": 5,
-        },
-        {
-            "person": "王承恩",
-            "event_kind": "撑腰",
-            "context": "皇帝当面为王承恩挡下责难。",
-            "origin": "credit:fixture:撑腰",
-            "turn": 6,
-        },
-        {
-            "person": "洪承畴",
-            "event_kind": "弃卒保车",
-            "context": "皇帝为保全大局弃置洪承畴。",
-            "origin": "credit:fixture:弃卒保车",
-            "turn": 7,
-        },
-        {
-            "person": "徐光启",
-            "event_kind": "知遇",
-            "context": "越次简拔，命其入阁。",
-            "origin": "credit:fixture:知遇",
-            "turn": 8,
-        },
-    ]
-
-    edges = credit_events_as_edges(fixture)
-
-    assert [(edge["source"], edge["target"]) for edge in edges] == [
-        ("杨嗣昌", EMPEROR_NODE),
-        (EMPEROR_NODE, "毕自严"),
-        (EMPEROR_NODE, "王承恩"),
-        (EMPEROR_NODE, "洪承畴"),
-        (EMPEROR_NODE, "徐光启"),
-    ]
-    assert [edge["event_kind"] for edge in edges] == [
-        "兑现所托",
-        "辜负",
-        "撑腰",
-        "弃卒保车",
-        "知遇",
-    ]
 
 
 def test_relation_edges_survive_restore(game, tmp_path):

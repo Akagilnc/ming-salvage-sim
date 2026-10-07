@@ -24,21 +24,22 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `tax_per_turn` | INTEGER | 省级月税基准（万两），含田赋+辽饷+盐税+商税合计 |
-| `gentry_resistance` | INTEGER 0-100 | 士绅阻力，影响实收率 |
-| `unrest` | INTEGER 0-100 | 民变压力，影响实收率和解运比 |
-| `fiscal` | JSON | 税种细分 + 腐败度，见下表 |
+| `gentry_resistance` | INTEGER 0-100 | 士绅阻力；政治/事件与材料投影用，**不**自动写入 `fiscal.settle` tick 输入 |
+| `unrest` | INTEGER 0-100 | 民变压力；事件门与材料投影用，**不**自动写入 settle tick 输入 |
+| `fiscal` | JSON | 税种细分 + `settle` 基座 + 腐败度，见下表 |
 
 `fiscal` JSON 字段说明：
 
 | key | 单位 | 说明 |
 |-----|------|------|
-| `guan_min_tian` | 万亩 | 官民田，田赋→国库 |
+| `guan_min_tian` | 万亩 | 官民田 |
 | `wang_tian` | 万亩 | 藩王庄田，免税；没收后转皇庄 |
-| `huang_tian` | 万亩 | 皇庄，仅北直隶有，地租→内库 |
-| `liao_xiang` | 万两/月 | 辽饷月摊派额 |
-| `salt_tax` | 万两/月 | 盐税月基数，产盐省才>0 |
-| `commerce_tax` | 万两/月 | 商税月基数 |
-| `corruption` | 0-100 | 腐败度，影响解运比 |
+| `huang_tian` | 万亩 | 皇庄田亩记录（月收预算以 fiscal_config 皇庄基准为准） |
+| `liao_xiang` | 万两/月 | 辽饷月摊派额（settle / 叙事用） |
+| `salt_tax` | 万两/月 | 盐税月基数，hub 旁路汇总 |
+| `commerce_tax` | 万两/月 | 商税月基数，hub 旁路汇总 |
+| `corruption` | 0-100 | 腐败度；region_delta 可写，材料可读；**不**自动映射进 settle tick |
+| `settle` | object | 省级财政基座 `st`/`p`；`settle_province_tick` 只读这里（及现役覆盖参数），与顶层士绅/民变/corruption 无自动耦合 |
 
 ---
 

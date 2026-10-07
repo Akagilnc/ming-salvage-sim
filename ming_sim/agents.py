@@ -11,7 +11,7 @@ import json
 import os
 import time
 from dataclasses import asdict, is_dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -96,7 +96,8 @@ def _dump_llm_messages(output: Any, tag: str, agent: Optional[Agent] = None) -> 
             msgs = getattr(last, "messages", None)
             if last is not None:
                 run_src = last
-        except Exception:  # noqa: BLE001 — dump 是调试旁路，任何异常都不该断结算
+        except Exception as exc:  # noqa: BLE001 — dump 是调试旁路，不中断主路径但须留真因
+            tlog(f"[DUMP-LLM] get_last_run_output failed: {type(exc).__name__}: {exc}")
             msgs = None
     if not msgs:
         return
@@ -197,10 +198,7 @@ def _history_backed_truncate_anchor(
     session_id = str(getattr(agent, "session_id", "") or "")
     if not session_id:
         return None
-    if not hasattr(game_db, "truncate_agno_session_runs"):
-        return None
-    if not hasattr(game_db, "agno_runs_length"):
-        return None
+    # game_db 已非 None：直调必备 GameDB 截缝，禁 hasattr 能力缺失兼容。
     keep = int(game_db.agno_runs_length(session_id))
     return game_db, session_id, keep
 

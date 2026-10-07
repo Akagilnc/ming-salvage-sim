@@ -1,6 +1,6 @@
-"""#648（[#477 S1]）：人口单位「人」迁移＋流民第八阶级 seed。
+"""#648（[#477 S1]）：人口单位「人」＋流民第八阶级 seed。
 
-canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2：
+canonical＝ADR 0087/0088 + 票面冻结修正案 r1/r2（#1843 旧档万人双口径已退役）：
 - F1：extractor class 写面只收 satisfaction/leverage，population 更新面删除；
 - F2：机面 TSV 裸人 / 玩家面 LLM 输入投影「约N万口」（正向 prompt，零删改）；
 - F3：流民冻结 seed 表（陕西15万/河南5万/内地其余省0；#659 辽东/东江边镇切片0；
@@ -41,6 +41,8 @@ def _displaced_rows(db: GameDB):
         "SELECT name, region_id, population, satisfaction, leverage, agenda "
         "FROM classes WHERE name='流民' ORDER BY region_id"
     ).fetchall()
+
+
 
 
 # ── 新档 classes seed（F3/r2 冻结表 + ×10⁴）─────────────────────────────────
@@ -165,6 +167,7 @@ def test_web_region_payload_has_no_population_wan_projection(game):
 
 JIANZHOU_OPENING_POP_PERSONS = 1200000  # 新档开局建州人口（人）
 JIANZHOU_RESTORE_POP_PERSONS = 900000   # content on_restore 90（万）→ 迁「人」
+
 
 def _settle_region_delta(db, state, content, delta):
     """自发信封形态从现役声明入口触发收复。"""

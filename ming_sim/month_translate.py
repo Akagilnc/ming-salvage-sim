@@ -22,8 +22,11 @@ from ming_sim.declaration_dispatch import (
 )
 
 
-def _visible_effect_refs(db: Any, turn: int) -> dict[str, list[int]]:
+def _visible_effect_refs(
+    db: Any, turn: int, decree_payload: Mapping[str, object] | None = None,
+) -> dict[str, list[int]]:
     """Freeze the same reference rosters supplied to this segment's translation."""
+    del decree_payload  # 密令案卷写权改由案卷自身 secret_order_id 判定（#1862 reopen）
     from ming_sim.materials import secret_order_dossier_ids
 
     return {

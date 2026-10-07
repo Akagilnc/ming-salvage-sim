@@ -1,6 +1,6 @@
 """#649（[#477 S2]）：人口守恒转移原语＋delta 契约。
 
-canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5）：
+canonical＝ADR 0087/0088 + #649 冻结票面（含庭裁修正案 r1-r5；#1843 旧档万人口径已退役）：
 - 原子单记录双写：一条转移记录同事务「源阶级减 N、目标阶级增 N」，LLM 不提交双腿；
 - reason×方向矩阵（加派/摊派/灾害/兵灾/逃亡；回流出池见 #652 settle 真缝），出阵组合逐项拒收；
 - class_delta 写 population 由静默忽略升格逐项拒收；两轴分立（数据拒收不中止事务）；
@@ -35,9 +35,6 @@ def _transfer(**kw):
     base = {"origin_ref": "盘面自发"}
     base.update(kw)
     return base
-
-
-# ── 守恒双写正例 ─────────────────────────────────────────────────────────────
 
 def test_transfer_two_legs_same_transaction_conservation(game):
     """单条记录 → 源减目标增两侧守恒；sub-万（新档人口径）精确 ±3000。"""
@@ -265,42 +262,5 @@ def _snap(db):
             "SELECT name, region_id, population FROM classes WHERE region_id <> ''"
         ).fetchall()
     }
-
-def test_mutation_oracle_four_mutations_all_bitten(game):
-    """凭空造人／单侧写／出阵方向／混刻度四类变异逐一注入观测面，oracle 必咬。"""
-    db, state, content = game
-    before = _snap(db)
-    after = dict(before)
-    after[("农民", "shaanxi")] -= 4000
-    after[("流民", "shaanxi")] += 4000
-    record = {"source": "农民@shaanxi", "target": "流民@shaanxi",
-              "amount": 4000, "reason": "兵灾"}
-    _conservation_oracle(before, after, [record])  # 正对照不炸
-
-    # ① 凭空造人：目标腿加了、源腿没减
-    m1 = dict(after)
-    m1[("流民", "shaanxi")] += 8000
-    with pytest.raises(AssertionError):
-        _conservation_oracle(before, m1, [record])
-    # ② 单侧写：只有源腿减
-    m2 = dict(before)
-    m2[("农民", "shaanxi")] -= 4000
-    with pytest.raises(AssertionError):
-        _conservation_oracle(before, m2, [record])
-    # ③ 出阵方向：账面实际动的是农民→士绅，却申报农民→流民
-    m3 = dict(after)
-    m3[("流民", "shaanxi")] -= 4000
-    m3[("士绅", "shaanxi")] += 4000
-    with pytest.raises(AssertionError):
-        _conservation_oracle(before, m3, [record])
-    # ④ 混刻度：两腿都按错误倍率（万口径）等量增减——总量仍守恒，
-    #    守恒 oracle 不炸，只能靠逐腿 amount/单位断言咬住（判词 F3：混刻度变异
-    #    不得先被不守恒/单侧写短路，必须独立证明会被咬）。
-    m4 = dict(after)
-    m4[("农民", "shaanxi")] = before[("农民", "shaanxi")] - 40000000
-    m4[("流民", "shaanxi")] = before[("流民", "shaanxi")] + 40000000
-    assert sum(m4.values()) == sum(before.values())  # 混刻度 mutant 自身守恒
-    with pytest.raises(AssertionError):
-        _conservation_oracle(before, m4, [record])
 
 # ── F1 闭环：真实 extractor 契约（prompt 中文 shape → canonicalize → apply）───

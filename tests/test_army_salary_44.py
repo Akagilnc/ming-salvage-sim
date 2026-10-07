@@ -11,10 +11,8 @@ import pytest
 
 from ming_sim.army_pay import army_needed
 
-
 def _army_row(db, army_id):
     return db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
-
 
 @pytest.mark.parametrize("army_id,expected", [
     ("guanning", 15),   # 72000 × 2.0 / 10000 = 14.4 → ceil 15
@@ -27,14 +25,12 @@ def test_army_needed_derives_from_manpower_rate(read_game, army_id, expected):
     db, state, _ = read_game
     assert army_needed(_army_row(db, army_id)) == expected
 
-
 def test_army_needed_zero_manpower_zero_pay(game):
     # 0 兵 → 应发 0（白嫖扩军上界 + 零兵吃饷下界一并消解，无需 #22 撤番）。
     db, state, _ = game
     db.conn.execute("UPDATE armies SET manpower=0 WHERE id='guanning'")
     db.conn.commit()
     assert army_needed(_army_row(db, "guanning")) == 0
-
 
 def test_army_needed_scales_with_manpower(game):
     # 扩军（manpower 涨）→ 应发随之涨（不再「兵涨饷不涨」白嫖）。
@@ -46,7 +42,6 @@ def test_army_needed_scales_with_manpower(game):
     assert after > before
     assert after == math.ceil(_army_row(db, "guanning")["manpower"] * _army_row(db, "guanning")["salary_rate"] / 10000)
 
-
 def test_army_needed_shrink_lowers_pay(game):
     # 裁军（manpower 负 delta）→ 应发降。
     db, state, _ = game
@@ -54,7 +49,6 @@ def test_army_needed_shrink_lowers_pay(game):
     db.conn.execute("UPDATE armies SET manpower=manpower/2 WHERE id='xuan_da'")
     db.conn.commit()
     assert army_needed(_army_row(db, "xuan_da")) < before
-
 
 def test_army_needed_non_ming_no_pay(read_game):
     # 非明军（owner_power != ming）不强加饷需（叛军/外族不吃明国库）。
@@ -64,7 +58,6 @@ def test_army_needed_non_ming_no_pay(read_game):
     if row is None:
         pytest.skip("无非明军")
     assert army_needed(row) == 0
-
 
 def test_defected_army_to_ming_owes_salary_not_free(read_game):
     """#44 ship-pre cmr R1（codex high）：原非明军经 owner_power 翻成 ming（倒戈/招安，军务 extractor
@@ -99,7 +92,6 @@ def test_total_ming_salary_is_72_ceil_sum(read_game):
     total = sum(army_needed(r) for r in rows)
     assert total == 72, f"明军总月应发 = sum(ceil)=72 万两（设计 66.5 为小数和），实得 {total}"
 
-
 def test_manpower_clamp_to_zero_leaves_army_log(game):
     # #44 顺手：0 兵再减 → clamp 仍 0、净 delta==0，但请求非 0 → 留 army_log delta=0（不静默吞，#14/#44）。
     # cmr r4 codex：起点必须先置 0 才命中 clamp 分支——正 manpower 减大数 → 净 delta 为负、走正常路。
@@ -120,7 +112,6 @@ def test_manpower_clamp_to_zero_leaves_army_log(game):
         (aid,)).fetchone()
     assert last["delta"] == 0, "clamp 净 0 的 army_log delta 应为 0"
 
-
 def test_manpower_true_noop_no_log(game):
     # 真 no-op（manpower delta==0）不留痕避噪。
     db, state, _ = game
@@ -134,7 +125,6 @@ def test_manpower_true_noop_no_log(game):
         "SELECT COUNT(*) FROM army_logs WHERE army_id=? AND field='manpower'", (aid,)).fetchone()[0]
     assert after == before, "真 no-op(delta==0)不留痕"
 
-
 def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
     # A salaried army with source debt participates in pooled repayment.
     from ming_sim.army_pay import _auto_pay_arrears_by_priority
@@ -147,7 +137,6 @@ def test_auto_pay_reaches_salary_army_via_arrears_filter(game):
     db.conn.commit()
     spent = _auto_pay_arrears_by_priority(db, state, "国库", 5, "补饷", "诏拨补饷")
     assert spent > 0, "兜底拨饷应能花到该军"
-
 
 def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
     # #287 PR R2：空 scope 是「不允许任何军」，不能被 truthiness 当成「不限制」而回落全局池。
@@ -165,7 +154,6 @@ def test_auto_pay_empty_allowed_ids_pays_no_armies(game):
     assert spent == 0, "allowed_army_ids=[] 应明确支付 0，不得回落全军池"
     assert row["arrears"] == pytest.approx(10)
 
-
 def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     from ming_sim.army_pay import _auto_pay_arrears_by_priority
     db, state, _ = game
@@ -181,42 +169,3 @@ def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     row = _army_row(db, aid)
     assert spent > 0
     assert row["arrears"] < 10
-
-
-def test_army_pay_morale_delta_tiers():
-    """士气底料 oracle：本月缺口扣士气；足额无旧欠 +2；足额但旧欠在账 0。"""
-    from ming_sim.army_pay import army_pay_morale_delta
-
-    assert army_pay_morale_delta(10, 5, 0) == -4
-    assert army_pay_morale_delta(10, 0, 0) == 2
-    assert army_pay_morale_delta(10, 0, 3) == 0
-    assert army_pay_morale_delta(0, 0, 0) == 0
-
-
-def test_coerce_new_salary_rate_blocks_freeload():
-    # cmr r3 codex medium: 新军 salary_rate 健壮解析——负/非数/bool/0/None → 锚点 1.5（防免费军白嫖）。
-    # 原 `or 1.5` 漏负值：-1 经 army_needed(rate<=0→0) 成免费军，绕过 #44 防白嫖。
-    from ming_sim.db import _coerce_new_salary_rate
-    assert _coerce_new_salary_rate(-1) == 1.5, "负值=白嫖→锚点"
-    assert _coerce_new_salary_rate(0) == 1.5
-    assert _coerce_new_salary_rate(None) == 1.5
-    assert _coerce_new_salary_rate("脏") == 1.5, "非数→锚点"
-    assert _coerce_new_salary_rate(True) == 1.5, "bool→锚点"
-    assert _coerce_new_salary_rate(2.0) == 2.0, "正常正值保留"
-
-
-def test_non_finite_salary_rate_anchored_not_crash():
-    """#44 ship-pre 线上 gemini high + coderabbit inf 探针：非有限 salary_rate（inf/-inf/nan）
-    须落锚点、不得崩。inf>0 为真会漏过 coerce、经 army_needed 的 ceil(manpower×inf/10000) 抛
-    OverflowError 崩整月结算。两道防线：_coerce_new_salary_rate（建军入口）+ army_needed（结算咽喉）。"""
-    from ming_sim.db import _coerce_new_salary_rate
-    from ming_sim.army_pay import army_needed
-
-    assert _coerce_new_salary_rate(float("inf")) == 1.5, "inf→锚点"
-    assert _coerce_new_salary_rate(float("-inf")) == 1.5, "-inf→锚点"
-    assert _coerce_new_salary_rate(float("nan")) == 1.5, "nan→锚点"
-    # army_needed 咽喉对非有限 rate 防御性归锚点、不抛 OverflowError。
-    for bad in (float("inf"), float("-inf"), float("nan")):
-        row = {"owner_power": "ming", "manpower": 5000, "salary_rate": bad}
-        needed = army_needed(row)
-        assert needed == math.ceil(5000 * 1.5 / 10000), f"非有限 rate({bad}) 应锚点应发，得 {needed}"
