@@ -195,32 +195,6 @@ def _month_fact_materials(
             "origin_ref": origin,
         })
     rejections: List[Dict[str, Any]] = []
-    exists = db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
-    ).fetchone()
-    if exists is not None:
-        for row in db.conn.execute(
-            "SELECT section, item_json, reason, category, source FROM rejection_reports "
-            "WHERE turn=? ORDER BY id",
-            (turn,),
-        ):
-            if not include_secret_sources and str(row["source"] or "") == "secret_order":
-                continue
-            try:
-                item = json.loads(row["item_json"] or "{}")
-            except json.JSONDecodeError:
-                item = {}
-            if not include_secret_sources and (
-                _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
-            ):
-                continue
-            rejections.append({
-                "section": row["section"],
-                "item": item,
-                "reason": row["reason"],
-                "category": row["category"],
-            })
-    rejections: List[Dict[str, Any]] = []
     if hasattr(db, "conn"):
         exists = db.conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",

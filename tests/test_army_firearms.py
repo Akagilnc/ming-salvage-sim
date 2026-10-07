@@ -9,6 +9,8 @@ simulator 看得见、软性加权判战；引擎只 clamp、不算胜负。
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 def _pay_source():
     return {
         "pay_source_region": "shaanxi",

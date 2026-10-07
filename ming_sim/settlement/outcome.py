@@ -11,7 +11,7 @@
   由框架在拒收报告投影时补，段不携带。
 
 ``world_advance`` / ``emperor_fate`` / ``事件结局`` / ``dossier_progress_reports``
-/ ``faction_denunciations`` / ``dossier_reconciliations`` /
+/ ``faction_denunciations``  / 
 ``covert_exec_selections`` 是无落库段的 delta 键，登记在
 :mod:`ming_sim.settlement.registry` 作框架段条目防派生缩键，故不进本类型。
 """

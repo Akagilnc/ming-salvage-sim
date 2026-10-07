@@ -375,7 +375,7 @@ def _appointment_intent_is_current_office_noop(
     if not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    row = conn.execute(
+    row = db.conn.execute(
         "SELECT status, office FROM characters WHERE name = ?",
         (canonical,),
     ).fetchone()

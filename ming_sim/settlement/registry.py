@@ -101,7 +101,7 @@ _SECTIONS: Tuple[SectionSpec, ...] = (
 # 无落库段的声明效果字段：登记为框架条目，只为派生视图不缩键（ADR 0150 决定 4）。
 _FRAMEWORK_KEYS: Tuple[str, ...] = (
     "world_advance", "emperor_fate", "事件结局", "dossier_progress_reports",
-    "faction_denunciations", "dossier_reconciliations", "covert_exec_selections",
+    "faction_denunciations", "covert_exec_selections",
 )
 
 

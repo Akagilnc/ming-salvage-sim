@@ -3383,12 +3383,7 @@ class GameDB:
             total += float(settle["st"].get("军饷欠", 0) or 0.0)
         return total
 
-    def _is_seeded_military_pay_funnel(self, settle: Dict[str, Any]) -> bool:
-        meta = settle.get("_meta")
-        if not isinstance(meta, dict):
-            return False
-        postures = meta.get("postures")
-        return isinstance(postures, list) and "纯军饷漏斗" in postures
+
 
     def _has_complete_province_pay_containers(self) -> bool:
         rows = self.conn.execute(
@@ -3621,62 +3616,6 @@ class GameDB:
             return changes, rejections
 
         old_source = str(row["pay_source_region"] or "")
-        try:
-            if pay_source_region is _SENTINEL:
-                pay_source_region_val = str(row["pay_source_region"] or "").strip()
-            else:
-                pay_source_region_val = str(pay_source_region or "").strip()
-            if province_pay_share is _SENTINEL:
-                province_share = _coerce_pay_source_float(row["province_pay_share"])
-            else:
-                province_share = _coerce_pay_source_float(province_pay_share)
-            if central_pay_share is _SENTINEL:
-                central_share = _coerce_pay_source_float(row["central_pay_share"])
-            else:
-                central_share = _coerce_pay_source_float(central_pay_share)
-            if is_tusi is _SENTINEL:
-                is_tusi_val = bool(row["is_tusi"])
-            else:
-                is_tusi_val = _coerce_bool_flag(is_tusi)
-            if self_funded_pay is _SENTINEL:
-                self_funded_val = bool(row["self_funded_pay"])
-            else:
-                self_funded_val = _coerce_bool_flag(self_funded_pay)
-
-            province_arrears = float(row["province_pay_arrears"] or 0)
-            central_arrears = float(row["central_pay_arrears"] or 0)
-            total_arrears = float(row["arrears"] or 0)
-            total_arrears = max(total_arrears, province_arrears + central_arrears)
-
-            exempt = owner_power != "ming" or is_tusi_val or self_funded_val
-            if exempt:
-                pay_source_region_val = ""
-                province_share = central_share = 0.0
-                province_arrears = central_arrears = 0.0
-                total_arrears = 0.0
-            self._validate_pay_source_values(
-                army_id, owner_power, pay_source_region_val, province_share, central_share,
-                is_tusi_val, self_funded_val, province_arrears, central_arrears,
-            )
-            if pay_source_region_val:
-                self._require_valid_pay_source_region(army_id, pay_source_region_val)
-        except (TypeError, ValueError) as exc:
-            changes.append({
-                "army": row["name"], "field": "pay_source",
-                "rejected": True, "category": "invalid_enum",
-                "reason": f"army_delta 饷源字段非法：{exc}",
-                "item": item,
-            })
-            return changes
-
-        origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
-        if origin_error:
-            changes.append({
-                "army": row["name"], "field": "owner_power", **origin_error,
-                "item": item,
-            })
-            return changes
-
         old_values = {
             "owner_power": old_owner,
             "pay_source_region": old_source,
@@ -11189,196 +11128,8 @@ class GameDB:
             self.conn.commit()
         return accepted
 
-    def merge_grant_reconciliation_into_execution_note(
-        self, dossier_id: int, *, commit: bool = True,
-    ) -> Optional[str]:
-        """S10 结案消费对账真源：经 merge_execution_note 单一写口增补说明。"""
-        history = self.list_dossier_reconciliations(int(dossier_id))
-        if not history:
-            return None
-        latest = history[-1]
-        fragment = (
-            f"押解对账：应解{int(latest['ordered_amount'])}两，"
-            f"实抵{int(latest['arrived_amount'])}两"
-        )
-        return self.merge_execution_note(int(dossier_id), fragment, commit=commit)
-    def trigger_commitment_backlashes(
-        self, state: GameState, *, commit: bool = False,
-    ) -> List[Dict[str, object]]:
-        """#626：事废/烂尾/变形暴露 → 承诺所系反噬 issue（邸报前 auto_trigger 同缝）。
 
-        方案 a（#625 形制）：代码侧确定性硬门；直读执行格/哭谏消费/承诺；
-        find_any_issue_by_origin 幂等；不碰 trigger_gate 求值器、不扩门表白名单。
-        分档触发侧重算 assess_foundation_tier（零新列）；唯 halfway 触发。
-        一拍差：判决 closed_turn < 当前 turn 才扫（判决在 delta、扫描在次回合前括号）。
-        与 #1894 前的 #623 立即倒退去重：那条代码生成的全国余波已删，本片只
-        立承诺所系 issue＋本片具名 metrics 一锤子；不写 ongoing_effects.metrics 镜像。
 
-        事废读源：todo.payload_json.verdict=='persist'（#623 finalize_persist 既判痕迹；
-        consumed 有三源不可区分，单独不得作既判证据；#1894 后 0056 不再抢先关案卷，
-        execution_outcome 在模型判决落地前本就为空，故不以执行格为事废唯一源）。
-        烂尾：读执行格终值 failed（#621）。
-        变形：execution_outcome==transformed 仅作候选；须经 #622 公开读端
-        list_economy_moves_for_dossier + beyond_intent 确认分叉事实后才立案。
-        """
-        from ming_sim.commitment_backlash import (
-            BACKLASH_NAMED_METRICS,
-            BACKLASH_ORIGIN_KIND,
-            SOURCE_BREACH_VERDICT,
-            SOURCE_DEFORMATION_EXPOSURE,
-            SOURCE_FAILED_TERMINAL,
-            backlash_origin_ref,
-            classify_backlash_source,
-        )
-        from ming_sim.breach_plea import (
-            ENTRY_KIND_BREACH_PLEA,
-            FOUNDATION_HALFWAY,
-            PLEA_VERDICT_KEY,
-            PLEA_VERDICT_PERSIST,
-            assess_foundation_tier,
-        )
-        from ming_sim.flows import _apply_metric_dict
-
-        candidates: List[Tuple[int, str, int]] = []  # (commitment_id, source_kind, dossier_id)
-
-        # ① 事废判决：persist 既判结构化痕迹 ∧ 承诺 closed_turn 一拍差
-        # 总纲：不从 consumed 反推；不读 execution_note 子串。
-        for todo in self.list_next_audience_todos(status="consumed"):
-            if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
-                continue
-            payload = todo.get("payload_json") or {}
-            if not isinstance(payload, dict):
-                continue
-            if str(payload.get(PLEA_VERDICT_KEY) or "") != PLEA_VERDICT_PERSIST:
-                continue
-            cid = int(todo.get("commitment_ref") or 0)
-            if cid <= 0:
-                continue
-            crow = self.conn.execute(
-                "SELECT id, title, closed_turn, commitment_kind, origin_ref "
-                "FROM issues WHERE id=?",
-                (cid,),
-            ).fetchone()
-            if crow is None or not str(crow["commitment_kind"] or "").strip():
-                continue
-            judgment_turn = int(crow["closed_turn"] or 0)
-            if judgment_turn <= 0 or judgment_turn >= int(state.turn):
-                continue
-            did = 0
-            origin = str(crow["origin_ref"] or "")
-            if origin.startswith("dossier:"):
-                try:
-                    did = int(origin.split(":", 1)[1])
-                except (TypeError, ValueError):
-                    did = 0
-            candidates.append((cid, SOURCE_BREACH_VERDICT, did))
-
-        breach_commitment_ids = {
-            cid for cid, sk, _ in candidates if sk == SOURCE_BREACH_VERDICT
-        }
-
-        # ② 烂尾终值 / 变形暴露候选：执行格终值（closed_turn 一拍差）
-        # 执行格 failed 默认 failed_terminal；事废已由 path ① 独占，同承诺不双立。
-        # 变形不得仅凭 transformed 文本立案——须 #622 分叉读端确认 beyond_intent。
-        rows = self.conn.execute(
-            """
-            SELECT id, execution_outcome, closed_turn, status
-            FROM decree_dossiers
-            WHERE execution_outcome IN ('failed', 'transformed')
-              AND closed_turn > 0
-              AND closed_turn < ?
-            ORDER BY id
-            """,
-            (int(state.turn),),
-        ).fetchall()
-        for row in rows:
-            dossier_id = int(row["id"])
-            source_kind = classify_backlash_source(
-                execution_outcome=row["execution_outcome"],
-            )
-            if source_kind is None:
-                continue
-            if source_kind == SOURCE_DEFORMATION_EXPOSURE:
-                # #1260：分叉确认扩为 economy+fiscal 单源（纯 fiscal 旨外亦可立案）。
-                if not self.dossier_has_beyond_intent(dossier_id):
-                    continue
-            for commitment in self.list_commitments_for_dossier(dossier_id):
-                if not str(commitment.get("commitment_kind") or "").strip():
-                    continue
-                cid = int(commitment["id"])
-                # 仅交叉去重：path① 已入候选的事废承诺，执行格 failed 不再叠 failed_terminal。
-                # origin_ref 仍按 source_kind 分键（非全局「一诺一源」）。
-                if (
-                    source_kind == SOURCE_FAILED_TERMINAL
-                    and cid in breach_commitment_ids
-                ):
-                    continue
-                candidates.append((cid, source_kind, dossier_id))
-
-        triggered: List[Dict[str, object]] = []
-        seen_origin: set[str] = set()
-        for cid, source_kind, dossier_id in candidates:
-            if assess_foundation_tier(self, cid) != FOUNDATION_HALFWAY:
-                continue
-            origin_ref = backlash_origin_ref(cid, source_kind)
-            if origin_ref in seen_origin:
-                continue
-            seen_origin.add(origin_ref)
-            existing = self.find_any_issue_by_origin(
-                BACKLASH_ORIGIN_KIND, origin_ref,
-            )
-            if existing is not None:
-                continue
-            crow = self.conn.execute(
-                "SELECT title FROM issues WHERE id=?", (cid,),
-            ).fetchone()
-            # P7：硬门只落结构化事实；标题仅链接源承诺既有事实，不拼装新成句。
-            # 玩家 stage/narrative 由叙事 LLM 步从特征化输入长出；bar 端标故意留空，
-            # web 空串不渲染（#626 甲：不开 bar 写口）。
-            title_c = str(crow["title"] if crow is not None else "").strip()
-            # 一锤子：复用既有 _apply_metric_dict（ISSUE_METRIC_KEYS），不自建 clamp。
-            applied_metrics = _apply_metric_dict(
-                state, dict(BACKLASH_NAMED_METRICS), db=self,
-            )
-            issue_id = self.insert_issue(
-                state,
-                kind="situation",
-                title=title_c,  # 源承诺事实链接；非 f-string 模板
-                origin_kind=BACKLASH_ORIGIN_KIND,
-                origin_ref=origin_ref,
-                stage_text="",  # 玩家文案留给叙事 LLM 步
-                tags=[],  # 机读身份仅 origin_kind/origin_ref；tags 不进玩家面
-                bar_value=35,
-                bar_good_meaning="",  # 空串；web 条件渲染，无 LLM bar 写口
-                bar_bad_meaning="",
-                inertia=-2,
-                severity=55,
-                ongoing_effects={},  # 一锤子，不镜像 metrics 到月扣
-                commit=False,
-            )
-            self.advance_issue(
-                state,
-                int(issue_id),
-                trigger_kind="commitment_backlash",
-                trigger_ref=f"issue:{cid}",
-                delta_bar=0,
-                stage_text="",
-                narrative="",  # 结构化账：metrics；叙述留给叙事步
-                metric_delta=dict(applied_metrics),
-                commit=False,
-            )
-            triggered.append({
-                "issue_id": int(issue_id),
-                "commitment_ref": cid,
-                "dossier_id": int(dossier_id),
-                "source_kind": source_kind,
-                "origin_ref": origin_ref,
-                "trigger_ref": f"issue:{cid}",
-                "metrics_delta": dict(applied_metrics),
-            })
-        if commit and triggered:
-            self.conn.commit()
-        return triggered
 
 
 
@@ -13815,35 +13566,7 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         return project_execution_liability_parties(dossier.get("participant_roster"))
 
-    def merge_execution_note(
-        self, dossier_id: int, fragment: str, *, commit: bool = True,
-    ) -> str:
-        """下游说明片段合并写口（#565；S12/#567 消费方）。
 
-        初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
-        """
-        text = str(fragment or "")
-        if not text.strip():
-            raise ValueError("说明片段不能为空")
-        row = self.get_decree_dossier(dossier_id)
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        existing = str(row.get("execution_note") or "")
-        if existing:
-            merged = f"{existing}；{text}"
-        else:
-            merged = text
-        if merged != existing:
-            self.conn.execute(
-                """
-                UPDATE decree_dossiers
-                SET execution_note=?, updated_at=CURRENT_TIMESTAMP
-                WHERE id=?
-                """,
-                (merged, int(dossier_id)),
-            )
-            self._commit_dossier_write(commit, owns_transaction=self.owns_transaction())
-        return merged
 
     def validate_joint_liability_affected_parties(
         self, affected_parties: object, outcome: str,
@@ -13964,37 +13687,9 @@ class GameDB:
                         )
         return True
 
-    def save_pending_promulgation_verdicts(
-        self, turn: int, verdicts: Iterable[Dict[str, object]],
-    ) -> None:
-        """Persist one complete turn-scoped batch before simulation starts."""
-        rows = list(verdicts)
-        with atomic(self):
-            self.conn.execute(
-                "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(turn),)
-            )
-            for verdict in rows:
-                self.conn.execute(
-                    "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
-                    (int(turn), strict_int(verdict.get("dossier_id")),
-                     safe_json_dumps(verdict, ensure_ascii=False)),
-                )
 
-    def get_pending_promulgation_verdicts(
-        self, turn: int,
-    ) -> List[Dict[str, object]]:
-        rows = self.conn.execute(
-            "SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id",
-            (int(turn),),
-        ).fetchall()
-        result = []
-        for row in rows:
-            raw_value = row["verdict_json"]
-            value = json.loads(raw_value)
-            if not isinstance(value, dict):
-                raise ValueError("待应用颁布判决须为对象")
-            result.append(value)
-        return result
+
+
 
     def _apply_military_order_station_effect(
         self, state, *, army_id: str, station: str, actor: str, reason: str,

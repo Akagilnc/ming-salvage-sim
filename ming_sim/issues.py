@@ -2021,6 +2021,8 @@ def _compute_inertia(ni: Dict[str, object]) -> int:
 # **不**列入（交给各自 adapter 按契约处理）:faction_delta 吃旧扁平 int
 # {"阉党": -10}（prompt 允许、合法）；class_delta 的扁平 item 不合法，由 adapter 逐项
 # `invalid_enum` 拒收（#564），而非 validate 层当 nested-dict shape 拒收。
+_COVERT_NEUTRALIZATION_REASON = "禁摊派：一次性撤销旧案暗渠财政效果"
+
 def neutralize_covert_fiscal_effects(
     db: Any, state: Any, *, exposed_dossier_id: int, prohibition_dossier_id: int,
 ) -> int:

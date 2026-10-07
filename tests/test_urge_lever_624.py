@@ -11,6 +11,8 @@ Seams:
 
 from __future__ import annotations
 
+from ming_sim.exceptions import PendingActionRefusal
+
 from functools import partial
 
 import pytest

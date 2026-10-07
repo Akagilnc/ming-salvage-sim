@@ -1,6 +1,8 @@
 import pytest
 
 from ming_sim.models import effect_dict_has_work
+from ming_sim.entities.issue.tracker import apply_issue_tracker_output
+from ming_sim.applier import Provenance
 
 def _promulgated_commitment_origin(db, state) -> str:
     dossier_id = db.create_decree_dossier(

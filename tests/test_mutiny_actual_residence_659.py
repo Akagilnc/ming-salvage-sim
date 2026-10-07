@@ -9,6 +9,8 @@ population_transfers。禁止 station 文本解析、第二事实核、第二转
 
 from __future__ import annotations
 
+from ming_sim.applier import Provenance
+
 
 from ming_sim.db import GameDB
 from ming_sim.models import Event
