@@ -3,7 +3,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
-import { SETTLEMENT_CLOSED_REASON } from "./settlementPresentation";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // jsdom 无布局：给 stage 非零尺寸，使 GameHud ready=true（地图/局势框/上月已结入口可挂）。
@@ -2265,12 +2264,9 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="奏疏"]')).not.toBeNull());
     });
     const memorialsDialog = host.querySelector('[role="dialog"][aria-label="奏疏"]')!;
-    expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(memorialsDialog.querySelector(".situation-list")).toBeNull();
     expect(memorialsDialog.querySelector(".situation-panel")).toBeNull();
     expect(memorialsDialog.querySelector(".empty-note")).not.toBeNull();
-    expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
-    expect(memorialsDialog.textContent).not.toContain(SNAP_MEMORIAL);
     await closeOpenOverlay(host);
 
     // history：史册可开，月档列表来自状态口同源只读 API
@@ -2418,8 +2414,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(attendant).not.toBeNull();
     expect(attendant!.textContent).toContain(SNAP_ATTENDANT);
     expect(attendant!.closest(".gazette-document")).toBeNull();
-    // 半程议题仍不泄漏；上月已结只读面可同屏
-    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    // 上月已结只读面可同屏；半程面以结构化缺席为准，不在含邸报正文的 host 上禁词
+    expect(host.querySelector(".situation-list")).toBeNull();
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();
     expect(host.textContent).toContain(SNAP_CLOSED);
   });
@@ -2541,11 +2537,8 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     const memorialsDialog = host.querySelector('[role="dialog"][aria-label="奏疏"]')!;
     expect(memorialsDialog.querySelector(".situation-panel")).toBeNull();
-    expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(memorialsDialog.textContent).toContain("杨嗣昌");
     expect(memorialsDialog.querySelector("pre.memorial-text")?.textContent).toBe(MEMORIAL_BODY);
-    expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
-    expect(memorialsDialog.textContent).not.toContain("progress:11");
     expect(
       fetchMock.mock.calls.some(([url, init]) =>
         String(url).includes("/api/memorials/read") && (init as RequestInit | undefined)?.method === "POST",

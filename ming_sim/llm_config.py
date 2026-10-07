@@ -515,14 +515,16 @@ def load_runtime_llm() -> Dict[str, object]:
     缺档／合法空 → {}（入口可按既有契约回落）。
     读／解析失败与缺档分判：保留真实原因并明示后，仍回落 {}——不另立 fail-fast，
     也不新增整档校验／修档／迁移或第二配置。
+    不做 isfile 等元数据预判：预判失败会把权限等真读故障洗成缺档。
     """
-    if not os.path.isfile(RUNTIME_LLM_PATH):
-        return {}
     try:
         with open(RUNTIME_LLM_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
+    except FileNotFoundError:
+        # 真缺档：合法空，不挂故障。
+        return {}
     except (OSError, json.JSONDecodeError) as exc:
-        # 坏档 ≠ 缺档：保留真实异常对象明示后再回落，禁无痕洗成空配置。
+        # 坏档／读失败 ≠ 缺档：保留真实异常对象明示后再回落，禁无痕洗成空配置。
         logger.warning(
             "runtime_llm load failed path=%s", RUNTIME_LLM_PATH,
             exc_info=(type(exc), exc, exc.__traceback__),

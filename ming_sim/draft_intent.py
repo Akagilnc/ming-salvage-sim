@@ -1250,8 +1250,7 @@ def project_draft_extract_to_directive_payload(
     declared_mode = resolve_directive_mode(
         extracted=captured.get("mode"), existing=existing_mode,
     )
-    if captured.get("draft_action") != "拟旨":
-        return _manual_special_decree_payload(declared_mode)
+    # 非拟旨兼容回落已删：生产调用方（补交）在入口已拒非拟旨；空声明仍走下方 empty 路径。
     payload: Dict[str, object] = {
         "dossier_action_type": captured.get("dossier_action_type"),
         "target_kind": captured.get("target_kind"),

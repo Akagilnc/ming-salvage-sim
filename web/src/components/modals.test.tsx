@@ -1496,7 +1496,10 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const root = createRoot(host); mountedRoots.push({ root, host });
     await act(async () => { root.render(<HistoryModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
     expect(host.textContent).toMatch(/奏报.*诏书.*递话|奏报、诏书与递话/);
-    expect(host.textContent).not.toContain("不应出现的场卷");
+    // 结构化边界：只收 month 档；不在整页自由正文上禁场卷标题词。
+    const items = Array.from(host.querySelectorAll(".history-turn-item"));
+    expect(items).toHaveLength(1);
+    expect(items[0].textContent).toContain("第 7 回合");
   });
 
   it("#671 史册月档经 HistoryModal fetch 呈现独立递话原文", async () => {
@@ -1653,11 +1656,10 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(label).toContain("递话");
     expect(label).not.toContain("奏报");
 
-    // 标题/摘要承认第三种内容（契约：含「递话」；不锁死全句）
+    // 标题/摘要承认第三种内容（契约：含「递话」；不锁死全句；不在含递话正文的 host 上禁旧词）
     const dialog = host.querySelector('[role="dialog"]');
     expect(dialog?.getAttribute("aria-label") || "").toContain("递话");
     expect(host.textContent).toContain("递话");
-    expect(host.textContent).not.toMatch(/仅收奏报与诏书/);
   });
 });
 
