@@ -269,14 +269,10 @@ def _uncased_grant_catalog_token(
         pending_id = int(candidate.get("pending_action_id"))
     except (TypeError, ValueError):
         return None
-    if pending_id <= 0 or not hasattr(db, "conn"):
+    if pending_id <= 0:
         return None
-    existing = db.conn.execute(
-        "SELECT id FROM decree_dossiers "
-        "WHERE action_type='grant_allocation' AND pending_action_id=? LIMIT 1",
-        (pending_id,),
-    ).fetchone()
-    if existing is not None:
+    # 纯持久：是否已有拨银案卷，经 DossierStore 既有 pending 接缝。
+    if db.dossiers.pending_action_dossier_ids(pending_id):
         return None
     return token
 

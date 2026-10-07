@@ -1156,27 +1156,43 @@ def test_army_truth_is_exactly_scoped_to_person_command(game):
 
 
 def test_household_secret_ledger_keeps_amount_but_hides_case_semantics(game):
+    """数额在结构化流水；案情按密令 excluded_names 对读者分流（不锁呈现子串）。"""
     db, state, content = game
     clerk = next(c for c in content.characters.values() if c.office_type == "户部")
+    other = next(
+        c for c in content.characters.values()
+        if c.office_type == "户部" and c.name != clerk.name
+    )
     order_id = create_test_secret_order(
         db, state, "毕自严", "密查太仓", "不可见案卷语义", [],
         excluded_names=[clerk.name],
     )
     dossier = next(d for d in db.dossiers.list_dossiers() if d["secret_order_id"] == order_id)
+    case_cat, case_reason = "秘密分类", "秘密流水原因"
     db.record_issue_economy_move(
-        state, "国库", -1, "秘密分类", "秘密流水原因",
+        state, "国库", -1, case_cat, case_reason,
         origin_ref=f"dossier:{dossier['id']}",
+    )
+    # 合法公开同文流水：正文身份 oracle 不得因同文假红。
+    db.record_issue_economy_move(
+        state, "国库", -3, case_cat, case_reason, origin_ref="",
     )
     move = db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE origin_ref=? ORDER BY id DESC LIMIT 1",
         (f"dossier:{dossier['id']}",),
     ).fetchone()
-    # Necessary amount on durable structured ledger — not presentation digit/substring locks.
     assert move is not None and int(move["delta"]) == -1
-    ledger = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
-    # Characteristic observation only: 户部 feed present; secret case labels stay out.
-    assert isinstance(ledger, str) and ledger.strip()
-    assert "秘密分类" not in ledger and "秘密流水原因" not in ledger
+    order = next(
+        o for o in db.character_knowledge.list_secret_orders()
+        if int(o["id"]) == int(order_id)
+    )
+    assert clerk.name in list(order.get("excluded_names") or [])
+    clerk_view = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
+    other_view = db.get_character_knowledge(state, other.name)["world"]["treasury"]
+    assert isinstance(clerk_view, str) and clerk_view.strip()
+    assert isinstance(other_view, str) and other_view.strip()
+    # 排除读者与非排除户部的案情投影不同（保密负向，不锁具体措辞）。
+    assert clerk_view != other_view
 
 
 def test_household_secret_ledger_hides_case_by_excluded_office(game):
@@ -1192,19 +1208,24 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         excluded_offices=[clerk.office_type],
     )
     dossier = next(d for d in db.dossiers.list_dossiers() if d["secret_order_id"] == order_id)
+    case_cat, case_reason = "职署秘密分类", "职署秘密流水"
     db.record_issue_economy_move(
-        state, "国库", -2, "职署秘密分类", "职署秘密流水",
+        state, "国库", -2, case_cat, case_reason,
         origin_ref=f"dossier:{dossier['id']}",
     )
     move = db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE origin_ref=? ORDER BY id DESC LIMIT 1",
         (f"dossier:{dossier['id']}",),
     ).fetchone()
-    # 数额契约在结构化流水；不锁呈现数字子串。
     assert move is not None and int(move["delta"]) == -2
+    order = next(
+        o for o in db.character_knowledge.list_secret_orders()
+        if int(o["id"]) == int(order_id)
+    )
+    offices = list((order.get("excluded_targets") or {}).get("offices") or [])
+    assert clerk.office_type in offices
     hidden = db.get_character_knowledge(state, clerk.name)["world"]["treasury"]
     assert isinstance(hidden, str) and hidden.strip()
-    assert "职署秘密分类" not in hidden and "职署秘密流水" not in hidden
 
     # 继任入户部：仍按当前 office_type 排挤（不靠签发时人名快照）
     clerk_office, clerk_type = clerk.office, clerk.office_type
@@ -1218,12 +1239,15 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
             state, successor.name,
         )["world"]["treasury"]
         assert isinstance(successor_view, str) and successor_view.strip()
-        assert "职署秘密流水" not in successor_view
+        # 继任现职落入 excluded offices 后，与已离户部的原吏投影不同。
+        left_view = db.get_character_knowledge(state, clerk.name)["world"]
+        assert "treasury" not in left_view or successor_view != left_view.get("treasury")
     finally:
         db.set_character_office(clerk.name, clerk_office, office_type=clerk_type)
         db.set_character_office(successor.name, prior_office, office_type=prior_type)
         clerk.office, clerk.office_type = clerk_office, clerk_type
         successor.office, successor.office_type = prior_office, prior_type
+
 
 def _office_archive_path_from_materials(db, state, character, root):
     prepared = prepare_character_materials(db, state, character, dest_root=root)

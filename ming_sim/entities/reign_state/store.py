@@ -240,9 +240,6 @@ class ReignStateStore:
     def read_ensure_opening_ledger(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT 1 FROM economy_ledger WHERE account = ? LIMIT 1', params).fetchone()
 
-    def read_build_fiscal_fact_brief(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id, delta, category, target_kind, target_id, origin_ref FROM economy_ledger WHERE turn = ? AND purpose = '补饷' AND delta < 0 ORDER BY id", params).fetchall()
-
     def read_spent_amount_and_fiscal_count(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT delta FROM economy_ledger WHERE origin_ref=? AND delta<0', params).fetchall()
 
@@ -595,11 +592,6 @@ class ReignStateStore:
         return self._conn.execute(
             "SELECT status FROM audience_nights WHERE id = ?", (int(night_id),)
         ).fetchone()
-
-    def list_closed_nights(self) -> Any:
-        return self._conn.execute(
-            "SELECT * FROM audience_nights WHERE status='closed' ORDER BY turn,id"
-        ).fetchall()
 
     def closed_nights_archive_rows(self) -> Any:
         return self._conn.execute(

@@ -5308,15 +5308,6 @@ class GameDB:
             })
         return out
 
-    def discard_pending_directives(self, turn: int) -> int:
-        """退朝无诏时丢弃本回合尚未落库的对话式拟旨暂存（kind=directive, status=pending）。
-        须在 commit_pending_actions 之前调用，防止 commit 把草案插成孤儿 turn_directives
-        行——退朝路不颁诏，孤儿 draft 永不经 extractor、不可见（codex r5 F2）。
-        返回删除条数。"""
-        for action_id in self.dossiers.pending_directive_ids_for_turn(int(turn)):
-            self._discard_deleted_directive_forecast(int(action_id))
-        return self.dossiers.delete_pending_directives_for_turn(int(turn))
-
     def _pending_action_owned_by_turn_in_tx(
         self, action_id: object, chat_turn_id: int,
     ) -> bool:
@@ -7822,20 +7813,6 @@ class GameDB:
         if commit and triggered:
             self.conn.commit()
         return triggered
-
-    def merge_grant_reconciliation_into_execution_note(
-        self, dossier_id: int, *, commit: bool = True,
-    ) -> Optional[str]:
-        """S10 结案消费对账真源：经 merge_execution_note 单一写口增补说明。"""
-        history = self.dossiers.reconciliations(int(dossier_id))
-        if not history:
-            return None
-        latest = history[-1]
-        fragment = (
-            f"押解对账：应解{int(latest['ordered_amount'])}两，"
-            f"实抵{int(latest['arrived_amount'])}两"
-        )
-        return self.dossiers.merge_execution_note(int(dossier_id), fragment, commit=commit)
 
     @staticmethod
     def _grant_allocation_is_monthly(payload: Optional[Dict[str, object]]) -> bool:
@@ -10932,24 +10909,6 @@ class GameDB:
             raise ValueError("旨稿机械载荷不完整或非法，拒绝改草")
         return normalized
 
-    def flag_directive_needs_clarification(self, candidate_id: int) -> int:
-        """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
-        「不回→默认同意」误提交（含糊口令 ≠ 未表态）。皇帝下一句指明后由确认路清标并准驳。
-        返回该行 id（不存在/非 pending 则 0）。
-        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
-        row = self.dossiers.pending_directive_pending_row(candidate_id)
-        if row is None:
-            return 0
-        payload = load_stored_object(row["payload_json"], label="payload_json")
-        payload["_needs_clarification"] = True
-        self.dossiers.set_pending_payload(
-            int(candidate_id), json.dumps(payload, ensure_ascii=False),
-        )
-        self.conn.commit()
-        return int(candidate_id)
-
     def _prepare_pending_directive(
         self, state: GameState, pa: Dict[str, object], *, content=None,
         allow_clarification: bool = False,
@@ -11814,13 +11773,6 @@ class GameDB:
             attendant_message=sanitize_sqlite_text(str(attendant_message or "")),
         )
         self.conn.commit()
-
-    def clear_resolve_context(self, turn: int) -> None:
-        self.resolve_contexts.delete(int(turn))
-        self.dossiers.clear_pending_promulgation_verdicts(int(turn))
-        self.conn.commit()
-
-    # ── #1234 月初快照（路③呈现投影）────────────────────────────────
 
     def capture_month_open_snapshot(self, state: GameState) -> bool:
         """点击受理：独立提交点击前四键 + 所属回合。已有本回合行则不覆盖（幂等）。

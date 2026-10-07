@@ -50,11 +50,10 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
 
     raw: object = None
     saw_db_row = False
-    if hasattr(db, "conn"):
-        row = IssueStore(db.conn).read_issue_audience_names((origin_ref,))
-        if row is not None:
-            saw_db_row = True
-            raw = row["audiences"]
+    row = IssueStore(db.conn).read_issue_audience_names((origin_ref,))
+    if row is not None:
+        saw_db_row = True
+        raw = row["audiences"]
     if not saw_db_row:
         content = db.content
         event_by_id = getattr(content, "event_by_id", None) or {}
@@ -151,11 +150,8 @@ def knowledge_row_visible_to(
     Recommendation reads pass each roster candidate explicitly so an excluded
     office cannot be reintroduced by a name-only roster projection.
     """
-    reader = None
-    try:
-        reader = CharacterStore(db.conn).read_knowledge_row_visible_to((character_name,))
-    except (AttributeError, TypeError):
-        reader = None
+    # 必备人物读口：缺行 → None（合法）；读口故障原样上抛，不得洗成无读者放行私源。
+    reader = CharacterStore(db.conn).read_knowledge_row_visible_to((character_name,))
     target = target or reader or row
     def target_value(key: str) -> object:
         try:
@@ -187,10 +183,8 @@ def knowledge_row_visible_to(
     # A private source's roster is a positive capability, not a deny-list
     # snapshot.  Enforce it at read time so characters created after archival
     # cannot inherit old participant-private material.
-    try:
-        source = db.character_knowledge.source_by_id(str(row["source_id"] or ""))
-    except (AttributeError, KeyError, IndexError, TypeError):
-        source = None
+    # 必备来源读口：缺行 → None（合法）；读口故障原样上抛，不得洗成无来源跳过私源名册。
+    source = db.character_knowledge.source_by_id(str(row["source_id"] or ""))
     # A public event is a new disclosure capability even when it deliberately
     # retains the private source id for provenance.  It keeps its own explicit
     # people/office exclusions above, but must not inherit the source roster.
@@ -225,7 +219,7 @@ def project_issue_materials(
         row["audience_names"] = tuple(sorted(audiences or ()))
         projected[issue_id] = row
 
-    active_issues = db.issues.active_rows() if hasattr(db, "issues") else []
+    active_issues = db.issues.active_rows()
     for issue in active_issues:
         issue_id = int(issue["id"])
         if issue_id in projected:
@@ -274,8 +268,6 @@ def project_court_roster_rows(
 
 def _appointment_register(db: Any, state: Any) -> str:
     """吏部任免簿：当前在朝职名，不是派系底账。"""
-    if not hasattr(db, "characters"):
-        return "任免簿：暂无。"
     rows = db.characters.current_court_rows(int(state.year), int(state.period))
     if not rows:
         return "任免簿：暂无。"
@@ -294,8 +286,6 @@ def _role_roster(db: Any, office_type: str, state: Any) -> str:
     restore, while the qualitative rendering keeps machine values out of the
     audience prompt.
     """
-    if not hasattr(db, "conn"):
-        return f"{office_type}本职在册：暂无。"
     rows = CharacterStore(db.conn).read_role_roster((office_type, int(state.year), int(state.year), int(state.period)))
     if not rows:
         return f"{office_type}本职在册：暂无。"
@@ -314,8 +304,6 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
     no public-event mirror exists; otherwise a mixed aggregate has no exact
     source fragment to redact.
     """
-    if not hasattr(db, "conn"):
-        return []
     rows = db.character_knowledge.sources_upto_turn(int(upto_turn))
     projected: list[Dict[str, object]] = []
     for row in rows:
@@ -387,10 +375,7 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
         _names, _targets = _exclusions.get(_secret_by_dossier.get(_did, 0), (None, None))
         r["excluded_names"] = _names
         r["excluded_targets"] = _targets
-    try:
-        reader = CharacterStore(db.conn).read_knowledge_row_visible_to((character_name,))
-    except (AttributeError, TypeError):
-        reader = None
+    reader = CharacterStore(db.conn).read_knowledge_row_visible_to((character_name,))
     lines = [f"太仓实存：{int(balance['balance'] if balance else state.metrics['国库'])}"]
     for row in reversed(rows):
         hide = _household_secret_case_hidden(row, character_name, reader)
@@ -457,9 +442,7 @@ def current_character_office(
 ) -> tuple[str, str]:
     """Current durable (office, office_type); missing DB row falls back to seed character fields."""
     name = str(character_name or getattr(character, "name", "") or "")
-    current = None
-    if hasattr(db, "conn"):
-        current = CharacterStore(db.conn).read_current_character_office((name,))
+    current = CharacterStore(db.conn).read_current_character_office((name,))
     return (
         str((current["office"] if current is not None else getattr(character, "office", "")) or ""),
         str((current["office_type"] if current is not None else getattr(character, "office_type", "")) or ""),
@@ -481,9 +464,7 @@ def _issue_audience_case_events(
     """
     known = set(known_source_ids or ())
     synthesized: list[Dict[str, object]] = []
-    active_issues = (
-        db.issues.active_rows() if hasattr(db, "issues") else []
-    )
+    active_issues = db.issues.active_rows()
     for issue in active_issues:
         source_id = f"issue:{int(issue['id'])}"
         if source_id in known:
@@ -719,7 +700,7 @@ def build_character_knowledge(
         if row.get("source_id")
     }
     visible_issues = []
-    for issue in db.issues.active_rows() if hasattr(db, "issues") else []:
+    for issue in db.issues.active_rows():
         source_id = f"issue:{issue['id']}"
         participants = participant_roster_names(issue["participant_roster"])
         # Unassigned issues are public; assigned issues are visible only when

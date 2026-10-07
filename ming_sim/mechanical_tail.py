@@ -372,11 +372,8 @@ def schedule_mechanical_tail_after_advance(
 
 
 def _resolve_context_turns(db: Any, current_turn: int) -> list[int]:
-    """有月链记录的回合。没有 resolve context 读口的替身退回 0..current。"""
-    store = getattr(db, "resolve_contexts", None)
-    if store is None or not hasattr(store, "turns"):
-        return list(range(0, int(current_turn) + 1))
-    return store.turns()
+    """有月链记录的回合（必备 resolve_contexts.turns；不得退回 0..current 替身扫）。"""
+    return db.resolve_contexts.turns()
 
 
 def _pending_mechanical_tails(

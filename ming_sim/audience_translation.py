@@ -148,13 +148,10 @@ def mark_turn_translation_done(
     ctid = int(chat_turn_id or 0)
     if ctid <= 0:
         return
+    # 首笔 DML 前快照归属：外层 atomic/BEGIN 已拥有事务时不得提交。
+    owns = bool(commit) and connection_owns_transaction(db.conn)
     db.reign.mark_extract_status_done(ctid)
-    if not commit:
-        return
-    if (
-        not bool(getattr(db.conn, "_commit_suspended", False))
-        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
-    ):
+    if owns:
         db.conn.commit()
 
 
@@ -219,8 +216,6 @@ def list_pending_translations(
     可按夜 / 源轮收窄。返回行附结构化系统提示态（供 0158 决定 6 投影，不做页面）。
     # #1853 J8：必备 list_unextracted_replies 直调；禁缺接口洗成空待补投影。
     """
-    if not hasattr(db, "reign"):
-        return []
     rows = list(db.reign.list_unextracted_replies(night_id=night_id) or [])
     want = int(chat_turn_id) if chat_turn_id is not None else None
     out: List[Dict[str, Any]] = []
@@ -292,11 +287,8 @@ def run_turn_translation_job(
                 raise AudienceTranslateError(
                     f"源轮回话未落定：chat_turn_id={ctid} status={status}"
                 )
-            already_done = (
-                hasattr(getattr(db, "reign", None), "get_story_extract_status")
-                and db.reign.get_story_extract_status(ctid) == "done"
-            )
-            if not already_done and hasattr(getattr(db, "reign", None), "mark_story_extraction_pending"):
+            already_done = db.reign.get_story_extract_status(ctid) == "done"
+            if not already_done:
                 db.reign.mark_story_extraction_pending(ctid)
         if already_done:
             from ming_sim.applier import SectionResult
@@ -349,7 +341,7 @@ def run_turn_translation_job(
             raise AudienceTranslateError("说话人分段未逐字覆盖源轮回话")
         with _gate_cm():
             # 落账临界区复查源轮仍存活（ADR 0038：后台写入前须校验目标轮仍存活）。
-            if ctid > 0 and hasattr(db, "conn"):
+            if ctid > 0:
                 live = db.reign.chat_turn_status(ctid)
                 if live is None or str(live["status"] or "") in {"failed", "undone"}:
                     from ming_sim.audience_translate import AudienceTranslateError

@@ -821,9 +821,8 @@ class WebGame:
                 self.db.reign.kv_set("favorites", json.dumps(sorted(self.favorites)))
             # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
             # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
-            if hasattr(self.db, "conn"):
-                self.db.reconcile_interrupted_chat_turns()
-                self.db.reign.reconcile_post_reply_recovery()
+            self.db.reconcile_interrupted_chat_turns()
+            self.db.reign.reconcile_post_reply_recovery()
             # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
             self._spawn_startup_extraction_catch_up()
         except Exception as init_exc:
@@ -1037,9 +1036,8 @@ class WebGame:
             favorites = set(json.loads(fav_raw)) if fav_raw else set(default_favorites)
             if not fav_raw:
                 candidate.db.reign.kv_set("favorites", json.dumps(sorted(favorites)))
-            if hasattr(candidate.db, "conn"):
-                candidate.db.reconcile_interrupted_chat_turns()
-                candidate.db.reign.reconcile_post_reply_recovery()
+            candidate.db.reconcile_interrupted_chat_turns()
+            candidate.db.reign.reconcile_post_reply_recovery()
         except Exception as rebuild_exc:
             residual = candidate or getattr(rebuild_exc, "residual_session", None)
             if residual is not None:
@@ -1895,18 +1893,13 @@ class WebGame:
 
         后台转译不在此等待。无夜时按大臣查；在飞的定义由 DB 写口维护。
         """
-        if hasattr(self.db, "reign") and hasattr(self.db.reign, "list_in_flight_chat_turns"):
-            if hasattr(self.db, "conn"):
-                from ming_sim.audience_night import get_open_night
-                night = get_open_night(self.db)
-                if night is not None:
-                    return bool(self.db.reign.list_in_flight_chat_turns(night_id=int(night["id"])))
-            return bool(self.db.reign.list_in_flight_chat_turns(
-                minister_name=minister_name, turn=int(self.state.turn),
-            ))
-        # 极薄兜底：旧替身无接口时不挡（与 get_last_active 语义接近）
-        existing = self.db.reign.get_last_active_chat_turn(minister_name, self.state.turn)
-        return existing is not None and not existing.get("minister_message_id")
+        from ming_sim.audience_night import get_open_night
+        night = get_open_night(self.db)
+        if night is not None:
+            return bool(self.db.reign.list_in_flight_chat_turns(night_id=int(night["id"])))
+        return bool(self.db.reign.list_in_flight_chat_turns(
+            minister_name=minister_name, turn=int(self.state.turn),
+        ))
 
     def _start_chat_turn(
         self, minister_name: str, *, attach_to_hall: bool = True,
@@ -1918,35 +1911,25 @@ class WebGame:
         # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
         # #1566：场外密疏只挂当前夜，不入殿、不启殿上 scene；route 落 chat_turns。
         # #1838 reopen：建轮 = 确保开夜 + create_chat_turn；入殿账只由「宣 X」/批红召见写。
-        if hasattr(self.db, "conn"):
-            from ming_sim.audience_night import (
-                ensure_open_night_for_audience,
-                get_open_night,
-            )
-            night_was_open = get_open_night(self.db) is not None
-            night = get_open_night(self.db) or ensure_open_night_for_audience(
-                self.db, self.state,
-            )
-            if not night_was_open:
-                from ming_sim.decree_forecast import schedule_held_decree_forecasts
-                schedule_held_decree_forecasts(self.session)
-            chat_turn_id = self.db.create_chat_turn(
-                self.state,
-                minister_name,
-                agno_session_id,
-                runs_before,
-                night_id=int(night["id"]),
-                status="generating",
-            )
-        else:
-            agno_session_id = self._minister_agno_session_id(minister_name)
-            runs_before = self.db.reign.agno_runs_length(agno_session_id)
-            chat_turn_id = self.db.create_chat_turn(
-                self.state,
-                minister_name,
-                agno_session_id,
-                runs_before,
-            )
+        from ming_sim.audience_night import (
+            ensure_open_night_for_audience,
+            get_open_night,
+        )
+        night_was_open = get_open_night(self.db) is not None
+        night = get_open_night(self.db) or ensure_open_night_for_audience(
+            self.db, self.state,
+        )
+        if not night_was_open:
+            from ming_sim.decree_forecast import schedule_held_decree_forecasts
+            schedule_held_decree_forecasts(self.session)
+        chat_turn_id = self.db.create_chat_turn(
+            self.state,
+            minister_name,
+            agno_session_id,
+            runs_before,
+            night_id=int(night["id"]),
+            status="generating",
+        )
         return chat_turn_id, snapshot
 
     def _record_chat_rollback_items(
@@ -2003,10 +1986,7 @@ class WebGame:
         if not chat_turn_id:
             return
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        row = (
-            self.db.reign.chat_turn_user_message_id(chat_turn_id)
-            if hasattr(self.db, "reign") else None
-        )
+        row = self.db.reign.chat_turn_user_message_id(chat_turn_id)
         if row is not None and row["user_message_id"]:
             restored_ids = self.db.restore_interrupted_after_failed_retry(chat_turn_id)
             from ming_sim.decree_forecast import schedule_restored_decree_forecasts
@@ -2157,7 +2137,7 @@ class WebGame:
             "answer": answer,
             # Persisted identity travels with the real player response; the web client
             # never infers night ownership from cross-night personal chat history.
-            "campaign_id": str(self.db.reign.kv_get("campaign_id") or "") if hasattr(self.db, "reign") else "",
+            "campaign_id": str(self.db.reign.kv_get("campaign_id") or ""),
             "night_id": int(open_night["id"]) if open_night else 0,
             # #499 单一投影：user/minister 带 chat_turn_id、既存读心记录按轮归位；
             # 前端 setChat 不再抹掉历史读心记录。
@@ -2207,8 +2187,6 @@ class WebGame:
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
         测试替身无 conn/该接口时返回空（无中断可重试）。"""
-        if not hasattr(self.db, "reign"):
-            return []
         return self.db.reign.get_interrupted_reply_retries(minister_name)
 
     def reply_retries_for_night(self, night_id: int) -> List[Dict[str, Any]]:
@@ -2230,7 +2208,7 @@ class WebGame:
                                if int(retry["chat_turn_id"]) in ids],
                               key=lambda item: int(item["chat_turn_id"]))
         interrupted = self.interrupted_reply_retries(minister_name)
-        post_reply = self.db.reign.get_post_reply_retries(minister_name) if hasattr(self.db, "reign") else []
+        post_reply = self.db.reign.get_post_reply_retries(minister_name)
         return sorted([*interrupted, *post_reply], key=lambda item: int(item["chat_turn_id"]))
 
     def _resume_post_reply(self, minister_name: str, target: Dict[str, Any]) -> Dict[str, Any]:
@@ -2631,10 +2609,6 @@ class WebGame:
         #1353 r10：预检 list_unextracted 短持 runtime gate（共享 conn 禁裸读）。
         # #1853 J8：启动预检与转译重试查询同属必备接口直调；禁缺接口当「无待补」。
         """
-        if not hasattr(self.db, "conn"):
-            return
-        if not hasattr(self.db, "reign"):
-            return
         with self._runtime_write_gate():
             pending = self.db.reign.list_unextracted_replies() or []
         if not pending:
@@ -2693,11 +2667,7 @@ class WebGame:
         still = list_pending_translations(
             self.db, chat_turn_id=ctid, write_queue=self._runtime_write_queue(),
         )
-        status = (
-            self.db.reign.get_story_extract_status(ctid)
-            if hasattr(getattr(self.db, "reign", None), "get_story_extract_status")
-            else ("pending" if still else "done")
-        )
+        status = self.db.reign.get_story_extract_status(ctid)
         return {
             "chat_turn_id": ctid,
             "extract_status": status,
@@ -2826,9 +2796,8 @@ class WebGame:
         # must close the durable turn and pending owner through the same terminal path as a
         # worker failure, rather than escaping this SSE generator.
         try:
-            if hasattr(self.db, "reign"):
-                identity["campaign_id"] = str(self.db.reign.kv_get("campaign_id") or "")
-            if chat_turn_id and hasattr(self.db, "conn"):
+            identity["campaign_id"] = str(self.db.reign.kv_get("campaign_id") or "")
+            if chat_turn_id:
                 from ming_sim.audience_night import get_open_night
                 open_night = get_open_night(self.db)
                 identity["night_id"] = int(open_night["id"]) if open_night else 0
@@ -5094,9 +5063,7 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
 
 
 def _failed_secret_order_ids_for_turn(game: WebGame, turn: int) -> set[int]:
-    db = getattr(game, "db", None)
-    if db is None or not hasattr(db, "dossiers"):
-        return set()
+    db = game.db
     return {
         int(action.get("id") or 0)
         for action in db.dossiers.list_pending_actions(int(turn), status="failed")
@@ -5107,9 +5074,7 @@ def _failed_secret_order_ids_for_turn(game: WebGame, turn: int) -> set[int]:
 def _new_secret_order_failure_payloads_for_turn(
     game: WebGame, turn: int, before_ids: set[int],
 ) -> List[Dict[str, Any]]:
-    db = getattr(game, "db", None)
-    if db is None or not hasattr(db, "dossiers"):
-        return []
+    db = game.db
     return [
         _pending_action_failure_payload(action)
         for action in db.dossiers.list_pending_actions(int(turn), status="failed")

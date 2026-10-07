@@ -42,9 +42,7 @@ _REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
 
 
 def _failed_secret_order_ids(session: GameSession, turn: int) -> set[int]:
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(getattr(db, "dossiers", None), "list_pending_actions"):
-        return set()
+    db = session.db
     return {
         int(action.get("id") or 0)
         for action in db.dossiers.list_pending_actions(int(turn), status="failed")
@@ -55,9 +53,7 @@ def _failed_secret_order_ids(session: GameSession, turn: int) -> set[int]:
 def _new_secret_order_failure_payloads(
     session: GameSession, turn: int, before_ids: set[int],
 ) -> List[dict]:
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(getattr(db, "dossiers", None), "list_pending_actions"):
-        return []
+    db = session.db
     failures: List[dict] = []
     for action in db.dossiers.list_pending_actions(int(turn), status="failed"):
         if action.get("kind") != "secret_order":
@@ -217,10 +213,7 @@ def _confirm_pending_directive(session: GameSession, draft, minister_name: str) 
 
 def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str) -> None:
     """#505：CLI 系统层恢复提示——崩溃后问话保留，可输入「重试回话」重新生成。"""
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "reign"):
-        return
-    retries = db.reign.get_interrupted_reply_retries(minister_name) or []
+    retries = session.db.reign.get_interrupted_reply_retries(minister_name) or []
     if not retries:
         return
     last = retries[-1]
@@ -239,11 +232,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     成功且 court_action 为 court_break 时返回 typed 'court_break'，供 minister_chat
     退出对话进入 play_turn 审阅；收夜失败仍返回 None，留在原对话。
     """
-    db = getattr(session, "db", None)
-    if db is None or not hasattr(db, "reign"):
-        print("当前会话不支持回话重试。\n")
-        return
-    retries = db.reign.get_interrupted_reply_retries(minister_name) or []
+    retries = session.db.reign.get_interrupted_reply_retries(minister_name) or []
     if not retries:
         print(f"{minister_name}没有待重试的中断回话。\n")
         return
@@ -366,13 +355,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         chat_turn_id = 0
         rollback_snapshot = None
         result = None
-        lifecycle_supported = (
-            all(hasattr(session.db, name) for name in (
-                "capture_chat_rollback_snapshot", "create_chat_turn",
-                "record_chat_turn_rollback_diffs", "fail_chat_turn",
-            ))
-            and hasattr(getattr(session.db, "reign", None), "update_chat_turn_messages")
-        )
         try:
             # #1849 reopen：CLI 也不再分密令/场外 route；前缀原文随问话进 scene 转译。
             if persistent_chat:
@@ -422,17 +404,10 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                 minister_name="殿上",
             )
             if persistent_chat:
-                if chat_turn_id and hasattr(session.db, "persist_minister_reply"):
-                    session.db.persist_minister_reply(
-                        character.name, accepted_turn, result.answer, chat_turn_id,
-                    )
-                    minister_message_id = 0
-                else:
-                    minister_message_id = session.db.chat_messages.insert(
-                        minister_name=character.name, turn=accepted_turn,
-                        role="minister", content=result.answer,
-                    )
-                    session.db.conn.commit()
+                session.db.persist_minister_reply(
+                    character.name, accepted_turn, result.answer, chat_turn_id,
+                )
+                minister_message_id = 0
                 if chat_turn_id:
                     if minister_message_id:
                         session.db.reign.update_chat_turn_messages(

@@ -2059,7 +2059,7 @@ def _dispatch_rushes(
             })
             continue
         # secret_order
-        order = db.character_knowledge.get_secret_order(target_id) if hasattr(db, "character_knowledge") else None
+        order = db.character_knowledge.get_secret_order(target_id)
         if order is None:
             _reject(rejected, item, f"催办目标密令不存在：{target_id}", "hallucinated_id", source)
             continue

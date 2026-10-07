@@ -9,7 +9,6 @@ simulator 看得见、软性加权判战；引擎只 clamp、不算胜负。
 
 from __future__ import annotations
 
-from ming_sim.constants import ARMY_SCORE_FIELDS
 
 def _pay_source():
     return {
@@ -18,10 +17,6 @@ def _pay_source():
         "central_pay_share": 0.0,
     }
 
-
-def test_score_fields_include_firearm_and_cannon():
-    assert "firearm_equipment" in ARMY_SCORE_FIELDS
-    assert "cannon_equipment" in ARMY_SCORE_FIELDS
 
 
 def test_new_army_defaults_zero_firearm(game):

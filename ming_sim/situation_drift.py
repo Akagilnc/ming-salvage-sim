@@ -338,7 +338,8 @@ def apply_situation_monthly_drift(
     # advance 的 delta_bar 是皇帝本月实旨推动的额外量，与 inertia 叠加，互不顶替。
     inertia_rejections: List[Dict[str, object]] = []
     active = db.issues.active_rows()
-    commit_local = not bool(getattr(db.conn, "in_transaction", False))
+    from ming_sim.applier import connection_owns_transaction
+    commit_local = connection_owns_transaction(db.conn)
     # 累计单月 metric 落账，用于上限 clamp
     period_metric_acc: Dict[str, int] = {}
 

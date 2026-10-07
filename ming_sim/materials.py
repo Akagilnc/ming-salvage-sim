@@ -464,7 +464,7 @@ def _own_affair_lines(
         )
 
     handling_ids: set[int] = set()
-    for issue in (db.issues.active_rows() if hasattr(db, "issues") else []):
+    for issue in db.issues.active_rows():
         issue_id = int(issue["id"])
         linked_affair_id = _issue_linked_affair_id(db, issue_id)
         if not linked_affair_id:
@@ -637,7 +637,7 @@ def _opening_affair_lines(
     }
     handled: list[tuple[str, str]] = []
     seen: set[str] = set()
-    active = db.issues.active_rows() if hasattr(db, "issues") else []
+    active = db.issues.active_rows()
     for issue in active:
         issue_id = int(issue["id"])
         if _issue_linked_affair_id(db, issue_id):
@@ -800,7 +800,7 @@ def _write_textual_fact_files(
     if name:
         subjects.append(("character", name, name))
     region_ids = set((knowledge.get("scope") or {}).get("region_ids") or ())
-    if region_ids and hasattr(db, "regions"):
+    if region_ids:
         for row in db.regions.rows():
             if str(row["id"] or "") not in region_ids:
                 continue
@@ -916,13 +916,11 @@ def _court_roster_text(db: Any, state: Any, character: Any, knowledge: dict) -> 
     office_type = str(
         knowledge.get("office_type") or getattr(character, "office_type", "") or ""
     )
-    rows: list[Any] = []
-    if hasattr(db, "characters"):
-        rows = project_court_roster_rows(
-            db.characters.current_court_rows(int(state.year), int(state.period)),
-            knowledge,
-            office_type,
-        )
+    rows = project_court_roster_rows(
+        db.characters.current_court_rows(int(state.year), int(state.period)),
+        knowledge,
+        office_type,
+    )
     if not rows:
         return "见闻中未载所查人物。"
     return "【在朝人事索引】\n" + "\n".join(
@@ -1175,10 +1173,8 @@ def _with_archived_gazette_titles(
 ) -> list[dict[str, object]]:
     """标题只取 turn_reports 已入档字段。缺标题留空，不读正文。"""
     archived: dict[int, str] = {}
-    archives = getattr(getattr(db, "turn_reports", None), "list_archives", None)
-    if archives is not None:
-        for item in archives():
-            archived[int(item.get("turn") or 0)] = str(item.get("title") or "")
+    for item in db.turn_reports.list_archives():
+        archived[int(item.get("turn") or 0)] = str(item.get("title") or "")
     stamped: list[dict[str, object]] = []
     for row in rows:
         current = str(row.get("title") or "")
@@ -1232,9 +1228,7 @@ def _write_world_textual_fact_files(
 
     affair facts already ride 事务/*/当前情况.txt — do not mint a second carrier.
     """
-    store = getattr(db, "textual_facts", None)
-    if store is None or not hasattr(db, "conn"):
-        return []
+    store = db.textual_facts
     rows = TextualFactStore(db.conn).read_write_world_textual_fact_files()
     index: list[str] = []
     for row in rows:
@@ -1250,7 +1244,7 @@ def _write_world_textual_fact_files(
         if not body:
             continue
         label = subject_id
-        if kind == "region" and hasattr(db, "regions"):
+        if kind == "region":
             for region in db.regions.rows():
                 if str(region["id"] or "") == subject_id:
                     label = str(region["name"] or subject_id)
@@ -1400,8 +1394,6 @@ def _world_board_text(
 
 
 def _world_roster_text(db: Any, state: Any) -> str:
-    if not hasattr(db, "characters"):
-        return "在朝名册：暂无。"
     rows = db.characters.current_court_rows(int(state.year), int(state.period))
     if not rows:
         return "在朝名册：暂无。"
@@ -1710,11 +1702,7 @@ def _write_world_tree(
     index.extend(_write_gazette_index(
         tmp,
         _with_archived_gazette_titles(
-            (
-                db.turn_reports.list_archives()
-                if getattr(getattr(db, "turn_reports", None), "list_archives", None)
-                else ()
-            ), db,
+            db.turn_reports.list_archives(), db,
         ),
         prefix=_WORLD_GAZETTE_DIR,
     ))
@@ -1886,10 +1874,9 @@ def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     for name in names:
         office = ""
-        if hasattr(db, "conn"):
-            row = CharacterStore(db.conn).read_dispatch_inquiries((name,))
-            if row is not None:
-                office = str(row["office"] or "")
+        row = CharacterStore(db.conn).read_dispatch_inquiries((name,))
+        if row is not None:
+            office = str(row["office"] or "")
         rows.append((name, office))
     return rows
 
@@ -1946,10 +1933,9 @@ def _resolve_present_character(
     hit = characters.get(name)
     if hit is not None:
         return hit
-    if hasattr(db, "conn"):
-        row = CharacterStore(db.conn).read_resolve_present_character((name,))
-        if row is not None:
-            return _character_projection_from_db_row(row)
+    row = CharacterStore(db.conn).read_resolve_present_character((name,))
+    if row is not None:
+        return _character_projection_from_db_row(row)
     from ming_sim.models import Character
 
     return Character(
@@ -2086,15 +2072,14 @@ def _write_one_present_person(
     from ming_sim.context import character_context_with_db
 
     dossier_body = character_context_with_db(character, db, turn=int(state.turn))
-    if hasattr(db, "characters") and hasattr(db.characters, "get_character_status"):
-        status, reason = db.characters.get_character_status(name)
-        status_text = str(status or "").strip()
-        reason_text = str(reason or "")
-        if status_text and status_text != "active":
-            line = f"当前状态：{status_text}"
-            if reason_text.strip():
-                line = f"{line}（{reason_text}）"
-            dossier_body = f"{dossier_body}\n{line}"
+    status, reason = db.characters.get_character_status(name)
+    status_text = str(status or "").strip()
+    reason_text = str(reason or "")
+    if status_text and status_text != "active":
+        line = f"当前状态：{status_text}"
+        if reason_text.strip():
+            line = f"{line}（{reason_text}）"
+        dossier_body = f"{dossier_body}\n{line}"
     dossier_rel = f"{base}/人物档料.txt"
     _write_text(tmp / dossier_rel, dossier_body)
     index.append(dossier_rel)

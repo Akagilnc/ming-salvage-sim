@@ -158,72 +158,67 @@ def _month_fact_materials(
     secret_dossiers = secret_order_dossier_ids(db) if not include_secret_sources else set()
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
-    if hasattr(db, "conn"):
-        rows = StagedDeclarationStore(db.conn).read_month_fact_materials((turn,))
-        for row in rows:
-            decree_ref = str(row["decree_ref"] or "")
-            declaration = load_stored_json(
-                row["declaration_json"], label="declaration_json", blank={},
-            )
-            visible = load_stored_json(
-                row["visible_refs_json"], label="visible_refs_json", blank={},
-            )
-            if not include_secret_sources and (
-                _decree_ref_is_secret(db, decree_ref)
-                or _secret_sourced(declaration)
-                or _secret_sourced(visible)
-            ):
-                continue
-            nominal.append({"decree_ref": decree_ref, "declaration": declaration})
-            forecast = row["forecast_text"]
-            if isinstance(forecast, str) and forecast.strip():
-                forecasts.append(forecast)
+    rows = StagedDeclarationStore(db.conn).read_month_fact_materials((turn,))
+    for row in rows:
+        decree_ref = str(row["decree_ref"] or "")
+        declaration = load_stored_json(
+            row["declaration_json"], label="declaration_json", blank={},
+        )
+        visible = load_stored_json(
+            row["visible_refs_json"], label="visible_refs_json", blank={},
+        )
+        if not include_secret_sources and (
+            _decree_ref_is_secret(db, decree_ref)
+            or _secret_sourced(declaration)
+            or _secret_sourced(visible)
+        ):
+            continue
+        nominal.append({"decree_ref": decree_ref, "declaration": declaration})
+        forecast = row["forecast_text"]
+        if isinstance(forecast, str) and forecast.strip():
+            forecasts.append(forecast)
     landed: List[Dict[str, Any]] = []
-    if hasattr(db, "conn"):
-        for row in ReignStateStore(db.conn).read_month_ledger((turn,)):
-            origin = str(row["origin_ref"] or "")
-            if not include_secret_sources and (
-                _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
-            ):
-                continue
-            rejections.append({
-                "section": row["section"],
-                "item": item,
-                "reason": row["reason"],
-                "category": row["category"],
-            })
+    for row in ReignStateStore(db.conn).read_month_ledger((turn,)):
+        origin = str(row["origin_ref"] or "")
+        if not include_secret_sources and (
+            is_secret_order_origin(origin)
+            or _origin_is_secret_dossier(origin, secret_dossiers)
+        ):
+            continue
+        landed.append({
+            "account": row["account"],
+            "delta": int(row["delta"]),
+            "category": row["category"],
+            "reason": row["reason"],
+            "origin_ref": origin,
+        })
     rejections: List[Dict[str, Any]] = []
-    if hasattr(db, "conn"):
-        for row in list_rejection_reports_for_turn(db.conn, turn):
-            if not include_secret_sources and str(row["source"] or "") == "secret_order":
-                continue
-            item = load_stored_json(row["item_json"], label="item_json", blank={})
-            if not include_secret_sources and (
-                _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
-            ):
-                continue
-            rejections.append({
-                "section": row["section"],
-                "item": item,
-                "reason": row["reason"],
-                "category": row["category"],
-            })
+    for row in list_rejection_reports_for_turn(db.conn, turn):
+        if not include_secret_sources and str(row["source"] or "") == "secret_order":
+            continue
+        item = load_stored_json(row["item_json"], label="item_json", blank={})
+        if not include_secret_sources and (
+            _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
+        ):
+            continue
+        rejections.append({
+            "section": row["section"],
+            "item": item,
+            "reason": row["reason"],
+            "category": row["category"],
+        })
     answers: List[Dict[str, Any]] = []
-    if hasattr(db, "issues") and hasattr(db.issues, "list_pending_decisions"):
-        for row in db.issues.list_pending_decisions(turn):
-            if str(row.get("status") or "") != "decided":
-                continue
-            choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
-            answers.append({
-                "title": row.get("title") or "",
-                "label": choice.get("label") or "",
-                "note": choice.get("note") or "",
-                "event_id": row.get("event_id") or "",
-            })
-    snapshot = None
-    getter = getattr(getattr(db, "month_open_snapshots", None), "get", None)
-    if getter is not None:
-        snapshot = getter(turn)
+    for row in db.issues.list_pending_decisions(turn):
+        if str(row.get("status") or "") != "decided":
+            continue
+        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        answers.append({
+            "title": row.get("title") or "",
+            "label": choice.get("label") or "",
+            "note": choice.get("note") or "",
+            "event_id": row.get("event_id") or "",
+        })
+    snapshot = db.month_open_snapshots.get(turn)
     return {
         "nominal": nominal,
         "landed": landed,

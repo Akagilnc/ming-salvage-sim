@@ -92,12 +92,6 @@ class IssueStore:
             [row[column] for column in columns],
         )
 
-    def has_active_for_affair(self, affair_id: int) -> bool:
-        return self._conn.execute(
-            "SELECT 1 FROM issues WHERE affair_id=? AND status='active' LIMIT 1",
-            (int(affair_id),),
-        ).fetchone() is not None
-
     def affair_id_of(self, issue_id: int) -> int:
         row = self._conn.execute(
             "SELECT affair_id FROM issues WHERE id=?", (int(issue_id),),
@@ -155,9 +149,6 @@ class IssueStore:
 
     def read_trigger_commitment_backlashes_title(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT title FROM issues WHERE id=?', params).fetchone()
-
-    def read_apply_revoke_decree_verdict_effect(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT kind, status, origin_ref FROM issues WHERE id=?', params).fetchone()
 
     def read_apply_punishment_verdict_effect(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT status,origin_kind,faction_hint,target_roster FROM issues WHERE id=?', params).fetchone()

@@ -1672,23 +1672,6 @@ class DossierStore:
             for r in rows
         ]
 
-    def presence_turns_by_auditor(
-        self, *, min_months: int, as_of_turn: Optional[int] = None,
-    ) -> list[Any]:
-        sql = (
-            "SELECT auditor_name, dossier_id, turn FROM dossier_supervision_presence "
-            "WHERE present=1"
-        )
-        params: tuple = ()
-        if as_of_turn is not None:
-            sql += " AND turn<=?"
-            params = (int(as_of_turn),)
-        return self._conn.execute(
-            sql + " GROUP BY auditor_name, dossier_id, turn "
-                  "ORDER BY auditor_name, dossier_id, turn",
-            params,
-        ).fetchall()
-
     def exposure_rows(
         self, dossier_id: int, *, as_of_turn: Optional[int] = None,
     ) -> list[dict[str, object]]:
@@ -2427,12 +2410,6 @@ class DossierStore:
     def pending_version_row(self, action_id: int) -> Any:
         return self._conn.execute(
             "SELECT version FROM pending_actions WHERE id=?",
-            (int(action_id),),
-        ).fetchone()
-
-    def pending_committed_directive_id_row(self, action_id: int) -> Any:
-        return self._conn.execute(
-            "SELECT committed_directive_id FROM pending_actions WHERE id=?",
             (int(action_id),),
         ).fetchone()
 

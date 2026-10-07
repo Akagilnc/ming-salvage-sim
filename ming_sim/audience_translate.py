@@ -63,8 +63,6 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
     经 DossierStore 读含 night_id / night_approved 的暂存投影；
     转译必须看见本夜归属与应允态，不能靠 list_pending_actions 呈现投影。
     """
-    if not hasattr(db, "dossiers"):
-        return []
     rows = db.dossiers.list_pending_for_translate(int(turn), night_id=int(night_id or 0))
     out: List[str] = []
     for row in rows:
@@ -208,10 +206,8 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
     for row in CharacterKnowledgeStore(db.conn).read_build_translation_target_grounding():
         lines.append(f"secret_order\t{int(row['id'])}\t{str(row['title'] or '')}")
     # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
-    for row in db.conn.execute(
-        "SELECT id, action_type, target_kind, target_id FROM decree_dossiers "
-        "WHERE status='executing' AND action_type='grant_allocation' ORDER BY id"
-    ).fetchall():
+    # 纯持久选择经 DossierStore.in_transit_grants；消费者保留 id 序与押解领域筛选。
+    for row in sorted(db.dossiers.in_transit_grants(), key=lambda r: int(r["id"])):
         declared = db.dossier_declares_escort(int(row["id"]))
         lines.append(
             f"dossier\t{int(row['id'])}\t{str(row['target_kind'] or '')}:{str(row['target_id'] or '')}"

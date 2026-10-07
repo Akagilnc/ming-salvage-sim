@@ -64,9 +64,7 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     form the minister-specific knowledge rail.  No global roster fallback is
     allowed, so an unrelated person remains invisible.
     """
-    conn = getattr(db, "conn", None)
-    if conn is None:
-        return []
+    conn = db.conn
     source = CharacterStore(conn).read_displace_duplicate_offices_faction((recommender,))
     if source is None:
         return []

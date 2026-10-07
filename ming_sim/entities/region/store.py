@@ -149,15 +149,6 @@ class RegionStore:
     def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT id, name FROM regions ORDER BY id', params).fetchall()
 
-    def read_due_order_displacement_entries(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_NewDebt','settle_宗禄欠_NewDebt')", params).fetchall()
-
-    def read_arrears_order_displacement_entries(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT field, delta FROM region_logs WHERE turn=? AND region_id=? AND field IN ('settle_官俸欠_Repaid','settle_宗禄欠_Repaid')", params).fetchall()
-
-    def read_build_fiscal_fact_brief(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id, region_id, field, delta FROM region_logs WHERE turn = ? AND field IN ('settle_官俸欠_NewDebt', 'settle_官俸欠_Repaid',  'settle_宗禄欠_NewDebt', 'settle_宗禄欠_Repaid') ORDER BY id", params).fetchall()
-
     def read_victory_status(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT * FROM regions WHERE id = 'beizhili'", params).fetchone()
 

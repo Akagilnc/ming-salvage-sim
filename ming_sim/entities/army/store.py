@@ -168,18 +168,6 @@ class ArmyStore:
     def read_build_translation_target_grounding(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT id, name FROM armies ORDER BY id', params).fetchall()
 
-    def read_due_order_displacement_entries(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT COALESCE(SUM(CASE WHEN CAST(new_value AS REAL)>CAST(old_value AS REAL) THEN CAST(new_value AS REAL)-CAST(old_value AS REAL) ELSE 0 END),0) AS v FROM army_logs WHERE turn=? AND field='province_pay_arrears' AND army_id IN (SELECT id FROM armies WHERE pay_source_region=?)", params).fetchone()
-
-    def read_arrears_order_displacement_entries(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT COALESCE(SUM(CASE WHEN CAST(old_value AS REAL)>CAST(new_value AS REAL) THEN CAST(old_value AS REAL)-CAST(new_value AS REAL) ELSE 0 END),0) AS v FROM army_logs WHERE turn=? AND field='province_pay_arrears' AND army_id IN (SELECT id FROM armies WHERE pay_source_region=?)", params).fetchone()
-
-    def read_build_fiscal_fact_brief(self, params: Any = ()) -> Any:
-        return self._conn.execute('SELECT id, name, owner_power, manpower, salary_rate, pay_source_region, station_region, central_pay_share, province_pay_share, province_pay_arrears, central_pay_arrears FROM armies ORDER BY rowid', params).fetchall()
-
-    def read_build_fiscal_fact_brief_id_army_id_old_value_new_value(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id, army_id, old_value, new_value FROM army_logs WHERE turn = ? AND field = 'province_pay_arrears' ORDER BY id", params).fetchall()
-
     def read_compute_budget_lines(self, params: Any = ()) -> Any:
         return self._conn.execute("\n        SELECT id, manpower, salary_rate, owner_power, central_pay_share,\n               pay_source_region\n        FROM armies\n        WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0\n          AND central_pay_share > 0\n        ", params).fetchall()
 
