@@ -469,11 +469,12 @@ def _iter_cli_process_lines(
                 payload = payload.encode("utf-8")
             proc.stdin.write(payload)
             proc.stdin.close()
-        except (OSError, ValueError) as exc:
-            # 写失败 = 子进程根本没拿到 prompt。记事实 + 留痕，交读循环终结时响亮
-            # 报确定性失败；绝不静默，否则空 stdout 被洗成 llm_empty_output 重试
-            # （ADR 0005：代码/IO 的错必须响亮，不得伪装成数据瞬断）。
-            result.stdin_error = exc
+        except BaseException as exc:
+            # 与 _pump 同：线程内不得只消亡。未知代码/控制异常也记入 stdin_error
+            # 交父调用；OSError 由消费者翻 typed，其余原样上浮（ADR 0005）。
+            # 不得在工作线程 re-raise 冒充已传给父调用（threading 只走 excepthook）。
+            if result.stdin_error is None:
+                result.stdin_error = exc
             logger.warning("CLI stdin 写入失败（prompt 未送达子进程）：%s", exc)
 
     open_streams = 0
@@ -838,8 +839,8 @@ def _iter_cli_runner_text(
         # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
         # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
         if outcome.stdin_error is not None:
-            # 生产者只记 OSError/ValueError；OSError=已确证宿主 I/O → typed；
-            # 其余（如 ValueError 载荷类型）原样上浮，不以槽非空改写类别。
+            # 写线程经 stdin_error 交父：OSError=已确证宿主 I/O → typed；
+            # 其余代码/控制异常原样上浮（与 stream_error 同契约）。
             err = outcome.stdin_error
             if isinstance(err, OSError):
                 from ming_sim.llm_model import cli_runner_unavailable
