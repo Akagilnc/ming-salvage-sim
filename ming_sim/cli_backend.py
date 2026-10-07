@@ -832,11 +832,8 @@ def _iter_cli_runner_text(
             raise RuntimeError(
                 f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
             ) from outcome.stdin_error
-        # 管道读失败已在 _iter_cli_process_lines 升格；此处再挡一层，防直接读 outcome 的调用方漏接。
-        if outcome.stream_error is not None:
-            raise RuntimeError(
-                f"{runner} 调用失败（子进程管道读取失败）：{outcome.stream_error}"
-            ) from outcome.stream_error
+        # 管道读失败已在 _iter_cli_process_lines 即时升格；本生成器完整消费该泵，
+        # 不另加上层同因兜底（#1902 REDUNDANT-CLI-STREAM-ERROR-FALLBACK）。
         # #1902 T2 / 锚定宪法：交付保留宿主原正文，不以 strip 改写呈现；
         # 空产出只以「去空白后是否为空」作判定，不把裁剪结果当交付物。
         primary = stdout_text if stdout_text.strip() else final_text

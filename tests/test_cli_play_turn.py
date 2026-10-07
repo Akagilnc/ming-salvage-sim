@@ -30,7 +30,8 @@ class _Sess:
     def __init__(self, fail_exc):
         self.calls = []
         self._fail = fail_exc
-        self.db = None
+        # 结算差集共核要求真实协作面 list_pending_actions；禁 db=None 空回落。
+        self.db = SimpleNamespace(list_pending_actions=lambda *_a, **_k: [])
         self.state = SimpleNamespace(turn=1)
 
     def begin_turn(self):

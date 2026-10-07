@@ -126,26 +126,21 @@ def test_audience_admission_records_nothing_for_capital_or_disqualified_person(g
     assert an.list_unsettled_summons(db) == []
 
 
-def test_cli_initial_selection_records_remote_summon_without_returning_minister(game, monkeypatch):
+def test_cli_initial_selection_returns_remote_minister_without_pre_admission(game, monkeypatch):
+    """#1902：菜单只解析人选，不另准入；场外记召交后续「宣 X」共核。"""
     from ming_sim.cli import terminal
 
     sess = _session(game)
     db, state, _content = game
     sess.state = state
-    _set_place(game, "洪承畴", location="shaanxi")
-    answers = iter(["洪承畴", "quit"])
-    notices = []
+    remote = _set_place(game, "洪承畴", location="shaanxi")
+    answers = iter(["洪承畴"])
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    monkeypatch.setattr("builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))))
+    monkeypatch.setattr("builtins.print", lambda *args, **_k: None)
 
-    assert terminal.choose_minister(sess) is None
-    assert [(row["person_name"], row["origin_id"]) for row in an.list_unsettled_summons(db)] == [
-        ("洪承畴", f"cli:initial:{state.turn}:洪承畴"),
-    ]
-    # 成功记召不喷固定承旨句；资格失败仍可经 reason 打印。
-    joined = "\n".join(notices)
-    assert "赴京" not in joined and "不能入殿" not in joined
-    assert "已传召" not in joined
+    chosen = terminal.choose_minister(sess)
+    assert chosen is not None and chosen.name == remote.name
+    assert an.list_unsettled_summons(db) == []
 
 
 def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeypatch):
@@ -686,53 +681,95 @@ def test_multi_origin_fresh_independent_retract_and_single_departure(game, monke
     assert {row["origin_id"] for row in unsettled} == {origin_a, origin_b}
 
 
-def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatch):
-    """#670 T3：夜内「传X来」场外只打印闸文，不返 summon:、不入殿。"""
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_cli_midflow_xuan_records_summon_via_shared_scene(game, monkeypatch):
+    """#670/#1902：夜内「传X来」原样走 minister_chat→scene_chat；场外记传召、不入殿。"""
+    from types import SimpleNamespace
     from ming_sim.cli import terminal
+    from ming_sim.session_write_queue import SessionWriteQueue
+    from tests.month_chain_helpers import make_light_session
 
-    sess = _session(game)
     db, state, content = game
-    sess.state = state
+    sess = make_light_session(db, state, content)
+    sess.llm_config = SimpleNamespace(channel="")
+    sess.temporary_characters = {}
+    sess._write_queue = SessionWriteQueue()
+    sess._write_gate = sess._write_queue.write_gate
     current = _set_place(game, "毕自严", location="beizhili")
     _set_place(game, "洪承畴", location="shaanxi")
-    notices: list[str] = []
-    monkeypatch.setattr(
-        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
-    )
+    # 已在场：不触发菜单加速器，输入原句「传洪承畴来」。
+    night = an.open_night(db, state)
+    an.ensure_summon_enter(db, int(night["id"]), current.name)
+    calls: list[str] = []
 
-    outcome = terminal._handle_court_command(sess, "传洪承畴来", current)
+    class FakeAgent:
+        tools = []
 
-    assert outcome == "handled"
-    # 成功记召不喷固定承旨句，仍 handled 不入殿。
-    joined = "\n".join(notices)
-    assert "赴京" not in joined and "不能入殿" not in joined
-    assert "已传召" not in joined
-    assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
-        f"cli:midflow:{state.turn}:洪承畴",
-    ]
+        def run(self, message):
+            calls.append(message)
+            return SimpleNamespace(content="传召已发。", tools=[])
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
+    sess.schedule_pending_scene_translation = lambda result: None  # type: ignore[method-assign]
+    answers = iter(["传洪承畴来", "done"])
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
+    monkeypatch.setattr("builtins.print", lambda *args, **_k: None)
+
+    assert terminal.minister_chat(sess, current) == "dismiss"
+    assert calls == ["传洪承畴来"]
+    unsettled = an.list_unsettled_summons(db)
+    assert len(unsettled) == 1
+    assert unsettled[0]["person_name"] == "洪承畴"
+    assert str(unsettled[0]["origin_id"]).startswith("scene:xuan:")
+    assert "洪承畴" not in an.present_names_at(db, int(night["id"]))
+    assert _chat_turn_count(db) == 1
+    rows = db.conn.execute(
+        "SELECT content FROM chat_messages WHERE role='user' ORDER BY id",
+    ).fetchall()
+    assert [r["content"] for r in rows] == ["传洪承畴来"]
 
 
-def test_cli_midflow_summon_rejects_unknown_unregistered_person(game):
-    """#670：CLI 夜内换人未知人物不得 summon-temp 旁路，须 ADR 0038 持久入册后再 admission。"""
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_cli_midflow_unknown_xuan_does_not_register_temp(game, monkeypatch):
+    """#670/#1902：未知人物经共核，不召唤-temp 旁路、不入册、不记传召。"""
+    from types import SimpleNamespace
     from ming_sim.cli import terminal
+    from ming_sim.session_write_queue import SessionWriteQueue
+    from tests.month_chain_helpers import make_light_session
 
-    sess = _session(game)
-    db, state, _content = game
-    sess.state = state
+    db, state, content = game
+    sess = make_light_session(db, state, content)
+    sess.llm_config = SimpleNamespace(channel="")
+    sess.temporary_characters = {}
+    sess._write_queue = SessionWriteQueue()
+    sess._write_gate = sess._write_queue.write_gate
     current = _set_place(game, "毕自严", location="beizhili")
     unknown = "乌有先生乙"
     assert unknown not in sess.content.characters
+    night = an.open_night(db, state)
+    an.ensure_summon_enter(db, int(night["id"]), current.name)
 
-    outcome = terminal._handle_court_command(sess, f"传{unknown}来", current)
+    class FakeAgent:
+        tools = []
 
-    assert outcome == "handled"
+        def run(self, message):
+            return SimpleNamespace(content="殿上无人应召。", tools=[])
+
+    monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
+    sess.schedule_pending_scene_translation = lambda result: None  # type: ignore[method-assign]
+    answers = iter([f"传{unknown}来", "done"])
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
+    monkeypatch.setattr("builtins.print", lambda *args, **_k: None)
+
+    assert terminal.minister_chat(sess, current) == "dismiss"
     assert unknown not in sess.temporary_characters
     assert an.list_unsettled_summons(db) == []
-    assert _chat_turn_count(db) == 0
-    assert _chat_message_count(db) == 0
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
     ).fetchone()["n"] == 0
+    # 原口令仍建一轮（共核），不在入口提前吞掉。
+    assert _chat_turn_count(db) == 1
+    assert _chat_message_count(db) >= 1
 
 
 

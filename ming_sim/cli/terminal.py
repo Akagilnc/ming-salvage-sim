@@ -18,7 +18,6 @@ from ming_sim.constants import (
     TURN_UNIT,
 )
 from ming_sim.assets import wrap
-from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.models import API_DEFAULT_TIMEOUT_SECONDS, Character, GameState
 from ming_sim.session import (
@@ -112,17 +111,8 @@ def choose_minister(session: GameSession) -> Optional[Character]:
             except ValueError:
                 print("请输入有效编号或姓名。")
                 continue
-        # 召对总闸 can_summon（含宗藩拒 + 非 active 拒）——按名/编号/模糊任一路解析到的人都过此闸，
-        # 与 web /chat、LLM summon 工具同口径集中守（cmr R6：CLI 选臣菜单原先只查 status、漏宗藩）。
-        decision = session.consume_audience_admission(
-            candidate,
-            origin_id=f"cli:initial:{session.state.turn}:{candidate.name}",
-        )
-        if not decision.allowed:
-            # 资格失败仍见 reason；成功记召 reason 为空，不喷固定承旨句。
-            if decision.reason:
-                print(decision.reason)
-            continue
+        # #1902：菜单只解析人选并生成口令加速器；准入／入殿账交共同场景生命周期，
+        # 入口不另 consume_audience_admission 或改写源问话。
         return candidate
 
 
@@ -135,8 +125,10 @@ def _record_audience_exit(session: GameSession, name: str) -> None:
 def _handle_court_command(
     session: GameSession, text: str, current: Character
 ) -> Optional[str]:
-    """CLI 控制指令识别。返回：'dismiss' | 'court_break' | 'summon:<name>' |
-    'handled'（口令已处理）| None（非控制指令，交给 chat）。"""
+    """CLI 控制口令：只认退下／退朝／退出。召见口令原样交共同场景生命周期。
+
+    返回：'dismiss' | 'court_break' | None（非本入口控制口令，交给 chat）。
+    """
     raw = text.strip()
     lowered = raw.lower()
     if lowered in EXIT_COMMANDS:
@@ -150,32 +142,6 @@ def _handle_court_command(
         raw, re.I,
     ):
         return "dismiss"
-
-    # 召见（传/召/宣/叫 开头）
-    # 量词须写 `{1,12}`；`{1,12?}` 会被解析成字面 `{1,1` + 可选 `2` + `}`，永远匹配失败。
-    summon_m = re.match(
-        r"^(?:传召|传|召|宣|叫|带)(.{1,12})(?:来|到|入殿|上殿|面圣|见我)$",
-        raw,
-    )
-    if summon_m:
-        name_fragment = summon_m.group(1)
-        # #670：未知/未注册人物不得临时旁路入殿；须 ADR 0038 持久入册后再走 admission。
-        try:
-            target = session.summon_character(name_fragment, current)
-        except ValueError:
-            print("人物未建档，须先补档后方可召见。\n")
-            return "handled"
-        # #670：夜内换人与初选同吃 consume_audience_admission；场外/在途只落传召账，不返 summon:。
-        decision = session.consume_audience_admission(
-            target,
-            origin_id=f"cli:midflow:{session.state.turn}:{target.name}",
-        )
-        if not decision.allowed:
-            # 资格失败仍见 reason；成功记召 reason 为空，不喷固定承旨句。
-            if decision.reason:
-                print(decision.reason + "\n")
-            return "handled"
-        return f"summon:{target.name}"
 
     return None
 
@@ -255,7 +221,11 @@ def _cli_write_gate(session: GameSession):
 
 
 def minister_chat(session: GameSession, character: Character, *, selected: bool = False) -> str:
-    """与一位大臣对话。返回 'dismiss' | 'court_break' | 'summon:<name>'。"""
+    """与一位大臣对话。返回 'dismiss' | 'court_break'。
+
+    #1902：召见口令（含菜单加速器「宣 X」）原样走共同建轮／scene_chat；
+    入口不再自解析后缀召见、另准入或合成替代源问话。
+    """
     other = next((n for n in session.content.characters if n != character.name), character.name)
     print(f"\n当前选择：{character.name}。可持续问话；done/退下 退下，“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
     print("提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。\n")
@@ -264,11 +234,11 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
     _print_interrupted_reply_retry_hint(session)
     from ming_sim.audience_night import get_open_night, present_names_at
     night = get_open_night(session.db) if selected else None
+    # 菜单加速器：与 Web summonMinister 同形，只在目标尚未在场时生成「宣 X」交共核。
     pending_xuan = selected and (
         night is None or character.name not in present_names_at(session.db, int(night["id"]))
     )
     while True:
-        # A selection is its own scene turn; the first question remains the player's text.
         question = f"宣{character.name}" if pending_xuan else input("朕问：").strip()
         pending_xuan = False
         if not question:
@@ -282,8 +252,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                 return "court_break"
             continue
         cmd = _handle_court_command(session, question, character)
-        if cmd == "handled":
-            continue
         if cmd == "dismiss":
             _record_audience_exit(session, character.name)
             return "dismiss"
@@ -295,11 +263,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                 "court_break", write_gate=_cli_write_gate(session),
             )
             return "court_break"
-        if cmd and cmd.startswith("summon:"):
-            target_name = cmd.split(":", 1)[1]
-
-            return cmd
-        # 非控制指令 → 场景对话，并持久记录对话轮。
+        # 非控制指令（含召见口令）→ 场景对话，并持久记录对话轮。
         # #1902：建轮/快照/问话落库/回滚终态全走会话层同一生命周期（与 Web 共核），
         # 入口只留输入采集与呈现。薄替身分支已删：真 GameDB 恒有这套生命周期，
         # 为只替 LLM 缝的壳另留一条无轮路径，等于给测试维护第二套生产生命周期。
@@ -308,9 +272,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             # 建轮归「殿上」（与 Web 同、殿上历史读得到）；问话/回话挂大臣名
             # （与修前 CLI 语义同）。模型会话身份／前像水位由会话核按真实夜提供。
             message_speaker=character.name,
-            ensure_summon=(
-                character.name if question == f"宣{character.name}" else ""
-            ),
         )
         result = None
         translation_dispatched = False
@@ -702,22 +663,16 @@ def play_turn(session: GameSession) -> Optional[GameSession]:
     from ming_sim.issues import show_active_issues
     show_active_issues(session.db)
 
-    pending_character: Optional[Character] = None
-
     while True:
         if session.current_phase() == TurnPhase.SUMMONING:
-            character = pending_character or choose_minister(session)
-            pending_character = None
+            character = choose_minister(session)
             if character is None:
                 action = review_directives(session)
             else:
                 chat_action = minister_chat(session, character, selected=True)
                 if chat_action == "dismiss":
                     continue
-                if chat_action.startswith("summon:"):
-                    pending_character = session.content.characters[chat_action.split(":", 1)[1]]
-                    continue
-                # court_break 或对话结束 → 审阅
+                # court_break 或对话结束 → 审阅（召见换人已交共同场景生命周期）
                 action = review_directives(session)
         else:
             action = review_directives(session)

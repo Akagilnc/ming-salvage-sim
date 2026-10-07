@@ -1195,16 +1195,6 @@ def _explicit_draft_locality_scope(raw: object) -> Optional[str]:
     return _normalize_locality_scope(raw)
 
 
-def _is_manual_special_decree_fallback(payload: Mapping[str, Any]) -> bool:
-    """旧手拟空载占位同形（special_decree/policy/manual-directive）；不得当成功拟旨。"""
-    return (
-        str(payload.get("dossier_action_type") or "").strip() == "special_decree"
-        and str(payload.get("target_kind") or "").strip() == "policy"
-        and str(payload.get("target_id") or "").strip() == "manual-directive"
-        and str(payload.get("locality_scope") or "").strip() == "none"
-    )
-
-
 def build_draft_admission_resubmit_feedback(
     *,
     failure_reason: str,
@@ -1352,21 +1342,19 @@ def resubmit_draft_admission_payload(
         # 名册产物错走本票 B 路预算/留存，不得升成整月 SettlementAbort 连带好旨。
         # 结算路无召对现场，不另作戏内回禀；只把不在册事实当失败事实回喂下一次重写。
         raise ValueError(exc.fact) from exc
-    # #1769 结算路 B：仅「仍为拟旨且非旧手拟空载同形」才算本轮成功产物。
-    # #1902 N1：解析失败/缺键/非法枚举已在 extract 响亮上抛真因；此处只承接模型
+    # #1769 结算路 B：仅「仍为拟旨」才算本轮成功产物。
+    # #1902：解析失败/缺键/非法枚举已在 extract 响亮上抛真因；此处只承接模型
     # 明确返回的合法「无」（非解析失败）。空结构在 project 内直接拒收。
+    # 旧手拟空载占位专用识别已清退——无现役生产者，不靠占位协议拒收。
     if captured.get("draft_action") != "拟旨":
         raise ValueError("结算补交重写未返回拟旨意图")
-    payload = project_draft_extract_to_directive_payload(
+    return project_draft_extract_to_directive_payload(
         captured,
         decree_text=text,
         existing_mode=existing_mode or (bad_payload or {}).get("mode"),
         db=db,
         content=content,
     )
-    if _is_manual_special_decree_fallback(payload):
-        raise ValueError("结算补交重写落空载 special_decree fallback")
-    return payload
 
 
 def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = None) -> Dict[str, Any]:

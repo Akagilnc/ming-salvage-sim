@@ -140,7 +140,7 @@ def test_special_decree_without_national_is_single_empty(env):
         db.conn,
         payload={
             "target_kind": "policy",
-            "target_id": "manual-directive",
+            "target_id": "清丈田亩",
             "locality_scope": "none",
         },
         regions_content=content.regions,

@@ -565,9 +565,10 @@ def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _failed_secret_order_ids(db: Any, turn: int) -> set[int]:
-    """本回合已 failed 的密令 pending id 集；Web/CLI 结算差集共核。"""
-    if db is None or not hasattr(db, "list_pending_actions"):
-        return set()
+    """本回合已 failed 的密令 pending id 集；Web/CLI 结算差集共核。
+
+    生产 db 恒有 list_pending_actions（GameDB）；缺协议不空返回洗白。
+    """
     return {
         int(action.get("id") or 0)
         for action in db.list_pending_actions(int(turn), status="failed")
@@ -578,9 +579,10 @@ def _failed_secret_order_ids(db: Any, turn: int) -> set[int]:
 def _new_secret_order_failure_payloads(
     db: Any, turn: int, before_ids: set[int],
 ) -> List[Dict[str, Any]]:
-    """相对 before_ids 的新增密令失败投影；Web/CLI 入口直引，禁两端各写一份。"""
-    if db is None or not hasattr(db, "list_pending_actions"):
-        return []
+    """相对 before_ids 的新增密令失败投影；Web/CLI 入口直引，禁两端各写一份。
+
+    生产 db 恒有 list_pending_actions（GameDB）；缺协议不空返回洗白。
+    """
     return [
         _pending_action_failure_payload(action)
         for action in db.list_pending_actions(int(turn), status="failed")
@@ -1207,7 +1209,6 @@ class GameSession:
 
     def begin_audience_chat_turn(
         self, message: str, *, message_speaker: str = "",
-        ensure_summon: str = "",
     ) -> AudienceChatTurn:
         """建一轮召对：确保开夜 → 建 chat_turn → 落问话。返回句柄供收口/回滚。
 
@@ -1220,10 +1221,8 @@ class GameSession:
           修前语义同）；Web 留空 = 与建轮同为「殿上」。
 
         模型会话身份与前像水位由 ``scene_model_session_anchor`` 在真实夜确定后
-        提供，入口不再传入。
-
-        ``ensure_summon`` 非空时按「宣 X」同入口补入殿账。问话原文在此落库，
-        入口不再自行 append。
+        提供，入口不再传入。召见入殿由 ``scene_chat`` 认原口令落地，建轮不另
+        开 ensure_summon 旁路。
 
         建轮、问话、问话关联在同一 ``atomic`` 里提交。关联写失败则整段回滚，
         不留下无所属的问话，也不留下仍占着本夜的半成品轮。
@@ -1231,7 +1230,6 @@ class GameSession:
         from ming_sim.applier import atomic
         from ming_sim.audience_night import (
             SCENE_CHAT_SPEAKER,
-            ensure_summon_enter,
             get_open_night,
             open_night,
         )
@@ -1261,11 +1259,6 @@ class GameSession:
                 night_id=night_id,
                 status="generating",
             )
-            if ensure_summon:
-                ensure_summon_enter(
-                    self.db, night_id, ensure_summon,
-                    origin_chat_turn_id=chat_turn_id, commit=False,
-                )
             user_message_id = self.db.append_chat_message(
                 speaker, accepted_turn, "user", message,
             )

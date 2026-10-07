@@ -505,10 +505,8 @@ def test_draft_admission_resubmit_code_fault_aborts_with_error_pack(
 _NO_INTENT_REWRITE = {
     # 模型明确合法「无」→ extract 短路 draft_action=无；结算路 B 不得
     # replace_payload 毁掉原 pay_order。解析失败/缺键另走 ValueError 真因，不经此夹具。
+    # #1902：旧空载占位字段已随专用识别清退，本夹具只承「无」意图。
     "拟旨意图": "无",
-    "动作类型": "special_decree",
-    "目标类型": "policy",
-    "目标ID": "manual-directive",
 }
 
 
@@ -540,7 +538,6 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
         isinstance(e, dict) and e.get("key") == "arrears_priority_军饷"
         for e in (kept.get("entries") or [])
     )
-    assert kept.get("target_id") != "manual-directive"
     assert game.db.get_dossier_for_directive(did) is None
     assert len(_rejection_rows(game, did)) == 1
 
