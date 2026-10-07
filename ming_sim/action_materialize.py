@@ -298,24 +298,6 @@ def punish_actions_effective() -> frozenset:
     return punish_actions_allowed() - {"无"}
 
 
-def appoint_actions_allowed() -> frozenset:
-    """appoint_action 枚举唯一真源 = ACTION_CLUSTERS appointment FieldSpec.allowed。"""
-    cluster = cluster_by_kind("appointment")
-    if cluster is None:
-        raise RuntimeError("appointment cluster not installed")
-    for field in cluster.fields:
-        if field.name == "appoint_action":
-            if field.allowed is None:
-                raise RuntimeError("appoint_action FieldSpec.allowed missing")
-            return field.allowed
-    raise RuntimeError("appoint_action FieldSpec missing")
-
-
-def appoint_actions_effective() -> frozenset:
-    """可物化的任免动作（排除分类器占位「无」）；层 A 与 mapper 共引。"""
-    return appoint_actions_allowed() - {"无"}
-
-
 def issue_dispositions_allowed() -> frozenset:
     """弹劾潮处置枚举唯一真源 = ACTION_CLUSTERS punishment 行。"""
     cluster = cluster_by_kind("punishment")
@@ -589,26 +571,6 @@ def require_grant_allocation_shape(
         )
     out["amount"] = amt
     return out
-
-
-def _grant_target(intent: Dict[str, Any]) -> Tuple[str, str]:
-    action = str(intent.get("grant_action") or "").strip()
-    name = str(intent.get("name") or "").strip()
-    target_id = str(intent.get("target_id") or "").strip()
-    if action in {"赏赉", "发内帑", "加衔", "荫叙"}:
-        return "character", name or target_id
-    if action == "项目经费":
-        return "issue", target_id or name or action
-    if action == "协饷":
-        # 仅抛原始 target 文本；army id 解析在 stage 前完成，禁止把 region 标签硬改 army。
-        # #1503：target_kind/target_id 须显式透传；缺失不得默认 army，不得用 name 代填。
-        kind = str(intent.get("target_kind") or "").strip()
-        return kind, target_id
-    if action in {"赈灾", "招抚屯田"}:
-        # #652：执行型赈济／招抚屯田均锚定属地省；recovery 单核读 region target。
-        kind = "region" if target_id and target_id != action else "issue"
-        return kind, target_id or name or action
-    return "issue", target_id or name or action
 
 
 def _resolve_xiexang_army_id(db: Any, raw_target: str) -> str:

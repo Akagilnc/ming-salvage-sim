@@ -1408,7 +1408,7 @@ class GameDB:
                 agno_session_id TEXT NOT NULL DEFAULT '',
                 agno_runs_before INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'active',
-                -- #498：对话轮锚定夜容器；0=未挂夜。索引在 init 幂等补缺。
+                -- #498：对话轮锚定夜容器；0=未挂夜。
                 night_id INTEGER NOT NULL DEFAULT 0,
                 -- 与 story_ledger_entries.seq 共用夜内单调序（allocate_night_seq）
                 night_seq INTEGER NOT NULL DEFAULT 0,
@@ -1427,6 +1427,8 @@ class GameDB:
                 ON chat_turns(minister_name, turn, status, id);
             CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id
                 ON chat_turns(status, id);
+            CREATE INDEX IF NOT EXISTS idx_chat_turns_night
+                ON chat_turns(night_id, id);
 
             -- #498 召对夜一等容器 + 故事账本（ADR 0035）
             CREATE TABLE IF NOT EXISTS audience_nights (
@@ -1579,6 +1581,8 @@ class GameDB:
                 ON decree_dossiers(status, id);
             CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
                 ON decree_dossiers(target_kind, target_id, status);
+            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor
+                ON decree_dossiers(executor_kind, executor_id, status);
             -- ADR 0054：只存新案卷→旧案卷；关系本身无状态位。
             CREATE TABLE IF NOT EXISTS decree_dossier_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2240,53 +2244,6 @@ class GameDB:
         self._apply_region_city_levels()
         # #1843：不再从存量 issues 回填 character_knowledge_sources。
         # 正常 insert_issue 写端登记来源；见闻读口可按持久记录 participant_roster 发现。
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_chat_turns_night "
-            "ON chat_turns(night_id, id)"
-        )
-        self.ensure_column(
-            "story_ledger_entries", "origin_ref", "TEXT NOT NULL DEFAULT ''")
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_origin_ref "
-            "ON story_ledger_entries(origin_ref) WHERE origin_ref != ''"
-        )
-        self.ensure_column(
-            "pending_actions", "night_id", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "pending_actions", "night_approved", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "pending_actions", "version", "INTEGER NOT NULL DEFAULT 1")
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_pending_actions_source_turn "
-            "ON pending_actions(source_chat_turn_id, status, id)"
-        )
-        # fiscal_config 科目元数据列（数据驱动预算目录）
-        self.ensure_column("fiscal_config", "budget_role", "TEXT NOT NULL DEFAULT 'fixed'")
-        self.ensure_column("fiscal_config", "account", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("fiscal_config", "direction", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("fiscal_config", "display", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("fiscal_config", "sort_order", "INTEGER NOT NULL DEFAULT 9999")
-        self.ensure_column(
-            "economy_ledger", "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
-        )
-        for _fiscal_prov in (
-            "fiscal_config_creations",
-            "fiscal_config_changes",
-            "fiscal_config_tombstones",
-        ):
-            self.ensure_column(
-                _fiscal_prov, "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
-            )
-        self.ensure_column("fiscal_config", "origin_ref", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "factions", "leverage_offset", "REAL NOT NULL DEFAULT 0"
-        )
-        self.ensure_column(
-            "turn_reports", "attendant_message", "TEXT NOT NULL DEFAULT ''",
-        )
-        self.ensure_column(
-            "turn_reports", "title", "TEXT NOT NULL DEFAULT ''",
-        )
         # 结局总结：每局结局触发时落一条（单 campaign 一库，turn 为主键，对齐 turn_reports）。
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS ending_summary (
@@ -2307,10 +2264,6 @@ class GameDB:
                 value TEXT NOT NULL
             )
             """
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "
-            "ON decree_dossiers(executor_kind, executor_id, status)"
         )
         from ming_sim.entities.textual_fact import TextualFactStore
         from ming_sim.entities.affair import AffairStore
@@ -2883,30 +2836,6 @@ class GameDB:
         if commit:
             self.conn.commit()
         return base_key
-
-    def ensure_column(self, table: str, column: str, definition: str) -> bool:
-        """确保 table.column 存在。返回 True=本次新增了该列（真·一次性迁移），
-        False=列已存在（后续 load 的常态）。多数 caller 忽略返回值即可。"""
-        columns = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
-        if column not in columns:
-            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-            return True
-        return False
-
-    def _ensure_decree_dossier_locality_indexes(self) -> None:
-        """#654 / #1837：pending 幂等键＝(pending_action_id, region_id, action_type)；
-        directive 仍 (directive_id, region_id)；secret_order 不动。"""
-        self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_pending_action")
-        self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_directive")
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_pending_action "
-            "ON decree_dossiers(pending_action_id, region_id, action_type) "
-            "WHERE pending_action_id > 0"
-        )
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive "
-            "ON decree_dossiers(directive_id, region_id) WHERE directive_id > 0"
-        )
 
     # 城市等级 0-5（静态，史实分级；未列出的地区默认 0=游牧/孤岛/边荒）。
     # 用途：城防大炮上限(city_level×8) + 将来经济/内政。1627 实况，非现代省份概念。
@@ -7803,24 +7732,6 @@ class GameDB:
             (nxt, nid),
         )
         return nxt
-
-    def complete_rescript_summon_scaffold_turn(self, chat_turn_id: int) -> None:
-        """#657：空问话召见 scaffold 消费成功 → status=consumed（非在飞终态唯一写点）。
-
-        list_in_flight 不含 consumed；与 failed（真失败）分立。body 已非空时
-        再入走 consumed 短路，不走 ensure CAS。
-        """
-        ctid = int(chat_turn_id or 0)
-        if ctid <= 0:
-            return
-        owns = self.owns_transaction()
-        self.conn.execute(
-            "UPDATE chat_turns SET status='consumed' "
-            "WHERE id=? AND status='generating' AND user_message_id IS NULL",
-            (ctid,),
-        )
-        if owns:
-            self.conn.commit()
 
     def list_in_flight_chat_turns(
         self,
@@ -13956,37 +13867,6 @@ class GameDB:
         return True
 
 
-    def merge_execution_note(
-        self, dossier_id: int, fragment: str, *, commit: bool = True,
-    ) -> str:
-        """下游说明片段合并写口（#565；S12/#567 消费方）。
-
-        初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
-        """
-        text = str(fragment or "")
-        if not text:
-            raise ValueError("说明片段不能为空")
-        row = self.get_decree_dossier(dossier_id)
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        existing = str(row.get("execution_note") or "")
-        if text in existing.split("；"):
-            merged = existing
-        elif existing:
-            merged = f"{existing}；{text}"
-        else:
-            merged = text
-        if merged != existing:
-            self.conn.execute(
-                """
-                UPDATE decree_dossiers
-                SET execution_note=?, updated_at=CURRENT_TIMESTAMP
-                WHERE id=?
-                """,
-                (merged, int(dossier_id)),
-            )
-            self._commit_dossier_write(commit)
-        return merged
 
     def validate_joint_liability_affected_parties(
         self, affected_parties: object, outcome: str,

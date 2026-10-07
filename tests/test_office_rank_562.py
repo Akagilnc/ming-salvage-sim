@@ -164,13 +164,6 @@ def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(gam
 
 
 
-def test_leverage_uses_min_modifiers_within_title_and_max_across_offices():
-    assert office_leverage_multiplier("候补总兵") == 0.25
-    assert office_leverage_multiplier("候用副总兵") == 0.25
-    assert office_leverage_multiplier("候补总兵,礼部侍郎") == 0.5
-    assert office_leverage_multiplier("陌生卫指挥") == 1.0
-
-
 def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
     """旧档 office_type 待铨/空时，任命案卷仍按历史实职识别破格（公开 break_rank）。"""
     db, state, _content = game

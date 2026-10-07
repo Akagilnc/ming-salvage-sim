@@ -553,10 +553,6 @@ def test_due_order_bad_shapes_raise(bad):
     p["due_order"] = bad
     with pytest.raises(ValueError):
         settle_tick(st, p, [])
-    # oracle 路径对称：同样锁在 ValueError 域
-    from ming_sim.fiscal_tick import _DUE_KEYS, _oracle_order
-    with pytest.raises(ValueError):
-        _oracle_order({"due_order": bad}, "due_order", _DUE_KEYS)
 
 def test_haircut_param_bad_values_raise():
     st, p = _board()

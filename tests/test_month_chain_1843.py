@@ -16,11 +16,6 @@ from ming_sim.session_write_queue import get_session_write_queue
 from tests.month_chain_helpers import make_light_session
 from tests.dossier_test_helpers import create_test_secret_order
 
-def _forbid_extractor(monkeypatch):
-    monkeypatch.setattr(
-        "ming_sim.session.write_decree_with_agno", lambda *_a, **_k: "诏",
-    )
-
 def _stage_edict(db, state, minister, text, category, delta, affair_id):
     pending_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister,

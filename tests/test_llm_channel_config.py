@@ -683,13 +683,6 @@ def test_cli_supports_reasoning_strength_matrix(runner, expected):
     assert cli_supports_reasoning_strength(runner) is expected
 
 
-def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
-    """#1271：能力名单单源在 cli_backend（与 effort/thinking 表同缝）。"""
-    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
-
-    assert CLI_REASONING_STRENGTH_RUNNERS == frozenset({"codex", "claude", "grok", "pi"})
-
-
 def test_agent_factories_omit_max_tokens_on_param_surface(monkeypatch):
     """#1472：ming_sim.agents 现役工厂 + gate 真实参数面无 max_tokens 键。"""
     from types import SimpleNamespace
@@ -780,14 +773,14 @@ def test_gate_evidence_config_omits_max_tokens():
     assert "max_tokens" not in block
 
 
-def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatch, game, tmp_path):
-    """#1794：召对/拟诏真实入口 → OpenAIChat 构造缝头表整张到达；不跑真实 LLM。"""
-    from ming_sim.agents import bind_content as agents_bind, create_rescript_revise_agent
+def test_scene_entry_passes_default_headers_at_transport(monkeypatch, game, tmp_path):
+    """#1794：召对真实入口 → OpenAIChat 构造缝头表整张到达；不跑真实 LLM。"""
+    from ming_sim.agents import bind_content as agents_bind
     from ming_sim.materials import PreparedMaterials
     from ming_sim.registry import create_scene_agent
 
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    db, state, content = game
+    _db, _state, content = game
     agents_bind(content)
 
     headers = {
@@ -816,9 +809,4 @@ def test_scene_and_rescript_entries_pass_default_headers_at_transport(monkeypatc
         content=content,
     )
     assert captured, "召对入口须构造 OpenAIChat"
-    assert captured[-1].get("default_headers") == headers
-
-    before = len(captured)
-    create_rescript_revise_agent(cfg, db)
-    assert len(captured) == before + 1, "改票入口须再构造一次 OpenAIChat"
     assert captured[-1].get("default_headers") == headers

@@ -15,7 +15,6 @@ from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence
 from agno.db.sqlite import SqliteDb
 
 from ming_sim.agents import (
-    _dump_llm_messages,
     create_promulgation_judge_agent,
     parse_agent_json,
     run_agent_text,
@@ -36,7 +35,6 @@ from ming_sim.flows import apply_fixed_period_flows, raise_fixed_period_flow_abo
 from ming_sim.issues import (
     apply_historical_fiscal_rates,
 )
-from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import imperial_authority_band, power_band, qualitative_character_axis
 from ming_sim.decree_vocabulary import (
@@ -149,11 +147,6 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
     except (TypeError, ValueError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
-
-
-def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) -> bool:
-    """#658：stalled 廷议不进颁布集合（判官/stub/校验/消费共用）。"""
-    return str(_dossier_payload_dict(dossier).get("deliberation_state") or "") == "stalled"
 
 
 def build_promulgation_judge_context(
@@ -579,54 +572,6 @@ def _rescript_decisions(
             ],
         })
     return decisions
-
-
-def write_decree_with_agno(
-    llm_config: LLMConfig,
-    agno_db: SqliteDb,
-    state: GameState,
-    directives: List[sqlite3.Row],
-    db: Optional[GameDB] = None,
-) -> str:
-    if not directives:
-        raise LLMContractError("无草案不能拟诏。")
-    # 已办结密令的 result 作为实质证据清单注入——皇帝下旨拿人/定罪时可引为依据。
-    closed_evidence: List[Dict[str, object]] = []
-    if db is not None:
-        for o in db.list_secret_orders(status="done"):
-            if o.get("result"):
-                closed_evidence.append({
-                    "id": int(o["id"]), "title": o["title"],
-                    "assignee": o["minister_name"], "evidence": o["result"],
-                })
-    # #1769：跨月未成案 draft 在既有 directives 投影上标 admission_status（输入侧；
-    # 不新建通知；不另抽 helper）。
-    current_turn = int(state.turn)
-    directive_feed: List[Dict[str, object]] = []
-    for row in directives:
-        item: Dict[str, object] = {"text": str(row["text"] or "")}
-        if int(row["turn"]) < current_turn:
-            item["admission_status"] = "上月未入档"
-        directive_feed.append(item)
-    payload = {
-        "turn": {"year": state.year, "period": state.period, "turn": state.turn},
-        "directives": directive_feed,
-        "closed_secret_orders": closed_evidence,
-        "instruction": "合并成一份正式诏书正文。closed_secret_orders 是已办结密令查得的实证，"
-                       "若草案据某密令查办之事拿人定罪，可在诏书里引该实证为据，使罪名落到实处。",
-    }
-    try:
-        agent = create_decree_writer_agent(llm_config, agno_db)
-        run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-        _dump_llm_messages(run_output, "拟诏", agent=agent)
-        text = extract_agent_text(run_output)
-    except LLMUnavailable:
-        raise
-    except Exception as error:
-        raise llm_unavailable_from_error(error, "拟诏") from error
-    if not text.strip():
-        raise LLMContractError("拟诏输出为空。")
-    return text.strip()
 
 
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:

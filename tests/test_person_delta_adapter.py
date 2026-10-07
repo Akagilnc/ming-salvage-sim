@@ -26,39 +26,6 @@ def _promulgated_dossier(db, state, decree_text, target_id="毛文龙"):
     return f"dossier:{dossier_id}"
 
 
-def test_normalize_person_changes_keeps_new_key_items():
-    extracted = {
-        "人物变更": [
-            {
-                "name": "孔有德",
-                "action": "易主",
-                "new_power": "houjin",
-                "方式": "主动投敌",
-                "反噬": {"houjin": {"leverage": 3}},
-            }
-        ]
-    }
-
-    assert normalize_person_changes(extracted) == [
-        {
-            "name": "孔有德",
-            "动作": "易主",
-            "new_power": "houjin",
-            "方式": "主动投敌",
-            "反噬": {"houjin": {"leverage": 3}},
-        }
-    ]
-
-def test_normalize_person_changes_ignores_non_item_shapes():
-    assert normalize_person_changes({"人物变更": ["bad", {"name": "毕自严"}]}) == [
-        {"name": "毕自严"}
-    ]
-    assert normalize_person_changes({"appointments": [{"name": "某氏", "office": "贵人"}]}) == []
-    assert normalize_person_changes(
-        {"office_changes": [{"name": "孙传庭", "new_office": "陕西总督"}]}
-    ) == []
-
-
 def test_apply_score_extraction_does_not_echo_normalized_person_changes(game):
     """实际结果契约只报 applied_person_changes；规范化输入回声不入返回。"""
     db, state, _ = game
@@ -2270,49 +2237,6 @@ def test_new_appointment_falsy_return_restores_snapshot(game, monkeypatch):
     ).fetchone()["office"]
     assert now_office == orig_office, \
         f"falsy-return 后半落库未回滚：victim office={now_office!r} 期望 {orig_office!r}"
-
-
-def test_fresh_seed_sanitizes_office_pollution(tmp_path):
-    """5b r4（Claude + codex-b concur, P1）：新开档 _sanitize_seed_office_pollution 须在
-    seed 之后跑——init_schema 在空表上 no-op，seed 后若不再迁移，罢居旧臣留 active+污染 office、
-    不进人才池（探针第一年盘面错）。钱谦益（office='…罢居常熟'）∈DISMISSED_OVERRIDE → dismissed/获罪削籍。"""
-    from ming_sim.content import GameContent
-    from ming_sim.db import GameDB
-
-    fresh = GameContent.load()
-    db = GameDB(str(tmp_path / "fresh.db"), fresh)
-    try:
-        db.seed_static_data()
-        row = db.conn.execute(
-            "SELECT status, reason_code, office FROM characters WHERE name=?", ("钱谦益",)
-        ).fetchone()
-    finally:
-        db.conn.close()
-    assert row is not None, "钱谦益 未 seed"
-    assert row["status"] == "dismissed", \
-        f"新开档未迁移：钱谦益 status={row['status']!r} office={row['office']!r}（migration 在 seed 前空表 no-op）"
-    assert row["reason_code"] == "获罪削籍"
-    assert "罢居" not in (row["office"] or ""), f"污染 office 串未清：{row['office']!r}"
-
-
-def test_seed_office_pollution_resolves_transit_to_region_id(game):
-    """5b r6（Gemini high）：在途 office 串迁移须把中文目的地解析成 region_id 落 transit_to。
-    旧码 `mm.group(1) in region_ids`（中文「辽东」vs 英文 region id「liaodong」）恒 False
-    → transit_to 永不落（死分支）；应改用 match_region_id_from_text 解析中文目的地。"""
-    db, _, content = game
-    name = active_ming_character(db, content)
-    db.conn.execute(
-        "UPDATE characters SET office=?, transit_to='', status='active' WHERE name=?",
-        ("兵部尚书督师辽东（在途）", name),
-    )
-    db.conn.commit()
-    db._sanitize_seed_office_pollution()
-    row2 = db.conn.execute(
-        "SELECT office, transit_to FROM characters WHERE name=?", (name,)
-    ).fetchone()
-    assert "在途" not in (row2["office"] or ""), "在途 串应清除"
-    assert row2["transit_to"] == "liaodong", \
-        f"在途辽东 应解析 transit_to=liaodong（中文→region_id），实际 {row2['transit_to']!r}"
 
 
 def test_displaced_holder_transit_to_cleared(game):

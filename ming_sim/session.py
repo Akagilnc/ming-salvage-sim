@@ -95,7 +95,9 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
             try:
                 _os.remove(_os.path.join(saves_dir, stale))
             except OSError:
-                pass
+                logger.exception(
+                    "prune_auto_saves failed to remove %s", stale,
+                )
 
 
 # TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；
@@ -143,12 +145,6 @@ class ChatTurnResult:
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
     pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
-    # #502 AC5：多道并存时口头准驳含糊 → 结构化含糊态（含候选集），驱动大臣当场追问哪一道。
-    directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
-    # Typed decree validation recovery (failed_fields + LLM report); sync/retry must project it.
-    decree_validation_failure: Optional[Dict[str, Any]] = None
-    # #1765：密令落不了库 → 大臣揣摩/追问（landing_gaps + report）；与拟旨 recovery 同投影缝。
-    secret_order_landing_recovery: Optional[Dict[str, Any]] = None
     # #1842：ctid>0 时 scene_chat 只暂存转译参数；回话 persist 后由
     # schedule_pending_scene_translation 启动（ADR 0155 / 0036：回话落定后起）。
     pending_audience_translation: Optional[Dict[str, Any]] = None
@@ -367,13 +363,10 @@ def _appointment_intent_is_current_office_noop(
     if conn is None or not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?",
-            (canonical,),
-        ).fetchone()
-    except sqlite3.Error:
-        return False
+    row = conn.execute(
+        "SELECT status, office FROM characters WHERE name = ?",
+        (canonical,),
+    ).fetchone()
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -1985,6 +1978,7 @@ class GameSession:
             prune_auto_saves(saves_dir, campaign_id)
             return target
         except Exception:
+            logger.exception("auto_save failed tag=%s", tag)
             return None
 
     def close(self, *, write_gate_already_held: bool = False) -> None:
