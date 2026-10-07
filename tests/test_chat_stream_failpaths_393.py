@@ -470,8 +470,8 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
     )
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids", lambda *_a, **_k: set())
+    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads", lambda *_a, **_k: [])
 
     # #1902：非流式颁诏入口退役，唯一入口流式；LLM 死的 typed 键（code/message/
     # provider_message/status_code）仍原样下发。

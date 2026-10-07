@@ -1507,12 +1507,10 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
 
     await act(async () => { await Promise.resolve(); });
+    // 结构契约：等待面/锁饰不因 SSE stage/thinking/text 出现；不在整 host 上禁自由事件正文（#1902 TEST-PROSE）。
     expect(host.querySelector('[data-testid="settlement-wait-progress"]')).toBeNull();
     expect(host.querySelector("[data-testid=settlement-lock-decor]")).toBeNull();
     expect(host.querySelector(".settlement-lock")).toBeNull();
-    expect(host.textContent).not.toContain("推敲片段甲");
-    expect(host.textContent).not.toContain("奏章片段乙");
-    expect(host.textContent).not.toContain("任意显示文案");
     // 核账叙事仍在（王承恩固定提示）
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
 

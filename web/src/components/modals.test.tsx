@@ -452,9 +452,11 @@ describe("ChatModal — #545 final composer contract", () => {
     const onClose = vi.fn();
     const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", onSend, onClose });
 
-    expect(host.textContent).not.toContain("转入诏书草案");
-    expect(host.textContent).not.toContain("任免");
     const buttons = Array.from(host.querySelectorAll("button"));
+    const buttonLabels = buttons.map((button) => (button.textContent || "").trim());
+    // chrome 契约落在按钮标签，不在含召对自由正文的整 host 上禁词（#1902 TEST-PROSE）。
+    expect(buttonLabels.some((label) => label.includes("转入诏书草案"))).toBe(false);
+    expect(buttonLabels.some((label) => label.includes("任免"))).toBe(false);
     const leave = buttons.find((button) => button.textContent?.includes("退出召对")) as HTMLButtonElement;
     const retreat = buttons.find((button) => button.textContent?.includes("散夜")) as HTMLButtonElement;
     expect(leave).toBeTruthy();

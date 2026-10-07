@@ -564,6 +564,31 @@ def _pending_action_failure_payload(pa: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _failed_secret_order_ids(db: Any, turn: int) -> set[int]:
+    """本回合已 failed 的密令 pending id 集；Web/CLI 结算差集共核。"""
+    if db is None or not hasattr(db, "list_pending_actions"):
+        return set()
+    return {
+        int(action.get("id") or 0)
+        for action in db.list_pending_actions(int(turn), status="failed")
+        if action.get("kind") == "secret_order"
+    }
+
+
+def _new_secret_order_failure_payloads(
+    db: Any, turn: int, before_ids: set[int],
+) -> List[Dict[str, Any]]:
+    """相对 before_ids 的新增密令失败投影；Web/CLI 入口直引，禁两端各写一份。"""
+    if db is None or not hasattr(db, "list_pending_actions"):
+        return []
+    return [
+        _pending_action_failure_payload(action)
+        for action in db.list_pending_actions(int(turn), status="failed")
+        if action.get("kind") == "secret_order"
+        and int(action.get("id") or 0) not in before_ids
+    ]
+
+
 def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: Optional[LLMConfig] = None) -> None:
     """启动/读档时以 DB characters 表重建内存人物表。
     DB 是持久化真相；不要在这里修写 DB。"""

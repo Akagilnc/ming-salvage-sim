@@ -338,8 +338,8 @@ def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_game_write_gate", _null_cm)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids", lambda *_a, **_k: set())
+    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads", lambda *_a, **_k: [])
 
     # #1902：非流式颁诏入口退役，改走唯一流式入口（decisions 终态）。
     from tests.issue_stream_helpers import consume_issue_stream_response
@@ -393,8 +393,8 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
-    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids", lambda *_a, **_k: set())
+    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads", lambda *_a, **_k: [])
 
     result = web_app.api_advance_without_edict()
     assert actions == ["resolve", "end_turn", "refresh"]
@@ -447,9 +447,9 @@ def test_web_advance_entry_awaiting_keeps_phase_and_decisions(game, monkeypatch)
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", _null_cm)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids", lambda *_a, **_k: set())
     monkeypatch.setattr(
-        web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: []
+        web_app, "_new_secret_order_failure_payloads", lambda *_a, **_k: []
     )
 
     result = web_app.api_advance_without_edict()

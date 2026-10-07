@@ -354,11 +354,12 @@ def _cli_process_clock() -> float:
 
 @dataclass
 class _CliProcessOutcome:
-    """子进程收尾事实（退出码 / stderr 诊断 / stdin 写错），由增量读循环回填。"""
+    """子进程收尾事实（退出码 / stderr 诊断 / stdin·管道读错），由增量读循环回填。"""
 
     returncode: Optional[int] = None
     stderr: str = ""
     stdin_error: Optional[BaseException] = None
+    stream_error: Optional[BaseException] = None
 
 
 def _cli_idle_seconds() -> float:
@@ -449,10 +450,15 @@ def _iter_cli_process_lines(
                 if not chunk:
                     break
                 chunks.put((kind, chunk))
-        except (OSError, ValueError) as exc:
-            # 判死 kill 后管道会在读中途关掉（ValueError: closed file / OSError），
-            # 是收尾正常形状；只窄捕获这一类并留痕，其余错原样上抛（ADR 0005）。
-            logger.debug("CLI %s 管道读中断（子进程已收尾）：%s", kind, exc)
+        except BaseException as exc:
+            # 读取失败不得洗成普通 EOF／成功收尾：记真因交父循环既有失败口；
+            # finally 仍发哨兵，避免父侧空等。SystemExit/KeyboardInterrupt 不吞。
+            # 主动 cancel（idle 等）若已在父侧抛出，以父侧终态为准，不另造监督层。
+            if isinstance(exc, (SystemExit, KeyboardInterrupt)):
+                raise
+            if result.stream_error is None:
+                result.stream_error = exc
+            logger.warning("CLI %s 管道读取失败：%s", kind, exc)
         finally:
             # 哨兵必发：否则读循环等不到 EOF，会把收尾误当静默。
             chunks.put((kind, None))
@@ -524,6 +530,12 @@ def _iter_cli_process_lines(
                     break
                 line, pending_out = pending_out[: nl + 1], pending_out[nl + 1 :]
                 yield line
+        # 与 stdin_error 同形：读失败不得当成功 EOF 交付；半截 stdout 由调用方丢弃。
+        # 在等进程退出前升格，避免已知读故障仍空转 idle。
+        if result.stream_error is not None:
+            raise RuntimeError(
+                f"CLI 管道读取失败：{result.stream_error}"
+            ) from result.stream_error
         # 管道已 EOF 但进程未退：静默同样计入 idle 预算，仍无总墙钟。
         while proc.poll() is None:
             check_idle_budget(
@@ -813,6 +825,11 @@ def _iter_cli_runner_text(
             raise RuntimeError(
                 f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{outcome.stdin_error}"
             ) from outcome.stdin_error
+        # 管道读失败已在 _iter_cli_process_lines 升格；此处再挡一层，防直接读 outcome 的调用方漏接。
+        if outcome.stream_error is not None:
+            raise RuntimeError(
+                f"{runner} 调用失败（子进程管道读取失败）：{outcome.stream_error}"
+            ) from outcome.stream_error
         # #1902 T2 / 锚定宪法：交付保留宿主原正文，不以 strip 改写呈现；
         # 空产出只以「去空白后是否为空」作判定，不把裁剪结果当交付物。
         primary = stdout_text if stdout_text.strip() else final_text

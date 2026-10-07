@@ -90,7 +90,9 @@ from ming_sim.session import AudienceChatTurn, GameSession
 from ming_sim.session import (
     AUTO_SAVE_PREFIX,
     AudienceAdmission,
+    _failed_secret_order_ids,
     _is_summonable_court_minister,
+    _new_secret_order_failure_payloads,
     _pending_action_failure_payload,
 )
 from ming_sim.highlight_judge import (
@@ -4801,30 +4803,6 @@ async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     return {"orders": orders}
 
 
-def _failed_secret_order_ids_for_turn(game: WebGame, turn: int) -> set[int]:
-    db = getattr(game, "db", None)
-    if db is None or not hasattr(db, "list_pending_actions"):
-        return set()
-    return {
-        int(action.get("id") or 0)
-        for action in db.list_pending_actions(int(turn), status="failed")
-        if action.get("kind") == "secret_order"
-    }
-
-
-def _new_secret_order_failure_payloads_for_turn(
-    game: WebGame, turn: int, before_ids: set[int],
-) -> List[Dict[str, Any]]:
-    db = getattr(game, "db", None)
-    if db is None or not hasattr(db, "list_pending_actions"):
-        return []
-    return [
-        _pending_action_failure_payload(action)
-        for action in db.list_pending_actions(int(turn), status="failed")
-        if action.get("kind") == "secret_order" and int(action.get("id") or 0) not in before_ids
-    ]
-
-
 def _capture_settlement_failure_snapshot(
     current: Optional[List[Dict[str, Any]]],
     game: WebGame,
@@ -4838,18 +4816,18 @@ def _capture_settlement_failure_snapshot(
 
     已物化 list（含空 list）原样保留、不再查询。仅 current is None 且仍在保护窗时
     才次生查询；查询失败 logger.exception + 返回 None，主异常由调用方继续 raise。
-    成功路径不走本 helper——直调 _new_secret_order_failure_payloads_for_turn。
+    成功路径不走本 helper——直调 session._new_secret_order_failure_payloads。
     """
     if current is not None:
         return current
     try:
         if hold_gate:
             with _game_write_gate(game):
-                return _new_secret_order_failure_payloads_for_turn(
-                    game, turn_before, failed_before,
+                return _new_secret_order_failure_payloads(
+                    game.db, turn_before, failed_before,
                 )
-        return _new_secret_order_failure_payloads_for_turn(
-            game, turn_before, failed_before,
+        return _new_secret_order_failure_payloads(
+            game.db, turn_before, failed_before,
         )
     except Exception:
         logger.exception(
@@ -5128,7 +5106,7 @@ def api_advance_without_edict(
     # 绝不在 async event loop 上跑同步 sleep（会冻结全服务）。
     game = get_game()
     turn_before = int(getattr(game.state, "turn", 0) or 0)
-    failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+    failed_before = _failed_secret_order_ids(game.db, turn_before)
     from ming_sim.audience_night import AudienceNightError
     # #1749：entry 释放 write_gate 后 drain 可关旧库；完整错误快照须在持闸窗物化进
     # failure_snapshot（None=未知；list=已物化）。门后只读 holder，禁再查库。
@@ -5157,8 +5135,8 @@ def api_advance_without_edict(
                     game.session.end_turn()
                     game.refresh_turn()
                 # §2.2：end_turn/refresh 后、return 前直查并立即赋 holder（失败进原异常链）。
-                failure_snapshot = _new_secret_order_failure_payloads_for_turn(
-                    game, turn_before, failed_before)
+                failure_snapshot = _new_secret_order_failure_payloads(
+                    game.db, turn_before, failed_before)
                 payload = {
                     "state": game.state_payload(),
                     "awaiting_decision": awaiting,
@@ -5268,7 +5246,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         try:
             game = get_game()
             turn_before = int(game.state.turn)
-            failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+            failed_before = _failed_secret_order_ids(game.db, turn_before)
             # #1241 S1：受理样板收 helper；stream 锁语义 = 阻塞 _game_write_gate（与 issue 同）。
             # 终态 __done__/__decisions__ 须在 entry（含 clear）成功后才入队——
             # 与 settled_ok 同核：clear 抛错走 __error__，禁先推成功终态。
@@ -5283,8 +5261,8 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     )
                     decree = game.session.last_decree
                     # §2.2：第一次 query 成功处立刻赋 holder；与 terminal 同一份 list。
-                    failure_snapshot = _new_secret_order_failure_payloads_for_turn(
-                        game, turn_before, failed_before)
+                    failure_snapshot = _new_secret_order_failure_payloads(
+                        game.db, turn_before, failed_before)
                     if result.awaiting:
                         # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新。
                         terminal = ("__decisions__", _settlement_player_payload(
@@ -5390,7 +5368,7 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
         try:
             game = get_game()
             turn_before = int(game.state.turn)
-            failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+            failed_before = _failed_secret_order_ids(game.db, turn_before)
             # #1322：相位快速预检前移到受理/抢锁前（假 200/锁排队拖成数十秒）；
             # 锁内 submit_decisions 仍做权威复查——与既有 TOCTOU 双查同款。
             if game.session.current_phase() != TurnPhase.AWAITING_DECISION:
@@ -5414,8 +5392,8 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                     # 不整段 body 持锁（join 仍在 gate 外）；成功 clear 仍走样板 False 支短持。
                     # §2.2：与 end_turn 同一短持段内直查写 holder；terminal 用同一份。
                     with _game_write_gate(game):
-                        failure_snapshot = _new_secret_order_failure_payloads_for_turn(
-                            game, turn_before, failed_before,
+                        failure_snapshot = _new_secret_order_failure_payloads(
+                            game.db, turn_before, failed_before,
                         )
                         advanced = int(game.state.turn) != turn_before
                         if advanced:

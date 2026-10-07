@@ -155,7 +155,7 @@ def test_resolve_decisions_stream_phase_precheck_before_lock(monkeypatch):
     gate.acquire()  # 模拟结算 worker 持锁；若预检在锁后，本测会阻塞至超时
     game = _ResolveGame(TurnPhase.SETTLING.value, gate)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids", lambda *_a, **_k: set())
 
     try:
         # gate held: precheck must finish without acquiring it (hang → CI final line)
@@ -187,9 +187,9 @@ def test_resolve_decisions_stream_awaiting_still_submits_under_lock(monkeypatch)
     game.session.submit_hitl_choices = _submit_hitl  # type: ignore[method-assign]
     game.session.last_decree = "诏曰：发帑。"
     monkeypatch.setattr(web_app, "get_game", lambda: game)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids", lambda *_a, **_k: set())
     monkeypatch.setattr(
-        web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: []
+        web_app, "_new_secret_order_failure_payloads", lambda *_a, **_k: []
     )
 
     events = asyncio.run(_consume_resolve_sse())
@@ -242,9 +242,9 @@ def test_load_save_409_during_resolve_body_keeps_old_session_tail(monkeypatch):
     game.state_payload = lambda: {"ok": True}  # type: ignore[attr-defined]
 
     monkeypatch.setattr(web_app, "get_game", lambda: game)
-    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids", lambda *_a, **_k: set())
     monkeypatch.setattr(
-        web_app, "_new_secret_order_failure_payloads_for_turn", _failures_after_submit
+        web_app, "_new_secret_order_failure_payloads", _failures_after_submit
     )
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: False)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
