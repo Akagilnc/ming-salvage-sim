@@ -7240,8 +7240,8 @@ def apply_score_extraction(
     落账只认有序声明路径：``ordered_deltas`` 缺省时按 extracted 字段原序派生，
     ``ordered_effect_event_ids`` 缺省为空（无声明归属＝独立效果）。
 
-    ``effect_sequence``：C0 effects 数组的逐笔 payload；提供时按交代先后交错
-    落各笔的普通字段，批次副作用仍只跑一次（#1844）。
+    ``effect_sequence``：C0 effects 的逐笔 payload；缺省时由 extracted 派生单步
+    序列。对象／数组／直接 apply 共用同一编排，批次副作用仍只跑一次（#1844/#1899）。
     """
     caller_transaction = db.conn.in_transaction
     commit_now = not caller_transaction
@@ -7495,6 +7495,11 @@ def _apply_score_extraction_body(
                     ]
             stamped_sequence.append((stamped_step, step_ordered, step_event_ids))
         effect_sequence = stamped_sequence
+    else:
+        # 直接 apply 与未传序列的调用方：单步接入同一编排，不另开分类回落。
+        effect_sequence = [
+            (extracted, ordered_deltas, ordered_effect_event_ids or {}),
+        ]
 
     def _origin_ref_from_result_item(item: Mapping[str, object] | None) -> str:
         return db.affairs.origin_ref_from_result_item(
@@ -7883,8 +7888,7 @@ def _apply_score_extraction_body(
         *,
         apply_event_owned: bool = False,
     ) -> None:
-        # apply_event_owned：effect_sequence 步进内消费已预检接纳的事件战果；
-        # 无序列的直接 apply 仍 False，战果由 deferred 成功分支复用本 helper 落账。
+        # apply_event_owned：步进内消费已预检接纳的事件战果（现役编排恒为 True）。
         step_new_armies = step_extracted.get("new_armies") or []
         declared = step_event_ids.get("new_armies") or []
         for idx, army_item in enumerate(step_new_armies):
@@ -7935,8 +7939,6 @@ def _apply_score_extraction_body(
     deferred_loss_pair_changes: List[Dict[str, object]] = []
     loss_pair_running: Dict[str, int] = {}
     loss_pair_final_by_pair: Dict[Tuple[str, str], Dict[str, int]] = {}
-    petition_outcomes_applied = False
-
     def _apply_fiscal_removes_items(removes: list) -> None:
         for remove in removes or []:
             key = str(remove.get("key") or "").strip()
@@ -8441,50 +8443,27 @@ def _apply_score_extraction_body(
             apply_event_owned=apply_event_owned,
         )
 
-    if effect_sequence is not None:
-        economy_index_base = 0
-        for step_extracted, step_ordered, step_event_ids in effect_sequence:
-            for key, value in step_ordered.get("metric_delta") or []:
-                for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
-                    applied_metric[metric] = applied_metric.get(metric, 0) + delta
-            # 先实体后钱：同笔内欠饷加额须先于补饷拨款可见。
-            # 已预检接纳的事件战果亦在本笔消费，后项可读前项事件落账存量。
-            _apply_ordinary_entity_step(
-                step_extracted, step_ordered, step_event_ids, apply_event_owned=True,
-            )
-            step_moves = list(step_extracted.get("economy_moves") or [])
-            _apply_economy_moves_list(step_moves, index_base=economy_index_base)
-            economy_index_base += len(step_moves)
-            # #1844/#1899：财政与亲裁结局进入逐笔接缝，退出固定分类回灌旁路。
-            _apply_world_step_fiscal_and_petition(step_extracted)
-            # #1844/#1899：派系/阶级/加派/人口/投贼/势力同缝按交代先后。
-            _apply_world_step_ordered_stock(
-                step_extracted, step_ordered, step_event_ids, apply_event_owned=True,
-            )
-        petition_outcomes_applied = True
-        _finalize_loss_pair_changes()
-        power_changes = list(absorption_power_changes) + power_changes
-    else:
-        metric_items = ordered_deltas.get("metric_delta") or []
-        for key, value in metric_items:
+    economy_index_base = 0
+    for step_extracted, step_ordered, step_event_ids in effect_sequence:
+        for key, value in step_ordered.get("metric_delta") or []:
             for metric, delta in _apply_metric_dict(state, {key: value}, db=db).items():
                 applied_metric[metric] = applied_metric.get(metric, 0) + delta
-        # 2) economy_moves
-        # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
-        # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
-        _apply_economy_moves_list(list(extracted.get("economy_moves") or []), index_base=0)
-        _apply_faction_items(ordered_deltas.get("faction_delta") or [])
-        _apply_class_items(ordered_deltas.get("class_delta") or [])
-        # 4) new_armies → region_delta / army_delta (复用旧 db 方法)
-        # 无序列的直接 apply：实现复用同一 helper；正式入口对象/数组均走 effect_sequence。
-        _apply_surcharge_items(extracted.get("surcharge_decrees") or [])
-        _apply_population_transfer_items(extracted.get("population_transfers") or [])
+        # 先实体后钱：同笔内欠饷加额须先于补饷拨款可见。
+        # 已预检接纳的事件战果亦在本笔消费，后项可读前项事件落账存量。
         _apply_ordinary_entity_step(
-            extracted, ordered_deltas, ordered_effect_event_ids or {},
+            step_extracted, step_ordered, step_event_ids, apply_event_owned=True,
         )
-        _apply_bandit_absorption_items(extracted.get("bandit_absorptions") or [])
-        power_changes = list(absorption_power_changes)
-        _apply_power_update_pairs(ordered_deltas.get("power_updates") or [])
+        step_moves = list(step_extracted.get("economy_moves") or [])
+        _apply_economy_moves_list(step_moves, index_base=economy_index_base)
+        economy_index_base += len(step_moves)
+        # #1844/#1899：财政与亲裁结局进入逐笔接缝，退出固定分类回灌旁路。
+        _apply_world_step_fiscal_and_petition(step_extracted)
+        # #1844/#1899：派系/阶级/加派/人口/投贼/势力同缝按交代先后。
+        _apply_world_step_ordered_stock(
+            step_extracted, step_ordered, step_event_ids, apply_event_owned=True,
+        )
+    _finalize_loss_pair_changes()
+    power_changes = list(absorption_power_changes) + power_changes
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
 
@@ -8620,10 +8599,7 @@ def _apply_score_extraction_body(
 
     # #1891/#1892：三饷亲裁语义落账——批红经 #1815 单一语义写口置定事件结局，原始选项标签
     # 不再旁路代批（ADR 0153:5）。留中／未给标签则不写终态：本疏已答而事件未终。
-    # effect_sequence 路径已在步进内落过亲裁结局；无序列的直接 apply 在此承接。
-    if not petition_outcomes_applied:
-        _apply_petition_outcomes_from(extracted)
-
+    # 亲裁结局已在 effect_sequence 步进内落过。
 
     for new_issue in (issue_summary.get("new_issues") or []):
         if not (
@@ -8641,17 +8617,16 @@ def _apply_score_extraction_body(
             new_issue["reason"] = "饷率事件结局只经御批写口"
             continue
         outcome_payload: Dict[str, object] = extracted
-        if effect_sequence is not None:
-            for step_extracted, _ordered, _ids in effect_sequence:
-                step_outcomes = step_extracted.get("事件结局")
-                if (
-                    isinstance(step_outcomes, dict)
-                    and _event_outcome_label(step_outcomes, event_id)
-                ):
-                    outcome_payload = {
-                        "事件结局": {event_id: step_outcomes[event_id]},
-                    }
-                    break
+        for step_extracted, _ordered, _ids in effect_sequence:
+            step_outcomes = step_extracted.get("事件结局")
+            if (
+                isinstance(step_outcomes, dict)
+                and _event_outcome_label(step_outcomes, event_id)
+            ):
+                outcome_payload = {
+                    "事件结局": {event_id: step_outcomes[event_id]},
+                }
+                break
         outcome_label, outcome_error = _strategic_event_outcome_label_or_error(
             event_id,
             outcome_payload,
@@ -8665,32 +8640,8 @@ def _apply_score_extraction_body(
             continue
         event_person_changes = _event_person_changes(event_id)
         # 归属与信封预检已由 preflight_declared_event_effects 在写入前判定一次。
-        # effect_sequence 路径：region/army/power/new_armies 已在步进落账。
-        # 无序列的直接 apply：复用同一 ordinary/power helper，不另维护适配副本。
+        # region/army/power/new_armies 已在 effect_sequence 步进落账，此处只补人物。
         event_person_results: List[Dict[str, object]] = []
-        if effect_sequence is None and event_id not in landed_event_stock_ids:
-            event_region_items = _ordered_strategic_items("region_delta", event_id)
-            event_army_items = _ordered_strategic_items("army_delta", event_id)
-            event_power_items = _ordered_strategic_items("power_updates", event_id)
-            event_new_armies = _event_new_armies(event_id)
-            mini_extracted: Dict[str, object] = {"new_armies": list(event_new_armies)}
-            mini_ordered: Dict[str, list[tuple[str, object]]] = {
-                "region_delta": list(event_region_items),
-                "army_delta": list(event_army_items),
-                "power_updates": list(event_power_items),
-            }
-            mini_event_ids: dict[str, list[str]] = {
-                "new_armies": [event_id] * len(event_new_armies),
-                "region_delta": [event_id] * len(event_region_items),
-                "army_delta": [event_id] * len(event_army_items),
-                "power_updates": [event_id] * len(event_power_items),
-            }
-            _apply_ordinary_entity_step(
-                mini_extracted, mini_ordered, mini_event_ids, apply_event_owned=True,
-            )
-            _apply_power_update_pairs(
-                event_power_items, step_event_ids=mini_event_ids, apply_event_owned=True,
-            )
         for item in event_person_changes:
             try:
                 origin_ref = _origin_ref_from_result_item(item)
@@ -8708,7 +8659,7 @@ def _apply_score_extraction_body(
                 [clean_item], origin_ref=origin_ref, require_origin=True,
             ))
         # Admitted C3 events are not re-rejected here: preflight already decided the
-        # envelope; owned stock lands via effect_sequence or the shared helper above.
+        # envelope; owned stock already landed in effect_sequence.
         db.mark_event_triggered(state, event_id, terminal_reason=outcome_label, commit=commit_now)
         apply_event_cascading_invalidations(state, db, commit=commit_now)
         new_issue["reason"] = "事件已记为触发，软判结果已落主账"
@@ -8722,13 +8673,7 @@ def _apply_score_extraction_body(
                 applied_person_changes.append(row)
     _apply_person_changes_itemwise(post_issue_person_changes, phase="post")
 
-    # 6.4–7) 无 effect_sequence 的直接 apply：财政按 removes→creates→changes；
-    # 正式入口（对象/数组）均已在序列步进内落完。
-    if effect_sequence is None:
-        _apply_fiscal_removes_items(list(extracted.get("fiscal_removes") or []))
-        _apply_fiscal_creates_items(list(extracted.get("fiscal_creates") or []))
-        _apply_fiscal_changes_items(list(extracted.get("fiscal_changes") or []))
-        _finalize_loss_pair_changes()
+    # 财政已在 effect_sequence 步进内落完。
 
     successful_authority_changes = [
         item for item in authority_change_results
