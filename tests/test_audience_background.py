@@ -86,7 +86,6 @@ class _FakeSession(HallAdmissionSessionMixin):
             "_record_persisted_audience_reply_failure",
             # #1902 M2：现役恢复面取数（reply_retries → pending_audience_recovery_retries）
             "_hall_turn_ids_for_night",
-            "_open_night_hall_turn_ids",
             "_chat_message_speaker",
             "pending_audience_reply_retries",
             "pending_post_reply_retries",

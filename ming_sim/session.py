@@ -1276,10 +1276,6 @@ class GameSession:
             int(row["id"]) for row in self.db.list_hall_chat_turns(nid)
         }
 
-    def _open_night_hall_turn_ids(self) -> "set[int]":
-        """本夜殿上轮 id 集（开夜缺省入口）。"""
-        return self._hall_turn_ids_for_night()
-
     def pending_audience_reply_retries(
         self, *, night_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:

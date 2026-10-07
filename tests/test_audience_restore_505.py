@@ -300,23 +300,24 @@ class _RetrySession:
     def close_night_after_chat_if_needed(self, court_action, *, write_gate=None, barrier_ticket=None):
         return None
 
-    def _open_night_hall_turn_ids(self):
-        # #1902 M1：夜域筛选单源；轻壳挂真方法。
-        from ming_sim.session import GameSession
-        return GameSession._open_night_hall_turn_ids(self)
 
-    def pending_audience_reply_retries(self):
+
+    def _hall_turn_ids_for_night(self, night_id=None):
+        from ming_sim.session import GameSession
+        return GameSession._hall_turn_ids_for_night(self, night_id)
+
+    def pending_audience_reply_retries(self, **kwargs):
         # #1902 L1：殿上中断取数共核。
         from ming_sim.session import GameSession
-        return GameSession.pending_audience_reply_retries(self)
+        return GameSession.pending_audience_reply_retries(self, **kwargs)
 
-    def pending_post_reply_retries(self):
+    def pending_post_reply_retries(self, **kwargs):
         from ming_sim.session import GameSession
-        return GameSession.pending_post_reply_retries(self)
+        return GameSession.pending_post_reply_retries(self, **kwargs)
 
-    def pending_audience_recovery_retries(self):
+    def pending_audience_recovery_retries(self, **kwargs):
         from ming_sim.session import GameSession
-        return GameSession.pending_audience_recovery_retries(self)
+        return GameSession.pending_audience_recovery_retries(self, **kwargs)
 
     def resume_post_reply_recovery(self, *args, **kwargs):
         from ming_sim.session import GameSession
