@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 from pathlib import Path
@@ -208,14 +207,13 @@ def _chat_stream(client: TestClient, minister: str, msg: str) -> dict:
     _assert_not_bare_500(r, step="chat/stream")
     assert r.status_code == 200, r.text
     events = _parse_sse(r.text)
-    assert not any(e.get("event") == "error" for e in events), r.text
-    acc = next(e for e in events if e.get("event") == "accepted")
-    acc_data = json.loads(acc["data"])
+    assert not any(name == "error" for name, _ in events), r.text
+    acc_data = next(data for name, data in events if name == "accepted")
+    assert isinstance(acc_data, dict), acc_data
     assert acc_data.get("campaign_id") and int(acc_data.get("night_id") or 0) >= 1
     assert int(acc_data.get("chat_turn_id") or 0) >= 1
-    done = next((e for e in events if e.get("event") == "done"), None)
-    assert done is not None, f"chat/stream missing done; events={events!r}"
-    done_data = json.loads(done["data"]) if isinstance(done.get("data"), str) else done.get("data")
+    done_data = next((data for name, data in events if name == "done"), None)
+    assert done_data is not None, f"chat/stream missing done; events={events!r}"
     assert isinstance(done_data, dict), done_data
     mid = int(done_data.get("minister_message_id") or 0)
     assert mid >= 1, f"done missing minister_message_id: {done_data!r}"
@@ -392,8 +390,8 @@ def test_new_game_write_path_direct_and_via_exit(tracer_client, monkeypatch):
     _assert_not_bare_500(cont, step="continue")
     assert cont.status_code == 200
     events = _parse_sse(cont.text)
-    terminal = events[-1] if events else {}
-    assert terminal.get("event") == "done", cont.text
+    terminal_name = events[-1][0] if events else ""
+    assert terminal_name == "done", cont.text
     g3 = web_app.web_game
     assert g3 is not None and g3 is not g2
     assert _campaign(g3) == c2

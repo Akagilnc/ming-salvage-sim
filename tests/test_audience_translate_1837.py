@@ -754,10 +754,16 @@ def test_translate_empty_success_still_dispatches_without_failure(game, monkeypa
 
 
 def test_appointment_without_text_is_rejected_not_templated(game):
-    """P7：任免缺正文拒收，不拼「任命X为Y」。"""
+    """P7：任免缺正文拒收；坏项不入 pending 账。"""
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     person = _hong_name(db, content)
+    before_pending = {
+        int(r["id"])
+        for r in db.conn.execute(
+            "SELECT id FROM pending_actions WHERE status='pending'"
+        ).fetchall()
+    }
     result = dispatch_declaration(
         db, state,
         {"commissions": [{
@@ -769,13 +775,13 @@ def test_appointment_without_text_is_rejected_not_templated(game):
     )
     assert result.commissions.applied == []
     assert result.commissions.rejected
-    # 库中不得出现模板拼装正文
-    rows = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE status='pending'"
-    ).fetchall()
-    for row in rows:
-        payload = json.loads(row["payload_json"] or "{}")
-        assert f"任命{person}为陕西巡抚" != str(payload.get("text") or "")
+    after_pending = {
+        int(r["id"])
+        for r in db.conn.execute(
+            "SELECT id FROM pending_actions WHERE status='pending'"
+        ).fetchall()
+    }
+    assert after_pending == before_pending
 
 
 def _active_chat_turn(db, state, night_id: int) -> int:
@@ -959,8 +965,6 @@ def test_pure_office_dossier_uses_payload_text_not_template(game):
     ).fetchone()
     assert dossier is not None, "纯任免应收夜成 appointment 案卷"
     assert dossier["decree_text"] == edict
-    template = f"任命{person}为陕西巡抚"
-    assert dossier["decree_text"] != template
     dossier_payload = json.loads(dossier["payload_json"] or "{}")
     assert dossier_payload.get("text") == edict
 

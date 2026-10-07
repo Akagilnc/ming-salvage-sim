@@ -139,12 +139,10 @@ def test_third_strike_transfers_to_bandit_via_adapter(game):
     assert owner_log is not None
     assert count_log is not None
     assert owner_log["new_value"] in BANDIT_POWERS
-    # 核销 → owner（清 latch 若有则夹在中间或与 owner 同序前）
+    # 核销先于 owner；清 latch 若有则亦先于 owner（id 不可等，不写被包含区间 OR）。
     assert writeoff["id"] < owner_log["id"]
     if latch_clear is not None:
-        assert writeoff["id"] < latch_clear["id"] <= owner_log["id"] or (
-            latch_clear["id"] < owner_log["id"]
-        )
+        assert latch_clear["id"] < owner_log["id"]
 
 
 def test_third_strike_does_not_repeat_while_already_bandit(game):
