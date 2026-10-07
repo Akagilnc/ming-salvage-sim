@@ -1,6 +1,0 @@
-path	line	ctx	kind	verdict	snippet
-ming_sim/db.py	3563	GameDB._ensure_office_type_parents	B_TABLE_PROBE:character_offices	EXCLUDED_INIT_MIGRATION	if self._table_exists("character_offices"):
-ming_sim/db.py	3574	GameDB._ensure_office_type_parents	B_TABLE_PROBE:character_offices	EXCLUDED_INIT_MIGRATION	if self._table_exists("character_offices"):
-ming_sim/db.py	9779	GameDB._agno_session_columns	B_TABLE_PROBE:agno_sessions	EXCLUDED_OPTIONAL	if not self._table_exists("agno_sessions"):
-ming_sim/db.py	9848	GameDB._agno_table_run_dicts	B_TABLE_PROBE:agno_runs	EXCLUDED_OPTIONAL	if not self._table_exists("agno_runs"):
-ming_sim/db.py	9937	GameDB._truncate_agno_runs_in_tx	B_TABLE_PROBE:agno_runs	EXCLUDED_OPTIONAL	if self._table_exists("agno_runs"):
