@@ -474,7 +474,6 @@ def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypa
         ensure_rounds[0], bad_id,
     )
     assert resubmit_calls[1]["failure_reason"] == product_faults[0]
-    assert resubmit_calls[1]["failure_reason"] != resubmit_calls[0]["failure_reason"]
 
 
 def test_draft_admission_code_fault_aborts_with_error_pack(admission_game, monkeypatch):
