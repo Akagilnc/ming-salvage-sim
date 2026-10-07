@@ -382,13 +382,10 @@ def _appointment_intent_is_current_office_noop(
     if conn is None or not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?",
-            (canonical,),
-        ).fetchone()
-    except sqlite3.Error:
-        return False
+    row = conn.execute(
+        "SELECT status, office FROM characters WHERE name = ?",
+        (canonical,),
+    ).fetchone()
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -409,12 +406,9 @@ def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool
     if conn is None or not clean:
         return False
     key = _canonical_minister_key(content, clean, db)
-    try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?", (key,)
-        ).fetchone()
-    except sqlite3.Error:
-        return False
+    row = conn.execute(
+        "SELECT status, office FROM characters WHERE name = ?", (key,)
+    ).fetchone()
     if row is None:
         return False
     return str(row["status"] or "") == "active" and bool(str(row["office"] or "").strip())

@@ -236,6 +236,7 @@ def _login_shell_path() -> Optional[str]:
         if m:
             discovered = m.group(1).strip()
     except Exception:
+        logger.exception("login shell PATH discovery failed")
         discovered = ""
     _DISCOVERED_LOGIN_PATH = discovered
     return discovered or None
@@ -342,8 +343,8 @@ def _trace(record: Dict[str, Any]) -> None:
             _trace_announced = True
         if announce:
             print(f"[cli_backend] LLM trace → {_TRACE_PATH}", flush=True)
-    except Exception as exc:  # trace 永不应中断游戏
-        _log(f"trace 写盘失败：{exc}")
+    except Exception:  # trace 永不应中断游戏，但必须留真因（ADR 0005）
+        logger.exception("LLM trace write failed path=%s", _TRACE_PATH)
 
 
 def _warm_keychain() -> None:
@@ -354,7 +355,7 @@ def _warm_keychain() -> None:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
         )
     except Exception:
-        pass
+        logger.exception("keychain warm failed")
 
 
 # CLI 子进程读循环轮询步长（秒）：只决定「多快发现静默/退出」，不是任何超时预算。
@@ -397,11 +398,12 @@ def _terminate_cli_process(proc: Any) -> None:
         proc.terminate()
         proc.wait(timeout=5)
     except Exception:
+        logger.exception("CLI process terminate failed; escalating to kill")
         try:
             proc.kill()
             proc.wait(timeout=5)
         except Exception:
-            pass
+            logger.exception("CLI process kill failed")
 
 
 def _iter_cli_process_lines(

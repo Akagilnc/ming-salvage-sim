@@ -8848,15 +8848,8 @@ class GameDB:
             any(item.get("excluded_names") for item in items)
         )
         source_snapshot_supplied = knowledge_items is not None
-        settlement_items = [
-            item for item in items
-            if str(item.get("source_id") or "") == f"settlement:narrative:{state.turn}"
-            and not item.get("excluded_names")
-        ]
         if public_body is None:
             public_report = (
-                "\n".join(str(item.get("body") or "") for item in settlement_items)
-                if settlement_items else
                 "\n".join(str(item.get("body") or item.get("title") or "")
                           for item in items if not item.get("excluded_names"))
                 if source_snapshot_supplied or has_restricted_source else str(report or "")
@@ -19007,10 +19000,8 @@ class GameDB:
         result = []
         for row in rows:
             source_id = str(row["source_id"] or "")
-            if (not character_name and (
-                (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
-                or re.fullmatch(r"settlement:narrative:\d+", source_id)
-            )):
+            if (not character_name and
+                    source_id.startswith("turn_report:") and not source_id.endswith(":public")):
                 continue
             item = {"turn": int(row["turn"]), "year": int(row["year"]), "period": int(row["period"]),
                     "kind": row["kind"], "title": row["title"], "body": row["body"], "source_id": row["source_id"]}

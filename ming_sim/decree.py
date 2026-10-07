@@ -605,15 +605,12 @@ def write_decree_with_agno(
     # 已办结密令的 result 作为实质证据清单注入——皇帝下旨拿人/定罪时可引为依据。
     closed_evidence: List[Dict[str, object]] = []
     if db is not None:
-        try:
-            for o in db.list_secret_orders(status="done"):
-                if o.get("result"):
-                    closed_evidence.append({
-                        "id": int(o["id"]), "title": o["title"],
-                        "assignee": o["minister_name"], "evidence": o["result"],
-                    })
-        except Exception:
-            closed_evidence = []
+        for o in db.list_secret_orders(status="done"):
+            if o.get("result"):
+                closed_evidence.append({
+                    "id": int(o["id"]), "title": o["title"],
+                    "assignee": o["minister_name"], "evidence": o["result"],
+                })
     # #1769：跨月未成案 draft 在既有 directives 投影上标 admission_status（输入侧；
     # 不新建通知；不另抽 helper）。
     current_turn = int(state.turn)

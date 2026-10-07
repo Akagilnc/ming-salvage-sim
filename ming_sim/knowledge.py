@@ -9,7 +9,6 @@ free of a second copy of the world state.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Dict
 
 from ming_sim.participant_roster import participant_roster_names
@@ -345,8 +344,7 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
         # Plain turn-report rows are rendered aggregate read models,
         # not independently authorizable sources.  Their explicit ``:public``
         # counterparts remain source-scoped and are projected below.
-        if ((source_id.startswith("turn_report:") and not source_id.endswith(":public"))
-                or re.fullmatch(r"settlement:narrative:\d+", source_id)):
+        if source_id.startswith("turn_report:") and not source_id.endswith(":public"):
             continue
         participants = participant_roster_names(row["participant_roster"])
         try:
@@ -592,7 +590,6 @@ def build_character_knowledge(
                 source_id.startswith("opening:")
                 or source_id.startswith("directive:")
                 or (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
-                or source_id == f"settlement:narrative:{turn}"
             )
             if int(row.get("turn") or 0) == turn and not aggregate_row:
                 rows.append(row)
@@ -687,7 +684,6 @@ def build_character_knowledge(
         # character-specific turn_report projection above is the only archive
         # representation allowed into the audience view.
         if not str(row.get("source_id") or "").startswith("turn_report:")
-        and not re.fullmatch(r"settlement:narrative:\d+", str(row.get("source_id") or ""))
         # When a source-preserving archive projection exists for this turn,
         # expose it once through that archive rather than beside its source row.
         and (
