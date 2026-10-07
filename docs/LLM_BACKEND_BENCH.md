@@ -217,7 +217,7 @@ choices 单一真源：`ming_sim.cli_backend.GATE_CLI_RUNNERS`。非法名 argpa
 MING_SIM_TRACE_PATH=/tmp/gate-trace.jsonl \
   python scripts/family_tail_acceptance_570.py \
     --runner kimi --model <alias> --samples 1 \
-    --output docs/evidence/issue-570-acceptance-kimi.json
+    --output /tmp/issue-570-acceptance-kimi.json
 ```
 
 ### API 通道（`--channel api`）— ds-flash / OpenCode Go
@@ -227,21 +227,19 @@ OpenCode Go OpenAI 兼容端点（#1256 实测写死）：
 - **base_url**：`https://opencode.ai/zen/v1`
 - **model id**：裸名 `deepseek-v4-flash`（**不要** `opencode-go/deepseek-v4-flash`）
 - **key**：`~/.local/share/opencode/auth.json` 的 `opencode-go.key`，经 `--api-key` 或 env（`MING_SIM_API_KEY` / `OPENAI_API_KEY`）注入，**不落库**
-- 端点核实 + 冒烟记录：[`docs/evidence/issue-1256-opencode-go-ds-flash-api.json`](evidence/issue-1256-opencode-go-ds-flash-api.json)
-
 ```bash
 # 族尾闸新跑默认 ds-flash 档
 export MING_SIM_API_KEY="$(python3 -c 'import json,pathlib;print(json.loads(pathlib.Path.home().joinpath(".local/share/opencode/auth.json").read_text())["opencode-go"]["key"])')"
 export MING_SIM_API_BASE_URL=https://opencode.ai/zen/v1
 python scripts/family_tail_acceptance_570.py --channel api \
   --model deepseek-v4-flash --samples 1 \
-  --output docs/evidence/issue-570-acceptance-ds-flash.json
+  --output /tmp/issue-570-acceptance-ds-flash.json
 
 # 争议复裁 / 同基对照才上 opus（CLI）
 MING_SIM_TRACE_PATH=/tmp/gate-opus.jsonl \
   python scripts/family_tail_acceptance_570.py \
     --runner claude --model claude-opus-4-8 --samples 1 \
-    --output docs/evidence/issue-570-acceptance-opus-rejudge.json
+    --output /tmp/issue-570-acceptance-opus-rejudge.json
 ```
 
 证据 JSON 的 `method.config` / 顶层 `config` 块：`channel` / `runner` / `model` 如实（api 时 `runner=""`）。
