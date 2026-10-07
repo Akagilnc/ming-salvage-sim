@@ -233,6 +233,7 @@ def _login_shell_path() -> Optional[str]:
         if m:
             discovered = m.group(1).strip()
     except Exception:
+        logger.exception("login shell PATH discovery failed")
         discovered = ""
     _DISCOVERED_LOGIN_PATH = discovered
     return discovered or None
@@ -319,25 +320,6 @@ def _log(msg: str) -> None:
         print(f"[cli_backend] {msg}", flush=True)
 
 
-def _infer_tag(prompt: str) -> str:
-    """从 prompt（含 system 段）猜是哪个 agent 在调用，方便复盘。
-
-    兼容无显式 tag 的调用日志；按专属标识推断，避免邸报正文的词污染分类。
-    """
-    p = prompt
-    if "扮演被皇帝召见" in p or "大臣扮演" in p:
-        return "minister"
-    if "module_allowed_fields" in p or "score_extractor" in p or "本月结算抽取" in p:
-        return "extractor"
-    if "simulator_payload" in p:
-        return "simulator"
-    if "诏书" in p and "拟" in p:
-        return "decree"
-    if "只输出合法 JSON" in p or "整理" in p:
-        return "sanitizer"
-    return "other"
-
-
 def _trace(record: Dict[str, Any]) -> None:
     if _TRACE_DISABLED:
         return
@@ -358,8 +340,8 @@ def _trace(record: Dict[str, Any]) -> None:
             _trace_announced = True
         if announce:
             print(f"[cli_backend] LLM trace → {_TRACE_PATH}", flush=True)
-    except Exception as exc:  # trace 永不应中断游戏
-        _log(f"trace 写盘失败：{exc}")
+    except Exception:  # trace 永不应中断游戏，但必须留真因（ADR 0005）
+        logger.exception("LLM trace write failed path=%s", _TRACE_PATH)
 
 
 def _warm_keychain() -> None:
@@ -370,7 +352,7 @@ def _warm_keychain() -> None:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
         )
     except Exception:
-        pass
+        logger.exception("keychain warm failed")
 
 
 # CLI 子进程读循环轮询步长（秒）：只决定「多快发现静默/退出」，不是任何超时预算。
@@ -1085,7 +1067,7 @@ def _run_backend_for_config(
     直接编程路径（职官分类/各 extractor/国策补全/连通性 verify）的唯一咽喉：
     每次调用 try/finally 写一条 trace，谁调都记，不靠各调用方自觉手写。
     （agno 游戏路径走 CliChat.invoke 自有 trace，与此咽喉不重叠。）
-    tag 空时退回 _infer_tag(prompt)。
+    tag 空时记 other；由调用方显式申报，不从自由 prompt 猜身份。
 
     #1465 切片③：本入口是结算/拟旨等非 Agent CLI extractor 的**次数入口**——
     在此包一次 run_with_transport，operation 调单次子进程；runner 内禁私有重试。"""
@@ -1120,7 +1102,7 @@ def _run_backend_for_config(
     finally:
         _trace({
             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "seq": -1, "tag": tag or _infer_tag(prompt),
+            "seq": -1, "tag": tag or "other",
             "backend": _backend_label(llm_config), "model_id": model_id,
             "dur_s": round(time.monotonic() - t0, 1), "attempts": attempts,
             "wants_json": False,
@@ -2950,7 +2932,7 @@ class CliChat(OpenAIChat):
         with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
             _seq += 1
             seq = _seq
-        tag = _infer_tag(prompt)
+        tag = str(getattr(self, "trace_tag", "") or "").strip() or "other"
         t0 = time.monotonic()
         error = None
         text = ""

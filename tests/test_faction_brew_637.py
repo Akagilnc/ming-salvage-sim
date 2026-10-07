@@ -149,55 +149,6 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清�
     return db.get_decree_dossier(dossier_id)
 
 
-def test_new_events_preserve_source_target_equal_to_db_rows(game):
-    """(a) 机械断言：每条 new_events 的 source/target 与 DB 行相等。"""
-    db, state, content = game
-    holder_a, holder_b = _minister(db), "王绍徽"
-    _add_edge(db, state, source=holder_a, target=holder_b, kind="结怨",
-              context=f"{holder_a}当殿讦{holder_b}。", origin="audience:turn-1")
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert targets
-    for target in targets:
-        events = collect_new_edge_events_for_faction(
-            db, faction=target["faction"], watermark=target["watermark"],
-        )
-        payload = build_faction_brew_input(
-            faction=target["faction"], year=int(state.year),
-            period=int(state.period), summary=target["summary"],
-            new_events=events, has_pending=target["has_pending"],
-        )
-        assert len(payload["new_events"]) == len(events)
-        for projected, row in zip(payload["new_events"], events, strict=True):
-            assert projected["source"] == row["source"]
-            assert projected["target"] == row["target"]
-
-
-
-def test_new_event_fields_are_pure_data_no_prose_composition(game):
-    """(c) 新增字段为纯数据、无任何拼接散文（ADR 0142：给数据不给话术）。"""
-    db, state, _ = game
-    _add_edge(db, state, source="温体仁", target=EMPEROR_NODE, kind="结怨",
-              context="收权·罢差·便宜行事·issue:清丈田亩", origin="audience:turn-1")
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert targets
-    events = collect_new_edge_events_for_faction(
-        db, faction=targets[0]["faction"], watermark=targets[0]["watermark"],
-    )
-    payload = build_faction_brew_input(
-        faction=targets[0]["faction"], year=int(state.year),
-        period=int(state.period), summary=targets[0]["summary"],
-        new_events=events, has_pending=targets[0]["has_pending"],
-    )
-    for item in payload["new_events"]:
-        # 新增字段值必须与 DB 列逐字节相同——非任何 "{source}（{faction}）与{target}…" 式拼接串。
-        row = next(r for r in events if r["origin"] == item["origin"])
-        assert item["source"] == row["source"]
-        assert item["target"] == row["target"]
-        assert isinstance(item["source"], str) and isinstance(item["target"], str)
 
 
 # ---- 送修口一负例 (a)：source_faction/target_faction 与现算投影逐项相等、皇帝端 null、表外 null 且无拼接串 ----

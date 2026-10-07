@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from ming_sim.constants import ECONOMY_ACCOUNTS, TURN_UNIT
-from ming_sim.assets import format_money, load_json_asset
+from ming_sim.constants import TURN_UNIT
+from ming_sim.assets import load_json_asset
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError
@@ -128,16 +128,6 @@ def match_region_id_from_text(text: str) -> Optional[str]:
 
 def match_army_id_from_text(text: str) -> Optional[str]:
     return _match_army(text, _ctx().armies)
-
-
-def state_context(state: GameState) -> str:
-    parts = []
-    for key, value in state.metrics.items():
-        if key in ECONOMY_ACCOUNTS:
-            parts.append(f"{key}{format_money(value)}")
-        else:
-            parts.append(f"{key}{value}")
-    return "，".join(parts)
 
 
 def _identity_bucket(value: object) -> str:

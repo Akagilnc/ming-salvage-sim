@@ -30,11 +30,3 @@ def print_header(state: GameState, db: Optional[GameDB] = None) -> None:
         # #321 P7：不在 CLI header 直显 army_report（含 mutiny_tier/morale_text/arrears_text）；
         # 军情只经既有 LLM 装配面（army_report/detail/roster → knowledge/tools/intelligence）。
     print()
-
-
-def metric_delta(before: Dict[str, int], after: Dict[str, int]) -> Dict[str, int]:
-    keys = list(before.keys())
-    for key in after:
-        if key not in before:
-            keys.append(key)
-    return {key: after.get(key, 0) - before.get(key, 0) for key in keys if after.get(key, 0) != before.get(key, 0)}

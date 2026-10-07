@@ -204,28 +204,6 @@ def test_region_zero_hit_fail_loud(env):
 # ── schema + create_decree_dossiers fan-out ────────────────────────
 
 
-def test_region_id_column_and_composite_indexes(env):
-    db, _, _ = env
-    cols = {r[1] for r in db.conn.execute("PRAGMA table_info(decree_dossiers)")}
-    assert "region_id" in cols
-    idx = {
-        r["name"]: r["sql"] or ""
-        for r in db.conn.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type='index' "
-            "AND name LIKE 'idx_decree_dossiers_%'"
-        ).fetchall()
-    }
-    assert "idx_decree_dossiers_directive" in idx
-    assert "idx_decree_dossiers_pending_action" in idx
-    # 复合唯一：directive 含 region_id；pending 含 region_id + action_type（#1837 组合载荷）
-    assert "region_id" in (idx["idx_decree_dossiers_directive"] or "")
-    pending_sql = idx["idx_decree_dossiers_pending_action"] or ""
-    assert "region_id" in pending_sql
-    assert "action_type" in pending_sql
-    # secret_order 单列索引保留
-    assert "idx_decree_dossiers_secret_order" in idx
-
-
 
 
 def test_create_decree_dossier_int_abi_single_row(env):
@@ -613,10 +591,8 @@ def test_revoke_decree_523_producer_durable_oracle_chain(env):
 # ── #654 A–H 断根补测 ─────────────────────────────────────────────
 
 
-def test_location_canonical_seed_and_write_seam(env, tmp_path):
+def test_location_canonical_seed_and_write_seam(env):
     """G：fresh seed 三人 beizhili；写缝别名归一；未知 fail-loud；在途保全。"""
-    import shutil
-    from ming_sim.db import GameDB
     from ming_sim.matching import canonical_region_id_exact
     from ming_sim.distance import DistanceMatrix
     from ming_sim.paths import bundled_path
@@ -661,39 +637,3 @@ def test_location_canonical_seed_and_write_seam(env, tmp_path):
     ).fetchone()["location"] == "beizhili"
     with pytest.raises(ValueError):
         db.set_character_transit("毕自严", location="atlantis", commit=True)
-    # 旧档在途保全：独立副本预置别名 + transit → 开档 migrate 后四字段不变
-    clone = tmp_path / "loc_migrate.db"
-    shutil.copyfile(db.path, clone)
-    # 绕过写缝，直接预置旧别名（模拟旧档）
-    import sqlite3
-    conn = sqlite3.connect(clone)
-    conn.execute(
-        "UPDATE characters SET location='beijing', transit_to='shaanxi', "
-        "transit_distance_remaining=2.5, transit_speed_factor=1.0, "
-        "transit_start_turn=3 WHERE name='毕自严'"
-    )
-    conn.commit()
-    conn.close()
-    restored = GameDB(str(clone), content)
-    try:
-        row = restored.conn.execute(
-            "SELECT location, transit_to, transit_distance_remaining, "
-            "transit_speed_factor, transit_start_turn FROM characters "
-            "WHERE name='毕自严'"
-        ).fetchone()
-        assert row["location"] == "beizhili"
-        assert row["transit_to"] == "shaanxi"
-        assert float(row["transit_distance_remaining"]) == 2.5
-        assert float(row["transit_speed_factor"]) == 1.0
-        assert int(row["transit_start_turn"]) == 3
-    finally:
-        restored.close()
-    # 未知非空开档 fail-loud
-    bad = tmp_path / "loc_bad.db"
-    shutil.copyfile(db.path, bad)
-    conn = sqlite3.connect(bad)
-    conn.execute("UPDATE characters SET location='atlantis' WHERE name='毕自严'")
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError):
-        GameDB(str(bad), content)

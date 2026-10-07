@@ -78,13 +78,6 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
 
     if not _os.path.isdir(saves_dir):
         return
-    legacy_auto = _re.compile(rf"^{_re.escape(AUTO_SAVE_PREFIX)}\d{{4}}_\d{{2}}_t\d{{4}}_.+\.db$")
-    for f in _os.listdir(saves_dir):
-        if legacy_auto.match(f):
-            try:
-                _os.remove(_os.path.join(saves_dir, f))
-            except OSError:
-                pass
     campaign_id = (campaign_id or "").strip()
     if not campaign_id:
         return
@@ -105,7 +98,7 @@ def prune_auto_saves(saves_dir: str, campaign_id: str, keep_turns: int = AUTO_SA
             try:
                 _os.remove(_os.path.join(saves_dir, stale))
             except OSError:
-                pass
+                logger.exception("prune_auto_saves failed removing %s", stale)
 
 
 # TurnPhase 单一真源已下沉 models.py（decree 也要用，import session 会循环）；

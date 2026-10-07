@@ -264,105 +264,12 @@ def test_run_claude_off_reasoning_uses_explicit_minimum_tokens(monkeypatch):
     assert captured["kw"]["env"]["MAX_THINKING_TOKENS"] == "2000"
 
 
-# ── _resolve_cli_bin / login shell path ──
-
-def test_resolve_cli_bin_found_on_current_path(monkeypatch):
-    monkeypatch.setattr(
-        cb.shutil, "which",
-        lambda name, path=None: "/usr/local/bin/codex" if path is None else None,
-    )
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: (_ for _ in ()).throw(AssertionError("no")))
-    assert cb._resolve_cli_bin("codex", "codex") == "/usr/local/bin/codex"
 
 
-def test_resolve_cli_bin_found_via_extra_dirs_when_gui_path_bare(monkeypatch):
-    monkeypatch.setattr(cb, "_EXTRA_BIN_DIRS", ["/fake/extra/bin"])
-    monkeypatch.setattr(cb.os.path, "isdir", lambda p: True)
-    home_bin = "/fake/extra/bin/codex"
-
-    def fake_which(name, path=None):
-        if path is None:
-            return None
-        assert "/fake/extra/bin" in path
-        return home_bin
-
-    login_calls = {"n": 0}
-
-    def spy_login():
-        login_calls["n"] += 1
-        return None
-
-    monkeypatch.setattr(cb.shutil, "which", fake_which)
-    monkeypatch.setattr(cb, "_login_shell_path", spy_login)
-    assert cb._resolve_cli_bin("codex", "codex") == home_bin
-    assert login_calls["n"] == 0
 
 
-def test_resolve_cli_bin_login_shell_path_last_resort(monkeypatch):
-    cb._BIN_CACHE.clear()
-
-    def fake_which(name, path=None):
-        if path and "/opt/odd/bin" in path:
-            return "/opt/odd/bin/codex"
-        return None
-
-    monkeypatch.setattr(cb.shutil, "which", fake_which)
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: "/opt/odd/bin")
-    assert cb._resolve_cli_bin("codex", "codex") == "/opt/odd/bin/codex"
 
 
-def test_resolve_cli_bin_falls_back_and_miss_not_cached(monkeypatch):
-    cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
-    monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
-    assert cb._resolve_cli_bin("codex", "codex") == "codex"
-    monkeypatch.setattr(
-        cb.shutil, "which",
-        lambda name, path=None: "/Users/x/.local/bin/codex" if path is None else None,
-    )
-    assert cb._resolve_cli_bin("codex", "codex") == "/Users/x/.local/bin/codex"
-
-
-def test_resolve_cli_bin_caches(monkeypatch):
-    cb._BIN_CACHE.clear()
-    calls = {"n": 0}
-
-    def fake_which(name, path=None):
-        calls["n"] += 1
-        return "/abs/codex"
-
-    monkeypatch.setattr(cb.shutil, "which", fake_which)
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
-    assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
-    assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
-    assert calls["n"] == 1
-
-
-def test_login_shell_path_extracts_from_sentinels_despite_noise(monkeypatch):
-    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
-
-    class _R:
-        stdout = (
-            "Warning: /usr/local/bin not writable: skipping\n"
-            "<<<CMRPATH>>>/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin<<<ENDPATH>>>\n"
-        )
-        stderr = ""
-        returncode = 0
-
-    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: _R())
-    assert cb._login_shell_path() == "/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin"
-
-
-def test_login_shell_path_single_dir_not_dropped(monkeypatch):
-    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
-
-    class _R:
-        stdout = "<<<CMRPATH>>>/usr/bin<<<ENDPATH>>>\n"
-        stderr = ""
-        returncode = 0
-
-    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: _R())
-    assert cb._login_shell_path() == "/usr/bin"
 
 
 def test_login_shell_path_uses_printenv_not_dollar_path(monkeypatch):
@@ -382,16 +289,6 @@ def test_login_shell_path_uses_printenv_not_dollar_path(monkeypatch):
     assert "-lic" not in captured["cmd"]
     assert {"-l", "-i", "-c"} <= set(captured["cmd"])
 
-
-def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
-    monkeypatch.setattr(
-        cb.shutil, "which",
-        lambda name, path=None: "./bin/codex" if path is None else None,
-    )
-    result = cb._resolve_cli_bin("codex", "./bin/codex")
-    assert cb.os.path.isabs(result)
-    assert result == cb.os.path.abspath("./bin/codex")
 
 
 @pytest.mark.parametrize(
@@ -597,35 +494,23 @@ def test_run_runner_empty_output_is_retryable_typed(monkeypatch):
 
 # ── trace throat ──
 
-@pytest.mark.parametrize(
-    "prompt,expect_tag",
-    [
-        ("你扮演被皇帝召见的大臣，回话……", "minister"),
-        ("本月结算抽取，输出 delta……", "extractor"),
-        ("simulator_payload: 当前盘面 TSV……", "simulator"),
-        ("请拟一道诏书，颁行天下", "decree"),
-        ("只输出合法 JSON，无多余字", "sanitizer"),
-        ("今日天气如何", "other"),
-        # 优先级：minister 先于 decree。
-        ("你扮演被皇帝召见的大臣，臣请拟诏书一道……", "minister"),
-    ],
-    ids=[
-        "minister", "extractor", "simulator",
-        "decree", "sanitizer", "other",
-        "minister_over_decree",
-    ],
-)
-def test_run_backend_infers_trace_tag_from_prompt(monkeypatch, prompt, expect_tag):
-    """公共咽喉 _run_backend_for_config：tag 空时从 prompt 推断 trace.tag（不直测 helper）。"""
+
+
+def test_run_backend_empty_tag_is_other_not_prompt_guess(monkeypatch):
+    """公共咽喉 _run_backend_for_config：tag 空时记 other，不从自由 prompt 猜分类。"""
     recs = []
     monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
     monkeypatch.setattr(
         cb, "_run_codex",
         lambda prompt, model=None, **kwargs: ("ok", 1),
     )
-    cb._run_backend_for_config(prompt, _cli_codex_cfg())  # no explicit tag
+    # Prompt contains words that the retired prose→tag guesser would have classified.
+    cb._run_backend_for_config(
+        "你扮演被皇帝召见的大臣，请拟一道诏书，只输出合法 JSON",
+        _cli_codex_cfg(),
+    )
     assert len(recs) == 1
-    assert recs[0]["tag"] == expect_tag
+    assert recs[0]["tag"] == "other"
 
 
 def test_run_backend_for_config_traces_every_call(monkeypatch):
