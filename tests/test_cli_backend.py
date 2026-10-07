@@ -797,26 +797,6 @@ def test_run_pi_flags_thinking_and_stdout(monkeypatch):
     assert captured["kw"].get("input") in (None, "")  # not stdin
 
 
-@pytest.mark.parametrize(
-    "runner,out",
-    [
-        ("cursor", "CURSOR_OUT"),
-        ("kimi", "KIMI_OUT"),
-        ("grok", "GROK_OUT"),
-        ("pi", "PI_OUT"),
-    ],
-)
-def test_run_backend_dispatch_new_runners(monkeypatch, runner, out):
-    """#1902：四个未跑过的宿主同样只经运行配置选，不再靠 env。"""
-    from ming_sim.models import LLMConfig
-
-    cfg = LLMConfig(
-        api_key="", base_url="", model="m", channel="cli", cli_runner=runner,
-    )
-    _patch_runner(monkeypatch, runner, lambda p, **kw: (out, 1))
-    assert cb._run_backend_for_config("x", cfg) == (out, 1)
-
-
 @pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
 def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
     from ming_sim.models import LLMConfig

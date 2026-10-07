@@ -882,31 +882,36 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
 
 
 def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):
-    """#1716：fresh Agno 3 首轮已落 run 后，生产 _start_chat_turn 第二轮须受理。
+    """#1716：fresh Agno 3 首轮已落 run 后，公开 chat_stream 第二轮须受理。
 
-    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送在 _start_chat_turn 读 runs 长度；
+    复现窗：首轮 LLM 建出 agno_runs 后，第二次发送读 runs 长度；
     旧缝直查 agno_sessions.runs 列 → OperationalError。本 tracer 走真实入口，
     断言第二轮 create 成功且 agno_runs_before=既有 run 数。
     """
+    from ming_sim.audience_night import SCENE_CHAT_SPEAKER, get_open_night, open_night
+    from ming_sim.session import ChatTurnResult
+
     game = web_game
-    minister = _active_minister(game.db, game.content)
-    # 先建一轮以确定真实夜，再按会话核锚点取身份（与生产同源）。
-    from ming_sim.audience_night import get_open_night, open_night
     night = get_open_night(game.db) or open_night(game.db, game.state)
     sid, _ = game.session.scene_model_session_anchor(int(night["id"]))
     # 首轮完成后的 Agno 3 态：session + 1 COMPLETED run（无 sessions.runs 列）。
     _seed_agno_v3_runs(game.db, sid, run_count=1)
     assert game.db.agno_runs_length(sid) == 1
 
-    chat_turn_id, _snapshot = game._start_chat_turn(minister)
+    # 离线 scene_chat：只让 stream 跑完 LLM 窗；建轮/accepted 仍走生产 chat_stream。
+    game.session.scene_chat = (
+        lambda message, *, chat_turn_id=0, stream_emit=None, minister_name="", **_k:
+        ChatTurnResult(answer="臣奏：当先抚后剿。")
+    )
+
+    events = list(game.chat_stream(SCENE_CHAT_SPEAKER, "剿抚孰先？"))
+    assert any(ev.get("type") == "accepted" for ev in events)
     row = game.db.conn.execute(
-        "SELECT agno_session_id, agno_runs_before, status FROM chat_turns WHERE id=?",
-        (chat_turn_id,),
+        "SELECT agno_session_id, agno_runs_before FROM chat_turns ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert row is not None
     assert row["agno_session_id"] == sid
     assert int(row["agno_runs_before"]) == 1
-    assert row["status"] == "generating"
 
 
 def test_load_save_reconciles_interrupted_orphan(web_game):
