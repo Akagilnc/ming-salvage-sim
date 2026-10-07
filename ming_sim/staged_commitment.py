@@ -24,6 +24,36 @@ TODO_STATUS_CONSUMED = "consumed"
 # rolled 写口仍由 mark_next_audience_todo_status 接受（P3 契约）；常量待 #623 超额滚存启用再导出。
 
 
+def _stage_text_fields(item: Dict[str, object]) -> tuple[str, str] | None:
+    """共同分段正文转换（criterion/origin 别名与回填）——读/写只此一处（#1897 K2）。
+
+    返回 (criterion_text, origin_context)；缺 criterion 时返回 None 由调用方决定
+    跳过（读）或拒收（写）。
+    """
+    # #1897 / ADR0142：自由正文原样入载体，禁 strip 规范化。
+    criterion = str(item.get("criterion_text") or item.get("criterion") or "")
+    origin_context = str(
+        item.get("origin_context") or item.get("origin") or criterion or ""
+    )
+    if not criterion and origin_context:
+        criterion = origin_context
+    if not criterion:
+        return None
+    return criterion, origin_context or criterion
+
+
+def _stage_record(
+    *, stage_idx: int, due_turn: int, criterion_text: str, origin_context: str,
+) -> Dict[str, object]:
+    """四字段分段记录形状——读/写共用。"""
+    return {
+        "stage_idx": stage_idx,
+        "due_turn": due_turn,
+        "criterion_text": criterion_text,
+        "origin_context": origin_context,
+    }
+
+
 def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     """Normalize structured stages payload → durable list.
 
@@ -62,23 +92,14 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
             stage_idx = int(item.get("stage_idx", idx))
         except (TypeError, ValueError, OverflowError):
             stage_idx = idx
-        # #1897 / ADR0142：自由正文原样入载体，禁 strip 规范化。
-        criterion = str(
-            item.get("criterion_text") or item.get("criterion") or ""
-        )
-        origin_context = str(
-            item.get("origin_context") or item.get("origin") or criterion or ""
-        )
-        if not criterion and origin_context:
-            criterion = origin_context
-        if not criterion:
+        texts = _stage_text_fields(item)
+        if texts is None:
             continue
-        out.append({
-            "stage_idx": stage_idx,
-            "due_turn": due_turn,
-            "criterion_text": criterion,
-            "origin_context": origin_context or criterion,
-        })
+        criterion, origin_context = texts
+        out.append(_stage_record(
+            stage_idx=stage_idx, due_turn=due_turn,
+            criterion_text=criterion, origin_context=origin_context,
+        ))
     out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
     return out
 
@@ -87,7 +108,8 @@ def _stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
     """Write-path stage admission: every item must be a valid stage dict.
 
     历史读侧 ``normalize_commitment_stages`` 可跳过坏段；写口不得把坏结构
-    洗成成功（#1897 C1）。复用 ``strict_int``：bool/非有限/Overflow → ValueError。
+    洗成成功（#1897 C1）。整数字段复用 ``strict_int``；正文转换复用
+    ``_stage_text_fields``（#1897 K2），不复制别名/回填规则。
     """
     from ming_sim.strict_types import strict_int
 
@@ -113,23 +135,14 @@ def _stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
             stage_idx = strict_int(raw_idx, accept_numeric_strings=True)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"stages[{idx}].stage_idx 须为有限整数") from exc
-        # #1897 / ADR0142：自由正文原样入载体，禁 strip 规范化。
-        criterion = str(
-            item.get("criterion_text") or item.get("criterion") or ""
-        )
-        origin_context = str(
-            item.get("origin_context") or item.get("origin") or criterion or ""
-        )
-        if not criterion and origin_context:
-            criterion = origin_context
-        if not criterion:
+        texts = _stage_text_fields(item)
+        if texts is None:
             raise ValueError(f"stages[{idx}] 缺 criterion_text")
-        out.append({
-            "stage_idx": stage_idx,
-            "due_turn": due_turn,
-            "criterion_text": criterion,
-            "origin_context": origin_context or criterion,
-        })
+        criterion, origin_context = texts
+        out.append(_stage_record(
+            stage_idx=stage_idx, due_turn=due_turn,
+            criterion_text=criterion, origin_context=origin_context,
+        ))
     out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
     return out
 

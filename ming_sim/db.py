@@ -66,8 +66,8 @@ from ming_sim.relations import (
     validate_edge_kind,
 )
 from ming_sim.strict_types import (
-    strict_int, validate_affected_parties, validate_rejection_verdict,
-    validate_verdict_affected_parties,
+    strict_int, strict_sqlite_id, validate_affected_parties,
+    validate_rejection_verdict, validate_verdict_affected_parties,
 )
 from ming_sim.token_stats import tlog
 
@@ -484,11 +484,12 @@ def _has_stop_condition(stop_condition: object) -> bool:
 def _optional_positive_dossier_id(raw: object, *, field: str) -> Optional[int]:
     """#658：typed dossier id 单权威——真正缺省→None；一旦出现只接正整数。
 
-    拒 0/负/bool/float/数字字符串。target 与 backing 共吃，禁第二份 optional-positive。
+    拒 0/负/bool/float/数字字符串/超 SQLite 64-bit。target 与 backing 共吃，
+    禁第二份 optional-positive（#1897 C1）。
     """
     if raw in (None, ""):
         return None
-    value = strict_int(raw, accept_numeric_strings=False)
+    value = strict_sqlite_id(raw, accept_numeric_strings=False)
     if value <= 0:
         raise ValueError(f"{field} 非法 shape：{raw!r}")
     return value
@@ -11559,7 +11560,7 @@ class GameDB:
         if action == "revoke_authority":
             # #523 / #611：收权生产项必带现存 authority_records.id；不得从 payload 拼 id。
             try:
-                aid = strict_int(
+                aid = strict_sqlite_id(
                     normalized.get("authority_id"), accept_numeric_strings=True,
                 )
             except (TypeError, ValueError):
@@ -11579,7 +11580,7 @@ class GameDB:
                 normalized["target_kind"] = "character"
                 normalized["target_id"] = holder
             try:
-                grant_did = strict_int(
+                grant_did = strict_sqlite_id(
                     normalized.get("grant_dossier_id"), accept_numeric_strings=True,
                 )
             except (TypeError, ValueError):
@@ -11597,14 +11598,14 @@ class GameDB:
             revoke_did = 0
             revoke_iid = 0
             try:
-                revoke_did = strict_int(
+                revoke_did = strict_sqlite_id(
                     normalized.get("revoke_target_dossier_id"),
                     accept_numeric_strings=True,
                 )
             except (TypeError, ValueError):
                 revoke_did = 0
             try:
-                revoke_iid = strict_int(
+                revoke_iid = strict_sqlite_id(
                     normalized.get("revoke_target_issue_id"),
                     accept_numeric_strings=True,
                 )
@@ -11620,7 +11621,7 @@ class GameDB:
                     kind = "issue"
                     raw = raw.split(":", 1)[1].strip()
                 try:
-                    tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
+                    tid = strict_sqlite_id(raw, accept_numeric_strings=True) if raw else 0
                 except (TypeError, ValueError):
                     tid = 0
                 if tid <= 0:
@@ -14909,7 +14910,7 @@ class GameDB:
     ) -> None:
         """把确认后的新→旧案卷关联整批落账；任一坏引用则整批拒收并留痕。"""
         from ming_sim.action_materialize import DecreeMaterializationValidationError
-        source_id = strict_int(source_dossier_id, accept_numeric_strings=False)
+        source_id = strict_sqlite_id(source_dossier_id, accept_numeric_strings=False)
         source = self.get_decree_dossier(source_id)
         if source is None:
             raise DecreeMaterializationValidationError("关联来源指向不存在案卷", category="hallucinated_id")
@@ -14917,7 +14918,7 @@ class GameDB:
         rejection: Optional[Tuple[int, str, str, str]] = None
         for item in links:
             try:
-                target_id = strict_int(
+                target_id = strict_sqlite_id(
                     item.get("target_dossier_id"), accept_numeric_strings=False
                 )
             except (AttributeError, ValueError):
@@ -14972,7 +14973,7 @@ class GameDB:
         column = "source_dossier_id" if direction == "outgoing" else "target_dossier_id"
         rows = self.conn.execute(
             f"SELECT * FROM decree_dossier_links WHERE {column}=? ORDER BY id",
-            (strict_int(dossier_id, accept_numeric_strings=False),),
+            (strict_sqlite_id(dossier_id, accept_numeric_strings=False),),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -14988,7 +14989,7 @@ class GameDB:
             column, value = "source_dossier_id", source_dossier_id
         rows = self.conn.execute(
             f"SELECT * FROM decree_dossier_link_rejections WHERE {column}=? ORDER BY id",
-            (strict_int(value, accept_numeric_strings=False),),
+            (strict_sqlite_id(value, accept_numeric_strings=False),),
         ).fetchall()
         return [dict(row) for row in rows]
 

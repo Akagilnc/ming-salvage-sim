@@ -291,9 +291,9 @@ def stage_punishment_candidate(
         return 0
     if issue_id is not None:
         # 事务身份引用：复用 SQLite 64-bit 权威，禁 bool/有损小数/超界绑查询（#1897 C1）。
-        from ming_sim.issues import _parse_sqlite_id
+        from ming_sim.strict_types import strict_sqlite_id
         try:
-            linked_issue_id = _parse_sqlite_id(issue_id)
+            linked_issue_id = strict_sqlite_id(issue_id, accept_numeric_strings=False)
         except (TypeError, ValueError):
             return 0
         if linked_issue_id <= 0:
@@ -1074,9 +1074,10 @@ def _parse_revoke_decree_target(
         raw = raw.split(":", 1)[1].strip()
     if not kind:
         kind = "dossier"
+    from ming_sim.strict_types import strict_sqlite_id
     try:
-        tid = int(raw)
-    except (TypeError, ValueError, OverflowError):
+        tid = strict_sqlite_id(raw, accept_numeric_strings=True)
+    except (TypeError, ValueError):
         return None
     if tid <= 0:
         return None
@@ -1092,7 +1093,9 @@ def _parse_revoke_decree_target(
         origin = str(row["origin_ref"] or "").strip()
         if origin.startswith("dossier:"):
             try:
-                linked = int(origin.split(":", 1)[1])
+                linked = strict_sqlite_id(
+                    origin.split(":", 1)[1], accept_numeric_strings=True,
+                )
             except (TypeError, ValueError):
                 linked = 0
         # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路

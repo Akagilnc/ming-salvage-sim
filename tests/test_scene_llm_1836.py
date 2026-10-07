@@ -147,6 +147,7 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_remote_xuan_feeds_summon_facts_to_scene(game, monkeypatch):
+    """真入口 scene_chat 宣召 → 结构化 unsettled summon 落账（不盯 opening 呈现）。"""
     from ming_sim.audience_night import list_unsettled_summons
 
     db, state, content = game
@@ -157,24 +158,21 @@ def test_remote_xuan_feeds_summon_facts_to_scene(game, monkeypatch):
     character.location = "shaanxi"
     sess = _sess(db, state, content, llm_config=SimpleNamespace(channel=""))
 
-    openings = []
-
     class FakeAgent:
         tools = []
 
         def run(self, message):
             return SimpleNamespace(content="传召已发。", tools=[])
 
-    def scene_agent(_config, prepared, **_kwargs):
-        openings.append(prepared.opening)
-        return FakeAgent()
-
-    monkeypatch.setattr("ming_sim.session.create_scene_agent", scene_agent)
+    monkeypatch.setattr(
+        "ming_sim.session.create_scene_agent",
+        lambda *_a, **_k: FakeAgent(),
+    )
     sess.scene_chat(f"宣{target}")
     summons = list_unsettled_summons(db)
-    assert any(str(s.get("person_name") or "") == target for s in summons)
-    # 真入口开场须带上传召对象；只认字段值到达，不锁 JSON 序列化原文。
-    assert openings and target in openings[0]
+    matched = [s for s in summons if str(s.get("person_name") or "") == target]
+    assert len(matched) == 1
+    assert str(matched[0].get("kind") or "") == "fresh"
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

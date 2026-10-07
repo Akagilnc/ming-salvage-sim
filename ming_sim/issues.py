@@ -78,18 +78,14 @@ _content: Optional[GameContent] = None
 COMMITMENT_KIND_UNTIL_STOP = "until_stop"
 _FISCAL_LEVY_TARGET_ABS_TOL = 1e-9
 
-# SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
-_SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
-
-
 def _parse_sqlite_id(raw: object) -> int:
-    """解析将绑进 SQLite 的整型主键 id（secret_order / issue 等通用）：非整数/bool/float/超
-    SQLite 64-bit 范围 → 抛 ValueError（调用方拒为 invalid_enum）。避免绑定超界 int 抛
-    OverflowError 崩整月结算（#63.5 一坏项带走整批；cmr secret-order r2 / close-issues r1 codex）。"""
-    val = _strict_int(raw)  # bool/float/非数 → ValueError
-    if not (_SQLITE_INT_MIN <= val <= _SQLITE_INT_MAX):
-        raise ValueError("id 超出 SQLite 64-bit 范围")
-    return val
+    """解析将绑进 SQLite 的整型主键 id：委托 ``strict_sqlite_id`` 单一范围权威。
+
+    非整数/bool/float/超 64-bit → ValueError（调用方拒为 invalid_enum）。避免绑定
+    超界 int 抛 OverflowError 崩整月结算（#63.5 / #1897 C1）。
+    """
+    from ming_sim.strict_types import strict_sqlite_id
+    return strict_sqlite_id(raw)
 
 
 _AUTHORITY_GRANT_OPS = frozenset({"授予", "grant"})
