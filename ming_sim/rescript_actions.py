@@ -474,11 +474,12 @@ def validate_all(
             )
 
             event_id = str(row.get("event_id") or "")
-            label = str(req.get("label") or "").strip()
-            note = str(req.get("note") or "").strip()
+            # Free presentation phrases: empty-check without mutating (P6).
+            label = str(req.get("label") or "")
+            note = str(req.get("note") or "")
             if (
-                not label
-                and note
+                not label.strip()
+                and note.strip()
                 and (
                     event_id.startswith(_DECREE_QUESTION_PREFIX)
                     or event_id.startswith(_WORLD_QUESTION_PREFIX)
@@ -494,9 +495,10 @@ def validate_all(
                 ))
                 continue
             labels = bind_decision_options(row.get("options") or [])
-            if label not in labels:
+            match_key = label.strip()
+            if match_key not in labels:
                 raise ValueError(f"decision 选项不在当前 options：{key}")
-            matched = labels[label]
+            matched = labels[match_key]
             validate_season_option(matched)
             # Persist only the canonical request identity.  The stored option is
             # batch-local execution authority and never changes retry identity.

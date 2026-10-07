@@ -854,14 +854,15 @@ def _iter_cli_runner_text(
                 code="llm_connection_error",
                 provider_message=f"agy auth race：{(stdout_text + stderr)[:200]}",
             )
-        text = stdout_text.strip() or final_text.strip()
-        if runner == "codex" and not json_events and not text:
+        # Free host body: empty-check without stripping carried prose (P6).
+        text = stdout_text if stdout_text.strip() else final_text
+        if runner == "codex" and not json_events and not text.strip():
             # 兜底：stdout 空时干净段可能落在合并流 "OpenAI Codex v" 之前。
-            text = (stdout_text + stderr).split("OpenAI Codex v")[0].strip()
+            text = (stdout_text + stderr).split("OpenAI Codex v")[0]
         # 非零退出不洗成瞬断：无 typed status 的失败当确定性失败（#1780 / ADR 0142）。
         if returncode != 0:
             raise RuntimeError(f"{runner} 调用失败（退出码 {returncode}）：{stderr[:200]}")
-        if not text:
+        if not text.strip():
             raise transport_failure_unavailable(
                 empty_output_failure(), attempts=1, exhausted=False,
             )
@@ -869,7 +870,7 @@ def _iter_cli_runner_text(
         if not json_events:
             yield text
         elif not pieces and final_text.strip():
-            yield final_text.strip()
+            yield final_text
     finally:
         if kimi_agent_path:
             try:
@@ -896,7 +897,8 @@ def _run_cli_runner(
             materials_dir=materials_dir,
         )
     )
-    return text.strip(), 1
+    # Free host body: return as-is (empty already rejected upstream).
+    return text, 1
 
 
 def _run_agy(prompt: str, *, materials_dir: Optional[str] = None) -> Tuple[str, int]:
@@ -1936,11 +1938,12 @@ def compose_decree_validation_recovery(
         f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
         "补充或改说所需信息后重拟。"
     )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
+    # Free body feeds: empty-check without mutating carried prose (P6).
+    emperor = str(emperor_words or "")
+    if emperor.strip():
         prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
+    prior = str(prior_output or "")
+    if prior.strip():
         prompt += f"\n【原产出】{prior}"
     return _compose_inworld_fact_report(
         prompt, llm_config=llm_config, tag="decree_validation_recovery",
@@ -3116,7 +3119,8 @@ def extract_draft_intent(
             mechanical["locality_scope"] = explicit_scope
     if mode is not None:
         mechanical["mode"] = mode
-    merged = str(obj.get("合并草案") or "").strip()
+    # Free draft body: empty-check elsewhere; do not strip carried prose (P6).
+    merged = str(obj.get("合并草案") or "")
     # #654 H 已在上方对 _action=="无" 短路；此处仅保留 #653 pay_order 验形。
     # #1849：entries 非法是脏产物，响亮拒收；不得洗成「无意图」让写入口
     # 以 special_decree 覆盖原草稿（失败诚实宪法）。
@@ -3127,9 +3131,9 @@ def extract_draft_intent(
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
         if _supplement_mode:
-            draft_text = merged if merged else _existing_draft_text
+            draft_text = merged if merged.strip() else _existing_draft_text
         else:
-            draft_text = (minister_reply or "").strip()
+            draft_text = (minister_reply or "")
         # #1849：非法事务声明响亮拒收（禁静默弃声明后照样出成功草案）。
         single_declaration = _affair_declaration_from_draft_obj(obj)
         if single_declaration:
@@ -3167,11 +3171,14 @@ def extract_draft_intent(
         # 多道并存、改/补目标不明：不落草案，交 session 走结构化含糊追问（对齐 AC5）。
         return {"draft_action": _action, "draft_text": "", "target_candidate": "含糊"}
     if target == "新":
-        draft_text = merged if merged else (minister_reply or "")
+        draft_text = merged if merged.strip() else (minister_reply or "")
     else:
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
-        draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
+        draft_text = (
+            merged if merged.strip()
+            else (existing if existing.strip() else (minister_reply or ""))
+        )
     # #1849：非法事务声明响亮拒收（禁洗成「无意图」）。
     cand_declaration = _affair_declaration_from_draft_obj(obj)
     if cand_declaration:
@@ -3245,10 +3252,11 @@ def capture_manual_directive_payload(
     #1849：抽取调用失败不再降级 special_decree 冒充成功拟旨，一律响亮上抛。
     special_decree 另有一合法来路：模型真答「无拟旨意图」（产物空，非失败）。
     """
-    directive_text = str(text or "").strip()
+    # Free decree body: empty-check without mutating carried prose (P6).
+    directive_text = str(text or "")
     fallback_mode = resolve_directive_mode(existing=existing_mode)
     # 空载短路：无正文可抽 → 直落草案结构，零 LLM 调用（P5：禁为省写把可短路 LLM 串回）。
-    if not directive_text:
+    if not directive_text.strip():
         return _manual_special_decree_payload(fallback_mode)
 
     prompt = (

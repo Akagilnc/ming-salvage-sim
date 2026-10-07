@@ -406,7 +406,8 @@ def test_run_codex_stdout_empty_fallback(monkeypatch):
         _P(stdout="", stderr="STDOUT_BODY\nOpenAI Codex v0.125.0\nlogs"),
     )
     out, n = cb._run_codex("p")
-    assert out == "STDOUT_BODY"
+    # Free host body: carry pre-banner segment as-is (no strip of trailing newline).
+    assert out == "STDOUT_BODY\n"
 
 
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
