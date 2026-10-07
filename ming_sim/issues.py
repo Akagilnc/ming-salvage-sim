@@ -4811,21 +4811,6 @@ def apply_issue_tracker_output(
                     "reason": "事件本批已消费",
                 })
                 continue
-            if (
-                ev.id not in candidate_event_ids
-                and ev.id not in pre_admitted_event_ids
-            ):
-                # LLM 只能从本回合候选池中挑选事件；落库端重验窗口、trigger_gate 与已触发状态，
-                # 避免陈旧/伪造 id 穿透候选层后直接应用确定性后果（#203 CMR）。
-                # 本批已按预检接纳落过世界战果者：单次接纳贯穿，不因写后改门再拒。
-                print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
-                applied_new.append({
-                    "id": ev.id,
-                    "title": ev.title,
-                    "rejected": True,
-                    "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
-                })
-                continue
             terminal_state = db.event_terminal_state(ev.id)
             if terminal_state:
                 terminal_reason = {
@@ -4836,58 +4821,72 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 已有终态 {terminal_state!r}，不再从 event_pool 立项。")
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": terminal_reason})
                 continue
-            # 重查候选：级联作废 / 新满足前提门的事件可能新进/退出候选池。
-            # 权威快照（authoritative）只增不减——union 进新候选、不缩窄初始绑定（#399 cmr R1 codex P2）；
-            # 非权威快照额外过滤——advances/前置事件效果关门后，已退出候选的事件不得沿用旧快照触发。
-            if candidates_dirty:
-                current_candidate_event_ids = {candidate.id for candidate in gather_candidate_events(state, db)}
-                candidates_dirty = False
-                if candidate_snapshot_authoritative:
-                    candidate_event_ids |= current_candidate_event_ids
-            # 本批已按预检接纳落过世界战果的 C3 事件：单次接纳贯穿终局，
-            # 不得因本批战果改写前提门后再 gather 拒收（两账分裂）。
-            if (
-                not candidate_snapshot_authoritative
-                and ev.id not in current_candidate_event_ids
-                and ev.id not in pre_admitted_event_ids
-            ):
-                print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
-                applied_new.append({
-                    "id": ev.id,
-                    "title": ev.title,
-                    "rejected": True,
-                    "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
-                })
-                continue
-            if _pending_person_changes_block_event_gate(
-                ev,
-                pending_person_changes_for_gates or [],
-                db,
-                content=runtime_content,
-                shadow_rows=shared_shadow_rows,
-                power_shadow_rows=shared_power_shadow_rows,
-                valid_regions=shared_valid_regions,
-            ):
-                print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
-                applied_new.append({
-                    "id": ev.id,
-                    "title": ev.title,
-                    "rejected": True,
-                    "reason": "事件当前未进候选池（同回合人物变更后前提门不满足）",
-                })
-                continue
-            if (
-                _is_strategic_foreign_node_event(ev)
-                and ev.id not in event_result_delta_event_ids
-            ):
-                print(f"[INFO] new_issue 已拒：战略/外敌事件 {event_id} 缺世界状态主账结果。")
-                applied_new.append({
-                    "id": ev.id,
-                    "title": ev.title,
-                    "rejected": True,
-                    "reason": "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更/新建军队）",
-                })
-                continue
+            # 本批预检接纳且世界战果已落账：单次接纳贯穿终局，不再二次裁断准入
+            # （候选 dirty gather / 人物影子闸 / 结果门均不得再拒，防两账分裂）。
+            pre_admitted = ev.id in pre_admitted_event_ids
+            if not pre_admitted:
+                if ev.id not in candidate_event_ids:
+                    # LLM 只能从本回合候选池中挑选事件；落库端重验窗口、trigger_gate 与已触发状态，
+                    # 避免陈旧/伪造 id 穿透候选层后直接应用确定性后果（#203 CMR）。
+                    print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
+                    applied_new.append({
+                        "id": ev.id,
+                        "title": ev.title,
+                        "rejected": True,
+                        "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
+                    })
+                    continue
+                # 重查候选：级联作废 / 新满足前提门的事件可能新进/退出候选池。
+                # 权威快照（authoritative）只增不减——union 进新候选、不缩窄初始绑定（#399 cmr R1 codex P2）；
+                # 非权威快照额外过滤——advances/前置事件效果关门后，已退出候选的事件不得沿用旧快照触发。
+                if candidates_dirty:
+                    current_candidate_event_ids = {
+                        candidate.id for candidate in gather_candidate_events(state, db)
+                    }
+                    candidates_dirty = False
+                    if candidate_snapshot_authoritative:
+                        candidate_event_ids |= current_candidate_event_ids
+                if (
+                    not candidate_snapshot_authoritative
+                    and ev.id not in current_candidate_event_ids
+                ):
+                    print(f"[INFO] new_issue 已拒：事件 {event_id} 当前未进 event_pool 候选池。")
+                    applied_new.append({
+                        "id": ev.id,
+                        "title": ev.title,
+                        "rejected": True,
+                        "reason": "事件当前未进候选池（窗口/前提门/已触发不满足）",
+                    })
+                    continue
+                if _pending_person_changes_block_event_gate(
+                    ev,
+                    pending_person_changes_for_gates or [],
+                    db,
+                    content=runtime_content,
+                    shadow_rows=shared_shadow_rows,
+                    power_shadow_rows=shared_power_shadow_rows,
+                    valid_regions=shared_valid_regions,
+                ):
+                    print(f"[INFO] new_issue 已拒：事件 {event_id} 被同回合人物变更阻断。")
+                    applied_new.append({
+                        "id": ev.id,
+                        "title": ev.title,
+                        "rejected": True,
+                        "reason": "事件当前未进候选池（同回合人物变更后前提门不满足）",
+                    })
+                    continue
+                if (
+                    _is_strategic_foreign_node_event(ev)
+                    and ev.id not in event_result_delta_event_ids
+                ):
+                    print(f"[INFO] new_issue 已拒：战略/外敌事件 {event_id} 缺世界状态主账结果。")
+                    applied_new.append({
+                        "id": ev.id,
+                        "title": ev.title,
+                        "rejected": True,
+                        "reason": "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更/新建军队）",
+                    })
+                    continue
             if ev.event_type != "situation":
                 if ev.id in defer_event_trigger_ids:
                     consumed_event_ids.add(ev.id)
