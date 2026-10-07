@@ -290,10 +290,10 @@ def stage_punishment_candidate(
     if disposition in issue_dispositions_allowed() and issue_id is None:
         return 0
     if issue_id is not None:
-        # 事务身份引用：strict_int 禁 bool/有损小数改绑（#1897 C1）。
-        from ming_sim.strict_types import strict_int
+        # 事务身份引用：复用 SQLite 64-bit 权威，禁 bool/有损小数/超界绑查询（#1897 C1）。
+        from ming_sim.issues import _parse_sqlite_id
         try:
-            linked_issue_id = strict_int(issue_id, accept_numeric_strings=False)
+            linked_issue_id = _parse_sqlite_id(issue_id)
         except (TypeError, ValueError):
             return 0
         if linked_issue_id <= 0:

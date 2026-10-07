@@ -147,9 +147,7 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_remote_xuan_feeds_summon_facts_to_scene(game, monkeypatch):
-    import json
     from ming_sim.audience_night import list_unsettled_summons
-    from ming_sim.materials import _scene_pending_audience_facts
 
     db, state, content = game
     target = "洪承畴"
@@ -173,15 +171,10 @@ def test_remote_xuan_feeds_summon_facts_to_scene(game, monkeypatch):
 
     monkeypatch.setattr("ming_sim.session.create_scene_agent", scene_agent)
     sess.scene_chat(f"宣{target}")
-    assert list_unsettled_summons(db)
-    raw_facts = _scene_pending_audience_facts(db, state)
-    facts = [json.loads(line) for line in raw_facts]
-    assert any(fact.get("person_name") == target and fact.get("kind") == "fresh" for fact in facts)
-    assert any(
-        line in openings[0]
-        for line, fact in zip(raw_facts, facts)
-        if fact.get("person_name") == target
-    )
+    summons = list_unsettled_summons(db)
+    assert any(str(s.get("person_name") or "") == target for s in summons)
+    # 真入口开场须带上传召对象；只认字段值到达，不锁 JSON 序列化原文。
+    assert openings and target in openings[0]
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")

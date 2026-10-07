@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 ENTRY_KIND_STAGED = "staged_commitment"
 # #624 / ADR 0078：反催谏 / 求宽限（0075 同款 next_audience_todos 通道；不进 due-review 白名单）
@@ -54,13 +54,13 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
             continue
         try:
             due_turn = int(item.get("due_turn") or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if due_turn <= 0:
             continue
         try:
             stage_idx = int(item.get("stage_idx", idx))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             stage_idx = idx
         # #1897 / ADR0142：自由正文原样入载体，禁 strip 规范化。
         criterion = str(
@@ -83,12 +83,64 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     return out
 
 
+def _stages_for_write(data: Sequence[object]) -> List[Dict[str, object]]:
+    """Write-path stage admission: every item must be a valid stage dict.
+
+    历史读侧 ``normalize_commitment_stages`` 可跳过坏段；写口不得把坏结构
+    洗成成功（#1897 C1）。复用 ``strict_int``：bool/非有限/Overflow → ValueError。
+    """
+    from ming_sim.strict_types import strict_int
+
+    if not isinstance(data, (list, tuple)):
+        raise ValueError(f"stages_json 须为 JSON 数组，得 {type(data).__name__}")
+    out: List[Dict[str, object]] = []
+    for idx, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"stages[{idx}] 须为对象")
+        raw_due = item.get("due_turn")
+        if raw_due in (None, ""):
+            raise ValueError(f"stages[{idx}] 缺 due_turn")
+        try:
+            due_turn = strict_int(raw_due, accept_numeric_strings=True)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"stages[{idx}].due_turn 须为有限整数") from exc
+        if due_turn <= 0:
+            raise ValueError(f"stages[{idx}].due_turn 须为正")
+        raw_idx = item.get("stage_idx", idx)
+        if raw_idx in (None, ""):
+            raw_idx = idx
+        try:
+            stage_idx = strict_int(raw_idx, accept_numeric_strings=True)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"stages[{idx}].stage_idx 须为有限整数") from exc
+        # #1897 / ADR0142：自由正文原样入载体，禁 strip 规范化。
+        criterion = str(
+            item.get("criterion_text") or item.get("criterion") or ""
+        )
+        origin_context = str(
+            item.get("origin_context") or item.get("origin") or criterion or ""
+        )
+        if not criterion and origin_context:
+            criterion = origin_context
+        if not criterion:
+            raise ValueError(f"stages[{idx}] 缺 criterion_text")
+        out.append({
+            "stage_idx": stage_idx,
+            "due_turn": due_turn,
+            "criterion_text": criterion,
+            "origin_context": origin_context or criterion,
+        })
+    out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
+    return out
+
+
 def stages_to_json(stages: object) -> str:
     """Serialize stages for durable DB write.
 
     Designed string surface: JSON array string is parsed, not char-iterated.
     Invalid non-empty strings raise ValueError (never silently store ``[]``).
     ``None`` / empty / ``[]`` → ``"[]"``.
+    写口逐段严格准入，不经读侧跳过面洗白坏段（#1897 C1）。
     """
     if stages is None:
         return "[]"
@@ -108,21 +160,12 @@ def stages_to_json(stages: object) -> str:
             )
         if len(data) == 0:
             return "[]"
-        normalized = normalize_commitment_stages(data)
-        if not normalized:
-            raise ValueError(
-                "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
-            )
+        normalized = _stages_for_write(data)
         return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
     if isinstance(stages, (list, tuple)):
         if not stages:
             return "[]"
-        normalized = normalize_commitment_stages(list(stages))
-        # 非空 list 归一后无有效段：与 str 支同响亮拒绝，禁静默存 []
-        if not normalized:
-            raise ValueError(
-                "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
-            )
+        normalized = _stages_for_write(list(stages))
         return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
     raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
 

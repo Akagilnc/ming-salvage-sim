@@ -915,10 +915,10 @@ def _assert_commission_grant_target_exists(
             raise KeyError(f"军队不存在：{tid}")
         return
     if kind == "issue":
-        from ming_sim.strict_types import strict_int
+        from ming_sim.issues import _parse_sqlite_id
         try:
-            # tid 已是字符串身份；只接整数字符串，拒 "4.5" 等有损形。
-            iid = strict_int(tid, accept_numeric_strings=True)
+            # tid 已是字符串身份；复用 SQLite 64-bit 身份权威（#1897 C1）。
+            iid = _parse_sqlite_id(tid)
         except (TypeError, ValueError) as exc:
             raise KeyError(f"事项不存在：{tid}") from exc
         row = db.conn.execute("SELECT 1 FROM issues WHERE id=?", (iid,)).fetchone()
@@ -1123,7 +1123,7 @@ def _dispatch_commissions(
 
         strategy = item.get("strategy_selection")
         if strategy is not None:
-            from ming_sim.strict_types import strict_int
+            from ming_sim.issues import _parse_sqlite_id
             body = _declared_prose(item.get("text"))
             actor = str(minister_name or "").strip()
             if not isinstance(strategy, Mapping) or any(
@@ -1133,7 +1133,7 @@ def _dispatch_commissions(
                 _reject(rejected, item, "点策交办须为独立结构化载荷", "invalid_shape", source)
                 continue
             try:
-                origin_id = strict_int(strategy.get("source_chat_turn_id"), accept_numeric_strings=False)
+                origin_id = _parse_sqlite_id(strategy.get("source_chat_turn_id"))
             except (TypeError, ValueError):
                 origin_id = 0
             target_id = strategy.get("target_id")
@@ -1169,7 +1169,7 @@ def _dispatch_commissions(
 
         progress = item.get("secret_order_progress")
         if progress is not None:
-            from ming_sim.strict_types import strict_int
+            from ming_sim.issues import _parse_sqlite_id
             if not isinstance(progress, Mapping) or any(
                 item.get(key) for key in
                 ("grant", "appointment", "punishment", "pacification", "assignment",
@@ -1178,7 +1178,7 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令进展载荷须为独立对象", "invalid_shape", source)
                 continue
             try:
-                order_id = strict_int(progress.get("order_id"), accept_numeric_strings=False)
+                order_id = _parse_sqlite_id(progress.get("order_id"))
             except (TypeError, ValueError):
                 order_id = 0
             note = progress.get("note")
@@ -1202,7 +1202,7 @@ def _dispatch_commissions(
 
         update = item.get("secret_order_update")
         if update is not None:
-            from ming_sim.strict_types import strict_int
+            from ming_sim.issues import _parse_sqlite_id
             if not isinstance(update, Mapping) or any(
                 item.get(key) for key in
                 ("grant", "appointment", "punishment", "pacification", "assignment",
@@ -1211,7 +1211,7 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令修改载荷须为独立对象", "invalid_shape", source)
                 continue
             try:
-                order_id = strict_int(update.get("order_id"), accept_numeric_strings=False)
+                order_id = _parse_sqlite_id(update.get("order_id"))
             except (TypeError, ValueError):
                 order_id = 0
             target = _active_secret_order(db, order_id)
@@ -1243,7 +1243,7 @@ def _dispatch_commissions(
 
         review = item.get("secret_order_review")
         if review is not None:
-            from ming_sim.strict_types import strict_int
+            from ming_sim.issues import _parse_sqlite_id
             if not isinstance(review, Mapping) or any(
                 item.get(key) for key in
                 ("grant", "appointment", "punishment", "pacification", "assignment",
@@ -1252,7 +1252,7 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令核议载荷须为独立对象", "invalid_shape", source)
                 continue
             try:
-                order_id = strict_int(review.get("order_id"), accept_numeric_strings=False)
+                order_id = _parse_sqlite_id(review.get("order_id"))
             except (TypeError, ValueError):
                 order_id = 0
             claim = review.get("claim")
@@ -1284,10 +1284,6 @@ def _dispatch_commissions(
                 ("grant", "appointment", "punishment", "pacification", "assignment")
             ):
                 _reject(rejected, item, "密令新建载荷须为独立对象", "invalid_shape", source)
-                continue
-            from ming_sim.cli_backend import secret_order_can_land
-            if not secret_order_can_land(dict(secret)):
-                _reject(rejected, item, "密令缺标题、内容或冻结任务契约", "invalid_shape", source)
                 continue
             source_turn = db.conn.execute(
                 "SELECT minister_name, user_message_id FROM chat_turns "
@@ -1871,7 +1867,7 @@ def _dispatch_endorsements(
     挂在 pending_actions.payload_json["endorsements"]，成案时继承到案卷；
     目标已成案（迟到转译）则按 pending_action_id 直写案卷背书。来源为本轮。
     """
-    from ming_sim.strict_types import strict_int
+    from ming_sim.issues import _parse_sqlite_id
 
     items, rejected = _section_items(raw, label="背书声明", source=source)
     applied: List[Any] = []
@@ -1884,9 +1880,7 @@ def _dispatch_endorsements(
         return SectionResult(applied=applied, rejected=rejected)
     for item in items:
         try:
-            action_id = strict_int(
-                item.get("action_id"), accept_numeric_strings=False,
-            )
+            action_id = _parse_sqlite_id(item.get("action_id"))
         except (TypeError, ValueError):
             action_id = 0
         form = str(item.get("form") or "").strip()
@@ -2007,9 +2001,9 @@ def _stage_prohibit_covert_levy(
     from ming_sim.covert_levy import PROHIBITION_ACTION
     from ming_sim.due_review import list_due_review_scenes
 
-    from ming_sim.strict_types import strict_int
+    from ming_sim.issues import _parse_sqlite_id
     try:
-        dossier_id = strict_int(item["target_id"], accept_numeric_strings=False)
+        dossier_id = _parse_sqlite_id(item["target_id"])
     except (KeyError, TypeError, ValueError):
         raise KeyError("禁摊派交办缺场面案卷 id") from None
     if not any(
@@ -2146,10 +2140,10 @@ def _dispatch_inquiries(
         order_suffix = ""
         raw_order = item.get("order_id", None)
         if raw_order not in (None, ""):
-            from ming_sim.strict_types import strict_int
+            from ming_sim.issues import _parse_sqlite_id
             try:
-                order_id = strict_int(raw_order, accept_numeric_strings=False)
-            except ValueError:
+                order_id = _parse_sqlite_id(raw_order)
+            except (TypeError, ValueError):
                 _reject(
                     rejected, item, "查访 order_id 须为整数",
                     "invalid_shape", source,
@@ -2222,13 +2216,12 @@ def _dispatch_rushes(
     applied: List[Any] = []
     for item in items:
         target_kind = str(item.get("target_kind") or "").strip()
-        # 身份引用走 strict_int：禁 bool/有损小数改绑（#1897 C1）。
+        # 身份引用走 SQLite 64-bit 权威：禁 bool/有损小数/超界绑查询（#1897 C1）。
+        from ming_sim.issues import _parse_sqlite_id
         from ming_sim.strict_types import strict_int
         try:
             raw_tid = item.get("target_id")
-            target_id = 0 if raw_tid in (None, "") else strict_int(
-                raw_tid, accept_numeric_strings=False,
-            )
+            target_id = 0 if raw_tid in (None, "") else _parse_sqlite_id(raw_tid)
         except (TypeError, ValueError):
             target_id = 0
         if target_kind not in {"commitment", "secret_order"} or target_id <= 0:
@@ -2388,17 +2381,14 @@ def _dispatch_promises(
     chat_turn_id: int, source: Provenance,
     preexisting_pending_ids: set[int],
 ) -> SectionResult:
-    from ming_sim.strict_types import strict_int
+    from ming_sim.issues import _parse_sqlite_id
 
     items, rejected = _section_items(raw, label="应允/拒绝/修改声明", source=source)
     applied: List[Any] = []
     for item in items:
         try:
-            # Strict positive int only — bool/float/numeric strings must not
-            # coerce via bare int() into another night's pending id.
-            action_id = strict_int(
-                item.get("action_id"), accept_numeric_strings=False,
-            )
+            # SQLite 身份权威：bool/float/超 64-bit 在查询前即 ValueError（#1897 C1）。
+            action_id = _parse_sqlite_id(item.get("action_id"))
         except (TypeError, ValueError):
             action_id = 0
         decision = str(item.get("decision") or "").strip()

@@ -1905,27 +1905,6 @@ def compose_unknown_participant_inworld_report(
     )
 
 
-def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
-    """Typed gaps that block a new secret order from landing. Empty ⇒ can land."""
-    so = secret if isinstance(secret, dict) else {}
-    gaps: List[str] = []
-    if bool(so.get("extract_failed")):
-        gaps.append("extract")
-    if not str(so.get("title") or "").strip():
-        gaps.append("title")
-    if not str(so.get("content") or "").strip():
-        gaps.append("content")
-    frozen = so.get("covert_task") if isinstance(so.get("covert_task"), dict) else None
-    if frozen is None:
-        gaps.append("covert_task")
-    return gaps
-
-
-def secret_order_can_land(secret: Optional[Dict[str, Any]]) -> bool:
-    """True when extract result has title + content + frozen contract and no extract_failed."""
-    return not secret_order_landing_gaps(secret)
-
-
 def _canon_person_id_key(raw: Any, *, db: Any, content: Any) -> Optional[str]:
     """单 id：非人滤除 + _canonical_minister_key → 熟键；与 roster 归一同口径。"""
     from ming_sim.session import _canonical_minister_key
