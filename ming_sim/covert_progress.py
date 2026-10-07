@@ -1492,7 +1492,7 @@ def apply_investigation_spoliation(
         target_name=name, fact_key=key, turn=turn, effect=effect,
         origin_ref=origin_ref, commit=False,
     )
-    if owns:
+    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
     return {"target": name, "fact_key": key, "applied": True, "effect": str(effect),
             "knowledge_source": str(knowledge_source or "").strip(),
@@ -1829,7 +1829,7 @@ def apply_monthly_covert_actual_progress(
             "contract_kind": contract.get("kind"),
             "contract_axes": list(contract.get("axes") or []),
         })
-    if owns:
+    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
     return applied
 
@@ -2049,6 +2049,6 @@ def settle_due_secret_orders(
             "target_units": target,
             "delivered": bool(verdict["delivered"]),
         })
-    if owns:
+    if commit and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0:
         db.conn.commit()
     return results

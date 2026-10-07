@@ -541,11 +541,6 @@ class _GapBDB:
             or not row.get("minister_message_id")
         ]
 
-    def history_by_minister(self):
-        out = {}
-        for m in self.messages:
-            out.setdefault(m["minister"], []).append({"role": m["role"], "content": m["content"]})
-        return out
 
     def kv_get(self, _k):
         return ""

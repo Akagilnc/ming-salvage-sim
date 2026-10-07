@@ -81,7 +81,7 @@ def test_dossier_link_rejection_stays_business_refusal_not_loud(game, monkeypatc
     future = persist_and_schedule_scene(sess, db, result)
     future.result()
 
-    assert db.list_secret_orders() == []
+    assert db.character_knowledge.list_secret_orders() == []
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (action_id,),
     ).fetchone()["status"] == "failed"
@@ -128,7 +128,7 @@ def test_ineligible_secret_order_is_business_refusal(game, monkeypatch):
     future = persist_and_schedule_scene(sess, db, result)
     future.result()
 
-    assert db.list_secret_orders() == []
+    assert db.character_knowledge.list_secret_orders() == []
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (action_id,),
     ).fetchone()["status"] == "failed"
@@ -194,5 +194,5 @@ def test_closed_secret_order_rush_fails_one_item_and_commits_the_rest(game):
     assert statuses[rush] == "failed"
     assert statuses[second] == "committed"
     assert {int(item["id"]) for item in applied} == {first, second}
-    assert db.get_secret_order(live)["title"] == "在办再改"
-    assert db.get_secret_order(closed)["status"] == "done"
+    assert db.character_knowledge.get_secret_order(live)["title"] == "在办再改"
+    assert db.character_knowledge.get_secret_order(closed)["status"] == "done"

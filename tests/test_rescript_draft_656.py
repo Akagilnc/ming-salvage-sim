@@ -52,7 +52,7 @@ def test_list_rescript_drafts_projects_planted_rows(game):
         options=[{"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}],
     )
     db.conn.commit()
-    drafts = db.list_rescript_drafts()
+    drafts = db.issues.list_rescript_drafts()
     assert [d["title"] for d in drafts] == ["陕西告饥", "无局急务"]
     first = drafts[0]
     assert first["event_id"] == "issue:42"
@@ -69,7 +69,7 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
     """save_pending_decisions 只清只写 kind='decision'，不连带清除 rescript_draft。"""
     db, state, _content = game
     turn = state.turn
-    db.save_pending_decisions(turn, [
+    db.issues.save_pending_decisions(turn, [
         {"title": "抉择", "context": "c", "options": [
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
     ])
@@ -78,18 +78,18 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
         options=[{"label": "甲", "hint": "一"}, {"label": "乙", "hint": "二"}],
     )
     db.conn.commit()
-    draft_before = db.list_rescript_drafts()[0]
-    db.save_pending_decisions(turn, [
+    draft_before = db.issues.list_rescript_drafts()[0]
+    db.issues.save_pending_decisions(turn, [
         {"title": "抉择改一", "context": "c2", "options": [
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
         {"title": "抉择改二", "context": "c3", "options": [
             {"label": "c", "hint": ""}, {"label": "d", "hint": ""}]},
     ])
-    rows = db.list_pending_decisions(turn)
+    rows = db.issues.list_pending_decisions(turn)
     assert [r["title"] for r in rows] == ["抉择改一", "抉择改二"]
     assert [r["idx"] for r in rows] == [0, 1]
     assert all(r["kind"] == "decision" for r in rows)
-    draft_after = db.list_rescript_drafts()[0]
+    draft_after = db.issues.list_rescript_drafts()[0]
     assert draft_after["idx"] == 2
     for field in ("event_id", "title", "context", "options"):
         assert draft_after[field] == draft_before[field]
@@ -99,7 +99,7 @@ def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game, tmp_path):
     """AWAITING 暂停态：仅有 decision 行时 restore 后同形。"""
     db, state, content = game
     turn = state.turn
-    db.save_pending_decisions(turn, [
+    db.issues.save_pending_decisions(turn, [
         {"title": "抉择", "context": "c", "options": [
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
     ])
@@ -108,8 +108,8 @@ def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game, tmp_path):
     db.backup_to(path)
     restored = GameDB(path, content)
     try:
-        assert restored.list_rescript_drafts() == []
-        rows = restored.list_pending_decisions(turn)
+        assert restored.issues.list_rescript_drafts() == []
+        rows = restored.issues.list_pending_decisions(turn)
         assert [r["title"] for r in rows] == ["抉择"]
         assert all(r["kind"] == "decision" for r in rows)
     finally:
@@ -137,15 +137,15 @@ def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
 
     db, state, _content = game
     turn = state.turn
-    db.save_pending_decisions(turn, [
+    db.issues.save_pending_decisions(turn, [
         {"title": "抉择", "context": "c", "options": [
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
     ])
     _plant_draft(db, state, "急务")
 
-    rows = db.list_pending_decisions(turn)
+    rows = db.issues.list_pending_decisions(turn)
     assert [r["kind"] for r in rows] == ["decision"]
-    assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]
+    assert [d["title"] for d in db.issues.list_rescript_drafts()] == ["急务"]
 
     # #657 批红案头：web 投影合并急务 + decision
     sess = GameSession.__new__(GameSession)
@@ -156,14 +156,14 @@ def test_persist_then_abort_draft_never_enters_hitl_envelope(game):
     assert "急务" in titles and "抉择" in titles
 
     # 仅 decision 行标 decided——draft 不在 list_pending_decisions 中被误标
-    for r in db.list_pending_decisions(turn):
+    for r in db.issues.list_pending_decisions(turn):
         db.conn.execute(
             "UPDATE pending_decisions SET choice_json=?, status='decided' "
             "WHERE turn=? AND idx=? AND kind='decision'",
             ('{"label":"a"}', turn, r["idx"]),
         )
     db.conn.commit()
-    drafts = {d["title"]: d["status"] for d in db.list_rescript_drafts()}
+    drafts = {d["title"]: d["status"] for d in db.issues.list_rescript_drafts()}
     assert drafts["急务"] == "pending"   # 票拟不被误标 decided
 
 # ---------------------------------------------------------------------------
@@ -329,7 +329,7 @@ def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
         options=_two_opts("丙", "h3", "丁", "h4"),
         actor_name="次辅", actor_office="内阁次辅", actor_faction="阉党",
     )
-    db.save_pending_decisions(turn, [{
+    db.issues.save_pending_decisions(turn, [{
         "title": "本月抉择",
         "context": "decision",
         "options": _two_opts("准", "", "驳", ""),
@@ -346,7 +346,7 @@ def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
     )
     db.conn.commit()
 
-    desk = db.list_rescript_desk(turn)
+    desk = db.issues.list_rescript_desk(turn)
     titles = [row["title"] for row in desk]
     assert "已决急务" not in titles
     # 旧急务在前，本月 decision 在急务之后（合并序）
@@ -369,16 +369,16 @@ def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
     assert dec["kind"] == "decision"
 
     # list 补列：list_rescript_drafts / list_pending_decisions 带出新列
-    drafts = db.list_rescript_drafts()
+    drafts = db.issues.list_rescript_drafts()
     hit = next(d for d in drafts if d["title"] == "旧急务甲")
     assert hit["revision_round"] == 2
     assert "prior_options_json" in hit
-    decisions = db.list_pending_decisions(turn)
+    decisions = db.issues.list_pending_decisions(turn)
     assert all("revision_round" in d for d in decisions)
 
     # #656 不变式：save_pending_decisions 不碰 rescript_draft
-    db.save_pending_decisions(turn, [{
+    db.issues.save_pending_decisions(turn, [{
         "title": "抉择再写", "context": "c", "options": _two_opts("准", "", "驳", ""),
     }])
-    assert any(d["title"] == "本月急务" for d in db.list_rescript_drafts())
-    assert any(d["title"] == "旧急务甲" for d in db.list_rescript_desk(turn))
+    assert any(d["title"] == "本月急务" for d in db.issues.list_rescript_drafts())
+    assert any(d["title"] == "旧急务甲" for d in db.issues.list_rescript_desk(turn))

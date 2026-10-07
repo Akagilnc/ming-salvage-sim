@@ -839,7 +839,7 @@ def test_half_weight_odd_baseline_no_round_drift(game):
     db.conn.commit()
     db.recompute_faction_leverage(faction)
     db.conn.commit()
-    lev = db.faction_leverage(faction)
+    lev = db.factions.faction_leverage(faction)
     assert lev == baseline, (
         f"weight_sum=2.5 + 奇数基线 {baseline} → leverage 应={baseline}（不漂），实得 {lev}"
     )

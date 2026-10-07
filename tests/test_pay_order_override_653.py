@@ -469,7 +469,7 @@ def test_real_revoke_restores_override_same_month_with_active_commitment(game):
         "key": "due_priority_军饷@shaanxi", "value": 40, "until_turn": until,
     }])
     db.apply_dossier_promulgation(state, target, "promulgated")
-    assert db.get_decree_dossier(target)["status"] == "closed"
+    assert db.dossiers.get(target)["status"] == "closed"
     assert "due_priority_军饷@shaanxi" in db.get_fiscal_config()
     issue_id = db.insert_issue(
         state, kind="initiative", title="边饷次序之诺", origin_kind="decree",
@@ -680,7 +680,7 @@ def test_lifecycle_promulgated_materializes_and_next_settlement_reads(game):
     ).fetchone()
     assert row["origin_ref"] == f"dossier:{did}"
     # 案卷顺颁即终局（无执行判定面）
-    assert db.get_decree_dossier(did)["status"] == "closed"
+    assert db.dossiers.get(did)["status"] == "closed"
     # 下一次结算读取新序（同 turn 重算即读新旨＝读端按当前在位键解析）
     after = db.settle_province_tick("shaanxi")
     assert after.breakdown["实付分账"]["军饷"] < before.breakdown["实付分账"]["军饷"]
@@ -700,7 +700,7 @@ def test_lifecycle_rejected_decree_zero_config_write(game):
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM fiscal_config_changes"
     ).fetchone()["c"] == before_rows                      # 零 provenance
-    assert db.get_decree_dossier(did)["status"] == "proposed"  # 打回持有态
+    assert db.dossiers.get(did)["status"] == "proposed"  # 打回持有态
 
 def test_lifecycle_force_promulgation_after_rejection(game):
     """强颁：中旨标记＋代价照 0055/0056 落，config 自下一次结算生效。"""
@@ -972,7 +972,7 @@ def test_manual_override_capture_stages_without_premature_materialization(game, 
     db, _state, _content = game
     entries = [{"key": "due_priority_军饷@shaanxi", "value": 40}]
     did = _capture_override_decree(game, monkeypatch, "今岁边饷居末", entries)
-    assert db.get_decree_dossier(did)["status"] == "proposed"
+    assert db.dossiers.get(did)["status"] == "proposed"
     assert "due_priority_军饷@shaanxi" not in db.get_fiscal_config()
 
 # ═══════════════ F2.3（owner 拍板 r5）：官俸欠/宗禄欠当回合流量持久留痕 ═══════════════

@@ -24,11 +24,11 @@ def test_candidate_binding_at_player_prewrite(game, echo, title, candidates, exp
     row = {"title": title, "options": [{"label": "留", "hint": "候旨"}]}
     if echo is not None:
         row["event_id"] = echo
-    db.save_pending_decisions(state.turn, [row])
+    db.issues.save_pending_decisions(state.turn, [row])
     db.save_resolve_context(state.turn, "诏", {"candidate_events": candidates})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.save_state(state)
-    key = db.list_rescript_desk(state.turn)[0]["decision_key"]
+    db.reign.save_game_state(state)
+    key = db.issues.list_rescript_desk(state.turn)[0]["decision_key"]
 
     triggers_before = db.conn.execute("SELECT * FROM event_triggers").fetchall()
     prepared = session.prepare_rescript_prewrite([
@@ -36,5 +36,5 @@ def test_candidate_binding_at_player_prewrite(game, echo, title, candidates, exp
     ])
 
     assert prepared["batch"].items[0].row.get("event_id") == expected
-    assert db.list_pending_decisions(state.turn)[0]["status"] == "pending"
+    assert db.issues.list_pending_decisions(state.turn)[0]["status"] == "pending"
     assert db.conn.execute("SELECT * FROM event_triggers").fetchall() == triggers_before

@@ -163,7 +163,7 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
     )
     db.conn.commit()
     urgent = next(
-        r for r in db.list_rescript_desk(int(state.turn))
+        r for r in db.issues.list_rescript_desk(int(state.turn))
         if r.get("kind") == "rescript_draft" and r.get("title") == "陕西告饥"
     )
     before = len(db.dossiers.list_dossiers())

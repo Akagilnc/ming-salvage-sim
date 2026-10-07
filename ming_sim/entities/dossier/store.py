@@ -66,6 +66,9 @@ _PENDING_ACTION_COLUMNS = frozenset({
     "status", "committed_directive_id", "night_id", "night_approved", "version",
     "source_chat_turn_id", "created_at",
 })
+_LINK_COLUMNS = frozenset({
+    "id", "source_dossier_id", "target_dossier_id", "relation_type", "note", "created_at",
+})
 DOSSIER_REPORT_ORIGIN_MONTHLY = "dossier-report:monthly_errand"
 DOSSIER_REPORT_ORIGIN_VERDICT = "dossier-report:execution_verdict"
 DOSSIER_REPORT_ORIGIN_RUSH = "dossier-report:rush"
@@ -2158,6 +2161,7 @@ class DossierStore:
             "decree_dossier_decisions": "SELECT * FROM decree_dossier_decisions",
             "dossier_reported_progress": "SELECT * FROM dossier_reported_progress",
             "pending_actions": "SELECT * FROM pending_actions",
+            "decree_dossier_links": "SELECT * FROM decree_dossier_links",
         }[table]
         return self._conn.execute(sql).fetchall()
 
@@ -2357,6 +2361,13 @@ class DossierStore:
             allowed=_PENDING_ACTION_COLUMNS, what="pending_actions",
         )
 
+    def restore_link(self, row: Mapping[str, object]) -> None:
+        from ming_sim.entities.column_write import upsert_by_pk
+        upsert_by_pk(
+            self._conn, "decree_dossier_links", row, pk="id",
+            allowed=_LINK_COLUMNS, what="decree_dossier_links",
+        )
+
     def delete_dossier(self, dossier_id: object) -> None:
         self._conn.execute("DELETE FROM decree_dossiers WHERE id=?", (dossier_id,))
 
@@ -2372,6 +2383,9 @@ class DossierStore:
 
     def delete_pending_action(self, action_id: object) -> None:
         self._conn.execute("DELETE FROM pending_actions WHERE id=?", (action_id,))
+
+    def delete_link(self, link_id: object) -> None:
+        self._conn.execute("DELETE FROM decree_dossier_links WHERE id=?", (link_id,))
 
     # ── pending_actions persistence primitives (fact owner) ─────────
 

@@ -387,7 +387,7 @@ def test_657_capability_revalidate_on_follow(game):
         actor_name="A", actor_office="o", actor_faction="f",
     )
     db.conn.commit()
-    desk = db.list_rescript_desk(int(state.turn))
+    desk = db.issues.list_rescript_desk(int(state.turn))
     key = desk[0]["decision_key"]
     # 正确 cap 通过
     batch = ra.validate_all(desk, [{

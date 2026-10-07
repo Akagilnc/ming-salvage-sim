@@ -318,16 +318,16 @@ class _WorkerPathDB:
     """Prologue succeeds (chat_messages.insert OK) but worker scene payload crashes
     AND fail_chat_turn also crashes → worker double-failure path."""
     def __init__(self):
-        self.conn = _query_conn_no_user_message()
+        # Production call sites commit via db.conn.commit after Store insert;
+        # keep a real conn object so __getattr__ stub does not shadow it.
+        # Also provide execute surface used by prologue queries.
+        base = _query_conn_no_user_message()
+        self.conn = base
+        if not hasattr(self.conn, 'commit'):
+            self.conn.commit = lambda: None
 
     def kv_get(self, _key):
         return ""
-
-
-    def __init__(self):
-        # Production call sites commit via db.conn.commit after Store insert;
-        # keep a real conn object so __getattr__ stub does not shadow it.
-        self.conn = SimpleNamespace(commit=lambda: None)
 
     def create_chat_turn(self, *a, **k):
         return 7
