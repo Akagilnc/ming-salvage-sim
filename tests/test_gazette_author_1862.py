@@ -320,6 +320,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         "dossier_ids": None,
         "fact_origins_kept": [],
         "event_source_ids_kept": [],
+        "audience_source_turns_kept": [],
         "prepared": None,
         "agent_prepared": None,
     }
@@ -327,6 +328,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     real_world_opening = materials_mod._world_opening_text
     real_keep_fact = materials_mod._keep_fact
     real_knowledge_exp = materials_mod._knowledge_for_experience
+    real_omit_audience = materials_mod._omit_secret_order_audience
     real_create = agents_mod.create_gazette_author_agent
     depth = {"n": 0}
 
@@ -356,6 +358,16 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
                     )
         return projected
 
+    def _spy_omit_audience(entries, secret_turn_ids):
+        kept = real_omit_audience(entries, secret_turn_ids)
+        if depth["n"] > 0:
+            for entry in kept:
+                if isinstance(entry, dict):
+                    author_capture["audience_source_turns_kept"].append(
+                        int(entry.get("source_chat_turn_id") or 0)
+                    )
+        return kept
+
     def _spy_prepare(db_arg, state_arg):
         depth["n"] += 1
         try:
@@ -363,6 +375,9 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
             monkeypatch.setattr(materials_mod, "_keep_fact", _spy_keep_fact)
             monkeypatch.setattr(
                 materials_mod, "_knowledge_for_experience", _spy_knowledge_exp,
+            )
+            monkeypatch.setattr(
+                materials_mod, "_omit_secret_order_audience", _spy_omit_audience,
             )
             prepared = real_prepare(db_arg, state_arg)
             author_capture["prepared"] = prepared
@@ -454,10 +469,16 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert "secret_order:9" not in kept_facts
     assert f"dossier:{secret_did}" not in kept_facts
     assert all(not str(o).startswith("secret_order:") for o in kept_facts)
-    # 最终经历投影：进入渲染的 source_id 不含密令 brief；可有非密令经历
+    # 最终经历投影：knowledge.events 不含密令 brief
     kept_events = set(author_capture.get("event_source_ids_kept") or [])
     assert f"secret_order_brief:{order_id}" not in kept_events
     assert all(not str(s).startswith("secret_order") for s in kept_events)
+    # 召对 audience 轨最终保留：普通 plain_turn 入选；密令关联轮排除
+    kept_audience_turns = set(author_capture.get("audience_source_turns_kept") or [])
+    assert int(plain_turn) in kept_audience_turns
+    assert int(secret_turn) not in kept_audience_turns
+    assert int(later_turn) not in kept_audience_turns
+    assert int(pending_turn) not in kept_audience_turns
     # agent tools 消费发生，且接到作者 prepare 同一份
     assert str(seen.get("files") or "").strip() != ""
     assert str(seen.get("instructions") or "").strip() != ""
