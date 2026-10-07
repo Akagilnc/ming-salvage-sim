@@ -149,7 +149,8 @@ def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game
     assert db.list_dossier_progress(short)
 
 
-def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
+def test_close_secret_order_keeps_model_reports_without_synthesizing_terminal(game):
+    """结案只落 result/执行格；不把结案正文写成人物终奏。"""
     db, state, content = game
     eligible_id, eligible = _order(db, state)
     ordinary_id, ordinary = _order(db, state, title="保护堤岸", tags=["河工"])
@@ -160,15 +161,23 @@ def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
         {"dossier_id": ordinary, "progress_band": "在办", "memorial_text": "河工并列密奏"},
     ]
     db.record_monthly_dossier_progress(state.turn, reports)
+    before_eligible = db.list_dossier_progress(eligible)
+    before_ordinary = db.list_dossier_progress(ordinary)
 
     db.close_secret_order(eligible_id, "failed", "护行中止", state.turn)
     db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
 
-    assert db.list_dossier_progress(eligible)[-1]["is_terminal"] is True
-    assert db.list_dossier_progress(ordinary)
+    after_eligible = db.list_dossier_progress(eligible)
+    after_ordinary = db.list_dossier_progress(ordinary)
+    assert after_eligible == before_eligible
+    assert after_ordinary == before_ordinary
+    assert all(not row.get("is_terminal") for row in after_eligible)
+    assert db.get_decree_dossier(eligible)["status"] == "closed"
+    assert db.get_decree_dossier(ordinary)["status"] == "closed"
 
 
-def test_character_terminal_status_closes_secret_orders_through_canonical_progress_rail(game):
+def test_character_terminal_status_closes_orders_without_synthetic_memorial(game):
+    """人物终态关密令/案卷；实况入 result 与执行说明，不污染既有模型月报。"""
     db, state, content = game
     assignee = _actor(db)
     chained_id, chained_dossier = _order(db, state, title="护行辽饷")
@@ -190,6 +199,8 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
         },
     ]
     db.record_monthly_dossier_progress(state.turn, reports)
+    before_chained = db.list_dossier_progress(chained_dossier)
+    before_unchained = db.list_dossier_progress(unchained_dossier)
 
     db.set_character_status(state, assignee, "dead", "途中病故")
 
@@ -205,10 +216,14 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     assert "途中病故" in orders[chained_id]["result"]
     assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
     assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
-    terminal = db.list_dossier_progress(chained_dossier)[-1]
-    assert terminal["is_terminal"] is True
-    assert "途中病故" in terminal["memorial_text"]
-    assert db.list_dossier_progress(unchained_dossier)
+    chained_progress = db.list_dossier_progress(chained_dossier)
+    unchained_progress = db.list_dossier_progress(unchained_dossier)
+    assert chained_progress == before_chained
+    assert unchained_progress == before_unchained
+    assert all(not row.get("is_terminal") for row in chained_progress)
+    assert all("途中病故" not in str(row.get("memorial_text") or "") for row in chained_progress)
+    assert all("人物终态" not in str(row.get("memorial_text") or "") for row in chained_progress)
+    assert unchained_progress
 
 
 def test_current_secret_order_deadline_controls_monthly_eligibility(game):

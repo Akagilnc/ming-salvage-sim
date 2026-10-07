@@ -19949,11 +19949,6 @@ class GameDB:
     ) -> None:
         def close_in_current_transaction() -> None:
             dossier = self.get_dossier_for_secret_order(int(order_id))
-            reports = (
-                self.list_dossier_progress(int(dossier["id"]))
-                if dossier is not None else []
-            )
-            has_progress_chain = bool(reports)
             close_text = str(result or "")
             self.conn.execute(
                 """
@@ -19968,19 +19963,8 @@ class GameDB:
                     self.transition_decree_dossier(
                         int(dossier["id"]), "executing", commit=False,
                     )
-                # 仅当结案正文是新增玩家叙事时追加终奏；不复写/复制既有 0058 奏报（P7）
-                if has_progress_chain and close_text.strip():
-                    last_memorial = ""
-                    for item in reversed(reports):
-                        text = str(item.get("memorial_text") or "")
-                        if text:
-                            last_memorial = text
-                            break
-                    if close_text != last_memorial:
-                        self.record_dossier_progress(
-                            int(dossier["id"]), int(turn_closed), "结案",
-                            close_text, is_terminal=True, commit=False,
-                        )
+                # 结案正文只入密令 result 与执行说明；人物奏报仅经模型声明/既有存储，
+                # 不得把实况/中断说明因进入本 API 写成 memorial（#1835 J14）。
                 self.record_dossier_execution(
                     int(dossier["id"]),
                     "fulfilled" if str(status) == "done" else "failed",
