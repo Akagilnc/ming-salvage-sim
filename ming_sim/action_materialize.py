@@ -1121,6 +1121,71 @@ def _parse_revoke_decree_target(
     }
 
 
+def _resolve_pending_target_candidate(
+    pending_rows: List[Dict[str, Any]],
+    target_candidate: object,
+    *,
+    expected_action: str,
+) -> tuple[int, Any]:
+    """续办身份：缺省/「新」→ 新建；显式指针必须命中既有 pending，失败拒收不搭救。
+
+    #1897 C1：显式坏形或查找不中不得静默改成独立新交办。
+    """
+    if target_candidate in (None, ""):
+        return 0, None
+    if isinstance(target_candidate, str):
+        pointed = target_candidate.strip()
+        if not pointed:
+            return 0, None
+        if pointed == "新":
+            return 0, None
+    else:
+        pointed = target_candidate
+    from ming_sim.strict_types import strict_sqlite_id
+    try:
+        want_id = strict_sqlite_id(pointed, accept_numeric_strings=True)
+    except (TypeError, ValueError) as exc:
+        raise DecreeMaterializationValidationError(
+            "续办目标候选须为既有候选 id",
+            failed_fields=("target_candidate",),
+        ) from exc
+    if want_id <= 0:
+        raise DecreeMaterializationValidationError(
+            "续办目标候选须为正整数 id",
+            failed_fields=("target_candidate",),
+            category="hallucinated_id",
+        )
+    for row in pending_rows:
+        if row.get("kind") != "directive":
+            continue
+        if int(row["id"]) != want_id:
+            continue
+        try:
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+        except (TypeError, ValueError) as exc:
+            raise DecreeMaterializationValidationError(
+                f"续办目标候选载荷损坏：{want_id}",
+                failed_fields=("target_candidate",),
+            ) from exc
+        if not isinstance(payload, dict):
+            raise DecreeMaterializationValidationError(
+                f"续办目标候选载荷损坏：{want_id}",
+                failed_fields=("target_candidate",),
+            )
+        if str(payload.get("dossier_action_type") or "").strip() != expected_action:
+            raise DecreeMaterializationValidationError(
+                f"续办目标候选类型不匹配：{want_id}",
+                failed_fields=("target_candidate",),
+                category="hallucinated_id",
+            )
+        return want_id, payload.get("mode")
+    raise DecreeMaterializationValidationError(
+        f"续办目标候选不存在或不可更新：{want_id}",
+        failed_fields=("target_candidate",),
+        category="hallucinated_id",
+    )
+
+
 def stage_assignment_candidate(
     db: Any,
     turn: int,
@@ -1187,27 +1252,9 @@ def stage_assignment_candidate(
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
 
-    existing_id = 0
-    existing_mode = None
-    pointed = str(target_candidate or "").strip()
-    if pointed.isdigit():
-        want_id = int(pointed)
-        for row in pending_rows:
-            if row.get("kind") != "directive":
-                continue
-            if int(row["id"]) != want_id:
-                continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
-            if str(payload.get("dossier_action_type") or "").strip() != "assignment":
-                break
-            existing_id = want_id
-            existing_mode = payload.get("mode")
-            break
+    existing_id, existing_mode = _resolve_pending_target_candidate(
+        pending_rows, target_candidate, expected_action="assignment",
+    )
 
     mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {
@@ -1322,25 +1369,9 @@ def stage_revoke_decree_candidate(
             p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
-    existing_id = 0
-    existing_mode = None
-    pointed = str(target_candidate or "").strip()
-    if pointed.isdigit():
-        want_id = int(pointed)
-        for row in pending_rows:
-            if int(row["id"]) != want_id:
-                continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
-            if str(payload.get("dossier_action_type") or "").strip() != "revoke_decree":
-                break
-            existing_id = want_id
-            existing_mode = payload.get("mode")
-            break
+    existing_id, existing_mode = _resolve_pending_target_candidate(
+        pending_rows, target_candidate, expected_action="revoke_decree",
+    )
 
     mode = resolve_directive_mode(extracted=extracted_mode, existing=existing_mode)
     staged: Dict[str, Any] = {

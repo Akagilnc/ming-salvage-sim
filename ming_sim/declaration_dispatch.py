@@ -1615,11 +1615,7 @@ def _dispatch_commissions(
         except DecreeMaterializationValidationError as exc:
             _reject(rejected, item, str(exc), _xiexang_reject_category(exc), source)
             continue
-        try:
-            raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
-        except (TypeError, ValueError, OverflowError) as exc:
-            _reject(rejected, item, str(exc), "invalid_shape", source)
-            continue
+        # 事务附件只在下方 _attach_commission_affair 解析一次（#1897 K2）。
         if appointment_fields:
             try:
                 _assert_characters_exist(db, [str(appointment_fields["name"])])

@@ -70,7 +70,7 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     data = raw
     if isinstance(raw, str):
         text = raw.strip()
-        if not text or text in ("[]", "{}"):
+        if not text or text == "[]":
             return []
         try:
             data = json.loads(text)
@@ -159,7 +159,8 @@ def stages_to_json(stages: object) -> str:
         return "[]"
     if isinstance(stages, str):
         text = stages.strip()
-        if not text or text in ("[]", "{}"):
+        # 仅缺省空串 / 空数组是合法无段；"{}" 等非数组显式坏形不得洗成 []（#1897 C1）。
+        if not text or text == "[]":
             return "[]"
         try:
             data = json.loads(text)
