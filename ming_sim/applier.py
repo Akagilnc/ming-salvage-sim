@@ -141,6 +141,19 @@ def load_stored_list(raw: object, *, label: str) -> list:
     return value
 
 
+def load_stored_object_list(raw: object, *, label: str) -> list[dict]:
+    """Durable list of objects. Blank is []. Non-list or non-object members raise."""
+    from collections.abc import Mapping
+
+    values = load_stored_list(raw, label=label)
+    out: list[dict] = []
+    for item in values:
+        if not isinstance(item, Mapping):
+            raise StoredDocumentError(f"{label} 成员须为对象")
+        out.append(dict(item))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # 决定 2/8：事务边界 —— commit 暂停连接 + atomic 包裹
 # ---------------------------------------------------------------------------

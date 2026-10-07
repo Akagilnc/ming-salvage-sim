@@ -32,7 +32,7 @@ from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Seq
 
 from ming_sim.applier import (
     StoredDocumentError, atomic, connection_owns_transaction,
-    durable_int, load_stored_json, load_stored_list, load_stored_object,
+    durable_int, load_stored_json, load_stored_list, load_stored_object, load_stored_object_list,
     safe_json_dumps, sanitize_sqlite_text,
 )
 from ming_sim.appointment_tenure import appointment_tenure_from
@@ -1832,17 +1832,13 @@ class GameDB:
         old_source = str(row["pay_source_region"] or "")
         from ming_sim.applier import durable_float as _durable_float
         # 未提供的旧列：持久损坏上抛，不冒充声明拒收。
+        from ming_sim.applier import durable_float as _durable_float
         try:
-            if pay_source_region is _SENTINEL:
-                pay_source_region_val = str(row["pay_source_region"] or "").strip()
-            if province_pay_share is _SENTINEL:
-                province_share = _coerce_pay_source_float(row["province_pay_share"])
-            if central_pay_share is _SENTINEL:
-                central_share = _coerce_pay_source_float(row["central_pay_share"])
-            if is_tusi is _SENTINEL:
-                is_tusi_val = bool(row["is_tusi"])
-            if self_funded_pay is _SENTINEL:
-                self_funded_val = bool(row["self_funded_pay"])
+            base_pay_source = str(row["pay_source_region"] or "").strip()
+            base_province_share = _coerce_pay_source_float(row["province_pay_share"])
+            base_central_share = _coerce_pay_source_float(row["central_pay_share"])
+            base_is_tusi = bool(row["is_tusi"])
+            base_self_funded = bool(row["self_funded_pay"])
             province_arrears = _durable_float(
                 row["province_pay_arrears"], label="armies.province_pay_arrears", blank=0.0,
             )
@@ -1852,15 +1848,37 @@ class GameDB:
         except (TypeError, ValueError) as exc:
             raise StoredDocumentError(f"军饷源持久列损坏：{exc}") from exc
         try:
-            if pay_source_region is not _SENTINEL:
+            self._validate_pay_source_values(
+                army_id, old_owner, base_pay_source, base_province_share,
+                base_central_share, base_is_tusi, base_self_funded,
+                province_arrears, central_arrears,
+            )
+            base_exempt = old_owner != "ming" or base_is_tusi or base_self_funded
+            if base_pay_source and not base_exempt:
+                self._require_valid_pay_source_region(army_id, base_pay_source)
+        except ValueError as exc:
+            raise StoredDocumentError(f"军饷源持久约束损坏：{exc}") from exc
+
+        try:
+            if pay_source_region is _SENTINEL:
+                pay_source_region_val = base_pay_source
+            else:
                 pay_source_region_val = str(pay_source_region or "").strip()
-            if province_pay_share is not _SENTINEL:
+            if province_pay_share is _SENTINEL:
+                province_share = base_province_share
+            else:
                 province_share = _coerce_pay_source_float(province_pay_share)
-            if central_pay_share is not _SENTINEL:
+            if central_pay_share is _SENTINEL:
+                central_share = base_central_share
+            else:
                 central_share = _coerce_pay_source_float(central_pay_share)
-            if is_tusi is not _SENTINEL:
+            if is_tusi is _SENTINEL:
+                is_tusi_val = base_is_tusi
+            else:
                 is_tusi_val = _coerce_bool_flag(is_tusi)
-            if self_funded_pay is not _SENTINEL:
+            if self_funded_pay is _SENTINEL:
+                self_funded_val = base_self_funded
+            else:
                 self_funded_val = _coerce_bool_flag(self_funded_pay)
         except (TypeError, ValueError) as exc:
             changes.append({
@@ -1883,14 +1901,6 @@ class GameDB:
             if pay_source_region_val:
                 self._require_valid_pay_source_region(army_id, pay_source_region_val)
         except ValueError as exc:
-            declared = any(
-                v is not _SENTINEL
-                for v in (
-                    province_pay_share, central_pay_share, is_tusi, self_funded_pay,
-                )
-            )
-            if not declared:
-                raise StoredDocumentError(f"军饷源持久约束损坏：{exc}") from exc
             changes.append({
                 "army": row["name"], "field": "pay_source",
                 "rejected": True, "category": "invalid_enum",
@@ -2105,6 +2115,18 @@ class GameDB:
                 "item": {"army_id": army_id, "changes": raw_changes},
             })
             return
+        # 先核旧账基线：坏旧事实 → StoredDocumentError，不看声明字段集合。
+        try:
+            self._validate_pay_source_values(
+                army_id, owner_power, base_pay_source, base_province_share,
+                base_central_share, base_is_tusi, base_self_funded,
+                province_arrears, central_arrears,
+            )
+            base_exempt = owner_power != "ming" or base_is_tusi or base_self_funded
+            if base_pay_source and not base_exempt:
+                self._require_valid_pay_source_region(army_id, base_pay_source)
+        except ValueError as exc:
+            raise StoredDocumentError(f"军饷源持久约束损坏：{exc}") from exc
         exempt = owner_power != "ming" or is_tusi or self_funded
         exempt_by_ming_flag = (
             owner_power == "ming"
@@ -2113,22 +2135,18 @@ class GameDB:
             and (is_tusi or self_funded)
         )
         if exempt_by_ming_flag and (province_arrears + central_arrears) > 1e-9:
-            # 声明把明军改成自养/土司且仍有欠：产品拒收
-            if {"is_tusi", "self_funded_pay"} & set(normalized):
-                changes.append({
-                    "army": row["name"], "field": "pay_source",
-                    "rejected": True, "category": "invalid_enum",
-                    "reason": "明军有欠饷时不得仅以自养/土司改隶清空饷源；须先走补饷或显式核销",
-                    "item": {"army_id": army_id, "changes": raw_changes},
-                })
-                return
-            raise StoredDocumentError(
-                "明军有欠饷时不得仅以自养/土司改隶清空饷源；须先走补饷或显式核销"
-            )
+            changes.append({
+                "army": row["name"], "field": "pay_source",
+                "rejected": True, "category": "invalid_enum",
+                "reason": "明军有欠饷时不得仅以自养/土司改隶清空饷源；须先走补饷或显式核销",
+                "item": {"army_id": army_id, "changes": raw_changes},
+            })
+            return
         if exempt:
             pay_source_region = ""
             province_share = central_share = 0.0
             province_arrears = central_arrears = 0.0
+        # 终态约束失败：旧账已通过 → 归新产品组合。
         try:
             self._validate_pay_source_values(
                 army_id, owner_power, pay_source_region, province_share, central_share,
@@ -2137,10 +2155,6 @@ class GameDB:
             if pay_source_region:
                 self._require_valid_pay_source_region(army_id, pay_source_region)
         except ValueError as exc:
-            # 声明未改份额/标志时，约束失败属旧持久；否则属产品组合。
-            declared_shape = _ARMY_PAY_SOURCE_DELTA_FIELDS.intersection(normalized)
-            if not (declared_shape - {"pay_source_region"}):
-                raise StoredDocumentError(f"军饷源持久约束损坏：{exc}") from exc
             changes.append({
                 "army": row["name"], "field": "pay_source",
                 "rejected": True, "category": "invalid_enum",
@@ -10493,17 +10507,9 @@ class GameDB:
             raise ValueError("背书来源对话轮 id 须为正整数")
         if not self.dossiers.source_chat_turn_exists(source_cid):
             raise ValueError("背书来源对话轮不存在")
-        raw_items = payload.get("endorsements")
-        if raw_items is None or raw_items == "":
-            items = []
-        elif not isinstance(raw_items, list):
-            raise StoredDocumentError("endorsements 必须为名单")
-        else:
-            items = []
-            for raw in raw_items:
-                if not isinstance(raw, Mapping):
-                    raise StoredDocumentError("endorsements 成员须为对象")
-                items.append(dict(raw))
+        items = load_stored_object_list(
+            payload.get("endorsements"), label="endorsements",
+        )
         # 同轮同形同人去重（INSERT OR IGNORE 同语义）。
         key = (form, endorser_id, imperial, source_cid)
         kept = []
@@ -10535,17 +10541,15 @@ class GameDB:
         self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = False,
     ) -> List[int]:
         """#1842：成案时把载荷 endorsements 继承到案卷（来源仍为声明轮）。"""
-        raw_items = payload.get("endorsements") if isinstance(payload, Mapping) else None
-        if raw_items is None or raw_items == "":
+        if not isinstance(payload, Mapping):
             return []
-        if not isinstance(raw_items, list):
-            raise StoredDocumentError("endorsements 必须为名单")
+        raw_items = load_stored_object_list(
+            payload.get("endorsements"), label="endorsements",
+        )
         if not raw_items:
             return []
         new_ids: List[int] = []
         for raw in raw_items:
-            if not isinstance(raw, Mapping):
-                raise StoredDocumentError("endorsements 成员须为对象")
             form = str(raw.get("form") or "").strip()
             endorser_id = str(raw.get("endorser_id") or "").strip()
             imperial = bool(raw.get("imperial", False))
