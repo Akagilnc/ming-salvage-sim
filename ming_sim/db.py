@@ -10632,13 +10632,11 @@ class GameDB:
                 what="应允暂存",
             )
         # #1842：背书随转译挂载荷，不再置 late_endorsement_pending。
+        owns = self.owns_transaction()
         updated = self.dossiers.mark_pending_night_approved(
             action_ids, night_id=night_id,
         )
-        if updated and (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns and updated:
             self.conn.commit()
         return updated
 
@@ -10796,6 +10794,7 @@ class GameDB:
         """
         from ming_sim.audience_night import assert_night_accepts_player_input
         assert_night_accepts_player_input(self, what="任免路径应答")
+        owns = self.owns_transaction()
         row = self.dossiers.pending_office_candidate_row(int(candidate_id))
         if row is None:
             return 0
@@ -10807,10 +10806,7 @@ class GameDB:
             json.dumps(merged, ensure_ascii=False),
             self.reign._current_open_night_id(),
         )
-        if (
-            not bool(getattr(self.conn, "_commit_suspended", False))
-            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if owns:
             self.conn.commit()
         return int(candidate_id)
 
@@ -11051,10 +11047,7 @@ class GameDB:
         if action_ids is not None:
             allowed_ids = {int(action_id) for action_id in action_ids}
             rows = [r for r in rows if int(r["id"]) in allowed_ids]
-        owns_transaction = not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-        )
+        owns_transaction = self.owns_transaction()
         for pa in rows:
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
                 prepared = self._prepare_pending_directive(
@@ -11199,10 +11192,7 @@ class GameDB:
         rejection_collector=None,
     ) -> Optional[Dict[str, object]]:
         """提交一条对话式拟旨暂存，并让 draft 行与 pending 状态同事务落定。"""
-        owns_transaction = not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-        )
+        owns_transaction = self.owns_transaction()
         cm = atomic(self) if owns_transaction else contextlib.nullcontext()
         result = None
         try:
@@ -11762,11 +11752,7 @@ class GameDB:
         """皇帝复核:撤回本回合一条尚未落库的暂存动作(删 pending 行)。返回是否删了。
         已 committed / 非本回合 / 不存在 → False。
         仍 inactive 的 office:<id> 传召 origin 同步清掉（#672 颁前反悔）。"""
-        owns_transaction = not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-            or self.conn.in_transaction
-        )
+        owns_transaction = self.owns_transaction()
         row = self.dossiers.withdraw_pending_action_row(int(action_id), int(turn))
         if row is None:
             return False
@@ -11792,11 +11778,7 @@ class GameDB:
         kind_filter_exclude 非空=不删该 kind(召对确认拒绝须放过 directive,BUG 1:拟旨搁置
         是颁诏期语义,不能被召对期拒绝静默删掉玩家草案)。
         仍 inactive 的 office:<id> 传召 origin 随 pending 同步清（#672 颁前拒绝）。"""
-        owns_transaction = not (
-            bool(getattr(self.conn, "_commit_suspended", False))
-            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
-            or self.conn.in_transaction
-        )
+        owns_transaction = self.owns_transaction()
         office_ids = self.dossiers.pending_ids_matching_minister(
             int(turn), str(minister_name), kind="office",
             kind_filter_exclude=kind_filter_exclude, action_ids=action_ids,
