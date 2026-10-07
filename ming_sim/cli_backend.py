@@ -504,10 +504,9 @@ def _iter_cli_process_lines(
                 payload = payload.encode("utf-8")
             proc.stdin.write(payload)
             proc.stdin.close()
-        except (OSError, ValueError) as exc:
-            # 写失败 = 子进程根本没拿到 prompt。记事实 + 留痕，交读循环终结时响亮
-            # 报确定性失败；绝不静默，否则空 stdout 被洗成 llm_empty_output 重试
-            # （ADR 0005：代码/IO 的错必须响亮，不得伪装成数据瞬断）。
+        except Exception as exc:
+            # 写失败 = 子进程根本没拿到 prompt。任何真异常都记 outcome，禁逃线程
+            # excepthook 后主路仍成功（#1834 F48）；OSError/ValueError 既有响亮路径保留。
             result.stdin_error = exc
             logger.warning("CLI stdin 写入失败（prompt 未送达子进程）：%s", exc)
 
@@ -575,22 +574,22 @@ def _iter_cli_process_lines(
             )
             time.sleep(_CLI_POLL_SECONDS)
     finally:
+        # 收尾接缝必须在「原异常离开」时也能执行：stream/terminate 真因在此上抛，
+        # 不得只写入无人消费的 outcome 后被 idle 等可重试异常盖掉（#1834 F48）。
         shutting_down.set()
         _terminate_cli_process(proc, outcome=result)
         for worker in workers:
             worker.join(timeout=5)
         result.stderr = "".join(stderr_parts)
         result.returncode = proc.poll()
-    # 活动期管道/终止真异常：在正常收尾契约之外响亮上抛（F48）。
-    # stdin_error 仍由 runner 成功出口统一处理（现役路径）。
-    if result.stream_error is not None:
-        raise RuntimeError(
-            f"CLI 管道读失败：{result.stream_error}"
-        ) from result.stream_error
-    if result.terminate_error is not None:
-        raise RuntimeError(
-            f"CLI 子进程终止失败：{result.terminate_error}"
-        ) from result.terminate_error
+        fault = result.stream_error or result.terminate_error
+        if fault is not None:
+            label = (
+                "CLI 管道读失败"
+                if result.stream_error is not None
+                else "CLI 子进程终止失败"
+            )
+            raise RuntimeError(f"{label}：{fault}") from fault
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
     if reasoning_strength is None:

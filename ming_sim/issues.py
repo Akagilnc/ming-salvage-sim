@@ -553,18 +553,26 @@ def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
         payload = GameDB.parse_engine_payload_json(
             row["metric_delta"], surface="economy_flows.metric_delta",
         )
-        progress = payload.get("commitment_progress") if isinstance(payload, dict) else None
-        if isinstance(progress, dict):
-            # Missing/empty paid_total → 0 (legal default). Present non-int is durable shape fault (F39).
-            raw = progress.get("paid_total", 0)
-            if raw is None or raw == "":
-                return 0
-            try:
-                return int(raw)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"commitment_progress.paid_total 非整数：{raw!r}"
-                ) from exc
+        # No progress field on this advance → keep scanning (legal absence → final 0).
+        if "commitment_progress" not in payload:
+            continue
+        progress = payload.get("commitment_progress")
+        # Present but not an object = durable shape fault; do not skip-wash to 0 (F39).
+        if not isinstance(progress, dict):
+            raise ValueError(
+                "commitment_progress 须为对象，"
+                f"得 {type(progress).__name__}: {progress!r}"
+            )
+        # Missing/empty paid_total → 0 (legal default). Present non-int is shape fault.
+        raw = progress.get("paid_total", 0)
+        if raw is None or raw == "":
+            return 0
+        try:
+            return int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"commitment_progress.paid_total 非整数：{raw!r}"
+            ) from exc
     return 0
 
 
