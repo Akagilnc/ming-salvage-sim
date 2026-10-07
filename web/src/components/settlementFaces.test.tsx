@@ -156,7 +156,10 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表");
     expect(regionBtn?.getAttribute("aria-disabled")).toBe("false");
     // 密令木牌角标（奏疏/拟诏也可能有 badge，勿用全局首枚）
-
+    const secretCmd = Array.from(host.querySelectorAll("button.hud2-cmd")).find((b) =>
+      (b.getAttribute("aria-label") || "").startsWith("密令"),
+    );
+    expect(secretCmd?.querySelector(".hud2-cmd-badge")?.textContent).toBe("3");
   });
 
   it("关闭组点击触发戏内理由回调", () => {
@@ -377,11 +380,18 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
       (b.getAttribute("aria-label") || "").startsWith("奏疏"),
     );
     expect(memorial).toBeTruthy();
+    // Badge is a standalone scalar node (unread_memorial_count=3), not prose-derived.
+    expect(host.querySelector('button.hud2-cmd[aria-label^="奏疏"] .hud2-cmd-badge')?.textContent).toBe("3");
 
-    // 零未读时不得借 issues 条数充数
-    mountHud({
-state: makeState(false,{ issues: makeState(false).issues,memorials: [],unread_memorial_count: 0 }),
-});
+    // 零未读时不得借 issues 条数充数 → badge 缺席
+    const { host: hostZero } = mountHud({
+      state: makeState(false, {
+        issues: makeState(false).issues,
+        memorials: [],
+        unread_memorial_count: 0,
+      }),
+    });
+    expect(hostZero.querySelector('button.hud2-cmd[aria-label^="奏疏"] .hud2-cmd-badge')).toBeNull();
 
     act(() => { memorial?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(opened).toEqual(["state"]);

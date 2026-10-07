@@ -5162,13 +5162,6 @@ class GameDB:
     def _json_load_row(self, raw: str) -> Dict[str, Any]:
         return load_stored_object(raw, label="rollback row")
 
-    def _table_exists(self, table: str) -> bool:
-        row = self.conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-            (table,),
-        ).fetchone()
-        return row is not None
-
     def list_supervision_history(
         self, dossier_id: int, *, as_of_turn: Optional[int] = None,
     ) -> List[Dict[str, object]]:
@@ -8655,9 +8648,10 @@ class GameDB:
                 )
             return seat
         # No typed region this call — only continue an existing same-office seat.
+        # character_offices is a required schema table: let Store query surface faults.
         person = str(name or "").strip()
         title = normalize_office(str(office or ""))
-        if person and title and self._table_exists("character_offices"):
+        if person and title:
             row = CharacterStore(self.conn).read_require_local_office_region((person,))
             if row is not None and normalize_office(str(row["office_title"] or "")) == title:
                 return str(row["region_id"] or "").strip()
@@ -8677,8 +8671,9 @@ class GameDB:
     def character_office_region(self, character_name: object) -> str:
         """Jurisdiction of the character's current appointment (一次任职)."""
         name = str(character_name or "").strip()
-        if not name or not hasattr(self, "conn") or not self._table_exists("character_offices"):
+        if not name:
             return ""
+        # Required table: empty name / no row stay business-empty; schema faults surface.
         row = CharacterStore(self.conn).read_character_office_region((name,))
         return str(row["region_id"] or "").strip() if row is not None else ""
 
@@ -9538,12 +9533,14 @@ class GameDB:
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
         existing = str(row.get("execution_note") or "")
-        if text in existing.split("；"):
-            merged = existing
-        elif existing:
-            merged = f"{existing}；{text}"
-        else:
+        # No prose-delimiter identity: structured callers (reconciliations) own
+        # identity; free-text fragment is carried as-is without split inference.
+        if not existing:
             merged = text
+        elif existing == text:
+            merged = existing
+        else:
+            merged = f"{existing}；{text}"
         if merged != existing:
             self.dossiers.merge_execution_note(
                 int(dossier_id), merged, commit=False,

@@ -1,2 +1,0 @@
-location	action	replacement
-tests/test_decree_dossiers_571.py:test_mechanical_directive_missing_target_fails_loudly_at_real_entry	DELETE prose lock on rejection reason containing "canonical target"	KEEP structured COUNT(*) FROM rejection_reports WHERE section=directive_locality >= 1 (same as sibling incomplete-mechanical test)

@@ -48,9 +48,11 @@ function mount(refreshOnEnd = false) {
   const hookRef = { current: null as HookApi | null };
   const busyRef = { current: "" };
   const setModalRef = { current: (_m: string) => {} };
+  const selectedRefHolder = { current: null as React.MutableRefObject<string> | null };
   const invalidateScrollRef = { current: () => {} };
   function Harness() {
     const selectedRef = React.useRef("温体仁");
+    selectedRefHolder.current = selectedRef;
     const [busy, setBusy] = React.useState("");
     const [activeModal, setActiveModal] = React.useState("chat");
     const [scrollGeneration, setScrollGeneration] = React.useState(0);
@@ -94,6 +96,12 @@ function mount(refreshOnEnd = false) {
   return {
     hookRef, busyRef, rows,
     setModal: (m: string) => act(() => setModalRef.current(m)),
+    /** App 同款：切大臣只改 selectedMinisterRef，生产守卫读此 ref。 */
+    switchMinister: (name: string) => {
+      act(() => {
+        if (selectedRefHolder.current) selectedRefHolder.current.current = name;
+      });
+    },
   };
 }
 
@@ -326,5 +334,120 @@ describe("召对投递（#499 经真实 useAudienceChat 生产控制器）", () 
     releaseOld();  // 更旧的 GET 迟到——generation 已推进，须丢弃、不回退
     await act(async () => { await pOld; });
     expect(chatRows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
+  });
+
+  it("切大臣后：在飞流式 delta/done 不写入新面板（真实 panelMatches 守卫）", async () => {
+    let releaseDelta!: () => void;
+    const deltaGate = new Promise<void>((r) => { releaseDelta = r; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/api/audience/scroll")) {
+        return jsonResp({ night_id: 0, messages: [] });
+      }
+      return gatedSse(
+        [{ event: "accepted", data: { campaign_id: "c1", night_id: 1, chat_turn_id: 9 } }],
+        deltaGate,
+        [
+          { event: "delta", data: { content: "甲的回话" } },
+          {
+            event: "done",
+            data: {
+              history: [U("问甲", 9), M("甲的回话", 9)],
+              suggestions: [],
+              directives: [],
+              night_id: 1,
+            },
+          },
+          { event: "end", data: {} },
+        ],
+      );
+    }));
+    const { hookRef, switchMinister } = mount();
+    await tick();
+
+    let sending!: Promise<void>;
+    act(() => { sending = hookRef.current!.sendChat("温体仁", "问甲", noCbs); });
+    await tick();
+    // App 同款：切人只改 selectedMinisterRef；守卫读 initiating panel。
+    switchMinister("周延儒");
+    releaseDelta();
+    await act(async () => { await sending; });
+    await tick();
+
+    expect(hookRef.current!.streamingMinisterMessage).toBe("");
+    expect(hookRef.current!.chat).toEqual([]);
+    expect(hookRef.current!.pendingUserMessage).toBe("");
+  });
+
+  it("切大臣后：迟到历史 GET 拒收，不覆盖当前面板", async () => {
+    let releaseOld!: () => void;
+    const oldGate = new Promise<void>((r) => { releaseOld = r; });
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/chat")) {
+        call += 1;
+        if (call === 1) {
+          await oldGate;
+          return jsonResp({
+            minister: MINISTER,
+            history: [U("旧问", 1), M("旧答", 1)],
+            suggestions: [],
+            can_undo_last_chat: false,
+            campaign_id: "old",
+            night_id: 1,
+          });
+        }
+        return jsonResp({
+          minister: { ...MINISTER, name: "周延儒" },
+          history: [U("新问", 2), M("新答", 2)],
+          suggestions: [],
+          can_undo_last_chat: false,
+          campaign_id: "new",
+          night_id: 2,
+        });
+      }
+      return jsonResp({ night_id: 0, messages: [] });
+    }));
+    const { hookRef, switchMinister } = mount();
+    const chatRows = () => hookRef.current!.chat.map((m) => `${m.role}:${m.content}`);
+
+    let pOld!: Promise<unknown>;
+    act(() => { pOld = hookRef.current!.loadHistory("温体仁"); });
+    switchMinister("周延儒");
+    await act(async () => { await hookRef.current!.loadHistory("周延儒"); });
+    expect(chatRows()).toEqual(["user:新问", "minister:新答"]);
+
+    releaseOld();
+    await act(async () => { await pOld; });
+    expect(chatRows()).toEqual(["user:新问", "minister:新答"]);
+    expect(await pOld).toBeNull();
+  });
+
+  it("未切人时流式回话正常落盘，不被守卫误丢", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/api/audience/scroll")) {
+        return jsonResp({ night_id: 0, messages: [] });
+      }
+      return sse([
+        { event: "accepted", data: { campaign_id: "c1", night_id: 1, chat_turn_id: 3 } },
+        { event: "delta", data: { content: "臣遵旨" } },
+        {
+          event: "done",
+          data: {
+            history: [U("请奏", 3), M("臣遵旨", 3)],
+            suggestions: [],
+            directives: [],
+            night_id: 1,
+          },
+        },
+        { event: "end", data: {} },
+      ]);
+    }));
+    const { hookRef } = mount();
+    await tick();
+    await act(async () => { await hookRef.current!.sendChat("温体仁", "请奏", noCbs); });
+    await tick();
+    expect(hookRef.current!.chat.map((m) => `${m.role}:${m.content}`)).toEqual([
+      "user:请奏", "minister:臣遵旨",
+    ]);
   });
 });

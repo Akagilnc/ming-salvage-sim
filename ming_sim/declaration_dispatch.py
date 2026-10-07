@@ -1261,9 +1261,11 @@ def _dispatch_commissions(
                 continue
             # 落现役唯一写口（db.stage_pending_action）；应允时按 ADR 0038
             # 夜内直写成案（_dispatch_promises 的 secret_order 分支）。
+            # Free body text: empty-check without mutating the stored value (P6).
+            content_text = str(secret.get("content") or "")
             payload = {
                 "title": str(secret.get("title") or "").strip(),
-                "content": str(secret.get("content") or "").strip(),
+                "content": content_text,
                 "assignee": str(secret.get("assignee") or "").strip() or actor,
                 "tags": list(secret.get("tags") or []),
                 "deadline_months": secret.get("deadline_months", 0),
