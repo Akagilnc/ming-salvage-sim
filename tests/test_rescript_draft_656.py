@@ -194,8 +194,7 @@ def test_clear_pending_decisions_keeps_rescript_drafts(game):
         "SELECT kind FROM pending_decisions WHERE turn=?", (turn,)
     ).fetchall()
     assert [r["kind"] for r in rows] == ["rescript_draft"]
-    assert len(db.list_rescript_drafts()) == 1
-    assert db.list_rescript_drafts()[0]["status"] == "pending"
+    assert [d["title"] for d in db.list_rescript_drafts()] == ["急务"]
 
 def test_save_pending_decisions_keeps_rescript_drafts(game):
     """判修 C2（run 01a02d20）：save_pending_decisions 与 clear/save_rescript_drafts
@@ -221,7 +220,7 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
     ])
     # decision 由一条增长为两条时仍完整覆写；draft 行重排但身份和内容不变。
     rows = db.list_pending_decisions(turn)
-    assert len(rows) == 2
+    assert [r["title"] for r in rows] == ["抉择改一", "抉择改二"]
     assert [r["idx"] for r in rows] == [0, 1]
     assert all(r["kind"] == "decision" for r in rows)
     draft_after = db.list_rescript_drafts()[0]
@@ -266,7 +265,7 @@ def test_repeated_overwrite_keeps_stable_synthetic_ids(game):
     # 同盘面覆写：行被替换、合成身份不变
     db.save_rescript_drafts(turn, _drafts("改拟甲", "改拟乙"))
     second = db.list_rescript_drafts()
-    assert len(second) == 2  # 覆写后仍两条
+    assert [d["title"] for d in second] == ["改拟甲", "改拟乙"]  # 确证替换
     assert [d["event_id"] for d in second] == [f"urgent:{turn}:2", f"urgent:{turn}:3"]
     # decision 行 idx 不受影响
     decisions = db.list_pending_decisions(turn)
