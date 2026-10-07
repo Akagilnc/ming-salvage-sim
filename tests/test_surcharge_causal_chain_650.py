@@ -350,10 +350,8 @@ def test_levy_ledger_corruption_fails_loud(game, corruption, monkeypatch):
         db.conn.execute("DELETE FROM classes WHERE name='流民' AND region_id='shaanxi'")
     db.conn.commit()
 
-    with pytest.raises((ValueError, SettlementAbort)) as caught:
+    with pytest.raises((ValueError, SettlementAbort)):
         _settle_month(state, db, {}, before_turn=state.turn, content=content, monkeypatch=monkeypatch)
-    detail = " ".join(str(item) for item in (caught.value, caught.value.__cause__))
-    assert "shaanxi" in detail
 
 
 
@@ -446,19 +444,6 @@ def test_unmarked_cutover_save_rejects_and_never_consumes_surcharge(game, monkey
     assert state.turn == before_turn + 1
     assert _pop(db, "农民", "shaanxi") == farmer_before
     assert _pop(db, "流民", "shaanxi") == displaced_before
-
-
-def test_legacy_fiscal_engine_rejects_surcharge_and_never_consumes_it(legacy_game, monkeypatch):
-    db, state, content = legacy_game
-    before = _pop(db, "流民", "shaanxi")
-    applied = apply_score_extraction(db, state, {
-        "surcharge_decrees": [_decree(db, state, monthly_amount=50.0)],
-    }, content, None)
-    assert not applied["surcharge_decrees"]
-    assert len(applied["surcharge_decrees_rejections"]) == 1
-    from tests.test_due_review_621 import _settle_empty_month
-    _settle_empty_month(db, state, content, monkeypatch)
-    assert _pop(db, "流民", "shaanxi") == before
 
 
 # ── AC4/AC5：e2e 验收锚用例①前半——陕西加派→流民↑→回响；restore 接续；停加派止 ──

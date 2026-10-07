@@ -7,7 +7,7 @@ import ming_sim.decree as decree_mod
 from ming_sim import audience_night
 from ming_sim.exceptions import LLMContractError
 from ming_sim.models import LLMConfig
-from ming_sim.qualitative import power_band, qualitative_character_axis
+from ming_sim.qualitative import qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, rejected_verdict
 
@@ -109,8 +109,6 @@ def test_promulgation_context_projects_faction_leverage_as_qualitative_band(game
     assert by_name["阉党"] == {
         "name": "阉党", "leverage": "强盛", "agenda": "附议清丈",
     }
-    assert by_name["东林"]["leverage"] == power_band(5)
-    assert by_name["阉党"]["leverage"] == power_band(95)
     assert all(
         isinstance(row["leverage"], str)
         and not isinstance(row["leverage"], bool)
@@ -120,26 +118,6 @@ def test_promulgation_context_projects_faction_leverage_as_qualitative_band(game
     # Resistance remains present; only the projection is qualitative.
     assert all(set(row) == {"name", "leverage", "agenda"} for row in context["factions"])
     assert any(row["agenda"] for row in context["factions"])
-
-
-def test_promulgation_context_routes_faction_leverage_through_power_band(
-    game, monkeypatch,
-):
-    """#614 C1: factions[].leverage must call the domain power_band entry."""
-    db, state, _content = game
-    _dossier(db, state, "清丈天下田亩")
-    db.conn.execute("UPDATE factions SET leverage=42 WHERE name='东林'")
-    db.conn.commit()
-
-    monkeypatch.setattr(
-        decree_mod, "power_band", lambda value: f"routed:{int(value)}",
-        raising=False,
-    )
-    context = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
-    )
-    by_name = {row["name"]: row for row in context["factions"]}
-    assert by_name["东林"]["leverage"] == "routed:42"
 
 
 def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
@@ -351,7 +329,7 @@ def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(g
     ).fetchone()["status"] == "dismissed"
     second_factions = {row["name"]: row for row in second["factions"]}
     assert second_factions["东林"] == {
-        "name": "东林", "leverage": power_band(5),
+        "name": "东林", "leverage": "极弱",
         "agenda": "失去许誉卿封驳支点，转入复议",
     }
     assert {

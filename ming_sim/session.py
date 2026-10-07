@@ -1947,10 +1947,9 @@ class GameSession:
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
         ctx = self.db.get_resolve_context(self.state.turn)
-        # #389：event_id 缺失/回显越权（越出本回合候选快照）时以候选快照重绑——
-        # 迁自旧 submit_decisions 的绑定步（与 choices[idx] 位置写协议无关，非
-        # 猜绑，唯一权威仍是 bind_decisions_to_candidate_events）；scope 与旧
-        # list_pending_decisions 同款只收 kind='decision'，rescript_draft 行不动。
+        # #389 / #1900 J20：只采信本回合候选快照内的显式 event_id（及合法 dossier:）；
+        # 标题不补绑。迁自旧 submit_decisions 的绑定步；scope 同旧
+        # list_pending_decisions 只收 kind='decision'，rescript_draft 行不动。
         if ctx is not None:
             from ming_sim.settlement_payload import bind_decisions_to_candidate_events
             decision_rows = [r for r in desk if str(r.get("kind") or "") == "decision"]

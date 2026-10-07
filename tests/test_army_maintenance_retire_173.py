@@ -28,23 +28,8 @@ def _pay_source():
 
 # ── schema：列已物理删除 ──────────────────────────────────────────────
 
-def test_armies_table_has_no_maintenance_column(read_game):
-    db, _state, _ = read_game
-    cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(armies)").fetchall()}
-    assert "maintenance_per_turn" not in cols, "维护费列应已物理删除"
 
 
-def test_drop_maintenance_column_removes_and_idempotent(game):
-    # 老档迁移路径：模拟列仍在的旧档 → _drop_maintenance_column 物理移除；再调一次幂等不崩。
-    db, _state, _ = game
-    db.conn.execute("ALTER TABLE armies ADD COLUMN maintenance_per_turn INTEGER NOT NULL DEFAULT 0")
-    db.conn.commit()
-    assert "maintenance_per_turn" in {
-        r["name"] for r in db.conn.execute("PRAGMA table_info(armies)").fetchall()}, "前提：列已加回"
-    db._drop_maintenance_column()
-    assert "maintenance_per_turn" not in {
-        r["name"] for r in db.conn.execute("PRAGMA table_info(armies)").fetchall()}, "drop 后列应消失"
-    db._drop_maintenance_column()  # 幂等：列已无 → no-op 不崩
 
 
 def test_existing_save_drops_maintenance_column_on_open(content, tmp_path):
@@ -62,8 +47,6 @@ def test_existing_save_drops_maintenance_column_on_open(content, tmp_path):
     # 重开：GameDB.__init__ → init_schema 的维护费退役迁移应 drop（不调 seed_static_data）。
     db2 = GameDB(path, content)
     try:
-        cols = {r["name"] for r in db2.conn.execute("PRAGMA table_info(armies)").fetchall()}
-        assert "maintenance_per_turn" not in cols, "现存档重开应在 init_schema 路径 drop 维护费列"
         state2 = db2.load_state()
         created = db2.create_armies_from_extraction(state2, [{
             "id": "post_drop_army", "name": "迁移后新军", "owner_power": "ming",

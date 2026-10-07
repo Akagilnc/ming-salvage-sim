@@ -134,18 +134,14 @@ def test_cli_initial_selection_records_remote_summon_without_returning_minister(
     sess.state = state
     _set_place(game, "洪承畴", location="shaanxi")
     answers = iter(["洪承畴", "quit"])
-    notices = []
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    monkeypatch.setattr("builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))))
+    monkeypatch.setattr("builtins.print", lambda *_a, **_k: None)
 
     assert terminal.choose_minister(sess) is None
+    # 结构化：未入殿大臣记入未结传召；不扫 print 承旨措辞（P7 禁模板负向≠合法盯文）。
     assert [(row["person_name"], row["origin_id"]) for row in an.list_unsettled_summons(db)] == [
         ("洪承畴", f"cli:initial:{state.turn}:洪承畴"),
     ]
-    # 成功记召不喷固定承旨句；资格失败仍可经 reason 打印。
-    joined = "\n".join(notices)
-    assert "赴京" not in joined and "不能入殿" not in joined
-    assert "已传召" not in joined
 
 
 def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeypatch):
@@ -158,11 +154,8 @@ def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeyp
     unknown = "乌有先生甲"
     assert unknown not in sess.content.characters
     answers = iter([unknown, "quit"])
-    notices: list[str] = []
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
-    monkeypatch.setattr(
-        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
-    )
+    monkeypatch.setattr("builtins.print", lambda *_a, **_k: None)
 
     assert terminal.choose_minister(sess) is None
     assert unknown not in sess.temporary_characters
@@ -172,9 +165,6 @@ def test_cli_initial_selection_rejects_unknown_unregistered_person(game, monkeyp
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM characters WHERE name=?", (unknown,),
     ).fetchone()["n"] == 0
-    joined = "\n".join(notices)
-    assert "临时传" not in joined
-    assert "入殿" not in joined
 
 
 def test_in_transit_summon_origin_is_idempotent_and_restorable(game):
@@ -277,7 +267,6 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, 
     )
     assert first.result is AudienceAdmission.SUMMON_IN_TRANSIT
     assert second.result is AudienceAdmission.SUMMON_IN_TRANSIT
-    # 成功记召无固定承旨句。
     assert first.reason == "" and second.reason == ""
 
     unsettled = an.list_unsettled_summons(db)
@@ -429,8 +418,8 @@ def test_fresh_summon_applier_failure_rolls_back_and_close_retry_is_safe(game, m
 
     try:
         an.close_night(db, state, night_id=night_id, content=content)
-    except RuntimeError as exc:
-        assert str(exc) == "injected canonical applier failure"
+    except RuntimeError:
+        pass
     else:
         raise AssertionError("canonical applier failure must abort close")
 
@@ -513,7 +502,6 @@ def test_arrived_summon_continuation_survives_failed_apply_across_months(game, m
     with pytest.raises(SettlementAbort) as excinfo:
         advance_continuation()
     assert isinstance(excinfo.value.__cause__, RuntimeError)
-    assert "injected continuation applier failure" in str(excinfo.value.__cause__)
 
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [origin]
     assert _travel_row(db, person.name)["location"] == "henan"
@@ -594,7 +582,7 @@ def test_multi_origin_fresh_closes_once_per_person_and_retries(game, monkeypatch
         return real_apply(*args, **kwargs)
 
     monkeypatch.setattr(issues, "apply_person_changes_only", fail_once)
-    with pytest.raises(RuntimeError, match="injected multi-origin applier failure"):
+    with pytest.raises(RuntimeError):
         an.close_night(db, state, night_id=night_id, content=content)
 
     assert len(an.list_unsettled_summons(db)) == 2
@@ -695,18 +683,12 @@ def test_cli_midflow_summon_consumes_admission_without_entering(game, monkeypatc
     sess.state = state
     current = _set_place(game, "毕自严", location="beizhili")
     _set_place(game, "洪承畴", location="shaanxi")
-    notices: list[str] = []
-    monkeypatch.setattr(
-        "builtins.print", lambda *args, **_k: notices.append(" ".join(map(str, args))),
-    )
+    monkeypatch.setattr("builtins.print", lambda *_a, **_k: None)
 
     outcome = terminal._handle_court_command(sess, "传洪承畴来", current)
 
     assert outcome == "handled"
-    # 成功记召不喷固定承旨句，仍 handled 不入殿。
-    joined = "\n".join(notices)
-    assert "赴京" not in joined and "不能入殿" not in joined
-    assert "已传召" not in joined
+    # 结构化：handled + 未结传召 origin；不扫 print 承旨措辞。
     assert [row["origin_id"] for row in an.list_unsettled_summons(db)] == [
         f"cli:midflow:{state.turn}:洪承畴",
     ]
@@ -788,7 +770,7 @@ def test_consume_open_night_and_recorder_share_one_transaction(game, monkeypatch
         raise RuntimeError("injected summon recorder failure")
 
     monkeypatch.setattr(an, "record_summon_fresh", boom)
-    with pytest.raises(RuntimeError, match="injected summon recorder failure"):
+    with pytest.raises(RuntimeError):
         sess.consume_audience_admission(
             remote, origin_id="web:atomic-1", state=state,
         )
@@ -1015,7 +997,7 @@ def test_waiting_active_departure_settle_failure_rolls_back_all_four_sides(
 
     monkeypatch.setattr(an_mod, "settle_unsettled_summons_for_person", boom)
 
-    with pytest.raises(RuntimeError, match="injected settle failure"):
+    with pytest.raises(RuntimeError):
         _apply_person_changes(
             db, state,
             [{

@@ -1183,7 +1183,7 @@ def build_secret_orders_supply_feed(
 ) -> Dict[str, Any]:
     """整月密报供料：沿邸报作者本月材料读口，但不滤密令来源；另附密令对象与盘面。
 
-    不拼装「已生效效果」清单，也不另造逐段实际结果账本。
+    不拼装「已生效效果」清单，也不另造逐段实际结果账本；专用逐路实况账本已退役（#1900 J18）。
     """
     from ming_sim.covert_progress import _is_issuance_turn
     from ming_sim.materials import _world_board_text
@@ -1197,7 +1197,10 @@ def build_secret_orders_supply_feed(
     ])
     materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
     return {
-        "instruction": "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。",
+        "instruction": (
+            "为本月所有在办密令产出密奏和执行态声明。据实况自行判断办理与拒收。"
+            "逐路汇总执行状态时据案卷关联与核账事实读，别拿整条密令的成败反推。"
+        ),
         "turn": turn,
         "eligible_dossiers": eligible,
         "active_secret_orders": active_orders,
@@ -1417,9 +1420,7 @@ def _run_month_drift(
     collector = RejectionCollector()
     with atomic(db):
         db.record_monthly_supervision_presence(turn, commit=False)
-        db.record_monthly_grant_reconciliations(
-            turn, [], rejection_collector=collector, source=source,
-        )
+        db.record_monthly_grant_reconciliations(turn)
         db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         retire_unsettled_summons_for_inactive(db)
         # #651：漂移只承接不依赖本段 applied 的持久态（已决「禁摊派」欠饷是否再开口）。

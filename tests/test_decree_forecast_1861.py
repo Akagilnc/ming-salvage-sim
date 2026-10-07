@@ -413,23 +413,44 @@ def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
     minister = next(iter(content.characters.values()))
     pending_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister.name,
-        payload={"text": "回滚后续推"},
+        payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "test-policy", "text": "回滚后续推",
+        },
     )
     db.conn.execute(
         "UPDATE pending_actions SET night_approved=1, night_id=? WHERE id=?",
         (int(night["id"]), pending_id),
     )
     db.conn.commit()
-    scheduled = []
-    monkeypatch.setattr(
-        forecast_mod, "schedule_pending_decree_forecast",
-        lambda session, action_id, *, night_id: scheduled.append((action_id, night_id)),
-    )
 
+    def judge(_agent, prompt, **_kwargs):
+        dossier = json.loads(prompt)["dossiers"][0]
+        return json.dumps({
+            "verdicts": [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        })
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    monkeypatch.setattr(
+        forecast_mod.agents, "run_agent_text",
+        lambda *_a, **_k: "预推",
+    )
+    monkeypatch.setattr(
+        month_translate, "run_declaration_translate_prompt",
+        lambda *_a, **_k: {"commissions": []},
+    )
     session = _sess(db, state, content, monkeypatch, lambda *_a, **_k: {})
     forecast_mod.schedule_restored_decree_forecasts(session, [pending_id])
+    assert get_session_write_queue(session).wait_idle(timeout_s=5)
 
-    assert scheduled == [(pending_id, int(night["id"]))]
+    staged = db.staged_declarations.staged_for(
+        pending_action_decree_ref(pending_id, 1),
+    )
+    assert staged
+    assert staged[0].status == "staged"
+    assert int(db.conn.execute(
+        "SELECT night_id FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["night_id"]) == int(night["id"])
 
 
 def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeypatch):
@@ -505,14 +526,10 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         assert len(fresh) == 1 and fresh[0].status == "staged"
         assert fresh[0].verdict["decision"] == "promulgated"
         assert dossier_id in fresh[0].visible_refs["dossiers"]
-    from ming_sim.month_chain import _settle_edicts
+    from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
 
-    chain = {}
-    _settle_edicts(sess, chain=chain)
-    assert all(
-        db.get_decree_dossier(dossier_id)["promulgation_decision"] == "promulgated"
-        for dossier_id in ids
-    )
+    held_refs = [held_dossier_decree_ref(dossier_id) for dossier_id in ids]
+    settle_staged_declarations_in_decree_order(db, state, held_refs)
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
         held_ref = held_dossier_decree_ref(dossier_id)
@@ -520,7 +537,7 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         assert db.staged_declarations.is_settled(held_ref)
 
     # 再次进入月链结算：留中案卷仍保持 dossier 身份，旧 pending-action 暂存不被冒名结算
-    _settle_edicts(sess, chain=chain)
+    settle_staged_declarations_in_decree_order(db, state, held_refs)
     for dossier_id, pending_id in zip(ids, pending_ids):
         stale_ref = pending_action_decree_ref(pending_id, 1)
         held_ref = held_dossier_decree_ref(dossier_id)

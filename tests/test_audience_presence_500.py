@@ -153,9 +153,7 @@ def test_court_break_writes_no_exit_ledger(game, monkeypatch):
         assert open_n is not None
         nid = int(open_n["id"])
         closed_nid["id"] = nid
-        an._set_night_fields(
-            db, nid, status=an.NIGHT_STATUS_CLOSED, closed_at="test",
-        )
+        an.close_night(db, state, night_id=nid, content=content)
 
     session.close_night_after_chat_if_needed = _close_ok
     session.schedule_close_night_after_chat_if_needed = _close_ok

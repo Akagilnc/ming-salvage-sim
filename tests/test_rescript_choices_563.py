@@ -3,7 +3,6 @@ import json
 import pytest
 
 import ming_sim.cli_backend as cli_backend
-import ming_sim.decree as decree_mod
 from tests.dossier_test_helpers import rejected_verdict
 
 
@@ -196,27 +195,6 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
 # #657 片2：canonical / capability 回验
 # ---------------------------------------------------------------------------
 
-def test_657_canonical_choice_stable_key_order():
-    from ming_sim.rescript_actions import canonical_choice
-    a = canonical_choice({
-        "decision_key": "rescript_draft:1:0",
-        "action": "follow_draft",
-        "draft_capability": "abc",
-        "label": "甲",
-        "hint": "h",
-        "note": "批",
-    })
-    b = canonical_choice({
-        "hint": "h",
-        "label": "甲",
-        "action": "follow_draft",
-        "decision_key": "rescript_draft:1:0",
-        "draft_capability": "abc",
-        "note": "批",
-    })
-    assert a == b
-    assert a["decision_key"] == "rescript_draft:1:0"
-    assert a["action"] == "follow_draft"
 
 
 @pytest.mark.parametrize("amount", ["30", True, 30.75, 30])

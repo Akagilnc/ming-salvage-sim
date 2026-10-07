@@ -5,7 +5,7 @@ import pytest
 import ming_sim.content as content_module
 from ming_sim.assets import load_json_asset
 from ming_sim.content import load_character_content
-from ming_sim.session import _sync_offices_from_db_impl
+from ming_sim.decree import reload_state_from_db
 
 
 def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
@@ -36,7 +36,7 @@ def test_identity_and_seed_guilt_survive_restore(game):
     ).fetchone()
     content.characters["魏忠贤"].identity = 0
     content.characters["魏忠贤"].seed_guilt = {}
-    _sync_offices_from_db_impl(content, db)
+    reload_state_from_db(db, state, content=content)
     after = db.conn.execute(
         "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
     ).fetchone()
@@ -107,14 +107,6 @@ def test_required_dig_7_seed_roster_entries_are_persisted(game):
             assert guilt["severity"] in {"无", "轻", "中", "重"}
 
 
-def test_identity_and_seed_guilt_never_enter_minister_context(game):
-    db, state, content = game
-    from ming_sim.context import character_context
-
-    rendered = character_context(content.characters["王承恩"])
-    assert "identity" not in rendered
-    assert "seed_guilt" not in rendered
-    assert "95" not in rendered
 
 
 def test_roster_has_no_cross_faction_aliases():

@@ -228,6 +228,16 @@ def build_translation_target_grounding(db: Any, state: Any = None) -> str:
         "SELECT id, title FROM secret_orders WHERE status='active' ORDER BY id"
     ).fetchall():
         lines.append(f"secret_order\t{int(row['id'])}\t{str(row['title'] or '')}")
+    # 在途拨帑与自带押解标记（普通押解随拨银旨）；专用护送目录/实况行已退役。
+    for row in db.conn.execute(
+        "SELECT id, action_type, target_kind, target_id FROM decree_dossiers "
+        "WHERE status='executing' AND action_type='grant_allocation' ORDER BY id"
+    ).fetchall():
+        declared = db.dossier_declares_escort(int(row["id"]))
+        lines.append(
+            f"dossier\t{int(row['id'])}\t{str(row['target_kind'] or '')}:{str(row['target_id'] or '')}"
+            + ("\t自带押解" if declared else "")
+        )
     if state is not None:
         from ming_sim.due_review import list_due_review_scenes
         for scene in list_due_review_scenes(db, state):
@@ -277,7 +287,10 @@ def build_c0_declaration_shape() -> str:
         '        "amount": 正整数万两, "account": "国库|内库",\n'
         '        "purpose": "补饷（仅协饷）",\n'
         f'        "target_kind": "{target_kind_hint}",\n'
-        '        "target_id": "目标 id", "cadence": "一次性|每月"\n'
+        '        "target_id": "目标 id", "cadence": "一次性|每月",\n'
+        '        "escort": {"escortees": [{"character_id": "押解人名", '
+        '"tier": "主办|协办|知情", "role": "职分文字", '
+        '"delegator_id": "委派人名或空"}], "note": "押解护送缘由原句"}\n'
         "      },\n"
         '      "punishment": {"target_id": "处置人名（压下时可空）", '
         '"punish_action": "惩处动作（压下时为无）", "issue_id": "弹劾事项 id（有则填）", '
@@ -416,6 +429,10 @@ def build_audience_translate_prompt(
         "- 暗渠揭破场面呈上后皇帝禁摊派 → commissions 一项 dossier_action_type=prohibit_covert_levy，target_id 填当前场面案卷 dossier_id。\n"
         "- 大臣具名举荐某人任某差并附荐词 → commissions 任命 + recommendation（荐者/荐词原句）。\n"
         "- 皇帝交代近侍查某事 → inquiries；催某件分段事或密令 → rushes；传召说明缓急 → travel_tones。\n"
+        "- **本场新交办的拨银自带押解**（「着某人押解护送」）→ 不另立密令，"
+        "在该 commissions 项的 grant.escort.escortees 按 ADR 0053 参与人条目写押解人"
+        "（character_id／tier 机械档／role 职分／delegator_id 委派人，无委派留空），"
+        "此人即进本案参与人名单。\n"
         f"{grounding_block}"
         f"【本场已说的话】\n{said_block}\n"
         f"【本夜暂存清单】{pending_block}\n"

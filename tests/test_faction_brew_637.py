@@ -281,29 +281,37 @@ def test_malformed_faction_output_degrades_and_keeps_old_summary_bytes(game):
 # ------------------------------------------- 异常边界：DB 错响亮不伪装降级
 
 def test_faction_claim_db_error_propagates_loudly(game):
+    """认领 DB 失败响亮上抛；来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
+    fault = sqlite3.OperationalError("派系认领库不可写")
+
     def boom(*args, **kwargs):
-        raise sqlite3.OperationalError("派系认领库不可写")
+        raise fault
 
     db.claim_faction_brew_targets = boom
-    with pytest.raises(sqlite3.OperationalError, match="派系认领库不可写"):
+    with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
+    assert ei.value is fault
 
 
 def test_faction_apply_db_error_propagates_loudly_not_disguised(game):
+    """落定 DB 失败响亮上抛、不伪装；来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, _ = game
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-1")
 
+    fault = sqlite3.OperationalError("派系落定库不可写")
+
     def boom(*args, **kwargs):
-        raise sqlite3.OperationalError("派系落定库不可写")
+        raise fault
 
     db.apply_faction_brew_result = boom
-    with pytest.raises(sqlite3.OperationalError, match="派系落定库不可写"):
+    with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
+    assert ei.value is fault
 
 
 # ------------------------------- P5：关系与派系同批条目并行不串行

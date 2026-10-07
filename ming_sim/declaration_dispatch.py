@@ -256,6 +256,7 @@ def _dispatch_declaration_sections(
             int(chat_turn_id or source_chat_turn_id or 0)
             if source_turn_err is None else 0
         ),
+        night_id=int(night_id),
     )
     turn = int(state.turn)
     promises = _dispatch_promises(
@@ -316,15 +317,15 @@ def _dispatch_declaration_sections(
         rushes=_dispatch_rushes(
             db, state, declaration.get("rushes"),
             minister_name=minister_name, source=source,
+            night_id=int(night_id),
             source_chat_turn_id=(
                 int(chat_turn_id or source_chat_turn_id or 0)
                 if source_turn_err is None else 0
             ),
         ),
         travel_tones=_dispatch_travel_tones(
-            db, declaration.get("travel_tones"), night_id=night_id,
-            chat_turn_id=origin_ctid, source=source,
-            source_turn_error=source_turn_err, state=state,
+            db, declaration.get("travel_tones"), night_id=night_id, source=source,
+            chat_turn_id=origin_ctid, source_turn_error=source_turn_err, state=state,
         ),
     )
     _record_unknown_sections(collector, declaration, turn, source)
@@ -377,8 +378,8 @@ def _persist_specialized_extraction(
 ) -> None:
     """转译契约仍收的专属案卷字段，交既有写入口，不在通用 applier 里再写一份。
 
-    密奏先落本回合稽核在场事实；origin 只承接密奏里已经声明的行动，不按派系补写。对账只落本段提案，
-    未提案目标的中位默认留到月末一次补，避免后段中位覆盖前段实抵。
+    密奏先落本回合稽核在场事实；origin 只承接密奏里已经声明的行动，不按派系补写。
+    月度拨帑核账走 ``record_monthly_grant_reconciliations``（引擎中位实抵），本口不碰。
 
     过月主链（ADR 0157 步骤 4a）整月密奏与执行态由独立供料 run 落账；
     ``defer_monthly_secret_supply`` 时不把逐段字段拼成整月义务。
@@ -391,11 +392,6 @@ def _persist_specialized_extraction(
     denunciations = extraction.get("faction_denunciations") or []
     if isinstance(denunciations, list) and denunciations:
         db.accept_faction_denunciations(state, denunciations, commit=False)
-    proposals = extraction.get("dossier_reconciliations") or []
-    if isinstance(proposals, list) and proposals:
-        db.record_monthly_grant_reconciliations(
-            int(turn), proposals, rejection_collector=collector, source=source,
-        )
     if not defer_monthly_secret_supply:
         selections = extraction.get("covert_exec_selections") or []
         if isinstance(selections, list) and selections:
@@ -717,7 +713,8 @@ def settle_staged_declarations_in_decree_order(
                     merged = _empty_dispatch_result()
                     for item in staged:
                         merged = merged.merge(_dispatch_declaration_sections(
-                            db, state, item.declaration,
+                            db, state,
+                            item.declaration,
                             minister_name=minister_name, night_id=night_id, source=source,
                             collector=collector,
                             visible_refs=item.visible_refs,
@@ -1012,7 +1009,76 @@ def _commission_grant_payload(
     purpose = str(grant.get("purpose") or "").strip()
     if purpose:
         payload["purpose"] = purpose
+    _attach_commission_escort(db, grant, payload)
     return payload
+
+
+def _attach_commission_escort(
+    db: Any, grant: Mapping[str, object], payload: Dict[str, Any],
+) -> None:
+    """#1900：押解随拨银旨——护送安排写在**同一道拨银交办**里即成。
+
+    owner 2026-09-30 裁定：平常「拨银三十万去宁远，着某某押解护送」，押解人
+    就记在这道拨银旨里，不另立密令、不另挂关联。押解人不另走一份名单：声明按
+    ADR 0053 参与人接缝给条目（人物 id／机械档／职分／委派人），代码只 normalize
+    与校验，**不猜机械档**（#1900 / 全局规则 #12）；名单落进 payload 的
+    ``participant_roster`` 单一真源。合法缺省＝没给 ``escort``；已声明却不是
+    ADR 0053 条目形状 → 逐项拒收，不静默丢弃（ADR 0005 失败诚实 / ADR 0015）。
+    """
+    escort = grant.get("escort")
+    if escort is None:          # 合法缺省＝没安排押解
+        return
+    if not isinstance(escort, Mapping):
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort 须为 ADR 0053 参与人条目对象", failed_fields=("escort",),
+        )
+    entries = escort.get("escortees")
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort.escortees 须为 ADR 0053 参与人条目列表",
+            failed_fields=("escort",),
+        )
+    note = escort.get("note")
+    if note is not None and not isinstance(note, str):
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort.note 须为原文", failed_fields=("escort",),
+        )
+    from ming_sim.cli_backend import normalize_draft_person_roster
+
+    # 形状闸（ADR 0053 条目结构）→ 存在性闸（既有 KeyError 缝 → hallucinated_id）
+    # → canon/非人归一。三件事各走各的既有接缝，不靠嗅错误文案分类。
+    try:
+        shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
+    except ValueError as exc:
+        raise DecreeMaterializationValidationError(
+            f"押解参与人名单非法：{exc}", failed_fields=("escort",),
+        ) from exc
+    if not shaped:
+        raise DecreeMaterializationValidationError(
+            "押解声明 escort.escortees 须含 ADR 0053 参与人条目",
+            failed_fields=("escort",),
+        )
+    _assert_characters_exist(
+        db, [str(entry["character_id"]) for entry in shaped],
+    )
+    roster = normalize_draft_person_roster(
+        list(entries), db=db, content=getattr(db, "content", None),
+    )
+    # 单一真源：参与人名单只存 participant_roster；escort 记录是它的押解投影。
+    # 复用 GameDB 现役 normalize + equality 追加（同 _merge_directive_payload）。
+    from ming_sim.db import GameDB
+
+    existing = payload.get("participant_roster")
+    payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+        existing if isinstance(existing, list) else [],
+        roster,
+    )
+    record: Dict[str, Any] = {
+        "escortees": [str(entry["character_id"]) for entry in roster],
+    }
+    if note is not None:
+        record["note"] = note
+    payload["escort"] = record
 
 
 def _attach_commission_staging_fields(
@@ -1038,7 +1104,18 @@ def _attach_commission_staging_fields(
     if not isinstance(roster, list) and grant:
         roster = grant.get("participant_roster")
     if isinstance(roster, list) and roster:
-        payload["participant_roster"] = list(roster)
+        # 押解名单已先写入 participant_roster。此处再给一份名单时合并，
+        # 不整表替换——否则押解人的职责与机械档从真源消失，只剩投影。
+        # 复用 GameDB 现役 normalize + equality 追加（#1900 J19），不另维规则。
+        from ming_sim.db import GameDB
+
+        existing = payload.get("participant_roster")
+        # 新交办名单走既有严格参与人语义（ADR 0053／#1900 J19）：
+        # 拒字符串兼容与缺档猜「知情」；完整条目 equality 合并不变。
+        payload["participant_roster"] = GameDB.merge_participant_roster_entries(
+            existing if isinstance(existing, list) else [],
+            roster,
+        )
     elif lead and not isinstance(payload.get("participant_roster"), list):
         payload["participant_roster"] = [{
             "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
@@ -1081,6 +1158,7 @@ def _attach_commission_affair(
 def _dispatch_commissions(
     db: Any, state: Any, raw: object, *, minister_name: str, source: Provenance,
     source_chat_turn_id: int = 0,
+    night_id: int = 0,
 ) -> SectionResult:
     """交办声明 → 既有 pending 暂存。
 
@@ -1099,6 +1177,7 @@ def _dispatch_commissions(
                 applied.append(
                     _stage_prohibit_covert_levy(
                         db, state, item, minister_name=minister_name,
+                        night_id=int(night_id),
                         source_chat_turn_id=source_chat_turn_id,
                     )
                 )
@@ -1148,6 +1227,7 @@ def _dispatch_commissions(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "directive", "拟旨", actor, payload,
+                night_id=int(night_id),
                 source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "payload": payload, "kind": "directive"})
@@ -1179,6 +1259,7 @@ def _dispatch_commissions(
             row_id = db.stage_pending_action(
                 int(state.turn), kind="secret_order", action="记进展",
                 minister_name=actor, target_id=order_id, payload={"note": note},
+                night_id=int(night_id),
                 source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
@@ -1221,7 +1302,7 @@ def _dispatch_commissions(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "更新", actor, payload,
-                target_id=order_id, source_chat_turn_id=source_chat_turn_id,
+                target_id=order_id, night_id=int(night_id), source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
             continue
@@ -1247,6 +1328,8 @@ def _dispatch_commissions(
                 _reject(rejected, item, "密令缺本轮口谕源轮", "missing_ref", source)
                 continue
             actor = str(minister_name or "").strip() or str(source_turn["minister_name"])
+            # 另行暗护沿既有密令声明入口；专用暂存资格校验与双载体承接已退役。
+            # 已记录拨银可由密令载荷 dossier_links 走既有关联槽（功能接续 #1873）。
             # 差务契约在此一次冻结并校验：落不成案的原因此刻即知，写一条
             # durable 拒收让下一句戏文里的大臣自己复述/请示（ADR 0155 场中
             # 承接），不留一条注定落不了库的暂存。
@@ -1274,6 +1357,7 @@ def _dispatch_commissions(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "secret_order", "新建", actor, payload,
+                night_id=int(night_id),
                 source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "secret_order"})
@@ -1315,6 +1399,7 @@ def _dispatch_commissions(
                     target_candidate=assignment.get("target_candidate"),
                     transaction_category=assignment.get("transaction_category", ""),
                     source_chat_turn_id=source_chat_turn_id,
+                    night_id=int(night_id),
                 )
             except (DecreeMaterializationValidationError, TypeError, ValueError) as exc:
                 _reject(rejected, item, str(exc), "invalid_shape", source)
@@ -1391,6 +1476,7 @@ def _dispatch_commissions(
                 backing_dossier_id=punishment.get("backing_dossier_id"),
                 issue_id=punishment.get("issue_id"),
                 issue_disposition=punishment.get("issue_disposition"),
+                night_id=int(night_id),
                 source_chat_turn_id=source_chat_turn_id,
             )
             if row_id:
@@ -1425,6 +1511,7 @@ def _dispatch_commissions(
             row_id = stage_pacification_candidate(
                 db, int(state.turn), actor, text=body,
                 target_id=canonical, extracted_mode=pacification.get("mode"),
+                night_id=int(night_id),
                 source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({"id": row_id, "kind": "directive"})
@@ -1521,9 +1608,15 @@ def _dispatch_commissions(
         if grant_raw:
             payload["mode"] = mode
         # 非 #1815 新形；声明给出则透传到 directive payload，代码不猜当前大臣。
-        _attach_commission_staging_fields(
-            payload, item, turn=int(state.turn),
-        )
+        # 名单 normalize/merge 的 ValueError（如非法机械档）走逐项 invalid_shape，
+        # 与同函数 declaration_from_payload 接缝一致（#1900 J19-R1）；不整份中止。
+        try:
+            _attach_commission_staging_fields(
+                payload, item, turn=int(state.turn),
+            )
+        except (TypeError, ValueError) as exc:
+            _reject(rejected, item, str(exc), "invalid_shape", source)
+            continue
 
         if not _attach_commission_affair(
             db, item, payload, rejected=rejected, source=source,
@@ -1565,6 +1658,7 @@ def _dispatch_commissions(
                         for key in ("reason", "recommendation", "faction")
                         if payload.get("recommendation") and key in payload
                     },
+                    night_id=int(night_id),
                 )
                 return {"id": oid, "kind": "office"}
             if appointment_fields["appoint_action"] == "任命":
@@ -1589,6 +1683,7 @@ def _dispatch_commissions(
                 str(office_payload["appoint_action"]),
                 minister_name,
                 office_payload,
+                night_id=int(night_id),
                 source_chat_turn_id=source_chat_turn_id,
             )
             return {"id": oid, "payload": office_payload, "kind": "office"}
@@ -1610,6 +1705,7 @@ def _dispatch_commissions(
             payload["actor"] = actor
         row_id = db.stage_pending_action(
             int(state.turn), "directive", "拟旨", actor, payload,
+            night_id=int(night_id),
             source_chat_turn_id=source_chat_turn_id,
         )
         applied.append({"id": row_id, "payload": payload, "kind": "directive"})
@@ -1752,6 +1848,7 @@ def _is_prohibit_covert_levy_item(item: Mapping[str, object]) -> bool:
 
 def _stage_prohibit_covert_levy(
     db: Any, state: Any, item: Mapping[str, object], *, minister_name: str,
+    night_id: int = 0,
     source_chat_turn_id: int = 0,
 ) -> Dict[str, Any]:
     """禁摊派交办：绑定当前暴露案卷 → 既有 directive 暂存并标夜应允。"""
@@ -1784,9 +1881,14 @@ def _stage_prohibit_covert_levy(
     }
     row_id = db.stage_pending_action(
         int(state.turn), "directive", "拟旨", actor, payload,
+        night_id=int(night_id),
         source_chat_turn_id=source_chat_turn_id,
     )
-    mark_actions_night_approved(db, [row_id])
+    # 源夜已封时按源夜应允；过月 night_id<=0 仍由开放夜接应允，与盖章回退一致。
+    if int(night_id) > 0:
+        mark_actions_night_approved(db, [row_id], night_id=int(night_id))
+    else:
+        mark_actions_night_approved(db, [row_id])
     return {"id": row_id, "payload": payload, "kind": "directive"}
 
 
@@ -1910,6 +2012,7 @@ def _dispatch_rushes(
     *,
     minister_name: str,
     source: Provenance,
+    night_id: int = 0,
     source_chat_turn_id: int = 0,
 ) -> SectionResult:
     """催办声明 → 既有 pending 催办写口（密令 / 分段承诺，ADR 0078）。
@@ -1969,7 +2072,7 @@ def _dispatch_rushes(
             }
             row_id = db.stage_pending_action(
                 int(state.turn), "commitment", "催办", actor, payload,
-                target_id=target_id, source_chat_turn_id=source_chat_turn_id,
+                target_id=target_id, night_id=int(night_id), source_chat_turn_id=source_chat_turn_id,
             )
             applied.append({
                 "id": row_id, "kind": "commitment", "target_id": target_id,
@@ -1991,7 +2094,7 @@ def _dispatch_rushes(
         payload = {"deadline_months": deadline, "reason": reason}
         row_id = db.stage_pending_action(
             int(state.turn), "secret_order", "催办", actor, payload,
-            target_id=target_id, source_chat_turn_id=source_chat_turn_id,
+            target_id=target_id, night_id=int(night_id), source_chat_turn_id=source_chat_turn_id,
         )
         applied.append({
             "id": row_id, "kind": "secret_order", "target_id": target_id,

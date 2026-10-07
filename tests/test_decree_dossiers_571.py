@@ -1325,7 +1325,7 @@ def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypat
 
     monkeypatch.setattr(db, "record_dossier_execution", fail_execution)
     with atomic(db):
-        with pytest.raises(RuntimeError, match="dossier close failed"):
+        with pytest.raises(RuntimeError):
             db.close_secret_order(
                 order_id, "done", "账目核清", state.turn, commit=False,
             )

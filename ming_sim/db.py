@@ -833,12 +833,11 @@ def resolve_office_type_preserving_title(
     return infer_office_type_from_office(office, declared or fallback, llm_config, use_llm=use_llm)
 
 
-# #567 / ADR 0054：押解实抵 clamp 界（北极星 30 两面值 → 无护 15-18 / 有护 22-25）。
-# 代码只 clamp；软判提案落在界内原样收。比例相对 30 锚定，保证有护下界 > 无护上界。
+# #567 / ADR 0054：押解实抵区间（北极星 30 两面值 → 无护 15-18 / 有护 22-25）。
+# 引擎取区间中位落核账（#1900）；比例相对 30 锚定，保证有护下界 > 无护上界。
 _GRANT_ARRIVAL_SCALE = 30
 _GRANT_ARRIVAL_BARE = (15, 18)
 _GRANT_ARRIVAL_ESCORT = (22, 25)
-_GRANT_ESCORT_RELATIONS = frozenset({"护卫", "稽核"})
 
 
 def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, int]:
@@ -856,17 +855,17 @@ def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, i
     return (lo, hi)
 
 
-def clamp_grant_arrival_amount(
-    ordered_amount: int, proposed_arrived: int, *, escorted: bool,
-) -> int:
-    """P2：软判提案 → 代码只 clamp 到护行口径界内。
-
-    提案须已由调用方解析为 int；非法量字段在 record 侧逐项拒收，不入本函数。
-    合法无提案中位默认仅经 record_monthly_grant_reconciliations 内联路径。
-    """
-    lo, hi = grant_arrival_bounds(int(ordered_amount), escorted=escorted)
-    proposed = int(proposed_arrived)
-    return max(lo, min(hi, proposed))
+def payload_declares_escort(payload: object) -> bool:
+    """拨银载荷是否自带押解安排。未成案与已成案共用这一判据，只是取数位置不同。"""
+    if not isinstance(payload, dict):
+        return False
+    escort = payload.get("escort")
+    if not isinstance(escort, dict):
+        return False
+    escortees = escort.get("escortees")
+    return isinstance(escortees, list) and any(
+        str(name or "").strip() for name in escortees
+    )
 
 
 _SECRET_ORDER_BODY_COLUMNS = ("result", "sim_note")
@@ -9264,6 +9263,8 @@ class GameDB:
         "textual_facts": "id",
         "public_sayings": "id",
         "relation_edge_events": "id",
+        # 0054 案卷关联槽：本轮召对当场写下的安排。ADR 0038 撤回须逆转。
+        "decree_dossier_links": "id",
     }
 
     def _delete_turn_scoped_knowledge_sources_in_tx(self, chat_turn_id: int) -> None:
@@ -12253,25 +12254,66 @@ class GameDB:
             reports.append(self.list_dossier_progress(dossier_id)[-1])
         return reports
 
-    def _grant_escort_presence(
-        self, dossier_id: int,
-    ) -> Tuple[bool, Optional[int], str]:
-        """被护案卷侧查入链：护卫/稽核在场与否（0054 逐路独立）。"""
-        for link in self.list_dossier_links(int(dossier_id), direction="incoming"):
-            relation = str(link.get("relation_type") or "").strip()
-            if relation in _GRANT_ESCORT_RELATIONS:
-                return True, int(link["source_dossier_id"]), relation
-        return False, None, ""
+    def dossier_declares_escort(self, dossier_id: int) -> bool:
+        """该道拨银旨自身是否声明了押解护送（#1900 押解默认随拨银旨）。
 
-    def list_monthly_grant_reconciliation_targets(self) -> List[Dict[str, object]]:
-        """扫描面：executing 且仍在途的拨帑案卷（排除成案不足额已 failed+close）。"""
-        rows = self.conn.execute(
-            """
-            SELECT * FROM decree_dossiers
-            WHERE status='executing' AND action_type='grant_allocation'
-            ORDER BY id
-            """
-        ).fetchall()
+        押解人、随行护卫写在**同一道拨银交办**里即成安排，不另立密令、不另挂
+        关联——这是 owner 2026-09-30 裁定的常态口径。案卷载荷里的 ``escort`` 是
+        参与人名单 ``participant_roster`` 的押解投影（ADR 0053 单一真源），此处只
+        判「有没有押解安排」，不重解名单。
+        """
+        row = self.conn.execute(
+            "SELECT payload_json FROM decree_dossiers WHERE id=?",
+            (int(dossier_id),),
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+        except (TypeError, ValueError):
+            return False
+        return payload_declares_escort(payload)
+
+    # #1900 J18：已撤销的专用暗护双载体 / 实况账本 / 聚合读口 / 专用资格校验已退役。
+    # 普通押解仍走 grant.escort→participant_roster；关联槽仍走 decree_dossier_links。
+    # 功能接续留家族收尾，缺口记 #1873。
+
+    def list_monthly_grant_reconciliation_targets(
+        self, turn: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        """扫描面：在途的拨帑案卷 ＋ **本回合已经出库**的结案拨帑。
+
+        正常结案不免除本次核账（#1900）：世界段同段提交 fulfilled 的那道拨帑，
+        结案后 status 已离开 executing，若只扫 executing 就整趟漏账。带 ``turn``
+        时把本回合结案且已经有银两离开账本的路一并纳入——办理失败不抹掉已经
+        离开账本的那笔。核账基数是实付：足额时与面额相同；不足额但已出库时按
+        实付，未付面额不算损耗。真正零出库的 failed 不进扫描面。不带 ``turn``
+        （供料读侧）只看在途，不翻历史结案。
+
+        专用逐路实况账本已退役；``escorted`` 字段保留形状但本切片恒为无护。
+        """
+        if turn is None:
+            rows = self.conn.execute(
+                """
+                SELECT * FROM decree_dossiers
+                WHERE status='executing' AND action_type='grant_allocation'
+                ORDER BY id
+                """
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT * FROM decree_dossiers
+                WHERE action_type='grant_allocation'
+                  AND (
+                    status='executing'
+                    OR (status='closed' AND closed_turn=?)
+                  )
+                ORDER BY id
+                """,
+                (int(turn),),
+            ).fetchall()
+        from ming_sim.materials import dossier_paid_amount
         targets: List[Dict[str, object]] = []
         for row in rows:
             try:
@@ -12294,13 +12336,23 @@ class GameDB:
             if ordered <= 0:
                 continue
             dossier_id = int(row["id"])
-            escorted, source_id, relation = self._grant_escort_presence(dossier_id)
+            basis = ordered
+            if (
+                str(row["status"] or "") == "closed"
+                and str(row["execution_outcome"] or "") == "failed"
+            ):
+                paid = dossier_paid_amount(self, dossier_id)
+                if paid <= 0:
+                    continue
+                basis = paid
+            # 专用逐路实况账本已退役（#1900 J18）；核账按无护口径，缺口记 #1873。
             targets.append({
                 "dossier_id": dossier_id,
-                "ordered_amount": ordered,
-                "escorted": escorted,
-                "escort_source_dossier_id": source_id,
-                "relation_type": relation,
+                "ordered_amount": basis,
+                "escorted": False,
+                "escort_source_dossier_id": None,
+                "relation_type": "",
+                "escort_note": "",
                 "decree_text": str(row["decree_text"] or ""),
                 "target_id": str(row["target_id"] or ""),
             })
@@ -12336,139 +12388,22 @@ class GameDB:
             for row in rows
         ]
 
-    def list_open_grant_reconciliations(self) -> List[Dict[str, object]]:
-        """在途拨帑的最新对账快照，供 issues 软判读账打折。"""
-        snapshots: List[Dict[str, object]] = []
-        for target in self.list_monthly_grant_reconciliation_targets():
-            history = self.list_dossier_reconciliations(int(target["dossier_id"]))
-            if history:
-                latest = dict(history[-1])
-            else:
-                latest = {
-                    "dossier_id": int(target["dossier_id"]),
-                    "turn": 0,
-                    "ordered_amount": int(target["ordered_amount"]),
-                    "arrived_amount": None,
-                    "loss_amount": None,
-                    "escorted": bool(target["escorted"]),
-                    "escort_source_dossier_id": target["escort_source_dossier_id"],
-                    "relation_type": str(target["relation_type"] or ""),
-                }
-            latest["decree_text"] = target["decree_text"]
-            latest["target_id"] = target["target_id"]
-            snapshots.append(latest)
-        return snapshots
-
     def record_monthly_grant_reconciliations(
-        self, turn: int, generated: object = None, *,
-        rejection_collector=None,
-        source: object = None,
+        self, turn: int,
     ) -> List[Dict[str, object]]:
-        """月度节拍：逐路软判实抵 → clamp → 落被护侧对账记录。
+        """月度节拍：逐路由引擎按既有押解折损范围定实抵与损耗 → 落被护侧对账记录。
 
-        无提案时用护行口径中位（无护行亦可机械落账，供 S10 结案合并）。
+        #1900：沿途损耗归引擎（#1820 后出，取代 0054 的「LLM 软判实抵＋clamp」）。
+        本方法不再接任何提案——实抵取该路护行口径区间的中位；专用逐路实况账本
+        已退役，本切片核账按无护口径（缺口记 #1873）。
         不写 0058 进展、不二次扣库、不改原 economy_move。
 
-        #1745 / ADR 0015-D6/D7：域级坏项逐项拒收；形状（非 list/非 dict 项）归
-        sanitize_delta_shape 独家，本方法不平行净化。好项与未提案目标的中位落账
-        仍在同一 atomic。拒收归属外层 RejectionCollector（flush/commit/mirror/
-        rollback 由 settle 编排所有者负责；本方法不自建 collector）。
+        分段过月会多次调本写入：已有本回合行的路不再覆盖（不拿后段中位盖前段实抵）。
         """
-        from ming_sim.applier import Provenance, RejectedItem
-
         targets = {
             int(item["dossier_id"]): item
-            for item in self.list_monthly_grant_reconciliation_targets()
+            for item in self.list_monthly_grant_reconciliation_targets(int(turn))
         }
-        if generated is None:
-            generated = []
-        if not targets and generated in (None, []):
-            return []
-
-        # source 走 collector 归一；None 取 typed 默认 unknown（0008-D5）。
-        if source is None:
-            source = Provenance.unknown
-
-        def _reject(raw_item: object, reason: str, category: str) -> None:
-            # 无外层归属不得无痕继续（0150-D2/D3；#1745 删自有 collector 旁路）。
-            if rejection_collector is None:
-                from ming_sim.applier import RejectionCollectorRequired
-                raise RejectionCollectorRequired(
-                    "dossier_reconciliations 拒收须由外层 RejectionCollector 归属"
-                )
-            # ADR 0015 F1：RejectedItem.item 恒 dict；非 dict 包装 raw_value。
-            # 域级拒收的 item 已是 dict；形状级（非 list/非 dict 项）归 sanitize_delta_shape
-            # 独家（0015-D6/F1，#1745 删双 producer）。
-            if isinstance(raw_item, dict):
-                payload = dict(raw_item)
-            else:
-                payload = {"raw_value": raw_item}
-            rejection_collector.record(
-                "dossier_reconciliations",
-                RejectedItem(
-                    item=payload, reason=reason, category=category, source=source,
-                ),
-                int(turn),
-            )
-
-        # 形状净化归 sanitize_delta_shape 独家（0015-D6；#1745 删本段平行形状拒收）。
-        # 非 list / 非 dict 项此处跳过域逻辑；settle 后半段 sanitize→collector 一次拒收。
-        if not isinstance(generated, list):
-            generated = []
-
-        supplied: Dict[int, Tuple[object, str]] = {}
-        for item in generated:
-            if not isinstance(item, dict):
-                continue
-            try:
-                dossier_id = strict_int(item.get("dossier_id", 0))
-                if dossier_id <= 0:
-                    raise ValueError("not positive")
-            except (TypeError, ValueError):
-                _reject(item, "对账提案案卷编号无效", "invalid_enum")
-                continue
-            if dossier_id not in targets:
-                _reject(
-                    item,
-                    f"对账提案指向非在途拨帑案卷：{dossier_id}",
-                    "missing_ref",
-                )
-                continue
-            if dossier_id in supplied:
-                _reject(item, "对账提案存在重复案卷", "invalid_enum")
-                continue
-            has_arrived = "arrived_amount" in item
-            has_loss = "loss_amount" in item
-            if has_arrived and has_loss:
-                # DELTA_SCHEMA 二选一：两字段同在不猜优先，逐项拒收（0015-D4 不猜）
-                _reject(
-                    item,
-                    "对账提案 arrived_amount 与 loss_amount 须二选一",
-                    "invalid_enum",
-                )
-                continue
-            if has_arrived:
-                raw_amount = item.get("arrived_amount")
-                amount_label = "实抵"
-            elif has_loss:
-                raw_amount = item.get("loss_amount")
-                amount_label = "折损"
-            else:
-                _reject(item, "对账提案须含 arrived_amount 或 loss_amount", "missing_field")
-                continue
-            try:
-                amount = strict_int(raw_amount)
-            except (TypeError, ValueError):
-                _reject(item, f"对账{amount_label}值无效", "invalid_enum")
-                continue
-            if amount_label == "实抵":
-                proposed = amount
-            else:
-                proposed = int(targets[dossier_id]["ordered_amount"]) - amount
-            note = str(item.get("note") or "").strip()
-            supplied[dossier_id] = (proposed, note)
-
-        # 无在途目标：坏提案已逐项拒收，不落假对账行。
         if not targets:
             return []
 
@@ -12476,24 +12411,18 @@ class GameDB:
         for dossier_id, target in targets.items():
             ordered = int(target["ordered_amount"])
             escorted = bool(target["escorted"])
-            if dossier_id in supplied:
-                proposed, note = supplied[dossier_id]
-                arrived = clamp_grant_arrival_amount(
-                    ordered, proposed, escorted=escorted,
-                )
-            else:
-                # 分段过月会多次调本写入。本次没有提案的路已有本回合行，不得用中位覆盖先前段落下的实抵。
-                existing = self.conn.execute(
-                    "SELECT 1 FROM decree_dossier_reconciliations "
-                    "WHERE dossier_id=? AND turn=?",
-                    (int(dossier_id), int(turn)),
-                ).fetchone()
-                if existing is not None:
-                    continue
-                lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
-                arrived = (lo + hi) // 2
-                note = ""
+            # 分段过月会多次调本写入：已有本回合行的路不覆盖。
+            existing = self.conn.execute(
+                "SELECT 1 FROM decree_dossier_reconciliations "
+                "WHERE dossier_id=? AND turn=?",
+                (int(dossier_id), int(turn)),
+            ).fetchone()
+            if existing is not None:
+                continue
+            lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
+            arrived = (lo + hi) // 2
             loss = ordered - arrived
+            note = ""
             source_id = target["escort_source_dossier_id"]
             relation = str(target["relation_type"] or "")
             self.conn.execute(
@@ -12551,15 +12480,19 @@ class GameDB:
 
         turn_i = int(turn)
         presence_written = 0
-        # 入链：source=稽核方案卷，target=被稽案卷
+        # 稽核配对只读既有 0054 关联槽；双方 status 用 SQLite JOIN 一次取出。
+        # https://www.sqlite.org/lang_select.html
         link_rows = self.conn.execute(
             """
-            SELECT l.source_dossier_id, l.target_dossier_id, l.relation_type,
-                   s.status AS source_status, t.status AS target_status
+            SELECT
+                l.source_dossier_id AS source_dossier_id,
+                l.target_dossier_id AS target_dossier_id,
+                s.status AS source_status,
+                t.status AS target_status
             FROM decree_dossier_links l
             JOIN decree_dossiers s ON s.id = l.source_dossier_id
             JOIN decree_dossiers t ON t.id = l.target_dossier_id
-            WHERE l.relation_type = ?
+            WHERE l.relation_type=?
             ORDER BY l.id
             """,
             (SUPERVISION_RELATION,),
@@ -13487,20 +13420,6 @@ class GameDB:
         if commit and triggered:
             self.conn.commit()
         return triggered
-
-    def merge_grant_reconciliation_into_execution_note(
-        self, dossier_id: int, *, commit: bool = True,
-    ) -> Optional[str]:
-        """S10 结案消费对账真源：经 merge_execution_note 单一写口增补说明。"""
-        history = self.list_dossier_reconciliations(int(dossier_id))
-        if not history:
-            return None
-        latest = history[-1]
-        fragment = (
-            f"押解对账：应解{int(latest['ordered_amount'])}两，"
-            f"实抵{int(latest['arrived_amount'])}两"
-        )
-        return self.merge_execution_note(int(dossier_id), fragment, commit=commit)
 
     def _backfill_proposed_appointment_break_ranks(self) -> None:
         """Idempotently upgrade in-flight pre-#562 appointment dossiers."""
@@ -14908,15 +14827,17 @@ class GameDB:
             except (AttributeError, ValueError):
                 target_id = 0
             relation = str(item.get("relation_type") or "") if isinstance(item, dict) else ""
-            note = str(item.get("note") or "").strip() if isinstance(item, dict) else ""
+            # LLM 自由文本零删改（CLAUDE.md P6 / ADR 0142）：空白只在副本上判定，
+            # 落库与拒收留痕一律存原文，不 strip。
+            note = str(item.get("note") or "") if isinstance(item, dict) else ""
             if self.get_decree_dossier(target_id) is None:
                 rejection = (target_id, relation, note, "关联指向不存在案卷")
             elif target_id >= source_id:
                 rejection = (target_id, relation, note, "案卷关联只允许新案卷指向旧案卷")
             elif relation not in DOSSIER_LINK_TYPES:
                 rejection = (target_id, relation, note, "案卷关联类型非法")
-            elif not note:
-                rejection = (target_id, relation, note, "案卷关联说明不能为空")
+            elif not note.strip():
+                rejection = (target_id, relation, note, "关联说明不能为空")
             if rejection is not None:
                 break
             normalized.append((target_id, relation, note))
@@ -16051,39 +15972,6 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         return project_execution_liability_parties(dossier.get("participant_roster"))
 
-    def merge_execution_note(
-        self, dossier_id: int, fragment: str, *, commit: bool = True,
-    ) -> str:
-        """下游说明片段合并写口（#565；S12/#567 消费方）。
-
-        初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
-        """
-        owns_transaction = self.owns_transaction() if commit else False
-        text = str(fragment or "").strip()
-        if not text:
-            raise ValueError("说明片段不能为空")
-        row = self.get_decree_dossier(dossier_id)
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        existing = str(row.get("execution_note") or "").strip()
-        if text in existing.split("；"):
-            merged = existing
-        elif existing:
-            merged = f"{existing}；{text}"
-        else:
-            merged = text
-        if merged != existing:
-            self.conn.execute(
-                """
-                UPDATE decree_dossiers
-                SET execution_note=?, updated_at=CURRENT_TIMESTAMP
-                WHERE id=?
-                """,
-                (merged, int(dossier_id)),
-            )
-            self._commit_dossier_write(commit, owns_transaction=owns_transaction)
-        return merged
-
     def validate_joint_liability_affected_parties(
         self, affected_parties: object, outcome: str,
     ) -> None:
@@ -16133,7 +16021,9 @@ class GameDB:
             return False
         primary_intensity = self._EXECUTION_OUTCOME_INTENSITY[outcome]
         secondary_intensity = self._INTENSITY_DOWNGRADE[primary_intensity]
-        reason_text = str(reason or "执行连坐").strip() or "执行连坐"
+        # reason 常承接 execution_note 原文：空白只判定，落边/费用语境不 strip。
+        reason_raw = str(reason or "")
+        reason_text = reason_raw if reason_raw.strip() else "执行连坐"
         identity = self._JOINT_LIABILITY_COST_IDENTITY
         origin = f"dossier:{int(dossier_id)}:{identity}"
 
@@ -16158,29 +16048,27 @@ class GameDB:
                 str(row["name"])
                 for row in self.conn.execute("SELECT name FROM factions")
             }
-            note_names: List[str] = []
             # 投影已先定档后去重（primary 胜）；同派系 UNIQUE 保留主责额度。
+            # #1900：连坐归属留在 list_execution_liability_parties / 关系边结构化账，
+            # 不向 execution_note 模板增补（P6 / ADR 0142 原文零删改）。
             for party in project_execution_liability_parties(
                 dossier.get("participant_roster"),
             ):
                 person = str(party["character_id"])
                 if party["responsibility"] == "primary":
                     intensity = primary_intensity
-                    role_label = "主办"
                 else:
                     intensity = secondary_intensity
-                    role_label = "委派"
                 row = self.conn.execute(
                     "SELECT faction,status FROM characters WHERE name=?", (person,),
                 ).fetchone()
                 if row is None:
                     continue
-                note_names.append(f"{person}（{role_label}）")
                 if str(row["status"] or "") == "dead":
                     logging.getLogger(__name__).warning("跳过已故连坐责任人%s", person)
                     continue
                 if intensity is None:
-                    # 执行人已是 weak 时次责无更低档→零机械扣、仍进走样说明。
+                    # 执行人已是 weak 时次责无更低档→零机械扣。
                     continue
                 magnitude = self._REACTION_INTENSITY[intensity]
                 delta = self._REACTION_SIGN["negative"] * magnitude
@@ -16198,14 +16086,6 @@ class GameDB:
                         self.adjust_factions(
                             {faction: {"satisfaction": delta}}, commit=False,
                         )
-
-            if note_names:
-                # P4：只写定性人名归属，不落 weak/strong/枚举裸词。
-                self.merge_execution_note(
-                    dossier_id,
-                    "连坐归属：" + "、".join(note_names),
-                    commit=False,
-                )
         return True
 
     def save_pending_promulgation_verdicts(
@@ -17212,9 +17092,25 @@ class GameDB:
         self._commit_dossier_write(commit, owns_transaction=owns_transaction)
         return len(rows)
 
+    def _night_id_for_staged_write(self, night_id: Optional[int], *, what: str) -> int:
+        """声明已持有源夜时盖源夜；未持有则盖当前开放夜。
+
+        封夜后的迟到转译传入已封源夜：CLOSED 原样放行，不改挂落账当下的开放夜。
+        CLOSING 仍拒。night_id 缺或 <=0 维持开夜查找（无开放夜则为 0）。
+        """
+        from ming_sim.audience_night import assert_night_accepts_player_input
+        requested = int(night_id) if night_id is not None else 0
+        if requested > 0:
+            bound = assert_night_accepts_player_input(self, requested, what=what)
+        else:
+            bound = assert_night_accepts_player_input(self, what=what)
+        return int(bound["id"]) if bound is not None else 0
+
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
         payload: Dict[str, object], target_id: Optional[int] = None,
+        *,
+        night_id: Optional[int] = None,
         source_chat_turn_id: int = 0,
     ) -> int:
         """把一条结构化聊天写动作存进 pending_actions 暂存(status=pending)。返回行 id。
@@ -17229,11 +17125,9 @@ class GameDB:
         another turn's held message is never a valid substitute.
         """
         payload_data: Dict[str, object] = dict(payload or {})
-        # #498：开夜期间 stage 的暂存挂 night_id；收夜只交本夜已应允 id
+        # #498：未持源夜时挂当前开放夜。#1900：声明路径传入源夜则盖源夜。
         # CLOSING freezes new staged actions.
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        open_n = assert_night_accepts_player_input(self, what="暂存")
-        night_id = int(open_n["id"]) if open_n is not None else 0
+        night_id = self._night_id_for_staged_write(night_id, what="暂存")
         # 写前捕获归属：INSERT 后 in_transaction 会使 owns_transaction() 恒 False。
         owns = self.owns_transaction()
         cur = self.conn.execute(
@@ -17495,6 +17389,8 @@ class GameDB:
 
     def stage_directive_candidate(
         self, turn: int, minister_name: str, payload: Dict[str, object],
+        *,
+        night_id: Optional[int] = None,
         source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
@@ -17505,19 +17401,22 @@ class GameDB:
         return self.stage_pending_action(
             turn, kind="directive", action="拟旨",
             minister_name=minister_name, target_id=None, payload=payload,
+            night_id=night_id,
             source_chat_turn_id=source_chat_turn_id,
         )
 
     def update_office_candidate_payload(
         self, candidate_id: int, payload: Dict[str, object],
+        *,
+        night_id: Optional[int] = None,
     ) -> int:
         """#529：原地更新某一道 pending office（任免）候选 payload（特旨/署理路径应答）。
 
-        与 directive 改草同纪律——归属迁到当前开夜并清 night_approved；
-        合并保留下划线控制键。返回该行 id（不存在/非 pending office 则 0）。
+        与 directive 改草同纪律——未持源夜时归属迁到当前开夜并清 night_approved；
+        声明路径传入源夜则盖源夜。合并保留下划线控制键。
+        返回该行 id（不存在/非 pending office 则 0）。
         """
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="任免路径应答")
+        stamp = self._night_id_for_staged_write(night_id, what="任免路径应答")
         owns = self.owns_transaction()
         row = self.conn.execute(
             "SELECT id,payload_json,status FROM pending_actions "
@@ -17532,7 +17431,7 @@ class GameDB:
         self.conn.execute(
             "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
             (json.dumps(merged, ensure_ascii=False),
-             self._current_open_night_id(), int(candidate_id)),
+             stamp, int(candidate_id)),
         )
         if owns:
             self.conn.commit()
@@ -17540,15 +17439,18 @@ class GameDB:
 
     def update_directive_candidate(
         self, candidate_id: int, payload: Dict[str, object],
+        *,
+        night_id: Optional[int] = None,
     ) -> int:
         """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
-        与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清 night_approved，
-        使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。返回该行 id（不存在/非 pending 则 0）。
+        未持源夜时与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清
+        night_approved，使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。声明路径传入
+        源夜则盖源夜。返回该行 id（不存在/非 pending 则 0）。
         **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
         静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
-        #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="改草")
+        #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。
+        声明路径传入源夜则盖源夜，不把既有候选迁到落账当下的开放夜。"""
+        stamp = self._night_id_for_staged_write(night_id, what="改草")
         row = self.conn.execute(
             "SELECT id,payload_json,status,version FROM pending_actions "
             "WHERE id=? AND kind='directive'",
@@ -17564,7 +17466,7 @@ class GameDB:
             "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
             "version=version+1 WHERE id=?",
             (json.dumps(merged, ensure_ascii=False),
-             self._current_open_night_id(), int(candidate_id)),
+             stamp, int(candidate_id)),
         )
         self.conn.commit()
         return int(candidate_id)
@@ -17750,14 +17652,20 @@ class GameDB:
         """
         old = self._decode_directive_dossier_payload(existing_json)
         incoming = dict(new_payload or {})
-        old_roster = self._normalize_participant_roster(old.get("participant_roster") or [])
-        new_roster = self._normalize_participant_roster(incoming.get("participant_roster") or [])
+        # 先规范化新名单一次：规范化为空则 pop，不覆盖旧名册；否则与旧名册共同 merge。
+        # #1900 J19：改草写入的新名单亦走严格参与人语义，拒字符串/缺档猜「知情」。
+        new_roster = self._normalize_participant_roster(
+            list(incoming.get("participant_roster") or []),
+            strict_structured=True,
+        )
         if not new_roster:
             incoming.pop("participant_roster", None)
         else:
-            incoming["participant_roster"] = old_roster + [
-                item for item in new_roster if item not in old_roster
-            ]
+            incoming["participant_roster"] = self.merge_participant_roster_entries(
+                old.get("participant_roster") or [],
+                new_roster,
+            )
+
         # 先对 incoming 互斥分类（并存即拒），再决定从 old 继承哪些字段
         incoming_kind = (
             classify_directive_structured_kind(incoming)
@@ -18254,10 +18162,10 @@ class GameDB:
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
-                title = str(payload.get("title") or "").strip()
+                title = str(payload.get("title") or "")
                 content_text = str(payload.get("content") or "")
                 assignee = str(payload.get("assignee") or pa["minister_name"] or "").strip()
-                if not title or not content_text.strip() or not assignee:
+                if not title.strip() or not content_text.strip() or not assignee:
                     return False
                 tags_raw = payload.get("tags") or []
                 tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
@@ -20939,6 +20847,25 @@ class GameDB:
             if item not in roster:
                 roster.append(item)
         return roster
+
+    @staticmethod
+    def merge_participant_roster_entries(
+        existing: Iterable[object] | None,
+        incoming: Iterable[object] | None,
+    ) -> List[Dict[str, object]]:
+        """载荷侧名单合并：incoming 严格规范化，再按完整条目 equality 追加。
+
+        与 ``_merge_directive_payload`` 名册分支同一条规则；不按 character_id
+        静默丢后项。持久化案卷追加冲突（同人异档）仍走
+        ``append_decree_dossier_participants``。通用宽松规范化仍由
+        ``_normalize_participant_roster`` 服务其他业务读缝，本合并口不再保留
+        无消费者的宽松 incoming 开关。
+        """
+        base = GameDB._normalize_participant_roster(list(existing or []))
+        add = GameDB._normalize_participant_roster(
+            list(incoming or []), strict_structured=True,
+        )
+        return base + [item for item in add if item not in base]
 
     def _validate_participant_roster_references(
         self, roster: Iterable[Mapping[str, object]],
