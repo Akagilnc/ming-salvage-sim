@@ -373,15 +373,12 @@ def run_gazette_text(
 
 def month_chain_call_failure(db: Any, turn: int) -> Optional[Dict[str, Any]]:
     """核账期恢复投影只读：本月链上未消费的调用失败（无则 None）。"""
+    from ming_sim.db import GameDB
+
     chain = _load_chain(db, int(turn))
-    failure = chain.get("call_failure")
-    if failure is None:
-        return None
-    if not isinstance(failure, dict):
-        raise ValueError(
-            f"month_chain.call_failure 须为对象，得 {type(failure).__name__}"
-        )
-    return dict(failure)
+    return GameDB.optional_object(
+        chain.get("call_failure"), surface="month_chain.call_failure",
+    )
 
 
 def continue_world_after_answers(
@@ -678,13 +675,13 @@ def _consume_call_failure_for_retry(
     db: Any, chain: Dict[str, Any], turn: int, decree_text: str, source: Provenance,
 ) -> None:
     """玩家点「重试」再入主链：按需丢段，然后清失败标记，只续未完成步。"""
-    failure = chain.get("call_failure")
+    from ming_sim.db import GameDB
+
+    failure = GameDB.optional_object(
+        chain.get("call_failure"), surface="month_chain.call_failure",
+    )
     if failure is None:
         return
-    if not isinstance(failure, dict):
-        raise ValueError(
-            f"month_chain.call_failure 须为对象，得 {type(failure).__name__}"
-        )
     step = str(failure.get("step") or "")
     if failure.get("escape_armed") and step in _TRANSLATE_ESCAPE_STEPS:
         _discard_segment_for_escape(chain, failure)
@@ -1855,22 +1852,29 @@ def _advance_after_gazette(
     from ming_sim.decree import TIMEOUT_TURN, atomic_and_reload
     from ming_sim.rescript_actions import clear_return_revise_choice_anchors
 
+    from ming_sim.db import GameDB
+
     settled_year, settled_period = int(state.year), int(state.period)
     ending_outcome: Optional[Dict[str, object]] = None
 
-    def _optional_outcome(value: object, *, surface: str) -> Optional[Dict[str, object]]:
-        if value is None:
-            return None
-        if isinstance(value, dict):
-            return dict(value)
-        raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
+    def _coalesce_declaration_outcome(
+        *candidates: object,
+    ) -> Optional[Dict[str, object]]:
+        """形状校验后保留合法空对象回落：``a or b or …``（{} 不抢下一位真源）。"""
+        for value in candidates:
+            if value is None:
+                continue
+            checked = GameDB.optional_object(
+                value, surface="month_chain.declaration_outcome",
+            )
+            if checked:  # 合法 {} 继续回落
+                return checked
+        return None
 
     with atomic_and_reload(db, state, content=content):
         if not state.ended:
-            outcome = _optional_outcome(
-                declaration_outcome if declaration_outcome is not None
-                else chain.get("declaration_outcome"),
-                surface="month_chain.declaration_outcome",
+            outcome = _coalesce_declaration_outcome(
+                declaration_outcome, chain.get("declaration_outcome"),
             )
             if outcome is None:
                 outcome = victory_status(db, state)
@@ -1887,10 +1891,8 @@ def _advance_after_gazette(
                 state.ending_status = str(outcome.get("status") or "")
                 ending_outcome = dict(outcome)
         else:
-            ending_outcome = _optional_outcome(
-                declaration_outcome if declaration_outcome is not None
-                else chain.get("declaration_outcome"),
-                surface="month_chain.declaration_outcome",
+            ending_outcome = _coalesce_declaration_outcome(
+                declaration_outcome, chain.get("declaration_outcome"),
             )
         from ming_sim.mechanical_tail import mark_mechanical_tail_pending
         mark_mechanical_tail_pending(

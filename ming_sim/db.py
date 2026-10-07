@@ -19383,6 +19383,19 @@ class GameDB:
             tlog(f"[{surface}] 腐坏 JSON，拒绝静默：{text[:80]!r}")
             raise ValueError(f"{surface} 腐坏 JSON：{text[:80]!r}") from exc
 
+    @staticmethod
+    def optional_object(value: object, *, surface: str) -> Optional[Dict[str, Any]]:
+        """已解码可选对象：None→None；dict（含合法空{}）→dict；非对象响亮。
+
+        业务空值回落（``{} or next``）由消费方决定；本权威只保形状。
+        """
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return dict(value)
+        tlog(f"[{surface}] 非对象，拒绝静默：{type(value).__name__}")
+        raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
+
     @classmethod
     def _parse_todo_payload_json(cls, raw: object) -> Dict[str, object]:
         return cls.parse_engine_payload_json(

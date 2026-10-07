@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from ming_sim.applier import Provenance
+from ming_sim.db import GameDB
 from ming_sim.relation_brew import MonthEndRelationBrewLeg
 from ming_sim.session_write_queue import get_session_write_queue
 
@@ -20,15 +21,6 @@ logger = logging.getLogger(__name__)
 _TAIL_STATUS_PENDING = "pending"
 _TAIL_STATUS_DONE = "done"
 _TAIL_STATUS_FAILED = "failed"
-
-
-def _optional_chain_object(value: object, *, surface: str) -> Optional[Dict[str, Any]]:
-    """Declared optional object on month_chain: None→None; dict→dict; wrong shape loud."""
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        return dict(value)
-    raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
 
 
 def mechanical_tail_key(closed_turn: int) -> tuple:
@@ -64,7 +56,7 @@ def _set_tail_status(
     from ming_sim import month_chain
 
     chain = month_chain._load_chain(db, int(closed_turn))
-    tail = _optional_chain_object(
+    tail = GameDB.optional_object(
         chain.get("mechanical_tail"), surface="month_chain.mechanical_tail",
     )
     if not tail:
@@ -287,7 +279,7 @@ def _submit_tail(
 
         def still_pending() -> bool:
             chain = month_chain._load_chain(session.db, int(closed_turn))
-            tail = _optional_chain_object(
+            tail = GameDB.optional_object(
                 chain.get("mechanical_tail"), surface="month_chain.mechanical_tail",
             )
             return bool(tail) and tail.get("status") == _TAIL_STATUS_PENDING
@@ -392,7 +384,7 @@ def _pending_mechanical_tails(
     pending: list[tuple[int, Dict[str, Any]]] = []
     for turn in _resolve_context_turns(db, current_turn):
         chain = month_chain._load_chain(db, turn)
-        tail = _optional_chain_object(
+        tail = GameDB.optional_object(
             chain.get("mechanical_tail"), surface="month_chain.mechanical_tail",
         )
         if tail is not None and tail.get("status") == _TAIL_STATUS_PENDING:
@@ -405,7 +397,7 @@ def failed_mechanical_tail(db: Any, state: Any) -> Optional[tuple[int, Dict[str,
     from ming_sim import month_chain
 
     for turn in _resolve_context_turns(db, int(getattr(state, "turn", 0) or 0)):
-        tail = _optional_chain_object(
+        tail = GameDB.optional_object(
             month_chain._load_chain(db, turn).get("mechanical_tail"),
             surface="month_chain.mechanical_tail",
         )
@@ -425,7 +417,7 @@ def retry_failed_mechanical_tail(session: Any) -> bool:
         session, closed_turn=turn,
         settled_year=int(tail.get("settled_year") or 0),
         settled_period=int(tail.get("settled_period") or 0),
-        ending_outcome=_optional_chain_object(
+        ending_outcome=GameDB.optional_object(
             tail.get("ending_outcome"), surface="month_chain.mechanical_tail.ending_outcome",
         ),
         source=Provenance.system_simulation,
@@ -438,7 +430,7 @@ def ending_summary_pending(db: Any, state: Any) -> bool:
         return False
     current = int(getattr(state, "turn", 0) or 0)
     for _turn, tail in _pending_mechanical_tails(db, current_turn=current):
-        outcome = _optional_chain_object(
+        outcome = GameDB.optional_object(
             tail.get("ending_outcome"),
             surface="month_chain.mechanical_tail.ending_outcome",
         )
@@ -461,7 +453,7 @@ def ensure_mechanical_tails(session: Any) -> None:
             closed_turn=turn,
             settled_year=int(tail.get("settled_year") or 0),
             settled_period=int(tail.get("settled_period") or 0),
-            ending_outcome=_optional_chain_object(
+            ending_outcome=GameDB.optional_object(
                 tail.get("ending_outcome"),
                 surface="month_chain.mechanical_tail.ending_outcome",
             ),
