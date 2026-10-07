@@ -75,7 +75,6 @@ def generate_ending_summary_for_tail(
     outcome: Dict[str, object],
     *,
     llm_config: Any = None,
-    agno_db: Any = None,
     save_fn: Any = None,
     gate_run: Any = None,
 ) -> str:
@@ -159,7 +158,6 @@ def generate_ending_summary_for_tail(
 def _brew_fn_for_session(session: Any):
     """生产路径注入真实 LLM；缺配置如实失败，不给测试开空串分支。"""
     llm_config = getattr(session, "llm_config", None)
-    agno_db = getattr(session, "agno_db", None)
     if llm_config is None:
         from ming_sim.exceptions import LLMUnavailable
 
@@ -247,7 +245,6 @@ def _run_tail_body(
         summary = generate_ending_summary_for_tail(
             db, closed_state, ending_outcome,
             llm_config=getattr(session, "llm_config", None),
-            agno_db=getattr(session, "agno_db", None),
             gate_run=lambda fn: queue.run(ticket, fn),
         )
         if not summary:

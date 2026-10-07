@@ -1498,7 +1498,7 @@ class GameSession:
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
             raise DeclarationDataError("无草案不能拟诏（未表态拟旨须先准驳，或于颁诏时默认同意）。")
-        decree = write_decree_with_agno(self.llm_config, self.agno_db, self.state, directives, db=self.db)
+        decree = write_decree_with_agno(self.llm_config, self.state, directives, db=self.db)
         self.last_decree = decree
         # P1-1：记下本份生成稿覆盖的 draft 集指纹。颁诏时若 draft 集已变（玩家拟诏后又新建
         # 草案），凭此判定 last_decree 已陈旧、强制重生成纳入新 draft，不许把新 draft 标记
@@ -1896,7 +1896,7 @@ class GameSession:
         decree_text = decree or self.last_decree
         if not decree_text and directives:
             decree_text = write_decree_with_agno(
-                self.llm_config, self.agno_db, self.state, directives, db=self.db
+                self.llm_config, self.state, directives, db=self.db
             )
         self.last_decree = decree_text
         # 恢复 fallthrough 把存档真源穿透传入（#146 cmr r2）；正常颁诏 recovered_source is None
@@ -1914,8 +1914,7 @@ class GameSession:
             resolve_kwargs["source"] = Provenance.system_simulation
         result = resolve_directives(
             self.state, self.db, self.agno_db, self.llm_config,
-            directives, decree_text, deaths_this_turn=self.deaths_this_turn,
-            debuts_this_turn=self.debuts_this_turn,
+            decree_text,
             content=self.content,
             cheat_directive=cheat_directive,
             **resolve_kwargs,

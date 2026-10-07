@@ -87,7 +87,7 @@ def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
         simulator_calls=sim_calls,
     )
     result = resolve_directives(
-        state, db, None, None, [], "",
+        state, db, None, None, "",
         content=content,
         source=Provenance.system_simulation,
     )

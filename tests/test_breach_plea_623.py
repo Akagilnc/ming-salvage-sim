@@ -6,7 +6,7 @@ Seams:
 - apply_pending_due_reviews 仅 staged 终裁；哭谏 pending 保留
 - dossiers_with_pending_due_review 不含挽留
 - revoke 拦截：当回合无损 + 写挽留 todo
-- finalize_persist / finalize_regret 写口；领域 cancel 实入后 tracker 坚持撤
+- finalize_persist 写口；领域 cancel 实入后 tracker 坚持撤
 - 沉默滚存 / 承诺到期失效
 - 坚持撤不代写半途国势
 """
@@ -290,7 +290,6 @@ def test_regret_via_extraction_true_entry_zero_damage(game):
     # 原 extraction 抢先消费已退出：合法 issue_advances 由领域段落账，哭谏待办不因
     # 未经验证的申报被抢先 consumed（#1835 J11）。
     out = settle_delta(state, db, {'issue_advances': [{'issue_id': cid, 'delta_bar': 1, 'narrative': '朕加拨复其供亿，前诺照旧'}]}, SettlementContext(content=content))
-    assert view(out, "breach_plea_resolutions") == []
     assert _cost_events(db, did) == []
     assert db.get_decree_dossier(did)["status"] == "executing"
     assert db.conn.execute(
@@ -393,7 +392,6 @@ def test_persist_via_extraction_cancels_true_entry(game):
     )
     out = settle_delta(state, db, {'cancels': [{'issue_id': cid, 'narrative': '朕意已决，仍撤此诺'}]}, SettlementContext(content=content))
     # 坚持撤由 issue tracker 在已校验 cancel 实入后调 finalize_persist，不经 extraction 抢先消费
-    assert view(out, "breach_plea_resolutions") == []
     cancels = list(getattr(out.issue, "cancels", None) or []) if out.issue is not None else []
     assert any(c.get("breach_plea_decision") == "persist" for c in cancels)
     assert _pending_pleas(db) == []
@@ -859,7 +857,6 @@ def test_merged_persist_via_domain_cancel_settles(game):
         db, state, token="ext-mrg",
     )
     out = settle_delta(state, db, {'cancels': [{'issue_id': cid, 'narrative': '朕意已决，仍撤此诺'}]}, SettlementContext(content=content))
-    assert view(out, "breach_plea_resolutions") == []
     cancels = list(getattr(out.issue, "cancels", None) or []) if out.issue is not None else []
     assert any(c.get("breach_plea_decision") == "persist" for c in cancels)
     assert _pending_pleas(db) == []

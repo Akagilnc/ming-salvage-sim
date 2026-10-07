@@ -34,7 +34,6 @@ ENTRY_KIND_BREACH_PLEA = "midcourse_breach_plea"
 # 哭谏 todo.payload_json 判决痕迹（#626 path① 真源；不扩三态枚举）
 PLEA_VERDICT_KEY = "verdict"
 PLEA_VERDICT_PERSIST = "persist"
-PLEA_VERDICT_REGRET = "regret"
 PLEA_VERDICT_EXPIRED = "expired"
 
 BREACH_KIND_FUNDING = "funding_cutoff"
@@ -682,33 +681,6 @@ def finalize_persist(
     }
 
 
-def finalize_regret(
-    db: Any,
-    state: Any,
-    todo: Dict[str, object],
-    *,
-    commit: bool = False,
-) -> Dict[str, object]:
-    """反悔：两轨零落账，承诺续跑，消费 todo。不写信用边（票面钉零落账）。"""
-    meta = decode_plea_meta(todo.get("origin_context"))
-    commitment_ref = int(todo["commitment_ref"])
-    consumed = db.mark_next_audience_todo_status(
-        int(todo["id"]), TODO_STATUS_CONSUMED,
-        payload_patch={PLEA_VERDICT_KEY: PLEA_VERDICT_REGRET},
-        commit=False,
-    )
-    if commit:
-        db.conn.commit()
-    return {
-        "decision": "regret",
-        "todo_id": int(todo["id"]),
-        "commitment_ref": commitment_ref,
-        "breach_kind": str(meta.get("breach_kind") or ""),
-        "consumed": bool(consumed),
-        "commitment_continues": True,
-    }
-
-
 def expire_breach_pleas_on_due(
     db: Any, state: Any, *, commit: bool = False,
 ) -> List[Dict[str, object]]:
@@ -1088,13 +1060,6 @@ def scan_and_write_breach_pleas(
     return written
 
 
-
-
-def _pending_breach_pleas(db: Any) -> List[Dict[str, object]]:
-    return [
-        t for t in db.list_next_audience_todos(status=TODO_STATUS_PENDING)
-        if str(t.get("entry_kind") or "") == ENTRY_KIND_BREACH_PLEA
-    ]
 
 
 def _extract_ref_ids(items: object, *, prefixes: Sequence[str]) -> Set[int]:

@@ -526,7 +526,6 @@ def _build_outcome(run) -> SettlementOutcome:
         secret_dossier_participants=placed("secret_dossier_participants"),
         authority=placed("authority"),
         secret_order=placed("secret_order"),
-        breach_plea=placed("breach_plea"),
         credit_event=placed("credit_event"),
         relation_edge=placed("relation_edge"),
     )

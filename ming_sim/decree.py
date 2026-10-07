@@ -641,7 +641,6 @@ def _rescript_decisions(
 
 def write_decree_with_agno(
     llm_config: LLMConfig,
-    agno_db: SqliteDb,
     state: GameState,
     directives: List[sqlite3.Row],
     db: Optional[GameDB] = None,
@@ -734,10 +733,7 @@ def resolve_directives(
     db: GameDB,
     agno_db: SqliteDb,
     llm_config: LLMConfig,
-    directives: List[sqlite3.Row],
     decree_text: str,
-    deaths_this_turn: Optional[List[Dict[str, str]]] = None,
-    debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     content=None,
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,

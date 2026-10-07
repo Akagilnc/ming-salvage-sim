@@ -151,7 +151,7 @@ def forecast_snapshot(
     dest_parent = Path(world_materials_root(db, state)).parent / "decree-forecast"
     prepared = prepare_world_materials(db, state, dest_root=dest_parent)
     try:
-        grounding, refs = _frozen_effect_refs(db, turn, payload)
+        grounding, refs = _frozen_effect_refs(db, turn)
         this_decree = _this_decree_fact(body, decree_text=text, db=db)
     except BaseException:
         release_material_tree(prepared.root)
@@ -247,9 +247,7 @@ def _held_snapshot(session: Any, dossier_id: int) -> Optional[Dict[str, Any]]:
     return snapshot
 
 
-def _frozen_effect_refs(
-    db: Any, turn: int, payload: Dict[str, Any],
-) -> tuple[str, dict]:
+def _frozen_effect_refs(db: Any, turn: int) -> tuple[str, dict]:
     """#1840：转译输入与暂存落账共用这一份可见引用，不另建账。"""
     refs = _visible_effect_refs(db, turn)
     return build_translation_target_grounding(db) + _effect_ref_grounding(refs), refs

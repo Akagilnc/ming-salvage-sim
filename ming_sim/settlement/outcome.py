@@ -106,7 +106,6 @@ class SettlementOutcome:
     )
     authority: SectionResult = field(default_factory=lambda: SectionResult([], []))
     secret_order: SectionResult = field(default_factory=lambda: SectionResult([], []))
-    breach_plea: SectionResult = field(default_factory=lambda: SectionResult([], []))
     credit_event: SectionResult = field(default_factory=lambda: SectionResult([], []))
     relation_edge: SectionResult = field(default_factory=lambda: SectionResult([], []))
 
@@ -135,7 +134,6 @@ class SettlementOutcome:
             "secret_dossier_participants": self.secret_dossier_participants,
             "authority_changes": self.authority,
             "secret_order_updates": self.secret_order,
-            "breach_plea_resolutions": self.breach_plea,
             "credit_event_resolutions": self.credit_event,
             "relation_edge_event_resolutions": self.relation_edge,
         }

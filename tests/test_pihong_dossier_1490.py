@@ -2393,7 +2393,7 @@ def test_658_stalled_excluded_from_promulgation_validation(game, monkeypatch):
         return {'verdict': {'decision': 'promulgated', 'dossier_id': dossier_id}, 'declaration': {}, 'questions': None, 'forecast_text': ''}
     monkeypatch.setattr(month_chain, 'run_world_segment_text', lambda *a, **k: '')
     monkeypatch.setattr('ming_sim.decree_forecast.produce_forecast_product', product)
-    decree_mod.resolve_directives(state, db, None, object(), [], '清核河工', content=content)
+    decree_mod.resolve_directives(state, db, None, object(), '清核河工', content=content)
     assert stalled_id not in seen
     assert normal_id in seen
     assert db.get_decree_dossier(stalled_id)['status'] == 'proposed'

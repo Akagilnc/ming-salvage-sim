@@ -47,8 +47,6 @@ class SectionSpec:
 # ② 人口段的「回流/加派」去重依赖同批加派段结果，故编排器在两段之间算
 #    surcharge_claims（见 run.SettlementRun）。
 _SECTIONS: Tuple[SectionSpec, ...] = (
-    SectionSpec("breach_plea", "ming_sim.entities.breach_plea.delta_section",
-                "apply", ()),
     SectionSpec("dossier_participants", "ming_sim.entities.dossier.delta_section",
                 "apply_participants", ("dossier_participants",)),
     SectionSpec("secret_dossier_participants",

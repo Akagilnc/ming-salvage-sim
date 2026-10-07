@@ -390,7 +390,7 @@ def _run_resolve_arm(
         # and consumes pending_promulgation_verdicts.
         resolve_turn = state.turn
         result = resolve_directives(
-            state, db, agno, cfg, [object()], label, content=content,
+            state, db, agno, cfg, label, content=content,
         )
         awaiting = bool(result.awaiting)
         verdicts = _resolve_arm_verdicts(
@@ -419,7 +419,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
             db, state, db.list_decree_dossiers(status="proposed"),
         )
         first_result = resolve_directives(
-            state, db, agno, cfg, [object()], "四旨并下", content=content,
+            state, db, agno, cfg, "四旨并下", content=content,
         )
         if not first_result.awaiting:
             raise RuntimeError("real gate expected rejected dossiers to reach rescript")
@@ -438,7 +438,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         )
         second_turn = state.turn
         second_result = resolve_directives(
-            state, db, agno, cfg, [], "留中案下月重判", content=content,
+            state, db, agno, cfg, "留中案下月重判", content=content,
         )
         second_pending = db.get_pending_promulgation_verdicts(second_turn)
         second_history = [
