@@ -91,6 +91,10 @@ def test_execution_surface_dossier_can_record_and_list_full_history(game):
 
     rows = db.list_dossier_progress(dossier_id)
     assert [row["turn"] for row in rows] == [state.turn, state.turn + 1]
+    assert [row["progress_band"] for row in rows] == ["启程", "在办"]
+    assert [row["memorial_text"] for row in rows] == [
+        "已分派书吏出京", "畿南三县清册已齐",
+    ]
     assert all(row["origin"] == DOSSIER_REPORT_MONTHLY for row in rows)
     assert all(row["dossier_id"] == dossier_id for row in rows)
     assert all(row["is_terminal"] is False for row in rows)
@@ -133,12 +137,13 @@ def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
     }])
     rows = db.list_dossier_progress(dossier_id)
     assert len(rows) == 1
+    assert rows[0]["memorial_text"] == "首批已出关619"
     assert rows[0]["origin"] == DOSSIER_REPORT_MONTHLY
 
     stored = db.conn.execute(
         "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
-    assert len(json.loads(stored["dossier_progress_json"])) == 1
+    assert json.loads(stored["dossier_progress_json"])[0]["memorial_text"] == "首批已出关619"
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM dossier_reported_progress WHERE dossier_id=?",
         (dossier_id,),
@@ -275,14 +280,16 @@ def test_restore_preserves_report_history(game, tmp_path, content):
     restored = GameDB(str(backup), content=content)
     try:
         rows = restored.list_dossier_progress(dossier_id)
-        assert [row["turn"] for row in rows] == [state.turn, state.turn + 1]
+        assert rows == expected
         # Append after restore continues the same physical history.
         restored.record_dossier_progress(
             dossier_id, state.turn + 2, "将结", "三县完册",
             origin=DOSSIER_REPORT_MONTHLY,
         )
         cont = restored.list_dossier_progress(dossier_id)
-        assert [row["turn"] for row in cont] == [state.turn, state.turn + 1, state.turn + 2]
+        assert [row["memorial_text"] for row in cont] == [
+            "出京核验", "已至保定", "三县完册",
+        ]
     finally:
         restored.close()
 

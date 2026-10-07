@@ -1687,15 +1687,16 @@ class GameSession:
         else:
             outcomes = [_llm_one(jobs[0])]
 
-        # DB 相串行：产物 ValueError 耗尽该旨；其它异常错误包中止整月。
+        # DB 相串行：已分类 ValueError 子类耗尽该旨；裸 ValueError／其它异常中止。
+        def _typed_domain_value_error(exc: BaseException) -> bool:
+            return isinstance(exc, ValueError) and type(exc) is not ValueError
+
         next_carry: Dict[int, Dict[str, object]] = {}
         for job, new_payload, exc in outcomes:
             did = int(job["directive_id"])
             if exc is not None:
-                if isinstance(exc, ValueError):
-                    # 本轮重写自身的产物错（含名册 escalate 归一）：DB 载荷未动，
-                    # 光靠下一轮 ensure 重探只会拿回旧拒因——把本轮失败事实带过去，
-                    # 否则同一句话问三遍（0150-D5-b：告诉 LLM 事实）。
+                if _typed_domain_value_error(exc):
+                    # 本轮重写自身的产物错：DB 载荷未动，把本次失败事实带到下轮。
                     logger.warning(
                         "[1769] draft#%s admission resubmit product exhaust: %s",
                         did, exc,
@@ -1722,18 +1723,18 @@ class GameSession:
                     dossier_payload=new_payload,
                     replace_payload=True,
                 )
-            except ValueError as write_exc:
-                # 写回被拒也是产物错：本次产物 + 本次写回拒因带进下一次重写，
-                # 否则下一轮只能拿 DB 里的旧载荷/旧拒因重问同一遍。
-                logger.warning(
-                    "[1769] draft#%s admission resubmit write-back rejected: %s",
-                    did, write_exc,
-                )
-                next_carry[did] = {
-                    "bad_payload": dict(new_payload),
-                    "reason": str(write_exc),
-                }
             except Exception as write_exc:
+                if _typed_domain_value_error(write_exc):
+                    # 写回领域拒：本次产物 + 写回拒因带进下一次重写。
+                    logger.warning(
+                        "[1769] draft#%s admission resubmit write-back rejected: %s",
+                        did, write_exc,
+                    )
+                    next_carry[did] = {
+                        "bad_payload": dict(new_payload),
+                        "reason": str(write_exc),
+                    }
+                    continue
                 pack_path = write_error_pack(
                     self.db, self.state, exc=write_exc,
                     extracted=None, resolve_ctx=None,

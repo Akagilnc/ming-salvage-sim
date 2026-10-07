@@ -2677,9 +2677,13 @@ def extract_draft_intent(
         # 那会让写入口把失败洗成 special_decree 冒充成功产物（失败诚实宪法）。
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
         # #1849：解析失败也是抽取失败，不是「无意图」（与单条路同一根因）。
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+
         obj = _loads_lenient(raw)
         if not isinstance(obj, dict):
-            raise ValueError("多旨稿抽取产物不可解析为 JSON 对象")
+            raise DecreeMaterializationValidationError(
+                "多旨稿抽取产物不可解析为 JSON 对象",
+            )
         values = obj.get("成品旨稿")
         drafts = []
         draft_combo_flags: List[bool] = []
@@ -2934,14 +2938,16 @@ def extract_draft_intent(
     # #1849：解析失败/缺意图键/非法意图值都是抽取产物不可用，不是「无意图」；
     # 一律响亮拒收（同 _coerce_draft_target_kind / 动作类型非法的既有契约），
     # 禁再消解成合法无意图让写入口覆盖原草稿。
+    from ming_sim.action_materialize import DecreeMaterializationValidationError
+
     obj = _loads_lenient(raw)
     if not isinstance(obj, dict):
-        raise ValueError("拟旨抽取产物不可解析为 JSON 对象")
+        raise DecreeMaterializationValidationError("拟旨抽取产物不可解析为 JSON 对象")
     if "拟旨意图" not in obj:
-        raise ValueError("拟旨抽取产物缺「拟旨意图」")
+        raise DecreeMaterializationValidationError("拟旨抽取产物缺「拟旨意图」")
     _action = str(obj.get("拟旨意图") or "").strip()
     if _action not in {"无", "拟旨"}:
-        raise ValueError(f"拟旨意图非法：{_action!r}")
+        raise DecreeMaterializationValidationError(f"拟旨意图非法：{_action!r}")
     # #654 H：无意图立即短路，不跑 acting/动作类型/target_kind 校验。
     # #1778：召对交办后置点将仍收承办人/名单（harvest_participants），不另造抽取器。
     if _action == "无":
@@ -3361,9 +3367,11 @@ def resubmit_draft_admission_payload(
     （原抽 + 重写 2 = 总计 3）。与 extract 内 heal_retries（组合/名册）独立——
     内部 heal 不冒充成案补交次数。不在引擎侧改写 LLM 输出（0142）。
     """
+    from ming_sim.action_materialize import DecreeMaterializationValidationError
+
     text = str(decree_text or "").strip()
     if not text:
-        raise ValueError("补交缺旨文正文")
+        raise DecreeMaterializationValidationError("补交缺旨文正文")
     feedback = build_draft_admission_resubmit_feedback(
         failure_reason=failure_reason,
         bad_payload=bad_payload,
@@ -3383,13 +3391,13 @@ def resubmit_draft_admission_payload(
         # 已识别的名册产物错：与 capture_manual_directive_payload 同一归一
         # ——产物错走本票 B 路预算/留存，不得升成整月 SettlementAbort 连带好旨。
         # 结算路无召对现场，不另作戏内回禀；只把不在册事实当失败事实回喂下一次重写。
-        raise ValueError(exc.fact) from exc
+        raise DecreeMaterializationValidationError(exc.fact) from exc
     # #1769 结算路 B：仅「仍为拟旨且非 capture 空载 fallback」才算本轮成功产物。
     # extract 缺拟旨意图/垃圾 → draft_action=无；project 再映成 special_decree
     # fallback——若 replace_payload 会毁掉原 pay_order/grant 并被二次 ensure 成案（P1）。
     # capture 首次空载/超时 fallback 不经本函数，不动。
     if captured.get("draft_action") != "拟旨":
-        raise ValueError("结算补交重写未返回拟旨意图")
+        raise DecreeMaterializationValidationError("结算补交重写未返回拟旨意图")
     payload = project_draft_extract_to_directive_payload(
         captured,
         decree_text=text,
@@ -3398,7 +3406,9 @@ def resubmit_draft_admission_payload(
         content=content,
     )
     if _is_manual_special_decree_fallback(payload):
-        raise ValueError("结算补交重写落空载 special_decree fallback")
+        raise DecreeMaterializationValidationError(
+            "结算补交重写落空载 special_decree fallback",
+        )
     return payload
 
 

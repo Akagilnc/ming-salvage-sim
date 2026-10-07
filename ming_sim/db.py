@@ -19460,7 +19460,11 @@ class GameDB:
         target_kind = str(structured.get("target_kind") or "").strip()
         target_id = str(structured.get("target_id") or "").strip()
         if not target_kind or not target_id:
-            raise ValueError("普通旨意缺少受控目标，拒绝成案")
+            from ming_sim.action_materialize import DecreeMaterializationValidationError
+            raise DecreeMaterializationValidationError(
+                "普通旨意缺少受控目标，拒绝成案",
+                failed_fields=("target_kind", "target_id"),
+            )
         executor_kind, executor_id = self._directive_executor(action_type, structured)
         pending = self.conn.execute(
             """
@@ -19603,24 +19607,17 @@ class GameDB:
                     sp = f"ensure_directive_{did}"
                     self.conn.execute(f"SAVEPOINT {sp}")
                     try:
-                        # 已持久载荷读失败是系统接缝，不得进产物拒收／补交（#1897 E1）。
-                        try:
-                            payload = self.read_directive_dossier_payload(row)
-                        except ValueError as durable_exc:
-                            self.conn.execute(f"ROLLBACK TO {sp}")
-                            code_fault = durable_exc
-                            tlog(
-                                f"[ensure_dossiers] 旨#{did} 持久载荷损坏：{durable_exc}"
-                            )
-                            raise
+                        # 已分类领域异常（ValueError 子类：DMVE/PayOrderKeyError…）→
+                        # 逐项拒收／补交；裸 ValueError＝未分类或嵌套持久读损坏 → 响亮（#1897 E1）。
                         self._ensure_directive_dossier(
                             state, did, str(row["text"]),
-                            payload, commit=False,
+                            self.read_directive_dossier_payload(row), commit=False,
                         )
                     except ValueError as exc:
-                        # 产物/契约错：逐项隔离留痕，保持 draft（#1769 补交/耗尽入口）
-                        # 含 DecreeMaterializationValidationError（ValueError 子类）。
-                        if code_fault is not None:
+                        if type(exc) is ValueError:
+                            self.conn.execute(f"ROLLBACK TO {sp}")
+                            code_fault = exc
+                            tlog(f"[ensure_dossiers] 旨#{did} 成案系统故障：{exc}")
                             raise
                         self.conn.execute(f"ROLLBACK TO {sp}")
                         reason = str(exc)
@@ -19639,10 +19636,10 @@ class GameDB:
                             )
                         tlog(f"[ensure_dossiers] 旨#{did} 成案产物错：{exc}")
                     except Exception as exc:
-                        # 真代码故障：不得当产物错洗白后继续（0005）
+                        # 真代码故障：回滚后响亮（0005）
                         self.conn.execute(f"ROLLBACK TO {sp}")
                         code_fault = exc
-                        tlog(f"[ensure_dossiers] 旨#{did} 成案代码故障：{exc}")
+                        tlog(f"[ensure_dossiers] 旨#{did} 成案系统故障：{exc}")
                         raise
                     finally:
                         self.conn.execute(f"RELEASE {sp}")
@@ -19696,13 +19693,14 @@ class GameDB:
         replace_payload=True（#1769 结算补交）：整份采用新 payload，不经 merge——
         避免 pay_order entries 等旧键残留到新动作类型上。默认 False 保持改草合并语义。
         """
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
         if self.get_dossier_for_directive(directive_id) is not None:
-            raise ValueError("已成案旨意不得编辑")
+            raise DecreeMaterializationValidationError("已成案旨意不得编辑")
         row = self.conn.execute(
             "SELECT dossier_payload_json FROM turn_directives WHERE id=?", (directive_id,)
         ).fetchone()
         if row is None:
-            raise ValueError("旨意不存在")
+            raise DecreeMaterializationValidationError("旨意不存在")
         incoming = dict(dossier_payload or {})
         if replace_payload:
             payload = incoming
@@ -19711,7 +19709,9 @@ class GameDB:
                 row["dossier_payload_json"], incoming,
             )
         if not directive_payload_admits_structured_write(payload):
-            raise ValueError("旨意编辑须提供完整结构化动作与目标")
+            raise DecreeMaterializationValidationError(
+                "旨意编辑须提供完整结构化动作与目标",
+            )
         with atomic(self):
             self.conn.execute(
                 """

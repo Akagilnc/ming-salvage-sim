@@ -136,14 +136,14 @@ def test_reopen_reconcile_unblocks_and_keeps_question(restore_env):
         # 该轮被标为可重试的 interrupted（不再在飞、不阻塞续问/收夜）。
         assert an.list_in_flight_chat_turns(db2, night["id"]) == []
         assert any(int(r["chat_turn_id"]) == ct for r in interrupted)
-        # 问话行保留（不删）——恢复路径永不删记录；不锁夹具问话正文。
+        # 问话行保留（不删）——恢复路径永不删记录；夹具问话原样运输。
         proj = db2.build_chat_projection(minister)
         user_rows = [m for m in proj if m["role"] == "user"]
-        assert len(user_rows) == 1
+        assert [m["content"] for m in user_rows] == ["杨卿何以教朕？"]
         assert int(user_rows[0]["chat_turn_id"]) == ct
-        # 待重试面板取数：同轮可重试身份。
+        # 待重试面板：同轮问话原文。
         retries = db2.get_interrupted_reply_retries(minister)
-        assert len(retries) == 1
+        assert [r["question"] for r in retries] == ["杨卿何以教朕？"]
         assert int(retries[0]["chat_turn_id"]) == ct
     finally:
         db2.close()
@@ -437,9 +437,9 @@ def test_failed_retry_rolls_back_side_effects_and_keeps_question(restore_env):
     ).fetchone()["error_pack_path"])
     assert (pack / "traceback.txt").is_file()
     assert (pack / "save_backup.db").is_file()
-    # 问话身份／水位：retry 挂同一 chat_turn，user_message 行在；不锁正文（#1897 T1）。
+    # 问话身份／水位：retry 挂同一 chat_turn；问话原文前像保留（#1897 T1）。
     retries = db.get_interrupted_reply_retries(minister)
-    assert len(retries) == 1
+    assert [r["question"] for r in retries] == ["剿抚孰先？"]
     assert int(retries[0]["chat_turn_id"]) == int(ct)
     uid = db.conn.execute(
         "SELECT user_message_id FROM chat_turns WHERE id=?", (ct,)

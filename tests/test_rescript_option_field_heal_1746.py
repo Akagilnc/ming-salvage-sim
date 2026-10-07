@@ -138,14 +138,16 @@ def _prior_contents(prior_messages) -> list:
 
 
 def _assert_call_history(calls: list[dict]) -> None:
-    """每轮 prior = 此前全部 user/assistant 完整顺序（角色链与轮次，不锁文案）。"""
+    """每轮 prior = 此前全部 user/assistant 完整顺序（角色+正文运输）。"""
     hist_roles: list[str] = []
+    hist_contents: list[object] = []
     for call in calls:
         assert call["roles"] == hist_roles
-        assert len(call.get("contents") or []) == len(hist_roles)
-        # 角色链长度身份；不锁 prompt/response 正文 type／非空（#1897 T1）。
-        assert "prompt" in call and "response" in call
+        assert call["contents"] == hist_contents
+        assert isinstance(call.get("prompt"), str) and call["prompt"]
+        assert isinstance(call.get("response"), str) and call["response"]
         hist_roles = hist_roles + ["user", "assistant"]
+        hist_contents = hist_contents + [call["prompt"], call["response"]]
 
 
 def _parse_heal_request(prompt: object) -> dict:
@@ -192,13 +194,17 @@ def test_run_agent_text_prior_messages_sent_as_message_list():
         {"role": "user", "content": "first-user"},
         {"role": "assistant", "content": "first-assistant"},
     ]
-    run_agent_text(
+    text = run_agent_text(
         _Agent(), "heal-user", tag="rescript-draft-heal", prior_messages=prior,
     )
+    assert text == '{"ok":true}'
     payload = captured[0]
     assert isinstance(payload, list) and len(payload) == 3
     assert all(isinstance(m, Message) for m in payload)
     assert [m.role for m in payload] == ["user", "assistant", "user"]
+    assert [m.content for m in payload] == [
+        "first-user", "first-assistant", "heal-user",
+    ]
 
 
 def test_run_agent_text_without_prior_passes_plain_prompt():

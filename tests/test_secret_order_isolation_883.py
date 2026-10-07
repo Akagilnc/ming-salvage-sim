@@ -1419,15 +1419,15 @@ def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollbac
     getattr(db, rollback_entry)(chat_turn_id)
 
     restored_order = db.conn.execute(
-        "SELECT id FROM secret_orders WHERE id=?", (order_id,),
+        "SELECT title, content FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
     restored_brief = db.conn.execute(
-        "SELECT order_id, origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+        "SELECT title, body, origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
         (order_id,),
     ).fetchone()
-    assert int(restored_order["id"]) == int(order_id)
-    assert int(restored_brief["order_id"]) == int(order_id)
-    assert restored_brief["origin_chat_message_ids"] == old_brief["origin_chat_message_ids"]
+    # 回滚前像：题名／正文完整等值，不只 id（#1897 T1）
+    assert dict(restored_order) == {"title": "旧密令", "content": "旧密文"}
+    assert dict(restored_brief) == old_brief
 
 
 def test_976_rt05_save_restore_between_hold_and_release(game, tmp_path):

@@ -18,14 +18,19 @@ def test_update_by_id_targets_exact_order_not_newest(game):
         state, old, "旧令甲·改", "查甲事·已纠正", tags=["甲·改"], deadline_months=0,
     )
     assert ok is True
-    tags_old = json.loads(
-        db.conn.execute("SELECT tags FROM secret_orders WHERE id=?", (old,)).fetchone()["tags"]
-    )
-    tags_new = json.loads(
-        db.conn.execute("SELECT tags FROM secret_orders WHERE id=?", (new,)).fetchone()["tags"]
-    )
-    assert tags_old == ["甲·改"]
-    assert tags_new == ["乙"]
+    row_old = db.conn.execute(
+        "SELECT title, content, tags FROM secret_orders WHERE id=?", (old,),
+    ).fetchone()
+    row_new = db.conn.execute(
+        "SELECT title, content, tags FROM secret_orders WHERE id=?", (new,),
+    ).fetchone()
+    # 精确 id 原样运输；非目标条正文不变（#1897 T1）
+    assert row_old["title"] == "旧令甲·改"
+    assert row_old["content"] == "查甲事·已纠正"
+    assert json.loads(row_old["tags"]) == ["甲·改"]
+    assert row_new["title"] == "新令乙"
+    assert row_new["content"] == "查乙事"
+    assert json.loads(row_new["tags"]) == ["乙"]
 
 
 def test_update_by_id_preserves_tags_when_none(game):
@@ -43,9 +48,10 @@ def test_update_by_id_persists_assignee_brief_after_restore(game):
     oid = create_test_secret_order(db, state, "保签官", "旧标题", "旧内容", ["辽东"])
 
     assert db.update_secret_order_by_id(state, oid, "新标题", "新内容")
-    assert db.conn.execute(
-        "SELECT 1 FROM secret_order_briefs WHERE order_id=?", (oid,),
-    ).fetchone() is not None
+    source = db.conn.execute(
+        "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,),
+    ).fetchone()
+    assert dict(source) == {"title": "新标题", "body": "新内容"}
 
     # The durable brief, rather than a live registry cache, is the restore
     # boundary.  A reopened save must project the revised order to its assignee.
@@ -56,14 +62,17 @@ def test_update_by_id_persists_assignee_brief_after_restore(game):
     restored = GameDB(path, content)
     restored_state = restored.load_state()
     knowledge = restored.get_character_knowledge(restored_state, "保签官")
-    assert restored.conn.execute(
-        "SELECT 1 FROM secret_order_briefs WHERE order_id=?", (oid,),
-    ).fetchone() is not None
+    source = restored.conn.execute(
+        "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,),
+    ).fetchone()
+    assert dict(source) == {"title": "新标题", "body": "新内容"}
     projected = [
         item for item in knowledge["events"]
         if item.get("source_id") == f"secret_order_brief:{oid}"
     ]
     assert len(projected) == 1
+    assert projected[0]["title"] == source["title"]
+    assert projected[0]["body"] == source["body"]
     restored.close()
 
 
@@ -74,5 +83,8 @@ def test_update_by_id_noop_on_non_active(game):
     db.close_secret_order(oid, "done", "已办结", state.turn)
     ok = db.update_secret_order_by_id(state, oid, "标题·改", "内容·改")
     assert ok is False
-    row = db.conn.execute("SELECT status FROM secret_orders WHERE id=?", (oid,)).fetchone()
+    row = db.conn.execute(
+        "SELECT status, content FROM secret_orders WHERE id=?", (oid,),
+    ).fetchone()
     assert row["status"] != "active"
+    assert row["content"] == "内容"  # 非 active 不改正文

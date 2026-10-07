@@ -142,10 +142,11 @@ def test_save_and_list_rescript_drafts_roundtrip(game):
         ]},
     ])
     drafts = db.list_rescript_drafts()
-    assert len(drafts) == 2
+    assert [d["title"] for d in drafts] == ["陕西告饥", "无局急务"]
     first = drafts[0]
     assert first["event_id"] == "issue:42"          # 权威 issue 回指原样保留
-    assert len(first["options"]) == 1
+    assert first["context"] == "秦地赤旱千里，臣愚以为赈济不可缓。"
+    assert first["options"] == [{"label": "发帑赈济", "hint": "所安者饥民"}]
     assert first["status"] == "pending"
     assert first["actor_name"] == "测试首辅"
     assert first["actor_office"] == "内阁首辅"
@@ -225,8 +226,9 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
     assert all(r["kind"] == "decision" for r in rows)
     draft_after = db.list_rescript_drafts()[0]
     assert draft_after["idx"] == 2
-    assert draft_after["event_id"] == draft_before["event_id"]
-    assert len(draft_after["options"]) == len(draft_before["options"])
+    # pending-decision 覆写不得污染 draft 内容（#1897 T1 原样）
+    for field in ("title", "context", "options", "event_id", "status"):
+        assert draft_after[field] == draft_before[field]
 
 def test_save_rescript_drafts_overwrites_not_duplicates(game):
     db, state, _content = game
@@ -275,24 +277,34 @@ def test_repeated_overwrite_keeps_stable_synthetic_ids(game):
 # ---------------------------------------------------------------------------
 
 def test_validate_and_persist_preserve_whitespace_verbatim(game):
-    """首尾空白不构成非法：validator 通过且落库一条 pending 票拟（结构闸，不锁文案）。"""
+    """首尾空白原样往返：validator 通过且落库字段等值（#1897 T1 运输，非关键词哨兵）。"""
     db, state, _content = game
     turn = state.turn
+    raw_title = " 陕西告饥  "
+    raw_context = "\n秦地赤旱千里，臣愚以为赈济不可缓。\t"
+    raw_label_a = " 发帑赈济 "
+    raw_hint_a = "\n所安者饥民\n"
     data = {"items": [{
-        "title": " 陕西告饥  ", "context": "\n秦地赤旱千里，臣愚以为赈济不可缓。\t",
+        "title": raw_title, "context": raw_context,
         "options": [
-            _layer_a_opt(label=" 发帑赈济 ", hint="\n所安者饥民\n"),
+            _layer_a_opt(label=raw_label_a, hint=raw_hint_a),
             _layer_a_opt(label="缓议加派", hint=" 所拂者小农 "),
         ],
     }]}
     drafts = validate_rescript_draft_items(data, set())
     assert len(drafts) == 1
-    assert len(drafts[0]["options"]) == 2
+    assert drafts[0]["title"] == raw_title
+    assert drafts[0]["context"] == raw_context
+    assert drafts[0]["options"][0]["label"] == raw_label_a
+    assert drafts[0]["options"][0]["hint"] == raw_hint_a
+    assert drafts[0]["options"][1]["hint"] == " 所拂者小农 "
     assert drafts[0]["options"][0]["draft_capability"]
     db.save_rescript_drafts(turn, drafts)
     row = db.list_rescript_drafts()[0]
     assert row["status"] == "pending"
-    assert len(row["options"]) == 2
+    assert row["title"] == raw_title
+    assert row["context"] == raw_context
+    assert row["options"] == drafts[0]["options"]
 
 
 def test_generate_ungrounded_region_heals_then_drops_sibling_kept(monkeypatch, tmp_path):
