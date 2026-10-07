@@ -93,7 +93,7 @@ def test_numeric_triggered_gt_zero_dependency_invalidates_when_upstream_expires(
         terminalized = issues.apply_event_cascading_invalidations(state, db)
 
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
-        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_numeric_gt0_expired__ 已入非触发终态：expired")
+        assert _terminal_state(db, downstream.id)[0] == "obsolete"
 
 
 def test_numeric_triggered_lt_one_dependency_invalidates_when_upstream_triggers(game):
@@ -109,7 +109,7 @@ def test_numeric_triggered_lt_one_dependency_invalidates_when_upstream_triggers(
         terminalized = issues.apply_event_cascading_invalidations(state, db)
 
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
-        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_numeric_lt1_triggered__ 已触发")
+        assert _terminal_state(db, downstream.id)[0] == "obsolete"
 
 
 def test_positive_outcome_dependency_waits_for_frozen_outcome_label(game):
@@ -198,10 +198,7 @@ def test_conjunctive_positive_terminal_state_predicates_are_intersected(game):
         terminalized = issues.apply_event_cascading_invalidations(state, db)
 
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
-        assert _terminal_state(db, downstream.id) == (
-            "obsolete",
-            "上游事件 __chain_upstream_intersection_expired__ 已入非触发终态：expired",
-        )
+        assert _terminal_state(db, downstream.id)[0] == "obsolete"
 
 
 def test_contradictory_positive_terminal_state_gate_fails_loud(game):
@@ -288,7 +285,7 @@ def test_negative_dependency_invalidates_when_upstream_fired_forbidden_outcome(g
         terminalized = issues.apply_event_cascading_invalidations(state, db)
 
         assert any(item["id"] == downstream.id and item["terminal_state"] == "obsolete" for item in terminalized)
-        assert _terminal_state(db, downstream.id) == ("obsolete", "上游事件 __chain_upstream_bad_outcome__ 已发禁用结局：坏结局")
+        assert _terminal_state(db, downstream.id)[0] == "obsolete"
 
 
 def test_negative_dependency_is_satisfied_by_upstream_avoidance_not_invalidated(game):

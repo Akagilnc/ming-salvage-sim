@@ -2292,75 +2292,10 @@ class GameDB:
             """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
         # #637 S6：relation_brew_pending.item_kind 真源在建表；不后置补列。
+        # #1812/#1835：现役列真源只在 CREATE；不在开库路径为旧形缺列档补列。
         self._ensure_office_type_parents()
         self._ensure_event_parents()
-        for column, definition in {
-            "military_strength": "INTEGER NOT NULL DEFAULT 50",
-            "cohesion": "INTEGER NOT NULL DEFAULT 50",
-            "supply": "INTEGER NOT NULL DEFAULT 50",
-            "last_action": "TEXT NOT NULL DEFAULT ''",
-            "kind": "TEXT NOT NULL DEFAULT '敌国'",
-            "aliases": "TEXT NOT NULL DEFAULT ''",
-        }.items():
-            self.ensure_column("powers", column, definition)
-        self.ensure_column("armies", "owner_power", "TEXT NOT NULL DEFAULT 'ming'")
-        self.ensure_column("armies", "station_region", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("armies", "province_pay_arrears", "REAL NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "central_pay_arrears", "REAL NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "consecutive_pay_shortfall_months", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "pay_source_region", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("armies", "province_pay_share", "REAL NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "central_pay_share", "REAL NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "is_tusi", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "self_funded_pay", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "mutiny_status", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("armies", "is_mutinied", "INTEGER NOT NULL DEFAULT 0 CHECK(is_mutinied IN (0, 1))")
-        self.ensure_column("armies", "mutiny_count", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "mutiny_probation", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "full_pay_streak", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "redemption_count", "INTEGER NOT NULL DEFAULT 0")
-        # 火器装备(鸟铳,野战+守城)/大炮装备(红夷炮,守城攻城、不利野战)：simulator 软判用的两条军备轴
-        self.ensure_column("armies", "firearm_equipment", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("armies", "cannon_equipment", "INTEGER NOT NULL DEFAULT 0")
-        # #44 名义月饷率(两/兵·月)。仅列**首次 ADD** 时回填一次（gemini high：避免每次启动重扫/
-        # 误覆盖动态态）；列已存在的后续 load 跳过（army_needed 的 rate<=0 锚定兜底 runtime 漏网）。
-        self.ensure_column("armies", "salary_rate", "REAL NOT NULL DEFAULT 0")
-        self.ensure_column("regions", "controlled_by", "TEXT NOT NULL DEFAULT 'ming'")
-        # 城市等级 0-5(静态,史实分级,将来供经济/内政)+ 城防大炮门数(城头红夷炮,上限 city_level×8)
-        self.ensure_column("regions", "city_level", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("regions", "cannon", "INTEGER NOT NULL DEFAULT 0")
         self._apply_region_city_levels()
-        self.ensure_column("issues", "resolve_condition", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("issues", "fail_condition", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("issues", "stop_condition", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("issues", "commitment_kind", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("issues", "stages_json", "TEXT NOT NULL DEFAULT '[]'")
-        # #624 / ADR 0078：next_audience_todos 引擎侧真伪底（方案 A）；老档迁移
-        self.ensure_column(
-            "next_audience_todos", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
-        # characters / pending_decisions / game_state / secret_orders 现役列真源在 CREATE。
-        self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
-        self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossier_link_rejections", "pending_action_id", "INTEGER"
-        )
-        self.ensure_column(
-            "character_knowledge_events", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("issues", "participants", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("issues", "participant_roster", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("issues", "target_roster", "TEXT NOT NULL DEFAULT '[]'")
-        # #976: audience chat hold-and-release — held until classification release.
-        # held | released | withheld | private
-        self.ensure_column(
-            "chat_messages", "knowledge_status", "TEXT NOT NULL DEFAULT 'held'")
-        # #544 / ADR 0045：高亮判官短语清单随消息落库
-        self.ensure_column(
-            "chat_messages", "highlights_json", "TEXT NOT NULL DEFAULT '[]'")
-        # #976 message-level origin provenance on assignee briefs (durable bloodline).
-        self.ensure_column(
-            "secret_order_briefs", "origin_chat_message_ids", "TEXT NOT NULL DEFAULT '[]'")
         # Read-side projection is registry-driven.  Only issue rows are shared
         # knowledge sources; #883 deliberately keeps secret orders out of it.
         self.conn.execute(
@@ -2368,84 +2303,6 @@ class GameDB:
             "(turn,year,period,kind,title,body,source_id,participant_roster) "
             "SELECT origin_turn, 0, 0, 'assignment', title, stage_text, "
             "'issue:' || id, participant_roster FROM issues WHERE participant_roster <> '[]'"
-        )
-        # turn_directives.source_pending_action_id / dossier_payload_json 真源在 CREATE。
-        self.ensure_column("character_offices", "dossier_id", "INTEGER")
-        self.ensure_column(
-            "character_offices", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
-        )
-        self.ensure_column(
-            "character_offices", "region_id", "TEXT NOT NULL DEFAULT ''"
-        )
-        self.ensure_column(
-            "office_change_records", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
-        )
-        # office_change_records 现役 CREATE 已无 turn 列；不在开库路径清退 superseded 列。
-        self.ensure_column(
-            "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "held_turn", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "decree_dossiers", "execution_note", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "closed_turn", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "decree_dossiers", "promulgation_blocked_layer", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "promulgation_reason", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossier_decisions", "blocked_layer", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossier_decisions", "legal_reason_code", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossier_decisions", "primary_opponents_json", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column("decree_dossier_decisions", "gatekeeper_id", "TEXT")
-        self.ensure_column(
-            "decree_dossier_decisions", "criteria_snapshot_json", "TEXT NOT NULL DEFAULT '{}'")
-        self.ensure_column(
-            "decree_dossier_decisions", "affected_parties_json", "TEXT NOT NULL DEFAULT '[]'")
-        self.ensure_column(
-            "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "decree_dossiers", "participant_roster", "TEXT NOT NULL DEFAULT '[]'"
-        )
-        # #654：属地列 + 复合唯一索引（旧单列索引 DROP 后重建）
-        self.ensure_column(
-            "decree_dossiers", "region_id", "TEXT NOT NULL DEFAULT ''"
-        )
-        # 属地唯一索引真源只在 CREATE；不在开库 DROP 旧形索引再重建。
-        # #498：night 列与 idx_chat_turns_night 真源在 CREATE。
-        self.ensure_column("chat_turns", "night_id", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("chat_turns", "night_seq", "INTEGER NOT NULL DEFAULT 0")
-        # #501 叙事抽取水位 + 抽取账溯源/在场效果/时序键（旧档补列，schema 升级非 fallback）。
-        self.ensure_column("chat_turns", "extract_status", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("chat_turns", "error_pack_path", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("chat_turns", "post_reply_recovery", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("chat_turns", "post_reply_error_pack_path", "TEXT NOT NULL DEFAULT ''")
-        # #506 轮级撤销：undo_chat_turn 写 undone_at；旧档 chat_turns 建于该列进 CREATE 之前
-        # 时缺列，undo 的 UPDATE 会 OperationalError（no such column: undone_at）→ 整撤回回滚。
-        self.ensure_column("chat_turns", "undone_at", "TEXT")
-        # #1838 C1b：本轮转译声明的御前主角（按源轮持久化；夜当前值在 audience_nights）。
-        self.ensure_column("chat_turns", "protagonist_name", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column(
-            "audience_nights", "protagonist_name", "TEXT NOT NULL DEFAULT ''")
-        # story_ledger / pending_actions / fiscal_config / factions / turn_reports
-        # 及 economy beyond_intent 真源在 CREATE；不后置拼装现役 schema。
-        self.ensure_column(
-            "audience_nights", "next_event_seq", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column(
-            "decree_dossiers", "office_archive_keys", "TEXT NOT NULL DEFAULT '[]'"
-        )
-        for table in ("region_logs", "army_logs", "power_logs", "person_logs", "building_logs"):
-            self.ensure_column(table, "origin_ref", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("legacies", "clear_gate", "TEXT NOT NULL DEFAULT '{}'")
-        self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
-        # pending_resolve_context 现役列若已在 CREATE 则 no-op；表本身可能后建。
-        self.ensure_column("pending_resolve_context", "source", "TEXT NOT NULL DEFAULT 'system_simulation'")
-        self.ensure_column(
-            "pending_resolve_context", "attendant_message", "TEXT NOT NULL DEFAULT ''",
         )
         # 结局总结：每局结局触发时落一条（单 campaign 一库，turn 为主键，对齐 turn_reports）。
         self.conn.execute("""
@@ -2477,15 +2334,10 @@ class GameDB:
         from ming_sim.entities.affair import AffairStore
         from ming_sim.entities.staged_declaration import StagedDeclarationStore
         TextualFactStore.ensure_schema(self.conn)
-        self.ensure_column("textual_facts", "origin_ref", "TEXT NOT NULL DEFAULT ''")
         self.textual_facts = TextualFactStore(self.conn)
         StagedDeclarationStore.ensure_schema(self.conn)
         self.staged_declarations = StagedDeclarationStore(self.conn)
         AffairStore.ensure_schema(self.conn)
-        # decree_dossiers.affair_id / characters.affair_id / relation_edge_events.affair_id
-        # 及对应索引真源在 CREATE；issues.affair_id 仍随 issues 表现役定义。
-        self.ensure_column("issues", "affair_id", "INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("decree_dossiers", "affair_id", "INTEGER NOT NULL DEFAULT 0")
         self.affairs = AffairStore(self.conn)
         self.conn.commit()
         self.init_fiscal_config()
@@ -2994,15 +2846,6 @@ class GameDB:
             self.conn.commit()
         return base_key
 
-
-    def ensure_column(self, table: str, column: str, definition: str) -> bool:
-        """确保 table.column 存在。返回 True=本次新增了该列（真·一次性迁移），
-        False=列已存在（后续 load 的常态）。多数 caller 忽略返回值即可。"""
-        columns = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
-        if column not in columns:
-            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-            return True
-        return False
 
     # 城市等级 0-5（静态，史实分级；未列出的地区默认 0=游牧/孤岛/边荒）。
     # 用途：城防大炮上限(city_level×8) + 将来经济/内政。1627 实况，非现代省份概念。

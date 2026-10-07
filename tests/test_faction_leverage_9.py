@@ -274,9 +274,8 @@ def test_displaced_minister_faction_leverage_recomputed(game):
 def test_offset_not_re_anchored_on_reload_after_clamp(game):
     """#9 cmr R3：老档每次 load 重锚 offset，clamp 后腐蚀基线。
     seed 后取白名单派系 offset；手动把 leverage 打到 0（模拟 clamp 触底）；再开一个 GameDB
-    （生产里每次 GameSession init = 新 GameDB.__init__→init_schema→seed_static_data，是真正的 reload，
-    offset 列已存在于 DB 文件 → ensure_column 返 False）。修前老档分支每次 load 都
-    offset=round(0−weight_sum)≠原值（被腐蚀）；修后因「列已存在 + 非新档」直接 return，offset 不变。"""
+    （生产里每次 GameSession init = 新 GameDB.__init__→init_schema→seed_static_data，是真正的 reload）。
+    修前每次 load 都 offset=round(0−weight_sum)≠原值（被腐蚀）；修后因「非新档」直接 return，offset 不变。"""
     from ming_sim.db import GameDB
 
     db, state, content = game
