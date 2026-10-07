@@ -835,38 +835,69 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
 
     #1896 后不再有 used／reason_code 字段——满阈自动写依律的旧清算轨已退役
     （ADR 0098 后出修订），掌握证据本身不等于依法清算；去重读口按 mastered 判。
+    已持久机械字段：缺省→0；显式坏值响亮，不得回填洗成 0 写回（#1897 E1/K2）。
     """
     raw = payload.get(FACT_LANES_KEY)
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"fact_lanes 须为数组，得 {type(raw).__name__}")
     lanes: List[Dict[str, object]] = []
     seen: set[str] = set()
-    if isinstance(raw, list):
-        for item in raw:
-            if not isinstance(item, Mapping):
-                continue
-            key = str(item.get("fact_key") or "").strip()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            try:
-                effort = float(item.get("effort") or 0.0)
-            except (TypeError, ValueError):
-                effort = 0.0
-            try:
-                difficulty = float(item.get("difficulty") or 0.0)
-            except (TypeError, ValueError):
-                difficulty = 0.0
-            try:
-                months = int(item.get("months") or 0)
-            except (TypeError, ValueError):
-                months = 0
-            lanes.append({
-                "fact_key": key,
-                "effort": max(0.0, effort),
-                "difficulty": max(0.0, difficulty),
-                "months": max(0, months),
-                "mastered": bool(item.get("mastered")),
-            })
+    for idx, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"fact_lanes[{idx}] 须为对象")
+        key = str(item.get("fact_key") or "").strip()
+        if not key:
+            raise ValueError(f"fact_lanes[{idx}] 缺 fact_key")
+        if key in seen:
+            continue
+        seen.add(key)
+        effort = _lane_number(
+            item.get("effort", 0.0), f"fact_lanes[{idx}].effort", allow_inf=False,
+        )
+        # difficulty 允许 +inf：gone／零能力等合法机械终值（见 investigation_fact_difficulty）。
+        difficulty = _lane_number(
+            item.get("difficulty", 0.0), f"fact_lanes[{idx}].difficulty", allow_inf=True,
+        )
+        months = _lane_nonneg_int(item.get("months", 0), f"fact_lanes[{idx}].months")
+        lanes.append({
+            "fact_key": key,
+            "effort": max(0.0, effort),
+            "difficulty": max(0.0, difficulty),
+            "months": months,
+            "mastered": bool(item.get("mastered")),
+        })
     return lanes
+
+
+def _lane_number(raw: object, label: str, *, allow_inf: bool) -> float:
+    """缺省/空 → 0；显式非数字或 NaN 响亮；+inf 仅 difficulty 合法。"""
+    if raw is None or raw == "":
+        return 0.0
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} 须为数字") from exc
+    if math.isnan(value):
+        raise ValueError(f"{label} 须为数字")
+    if not allow_inf and not math.isfinite(value):
+        raise ValueError(f"{label} 须为有限数字")
+    if allow_inf and value < 0 and not math.isfinite(value):
+        raise ValueError(f"{label} 不得为 -inf")
+    return value
+
+
+def _lane_nonneg_int(raw: object, label: str) -> int:
+    if raw is None or raw == "":
+        return 0
+    try:
+        value = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} 须为整数") from exc
+    if value < 0:
+        raise ValueError(f"{label} 须为非负整数")
+    return value
 
 
 def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
@@ -2015,7 +2046,7 @@ def _apply_investigation_selection(
     else:
         raw_note = None
     # 查案 note = 密奏正文（可谎）：入奏报轨，不入实况轨（DELTA_SCHEMA / #1897 R1）。
-    # 普通 covert 的执行态备注仍走实况 note；此处分轨，不改正文、不另立第三载体。
+    # 复用 update_secret_order_progress 既有奏报写口（自带进展档），不另造 band 前置。
     memorial_note: Optional[str] = None
     if raw_note is not None and not isinstance(raw_note, (Mapping, list)):
         memorial_note = str(raw_note)
@@ -2023,21 +2054,9 @@ def _apply_investigation_selection(
         did, turn, units=units, fidelity_state="", floor_state="",
         note=None, commit=False,
     )
-    if memorial_note is not None and memorial_note.strip():
-        band = ""
-        for item in db.list_dossier_progress(did):
-            if int(item.get("turn") or 0) == int(turn) and not item.get("is_terminal"):
-                band = str(item.get("progress_band") or "")
-                if band.strip():
-                    break
-        if not band.strip():
-            band = str(
-                sel_map.get("progress_band") or sel_map.get("进展") or ""
-            )
-        if band.strip():
-            db.record_dossier_progress(
-                did, turn, band, memorial_note, commit=False,
-            )
+    if memorial_note is not None:
+        # 既有写口自带进展档；空/空白正文按其合同不落条，仍须标在办。
+        db.update_secret_order_progress(oid, memorial_note, commit=False)
     db.mark_secret_order_in_progress(oid, commit=False)
     applied: Dict[str, object] = {
         "order_id": oid,

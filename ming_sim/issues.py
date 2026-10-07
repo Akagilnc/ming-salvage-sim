@@ -13,6 +13,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
+from ming_sim.action_materialize import DecreeMaterializationValidationError
 from ming_sim.applier import atomic, connection_owns_transaction
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
@@ -2110,10 +2111,11 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         # #622/#1260 单源：仅有旨外 durable 的变形才构成 deformation_exposure。
         if not db.dossier_has_beyond_intent(did):
             continue
-        try:
-            roster = json.loads(str(row["participant_roster"] or "[]"))
-        except (TypeError, ValueError):
+        # 复用 get_decree_dossier 响亮读名册；腐坏不上扫跳过（#1897 E1/K2）。
+        dossier = db.get_decree_dossier(did)
+        if dossier is None:
             continue
+        roster = dossier.get("participant_roster") or []
         if not isinstance(roster, list) or not roster:
             continue
         participant_ids = [
@@ -2121,7 +2123,7 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
             for item in roster if isinstance(item, dict) and str(item.get("character_id") or "").strip()
         ]
         if len(participant_ids) != len(roster) or not participant_ids:
-            continue
+            raise ValueError(f"案卷#{did} participant_roster 含无效成员")
         liability = project_execution_liability_parties(roster)
         responsible_ids = [
             str(item.get("character_id") or "").strip() for item in liability
@@ -6892,6 +6894,7 @@ def _apply_dossier_participant_items(
                 "rejected": True, "category": "invalid_shape", "item": item,
             })
             continue
+        # 本次声明字段错误 → 逐项拒收；已持久名册/读改写故障上抛（#1897 E1/K2）。
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             if dossier_id not in authority_set:
@@ -6905,12 +6908,22 @@ def _apply_dossier_participant_items(
                 raise ValueError("追加参与层级必须为主办/协办/知情")
             if not delegator_id:
                 raise ValueError("追加参与人必须注明委派人")
-            added = db.append_decree_dossier_participants(dossier_id, [{
+            addition = {
                 "character_id": character_id,
                 "tier": tier,
                 "role": str(item.get("role") or "").strip(),
                 "delegator_id": delegator_id,
-            }], state=state, commit=False)
+            }
+        except (TypeError, ValueError) as exc:
+            results.append({
+                "rejected": True, "category": "invalid_participant_roster",
+                "reason": str(exc), "item": item,
+            })
+            continue
+        try:
+            added = db.append_decree_dossier_participants(
+                dossier_id, [addition], state=state, commit=False,
+            )
             if not added:
                 # Exact durable duplicate is the only no-write success case.
                 existing = db.get_decree_dossier(dossier_id) or {}
@@ -6927,9 +6940,11 @@ def _apply_dossier_participant_items(
             }
             results.append({
                 "dossier_id": dossier_id,
-                "character_id": persisted["character_id"], "tier": persisted["tier"],
+                "character_id": persisted["character_id"],
+                "tier": persisted["tier"],
             })
-        except (TypeError, ValueError, KeyError) as exc:
+        except DecreeMaterializationValidationError as exc:
+            # 追加项领域拒收（名册无此人等）；已持久腐坏仍上抛 ValueError。
             results.append({
                 "rejected": True, "category": "invalid_participant_roster",
                 "reason": str(exc), "item": item,

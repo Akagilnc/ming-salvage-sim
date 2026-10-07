@@ -14512,33 +14512,26 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        out = self._dossier_row(row)
-        # 读缝附 payload 对象，避免调用方只认 payload 键时踩空
-        try:
-            out["payload"] = json.loads(str(out.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            out["payload"] = {}
-        if not isinstance(out["payload"], dict):
-            out["payload"] = {}
-        return out
+        # _dossier_row 已响亮解析 payload；不平行宽容重读（#1897 E1/K2）。
+        return self._dossier_row(row)
 
     def append_decree_dossier_participants(
         self, dossier_id: int, participants: Iterable[object], *,
         state: Optional[GameState] = None, commit: bool = True,
     ) -> List[Dict[str, object]]:
-        """Append ADR 0053 roster entries without replacing durable members."""
-        row = self.conn.execute(
-            "SELECT participant_roster,action_type,decree_text FROM decree_dossiers WHERE id=?",
-            (int(dossier_id),),
-        ).fetchone()
-        if row is None:
+        """Append ADR 0053 roster entries without replacing durable members.
+
+        已持久名册经 get_decree_dossier 响亮读取；腐坏不得当空名册覆写（#1897 E1/K2）。
+        """
+        dossier = self.get_decree_dossier(int(dossier_id))
+        if dossier is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        try:
-            existing_raw = json.loads(row["participant_roster"] or "[]")
-        except (TypeError, ValueError):
-            existing_raw = []
+        existing_raw = dossier.get("participant_roster") or []
+        if not isinstance(existing_raw, list):
+            raise ValueError(f"案卷#{dossier_id} participant_roster 非列表")
+        # 已持久成员严格归一：坏旧项上抛，不得跳过洗成空名册。
         existing = self._normalize_participant_roster(
-            existing_raw if isinstance(existing_raw, list) else []
+            existing_raw, strict_structured=True,
         )
         additions = self._normalize_participant_roster(participants, strict_structured=True)
         self._validate_participant_roster_references(additions)
@@ -14571,7 +14564,7 @@ class GameDB:
                     f"office_archive_keys 须为 JSON 数组：dossier {int(dossier_id)}"
                 )
             archive_keys = {str(item) for item in parsed_keys}
-            if str(row["action_type"] or "") != "secret_order":
+            if str(dossier.get("action_type") or "") != "secret_order":
                 for item in added:
                     if str(item.get("tier") or "") != "主办":
                         continue
@@ -14598,14 +14591,14 @@ class GameDB:
                     int(dossier_id),
                 ),
             )
-            if state is not None and str(row["action_type"] or "") != "secret_order":
+            if state is not None and str(dossier.get("action_type") or "") != "secret_order":
                 for item in added:
                     identity = ":".join(str(item.get(key) or "-") for key in (
                         "character_id", "tier", "role", "delegator_id",
                     ))
                     self.register_character_knowledge_source(
                         state, [item], "assignment", "旨意案卷追加参与",
-                        str(row["decree_text"] or ""),
+                        str(dossier.get("decree_text") or ""),
                         source_id=f"dossier:{int(dossier_id)}:participant:{identity}",
                         commit=False,
                     )
