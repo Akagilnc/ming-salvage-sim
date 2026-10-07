@@ -248,7 +248,8 @@ def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
     apply_issue_tracker_output(db, state, {"cancels": [cancel]}, source=Provenance.system_simulation)
 
     assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "dropped"
-    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+    # 明确撤令不抢关原案卷：0056 名声账已落，结案留给执行格声明。
+    assert db.get_decree_dossier(dossier_id)["status"] in {"promulgated", "executing"}
     assert state.metrics["皇威"] == max(0, authority - 5)
     assert state.metrics["民心"] == popular_support
     events = _cost_events(db, dossier_id)

@@ -850,9 +850,12 @@ def apply_issue_tracker_output(
             )
         )
         if deterministic_breach:
+            # #1894 / ADR 0075：明确撤令只落 0056 名声账，不抢关原案卷；
+            # 结案留给执行格判官本月 dossier_executions（同 finalize_persist / 撤旨尾）。
             db.breach_decree_dossier(
                 state, int(linked_dossier["id"]),
                 reason=str(cn.get("narrative") or "撤回成命"), commit=False,
+                close_target=False,
             )
         raw_cost = cn.get("applied_cost")
         cost = {} if raw_cost is None or deterministic_breach else raw_cost

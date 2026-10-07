@@ -1301,6 +1301,7 @@ class GameDB:
                 target_id TEXT,
                 dossier_id INTEGER,
                 origin_ref TEXT NOT NULL DEFAULT '',
+                beyond_intent INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(account) REFERENCES economy_accounts(account)
             );
@@ -1381,9 +1382,8 @@ class GameDB:
                 source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            -- #1890：idx_pending_actions_source_turn 不写在本 CREATE 块——旧档
-            -- pending_actions 已存在时 CREATE TABLE IF NOT EXISTS 不重建、不补
-            -- source_chat_turn_id，索引会引用缺列失败。索引随下面的 ensure_column 建。
+            CREATE INDEX IF NOT EXISTS idx_pending_actions_source_turn
+                ON pending_actions(source_chat_turn_id, status, id);
 
             CREATE TABLE IF NOT EXISTS recommendation_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1431,9 +1431,7 @@ class GameDB:
                 agno_session_id TEXT NOT NULL DEFAULT '',
                 agno_runs_before INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'active',
-                -- #498：对话轮锚定夜容器；0=未挂夜（旧档/无夜路径）
-                -- night_id 列可能由 ensure_column 后补；索引不得写在本 CREATE 块
-                -- （旧档 chat_turns 已存在时 CREATE TABLE IF NOT EXISTS 不重建，索引会引用缺列失败）
+                -- #498：对话轮锚定夜容器；0=未挂夜（无夜路径）
                 night_id INTEGER NOT NULL DEFAULT 0,
                 -- 与 story_ledger_entries.seq 共用夜内单调序（allocate_night_seq）
                 night_seq INTEGER NOT NULL DEFAULT 0,
@@ -1452,6 +1450,8 @@ class GameDB:
                 ON chat_turns(minister_name, turn, status, id);
             CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id
                 ON chat_turns(status, id);
+            CREATE INDEX IF NOT EXISTS idx_chat_turns_night
+                ON chat_turns(night_id, id);
 
             -- #498 召对夜一等容器 + 故事账本（ADR 0035）
             CREATE TABLE IF NOT EXISTS audience_nights (
@@ -1858,6 +1858,7 @@ class GameDB:
                 kind TEXT NOT NULL,
                 origin_ref TEXT NOT NULL,
                 reason TEXT NOT NULL DEFAULT '',
+                beyond_intent INTEGER NOT NULL DEFAULT 0,
                 removed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -1872,6 +1873,7 @@ class GameDB:
                 kind TEXT NOT NULL,
                 origin_ref TEXT NOT NULL,
                 reason TEXT NOT NULL DEFAULT '',
+                beyond_intent INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -1887,6 +1889,7 @@ class GameDB:
                 delta INTEGER NOT NULL,
                 origin_ref TEXT NOT NULL,
                 reason TEXT NOT NULL DEFAULT '',
+                beyond_intent INTEGER NOT NULL DEFAULT 0,
                 changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -2357,21 +2360,14 @@ class GameDB:
         )
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；due_turn>0 且 ≤当前回合时，settle 尾部按实进度对账派生 done/failed（#1504）。
+        # deadline_span 已在 CREATE 承载；不从旧期限表示回填。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
-        if self.ensure_column(
-            "secret_orders", "deadline_span", "INTEGER NOT NULL DEFAULT 0"
-        ):
-            self.conn.execute(
-                "UPDATE secret_orders SET deadline_span="
-                "MAX(COALESCE(due_turn, 0)-COALESCE(turn_issued, 0), 0)"
-            )
+        self.ensure_column("secret_orders", "deadline_span", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("secret_orders", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
         # #566/#883: secret monthly reports stay private on the order itself.
-        # #619 adds a separate physical general track (dossier_reported_progress);
-        # the retired shared table name remains forbidden (no shared table+flag).
+        # #619 adds a separate physical general track (dossier_reported_progress).
         self.ensure_column(
             "secret_orders", "dossier_progress_json", "TEXT NOT NULL DEFAULT '[]'")
-        self.conn.execute("DROP TABLE IF EXISTS dossier_progress_reports")
         # #489：character_knowledge_events 在早期存档中已存在但没有黑名单列；
         # ensure_column 必须覆盖「表已存在」的迁移路径，不能只依赖 CREATE TABLE。
         self.ensure_column(
@@ -2415,14 +2411,7 @@ class GameDB:
         self.ensure_column(
             "office_change_records", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
         )
-        # #1847：4a 改读段结果后 turn 列无消费者；幂等 DROP（SQLite 3.35+）。
-        office_change_cols = {
-            r["name"]
-            for r in self.conn.execute("PRAGMA table_info(office_change_records)").fetchall()
-        }
-        if "turn" in office_change_cols:
-            self.conn.execute("ALTER TABLE office_change_records DROP COLUMN turn")
-            self.conn.commit()
+        # office_change_records 现役 CREATE 已无 turn 列；不在开库路径清退 superseded 列。
         self.ensure_column(
             "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -2457,15 +2446,10 @@ class GameDB:
         self.ensure_column(
             "decree_dossiers", "region_id", "TEXT NOT NULL DEFAULT ''"
         )
-        self._ensure_decree_dossier_locality_indexes()
-        # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
-        # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
+        # 属地唯一索引真源只在 CREATE；不在开库 DROP 旧形索引再重建。
+        # #498：night 列与 idx_chat_turns_night 真源在 CREATE。
         self.ensure_column("chat_turns", "night_id", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("chat_turns", "night_seq", "INTEGER NOT NULL DEFAULT 0")
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_chat_turns_night "
-            "ON chat_turns(night_id, id)"
-        )
         # #501 叙事抽取水位 + 抽取账溯源/在场效果/时序键（旧档补列，schema 升级非 fallback）。
         self.ensure_column("chat_turns", "extract_status", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("chat_turns", "error_pack_path", "TEXT NOT NULL DEFAULT ''")
@@ -2505,15 +2489,9 @@ class GameDB:
             "pending_actions", "night_approved", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "pending_actions", "version", "INTEGER NOT NULL DEFAULT 1")
-        # #1890：交办暂存的来源轮。撤回本轮按此列整轮作废，不再回溯
-        # chat_turn_rollback_items 猜是哪轮写的（那道回溯链是本票要拆的旧同步）。
-        # 索引随本列建：CREATE 块里的索引会引用旧档缺列（同 chat_turns 注记）。
+        # #1890：交办来源轮与 idx_pending_actions_source_turn 真源在 CREATE。
         self.ensure_column(
             "pending_actions", "source_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_pending_actions_source_turn "
-            "ON pending_actions(source_chat_turn_id, status, id)"
-        )
         # fiscal_config 科目元数据列（数据驱动预算目录）：budget_role=fixed 的 base 项靠
         # account/direction/display 由 flows.compute_budget_lines 动态生成预算行；
         # dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式/皇庄专路，这三列留空。
@@ -2535,10 +2513,10 @@ class GameDB:
             "economy_ledger", "origin_ref", "TEXT NOT NULL DEFAULT ''"
         )
         # #622：旨外恶果/受益标记——效果行同列注解（#558 origin 同一载体，非平行轨）。
+        # beyond_intent / origin_ref 真源在 CREATE；不在开库回填空 origin 或旧表示。
         self.ensure_column(
             "economy_ledger", "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
         )
-        # #1260：fiscal 三溯源表同款 beyond_intent（与 economy_ledger 同一迁移落点）。
         for _fiscal_prov in (
             "fiscal_config_creations",
             "fiscal_config_changes",
@@ -2547,16 +2525,6 @@ class GameDB:
             self.ensure_column(
                 _fiscal_prov, "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
             )
-        # Rolling upgrades may already have the column while interrupted/older
-        # migrations left individual rows blank.  Re-scan idempotently; only a
-        # real dossier is authoritative and an existing origin is never replaced.
-        self.conn.execute(
-            """UPDATE economy_ledger
-               SET origin_ref='dossier:' || dossier_id
-               WHERE origin_ref=''
-                 AND dossier_id > 0
-                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.id=economy_ledger.dossier_id)"""
-        )
         self.ensure_column("fiscal_config", "origin_ref", "TEXT NOT NULL DEFAULT ''")
         for table in ("region_logs", "army_logs", "power_logs", "person_logs", "building_logs"):
             self.ensure_column(table, "origin_ref", "TEXT NOT NULL DEFAULT ''")
@@ -3155,21 +3123,6 @@ class GameDB:
             self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
             return True
         return False
-
-    def _ensure_decree_dossier_locality_indexes(self) -> None:
-        """#654 / #1837：pending 幂等键＝(pending_action_id, region_id, action_type)；
-        directive 仍 (directive_id, region_id)；secret_order 不动。"""
-        self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_pending_action")
-        self.conn.execute("DROP INDEX IF EXISTS idx_decree_dossiers_directive")
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_pending_action "
-            "ON decree_dossiers(pending_action_id, region_id, action_type) "
-            "WHERE pending_action_id > 0"
-        )
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive "
-            "ON decree_dossiers(directive_id, region_id) WHERE directive_id > 0"
-        )
 
     # 城市等级 0-5（静态，史实分级；未列出的地区默认 0=游牧/孤岛/边荒）。
     # 用途：城防大炮上限(city_level×8) + 将来经济/内政。1627 实况，非现代省份概念。
@@ -14288,14 +14241,15 @@ class GameDB:
 
     def breach_decree_dossier(
         self, state: GameState, dossier_id: int, *, reason: str = "撤回成命",
-        commit: bool = True, close_target: bool = True,
+        commit: bool = True, close_target: bool = False,
     ) -> bool:
         """Withdraw an issued promise; commit=False belongs wholly to its caller.
 
-        #1894：``close_target=False`` 只落 0056 名声代价（毁约判定、皇威、当事
+        默认 ``close_target=False``：只落 0056 名声代价（毁约判定、皇威、当事
         大臣观感、派系），**不**代模型把目标案卷结案——案卷的终局由执行格
         判官的 ``dossier_executions`` 声明落（撤令当月见办理结果）。早于此处
-        关案会让那份声明被「案卷不在 executing」拒收。
+        关案会让那份声明被「案卷不在 executing」拒收。显式 ``close_target=True``
+        仅留给仍需代码关案的窄口。
         """
         if commit:
             from ming_sim.decree import atomic_and_reload
@@ -17592,16 +17546,12 @@ class GameDB:
             """,
             (int(directive_id),),
         ).fetchone()
-        # #1890：来源轮只认 pending_actions.source_chat_turn_id 这一列（交办的
-        # 统一身份），并按 turn_directives.source_pending_action_id 从新指旧找到
-        # 那道交办（ADR 0054：禁反向回填）。载荷里那份副本已删——同一事实两处
-        # 可写，改草/迟到转译会让两者漂移。认不到行（无 pending 的直写路径）
-        # 时回落载荷，仅保旧档兼容，不作为常规来源。
-        dossier_source_turn = 0
-        if pending is not None:
-            dossier_source_turn = int(pending["source_chat_turn_id"] or 0)
-        if dossier_source_turn <= 0:
-            dossier_source_turn = int(structured.get("source_chat_turn_id") or 0)
+        # #1890：来源轮只认 pending_actions.source_chat_turn_id（交办统一身份），
+        # 经 turn_directives.source_pending_action_id 从新指旧找到交办（ADR 0054）。
+        # 无 pending 或不带正源轮 → 0；不回落载荷旧副本。
+        dossier_source_turn = (
+            int(pending["source_chat_turn_id"] or 0) if pending is not None else 0
+        )
         return self.create_decree_dossiers(
             state,
             action_type=action_type,

@@ -553,8 +553,11 @@ def settle_delta(
     db._batch_frozen_open_affair_ids = run.frozen_open_affairs
     try:
 
-        def _execute() -> SettlementOutcome:
-            _register_runtime_rollback_snapshot(db, state, ctx.content)
+        def _execute(*, register_outer_runtime_snapshot: bool) -> SettlementOutcome:
+            # 仅在借用外层事务时登记运行态快照：供项级 SAVEPOINT 恢复与外层回滚接缝。
+            # 本调用为整事务主人时走 atomic_and_reload，不再用内存快照顶替 DB 同源重载。
+            if register_outer_runtime_snapshot:
+                _register_runtime_rollback_snapshot(db, state, ctx.content)
             if run.effect_sequence is not None:
                 _run_effect_sequence(run)
                 _run_registry_after_interleave(run)
@@ -562,14 +565,15 @@ def settle_delta(
                 _run_registry(run)
             return _build_outcome(run)
 
-        # commit_now 在进入事务前已读走。本调用是事务主人时，整批一次提交；
-        # 调用方已持有事务时不另开、不提交（ADR 0150 决定 3）。
+        # commit_now 在进入事务前已读走。本调用是事务主人时，整批一次提交并在
+        # 真回滚后 DB 同源重载（ADR 0008 / 0150）；调用方已持有事务时不另开、
+        # 不提交、不在尚未回滚处 reload。
         if run.commit_now:
-            from ming_sim.applier import atomic
+            from ming_sim.decree import atomic_and_reload
 
-            with atomic(db):
-                return _execute()
-        return _execute()
+            with atomic_and_reload(db, state, content=ctx.content):
+                return _execute(register_outer_runtime_snapshot=False)
+        return _execute(register_outer_runtime_snapshot=True)
     finally:
         db._batch_authorized_open_affair_ids = prev_authorized
         db._batch_frozen_open_affair_ids = prev_frozen
@@ -655,8 +659,10 @@ def apply_person_changes_only(
     )
     from ming_sim.entities.character.apply import apply_person_changes
 
-    def _write():
-        _register_runtime_rollback_snapshot(db, state, runtime_content)
+    def _write(*, register_outer_runtime_snapshot: bool):
+        # 外层事务内：快照供项级 SAVEPOINT 恢复；本入口为事务主人时改走同源重载。
+        if register_outer_runtime_snapshot:
+            _register_runtime_rollback_snapshot(db, state, runtime_content)
         return apply_person_changes(
             db,
             state,
@@ -668,10 +674,10 @@ def apply_person_changes_only(
         source=source)
 
     if caller_transaction:
-        results, results_rejections = _write()
+        results, results_rejections = _write(register_outer_runtime_snapshot=True)
     else:
-        from ming_sim.applier import atomic
+        from ming_sim.decree import atomic_and_reload
 
-        with atomic(db):
-            results, results_rejections = _write()
+        with atomic_and_reload(db, state, content=runtime_content):
+            results, results_rejections = _write(register_outer_runtime_snapshot=False)
     return SectionResult(applied=results, rejected=results_rejections)

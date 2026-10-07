@@ -612,11 +612,11 @@ def dispatch_declaration(
 ) -> DeclarationDispatchResult:
     """把一份转译声明分派到既有暂存（交办 / 应允）与新记录。这是召对/过月场中
     承接（ADR 0155）直接分派单条声明时用的公开入口，唯一契约：始终原子、始终
-    durable——自己开唯一一段 `atomic(db)`，把各 section 的分派副作用、拒收
-    收集与 `flush_to_db` 全部包在同一个事务里，任一步失败（含 flush 本身失败）
-    都整体回滚，不会出现「合法 sibling 已落库、其拒收却没落进
-    ``rejection_reports``」的半写状态；提交成功后再镜像 jsonl。不建声明专用
-    拒收表，复用既有 ``rejection_reports`` 单一真源（ADR 0008 决定 5）。
+    durable——自己开唯一一段 `atomic_and_reload`（ADR 0008 最外层 DB 同源重载），
+    把各 section 的分派副作用、拒收收集与 `flush_to_db` 全部包在同一个事务里，
+    任一步失败（含 flush 本身失败）都整体回滚并重载运行态，不会出现「合法 sibling
+    已落库、其拒收却没落进 ``rejection_reports``」的半写状态；提交成功后再镜像
+    jsonl。不建声明专用拒收表，复用既有 ``rejection_reports`` 单一真源（ADR 0008 决定 5）。
 
     ``night_id``：本声明所属的召对夜——「应允/拒绝」只认这一夜暂存清单里的
     动作（ADR 0155：转译读「本夜暂存清单」），引用其它夜真实存在的 id 一律
@@ -649,7 +649,9 @@ def dispatch_declaration(
         if origin_ctid > 0 and hasattr(db, "capture_chat_rollback_snapshot")
         else None
     )
-    with atomic(db):
+    # 整事务根：atomic 真回滚后走既有 DB 同源重载（ADR 0008），不靠批中内存快照顶替。
+    from ming_sim.decree import atomic_and_reload
+    with atomic_and_reload(db, state, content=getattr(db, "content", None)):
         result = _dispatch_declaration_sections(
             db, state, declaration,
             minister_name=minister_name, night_id=night_id, source=source,
@@ -836,8 +838,8 @@ class _ItemAtomicReject(Exception):
 def _item_savepoint_scope(db: Any, savepoint: str) -> Iterator[None]:
     """逐项落库的最小原子域，供 on_scene_facts / edge_events 的「动作 + 事务
     指针绑定」两步复合写共用。已在外层事务（本模块 `dispatch_declaration`
-    直接分派自己的 `atomic(db)`，或 `settle_staged_declarations_in_decree_order`
-    的旨级 `atomic`）内时只用 SAVEPOINT 做本项细粒度回滚，不再另开一层
+    直接分派自己的 `atomic_and_reload`，或 `settle_staged_declarations_in_decree_order`
+    的旨级 `atomic_and_reload`）内时只用 SAVEPOINT 做本项细粒度回滚，不再另开一层
     `atomic`——嵌套 `atomic()` 的 flat 语义会把「本函数用 try/except 接住内层
     异常后继续下一项」判定为吞异常并响亮拦截（cmr S1 F2），SAVEPOINT 才是
     这里真正需要的局部回滚原语。未在任何外层事务内（独立调用）时用
