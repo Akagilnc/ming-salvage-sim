@@ -12411,7 +12411,7 @@ class GameDB:
         ]
 
     def record_monthly_grant_reconciliations(
-        self, turn: int, *, commit: bool = False,
+        self, turn: int,
     ) -> List[Dict[str, object]]:
         """月度节拍：逐路由引擎按既有押解折损范围定实抵与损耗 → 落被护侧对账记录。
 
@@ -12471,8 +12471,6 @@ class GameDB:
             )
             history = self.list_dossier_reconciliations(int(dossier_id))
             reports.append(history[-1])
-        if commit:
-            self.conn.commit()
         return reports
 
     # ── #625 / ADR 0077 supervision fact bottom ─────────────────────────
