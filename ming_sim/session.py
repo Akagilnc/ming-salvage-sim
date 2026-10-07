@@ -1953,8 +1953,9 @@ class GameSession:
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
         ctx = self.db.get_resolve_context(self.state.turn)
-        # 显式 event_id 对照本回合候选快照：候选内采信，越权解绑；不从题名补身份。
-        # scope 只收 kind='decision'，rescript_draft 行不动。
+        # #389 / #1900 J20：只采信本回合候选快照内的显式 event_id（及合法 dossier:）；
+        # 标题不补绑。迁自旧 submit_decisions 的绑定步；scope 同旧
+        # list_pending_decisions 只收 kind='decision'，rescript_draft 行不动。
         if ctx is not None:
             from ming_sim.settlement_payload import bind_decisions_to_candidate_events
             decision_rows = [r for r in desk if str(r.get("kind") or "") == "decision"]
@@ -2396,22 +2397,26 @@ class GameSession:
     def auto_save(self, tag: str) -> Optional[str]:
         """每回合 begin/end 自动热备一份。每个 campaign 保留最近 AUTO_SAVE_KEEP_TURNS 个回合，旧的删。
         文件名 auto_<campaign_id>_<year>_<period>_<turn>_<tag>.db；prune 只动同 campaign 的自动档，
-        不碰用户手动存档。备份／路径故障沿现役异常出口上抛。"""
-        import os as _os
-        saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
-        saves_dir = _os.path.dirname(saves_dir)
-        campaign_id = (self.db.kv_get("campaign_id") or "").strip()
-        if not campaign_id:
-            campaign_id = uuid.uuid4().hex[:12]
-            self.db.kv_set("campaign_id", campaign_id)
-        fname = (
-            f"{AUTO_SAVE_PREFIX}{campaign_id}_{self.state.year:04d}_"
-            f"{self.state.period:02d}_t{self.state.turn:04d}_{tag}.db"
-        )
-        target = _os.path.join(saves_dir, fname)
-        self.db.backup_to(target)
-        prune_auto_saves(saves_dir, campaign_id)
-        return target
+        不碰用户手动存档。失败非致命（不阻断月链），但必须留异常真因（ADR 0005）。"""
+        try:
+            import os as _os
+            saves_dir = user_data_path("saves", "_keep")  # 确保父目录建好
+            saves_dir = _os.path.dirname(saves_dir)
+            campaign_id = (self.db.kv_get("campaign_id") or "").strip()
+            if not campaign_id:
+                campaign_id = uuid.uuid4().hex[:12]
+                self.db.kv_set("campaign_id", campaign_id)
+            fname = (
+                f"{AUTO_SAVE_PREFIX}{campaign_id}_{self.state.year:04d}_"
+                f"{self.state.period:02d}_t{self.state.turn:04d}_{tag}.db"
+            )
+            target = _os.path.join(saves_dir, fname)
+            self.db.backup_to(target)
+            prune_auto_saves(saves_dir, campaign_id)
+            return target
+        except Exception:
+            logger.exception("auto_save failed tag=%s", tag)
+            return None
 
     def close(self, *, write_gate_already_held: bool = False) -> None:
         """排空本会话已受理工作，再关闭全部数据库资源。"""

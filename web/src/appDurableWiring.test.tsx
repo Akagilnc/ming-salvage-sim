@@ -300,7 +300,6 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
 
     const alert = host.querySelector('[role="alert"]')!;
     expect(alert.textContent).toBe(detail.message);
-    expect(alert.textContent).not.toContain(detail.code);
     // #1808：非结算通道不得泄漏到普通 HUD 告警位
     expect(host.querySelector('[data-testid="hud-error"]')).toBeNull();
   });

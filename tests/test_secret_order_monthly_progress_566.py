@@ -42,18 +42,6 @@ def _production_session(db, state, content):
     return session
 
 
-def _canned_monthly_settlement(monkeypatch, extractor_calls):
-    """Keep the production settlement pipeline; replace only external LLM seams."""
-    from tests.settlement_seam_helpers import canned_full_settlement
-
-    def _track_world(*_a, **_k):
-        extractor_calls.append("world")
-        return "本月公开邸报"
-
-    canned_full_settlement(monkeypatch, narrative="本月公开邸报")
-    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", _track_world)
-
-
 def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
 
@@ -315,6 +303,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     before = _rollback_snapshot(db, state, pending_ids)
     observed = {"fiscal_written": False, "metrics_written": False}
     original_flows = decree.apply_fixed_period_flows
+    fiscal_fault = RuntimeError("post-fiscal failure 566")
 
     def fail_after_real_flows(flow_db, flow_state):
         ledger_before = _rows(flow_db, "economy_ledger")
@@ -323,7 +312,7 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
         observed["fiscal_written"] = _rows(flow_db, "economy_ledger") != ledger_before
         observed["metrics_written"] = dict(flow_state.metrics) != metrics_before
         assert observed == {"fiscal_written": True, "metrics_written": True}
-        raise RuntimeError("post-fiscal failure 566")
+        raise fiscal_fault
 
     monkeypatch.setattr(decree, "apply_fixed_period_flows", fail_after_real_flows)
     monkeypatch.setattr(
@@ -359,13 +348,12 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
             invoke()
         assert exc_info.value.status_code == 500
         detail = exc_info.value.detail
-        if isinstance(detail, dict):
-            assert "post-fiscal failure 566" in str(detail.get("message") or detail)
-        else:
-            assert "post-fiscal failure 566" in str(detail)
+        assert isinstance(detail, dict)
+        assert detail.get("message") == str(fiscal_fault)
     else:
-        with pytest.raises(RuntimeError, match="post-fiscal failure 566"):
+        with pytest.raises(RuntimeError) as ei:
             invoke()
+        assert ei.value is fiscal_fault
 
     after = _rollback_snapshot(db, state, pending_ids)
     for key in ("pending", "directives", "dossiers", "orders", "knowledge", "metrics", "clock"):

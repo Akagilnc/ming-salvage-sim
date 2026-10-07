@@ -151,19 +151,22 @@ _DEBT_SEVERITIES = frozenset({"轻", "中", "重"})
 def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
     """真相底只收结构化罪情。severity ∈ {轻, 中, 重} 才入罪谱。
 
-    crime 是说明散文，不承重。真空/severity 为空或「无」不算罪；腐坏 JSON 响亮（F39）。
+    crime 是说明散文，不承重。解析失败、非对象、severity 为空或「无」，都不造罪
+    （W4/#1896：裸散文／解析失败不造罪）。
     """
-    from ming_sim.db import GameDB
-
     if isinstance(seed_guilt, Mapping):
-        guilt: Mapping[str, object] = seed_guilt
+        guilt: object = seed_guilt
     else:
         text = str(seed_guilt or "").strip()
         if not text:
             return False
-        guilt = GameDB.parse_engine_payload_json(
-            text, surface="characters.seed_guilt",
-        )
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(parsed, Mapping):
+            return False
+        guilt = parsed
     severity = str(guilt.get("severity") or "").strip()
     return severity in _DEBT_SEVERITIES
 
@@ -565,7 +568,6 @@ def contract_target_units(contract: Mapping[str, object]) -> float:
     return target
 
 
-
 def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[str, object]:
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
@@ -621,8 +623,6 @@ def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
         (str(minister_name or "").strip(),),
     ).fetchone()
     return row is not None
-
-
 
 
 def canonical_fields_for_delivery(*, unit: object = None) -> List[str]:

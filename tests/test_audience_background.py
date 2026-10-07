@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import json
 import threading
 from tests.wait_utils import wait_until
-import types
 from types import SimpleNamespace
 
 import pytest
 
-import ming_sim.cli_backend as cb
-from ming_sim.exceptions import LLMUnavailable
-from ming_sim.materials import prepare_character_materials
 from ming_sim.session import GameSession
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
 from tests.conftest import (
@@ -210,28 +204,6 @@ def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
 
     assert result["undone_chat_turn_id"] == turn
     assert db.get_last_active_chat_turn(minister_name, state.turn) is None
-
-
-def test_current_unissued_draft_is_not_character_carryover(game):
-    """本回合未明发草案不应绕过见闻投影，注入未参与大臣的召对提示。
-
-    #1769 只放行**跨月**未入档旨稿（上月已随颁诏发出、仅未落档）；本回合刚拟、
-    还在御案上的草案仍是密事，不得越过排除边界。
-    """
-    db, state, _content = game
-    db.add_directive(
-        state, None, "着户部清核辽饷。", "player-decree-test",
-        dossier_payload={
-            "dossier_action_type": "policy", "target_kind": "issue",
-            "target_id": "liaoxiang-audit", "locality_scope": "none",
-        },
-    )
-    from ming_sim.materials import _carryover_drafts
-    assert _carryover_drafts(db, state) == []
-
-
-
-
 
 
 

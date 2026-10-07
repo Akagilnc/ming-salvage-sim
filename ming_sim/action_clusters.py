@@ -1,7 +1,7 @@
 """动作档 FieldSpec 登记表（#515 / #1871）。
 
 唯一真源：ACTION_CLUSTERS（由 action_materialize.install 装入）。
-提供 kind/fields 枚举、shape 校验与 prompt 投影；分类器候选链与 materialize_fn 已删。
+提供 kind/fields 枚举与 shape 校验；分类器候选链与 materialize_fn 已删。
 
 范围（ADR 0039 / #513）：机械聚类挂点，不是 25 词语义表。
 """
@@ -193,7 +193,6 @@ def validate_season_option(option: Mapping[str, object]) -> str:
             if number < spec.int_lo or number > spec.int_hi:
                 raise ValueError(f"choice.{spec.name} 超出范围：{number!r}")
     return action_type
-
 
 
 def cluster_fields_prompt(kind: str) -> str:

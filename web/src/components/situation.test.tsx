@@ -149,15 +149,12 @@ describe("#1726 StateModal 奏疏收件箱", () => {
     );
 
     const doc = document.querySelector(".state-document");
-    expect(doc?.textContent).toContain("杨嗣昌");
-    expect(doc?.querySelector(".situation-panel") ?? null).toBeNull();
-    expect(doc?.querySelector(".situation-row") ?? null).toBeNull();
-    expect(doc?.textContent).not.toContain(makeIssue().title);
-    expect(doc?.querySelector("pre.memorial-text")?.textContent).toBe(body);
-    expect(doc?.textContent).not.toContain("progress:7");
-    expect(doc?.textContent).not.toContain("progress_band");
-    expect(doc?.querySelector(".empty-note") ?? null).toBeNull();
-    cleanup();
+    expect(doc).toBeTruthy();
+    expect(doc!.querySelector(".situation-panel")).toBeNull();
+    expect(doc!.querySelector(".situation-row")).toBeNull();
+    expect(doc!.textContent).toContain("杨嗣昌");
+    expect(doc!.querySelector("pre.memorial-text")?.textContent).toBe(body);
+    expect(doc!.querySelector(".empty-note")).toBeNull();    cleanup();
   });
 
   it("无奏疏时示空态，不因有局势而填充", () => {

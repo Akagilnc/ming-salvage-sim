@@ -24,170 +24,102 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `tax_per_turn` | INTEGER | 省级月税基准（万两），含田赋+辽饷+盐税+商税合计 |
-| `gentry_resistance` | INTEGER 0-100 | 士绅阻力，影响实收率 |
-| `unrest` | INTEGER 0-100 | 民变压力，影响实收率和解运比 |
-| `fiscal` | JSON | 税种细分 + 腐败度，见下表 |
+| `gentry_resistance` | INTEGER 0-100 | 士绅阻力；政治/事件与材料投影用，**不**自动写入 `fiscal.settle` tick 输入 |
+| `unrest` | INTEGER 0-100 | 民变压力；事件门与材料投影用，**不**自动写入 settle tick 输入 |
+| `fiscal` | JSON | 税种细分 + `settle` 基座 + 腐败度，见下表 |
 
 `fiscal` JSON 字段说明：
 
 | key | 单位 | 说明 |
 |-----|------|------|
-| `guan_min_tian` | 万亩 | 官民田，田赋→国库 |
+| `guan_min_tian` | 万亩 | 官民田 |
 | `wang_tian` | 万亩 | 藩王庄田，免税；没收后转皇庄 |
-| `huang_tian` | 万亩 | 皇庄，仅北直隶有，地租→内库 |
-| `liao_xiang` | 万两/月 | 辽饷月摊派额 |
-| `salt_tax` | 万两/月 | 盐税月基数，产盐省才>0 |
-| `commerce_tax` | 万两/月 | 商税月基数 |
-| `corruption` | 0-100 | 腐败度，影响解运比 |
+| `huang_tian` | 万亩 | 皇庄田亩记录（月收预算以 fiscal_config 皇庄基准为准） |
+| `liao_xiang` | 万两/月 | 辽饷月摊派额（settle / 叙事用） |
+| `salt_tax` | 万两/月 | 盐税月基数，hub 旁路汇总 |
+| `commerce_tax` | 万两/月 | 商税月基数，hub 旁路汇总 |
+| `corruption` | 0-100 | 腐败度；region_delta 可写，材料可读；**不**自动映射进 settle tick |
+| `settle` | object | 省级财政基座 `st`/`p`；`settle_province_tick` 只读这里（及现役覆盖参数），与顶层士绅/民变/corruption 无自动耦合 |
 
 ---
 
-### 月结算公式（`calc_province_fiscal`）
+### 月结算（substrate hub）
 
-#### 第一步：系数计算
+现行月度国库收入不再走省级 flat 系数公式，而由 **substrate hub** 统一投影与落账：
 
-```
-# 实收率：士绅阻力 + 民变决定能征到多少
-collection_rate = 1.0
-               - gentry_resistance / 200
-               - max(0, unrest - 20) / 250
-# 钳到 [0.30, 1.00]
+1. **省级 settle tick**（`db.settle_province_tick` / `flows._advance_province_fiscal_substrate`）：明控且已 seed `settle` 基座的省推进三饷、火耗、起运、逋赋等账本。
+2. **起运到京** → 国库；太仓人类/沉没漏损按 `fiscal_config` 中央损耗率拆分。
+3. **盐税 / 商税** 仍从各省 `fiscal` 旁路汇总入中央（hub 侧通道）。
+4. **京运补 / 中央军饷** 按饷源份额拟拨，经 hub outbound 扣账，不预演未来转运损耗。
+5. **皇庄** 走 `fiscal_config.皇庄_base × 皇庄_rate` 入内库（预算与落账同源：`compute_budget_lines`）。
+6. **fixed 科目**（宗禄、官俸等）由 `fiscal_config` 中 `budget_role=fixed` 项按 base×rate 遍历落账。
 
-# 解运比：腐败度 + 民变决定税银实际到账比例
-transport_ratio = 0.95
-               - corruption / 200
-               - max(0, unrest - 30) / 300
-# 钳到 [0.35, 0.92]
+入口：`flows.apply_fixed_period_flows`（pre_settle 固定财政段）。预算展示同源：`flows.compute_budget_lines`。
 
-# 辽饷解运比：额外受皇威影响（皇威低→地方截留多）
-liao_ratio = transport_ratio × (0.5 + 皇威 / 200)
-# 钳到 [0.30, 0.95]
-```
-
-#### 第二步：各税源
-
-```
-# 税种拆分：从 tax_per_turn 扣除辽饷/盐税/商税固定额，剩余为田赋基数
-田赋基数 = max(0, tax_per_turn - liao_xiang - salt_tax - commerce_tax)
-
-田赋月收 = 田赋基数 × collection_rate × transport_ratio  → 国库
-辽饷月收 = liao_xiang × liao_ratio                       → 国库
-盐税月收 = salt_tax × transport_ratio                     → 国库
-商税月收 = commerce_tax × transport_ratio                 → 国库
-
-皇庄月收 = huang_tian × 0.57（万两/万亩/月）             → 内库
-           （仅北直隶 huang_tian>0；0.57 = 20万两/月 ÷ 35万亩基准）
-```
-
-#### 第三步：全国汇总
-
-```
-国库月收 = Σ(各省 田赋 + 辽饷 + 盐税 + 商税)
-内库月收 = Σ(各省 皇庄收入) + fiscal_config 皇庄_base
-```
-
-> 注：内库皇庄基准走 `fiscal_config.皇庄_base`（已校准=20万/月）；`huang_tian` 字段用于没收藩王庄田后的**增量**计算。
-
----
-
-### 典型数值示例
-
-| 省份 | corruption | gentry_resistance | unrest | transport_ratio | collection_rate | 月收（估） |
-|------|-----------|------------------|--------|----------------|----------------|----------|
-| 南直隶 | 44 | 85 | 25 | 0.73 | 0.56 | ~51万 |
-| 浙江 | 38 | 78 | 22 | 0.76 | 0.60 | ~46万 |
-| 陕西 | 72 | 42 | 78 | 0.43 | 0.51 | ~10万 |
-| 北直隶 | 62 | 55 | 35 | 0.62 | 0.67 | ~22万 |
-
-全国月收合计约 **398万两**（开局基准）。
+设计细节见 `docs/FISCAL_PROVINCE_SUBSTRATE.md` 与 ADR 0019/0021（ADR 正文整理归 #1881）。
 
 ---
 
 ### 动态变化
 
-**收入减少的路径：**
-- 清查/抄家诏书 → `gentry_resistance` 短期暴涨 → `collection_rate` 下降 → 田赋减少
-- 灾荒事件 → `unrest` 上升 → 双系数同时下降
-- 皇威低落 → `liao_ratio` 下降 → 辽饷截留增加
-
-**收入增加的路径：**
-- issue「清丈田亩」推进到高 bar → `gentry_resistance` 下降 → 实收率提升
-- 整治贪腐成功 → `corruption` 下降 → 解运比提升
-- 没收藩王庄田 → `wang_tian` 转 `huang_tian` → 内库增量
-- 诏书增商税/盐税 → `salt_tax`/`commerce_tax` 基数提升
+**收入/压力路径（现行）：**
+- 省级 tick 只消费 `fiscal.settle` 的 st/p（及桥接层显式覆盖参数）；改顶层 `gentry_resistance`/`unrest`/`fiscal.corruption` **不会**单独改变同 st/p 的 tick 结果
+- 灾荒、加派、清丈等经人口池与 surcharge/levy 通道改应征与入池
+- 整治贪腐 / 巡按 → `regions.fiscal.corruption` delta（region_delta 白名单写入，供材料/叙事；要进 settle 须改 settle 参数本身）
+- 盐税/商税基数改各省 `fiscal` 字段才进 hub 旁路；皇庄改 `fiscal_config`
 
 ---
 
-## 固定月度支出（`fiscal_config`）
+## 固定月度科目（`fiscal_config`）
 
-所有 base 为**季度额**，`monthly_amount(base × rate / 100)` = 月额（约 ÷3）。
+`content/fiscal_config.json` 中 base/rate **直接是月度**单位（万两 / %）。`flows.compute_budget_lines` 与 `apply_fixed_period_flows` 对 `budget_role=fixed` 项按 `round(base × rate / 100)` 落预算与账，**不再做季度÷3 换算**。真源以该 JSON 与 `db.init_fiscal_config` 为准；下表摘录现行默认月基准（rate=100 时的月额）。
 
-### 国库支出
+### 国库 fixed 支出（摘录）
 
-| 项目 | base（季） | rate | 月额（估） | 说明 |
-|------|-----------|------|----------|------|
-| 宗室禄米 | 360 | 70% | ~84万 | 最大包袱，削藩可降 |
-| 九边补给 | 270 | 90% | ~81万 | 九边粮草，非军饷 |
-| 各军军饷 | — | — | ~150万 | 按优先级逐军发放 |
-| 百官俸禄 | 90 | 100% | ~30万 | 含地方折色 |
-| 建筑维护 | — | — | ~75万 | 各省建筑月维护 |
-| 赈灾备用 | 15 | 100% | ~5万 | 制度性预留 |
-| 工部 | 15 | 100% | ~5万 | 工部日常 |
+| 项目 | base（月） | 说明 |
+|------|-----------|------|
+| 宗室禄米 | 120 | 诸藩禄米月度账面；削藩可降 |
+| 百官俸禄 | 25 | 在京百官（含地方折色） |
+| 赈灾备用 | 5 | 制度性预留 |
+| 工部 | 5 | 工部日常维护 |
 
-**月支出合计约 430万两**
+军饷不在 fixed 目录：预算分列「中央军饷拟拨」「京运补拟拨」，实拨走 substrate hub。建筑维护不进 fiscal_config base：产出按 condition 折算，维护费不折算（内廷扣内库，其余扣国库）。
 
-### 内库支出
+### 内库 fixed（摘录）
 
-| 项目 | base（季） | rate | 月额 |
-|------|-----------|------|------|
-| 宫廷开支 | 22 | 100% | ~7万 |
-| 内廷俸禄 | 15 | 100% | ~5万 |
-| 妃嫔供奉 | 10 | 100% | ~3万 |
+| 项目 | base（月） | 方向 |
+|------|-----------|------|
+| 宫廷开支 | 7 | 支出 |
+| 内廷俸禄 | 5 | 支出 |
+| 妃嫔供奉 | 3 | 支出 |
+| 织造 | 12 | 收入 |
+| 矿税 | 3 | 收入 |
+| 皇庄 | 20 | 收入（`budget_role=dynamic` 专路，仍读 fiscal_config 皇庄_base） |
 
-### 内库收入
-
-| 项目 | base（季） | rate | 月额 |
-|------|-----------|------|------|
-| 皇庄 | 60 | 100% | ~20万 |
-| 织造 | 35 | 100% | ~12万 |
-| 矿税 | 10 | 100% | ~3万 |
-
----
-
-## 开局月净
-
-| 账户 | 月收入 | 月支出 | 月净 |
-|------|--------|--------|------|
-| 国库 | ~398 | ~430 | **~-32** |
-| 内库 | ~35 | ~15 | **~+20** |
-
-国库持续亏损，逼玩家开源节流。内库正向积累，作为救急储备。
+国库动态收入（起运/盐/商/太仓亏空）与边饷 hub 见上文「月结算（substrate hub）」；开局量级以鲜库 `compute_budget_lines` 为准，不在本文锁死旧估算表。
 
 ---
 
 ## 腐败度（`corruption`）
 
 - 存储位置：`regions.fiscal` JSON，key=`corruption`，0-100
-- **读取**：`simulation.py` 把 `json_extract(fiscal,'$.corruption')` 喂进推演 payload
 - **写入**：`apply_region_deltas` 识别 `FISCAL_SCORE_FIELDS`，解析 JSON → patch → 写回
-- **LLM 触发条件**（`score_extractor.md`）：整治贪腐/巡按/抄家/杀士绅头领 → 负值 ±5~±20；放任失控 → 正值
+- **读取／供料**：世界段与大臣材料目录按需投影地区财政特征；不再经已退役的五模块 `score_extractor` 或独立 `score_extractor.md` 抽取。数值变更由月链声明 / region_delta 结构化落账。
 
 ---
 
 ## 藩王庄田没收
 
 ```
-execution_evaluator 输出：
-  region_delta: {"henan": {"wang_tian_transfer": 40, "reason": "查抄福王庄田"}}
+region_delta: {"henan": {"wang_tian_transfer": 40, "reason": "…"}}
 
 apply 时：
   wang_tian -= 40
   huang_tian += 40
-  内库月增量 += 40 × 0.57 = 23万两/月（持续）
-  同时：gentry_resistance +15，党争压力上升
+  同时：gentry_resistance 等政治反应由裁判另产
 ```
 
-河南（福王）、湖广（楚王）、山西（晋王）是主要藩王省份。
+河南（福王）、湖广（楚王）、山西（晋王）是主要藩王省份。皇庄月收预算仍以 `fiscal_config.皇庄_base` 为现行基准。
 
 ---
 
@@ -195,9 +127,9 @@ apply 时：
 
 | 功能 | 文件 | 函数/位置 |
 |------|------|---------|
-| 省级月收计算 | `ming_sim/flows.py` | `calc_province_fiscal` |
-| 月度财政 tick | `ming_sim/flows.py` | `apply_fixed_period_flows` |
+| 月度财政落账 | `ming_sim/flows.py` | `apply_fixed_period_flows` |
+| 预算同源 | `ming_sim/flows.py` | `compute_budget_lines` |
+| 省级 settle 桥 | `ming_sim/db.py` | `settle_province_tick` |
 | 腐败度 delta 落库 | `ming_sim/db.py` | `apply_region_deltas` → FISCAL_SCORE_FIELDS 分支 |
 | 省级字段白名单 | `ming_sim/constants.py` | `FISCAL_SCORE_FIELDS` |
 | fiscal_config 初始值 | `ming_sim/db.py` | `init_fiscal_config` |
-| 推演 payload 含 corruption | `ming_sim/simulation.py` | `json_extract(fiscal,'$.corruption')` |

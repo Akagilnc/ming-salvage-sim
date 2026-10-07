@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import threading
+
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List
@@ -18,26 +20,11 @@ from ming_sim import audience_night as an
 from ming_sim.db import GameDB
 from ming_sim.highlight_judge import (
     DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
-    parse_highlight_judge_output,
     run_highlight_judge,
 )
 
 
 # ── 解析 / 单次调用降级 ──────────────────────────────────────────────────
-
-
-def test_parse_highlight_judge_bad_output_is_empty():
-    assert parse_highlight_judge_output("") == []
-    assert parse_highlight_judge_output("not json") == []
-    assert parse_highlight_judge_output('{"highlights": "辽饷"}') == []
-    assert parse_highlight_judge_output('{"phrases": ["甲"]}') == []
-    assert parse_highlight_judge_output('{"highlights": [1, null, ""]}') == []
-
-
-def test_parse_highlight_judge_valid_phrases():
-    assert parse_highlight_judge_output(
-        '```json\n{"highlights": ["**辽饷**", "户部亏空", "  "]}\n```'
-    ) == ["**辽饷**", "户部亏空"]
 
 
 def test_run_highlight_judge_timeout_and_exception_degrade_silently():
@@ -71,17 +58,25 @@ def test_run_highlight_judge_timeout_and_exception_degrade_silently():
     ) == []
 
 
-def test_run_highlight_judge_success_returns_phrases():
+@pytest.mark.parametrize(("output", "expected"), [
+    ("", []),
+    ("not json", []),
+    ('{"highlights": "辽饷"}', []),
+    ('{"phrases": ["甲"]}', []),
+    ('{"highlights": [1, null, ""]}', []),
+    ('{"highlights": ["辽饷", "军心"]}', ["辽饷", "军心"]),
+])
+def test_run_highlight_judge_success_returns_phrases(output, expected):
     class _Ok:
         def run(self, *_a, **_k):
-            return SimpleNamespace(content='{"highlights": ["辽饷", "军心"]}')
+            return SimpleNamespace(content=output)
 
     assert run_highlight_judge(
         minister_reply="臣陈**辽饷**与军心。",
         llm_config=object(),
         agent=_Ok(),
         timeout_s=1.0,
-    ) == ["辽饷", "军心"]
+    ) == expected
 
 
 # ── 落库 + 两读端 + restore ──────────────────────────────────────────────

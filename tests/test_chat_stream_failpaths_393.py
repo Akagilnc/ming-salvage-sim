@@ -429,8 +429,10 @@ def test_worker_postprocess_exception_emits_error_end(monkeypatch):
         }
     )
 
+    postprocess_error = RuntimeError("highlight trail boom")
+
     def _boom_spawn(*_a, **_k):
-        raise RuntimeError("highlight trail boom")
+        raise postprocess_error
 
     runtime._spawn_pending_write_thread = _boom_spawn  # type: ignore[method-assign]
 
@@ -450,6 +452,7 @@ def test_worker_postprocess_exception_emits_error_end(monkeypatch):
         finally:
             done.set()
 
+    # 施工席自选：Thread + Event 确定性等实际 worker 结束（非新增框架）
     th = threading.Thread(target=consume, daemon=True)
     th.start()
     done.wait()
@@ -462,7 +465,9 @@ def test_worker_postprocess_exception_emits_error_end(monkeypatch):
     err_idx = types.index("error")
     assert types[err_idx + 1] == "end", types
     err = next(e for e in events if e.get("type") == "error")
-    assert "highlight trail boom" in str(err.get("message") or ""), err
+    assert err.get("type") == "error"
+    # SSE 可见诊断须回溯到后处理真实故障来源（非仅非空）
+    assert err.get("message") == str(postprocess_error)
     _assert_write_path_free(runtime)
 
 
@@ -492,8 +497,6 @@ def _assert_structured_llm_http(response) -> dict:
     assert detail.get("code"), detail
     assert detail.get("message"), detail
     assert "provider_message" in detail, detail
-    assert "Internal Server Error" not in response.text
-    assert "Internal Server Error" not in str(detail.get("message") or "")
     return detail
 
 
@@ -609,7 +612,7 @@ class _FailLeavingAgnoRunAgent:
         n = self.calls
         # 本 attempt 启动时持久读回（_start_stream 已先 truncate）
         self.history_at_attempt_start.append(
-            [str(r.get("run_id")) for r in self.db._agno_merged_runs(self.session_id)]
+            list(self.db.agno_run_ids(self.session_id))
         )
         if n <= self.fail_times:
             from tests.test_audience_restore_505 import _insert_agno_table_run

@@ -57,6 +57,13 @@ class _RecordingDB:
     def set_character_status(self, *a, **k):
         self.writes.append("set_character_status")
 
+    def capture_month_open_snapshot(self, *a, **k):
+        self.writes.append("capture_month_open_snapshot")
+        return True
+
+    def get_month_open_snapshot(self, *a, **k):
+        return None
+
 
 class _FakeGame:
     def __init__(self, turn_phase: str):
@@ -322,7 +329,8 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
         exc = result.get("exc")
         assert isinstance(exc, HTTPException)
         assert exc.status_code == 409
-        assert game.db.writes == []
+        # #1235 点即入：409 前可已 capture；不得再跑 advance_without_decree 写盘。
+        assert "advance_without_decree" not in game.db.writes
     finally:
         game._write_gate.release()
         worker.join()
@@ -381,7 +389,8 @@ def test_advance_short_hold_409_when_gate_taken_after_admit(monkeypatch):
         exc = result.get("exc")
         assert isinstance(exc, HTTPException), result
         assert exc.status_code == 409
-        assert game.db.writes == []
+        # #1235 点即入：409 前可已 capture；不得再跑 advance_without_decree 写盘。
+        assert "advance_without_decree" not in game.db.writes
     finally:
         gate_held_by_peer.set()  # 解 worker 侧 wait，避免 finally 再挂
         if game._write_gate.locked():

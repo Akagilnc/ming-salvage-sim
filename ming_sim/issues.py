@@ -499,8 +499,14 @@ def _apply_issue_buildings(
     return applied
 
 
+# 创建期拒收：resolve_condition 文本不得冒充承诺停止条件（正式停止条件只认 stop_condition dict）。
+_FORBIDDEN_COMMITMENT_RESOLVE_SHAPE = re.compile(
+    r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+"
+)
+
+
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
-    """显式 stop_condition JSON 门；不从 resolve_condition 正文推停止条件。"""
+    """只读显式 stop_condition JSON；不再从 resolve_condition 散文解码。"""
     keys = row.keys() if hasattr(row, "keys") else []
     raw = row["stop_condition"] if "stop_condition" in keys else ""
     if not raw:
@@ -4668,11 +4674,18 @@ def apply_issue_tracker_output(
             ) > 0
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
+        resolve_text_for_shape = _issue_condition_text(ni.get("resolve_condition"))
+        if not resolve_text_for_shape and isinstance(stop_condition_raw, str):
+            resolve_text_for_shape = stop_condition
+        forbidden_resolve_commitment_shape = bool(
+            _FORBIDDEN_COMMITMENT_RESOLVE_SHAPE.fullmatch(str(resolve_text_for_shape or "").strip())
+        )
         commitment_shape_without_marker = (
             not commitment_kind
             and kind == "initiative"
             and (
                 end_turn_marker_shape
+                or forbidden_resolve_commitment_shape
                 or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
                 or (
                     isinstance(stop_condition_raw, str)
@@ -7572,9 +7585,10 @@ def _apply_score_extraction_body(
                 raise ValueError(
                     "执行结果必须为 fulfilled/degraded/failed/transformed"
                 )
-            # Free prose execution note: preserve raw (#1834 F16).
+            # Free prose execution note: preserve raw (#1834 F16 / P6).
+            # 空白只在副本上判定非空，落库一律存原文。
             note = str(item.get("note") or "")
-            if not note:
+            if not note.strip():
                 raise ValueError("执行说明不能为空")
             # #565：显式 affected_parties 仅校验门闩（契约§5），不驱动机械写路。
             raw_parties = (
@@ -7598,9 +7612,8 @@ def _apply_score_extraction_body(
             db.record_dossier_execution(
                 dossier_id, outcome, note, state.turn, close=True, commit=False,
             )
-            db.merge_grant_reconciliation_into_execution_note(
-                dossier_id, commit=False,
-            )
+            # #567 / #1900：核账事实留在 list_dossier_reconciliations 结构化账，
+            # 不向 execution_note 模板增补或覆盖原文。
             if outcome in {"degraded", "transformed"}:
                 prior = list(db.list_dossier_progress(int(dossier_id)))
                 band, memorial = terminal_report_facade(

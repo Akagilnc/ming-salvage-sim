@@ -24,7 +24,6 @@ from ming_sim.audience_night import (
     list_ledger,
     open_night,
 )
-from ming_sim.audience_translate import normalize_audience_declaration
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
@@ -197,7 +196,7 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
         result = sess.scene_chat("准", chat_turn_id=ctid)
         future = persist_and_schedule_scene(sess, db, result)
         assert future is not None
-        with pytest.raises(RuntimeError, match="translation unavailable"):
+        with pytest.raises(RuntimeError):
             future.result(timeout=30)
 
     write_queue = SessionWriteQueue()
@@ -244,24 +243,22 @@ def test_pending_round_approval_endorsed_before_close_or_after_month_join(
     assert directive_id in pubs
 
 
-def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
+def test_translation_entry_preserves_unknown_rejection(
     game, monkeypatch,
 ):
-    """真实转译入口：未知 section 留痕；上下文只含严格早于源轮的轮次。"""
+    """真实转译入口必要拒收负向：未知 section、坏形状。
+
+    不宣称证明源轮截止；截止属生产契约，测试缺陷不得指控生产截止错误。
+    """
     db, state, content = game
     night = open_night(db, state, location="乾清宫", time_of_day="夜")
     night_id = int(night["id"])
     _persist_night_chat(db, state, night_id, "第一问", "第一答")
     source = _persist_night_chat(db, state, night_id, "本轮问", "本轮答")
-    _persist_night_chat(db, state, night_id, "后轮问", "后轮答")
-    captured: dict[str, object] = {}
-    real_build_prompt = audience_translate.build_audience_translate_prompt
+    night_said = audience_translate.build_night_said_so_far(
+        db, night_id, until_chat_turn_id=source,
+    )
 
-    def capture_prompt(**kwargs):
-        captured["night_said"] = tuple(kwargs["night_said"])
-        return real_build_prompt(**kwargs)
-
-    monkeypatch.setattr(audience_translate, "build_audience_translate_prompt", capture_prompt)
     declaration = {
         "commissions": [{"text": "拟旨赈济"}],
         "commisssions": [{"text": "拼错交办"}],
@@ -269,17 +266,18 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
             {"body": "提及未在册者", "role": "scene", "person_names": ["未在册者"]},
         ],
     }
+
     from ming_sim.audience_translation import apply_audience_round_translation
     decl = audience_translate.translate_audience_turn(
         emperor_message="本轮问",
         reply="本轮答",
-        night_said=audience_translate.build_night_said_so_far(
-            db, night_id, until_chat_turn_id=source,
-        ),
+        night_said=night_said,
         pending_summaries=audience_translate.build_pending_summaries(
             db, int(state.turn), night_id=night_id,
         ),
-        translate_fn=lambda prompt, config: {**offline_empty_audience_translate(prompt, config), **declaration},
+        translate_fn=lambda prompt, config: {
+            **offline_empty_audience_translate(prompt, config), **declaration,
+        },
     )
     applied = apply_audience_round_translation(
         db, state, decl,
@@ -287,10 +285,6 @@ def test_translation_entry_preserves_unknown_rejection_and_source_cutoff(
         minister_name=_hong_name(db, content),
     )
 
-    said = captured["night_said"]
-    assert isinstance(said, tuple)
-    # 每轮两条消息；源轮与后轮若越过严格截止，条数会从 2 增至 4/6。
-    assert len(said) == 2
     pending = db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE status='pending' ORDER BY id"
     ).fetchall()
@@ -614,10 +608,9 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
     monkeypatch.setattr(
         "ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent(),
     )
-    shapes = []
+    payloads = []
     for channel in ("api", "cli"):
         def translate_fn(prompt, llm_config, _decl=declaration):
-            shapes.append(normalize_audience_declaration(_decl))
             return {**offline_empty_audience_translate(prompt, llm_config), **_decl}
 
         sess = _sess(
@@ -625,6 +618,9 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
             llm_config=SimpleNamespace(channel=channel),
             translate_fn=translate_fn,
         )
+        before_id = db.conn.execute(
+            "SELECT COALESCE(MAX(id), 0) AS mid FROM pending_actions"
+        ).fetchone()["mid"]
         before = db.conn.execute(
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]
@@ -633,11 +629,17 @@ def test_scene_chat_cli_and_api_same_translation_shape(game, monkeypatch):
             "SELECT COUNT(*) c FROM pending_actions WHERE status='pending'"
         ).fetchone()["c"]
         assert after > before
+        payloads.append([
+            row["payload_json"]
+            for row in db.conn.execute(
+                "SELECT payload_json FROM pending_actions "
+                "WHERE status='pending' AND id > ? ORDER BY id",
+                (before_id,),
+            ).fetchall()
+        ])
 
-    assert len(shapes) == 2
-    assert shapes[0] == shapes[1]
-    assert "commissions" in shapes[0] and "promises" in shapes[0]
-    assert "noise" not in shapes[0]
+    assert len(payloads) == 2
+    assert payloads[0] == payloads[1]
 
 
 

@@ -57,16 +57,16 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         if not isinstance(obj, dict):
             continue
-        title = str(obj.get("title") or "")
+        title = str(obj.get("title") or "").strip()
         raw_opts = obj.get("options")
-        if not title.strip() or not isinstance(raw_opts, list):
+        if not title or not isinstance(raw_opts, list):
             continue
         options: List[Dict[str, object]] = []
         for o in raw_opts:
             if not isinstance(o, dict):
                 continue
-            label = str(o.get("label") or "")
-            if not label.strip():
+            label = str(o.get("label") or "").strip()
+            if not label:
                 continue
             try:
                 action_type = validate_season_option(o)
@@ -75,8 +75,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
                 break
             option: Dict[str, object] = {
                 "label": label,
-                # Free prose hint/context: preserve bytes; emptiness checked above.
-                "hint": str(o.get("hint") or ""),
+                "hint": str(o.get("hint") or "").strip(),
             }
             # Deterministic financial options carry their executable payload;
             # label/hint remain presentation only.
@@ -92,7 +91,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         decision = {
             "title": title,
-            "context": str(obj.get("context") or ""),
+            "context": str(obj.get("context") or "").strip(),
             "options": options[:3],
         }
         explicit_event_id = str(obj.get("event_id") or "").strip()
@@ -158,11 +157,15 @@ def bind_decisions_to_candidate_events(
     decisions: List[Dict[str, object]],
     simulator_payload: object,
 ) -> List[Dict[str, object]]:
-    """Keep explicit structured event identity against the candidate snapshot.
+    """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389 / ADR 0115).
 
-    - Echoed event_id is trusted only when it belongs to this turn's candidate snapshot.
-    - dossier: ids with rescript capability pairs are kept (批红待裁).
-    - Missing or off-snapshot ids stay/become unbound. No title/presentation fallback.
+    Binding is by structured identity only（绑定由构造保证，非由文本捞回）:
+    - A simulator-echoed event_id is trusted ONLY if it belongs to this turn's
+      candidate snapshot.
+    - A missing id stays unbound; an off-snapshot id is stripped. Titles are
+      presentation and never used to invent or rescue an event_id (#1900 J20).
+    - Non-event HITL decisions keep no event_id. dossier: prefixes with full
+      rescript capability fields are retained (#1490/#1492 A).
     """
     if not decisions:
         return []
@@ -185,7 +188,7 @@ def bind_decisions_to_candidate_events(
         out = dict(decision)
         explicit = str(out.get("event_id") or "").strip()
         if explicit and explicit in candidate_ids:
-            bound.append(out)
+            bound.append(out)  # 回显 id 确属本回合候选 → 采信
             continue
         # #1490/#1492 A：仅当 options 带齐 dossier_id+dossier_decision 时保留
         # dossier: 前缀（真批红待裁）。裸 origin_ref 回填 / LLM 幻觉行照旧解绑。
@@ -193,7 +196,8 @@ def bind_decisions_to_candidate_events(
             bound.append(out)
             continue
         if explicit:
-            # off-snapshot 回显 id → 解绑，不保留非候选 id 进事件账。
+            # off-snapshot 回显 id → 解绑，不保留非候选 id（否则 submit_decisions
+            # 会当 triggered 写进事件账，污染终态）。
             out.pop("event_id", None)
         bound.append(out)
     return bound
@@ -227,7 +231,7 @@ def list_due_commitments(db: GameDB, state: GameState) -> List[Dict[str, object]
             "entry_kind": "due_commitment",
             "issue_id": int(row["id"]),
             "title": str(row["title"] or ""),
-            "content": str(row["stage_text"] or row["title"] or ""),
+            "content": str(row["stage_text"] or row["title"] or "")[:120],
             "origin_ref": str(row["origin_ref"] or ""),
             "turn_issued": int(row["origin_turn"] or 0),
             "due_turn": int(row["end_turn"] or 0),

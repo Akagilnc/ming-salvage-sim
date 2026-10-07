@@ -74,7 +74,12 @@ def test_submit_event_decision_persists_choice_after_pending_cleanup(game, monke
     db.save_state(state)
 
     def _phase2(_state, _db, *_args, **_kwargs):
-        _db.clear_pending_decisions(turn)
+        # 对抗性清理：验证亲裁选择已落入事件账，不依赖已退役的 clear 写口。
+        _db.conn.execute(
+            "DELETE FROM pending_decisions WHERE turn = ? AND kind = 'decision'",
+            (int(turn),),
+        )
+        _db.conn.commit()
         return "ok"
 
     monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
@@ -370,7 +375,6 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
     with pytest.raises(ValueError):
         sess.resolve_turn()
     assert state.turn == turn  # 未推进，拟旨不孤儿
-    db.clear_resolve_context(turn)
 
 def test_skip_refused_at_front_half_done(game):
     """#1274 r1：decree.advance_without_edict 空壳已删；跳过结算的快路名缺席。

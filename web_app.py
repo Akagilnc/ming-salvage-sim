@@ -3369,7 +3369,12 @@ def _settlement_period_entry(
             if entered and not settled_ok:
                 # 含 gate/HTTPException 拒收与未映射异常；blocking 由 web 创建位决定。
                 # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
-                _exit_settlement_display_on_failure(game, blocking=created_display)
+                # advance 走 _serialized_web_write（非阻塞 409 契约）：失败清快照也不得
+                # 阻塞等闸——否则「他方持闸 → 本路 409 → exit blocking 等同一闸」自锁死。
+                exit_blocking = bool(
+                    created_display and write_cm is not _serialized_web_write
+                )
+                _exit_settlement_display_on_failure(game, blocking=exit_blocking)
         finally:
             if entered:
                 _end_settlement_entry(game)

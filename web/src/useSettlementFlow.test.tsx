@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EndingModal } from "./components/endingModal";
+import { MechanicalTailFailure } from "./components/mechanicalTailFailure";
 import { yearMonthLabel } from "./settlementPresentation";
 import type { GameState, PendingDecision } from "./types";
 import { useSettlementFlow } from "./useSettlementFlow";
@@ -134,6 +135,12 @@ function mountHarness(opts: {
         <div data-testid="pending-count">{String(hookRef.current.pendingDecisions.length)}</div>
         <div data-testid="phase">{turn?.phase || ""}</div>
         <div data-testid="settlement-display">{String(Boolean(turn?.settlement_display))}</div>
+        {!state?.ending ? (
+          <MechanicalTailFailure
+            failure={state?.mechanical_tail_failure}
+            onRetry={opts.onRetry ?? (() => {})}
+          />
+        ) : null}
         {state?.ending ? <EndingModal ending={state.ending} failure={state.mechanical_tail_failure} onClose={() => {}} onRetry={opts.onRetry ?? (() => {})} /> : null}
       </div>
     );
@@ -292,11 +299,14 @@ describe("#1845 background tail failure observation", () => {
       mechanical_tail_failure: { error_pack_path: "/tmp/tail-error" },
     } as GameState;
     const loadState = vi.fn<() => Promise<GameState | null>>().mockResolvedValue(failed);
-    const { cleanup } = mountHarness({ initial: running, loadState });
+    const { host, cleanup } = mountHarness({ initial: running, loadState });
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    const alert = host.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("/tmp/tail-error");
     expect(loadState).toHaveBeenCalledTimes(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(loadState).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
     cleanup();
   });
 });

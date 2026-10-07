@@ -1,21 +1,18 @@
-"""上下文生成与文本匹配：历史锚点、胜负判定、地区/军队/事件模糊匹配、
-人物/事件上下文串、给 LLM 的 state_context。L4。
+"""上下文生成与文本匹配：胜负判定、地区/军队模糊匹配、人物档料与派系上下文。L4。
 
 通过 bind_content() 注入 GameContent（过渡期）。
 """
 
 from __future__ import annotations
 
-import json
-import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from ming_sim.constants import ECONOMY_ACCOUNTS, TURN_UNIT
 from ming_sim.assets import format_money, load_json_asset
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError
-from ming_sim.models import Army, Character, Event, GameState, Region
+from ming_sim.models import Character, GameState
 from ming_sim.qualitative import (
     identity_band,
     identity_bucket,
@@ -70,7 +67,6 @@ def _ctx() -> GameContent:
     if _content is None:
         raise RuntimeError("context.bind_content() 未调用：GameContent 未注入。")
     return _content
-
 
 
 # 结局类型枚举（CLI/Web/总结 agent 共用）。
@@ -142,7 +138,6 @@ def state_context(state: GameState) -> str:
         else:
             parts.append(f"{key}{value}")
     return "，".join(parts)
-
 
 
 def _identity_bucket(value: object) -> str:
@@ -299,7 +294,6 @@ def faction_context_with_db(character: Character, db: GameDB) -> str:
         f"【派系档料】{character.faction}：{faction_text}"
         f"【党派认同】此人对本派的认同为{identity_band(character.identity)}。"
     )
-
 
 
 def character_from_name(name: object) -> Character:

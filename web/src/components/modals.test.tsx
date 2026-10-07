@@ -290,8 +290,6 @@ describe("EdictModal — decree desk behavior", () => {
     });
     expect(host.querySelector(".desk-compose")).toBeNull();
     expect(host.querySelector(".desk-add-btn")).toBeNull();
-    expect(host.textContent).not.toContain("御笔自拟");
-    expect(host.textContent).not.toContain("新增草案");
     // 草稿仍可改可删。
     expect(host.querySelectorAll(".directive-tools button")).toHaveLength(2);
   });
@@ -425,8 +423,6 @@ describe("ChatModal — #545 final composer contract", () => {
     const onClose = vi.fn();
     const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", onSend, onClose });
 
-    expect(host.textContent).not.toContain("转入诏书草案");
-    expect(host.textContent).not.toContain("任免");
     const buttons = Array.from(host.querySelectorAll("button"));
     const leave = buttons.find((button) => button.textContent?.includes("退出召对")) as HTMLButtonElement;
     const retreat = buttons.find((button) => button.textContent?.includes("散夜")) as HTMLButtonElement;

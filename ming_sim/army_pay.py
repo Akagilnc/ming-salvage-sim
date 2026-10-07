@@ -45,10 +45,9 @@ def army_needed(row) -> int:
     row 需含 owner_power / manpower / salary_rate 三列。
 
     #44 ship-pre R1（codex high）：ming 军「有兵必有饷」。salary_rate<=0 对 ming 军非法（=白嫖），
-    募兵入口（_coerce_new_salary_rate 默认 1.5）+ 迁移入口（_backfill_salary_rate）已堵，但 runtime
-    易主（owner_power 经 army_delta 翻成 ming）/裸 UPDATE 会留下 rate<=0 的明军（如倒戈的满洲八旗
-    62000 兵、salary_rate 0）。在结算唯一咽喉对 ming+有兵+rate<=0 锚定 SALARY_RATE_ANCHOR（边军史实
-    锚点），一处堵死所有入口（不依赖每个 mutation 点各自 coerce）。"""
+    募兵入口（_coerce_new_salary_rate 默认 1.5）已堵，但 runtime 易主（owner_power 经
+    army_delta 翻成 ming）/裸 UPDATE 会留下 rate<=0 的明军。在结算唯一咽喉对
+    ming+有兵+rate<=0 锚定 SALARY_RATE_ANCHOR（边军史实锚点），一处堵死所有入口。"""
     if str(row["owner_power"]) != "ming":
         return 0
     manpower = int(row["manpower"])

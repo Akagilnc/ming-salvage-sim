@@ -12,10 +12,13 @@ from ming_sim.structured_decree import (
     assemble_structured_decree,
 )
 from tests.directive_seed_helpers import seed_manual_draft
+from tests.rescript_test_helpers import sql_rescript_draft
+
 from tests.test_month_loop_tracer_1468 import (  # noqa: F401
     _post_issue_stream,
     tracer_client,
 )
+
 
 # #1778 决定 3：拟票大臣把参与名单写进票拟（主办可多人）；代码不按职司表配人。
 _OWNER_ROSTER = [
@@ -37,7 +40,6 @@ _OWNER_OPTION = {
     "participant_roster": [dict(item) for item in _OWNER_ROSTER],
 }
 
-
 def _owner_manual_backend_json() -> str:
     # 附件 r3 回显形态：LLM 误带执行面=immediate；assignment 不得透传落库。
     return json.dumps({
@@ -53,7 +55,6 @@ def _owner_manual_backend_json() -> str:
         "执行面": "immediate",
         "参与人": [dict(item) for item in _OWNER_ROSTER],
     }, ensure_ascii=False)
-
 
 def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
     """#1778 决定 3/5：主办＝旨意自带名单里的主办，逐字钉进案卷（不是职司表推出的人）。"""
@@ -75,56 +76,6 @@ def _assert_drafted_roster_nailed(db, dossier: dict) -> None:
         ).fetchone() is not None, f"参与人未建档：{name!r}"
 
 
-def _month_end_ctx() -> dict:
-    return {
-        "active_issues": [],
-        "region_targets": [{"id": "shaanxi", "name": "陕西", "kind": "腹地"}],
-        "army_targets": [
-            {"id": "xuanfu", "name": "宣府"},
-            {"id": "guanning", "name": "关宁军 / 宁锦防线", "station": "辽东 / 宁远锦州"},
-        ],
-    }
-
-
-def _army_single_bad_item() -> dict:
-    """复验残留样本：辽东欠饷 option 层 army+single（矩阵非法）。"""
-    return {
-        "title": "辽东欠饷",
-        "context": "九边欠饷数月，饥溃可待。",
-        "options": [
-            {
-                "label": "补发关宁军饷",
-                "hint": "边饷急",
-                "action_type": "grant_allocation",
-                "assignee_name": "",
-                "target_kind": "army",
-                "target_id": "guanning",
-                "locality_scope": "single",
-                "region_id": "",
-                "transaction_category": "",
-                "grant_kind": "army_pay",
-                "amount": 300,
-                "account": "国库",
-                "purpose": "补饷",
-                "participant_roster": [dict(item) for item in _OWNER_ROSTER],
-            },
-            {
-                **_OWNER_OPTION,
-                "label": "缓议加派",
-                "hint": "候报",
-            },
-        ],
-    }
-
-
-def _army_none_legal_item() -> dict:
-    """纠错轮合法：同军目标 + locality_scope=none。"""
-    item = _army_single_bad_item()
-    item["options"][0] = {
-        **item["options"][0],
-        "locality_scope": "none",
-    }
-    return item
 
 
 def test_shared_validate_rejects_region_id_and_category_holes():
@@ -192,8 +143,6 @@ def test_shared_validate_rejects_region_id_and_category_holes():
     assert only_action["action_type"] == "policy"
     assert only_action["dossier_action_type"] == "policy"
 
-
-
 def test_rescript_follow_draft_nails_drafted_roster(game):
     """真实批红 follow_draft：Owner 例未点将 → 主办来自票拟名单，成案钉进案卷。"""
     import ming_sim.rescript_actions as ra
@@ -205,14 +154,12 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
     alt = normalize_rescript_layer_a_option({
         **_OWNER_OPTION, "label": "缓征", "hint": "b", "transaction_category": "钱粮",
     })
-    db.save_rescript_drafts(int(state.turn), [{
-        "title": "陕西告饥",
-        "context": "秦地赤旱",
-        "options": [opt, alt],
-        "actor_name": "杨嗣昌",
-        "actor_office": "兵部尚书",
-        "actor_faction": "东林",
-    }])
+    sql_rescript_draft(
+        db, int(state.turn), idx=0, event_id="draft:陕西告饥",
+        title="陕西告饥", context="秦地赤旱",
+        options=[opt, alt],
+        actor_name="杨嗣昌", actor_office="兵部尚书", actor_faction="东林",
+    )
     db.conn.commit()
     urgent = next(
         r for r in db.list_rescript_desk(int(state.turn))
@@ -237,7 +184,6 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
     assert payload.get("transaction_category") == "督赈"
     assert not str(payload.get("assignee_id") or payload.get("assignee") or "").strip()
     _assert_drafted_roster_nailed(db, created)
-
 
 def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     """真实 Web 手工拟诏：Owner 例 → 盖玺；持久化 canonical + 大臣所拟名单。"""
@@ -279,7 +225,6 @@ def test_manual_owner_example_seal_advances(tracer_client, monkeypatch):
     assert str(payload.get("execution_surface") or "").strip() == ""
     _assert_drafted_roster_nailed(game.db, matched[0])
 
-
 def _executing_counts(db, *, owner_name: str, region_id: str):
     """Observe durable executing dossiers, not the retired simulator board."""
     owner_open = db.conn.execute(
@@ -292,7 +237,6 @@ def _executing_counts(db, *, owner_name: str, region_id: str):
         "WHERE status='executing' AND region_id=?", (region_id,),
     ).fetchone()[0]
     return owner_open, province_open
-
 
 
 def test_normalize_rescript_layer_a_option_contract():
@@ -356,7 +300,6 @@ def test_normalize_rescript_layer_a_option_contract():
         "name": "",
     })
     assert auth_assignee_zero.get("assignee_name") == "0"
-
 
 def test_combo_correction_preserves_first_draw_roster(game, monkeypatch):
     """组合纠错：失败字段（含 target_kind 身份束）采纳；未失败动作/名册/类别/旨文冻结。

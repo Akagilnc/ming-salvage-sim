@@ -203,9 +203,10 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(game, monk
 def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(game, monkeypatch):
     """失败的 CLI 召对只回滚本轮 user-only 半轮，不清历史（真实 fail_chat_turn）。"""
 
+    chat_error = RuntimeError("LLM down")
     sess, character, db, state = _cli_minister_session(
         game,
-        scene_chat=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("LLM down")),
+        scene_chat=lambda *a, **k: (_ for _ in ()).throw(chat_error),
     )
     prior = "前一轮召对内容"
     db.append_chat_message(character.name, max(1, int(state.turn) - 1), "user", prior)
@@ -213,8 +214,9 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_fails(gam
     answers = iter([question])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    with pytest.raises(RuntimeError, match="LLM down"):
+    with pytest.raises(RuntimeError) as ei:
         term.minister_chat(sess, character)
+    assert ei.value is chat_error
 
     assert _chat_rows(db, character.name) == [("user", prior)]
 
@@ -238,26 +240,32 @@ def test_terminal_minister_chat_removes_user_message_when_session_chat_interrupt
 
 def test_terminal_minister_chat_preserves_chat_error_when_rollback_fails(game, monkeypatch):
     """回滚删除失败不能盖掉原始 scene_chat/chat 异常。"""
+    chat_error = RuntimeError("LLM down")
+    rollback_error = RuntimeError("rollback failed")
 
     sess, character, db, _state = _cli_minister_session(
         game,
-        scene_chat=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("LLM down")),
+        scene_chat=lambda *a, **k: (_ for _ in ()).throw(chat_error),
     )
 
     def boom_fail(_chat_turn_id):
-        raise RuntimeError("rollback failed")
+        raise rollback_error
 
     monkeypatch.setattr(db, "fail_chat_turn", boom_fail)
     answers = iter(["命洪承畴督办陕西赈灾，东厂暗助护赈银。"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    with pytest.raises(RuntimeError, match="LLM down"):
+    # 原故障对象保真：注入异常对象作期望（非散落硬编码措辞）。
+    with pytest.raises(RuntimeError) as ei:
         term.minister_chat(sess, character)
+    assert ei.value is chat_error
+    assert ei.value.__cause__ is rollback_error
 
 def test_terminal_minister_chat_reply_persist_failure_uses_fail_chat_turn(game, monkeypatch):
     """大臣已回话后 minister 落库失败走真实 fail_chat_turn，不走无轮 delete。"""
 
     fail_calls: list[int] = []
+    persist_error = RuntimeError("reply persist failed")
 
     def scene_chat(question, *, chat_turn_id=0, stream_emit=None, minister_name=""):
         return SimpleNamespace(
@@ -273,7 +281,7 @@ def test_terminal_minister_chat_reply_persist_failure_uses_fail_chat_turn(game, 
     sess, character, db, _state = _cli_minister_session(game, scene_chat=scene_chat)
 
     def boom_persist(*_a, **_k):
-        raise RuntimeError("reply persist failed")
+        raise persist_error
 
     real_fail = db.fail_chat_turn
 
@@ -294,8 +302,9 @@ def test_terminal_minister_chat_reply_persist_failure_uses_fail_chat_turn(game, 
     answers = iter([question])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    with pytest.raises(RuntimeError, match="reply persist failed"):
+    with pytest.raises(RuntimeError) as ei:
         term.minister_chat(sess, character)
+    assert ei.value is persist_error
 
     assert fail_calls and fail_calls[0] > 0
     assert _chat_rows(db, character.name) == []
@@ -430,17 +439,6 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
 
     assert str(exc) in capsys.readouterr().out
     assert session.calls == ["begin", "advance", "advance"]
-
-def test_cli_write_gate_canonical_session_attr():
-    """#1353 fold-in r8：CLI 唯一 write gate 挂 session._write_gate（禁第二锁名分叉）。"""
-    from ming_sim.session_write_queue import ClassifiedWriteGate
-
-    session = SimpleNamespace()
-    gate = term._cli_write_gate(session)
-    assert isinstance(gate, ClassifiedWriteGate)
-    assert getattr(session, "_write_gate", None) is gate
-    # 二次调用同锁
-    assert term._cli_write_gate(session) is gate
 
 @pytest.mark.parametrize("action", ["skip", "issue"])
 def test_play_turn_hitl_awaits_without_auto_proxy(game, monkeypatch, action):

@@ -26,36 +26,6 @@ def tlog(msg: str) -> None:
     print(f"[{ts()}] {msg}", flush=True)
 
 
-def _guess_caller_tag(kwargs: Dict[str, object]) -> str:
-    """从 messages 的所有 system 段拼合后猜哪个 agent 在调用,用于 token 日志可读。"""
-    messages = kwargs.get("messages") or []
-    sys_text = ""
-    for msg in messages:
-        if not isinstance(msg, dict) or msg.get("role") != "system":
-            continue
-        c = msg.get("content")
-        if isinstance(c, str):
-            sys_text += c
-        elif isinstance(c, list):
-            for item in c:
-                if isinstance(item, dict):
-                    sys_text += str(item.get("text", ""))
-    # minister 必须先判：大臣 system 末尾注入上月邸报全文(simulator 产出，含『日讲官』
-    # 『档房书办』等词)，若先判 extractor/simulator 会把大臣对话误标成结算 agent。
-    # 大臣自身开场白『扮演被皇帝召见』只在大臣 prompt 出现，且在邸报之前 → 用它先认。
-    if "扮演被皇帝召见" in sys_text or "大臣扮演" in sys_text:
-        return "minister"
-    # 结算/写诏 agent 的 system = game_world_prompt(很长) + 自身 prompt，关键锚点在中后段，
-    # 不能只看开头窗口。这几个 agent 不注入邸报，故全文搜各自唯一开场白即可。
-    if "档房书办" in sys_text:
-        return "extractor"
-    if "日讲官兼推演官" in sys_text or "月末推演" in sys_text:
-        return "simulator"
-    if "诏书润色" in sys_text or "正式诏书" in sys_text:
-        return "decree-writer"
-    return "?"
-
-
 def _record_usage(model_id: str, usage: object, caller_tag: str = "?") -> None:
     if usage is None:
         return
@@ -94,7 +64,8 @@ def _get_client_base_url(self_client_holder: object) -> str:
             return ""
         base = getattr(client, "base_url", "")
         return str(base) if base else ""
-    except Exception:
+    except Exception as exc:
+        tlog(f"[TOKEN] client base_url lookup failed: {type(exc).__name__}: {exc}")
         return ""
 
 
@@ -138,35 +109,34 @@ def install_token_stats_patch() -> None:
             return
         try:
             from openai.resources.chat.completions import Completions, AsyncCompletions  # type: ignore
-        except Exception:
+        except Exception as exc:
+            tlog(f"[TOKEN] install patch skipped: {type(exc).__name__}: {exc}")
             return
         orig_create = Completions.create
         orig_acreate = AsyncCompletions.create
 
         def patched_create(self, *args, **kwargs):
             base_url = _get_client_base_url(self)
-            caller_tag = _guess_caller_tag(kwargs)
             if is_dashscope_base_url(base_url):
                 _inject_dashscope_cache_mark(kwargs)
             resp = orig_create(self, *args, **kwargs)
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-                _record_usage(model_id, getattr(resp, "usage", None), caller_tag)
-            except Exception:
-                pass
+                _record_usage(model_id, getattr(resp, "usage", None))
+            except Exception as exc:
+                tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         async def patched_acreate(self, *args, **kwargs):
             base_url = _get_client_base_url(self)
-            caller_tag = _guess_caller_tag(kwargs)
             if is_dashscope_base_url(base_url):
                 _inject_dashscope_cache_mark(kwargs)
             resp = await orig_acreate(self, *args, **kwargs)
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
-                _record_usage(model_id, getattr(resp, "usage", None), caller_tag)
-            except Exception:
-                pass
+                _record_usage(model_id, getattr(resp, "usage", None))
+            except Exception as exc:
+                tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         Completions.create = patched_create  # type: ignore

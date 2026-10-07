@@ -616,4 +616,3 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
         assert all(str(r["context"] or "").strip() for r in r_edges)
     finally:
         restored.close()
-

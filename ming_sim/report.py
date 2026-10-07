@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Optional
 
 from ming_sim.assets import format_money, wrap
 from ming_sim.constants import ECONOMY_ACCOUNTS, SCORE_METRICS
 from ming_sim.db import GameDB
-from ming_sim.models import Event, GameState, period_label
+from ming_sim.models import GameState, period_label
 
 
 def metric_bar(value: int) -> str:

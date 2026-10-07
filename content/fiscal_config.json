@@ -1,5 +1,5 @@
 {
-  "_comment": "财政科目目录（数据驱动）。base/rate 单位＝月度万两/%，全盘按月。改默认值改本文件并升 db.py 的 FISCAL_SCHEMA_VERSION。budget_role: fixed=由 flows.compute_budget_lines 遍历按 base×rate 直接落账；dynamic=走省级 calc_province_fiscal / 皇庄专路，不在遍历目录里（base/rate 仍供省级公式与系数调节）。account/direction/display 仅 fixed 项用于生成 budget 行。order 控制预算表展示顺序。",
+  "_comment": "财政科目目录（数据驱动）。base/rate 单位＝月度万两/%，全盘按月。改默认值改本文件并升 schema_version（新档整体 seed，不做老档差量升版）。budget_role: fixed=由 flows.compute_budget_lines 遍历按 base×rate 直接落账；dynamic=省级起运/盐商等走 substrate hub，皇庄走 fiscal_config 基准专路，不在 fixed 遍历目录里（base/rate 仍供系数调节）。account/direction/display 仅 fixed 项用于生成 budget 行。order 控制预算表展示顺序。",
   "schema_version": 8,
   "items": [
     {"key": "田赋_rate",     "value": 68,  "kind": "rate", "budget_role": "dynamic", "note": "各省田赋实收率%，账面×此率/100。可升至 85（查隐田+清丈）"},

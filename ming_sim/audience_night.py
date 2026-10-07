@@ -1359,6 +1359,7 @@ def list_waiting_audience_summons(db: Any) -> List[Dict[str, Any]]:
             "location": location,
         })
     return _one_per_person(waiting)
+
 def settle_applied_arrived_summons(
     db: Any, applied: Dict[str, Any],
 ) -> List[str]:

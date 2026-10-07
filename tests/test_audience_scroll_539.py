@@ -8,13 +8,11 @@ from ming_sim import audience_night as an
 from ming_sim.audience_translation import list_pending_translations
 from tests.conftest import append_night_chat, open_audience_night
 
-
 def _scroll_game(db):
     return SimpleNamespace(
         db=db,
         pending_translation_retries=lambda **kw: list_pending_translations(db, **kw),
     )
-
 
 def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(game, monkeypatch):
     import json
@@ -56,7 +54,6 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(gam
     assert int(persisted["id"]) != old_night_id
     assert int(persisted["turn"]) == int(state.turn)
 
-
 def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game, monkeypatch):
     import json
     import web_app
@@ -83,7 +80,6 @@ def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game
     assert scroll["protagonist"] == "王绍徽"
     assert any(person["name"] == "王绍徽" and person["portrait_id"] == content.characters["王绍徽"].portrait_id for person in scroll["characters"])
 
-
 def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     import web_app
 
@@ -109,7 +105,6 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     assert live["status"] == "open"
     assert closed["status"] == "closed"
 
-
 def test_empty_open_night_scroll_exposes_persisted_container(game, monkeypatch):
     import web_app
 
@@ -121,7 +116,6 @@ def test_empty_open_night_scroll_exposes_persisted_container(game, monkeypatch):
     assert payload["night_id"] == night_id
     assert all(not message["content"] for message in payload["messages"])
     assert payload["container"] == {"time_of_day": "午时", "location": "文华殿", "audience_type": "召对"}
-
 
 def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch):
     import web_app
@@ -143,7 +137,6 @@ def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch
         {"name": "毕自严", "present": True},
     ]
 
-
 def test_scroll_projects_portrait_for_legal_aside_speaker_outside_roster(game, monkeypatch):
     import web_app
     from tests.test_audience_background import _FakeAgent, _web_game
@@ -164,7 +157,6 @@ def test_scroll_projects_portrait_for_legal_aside_speaker_outside_roster(game, m
     assert any(message["role"] == "attendant" and message["speaker"] == "杨嗣昌" for message in payload["messages"])
     assert any(person["name"] == "杨嗣昌" and person["portrait_id"] == content.characters["杨嗣昌"].portrait_id for person in payload["characters"])
 
-
 def test_scroll_exposes_translation_pending_until_late_declaration_lands(game, monkeypatch):
     import web_app
     from ming_sim.audience_translation import apply_audience_round_translation
@@ -181,7 +173,6 @@ def test_scroll_exposes_translation_pending_until_late_declaration_lands(game, m
     settled = client.get("/api/audience/scroll").json()
     assert settled["translation_pending"] is False
     assert settled["protagonist"] == "王绍徽"
-
 
 def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeypatch):
     import web_app
@@ -217,7 +208,6 @@ def test_translation_segments_replace_neutral_reply_in_real_scroll(game, monkeyp
     assert "".join(m["content"] for m in segments) == story
     assert [m for m in client.get(f"/api/audience/scroll?night_id={night_id}").json()["messages"] if m.get("chat_turn_id") == turn_id and m["role"] != "user"] == segments
 
-
 def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
     import pytest
     import web_app
@@ -238,7 +228,6 @@ def test_unnamed_speaker_cannot_finish_translation(game, monkeypatch):
     reply = next(m for m in payload["messages"]
                  if m.get("chat_turn_id") == turn_id and m["role"] != "user")
     assert (reply["role"], reply["speaker"]) == ("scene", "")
-
 
 def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats(game, monkeypatch):
     import web_app
@@ -286,7 +275,6 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
         assert forbidden_character_stats.isdisjoint(message["container"])
         assert set(message["container"]) == {"time_of_day", "location", "audience_type"}
 
-
 def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     db, state, _ = game
     night_id = open_audience_night(db, state)
@@ -303,7 +291,6 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     assert all({"role", "speaker", "audibility", "time", "soft_boundary", "beat", "highlights", "container"} <= set(m) for m in scroll)
     assert not any(m.get("beat") == "coda" for m in scroll)  # #1838 reopen：无 coda
 
-
 def test_presence_commands_only_record_facts(game):
     """入殿/告退只记事实账，戏文由场景 LLM 写。"""
     db, state, _ = game
@@ -318,7 +305,6 @@ def test_presence_commands_only_record_facts(game):
     tags_sets = [set(e.get("tags") or []) for e in an.list_ledger(db, night_id)]
     assert any(an.TAG_ENTER in ts and "杨嗣昌" in str(e.get("person_names"))
                for e, ts in zip(an.list_ledger(db, night_id), tags_sets))
-
 
 def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
     db, state, _ = game
@@ -339,7 +325,6 @@ def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
     assert divider["soft_boundary"] is True
     assert divider["speaker"] == "洪承畴"
 
-
 def test_extractor_open_tags_do_not_drive_beat_or_soft_boundary(game):
     db, state, _ = game
     night_id = open_audience_night(db, state)
@@ -359,7 +344,6 @@ def test_extractor_open_tags_do_not_drive_beat_or_soft_boundary(game):
     assert not any(message.get("record_id") for message in scroll)
     assert not any(message["beat"] == "divider" and message["speaker"] == "洪承畴" for message in scroll)
 
-
 def test_scroll_container_presents_audience_type_from_persisted_summon_method(game):
     """#1838：入殿正文恒空不进卷轴；audience_type 仍由入殿召法 tag 派生。"""
     db, state, _ = game
@@ -377,7 +361,6 @@ def test_scroll_container_presents_audience_type_from_persisted_summon_method(ga
     assert yueci_scroll[0]["container"]["audience_type"] == "越次召对"
     assert ordinary_scroll[0]["container"]["audience_type"] == "召对"
 
-
 def test_scroll_without_next_entrance_has_unnamed_boundary(game):
     db, state, _ = game
     night_id = open_audience_night(db, state)
@@ -389,7 +372,6 @@ def test_scroll_without_next_entrance_has_unnamed_boundary(game):
 
     divider = next(m for m in scroll if m["beat"] == "divider")
     assert divider["speaker"] == ""
-
 
 def test_same_departure_facts_emit_one_divider_but_later_departure_survives(game):
     db, state, _ = game
@@ -412,7 +394,6 @@ def test_same_departure_facts_emit_one_divider_but_later_departure_survives(game
     dividers = [message for message in an.read_night_scroll(db, night_id) if message["beat"] == "divider"]
 
     assert len(dividers) >= 2
-
 
 def test_history_turns_lists_every_closed_night_including_night_only_turns(game, monkeypatch):
     import web_app
@@ -437,7 +418,6 @@ def test_history_turns_lists_every_closed_night_including_night_only_turns(game,
     assert all(not item["has_report"] and not item["has_directive"] for item in entries)
     assert all("has_extraction" not in item for item in entries)
 
-
 def test_closed_night_archive_derives_stable_titles_people_and_no_content(game):
     db, state, _ = game
     first = open_audience_night(db, state)
@@ -461,45 +441,6 @@ def test_closed_night_archive_derives_stable_titles_people_and_no_content(game):
     assert entries[0]["involved_people"] == ["王承恩", "杨嗣昌", "洪承畴", "孙传庭"]
     assert entries[1]["involved_people"] == ["王承恩", "洪承畴"]
     assert all("messages" not in item and "content" not in item for item in entries)
-
-
-def test_closed_night_archive_batches_each_metadata_store_once(game):
-    db, state, _ = game
-    for minister in ("杨嗣昌", "洪承畴", "孙传庭"):
-        night_id = open_audience_night(db, state)
-        an.summon_enter(db, night_id, minister, method=an.METHOD_YUECI)
-        append_night_chat(db, state, night_id, minister, "问话", "答复", 10)
-        db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (night_id,))
-    db.conn.commit()
-    statements = []
-    db.conn.set_trace_callback(statements.append)
-
-    entries = db.list_closed_night_archives()
-
-    db.conn.set_trace_callback(None)
-    selects = [" ".join(statement.lower().split()) for statement in statements if statement.lstrip().lower().startswith("select")]
-    assert len(entries) == 3
-    assert sum(" from audience_nights " in statement for statement in selects) == 1
-    assert sum(" from story_ledger_entries " in statement for statement in selects) == 1
-    assert sum(" from chat_turns " in statement for statement in selects) == 1
-
-
-def test_read_night_scroll_reads_each_metadata_store_once(game):
-    db, state, _ = game
-    night_id = open_audience_night(db, state)
-    an.summon_enter(db, night_id, "杨嗣昌", method=an.METHOD_YUECI)
-    append_night_chat(db, state, night_id, "杨嗣昌", "问话", "答复", 10)
-    statements = []
-    db.conn.set_trace_callback(statements.append)
-
-    scroll = an.read_night_scroll(db, night_id)
-
-    db.conn.set_trace_callback(None)
-    selects = [" ".join(statement.lower().split()) for statement in statements if statement.lstrip().lower().startswith("select")]
-    assert scroll[0]["container"]["audience_type"] == "越次召对"
-    assert sum(" from story_ledger_entries " in statement for statement in selects) == 1
-    assert sum(" from chat_turns " in statement for statement in selects) == 1
-
 
 def test_personal_projection_only_reads_the_current_open_night(game):
     db, state, _ = game

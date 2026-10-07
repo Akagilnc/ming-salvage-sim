@@ -13,9 +13,8 @@ shape 校验（顶层合法／必需字段在），零 regex、零词表、零�
 奏疏体零数值只在输入侧以正向措辞落实（prompt＋定性盘面投影）。
 
 载体（票面 F2）：复用既有 pending_decisions 表，kind='rescript_draft' 行；只投影既有
-issue 盘面事实，不新建 issue。event_id 绑定走 bind_decisions_to_candidate_events 同款
-纪律——权威快照（喂给 LLM 的 issue 盘面投影）为准，不信 LLM 回显；无对应 issue 的
-急务用确定性合成 id `urgent:{turn}:{idx}`。
+issue 盘面事实，不新建 issue。event_id 以喂给 LLM 的 issue 盘面投影为准，不信 LLM
+回显。
 """
 
 from __future__ import annotations
@@ -36,8 +35,9 @@ from ming_sim.exceptions import LLMContractError
 from ming_sim.participant_roster import PARTICIPANT_LEAD_TIER, PARTICIPANT_TIERS
 from ming_sim.structured_decree import StructuredDecreeCombinationError
 
-# 整 option 替换语义标记（非 object 等）；field_failures 中出现时合并器接受完整 option 体。
-_OPTION_REPLACE_FIELD = "option"
+# #1746：单 option 契约失败（缺/错/组合/接地/形）→ RescriptOptionMissingFieldsError。
+# decision: heal-covers-illegal-values-too（不问错在哪；不按错误种类分闸）
+# 整 option 替换语义标记（非 object 等）；出现在 missing_fields 时合并器接受完整 option 体。_OPTION_REPLACE_FIELD = "option"
 
 
 def _field_failure(

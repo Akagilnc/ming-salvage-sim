@@ -125,12 +125,15 @@ def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_pat
 
     prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-facts")
     listed = list_materials(prepared.root)
-    # 文字事实进场景目录 人物/<名>/按月实况.txt
-    facts_rel = f"人物/{sun}/按月实况.txt"
-    assert facts_rel in listed
+    # 文字事实进场景目录 人物/<safe_segment>/按月实况.txt（#1830 safe path）
+    from ming_sim.materials import _safe_segment
+    person_seg = _safe_segment(sun)
+    facts_rel = next(p for p in listed if p.startswith(f"人物/{person_seg}/") and p.endswith("按月实况.txt"))
     assert arm_injury in read_material(prepared.root, facts_rel)
-    public_rel = f"人物/{sun}/公开说法/{state.year}年{state.period}月.txt"
-    assert public_rel in listed
+    public_rel = next(
+        p for p in listed
+        if p.startswith(f"人物/{person_seg}/公开说法/") and p.endswith(".txt")
+    )
     assert death_rumour in read_material(prepared.root, public_rel)
 
 

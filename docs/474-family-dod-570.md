@@ -64,8 +64,8 @@
 
 | AC | 证据指针 |
 |---|---|
-| 大政令打回 / 寻常顺颁〔闸〕 | `scripts/promulgation_gate_561.py` → `docs/evidence/issue-561-gate.json` |
-| 留中重判可改〔闸〕 | 同上 evidence `scenarios` |
+| 大政令打回 / 寻常顺颁〔闸〕 | `scripts/promulgation_gate_561.py` |
+| 留中重判可改〔闸〕 | 同上脚本 `scenarios` |
 | 默认同意与亲允同批〔CI〕 | `tests/test_promulgation_judge_561.py` |
 | 上下文无 satisfaction〔CI〕 | `tests/test_promulgation_judge_561.py` |
 | 受损清单持久化〔CI〕 | `tests/test_promulgation_judge_561.py` |
@@ -83,7 +83,7 @@
 | 品级带覆盖 allowed_types | `tests/test_office_rank_562.py` |
 | 白身授巡抚打标 / 起复分支 | `tests/test_office_rank_562.py` |
 | offices.json 单真源 | `tests/test_office_rank_562.py`；`content/offices.json` |
-| 判官破格从严〔闸〕 | `scripts/break_rank_judge_gate_562.py` → `docs/evidence/issue-562-break-rank-judge.json` |
+| 判官破格从严〔闸〕 | `scripts/break_rank_judge_gate_562.py` |
 
 ## #563 S8 批红三选
 
@@ -166,10 +166,10 @@
 
 | AC | 证据指针 |
 |---|---|
-| ① 验收锚全绿（P-3） | `scripts/family_tail_acceptance_570.py` → `docs/evidence/issue-570-acceptance-anchors.json` → `summary.checks`（cabinet / bare_rejected+force_three_costs / midzhi_force_e2e） |
+| ① 验收锚全绿（P-3） | `scripts/family_tail_acceptance_570.py` → `summary.checks`（cabinet / bare_rejected+force_three_costs / midzhi_force_e2e） |
 | ② 月中 restore 四面 | `tests/test_family_tail_restore_570.py` |
 | ③ 债单+试玩指引 | `docs/474-playtest-guide.md`；issue #570 交付评论 |
-| ④ 中旨螺旋〔闸〕 | `scripts/midzhi_spiral_judge_gate_570.py` → `docs/evidence/issue-570-midzhi-spiral.json` → `summary.passed` / `summary.diagnosis`（红则债，不自豁、不造棘轮） |
+| ④ 中旨螺旋〔闸〕 | `scripts/midzhi_spiral_judge_gate_570.py` → `summary.passed` / `summary.diagnosis`（红则债，不自豁、不造棘轮） |
 | ⑤ P4 哨兵 | 确定性：`tests/test_p4_guard_new_surfaces_547.py`（含 `test_family_dossier_brief_and_progress_keep_system_words_out`）；LLM 三面：acceptance 闸 `p4_gazette_clean` / `p4_memorial_clean` / `p4_audience_brief_clean` |
 | ⑥ 0055/0056 回注 | `docs/570-adr0055-backref-checklist.md`（8 项）；0056 靶点=空集，对齐 #564 Implementation Decisions |
 | ⑦ 全族 DoD | 本文逐票逐 AC；全量 pytest 最终态绿 |

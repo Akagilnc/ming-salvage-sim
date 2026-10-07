@@ -1,14 +1,15 @@
 # 人物性格细化计划
 
+> **状态：被取代的历史计划（#1843）**。下文仍描述已退役的 `score_extractor` / `season_simulator` 接法与 `character_style_updates` 路径，**不得再按此施工**。
+> 现役结算与人物写契约见 [`SETTLEMENT_FLOW`](SETTLEMENT_FLOW.md)、[`DELTA_SCHEMA`](DELTA_SCHEMA.md)、ADR 0009；关系层真源见 ADR 0085 / 0082。
+
 > **⚠️ 关系层迁出注记（2026-07-06，#479 设计闸 Q6 拍定；ADR 0085 为唯一 canonical）**——本文各节处置：
 > ① A 节 style 第 3 层 private_ties、第 4 层 emperor_memory：**迁出**——关系真源归 #479 边引擎，现存关系句转开局 seed 素材（ADR 0086）。
 > ② B 节 `character_style_updates` 软进化：**收窄**为人物自身变化，关系变化一律走边事件。
 > ③ C 节 `record_minister_memory` 工具：**废止**——由 ADR 0079＋召对口写端（ADR 0082）取代。
 > ④ style 保留域：**收缩**为人物固有层（基调＋quirks＋立人事例）。
-> 本文其余部分按此裁剪后再执行。
 
 > 从 `docs/plan-military-character-events.md` 第二节 2.1 / 2.4 部分拆出。聚焦"性格细化 + style 进化"，不含郑芝龙 / 台湾（仍留母文档 2.2 / 2.3）。
-> 约束沿用："设定 JSON 是唯一来源"、"无 fallback"、不破坏 DeepSeek 前缀缓存。
 
 ---
 
