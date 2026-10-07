@@ -42,79 +42,21 @@
 
 ---
 
-### 月结算公式（`calc_province_fiscal`）
+### 月结算（现役唯一引擎＝`substrate_hub`）
 
-#### 第一步：系数计算
+旧 `calc_province_fiscal`（`collection_rate` / `transport_ratio` / `liao_ratio` 系数公式）已退出，**不再是现役月收核**。现役路径在 `flows.apply_fixed_period_flows`：
 
-```
-# 实收率：士绅阻力 + 民变决定能征到多少
-collection_rate = 1.0
-               - gentry_resistance / 200
-               - max(0, unrest - 20) / 250
-# 钳到 [0.30, 1.00]
+1. **中央 hub 拨付**：京运补 + 中央军饷份额优先占用月初国库（`_compute_substrate_hub_outbound`）。
+2. **省级基座 tick**：明控且已 seed 的省走 `_advance_province_fiscal_substrate`（三饷/火耗/起运存留/宗禄/逋赋等，设计真源见 [FISCAL_PROVINCE_SUBSTRATE.md](../FISCAL_PROVINCE_SUBSTRATE.md)）。
+3. **旁路入库**：省级起运到京、盐税/商税中央旁路入太仓；太仓人为/自然亏空入对应 container；军饷分源欠账（省/中央）由 hub 与省基座共同推进。
+4. **建筑产出与维护、固定 fiscal_config 流水**仍在同一 `apply_fixed_period_flows` 内落账。
 
-# 解运比：腐败度 + 民变决定税银实际到账比例
-transport_ratio = 0.95
-               - corruption / 200
-               - max(0, unrest - 30) / 300
-# 钳到 [0.35, 0.92]
+一次性诏书收支不经本 tick，走声明 `economy_moves`（见 [DELTA_SCHEMA.md](../DELTA_SCHEMA.md)）。人口口径＝「人」；无旧档 legacy 万人/旧公式分叉。
 
-# 辽饷解运比：额外受皇威影响（皇威低→地方截留多）
-liao_ratio = transport_ratio × (0.5 + 皇威 / 200)
-# 钳到 [0.30, 0.95]
-```
+### 盘面压力如何仍影响钱粮（不经旧系数公式）
 
-#### 第二步：各税源
-
-```
-# 税种拆分：从 tax_per_turn 扣除辽饷/盐税/商税固定额，剩余为田赋基数
-田赋基数 = max(0, tax_per_turn - liao_xiang - salt_tax - commerce_tax)
-
-田赋月收 = 田赋基数 × collection_rate × transport_ratio  → 国库
-辽饷月收 = liao_xiang × liao_ratio                       → 国库
-盐税月收 = salt_tax × transport_ratio                     → 国库
-商税月收 = commerce_tax × transport_ratio                 → 国库
-
-皇庄月收 = huang_tian × 0.57（万两/万亩/月）             → 内库
-           （仅北直隶 huang_tian>0；0.57 = 20万两/月 ÷ 35万亩基准）
-```
-
-#### 第三步：全国汇总
-
-```
-国库月收 = Σ(各省 田赋 + 辽饷 + 盐税 + 商税)
-内库月收 = Σ(各省 皇庄收入) + fiscal_config 皇庄_base
-```
-
-> 注：内库皇庄基准走 `fiscal_config.皇庄_base`（已校准=20万/月）；`huang_tian` 字段用于没收藩王庄田后的**增量**计算。
-
----
-
-### 典型数值示例
-
-| 省份 | corruption | gentry_resistance | unrest | transport_ratio | collection_rate | 月收（估） |
-|------|-----------|------------------|--------|----------------|----------------|----------|
-| 南直隶 | 44 | 85 | 25 | 0.73 | 0.56 | ~51万 |
-| 浙江 | 38 | 78 | 22 | 0.76 | 0.60 | ~46万 |
-| 陕西 | 72 | 42 | 78 | 0.43 | 0.51 | ~10万 |
-| 北直隶 | 62 | 55 | 35 | 0.62 | 0.67 | ~22万 |
-
-全国月收合计约 **398万两**（开局基准）。
-
----
-
-### 动态变化
-
-**收入减少的路径：**
-- 清查/抄家诏书 → `gentry_resistance` 短期暴涨 → `collection_rate` 下降 → 田赋减少
-- 灾荒事件 → `unrest` 上升 → 双系数同时下降
-- 皇威低落 → `liao_ratio` 下降 → 辽饷截留增加
-
-**收入增加的路径：**
-- issue「清丈田亩」推进到高 bar → `gentry_resistance` 下降 → 实收率提升
-- 整治贪腐成功 → `corruption` 下降 → 解运比提升
-- 没收藩王庄田 → `wang_tian` 转 `huang_tian` → 内库增量
-- 诏书增商税/盐税 → `salt_tax`/`commerce_tax` 基数提升
+- 士绅阻力 / 民变 / 腐败等仍是省域与叙事压力字段，经局势、声明 `region_delta` 与基座参数影响可征可解，**不是**再套一层 `collection_rate = 1 - gentry/200` 的平行核。
+- 清丈、治腐、抄没、增盐商税等仍应落到结构化声明（`region_delta` / `fiscal_changes` / `economy_moves` / 局势效果），restore 只读 DB 接续。
 
 ---
 
@@ -170,7 +112,7 @@ liao_ratio = transport_ratio × (0.5 + 皇威 / 200)
 - 存储位置：`regions.fiscal` JSON，key=`corruption`，0-100
 - **读取**：`simulation.py` 把 `json_extract(fiscal,'$.corruption')` 喂进推演 payload
 - **写入**：`apply_region_deltas` 识别 `FISCAL_SCORE_FIELDS`，解析 JSON → patch → 写回
-- **LLM 触发条件**（`score_extractor.md`）：整治贪腐/巡按/抄家/杀士绅头领 → 负值 ±5~±20；放任失控 → 正值
+- **声明触发**（经 `region_delta` / 局势效果，旧 `score_extractor` 已退役）：整治贪腐/巡按/抄家等叙事须落到结构化字段；引擎只 clamp 与记账
 
 ---
 
@@ -195,9 +137,11 @@ apply 时：
 
 | 功能 | 文件 | 函数/位置 |
 |------|------|---------|
-| 省级月收计算 | `ming_sim/flows.py` | `calc_province_fiscal` |
-| 月度财政 tick | `ming_sim/flows.py` | `apply_fixed_period_flows` |
-| 腐败度 delta 落库 | `ming_sim/db.py` | `apply_region_deltas` → FISCAL_SCORE_FIELDS 分支 |
-| 省级字段白名单 | `ming_sim/constants.py` | `FISCAL_SCORE_FIELDS` |
-| fiscal_config 初始值 | `ming_sim/db.py` | `init_fiscal_config` |
-| 推演 payload 含 corruption | `ming_sim/simulation.py` | `json_extract(fiscal,'$.corruption')` |
+| 月度财政 tick（唯一入口） | `ming_sim/flows.py` | `apply_fixed_period_flows` |
+| 中央 hub 拨付 | `ming_sim/flows.py` | `_compute_substrate_hub_outbound` 等 |
+| 省级基座推进 | `ming_sim/flows.py` | `_advance_province_fiscal_substrate` |
+| 盐商税旁路 / 太仓亏空 | `ming_sim/flows.py` | `_substrate_hub_salt_commerce_income_split` 等 |
+| 一次性收支声明段 | `ming_sim/entities/economy/` | `delta_section` / `apply` |
+| 腐败度等省域 delta | 领域 `region` 段 → DB | `FISCAL_SCORE_FIELDS` 白名单 |
+| 省级基座设计 | `docs/FISCAL_PROVINCE_SUBSTRATE.md` | spike / 参数真源 |
+| 旧 `calc_province_fiscal` | — | **已删除，勿再引用为现役核** |

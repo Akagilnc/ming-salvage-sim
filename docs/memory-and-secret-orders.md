@@ -8,4 +8,4 @@
 
 承办人逐月密奏不直接结案。月末从真实效果、案卷来源与执行判决累计实况；到期后 `settle_due_secret_orders()` 按合同对账，`db.close_secret_order()` 记录结案。奏报不能改变世界状态。
 
-月末公共推演只看公开的到期承诺，不预读密令正文；密令分组仅进入 personnel_secret extractor 的独立轨。披露事件才可使密令内容成为公开知识（#883）。
+月末公共推演只看公开的到期承诺，不预读密令正文。密令实况由月链整月供料 `build_secret_orders_supply_feed` → `run_secret_orders_supply`（`month_chain._step_4a_secret_order_supply`）生产密奏/披露/实况，再经声明字段与 `declaration_dispatch`/`settle_delta` 落库；旧五模块 `personnel_secret` extractor 包装已退役，字段名仍可标私密 provenance（#883）。披露事件才可使密令内容成为公开知识。

@@ -47,7 +47,7 @@
   "dossier_reconciliations": [], // 在途拨帑对账提案（#567 / ADR 0054）
   "faction_denunciations": [], // 政敌检举条目（#627 / ADR 0077 ID-12）
 
-  // ── personnel_secret 模块 ──
+  // ── 密令私密声明字段（旧五模块 personnel_secret extractor 已退役；字段名仍标 provenance）──
   "人物变更":                    [],  // ADR 0009 单一人物入口：每项必带「动作」
   "secret_order_updates":       [],  // 密令副作用
   "covert_exec_selections":     [],  // #1504 密令带内选态
@@ -327,7 +327,7 @@ canonical 段形＝list，每项落一道加派旨：逐省累积账当回合落
 
 ### `secret_dossier_participants` — #1252 密令案卷参与人追加
 
-personnel_secret 模块产出；与公共 `dossier_participants` **分立**（字段名即 provenance，禁止共享槽位 + union 授权）。settle 内经同一 `append_decree_dossier_participants` 写原语逐项拒收留痕（ADR 0015），不 fail-loud。
+密令侧私密声明字段（字段名即 provenance，与公共 `dossier_participants` **分立**，禁止共享槽位 + union 授权）。由月链密令供料 / 声明路径写入，经 `declaration_dispatch` → `settle_delta` 承接；旧五模块 `personnel_secret` extractor 包装已退役。settle 内经同一 `append_decree_dossier_participants` 写原语逐项拒收留痕（ADR 0015），不 fail-loud。
 
 | 字段 | 约束 |
 |---|---|
@@ -337,7 +337,7 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 | `delegator_id` | **必填**同案已有主办/协办 |
 | `role` | 可选职分文字 |
 
-读缝：`secret_dossier_rosters`（personnel_secret 私轨；每项 `dossier_id`+`participant_roster`，同 `monthly_dossier_reports` 口径）。键控用 `dossier_id`，不另起 `order_id` 键空间。公共 `dossier_participants` 对密令案卷 id 仍拒（#883 隔离不变）。
+读缝：`secret_dossier_rosters`（密令私密 provenance 读缝；每项 `dossier_id`+`participant_roster`，同 `monthly_dossier_reports` 口径）。键控用 `dossier_id`，不另起 `order_id` 键空间。公共 `dossier_participants` 对密令案卷 id 仍拒（#883 隔离不变）。
 
 ### 背书条目（ADR 0070）
 
@@ -385,12 +385,12 @@ personnel_secret 模块产出；与公共 `dossier_participants` **分立**（�
 | `loss_amount`（别名 `折损`） | 与 `arrived_amount` **二选一**；整数，单位两；引擎换算 `arrived = ordered - loss` |
 | `note` | 可选文本 |
 
-引擎行为：只按护行/稽核在场口径 **clamp** 实抵上下界；**不二次扣库**、不改原 `economy_move`、**不写 0058 进展**（密奏仍走 personnel_secret / #566）。无提案时对扫描面内每路按口径中位机械落账（有/无护行同一存储、逐路键控）。
+引擎行为：只按护行/稽核在场口径 **clamp** 实抵上下界；**不二次扣库**、不改原 `economy_move`、**不写 0058 进展**（密奏走月链 `run_secret_orders_supply` / #566）。无提案时对扫描面内每路按口径中位机械落账（有/无护行同一存储、逐路键控）。
 
 > #1745 / ADR 0015-D6/D7：可拆项坏引用（未知/非在途/已结清/已撤回案卷、缺量字段、量值非法、重复）由 `record_monthly_grant_reconciliations` **逐项域级拒收留痕**；section 值非 list / 非 dict 列表项的**形状拒收**归 `sanitize_delta_shape` 独家（`invalid_shape`，item 恒 `{raw_value:…}`，含 dict 坏容器），一次归属 `dossier_reconciliations`，**不整月 abort、不双记**。拒收经外层 `RejectionCollector`（RejectedItem 四字段 item/reason/category/source）；好项与未提案目标的中位落账仍在同一 atomic。空提案（缺省/`[]`）合法——程序用中位默认；无在途目标却收到提案 → 逐项 `missing_ref`，不落假对账行。
 
 ### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
-personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。
+由月链整月密令供料（`month_chain.run_secret_orders_supply`）生产，经声明/`settle_delta` 承接；`record_monthly_dossier_progress` 消费。旧五模块 extractor 包装已退役。
 - 每项必须带 `dossier_id`、`progress_band`、`memorial_text`；三者皆非空。
 - 可选 `origin`：承办人在该条密奏里自己声明的行动。`same_faction_blind` 为睁眼闭眼，`private_goods` 为带私货；两项都声明时用 `+` 连接。未作此选择则省略。同派或敌派不补写行动；未知记号不落成行动。落库后从该条密奏的 origin 续读。
 - 合资格集 = `decree_dossiers.status` 为 `promulgated` / `executing` 且所关联 `secret_orders.status='active'` 的案卷（读缝 `monthly_dossier_reports` / `list_monthly_dossier_progress_nudges`；#1504：不限 tag、不限期限月数）。
