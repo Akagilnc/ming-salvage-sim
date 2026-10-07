@@ -2670,7 +2670,6 @@ def event_to_issue(
     llm_config: Any = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
     entity_rejections: Optional[List[Dict[str, object]]] = None,
-    entity_commit: Optional[bool] = None,
 ) -> Optional[int]:
     """把一个预设 event（EVENTS / SEED_EVENTS）落成一条 situation issue。供推演判定触发后调用。
 
@@ -2753,7 +2752,7 @@ def event_to_issue(
             content=content if content is not None else _ctx(),
             llm_config=llm_config,
             applied_person_changes=applied_person_changes,
-            commit=commit if entity_commit is None else entity_commit,
+            commit=commit,
         )
         if entity_rejections is not None:
             entity_rejections.extend(rejections)
@@ -4927,7 +4926,6 @@ def apply_issue_tracker_output(
                 llm_config=llm_config,
                 applied_person_changes=issue_person_changes,
                 entity_rejections=entity_rejections,
-                entity_commit=commit_now,
             )
             if issue_id is None:
                 # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
