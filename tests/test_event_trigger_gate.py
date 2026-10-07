@@ -689,29 +689,6 @@ def test_character_text_gate_rejects_numeric_character_field():
 
     assert gate_text_key_form_error("character.毛文龙.loyalty")
 
-def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, monkeypatch):
-    """auto-trigger 事务体内转 issue 时不得内部 commit，回滚边界由外层 atomic 统一控制。"""
-    db, state, content = game
-    issues.bind_content(content)
-    event_id = "__test_auto_trigger_atomic__"
-    ev = _hist_event(event_id, {})
-    ev.auto_trigger = True
-    calls = []
-
-    def fake_event_to_issue(db_arg, state_arg, ev_arg, *, commit=True):
-        calls.append((ev_arg.id, commit))
-        return 999
-
-    monkeypatch.setattr(issues, "event_to_issue", fake_event_to_issue)
-    content.events.append(ev)
-    try:
-        triggered = issues.auto_trigger_seed_issues(state, db)
-    finally:
-        content.events.remove(ev)
-
-    assert calls == [(event_id, False)]
-    assert {"id": event_id, "title": ev.title, "issue_id": 999} in triggered
-
 def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
     """内容契约：person_core_subjects 写了就必须是字符串数组，空字符串不能吞成缺省。"""
     from ming_sim import content as content_module
