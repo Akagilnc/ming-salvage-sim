@@ -855,7 +855,6 @@ def apply_issue_tracker_output(
             db.breach_decree_dossier(
                 state, int(linked_dossier["id"]),
                 reason=str(cn.get("narrative") or "撤回成命"), commit=False,
-                close_target=False,
             )
         raw_cost = cn.get("applied_cost")
         cost = {} if raw_cost is None or deterministic_breach else raw_cost
