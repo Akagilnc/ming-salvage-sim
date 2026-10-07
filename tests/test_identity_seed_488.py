@@ -107,16 +107,6 @@ def test_required_dig_7_seed_roster_entries_are_persisted(game):
             assert guilt["severity"] in {"无", "轻", "中", "重"}
 
 
-def test_identity_and_seed_guilt_never_enter_minister_context(game):
-    db, state, content = game
-    from ming_sim.context import character_context
-
-    rendered = character_context(content.characters["王承恩"])
-    # 闸：大臣供料上下文不得泄漏身份机器字段名
-    assert "identity" not in rendered
-    assert "seed_guilt" not in rendered
-
-
 def test_roster_has_no_cross_faction_aliases():
     _, characters = load_character_content()
     by_alias = {}

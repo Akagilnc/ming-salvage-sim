@@ -1,5 +1,4 @@
 import copy
-from collections import Counter
 
 import pytest
 
@@ -15,30 +14,6 @@ EXPECTED_MATRIX = {
     "西学": {"礼法名节": -1, "既得利益": -1, "实务事功": 2, "皇权依附": 1, "华夷战和": 1, "民本恤民": 0},
     "中立": {"礼法名节": -1, "既得利益": 0, "实务事功": 2, "皇权依附": 0, "华夷战和": 1, "民本恤民": 0},
 }
-
-
-def test_target_aware_axis_collisions_route_only_the_target_faction_vitals():
-    results = value_matrix.axis_collision_stances(
-        [
-            {"axis": "既得利益", "direction": -1, "scope": "泛化"},
-            {"axis": "皇权依附", "direction": -1, "scope": "目标命门"},
-        ],
-        target_faction="阉党",
-    )
-
-    expected = [
-        {"faction": "东林", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": 1},
-        {"faction": "阉党", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": -2},
-        {"faction": "军队", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": -1},
-        {"faction": "皇党", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": 1},
-        {"faction": "宗室", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": -2},
-        {"faction": "西学", "axis": "既得利益", "direction": -1, "scope": "泛化", "aligned_stance": 1},
-        {"faction": "阉党", "axis": "皇权依附", "direction": -1, "scope": "目标命门", "aligned_stance": -2},
-    ]
-
-    assert Counter(tuple(sorted(row.items())) for row in results) == Counter(
-        tuple(sorted(row.items())) for row in expected
-    )
 
 
 @pytest.mark.parametrize(

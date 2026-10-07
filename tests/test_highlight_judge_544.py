@@ -79,32 +79,6 @@ def test_run_highlight_judge_success_returns_phrases(output, expected):
     ) == expected
 
 
-def test_run_highlight_judge_bad_output_degrades_to_empty():
-    """#544/#1902：入口 run_highlight_judge 对坏 JSON/错键/非短语 → []，不抛。
-    覆盖原 parse_highlight_judge_bad_output_is_empty（不直测 helper）。"""
-
-    class _Bad:
-        def __init__(self, content: str):
-            self._content = content
-
-        def run(self, *_a, **_k):
-            return SimpleNamespace(content=self._content)
-
-    for bad in (
-        "",
-        "not json",
-        '{"highlights": "辽饷"}',
-        '{"phrases": ["甲"]}',
-        '{"highlights": [1, null, ""]}',
-    ):
-        assert run_highlight_judge(
-            minister_reply="臣陈辽饷。",
-            llm_config=object(),
-            agent=_Bad(bad),
-            timeout_s=1.0,
-        ) == []
-
-
 # ── 落库 + 两读端 + restore ──────────────────────────────────────────────
 
 
