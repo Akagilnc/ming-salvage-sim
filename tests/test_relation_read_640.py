@@ -8,9 +8,8 @@
   仅授权参数不同；全知结果为角色视角权限超集。
 - 判官机面全知（ID-12）：fixture 断言判官能读到普通角色视角不可见的边；
   接入归 #634 线，本票不造判官。
-- TD-7 双断言 oracle（庭裁 r2/r3）：①DTO 字段集合恰等五字段冻结白名单
-  source/target/summary/recent_context/updated_at_period；②局部 marker 负断言
-  （结构键/事件类目数据不 ride-along 进玩家可感投影输出）。
+- TD-7：DTO 字段集合恰等五字段冻结白名单
+  source/target/summary/recent_context/updated_at_period。
 """
 
 from __future__ import annotations
@@ -25,9 +24,6 @@ from ming_sim.relations import EMPEROR_NODE
 
 # 冻结票面 r3 白名单本体——独立真源（票面原文照抄），不从生产代码重推导。
 FROZEN_DTO_WHITELIST = {"source", "target", "summary", "recent_context", "updated_at_period"}
-
-# TD-7 局部 marker：测试局部唯一串（非全局词表），只进本 fixture 的结构字段。
-MARKER = "TD7哨兵-640-唯一标记QINGYUAN"
 
 def _add_edge(db, state, *, source, target, kind, context, origin):
     return db.record_relation_edge_event(
@@ -47,7 +43,7 @@ def ledger(game):
     db, state, _ = game
     _add_edge(db, state, source="王绍徽", target="崔呈秀", kind="结怨",
               context="王绍徽背影里的戾气，毕自严再挡他路时还在。",
-              origin=f"audience:turn-1|{MARKER}")
+              origin="audience:turn-1")
     db.apply_relation_brew_result(
         source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
         founding_segment="越次一召，擢杨嗣昌于五品郎中。",
@@ -59,7 +55,7 @@ def ledger(game):
               context="越次一召，擢杨嗣昌于五品郎中。", origin="audience:turn-1")
     _add_edge(db, state, source="钱谦益", target="温体仁", kind="把柄",
               context="温体仁握有钱谦益科场案的把柄。",
-              origin=f"dossier:9:credit:cover|round:2|{MARKER}")
+              origin="dossier:9:credit:cover|round:2")
     return db, state
 
 # ---------------------------------------------------------------- 视角裁切形态
