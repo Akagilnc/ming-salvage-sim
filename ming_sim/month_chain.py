@@ -238,15 +238,7 @@ def _month_fact_materials(
     for row in db.list_pending_decisions(turn):
         if str(row.get("status") or "") != "decided":
             continue
-        raw_choice = row.get("choice")
-        if raw_choice is None:
-            choice = {}
-        elif isinstance(raw_choice, dict):
-            choice = raw_choice
-        else:
-            raise ValueError(
-                f"pending_decisions.choice 须为对象，得 {type(raw_choice).__name__}"
-            )
+        choice = row.get("choice") or {}
         answers.append({
             "title": row.get("title") or "",
             "label": choice.get("label") or "",
@@ -296,10 +288,8 @@ def _gazette_feed(db: Any, state: Any, chain: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _persisted_transit_arrivals(db: Any, turn: int) -> list:
-    """过月前半段已写入 resolve context 的本月抵达。缺键视为无抵达；键在而错形响亮。"""
-    ctx = db.get_resolve_context(int(turn)) or {}
-    payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
+def transit_arrivals_from_payload(payload: object) -> list:
+    """simulator_payload.transit_arrivals 单一读口：缺键/None→[]；list→list；错形响亮。"""
     if not isinstance(payload, dict):
         return []
     if "transit_arrivals" not in payload or payload.get("transit_arrivals") is None:
@@ -310,6 +300,13 @@ def _persisted_transit_arrivals(db: Any, turn: int) -> list:
             f"simulator_payload.transit_arrivals 须为 list，得 {type(arrivals).__name__}"
         )
     return list(arrivals)
+
+
+def _persisted_transit_arrivals(db: Any, turn: int) -> list:
+    """过月前半段已写入 resolve context 的本月抵达。"""
+    ctx = db.get_resolve_context(int(turn)) or {}
+    payload = ctx.get("simulator_payload") if isinstance(ctx, dict) else None
+    return transit_arrivals_from_payload(payload)
 
 
 def prepare_gazette_author_materials(db: Any, state: Any):
@@ -378,7 +375,13 @@ def month_chain_call_failure(db: Any, turn: int) -> Optional[Dict[str, Any]]:
     """核账期恢复投影只读：本月链上未消费的调用失败（无则 None）。"""
     chain = _load_chain(db, int(turn))
     failure = chain.get("call_failure")
-    return dict(failure) if isinstance(failure, dict) else None
+    if failure is None:
+        return None
+    if not isinstance(failure, dict):
+        raise ValueError(
+            f"month_chain.call_failure 须为对象，得 {type(failure).__name__}"
+        )
+    return dict(failure)
 
 
 def continue_world_after_answers(
@@ -458,15 +461,8 @@ def continue_decree_after_answers(
         # LLM 已成功且无问后文：空后果终态，方可清问。
         db.staged_declarations.clear_questions(decree_ref)
         return
-    raw_payload = dossier.get("payload")
-    if raw_payload is None:
-        payload = {}
-    elif isinstance(raw_payload, dict):
-        payload = raw_payload
-    else:
-        raise ValueError(
-            f"decree_dossiers.payload 须为对象，得 {type(raw_payload).__name__}"
-        )
+    # _dossier_row / get_decree_dossier 已保证 payload 为对象。
+    payload = dossier.get("payload") or {}
 
     def consume(result: Any) -> None:
         candidate = _ending_from_dispatch_result(result)
@@ -479,7 +475,7 @@ def continue_decree_after_answers(
 
     dispatch_month_segment(
         db, state, segment=prefix,
-        decree_payload=payload if isinstance(payload, dict) else {},
+        decree_payload=payload,
         llm_config=session.llm_config,
         source=source,
         alongside=consume,
@@ -683,8 +679,12 @@ def _consume_call_failure_for_retry(
 ) -> None:
     """玩家点「重试」再入主链：按需丢段，然后清失败标记，只续未完成步。"""
     failure = chain.get("call_failure")
-    if not isinstance(failure, dict):
+    if failure is None:
         return
+    if not isinstance(failure, dict):
+        raise ValueError(
+            f"month_chain.call_failure 须为对象，得 {type(failure).__name__}"
+        )
     step = str(failure.get("step") or "")
     if failure.get("escape_armed") and step in _TRANSLATE_ESCAPE_STEPS:
         _discard_segment_for_escape(chain, failure)
@@ -1079,15 +1079,8 @@ def _enrich_eligible_dossiers_for_supply(
         dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
         if dossier is not None:
             row["decree_text"] = str(dossier.get("decree_text") or "")
-            payload = dossier.get("payload")
-            if payload is None:
-                row["payload"] = {}
-            elif isinstance(payload, dict):
-                row["payload"] = payload
-            else:
-                raise ValueError(
-                    f"decree_dossiers.payload 须为对象，得 {type(payload).__name__}"
-                )
+            # get_decree_dossier → _dossier_row 已保证 payload 为对象。
+            row["payload"] = dossier.get("payload") or {}
             row["status"] = str(dossier.get("status") or "")
             contract = read_covert_task_contract(dossier)
             if contract is not None:
@@ -1709,15 +1702,7 @@ def _record_world_question_event_choices(
             event_id = bindings.get(str(row.get("event_id") or ""))
             if not event_id:
                 continue
-            raw_choice = row.get("choice")
-            if raw_choice is None:
-                choice = {}
-            elif isinstance(raw_choice, dict):
-                choice = dict(raw_choice)
-            else:
-                raise ValueError(
-                    f"pending_decisions.choice 须为对象，得 {type(raw_choice).__name__}"
-                )
+            choice = dict(row.get("choice") or {})
             db.record_event_petition_answer(
                 state, event_id, choice,
                 {
@@ -1747,15 +1732,7 @@ def _consume_rescript_answers(
         return
 
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
-        raw_choice = row.get("choice")
-        if raw_choice is None:
-            choice = {}
-        elif isinstance(raw_choice, dict):
-            choice = raw_choice
-        else:
-            raise ValueError(
-                f"pending_decisions.choice 须为对象，得 {type(raw_choice).__name__}"
-            )
+        choice = row.get("choice") or {}
         return {
             "label": str(choice.get("label") or ""),
             "hint": str(choice.get("hint") or ""),
@@ -1769,15 +1746,7 @@ def _consume_rescript_answers(
         event_id = str(row.get("event_id") or "")
         if not event_id.startswith("dossier:"):
             continue
-        raw_choice = row.get("choice")
-        if raw_choice is None:
-            choice = {}
-        elif isinstance(raw_choice, dict):
-            choice = raw_choice
-        else:
-            raise ValueError(
-                f"pending_decisions.choice 须为对象，得 {type(raw_choice).__name__}"
-            )
+        choice = row.get("choice") or {}
         _apply_decided_triad(db, state, row, choice, content=session.content)
 
     world_rows = [
@@ -1888,26 +1857,41 @@ def _advance_after_gazette(
 
     settled_year, settled_period = int(state.year), int(state.period)
     ending_outcome: Optional[Dict[str, object]] = None
+
+    def _optional_outcome(value: object, *, surface: str) -> Optional[Dict[str, object]]:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return dict(value)
+        raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
+
     with atomic_and_reload(db, state, content=content):
         if not state.ended:
-            outcome = declaration_outcome or chain.get("declaration_outcome") or victory_status(db, state)
+            outcome = _optional_outcome(
+                declaration_outcome if declaration_outcome is not None
+                else chain.get("declaration_outcome"),
+                surface="month_chain.declaration_outcome",
+            )
+            if outcome is None:
+                outcome = victory_status(db, state)
             if (
-                isinstance(outcome, dict)
-                and outcome.get("status") == ENDING_ONGOING
+                outcome.get("status") == ENDING_ONGOING
                 and state.turn >= TIMEOUT_TURN
             ):
                 outcome = {
                     "status": ENDING_TIMEOUT,
                     "summary": ENDING_LABELS.get(ENDING_TIMEOUT, ""),
                 }
-            if isinstance(outcome, dict) and outcome.get("status") != ENDING_ONGOING:
+            if outcome.get("status") != ENDING_ONGOING:
                 state.ended = True
                 state.ending_status = str(outcome.get("status") or "")
                 ending_outcome = dict(outcome)
-        elif isinstance(declaration_outcome, dict):
-            ending_outcome = dict(declaration_outcome)
-        elif isinstance(chain.get("declaration_outcome"), dict):
-            ending_outcome = dict(chain["declaration_outcome"])
+        else:
+            ending_outcome = _optional_outcome(
+                declaration_outcome if declaration_outcome is not None
+                else chain.get("declaration_outcome"),
+                surface="month_chain.declaration_outcome",
+            )
         from ming_sim.mechanical_tail import mark_mechanical_tail_pending
         mark_mechanical_tail_pending(
             db, turn, settled_year=settled_year, settled_period=settled_period,

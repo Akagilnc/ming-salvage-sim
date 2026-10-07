@@ -22,6 +22,15 @@ _TAIL_STATUS_DONE = "done"
 _TAIL_STATUS_FAILED = "failed"
 
 
+def _optional_chain_object(value: object, *, surface: str) -> Optional[Dict[str, Any]]:
+    """Declared optional object on month_chain: None→None; dict→dict; wrong shape loud."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return dict(value)
+    raise ValueError(f"{surface} 须为对象，得 {type(value).__name__}")
+
+
 def mechanical_tail_key(closed_turn: int) -> tuple:
     return ("mechanical-tail", int(closed_turn))
 
@@ -55,7 +64,9 @@ def _set_tail_status(
     from ming_sim import month_chain
 
     chain = month_chain._load_chain(db, int(closed_turn))
-    tail = dict(chain.get("mechanical_tail") or {})
+    tail = _optional_chain_object(
+        chain.get("mechanical_tail"), surface="month_chain.mechanical_tail",
+    )
     if not tail:
         return
     tail["status"] = status
@@ -243,7 +254,7 @@ def _run_tail_body(
         session, closed_turn=closed_turn, settled_year=settled_year,
         settled_period=settled_period, queue=queue, ticket=ticket,
     )
-    if isinstance(ending_outcome, dict) and ending_outcome.get("status"):
+    if ending_outcome and ending_outcome.get("status"):
         summary = generate_ending_summary_for_tail(
             db, closed_state, ending_outcome,
             llm_config=getattr(session, "llm_config", None),
@@ -276,11 +287,10 @@ def _submit_tail(
 
         def still_pending() -> bool:
             chain = month_chain._load_chain(session.db, int(closed_turn))
-            tail = chain.get("mechanical_tail")
-            return (
-                isinstance(tail, dict)
-                and tail.get("status") == _TAIL_STATUS_PENDING
+            tail = _optional_chain_object(
+                chain.get("mechanical_tail"), surface="month_chain.mechanical_tail",
             )
+            return bool(tail) and tail.get("status") == _TAIL_STATUS_PENDING
 
         try:
             # 扫描见到 pending 之后，上一张票可能已经终结。写闸内再读，
@@ -382,8 +392,10 @@ def _pending_mechanical_tails(
     pending: list[tuple[int, Dict[str, Any]]] = []
     for turn in _resolve_context_turns(db, current_turn):
         chain = month_chain._load_chain(db, turn)
-        tail = chain.get("mechanical_tail")
-        if isinstance(tail, dict) and tail.get("status") == _TAIL_STATUS_PENDING:
+        tail = _optional_chain_object(
+            chain.get("mechanical_tail"), surface="month_chain.mechanical_tail",
+        )
+        if tail is not None and tail.get("status") == _TAIL_STATUS_PENDING:
             pending.append((turn, tail))
     return pending
 
@@ -393,8 +405,11 @@ def failed_mechanical_tail(db: Any, state: Any) -> Optional[tuple[int, Dict[str,
     from ming_sim import month_chain
 
     for turn in _resolve_context_turns(db, int(getattr(state, "turn", 0) or 0)):
-        tail = month_chain._load_chain(db, turn).get("mechanical_tail")
-        if isinstance(tail, dict) and tail.get("status") == _TAIL_STATUS_FAILED:
+        tail = _optional_chain_object(
+            month_chain._load_chain(db, turn).get("mechanical_tail"),
+            surface="month_chain.mechanical_tail",
+        )
+        if tail is not None and tail.get("status") == _TAIL_STATUS_FAILED:
             return turn, tail
     return None
 
@@ -410,7 +425,9 @@ def retry_failed_mechanical_tail(session: Any) -> bool:
         session, closed_turn=turn,
         settled_year=int(tail.get("settled_year") or 0),
         settled_period=int(tail.get("settled_period") or 0),
-        ending_outcome=tail.get("ending_outcome") if isinstance(tail.get("ending_outcome"), dict) else None,
+        ending_outcome=_optional_chain_object(
+            tail.get("ending_outcome"), surface="month_chain.mechanical_tail.ending_outcome",
+        ),
         source=Provenance.system_simulation,
     )
 
@@ -421,8 +438,11 @@ def ending_summary_pending(db: Any, state: Any) -> bool:
         return False
     current = int(getattr(state, "turn", 0) or 0)
     for _turn, tail in _pending_mechanical_tails(db, current_turn=current):
-        outcome = tail.get("ending_outcome")
-        if isinstance(outcome, dict) and outcome.get("status"):
+        outcome = _optional_chain_object(
+            tail.get("ending_outcome"),
+            surface="month_chain.mechanical_tail.ending_outcome",
+        )
+        if outcome is not None and outcome.get("status"):
             return True
     return False
 
@@ -441,7 +461,9 @@ def ensure_mechanical_tails(session: Any) -> None:
             closed_turn=turn,
             settled_year=int(tail.get("settled_year") or 0),
             settled_period=int(tail.get("settled_period") or 0),
-            ending_outcome=tail.get("ending_outcome")
-            if isinstance(tail.get("ending_outcome"), dict) else None,
+            ending_outcome=_optional_chain_object(
+                tail.get("ending_outcome"),
+                surface="month_chain.mechanical_tail.ending_outcome",
+            ),
             source=source,
         )
