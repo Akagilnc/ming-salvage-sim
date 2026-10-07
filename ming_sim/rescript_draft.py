@@ -14,7 +14,7 @@ shape 校验（顶层合法／必需字段在），零 regex、零词表、零�
 
 载体（票面 F2）：复用既有 pending_decisions 表，kind='rescript_draft' 行；只投影既有
 issue 盘面事实，不新建 issue。event_id 以喂给 LLM 的 issue 盘面投影为准，不信 LLM
-回显；无对应 issue 的急务用确定性合成 id `urgent:{turn}:{idx}`。
+回显。
 """
 
 from __future__ import annotations

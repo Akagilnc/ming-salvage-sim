@@ -41,10 +41,10 @@ def _insert_draft_row(
     turn: int,
     *,
     idx: int,
+    event_id: str,
     title: str,
     context: str = "",
     options: list | None = None,
-    event_id: str = "",
     actor_name: str = "",
     actor_office: str = "",
     actor_faction: str = "",
@@ -52,8 +52,7 @@ def _insert_draft_row(
     revision_round: int = 0,
     prior_options_json: str = "[]",
 ) -> None:
-    """测试夹具：直接落一条 rescript_draft 行（非生产写口，非旧批量覆写算法）。"""
-    eid = event_id or f"urgent:{int(turn)}:{int(idx)}"
+    """最短 SQL 行夹具：调用方显式给 idx 与 event_id，无自动续编/身份合成。"""
     db.conn.execute(
         "INSERT INTO pending_decisions\n"
         " (turn, idx, event_id, title, context, options_json, choice_json,\n"
@@ -63,7 +62,7 @@ def _insert_draft_row(
         (
             int(turn),
             int(idx),
-            eid,
+            str(event_id),
             title,
             context,
             json.dumps(options or [], ensure_ascii=False),
@@ -88,7 +87,7 @@ def test_list_rescript_drafts_projects_planted_rows(game):
         actor_name="测试首辅", actor_office="内阁首辅", actor_faction="阉党",
     )
     _insert_draft_row(
-        db, turn, idx=1, title="无局急务",
+        db, turn, idx=1, event_id="issue:no-board", title="无局急务",
         options=[{"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}],
     )
     db.conn.commit()
@@ -102,7 +101,7 @@ def test_list_rescript_drafts_projects_planted_rows(game):
     assert first["actor_name"] == "测试首辅"
     assert first["actor_office"] == "内阁首辅"
     assert first["actor_faction"] == "阉党"
-    assert drafts[1]["event_id"] == f"urgent:{turn}:1"
+    assert drafts[1]["event_id"] == "issue:no-board"
 
 
 def test_save_pending_decisions_keeps_rescript_drafts(game):
@@ -114,9 +113,8 @@ def test_save_pending_decisions_keeps_rescript_drafts(game):
             {"label": "a", "hint": ""}, {"label": "b", "hint": ""}]},
     ])
     _insert_draft_row(
-        db, turn, idx=1, title="急务", context="待票拟",
+        db, turn, idx=1, event_id="draft:急务", title="急务", context="待票拟",
         options=[{"label": "甲", "hint": "一"}, {"label": "乙", "hint": "二"}],
-        event_id=f"urgent:{turn}:1",
     )
     db.conn.commit()
     draft_before = db.list_rescript_drafts()[0]
@@ -157,15 +155,11 @@ def test_restore_roundtrip_at_awaiting_pause_has_no_draft_rows(game, tmp_path):
         restored.close()
 
 
-def _plant_draft(db, state, title: str) -> None:
+def _plant_draft(db, state, title: str, *, idx: int = 10) -> None:
+    """显式 idx/event_id 种入；调用方保证不与 decision 行冲突。"""
     turn = int(state.turn)
-    row = db.conn.execute(
-        "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
-        (turn,),
-    ).fetchone()
-    idx = int(row[0] or 0)
     _insert_draft_row(
-        db, turn, idx=idx, title=title, context="旧导语",
+        db, turn, idx=idx, event_id=f"draft:{title}", title=title, context="旧导语",
         options=[{"label": "甲", "hint": ""}, {"label": "乙", "hint": ""}],
         actor_name="测试首辅", actor_office="内阁首辅", actor_faction="阉党",
     )
@@ -369,7 +363,7 @@ def test_657_s1_list_rescript_desk_merges_cross_month_and_decisions(game):
         ),
     )
     _insert_draft_row(
-        db, turn, idx=0, title="本月急务", context="当月",
+        db, turn, idx=0, event_id="draft:本月急务", title="本月急务", context="当月",
         options=_two_opts("丙", "h3", "丁", "h4"),
         actor_name="次辅", actor_office="内阁次辅", actor_faction="阉党",
     )

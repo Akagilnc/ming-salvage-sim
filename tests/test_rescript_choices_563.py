@@ -5,33 +5,24 @@ import pytest
 import ming_sim.cli_backend as cli_backend
 from tests.dossier_test_helpers import rejected_verdict
 
+def _sql_rescript_draft(
+    db, turn, *, idx, event_id, title, context="", options=None,
+    actor_name="", actor_office="", actor_faction="",
+):
+    """单行 SQL 夹具：idx/event_id 必填，无续编、无身份合成、无批量算法。"""
+    db.conn.execute(
+        "INSERT INTO pending_decisions "
+        "(turn, idx, event_id, title, context, options_json, choice_json, "
+        " status, kind, actor_name, actor_office, actor_faction) "
+        "VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)",
+        (
+            int(turn), int(idx), str(event_id), str(title), str(context),
+            json.dumps(options or [], ensure_ascii=False),
+            str(actor_name), str(actor_office), str(actor_faction),
+        ),
+    )
 
-def _plant_drafts(db, turn, drafts):
-    """测试夹具：插入 rescript_draft 行（非生产批量覆写口）。"""
-    turn = int(turn)
-    row = db.conn.execute(
-        "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
-        (turn,),
-    ).fetchone()
-    idx = int(row[0] or 0)
-    for d in drafts:
-        event_id = str(d.get("event_id") or "").strip() or f"urgent:{turn}:{idx}"
-        db.conn.execute(
-            """INSERT INTO pending_decisions
-               (turn, idx, event_id, title, context, options_json, choice_json,
-                status, kind, actor_name, actor_office, actor_faction)
-               VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)""",
-            (
-                turn, idx, event_id,
-                str(d.get("title") or ""),
-                str(d.get("context") or ""),
-                json.dumps(d.get("options") or [], ensure_ascii=False),
-                str(d.get("actor_name") or ""),
-                str(d.get("actor_office") or ""),
-                str(d.get("actor_faction") or ""),
-            ),
-        )
-        idx += 1
+
 
 
 
@@ -409,12 +400,13 @@ def test_657_capability_revalidate_on_follow(game):
         "transaction_category": "督赈",
     })
     assert opt["draft_capability"] == derive_draft_capability(opt)
-    _plant_drafts(db, int(state.turn), [{
-        "title": "急", "context": "c",
-        "options": [opt, {"label": "备", "hint": "b",
-                           "draft_capability": derive_draft_capability({"label": "备"})}],
-        "actor_name": "A", "actor_office": "o", "actor_faction": "f",
-    }])
+    _sql_rescript_draft(
+        db, int(state.turn), idx=0, event_id="draft:急",
+        title="急", context="c",
+        options=[opt, {"label": "备", "hint": "b",
+                       "draft_capability": derive_draft_capability({"label": "备"})}],
+        actor_name="A", actor_office="o", actor_faction="f",
+    )
     db.conn.commit()
     desk = db.list_rescript_desk(int(state.turn))
     key = desk[0]["decision_key"]

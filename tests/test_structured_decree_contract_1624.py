@@ -12,38 +12,28 @@ from ming_sim.structured_decree import (
     assemble_structured_decree,
 )
 from tests.directive_seed_helpers import seed_manual_draft
+
+def _sql_rescript_draft(
+    db, turn, *, idx, event_id, title, context="", options=None,
+    actor_name="", actor_office="", actor_faction="",
+):
+    """单行 SQL 夹具：idx/event_id 必填，无续编、无身份合成、无批量算法。"""
+    db.conn.execute(
+        "INSERT INTO pending_decisions "
+        "(turn, idx, event_id, title, context, options_json, choice_json, "
+        " status, kind, actor_name, actor_office, actor_faction) "
+        "VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)",
+        (
+            int(turn), int(idx), str(event_id), str(title), str(context),
+            json.dumps(options or [], ensure_ascii=False),
+            str(actor_name), str(actor_office), str(actor_faction),
+        ),
+    )
+
 from tests.test_month_loop_tracer_1468 import (  # noqa: F401
     _post_issue_stream,
     tracer_client,
 )
-
-def _plant_drafts(db, turn, drafts):
-    """测试夹具：插入 rescript_draft 行（非生产批量覆写口）。"""
-    turn = int(turn)
-    row = db.conn.execute(
-        "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
-        (turn,),
-    ).fetchone()
-    idx = int(row[0] or 0)
-    for d in drafts:
-        event_id = str(d.get("event_id") or "").strip() or f"urgent:{turn}:{idx}"
-        db.conn.execute(
-            """INSERT INTO pending_decisions
-               (turn, idx, event_id, title, context, options_json, choice_json,
-                status, kind, actor_name, actor_office, actor_faction)
-               VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)""",
-            (
-                turn, idx, event_id,
-                str(d.get("title") or ""),
-                str(d.get("context") or ""),
-                json.dumps(d.get("options") or [], ensure_ascii=False),
-                str(d.get("actor_name") or ""),
-                str(d.get("actor_office") or ""),
-                str(d.get("actor_faction") or ""),
-            ),
-        )
-        idx += 1
-
 
 
 # #1778 决定 3：拟票大臣把参与名单写进票拟（主办可多人）；代码不按职司表配人。
@@ -180,14 +170,12 @@ def test_rescript_follow_draft_nails_drafted_roster(game):
     alt = normalize_rescript_layer_a_option({
         **_OWNER_OPTION, "label": "缓征", "hint": "b", "transaction_category": "钱粮",
     })
-    _plant_drafts(db, int(state.turn), [{
-        "title": "陕西告饥",
-        "context": "秦地赤旱",
-        "options": [opt, alt],
-        "actor_name": "杨嗣昌",
-        "actor_office": "兵部尚书",
-        "actor_faction": "东林",
-    }])
+    _sql_rescript_draft(
+        db, int(state.turn), idx=0, event_id="draft:陕西告饥",
+        title="陕西告饥", context="秦地赤旱",
+        options=[opt, alt],
+        actor_name="杨嗣昌", actor_office="兵部尚书", actor_faction="东林",
+    )
     db.conn.commit()
     urgent = next(
         r for r in db.list_rescript_desk(int(state.turn))

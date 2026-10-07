@@ -487,39 +487,42 @@ def _layer_a_option(**overrides):
     return normalize_rescript_layer_a_option(base)
 
 
-def _insert_rescript_draft_fixture(db, turn, drafts):
-    """测试夹具：逐条插入 rescript_draft 行（非生产批量覆写口）。"""
-    turn = int(turn)
-    row = db.conn.execute(
-        "SELECT COALESCE(MAX(idx) + 1, 0) FROM pending_decisions WHERE turn = ?",
-        (turn,),
-    ).fetchone()
-    idx = int(row[0] or 0)
-    for d in drafts:
-        event_id = str(d.get("event_id") or "").strip() or f"urgent:{turn}:{idx}"
-        db.conn.execute(
-            """INSERT INTO pending_decisions
-               (turn, idx, event_id, title, context, options_json, choice_json,
-                status, kind, actor_name, actor_office, actor_faction)
-               VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)""",
-            (
-                turn, idx, event_id,
-                str(d.get("title") or ""),
-                str(d.get("context") or ""),
-                json.dumps(d.get("options") or [], ensure_ascii=False),
-                str(d.get("actor_name") or ""),
-                str(d.get("actor_office") or ""),
-                str(d.get("actor_faction") or ""),
-            ),
-        )
-        idx += 1
+
+
+def _sql_rescript_draft(
+    db, turn, *, idx, event_id, title, context='', options=None,
+    actor_name='', actor_office='', actor_faction='',
+):
+    """单行 SQL 夹具：idx/event_id 必填，无续编、无身份合成、无批量算法。"""
+    db.conn.execute(
+        'INSERT INTO pending_decisions '
+        '(turn, idx, event_id, title, context, options_json, choice_json, '
+        " status, kind, actor_name, actor_office, actor_faction) "
+        "VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'rescript_draft', ?, ?, ?)",
+        (
+            int(turn), int(idx), str(event_id), str(title), str(context),
+            json.dumps(options or [], ensure_ascii=False),
+            str(actor_name), str(actor_office), str(actor_faction),
+        ),
+    )
 
 def _plant_urgent_desk(db, state, *, options=None, actor_name='杨嗣昌'):
     opts = options or [_layer_a_option(), _layer_a_option(label='缓征', hint='先赈后征')]
-    _insert_rescript_draft_fixture(db, int(state.turn), [{'title': '陕西告饥', 'context': '秦地赤旱', 'options': opts, 'actor_name': actor_name, 'actor_office': '兵部尚书', 'actor_faction': '东林'}])
+    turn = int(state.turn)
+    # 夹具重入：只清同 event_id 旧行，再以固定 idx/event_id 种入（无 MAX 续编、无 urgent 合成）。
+    event_id = 'plant:陕西告饥'
+    db.conn.execute(
+        "DELETE FROM pending_decisions WHERE turn=? AND event_id=?",
+        (turn, event_id),
+    )
+    _sql_rescript_draft(
+        db, turn, idx=100, event_id=event_id,
+        title='陕西告饥', context='秦地赤旱', options=opts,
+        actor_name=actor_name, actor_office='兵部尚书', actor_faction='东林',
+    )
     db.conn.commit()
-    desk = db.list_rescript_desk(int(state.turn))
-    urgent = next((r for r in desk if r['kind'] == 'rescript_draft'))
+    desk = db.list_rescript_desk(turn)
+    urgent = next((r for r in desk if r.get('event_id') == event_id))
     return (urgent, opts)
 
 def _dossier_payload(row):
@@ -672,7 +675,12 @@ def test_657_http_default_hold_keyed_empty_action_and_betray(web_game, monkeypat
     _657_install_real_phase2_llm_boundary(monkeypatch)
     opt = _layer_a_option()
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
-    _insert_rescript_draft_fixture(db, int(state.turn), [{'title': 'HTTP默认留中', 'context': 'c', 'options': [opt, _layer_a_option(label='备', hint='h')], 'actor_name': '杨嗣昌', 'actor_office': '兵部尚书', 'actor_faction': '东林'}])
+    _sql_rescript_draft(
+        db, int(state.turn), idx=0, event_id='plant:HTTP默认留中',
+        title='HTTP默认留中', context='c',
+        options=[opt, _layer_a_option(label='备', hint='h')],
+        actor_name='杨嗣昌', actor_office='兵部尚书', actor_faction='东林',
+    )
     db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
@@ -769,7 +777,18 @@ def _657_plant_awaiting_web(web_game, *, drafts=None, decisions=None, title='陕
     db.conn.execute('DELETE FROM pending_decisions')
     db.conn.commit()
     if drafts:
-        _insert_rescript_draft_fixture(db, int(state.turn), drafts)
+        turn = int(state.turn)
+        for i, d in enumerate(drafts):
+            title = str(d.get('title') or '')
+            _sql_rescript_draft(
+                db, turn, idx=i,
+                event_id=str(d.get('event_id') or '').strip() or f'plant:{title or i}',
+                title=title, context=str(d.get('context') or ''),
+                options=d.get('options') or [],
+                actor_name=str(d.get('actor_name') or ''),
+                actor_office=str(d.get('actor_office') or ''),
+                actor_faction=str(d.get('actor_faction') or ''),
+            )
     if decisions:
         db.save_pending_decisions(int(state.turn), decisions)
     db.save_resolve_context(int(state.turn), '诏', {'candidate_events': [], 'transit_semantics': []})
@@ -946,7 +965,11 @@ def test_657_abi_mapper_matrix_a1_a12(game):
             drafts_opts = [_layer_a_option(label='骨架', hint='h'), _layer_a_option(label='b', hint='h')]
             cap = ''
             label = choice_fields.get('label') or '中旨'
-        _insert_rescript_draft_fixture(db, int(state.turn), [{'title': title, 'context': 'c', 'options': drafts_opts, 'actor_name': mname, 'actor_office': 'o', 'actor_faction': 'f'}])
+        _sql_rescript_draft(
+            db, int(state.turn), idx=0, event_id=f'plant:{title}',
+            title=title, context='c', options=drafts_opts,
+            actor_name=mname, actor_office='o', actor_faction='f',
+        )
         db.conn.commit()
         desk = db.list_rescript_desk(int(state.turn))
         row = next((r for r in desk if r['title'] == title))
@@ -1139,7 +1162,12 @@ def test_657_abi_mapper_matrix_a1_a12(game):
     opt_fields = {'action_type': 'assignment', 'label': '幂等交办', 'hint': 'h', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'assignee_name': '', 'transaction_category': '督赈', 'deadline_months': 1, 'participant_roster': _roster(_ROSTER_LEAD)}
     opt = normalize_rescript_layer_a_option(opt_fields)
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
-    _insert_rescript_draft_fixture(db, int(state.turn), [{'title': '幂等急务', 'context': 'c', 'options': [opt, _layer_a_option(label='b', hint='h')], 'actor_name': mname, 'actor_office': 'o', 'actor_faction': 'f'}])
+    _sql_rescript_draft(
+        db, int(state.turn), idx=0, event_id='plant:幂等急务',
+        title='幂等急务', context='c',
+        options=[opt, _layer_a_option(label='b', hint='h')],
+        actor_name=mname, actor_office='o', actor_faction='f',
+    )
     db.conn.commit()
     desk = db.list_rescript_desk(int(state.turn))
     key = next((r['decision_key'] for r in desk if r['title'] == '幂等急务'))
@@ -1758,7 +1786,12 @@ def test_657_revise_deliberate_strict_contracts_zero_write_on_bad_shape(game, mo
     opt = normalize_rescript_layer_a_option({'label': '备', 'hint': 'h', 'action_type': 'assignment', 'assignee_name': '', 'target_kind': 'region', 'target_id': 'shaanxi', 'locality_scope': 'single', 'region_id': 'shaanxi', 'transaction_category': '督赈'})
     db.conn.execute("DELETE FROM pending_decisions WHERE kind='rescript_draft'")
     prepare_resolve_front_half(state, db, decree_text='诏', content=content)
-    _insert_rescript_draft_fixture(db, int(state.turn), [{'title': '改票契约', 'context': 'c', 'options': [opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}], 'actor_name': '杨嗣昌', 'actor_office': 'o', 'actor_faction': 'f'}])
+    _sql_rescript_draft(
+        db, int(state.turn), idx=0, event_id='plant:改票契约',
+        title='改票契约', context='c',
+        options=[opt, {'label': 'x', 'hint': 'h', 'draft_capability': 'z'}],
+        actor_name='杨嗣昌', actor_office='o', actor_faction='f',
+    )
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     desk = db.list_rescript_desk(int(state.turn))
@@ -2584,11 +2617,12 @@ def test_657_s10_http_five_actions_and_1490_no_regress(web_game, monkeypatch):
             db.conn.execute("DELETE FROM pending_decisions")
             db.conn.commit()
             case_opt = liaodong_opt if name == "follow_draft" else opt
-            _insert_rescript_draft_fixture(db, int(state.turn), [{
-                "title": f"急务-{name}", "context": "c",
-                "options": [case_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
-                "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
-            }])
+            _sql_rescript_draft(
+                db, int(state.turn), idx=0, event_id=f'plant:急务-{name}',
+                title=f'急务-{name}', context='c',
+                options=[case_opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}],
+                actor_name='杨嗣昌', actor_office='兵部尚书', actor_faction='东林',
+            )
             db.conn.commit()
             db.save_resolve_context(
                 int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
@@ -2704,11 +2738,12 @@ def test_1621_http_follow_draft_uses_catalog_army_id(web_game, monkeypatch):
     _657_install_real_phase2_llm_boundary(monkeypatch)
     db.conn.execute("DELETE FROM pending_decisions")
     db.conn.commit()
-    _insert_rescript_draft_fixture(db, int(state.turn), [{
-        "title": "急务-军令", "context": "c",
-        "options": [army_opt, {"label": "备", "hint": "h", "draft_capability": "x"}],
-        "actor_name": "杨嗣昌", "actor_office": "兵部尚书", "actor_faction": "东林",
-    }])
+    _sql_rescript_draft(
+        db, int(state.turn), idx=0, event_id='plant:急务-军令',
+        title='急务-军令', context='c',
+        options=[army_opt, {'label': '备', 'hint': 'h', 'draft_capability': 'x'}],
+        actor_name='杨嗣昌', actor_office='兵部尚书', actor_faction='东林',
+    )
     db.conn.commit()
     db.save_resolve_context(
         int(state.turn), "诏", {"candidate_events": [], "transit_semantics": []},
