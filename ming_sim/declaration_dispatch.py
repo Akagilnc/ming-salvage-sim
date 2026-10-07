@@ -1064,16 +1064,20 @@ def _attach_commission_affair(
     db: Any, item: Mapping[str, object], payload: Dict[str, Any],
     *, rejected: List[RejectedItem], source: Provenance,
 ) -> bool:
-    """校验声明并暂存；事务仅在收夜案卷接缝物化。"""
-    raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
-    if raw_affair is None:
-        return True
+    """校验声明并暂存；事务仅在收夜案卷接缝物化。
+
+    解析与 peek 同在逐项拒收边界内：超界/坏形 affair_id 在 declaration_from_payload
+    即 ValueError，不得逃出 helper 带走同批（#1897 C1；撤令与普通交办共吃）。
+    """
     try:
+        raw_affair = declaration_from_payload(item, allowed=ATTACH_BIRTH)
+        if raw_affair is None:
+            return True
         db.affairs.peek_declared_id(raw_affair, allowed=ATTACH_BIRTH)
     except KeyError as exc:
         _reject(rejected, item, str(exc), "hallucinated_id", source)
         return False
-    except ValueError as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         _reject(rejected, item, str(exc), "invalid_shape", source)
         return False
     payload["affair_declaration"] = raw_affair
