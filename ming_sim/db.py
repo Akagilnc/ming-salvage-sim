@@ -14478,7 +14478,8 @@ class GameDB:
         ``issue:`` 前缀），issue 再经 ``origin_ref`` 回指案卷。两个字段可同时
         在场（撤的是某道旨下出的承诺），**不得**读到其一即止。
 
-        无合法案卷来源时响亮拒绝；只读供料方按「无原旨可读」捕获。
+        无合法案卷来源时以 ValueError 声明；只读供料方仅捕获该无目标合同，
+        不得吞没 AttributeError/TypeError 等代码异常。
         """
         from ming_sim.strict_types import strict_int
 

@@ -207,7 +207,8 @@ def test_origin_namespace_minimum_closed_set_and_open_append(game):
         )
 
 
-def test_production_terminal_sidepath_records_degraded_transformed_only(game):
+def test_execution_outcomes_do_not_synthesize_character_reports(game):
+    """执行格落终值不代写人物奏报；奏报只经模型声明/既有存储。"""
     db, state, content = game
     degraded_id = _executing_assignment(db, state, target="deg-619")
     transformed_id = _executing_assignment(db, state, text="变形案", target="xf-619")
@@ -216,21 +217,8 @@ def test_production_terminal_sidepath_records_degraded_transformed_only(game):
 
     settle_delta(state, db, {'dossier_executions': [{'dossier_id': degraded_id, 'outcome': 'degraded', 'note': '只得半成'}, {'dossier_id': transformed_id, 'outcome': 'transformed', 'note': '名实已乖'}, {'dossier_id': fulfilled_id, 'outcome': 'fulfilled', 'note': '如期办妥'}, {'dossier_id': failed_id, 'outcome': 'failed', 'note': '事败不成'}]}, SettlementContext(content=content))
 
-    deg = db.list_dossier_progress(degraded_id)
-    xf = db.list_dossier_progress(transformed_id)
-    assert len(deg) == 1 and deg[0]["is_terminal"] is True
-    assert deg[0]["origin"] == DOSSIER_REPORT_VERDICT
-    # #622：progress_band 定性中文，禁英文枚举；变形案 memorial 为承办人假象。
-    assert deg[0]["progress_band"] not in {
-        "degraded", "transformed", "fulfilled", "failed", "executing",
-    }
-    assert "变形" not in deg[0]["progress_band"]
-    assert deg[0]["memorial_text"]  # 非空定性陈词
-    assert len(xf) == 1 and xf[0]["origin"] == DOSSIER_REPORT_VERDICT
-    assert xf[0]["progress_band"] not in {
-        "degraded", "transformed", "fulfilled", "failed", "executing",
-    }
-    assert "变形" not in xf[0]["progress_band"]
+    assert db.list_dossier_progress(degraded_id) == []
+    assert db.list_dossier_progress(transformed_id) == []
     assert db.list_dossier_progress(fulfilled_id) == []
     assert db.list_dossier_progress(failed_id) == []
 

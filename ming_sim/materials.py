@@ -1728,13 +1728,13 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
     事实判断准行/劝回/拖延，以及准行后原案卷的办理结果怎么落。只读 DB 真源；
     目标身份解析复用 ``db.resolve_revoke_decree_target_ids``（判后物化同一实现，
     禁平行口径），身份取自载荷与案卷行（与判后物化同一读口，缺行即漏回退）；
-    查无此事时返回空 dict（调用方按「无原旨可读」处理，不猜）。
+    解析器声明的无合法目标（ValueError）与查无案卷返回空 dict；代码异常上抛。
     """
     if not isinstance(payload, Mapping) and not isinstance(row, Mapping):
         return {}
     try:
         target_dossier_id, target_issue_id = db.resolve_revoke_decree_target_ids(payload, row)
-    except (AttributeError, TypeError, ValueError):
+    except ValueError:
         return {}
     dossier = db.get_decree_dossier(int(target_dossier_id))
     if dossier is None:

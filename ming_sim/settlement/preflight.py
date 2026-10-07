@@ -44,7 +44,6 @@ from ming_sim.relations import EMPEROR_NODE
 from ming_sim.decree_vocabulary import (
     dossier_action_policy,
     format_public_progress_disclosure,
-    terminal_report_facade,
 )
 from ming_sim.exceptions import DeclarationDataError, OfficeAppointmentRejection, SettlementAbort
 from ming_sim.entities.metric.apply import (

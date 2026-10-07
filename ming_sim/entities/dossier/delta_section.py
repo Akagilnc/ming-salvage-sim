@@ -48,7 +48,6 @@ def apply_executions(run):
     from ming_sim.db import GameDB
     from ming_sim.due_review import dossiers_with_pending_due_review
     from ming_sim.strict_types import _parse_sqlite_id
-    from ming_sim.decree_vocabulary import terminal_report_facade
 
     applied: List[object] = []
     rejected: List[RejectedItem] = []
@@ -99,18 +98,8 @@ def apply_executions(run):
         )
         # #567：S10 结案同源读被护侧对账，经 merge_execution_note 增补（单写口）。
         run.db.merge_grant_reconciliation_into_execution_note(dossier_id, commit=False)
-        # #619/#622：表报终值旁路——仅 degraded/transformed 挂奏报行；
-        # 变形案载承办人假象（不得回填判官真值）。
-        if outcome in {"degraded", "transformed"}:
-            prior = list(run.db.list_dossier_progress(int(dossier_id)))
-            band, memorial = terminal_report_facade(outcome, prior_reports=prior)
-            run.db.record_dossier_progress(
-                dossier_id, run.state.turn, band, memorial,
-                is_terminal=True,
-                origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-                commit=False,
-            )
         # 连坐挂载点＝本段落终值笔；禁对 execution_outcome 列事后扫描。
+        # 人物奏报只经模型声明/既有存储写入，执行格不代写奏报行。
         run.db.apply_execution_joint_liability(
             run.state, dossier_id, outcome, reason=note, commit=False,
         )

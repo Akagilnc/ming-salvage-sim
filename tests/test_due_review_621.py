@@ -441,10 +441,8 @@ def test_mid_stage_no_close_no_joint_liability(game):
     assert dossier["execution_outcome"] == "executing"
     assert dossier["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
-    # 过程奏报 is_terminal=False
-    progress = db.list_dossier_progress(dossier_id)
-    assert progress
-    assert all(not p.get("is_terminal") for p in progress)
+    # 中段复核只落执行格，不代写人物奏报
+    assert db.list_dossier_progress(dossier_id) == []
 
 
 def test_final_stage_terminal_close_joint_liability_at_most_once(game):
