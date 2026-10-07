@@ -142,12 +142,20 @@ def load_stored_list(raw: object, *, label: str) -> list:
 
 
 def load_stored_object_list(raw: object, *, label: str) -> list[dict]:
-    """Durable list of objects. Blank is []. Non-list or non-object members raise."""
+    """Already-decoded durable field: list of objects.
+
+    Blank/missing → []. A present non-list — including a JSON text string — is
+    corruption (no second json.loads). Top-level JSON documents still use
+    load_stored_list / load_stored_object at the document boundary.
+    """
     from collections.abc import Mapping
 
-    values = load_stored_list(raw, label=label)
+    if raw is None or raw == "":
+        return []
+    if not isinstance(raw, list):
+        raise StoredDocumentError(f"{label} 必须为名单")
     out: list[dict] = []
-    for item in values:
+    for item in raw:
         if not isinstance(item, Mapping):
             raise StoredDocumentError(f"{label} 成员须为对象")
         out.append(dict(item))

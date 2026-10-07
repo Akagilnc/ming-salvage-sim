@@ -32,7 +32,7 @@ from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Seq
 
 from ming_sim.applier import (
     StoredDocumentError, atomic, connection_owns_transaction,
-    durable_int, load_stored_json, load_stored_list, load_stored_object, load_stored_object_list,
+    durable_float, durable_int, load_stored_json, load_stored_list, load_stored_object, load_stored_object_list,
     safe_json_dumps, sanitize_sqlite_text,
 )
 from ming_sim.appointment_tenure import appointment_tenure_from
@@ -1830,19 +1830,17 @@ class GameDB:
             return changes
 
         old_source = str(row["pay_source_region"] or "")
-        from ming_sim.applier import durable_float as _durable_float
         # 未提供的旧列：持久损坏上抛，不冒充声明拒收。
-        from ming_sim.applier import durable_float as _durable_float
         try:
             base_pay_source = str(row["pay_source_region"] or "").strip()
             base_province_share = _coerce_pay_source_float(row["province_pay_share"])
             base_central_share = _coerce_pay_source_float(row["central_pay_share"])
             base_is_tusi = bool(row["is_tusi"])
             base_self_funded = bool(row["self_funded_pay"])
-            province_arrears = _durable_float(
+            province_arrears = durable_float(
                 row["province_pay_arrears"], label="armies.province_pay_arrears", blank=0.0,
             )
-            central_arrears = _durable_float(
+            central_arrears = durable_float(
                 row["central_pay_arrears"], label="armies.central_pay_arrears", blank=0.0,
             )
         except (TypeError, ValueError) as exc:
@@ -1853,9 +1851,6 @@ class GameDB:
                 base_central_share, base_is_tusi, base_self_funded,
                 province_arrears, central_arrears,
             )
-            base_exempt = old_owner != "ming" or base_is_tusi or base_self_funded
-            if base_pay_source and not base_exempt:
-                self._require_valid_pay_source_region(army_id, base_pay_source)
         except ValueError as exc:
             raise StoredDocumentError(f"军饷源持久约束损坏：{exc}") from exc
 
@@ -2070,16 +2065,15 @@ class GameDB:
         old_source = str(row["pay_source_region"] or "")
         owner_power = str(row["owner_power"] or "").strip()
         # 旧持久列先读：损坏走 StoredDocumentError，不冒充 army_delta 产品拒收。
-        from ming_sim.applier import durable_float as _durable_float
         try:
             base_province_share = _coerce_pay_source_float(row["province_pay_share"])
             base_central_share = _coerce_pay_source_float(row["central_pay_share"])
             base_is_tusi = bool(row["is_tusi"])
             base_self_funded = bool(row["self_funded_pay"])
-            province_arrears = _durable_float(
+            province_arrears = durable_float(
                 row["province_pay_arrears"], label="armies.province_pay_arrears", blank=0.0,
             )
-            central_arrears = _durable_float(
+            central_arrears = durable_float(
                 row["central_pay_arrears"], label="armies.central_pay_arrears", blank=0.0,
             )
             base_pay_source = str(row["pay_source_region"] or "").strip()
@@ -2115,16 +2109,14 @@ class GameDB:
                 "item": {"army_id": army_id, "changes": raw_changes},
             })
             return
-        # 先核旧账基线：坏旧事实 → StoredDocumentError，不看声明字段集合。
+        # 先核旧列数值/份额约束：坏旧列 → StoredDocumentError。
+        # 引用对象是否仍明控属当前世界态，不在旧列门槛内（失地可中央养军）。
         try:
             self._validate_pay_source_values(
                 army_id, owner_power, base_pay_source, base_province_share,
                 base_central_share, base_is_tusi, base_self_funded,
                 province_arrears, central_arrears,
             )
-            base_exempt = owner_power != "ming" or base_is_tusi or base_self_funded
-            if base_pay_source and not base_exempt:
-                self._require_valid_pay_source_region(army_id, base_pay_source)
         except ValueError as exc:
             raise StoredDocumentError(f"军饷源持久约束损坏：{exc}") from exc
         exempt = owner_power != "ming" or is_tusi or self_funded
