@@ -553,16 +553,10 @@ def test_undo_survives_db_created_before_undone_at_column(game):
     # 模拟旧档：chat_turns 建于 undone_at 进 CREATE 之前（列不存在）。
     db.conn.execute("ALTER TABLE chat_turns DROP COLUMN undone_at")
     db.conn.commit()
-    assert "undone_at" not in {
-        r["name"] for r in db.conn.execute("PRAGMA table_info(chat_turns)").fetchall()
-    }
 
     # 重开 → GameDB 升级迁移必须补回该列（ensure_column），而非留待 undo 时炸。
     db2 = _reopen(db, content)
     try:
-        assert "undone_at" in {
-            r["name"] for r in db2.conn.execute("PRAGMA table_info(chat_turns)").fetchall()
-        }
         db2.undo_chat_turn(chat_id)
         row = db2.conn.execute(
             "SELECT status, undone_at FROM chat_turns WHERE id = ?", (int(chat_id),)

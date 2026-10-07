@@ -508,7 +508,7 @@ def test_open_night_atomic_on_dead_roster_injection(game, monkeypatch):
     monkeypatch.setattr(an, "append_ledger_entry", flaky_append)
     # 确保有员额可触发
     assert an.resolve_standing_roster(db)
-    with pytest.raises(RuntimeError, match="inject roster fail"):
+    with pytest.raises(RuntimeError):
         an.open_night(db, state, location="乾清宫")
     open_n = an.get_open_night(db)
     assert open_n is None

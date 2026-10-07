@@ -559,6 +559,32 @@ def _settlement_sse_error_data(
     if failure_snapshot:
         payload["pending_action_failures"] = failure_snapshot
     return payload
+    if isinstance(exc, SettlementAbort) and isinstance(exc.__cause__, LLMUnavailable):
+        detail = _llm_error_detail(exc.__cause__)
+        payload = {
+            "message": str(exc),  # abort 文案不动
+            "code": detail.get("code"),
+            "provider_message": detail.get("provider_message"),
+            "status_code": detail.get("status_code"),
+            "error_pack_path": getattr(exc, "error_pack_path", None) or "",
+            "stage": getattr(exc, "stage", "") or "",
+        }
+        if "transport_attempts" in detail:
+            payload["transport_attempts"] = detail["transport_attempts"]
+    elif isinstance(exc, SettlementAbort):
+        # #1902：结算中止在 SSE 上刻意不带 status_code —— issue/stream 上的 409 是
+        # 「月份令牌失效/死锁」专用信号（前端与 tracer 据此分流），中止只认 stage /
+        # error_pack_path 这两个 typed 键（ADR 0008）。旧非流式路由的 HTTP 409 已随
+        # 该路由退役，中止的可重试语义由这两个键承担，不冒充 409。
+        payload = _settlement_abort_http_detail(exc)
+    if payload is None:
+        # 非 LLM 终失败：保持既有「无 snapshot → 标量；有 snapshot → {message, failures}」
+        if failure_snapshot:
+            return {"message": str(exc), "pending_action_failures": failure_snapshot}
+        return str(exc)
+    if failure_snapshot:
+        payload["pending_action_failures"] = failure_snapshot
+    return payload
 
 
 # #1902：数值槽宽容取值与「是否真 key」判定都只在 llm_config 一处实现，
@@ -1812,8 +1838,6 @@ class WebGame:
                 1 for a in pending_actions
                 if a["kind"] == "secret_order"),
             "pending_non_directive_action_count": len(visible_non_directive_pending),
-            "failed_secret_order_count": sum(
-                1 for _a in self.db.list_failed_secret_order_actions()),
             "pending_decisions": pending_decisions,
             # #657：phase1 已落 decided、desk 只查 pending 为空时，投影 typed 续跑信号。
             # 不把 decided 塞回 pending 列表；前端空 POST 既有 resolve_decisions/stream。
@@ -1938,6 +1962,18 @@ class WebGame:
             "can_undo_last_chat": self.can_undo_last_chat(present),
         }
 
+    def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
+        return [
+            _pending_action_failure_payload(action)
+            for action in self.db.list_failed_secret_order_actions(minister_name)
+        ]
+
+    def pending_action_failures(self) -> List[Dict[str, Any]]:
+        return [
+            _pending_action_failure_payload(action)
+            for action in self.db.list_failed_secret_order_actions()
+        ]
+
     def _chat_payload(
         self,
         minister_name: str,
@@ -2041,18 +2077,6 @@ class WebGame:
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
             "pending_action_failures": self.pending_action_failures_for(minister_name),
         }
-
-    def pending_action_failures_for(self, minister_name: str) -> List[Dict[str, Any]]:
-        return [
-            _pending_action_failure_payload(action)
-            for action in self.db.list_failed_secret_order_actions(minister_name)
-        ]
-
-    def pending_action_failures(self) -> List[Dict[str, Any]]:
-        return [
-            _pending_action_failure_payload(action)
-            for action in self.db.list_failed_secret_order_actions()
-        ]
 
     def retry_interrupted_reply(self, minister_name: str, target_chat_turn_id: Optional[int] = None) -> Dict[str, Any]:
         """恢复指定中断轮，或续接已落回话的尾随阶段；旧调用默认最新中断轮。
@@ -2816,7 +2840,7 @@ def _accept_settlement_period(game) -> bool:
     （创建者 blocking 必清；非创建者 non-blocking + in-flight 归零才可清）。"""
     db = getattr(game, "db", None)
     state = getattr(game, "state", None)
-    if db is None or state is None or not hasattr(db, "capture_month_open_snapshot"):
+    if db is None or state is None:
         return False
     from ming_sim.month_open_snapshot import accept_settlement_period
     return bool(accept_settlement_period(db, state))
@@ -2868,7 +2892,7 @@ def _exit_settlement_display_on_failure(game, *, blocking: bool = False) -> None
     清快照期间持 entry_lock，使并发 begin 不得插在「见 in-flight==1」与 clear 之间。"""
     db = getattr(game, "db", None)
     state = getattr(game, "state", None)
-    if db is None or state is None or not hasattr(db, "clear_month_open_snapshot"):
+    if db is None or state is None:
         return
     from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
     gate = _game_write_gate(game)
@@ -3119,7 +3143,7 @@ def _settlement_period_entry(
             # 持 write_cm 同门（与失败支 _game_write_gate 同形）——禁无门直写共享连接。
             db = getattr(game, "db", None)
             state = getattr(game, "state", None)
-            if db is not None and state is not None and hasattr(db, "clear_month_open_snapshot"):
+            if db is not None and state is not None:
                 from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
                 clear_orphan_month_open_snapshot(db, state)
 
@@ -4792,10 +4816,7 @@ def project_secret_orders_for_player(
 
 @app.get("/api/secret_orders")
 async def api_secret_orders(status: str = "") -> Dict[str, Any]:
-    """列出密令的玩家投影。status 为空返回全部，否则按投影后的状态过滤。
-
-    failed_secret_order_count 是落库失败的待办计数，不是结案成败。
-    """
+    """列出密令的玩家投影。status 为空返回全部，否则按投影后的状态过滤。"""
     game = get_game()
     orders = project_secret_orders_for_player(
         game.db.list_secret_orders(), status=status,
@@ -4927,7 +4948,8 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     if night is None:
         return {
             "night_id": 0, "status": "", "messages": [], "protagonist": "",
-            "roster": [], "translation_pending": False, "translation_retries": [], "pending_translation_turn_ids": [],
+            "roster": [], "translation_pending": False, "translation_retries": [],
+            "pending_translation_turn_ids": [], "reply_retries": [],
         }
     roster = presence_roster(game.db, int(night["id"]))
     protagonist = str(night.get("protagonist_name") or "")
@@ -4952,6 +4974,7 @@ def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
         "translation_pending": bool(pending_replies),
         "pending_translation_turn_ids": [int(row["chat_turn_id"]) for row in pending_replies],
         "translation_retries": game.pending_translation_retries(night_id=int(night["id"])),
+        "reply_retries": _reply_retries_for_night(game.db, int(night["id"])),
     }
 
 

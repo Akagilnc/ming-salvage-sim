@@ -45,15 +45,14 @@ def _issue_audience_names(db: Any, issue: Any) -> set[str] | None:
 
     raw: object = None
     saw_db_row = False
-    if hasattr(db, "conn"):
-        row = db.conn.execute(
-            "SELECT audiences FROM events WHERE id=?", (origin_ref,),
-        ).fetchone()
-        if row is not None:
-            saw_db_row = True
-            raw = row["audiences"]
+    row = db.conn.execute(
+        "SELECT audiences FROM events WHERE id=?", (origin_ref,),
+    ).fetchone()
+    if row is not None:
+        saw_db_row = True
+        raw = row["audiences"]
     if not saw_db_row:
-        content = getattr(db, "content", None)
+        content = db.content
         event_by_id = getattr(content, "event_by_id", None) or {}
         ev = event_by_id.get(origin_ref)
         if ev is None:
@@ -150,13 +149,10 @@ def knowledge_row_visible_to(
     Recommendation reads pass each roster candidate explicitly so an excluded
     office cannot be reintroduced by a name-only roster projection.
     """
-    reader = None
-    try:
-        reader = db.conn.execute(
-            "SELECT name, office, office_type FROM characters WHERE name=?", (character_name,)
-        ).fetchone()
-    except (AttributeError, TypeError):
-        reader = None
+    # #1853 J8-R2：成功持有 GameDB 后 conn 为必备能力；禁 AttributeError 洗成无读者。
+    reader = db.conn.execute(
+        "SELECT name, office, office_type FROM characters WHERE name=?", (character_name,)
+    ).fetchone()
     target = target or reader or row
     def target_value(key: str) -> object:
         try:
@@ -168,17 +164,15 @@ def knowledge_row_visible_to(
     excluded_names, people, offices = _exclusion_lists_from_row(row)
     source_id = str(row["source_id"] or "")
     # 合成读模型行未必自带 excluded_names；source 上的持久黑名单仍是同一真源。
-    if hasattr(db, "knowledge_exclusions_for_source"):
-        excluded_names |= {
-            str(name)
-            for name in (db.knowledge_exclusions_for_source(source_id) or [])
-        }
+    excluded_names |= {
+        str(name)
+        for name in (db.knowledge_exclusions_for_source(source_id) or [])
+    }
     if not people and not offices:
-        if hasattr(db, "knowledge_exclusion_targets_for_source"):
-            fallback = db.knowledge_exclusion_targets_for_source(source_id)
-            if isinstance(fallback, dict):
-                people = {str(name) for name in (fallback.get("people") or [])}
-                offices = {str(name) for name in (fallback.get("offices") or [])}
+        fallback = db.knowledge_exclusion_targets_for_source(source_id)
+        if isinstance(fallback, dict):
+            people = {str(name) for name in (fallback.get("people") or [])}
+            offices = {str(name) for name in (fallback.get("offices") or [])}
     if _subject_matches_exclusion(
         reader, character_name,
         excluded_names=excluded_names, people=people, offices=offices,
@@ -190,13 +184,11 @@ def knowledge_row_visible_to(
     # A private source's roster is a positive capability, not a deny-list
     # snapshot.  Enforce it at read time so characters created after archival
     # cannot inherit old participant-private material.
-    try:
-        source = db.conn.execute(
-            "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
-            (str(row["source_id"] or ""),),
-        ).fetchone()
-    except (AttributeError, KeyError, IndexError, TypeError):
-        source = None
+    # #1853 J8-R2：conn 直调；行字段缺失由上层 Mapping 契约承担，不在此吞 AttributeError。
+    source = db.conn.execute(
+        "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
+        (str(row["source_id"] or ""),),
+    ).fetchone()
     # A public event is a new disclosure capability even when it deliberately
     # retains the private source id for provenance.  It keeps its own explicit
     # people/office exclusions above, but must not inherit the source roster.
@@ -231,7 +223,7 @@ def project_issue_materials(
         row["audience_names"] = tuple(sorted(audiences or ()))
         projected[issue_id] = row
 
-    active_issues = db.list_active_issues() if hasattr(db, "list_active_issues") else []
+    active_issues = db.list_active_issues()
     for issue in active_issues:
         issue_id = int(issue["id"])
         if issue_id in projected:
@@ -284,8 +276,6 @@ def project_court_roster_rows(
 
 def _appointment_register(db: Any, state: Any) -> str:
     """吏部任免簿：当前在朝职名，不是派系底账。"""
-    if not hasattr(db, "current_court_roster_rows"):
-        return "任免簿：暂无。"
     rows = db.current_court_roster_rows(state)
     if not rows:
         return "任免簿：暂无。"
@@ -304,8 +294,6 @@ def _role_roster(db: Any, office_type: str, state: Any) -> str:
     restore, while the qualitative rendering keeps machine values out of the
     audience prompt.
     """
-    if not hasattr(db, "conn"):
-        return f"{office_type}本职在册：暂无。"
     rows = db.conn.execute(
         """SELECT name, office FROM characters
            WHERE office_type = ? AND status = 'active' AND power_id = 'ming'
@@ -331,8 +319,6 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
     no public-event mirror exists; otherwise a mixed aggregate has no exact
     source fragment to redact.
     """
-    if not hasattr(db, "conn"):
-        return []
     rows = db.conn.execute(
         "SELECT turn, year, period, kind, title, body, source_id, "
         "participant_roster, excluded_names FROM character_knowledge_sources "
@@ -398,13 +384,11 @@ def _household_ledger(db: Any, state: Any, character_name: str) -> str:
            LEFT JOIN secret_orders s ON s.id=d.secret_order_id
            WHERE e.account='国库' ORDER BY e.id DESC"""
     ).fetchall()
-    try:
-        reader = db.conn.execute(
-            "SELECT name, office, office_type FROM characters WHERE name=?",
-            (character_name,),
-        ).fetchone()
-    except (AttributeError, TypeError):
-        reader = None
+    # #1853 J8-R2：与上方 balance/rows 同为必备 conn 直调，禁缺能力软兼容。
+    reader = db.conn.execute(
+        "SELECT name, office, office_type FROM characters WHERE name=?",
+        (character_name,),
+    ).fetchone()
     lines = [f"太仓实存：{int(balance['balance'] if balance else state.metrics['国库'])}"]
     for row in reversed(rows):
         hide = _household_secret_case_hidden(row, character_name, reader)
@@ -434,8 +418,6 @@ def _world(
         "role": _role_roster(db, office_type, state),
     }
     scope: Dict[str, tuple[str, ...]] = {"region_ids": (), "army_ids": ()}
-    if not hasattr(db, "conn"):
-        return result, scope
 
     if office_type == "户部":
         result["treasury"] = _household_ledger(db, state, character_name)
@@ -446,11 +428,9 @@ def _world(
 
     # Authoritative office→辖域 projection (shared with dossier archive keys).
     # Region from the holder's appointment (character_offices.region_id) — never location.
-    projected = {}
-    if hasattr(db, "project_office_identity"):
-        projected = db.project_office_identity(
-            office_name, office_type, character_name=character_name,
-        ) or {}
+    projected = db.project_office_identity(
+        office_name, office_type, character_name=character_name,
+    ) or {}
     region_ids = tuple(
         str(rid) for rid in (projected.get("region_ids") or ()) if str(rid or "").strip()
     )
@@ -478,13 +458,11 @@ def _world(
 def current_character_office(
     db: Any, character: Any, character_name: str = "",
 ) -> tuple[str, str]:
-    """Current durable (office, office_type), with seed fallback for lightweight callers."""
+    """Current durable (office, office_type); missing DB row falls back to seed character fields."""
     name = str(character_name or getattr(character, "name", "") or "")
-    current = None
-    if hasattr(db, "conn"):
-        current = db.conn.execute(
-            "SELECT office, office_type FROM characters WHERE name = ?", (name,),
-        ).fetchone()
+    current = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name = ?", (name,),
+    ).fetchone()
     return (
         str((current["office"] if current is not None else getattr(character, "office", "")) or ""),
         str((current["office_type"] if current is not None else getattr(character, "office_type", "")) or ""),
@@ -506,9 +484,7 @@ def _issue_audience_case_events(
     """
     known = set(known_source_ids or ())
     synthesized: list[Dict[str, object]] = []
-    active_issues = (
-        db.list_active_issues() if hasattr(db, "list_active_issues") else []
-    )
+    active_issues = db.list_active_issues()
     for issue in active_issues:
         try:
             source_id = f"issue:{int(issue['id'])}"
@@ -754,7 +730,7 @@ def build_character_knowledge(
         if row.get("source_id")
     }
     visible_issues = []
-    for issue in db.list_active_issues() if hasattr(db, "list_active_issues") else []:
+    for issue in db.list_active_issues():
         source_id = f"issue:{issue['id']}"
         try:
             participants = participant_roster_names(issue["participant_roster"])

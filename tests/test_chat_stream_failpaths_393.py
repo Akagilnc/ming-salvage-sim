@@ -96,6 +96,15 @@ class _FailingPrologueDB:
     def agno_runs_length(self, *a, **k):
         return 0
 
+    def kv_get(self, key, default=None):
+        return default
+
+    def restore_interrupted_after_failed_retry(self, *a, **k):
+        return []
+
+    def set_chat_turn_error_pack(self, *a, **k):
+        return None
+
 
 def _base_runtime(db):
     character = minister_double("测试大臣")
@@ -255,6 +264,15 @@ class _DoubleFailDB:
     def agno_runs_length(self, *a, **k):
         return 0
 
+    def kv_get(self, key, default=None):
+        return default
+
+    def restore_interrupted_after_failed_retry(self, *a, **k):
+        return []
+
+    def set_chat_turn_error_pack(self, *a, **k):
+        return None
+
 
 def test_prologue_cleanup_failure_still_releases_gate_and_counter():
     """R3 self-check: prologue 崩 → _fail_chat_turn_and_reload 自身也崩（DB 已坏）→
@@ -310,6 +328,15 @@ class _WorkerPathDB:
 
     def agno_runs_length(self, *a, **k):
         return 0
+
+    def kv_get(self, key, default=None):
+        return default
+
+    def restore_interrupted_after_failed_retry(self, *a, **k):
+        return []
+
+    def set_chat_turn_error_pack(self, *a, **k):
+        return None
 
 
 def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
@@ -457,6 +484,8 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
         current_phase=lambda: state.turn_phase,
         await_translations_before_month=lambda after_drain=None: after_drain() if after_drain else None,
     )
+    import threading
+    write_gate = get_session_write_queue(session).write_gate
     runtime = SimpleNamespace(
         db=db,
         state=state,
@@ -466,7 +495,12 @@ def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
         refresh_turn=lambda: None,
         directive_rows=lambda: [],
         state_payload=lambda: {"turn": {"turn": int(state.turn)}},
-        _write_gate=get_session_write_queue(session).write_gate,
+        _write_gate=write_gate,
+        _write_queue=get_session_write_queue(session),
+        _settlement_entry_lock=threading.Lock(),
+        _settlement_entries_inflight=0,
+        _runtime_write_gate=lambda: write_gate,
+        _runtime_write_queue=lambda: get_session_write_queue(session),
     )
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)

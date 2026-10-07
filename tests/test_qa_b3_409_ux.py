@@ -123,11 +123,28 @@ class _PhaseSession:
 
 class _ResolveGame:
     def __init__(self, phase: str, gate: ClassifiedWriteGate):
+        import threading
+        from ming_sim.session_write_queue import get_session_write_queue
         self.state = SimpleNamespace(turn=3, ended=False, turn_phase=phase)
         self.session = _PhaseSession(phase)
         self.session.state = self.state
-        self.db = SimpleNamespace(list_pending_actions=lambda *_a, **_k: [])
+        self.session.await_translations_before_month = (
+            lambda after_drain=None: after_drain() if after_drain else None
+        )
+        self.db = SimpleNamespace(
+            list_pending_actions=lambda *_a, **_k: [],
+            kv_get=lambda *_a, **_k: None,
+            capture_month_open_snapshot=lambda *_a, **_k: False,
+            get_month_open_snapshot=lambda *_a, **_k: None,
+            clear_month_open_snapshot=lambda *_a, **_k: None,
+            conn=SimpleNamespace(execute=lambda *a, **k: SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])),
+        )
         self._write_gate = gate
+        self._write_queue = get_session_write_queue(self.session)
+        self._settlement_entry_lock = threading.Lock()
+        self._settlement_entry_inflight = 0
+        self._runtime_write_gate = lambda: gate
+        self._runtime_write_queue = lambda: self._write_queue
         self.actions = []
         self.session.end_turn = lambda: self.actions.append("end_turn")
 

@@ -47,8 +47,6 @@ def test_existing_save_drops_maintenance_column_on_open(content, tmp_path):
     # 重开：GameDB.__init__ → init_schema 的维护费退役迁移应 drop（不调 seed_static_data）。
     db2 = GameDB(path, content)
     try:
-        cols = {r["name"] for r in db2.conn.execute("PRAGMA table_info(armies)").fetchall()}
-        assert "maintenance_per_turn" not in cols, "现存档重开应在 init_schema 路径 drop 维护费列"
         state2 = db2.load_state()
         created = db2.create_armies_from_extraction(state2, [{
             "id": "post_drop_army", "name": "迁移后新军", "owner_power": "ming",

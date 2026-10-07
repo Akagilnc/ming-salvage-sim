@@ -241,3 +241,4 @@ def test_issue_effect_faction_rejection_reaches_reports(game):
     rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
     rows = [r for r in rows if r[2] == "missing_ref"]
     assert len(rows) == 1, rows
+    assert rows[0][1]

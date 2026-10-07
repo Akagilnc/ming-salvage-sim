@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import threading
+
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List
@@ -56,17 +58,25 @@ def test_run_highlight_judge_timeout_and_exception_degrade_silently():
     ) == []
 
 
-def test_run_highlight_judge_success_returns_phrases():
+@pytest.mark.parametrize(("output", "expected"), [
+    ("", []),
+    ("not json", []),
+    ('{"highlights": "辽饷"}', []),
+    ('{"phrases": ["甲"]}', []),
+    ('{"highlights": [1, null, ""]}', []),
+    ('{"highlights": ["辽饷", "军心"]}', ["辽饷", "军心"]),
+])
+def test_run_highlight_judge_success_returns_phrases(output, expected):
     class _Ok:
         def run(self, *_a, **_k):
-            return SimpleNamespace(content='{"highlights": ["辽饷", "军心"]}')
+            return SimpleNamespace(content=output)
 
     assert run_highlight_judge(
         minister_reply="臣陈**辽饷**与军心。",
         llm_config=object(),
         agent=_Ok(),
         timeout_s=1.0,
-    ) == ["辽饷", "军心"]
+    ) == expected
 
 
 def test_run_highlight_judge_bad_output_degrades_to_empty():
@@ -220,7 +230,6 @@ def test_chat_stream_done_before_highlights_and_degrade(game, monkeypatch):
     from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
-    minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣", "陈辽饷。"]))
     _restore_highlight_seams(web_game)
 
@@ -248,7 +257,6 @@ def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
     from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
-    minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣", "先陈军务。"]))
     _restore_highlight_seams(web_game)
 
@@ -296,7 +304,6 @@ def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
     from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
-    minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣陈辽饷。"]))
     _restore_highlight_seams(web_game)
 
@@ -333,7 +340,6 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
     from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
-    minister = "温体仁"
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
     _restore_highlight_seams(web_game)
 

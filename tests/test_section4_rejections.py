@@ -371,49 +371,64 @@ def test_duplicate_army_without_manpower_rejected(game):
 # ---- 代码异常(bug 类,非脏数据)→ 原样上抛，原子分派回滚整批 ----
 
 def test_region_deltas_code_exception_aborts_settlement(game, monkeypatch):
-    """apply_region_deltas 内代码异常原样上抛，原子分派回滚整批。"""
+    """apply_region_deltas 内代码异常原样上抛，原子分派回滚整批。
+    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, content = game
     good = _a_region(db)
 
+    fault = AttributeError("code bug in apply_region_deltas")
+
     def _boom(self, *a, **k):
-        raise AttributeError("code bug in apply_region_deltas")
+        raise fault
+
     monkeypatch.setattr(type(db), "apply_region_deltas", _boom)
 
-    with pytest.raises(AttributeError):
+    with pytest.raises(AttributeError) as ei:
         run_settle(db, state, content, {
             "region_delta": {good: {"public_support": 2}},
         }, narrative="x", decree_text="y")
+    assert ei.value is fault
 
 
 def test_army_deltas_code_exception_aborts_settlement(game, monkeypatch):
-    """apply_army_deltas 内代码异常原样上抛，原子分派回滚整批。"""
+    """apply_army_deltas 内代码异常原样上抛，原子分派回滚整批。
+    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, content = game
     good = _an_army(db)
 
+    fault = KeyError("code bug in apply_army_deltas")
+
     def _boom(self, *a, **k):
-        raise KeyError("code bug in apply_army_deltas")
+        raise fault
+
     monkeypatch.setattr(type(db), "apply_army_deltas", _boom)
 
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError) as ei:
         run_settle(db, state, content, {
             "army_delta": {good: {"morale": 2}},
         }, narrative="x", decree_text="y")
+    assert ei.value is fault
 
 
 def test_create_armies_code_exception_aborts_settlement(game, monkeypatch):
-    """create_armies_from_extraction 内代码异常原样上抛，原子分派回滚整批。"""
+    """create_armies_from_extraction 内代码异常原样上抛，原子分派回滚整批。
+    来源保真：冒出的须是注入的原异常对象，不锁诊断措辞。"""
     db, state, content = game
     good_owner = _valid_power_id(db)
 
+    fault = AttributeError("code bug in create_armies_from_extraction")
+
     def _boom(self, *a, **k):
-        raise AttributeError("code bug in create_armies_from_extraction")
+        raise fault
+
     monkeypatch.setattr(type(db), "create_armies_from_extraction", _boom)
 
-    with pytest.raises(AttributeError):
+    with pytest.raises(AttributeError) as ei:
         run_settle(db, state, content, {
             "new_armies": [{"id": "x_corps", "owner_power": good_owner,
                             "manpower": 1000, "maintenance_per_turn": 1}],
         }, narrative="x", decree_text="y")
+    assert ei.value is fault
 
 
 # ---- clamp 语义(P2 铁律):clamp 不是拒收,clamp 后照落 ----
@@ -673,7 +688,10 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
 
     rows = _rejection_rows(db, turn, "issue_summary.entity_rejections")
     assert len(rows) == 1
-    assert "士气大振" in rows[0][1] or "非法字段" in rows[0][1]
+    section, reason, category, source = rows[0]
+    assert section == "issue_summary.entity_rejections"
+    assert reason
+    assert category
 
 
 def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):

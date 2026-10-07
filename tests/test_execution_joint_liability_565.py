@@ -124,14 +124,20 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
     targets = {e["target"] for e in edges}
     assert "倪元璐" in targets
     if delegator_delta is None:
-        # degraded：委派人零机械边，但仍进走样说明
+        # degraded：委派人零机械边，责任面仍在结构化归属
         assert "徐光启" not in targets
     else:
         assert "徐光启" in targets
     assert not {"黄道周", "王承恩"} & targets
 
+    # 连坐归属读结构化责任面，不写入 execution_note 原文
+    liable_ids = {
+        str(p["character_id"])
+        for p in db.list_execution_liability_parties(dossier_id)
+    }
+    assert {"倪元璐", "徐光启"} <= liable_ids
     note = db.get_decree_dossier(dossier_id)["execution_note"]
-    assert "徐光启" in note
+    assert note == "门生办砸，走样"
 
 
 def test_adapter_replay_is_idempotent_on_joint_liability_rows(game):
@@ -184,7 +190,7 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     assert db.get_relation_edge_events(event_kind="连坐") == []
 
 
-def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
+def test_dead_liable_party_skips_satisfaction_but_stays_on_liability_roster(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
     db.conn.execute("UPDATE characters SET status='dead' WHERE name='倪元璐'")
@@ -206,8 +212,14 @@ def test_dead_liable_party_skips_satisfaction_but_enters_note(game):
     }
     assert "倪元璐" not in edges
     assert "徐光启" in edges
+    # 已故主办仍在结构化责任面；execution_note 保持 LLM 原文
+    liable_ids = {
+        str(p["character_id"])
+        for p in db.list_execution_liability_parties(dossier_id)
+    }
+    assert "倪元璐" in liable_ids
     note = db.get_decree_dossier(dossier_id)["execution_note"]
-    assert "倪元璐" in note
+    assert note == "主事已故仍须叙明"
 
 
 def test_explicit_affected_parties_must_pass_full_key_validation(game):

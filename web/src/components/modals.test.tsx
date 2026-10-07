@@ -305,75 +305,6 @@ describe("EdictModal — decree desk behavior", () => {
     expect(onIssue).toHaveBeenCalledTimes(1);
   });
 
-  it("#1732 failed-only：页脚就地确认；取消零调用；确认后退朝", () => {
-    const onAdvance = vi.fn();
-    const confirm = vi.spyOn(window, "confirm");
-    const { host } = renderEdictModal({
-      state: baseGameState({
-        directives: [],
-        pending_directive_count: 0,
-        pending_secret_order_count: 0,
-        pending_non_directive_action_count: 0,
-        failed_secret_order_count: 1,
-      }),
-      onAdvanceWithoutEdict: onAdvance,
-    });
-    const footer = host.querySelector<HTMLButtonElement>(".desk-footer button");
-    expect(footer?.disabled).toBe(false);
-    act(() => footer?.click());
-    expect(confirm).not.toHaveBeenCalled();
-    expect(onAdvance).not.toHaveBeenCalled();
-    const panel = host.querySelector('[aria-label="退朝确认"]');
-    expect(panel).not.toBeNull();
-    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("取消")
-    );
-    act(() => cancel?.click());
-    expect(onAdvance).not.toHaveBeenCalled();
-    expect(host.querySelector('[aria-label="退朝确认"]')).toBeNull();
-
-    const footer2 = host.querySelector<HTMLButtonElement>(".desk-footer button");
-    act(() => footer2?.click());
-    const yes = Array.from(host.querySelector('[aria-label="退朝确认"]')!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("退朝结束本月")
-    );
-    act(() => yes?.click());
-    expect(onAdvance).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("#1732 ChatModal · 撤回就地确认", () => {
-  it("取消零调用；确认后 onUndo", () => {
-    const onUndo = vi.fn();
-    const confirm = vi.spyOn(window, "confirm");
-    const host = renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      canUndoLastChat: true,
-      onUndo,
-    });
-    const undo = Array.from(host.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("撤回本轮")
-    ) as HTMLButtonElement;
-    act(() => undo.click());
-    expect(confirm).not.toHaveBeenCalled();
-    expect(onUndo).not.toHaveBeenCalled();
-    const panel = host.querySelector('[aria-label="撤回召对确认"]');
-    expect(panel).not.toBeNull();
-    const cancel = Array.from(panel!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("取消")
-    );
-    act(() => cancel?.click());
-    expect(onUndo).not.toHaveBeenCalled();
-
-    act(() => undo.click());
-    const yes = Array.from(host.querySelector('[aria-label="撤回召对确认"]')!.querySelectorAll("button")).find((b) =>
-      (b.textContent || "").includes("继续撤回")
-    );
-    act(() => yes?.click());
-    expect(onUndo).toHaveBeenCalledWith("周延儒");
-  });
-
   it("#1732 T3 开着确认条发送后确认条关闭", () => {
     const onSend = vi.fn();
     const host = renderModal({
@@ -511,32 +442,6 @@ describe("ChatModal — placeholder switches on character type", () => {
     expect(textarea.placeholder).not.toContain("他");
   });
 
-  it("shows #505 system-layer reply retry control when replyRetry is set", () => {
-    const retry = vi.fn();
-    renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      chat: [{ role: "user", content: "剿抚孰先？" }],
-      replyRetries: [
-        { chat_turn_id: 12, question: "剿抚孰先？" },
-        { chat_turn_id: 13, question: "退朝", recovery_phase: "court_break", error_pack_path: "/tmp/post-reply-pack" },
-      ],
-      onRetryReply: retry,
-    });
-    const note = document.querySelector('[data-testid="reply-retry-12"]');
-    expect(note?.textContent).toContain("重试");
-    expect(note?.textContent).toContain("剿抚孰先？");
-    expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("回话已保存，后续处理失败");
-    expect(document.querySelector('[data-testid="reply-retry-13"]')?.textContent).toContain("/tmp/post-reply-pack");
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (node) => node.textContent === "重试",
-    );
-    expect(button).toBeTruthy();
-    act(() => button?.click());
-    expect(retry).toHaveBeenCalledTimes(1);
-    expect(retry).toHaveBeenCalledWith("殿上", 12);
-  });
-
 });
 
 describe("ChatModal — organic markdown display cleanup", () => {
@@ -599,60 +504,6 @@ describe("ChatModal — four diegetic roles (#540)", () => {
   });
 });
 
-describe("ChatModal — soft scenes / divider / retry wiring (#543)", () => {
-  it("keeps a side interjection in the selected minister segment without window bleed", async () => {
-    const send = vi.fn();
-    const undo = vi.fn();
-    const retryReply = vi.fn();
-    const yang = { ...MINISTER_MOCK, id: "yang", name: "杨嗣昌", summary: "兵部旧臣", favorite: false };
-    const hong = { ...MINISTER_MOCK, id: "hong", name: "洪承畴", office: "三边总督", summary: "边臣", favorite: true };
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "洪承畴", roster: [{ name: "洪承畴", present: true }], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "越次召对" }, translation_retries: [{ chat_turn_id: 1, night_id: 23, minister_name: "洪承畴", kind: "translation_pending", retryable: true, error_pack_path: "/tmp/audience-turn-1" }], messages: [
-      { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
-      { role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance", container: { audience_type: "越次召对" } },
-      { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 1 },
-      { role: "minister", speaker: "杨嗣昌", content: "殿侧容臣插一句。", beat: "dialogue", container: { audience_type: "越次召对" } },
-      { role: "user", speaker: "朕", content: "辽饷何解？", beat: "dialogue", container: { audience_type: "越次召对" }, chat_turn_id: 12 },
-      { role: "scene", speaker: "", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
-    ] }) }));
-
-    const host = renderModal({
-      minister: hong,
-      ministers: [yang, hong],
-      portraitPrefix: "minister_",
-      currentNightId: 23,
-      onSend: send,
-      onUndo: undo,
-      canUndoLastChat: true,
-      replyRetries: [{ chat_turn_id: 12, question: "辽饷何解？" }],
-      onRetryReply: retryReply,
-      onRetryTranslation: vi.fn(),
-    });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-
-    expect(host.querySelector(".audience-type-label")?.textContent).toBe("越次召对");
-    expect(host.querySelector(".minister-profile")).toBeNull();
-    expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
-    expect(host.querySelector(".chat-secret-orders")).toBeNull();
-    const ministerMessages = host.querySelectorAll(".chat-message.minister");
-    expect(ministerMessages[ministerMessages.length - 1]?.querySelector("span")?.textContent).toBe("杨嗣昌");
-    const clickButton = (text: string) => act(() => Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.includes(text))?.click());
-    // #1732 B：撤回就地确认
-    clickButton("撤回本轮");
-    clickButton("继续撤回");
-    act(() => host.querySelector<HTMLButtonElement>('[data-testid="reply-retry-12"] button')?.click());
-    expect(undo).toHaveBeenCalledWith("洪承畴");
-    expect(retryReply).toHaveBeenCalledWith("殿上", 12);
-    const replyFailure = host.querySelector('[data-testid="reply-retry-12"]');
-    expect(replyFailure?.closest('[data-audience-turn-id="12"]')).not.toBeNull();
-    const translationFailure = host.querySelector('[data-testid="translation-retry-1"]');
-    expect(translationFailure?.closest('[data-audience-turn-id="1"]')).not.toBeNull();
-    expect(translationFailure?.textContent).toContain("/tmp/audience-turn-1");
-    const divisions = Array.from(host.querySelectorAll(".beat-divider"));
-    expect(divisions).toHaveLength(2);
-    expect(divisions[0]?.textContent).toContain("洪承畴");
-    expect(divisions[1]?.textContent).not.toMatch(/杨嗣昌|洪承畴/);
-  });
-});
 
 describe("ChatModal — single night-scroll authority (#539)", () => {
   it("retires the whole old-night snapshot when the persisted player-entry identity changes before refresh fails", async () => {
@@ -1273,17 +1124,7 @@ describe("ChatModal — one-night audience scroll (#1849)", () => {
     expect(document.querySelector('[data-audience-turn-id="11"]')).not.toBeNull();
   });
 
-  it("切回有记录大臣：全夜卷轴按 turn 结构呈现（#1849）", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, protagonist: "", roster: [], translation_pending: false, messages: nightScroll }) }));
-    renderModal({ minister: hong, ministers: [hong, xu], portraitPrefix: "minister_", currentNightId: 23 });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    const turn11 = document.querySelector('[data-audience-turn-id="11"]');
-    expect(turn11?.querySelectorAll(".turn-segment")).toHaveLength(3);
-    expect(turn11?.querySelector(".turn-segment.user")).not.toBeNull();
-    expect(turn11?.querySelector(".turn-segment.minister")).not.toBeNull();
-    expect(turn11?.querySelector(".turn-segment.aside")).not.toBeNull();
-    expect(document.querySelector(".minister-profile")).toBeNull();
-  });
+
 
 });
 

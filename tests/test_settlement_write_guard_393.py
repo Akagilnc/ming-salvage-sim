@@ -65,6 +65,15 @@ class _RecordingDB:
         self.writes.append("admin_delete")
         return 1
 
+    def capture_month_open_snapshot(self, *a, **k):
+        return False
+
+    def get_month_open_snapshot(self, *a, **k):
+        return None
+
+    def clear_month_open_snapshot(self, *a, **k):
+        return None
+
 
 class _FakeGame:
     def __init__(self, turn_phase: str):

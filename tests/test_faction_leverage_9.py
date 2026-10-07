@@ -191,10 +191,13 @@ def test_promotion_via_set_character_office_raises_leverage(game):
     assert after > before, f"升迁到内阁后 leverage 应上升(before={before} after={after})"
 
 def test_failed_appointment_rolls_back_faction_leverage(game):
-    """#9 finding#2 事务回滚：失败的 apply_office_appointment（走 _restore_person_write_state）后，
-    该 faction leverage 与调用前一致（中途全重算被回滚、不漂移）。"""
+    """#9 finding#2 事务回滚：代码故障上抛前走 _restore_person_write_state，
+    faction leverage 与调用前一致（中途全重算被回滚、不漂移）。
+
+    #1853：schema/code 故障不得洗成业务 rejected（ADR 0005）；注入 RuntimeError
+    必须响亮上抛，同时仍完成快照还原。
+    """
     db, state, content = game
-    # 构造失败：起复一个在册阉党成员，但 set_character_office 抛错（授个会让 infer 报错的非法链）。
     # 更稳的失败注入：monkeypatch set_character_office 抛错，验回滚还原 leverage。
     name = db.conn.execute(
         "SELECT name FROM characters WHERE faction='阉党' AND status='active' "
@@ -213,13 +216,16 @@ def test_failed_appointment_rolls_back_faction_leverage(game):
 
     db.set_character_office = _boom  # type: ignore[assignment]
     try:
-        result = apply_office_appointment(
-            db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党"
-        )
+        try:
+            apply_office_appointment(
+                db, state, content, name, "内阁大学士", reason="起复内阁", faction="阉党"
+            )
+            raise AssertionError("代码故障必须上抛，不得洗成业务 rejected")
+        except RuntimeError as exc:
+            assert "注入故障：授官落库失败" in str(exc)
     finally:
         db.set_character_office = orig  # type: ignore[assignment]
 
-    assert result.get("rejected"), f"注入故障应使任命 rejected：{result}"
     after = db.faction_leverage("阉党")
     assert after == before, (
         f"失败任命回滚后阉党 leverage 应不变(before={before} after={after})"
@@ -790,10 +796,7 @@ def test_calibrated_save_without_marker_not_re_anchored(game, tmp_path):
                 f"{faction}：已校准缺标记的老档（clamp 后）不得重锚 offset，"
                 f"期望保持 {exp}，得 {got}"
             )
-        # 持久标记应已补落（下次开档走 marker 早返、彻底不再碰 offset）。
-        assert db._has_meta_flag("__leverage_offsets_calibrated"), (
-            "已校准缺标记的老档应补落持久标记 __leverage_offsets_calibrated"
-        )
+        # 外部契约：offset 保持；不锁私有迁移标记名。
     finally:
         db.close()
 
@@ -945,9 +948,6 @@ def test_old_integer_offset_migrated_to_float(game):
 
     reopened = GameDB(db.path, content)
     try:
-        assert reopened._has_meta_flag("__leverage_offsets_float_v2"), (
-            "v2 迁移标记应已落库（老档重开应触发 v2 迁移）"
-        )
         offset = reopened.conn.execute(
             "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
         ).fetchone()["leverage_offset"]

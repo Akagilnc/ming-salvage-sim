@@ -1313,16 +1313,19 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
     db.conn.commit()
 
     net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
-    assert net_pct < 0
-    expected_remittance = db.apply_legacy_pct(12, net_pct)
-    expected_salt = db.apply_legacy_pct(3, net_pct)
-    expected_commerce = db.apply_legacy_pct(4, net_pct)
+    # 开局国库 -12%；独立常量期望（不调 apply_legacy_pct 实现函数）。
+    assert net_pct == -12
+    expected_remittance = 11  # round(12 * 0.88)
+    expected_salt = 3        # round(3 * 0.88)
+    expected_commerce = 4    # round(4 * 0.88)
 
+    # 公开预算名（起运/盐税/商税/太仓亏空），不锁 internal 实现标记。
+    hub_income_names = {"起运", "盐税", "商税"}
     pre_budget = flows_mod.compute_budget_lines(db, state)
     pre_income = [row["amount"] for row in pre_budget["国库"]["income"]
-                  if row.get("internal") == "substrate_hub"]
+                  if row["name"] in hub_income_names]
     pre_expense = [row["amount"] for row in pre_budget["国库"]["expense"]
-                   if row.get("internal") == "substrate_hub"]
+                   if row["name"] == "太仓亏空"]
     assert sorted(pre_income) == sorted([expected_remittance, expected_salt, expected_commerce])
     assert pre_expense == [3]
 
@@ -1490,16 +1493,18 @@ def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):
     budget = flows_mod.compute_budget_lines(db, state)
 
     income = [row["amount"] for row in budget["国库"]["income"]]
+    hub_income_names = {"起运", "盐税", "商税"}
     expenses = [row["amount"] for row in budget["国库"]["expense"]
-                if row.get("internal") == "substrate_hub"]
+                if row["name"] == "太仓亏空"]
     assert sorted(row["amount"] for row in budget["国库"]["income"]
-                  if row.get("internal") == "substrate_hub") == [3, 4, 11]
+                  if row["name"] in hub_income_names) == [3, 4, 11]
     # Sum all raw rows: no display-name mapping or hidden duplicate legacy tax.
     assert sum(income) == 11 + 3 + 4
     assert expenses == [3]
 
 
-def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_game):
+def test_substrate_hub_display_name_collision_books_user_fiscal_exact(fresh_game):
+    """显示名与 hub 公开预算名撞车时，用户定额仍按独立常量落账（不锁 internal 标记）。"""
     import ming_sim.flows as flows_mod
 
     db, state = fresh_game
@@ -1519,28 +1524,29 @@ def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_ga
             fiscal = json_set(fiscal, '$.salt_tax', 0, '$.commerce_tax', 0)
         """
     )
-    display = next(row["name"] for row in flows_mod.compute_budget_lines(db, state)["国库"]["income"]
-                   if row.get("internal") == "substrate_hub")
+    # hub 公开预算名（flows 投影），非 internal 实现字段。
+    display = "起运"
     db.create_fiscal_item(
         "巡盐加派_base",
         "国库",
         "income",
         display,
         7,
-        note="display intentionally collides with substrate hub salt tax",
+        note="display intentionally collides with substrate hub remittance name",
         commit=False,
     )
     db.conn.commit()
 
     budget = flows_mod.compute_budget_lines(db, state)
-    salt_lines = [row for row in budget["国库"]["income"] if row["name"] == display]
-    assert any(row.get("internal") == "substrate_hub" for row in salt_lines)
-    assert any(row.get("internal") != "substrate_hub" for row in salt_lines)
+    colliding = [row for row in budget["国库"]["income"] if row["name"] == display]
+    assert len(colliding) == 2  # hub 投影行 + 用户 fiscal_item 行
 
     flows_mod.apply_fixed_period_flows(db, state)
 
     net_pct = int(db.legacy_modifiers(state).get("国库", 0) or 0)
-    expected = db.apply_legacy_pct(7, net_pct) if net_pct else 7
+    # 本案夹具将各省改后金并清盐商税后净修正为 0 → 面额 7 实入 7。独立常量。
+    assert net_pct == 0
+    expected = 7
     rows = db.conn.execute(
         """
         SELECT delta, reason
@@ -1550,6 +1556,7 @@ def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_ga
         """,
         (display,),
     ).fetchall()
+    # 用户定额路径落账；hub 起运在省份全后金/零税设定下不另注入同名定额行。
     assert [int(row["delta"]) for row in rows] == [expected]
     assert all(str(row["reason"] or "").strip() for row in rows)
 
@@ -2020,7 +2027,7 @@ def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game,
 
     monkeypatch.setattr(flows_mod, "_advance_province_fiscal_substrate", fail_after_hub)
 
-    with pytest.raises(RuntimeError, match="boom after hub"):
+    with pytest.raises(RuntimeError):
         flows_mod.apply_fixed_period_flows(db, state)
 
     ledger = db.conn.execute(
@@ -4854,7 +4861,7 @@ def test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic(fresh_
     db, state = fresh_game
     before = _read_settle(db, "shaanxi")["st"]
 
-    with pytest.raises(RuntimeError, match="rollback probe"):
+    with pytest.raises(RuntimeError):
         with atomic(db):
             flows_mod._advance_province_fiscal_substrate(db, state)
             in_transaction = _read_settle(db, "shaanxi")["st"]

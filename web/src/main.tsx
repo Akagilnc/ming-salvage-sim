@@ -144,8 +144,6 @@ export function App() {
   // 召对动作群（useChatActions.ts）：召对面板外围态 + 开召对/发问/撤回/重试。
   const {
     chatNotice,
-    replyRetries,
-    translationRetries,
     retryReadFailure,
     canUndoLastChat,
     composerHint,
@@ -190,7 +188,7 @@ export function App() {
     deleteDirective,
   } = useEdictActions({ setError, setState, beginDurableMutation });
 
-  // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/failed-only 退朝/HITL 决策点续裁/失败重拉。
+  // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/无旨退朝重试/HITL 决策点续裁/失败重拉。
   // hook 必须在 menu/loading 早退之前调用。
   const {
     settlementGazetteReading,
@@ -199,7 +197,6 @@ export function App() {
     dismissSettlementGazette,
     suppressPostAdvanceOverlays,
     pendingDecisions,
-    decisionFailures,
     pausedDecisionError,
     settlementHudError,
     failedEntryWasRetreat,
@@ -738,8 +735,6 @@ export function App() {
             input={input}
             busy={busy}
             error={error}
-            replyRetries={replyRetries}
-            translationRetries={translationRetries}
             retryReadFailure={retryReadFailure}
             onInput={setInput}
             onSend={sendChat}
@@ -774,7 +769,6 @@ export function App() {
             localDirectives={localDirectives}
             onDeleteDirective={deleteDirective}
             onIssueDecree={issueDecree}
-            onAdvanceWithoutEdict={() => { setActiveModal("none"); void advanceWithoutEdict(); }}
           />
         </FullscreenModal>
       ) : null}
@@ -854,7 +848,7 @@ export function App() {
           #1620：落印失败保留 pending/picks；typed 错只经上方 decision-recovery 单一 role=alert，不在此复制。 */}
       {pendingDecisions.length > 0 ? (
         <div data-testid="decision-modal">
-          <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} busy={busy} />
+          <DecisionModal decisions={pendingDecisions} onResolve={submitDecisions} busy={busy} />
         </div>
       ) : null}
       </div>

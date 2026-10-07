@@ -356,7 +356,7 @@ def render_referenceable_dossier_brief(candidates) -> str:
         outcome_cn = qualitative_dossier_outcome(
             row.get("execution_outcome"), status=row.get("status"),
         )
-        note = str(row.get("execution_note") or "").strip()
+        note = str(row.get("execution_note") or "")
         markers = qualitative_midzhi_markers(row)
         facts = []
         if status_cn:

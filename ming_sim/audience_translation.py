@@ -146,20 +146,18 @@ def mark_turn_translation_done(
     db: Any, chat_turn_id: int, *, commit: bool = True,
 ) -> None:
     """水位单真源：源轮 extract_status → done（控制口令早退与转译落账共用）。"""
+    from ming_sim.applier import connection_owns_transaction
+
     ctid = int(chat_turn_id or 0)
     if ctid <= 0:
         return
+    owns = connection_owns_transaction(db.conn) if commit else False
     db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' "
         "WHERE id=? AND status NOT IN ('failed','undone')",
         (ctid,),
     )
-    if not commit:
-        return
-    if (
-        not bool(getattr(db.conn, "_commit_suspended", False))
-        and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
-    ):
+    if owns:
         db.conn.commit()
 
 
@@ -222,7 +220,7 @@ def list_pending_translations(
     """玩家可重试的转译失败：仅明确失败的 pending，不含刚落库的空水位。
 
     可按夜 / 源轮收窄。返回行附结构化系统提示态（供 0158 决定 6 投影，不做页面）。
-    无待补 → 正常空列表；直接引用真实库契约。
+    # #1853 J8：必备 list_unextracted_replies 直调；禁缺接口洗成空待补投影。
     """
     rows = list(db.list_unextracted_replies(night_id=night_id) or [])
     want = int(chat_turn_id) if chat_turn_id is not None else None
@@ -276,6 +274,8 @@ def run_turn_translation_job(
 
     # 死轮 / 未落定回话 / 已 done：闸内短读后早退（禁持非重入锁再嵌套写）。
     # ADR 0155 / 0036：转译真源 = 已持久化回话；generating 或无 minister_message_id 拒绝。
+    # #1853 J8：必备 get_story_extract_status / conn 查询直调；禁缺接口把已 done
+    # 洗成 already_done=False 后静默整轮重译（不只空[]）。
     already_done = False
     if ctid > 0:
         with _gate_cm():
@@ -350,6 +350,7 @@ def run_turn_translation_job(
             raise AudienceTranslateError("说话人分段未逐字覆盖源轮回话")
         with _gate_cm():
             # 落账临界区复查源轮仍存活（ADR 0038：后台写入前须校验目标轮仍存活）。
+            # #1853 J8：必备 conn 查询直调；禁缺接口跳过复查后继续落账。
             if ctid > 0:
                 live = db.conn.execute(
                     "SELECT status FROM chat_turns WHERE id=?", (ctid,),
@@ -534,6 +535,7 @@ def _load_emperor_message_for_turn(
     db: Any, chat_turn_id: int, write_gate: Any,
 ) -> str:
     """读源轮皇帝原话。查询成功且缺行 → 空串；SQL/连接/Row 形状异常响亮上抛。"""
+    # #1853 J8：必备 db.conn 直调；禁缺接口洗成「无原话」。无效 chat_turn_id 仍空串。
     ctid = int(chat_turn_id or 0)
     if ctid <= 0:
         return ""

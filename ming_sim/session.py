@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 import threading
 import time
 import uuid
@@ -423,19 +422,16 @@ def _appointment_intent_is_current_office_noop(
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
     归一到在册原始名，再查当前 office。"""
-    conn = getattr(db, "conn", None)
+    # #1853 J8-R：必备 GameDB.conn 直调；禁 getattr(conn, None) 替身。
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
-    if conn is None or not clean_name or not desired:
+    if not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    try:
-        row = conn.execute(
-            "SELECT status, office FROM characters WHERE name = ?",
-            (canonical,),
-        ).fetchone()
-    except sqlite3.Error:
-        return False
+    row = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name = ?",
+        (canonical,),
+    ).fetchone()
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))
@@ -1038,7 +1034,7 @@ class GameSession:
 
 
     def _recognize_audience_command_verdict(self, message: str) -> str:
-        """同步识别收夜口令。纯封闭集匹配，无 Future/宽降级。"""
+        """同步识别显式退朝口令。纯封闭集匹配，无 Future/宽降级。"""
         from ming_sim.audience_night import (
             normalize_audience_command_verdict,
             recognize_audience_command,
@@ -1821,8 +1817,8 @@ class GameSession:
             schedule_held_decree_forecasts(self)
         night_id = int(night["id"])
 
-        # 收夜口令。先兑现确定性效果，再把无需转译的源轮标 done。
-        # 退朝：有对话轮只标 court_break，由 epilogue 收夜。
+        # 显式退朝口令：chat_turn_id==0 当场收夜；非 0 只标 court_break 由 epilogue 收。
+        # 留侍／含糊收夜词表已退役——走普通场景演绎与转译。
         audience_command_verdict = self._recognize_audience_command_verdict(message_text)
         result = ChatTurnResult(answer="")
         if audience_command_verdict == CMD_CLOSE_NIGHT:
@@ -1867,14 +1863,12 @@ class GameSession:
                     )
                     xuan_ctid = int(chat_turn_id or 0)
                     if xuan_ctid > 0:
+                        owns = connection_owns_transaction(self.db.conn)
                         self.db.conn.execute(
                             "UPDATE chat_turns SET protagonist_name=? WHERE id=?",
                             (target.name, xuan_ctid),
                         )
-                        if (
-                            not bool(getattr(self.db.conn, "_commit_suspended", False))
-                            and int(getattr(self.db.conn, "_atomic_depth", 0) or 0) == 0
-                        ):
+                        if owns:
                             self.db.conn.commit()
                     if on_protagonist_changed is not None:
                         on_protagonist_changed()
@@ -2646,10 +2640,9 @@ class GameSession:
         self._assert_awaiting_decision_submit()
         desk = list(self.db.list_rescript_desk(int(self.state.turn)))
         ctx = self.db.get_resolve_context(self.state.turn)
-        # #389：event_id 缺失/回显越权（越出本回合候选快照）时以候选快照重绑——
-        # 迁自旧 submit_decisions 的绑定步（与 choices[idx] 位置写协议无关，非
-        # 猜绑，唯一权威仍是 bind_decisions_to_candidate_events）；scope 与旧
-        # list_pending_decisions 同款只收 kind='decision'，rescript_draft 行不动。
+        # #389 / #1900 J20：只采信本回合候选快照内的显式 event_id（及合法 dossier:）；
+        # 标题不补绑。迁自旧 submit_decisions 的绑定步；scope 同旧
+        # list_pending_decisions 只收 kind='decision'，rescript_draft 行不动。
         if ctx is not None:
             from ming_sim.settlement_payload import bind_decisions_to_candidate_events
             decision_rows = [r for r in desk if str(r.get("kind") or "") == "decision"]

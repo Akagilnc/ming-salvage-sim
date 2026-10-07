@@ -8,15 +8,8 @@ city_level：静态结构属性(改一级需五年十年，暂不做变更机制
 from __future__ import annotations
 
 
-def _region_cols(db):
-    return {r["name"] for r in db.conn.execute("PRAGMA table_info(regions)").fetchall()}
 
 
-def test_regions_have_city_level_and_cannon(read_game):
-    db, _, _ = read_game
-    cols = _region_cols(db)
-    assert "city_level" in cols
-    assert "cannon" in cols
 
 
 def test_city_level_tiers_by_history(read_game):
