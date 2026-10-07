@@ -618,48 +618,27 @@ def _run_registry_after_interleave(run) -> None:
         _capture(run, spec.name, registry.load(spec)(run))
 
 
-def _align_person_memory_to_db(db: Any, content: Any, item: Mapping[str, object]) -> None:
-    """拒收回滚后按 DB 行对齐本项人物内存（不做全盘 metrics/人物快照）。"""
+def _register_characters_sync_on_rollback(db: Any, content: Any) -> None:
+    """项级/外层 SAVEPOINT 回滚后，复用既有 DB→人物同源重建刷内存。
+
+    真源是 ``session._sync_offices_from_db_impl``（与 reload_state_from_db 同路径）：
+    覆盖本项写入的全部人物字段及级联顶替对象，不手写字段清单、不另造投影。
+    合法 sibling 的已落 DB 行仍在外层事务内，重建后与之一致。
+    整事务 metrics 等仍由最外层 atomic_and_reload 承接。
+    """
     if content is None:
         return
-    from ming_sim.entities.character.names import _person_change_name
-
-    name = str(_person_change_name(dict(item)) or "").strip()
-    if not name or name not in getattr(content, "characters", {}):
-        return
-    row = db.conn.execute(
-        "SELECT status, office, office_type, status_reason, reason_code, "
-        "transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
-        "FROM characters WHERE name=?",
-        (name,),
-    ).fetchone()
-    if row is None:
-        return
-    ch = content.characters[name]
-    ch.status = str(row["status"] or "")
-    ch.office = str(row["office"] or "")
-    ch.office_type = str(row["office_type"] or ch.office_type)
-    ch.status_reason = str(row["status_reason"] or "")
-    ch.reason_code = str(row["reason_code"] or "")
-    ch.transit_to = str(row["transit_to"] or "")
-    ch.transit_distance_remaining = row["transit_distance_remaining"]
-    ch.transit_speed_factor = row["transit_speed_factor"]
-    ch.transit_start_turn = int(row["transit_start_turn"] or 0)
-
-
-def _register_person_align_on_rollback(db: Any, content: Any, item: Mapping[str, object]) -> None:
-    """把「按 DB 对齐本项人物内存」挂到连接共享 rollback callbacks。
-
-    供本项 SAVEPOINT 失败与外层 item_savepoint_scope（如当场实况指针绑定）
-    共用；不是全盘 metrics/全人物快照。
-    """
     callbacks = getattr(db.conn, "_runtime_rollback_callbacks", None)
     if callbacks is None:
         callbacks = []
         db.conn._runtime_rollback_callbacks = callbacks
 
     def restore() -> None:
-        _align_person_memory_to_db(db, content, item)
+        from ming_sim.session import _sync_offices_from_db_impl
+
+        _sync_offices_from_db_impl(
+            content, db, getattr(db, "llm_config", None),
+        )
 
     callbacks.append(restore)
 
@@ -675,10 +654,10 @@ def land_person_changes_isolated(
     require_origin: bool = False,
     source: Provenance = Provenance.system_simulation,
 ) -> Tuple[List[Dict[str, object]], List[RejectedItem]]:
-    """编排器逐条落人物变更：项级 SAVEPOINT + 单人内存对齐回调。
+    """编排器逐条落人物变更：项级 SAVEPOINT + 同源人物重建回调。
 
-    不做全盘 metrics/全人物运行态快照——整事务失败由最外层 atomic_and_reload
-    同源重载；本函数只服务「本项拒收或外层项级回滚、sibling 保留」的局部 undo。
+    局部 undo 复用 ``_sync_offices_from_db_impl``，不自造字段投影、不登记全盘
+    metrics 快照；整事务失败仍由最外层 atomic_and_reload 同源重载。
     """
     from ming_sim.entities.character.apply import apply_person_changes
 
@@ -690,7 +669,7 @@ def land_person_changes_isolated(
         refused: List[RejectedItem] = []
         try:
             with item_savepoint_scope(db, f"person_item_{abs(id(item)) & 0xFFFFFFFF:x}"):
-                _register_person_align_on_rollback(db, runtime_content, item)
+                _register_characters_sync_on_rollback(db, runtime_content)
                 results, refused = apply_person_changes(
                     db,
                     state,

@@ -412,12 +412,19 @@ def test_on_scene_fact_conflicting_affair_pointer_rolls_back_the_person_change_t
     status_after, _ = db.get_character_status(minister)
     assert status_after == "imprisoned"  # 没有被冲突项的「dead」半写进去
     row = db.conn.execute(
-        "SELECT affair_id FROM characters WHERE name=?", (minister,),
+        "SELECT affair_id, status, office, status_reason, reason_code, loyalty, style, power_id "
+        "FROM characters WHERE name=?", (minister,),
     ).fetchone()
     assert row["affair_id"] == affair_a.id  # 指针仍是最初绑的那个，没被改动
-    # DB 回滚必须连运行时对象一起还原：不能出现「DB 仍是 imprisoned、
-    # content.characters 却停在冲突项写过的 dead」这种跨层分叉。
-    assert content.characters[minister].status == "imprisoned"
+    # 局部 undo 复用同源人物重建：内存与保留 DB 全字段一致（非仅 status）。
+    ch = content.characters[minister]
+    assert ch.status == row["status"] == "imprisoned"
+    assert ch.office == (row["office"] or "")
+    assert ch.status_reason == (row["status_reason"] or "")
+    assert ch.reason_code == (row["reason_code"] or "")
+    assert int(ch.loyalty) == int(row["loyalty"])
+    assert ch.style == (row["style"] or "")
+    assert ch.power_id == (row["power_id"] or ch.power_id)
 
 
 def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):

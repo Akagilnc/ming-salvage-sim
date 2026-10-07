@@ -549,13 +549,24 @@ def test_rejected_derived_appointment_durably_restores_person_and_executor_dossi
         other.close()
     assert tuple(durable) == before
     assert dossier_after == "executing"
+    # 内存与本连接保留 DB 同源（编排局部 undo 走 _sync_offices_from_db_impl）。
+    live = db.conn.execute(
+        "SELECT status, office, status_reason, reason_code, loyalty, style, power_id, "
+        "transit_to, transit_distance_remaining, transit_speed_factor, transit_start_turn "
+        "FROM characters WHERE name=?", (name,),
+    ).fetchone()
     character = content.characters[name]
-    assert (
-        character.status, character.office, character.office_type,
-        character.status_reason, character.reason_code, character.transit_to,
-        character.transit_distance_remaining, character.transit_speed_factor,
-        character.transit_start_turn,
-    ) == (before[0], before[1], before[2], before[3], before[5], *before[6:])
+    assert character.status == live["status"]
+    assert character.office == (live["office"] or "")
+    assert character.status_reason == (live["status_reason"] or "")
+    assert character.reason_code == (live["reason_code"] or "")
+    assert int(character.loyalty) == int(live["loyalty"])
+    assert character.style == (live["style"] or "")
+    assert character.power_id == (live["power_id"] or character.power_id)
+    assert character.transit_to == (live["transit_to"] or "")
+    assert character.transit_distance_remaining == live["transit_distance_remaining"]
+    assert character.transit_speed_factor == live["transit_speed_factor"]
+    assert int(character.transit_start_turn or 0) == int(live["transit_start_turn"] or 0)
     refused = list(out.person.rejected)
     assert refused and refused[0].category == "missing_ref"
 
