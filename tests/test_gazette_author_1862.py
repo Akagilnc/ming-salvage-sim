@@ -310,28 +310,24 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     monkeypatch.setattr(month_chain, "run_world_segment_text", world)
     monkeypatch.setattr("ming_sim.agents.run_agent_text", run_agent)
 
-    # 只观察 resolve 上「邸报作者」那一次 prepare 的结构化消费入参，不扫任意 prepare 调用。
+    # 作者 prepare 深度内：观察最终消费筛选结果（_keep_fact / _knowledge_for_experience），
+    # 不观察谓词布尔本身；agent 接缝绑定同一 prepared。
+    import ming_sim.agents as agents_mod
     import ming_sim.materials as materials_mod
     import ming_sim.month_chain as month_chain_mod
 
     author_capture: dict[str, object] = {
         "dossier_ids": None,
         "fact_origins_kept": [],
-        "event_ok": [],
+        "event_source_ids_kept": [],
         "prepared": None,
         "agent_prepared": None,
     }
     real_prepare = month_chain_mod.prepare_gazette_author_materials
     real_world_opening = materials_mod._world_opening_text
-    real_gpf = month_chain_mod._gazette_public_fact
-    real_gpe = month_chain_mod._gazette_public_event
-    real_create = None
-    try:
-        from ming_sim import agents as agents_mod
-        real_create = agents_mod.create_gazette_author_agent
-    except Exception:
-        agents_mod = None
-
+    real_keep_fact = materials_mod._keep_fact
+    real_knowledge_exp = materials_mod._knowledge_for_experience
+    real_create = agents_mod.create_gazette_author_agent
     depth = {"n": 0}
 
     def _spy_world_opening(state_arg, board_text, affair_lines, dossier_facts, **kwargs):
@@ -341,27 +337,33 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
             state_arg, board_text, affair_lines, dossier_facts, **kwargs,
         )
 
-    def _spy_gpf(fact, secret_dossier_ids=None):
-        ok = real_gpf(fact, secret_dossier_ids)
-        if depth["n"] > 0 and ok:
+    def _spy_keep_fact(fact, include_fact):
+        kept = real_keep_fact(fact, include_fact)
+        if depth["n"] > 0 and kept:
             origin = getattr(fact, "origin_ref", None)
             if origin is None and isinstance(fact, dict):
                 origin = fact.get("origin_ref")
             author_capture["fact_origins_kept"].append(str(origin or ""))
-        return ok
+        return kept
 
-    def _spy_gpe(event):
-        ok = real_gpe(event)
+    def _spy_knowledge_exp(knowledge, include_event):
+        projected = real_knowledge_exp(knowledge, include_event)
         if depth["n"] > 0:
-            author_capture["event_ok"].append(bool(ok))
-        return ok
+            for item in projected.get("events") or []:
+                if isinstance(item, dict):
+                    author_capture["event_source_ids_kept"].append(
+                        str(item.get("source_id") or "")
+                    )
+        return projected
 
     def _spy_prepare(db_arg, state_arg):
         depth["n"] += 1
         try:
             monkeypatch.setattr(materials_mod, "_world_opening_text", _spy_world_opening)
-            monkeypatch.setattr(month_chain_mod, "_gazette_public_fact", _spy_gpf)
-            monkeypatch.setattr(month_chain_mod, "_gazette_public_event", _spy_gpe)
+            monkeypatch.setattr(materials_mod, "_keep_fact", _spy_keep_fact)
+            monkeypatch.setattr(
+                materials_mod, "_knowledge_for_experience", _spy_knowledge_exp,
+            )
             prepared = real_prepare(db_arg, state_arg)
             author_capture["prepared"] = prepared
             return prepared
@@ -373,8 +375,7 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         return real_create(llm_config, prepared, *a, **k)
 
     monkeypatch.setattr(month_chain_mod, "prepare_gazette_author_materials", _spy_prepare)
-    if real_create is not None:
-        monkeypatch.setattr(agents_mod, "create_gazette_author_agent", _spy_create)
+    monkeypatch.setattr(agents_mod, "create_gazette_author_agent", _spy_create)
 
     before = prepare_world_materials(db, state)
     try:
@@ -446,24 +447,20 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     gaz_ids = set(author_capture.get("dossier_ids") or [])
     assert int(secret_did) not in gaz_ids
     assert int(plain_did) in gaz_ids
-    # 事实筛选：作者 prepare 保留 origin 含公开、不含密令/密令案卷
-    kept = set(author_capture.get("fact_origins_kept") or [])
-    assert f"affair:{affair.id}" in kept
-    assert f"dossier:{plain_did}" in kept
-    assert "secret_order:9" not in kept
-    assert f"dossier:{secret_did}" not in kept
-    assert all(not str(o).startswith("secret_order:") for o in kept)
-    # agent 实际 tools 消费发生，且 agent 接到的是作者 prepare 同一份
+    # 最终 _keep_fact 消费结果：公开 origin 入选，密令/密令案卷 origin 不入选
+    kept_facts = set(author_capture.get("fact_origins_kept") or [])
+    assert f"affair:{affair.id}" in kept_facts
+    assert f"dossier:{plain_did}" in kept_facts
+    assert "secret_order:9" not in kept_facts
+    assert f"dossier:{secret_did}" not in kept_facts
+    assert all(not str(o).startswith("secret_order:") for o in kept_facts)
+    # 最终经历投影：进入渲染的 source_id 不含密令 brief；可有非密令经历
+    kept_events = set(author_capture.get("event_source_ids_kept") or [])
+    assert f"secret_order_brief:{order_id}" not in kept_events
+    assert all(not str(s).startswith("secret_order") for s in kept_events)
+    # agent tools 消费发生，且接到作者 prepare 同一份
     assert str(seen.get("files") or "").strip() != ""
     assert str(seen.get("instructions") or "").strip() != ""
-
-    # 密令 brief：精确 source_id
-    knowledge = db.get_character_knowledge(state, minister)
-    event_source_ids = {
-        str(item.get("source_id") or "")
-        for item in (knowledge.get("events") or [])
-    }
-    assert f"secret_order_brief:{order_id}" in event_source_ids
 
     prepared = prepare_character_materials(db, state, character)
     try:
