@@ -1043,7 +1043,7 @@ def _attach_commission_escort(
         raise DecreeMaterializationValidationError(
             "押解声明 escort.note 须为原文", failed_fields=("escort",),
         )
-    from ming_sim.cli_backend import normalize_draft_person_roster
+    from ming_sim.draft_intent import normalize_draft_person_roster
 
     # 形状闸（ADR 0053 条目结构）→ 存在性闸（既有 KeyError 缝 → hallucinated_id）
     # → canon/非人归一。三件事各走各的既有接缝，不靠嗅错误文案分类。
