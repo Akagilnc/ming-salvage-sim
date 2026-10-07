@@ -824,7 +824,7 @@ def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, mon
     ev.auto_trigger = True
     calls = []
 
-    def fake_event_to_issue(db_arg, state_arg, ev_arg, *, commit=True):
+    def fake_event_to_issue(db_arg, state_arg, ev_arg, *, commit=True, **_kwargs):
         calls.append((ev_arg.id, commit))
         return 999
 

@@ -4134,13 +4134,12 @@ def test_all_settle_substrate_provisional_meta_covers_virtual_fields(fresh_db):
         meta = settle["_meta"]
         provisional = set(settle["_meta"].get("provisional", []))
         if p["正赋应征"] == 0 and p["起运定额"] == 0:
+            # 无税基战区：虚字段契约独立于实际 provisional 内容（不得与实际值求交自证）。
             required = {"军饷", "拨付gross", "军饷欠", "起运定额"}
         elif region_id == "shaanxi" or "source_grain" in meta:
             required = {"隐田"}
         else:
             required = {"起运定额", "官民田", "隐田"}
-        if meta.get("source_status") == "no_wanli_accounting_record":
-            required = set(meta.get("provisional") or []) & required
         refined = set((meta.get("primary_source") or {}).get("fields_refined", []))
         required -= refined
         source = meta.get("source")

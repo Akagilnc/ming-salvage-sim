@@ -2660,10 +2660,22 @@ def show_active_issues(db: GameDB) -> None:
     print()
 
 
-def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = True) -> Optional[int]:
+def event_to_issue(
+    db: GameDB,
+    state: GameState,
+    ev: Event,
+    *,
+    commit: bool = True,
+    content=None,
+    llm_config: Any = None,
+    applied_person_changes: Optional[List[Dict[str, object]]] = None,
+    entity_rejections: Optional[List[Dict[str, object]]] = None,
+    entity_commit: Optional[bool] = None,
+) -> Optional[int]:
     """把一个预设 event（EVENTS / SEED_EVENTS）落成一条 situation issue。供推演判定触发后调用。
 
     饷率事件不立局势、不记触发。结局只经御批写口。
+    effect_on_trigger 在此单次消费；容忍拒收与人物结果经可选 sink 回传调用方。
 
     去重分两类：
     - 无 trigger_gate（开局局势）：查任意状态同源 issue，立过则永不重立。
@@ -2731,15 +2743,20 @@ def event_to_issue(db: GameDB, state: GameState, ev: Event, *, commit: bool = Tr
         commit=False,
     )
     # #1892：核心物理事实（改国号等）随终态一次落库，不另设日期旁路——事件未触发
-    # 即无核心事实，触发时只此一处消费 effect_on_trigger。
+    # 即无核心事实，触发时只此一处消费 effect_on_trigger；拒收/人物结果经 sink 回传。
     if ev.effect_on_trigger:
-        _apply_issue_entities(
+        rejections = _apply_issue_entities(
             db,
             state,
             ev.effect_on_trigger,
             f"事件#{ev.id}触发",
-            content=_ctx(),
+            content=content if content is not None else _ctx(),
+            llm_config=llm_config,
+            applied_person_changes=applied_person_changes,
+            commit=commit if entity_commit is None else entity_commit,
         )
+        if entity_rejections is not None:
+            entity_rejections.extend(rejections)
     db.mark_event_triggered(state, ev.id, source="event_pool", commit=False)
     apply_event_cascading_invalidations(state, db, commit=False)
     if commit:
@@ -4901,7 +4918,17 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：事件 {event_id} 为 {ev.event_type}，不转 issue。")
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": False, "reason": f"event_type={ev.event_type} 已记为触发"})
                 continue
-            issue_id = event_to_issue(db, state, ev, commit=not external_transaction)
+            issue_id = event_to_issue(
+                db,
+                state,
+                ev,
+                commit=not external_transaction,
+                content=runtime_content,
+                llm_config=llm_config,
+                applied_person_changes=issue_person_changes,
+                entity_rejections=entity_rejections,
+                entity_commit=commit_now,
+            )
             if issue_id is None:
                 # event_to_issue 移除 broad except 后，返回 None 只剩一种语义：同源 issue 已存在的
                 # 幂等去重跳过（在其 insert try 之外 early-return）；insert 的真代码/DB 异常现已上抛、
