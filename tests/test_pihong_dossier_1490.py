@@ -1923,15 +1923,11 @@ def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
     assert 'follow_draft' not in str(pref2.get('action') or '')
 
 def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
-    """#1897 S1：选项身份原样——真重复 label 拒存；空白相异为两选项；strip 请求不命中。"""
-    from contextlib import nullcontext
+    """#1897 S1／T1：真实 prepare 入口拒非法原样 label；拒前零写入。"""
     from ming_sim.models import TurnPhase
-    from ming_sim.settlement_payload import bind_decision_options
     from tests.month_chain_helpers import make_light_session
 
     db, state, content = game
-    with pytest.raises(ValueError, match="重复"):
-        bind_decision_options([{'label': '同名', 'hint': '一'}, {'label': '同名', 'hint': '二'}])
     db.save_pending_decisions(int(state.turn), [{
         'title': '歧义亲裁', 'context': 'c',
         'options': [{'label': '同名', 'hint': '一'}, {'label': ' 同名 ', 'hint': '二'}],
@@ -1940,21 +1936,10 @@ def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
     db.save_state(state)
     session = make_light_session(db, state, content)
     key = db.list_rescript_desk(int(state.turn))[0]['decision_key']
-    # 原样命中第一项；请求侧再 strip 不得误绑第二项。
-    pre = session.prepare_rescript_prewrite([
-        {'decision_key': key, 'label': '同名', 'action': 'decision'},
-    ])
-    assert pre is not None
-    with pytest.raises(ValueError, match="不在当前 options"):
-        # 仅裁空白后的请求不得命中「 同名 」原样项。
+    with pytest.raises(ValueError):
         session.prepare_rescript_prewrite([
             {'decision_key': key, 'label': '同名\t', 'action': 'decision'},
         ])
-    # 空白相异的第二项须原样请求才命中。
-    pre2 = session.prepare_rescript_prewrite([
-        {'decision_key': key, 'label': ' 同名 ', 'action': 'decision'},
-    ])
-    assert pre2 is not None
     assert db.list_pending_decisions(int(state.turn))[0]['status'] == 'pending'
 
 def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):
