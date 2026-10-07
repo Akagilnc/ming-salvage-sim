@@ -13,7 +13,6 @@ from ming_sim.db import GameDB
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.strict_types import _parse_sqlite_id
 from ming_sim.models import GameState
-from ming_sim.relations import EMPEROR_NODE
 
 
 class AuthorityDataError(ValueError):
@@ -155,20 +154,11 @@ def _write_authority_change_item(
     )
     if revoked.rowcount <= 0:
         raise ValueError("unknown_authority_id")
+    # #1895 / #1835 J19：首次收回只记授权事实；holder 是否结怨由既有人物 run
+    # 经 relation 声明口承接，代码不自动写 holder→皇帝结怨。
     privilege = str(record.get("privilege") or "")
     scope = str(record.get("scope") or "")
     holder_id = str(record.get("holder_id") or "")
-    db.record_relation_edge_event(
-        source=holder_id,
-        target=EMPEROR_NODE,
-        event_kind="结怨",
-        context=f"收权·罢差·{privilege}·{scope}",
-        origin=f"authority_revoke:{authority_id}",
-        turn=int(state.turn),
-        year=int(state.year),
-        period=int(state.period),
-        evidence=False,
-    )
     return {
         "动作": "收回",
         "authority_id": authority_id,
