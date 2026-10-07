@@ -417,6 +417,8 @@ def _terminate_cli_process(proc: Any, *, outcome: Optional[_CliProcessOutcome] =
         proc.terminate()
         proc.wait(timeout=5)
     except Exception as exc:
+        # 终止真异常必须留痕；调用方是否另有 stream/stdin 错，不得吞掉本因（F48）。
+        logger.warning("CLI 子进程终止失败：%s", exc)
         if outcome is not None:
             if outcome.terminate_error is None:
                 outcome.terminate_error = exc
@@ -528,15 +530,20 @@ def _iter_cli_process_lines(
         "out": codecs.getincrementaldecoder("utf-8")("replace"),
         "err": codecs.getincrementaldecoder("utf-8")("replace"),
     }
+    def _activity_fault() -> Optional[BaseException]:
+        # 活动期已识别故障：stdin/管道任一即可结束等待，禁再走 idle 重试（F48）。
+        return result.stdin_error or result.stream_error
+
     pending_out = ""
     try:
         while open_streams > 0:
-            if result.stream_error is not None:
-                # 活动期管道真异常：不再等静默/收尾当成功（#1834 F48）。
+            if _activity_fault() is not None:
                 break
             try:
                 kind, chunk = chunks.get(timeout=_CLI_POLL_SECONDS)
             except queue.Empty:
+                if _activity_fault() is not None:
+                    break
                 check_idle_budget(
                     last_activity_at=last_activity, policy=policy, clock=tick,
                 )
@@ -567,29 +574,33 @@ def _iter_cli_process_lines(
                 line, pending_out = pending_out[: nl + 1], pending_out[nl + 1 :]
                 yield line
         # 管道已 EOF 但进程未退：静默同样计入 idle 预算，仍无总墙钟。
-        # 已有 stream_error 则直接收尾上抛，不把后续零退出洗成成功。
-        while proc.poll() is None and result.stream_error is None:
+        # 已有活动期故障则直接收尾上抛，不把后续 idle/零退出洗成可重试成功。
+        while proc.poll() is None and _activity_fault() is None:
             check_idle_budget(
                 last_activity_at=last_activity, policy=policy, clock=tick,
             )
             time.sleep(_CLI_POLL_SECONDS)
     finally:
-        # 收尾接缝必须在「原异常离开」时也能执行：stream/terminate 真因在此上抛，
-        # 不得只写入无人消费的 outcome 后被 idle 等可重试异常盖掉（#1834 F48）。
+        # 收尾接缝在「任何离开路径」执行：stdin/stream/terminate 一并消费。
+        # 并存故障全部留痕；主因上抛，其余不得只停在无人读的字段（#1834 F48）。
         shutting_down.set()
         _terminate_cli_process(proc, outcome=result)
         for worker in workers:
             worker.join(timeout=5)
         result.stderr = "".join(stderr_parts)
         result.returncode = proc.poll()
-        fault = result.stream_error or result.terminate_error
-        if fault is not None:
-            label = (
-                "CLI 管道读失败"
-                if result.stream_error is not None
-                else "CLI 子进程终止失败"
-            )
-            raise RuntimeError(f"{label}：{fault}") from fault
+        fault_parts: List[Tuple[str, BaseException]] = []
+        if result.stdin_error is not None:
+            fault_parts.append(("stdin 写入", result.stdin_error))
+        if result.stream_error is not None:
+            fault_parts.append(("管道读", result.stream_error))
+        if result.terminate_error is not None:
+            fault_parts.append(("子进程终止", result.terminate_error))
+        if fault_parts:
+            for label, exc in fault_parts[1:]:
+                logger.warning("CLI 并存故障（%s）：%s", label, exc)
+            label, fault = fault_parts[0]
+            raise RuntimeError(f"CLI {label}失败：{fault}") from fault
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
     if reasoning_strength is None:
