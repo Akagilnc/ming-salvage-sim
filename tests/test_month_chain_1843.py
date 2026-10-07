@@ -97,7 +97,6 @@ def test_player_month_entry_settles_prepushed_edicts_then_world_once(game, monke
         try:
             world_calls.append({
                 "treasury": int(state_.metrics["国库"]),
-                "opening": prepared.opening,
                 "edicts": _categories(db_),
             })
         finally:
@@ -699,34 +698,23 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     from pathlib import Path
 
     import ming_sim.agents as agents_mod
-    import ming_sim.materials as materials_mod
     from ming_sim.agents import bind_content
     from ming_sim.models import LLMConfig
 
     db, state, content = game
     bind_content(content)
     seen = []
-    openings = []
-    real_prepare = materials_mod.prepare_world_materials
-
-    def prepare(db_, state_, *args, **kwargs):
-        prepared = real_prepare(db_, state_, *args, **kwargs)
-        openings.append(prepared.opening)
-        return prepared
-
-    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
 
     def capture(agent, _message, **_kwargs):
         tools = {tool.__name__: tool for tool in agent.tools}
         listing = tools["list_materials"]("")
-        # 路径可读（生产工具结果）；不采集 index/board 正文作断言（#1897 T1）。
+        # 路径可读（生产工具结果）；不采集 opening／正文，不锁内部对象身份（#1897 T1）。
         tools["read_material"]("INDEX.txt")
         tools["read_material"]("盘面/全局.txt")
         materials_dir = getattr(agent.model, "materials_dir", "")
         seen.append({
             "listing": listing,
             "dir_has_index": bool(materials_dir) and (Path(materials_dir) / "INDEX.txt").is_file(),
-            "instructions": list(agent.instructions),
         })
         return "静"
 
@@ -740,9 +728,6 @@ def test_world_segment_reads_material_directory(game, monkeypatch):
     assert "INDEX.txt" in catalog
     assert any(line != "INDEX.txt" for line in catalog)
     assert seen[0]["dir_has_index"] is False
-    # 开场通道＝prepare 交回的那一份（对象身份），不跨字段比正文。
-    assert openings[0] is not None
-    assert any(part is openings[0] for part in seen[0]["instructions"])
 
     cli = LLMConfig(api_key="", base_url="", model="", channel="cli", cli_runner="agy")
     month_chain.run_world_segment_text(db, state, cli)

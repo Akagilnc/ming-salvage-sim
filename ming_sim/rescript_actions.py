@@ -469,11 +469,13 @@ def validate_all(
             )
 
             event_id = str(row.get("event_id") or "")
-            label = str(req.get("label") or "").strip()
-            note = str(req.get("note") or "").strip()
+            # #1897 S1：选项身份与 bind_decision_options 同规——原样 label 命中；
+            # strip 只作判空局部副本，不改写请求身份、不另立兼容通道。
+            label = str(req.get("label") or "")
+            note = str(req.get("note") or "")
             if (
-                not label
-                and note
+                not label.strip()
+                and note.strip()
                 and (
                     event_id.startswith(_DECREE_QUESTION_PREFIX)
                     or event_id.startswith(_WORLD_QUESTION_PREFIX)

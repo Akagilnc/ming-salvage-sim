@@ -27,7 +27,7 @@ MAX_DECISIONS_PER_TURN = 5
 
 
 def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
-    """Bind normalized labels to stored options, rejecting ambiguous decisions."""
+    """Bind raw option labels to stored options; empty/duplicate labels rejected."""
     bound: Dict[str, Dict[str, object]] = {}
     if not isinstance(options, list):
         raise ValueError("decision options 须为 list")

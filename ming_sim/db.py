@@ -12124,7 +12124,9 @@ class GameDB:
         _ = turn  # 签名保留；0058 候选不按结算回合收缩
         rows = self.conn.execute(
             """
-            SELECT d.* FROM decree_dossiers d
+            SELECT d.*, s.title AS secret_title, s.content AS secret_content,
+                   s.due_turn AS secret_due_turn
+            FROM decree_dossiers d
             JOIN secret_orders s ON s.id=d.secret_order_id
             WHERE d.status IN ('promulgated','executing') AND s.status='active'
             ORDER BY d.id
@@ -12133,16 +12135,12 @@ class GameDB:
         out: List[Dict[str, object]] = []
         for row in rows:
             dossier_id = int(row["id"])
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            # #1897 S2：题名／现行要旨／期限读 secret_orders，不读案卷 payload 平行副本。
             item: Dict[str, object] = {
                 "dossier_id": dossier_id,
                 "secret_order_id": int(row["secret_order_id"]),
-                "title": payload.get("title", ""),
+                "title": str(row["secret_title"] or ""),
+                "due_turn": int(row["secret_due_turn"] or 0),
                 "progress": self.list_dossier_progress(dossier_id),
             }
             # #622 AC5：仅当稽核链在场时挂分叉信号键；无链则键不出现。
@@ -22090,18 +22088,8 @@ class GameDB:
                 origin_chat_message_ids=classify_ids,
                 commit=False,
             )
-            dossier = self.get_dossier_for_secret_order(int(order_id))
-            if dossier is not None:
-                try:
-                    payload = json.loads(str(dossier.get("payload_json") or "{}"))
-                except (TypeError, ValueError):
-                    payload = {}
-                if not isinstance(payload, dict):
-                    payload = {}
-                payload["title"] = persisted_title
-                payload["content"] = content
-                payload["tags"] = json.loads(tags_json)
-                self.update_decree_dossier_payload(int(dossier["id"]), payload, commit=False)
+            # #1897 S2：现行要旨／期限权威面＝secret_orders；案卷 decree_text／
+            # payload.text 保留发令历史原诏，不再平行改写 payload.content 等现行副本。
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
         return True
 

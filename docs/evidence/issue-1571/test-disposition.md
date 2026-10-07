@@ -3,7 +3,6 @@
 - 票：issue #1571 / ADR 0151（案卷 store 摘取，`ming_sim/entities/dossier/`，窄 interface ~15 方法、无 facade、事务两态）
 - HEAD：`e88cc29c28a91c28129b320588934aa12768792b`（分支 kimi/issue-1571；行号以该 HEAD 实读为准）
 - **范围校正（owner 2026-08-28）**：N1、P28、P29 及 T16-T18 已整体转交 #1561，不计入 #1571；T19 仅移出 N1 opening 断言，P24 close-only 部分与 T19 编号仍留本票。故 #1571 当前计数为生产 28（P1-P27 + S1）、测试 19（T1-T15 + T19-T22）。下文旧审次记录中对转出项的描述仅作历史依据，不再授权 #1571 施工。
-- **#1895 追注（2026-09-30）**：本文为 `e88cc29c` 基线的**历史证据快照**，其中 `trigger_supervision_countermeasures` 的拆分/编排提案**已随 #1895 整体退役、不再施工**——代码不再按 integrity 档判定人物是否反制、也不再 hash 指定反制形态；人物反制归 #1861／#1843 run 依可及事实自选（见 `docs/adr/0077-supervision-dulling-person-conditioned.md` 后出修订段，commit `1e5b14f40`）。本文其余行号、拆分形状与归属账原样保留为该 HEAD 的历史依据，不因本次退役而改写。
 - 判词原话要点（一审打回项，逐句对应下文章节）：
   1. 普通公共读写可机械改径；内化的 decision/transition 测试须经真实 record_verdict/结算入口重投影，或删除只锁内部步骤的绿卡 → §2、§3.1；
   2. pending verdict 必须保留真实入口下的 atomic replace、rollback、跨连接 reopen → §3.2；

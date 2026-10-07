@@ -1923,19 +1923,38 @@ def test_657_preferred_hitl_choice_urgent_follow_draft_ordinary_intact():
     assert 'follow_draft' not in str(pref2.get('action') or '')
 
 def test_1682_phase2_surfaces_ambiguous_stored_choice(game):
-    """批红真入口拒绝同名选项，且拒绝前不得落亲裁。"""
+    """#1897 S1：选项身份原样——真重复 label 拒存；空白相异为两选项；strip 请求不命中。"""
     from contextlib import nullcontext
     from ming_sim.models import TurnPhase
+    from ming_sim.settlement_payload import bind_decision_options
     from tests.month_chain_helpers import make_light_session
 
     db, state, content = game
-    db.save_pending_decisions(int(state.turn), [{'title': '歧义亲裁', 'context': 'c', 'options': [{'label': '同名', 'hint': '一'}, {'label': ' 同名 ', 'hint': '二'}]}])
+    with pytest.raises(ValueError, match="重复"):
+        bind_decision_options([{'label': '同名', 'hint': '一'}, {'label': '同名', 'hint': '二'}])
+    db.save_pending_decisions(int(state.turn), [{
+        'title': '歧义亲裁', 'context': 'c',
+        'options': [{'label': '同名', 'hint': '一'}, {'label': ' 同名 ', 'hint': '二'}],
+    }])
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.save_state(state)
     session = make_light_session(db, state, content)
-    choice = [{'decision_key': db.list_rescript_desk(int(state.turn))[0]['decision_key'], 'label': '同名', 'action': 'decision'}]
-    with pytest.raises(ValueError):
-        session.submit_hitl_choices(choice, write_gate=nullcontext())
+    key = db.list_rescript_desk(int(state.turn))[0]['decision_key']
+    # 原样命中第一项；请求侧再 strip 不得误绑第二项。
+    pre = session.prepare_rescript_prewrite([
+        {'decision_key': key, 'label': '同名', 'action': 'decision'},
+    ])
+    assert pre is not None
+    with pytest.raises(ValueError, match="不在当前 options"):
+        # 仅裁空白后的请求不得命中「 同名 」原样项。
+        session.prepare_rescript_prewrite([
+            {'decision_key': key, 'label': '同名\t', 'action': 'decision'},
+        ])
+    # 空白相异的第二项须原样请求才命中。
+    pre2 = session.prepare_rescript_prewrite([
+        {'decision_key': key, 'label': ' 同名 ', 'action': 'decision'},
+    ])
+    assert pre2 is not None
     assert db.list_pending_decisions(int(state.turn))[0]['status'] == 'pending'
 
 def test_657_clear_revise_anchor_corrupt_json_fails_loud(game):

@@ -1046,7 +1046,11 @@ def _apply_deferred_disclosures(
 def _enrich_eligible_dossiers_for_supply(
     db: Any, candidates: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """合资格案卷供料：复用 get_decree_dossier／typed contract 读口补齐正文与执行契约。"""
+    """合资格案卷供料：复用 get_decree_dossier／typed contract 读口补齐正文与执行契约。
+
+    密令关联案卷的现行要旨与期限只读 secret_orders（#1897 S2）；案卷 decree_text
+    是发令历史原诏，不作现行正文真源。
+    """
     from ming_sim.covert_progress import read_covert_task_contract
 
     out: List[Dict[str, Any]] = []
@@ -1055,7 +1059,20 @@ def _enrich_eligible_dossiers_for_supply(
         dossier_id = int(item.get("dossier_id") or 0)
         dossier = db.get_decree_dossier(dossier_id) if dossier_id and hasattr(db, "get_decree_dossier") else None
         if dossier is not None:
-            row["decree_text"] = str(dossier.get("decree_text") or "")
+            secret_order_id = int(
+                dossier.get("secret_order_id") or item.get("secret_order_id") or 0
+            )
+            order = (
+                db.get_secret_order(secret_order_id)
+                if secret_order_id and hasattr(db, "get_secret_order")
+                else None
+            )
+            if order is not None:
+                row["decree_text"] = str(order.get("content") or "")
+                row["title"] = str(order.get("title") or row.get("title") or "")
+                row["due_turn"] = int(order.get("due_turn") or 0)
+            else:
+                row["decree_text"] = str(dossier.get("decree_text") or "")
             payload = dossier.get("payload")
             row["payload"] = payload if isinstance(payload, dict) else {}
             row["status"] = str(dossier.get("status") or "")

@@ -436,7 +436,12 @@ def _dispatch_effects(
         )])
 
     from ming_sim.simulation import EMPTY_EXTRACTION
-    from ming_sim.issues import apply_score_extraction, preflight_declared_event_effects, sanitize_delta_shape
+    from ming_sim.issues import (
+        _merge_first_event_outcome,
+        apply_score_extraction,
+        preflight_declared_event_effects,
+        sanitize_delta_shape,
+    )
     from ming_sim.decree import _collect_inline_rejections
     from ming_sim.person_delta_adapter import normalize_person_changes
 
@@ -474,6 +479,7 @@ def _dispatch_effects(
     ordered_deltas = {field: [] for field in _ORDERED_DELTA_FIELDS}
     ordered_effect_event_ids = {field: [] for field in EMPTY_EXTRACTION}
     effect_sequence: list[tuple[dict[str, object], dict[str, list[tuple[str, object]]], dict[str, list[str]]]] = []
+    declared_effect_event_ids: list[str] = []
     accepted_effect = False
     for item, event_id, clean in clean_items:
         if event_id in rejected_events:
@@ -483,11 +489,32 @@ def _dispatch_effects(
             ))
             continue
         accepted_effect = True
+        if event_id:
+            declared_effect_event_ids.append(event_id)
+        # #1897 S3：事件结局复用既有 first-wins／未归属拒收，不经 dict.update 末写覆盖。
+        step_outcomes: dict[str, object] = {}
+        incoming_outcomes = clean.get("事件结局") or {}
+        for piece in _merge_first_event_outcome(step_outcomes, incoming_outcomes, event_id):
+            rejected.append(RejectedItem(
+                item={"event_id": event_id, "事件结局": piece},
+                reason="事件结局未归属本信封",
+                category="invalid_state", source=source,
+            ))
+        clean_without_outcomes = {
+            key: value for key, value in clean.items() if key != "事件结局"
+        }
         step_extraction, step_ordered, step_event_ids = _effect_extraction_from_clean(
-            clean, event_id, empty_extraction=EMPTY_EXTRACTION,
+            clean_without_outcomes, event_id, empty_extraction=EMPTY_EXTRACTION,
         )
+        if step_outcomes:
+            step_extraction["事件结局"] = dict(step_outcomes)
+            _merge_first_event_outcome(
+                extraction["事件结局"], step_outcomes, event_id,
+            )
         effect_sequence.append((step_extraction, step_ordered, step_event_ids))
         for field, value in step_extraction.items():
+            if field == "事件结局":
+                continue
             current = extraction[field]
             if isinstance(value, list) and isinstance(current, list):
                 current.extend(value)
@@ -508,6 +535,7 @@ def _dispatch_effects(
         secret_dossier_ids_at_input=set(refs.get("secret_dossiers", ())),
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=ordered_effect_event_ids,
+        declared_effect_event_ids=declared_effect_event_ids,
         prior_shape_rejections=shape_rejections,
         effect_sequence=effect_sequence if isinstance(raw, list) else None,
         defer_disclosure=defer_disclosure,
