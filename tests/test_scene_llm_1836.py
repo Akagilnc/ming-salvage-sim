@@ -136,10 +136,10 @@ def test_cli_selection_uses_scene_turn_as_admission_origin(game, monkeypatch):
         return FakeAgent()
 
     monkeypatch.setattr("ming_sim.session.create_scene_agent", scene_agent)
-    answers = iter(["边饷如何？", "done"])
+    answers = iter(["边饷如何？", "quit"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    assert minister_chat(sess, character, selected=True) == "dismiss"
+    assert minister_chat(sess, character, selected=True) == "court_break"
     assert calls == [f"宣{character.name}", "边饷如何？"]
     night = get_open_night(db)
     assert night is not None

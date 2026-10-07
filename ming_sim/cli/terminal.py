@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import threading
 from typing import List, Optional
 
@@ -116,18 +115,11 @@ def choose_minister(session: GameSession) -> Optional[Character]:
         return candidate
 
 
-def _record_audience_exit(session: GameSession, name: str) -> None:
-    """CLI「退下」控制口令：落空正文告退账（#1838 reopen：无旁白调用）。"""
-    from ming_sim.audience_night import dismiss_from_audience
-    dismiss_from_audience(session.db, name)
+def _handle_court_command(text: str) -> Optional[str]:
+    """CLI 导航口令：只认退朝／退出游戏。
 
-
-def _handle_court_command(
-    session: GameSession, text: str, current: Character
-) -> Optional[str]:
-    """CLI 控制口令：只认退下／退朝／退出。召见口令原样交共同场景生命周期。
-
-    返回：'dismiss' | 'court_break' | None（非本入口控制口令，交给 chat）。
+    #1902：退人口令（退下/done 等）不在入口自持语义或落在场账；原样交共同
+    begin_audience_chat_turn→scene_chat。返回 'court_break' | None。
     """
     raw = text.strip()
     lowered = raw.lower()
@@ -135,14 +127,6 @@ def _handle_court_command(
         raise ExitGame
     if lowered in COURT_BREAK_COMMANDS or raw in COURT_BREAK_COMMANDS:
         return "court_break"
-
-    # 退下（短句正则，不误伤长对话）
-    if re.fullmatch(
-        r"\s*(退下|退了|跪安|下去|done|dismiss|让[他其]退下|叫[他其]退下|让此人退下|叫此人退下)\s*",
-        raw, re.I,
-    ):
-        return "dismiss"
-
     return None
 
 
@@ -221,13 +205,13 @@ def _cli_write_gate(session: GameSession):
 
 
 def minister_chat(session: GameSession, character: Character, *, selected: bool = False) -> str:
-    """与一位大臣对话。返回 'dismiss' | 'court_break'。
+    """与一位大臣对话。返回 'court_break'。
 
-    #1902：召见口令（含菜单加速器「宣 X」）原样走共同建轮／scene_chat；
-    入口不再自解析后缀召见、另准入或合成替代源问话。
+    #1902：召见／退人口令原样走共同建轮／scene_chat；入口不再自解析后缀召见、
+    另准入、自持退人目标或直接落告退账。导航只留退朝／退出游戏。
     """
     other = next((n for n in session.content.characters if n != character.name), character.name)
-    print(f"\n当前选择：{character.name}。可持续问话；done/退下 退下，“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
+    print(f"\n当前选择：{character.name}。可持续问话；“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
     print("提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。\n")
     # #505：入殿时显眼提示回话中断恢复入口（与 web ChatModal 同语义）。
     # #1353：欠账抽取无玩家手动补写面——过月内部 drain 唯一处理路。
@@ -242,7 +226,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         question = f"宣{character.name}" if pending_xuan else input("朕问：").strip()
         pending_xuan = False
         if not question:
-            print("可继续问话；若要让其退下，请输入 done。")
+            print("可继续问话；quit 退朝审阅诏书。")
             continue
         # #505 系统层恢复命令（非皇帝内容选项）。禁抽取手动补写平行面（#1353）。
         low_q = question.lower().strip()
@@ -251,10 +235,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
             if retry_action == "court_break":
                 return "court_break"
             continue
-        cmd = _handle_court_command(session, question, character)
-        if cmd == "dismiss":
-            _record_audience_exit(session, character.name)
-            return "dismiss"
+        cmd = _handle_court_command(question)
         if cmd == "court_break":
             # #526/#1842：高置信收夜口令 → 前台先返回；队列随后 FIFO 转译 join→封夜。
             # 后台失败留痕、夜可恢复；不假成功静默吞错（ADR 0005）。
@@ -263,7 +244,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                 "court_break", write_gate=_cli_write_gate(session),
             )
             return "court_break"
-        # 非控制指令（含召见口令）→ 场景对话，并持久记录对话轮。
+        # 非导航口令（含召见／退人原句）→ 场景对话，并持久记录对话轮。
         # #1902：建轮/快照/问话落库/回滚终态全走会话层同一生命周期（与 Web 共核），
         # 入口只留输入采集与呈现。薄替身分支已删：真 GameDB 恒有这套生命周期，
         # 为只替 LLM 缝的壳另留一条无轮路径，等于给测试维护第二套生产生命周期。
@@ -669,10 +650,8 @@ def play_turn(session: GameSession) -> Optional[GameSession]:
             if character is None:
                 action = review_directives(session)
             else:
-                chat_action = minister_chat(session, character, selected=True)
-                if chat_action == "dismiss":
-                    continue
-                # court_break 或对话结束 → 审阅（召见换人已交共同场景生命周期）
+                minister_chat(session, character, selected=True)
+                # court_break → 审阅（召见／退人已交共同场景生命周期）
                 action = review_directives(session)
         else:
             action = review_directives(session)

@@ -103,6 +103,8 @@ def _cli_session(db, state, content):
         # #1902 F2/G2：中断重试取数已下沉会话层；轻壳无中断时返回空
         # （与 test_audience_night_498 同形，禁缺方法 AttributeError）。
         pending_audience_reply_retries=lambda: [],
+        # 导航收夜：轻壳只承接 CLI 导航口令，不真关夜。
+        schedule_close_night_after_chat_if_needed=lambda *a, **k: None,
     )
 
 
@@ -115,22 +117,39 @@ def _active_minister(db, content):
     )
 
 
-def test_dismiss_via_cli_command_writes_exit_ledger(game, monkeypatch):
-    """AC1 真实入口：起聊入殿 → 「退下」口令 → 告退账落地、present 即时去人。"""
+def test_cli_dismiss_text_goes_through_shared_chat_without_exit_ledger(game, monkeypatch):
+    """#1902：CLI「退下」原句走共同建轮，入口不自写告退账。"""
     import ming_sim.cli.terminal as term
 
     db, state, content = game
     character = _active_minister(db, content)
     session = _cli_session(db, state, content)
-    answers = iter(["退下"])
+    # 夜已开且人已在场：不走菜单「宣X」加速器，首句即玩家「退下」。
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    an.summon_enter(db, int(night["id"]), character.name)
+    seen: list[str] = []
+
+    def scene_chat(message, *, chat_turn_id=0, stream_emit=None, minister_name=""):
+        seen.append(str(message))
+        assert chat_turn_id > 0
+        return __import__("types").SimpleNamespace(answer="臣遵旨。", court_action="")
+
+    session.scene_chat = scene_chat
+    answers = iter(["退下", "quit"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    assert term.minister_chat(session, character, selected=True) == "dismiss"
+    assert term.minister_chat(session, character, selected=True) == "court_break"
+    assert seen == ["退下"]
 
-    nid = int(an.get_open_night(db)["id"])
-    last = an.list_ledger(db, nid)[-1]
-    assert TAG_EXIT in last["tags"] and character.name in last["person_names"]
-    assert character.name not in an.present_names_at(db, nid)
+    nid = int(night["id"])
+    exits = [
+        e for e in an.list_ledger(db, nid)
+        if TAG_EXIT in e["tags"] and character.name in e["person_names"]
+    ]
+    assert exits == []
+    turns = an.list_chat_turns_for_night(db, nid)
+    assert turns and int(turns[-1]["night_id"]) == nid
+    assert character.name in an.present_names_at(db, nid)
 
 
 def test_court_break_writes_no_exit_ledger(game, monkeypatch):

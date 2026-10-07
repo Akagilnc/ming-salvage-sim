@@ -623,11 +623,13 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
         # #1902 F2：中断重试取数已下沉会话层，入口不再自带查询；真会话方法在
         # 轻壳上按「无中断可重试」返回空（与无夜/无 conn 同形）。
         pending_audience_reply_retries=lambda: [],
+        # 导航收夜：轻壳只承接 CLI 退朝口令。
+        schedule_close_night_after_chat_if_needed=lambda *a, **k: None,
     )
-    answers = iter(["朕问卿边事如何？", "done"])
+    answers = iter(["朕问卿边事如何？", "quit"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    assert term.minister_chat(session, character) == "dismiss"
+    assert term.minister_chat(session, character) == "court_break"
 
     open_n = an.get_open_night(db)
     assert open_n is not None

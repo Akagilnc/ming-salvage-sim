@@ -711,11 +711,11 @@ def test_cli_midflow_xuan_records_summon_via_shared_scene(game, monkeypatch):
 
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
     sess.schedule_pending_scene_translation = lambda result: None  # type: ignore[method-assign]
-    answers = iter(["传洪承畴来", "done"])
+    answers = iter(["传洪承畴来", "quit"])
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
     monkeypatch.setattr("builtins.print", lambda *args, **_k: None)
 
-    assert terminal.minister_chat(sess, current) == "dismiss"
+    assert terminal.minister_chat(sess, current) == "court_break"
     assert calls == ["传洪承畴来"]
     unsettled = an.list_unsettled_summons(db)
     assert len(unsettled) == 1
@@ -757,11 +757,11 @@ def test_cli_midflow_unknown_xuan_does_not_register_temp(game, monkeypatch):
 
     monkeypatch.setattr("ming_sim.session.create_scene_agent", lambda *a, **k: FakeAgent())
     sess.schedule_pending_scene_translation = lambda result: None  # type: ignore[method-assign]
-    answers = iter([f"传{unknown}来", "done"])
+    answers = iter([f"传{unknown}来", "quit"])
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(answers))
     monkeypatch.setattr("builtins.print", lambda *args, **_k: None)
 
-    assert terminal.minister_chat(sess, current) == "dismiss"
+    assert terminal.minister_chat(sess, current) == "court_break"
     assert unknown not in sess.temporary_characters
     assert an.list_unsettled_summons(db) == []
     assert db.conn.execute(

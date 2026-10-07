@@ -197,10 +197,10 @@ def test_terminal_minister_chat_persists_messages_before_session_chat(game, monk
 
     session.scene_chat = _scene_chat  # type: ignore[method-assign]
     session.schedule_pending_scene_translation = lambda result: None  # type: ignore[method-assign]
-    answers = iter([question, "done"])
+    answers = iter([question, "quit"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
-    assert term.minister_chat(session, SimpleNamespace(name=minister_name)) == "dismiss"
+    assert term.minister_chat(session, SimpleNamespace(name=minister_name)) == "court_break"
 
     assert seen["chat_turn_id"] >= 1
     assert seen["rows_before_reply"] == [(minister_name, int(state.turn), "user", question)]
