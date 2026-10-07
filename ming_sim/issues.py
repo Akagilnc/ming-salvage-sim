@@ -2859,6 +2859,10 @@ def _pending_person_change_origin_ref(
 
     Returns None when the item is outside the frozen authorized set (will not
     admit). Empty string remains a missing-origin signal for the write core.
+
+    ``authorized_ids`` must be the live batch set (same object
+    ``effect_origin_rejection`` reads). Probe callers snapshot/restore that set
+    so a rolled-back birth cannot widen real batch authority.
     """
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
 
@@ -2868,8 +2872,7 @@ def _pending_person_change_origin_ref(
             year=int(state.year),
             period=int(state.period),
             turn=int(state.turn),
-            # Copy so a dry-run birth cannot widen the live authorized set.
-            authorized_ids=None if authorized_ids is None else set(authorized_ids),
+            authorized_ids=authorized_ids,
         )
     except UnauthorizedAffairOriginRef:
         return None
@@ -2885,17 +2888,20 @@ def _dry_run_apply_person_changes(
     require_origin: bool = True,
     keep_applied: bool = False,
 ) -> List[Dict[str, object]]:
-    """Run person write-core under SAVEPOINT.
+    """Run person write-core under SAVEPOINT with the live origin-auth context.
 
     Default rolls back so the world is unchanged. ``keep_applied=True`` leaves
     admitted writes visible until the caller rolls back its own savepoint —
-    used when a consumer must read the resulting gate/DB state.
+    used when a consumer must read the resulting gate/DB state. Batch-authorized
+    affair births during the probe always restore pre-probe membership so
+    rollback cannot expand real batch authority.
     """
     if not changes:
         return []
     from ming_sim.entities.affair import UnauthorizedAffairOriginRef
 
     authorized = getattr(db, "_batch_authorized_open_affair_ids", None)
+    authorized_snapshot = set(authorized) if authorized is not None else None
     content_rows = _snapshot_content_character_rows(content)
     savepoint = "person_write_core_probe"
     owns_savepoint = not keep_applied
@@ -2907,6 +2913,8 @@ def _dry_run_apply_person_changes(
             if not isinstance(raw, dict):
                 continue
             item = dict(raw)
+            # Live set production writes use — births register here so
+            # effect_origin_rejection sees them during the probe.
             origin_ref = _pending_person_change_origin_ref(
                 db, state, item, authorized_ids=authorized,
             )
@@ -2934,6 +2942,9 @@ def _dry_run_apply_person_changes(
             )
         return applied
     finally:
+        if authorized is not None and authorized_snapshot is not None:
+            authorized.clear()
+            authorized.update(authorized_snapshot)
         if owns_savepoint:
             db.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
             db.conn.execute(f"RELEASE SAVEPOINT {savepoint}")

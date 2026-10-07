@@ -96,11 +96,17 @@ def test_same_name_affairs_are_not_merged_and_close_attach_is_not_a_birth(game):
     )
     assert first.id != second.id
     before = db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"]
-    apply_score_extraction(
+    # Top-level affair_declarations is retired; unknown keys are section-rejected
+    # and must not birth affairs.
+    retired = apply_score_extraction(
         db, state, {"affair_declarations": [_declaration()]},
         open_affair_ids_at_input=set(),
     )
     assert db.conn.execute("SELECT COUNT(*) AS n FROM affairs").fetchone()["n"] == before
+    assert any(
+        row.get("report_section") == "affair_declarations"
+        for row in retired.get("validate_shape_rejections") or []
+    )
     try:
         db.create_decree_dossiers(
             state,
@@ -120,14 +126,6 @@ def test_same_name_affairs_are_not_merged_and_close_attach_is_not_a_birth(game):
     else:
         raise AssertionError("expected birth close attach to fail")
     assert db.affairs.get(first.id).status == "open"
-    # Retired close protocol: top-level affair_declarations are no longer consumed.
-    ignored = apply_score_extraction(
-        db, state,
-        {"affair_declarations": [{"attach": "close", "affair_id": first.id}]},
-        open_affair_ids_at_input={first.id},
-    )
-    assert db.affairs.get(first.id).status == "open"
-    assert ignored.get("validate_shape_rejections") in (None, [], ())
 
 
 
