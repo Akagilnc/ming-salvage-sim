@@ -351,7 +351,7 @@ def test_actual_progress_container_separate_from_reported_rail(game):
     assert "dossier_progress_json" not in actual[0]
     # list_dossier_durable_effects 仍只 economy+fiscal；实进度走并列读口
     durable = db.list_dossier_durable_effects(did)
-    assert all("account" in r or "key" in r or "delta" in r for r in durable) or durable == []
+    assert all("account" in r or "key" in r or "delta" in r for r in durable)
     # Live observation via production list APIs (no TEST_ONLY rail helper).
     rail = list(db.list_dossier_durable_effects(did)) + list(db.list_dossier_actual_progress(did))
     assert rail  # 含 actual_progress 行

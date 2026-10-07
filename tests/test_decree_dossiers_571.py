@@ -1044,8 +1044,7 @@ def test_final_decree_edit_path_removed_no_bypass(game):
         },
     )
 
-    paths = {getattr(r, "path", None) for r in web_app.app.routes}
-    assert "/api/decree" not in paths or not any(
+    assert not any(
         getattr(r, "path", None) == "/api/decree"
         and "PATCH" in (getattr(r, "methods", None) or set())
         for r in web_app.app.routes

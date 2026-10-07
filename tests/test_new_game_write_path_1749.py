@@ -591,7 +591,7 @@ def test_exit_close_fail_blocks_archive_on_real_new_game(tracer_client, monkeypa
         assert all(
             _db_snapshot(str(p))["campaign_id"] != c0
             for p in _drained(Path(web_app.user_data_path()))
-        ) or _drained(Path(web_app.user_data_path())) == []
+        )
         assert marker in _db_snapshot(old_path)["directive_texts"]
         # 新局可写且 campaign 不同于失败旧局
         assert _campaign(g1) != c0

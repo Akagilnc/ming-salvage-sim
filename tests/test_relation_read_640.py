@@ -9,8 +9,8 @@
 - 判官机面全知（ID-12）：fixture 断言判官能读到普通角色视角不可见的边；
   接入归 #634 线，本票不造判官。
 - TD-7 双断言 oracle（庭裁 r2/r3）：①DTO 字段集合恰等五字段冻结白名单
-  source/target/summary/recent_context/updated_at_period；②局部 marker 负断言
-  （结构键/事件类目数据不 ride-along 进玩家可感投影输出）。
+  source/target/summary/recent_context/updated_at_period；②结构来源隔离
+  （event_kind 等类目键不 ride-along；不把 DTO 自由正文当禁词表）。
 """
 
 from __future__ import annotations
@@ -190,10 +190,10 @@ def test_td7_dto_field_set_equals_frozen_whitelist(ledger):
 
 
 def test_td7_local_marker_negative_assertion(ledger):
-    """TD-7②：局部 marker 负断言——结构键/事件类目数据不进玩家可感投影输出。
+    """TD-7②：结构键/事件类目不进玩家可感投影——白名单与 event_kind 缺席。
 
     marker 只埋在本 fixture 的结构字段（origin 尾段）与绕过写口直插的
-    event_kind 列；玩家可感投影（角色视角 DTO 序列化）中必须零出现。
+    event_kind 列；契约咬结构来源隔离，不把 DTO 自由正文当禁词表。
     """
     db, state = ledger
     # 绕过 fail-closed 写口直插一条含 marker 的 event_kind 行：证明即便存储层
@@ -206,11 +206,10 @@ def test_td7_local_marker_negative_assertion(ledger):
     )
     db.conn.commit()
     projection = project_relation_ledger(db, viewer="王绍徽")
-    # 结构键白名单 + 字段值不含 marker；不扫 JSON 序列化载体。
+    # 结构键白名单 + event_kind 不出 DTO；不扫字段自由正文、不扫 JSON 载体。
     for dto in projection:
         assert "event_kind" not in dto
         assert set(dto.keys()) == FROZEN_DTO_WHITELIST
-        assert all(value != MARKER for value in dto.values())
 
 
 def test_missing_viewer_rejected(ledger):

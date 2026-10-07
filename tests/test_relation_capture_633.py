@@ -554,10 +554,9 @@ def test_multi_target_with_one_bad_endpoint_writes_zero_edges_for_item(game):
     rejected = [r for r in res if r.get("rejected")]
     assert len(rejected) == 1
     assert rejected[0]["category"] == "invalid_relation_event"
-    # 坏项身份在 item 字段；不锁 reason 措辞。
+    # 坏项身份按原项结构核值；不锁 reason 措辞、不猜退化形状。
     bad_item = rejected[0]["item"]
-    targets = bad_item.get("受动者")
-    assert targets == ["周延儒", "幻觉丙"] or "幻觉丙" in (targets if isinstance(targets, list) else [targets])
+    assert bad_item.get("受动者") == ["周延儒", "幻觉丙"]
     # 坏项零写入（含好端点也不部分落库）；好项不受牵连
     rows = _edge_rows(db)
     assert _triplets(rows) == {("毕自严", "王绍徽", "协作")}

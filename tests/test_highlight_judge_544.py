@@ -125,7 +125,7 @@ def test_build_chat_projection_includes_minister_highlights(game):
 
     proj = db.build_chat_projection(minister)
     roles = [(m["role"], m.get("highlights")) for m in proj]
-    assert ("user", []) in roles or any(r == "user" and h == [] for r, h in roles)
+    assert ("user", []) in roles
     minister_msgs = [m for m in proj if m["role"] == "minister"]
     assert minister_msgs
     assert minister_msgs[0]["highlights"] == ["辽饷", "户部亏空"]

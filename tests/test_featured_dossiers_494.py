@@ -55,42 +55,66 @@ def test_every_active_seven_faction_minister_has_featured_dossier(game):
 def test_seven_faction_dossiers_are_objective_and_identity_scoped(game):
     """#494：identity 桶决定供料来源；最低桶不喂 dossier/议程原值。
 
-    契约=已知源字段原值搬运（正/负），不复制渲染模板、不扫任意禁词。
+    契约=按桶供料：应喂源的原值入面；不应喂的源被改写后面不变。
+    不复制渲染模板、不按文字值推断来源、不断言私有桶标签。
     """
-    from ming_sim.context import _identity_bucket
-
     db, _state, content = game
     base = next(c for c in content.characters.values() if c.faction == "东林")
 
-    assert _identity_bucket(20) == "low"
-    assert _identity_bucket(60) == "middle"
-    assert _identity_bucket(90) == "high"
-
     for faction in SEVEN_FACTIONS:
-        # middle 桶：core + agenda 原值入面；internal 不喂。
-        rendered = faction_context_with_db(replace(base, faction=faction, identity=65), db)
-        row = _faction_row(db, faction)
-        core = _FACTION_DOSSIERS[faction]["core"]
-        internal = _FACTION_DOSSIERS[faction]["internal"]
-        agenda = str(row["agenda"])
-        assert core in rendered
-        assert agenda in rendered
-        assert internal not in rendered
+        char_low = replace(base, faction=faction, identity=20)
+        char_mid = replace(base, faction=faction, identity=65)
+        char_high = replace(base, faction=faction, identity=90)
+        dossier = _FACTION_DOSSIERS[faction]
+        core = dossier["core"]
+        agenda = str(_faction_row(db, faction)["agenda"])
 
-    faction = base.faction
-    core = _FACTION_DOSSIERS[faction]["core"]
-    internal = _FACTION_DOSSIERS[faction]["internal"]
-    agenda = str(_faction_row(db, faction)["agenda"])
-    low = faction_context_with_db(replace(base, identity=20), db)
-    middle = faction_context_with_db(replace(base, identity=60), db)
-    high = faction_context_with_db(replace(base, identity=90), db)
-    assert len({low, middle, high}) == 3
-    # 最低桶：dossier/agenda 源原值均不喂。
-    assert core not in low and internal not in low and agenda not in low
-    # 中桶：core+agenda；不喂 internal。
-    assert core in middle and agenda in middle and internal not in middle
-    # 高桶：core+internal+agenda。
-    assert core in high and internal in high and agenda in high
+        # 正：中桶搬运 core + agenda 原值。
+        mid = faction_context_with_db(char_mid, db)
+        assert core in mid and agenda in mid
+
+        # 负：agenda 源——低桶不喂（改写后面不变）；中桶喂新值。
+        low_before = faction_context_with_db(char_low, db)
+        probe_agenda = f"AGENDA_PROBE_494_{faction}"
+        db.conn.execute(
+            "UPDATE factions SET agenda = ? WHERE name = ?",
+            (probe_agenda, faction),
+        )
+        db.conn.commit()
+        try:
+            assert faction_context_with_db(char_low, db) == low_before
+            mid_after = faction_context_with_db(char_mid, db)
+            assert probe_agenda in mid_after and core in mid_after
+        finally:
+            db.conn.execute(
+                "UPDATE factions SET agenda = ? WHERE name = ?",
+                (agenda, faction),
+            )
+            db.conn.commit()
+
+        # 负：internal 源——中桶不喂；高桶喂新值。
+        old_internal = dossier["internal"]
+        probe_internal = f"INTERNAL_PROBE_494_{faction}"
+        mid_before = faction_context_with_db(char_mid, db)
+        dossier["internal"] = probe_internal
+        try:
+            assert faction_context_with_db(char_mid, db) == mid_before
+            high_after = faction_context_with_db(char_high, db)
+            assert probe_internal in high_after and core in high_after
+        finally:
+            dossier["internal"] = old_internal
+
+        # 负：core 源——低桶不喂；中/高桶喂新值。
+        old_core = dossier["core"]
+        probe_core = f"CORE_PROBE_494_{faction}"
+        low_before = faction_context_with_db(char_low, db)
+        dossier["core"] = probe_core
+        try:
+            assert faction_context_with_db(char_low, db) == low_before
+            assert probe_core in faction_context_with_db(char_mid, db)
+            assert probe_core in faction_context_with_db(char_high, db)
+        finally:
+            dossier["core"] = old_core
 
 
 def test_north_star_ministers_have_distinct_featured_voices(game):
