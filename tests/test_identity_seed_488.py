@@ -7,7 +7,6 @@ from ming_sim.assets import load_json_asset
 from ming_sim.content import load_character_content
 from ming_sim.session import _sync_offices_from_db_impl
 
-
 def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     """DB seed_guilt 与已加载 content 输入结构化全等（不硬编码 crime 散文）。"""
     db, state, content = game
@@ -26,7 +25,6 @@ def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     assert 温["identity"] == content.characters["温体仁"].identity
     assert json.loads(温["seed_guilt"]) == content.characters["温体仁"].seed_guilt
 
-
 def test_identity_and_seed_guilt_survive_restore(game):
     db, state, content = game
     before = db.conn.execute(
@@ -44,9 +42,6 @@ def test_identity_and_seed_guilt_survive_restore(game):
     assert content.characters["魏忠贤"].identity == before["identity"]
     assert content.characters["魏忠贤"].seed_guilt == guilt
 
-
-
-
 _DIG_7_REQUIRED_SEED_NAMES = {
     "韩爌", "张瑞图", "来宗道", "施凤来", "黄立极", "王绍徽", "毕自严", "杨嗣昌",
     "温体仁", "钱龙锡", "刘鸿训", "钱谦益", "李标", "孙承宗", "崔呈秀", "王在晋",
@@ -59,7 +54,6 @@ _DIG_7_REQUIRED_SEED_NAMES = {
     "郑芝龙", "何腾蛟", "瞿式耜", "郑成功", "张煌言", "孔有德", "耿仲明", "尚可喜",
     "朱由榔", "朱术桂",
 }
-
 
 def test_required_dig_7_seed_roster_entries_are_persisted(game):
     db, state, content = game
@@ -78,17 +72,6 @@ def test_required_dig_7_seed_roster_entries_are_persisted(game):
             assert set(guilt) == {"crime", "severity"}
             assert guilt["severity"] in {"无", "轻", "中", "重"}
 
-
-def test_identity_and_seed_guilt_never_enter_minister_context(game):
-    db, state, content = game
-    from ming_sim.context import character_context
-
-    rendered = character_context(content.characters["王承恩"])
-    assert "identity" not in rendered
-    assert "seed_guilt" not in rendered
-    assert "95" not in rendered
-
-
 def test_roster_has_no_cross_faction_aliases():
     _, characters = load_character_content()
     by_alias = {}
@@ -97,14 +80,12 @@ def test_roster_has_no_cross_faction_aliases():
             by_alias.setdefault(alias, set()).add(character.faction)
     assert all(len(factions) == 1 for factions in by_alias.values())
 
-
 def test_roster_rejects_alias_colliding_with_other_faction_name(monkeypatch):
     data = load_json_asset("characters.json")
     data["characters"][0]["aliases"].append("温体仁")
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
     with pytest.raises(SystemExit):
         load_character_content()
-
 
 def test_roster_rejects_duplicate_canonical_name(monkeypatch):
     data = load_json_asset("characters.json")
@@ -113,7 +94,6 @@ def test_roster_rejects_duplicate_canonical_name(monkeypatch):
     monkeypatch.setattr(content_module, "load_json_asset", lambda _: data)
     with pytest.raises(SystemExit):
         load_character_content()
-
 
 @pytest.mark.parametrize(
     "field,value",

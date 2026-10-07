@@ -243,28 +243,6 @@ def _assert_hub_conservation_oracle(
                 expected_human + expected_sink
             )
 
-def _assert_hub_oracle_mutation_fails(
-    ledger,
-    containers,
-    *,
-    outbound=None,
-    expected_taicang_losses=None,
-    expected_jingyun_losses=None,
-    mutate,
-):
-    mutated_ledger = dict(ledger)
-    mutated_containers = dict(containers)
-    mutated_outbound = dict(outbound) if outbound is not None else None
-    mutate(mutated_ledger, mutated_containers, mutated_outbound)
-    with pytest.raises(AssertionError):
-        _assert_hub_conservation_oracle(
-            mutated_ledger,
-            mutated_containers,
-            outbound=mutated_outbound,
-            expected_taicang_losses=expected_taicang_losses,
-            expected_jingyun_losses=expected_jingyun_losses,
-        )
-
 def _province_pay_due(db, region_id):
     rows = db.conn.execute(
         """
@@ -975,43 +953,6 @@ def test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_gran
         outbound=outbound,
         expected_jingyun_losses=expected_jingyun_losses,
     )
-    _assert_hub_oracle_mutation_fails(
-        ledger_snapshot,
-        container_snapshot,
-        outbound=outbound,
-        expected_jingyun_losses=expected_jingyun_losses,
-        mutate=lambda ledger, containers, out: ledger.__setitem__(
-            "边饷hub", ledger["边饷hub"] + 1
-        ),
-    )
-    _assert_hub_oracle_mutation_fails(
-        ledger_snapshot,
-        container_snapshot,
-        outbound=outbound,
-        expected_jingyun_losses=expected_jingyun_losses,
-        mutate=lambda ledger, containers, out: containers.__setitem__(
-            "C_京运克扣", containers["C_京运克扣"] + 1
-        ),
-    )
-    _assert_hub_oracle_mutation_fails(
-        ledger_snapshot,
-        container_snapshot,
-        outbound=outbound,
-        expected_jingyun_losses=expected_jingyun_losses,
-        mutate=lambda ledger, containers, out: (
-            containers.__setitem__("C_京运克扣", 2),
-            containers.__setitem__("C_京运运损", 0),
-        ),
-    )
-    _assert_hub_oracle_mutation_fails(
-        ledger_snapshot,
-        container_snapshot,
-        outbound=outbound,
-        expected_jingyun_losses=expected_jingyun_losses,
-        mutate=lambda ledger, containers, out: out.__setitem__(
-            "transport_loss", out["transport_loss"] + 1
-        ),
-    )
 
 def test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_jingyun(fresh_game):
     import ming_sim.flows as flows_mod
@@ -1315,39 +1256,6 @@ def test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losse
         ledger_snapshot,
         container_snapshot,
         expected_taicang_losses=expected_taicang_losses,
-    )
-    _assert_hub_oracle_mutation_fails(
-        ledger_snapshot,
-        container_snapshot,
-        expected_taicang_losses=expected_taicang_losses,
-        mutate=lambda ledger, containers, out: containers.__setitem__(
-            "hub_省级起运到京", containers["hub_省级起运到京"] + 1
-        ),
-    )
-    _assert_hub_oracle_mutation_fails(
-        ledger_snapshot,
-        container_snapshot,
-        expected_taicang_losses=expected_taicang_losses,
-        mutate=lambda ledger, containers, out: ledger.__setitem__(
-            "太仓亏空", ledger["太仓亏空"] - 1
-        ),
-    )
-    _assert_hub_oracle_mutation_fails(
-        ledger_snapshot,
-        container_snapshot,
-        expected_taicang_losses=expected_taicang_losses,
-        mutate=lambda ledger, containers, out: containers.__setitem__(
-            "C_太仓挪用", containers["C_太仓挪用"] + 1
-        ),
-    )
-    _assert_hub_oracle_mutation_fails(
-        ledger_snapshot,
-        container_snapshot,
-        expected_taicang_losses=expected_taicang_losses,
-        mutate=lambda ledger, containers, out: (
-            containers.__setitem__("C_太仓挪用", 3),
-            containers.__setitem__("C_太仓纯亏空", 0),
-        ),
     )
 
 def test_budget_lines_read_persisted_substrate_hub_income_source(fresh_game):

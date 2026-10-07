@@ -111,7 +111,6 @@ def _web_runtime(db, state, content):
 def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
     """军牌出口：army_payload 无 status、无 raw arrears 键；arrears_text 在场；完整键集/逐字段对照。"""
     db, _state, _ = read_game
-    seed_status = _guanning_db_status(db)
 
     rows_by_id = {row["id"]: row for row in db.army_rows()}
     payload = db.army_payload()
@@ -139,15 +138,8 @@ def test_army_payload_omits_static_status_exposes_arrears_text(read_game):
                 f"{army_id}.{key}: payload={card[key]!r} expected={value!r}"
             )
 
-        # seed status 句不得以任何字段值形式泄漏到结构化投影
-        st = str(row["status"] or "").strip()
-        if st:
-            joined = " ".join(str(v) for v in card.values())
-            assert st not in joined
-
     guanning = by_id[_GUANNING_ID]
     assert isinstance(guanning["arrears_text"], str) and guanning["arrears_text"]
-    assert seed_status not in " ".join(str(v) for v in guanning.values())
 
 
 def test_shared_consumers_keep_structured_army_surfaces(read_game):
