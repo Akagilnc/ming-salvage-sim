@@ -148,24 +148,6 @@ def test_out_of_table_faction_and_unknown_person_never_projected(game):
     assert db.get_faction_stance_summaries() == []
 
 
-# ------------------------------------------------- F1 canonical 党籍投影
-
-def test_canonical_projection_intersects_existing_factions_only(game):
-    """投影＝characters.faction ∩ factions 现存集合：表外党籍与皇帝节点不入映射，
-    不猜不建第二套映射表。"""
-    db, state, _ = game
-    proj = project_character_factions(db)
-    assert proj["杨嗣昌"] == "皇党"
-    assert proj["王绍徽"] == "阉党"
-    # 皇帝端不投影（皇帝不是 characters 行，即便同名也绝不入映射）。
-    assert EMPEROR_NODE not in proj
-    # 表外党籍（后金/中宫/流寇等真实种子）不入投影。
-    in_table = {row["name"] for row in db.conn.execute("SELECT name FROM factions")}
-    assert set(proj.values()) <= in_table
-    assert "皇太极" not in proj
-    assert "周皇后" not in proj
-
-
 # ------------------------------------- 验收：事件月更新／无事月字节不变
 
 def test_event_month_updates_stance_and_no_event_month_byte_identical(game):

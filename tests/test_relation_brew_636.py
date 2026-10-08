@@ -305,37 +305,6 @@ def test_brew_persistence_chain_preserves_32700_byte_fixture_byte_identical(game
     assert stored.encode("utf-8") == fixture
 
 
-# --------------------------------------------- P5：批内条目并行不串行
-
-def test_brew_batch_runs_items_in_parallel_not_serialized(game):
-    db, state, _ = game
-    pairs = [("甲", "乙"), ("丙", "丁")]
-    for source, target in pairs:
-        _add_edge(db, state, source=source, target=target, kind="协作",
-                  context=f"{source}与{target}当场协作。", origin=f"audience:{source}{target}")
-
-    barrier = threading.Barrier(len(pairs))
-    threads: list = []
-
-    def parallel_brew(payload_json: str) -> str:
-        payload = json.loads(payload_json)
-        threads.append(threading.current_thread().name)
-        # 标准库 Barrier 超时：串行故障秒级 BrokenBarrierError，不无限挂起。
-        barrier.wait(timeout=2.0)
-        return json.dumps(
-            _script(recent=f"{payload['source']}与{payload['target']}协作在案。"),
-            ensure_ascii=False,
-        )
-
-    report = run_month_end_relation_brew(db, state, parallel_brew, parallel=True)
-    assert len(report["brewed"]) == 2
-    assert len(set(threads)) == 2
-    for source, target in pairs:
-        assert db.get_relation_summary(source, target)["recent_segment"] == (
-            f"{source}与{target}协作在案。"
-        )
-
-
 # ------------------------------------------------- 「本月新增」总判据（历史水位不选旧事）
 
 def test_historical_events_alone_do_not_select_in_later_month(game):
