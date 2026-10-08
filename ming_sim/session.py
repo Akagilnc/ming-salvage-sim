@@ -519,18 +519,15 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
         )
         import json as _json
 
-        try:
-            aliases = _json.loads(row["aliases"] or "[]")
-        except (TypeError, ValueError):
-            aliases = []
-        if not isinstance(aliases, list):
-            aliases = []
-        try:
-            personal_skills = _json.loads(row["personal_skills"] or "[]")
-        except (TypeError, ValueError):
-            personal_skills = []
-        if not isinstance(personal_skills, list):
-            personal_skills = []
+        # aliases/personal_skills 持久字符串数组：腐坏响亮（#1897 E1）。
+        # seed_guilt 写口允许文字值，不在此按 JSON 对象硬解（判词 J966 明示排除）。
+        from ming_sim.db import _load_durable_str_list
+        aliases = _load_durable_str_list(
+            row["aliases"], surface=f"characters#{name}.aliases",
+        )
+        personal_skills = _load_durable_str_list(
+            row["personal_skills"], surface=f"characters#{name}.personal_skills",
+        )
         try:
             seed_guilt = _json.loads(row["seed_guilt"] or "{}")
         except (TypeError, ValueError):
@@ -542,8 +539,8 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             office=row["office"],
             office_type=office_type,
             faction=row["faction"],
-            aliases=[str(item) for item in aliases if str(item).strip()],
-            personal_skills=[str(item) for item in personal_skills if str(item).strip()],
+            aliases=list(aliases),
+            personal_skills=list(personal_skills),
             loyalty=int(row["loyalty"]),
             ability=int(row["ability"]),
             integrity=int(row["integrity"]),

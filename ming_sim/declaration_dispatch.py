@@ -1149,10 +1149,21 @@ def _attach_commission_staging_fields(
         item if item.get("deadline_months") not in (None, "", 0) else grant
     )
     # 与 stage_assignment / stage_grant 同缝：相对月数或绝对回合 → 绝对 due_turn。
+    # 禁 ``or 0`` 把 False/脏类型洗成合法缺省（#1897 C1）。
+    raw_due = (due_src or item).get("due_turn")
+    raw_end = (end_src or item).get("end_turn")
+    if raw_due not in (None, ""):
+        end_turn_in = raw_due
+    elif raw_end not in (None, ""):
+        end_turn_in = raw_end
+    else:
+        end_turn_in = 0
+    raw_months = (months_src or item).get("deadline_months")
+    months_in = 0 if raw_months is None or raw_months == "" else raw_months
     absolute_due = _assignment_absolute_end_turn(
         int(turn),
-        end_turn=(due_src or item).get("due_turn") or (end_src or item).get("end_turn") or 0,
-        deadline_months=(months_src or item).get("deadline_months") or 0,
+        end_turn=end_turn_in,
+        deadline_months=months_in,
     )
     if absolute_due > int(turn):
         payload["due_turn"] = absolute_due
@@ -1342,10 +1353,22 @@ def _dispatch_commissions(
                     continue
             else:
                 new_title = target["title"]
+            # 期限准入走唯一权威（#1897 C1）：脏类型逐项拒收，不进持久 pending。
+            from ming_sim.db import _coerce_deadline_months
+            try:
+                deadline = _coerce_deadline_months(
+                    update.get("deadline_months", 0), default=0,
+                )
+            except DecreeMaterializationValidationError as exc:
+                _reject(
+                    rejected, item, str(exc),
+                    getattr(exc, "category", None) or "invalid_shape", source,
+                )
+                continue
             payload = {
                 "new_title": new_title,
                 "new_content": content_text,
-                "deadline_months": update.get("deadline_months", 0),
+                "deadline_months": deadline,
                 "origin_chat_message_id": origin_mid,
             }
             row_id = db.stage_pending_action(
@@ -1483,12 +1506,24 @@ def _dispatch_commissions(
             if title is None:
                 _reject(rejected, item, "密令标题缺自由文本", "invalid_shape", source)
                 continue
+            # 期限准入走唯一权威（#1897 C1）：脏类型逐项拒收，不进持久 pending。
+            from ming_sim.db import _coerce_deadline_months
+            try:
+                deadline = _coerce_deadline_months(
+                    secret.get("deadline_months", 0), default=0,
+                )
+            except DecreeMaterializationValidationError as exc:
+                _reject(
+                    rejected, item, str(exc),
+                    getattr(exc, "category", None) or "invalid_shape", source,
+                )
+                continue
             payload = {
                 "title": title,
                 "content": body,
                 "assignee": assignee,
                 "tags": optional_lists["tags"],
-                "deadline_months": secret.get("deadline_months", 0),
+                "deadline_months": deadline,
                 "excluded_names": optional_lists["excluded_names"],
                 "excluded_offices": optional_lists["excluded_offices"],
                 "dossier_links": links,

@@ -2895,9 +2895,10 @@ def extract_draft_intent(
         f"【现有草案】{_existing_draft_text}\n"
         if _existing_draft_text.strip() else ""
     )
+    # 候选原文过手不截断（#1897 E2 / 原话运输）。
     candidates_context = (
         "【现有候选】\n" + "\n".join(
-            f"  [{int(c['id'])}] {str(c.get('summary') or c.get('text') or '')[:40]}"
+            f"  [{int(c['id'])}] {str(c.get('summary') or c.get('text') or '')}"
             for c in _candidates
         ) + "\n"
         if _candidates else ""

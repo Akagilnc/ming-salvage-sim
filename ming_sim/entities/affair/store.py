@@ -440,26 +440,23 @@ class AffairStore:
             (*refs, f"{affair_ref}/%"),
         ).fetchall()
         out: list[dict[str, object]] = []
+        from ming_sim.db import _load_durable_str_list
         for row in rows:
             origin = str(row["origin_ref"] or "").strip()
-            try:
-                tags = json.loads(row["tags"] or "[]")
-            except (TypeError, ValueError):
-                tags = []
-            if not isinstance(tags, list):
-                tags = []
-            try:
-                people = json.loads(row["person_names"] or "[]")
-            except (TypeError, ValueError):
-                people = []
-            if not isinstance(people, list):
-                people = []
+            # 故事账 tags/person_names：腐坏响亮，不 catch-to-[]（#1897 E1）。
+            tags = _load_durable_str_list(
+                row["tags"], surface=f"story_ledger_entries#{int(row['id'])}.tags",
+            )
+            people = _load_durable_str_list(
+                row["person_names"],
+                surface=f"story_ledger_entries#{int(row['id'])}.person_names",
+            )
             out.append({
                 "id": int(row["id"]),
                 "body": str(row["body"] or ""),
                 "origin_ref": origin,
-                "person_names": [str(name) for name in people if str(name).strip()],
-                "tags": [str(tag) for tag in tags if str(tag).strip()],
+                "person_names": list(people),
+                "tags": list(tags),
             })
         return tuple(out)
 

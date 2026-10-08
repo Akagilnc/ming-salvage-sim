@@ -239,17 +239,9 @@ def _now_iso() -> str:
 
 
 def _json_list(value: Any) -> List[Any]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value or "[]")
-        except (TypeError, ValueError):
-            return []
-        return parsed if isinstance(parsed, list) else []
-    return []
+    """故事账 tags/person_names 持久列表：腐坏响亮，不 catch-to-[]（#1897 E1）。"""
+    from ming_sim.db import _load_durable_json_list
+    return _load_durable_json_list(value, surface="story_ledger_entries.json_list")
 
 
 def _row_dict(row: Any) -> Dict[str, Any]:
@@ -1400,7 +1392,7 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     ).fetchall()
     projected: List[Dict[str, Any]] = []
     for row in rows:
-        tags = json.loads(row["tags"] or "[]")
+        tags = _json_list(row["tags"])
         if TAG_SUMMON_UNSETTLED not in tags or TAG_SUMMON_SETTLED in tags:
             continue
         origin = next(
@@ -1408,7 +1400,7 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
              if str(tag).startswith(_SUMMON_ORIGIN_PREFIX)),
             "",
         )
-        names = json.loads(row["person_names"] or "[]")
+        names = _json_list(row["person_names"])
         if not origin or not names:
             continue
         person_name = str(names[0])
@@ -1509,7 +1501,7 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
         ).fetchone()
         if row is None:
             continue
-        tags = json.loads(row["tags"] or "[]")
+        tags = list(_json_list(row["tags"]))
         if TAG_IN_TRANSIT in tags:
             continue
         tags.append(TAG_IN_TRANSIT)
@@ -1541,8 +1533,9 @@ def settle_summon_origin(
         row = db.conn.execute(
             "SELECT tags FROM story_ledger_entries WHERE id=?", (item["entry_id"],)
         ).fetchone()
-        tags = json.loads(row["tags"] or "[]")
-        tags = [tag for tag in tags if tag != TAG_SUMMON_UNSETTLED]
+        tags = [
+            tag for tag in _json_list(row["tags"]) if tag != TAG_SUMMON_UNSETTLED
+        ]
         tags.append(TAG_SUMMON_SETTLED)
         db.conn.execute(
             "UPDATE story_ledger_entries SET tags=? WHERE id=?",
@@ -1670,8 +1663,10 @@ def update_summon_travel_tone(
     ).fetchone()
     if row is None:
         raise KeyError(f"传召账不存在：{entry_id}")
-    tags = [str(t) for t in json.loads(row["tags"] or "[]")]
-    tags = [t for t in tags if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)]
+    tags = [
+        str(t) for t in _json_list(row["tags"])
+        if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)
+    ]
     tags.append(_travel_tone_tag(tone))
     db.conn.execute(
         "UPDATE story_ledger_entries SET tags=? WHERE id=?",
@@ -2175,17 +2170,8 @@ def rescript_summon_origin_consumed(
     """
     if entry is None:
         return False
-    tags_raw = entry.get("tags")
-    if isinstance(tags_raw, str):
-        try:
-            tags_list = json.loads(tags_raw or "[]")
-        except Exception:
-            tags_list = []
-    elif isinstance(tags_raw, (list, tuple)):
-        tags_list = list(tags_raw)
-    else:
-        tags_list = []
-    tags = [str(t) for t in tags_list]
+    # 持久 tags 走故事账列表权威；腐坏响亮，不洗空（#1897 E1）。
+    tags = [str(t) for t in _json_list(entry.get("tags"))]
     return TAG_ENTER in tags
 
 

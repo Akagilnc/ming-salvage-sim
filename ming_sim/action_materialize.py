@@ -1355,8 +1355,10 @@ def _parse_revoke_decree_target(
         raw = raw.split(":", 1)[1].strip()
     if not kind:
         kind = "dossier"
+    # 身份引用走 SQLite 64-bit 权威：超界/脏类型在查询前拒，不让 OverflowError 带走同批（#1897 C1）。
+    from ming_sim.strict_types import strict_sqlite_id
     try:
-        tid = int(raw)
+        tid = strict_sqlite_id(raw, accept_numeric_strings=True)
     except (TypeError, ValueError):
         return None
     if tid <= 0:
@@ -1373,7 +1375,9 @@ def _parse_revoke_decree_target(
         origin = str(row["origin_ref"] or "").strip()
         if origin.startswith("dossier:"):
             try:
-                linked = int(origin.split(":", 1)[1])
+                linked = strict_sqlite_id(
+                    origin.split(":", 1)[1], accept_numeric_strings=True,
+                )
             except (TypeError, ValueError):
                 linked = 0
         # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路
@@ -1758,10 +1762,9 @@ def stage_referral_candidate(
         )
     matter_id = str(target_id or "").strip() or matter_title
 
-    try:
-        months = int(deadline_months or 0)
-    except (TypeError, ValueError):
-        months = 0
+    # 期限准入走唯一权威；脏类型领域拒收，不 or-洗成 0（#1897 C1）。
+    from ming_sim.db import _coerce_deadline_months
+    months = _coerce_deadline_months(deadline_months, default=0)
     # FieldSpec int_hi=36 已在 normalize 夹紧；此处仍守 <=0 不产项
     if months <= 0:
         return 0

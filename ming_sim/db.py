@@ -932,6 +932,30 @@ def _optional_payload_str_list(
     return _require_str_list_members(raw, surface=surface)
 
 
+def _durable_payload_endorsements(
+    payload: Mapping[str, object], *, surface: str,
+) -> list:
+    """Durable payload endorsements list: absent/None → []; present bad shape loud.
+
+    Do not list(... or []) / skip non-object / wash non-list to [] (#1897 E1).
+    """
+    if "endorsements" not in payload or payload.get("endorsements") is None:
+        return []
+    raw = payload.get("endorsements")
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"{surface} 须为列表，得 {type(raw).__name__}"
+        )
+    out: list = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"{surface}[{idx}] 须为对象，得 {type(item).__name__}"
+            )
+        out.append(dict(item))
+    return out
+
+
 def _require_durable_prose(raw: object, *, field: str, required: bool = True) -> str:
     """Durable free-text field: already str, no str() coercion (#1897 E1).
 
@@ -7640,17 +7664,10 @@ class GameDB:
 
     @staticmethod
     def _parse_highlights_json(raw: Any) -> List[str]:
-        try:
-            data = json.loads(raw or "[]")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
-            return []
-        out: List[str] = []
-        for item in data:
-            if isinstance(item, str) and item.strip():
-                out.append(item.strip())
-        return out
+        # 持久 highlights 字符串数组：腐坏响亮，不 catch-to-[]（#1897 E1）。
+        return _load_durable_str_list(
+            raw, surface="chat_messages.highlights_json",
+        )
 
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
         ids = [int(mid) for mid in message_ids if mid is not None]
@@ -8635,10 +8652,17 @@ class GameDB:
                             "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
                             (int(target_id),),
                         ).fetchone()
-                        current = json.loads(brief[0] or "[]") if brief is not None else []
+                        # 已持久 brief 源身份：响亮解码（#1897 E1）。
+                        current = self._load_durable_origin_message_ids(
+                            None if brief is None else brief[0],
+                            surface=f"secret_order_briefs#{int(target_id)}.origin_chat_message_ids",
+                        )
                         pins = [pin for pin in current if int(pin) not in undone]
                     else:
-                        pins = json.loads(str(raw_pins) or "[]")
+                        pins = self._load_durable_origin_message_ids(
+                            raw_pins,
+                            surface=f"rollback.secret_orders#{int(target_id)}.brief_pins",
+                        )
                     self._restore_secret_order_brief_projection_in_tx(int(target_id), pins)
             else:
                 raise ValueError(f"不支持的回滚策略：{strategy}")
@@ -9115,11 +9139,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        try:
-            timeline = json.loads(row["timeline"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] timeline JSON 损坏，回空：{exc}")  # #14 surface
-            timeline = []
+        # 结局 timeline 持久列表：腐坏响亮，不回空（#1897 E1）。
+        timeline = _load_durable_json_list(
+            row["timeline"], surface="ending_summary.timeline",
+        )
         return {
             "turn": int(row["turn"]),
             "year": int(row["year"]),
@@ -9371,22 +9394,7 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}")  # #14 surface
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
+            options, choice, prior = self._load_pending_decision_json_fields(r)
             source_turn = int(r["turn"])
             idx = int(r["idx"])
             kind = str(r["kind"] or "decision")
@@ -9400,7 +9408,7 @@ class GameDB:
                 "context": r["context"],
                 "rejection_reason": r["rejection_reason"],
                 "opposition": r["opposition"],
-                "options": options if isinstance(options, list) else [],
+                "options": options,
                 "choice": choice,
                 "status": r["status"],
                 "kind": kind,
@@ -9408,7 +9416,7 @@ class GameDB:
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
                 "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
+                "prior_options_json": prior,
             })
         return out
 
@@ -9424,36 +9432,21 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
-            choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except Exception as exc:
-                tlog(f"[db] choice_json 损坏，回 None（draft turn={r['turn']} idx={r['idx']}）：{exc}")
-                choice = None
-            try:
-                prior = json.loads(r["prior_options_json"] or "[]")
-            except Exception as exc:
-                tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-                prior = []
+            options, choice, prior = self._load_pending_decision_json_fields(r)
             out.append({
                 "turn": int(r["turn"]),
                 "idx": int(r["idx"]),
                 "event_id": r["event_id"],
                 "title": r["title"],
                 "context": r["context"],
-                "options": options if isinstance(options, list) else [],
+                "options": options,
                 "choice": choice,
                 "status": r["status"],
                 "actor_name": r["actor_name"],
                 "actor_office": r["actor_office"],
                 "actor_faction": r["actor_faction"],
                 "revision_round": int(r["revision_round"] or 0),
-                "prior_options_json": prior if isinstance(prior, list) else [],
+                "prior_options_json": prior,
             })
         return out
 
@@ -9486,29 +9479,50 @@ class GameDB:
         ).fetchall()
         return [self._project_rescript_desk_row(r) for r in rows]
 
+    @staticmethod
+    def _load_pending_decision_json_fields(
+        r: Any,
+    ) -> tuple[list, object | None, list]:
+        """pending_decisions options/choice/prior 持久解码单一权威（#1897 E1）。
+
+        列表缺省合法空；腐坏/非列表响亮。choice 空串＝未选（None）。
+        调用方 SELECT 可能省略 kind（如 list_rescript_drafts 已按 kind 过滤）。
+        """
+        try:
+            keys = set(r.keys())
+        except Exception:
+            keys = set(r) if isinstance(r, Mapping) else set()
+        kind = str(r["kind"] or "decision") if "kind" in keys else "decision"
+        surface = f"pending_decisions.{kind}:{int(r['turn'])}:{int(r['idx'])}"
+        options = _load_durable_json_list(
+            r["options_json"], surface=f"{surface}.options_json",
+        )
+        prior_raw = r["prior_options_json"] if "prior_options_json" in keys else None
+        prior = _load_durable_json_list(
+            prior_raw, surface=f"{surface}.prior_options_json",
+        )
+        choice_raw = r["choice_json"] if "choice_json" in keys else None
+        if choice_raw is None or (
+            isinstance(choice_raw, str) and not choice_raw.strip()
+        ):
+            choice: object | None = None
+        else:
+            # choice 可为 object 或其它 JSON 值；非空串走对象权威，列表/标量也保留。
+            if isinstance(choice_raw, (dict, list)):
+                choice = choice_raw
+            else:
+                try:
+                    choice = json.loads(choice_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"{surface}.choice_json 腐坏 JSON") from exc
+        return options, choice, prior
+
     def _project_rescript_desk_row(self, r: Any) -> Dict[str, object]:
         """pending_decisions 行 → desk 投影（pending/decided 共用）。"""
         kind = str(r["kind"] or "decision")
         source_turn = int(r["turn"])
         idx = int(r["idx"])
-        try:
-            options = json.loads(r["options_json"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-            options = []
-        if not isinstance(options, list):
-            options = []
-        choice_raw = (r["choice_json"] or "").strip()
-        try:
-            choice = json.loads(choice_raw) if choice_raw else None
-        except Exception as exc:
-            tlog(f"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}")
-            choice = None
-        try:
-            prior = json.loads(r["prior_options_json"] or "[]")
-        except Exception as exc:
-            tlog(f"[db] prior_options_json 损坏，回空：{exc}")  # #14 surface
-            prior = []
+        options, choice, prior = self._load_pending_decision_json_fields(r)
         return {
             "decision_key": f"{kind}:{source_turn}:{idx}",
             "kind": kind,
@@ -9527,7 +9541,7 @@ class GameDB:
             "actor_office": r["actor_office"],
             "actor_faction": r["actor_faction"],
             "revision_round": int(r["revision_round"] or 0),
-            "prior_options_json": prior if isinstance(prior, list) else [],
+            "prior_options_json": prior,
         }
 
     def get_rescript_desk_rows_by_keys(
@@ -12900,13 +12914,12 @@ class GameDB:
             ).fetchone()
             raw_keys = (
                 raw_keys_row["office_archive_keys"] if raw_keys_row is not None else None
-            ) or "[]"
-            parsed_keys = json.loads(raw_keys)
-            if not isinstance(parsed_keys, list):
-                raise ValueError(
-                    f"office_archive_keys 须为 JSON 数组：dossier {int(dossier_id)}"
-                )
-            archive_keys = {str(item) for item in parsed_keys}
+            )
+            parsed_keys = _load_durable_str_list(
+                raw_keys,
+                surface=f"decree_dossiers#{int(dossier_id)}.office_archive_keys",
+            )
+            archive_keys = set(parsed_keys)
             if str(dossier.get("action_type") or "") != "secret_order":
                 for item in added:
                     if str(item.get("tier") or "") != "主办":
@@ -13229,7 +13242,10 @@ class GameDB:
                     or bool(row["was_force_promulgated"])
                     or int(row["id"]) in known_dossier_ids
                     or reader_archive_key in set(
-                        json.loads(row["office_archive_keys"] or "[]")
+                        _load_durable_str_list(
+                            row["office_archive_keys"],
+                            surface=f"decree_dossiers#{int(row['id'])}.office_archive_keys",
+                        )
                     )
                 )
             ) or (
@@ -15083,8 +15099,11 @@ class GameDB:
                 return
             if issue_disposition == "办人":
                 try:
-                    roster = json.loads(str(issue["target_roster"] or "[]"))
-                except (TypeError, ValueError) as exc:
+                    roster = _load_durable_json_list(
+                        issue["target_roster"],
+                        surface=f"issues#{issue_id}.target_roster",
+                    )
+                except ValueError as exc:
                     raise ValueError("弹劾潮 target_roster 非法") from exc
                 if target not in roster:
                     raise ValueError("办人目标不在弹劾潮 target_roster")
@@ -15597,15 +15616,14 @@ class GameDB:
                 "背书来源对话轮不存在",
                 failed_fields=("source_chat_turn_id",), category="missing_ref",
             )
-        items = list(payload.get("endorsements") or [])
-        if not isinstance(items, list):
-            items = []
+        # 已持久 endorsements：缺省合法空；present 非列表/非对象响亮，不洗后覆盖（#1897 E1）。
+        items = _durable_payload_endorsements(
+            payload, surface=f"pending_actions#{aid}.endorsements",
+        )
         # 同轮同形同人去重（INSERT OR IGNORE 同语义）。
         key = (form, endorser_id, imperial, source_cid)
         kept = []
         for raw in items:
-            if not isinstance(raw, Mapping):
-                continue
             k = (
                 str(raw.get("form") or "").strip(),
                 str(raw.get("endorser_id") or "").strip(),
@@ -15632,21 +15650,31 @@ class GameDB:
     ) -> List[int]:
         """#1842：成案时把载荷 endorsements 继承到案卷（来源仍为声明轮）。"""
         owns = self.owns_transaction() if commit else False
-        raw_items = payload.get("endorsements") if isinstance(payload, Mapping) else None
-        if not isinstance(raw_items, list) or not raw_items:
+        if not isinstance(payload, Mapping):
+            return []
+        # 已持久 endorsements：缺省合法空；present 非列表/非对象/坏契约响亮（#1897 E1）。
+        raw_items = _durable_payload_endorsements(
+            payload, surface=f"dossier#{int(dossier_id)}.payload.endorsements",
+        )
+        if not raw_items:
             return []
         new_ids: List[int] = []
-        for raw in raw_items:
-            if not isinstance(raw, Mapping):
-                continue
+        for idx, raw in enumerate(raw_items):
             form = str(raw.get("form") or "").strip()
             endorser_id = str(raw.get("endorser_id") or "").strip()
             imperial = bool(raw.get("imperial", False))
-            source_cid = int(raw.get("source_chat_turn_id") or 0)
+            try:
+                source_cid = int(raw.get("source_chat_turn_id") or 0)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(
+                    f"持久 endorsements[{idx}].source_chat_turn_id 契约腐坏"
+                ) from exc
             if form == "御笔手敕":
                 imperial, endorser_id = True, ""
             if form not in {"会签", "当面站台", "御笔手敕"} or source_cid <= 0:
-                continue
+                raise ValueError(
+                    f"持久 endorsements[{idx}] 契约腐坏：form/source_chat_turn_id"
+                )
             eid = self.add_dossier_endorsement(
                 int(dossier_id),
                 form=form,
