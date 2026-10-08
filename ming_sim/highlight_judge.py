@@ -1,21 +1,18 @@
 """大臣奏对高亮判官（#544 / ADR 0045）。
 
 生成完成后的独立机器面短调用：读成品全文，输出硬格式 JSON 承重短语清单。
-超时/坏输出/判官失败 → 空清单（产品面永不挡回话）；异常边界带日志，不宽吞代码 bug。
+超时封顶与坏输出解析 → 空清单；实际调用故障（模型不可用/契约/代码）原样上抛，不洗成成功空结果。
 不在 Python 侧重写 markdown 剥离（剥离与匹配真源在 web/src/format.ts + 前端匹配链）。
 """
 
 from __future__ import annotations
 
 import json
-import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import Any, List
 
-from ming_sim.exceptions import LLMContractError, LLMUnavailable
+from ming_sim.exceptions import LLMContractError
 from ming_sim.llm_model import extract_agent_text
-
-logger = logging.getLogger(__name__)
 
 # 几秒级上限（ADR 0045：非流式折窗的封顶；超时即回话先行无高亮）
 DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S = 8.0
@@ -53,7 +50,7 @@ def run_highlight_judge(
     agent: Any = None,
     timeout_s: float = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
 ) -> List[str]:
-    """同通道短调用；超时/坏输出/判官失败 → []（一层带日志边界，零副作用）。"""
+    """同通道短调用；超时封顶 → []；坏输出由 parse 收成 []；实际调用故障原样上抛。"""
     reply = str(minister_reply or "").strip()
     if not reply:
         return []
@@ -93,12 +90,9 @@ def run_highlight_judge(
         try:
             return list(future.result(timeout=timeout))
         except FuturesTimeout:
-            # 不 wait 卡住调用方——超时即降级；worker 随进程回收
+            # 不 wait 卡住调用方——超时封顶空清单；worker 随进程回收。
+            # 实际模型/契约/代码故障不在此转空，由 future.result 原样上抛。
             future.cancel()
-            return []
-        except (LLMContractError, LLMUnavailable) as exc:
-            # 只认契约/模型不可用降级空清单；未知代码故障原样上抛（#1902）。
-            logger.warning("highlight judge degraded (contract/unavailable): %s", exc)
             return []
     finally:
         pool.shutdown(wait=False, cancel_futures=True)

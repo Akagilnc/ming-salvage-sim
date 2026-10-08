@@ -402,6 +402,77 @@ def test_worker_postprocess_exception_emits_error_end():
     _assert_write_path_free(runtime)
 
 
+def test_worker_highlight_thread_fault_emits_error_end(monkeypatch):
+    """#1902：保留高亮线程内实际故障 join 后交还统一出口 error→end，不洗成成功。
+
+    真 spawn 缝（非同步 raise 替身）：trail 抛 LLMUnavailable / TypeError 均须可见 error。
+    """
+    import types
+
+    from web_app import WebGame
+
+    db = _WorkerPathDB()
+    runtime, minister = _base_runtime(db)
+    runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
+    runtime.session._character = lambda name: minister_double(minister)
+    runtime.session.close_night_after_chat_if_needed = (
+        lambda *a, **k: None
+    )
+    # 生产 spawn / trail 缝（夹具默认可能 stub）。
+    runtime._spawn_pending_write_thread = types.MethodType(
+        WebGame._spawn_pending_write_thread, runtime,
+    )
+    runtime._trail_highlight_judge_after_reply = types.MethodType(
+        WebGame._trail_highlight_judge_after_reply, runtime,
+    )
+    runtime._scene_chat_stream_payload = (  # type: ignore[method-assign]
+        lambda *a, **k: {
+            "answer": "臣已知晓。",
+            "minister_message_id": 1,
+            "court_action": "",
+        }
+    )
+
+    def _boom_judge(**_k):
+        raise LLMUnavailable("highlight model down", code="llm_error")
+
+    monkeypatch.setattr("web_app.run_highlight_judge", _boom_judge)
+
+    events: list[dict] = []
+    done = threading.Event()
+    box: dict = {}
+
+    def consume() -> None:
+        try:
+            for item in runtime.chat_stream("殿上", "边饷如何？"):
+                events.append(item)
+                if item.get("type") == "end":
+                    break
+            box["ok"] = True
+        except Exception as exc:  # noqa: BLE001
+            box["exc"] = exc
+        finally:
+            done.set()
+
+    th = threading.Thread(target=consume, daemon=True)
+    th.start()
+    done.wait(timeout=5)
+    th.join(timeout=5)
+    assert box.get("ok") is True, box
+    types = [e.get("type") for e in events]
+    assert "done" in types, events
+    assert "error" in types, events
+    assert "highlights" not in types, events
+    assert types[-1] == "end", events
+    err = next(e for e in events if e.get("type") == "error")
+    # typed 走 detail dict.message；代码故障走 message——合并原声核验。
+    detail = err.get("detail")
+    detail_msg = detail.get("message") if isinstance(detail, dict) else detail
+    blob = f"{err.get('message') or ''}{detail_msg or ''}"
+    assert "highlight model down" in blob, err
+    _assert_write_path_free(runtime)
+
+
 # #1902 F7：SSE 解析真源在 tests.sse_helpers（仓内只此一份，含 tuple 投影）。
 # 本文件不再自带第二份实现。
 _parse_sse = parse_sse_event_pairs

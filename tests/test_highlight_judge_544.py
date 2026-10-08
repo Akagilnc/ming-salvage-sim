@@ -1,7 +1,8 @@
-"""#544 高亮判官管道：同通道后处理 · 清单落库 · 两通道时序 · 静默降级。
+"""#544 高亮判官管道：同通道后处理 · 清单落库 · 两通道时序。
 
-票面 AC（冻结 r2）：
-- 超时/坏输出 → 无高亮、零报错、回话照常（注入假输出、零真 LLM）
+票面 AC（冻结 r2 / #1902）：
+- 超时/坏输出 → 无高亮、回话照常（注入假输出、零真 LLM）
+- 实际调用故障原样上抛，不洗成成功空清单
 - 清单落库 + restore 后仍在（build_chat_projection / audience_night 卷轴）
 - 非流式同到（折等待窗、超时封顶）；流式不挡流、流完补挂
 - 慢而成功的判官：流式=回话先显示；非流式=折窗封顶
@@ -27,8 +28,8 @@ from ming_sim.highlight_judge import (
 # ── 解析 / 单次调用降级 ──────────────────────────────────────────────────
 
 
-def test_run_highlight_judge_timeout_and_typed_unavailable_degrade():
-    """超时与 typed 模型不可用仍静默降级 []；未知代码异常不降级（#1902）。"""
+def test_run_highlight_judge_timeout_empty_actual_faults_raise():
+    """超时封顶 → []；typed 不可用与代码故障原样上抛，不洗成成功空清单（#1902）。"""
     from ming_sim.exceptions import LLMUnavailable
 
     release = threading.Event()
@@ -57,12 +58,13 @@ def test_run_highlight_judge_timeout_and_typed_unavailable_degrade():
         # 断言失败不得扣住 _Slow.run；释放归本测 finally。
         release.set()
 
-    assert run_highlight_judge(
-        minister_reply="臣陈辽饷。",
-        llm_config=object(),
-        agent=_TypedDown(),
-        timeout_s=1.0,
-    ) == []
+    with pytest.raises(LLMUnavailable, match="model down"):
+        run_highlight_judge(
+            minister_reply="臣陈辽饷。",
+            llm_config=object(),
+            agent=_TypedDown(),
+            timeout_s=1.0,
+        )
 
     with pytest.raises(TypeError, match="model down"):
         run_highlight_judge(
@@ -222,7 +224,7 @@ def test_chat_stream_done_before_highlights_and_degrade(game, monkeypatch):
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣", "陈辽饷。"]))
     _restore_highlight_seams(web_game)
 
-    # run_highlight_judge 契约：失败/超时/坏输出只回 []、不抛（一层边界在其内部）。
+    # 合法空结果（超时/坏输出）→ []；本案覆盖无高亮事件、回话照常。
     monkeypatch.setattr(web_app_mod, "run_highlight_judge", lambda **_k: [])
 
     events = list(web_game.chat_stream("殿上", "军务如何？"))

@@ -2221,8 +2221,7 @@ class WebGame:
     ) -> List[str]:
         """#544 / ADR 0045：回话完成后同通道高亮判官。超时/坏输出 → []，落库短语。
 
-        判官失败边界在 run_highlight_judge（带日志）；此处只收窄写库 sqlite 异常并 warning。
-        写库经票据执行 seam。
+        判官实际调用故障原样上抛（不在此转空成功）；写库经票据 seam。
         匹配/剥离在前端，此处只存短语。无票且 seal → 零 LLM 零写。
         #1353：spawn 路票据由 spawner finally 归还；本腿只消费交接票。直接调用无票时自领自还。
         """
@@ -2255,12 +2254,6 @@ class WebGame:
                     self.db.set_message_highlights(mid, phrases)
             except TicketCancelled:
                 return []
-            except sqlite3.Error as exc:
-                logger.warning(
-                    "highlight judge persist failed message_id=%s: %s",
-                    mid, exc, exc_info=True,
-                )
-                return []
             return phrases
         finally:
             # 仅自领票由本腿收口；spawn 交接票由 spawner 归还。
@@ -2283,9 +2276,14 @@ class WebGame:
         if ticket is None:
             return None
 
+        # 实际异常不得在保留线程里消亡后被 join 方当成成功；stash 供 join 后原样上抛。
+        spawn_errors: List[BaseException] = []
+
         def _runner() -> None:
             try:
                 target(*args, pending_ticket=ticket)
+            except BaseException as exc:
+                spawn_errors.append(exc)
             finally:
                 self._complete_pending_write(ticket)
 
@@ -2294,6 +2292,8 @@ class WebGame:
             daemon=True,
             name=name,
         )
+        # join 方读此盒；startup 等 fire-and-forget 不 join，异常仍留日志侧由调用契约决定。
+        thread._spawn_errors = spawn_errors  # type: ignore[attr-defined]
         try:
             thread.start()
         except Exception:
@@ -2586,8 +2586,12 @@ class WebGame:
                     reply_done_emitted = True
 
                     # #544：流式不挡流——done 后补挂高亮（超时封顶）；有清单才发事件。
+                    # 保留线程实际异常交还本 worker 统一失败出口（error→end），不洗成成功。
                     if highlight_thread is not None:
                         highlight_thread.join()
+                        spawn_errors = getattr(highlight_thread, "_spawn_errors", None) or []
+                        if spawn_errors:
+                            raise spawn_errors[0]
                     if highlight_box:
                         ev_queue.put({
                             "type": "highlights",
