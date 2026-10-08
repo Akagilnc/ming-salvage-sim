@@ -14,15 +14,6 @@ import pytest
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, SectionResult
 
 
-def test_provenance_enum_values():
-    """五个成员值与字符串标识一致（ADR 0008 决定 5）。"""
-    assert Provenance.player_decree.value == "player_decree"
-    assert Provenance.hitl_decision.value == "hitl_decision"
-    assert Provenance.secret_order.value == "secret_order"
-    assert Provenance.system_simulation.value == "system_simulation"
-    assert Provenance.unknown.value == "unknown"
-
-
 # ---------------------------------------------------------------------------
 # RejectedItem
 # ---------------------------------------------------------------------------

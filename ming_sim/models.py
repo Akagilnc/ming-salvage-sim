@@ -29,21 +29,56 @@ from ming_sim.constants import (
 from ming_sim.person_archive_contract import PERSON_ACTIONS
 
 
-def loads_effect_dict(raw: object) -> Dict[str, object]:
-    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口（#117）：
-    - 已是 dict（调用方传解析过的对象）→ 原样返回；
-    - JSON 字符串 → 解析；解析失败或真值非 dict（脏库/历史写路径/标量）→ {}。
-    所有 effect-列读取统一经此，下游 .get/.items 永不在非 dict 上崩回合。放 models（leaf，只依赖 json）
-    避免 db↔issues 循环——db / issues / simulation / web_app 都从这里取（cmr #117 R4）。"""
+def loads_persistent_json_object(
+    raw: object, *, surface: str = "payload_json",
+) -> Dict[str, object]:
+    """Durable object JSON: missing/empty → {}; corrupt or non-object raises.
+
+    Leaf reader shared by effect columns, engine payloads, and exclusion targets.
+    """
     if isinstance(raw, dict):
-        return raw
-    if not raw:  # None / 空串等常见空值：快速返 {}，免 json.loads 解析开销（gemini PR#127 R2）
+        return dict(raw)
+    if raw is None:
+        return {}
+    text = str(raw).strip()
+    if not text or text == "{}":
         return {}
     try:
-        v = json.loads(raw)
-    except (ValueError, TypeError):
-        return {}
-    return v if isinstance(v, dict) else {}
+        data = json.loads(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{surface} 腐坏 JSON：{text!r}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{surface} 须为对象，得 {type(data).__name__}")
+    return dict(data)
+
+
+def loads_persistent_json_list(
+    raw: object, *, surface: str = "json_list",
+) -> list:
+    """Durable list JSON: missing/empty → []; corrupt or non-list raises."""
+    if isinstance(raw, list):
+        return list(raw)
+    if raw is None:
+        return []
+    text = str(raw).strip()
+    if not text or text == "[]":
+        return []
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{surface} 腐坏 JSON：{text!r}") from exc
+    if not isinstance(data, list):
+        raise ValueError(f"{surface} 须为数组，得 {type(data).__name__}")
+    return list(data)
+
+
+def loads_effect_dict(raw: object) -> Dict[str, object]:
+    """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口（#117）。
+
+    已是 dict → 原样；缺省/空 → {}；腐坏或非 dict → 响亮失败（ADR 0005）。
+    放 models（leaf）避免 db↔issues 循环。
+    """
+    return loads_persistent_json_object(raw, surface="effect_json")
 
 
 def _nonzero_int(raw: object) -> bool:

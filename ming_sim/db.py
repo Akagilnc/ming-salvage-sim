@@ -37,7 +37,8 @@ from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection, Pe
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
-    loads_effect_dict, monthly_amount, period_label, reign_period_label,
+    loads_effect_dict, loads_persistent_json_list, loads_persistent_json_object,
+    monthly_amount, period_label, reign_period_label,
 )
 from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
 from ming_sim.participant_roster import (
@@ -8884,15 +8885,9 @@ class GameDB:
         # source_projection of the same source_id must not replace it.
         public_kept: set[str] = set()
         for row in rows:
-            raw_excluded = row["excluded_names"]
-            if raw_excluded in (None, ""):
-                excluded_names = []
-            else:
-                excluded_names = json.loads(raw_excluded)
-            if not isinstance(excluded_names, list):
-                raise ValueError(
-                    f"excluded_names must be a JSON list, got {type(excluded_names).__name__}"
-                )
+            excluded_names = self._load_persistent_name_list(
+                row["excluded_names"], field="excluded_names",
+            )
             key = str(row["source_id"] or "")
             is_public = str(row["kind"] or "") == "public"
             if key and key in public_kept and not is_public:
@@ -8916,24 +8911,12 @@ class GameDB:
         character_names = {str(row["name"]) for row in characters}
         for row in source_rows:
             participants = participant_roster_names(row["participant_roster"])
-            raw_excluded = row["excluded_names"]
-            if raw_excluded in (None, ""):
-                excluded_names = []
-            else:
-                excluded_names = json.loads(raw_excluded)
-            if not isinstance(excluded_names, list):
-                raise ValueError(
-                    f"excluded_names must be a JSON list, got {type(excluded_names).__name__}"
-                )
-            raw_targets = row["excluded_targets"]
-            if raw_targets in (None, ""):
-                excluded_targets = {}
-            else:
-                excluded_targets = json.loads(raw_targets)
-            if not isinstance(excluded_targets, dict):
-                raise ValueError(
-                    f"excluded_targets must be a JSON object, got {type(excluded_targets).__name__}"
-                )
+            excluded_names = self._load_persistent_name_list(
+                row["excluded_names"], field="excluded_names",
+            )
+            excluded_targets = self._load_persistent_exclusion_targets(
+                row["excluded_targets"], field="excluded_targets",
+            )
             target_people = {
                 str(name) for name in excluded_targets.get("people", [])
             }
@@ -9452,12 +9435,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             return []
-        try:
-            parsed = json.loads(row["origin_chat_message_ids"] or "[]")
-        except (TypeError, ValueError):
-            return []
-        if not isinstance(parsed, list):
-            return []
+        parsed = self._load_persistent_name_list(
+            row["origin_chat_message_ids"],
+            field="secret_order_briefs.origin_chat_message_ids",
+        )
         return self._coerce_positive_message_ids(parsed)
 
     def _classify_secret_order_audience(
@@ -10269,12 +10250,9 @@ class GameDB:
         out: List[Dict[str, object]] = []
         for row in rows:
             dossier_id = int(row["id"])
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="decree_dossiers.payload_json",
+            )
             item: Dict[str, object] = {
                 "dossier_id": dossier_id,
                 "secret_order_id": int(row["secret_order_id"]),
@@ -10412,12 +10390,9 @@ class GameDB:
         from ming_sim.materials import dossier_paid_amount
         targets: List[Dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(str(row["payload_json"] or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="decree_dossiers.payload_json",
+            )
             policy = dossier_action_policy("grant_allocation", payload)
             if policy.get("execution_surface") != "in_transit":
                 continue
@@ -12446,13 +12421,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        try:
-            existing_raw = json.loads(row["participant_roster"] or "[]")
-        except (TypeError, ValueError):
-            existing_raw = []
-        existing = self._normalize_participant_roster(
-            existing_raw if isinstance(existing_raw, list) else []
+        existing_raw = loads_persistent_json_list(
+            row["participant_roster"], surface="decree_dossiers.participant_roster",
         )
+        existing = self._normalize_participant_roster(existing_raw)
         additions = self._normalize_participant_roster(participants, strict_structured=True)
         self._validate_participant_roster_references(additions)
         by_character = {str(item["character_id"]): item for item in existing}
@@ -15068,12 +15040,9 @@ class GameDB:
             raise KeyError(f"暂存动作不存在：{aid}")
         if str(row["status"] or "") != "pending":
             raise ValueError(f"暂存动作状态不可挂背书：{row['status']}")
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = self.parse_engine_payload_json(
+            row["payload_json"], surface="pending_actions.payload_json",
+        )
         form = str(entry.get("form") or "").strip()
         endorser_id = str(entry.get("endorser_id") or "").strip()
         imperial = bool(entry.get("imperial", False))
@@ -16729,10 +16698,9 @@ class GameDB:
             actors.add(executor_id)
         roster = dossier.get("participant_roster") or []
         if isinstance(roster, str):
-            try:
-                roster = json.loads(roster)
-            except (TypeError, ValueError):
-                roster = []
+            roster = loads_persistent_json_list(
+                roster, surface="decree_dossiers.participant_roster",
+            )
         if isinstance(roster, list):
             for entry in roster:
                 if not isinstance(entry, dict):
@@ -17500,28 +17468,13 @@ class GameDB:
     ) -> Dict[str, object]:
         """#624 / ADR 0005：引擎侧 payload 读路单一助手。
 
-        真空/缺省 → {}；腐坏 JSON 或非对象 → 响亮 tlog + ValueError（禁静默吞成空底）。
+        真空/缺省 → {}；腐坏 JSON 或非对象 → 响亮失败（禁静默吞成空底）。
         """
-        if isinstance(raw, dict):
-            return dict(raw)
-        if raw is None:
-            return {}
-        text = str(raw).strip()
-        if not text or text == "{}":
-            return {}
         try:
-            data = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            tlog(f"[{surface}] 腐坏 JSON，拒绝静默等同空底：{text!r}")
-            raise ValueError(
-                f"{surface} 腐坏 JSON：{text!r}"
-            ) from exc
-        if not isinstance(data, dict):
-            tlog(f"[{surface}] 非对象，拒绝静默：{type(data).__name__}")
-            raise ValueError(
-                f"{surface} 须为对象，得 {type(data).__name__}"
-            )
-        return dict(data)
+            return loads_persistent_json_object(raw, surface=surface)
+        except ValueError as exc:
+            tlog(f"[{surface}] 腐坏 JSON，拒绝静默等同空底：{exc}")
+            raise
 
     @classmethod
     def _parse_todo_payload_json(cls, raw: object) -> Dict[str, object]:
@@ -18625,22 +18578,13 @@ class GameDB:
 
     @staticmethod
     def _load_persistent_name_list(raw: object, *, field: str) -> List[str]:
-        """Parse a durable JSON name list. Empty/missing is empty; corrupt raises."""
-        if raw in (None, ""):
-            return []
-        parsed = json.loads(raw) if not isinstance(raw, (list, tuple)) else list(raw)
-        if not isinstance(parsed, list):
-            raise ValueError(f"{field} must be a JSON list, got {type(parsed).__name__}")
-        return [str(name) for name in parsed]
+        """Parse a durable JSON name list via the shared leaf reader."""
+        return [str(name) for name in loads_persistent_json_list(raw, surface=field)]
 
     @staticmethod
     def _load_persistent_exclusion_targets(raw: object, *, field: str) -> Dict[str, List[str]]:
-        """Parse durable excluded_targets. Empty/missing is empty; corrupt raises."""
-        if raw in (None, ""):
-            return {"people": [], "offices": []}
-        payload = json.loads(raw) if not isinstance(raw, dict) else raw
-        if not isinstance(payload, dict):
-            raise ValueError(f"{field} must be a JSON object, got {type(payload).__name__}")
+        """Parse durable excluded_targets via the shared leaf reader."""
+        payload = loads_persistent_json_object(raw, surface=field)
         return {
             "people": [str(x) for x in payload.get("people", [])],
             "offices": [str(x) for x in payload.get("offices", [])],
@@ -18856,15 +18800,9 @@ class GameDB:
                 if mid > 0:
                     out[mid] = True
         for row in pending_rows:
-            raw_payload = row["payload_json"]
-            if raw_payload in (None, ""):
-                payload = {}
-            else:
-                payload = json.loads(raw_payload)
-            if not isinstance(payload, dict):
-                raise ValueError(
-                    f"pending_actions.payload_json must be a JSON object, got {type(payload).__name__}"
-                )
+            payload = self.parse_engine_payload_json(
+                row["payload_json"], surface="pending_actions.payload_json",
+            )
             mid = self._parse_origin_chat_message_id(payload)
             if mid is not None:
                 out.setdefault(mid, False)
@@ -19450,24 +19388,12 @@ class GameDB:
         persisted_title = title
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
-        raw_prior = row["excluded_targets"]
-        if raw_prior in (None, ""):
-            prior_targets = {}
-        else:
-            prior_targets = json.loads(raw_prior)
-        if not isinstance(prior_targets, dict):
-            raise ValueError(
-                f"secret_order excluded_targets must be a JSON object, got {type(prior_targets).__name__}"
-            )
-        raw_legacy = row["excluded_names"]
-        if raw_legacy in (None, ""):
-            legacy_people = []
-        else:
-            legacy_people = json.loads(raw_legacy)
-        if not isinstance(legacy_people, list):
-            raise ValueError(
-                f"secret_order excluded_names must be a JSON list, got {type(legacy_people).__name__}"
-            )
+        prior_targets = self._load_persistent_exclusion_targets(
+            row["excluded_targets"], field="secret_orders.excluded_targets",
+        )
+        legacy_people = self._load_persistent_name_list(
+            row["excluded_names"], field="secret_orders.excluded_names",
+        )
         people, offices = canonical_secret_order_exclusions(
             self.content, [*legacy_people, *prior_targets.get("people", [])],
             prior_targets.get("offices", []),
@@ -19503,15 +19429,9 @@ class GameDB:
             )
             dossier = self.get_dossier_for_secret_order(int(order_id))
             if dossier is not None:
-                raw_payload = dossier.get("payload_json")
-                if raw_payload in (None, ""):
-                    payload = {}
-                else:
-                    payload = json.loads(str(raw_payload))
-                if not isinstance(payload, dict):
-                    raise ValueError(
-                        f"decree_dossier payload_json must be a JSON object, got {type(payload).__name__}"
-                    )
+                payload = self.parse_engine_payload_json(
+                    dossier.get("payload_json"), surface="decree_dossiers.payload_json",
+                )
                 payload["title"] = persisted_title
                 payload["content"] = content
                 payload["tags"] = json.loads(tags_json)

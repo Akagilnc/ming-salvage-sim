@@ -496,15 +496,11 @@ def _apply_issue_buildings(
 # 创建期拒收：resolve_condition 文本不得冒充承诺停止条件（正式停止条件只认 stop_condition dict）。
 def _commitment_stop_gate(row: sqlite3.Row) -> Dict[str, str]:
     """只读显式 stop_condition JSON；不再从 resolve_condition 散文解码。"""
+    from ming_sim.models import loads_persistent_json_object
     keys = row.keys() if hasattr(row, "keys") else []
     raw = row["stop_condition"] if "stop_condition" in keys else ""
-    if not raw:
-        return {}
-    try:
-        gate = json.loads(str(raw))
-    except (TypeError, ValueError):
-        return {}
-    return gate if isinstance(gate, dict) and gate else {}
+    gate = loads_persistent_json_object(raw, surface="issues.stop_condition")
+    return {str(k): str(v) for k, v in gate.items()} if gate else {}
 
 
 def _commitment_remaining_from_gate(
@@ -547,11 +543,11 @@ def _latest_commitment_paid_total(db: GameDB, issue_id: int) -> int:
         "SELECT metric_delta FROM issue_advances WHERE issue_id=? ORDER BY id DESC",
         (issue_id,),
     ).fetchall()
+    from ming_sim.models import loads_persistent_json_object
     for row in rows:
-        try:
-            payload = json.loads(str(row["metric_delta"] or "{}"))
-        except (TypeError, ValueError):
-            continue
+        payload = loads_persistent_json_object(
+            row["metric_delta"], surface="issue_advances.metric_delta",
+        )
         progress = payload.get("commitment_progress") if isinstance(payload, dict) else None
         if isinstance(progress, dict):
             try:

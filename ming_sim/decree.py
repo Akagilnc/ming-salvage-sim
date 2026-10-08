@@ -142,11 +142,10 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
     payload = row.get("payload")
     if isinstance(payload, dict):
         return payload
-    try:
-        parsed = json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    from ming_sim.models import loads_persistent_json_object
+    return loads_persistent_json_object(
+        row.get("payload_json"), surface="decree_dossiers.payload_json",
+    )
 
 
 def build_promulgation_judge_context(

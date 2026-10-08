@@ -9,6 +9,8 @@ free of a second copy of the world state.
 from __future__ import annotations
 
 import json
+
+from ming_sim.models import loads_persistent_json_list, loads_persistent_json_object
 from typing import Any, Dict
 
 from ming_sim.participant_roster import participant_roster_names
@@ -89,36 +91,22 @@ def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
 
 
 def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
-    """Parse excluded_names and excluded_targets.people/offices from one row.
+    """Parse excluded_names and excluded_targets via shared durable JSON readers.
 
-    Corrupt persistent exclusion JSON must not become empty permissions.
-    Missing columns still mean no list; malformed JSON propagates.
+    Missing columns mean no list; corrupt persistent JSON propagates.
     """
     try:
         raw_names = row["excluded_names"]
     except (KeyError, IndexError, TypeError):
         raw_names = None
-    if raw_names in (None, ""):
-        excluded_names: set[str] = set()
-    else:
-        parsed_names = json.loads(raw_names)
-        if not isinstance(parsed_names, list):
-            raise ValueError(
-                f"excluded_names must be a JSON list, got {type(parsed_names).__name__}"
-            )
-        excluded_names = {str(name) for name in parsed_names}
+    excluded_names = {
+        str(name) for name in loads_persistent_json_list(raw_names, surface="excluded_names")
+    }
     try:
         raw_targets = row["excluded_targets"]
     except (KeyError, IndexError, TypeError):
         raw_targets = None
-    if raw_targets in (None, ""):
-        targets: object = {}
-    else:
-        targets = json.loads(raw_targets)
-    if not isinstance(targets, dict):
-        raise ValueError(
-            f"excluded_targets must be a JSON object, got {type(targets).__name__}"
-        )
+    targets = loads_persistent_json_object(raw_targets, surface="excluded_targets")
     people = {str(name) for name in (targets.get("people") or [])}
     offices = {str(name) for name in (targets.get("offices") or [])}
     return excluded_names, people, offices
@@ -344,15 +332,9 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
         if source_id.startswith("turn_report:") and not source_id.endswith(":public"):
             continue
         participants = participant_roster_names(row["participant_roster"])
-        raw_excluded = row["excluded_names"]
-        if raw_excluded in (None, ""):
-            excluded = []
-        else:
-            excluded = json.loads(raw_excluded)
-        if not isinstance(excluded, list):
-            raise ValueError(
-                f"source excluded_names must be a JSON list, got {type(excluded).__name__}"
-            )
+        excluded = loads_persistent_json_list(
+            row["excluded_names"], surface="character_knowledge_sources.excluded_names",
+        )
         # A participant-rostered source is private to its participants unless
         # an explicit exclusion says otherwise.  Empty rosters are not added
         # here: public events already have their own projection path.
