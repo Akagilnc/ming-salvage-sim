@@ -596,10 +596,10 @@ def test_pending_product_error_enters_resubmit_seam_not_softlock(
         },
         decree_text=_DECREE_TEXT,
     )
-    did = game.db.add_directive(
-        game.state, None, _DECREE_TEXT, source="minister",
-        actor="郭允厚", status="pending", dossier_payload=bad_payload,
-    )
+    did = game.db.issues.add_directive(
+            game.state.turn, game.state.year, game.state.period, None,
+            _DECREE_TEXT, source="minister",
+        actor="郭允厚", status="pending", dossier_payload=bad_payload,)
     assert str(IssueStore(game.db.conn).directive(did)["status"]) == "pending"
 
     body = _post_issue_stream(

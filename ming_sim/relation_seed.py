@@ -193,7 +193,7 @@ def import_relationship_seed(
     for summary in validated["summaries"]:
         existing = db.person_logs.get_relation_summary(summary["source"], summary["target"])
         if existing is None:
-            db.apply_seed_founding_segment(
+            db.person_logs.apply_seed_founding_segment(
                 source=summary["source"],
                 target=summary["target"],
                 dimension=summary["dimension"],

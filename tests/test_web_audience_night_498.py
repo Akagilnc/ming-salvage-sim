@@ -514,10 +514,10 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game, monkeypatch):
 # ── ⑤ 已成案旨无公开拟诏、改稿、删除工作面 ─────────────────────────────
 def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
     game = web_game
-    directive_id = game.db.add_directive(
-        game.state, None, "着户部核边饷", "手动新增",
-        dossier_payload=_POLICY_FIELDS,
-    )
+    directive_id = game.db.issues.add_directive(
+            game.state.turn, game.state.year, game.state.period, None,
+            "着户部核边饷", "手动新增",
+        dossier_payload=_POLICY_FIELDS,)
     game.db.ensure_dossiers_for_draft_directives(game.state)
 
     registered_paths = {route.path for route in web_app.app.routes}
@@ -672,17 +672,17 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
     _fake_settlement_llm(monkeypatch)
     turn_before = int(game.state.turn)
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
-    directive_id = game.db.add_directive(
-        game.state, None, "着户部核边饷", "legacy-chat", actor=minister,
-        status="pending", dossier_payload={**_POLICY_FIELDS},
-    )
-    dossiered_id = game.db.add_directive(
-        game.state, None, "已成案旨", "legacy-approved", actor=minister,
+    directive_id = game.db.issues.add_directive(
+            game.state.turn, game.state.year, game.state.period, None,
+            "着户部核边饷", "legacy-chat", actor=minister,
+        status="pending", dossier_payload={**_POLICY_FIELDS},)
+    dossiered_id = game.db.issues.add_directive(
+            game.state.turn, game.state.year, game.state.period, None,
+            "已成案旨", "legacy-approved", actor=minister,
         status="draft", dossier_payload={
             "dossier_action_type": "policy", "target_kind": "issue",
             "target_id": "already-dossiered",
-        },
-    )
+        },)
     game.db._ensure_directive_dossier(
         game.state, dossiered_id, "已成案旨", {
             "dossier_action_type": "policy", "target_kind": "issue",

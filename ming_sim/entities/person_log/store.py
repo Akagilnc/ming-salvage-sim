@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, List, Mapping, Optional
+
+from ming_sim.applier import connection_owns_transaction
 from ming_sim.entities.column_write import upsert_by_pk
 
 
@@ -169,6 +171,129 @@ class PersonLogStore:
 
     def write_apply_seed_founding_segment(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            INSERT INTO relation_summaries\n                (source, target, dimension, founding_segment, recent_segment,\n                 last_event_id, last_brewed_turn, last_brewed_year, last_brewed_period)\n            VALUES (?, ?, ?, ?, '', 0, 0, 0, 0)\n            ON CONFLICT(source, target) DO UPDATE SET\n                dimension = excluded.dimension,\n                founding_segment = excluded.founding_segment,\n                updated_at = CURRENT_TIMESTAMP\n            ", params)
+
+    def apply_seed_founding_segment(
+        self,
+        *,
+        source: str,
+        target: str,
+        dimension: str,
+        founding_segment: str,
+    ) -> None:
+        """#638 S7：seed 可选初始摘要落奠基段（只增不改；近况段/水位不动）。"""
+        if dimension not in ("君臣", "大臣"):
+            raise ValueError(f"未知关系维度: {dimension!r}")
+        owns = connection_owns_transaction(self._conn)
+        self.write_apply_seed_founding_segment(
+            (str(source), str(target), dimension, str(founding_segment)),
+        )
+        if owns:
+            self._conn.commit()
+
+    def apply_relation_brew_result(
+        self,
+        *,
+        source: str,
+        target: str,
+        dimension: str,
+        founding_segment: str,
+        recent_segment: str,
+        last_event_id: int,
+        turn: int,
+        year: int,
+        period: int,
+    ) -> None:
+        """摘要落定＋该关系 pending 清除在同一 DB 事务内原子落定。"""
+        if dimension not in ("君臣", "大臣"):
+            raise ValueError(f"未知关系维度: {dimension!r}")
+        owns = connection_owns_transaction(self._conn)
+        try:
+            self.write_apply_relation_brew_result((
+                str(source), str(target), dimension,
+                str(founding_segment), str(recent_segment),
+                int(last_event_id), int(turn), int(year), int(period),
+            ))
+            self.write_apply_relation_brew_result_relation_brew_pending(
+                (str(source), str(target)),
+            )
+            if owns:
+                self._conn.commit()
+        except Exception:
+            if owns:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+            raise
+
+    def mark_relation_brew_pending(
+        self,
+        *,
+        source: str,
+        target: str,
+        year: int,
+        period: int,
+        reason: str = "",
+    ) -> None:
+        """酿制失败的月份进持久 pending-backlog。"""
+        owns = connection_owns_transaction(self._conn)
+        try:
+            self.write_mark_relation_brew_pending(
+                (str(source), str(target), int(year), int(period), str(reason)),
+            )
+            if owns:
+                self._conn.commit()
+        except Exception:
+            if owns:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+            raise
+
+    def claim_relation_brew_targets(self, *, year: int, period: int) -> int:
+        """settled 年月入选关系先作 durable claim。返回本次新认领的关系数。"""
+        owns = connection_owns_transaction(self._conn)
+        cur = self.write_claim_relation_brew_targets(
+            (int(year), int(period), int(year), int(period)),
+        )
+        if owns:
+            self._conn.commit()
+        return max(int(cur.rowcount or 0), 0)
+
+    def claim_faction_brew_targets(self, *, year: int, period: int) -> int:
+        """settled 年月涉派派系先作 durable claim。返回本次新认领的派系数。"""
+        owns = connection_owns_transaction(self._conn)
+        cur = self.write_claim_faction_brew_targets(
+            (int(year), int(period), int(year), int(period)),
+        )
+        if owns:
+            self._conn.commit()
+        return max(int(cur.rowcount or 0), 0)
+
+    def mark_faction_brew_pending(
+        self,
+        *,
+        faction: str,
+        year: int,
+        period: int,
+        reason: str = "",
+    ) -> None:
+        """派系酿制失败月进持久 pending-backlog。"""
+        owns = connection_owns_transaction(self._conn)
+        try:
+            self.write_mark_faction_brew_pending(
+                (str(faction), int(year), int(period), str(reason)),
+            )
+            if owns:
+                self._conn.commit()
+        except Exception:
+            if owns:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+            raise
 
     def write_claim_relation_brew_targets(self, params: Any = ()) -> Any:
         return self._conn.execute("\n            INSERT INTO relation_brew_pending (source, target, year, period, reason)\n            SELECT e.source, e.target, ?, ?, '月末新事件认领'\n            FROM relation_edge_events AS e\n            LEFT JOIN relation_summaries AS s\n                ON s.source = e.source AND s.target = e.target\n            WHERE e.year = ? AND e.period = ?\n              AND e.id > COALESCE(s.last_event_id, 0)\n            GROUP BY e.source, e.target\n            ON CONFLICT(source, target) DO NOTHING\n            ", params)

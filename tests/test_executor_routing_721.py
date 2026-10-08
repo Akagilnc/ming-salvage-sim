@@ -304,12 +304,14 @@ def test_pending_routing_rejection_lands_on_ensure_batch_seam(
     db, state, _ = env
     mirror = tmp_path / "ensure-routing.jsonl"
     monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
-    bad = db.add_directive(
-        state, None, "缺目标", "test", status="pending",
+    bad = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "缺目标", "test", status="pending",
         dossier_payload=_bad_directive_payload(),
     )
-    good = db.add_directive(
-        state, None, "清丈", "test", status="pending",
+    good = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "清丈", "test", status="pending",
         dossier_payload=_directive_payload("清丈"),
     )
 
@@ -385,8 +387,9 @@ def test_directive_routing_rejection_rolls_back_with_outer_owner(
     db, state, _ = env
     mirror = tmp_path / "batch-rollback.jsonl"
     monkeypatch.setattr("ming_sim.error_pack.rejections_jsonl_path", lambda: str(mirror))
-    directive_id = db.add_directive(
-        state, None, "缺目标", "test", status="draft",
+    directive_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "缺目标", "test", status="draft",
         dossier_payload=_bad_directive_payload(),
     )
 

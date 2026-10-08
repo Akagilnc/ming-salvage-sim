@@ -296,7 +296,7 @@ def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
         {"人物变更": [_temperament_item(style=PADDED_STYLE)]},
         content=content,
     )
-    db.apply_relation_brew_result(
+    db.person_logs.apply_relation_brew_result(
         source=person.name,
         target=other.name,
         dimension="大臣",

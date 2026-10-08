@@ -119,13 +119,13 @@ def test_with_edict_resolve_turn_still_full_settlement(game, monkeypatch):
     """有旨月与无旨月同一主链：世界段跑一次，邸报未写则不推进。"""
     db, state, content = game
     closed_turn = int(state.turn)
-    db.add_directive(
-        state, None, "着户部清核辽饷。", source="player", status="draft",
+    db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "着户部清核辽饷。", source="player", status="draft",
         dossier_payload={
             "dossier_action_type": "policy",
             "target_kind": "issue", "target_id": "liao-pay-audit-1274",
-        },
-    )
+        },)
 
     sim_calls = []
     _canned_full_settlement(

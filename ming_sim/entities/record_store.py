@@ -6,7 +6,7 @@ The SQL that reads or writes the row lives here.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from ming_sim.applier import safe_json_dumps, sanitize_sqlite_text
 
@@ -31,6 +31,23 @@ class ChatMessageStore:
             (minister_name, int(turn), role, content, knowledge_status),
         )
         return int(cursor.lastrowid)
+
+    def set_highlights(
+        self, message_id: int, phrases: Sequence[Any],
+    ) -> None:
+        """#544：把判官短语清单落在 chat_messages 上（原样/已过滤皆可）。"""
+        clean: List[str] = []
+        for item in list(phrases or []):
+            if not isinstance(item, str):
+                continue
+            # Free phrase: empty-check without mutating stored member (P6).
+            if item.strip():
+                clean.append(item)
+        self.set_highlights_json(
+            int(message_id),
+            safe_json_dumps(clean, ensure_ascii=False),
+        )
+        self._conn.commit()
 
     def set_highlights_json(self, message_id: int, payload: str) -> None:
         self._conn.execute(

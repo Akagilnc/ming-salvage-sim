@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import threading
-from tests.wait_utils import wait_until
 from types import SimpleNamespace
 
 import pytest
 
 from ming_sim.session import GameSession
+from tests.wait_utils import wait_until
 from tests.web_audience_test_doubles import HallAdmissionSessionMixin
 from web_app import WebGame
 from tests.conftest import (
@@ -27,12 +27,6 @@ class RunOutput:
         self.tools = tools or []
         self.content = None
 
-
-class ToolExec:
-    def __init__(self, tool_name: str, result: str, arguments=None) -> None:
-        self.tool_name = tool_name
-        self.result = result
-        self.arguments = arguments or {}
 
 
 class _FakeAgent:
@@ -139,6 +133,14 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
         stub_audience_translate(monkeypatch)
     return game
 
+
+def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
+    """等本局唯一写队列进入 idle。"""
+    q = getattr(web_game, "_write_queue", None)
+    if q is not None and hasattr(q, "wait_idle"):
+        q.wait_idle()  # unlimited; CI job final line owns hang
+    else:
+        wait_until(lambda: int(getattr(web_game, "_pending_writes_count", 0) or 0) == 0)
 
 
 def test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn(game):

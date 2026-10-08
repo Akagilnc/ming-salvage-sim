@@ -118,7 +118,7 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
         f"臣请据实核账，兵约{facts['manpower']}。",
         20,
     )
-    db.set_message_highlights(mid, ["辽饷", f"兵{facts['manpower']}"])
+    db.chat_messages.set_highlights(mid, ["辽饷", f"兵{facts['manpower']}"])
     from ming_sim.audience_translation import apply_audience_round_translation
     apply_audience_round_translation(db, state, {"scene_facts": [{
         "body": f"臣请据实核账，兵约{facts['manpower']}。",
@@ -227,7 +227,7 @@ def test_audience_archive_qiju_keeps_sentinels_out_and_world_facts_in(game, monk
         f"边军约{facts['manpower']}可支。",
         10,
     )
-    db.set_message_highlights(mid, [f"{facts['manpower']}可支"])
+    db.chat_messages.set_highlights(mid, [f"{facts['manpower']}可支"])
     db.conn.execute(
         "UPDATE audience_nights SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id=?",
         (night_id,),

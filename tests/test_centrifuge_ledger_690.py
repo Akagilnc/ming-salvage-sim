@@ -20,13 +20,6 @@ from ming_sim.exceptions import SettlementAbort
 _AXIS = "礼法名节"
 _TARGET_EUNUCH = "崔呈秀"  # 阉党 · identity=98
 _TARGET_ARMY = "袁崇焕"  # 军队 · identity=80
-_SENTINEL_DEBT = 424242
-_SENTINEL_WARINESS = 434343
-_SENTINEL_OVERDRAW = 444444
-_SENTINEL_LEG = 454545
-_SENTINEL_AMOUNT = 464646
-_SENTINEL_BASE = 474747
-
 
 def _log_rows(db) -> list[sqlite3.Row]:
     return list(

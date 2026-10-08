@@ -87,7 +87,7 @@ def test_relation_edges_survive_restore(game, tmp_path):
         turn=state.turn,
     )
     edge = db.person_logs.get_relation_edge_events(source="杨嗣昌", target="徐光启")[0]
-    db.apply_relation_brew_result(
+    db.person_logs.apply_relation_brew_result(
         source="杨嗣昌", target="徐光启", dimension="大臣",
         founding_segment="徐杨相发明奠基。",
         recent_segment="协作在案。",

@@ -106,7 +106,7 @@ def test_build_chat_projection_includes_minister_highlights(game):
     db, state, _ = game
     minister = "温体仁"
     _cid, mid = _minister_turn(db, state, minister, "臣陈辽饷与户部亏空。")
-    db.set_message_highlights(mid, ["辽饷", "户部亏空"])
+    db.chat_messages.set_highlights(mid, ["辽饷", "户部亏空"])
     # 帝/递话消息不得因列默认而带高亮清单（只标大臣）
     uid_row = db.conn.execute(
         "SELECT id FROM chat_messages WHERE role='user' ORDER BY id DESC LIMIT 1"
@@ -128,7 +128,7 @@ def test_read_night_scroll_includes_minister_highlights(game):
     cid, mid = _minister_turn(
         db, state, minister, "臣请据实核账。", night_id=night_id,
     )
-    db.set_message_highlights(mid, ["据实核账"])
+    db.chat_messages.set_highlights(mid, ["据实核账"])
 
     scroll = an.read_night_scroll(db, night_id)
     assert any(m["role"] == "scene" and m.get("chat_turn_id") == cid
@@ -154,7 +154,7 @@ def test_highlights_survive_db_restore(game, content, tmp_path):
     cid, mid = _minister_turn(
         src_db, state, minister, "臣陈军务与辽饷。", night_id=night_id,
     )
-    src_db.set_message_highlights(mid, ["军务", "辽饷"])
+    src_db.chat_messages.set_highlights(mid, ["军务", "辽饷"])
     assert any(m["role"] == "scene" and m["highlights"] == []
                for m in an.read_night_scroll(src_db, night_id) if m.get("chat_turn_id") == cid)
     _settle_minister_reply(src_db, state, cid, night_id, minister, "臣陈军务与辽饷。")

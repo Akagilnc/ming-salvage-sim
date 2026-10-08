@@ -17,8 +17,6 @@ from tests.test_declaration_dispatch_1835 import _minister
 
 NINGYUAN = "宁远护送"
 ORIGIN = "拨银、调将、派兵去宁远"
-PROGRESS = "护送银两已出京，尚未抵宁远"
-
 
 def _declaration(*, attach="new", birth_key="", affair_id=None, identity=""):
     body = {"attach": attach}

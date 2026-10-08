@@ -248,13 +248,13 @@ def test_capture_before_mutation_on_resolve_turn_entry(game, monkeypatch):
 
     monkeypatch.setattr(an, "auto_close_open_night", _boom)
 
-    db.add_directive(
-        state, None, "减赋", source="player", status="draft",
+    db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "减赋", source="player", status="draft",
         dossier_payload={
             "dossier_action_type": "policy",
             "target_kind": "issue", "target_id": "tax-relief",
-        },
-    )
+        },)
 
     with pytest.raises(RuntimeError):
         sess.resolve_turn(decree="诏曰测试")

@@ -272,9 +272,9 @@ class MonthEndRelationBrewLeg:
         if not targets and not faction_targets:
             return False
         if targets:
-            self._db.claim_relation_brew_targets(year=self.year, period=self.period)
+            self._db.person_logs.claim_relation_brew_targets(year=self.year, period=self.period)
         if faction_targets:
-            self._db.claim_faction_brew_targets(year=self.year, period=self.period)
+            self._db.person_logs.claim_faction_brew_targets(year=self.year, period=self.period)
         # 输入先串行备好（纯计算、确定性，不含 LLM 调用），brew() 才能零 DB 并行。
         # 批内条目无依赖必并行（P5）：关系对与派系工作项混排同一批，关系在前、
         # 派系在后（各自按序，确定性）。
@@ -379,7 +379,7 @@ class MonthEndRelationBrewLeg:
                     reason = str(exc) if exc is not None else "空结果"
                     tlog(f"[relation-brew] {faction} 态势酿制失败降级（保旧摘要）：{reason}")
                     # 认领先行下 pending 已持久在册（不靠此处补记）；本写只刷新失败原因。
-                    self._db.mark_faction_brew_pending(
+                    self._db.person_logs.mark_faction_brew_pending(
                         faction=faction, year=self.year, period=self.period,
                         reason=reason,
                     )
@@ -406,7 +406,7 @@ class MonthEndRelationBrewLeg:
                 reason = str(exc) if exc is not None else "空结果"
                 tlog(f"[relation-brew] {source}→{target} 酿制失败降级（保旧摘要）：{reason}")
                 # 认领先行下 pending 已持久在册（不靠此处补记）；本写只刷新失败原因。
-                self._db.mark_relation_brew_pending(
+                self._db.person_logs.mark_relation_brew_pending(
                     source=source, target=target, year=self.year, period=self.period,
                     reason=reason,
                 )
@@ -417,7 +417,7 @@ class MonthEndRelationBrewLeg:
             last_event_id = max(
                 [int(event["id"]) for event in job["new_events"]] + [int(job["watermark"])]
             )
-            self._db.apply_relation_brew_result(
+            self._db.person_logs.apply_relation_brew_result(
                 source=source, target=target, dimension=job["dimension"],
                 founding_segment=merge_founding_segment(
                     str(job["summary"]["founding_segment"]) if job["summary"] else "",

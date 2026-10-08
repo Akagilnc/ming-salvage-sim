@@ -1373,9 +1373,9 @@ class GameSession:
         payload = dict(dossier_payload or {})
         if not directive_payload_admits_structured_write(payload):
             raise ValueError("新增旨意须由上游提供完整结构化动作与目标")
-        directive_id = self.db.add_directive(
-            self.state, None, text, "手动新增", notes=notes,
-            dossier_payload=payload,
+        directive_id = self.db.issues.add_directive(
+            self.state.turn, self.state.year, self.state.period, None,
+            text, "手动新增", notes=notes, dossier_payload=payload,
         )
         return DirectiveView(id=directive_id, text=text, status="draft",
                              source="手动新增", notes=notes)

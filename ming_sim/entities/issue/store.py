@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Mapping, Sequence, Tuple
+from types import SimpleNamespace
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ming_sim.applier import load_stored_json, load_stored_list
+from ming_sim.applier import atomic, load_stored_json, load_stored_list
 from ming_sim.entities.column_write import bind_affair_once, checked_columns
 
 
@@ -277,6 +278,32 @@ class IssueStore:
             "(turn, year, period, event_id, actor, text, source, status, notes, dossier_payload_json, source_pending_action_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", params,
         )
+
+    def add_directive(
+        self,
+        turn: int,
+        year: int,
+        period: int,
+        event_id: Optional[int],
+        text: str,
+        source: str,
+        actor: str = "",
+        notes: str = "",
+        status: str = "draft",
+        dossier_payload: Optional[Dict[str, object]] = None,
+    ) -> int:
+        """Insert one turn_directives row; encoding + atomic commit live here."""
+        # status: 'draft'=已确认颁诏候选；'pending'=大臣拟旨待皇帝核定。
+        with atomic(SimpleNamespace(conn=self._conn)):
+            cursor = self.insert_directive(
+                (
+                    int(turn), int(year), int(period), event_id,
+                    actor or None, text, source, status, notes,
+                    json.dumps(dossier_payload or {}, ensure_ascii=False),
+                    0,
+                ),
+            )
+            return int(cursor.lastrowid)
 
     def snapshot_directive_rows(self) -> Any:
         return self._conn.execute("SELECT * FROM turn_directives").fetchall()

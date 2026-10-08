@@ -2391,12 +2391,16 @@ def test_658_typed_target_and_backing_reject_bad_shapes(game, monkeypatch):
     assert multi['drafts'][1]['target_id'] == 'river-works'
     push_payload = cli_backend.project_draft_extract_to_directive_payload(multi['drafts'][0], decree_text='御笔强推', db=db, content=content)
     assert push_payload.get('affair_declaration')
-    push_dir = int(db.add_directive(state, None, '御笔强推', 'test-658-push-bind', dossier_payload=push_payload))
+    push_dir = int(db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            '御笔强推', 'test-658-push-bind', dossier_payload=push_payload))
     db.ensure_dossiers_for_draft_directives(state)
     assert int(db.dossiers.get(bind_did)['affair_id'] or 0) == int(bind_affair.id)
     assert db.dossiers.get_for_directive(push_dir) is not None
     assert int(db.dossiers.get_for_directive(push_dir)['id']) == bind_did
-    bad_directive = int(db.add_directive(state, None, '处分不存在之人', 'test-658-ensure', dossier_payload={'dossier_action_type': 'punishment', 'target_kind': 'character', 'target_id': '不存在的大臣XYZ', 'mode': 'ordinary'}))
+    bad_directive = int(db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            '处分不存在之人', 'test-658-ensure', dossier_payload={'dossier_action_type': 'punishment', 'target_kind': 'character', 'target_id': '不存在的大臣XYZ', 'mode': 'ordinary'}))
     db.ensure_dossiers_for_draft_directives(state)
     status = db.conn.execute('SELECT status FROM turn_directives WHERE id=?', (bad_directive,)).fetchone()['status']
     assert status == 'draft'
@@ -2432,8 +2436,12 @@ def test_658_routing_rejected_draft_retries_across_real_turn_boundaries(
     original_turn = int(state.turn)
     original_year = int(state.year)
     original_period = int(state.period)
-    bad = int(db.add_directive(state, None, '缺账拨帑', 'player-decree-test', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账', 'amount': 100}))
-    good = int(db.add_directive(state, None, '清丈', 'player-decree-test', dossier_payload={'dossier_action_type': 'assignment', 'target_kind': 'issue', 'target_id': 'route-清丈', 'transaction_category': '清丈', 'participant_roster': _roster(_ROSTER_LEAD)}))
+    bad = int(db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            '缺账拨帑', 'player-decree-test', dossier_payload={'dossier_action_type': 'grant_allocation', 'target_kind': 'issue', 'target_id': 'route-缺账', 'amount': 100}))
+    good = int(db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            '清丈', 'player-decree-test', dossier_payload={'dossier_action_type': 'assignment', 'target_kind': 'issue', 'target_id': 'route-清丈', 'transaction_category': '清丈', 'participant_roster': _roster(_ROSTER_LEAD)}))
     first = session.resolve_turn()
     assert first.awaiting is False
     assert int(state.turn) == original_turn
@@ -2483,7 +2491,9 @@ def test_658_ordinary_edit_does_not_inherit_push_target(game):
     db, state, content = game
     stalled, _ = _658_plant_stalled_deliberation(db, state, content, title='旧强推')
     did = int(stalled['id'])
-    dir_id = int(db.add_directive(state, None, '着即强推', 'test-658-edit', dossier_payload={'target_dossier_id': did}))
+    dir_id = int(db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            '着即强推', 'test-658-edit', dossier_payload={'target_dossier_id': did}))
     db.update_directive_text(dir_id, '着清核河工', dossier_payload={'dossier_action_type': 'policy', 'target_kind': 'issue', 'target_id': 'river-works', 'mode': 'ordinary'})
     row = db.conn.execute('SELECT dossier_payload_json FROM turn_directives WHERE id=?', (dir_id,)).fetchone()
     payload = json.loads(str(row['dossier_payload_json'] or '{}'))

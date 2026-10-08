@@ -273,7 +273,7 @@ def test_faction_claim_db_error_propagates_loudly(game):
     def boom(*args, **kwargs):
         raise fault
 
-    db.claim_faction_brew_targets = boom
+    db.person_logs.claim_faction_brew_targets = boom
     with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, _dual_brew_fn_factory([]))
     assert ei.value is fault

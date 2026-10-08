@@ -5178,21 +5178,6 @@ class GameDB:
         # #1843 reopen：无有效邸报则真空；旧 turn_logs 回落已删。
         return ""
 
-    def set_message_highlights(
-        self, message_id: int, phrases: Sequence[Any],
-    ) -> None:
-        """#544：把判官短语清单落在 chat_messages 上（原样/已过滤皆可）。"""
-        clean: List[str] = []
-        for item in list(phrases or []):
-            if not isinstance(item, str):
-                continue
-            # Free phrase: empty-check without mutating stored member (P6).
-            if item.strip():
-                clean.append(item)
-        payload = json.dumps(clean, ensure_ascii=False)
-        self.chat_messages.set_highlights_json(int(message_id), payload)
-        self.conn.commit()
-
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
         ids = [int(mid) for mid in message_ids if mid is not None]
         if not ids:
@@ -11560,28 +11545,6 @@ class GameDB:
         projected.sort(key=lambda item: int(item["id"]))
         return projected
 
-    def add_directive(
-        self,
-        state: GameState,
-        event: Event | None,
-        text: str,
-        source: str,
-        actor: str = "",
-        notes: str = "",
-        status: str = "draft",
-        dossier_payload: Optional[Dict[str, object]] = None,
-    ) -> int:
-        # status: 'draft'=已确认颁诏候选；'pending'=大臣拟旨待皇帝核定。
-        with atomic(self):
-            cursor = IssueStore(self.conn).insert_directive(
-                (state.turn, state.year, state.period, event.id if event else None,
-                 actor or None, text, source, status, notes,
-                 json.dumps(dossier_payload or {}, ensure_ascii=False),
-                 0),
-            )
-            directive_id = int(cursor.lastrowid)
-        return directive_id
-
     def _ensure_directive_dossier(
         self, state: GameState, directive_id: int, text: str,
         payload: Optional[Dict[str, object]] = None, *, commit: bool = True,
@@ -13603,151 +13566,8 @@ class GameDB:
     write_relation_edge_event = record_relation_edge_event
     insert_relation_edge_event = record_relation_edge_event
 
-    # ------------------------------------------------------------------
-    # #636 关系摘要层 S5：两段式存储＋月末增量重酿腿的持久化接缝。
-    # 摘要文本机械原样存取（LLM 自由文本零删改，CLAUDE.md P6/ADR 0142）；
-    # 奠基段只增不改、近况段覆盖式幂等由 apply 路机械保证。
-    # ------------------------------------------------------------------
-
-    def apply_seed_founding_segment(
-        self,
-        *,
-        source: str,
-        target: str,
-        dimension: str,
-        founding_segment: str,
-    ) -> None:
-        """#638 S7：seed 可选初始摘要落奠基段（只增不改；近况段/水位不动）。
-
-        与 apply_relation_brew_result 的差异：本写只碰奠基段——近况段留空、
-        last_event_id 留 0，seed 边因此仍在水位之上，该对首次真实月末酿制照常
-        收取 seed 边作输入语境（ADR 0086 同一套酿制，不另立第二套腿）。幂等：
-        同内容重放由调用方 merge_founding_segment 字节等去重保证字节不变。"""
-        if dimension not in ("君臣", "大臣"):
-            raise ValueError(f"未知关系维度: {dimension!r}")
-        owns = self.owns_transaction()
-        PersonLogStore(self.conn).write_apply_seed_founding_segment((str(source), str(target), dimension, str(founding_segment)))
-        if owns:
-            self.conn.commit()
-
-    def apply_relation_brew_result(
-        self,
-        *,
-        source: str,
-        target: str,
-        dimension: str,
-        founding_segment: str,
-        recent_segment: str,
-        last_event_id: int,
-        turn: int,
-        year: int,
-        period: int,
-    ) -> None:
-        """摘要落定＋该关系 pending 清除在同一 DB 事务内原子落定（庭裁 r2 F1）。
-
-        近况段覆盖式幂等（禁半量累积）；奠基段由调用方拼好只增不改的结果传入。
-        任意缝失败→整体回滚→pending 保留→下次结算补酿。"""
-        if dimension not in ("君臣", "大臣"):
-            raise ValueError(f"未知关系维度: {dimension!r}")
-        owns = self.owns_transaction()
-        try:
-            PersonLogStore(self.conn).write_apply_relation_brew_result((
-                    str(source), str(target), dimension,
-                    str(founding_segment), str(recent_segment),
-                    int(last_event_id), int(turn), int(year), int(period),
-                ))
-            PersonLogStore(self.conn).write_apply_relation_brew_result_relation_brew_pending((str(source), str(target)))
-            if owns:
-                self.conn.commit()
-        except Exception:
-            # 故障注入验收缝（庭裁 r3 F1①）：摘要已写、事务未提交即崩→整体回滚，
-            # pending 仍在、摘要读回＝崩前旧值。
-            if owns:
-                try:
-                    self.conn.rollback()
-                except Exception:
-                    pass
-            raise
-
-    def mark_relation_brew_pending(
-        self,
-        *,
-        source: str,
-        target: str,
-        year: int,
-        period: int,
-        reason: str = "",
-    ) -> None:
-        """酿制失败的月份进持久 pending-backlog（庭裁 r1 F1）；保旧摘要、不阻塞结算。"""
-        owns = self.owns_transaction()
-        try:
-            PersonLogStore(self.conn).write_mark_relation_brew_pending((str(source), str(target), int(year), int(period), str(reason)))
-            if owns:
-                self.conn.commit()
-        except Exception:
-            if owns:
-                try:
-                    self.conn.rollback()
-                except Exception:
-                    pass
-            raise
-
-    def claim_relation_brew_targets(self, *, year: int, period: int) -> int:
-        """settled 年月入选关系先作 durable claim（庭裁 r2/r3 F1）。
-
-        选中＝该年月新增边事件（id 在摘要水位之上）；已在册的 pending 原样保留
-        （不覆盖原失败月份/原因）。事务归属与 mark_relation_brew_pending 一致：
-        settle 事务内（atomic_depth>0）不提前 commit，认领与本月边事件同生共死——
-        任意缝崩溃→两者一并回滚→重启重放再认领；独立调用则自成一体提交。
-        返回本次新认领的关系数。"""
-        owns = self.owns_transaction()
-        cur = PersonLogStore(self.conn).write_claim_relation_brew_targets((int(year), int(period), int(year), int(period)))
-        if owns:
-            self.conn.commit()
-        return max(int(cur.rowcount or 0), 0)
-
-    # ------------------------------------------------------------------
-    # #637 派系态势摘要 S6：持久化接缝（ADR 0084）。
-    # 复用 #636 单一 durable claim/watermark/apply+clear 所有者（庭裁 r1 F2）：
-    # pending 走同一 relation_brew_pending 表（item_kind='派系' 身份），apply 与
-    # pending 清除同事务原子落定，与 apply_relation_brew_result 同构。
-    # ------------------------------------------------------------------
-
-    def claim_faction_brew_targets(self, *, year: int, period: int) -> int:
-        """settled 年月涉派派系先作 durable claim（庭裁 r1 F2：复用既有认领机制）。
-
-        选中＝canonical 党籍投影命中现存 factions 集合的涉派新事件（庭裁 r1 F1：
-        任一端 characters.faction 归一后命中该派；表外党籍不入、不猜映射——投影
-        即 JOIN 本身，不持久化任何映射表）。已在册的 pending 原样保留。事务归属与
-        claim_relation_brew_targets 一致：settle 事务内不提前 commit，认领与本月
-        边事件同生共死；独立调用则自成一体提交。返回本次新认领的派系数。"""
-        owns = self.owns_transaction()
-        cur = PersonLogStore(self.conn).write_claim_faction_brew_targets((int(year), int(period), int(year), int(period)))
-        if owns:
-            self.conn.commit()
-        return max(int(cur.rowcount or 0), 0)
-
-    def mark_faction_brew_pending(
-        self,
-        *,
-        faction: str,
-        year: int,
-        period: int,
-        reason: str = "",
-    ) -> None:
-        """派系酿制失败月进持久 pending-backlog（同表同机制，保旧摘要、不阻塞结算）。"""
-        owns = self.owns_transaction()
-        try:
-            PersonLogStore(self.conn).write_mark_faction_brew_pending((str(faction), int(year), int(period), str(reason)))
-            if owns:
-                self.conn.commit()
-        except Exception:
-            if owns:
-                try:
-                    self.conn.rollback()
-                except Exception:
-                    pass
-            raise
+    # #637：派系态势 apply 跨 FactionStore + PersonLogStore，编排留 GameDB。
+    # 关系单实体 brew 写口已归 PersonLogStore。
 
     def apply_faction_brew_result(
         self,

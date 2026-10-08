@@ -5,13 +5,11 @@ from __future__ import annotations
 from ming_sim.session_write_queue import get_session_write_queue
 
 import json
-import threading
 
 import pytest
 
 import ming_sim.decree as decree_mod
 import ming_sim.issues as I
-from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +362,9 @@ def test_recovery_replay_blocked_by_pending_directives(game, monkeypatch):
     turn = state.turn
     dm.pre_settle(state, db, content=content)
     # 恢复期大臣拟旨（pending 待准驳）
-    db.add_directive(state, None, "请拨内帑", source="minister", status="pending")
+    db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "请拨内帑", source="minister", status="pending")
 
     sess = _recovery_session(db, state, content, monkeypatch)
     with pytest.raises(ValueError):

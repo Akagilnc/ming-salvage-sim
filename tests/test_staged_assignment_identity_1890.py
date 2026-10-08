@@ -498,9 +498,9 @@ def test_undo_deletes_only_this_turns_committed_draft_directive(game):
     ).fetchone()["id"])
     # 无关 draft：同回合、非召对来源的拟旨候选（走 add_directive 那条无 pending
     # 的老路），撤回不得波及。
-    other_draft = db.add_directive(
-        state, None, "过月世界段拟的旨", "大臣拟旨", actor=minister, status="draft",
-    )
+    other_draft = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "过月世界段拟的旨", "大臣拟旨", actor=minister, status="draft",)
     db.commit_pending_actions(
         state, content=content, action_ids=[staged_id], directive_status="draft",
     )

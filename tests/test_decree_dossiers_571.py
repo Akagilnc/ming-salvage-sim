@@ -1,14 +1,10 @@
-import asyncio
 import json
-import types
-import threading
 
 import pytest
 import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
 from ming_sim.entities.issue.store import IssueStore
-from tests.conftest import covering_monthly_extract
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
 
 def _active_people(db, count):
@@ -1132,15 +1128,15 @@ def test_final_decree_edit_path_removed_no_bypass(game):
     import web_app
 
     db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "拨十两赈济", "手动新增",
+    directive_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "拨十两赈济", "手动新增",
         dossier_payload={
             "dossier_action_type": "grant_allocation",
             "target_kind": "issue", "target_id": "relief",
             "amount": 10, "account": "国库",
             "execution_surface": "immediate",
-        },
-    )
+        },)
 
     paths = {getattr(r, "path", None) for r in web_app.app.routes}
     assert "/api/decree" not in paths or not any(
@@ -1159,13 +1155,13 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     from ming_sim.session import GameSession
 
     db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "着修河工", "手动新增",
+    directive_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "着修河工", "手动新增",
         dossier_payload={
             "dossier_action_type": "policy",
             "target_kind": "issue", "target_id": "river-works",
-        },
-    )
+        },)
     db.ensure_dossiers_for_draft_directives(state)
     session = GameSession.__new__(GameSession)
     session.db = db
@@ -1503,17 +1499,17 @@ def test_directive_freezes_at_dossier_birth(game):
         "dossier_action_type": "policy",
         "target_kind": "issue", "target_id": "river-works",
     }
-    editable_id = db.add_directive(
-        state, None, "河工初稿", "手动新增", dossier_payload=payload,
-    )
+    editable_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "河工初稿", "手动新增", dossier_payload=payload,)
     db.update_directive_text(
         editable_id, "河工改稿", dossier_payload=payload,
     )
     db.delete_directive(editable_id)
 
-    directive_id = db.add_directive(
-        state, None, "着修河工", "手动新增", dossier_payload=payload,
-    )
+    directive_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "着修河工", "手动新增", dossier_payload=payload,)
     db.ensure_dossiers_for_draft_directives(state)
     with pytest.raises(ValueError):
         db.update_directive_text(directive_id, "成案后改稿")
@@ -1529,9 +1525,9 @@ def test_directive_edit_replaces_mechanical_payload_before_submission(game):
         "account": "国库", "amount": 10, "execution_surface": "immediate",
     }
     hundred = {**ten, "amount": 100}
-    directive_id = db.add_directive(
-        state, None, "拨十两赈济", "手动新增", dossier_payload=ten,
-    )
+    directive_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "拨十两赈济", "手动新增", dossier_payload=ten,)
 
     db.update_directive_text(
         directive_id, "改拨百两赈济", dossier_payload=hundred,
@@ -1548,14 +1544,14 @@ def test_directive_edit_replaces_mechanical_payload_before_submission(game):
 def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
     db, state, _content = game
     # #1716：太仓是 resolve_grant_account 合法别名→国库；未知账户才在 shape 边界拒。
-    directive_id = db.add_directive(
-        state, None, "发外库银十两赈济", "手动新增",
+    directive_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "发外库银十两赈济", "手动新增",
         dossier_payload={
             "dossier_action_type": "grant_allocation",
             "target_kind": "issue", "target_id": "relief",
             "account": "外库", "amount": 10, "execution_surface": "immediate",
-        },
-    )
+        },)
 
     # #654 路3：成案失败记 rejection、保持 draft，不向外抛
     db.ensure_dossiers_for_draft_directives(state)
@@ -1633,9 +1629,9 @@ def test_incomplete_mechanical_directive_is_rejected_instead_of_retyped(
     game, payload,
 ):
     db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "不完整机械旨意", "手动新增", dossier_payload=payload,
-    )
+    directive_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "不完整机械旨意", "手动新增", dossier_payload=payload,)
     # #654 路3：校验失败不抛穿；零行 + draft/rejection
     db.ensure_dossiers_for_draft_directives(state)
     assert db.dossiers.get_for_directive(directive_id) is None
@@ -1650,16 +1646,16 @@ def test_incomplete_mechanical_directive_is_rejected_instead_of_retyped(
 
 def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
     db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "拨银十两但未指明去处", "手动新增",
+    directive_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "拨银十两但未指明去处", "手动新增",
         dossier_payload={
             "dossier_action_type": "grant_allocation",
             "target_kind": "issue",
             "account": "国库",
             "amount": 10,
             "execution_surface": "immediate",
-        },
-    )
+        },)
     # #654 路3：缺 target → rejection，不抛穿（结构化：section + 非空拒收；不锁生产 reason 措辞）
     db.ensure_dossiers_for_draft_directives(state)
     assert db.dossiers.get_for_directive(directive_id) is None
@@ -1685,8 +1681,9 @@ def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
 
 def test_military_directive_projects_normalized_due_turn_to_dossier(game):
     db, state, _content = game
-    directive_id = db.add_directive(
-        state, None, "命洪承畴四月内出师", "手动新增",
+    directive_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "命洪承畴四月内出师", "手动新增",
         dossier_payload={
             "dossier_action_type": "military_order",
             "target_kind": "army", "target_id": "guanning",
@@ -1981,15 +1978,15 @@ def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):
             (item.name,),
         ).fetchone()
     )
-    directive_id = db.add_directive(
-        state, None, "密授权理财", "player_decree",
+    directive_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "密授权理财", "player_decree",
         dossier_payload={
             "dossier_action_type": "secret_authorization",
             "target_kind": "character", "target_id": character.aliases[0],
             "assignee": character.aliases[0], "authorization_id": "理财",
             "authorization_ids": ["伪授权"],
-        },
-    )
+        },)
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.dossiers.get_for_directive(directive_id)
     assert dossier is not None
@@ -2011,9 +2008,9 @@ def test_secret_authorization_rejects_missing_assignee_without_grant(game):
         "assignee": actor, "authorization_id": "理财",
     }
     payload.pop("assignee")
-    directive_id = db.add_directive(
-        state, None, "残缺密授权", "player_decree", dossier_payload=payload,
-    )
+    directive_id = db.issues.add_directive(
+            state.turn, state.year, state.period, None,
+            "残缺密授权", "player_decree", dossier_payload=payload,)
     # #654 路3：缺 assignee → rejection 保持 draft，不抛穿
     db.ensure_dossiers_for_draft_directives(state)
     assert db.dossiers.get_for_directive(directive_id) is None

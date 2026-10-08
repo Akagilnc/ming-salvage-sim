@@ -243,15 +243,15 @@ def test_true_failure_issue_exits_display(web_game, monkeypatch, tmp_path):
     before = _click_before(game.state)
     turn = int(game.state.turn)
     _open_night_with_unextracted_reply(game, minister)
-    game.db.add_directive(
-        game.state, None, "着户部核边饷", "t1235-fail", actor=minister,
+    game.db.issues.add_directive(
+            game.state.turn, game.state.year, game.state.period, None,
+            "着户部核边饷", "t1235-fail", actor=minister,
         status="draft",
         dossier_payload={
             "dossier_action_type": "policy",
             "target_kind": "issue",
             "target_id": "border-pay-fail",
-        },
-    )
+        },)
     saw = {}
     real_close = web_app._auto_close_open_night_gate_free
 

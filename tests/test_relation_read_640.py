@@ -44,7 +44,7 @@ def ledger(game):
     _add_edge(db, state, source="王绍徽", target="崔呈秀", kind="结怨",
               context="王绍徽背影里的戾气，毕自严再挡他路时还在。",
               origin="audience:turn-1")
-    db.apply_relation_brew_result(
+    db.person_logs.apply_relation_brew_result(
         source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
         founding_segment="越次一召，擢杨嗣昌于五品郎中。",
         recent_segment="杨嗣昌蒙知遇之恩，复命时记得皇爷上月简拔。",
@@ -116,7 +116,7 @@ def test_updated_at_period_is_era_label_not_bare_turn(r3_guard):
 @pytest.fixture
 def r3_guard(game):
     db, state, _ = game
-    db.apply_relation_brew_result(
+    db.person_logs.apply_relation_brew_result(
         source=EMPEROR_NODE, target="杨嗣昌", dimension="君臣",
         founding_segment="奠.", recent_segment="近.",
         last_event_id=1, turn=5, year=1627, period=10,

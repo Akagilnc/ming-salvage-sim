@@ -257,25 +257,23 @@ def test_invalid_bundled_seed_rolls_back_new_save_and_can_retry(tmp_path, monkey
 
 def test_seed_founding_write_does_not_swallow_execute_error_with_bad_rollback():
     """窄写口不擅自 rollback；因此 rollback 故障不能遮蔽原始写入异常。"""
-    from ming_sim.db import GameDB
+    from ming_sim.entities.person_log.store import PersonLogStore
 
     class FailingConnection:
+        in_transaction = False
+
         def execute(self, *args, **kwargs):
             raise RuntimeError("injected write failure")
 
         def rollback(self):
             raise AssertionError("写口不得拥有 rollback")
 
-    class FakeDB:
-        conn = FailingConnection()
-
-        @staticmethod
-        def owns_transaction():
-            return True
+        def commit(self):
+            raise AssertionError("execute 已失败时不得 commit")
 
     with pytest.raises(RuntimeError, match='injected write failure'):
-        GameDB.apply_seed_founding_segment(
-            FakeDB(), source="甲", target="乙", dimension="大臣", founding_segment="旧事"
+        PersonLogStore(FailingConnection()).apply_seed_founding_segment(
+            source="甲", target="乙", dimension="大臣", founding_segment="旧事",
         )
 
 
@@ -402,7 +400,7 @@ def test_seed_replay_does_not_overwrite_later_brew_summary(fresh_session):
     sess, _content = fresh_session
     source, target = "皇帝", "王承恩"
     old = sess.db.person_logs.get_relation_summary(source, target)
-    sess.db.apply_relation_brew_result(
+    sess.db.person_logs.apply_relation_brew_result(
         source=source, target=target, dimension=old["dimension"],
         founding_segment=str(old["founding_segment"]) + "\n后添奠基。",
         recent_segment="后来近况。", last_event_id=17,

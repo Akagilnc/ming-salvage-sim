@@ -2514,7 +2514,7 @@ class WebGame:
             ) or [])
             try:
                 with self._ticketed_write_gate(pending_ticket):
-                    self.db.set_message_highlights(mid, phrases)
+                    self.db.chat_messages.set_highlights(mid, phrases)
             except TicketCancelled:
                 return []
             except sqlite3.Error as exc:
@@ -5161,7 +5161,7 @@ def _require_active_minister(minister_name: str) -> None:
 
 
 def _reply_retries_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    turns = db.list_hall_chat_turns(int(night_id))
+    turns = db.reign.list_hall_chat_turns(int(night_id))
     speakers = dict.fromkeys(str(row["minister_name"]) for row in turns)
     ids = {int(row["id"]) for row in turns}
     rows: List[Dict[str, Any]] = []

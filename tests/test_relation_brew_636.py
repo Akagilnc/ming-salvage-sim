@@ -369,7 +369,7 @@ def test_prepare_claim_db_error_propagates_loudly(game):
     def boom(*args, **kwargs):
         raise fault
 
-    db.claim_relation_brew_targets = boom
+    db.person_logs.claim_relation_brew_targets = boom
     with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, _brew_fn_factory([]))
     assert ei.value is fault
@@ -387,15 +387,15 @@ def test_apply_db_error_propagates_loudly_not_disguised_as_llm_failure(game):
     def boom(*args, **kwargs):
         raise fault
 
-    db.apply_relation_brew_result = boom
+    db.person_logs.apply_relation_brew_result = boom
     marked: list = []
-    original_mark = db.mark_relation_brew_pending
+    original_mark = db.person_logs.mark_relation_brew_pending
 
     def spy_mark(**kwargs):
         marked.append(kwargs)
         return original_mark(**kwargs)
 
-    db.mark_relation_brew_pending = spy_mark
+    db.person_logs.mark_relation_brew_pending = spy_mark
     with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, _brew_fn_factory([]))
     assert ei.value is fault
@@ -417,7 +417,7 @@ def test_mark_failure_after_llm_failure_propagates_loudly(game):
     def boom(*args, **kwargs):
         raise fault
 
-    db.mark_relation_brew_pending = boom
+    db.person_logs.mark_relation_brew_pending = boom
     with pytest.raises(sqlite3.OperationalError) as ei:
         run_month_end_relation_brew(db, state, failing_brew)
     assert ei.value is fault

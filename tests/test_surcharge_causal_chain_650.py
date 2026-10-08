@@ -25,7 +25,6 @@ from ming_sim.issues import apply_historical_fiscal_rates, apply_score_extractio
 import ming_sim.issues as issues
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
-FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
 DISPLACED_SHAANXI = 150000    # 流民@shaanxi
 SHAANXI_SUPPORT = 32          # content/regions.json 陕西 public_support seed
 LIAO_SEED_SHAANXI = 2929.20151 * 0.009 / 12.0  # 辽饷九厘基线（万两/月）
