@@ -229,24 +229,21 @@ def _month_fact_materials(
                 "category": row["category"],
             })
     answers: List[Dict[str, Any]] = []
-    if hasattr(db, "list_pending_decisions"):
-        answer_rows = db.list_pending_decisions(turn) + [
-            r for r in db.list_rescript_drafts() if r["answered_turn"] == turn
-        ]
-        for row in answer_rows:
-            if str(row.get("status") or "") not in {"decided", "revision_pending"}:
-                continue
-            choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
-            answers.append({
-                **row, "choice": dict(choice),
-                "title": row.get("title") or "",
-                "label": choice.get("label") or "",
-                "note": choice.get("note") or "",
-                "event_id": row.get("event_id") or "",
-            })
-    snapshot = None
-    if hasattr(db, "get_month_open_snapshot"):
-        snapshot = db.get_month_open_snapshot(turn)
+    answer_rows = db.list_pending_decisions(turn) + [
+        r for r in db.list_rescript_drafts() if r["answered_turn"] == turn
+    ]
+    for row in answer_rows:
+        if str(row.get("status") or "") not in {"decided", "revision_pending"}:
+            continue
+        choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        answers.append({
+            **row, "choice": dict(choice),
+            "title": row.get("title") or "",
+            "label": choice.get("label") or "",
+            "note": choice.get("note") or "",
+            "event_id": row.get("event_id") or "",
+        })
+    snapshot = db.get_month_open_snapshot(turn)
     return {
         "nominal": nominal,
         "landed": landed,

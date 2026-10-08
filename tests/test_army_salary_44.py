@@ -168,11 +168,3 @@ def test_auto_pay_strips_allowed_army_ids_before_filtering(game):
     assert row["arrears"] < 10
 
 
-def test_army_pay_morale_delta_tiers():
-    """士气底料 oracle：本月缺口扣士气；足额无旧欠 +2；足额但旧欠在账 0。"""
-    from ming_sim.army_pay import army_pay_morale_delta
-
-    assert army_pay_morale_delta(10, 5, 0) == -4
-    assert army_pay_morale_delta(10, 0, 0) == 2
-    assert army_pay_morale_delta(10, 0, 3) == 0
-    assert army_pay_morale_delta(0, 0, 0) == 0

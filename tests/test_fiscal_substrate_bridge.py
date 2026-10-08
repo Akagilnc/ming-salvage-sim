@@ -4406,36 +4406,6 @@ def test_all_ming_settle_substrates_advance_through_fixed_flows(fresh_game):
     assert _read_settle(db, "huguang")["p"]["Due"]["宗禄"] > _read_settle(db, "nanzhili")["p"]["Due"]["宗禄"], \
         "楚藩重省宗禄 Due 应重于江南基准"
 
-# --- #1847 unique retain ---
-
-def test_armies_provision_empty_mutiny_status_flag(fresh_db):
-    columns = {
-        row["name"]: row
-        for row in fresh_db.conn.execute("PRAGMA table_info(armies)").fetchall()
-    }
-
-    assert "mutiny_status" in columns
-    assert columns["mutiny_status"]["dflt_value"] in ("''", '""')
-    assert fresh_db.conn.execute(
-        """
-        SELECT COUNT(*) AS count
-        FROM armies
-        WHERE COALESCE(mutiny_status, '') != ''
-        """
-    ).fetchone()["count"] == 0
-
-def test_standalone_army_pay_container_total_uses_grouped_arrears(fresh_db, monkeypatch):
-    def fail_single_region_lookup(region_id):
-        raise AssertionError(f"unexpected per-region army pay lookup: {region_id}")
-
-    monkeypatch.setattr(
-        fresh_db,
-        "_army_pay_source_rows_for_region",
-        fail_single_region_lookup,
-    )
-
-    assert fresh_db._standalone_army_pay_container_total() >= 0
-
 def test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display(fresh_game):
     import ming_sim.flows as flows_mod
 

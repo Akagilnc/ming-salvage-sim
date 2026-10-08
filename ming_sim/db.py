@@ -1795,16 +1795,6 @@ class GameDB:
             );
                         CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
                 ON decree_cost_events(dossier_id, id);
-            CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
-                turn INTEGER NOT NULL,
-                dossier_id INTEGER NOT NULL,
-                verdict_json TEXT NOT NULL,
-                PRIMARY KEY(turn, dossier_id),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-
-
-
             -- ADR 0071：持有型/持续型特权的 durable 授权档。
             CREATE TABLE IF NOT EXISTS authority_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -12964,13 +12954,6 @@ class GameDB:
                        AND d.held_turn > 0
                        AND ? > d.held_turn
                     )
-                    OR (
-                           d.promulgation_decision=''
-                       AND EXISTS (
-                               SELECT 1 FROM pending_promulgation_verdicts pv
-                               WHERE pv.turn=? AND pv.dossier_id=d.id
-                           )
-                    )
                 )
             ) OR (
                     d.status='executing'
@@ -12995,7 +12978,7 @@ class GameDB:
             """,
             (
                 int(turn), int(turn), int(turn),
-                int(turn), int(turn), int(turn),
+                int(turn), int(turn),
                 int(turn),
                 int(turn), int(turn), int(turn),
             ),
@@ -13867,37 +13850,6 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         return project_execution_liability_parties(dossier.get("participant_roster"))
 
-    def merge_execution_note(
-        self, dossier_id: int, fragment: str, *, commit: bool = True,
-    ) -> str:
-        """下游说明片段合并写口（#565；S12/#567 消费方）。
-
-        初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
-        """
-        text = str(fragment or "")
-        if not text:
-            raise ValueError("说明片段不能为空")
-        row = self.get_decree_dossier(dossier_id)
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        existing = str(row.get("execution_note") or "")
-        # 正文是自由说明，不以分句协议去重；原说明保留，合法增补直接接上。
-        if existing:
-            merged = f"{existing}；{text}"
-        else:
-            merged = text
-        if merged != existing:
-            self.conn.execute(
-                """
-                UPDATE decree_dossiers
-                SET execution_note=?, updated_at=CURRENT_TIMESTAMP
-                WHERE id=?
-                """,
-                (merged, int(dossier_id)),
-            )
-            self._commit_dossier_write(commit)
-        return merged
-
     def validate_joint_liability_affected_parties(
         self, affected_parties: object, outcome: str,
     ) -> None:
@@ -14014,27 +13966,6 @@ class GameDB:
                         )
         return True
 
-
-    def get_pending_promulgation_verdicts(
-        self, turn: int,
-    ) -> List[Dict[str, object]]:
-        rows = self.conn.execute(
-            "SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id",
-            (int(turn),),
-        ).fetchall()
-        result = []
-        for row in rows:
-            raw_value = row["verdict_json"]
-            try:
-                value = json.loads(raw_value)
-                if not isinstance(value, dict):
-                    raise ValueError("待应用颁布判决须为对象")
-            except ValueError as exc:
-                raise LLMContractError(
-                    f"待应用颁布判决读取失败：{exc}", raw_value=raw_value,
-                ) from exc
-            result.append(value)
-        return result
 
     def _apply_military_order_station_effect(
         self, state, *, army_id: str, station: str, actor: str, reason: str,

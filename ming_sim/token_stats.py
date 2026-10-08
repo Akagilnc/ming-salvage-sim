@@ -123,8 +123,8 @@ def install_token_stats_patch() -> None:
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
                 _record_usage(model_id, getattr(resp, "usage", None), "?")
-            except Exception:
-                pass
+            except Exception as exc:
+                tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         async def patched_acreate(self, *args, **kwargs):
@@ -135,8 +135,8 @@ def install_token_stats_patch() -> None:
             try:
                 model_id = getattr(resp, "model", kwargs.get("model", "unknown"))
                 _record_usage(model_id, getattr(resp, "usage", None), "?")
-            except Exception:
-                pass
+            except Exception as exc:
+                tlog(f"[TOKEN] record usage failed: {type(exc).__name__}: {exc}")
             return resp
 
         Completions.create = patched_create  # type: ignore

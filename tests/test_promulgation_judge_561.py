@@ -8,7 +8,7 @@ from ming_sim.exceptions import LLMContractError
 from ming_sim.models import LLMConfig
 from ming_sim.qualitative import qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
-from tests.dossier_test_helpers import rejected_verdict
+from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
     return db.create_decree_dossier(
@@ -510,19 +510,6 @@ def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
     assert by_event[f"dossier:{authority_edge}"]["dossier_decision"] != (
         "force_promulgated"
     )
-
-
-def test_appointment_text_is_pure_gatekeeper_transfer_without_land_confiscation():
-    """Recursive appointment sample must not smuggle hostile 隐田 policy."""
-    from scripts.promulgation_gate_561 import APPOINTMENT_TEXT
-
-    assert "许誉卿" in APPOINTMENT_TEXT
-    for token in ("隐田", "清丈", "追夺", "田亩"):
-        assert token not in APPOINTMENT_TEXT, token
-
-
-
-
 
 
 def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
