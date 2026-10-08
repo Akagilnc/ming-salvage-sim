@@ -1,7 +1,5 @@
 import React from "react";
-import type {
-  DecisionChoice, PendingActionFailure, PendingDecision, RescriptDeskAction,
-} from "../types";
+import type { DecisionChoice, PendingDecision } from "../types";
 
 function isCheatConsoleTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(".cheat-console") !== null;

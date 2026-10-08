@@ -110,7 +110,10 @@ def _apply_authority_change_item(
         dossier_id = _parse_sqlite_id(item.get("dossier_id"))
     except (TypeError, ValueError):
         raise ValueError("missing_dossier_source") from None
-    if dossier_id <= 0 or db.get_decree_dossier(dossier_id) is None:
+    if dossier_id <= 0:
+        raise ValueError("missing_dossier_source")
+    # 既存案卷 schema 故障由 get_decree_dossier 上抛，不洗成 missing_dossier_source。
+    if db.get_decree_dossier(dossier_id) is None:
         raise ValueError("missing_dossier_source")
     if not db.dossier_authorizes_effects(dossier_id):
         raise ValueError("dossier_not_effect_eligible")
@@ -4351,7 +4354,7 @@ def apply_issue_tracker_output(
                 print(f"[INFO] new_issue 已拒：event {event_id} 已有终态 {terminal_state!r}，不再从 event_pool 立项。")
                 applied_new.append({"id": ev.id, "title": ev.title, "rejected": True, "reason": terminal_reason})
                 continue
-            # 本批预检接纳且世界战果已落账：单次接纳贯穿终局，不再二次裁断准入
+            # 本批预检已接纳：单次接纳贯穿终局，不再二次裁断准入
             # （候选 dirty gather / 人物影子闸 / 结果门均不得再拒，防两账分裂）。
             pre_admitted = ev.id in pre_admitted_event_ids
             if not pre_admitted:
@@ -6468,6 +6471,7 @@ def _apply_dossier_participant_items(
                 "rejected": True, "category": "invalid_shape", "item": item,
             })
             continue
+        # 模型新输入脏项在此拒收；既存持久名册 schema 故障由 append 上抛，不洗成拒收。
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             if dossier_id not in authority_set:
@@ -6481,35 +6485,39 @@ def _apply_dossier_participant_items(
                 raise ValueError("追加参与层级必须为主办/协办/知情")
             if not delegator_id:
                 raise ValueError("追加参与人必须注明委派人")
-            added = db.append_decree_dossier_participants(dossier_id, [{
+            addition = {
                 "character_id": character_id,
                 "tier": tier,
                 "role": str(item.get("role") or ""),
                 "delegator_id": delegator_id,
-            }], state=state, commit=False)
-            if not added:
-                # Exact durable duplicate is the only no-write success case.
-                existing = db.get_decree_dossier(dossier_id) or {}
-                if not any(
-                    row.get("character_id") == character_id
-                    and row.get("tier") == tier
-                    and row.get("role") == str(item.get("role") or "")
-                    and row.get("delegator_id") == delegator_id
-                    for row in existing.get("participant_roster", [])
-                ):
-                    raise ValueError("参与人未实际加入案卷")
-            persisted = added[0] if added else {
-                "character_id": character_id, "tier": tier,
             }
-            results.append({
-                "dossier_id": dossier_id,
-                "character_id": persisted["character_id"], "tier": persisted["tier"],
-            })
         except (TypeError, ValueError, KeyError) as exc:
             results.append({
                 "rejected": True, "category": "invalid_participant_roster",
                 "reason": str(exc), "item": item,
             })
+            continue
+        added = db.append_decree_dossier_participants(
+            dossier_id, [addition], state=state, commit=False,
+        )
+        if not added:
+            # Exact durable duplicate is the only no-write success case.
+            existing = db.get_decree_dossier(dossier_id) or {}
+            if not any(
+                row.get("character_id") == character_id
+                and row.get("tier") == tier
+                and row.get("role") == str(item.get("role") or "")
+                and row.get("delegator_id") == delegator_id
+                for row in existing.get("participant_roster", [])
+            ):
+                raise ValueError("参与人未实际加入案卷")
+        persisted = added[0] if added else {
+            "character_id": character_id, "tier": tier,
+        }
+        results.append({
+            "dossier_id": dossier_id,
+            "character_id": persisted["character_id"], "tier": persisted["tier"],
+        })
     return results
 
 
@@ -7310,13 +7318,11 @@ def _apply_score_extraction_body(
                 "rejected": True, "category": "invalid_shape", "item": item,
             })
             continue
+        # 模型新输入脏项在此拒收；既存案卷 schema／连坐投影故障由写核上抛。
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             if int(dossier_id) in _due_review_owned:
                 raise ValueError("正式复核接管：extractor 不得并行写执行格终值")
-            dossier = db.get_decree_dossier(dossier_id)
-            if dossier is None or dossier["status"] != "executing":
-                raise ValueError("案卷不存在或不在 executing")
             outcome = str(item.get("outcome") or "").strip()
             if outcome not in {"fulfilled", "degraded", "failed", "transformed"}:
                 raise ValueError(
@@ -7336,26 +7342,47 @@ def _apply_score_extraction_body(
                 and outcome in GameDB._JOINT_LIABILITY_TRIGGERS
             ):
                 db.validate_joint_liability_affected_parties(raw_parties, outcome)
-            db.record_dossier_execution(
-                dossier_id, outcome, note, state.turn, close=True, commit=False,
-            )
-            # #567 / #1900：核账事实留在 list_dossier_reconciliations 结构化账，
-            # 不向 execution_note 模板增补或覆盖原文。
-            # 执行格真值只落 record_dossier_execution；不代人物拼终值奏报。
-            # 连坐挂载点＝本适配器落终值笔；禁对 execution_outcome 列事后扫描。
-            # 触发过滤由 apply 内 _JOINT_LIABILITY_TRIGGERS 单一真源承担。
-            db.apply_execution_joint_liability(
-                state, dossier_id, outcome, reason=note, commit=False,
-            )
-            dossier_execution_results.append({
-                "dossier_id": dossier_id, "outcome": outcome,
-            })
         except (TypeError, ValueError, KeyError) as exc:
             dossier_execution_results.append({
                 "rejected": True, "category": "invalid_transition",
                 "reason": str(exc), "item": item,
             })
+            continue
+        dossier = db.get_decree_dossier(dossier_id)
+        if dossier is None or dossier["status"] != "executing":
+            dossier_execution_results.append({
+                "rejected": True, "category": "invalid_transition",
+                "reason": "案卷不存在或不在 executing", "item": item,
+            })
+            continue
+        db.record_dossier_execution(
+            dossier_id, outcome, note, state.turn, close=True, commit=False,
+        )
+        # #567 / #1900：核账事实留在 list_dossier_reconciliations 结构化账，
+        # 不向 execution_note 模板增补或覆盖原文。
+        # 执行格真值只落 record_dossier_execution；不代人物拼终值奏报。
+        # 连坐挂载点＝本适配器落终值笔；禁对 execution_outcome 列事后扫描。
+        # 触发过滤由 apply 内 _JOINT_LIABILITY_TRIGGERS 单一真源承担。
+        db.apply_execution_joint_liability(
+            state, dossier_id, outcome, reason=note, commit=False,
+        )
+        dossier_execution_results.append({
+            "dossier_id": dossier_id, "outcome": outcome,
+        })
 
+    _authority_item_reject_reasons = frozenset({
+        "missing_dossier_source",
+        "dossier_not_effect_eligible",
+        "duplicate_active_authority",
+        "invalid_authority_scope",
+        "unknown_authority_id",
+        "already_revoked",
+        "授权变更动作只收授予/收回",
+        "授予项必须含 holder_id/privilege/scope",
+        "授权权项不在首批枚举",
+        "授权对象不在人物档",
+        "授权失效回合不得早于生效回合",
+    })
     authority_change_results: List[Dict[str, object]] = []
     for item in extracted.get("authority_changes") or []:
         if not isinstance(item, dict):
@@ -7368,18 +7395,23 @@ def _apply_score_extraction_body(
             authority_change_results.append(
                 _apply_authority_change_item(db, state, item)
             )
-        except (TypeError, ValueError, KeyError) as exc:
+        except ValueError as exc:
+            # 仅契约拒收理由进逐项拒收；既存 schema 等其它 ValueError 上抛。
             reason = str(exc)
-            category = "invalid_authority_change"
-            if reason in {
-                "missing_dossier_source",
-                "dossier_not_effect_eligible",
-                "duplicate_active_authority",
-                "invalid_authority_scope",
-                "unknown_authority_id",
-                "already_revoked",
-            }:
-                category = reason
+            if reason not in _authority_item_reject_reasons:
+                raise
+            category = (
+                reason
+                if reason in {
+                    "missing_dossier_source",
+                    "dossier_not_effect_eligible",
+                    "duplicate_active_authority",
+                    "invalid_authority_scope",
+                    "unknown_authority_id",
+                    "already_revoked",
+                }
+                else "invalid_authority_change"
+            )
             authority_change_results.append({
                 "rejected": True, "category": category,
                 "reason": reason, "item": item,
@@ -7616,8 +7648,6 @@ def _apply_score_extraction_body(
                 db.conn.execute(f"RELEASE {savepoint}")
                 raise
 
-    landed_event_stock_ids: set[str] = set()
-
     def _apply_ordinary_entity_step(
         step_extracted: Dict[str, object],
         step_ordered: Dict[str, list[tuple[str, object]]],
@@ -7635,8 +7665,6 @@ def _apply_score_extraction_body(
             event_owned = event_for_item in strategic_event_referenced_ids
             if not apply_event_owned and event_owned:
                 continue
-            if apply_event_owned and event_owned and event_for_item:
-                landed_event_stock_ids.add(event_for_item)
             origin_ref = str(army_item.get("origin_ref") or "").strip()
             created_armies.extend(db.create_armies_from_extraction(
                 state, [army_item], actor="档房", commit=commit_now,
@@ -7648,8 +7676,6 @@ def _apply_score_extraction_body(
             )
             if not apply_event_owned and owned:
                 continue
-            if apply_event_owned and owned:
-                landed_event_stock_ids.update(owned)
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
             region_changes.extend(db.apply_region_deltas(
@@ -7662,8 +7688,6 @@ def _apply_score_extraction_body(
             )
             if not apply_event_owned and owned:
                 continue
-            if apply_event_owned and owned:
-                landed_event_stock_ids.update(owned)
             army_changes.extend(_apply_extracted_army_delta(
                 db, state, pseudo_event, army_id, raw_changes, commit_now=commit_now,
             ))
@@ -8095,11 +8119,6 @@ def _apply_score_extraction_body(
             ))
             if event_owned and not apply_event_owned:
                 continue
-            if event_owned and apply_event_owned:
-                # 事件战果复用同一写核与现役过滤，不另开身份豁免直写路。
-                landed_event_stock_ids.update(_effect_event_ids(
-                    "power_updates", index, strategic_event_referenced_ids, event_ids_map,
-                ))
             if power_id in conflict_powers:
                 power_changes.append({
                     "power_id": power_id,
@@ -8226,7 +8245,10 @@ def _apply_score_extraction_body(
         event_result_delta_event_ids=strategic_event_result_delta_event_ids,
         defer_event_trigger_ids=strategic_event_pool_ids,
         open_affair_ids_at_input=authorized_open_affairs,
-        pre_admitted_event_ids=landed_event_stock_ids)
+        # C3／声明显式已接纳的事件信封贯穿终局，不再靠部分库存落账二次裁断。
+        pre_admitted_event_ids={
+            event_id for event_id in (declared_effect_event_ids or ()) if event_id
+        })
 
     def _ordered_strategic_items(field: str, event_id: str) -> list[tuple[str, object]]:
         items = ordered_deltas.get(field) or []

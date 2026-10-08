@@ -1328,11 +1328,6 @@ class GameDB:
                 rejection_reason TEXT NOT NULL DEFAULT '',
                 opposition TEXT NOT NULL DEFAULT '',
                 kind TEXT NOT NULL DEFAULT 'decision',
-                actor_name TEXT NOT NULL DEFAULT '',
-                actor_office TEXT NOT NULL DEFAULT '',
-                actor_faction TEXT NOT NULL DEFAULT '',
-                revision_round INTEGER NOT NULL DEFAULT 0,
-                prior_options_json TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (turn, idx)
             );
@@ -17082,10 +17077,29 @@ class GameDB:
                     stage="petition_records",
                 ) from exc
             if not isinstance(payload, dict):
+                from ming_sim.exceptions import SettlementAbort
+
+                raise SettlementAbort(
+                    "event_triggers.choice_json 根须为对象 "
+                    f"event_id={r['event_id']!r} rowid={r['rowid']} "
+                    f"got {type(payload).__name__}",
+                    turn=int(r["turn"] or 0),
+                    stage="petition_records",
+                )
+            # 无 petition 键＝普通事件 choice，合法跳过；键在而值非对象＝坏已有资料。
+            if "petition" not in payload:
                 continue
             petition = payload.get("petition")
             if not isinstance(petition, dict):
-                continue
+                from ming_sim.exceptions import SettlementAbort
+
+                raise SettlementAbort(
+                    "event_triggers.choice_json.petition 须为对象 "
+                    f"event_id={r['event_id']!r} rowid={r['rowid']} "
+                    f"got {type(petition).__name__}",
+                    turn=int(r["turn"] or 0),
+                    stage="petition_records",
+                )
             # 答案字段（label/hint/note）与 petition 段同级摊平返回：供料侧要一次
             # 读到「呈疏记录」和「皇帝原批语」，不必自己再拆一层。
             out.append({
