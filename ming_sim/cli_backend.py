@@ -2596,8 +2596,14 @@ def extract_draft_intent(
     correction_feedback（#1274 V-1）：校验失败回喂的纠错指令；非空时 LLM 挂死响亮上抛。"""
     roster_facts = _draft_intent_character_roster_facts(content)
     army_facts = _draft_intent_army_grounding_facts(content)
-    correction_block = str(correction_feedback or "").strip()
-    if correction_block and not correction_block.endswith("\n"):
+    # 纠错反馈可含原旨副本：strip 只判空，不得加工整份运输块（#1897 E2 / P6）。
+    if correction_feedback is None:
+        correction_block = ""
+    elif isinstance(correction_feedback, str):
+        correction_block = correction_feedback
+    else:
+        correction_block = str(correction_feedback)
+    if correction_block.strip() and not correction_block.endswith("\n"):
         correction_block += "\n"
     stalled_push_facts = _stalled_deliberation_push_facts(db)
     open_affair_facts = _draft_intent_open_affair_facts(db)

@@ -254,36 +254,30 @@ class StagedDeclarationStore:
         return int(cur.rowcount or 0)
 
 
-def _load_optional_json(row: Any, column: str) -> object:
-    """可选持久 JSON 列：SQL NULL → None；空串/腐坏响亮（#1897 E1）。"""
-    if column not in row.keys() or row[column] is None:
-        return None
-    raw = row[column]
-    # 空串不得洗成合法缺省（与 parse_engine / durable 权威同缝）。
-    if isinstance(raw, str) and not raw.strip():
-        raise ValueError(f"staged_declarations.{column} 空串腐坏")
-    try:
-        return json.loads(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"staged_declarations.{column} 腐坏 JSON") from exc
-
-
 def _row_to_staged(row: Any) -> StagedDeclaration:
-    verdict = _load_optional_json(row, "verdict_json")
-    questions = _load_optional_json(row, "questions_json")
-    forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
-    from ming_sim.db import GameDB
-    # 持久声明 JSON 与引擎 payload 同权威；空串/腐坏响亮（#1897 E1）。
+    from ming_sim.db import (
+        GameDB,
+        _load_durable_json_list,
+        _load_durable_json_object,
+    )
+    # 可选列：仅 SQL NULL = 合法缺省；其余值复用既有持久 list/object 权威
+    # （JSON 文本 null/空串/非形一律响亮，禁平行 json.loads + 洗缺席，#1897 E1）。
     decree_ref = str(row["decree_ref"])
-    # present 非对象/非列表不得洗成缺席（#1897 E1）。
-    if verdict is not None and not isinstance(verdict, dict):
-        raise ValueError(
-            f"staged_declarations.verdict_json 须为对象，得 {type(verdict).__name__}"
+    if "verdict_json" not in row.keys() or row["verdict_json"] is None:
+        verdict = None
+    else:
+        verdict = _load_durable_json_object(
+            row["verdict_json"],
+            surface=f"staged_declarations.verdict_json:{decree_ref}",
         )
-    if questions is not None and not isinstance(questions, list):
-        raise ValueError(
-            f"staged_declarations.questions_json 须为列表，得 {type(questions).__name__}"
+    if "questions_json" not in row.keys() or row["questions_json"] is None:
+        questions = None
+    else:
+        questions = _load_durable_json_list(
+            row["questions_json"],
+            surface=f"staged_declarations.questions_json:{decree_ref}",
         )
+    forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=decree_ref,
         declaration=GameDB.parse_engine_payload_json(
