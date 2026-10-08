@@ -28,6 +28,9 @@ class _RecordingDB:
             kv_get=lambda key: None,
             kv_set=lambda key, value: self.writes.append(f"kv_set:{key}"),
         )
+        self.issues = SimpleNamespace(
+            read_directive_dossier_payload=self._read_directive_dossier_payload,
+        )
 
     def create_secret_order(self, *a, **k):
         self.writes.append("create_secret_order")
@@ -40,7 +43,7 @@ class _RecordingDB:
     def list_pending_actions(self, *a, **k):
         return []
 
-    def read_directive_dossier_payload(self, row):
+    def _read_directive_dossier_payload(self, row):
         assert row["id"] == 7
         return {"mode": "midzhi"}
 

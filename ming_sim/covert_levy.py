@@ -4,6 +4,8 @@
 揭破只进入 next_audience_todos 的唯一 dispatcher。
 """
 from __future__ import annotations
+
+from ming_sim.applier import coerce_beyond_intent_flag
 from ming_sim.entities.issue.store import IssueStore
 
 from typing import Any, Dict, List, Mapping
@@ -34,7 +36,7 @@ def canonical_fiscal_result(
     origin = source.get("origin_ref") if effective_origin_ref is None else effective_origin_ref
     result["origin_ref"] = str(origin or "").strip()
     result["beyond_intent"] = bool(
-        db.coerce_beyond_intent_flag(read_beyond_intent_raw(source))
+        coerce_beyond_intent_flag(read_beyond_intent_raw(source))
     )
     result["applied"] = bool(applied)
     return result
@@ -51,7 +53,7 @@ def stopped_covert_effect(
     if not raw_id.isdigit():
         return False
     from ming_sim.simulation import read_beyond_intent_raw
-    beyond = db.coerce_beyond_intent_flag(read_beyond_intent_raw({"beyond_intent": beyond_intent}))
+    beyond = coerce_beyond_intent_flag(read_beyond_intent_raw({"beyond_intent": beyond_intent}))
     if not beyond:
         return False
     return active_prohibition_dossier(db, int(raw_id)) is not None

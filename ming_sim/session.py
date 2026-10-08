@@ -1486,7 +1486,7 @@ class GameSession:
             # 沿本方法既有错误包 + SettlementAbort 归属（与 LLM/写回系统故障同形）。
             from ming_sim.applier import StoredDocumentError
             try:
-                bad_payload = self.db.read_directive_dossier_payload(row)
+                bad_payload = self.db.issues.read_directive_dossier_payload(row)
             except (StoredDocumentError, ValueError) as exc:
                 pack_path = write_error_pack(
                     self.db, self.state, exc=exc, extracted=None, resolve_ctx=None,

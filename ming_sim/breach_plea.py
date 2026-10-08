@@ -435,7 +435,7 @@ def _spent_amount_and_fiscal_count(
                 delta = 0
             if delta < 0:
                 spent_amount += -delta
-        fiscal_count += len(db.list_fiscal_effects_for_dossier(int(did)))
+        fiscal_count += len(db.fiscal_config.effects_for_dossier(int(did)))
     if origin:
         for r in ReignStateStore(db.conn).read_spent_amount_and_fiscal_count((origin,)):
             # list_economy_moves 已按 dossier 计；此处仅补非 dossier origin

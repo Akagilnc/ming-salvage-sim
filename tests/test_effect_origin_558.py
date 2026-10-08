@@ -51,7 +51,7 @@ def test_effect_origins_round_trip_and_missing_origin_is_rejected(game):
     assert state.metrics["国库"] == before - 1
     assert result["economy_moves_rejections"][0]["category"] == "missing_origin_ref"
     assert db.reign.list_economy_moves_for_dossier(dossier_id)[0]["origin_ref"] == f"dossier:{dossier_id}"
-    fiscal = db.list_fiscal_effects_for_dossier(dossier_id)
+    fiscal = db.fiscal_config.effects_for_dossier(dossier_id)
     assert {row["key"] for row in fiscal} == {"河工月费_base", "河工月费_rate"}
     assert {row["origin_ref"] for row in fiscal} == {f"dossier:{dossier_id}"}
     assert all(row["dossier_id"] is None for row in db.reign.list_economy_moves_for_dossier(dossier_id))

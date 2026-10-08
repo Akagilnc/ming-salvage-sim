@@ -340,13 +340,13 @@ class ReignStateStore:
 
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
         """Ledger rows for one dossier; beyond_intent via sole coerce_beyond_intent_flag."""
-        from ming_sim.db import GameDB
+        from ming_sim.applier import coerce_beyond_intent_flag
 
         rows: List[Dict[str, object]] = []
         for row in self.read_list_economy_moves_for_dossier((f"dossier:{int(dossier_id)}",)):
             item = dict(row)
             item["beyond_intent"] = bool(
-                GameDB.coerce_beyond_intent_flag(item.get("beyond_intent"))
+                coerce_beyond_intent_flag(item.get("beyond_intent"))
             )
             rows.append(item)
         return rows

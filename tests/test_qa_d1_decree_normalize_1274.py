@@ -219,7 +219,7 @@ def test_seeded_draft_long_extract_still_lands_real_dossier(game, monkeypatch):
     # 不是罩饿死后的 special_decree 兜底。
     rows = db.issues.list_directives(state.turn, statuses=("pending", "draft"))
     row = next(item for item in rows if int(item["id"]) == directive_id)
-    payload = db.read_directive_dossier_payload(row)
+    payload = db.issues.read_directive_dossier_payload(row)
     assert payload.get("dossier_action_type") == "policy"
     assert payload.get("target_id") == "treasury-audit"
     assert [str(i["character_id"]) for i in (payload.get("participant_roster") or [])] == [

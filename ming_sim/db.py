@@ -32,6 +32,7 @@ from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Seq
 
 from ming_sim.applier import (
     StoredDocumentError, atomic, connection_owns_transaction,
+    coerce_beyond_intent_flag,
     durable_float, durable_int, load_stored_json, load_stored_list, load_stored_object, load_stored_object_list,
     safe_json_dumps, sanitize_sqlite_text,
 )
@@ -1130,7 +1131,7 @@ class GameDB:
                 "sort_order": sort_order, "note": item_note, "origin_ref": origin_ref,
             })
         # #1260：base+rate 两行 creations 同旗（any() 消费者安全；计数型会双计——勿据此改计数语义）。
-        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
+        beyond_flag = coerce_beyond_intent_flag(beyond_intent)
         for item_key, value, kind in (
             (base_key, max(0, init_value), "base"), (rate_key, 100, "rate"),
         ):
@@ -1367,7 +1368,7 @@ class GameDB:
         # removed rows in a narrow append-only audit so origin -> removal is a
         # single indexed lookup rather than an inference from unrelated logs.
         # #1260：INSERT...SELECT 显式列清单 + beyond_intent 常量（禁 SELECT * 位置漂移）。
-        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
+        beyond_flag = coerce_beyond_intent_flag(beyond_intent)
         self.fiscal_config.remove_items(
             (base_key, rate_key), turn=int(turn), origin=origin_ref,
             reason=reason, beyond=beyond_flag,
@@ -8694,7 +8695,7 @@ class GameDB:
                 elif row["action_type"] == "grant_allocation":
                     amount = int(payload.get("amount") or 0)
                     if self._grant_allocation_is_monthly(payload):
-                        fiscal = self.list_fiscal_effects_for_dossier(dossier_id)
+                        fiscal = self.fiscal_config.effects_for_dossier(dossier_id)
                         landed = any(
                             str(item.get("key") or "").endswith("_base")
                             and int(item.get("value") or 0) == amount
@@ -10360,7 +10361,7 @@ class GameDB:
         #658：普通 triad 与御笔 target 互斥生命周期——
         普通改草不得继承旧 target；纯强推改草不得继承旧 triad。
         """
-        old = self._decode_directive_dossier_payload(existing_json)
+        old = IssueStore.decode_directive_dossier_payload(existing_json)
         incoming = dict(new_payload or {})
         old_roster = self._normalize_participant_roster(old.get("participant_roster") or [])
         new_roster = self._normalize_participant_roster(incoming.get("participant_roster") or [])
@@ -11384,19 +11385,6 @@ class GameDB:
             commit=commit,
         )
 
-    @staticmethod
-    def _decode_directive_dossier_payload(
-        raw: object, *, directive_id: Optional[int] = None,
-    ) -> Dict[str, object]:
-        label = f"旨稿#{directive_id}" if directive_id is not None else "既有旨稿"
-        return load_stored_object(raw, label=f"{label} 结构化载荷")
-
-    def read_directive_dossier_payload(self, row: object) -> Dict[str, object]:
-        """Strictly decode a durable turn_directives payload at the DB read seam."""
-        return self._decode_directive_dossier_payload(
-            row["dossier_payload_json"], directive_id=int(row["id"]),
-        )
-
     def confirm_directive(self, directive_id: int, state: GameState) -> None:
         """大臣拟旨经皇帝核定：pending → draft（进入颁诏候选池）。
 
@@ -11447,7 +11435,7 @@ class GameDB:
                     # 接缝分流（ADR0005 / #1889 R5）：持久载荷解码在产物 try 外——
                     # 损坏/非 JSON 是读接缝系统故障，不得洗成 locality_fanout_failed。
                     # 合法空对象 {} 仍进入成案，由产物 ValueError 隔离留痕。
-                    payload = self.read_directive_dossier_payload(row)
+                    payload = self.issues.read_directive_dossier_payload(row)
                     sp = f"ensure_directive_{did}"
                     self.conn.execute(f"SAVEPOINT {sp}")
                     try:
@@ -12035,22 +12023,6 @@ class GameDB:
             self.conn.commit()
         return IssueStore(self.conn).row(issue_id)
 
-    @staticmethod
-    def coerce_beyond_intent_flag(value: object) -> int:
-        """闭世界肯定识别器：仅契约内肯定表示 →1；缺席/否定/空/畸形一律 →0。
-
-        肯定：True / 非零 int·float / 肯定串集 {"1","true","yes","on","是","有","真"}。
-        开放兜底永不得回归——畸形输入不得捏造肯定标记（0072/0118 真相层）。
-        """
-        if value is None:
-            return 0
-        if isinstance(value, bool):
-            return 1 if value else 0
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return 1 if int(value) != 0 else 0
-        text = str(value).strip().lower()
-        return 1 if text in {"1", "true", "yes", "on", "是", "有", "真"} else 0
-
     def record_issue_economy_move(
         self,
         state: GameState,
@@ -12105,7 +12077,7 @@ class GameDB:
         # 此处随流水同事务写 metrics，恢复（reload_state_from_db→load_state）与
         # 回滚都读到同一个真值。
         self.reign.upsert_metric(account, after)
-        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
+        beyond_flag = coerce_beyond_intent_flag(beyond_intent)
         self.reign.insert_ledger({
             "turn": state.turn,
             "year": state.year,
@@ -12126,39 +12098,13 @@ class GameDB:
             self.conn.commit()
         return actual
 
-    def record_fiscal_config_change(
-        self, *, turn: int, key: str, old_value: int, new_value: int,
-        origin_ref: str, reason: str = "", beyond_intent: object = 0,
-    ) -> None:
-        """Append immutable provenance for a fiscal value change.
-
-        The caller owns the surrounding transaction so the history row and live
-        configuration can never commit separately.
-
-        beyond_intent：#1260 旨外恶果/受益同列标记（与 origin_ref 同载体，非平行轨）。
-        """
-        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
-        self.fiscal_config.append_history("change", {
-            "turn": int(turn), "key": key, "old_value": int(old_value),
-            "new_value": int(new_value), "delta": int(new_value) - int(old_value),
-            "origin_ref": origin_ref, "reason": reason, "beyond_intent": beyond_flag,
-        })
-
-    def list_fiscal_effects_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
-        origin = f"dossier:{int(dossier_id)}"
-        rows: List[Dict[str, object]] = []
-        for item in self.fiscal_config.effects(origin):
-            item["beyond_intent"] = bool(self.coerce_beyond_intent_flag(item.get("beyond_intent")))
-            rows.append(item)
-        return rows
-
     def list_dossier_durable_effects(self, dossier_id: int) -> List[Dict[str, object]]:
         """#1260 单源：案卷 durable_effects = economy + fiscal（已归一 beyond_intent bool）。
 
         只供事实，不参与裁决形状。四读端改调此处，禁再各写一份合并。
         """
         return list(self.reign.list_economy_moves_for_dossier(int(dossier_id))) + list(
-            self.list_fiscal_effects_for_dossier(int(dossier_id))
+            self.fiscal_config.effects_for_dossier(int(dossier_id))
         )
 
     def list_dossier_actual_rail(self, dossier_id: int) -> List[Dict[str, object]]:

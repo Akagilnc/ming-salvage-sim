@@ -9,7 +9,7 @@ import json
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ming_sim.applier import atomic, load_stored_json, load_stored_list
+from ming_sim.applier import atomic, load_stored_json, load_stored_list, load_stored_object
 from ming_sim.entities.column_write import bind_affair_once, checked_columns
 
 
@@ -332,6 +332,20 @@ class IssueStore:
             "SELECT id, text, status, turn, dossier_payload_json FROM turn_directives WHERE id=?",
             (directive_id,),
         ).fetchone()
+
+    @staticmethod
+    def decode_directive_dossier_payload(
+        raw: object, *, directive_id: int | None = None,
+    ) -> Dict[str, object]:
+        """Strict durable decode of turn_directives.dossier_payload_json."""
+        label = f"旨稿#{directive_id}" if directive_id is not None else "既有旨稿"
+        return load_stored_object(raw, label=f"{label} 结构化载荷")
+
+    def read_directive_dossier_payload(self, row: object) -> Dict[str, object]:
+        """Strictly decode a durable turn_directives payload at the issue read seam."""
+        return self.decode_directive_dossier_payload(
+            row["dossier_payload_json"], directive_id=int(row["id"]),
+        )
 
     def set_directive_status(self, directive_id: int, status: str, *, expected: str | None = None) -> Any:
         sql = "UPDATE turn_directives SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"

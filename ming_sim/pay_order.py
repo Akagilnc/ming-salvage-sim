@@ -21,7 +21,7 @@
   （flows 读端按 r3 全序取胜出键、floor 折算，余数=免除不入欠），hub 恒先、合并 k
   公式与中央旧欠不自动偿还（0023 D7③）一律不动。
 
-持久化**只**经 fiscal_config 行＋``record_fiscal_config_change``（immutable
+持久化**只**经 fiscal_config 行＋``FiscalConfigStore.record_change``（immutable
 provenance、origin_ref=dossier:<id>），禁第二份旨意真源或新表（F1.2）。
 """
 from __future__ import annotations
@@ -330,7 +330,7 @@ def materialize_pay_order_decree(
     for key, value, until in prepared:
         old = int(current.get(key, _default_of(key)))
         db.fiscal_config.override(key, value, "偿还序override/折发系数（#653 ADR 0090）", origin)
-        db.record_fiscal_config_change(
+        db.fiscal_config.record_change(
             turn=turn, key=key, old_value=old, new_value=value,
             origin_ref=origin, reason=reason,
         )
@@ -339,7 +339,7 @@ def materialize_pay_order_decree(
         if until is not None:
             old_until = int(current.get(until_key, 0))
             db.fiscal_config.override(until_key, until, "override 期限伴随键（#653 r2/r3）", origin)
-            db.record_fiscal_config_change(
+            db.fiscal_config.record_change(
                 turn=turn, key=until_key, old_value=old_until, new_value=until,
                 origin_ref=origin, reason=reason,
             )
@@ -352,7 +352,7 @@ def materialize_pay_order_decree(
                 (until_key,), turn=turn, origin=origin,
                 reason="永久旨覆写清旧期限（#653 F1.4 stale until）", beyond=0,
             )
-            db.record_fiscal_config_change(
+            db.fiscal_config.record_change(
                 turn=turn, key=until_key, old_value=stale_until, new_value=0,
                 origin_ref=origin, reason="永久旨覆写清旧期限（stale until 清除）",
             )
@@ -410,7 +410,7 @@ def restore_pay_order_override(
             (key,), turn=int(turn), origin=origin,
             reason=reason or "撤销 override 旨，形状退出格律", beyond=0,
         )
-        db.record_fiscal_config_change(
+        db.fiscal_config.record_change(
             turn=int(turn), key=key, old_value=old, new_value=_default_of(key),
             origin_ref=origin,
             reason=reason or "撤销 override 旨，形状退出格律（回落次特定/祖制）",
@@ -423,7 +423,7 @@ def restore_pay_order_override(
                 (until_key,), turn=int(turn), origin=origin,
                 reason="撤销 override 旨，清除期限伴随键", beyond=0,
             )
-            db.record_fiscal_config_change(
+            db.fiscal_config.record_change(
                 turn=int(turn), key=until_key, old_value=old_until, new_value=0,
                 origin_ref=origin, reason="撤销 override 旨，清除期限伴随键",
             )

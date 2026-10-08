@@ -1,10 +1,7 @@
 """#173 显示口径：军饷呈现端从退役的 maintenance_per_turn 迁到引擎实扣的 army_needed。
 
-#44 后引擎按 army_needed=ceil(manpower×salary_rate/10000) 扣应发；呈现端（army_payload/
-army_report/欠饷月数/simulator TSV）统一到 army_needed，玩家与审计大臣 LLM 看到的月饷=实扣。
-#173 删列 PR 已物理移除 maintenance_per_turn 列，army_needed 是月饷唯一真源。
-
-#1185：不锁中文奏报措辞；真实出口差分/可数域值 tracer。
+#44 后引擎按 army_needed=ceil(manpower×salary_rate/10000) 扣应发；army_payload 与欠饷月数排序统一到 army_needed。
+#173 删列后 army_needed 是月饷唯一真源。分源裸键排除见 test_player_army_projection_321 结构 tracer。
 """
 
 from __future__ import annotations
@@ -28,24 +25,6 @@ def test_army_payload_exposes_army_needed(read_game):
         )
 
 
-def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
-    """#305/D10：detail/report/roster 走欠饷近似；分账字段与抽象裸分不进真实出口。"""
-    db, _state, _ = game
-    row = db.conn.execute(
-        "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
-    ).fetchone()
-    # 受控裸分 token：不与兵额/合计饷银等合法可数事实混淆
-    scores = dict(loyalty=67, supply=69, morale=61, training=59, equipment=53, mobility=47)
-    db.conn.execute(
-        "UPDATE armies SET province_pay_arrears=17, central_pay_arrears=46,"
-        "manpower=20000, cannon_equipment=0, firearm_equipment=0,"
-        "loyalty=?, supply=?, morale=?, training=?, equipment=?, mobility=? WHERE id=?",
-        (*scores.values(), row["id"]),
-    )
-    db.conn.commit()
-    payload = {army["id"]: army for army in db.army_payload()}[row["id"]]
-    for key in ("arrears", "province_pay_arrears", "central_pay_arrears", "morale", "loyalty"):
-        assert key not in payload
 
 
 def test_danger_order_uses_army_needed_for_arrears_months(game):

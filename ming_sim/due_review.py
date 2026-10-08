@@ -15,6 +15,7 @@ from ming_sim.entities.issue.store import IssueStore
 from typing import Any, Dict, List, Optional
 
 from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
+from ming_sim.applier import coerce_beyond_intent_flag
 from ming_sim.db import GameDB
 from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
@@ -359,7 +360,7 @@ def effect_has_beyond_intent(effect: object) -> bool:
         return False
     from ming_sim.simulation import read_beyond_intent_raw
     raw = read_beyond_intent_raw(effect)
-    return bool(GameDB.coerce_beyond_intent_flag(raw))
+    return bool(coerce_beyond_intent_flag(raw))
 
 
 def durable_effects_beyond_intent(effects: object) -> bool:

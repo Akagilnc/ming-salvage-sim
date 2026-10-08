@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.entities.dossier import DOSSIER_REPORT_ORIGIN_VERDICT
-from ming_sim.applier import StoredDocumentError, atomic, connection_owns_transaction, durable_int, load_stored_list, load_stored_object
+from ming_sim.applier import StoredDocumentError, atomic, connection_owns_transaction, coerce_beyond_intent_flag, durable_int, load_stored_list, load_stored_object
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
@@ -6821,7 +6821,7 @@ def _write_fiscal_config_change(
     db.validate_fiscal_config_value(key, new_value)
     db.set_fiscal_config(key, new_value, commit=False)
     db.fiscal_config.set_origin(key, origin_ref)
-    db.record_fiscal_config_change(
+    db.fiscal_config.record_change(
         turn=turn, key=key, old_value=old_value, new_value=new_value,
         origin_ref=origin_ref, reason=reason, beyond_intent=beyond_intent,
     )
@@ -6837,7 +6837,7 @@ def neutralize_covert_fiscal_effects(
     """Undo one old case's beyond-intent fiscal contribution, once per live incarnation."""
     old_origin = f"dossier:{int(exposed_dossier_id)}"
     receipt_origin = f"dossier:{int(prohibition_dossier_id)}"
-    rows = db.list_fiscal_effects_for_dossier(int(exposed_dossier_id))
+    rows = db.fiscal_config.effects_for_dossier(int(exposed_dossier_id))
     raw_keys = {str(row.get("key") or "").strip() for row in rows if row.get("beyond_intent")}
     keys: set[str] = set()
     for raw_key in raw_keys:
@@ -6870,7 +6870,7 @@ def neutralize_covert_fiscal_effects(
         if (
             latest_create is not None and create_mark > remove_mark
             and str(latest_create["origin_ref"]) == old_origin
-            and bool(db.coerce_beyond_intent_flag(latest_create["beyond_intent"]))
+            and bool(coerce_beyond_intent_flag(latest_create["beyond_intent"]))
         ):
             if key != base_key:
                 continue
@@ -6884,7 +6884,7 @@ def neutralize_covert_fiscal_effects(
         contribution = 0
         for row in db.fiscal_config.changes_for(key, old_origin):
             mark = (int(row["turn"]), 2, int(row["id"]))
-            if mark > start and bool(db.coerce_beyond_intent_flag(row["beyond_intent"])):
+            if mark > start and bool(coerce_beyond_intent_flag(row["beyond_intent"])):
                 contribution += int(row["delta"])
         floor = db.fiscal_config_minimum_value(key) or 0
         new_value = max(int(floor), int(current) - max(0, contribution))
@@ -8441,7 +8441,7 @@ def _apply_score_extraction_body(
             continue
         for change in pair_changes:
             db.fiscal_config.set_origin(change["key"], change["origin_ref"])
-            db.record_fiscal_config_change(
+            db.fiscal_config.record_change(
                 turn=state.turn, key=str(change["key"]),
                 old_value=int(change["old"]), new_value=int(change["new"]),
                 origin_ref=str(change["origin_ref"]), reason=str(change["reason"]),

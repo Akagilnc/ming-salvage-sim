@@ -302,7 +302,7 @@ def test_draft_admission_resubmit_success_advances_month(admission_game, monkeyp
     wait_pending_writes(game)
     draft_id = _latest_directive_id(game)
     first_row = IssueStore(game.db.conn).directive(draft_id)
-    first = game.db.read_directive_dossier_payload(first_row)
+    first = game.db.issues.read_directive_dossier_payload(first_row)
     assert first.get("dossier_action_type") == "pay_order_override"
     assert any(
         isinstance(e, dict) and e.get("key") == "arrears_priority_军饷"
@@ -544,7 +544,7 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
     _post_directive(game, _DECREE_TEXT)
     wait_pending_writes(game)
     did = _latest_directive_id(game)
-    first = game.db.read_directive_dossier_payload(IssueStore(game.db.conn).directive(did))
+    first = game.db.issues.read_directive_dossier_payload(IssueStore(game.db.conn).directive(did))
     assert first.get("dossier_action_type") == "pay_order_override"
 
     _post_issue_stream(client, expected_turn=turn, step="1769 non-intent rewrite")
@@ -559,7 +559,7 @@ def test_resubmit_non_intent_keeps_original_payload_no_special_decree(
 
     row = IssueStore(game.db.conn).directive(did)
     assert row is not None and str(row["status"]) == "draft"
-    kept = game.db.read_directive_dossier_payload(row)
+    kept = game.db.issues.read_directive_dossier_payload(row)
     assert kept.get("dossier_action_type") == "pay_order_override"
     assert any(
         isinstance(e, dict) and e.get("key") == "arrears_priority_军饷"

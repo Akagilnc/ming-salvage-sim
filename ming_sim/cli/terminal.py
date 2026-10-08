@@ -489,7 +489,7 @@ def review_directives(session: GameSession) -> str:
                                 session.state.turn, statuses=("draft",),
                             ) if int(r["id"]) == target_id
                         )
-                        existing_payload = session.db.read_directive_dossier_payload(row)
+                        existing_payload = session.db.issues.read_directive_dossier_payload(row)
                         session.update_directive(
                             target_id,
                             new_text,

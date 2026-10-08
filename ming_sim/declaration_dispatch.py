@@ -1087,7 +1087,7 @@ def _attach_commission_staging_fields(
 ) -> None:
     """透传既有 staging 字段：assignee / participant_roster / due_turn。
 
-    字段可在交办顶层，或挂在 grant 对象内（与 stage_grant_allocation_candidate
+    字段可在交办顶层，或挂在 grant 对象内（与现役 grant 暂存
     kwargs 同口径）。期限单源＝due_turn；deadline_months / end_turn 仅作换算输入。
     """
     grant = item.get("grant") if isinstance(item.get("grant"), Mapping) else {}

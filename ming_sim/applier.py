@@ -1,7 +1,7 @@
 """结算落库统一拒收契约与事务边界（ADR 0008 S0 骨架）。
 
 契约住此模块；各 section 适配器将原地迁入（PR2）。
-公开类型：Provenance / RejectedItem / SectionResult / ApplyContext / RejectionCollector。
+公开类型：Provenance / RejectedItem / SectionResult / RejectionCollector。
 """
 
 from __future__ import annotations
@@ -98,6 +98,23 @@ def durable_float(
     if allow_nonfinite and value == float("inf"):
         return float(value)
     raise StoredDocumentError(f"{label} 损坏")
+
+
+def coerce_beyond_intent_flag(value: object) -> int:
+    """闭世界肯定识别器：仅契约内肯定表示 →1；缺席/否定/空/畸形一律 →0。
+
+    肯定：True / 非零 int·float / 肯定串集 {"1","true","yes","on","是","有","真"}。
+    开放兜底永不得回归——畸形输入不得捏造肯定标记（0072/0118 真相层）。
+    Durable beyond_intent 列的唯一归一；Store 与写口共用，不经 GameDB 反向依赖。
+    """
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return 1 if int(value) != 0 else 0
+    text = str(value).strip().lower()
+    return 1 if text in {"1", "true", "yes", "on", "是", "有", "真"} else 0
 
 
 def load_stored_json(raw: object, *, label: str, blank: object = None) -> object:
@@ -422,22 +439,6 @@ class SectionResult:
             rejected=self.rejected + other.rejected,
         )
 
-
-# ---------------------------------------------------------------------------
-# 决定 1：适配器入参上下文
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ApplyContext:
-    """适配器入参，持结算所需的全部外部依赖。
-
-    source 由调用方在调用前传入。
-    """
-
-    db: Any          # GameDB（不在 applier 层导入 GameDB 避免循环）
-    state: Any       # GameState
-    content: Any     # GameContent
-    source: Provenance
 
 
 # ---------------------------------------------------------------------------

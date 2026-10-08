@@ -157,33 +157,6 @@ def _materials_invocation_dir(db: Any, state: Any) -> Path:
     )
 
 
-class MaterialsRoot:
-    """Mutable live materials root shared by API tools and optional CLI cwd.
-
-    Independent of whether the concrete model declares ``materials_dir``.
-    """
-
-    __slots__ = ("_root",)
-
-    def __init__(self, root: Optional[Path | str] = "") -> None:
-        self._root = str(root or "")
-
-    @property
-    def root(self) -> str:
-        return self._root
-
-    def set(self, root: Optional[Path | str]) -> str:
-        previous = self._root
-        self._root = str(root or "")
-        return previous
-
-    def clear(self) -> str:
-        return self.set("")
-
-    def __call__(self) -> str:
-        return self._root
-
-
 def _empty_uuid_invocation_parent(path: Path) -> Optional[Path]:
     parent = path.parent
     name = parent.name
@@ -304,7 +277,7 @@ def material_tools(root: Any) -> list:
         value = root() if callable(root) else root
         text = str(value or "").strip()
         if not text:
-            # Empty/cleared MaterialsRoot must not resolve Path("") → CWD.
+            # Empty/cleared materials root must not resolve Path("") → CWD.
             raise ValueError("材料目录未就绪")
         return Path(text)
 

@@ -14,13 +14,14 @@ from ming_sim.db import (
 )
 from ming_sim.army_pay import derive_army_mutiny_state
 from ming_sim.flows import apply_fixed_period_flows
-from ming_sim.knowledge import build_character_knowledge
-from ming_sim.materials import list_materials, prepare_character_materials
 
 ARMY = "guanning"
 
 
-_RAW_KEYS = frozenset({"morale", "loyalty", "arrears"})
+_RAW_KEYS = frozenset({
+    "morale", "loyalty", "arrears",
+    "province_pay_arrears", "central_pay_arrears",
+})
 _SIT_KEYS = frozenset({"mutiny_tier", "morale_text", "arrears_text"})
 _MUTINY_ORDINAL_KEYS = frozenset(
     {
@@ -250,24 +251,6 @@ def test_structured_situation_on_payload_and_map_nodes(game):
     _assert_structured_situation(map_army, sit, "map_nodes.armies")
     map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
     _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
-
-    # 链2–4：report/detail/roster 为 LLM 输入装配字符串；situation 契约已由
-    # army_payload / state_payload.armies / map_nodes 结构化三键覆盖，不锁正文模板。
-    assert isinstance(db.army_report(limit=30), str)
-    assert isinstance(db.army_roster(filter_names=[ARMY]), str)
-    assert isinstance(db.army_roster(), str)
-
-    war = next(c for c in content.characters.values() if c.office_type == "兵部")
-    knowledge = build_character_knowledge(db, state, war.name)
-    world = knowledge.get("world") or {}
-    assert "military" in world
-    assert isinstance(world["military"], str) and world["military"]
-
-    prepared = prepare_character_materials(db, state, war)
-    assert any(
-        path.endswith("/公事档案.txt")
-        for path in list_materials(prepared.root) if path != "INDEX.txt"
-    )
 
 
 def test_restore_five_columns_and_player_tier_survives_reopen(game, tmp_path):

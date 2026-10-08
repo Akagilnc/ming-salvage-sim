@@ -131,7 +131,7 @@ def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
         content=content,
     )
     assert applied["fiscal_creates"] and not applied["fiscal_creates"][0].get("rejected"), applied
-    rows = db.list_fiscal_effects_for_dossier(did)
+    rows = db.fiscal_config.effects_for_dossier(did)
     create_rows = [r for r in rows if r.get("effect_kind") == "create"]
     assert {r["key"] for r in create_rows} == {"剿饷浮收_base", "剿饷浮收_rate"}
     assert all(r["beyond_intent"] is True for r in create_rows), create_rows
@@ -168,7 +168,7 @@ def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
         )
         assert out["fiscal_creates"] and not out["fiscal_creates"][0].get("rejected"), out
     neg_rows = [
-        r for r in db.list_fiscal_effects_for_dossier(did)
+        r for r in db.fiscal_config.effects_for_dossier(did)
         if r.get("effect_kind") == "create"
         and str(r.get("key") or "").endswith("_base")
         and any(str(r.get("key") or "").startswith(k) for k, _ in cases)
@@ -206,7 +206,7 @@ def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
     )
     assert applied["fiscal_changes"] and not applied["fiscal_changes"][0].get("rejected"), applied
     change_rows = [
-        r for r in db.list_fiscal_effects_for_dossier(did)
+        r for r in db.fiscal_config.effects_for_dossier(did)
         if r.get("effect_kind") == "change"
     ]
     assert change_rows and all(r["beyond_intent"] is True for r in change_rows), change_rows
@@ -232,7 +232,7 @@ def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
         )
         assert out["fiscal_changes"] and not out["fiscal_changes"][0].get("rejected"), out
     all_changes = [
-        r for r in db.list_fiscal_effects_for_dossier(did)
+        r for r in db.fiscal_config.effects_for_dossier(did)
         if r.get("effect_kind") == "change"
     ]
     # first is True; the three negatives are False
@@ -277,7 +277,7 @@ def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
         )
         assert out["fiscal_removes"] and not out["fiscal_removes"][0].get("rejected"), out
         tomb = [
-            r for r in db.list_fiscal_effects_for_dossier(did)
+            r for r in db.fiscal_config.effects_for_dossier(did)
             if r.get("effect_kind") == "remove" and str(r.get("key") or "").startswith(stem)
         ]
         assert tomb, stem
@@ -307,7 +307,7 @@ def test_s1_engine_grant_fiscal_create_stays_beyond_intent_zero(game):
         text="赏银月拨",
     )
     assert created
-    rows = db.list_fiscal_effects_for_dossier(did)
+    rows = db.fiscal_config.effects_for_dossier(did)
     create_rows = [r for r in rows if r.get("effect_kind") == "create"]
     assert create_rows
     assert all(r["beyond_intent"] is False for r in create_rows), create_rows
@@ -342,7 +342,7 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     # Zero beyond-flagged economy moves (foundation seed may add plain spend later)
     eco = db.reign.list_economy_moves_for_dossier(did)
     assert not any(bool(m.get("beyond_intent")) for m in eco), eco
-    fisc = db.list_fiscal_effects_for_dossier(did)
+    fisc = db.fiscal_config.effects_for_dossier(did)
     assert any(r.get("beyond_intent") is True for r in fisc), fisc
 
     # Single-source helpers

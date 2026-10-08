@@ -2,6 +2,8 @@
 
 from typing import Any, Mapping
 
+from ming_sim.applier import coerce_beyond_intent_flag
+
 from ming_sim.entities.column_write import checked_columns
 
 _COLUMNS = frozenset({
@@ -144,3 +146,35 @@ class FiscalConfigStore:
                 f"SELECT * FROM {table} WHERE origin_ref=? ORDER BY id", (origin,),
             ).fetchall()
         ]
+
+    def record_change(
+        self,
+        *,
+        turn: int,
+        key: str,
+        old_value: int,
+        new_value: int,
+        origin_ref: str,
+        reason: str = "",
+        beyond_intent: object = 0,
+    ) -> None:
+        """Append immutable provenance for a fiscal value change.
+
+        Caller owns the surrounding transaction so history and live config
+        never commit separately. beyond_intent uses sole durable coerce.
+        """
+        beyond_flag = coerce_beyond_intent_flag(beyond_intent)
+        self.append_history("change", {
+            "turn": int(turn), "key": key, "old_value": int(old_value),
+            "new_value": int(new_value), "delta": int(new_value) - int(old_value),
+            "origin_ref": origin_ref, "reason": reason, "beyond_intent": beyond_flag,
+        })
+
+    def effects_for_dossier(self, dossier_id: int) -> list[dict[str, object]]:
+        """History rows for one dossier origin; beyond_intent normalized to bool."""
+        origin = f"dossier:{int(dossier_id)}"
+        rows: list[dict[str, object]] = []
+        for item in self.effects(origin):
+            item["beyond_intent"] = bool(coerce_beyond_intent_flag(item.get("beyond_intent")))
+            rows.append(item)
+        return rows
