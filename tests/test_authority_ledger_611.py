@@ -1,4 +1,4 @@
-"""#611 authority ledger: production slot, projection, restore, revoke impression."""
+"""#611 authority ledger: production slot, projection, restore, revoke facts."""
 
 import pytest
 
@@ -61,8 +61,8 @@ def _revoke(db, state, content, authority_id, dossier):
 
 
 
-def test_production_path_grant_restore_revoke_impression_tracer(game):
-    """Real production-slot lifecycle: grant → judge → restore → revoke → restore."""
+def test_production_path_grant_restore_revoke_without_auto_grudge(game):
+    """Grant → restore → revoke keeps authority facts; no auto holder→emperor 结怨 (#1895)."""
     db, state, content = game
     holder = _minister(db)
     domain = "issue:清丈田亩"
@@ -138,12 +138,10 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert record["revoked"] is True
     assert record["revoked_turn"] == final_state.turn
 
-    edges = final.get_relation_edge_events(
+    # #1895 / J19: first revoke records only the revoke fact — no automatic 结怨.
+    assert final.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
-    )
-    assert len(edges) == 1
-    assert edges[0]["origin"].startswith(f"authority_revoke:{authority_id}")
-    assert not edges[0]["evidence"]
+    ) == []
 
     # Zero 0056 / 皇威 / faction cost on revoke.
     assert final_state.metrics == metrics_before
@@ -159,7 +157,7 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert gone["dossiers"][0]["held_authorities"] == []
     assert gone["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == []
 
-    # Idempotent already_revoked: no second edge, no revoked_turn rewrite.
+    # Idempotent already_revoked: no revoked_turn rewrite, still no auto edge.
     first_revoked_turn = record["revoked_turn"]
     again = issue_engine.apply_score_extraction(final, final_state, {
         "authority_changes": [{
@@ -171,9 +169,9 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert again["authority_changes"][0]["reason"] == "already_revoked"
     assert again["authority_changes"][0].get("rejected") is not True
     assert final.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
-    assert len(final.get_relation_edge_events(
+    assert final.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
-    )) == 1
+    ) == []
 
 
 def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
