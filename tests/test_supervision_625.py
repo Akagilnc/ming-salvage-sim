@@ -357,7 +357,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
     assert any(r["execution_form"] == "degraded" for r in exps)
 
 def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
-    """有在场事实时监督史非空；到期消费后执行格只跟实况账。"""
+    """有在场事实时监督史入复核输入；无模型终值时不机械替判关案。"""
     db, state, content = game
     owner, auditor_row = _pair_same_faction(db)
     subject_id = _subject_dossier(db, state, owner=str(owner["name"]), token="dr")
@@ -380,8 +380,10 @@ def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
         (int(state.turn) - 1,),
     )
     db.conn.commit()
+    # 监督史只供模型读；无 dossier_executions 终值时复核保留 pending，不代写 degraded
     applied = apply_pending_due_reviews(db, state, commit=True)
-    assert applied
+    assert applied and applied[0].get("consumed") is False
+    assert (applied[0].get("execution") or {}).get("waiting_model") is True
     dossier = db.get_decree_dossier(subject_id)
-    assert dossier["execution_outcome"] == "degraded"
-    assert dossier["status"] == "closed"
+    assert dossier["status"] == "executing"
+    assert dossier["execution_outcome"] in ("", None)
