@@ -14001,12 +14001,7 @@ class GameDB:
 
     @staticmethod
     def _affected_people_from_applied_rows(rows) -> set[str]:
-        """Canonical applied rows → formal person names (appointee + displaced).
-
-        Partial concurrent-office displacements live only on the row's displaced
-        list (full 听用候铨 displacements are also synthesized as cascade rows).
-        Used to report actual appointment changes, including partial displacements.
-        """
+        """Canonical applied rows → formal person names on the row itself."""
         names: set[str] = set()
         for item in rows or ():
             if not isinstance(item, dict) or item.get("rejected"):
@@ -14014,10 +14009,6 @@ class GameDB:
             person = str(item.get("name") or item.get("人物") or "").strip()
             if person:
                 names.add(person)
-            for part in item.get("displaced") or []:
-                displaced_name = str(part).split(":", 1)[0].strip()
-                if displaced_name:
-                    names.add(displaced_name)
         return names
 
     def _apply_military_order_office_effect(

@@ -5467,7 +5467,7 @@ def apply_office_appointment(
     """朝臣任命/调任的【唯一落地核】：在册且未死 → 改 active + 授官 + 顶替去重 + 同步内存；
     不在册 → apply_appointment 建新档。「人物变更」调任/任命与 CLI 自然语言任免 commit
     共用此核，杜绝两份会漂的 copy（CMR R2 reground）。
-    返回结果 dict（rejected / kind=transfer|appoint / displaced 等）。"""
+    返回结果 dict（rejected / kind=transfer|appoint 等）。"""
     name = str(name or "").strip()
     new_office = str(new_office or "").strip()
     if not name or not new_office:
@@ -5742,35 +5742,6 @@ def _apply_person_changes(
         if new_power == "ming" or way == "主动归附":
             return "归附"
         return "降臣"
-
-    def displaced_talent_pool_results(displaced_parts: object) -> List[Dict[str, object]]:
-        if not isinstance(displaced_parts, list):
-            return []
-        results: List[Dict[str, object]] = []
-        for part in displaced_parts:
-            name_part = str(part).split(":", 1)[0].strip()
-            if not name_part:
-                continue
-            row = character_row(name_part)
-            if row is None:
-                continue
-            if str(row["office"] or "") != "听用候铨" or str(row["reason_code"] or "") != "被顶替":
-                continue
-            results.append(
-                {
-                    "name": name_part,
-                    "动作": "处置",
-                    "status": "active",
-                    "reason": "被顶替",
-                    "reason_code": "被顶替",
-                    "office": "听用候铨",
-                    "office_type": "身名分",
-                    "derived_from": "被顶替",
-                    # applier 合成级联回声：信用写端只消费 extractor 宣告本体行。
-                    "cascade_echo": True,
-                }
-            )
-        return results
 
     applied: List[Dict[str, object]] = []
     needs_person_change_commit = False
@@ -6135,9 +6106,6 @@ def _apply_person_changes(
                 wrapped["normalized"] = f"{action}->{effective_action}"
             applied.append(wrapped)
             log_applied(wrapped, item, commit=False if derive_label else None)
-            for displacement_result in displaced_talent_pool_results(wrapped.get("displaced")):
-                applied.append(displacement_result)
-                log_applied(displacement_result, item, commit=False if derive_label else None)
             if derive_label and commit_person_change:
                 db.conn.commit()
             continue
@@ -8562,7 +8530,7 @@ def _apply_score_extraction_body(
             extracted.get("dossier_executions"), dossier_execution_results,
         ),
         # 人物变更 rejected 单一保护点（credit_events 不再二次滤）。
-        # cascade_echo：applier 合成级联回声（放归/被顶替等）在生产点打标，
+        # cascade_echo：applier 合成级联回声（放归/赦还等）在生产点打标，
         # 此处唯一滤除；禁在 credit_events 另设第二闸或盯 derived_from 文本。
         "人物变更": [
             r for r in applied_person_changes

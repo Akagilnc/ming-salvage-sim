@@ -486,10 +486,7 @@ def test_fresh_start_zero_llm_calls_disposes_old_main_db(tmp_path, monkeypatch):
         assert not db_path.exists() or db_path.read_bytes() != b"existing-progress"
         assert calls == [], f"fresh 构造不应触发 LLM 调用，实得 {calls}"
     finally:
-        try:
-            game.session.close()
-        except Exception:
-            pass
+        game.session.close()
 
 
 def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
@@ -546,10 +543,7 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
         assert archived_favorites == [preresolve_marker]
         assert after_begin_marker in json.loads(seed.db.kv_get("favorites"))
     finally:
-        try:
-            seed.session.close()
-        except Exception:
-            pass
+        seed.session.close()
 
     # continue：已有主库 fresh=False
     cont = web_app.WebGame(fresh=False)
@@ -576,10 +570,7 @@ def test_continue_load_save_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
 
         assert calls == [], f"continue/load_save 不应触发 LLM 调用，实得 {calls}"
     finally:
-        try:
-            cont.session.close()
-        except Exception:
-            pass
+        cont.session.close()
 
 
 

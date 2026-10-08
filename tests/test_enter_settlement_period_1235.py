@@ -46,11 +46,10 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
-    yield game
     try:
+        yield game
+    finally:
         game.session.close()
-    except Exception:
-        pass
 
 
 from tests.test_court_break_player_lock_1727 import _active_minister

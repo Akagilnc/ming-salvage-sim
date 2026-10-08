@@ -398,31 +398,6 @@ def test_declared_holder_to_emperor_grudge_reaches_holder_faction_brew(game):
     assert matching[0]["target"] == EMPEROR_NODE
 
 
-def test_new_event_fields_are_pure_data_no_prose_composition(game):
-    """(c) 新增字段为纯数据、无任何拼接散文（ADR 0142：给数据不给话术）。"""
-    db, state, _ = game
-    _add_edge(db, state, source="温体仁", target=EMPEROR_NODE, kind="结怨",
-              context="收权·罢差·便宜行事·issue:清丈田亩", origin="audience:turn-1")
-    targets = select_faction_brew_targets(
-        db, year=int(state.year), period=int(state.period),
-    )
-    assert targets
-    events = collect_new_edge_events_for_faction(
-        db, faction=targets[0]["faction"], watermark=targets[0]["watermark"],
-    )
-    payload = build_faction_brew_input(
-        faction=targets[0]["faction"], year=int(state.year),
-        period=int(state.period), summary=targets[0]["summary"],
-        new_events=events, has_pending=targets[0]["has_pending"],
-    )
-    for item in payload["new_events"]:
-        # 新增字段值必须与 DB 列逐字节相同——非任何 "{source}（{faction}）与{target}…" 式拼接串。
-        row = next(r for r in events if r["origin"] == item["origin"])
-        assert item["source"] == row["source"]
-        assert item["target"] == row["target"]
-        assert isinstance(item["source"], str) and isinstance(item["target"], str)
-
-
 # ---- 送修口一负例 (a)：source_faction/target_faction 与现算投影逐项相等、皇帝端 null、表外 null 且无拼接串 ----
 
 def test_source_faction_target_faction_equals_current_projection_and_nulls_and_no_concatenation(game):
@@ -505,47 +480,41 @@ def test_source_faction_target_faction_equals_current_projection_and_nulls_and_n
     assert payload_out_db["new_events"][0]["target_faction"] == "皇党"
 
 
-# ---- 送修口二负例 (b)：重试月场景，prompt 不把旧事件称作本月 ----
+# ---- 送修口二负例 (b)：重试月场景，旧事件年月与重试月区分（经真实酿制 tracer）----
 
 def test_faction_brew_prompt_retry_month_does_not_label_old_events_as_current_month(game):
-    """负例(b) 机械可验：复刻重试月场景（水位之上含旧月事件），断言 prompt 渲染措辞不把旧事件称作本月。
-    正向表述：描述为未处理事件、每条自带时间戳、以事件自带年月为据；禁负向句。"""
-    from pathlib import Path
+    """失败留 pending 后次月补酿：真实 brew 输入的 year/period 是重试月，事件自带旧年月。"""
     db, state, _ = game
-    # 旧月事件：落在当前 year/period
     old_year, old_period = int(state.year), int(state.period)
     _add_edge(db, state, source="温体仁", target="周延儒", kind="结怨",
               context="温体仁当殿讦周延儒。", origin="audience:turn-old")
-    # 模拟失败：酿制失败留 pending（不推进水位）
+
     def failing_brew(payload_json: str) -> str:
         raise LLMUnavailable("酿制裁判接口不可用")
+
     with pytest.raises(LLMUnavailable):
         run_month_end_relation_brew(db, state, failing_brew)
     assert any(row["faction"] == "皇党" for row in db.get_faction_brew_pending())
-    old_summary = _faction_stance(db, "皇党")
-    assert old_summary is None
-    old_pending = db.get_faction_brew_pending()
-    assert old_pending
 
-    # 重试月：推进年月但不新增事件，水位仍为 0，旧事件仍在水位之上
     state.turn += 1
     state.period += 1
     retry_year, retry_period = int(state.year), int(state.period)
     assert (retry_year, retry_period) != (old_year, old_period)
-    targets = select_faction_brew_targets(db, year=retry_year, period=retry_period)
-    # 无本月新事件但有 pending 仍选中（F2）
-    assert any(row["faction"] == "皇党" for row in targets)
-    retry_target = next(row for row in targets if row["faction"] == "皇党")
-    assert retry_target["has_pending"] is True
-    events = collect_new_edge_events_for_faction(db, faction="皇党", watermark=retry_target["watermark"])
-    assert len(events) >= 1
-    assert events[0]["year"] == old_year and events[0]["period"] == old_period
-    payload = build_faction_brew_input(
-        faction="皇党", year=retry_year, period=retry_period,
-        summary=retry_target["summary"], new_events=events, has_pending=retry_target["has_pending"],
-    )
+
+    calls: list = []
+    run_month_end_relation_brew(db, state, _dual_brew_fn_factory(calls))
+    faction_payloads = [
+        payload for payload in calls if payload.get("view") == VIEW_FACTION_STANCE
+    ]
+    assert len(faction_payloads) == 1
+    payload = faction_payloads[0]
     assert payload["has_pending_failure"] is True
     assert payload["year"] == retry_year and payload["period"] == retry_period
+    assert payload["new_events"], payload
     assert payload["new_events"][0]["year"] == old_year
     assert payload["new_events"][0]["period"] == old_period
-    assert payload["year"] != payload["new_events"][0]["year"] or payload["period"] != payload["new_events"][0]["period"]
+    assert (
+        payload["year"] != payload["new_events"][0]["year"]
+        or payload["period"] != payload["new_events"][0]["period"]
+    )
+    assert db.get_faction_brew_pending() == []

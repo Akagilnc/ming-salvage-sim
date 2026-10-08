@@ -122,10 +122,7 @@ def admission_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     try:
         yield game
     finally:
-        try:
-            game.session.close()
-        except Exception:
-            pass
+        game.session.close()
 
 
 def _queue_backend(monkeypatch, captures: list) -> None:
@@ -424,10 +421,7 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
             for d in restored.db.list_decree_dossiers()
         )
     finally:
-        try:
-            restored.session.close()
-        except Exception:
-            pass
+        restored.session.close()
 
 
 def test_draft_admission_mixed_good_and_bad_independent(admission_game, monkeypatch):

@@ -627,11 +627,10 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     # #544 / #1353 r6：高亮判官 LLM 边界离线中和，禁 sk-test 真网。
     monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
     game = web_app.WebGame(fresh=False)
-    yield game
     try:
+        yield game
+    finally:
         game.session.close()
-    except Exception:
-        pass
 
 
 def test_start_chat_turn_second_turn_reads_agno_v3_runs(web_game):

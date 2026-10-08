@@ -371,7 +371,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
 
 
 def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
-    """丢卒保车两笔；包庇→撑腰；查办→不记；级联回声（放归/被顶替）不计。"""
+    """丢卒保车两笔；包庇→撑腰；查办→不记；级联回声（放归）不计。"""
     db, state, content = game
 
     roster = _SCAPEGOAT_ROSTER()
@@ -498,79 +498,6 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
     ]
     assert sg_rel == [], "放归级联回声不得写弃卒保车边"
     assert len(_credit_edges(db, event_kind=KIND_SCAPEGOAT)) == before_sg_rel
-
-    # ── 被顶替人才池回声：接任顶出局 → 对被顶替者零 cover/撑腰边 ──
-    # 回声行 {处置, status:active} 若混入会被 _is_cover_change 误归包庇。
-    displaced_host = "黄道周"
-    successor = "刘鸿训"
-    target_office = "信用回声试总督"
-    did_disp = _transformed_dossier(
-        db, state, token="displace-echo-628",
-        roster=[{"character_id": displaced_host, "tier": "主办", "role": "承办"}],
-    )
-    old_disp = (
-        content.characters[displaced_host].status,
-        content.characters[displaced_host].office,
-        content.characters[displaced_host].office_type,
-    )
-    old_succ = (
-        content.characters[successor].status,
-        content.characters[successor].office,
-        content.characters[successor].office_type,
-    )
-    try:
-        # 新正形：地方在任须有 character_offices.region_id，与接任同 seat 才互挤。
-        db.conn.execute(
-            "UPDATE characters SET status='active', office=?, office_type=? WHERE name=?",
-            (target_office, "地方", displaced_host),
-        )
-        db._record_character_office(
-            displaced_host, target_office, "地方", "test-fixture", region_id="shaanxi",
-        )
-        db.conn.commit()
-        content.characters[displaced_host].status = "active"
-        content.characters[displaced_host].office = target_office
-        content.characters[displaced_host].office_type = "地方"
-        content.characters[displaced_host].office_region = "shaanxi"
-        before_back_disp = [
-            e for e in _credit_edges(db, event_kind=KIND_BACK, target=displaced_host)
-            if f"dossier:{did_disp}:credit:cover" in str(e["origin"])
-        ]
-        disp_out = apply_score_extraction(
-            db, state,
-            {"人物变更": [{
-                "name": successor, "动作": "任命",
-                "office": target_office, "office_type": "地方",
-                "region_id": "shaanxi",
-                "reason": "另简接任",
-                "origin_ref": f"dossier:{did_disp}",
-            }]},
-            content=content,
-        )
-        pcs_disp = disp_out.get("applied_person_changes") or []
-        assert any(
-            isinstance(r, dict)
-            and r.get("cascade_echo")
-            and r.get("name") == displaced_host
-            and r.get("derived_from") == "被顶替"
-            for r in pcs_disp
-        ), "被顶替回声须在生产点打 cascade_echo"
-        cover_disp = [
-            e for e in _credit_edges(db, event_kind=KIND_BACK, target=displaced_host)
-            if f"dossier:{did_disp}:credit:cover" in str(e["origin"])
-        ]
-        assert cover_disp == before_back_disp, "被顶替回声不得写 cover/撑腰边"
-    finally:
-        (
-            content.characters[displaced_host].status,
-            content.characters[displaced_host].office,
-            content.characters[displaced_host].office_type,
-        ) = old_disp
-        (
-            content.characters[successor].status,
-            content.characters[successor].office,
-            content.characters[successor].office_type,
-        ) = old_succ
 
 
 # ── ④ 幂等 + 叙事语境 + restore + 只写不读 ────────────────────────

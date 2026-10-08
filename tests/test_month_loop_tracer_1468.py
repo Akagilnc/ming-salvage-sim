@@ -29,8 +29,14 @@ from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pen
 # ── outermost LLM seams only ─────────────────────────────────────────────
 
 def _stub_outer_llm_seams(monkeypatch) -> None:
-    """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由全真跑。"""
+    """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由、月尾 writer 全真跑。
+
+    现役关系／派系酿制外部模型出口一并纳入：复用 deterministic brew 手，不改生产
+    ``load_runtime_llm() == {}`` 配置语义，也不截月尾／queue／持久化。
+    """
     from tests.month_chain_helpers import empty_rescript_response
+    from tests.test_faction_brew_637 import _dual_brew_fn_factory
+
     monkeypatch.setattr("ming_sim.rescript_draft.run_rescript_text", empty_rescript_response)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     # #642：召对/收夜关系判官同属外层 LLM 缝——漏 stub 会在有 window 时真网挂起，
@@ -81,6 +87,12 @@ def _stub_outer_llm_seams(monkeypatch) -> None:
             "forecast_text": "边饷已核",
             "visible_refs": {},
         },
+    )
+    # 月尾关系／派系酿制：隔离外部 brew 模型出口，保留 mechanical_tail 真路径。
+    offline_brew = _dual_brew_fn_factory([])
+    monkeypatch.setattr(
+        "ming_sim.mechanical_tail._brew_fn_for_session",
+        lambda _session: offline_brew,
     )
 
 

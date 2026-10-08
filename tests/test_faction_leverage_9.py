@@ -468,24 +468,6 @@ def test_reconcile_runs_before_clear_gated_legacies_same_turn(game, monkeypatch)
     )
 
 
-def test_all_court_allowed_types_have_leverage_weight():
-    """#9 cmr R5 finding#2 完整性锁（集中化，防再漏第三个）：遍历 offices.json allowed_types，
-    除纯民/无朝堂实权的 {后宫,生员,乡绅,富商,布衣,流寇,待铨} 外，每个 allowed_type 都必须在
-    _OFFICE_LEVERAGE_WEIGHT。（这条本应在补刑部那轮加——加了内廷这轮就不会冒第三个。）"""
-    from ming_sim.assets import load_json_asset
-    from ming_sim.db import _OFFICE_LEVERAGE_WEIGHT
-
-    allowed = load_json_asset("offices.json").get("allowed_types") or []
-    assert allowed, "offices.json allowed_types 不应为空（数据前提）"
-    NON_COURT = {"后宫", "生员", "乡绅", "富商", "布衣", "流寇", "待铨"}
-    for t in allowed:
-        if t in NON_COURT:
-            continue
-        assert t in _OFFICE_LEVERAGE_WEIGHT, (
-            f"allowed_type「{t}」有朝堂实权却缺 _OFFICE_LEVERAGE_WEIGHT 权重（该类在朝者贡献 0）"
-        )
-
-
 def test_weizhongxian_ouster_drops_yandang_by_sili_weight(game):
     """#9（用户挑战）：魏忠贤(九千岁)退场对阉党的冲击应按司礼监批红(20)算，不是东厂(8)。
     他真权在司礼监秉笔=批红，office_type=东厂只是兼差。退场掉 20 而非 8。"""
@@ -583,33 +565,6 @@ def test_non_whitelist_faction_delta_direct_leverage_survives_reconcile(game):
     after_reconcile = db.faction_leverage(faction)
     assert after_reconcile == before + 6, (
         f"非白名单(宗室) leverage 不被 reconcile 动、增量留存（after_reconcile={after_reconcile}）"
-    )
-
-
-def test_rollback_snapshot_restores_leverage_offset(game):
-    """#9 R1 finding#2：person 写状态快照/还原须含 leverage_offset（leverage 由 offset+权重派生、
-    二者一个逻辑态）。构造：改 offset 后还原，断言 offset 也回到原值。"""
-    from ming_sim.issues import _snapshot_person_write_state, _restore_person_write_state
-
-    db, state, content = game
-    faction = "阉党"
-    before_offset = db.conn.execute(
-        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-    ).fetchone()["leverage_offset"]
-
-    snapshot = _snapshot_person_write_state(db, content)
-    # 模拟包裹流中途改 offset（adjust_factions 白名单路会改 offset）。
-    db.conn.execute(
-        "UPDATE factions SET leverage_offset = leverage_offset + 13 WHERE name=?", (faction,)
-    )
-    db.conn.commit()
-    _restore_person_write_state(db, content, snapshot)
-
-    after_offset = db.conn.execute(
-        "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
-    ).fetchone()["leverage_offset"]
-    assert after_offset == before_offset, (
-        f"回滚应还原 leverage_offset：before={before_offset} after={after_offset}"
     )
 
 

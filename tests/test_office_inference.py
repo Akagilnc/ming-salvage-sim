@@ -215,10 +215,7 @@ def test_fresh_gamesession_start_makes_no_backend_calls(tmp_path, monkeypatch):
         sess.begin_turn()  # 再跑一回合：sync 路径每回合复跑，确认仍零调用
         assert calls == [], f"开局全路径不应调 CLI 后端，实调 {len(calls)} 次：{calls[:3]}"
     finally:
-        try:
-            sess.close()
-        except Exception:
-            pass
+        sess.close()
 
 
 def test_sync_preserves_persisted_court_office_type_on_table_miss(tmp_path):
