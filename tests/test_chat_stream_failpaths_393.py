@@ -600,7 +600,7 @@ def _provider_http_error_agent(status: int | None, message: str, *, http_hits: d
     return Agent(model=model, markdown=False)
 
 
-def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, web_game, tmp_path):
+def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, web_game):
     """#1452 B / #1465：真实 web 流入口——无 typed status 的 RunErrorEvent
     → 一次不重试、系统层 typed 终失败、provider_message 保真。"""
     agent = _RunErrorAgent()
@@ -632,7 +632,7 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, web_
 
 
 
-def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, web_game, tmp_path):
+def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, web_game):
     """#1465 ① / #1792：三次瞬断耗尽 → 系统层终失败文案与现行一致、夜不封；
     总耗时含两段 retry_interval（受控时钟）；随后可重发并读回夜/轮状态。
     """
@@ -714,7 +714,7 @@ def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypat
     assert str(ok_row["status"]) != "failed"
 
 
-def test_chat_stream_provider_5xx_retries_status_preserved(monkeypatch, web_game, tmp_path):
+def test_chat_stream_provider_5xx_retries_status_preserved(monkeypatch, web_game):
     """#1780：召对真实入口，提供方 HTTP 500 经 ModelProviderError 事件界保真。
 
     耗尽后 SSE transport_attempts 3 条、status_code=500。禁止 agent.run 抛 LLMUnavailable。
@@ -742,7 +742,7 @@ def test_chat_stream_provider_5xx_retries_status_preserved(monkeypatch, web_game
     assert http_hits["n"] == max_a
 
 
-def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, web_game, tmp_path):
+def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, web_game):
     """#1465 ① / #1780 / #1792：确定性 4xx → 提供方层一次不重试、无间隔等待、typed status 保真。"""
     import ming_sim.llm_transport as transport_mod
 
@@ -770,7 +770,7 @@ def test_chat_stream_deterministic_4xx_no_retry(monkeypatch, web_game, tmp_path)
     assert detail.get("message")
 
 
-def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, web_game, tmp_path):
+def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, web_game):
     """#1780：ModelProviderError 默认 502（无提供方 HTTP typed status）不得洗成 5xx。
 
     连接层断 → 事件界无 typed status → 一次 terminal，不成 llm_http_502、不重试。
@@ -794,7 +794,7 @@ def test_chat_stream_provider_default_502_not_washed_to_retryable(monkeypatch, w
     assert attempts[0].get("outcome") == "terminal_fail"
 
 
-def test_chat_stream_typed_429_preserved(monkeypatch, web_game, tmp_path):
+def test_chat_stream_typed_429_preserved(monkeypatch, web_game):
     """#1465 ① / #1750 phase0 §3：typed 429 经统一层保真 status/code/原因/次数。
 
     复用边界：本片验证召对 HTTP SSE 入口的 typed 字段透传（_llm_error_detail 键）。
@@ -932,7 +932,7 @@ def test_chat_stream_idle_budget_independent_per_attempt(monkeypatch, web_game, 
     assert int(done.get("minister_message_id") or 0) > 0
 
 
-def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, web_game, tmp_path):
+def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, web_game):
     """#1465 半流选项 1：首 attempt 已出部分 delta 后瞬断 → 重试成功
 
     事件序列：content delta → replace delta → content delta → done。
@@ -1003,9 +1003,7 @@ def test_chat_stream_halfstream_retry_replaces_temp_presentation(monkeypatch, we
     assert int(done.get("minister_message_id") or 0) > 0
 
 
-def test_chat_stream_halfstream_terminal_fail_replaces_temp(
-    monkeypatch, web_game, tmp_path,
-):
+def test_chat_stream_halfstream_terminal_fail_replaces_temp(monkeypatch, web_game):
     """#1465 ④：半流已出 delta 后终失败 → content → replace → error；重放临时正文空。
 
     恢复/重发由 three_transient 案承担；系统层 typed 由 RunErrorEvent 案承担。

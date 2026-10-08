@@ -127,9 +127,7 @@ def _cli_web_game(web_game, monkeypatch, *, backend: str = "claude"):
     return web_game, minister
 
 
-def test_cli_chat_stream_two_transient_then_success_three_attempts(
-    monkeypatch, web_game, tmp_path, game,
-):
+def test_cli_chat_stream_two_transient_then_success_three_attempts(monkeypatch, web_game, tmp_path):
     """①瞬断两次后第三次成功：CLI runner 与 API 同一 transport 次数账。
 
     注入 = 前两次子进程 rc=0 空输出（可重试 typed 空输出），第三次正常出文。
@@ -156,9 +154,7 @@ def test_cli_chat_stream_two_transient_then_success_three_attempts(
     assert int(done.get("minister_message_id") or 0) > 0
 
 
-def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_resend(
-    monkeypatch, web_game, tmp_path, game,
-):
+def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_resend(monkeypatch, web_game, tmp_path):
     """②三次瞬断耗尽 → 系统层终失败呈现、夜不封、可重发。
 
     #1847 N10：注入改用宿主空输出（可重试 typed），不扫正文认证词表。
@@ -232,7 +228,10 @@ def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, web_game, 
     ids=["empty_stdout", "nonempty_stdout"],
 )
 def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
-    monkeypatch, web_game, tmp_path, game, stdout,
+    monkeypatch,
+    web_game,
+    tmp_path,
+    stdout,
 ):
     """prompt 没写进 stdin = IO 错，须响亮确定性失败一次，不洗成空输出瞬断重试。
 
@@ -295,9 +294,7 @@ def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, web_game, t
     assert int(done.get("minister_message_id") or 0) > 0
 
 
-def test_cli_process_idle_over_budget_dies_then_retry_succeeds(
-    monkeypatch, web_game, tmp_path, game,
-):
+def test_cli_process_idle_over_budget_dies_then_retry_succeeds(monkeypatch, web_game, tmp_path):
     """⑤静默超阈值判死并重试；每 attempt 独立整份 idle 预算（受控时钟）。
 
     对照：完全无字节超 idle 仍判死可重试；无换行字节持续到达（间隔 < idle、
