@@ -17,7 +17,7 @@ from ming_sim.applier import Provenance, RejectedItem
 from ming_sim.settlement.outcome import IssueSectionResult
 from ming_sim.db import GameDB
 from ming_sim.entities.metric.apply import declare_metric_pairs
-from ming_sim.flows import _strict_int
+from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.models import GameState, effect_dict_has_work, loads_effect_dict
 
 def apply_issue_tracker_output(

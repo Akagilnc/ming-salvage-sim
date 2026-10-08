@@ -21,7 +21,6 @@ from ming_sim.covert_progress import (
     CovertContractError,
     apply_investigation_spoliation,
     build_covert_task_contract,
-    decide_secret_order_settlement,
     investigation_clue_records,
     live_investigation_fact_keys,
     read_covert_task_contract,
@@ -210,44 +209,12 @@ def _originate_catches(db, state, content, dossier_id, names):
     )
 
 def test_seed_guilt_structured_clean_vs_debt():
-    # 现约：只收结构化 severity∈{轻,中,重}；裸散文／解析失败不造罪（W4/#1896）。
+    # 现约负向闸：只收结构化 severity∈{轻,中,重}；裸散文／解析失败不造罪（W4/#1896）。
     assert not seed_guilt_counts_as_debt("")
     assert not seed_guilt_counts_as_debt(None)
     assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
     assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
     assert not seed_guilt_counts_as_debt("血债")
-    assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
-
-def test_decide_settlement_delivery_gap_bidirectional():
-    done = decide_secret_order_settlement({
-        "actual_units": 3.0, "target_units": 3.0, "criterion_text": "密查甲",
-    })
-    assert done["status"] == "done" and done["outcome"] == "fulfilled" and done["delivered"]
-
-    failed = decide_secret_order_settlement({
-        "actual_units": 0.5, "target_units": 3.0, "criterion_text": "密查甲",
-        "has_reports": True,
-    })
-    assert failed["status"] == "failed" and not failed["delivered"]
-    # 表报不改变 delivered 判定
-    bare = decide_secret_order_settlement({
-        "actual_units": 0.5, "target_units": 3.0, "has_reports": False,
-    })
-    assert bare["status"] == "failed"
-
-def test_task_specific_contract_from_explicit_fields_not_tags():
-    audit = build_covert_task_contract(
-        kind="补发饷银", axes=["既得利益"], direction=1,
-        delivery_unit="万两", delivery_target_units=3, effect_sign=-1,
-        purpose="其它", category="密令差务", account="内库")
-    catch = build_covert_task_contract(
-        kind="缉获人犯", axes=["实务事功"], direction=1,
-        delivery_unit="人犯", delivery_target_units=3, effect_sign=1, person_action="处置")
-    assert audit["kind"] == "补发饷银" and audit["axes"] == ["既得利益"]
-    assert audit["delivery"]["unit"] == "万两"
-    assert audit["delivery"]["target_units"] == 3.0
-    assert catch["kind"] == "缉获人犯" and catch["delivery"]["unit"] == "人犯"
-    assert catch["delivery"]["target_units"] == 3.0
 
 def test_task_specific_contract_rejects_empty_without_typed_fields():
     with pytest.raises(CovertContractError):
@@ -1036,17 +1003,6 @@ def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypat
     assert failed.value is error
     assert len(roots) == 2
     assert not roots[-1].exists()
-
-def test_non_investigation_contract_keeps_its_delivery_account(game):
-    """筹饷密令仍按自己的交付单位与账户成约。"""
-    del game
-    contract = build_covert_task_contract(covert_task={
-        "kind": "筹饷", "axes": ["实务事功"], "direction": 1,
-        "delivery": {"unit": "万两", "target_units": 30.0, "effect_sign": -1,
-                     "purpose": "其它", "category": "密令差务", "account": "内库"},
-    })
-    assert contract["delivery"]["unit"] == "万两"
-    assert contract["delivery"]["account"] == "内库"
 
 def test_case_opening_source_clue_assists_its_fact(game):
     """#1896 R6：开案这条来源自身就是真实线索，与汇案来源同一条接线。

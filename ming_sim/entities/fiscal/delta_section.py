@@ -13,7 +13,7 @@ from __future__ import annotations
 from ming_sim.applier import RejectedItem
 
 from typing import Any, Dict, List, Tuple
-from ming_sim.flows import _strict_int
+from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.token_stats import tlog
 
 from ming_sim.applier import SectionResult

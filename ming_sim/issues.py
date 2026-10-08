@@ -38,10 +38,8 @@ from ming_sim.exceptions import SettlementAbort
 from ming_sim.entities.metric.apply import (
     ISSUE_METRIC_KEYS,
 )
-from ming_sim.flows import (
-    ISSUE_METRIC_LOCK_CAPS,
-    _strict_int,
-)
+from ming_sim.flows import ISSUE_METRIC_LOCK_CAPS
+from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.models import Event, GameState, effect_dict_has_work, loads_effect_dict
 from ming_sim.participant_roster import project_execution_liability_parties
 from ming_sim.entities.character.normalize import normalize_person_changes

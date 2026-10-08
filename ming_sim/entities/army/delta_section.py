@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 from ming_sim.applier import SectionResult
 from ming_sim.constants import ARMY_FIELD_ALIASES
-from ming_sim.flows import _strict_int
+from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.db import latched_army_field_effect_permitted
 from ming_sim.settlement.preflight import _effect_event_ids
 

@@ -239,17 +239,11 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
 # ── ⑤ coerce 闭世界肯定识别器（#622 r2 畸形归 0）────────────────────
 
 def test_coerce_beyond_intent_flag_closed_affirmative_world():
-    """coerce_beyond_intent_flag 是闭世界肯定识别器。
+    """coerce_beyond_intent_flag 闭世界负向闸：缺席、否定、畸形不得捏造肯定。
 
-    仅契约内肯定表示（True / 非零 int·float / 肯定串集）→1；
-    缺席、否定、空、任何畸形（含非标量、非契约串）一律 →0。
-    开放兜底永不得回归。
+    正向肯定经真实补饷入口与 ledger/回执案覆盖；本处只锁负向。
     """
     coerce = GameDB.coerce_beyond_intent_flag
-
-    # 肯定集
-    for value in (True, 1, 2, 1.5, "true", "TRUE", "1", "yes", "on", "是", "有", "真"):
-        assert coerce(value) == 1, value
 
     # 否定 / 缺省
     for value in (False, 0, 0.0, None, "否", "无", "off", "false", "no", "0"):

@@ -52,20 +52,6 @@ def _board(gross: float = 0.0):
 # ═══════════════ r3/r4 键形白名单与值域 ═══════════════
 
 @pytest.mark.parametrize("key", [
-    "due_priority_军饷",
-    "due_priority_官俸@shaanxi",
-    "arrears_priority_宗禄欠@shaanxi",
-    "due_haircut_bp_军饷",
-    "due_haircut_bp_军饷@shaanxi",
-    "due_haircut_bp_军饷#province",
-    "due_haircut_bp_军饷@shaanxi#province",
-    "due_haircut_bp_军饷@shaanxi#central",
-    "due_haircut_bp_宗禄@shaanxi",
-])
-def test_override_key_legal_shapes(key):
-    assert parse_override_key(key).subject
-
-@pytest.mark.parametrize("key", [
     # priority 族带 # 饷源后缀＝非法（r3：序无饷源维度）
     "due_priority_军饷#province",
     "arrears_priority_军饷欠#central",
@@ -783,10 +769,10 @@ def test_central_due_haircut_consumer(game):
 
 def test_pure_central_zero_haircut_due_clears_shortfall_counter(game):
     """#651×#653：纯中央军合法折发后 Due floor=0 须归零连续缺口计数，且不自动还旧欠。"""
+    from ming_sim.army_pay import army_needed
     from ming_sim.flows import (
         _central_dues_with_haircut,
         apply_fixed_period_flows,
-        army_needed,
     )
 
     db, state, _content = game

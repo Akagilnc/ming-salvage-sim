@@ -10,25 +10,19 @@ import math
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from ming_sim.army_pay import (
-    derive_army_mutiny_state,
     ARMY_SALARY_PRIORITY,
-    _auto_pay_arrears_by_priority,
     _clear_zero_manpower_mutiny_latch,
     _maybe_third_strike_defect,
-    _pay_single_army_arrears,
-    _payable_army_arrears_cap,
     army_needed,
     settle_hub_army_loyalty_tick,
     settle_hub_central_army_pay,
 )
-from ming_sim.entities.metric.apply import ISSUE_METRIC_KEYS
 from ming_sim.assets import format_wanliang_amount
 from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import GameState
-from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.token_stats import tlog
 
 

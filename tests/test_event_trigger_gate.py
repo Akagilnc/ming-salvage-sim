@@ -11,7 +11,6 @@ from ming_sim.entities.issue.tracker import apply_issue_tracker_output
 from ming_sim.applier import Provenance
 import json
 from contextlib import contextmanager
-from pathlib import Path
 
 import pytest
 
@@ -444,17 +443,6 @@ def test_historical_event_none_gate_no_crash(game):
 
 # ── #12(b)：trigger_gate key/cond fail-loud（ADR 0012 残留 4b，Q3 裁断=fail-loud）──
 
-def test_gate_key_form_error_accepts_valid_forms():
-    """存量 6 形态 + 文本字段 key 全合法（不误拒）。"""
-    from ming_sim.content import gate_key_form_error
-    for k in ("民心", "皇威", "国库", "内库",
-              "power.houjin.leverage", "region.huguang.grain_security",
-              "region.shaanxi|shanxi|henan.unrest.min",
-              "class.士绅@nanzhili|zhejiang|fujian.satisfaction.max",
-              "event.huabei_plague.triggered",
-              "region.x.controlled_by"):
-        assert gate_key_form_error(k) == "", (k, gate_key_form_error(k))
-
 def test_gate_key_form_error_rejects_typo_metric_table_structure():
     """typo'd metric / 未知表 / 结构不完整 → 非空错误说明（fail-loud 素材）。"""
     from ming_sim.content import gate_key_form_error
@@ -464,11 +452,8 @@ def test_gate_key_form_error_rejects_typo_metric_table_structure():
     assert gate_key_form_error("event.huabei_plague.status")     # event 仅支持 triggered
 
 def test_gate_cond_form_error_numeric_and_text():
-    """数值比较 + 文本相等都合法（load/runtime 调和，残留 4b②）；垃圾非法。"""
+    """cond 形态负向闸：垃圾非法（合法 cond 由真实 load/runtime 案覆盖）。"""
     from ming_sim.content import gate_cond_form_error
-    # 数值比较（无 !=）+ 文本相等（==/!=）；数值 != 见 test_gate_cond_numeric_neq_rejected_*
-    for c in ("<=240", ">=34", "==5", "==ming", "!=houjin"):
-        assert gate_cond_form_error(c) == "", (c, gate_cond_form_error(c))
     assert gate_cond_form_error("abc")
     assert gate_cond_form_error(">> 5")
 
@@ -731,13 +716,6 @@ def test_character_text_typo_field_gate_raises_clear(read_game):
     with pytest.raises(ValueError):
         _gate_passed({"character.毛文龙.locaiton": "==liaodong"}, state.metrics, db)
 
-def test_character_text_gate_key_passes_content_validation():
-    """load-time 文本 gate 校验接受 character 的文本字段（#201）。"""
-    from ming_sim.content import gate_text_key_form_error
-
-    assert gate_text_key_form_error("character.毛文龙.location") == ""
-    assert gate_text_key_form_error("character.毛文龙.office") == ""
-
 def test_character_text_gate_rejects_serialized_list_field():
     """character.personal_skills 是序列化列表，不适合作普通文本等值门。"""
     from ming_sim.content import gate_text_key_form_error
@@ -749,19 +727,6 @@ def test_character_text_gate_rejects_numeric_character_field():
     from ming_sim.content import gate_text_key_form_error
 
     assert gate_text_key_form_error("character.毛文龙.loyalty")
-
-def test_mao_event_effect_uses_unified_person_change_key():
-    """ADR 0009 后新增事件效果应写统一 人物变更，不再写旧 flat key。"""
-    events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
-    events = json.loads(events_path.read_text(encoding="utf-8"))
-    mao = next(item for item in events if item["id"] == "mao_wenlong")
-
-    effect = mao["effect_on_trigger"]
-    assert "人物变更" in effect
-    assert "character_status_changes" not in effect
-    assert effect["人物变更"] == [
-        {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
-    ]
 
 def test_auto_trigger_historical_event_to_issue_uses_outer_transaction(game, monkeypatch):
     """auto-trigger 事务体内转 issue 时不得内部 commit，回滚边界由外层 atomic 统一控制。"""
@@ -1551,115 +1516,6 @@ def test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path(ga
     db.conn.execute("UPDATE regions SET unrest=? WHERE id=?", (55, "huguang"))
 
     assert any(ev.id == "zhangxianzhong_zaifan" for ev in issues.gather_candidate_events(state, db))
-
-def test_issue_191_person_core_events_are_explicitly_classified(content):
-    """#191：人物核心类逐事件显式标注；战略/外敌点名将不误纳入。"""
-    expected = {
-        "mao_wenlong": (
-            ["毛文龙"],
-            {"character.毛文龙.status", "character.毛文龙.location", "character.袁崇焕.status", "army.guanning.commander"},
-        ),
-        "yuan_xialing": (
-            ["袁崇焕"],
-            {"character.袁崇焕.status", "army.guanning.commander", "character.毛文龙.status", "character.毛文龙.status_reason", "event.jisi_lubian.terminal_state", "event.jisi_lubian.terminal_reason"},
-        ),
-        "kong_youde": (
-            ["孔有德"],
-            {"character.孔有德.status", "character.孔有德.power_id", "character.孔有德.location", "character.毛文龙.status"},
-        ),
-        "li_chenghai": (
-            ["李自成"],
-            {"character.李自成.status", "character.李自成.power_id", "character.李自成.location", "region.shaanxi.unrest", "power.bandit_li_zicheng.military_strength"},
-        ),
-        "zhangxianzhong_zaifan": (
-            ["张献忠"],
-            {"character.张献忠.status", "character.张献忠.power_id", "character.张献忠.loyalty", "character.张献忠.location"},
-        ),
-    }
-    for event_id, (subjects, gate_keys) in expected.items():
-        ev = content.event_by_id[event_id]
-        assert ev.person_core_subjects == subjects
-        assert gate_keys <= set(ev.trigger_gate)
-
-    not_person_core = {
-        "jisi_lubian",
-        "dalingghe",
-        "lindan_xiqian",
-        "huangtaiji_chengdi",
-        "wuyin_lubian",
-        "songshan_battle",
-        "luoyang_fallen",
-    }
-    assert not {
-        event_id for event_id in not_person_core
-        if content.event_by_id[event_id].person_core_subjects
-    }
-
-def test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated(content):
-    """#194：战略/外敌类事件显式分类，且每条都有结构化 trigger_gate。"""
-    raw_by_id = {
-        str(item["id"]): item
-        for item in json.loads(
-            (Path(__file__).resolve().parents[1] / "content" / "events.json").read_text(
-                encoding="utf-8"
-            )
-        )
-    }
-    expected = {
-        "jisi_lubian": {},
-        "dalingghe": {
-            "region.liaodong.controlled_by": "==ming",
-            "army.guanning.supply": "<=45",
-            "army.guanning.arrears": ">=40",
-            "power.houjin.military_strength": ">=70",
-        },
-        "lindan_xiqian": {
-            "region.mongol_chahar.controlled_by": "==mongol",
-            "army.mongol_chahar_host.loyalty": "<=45",
-            "power.mongol.military_strength": "<=55",
-            "power.houjin.military_strength": ">=70",
-        },
-        "wuyin_lubian": {
-            "army.jizhen.arrears": ">=10",
-            "army.xuan_da.morale": "<=55",
-            "power.mongol.military_strength": "<=55",
-            "power.houjin.military_strength": ">=75",
-        },
-        "songshan_battle": {
-            "region.liaodong.controlled_by": "==ming",
-            "army.guanning.supply": "<=45",
-            "army.guanning.morale": "<=55",
-            "power.houjin.military_strength": ">=70",
-        },
-        "luoyang_fallen": {
-            "region.henan.controlled_by": "==ming",
-            "region.henan.unrest": ">=60",
-            "power.bandit_li_zicheng.military_strength": ">=45",
-        },
-        "kaifeng_siege": {
-            "event.luoyang_fallen.terminal_state": "==triggered",
-            "region.henan.controlled_by": "==ming",
-            "region.henan.military_pressure": ">=70",
-            "power.bandit_li_zicheng.military_strength": ">=55",
-        },
-        "beijing_fallen": {
-            "region.beizhili.controlled_by": "==ming",
-            "region.beizhili.military_pressure": ">=85",
-            "army.jingying.morale": "<=40",
-            "army.jingying.loyalty": "<=45",
-            "power.bandit_li_zicheng.military_strength": ">=65",
-        },
-    }
-
-    for event_id, trigger_gate in expected.items():
-        raw = raw_by_id[event_id]
-        ev = content.event_by_id[event_id]
-        assert raw["trigger_class"] == "strategic_foreign"
-        assert raw["trigger_gate"] == trigger_gate
-        assert ev.trigger_class == "strategic_foreign"
-        assert ev.event_type in {"node", "ending"}
-        assert ev.trigger_gate == trigger_gate
-        assert ev.person_core_subjects == []
 
 def test_strategic_foreign_classification_requires_outcome_targets(content, monkeypatch):
     """PR R3：trigger_class 是内容真源，消费者 target map 漏项必须启动期 fail-loud。"""

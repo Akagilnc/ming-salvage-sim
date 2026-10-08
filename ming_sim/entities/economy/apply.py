@@ -33,7 +33,11 @@ def _apply_economy_list(
     stop gate 已经给出范围，可在 pay_arrears_pool_army_ids 内按优先级池偿还。
     """
     rejections: List[RejectedItem] = []
-    from ming_sim.flows import _auto_pay_arrears_by_priority, _payable_army_arrears_cap, _pay_single_army_arrears
+    from ming_sim.army_pay import (
+        _auto_pay_arrears_by_priority,
+        _payable_army_arrears_cap,
+        _pay_single_army_arrears,
+    )
     from ming_sim.assets import format_wanliang_amount
     from ming_sim.constants import ECONOMY_PURPOSES, ECONOMY_TARGET_KINDS
     applied: List[Dict[str, object]] = []

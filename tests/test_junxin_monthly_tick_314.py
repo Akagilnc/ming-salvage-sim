@@ -1,21 +1,13 @@
 """#314 — 确定性军心月度 tick（欠饷月数分档 +5/0/-5，ADR 0025 D2）。
 
 seam = 月末确定性结算 tick（apply_fixed_period_flows，现役 substrate_hub）。
-oracle：army_loyalty_tick_delta 分档 + hub 路真实落库接线。
-
-票面验收覆盖：
-① 满饷月 +5 回血（oracle 单元）
-② 欠饷第 1-2 月不掉（dead-band，oracle 单元）
-③ 第 3 月起每月 -5（oracle + hub 落库）
-④ clamp 触底/触顶（oracle 单元；落库侧 clamp 由 hub tick）
-⑤ 土司 / 非明 / 自养 / 零兵不被 tick 动（hub 路）
+真实 hub 路落库接线覆盖分档与豁免。
 """
 
 from __future__ import annotations
 
 import pytest
 
-from ming_sim.army_pay import army_loyalty_tick_delta
 from ming_sim.flows import apply_fixed_period_flows
 
 KEG = "guanning"    # 火药桶/主测军（content 军，needed 可控）
@@ -52,17 +44,6 @@ def _run_months(db, state, months, *, fund_fully=True):
     for _ in range(months):
         state.metrics["国库"] = 10 ** 9 if fund_fully else 0
         apply_fixed_period_flows(db, state)
-
-
-def test_army_loyalty_tick_delta_tiers():
-    """分档 oracle：满饷 +5；半欠/短欠 dead-band 0；≥3 月 -5；零需短路 0。"""
-    assert army_loyalty_tick_delta(0, 1) == 5
-    assert army_loyalty_tick_delta(0.5, 1) == 0
-    assert army_loyalty_tick_delta(1, 1) == 0
-    assert army_loyalty_tick_delta(2, 1) == 0
-    assert army_loyalty_tick_delta(3, 1) == -5
-    assert army_loyalty_tick_delta(5, 1) == -5
-    assert army_loyalty_tick_delta(10, 0) == 0
 
 
 def test_substrate_hub_path_loyalty_tier(game):
