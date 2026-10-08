@@ -85,17 +85,26 @@ def run_highlight_judge(
                 raw = str(getattr(output, "content") or "")
             return parse_highlight_judge_output(raw)
 
+    # worker 结果装箱：Future.result 的 TimeoutError 只表示等待封顶。
+    # 若让 worker 异常经 future 原样抛出，会与等待 TimeoutError 同型；
+    # done() 又有「等超时后 worker 才完成」的竞态窗口——标准做法是返回值携带异常。
+    def _guarded() -> tuple[str, Any]:
+        try:
+            return ("ok", _call())
+        except BaseException as exc:
+            return ("err", exc)
+
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        future = pool.submit(_call)
+        future = pool.submit(_guarded)
         try:
-            return list(future.result(timeout=timeout))
+            kind, payload = future.result(timeout=timeout)
         except FuturesTimeout:
-            # Future.result：调用已抛的异常会原样再抛；等待封顶也是 TimeoutError。
-            # 二者同型——done 区分：worker 已结束的实际 TimeoutError 上抛；未完成才是等待封顶 → []。
-            if future.done():
-                raise
+            # 仅等待封顶；不读 done()（释放锁后 worker 仍可能完成，会误判）。
             future.cancel()
             return []
+        if kind == "err":
+            raise payload
+        return list(payload)
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
