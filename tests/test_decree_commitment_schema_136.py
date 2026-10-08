@@ -42,7 +42,6 @@ def test_effect_dict_has_work_ignores_metadata_only_payloads(payload):
         {"buildings": [{"action": "remove", "building_id": "beizhili_b1"}]},
         {"new_armies": [{"origin_ref": "盘面自发", "id": "tianxiong", "manpower": 1000}]},
         {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": 1}]},
-        {"character": [{"name": "毛文龙", "loyalty": 1, "reason": "每月安抚"}]},
         {"legacy": {"modifiers": {"民心": 1}}},
     ],
 )
@@ -85,7 +84,6 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
     "payload",
     [
         {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": "2"}]},
-        {"character": [{"name": "毛文龙", "loyalty": "2", "reason": "每月安抚"}]},
     ],
 )
 def test_effect_dict_has_work_ignores_malformed_person_loyalty(payload):

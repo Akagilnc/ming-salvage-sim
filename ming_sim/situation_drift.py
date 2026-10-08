@@ -75,10 +75,8 @@ def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[s
         return ongoing
     gate_army_ids = _commitment_arrears_gate_army_ids(row)
     normalized = dict(ongoing)
-    for key in ("economy", "economy_moves"):
-        economy = ongoing.get(key)
-        if not isinstance(economy, list):
-            continue
+    economy = ongoing.get("economy")
+    if isinstance(economy, list):
         normalized_economy: List[object] = []
         for move in economy:
             if not isinstance(move, dict):
@@ -100,7 +98,7 @@ def _commitment_ongoing_effects_for_settlement(row: sqlite3.Row, ongoing: Dict[s
                     item["target_kind"] = "army"
                     item["target_id"] = gate_army_ids[0]
             normalized_economy.append(item)
-        normalized[key] = normalized_economy
+        normalized["economy"] = normalized_economy
     return normalized
 
 def _resolve_commitment_issue(

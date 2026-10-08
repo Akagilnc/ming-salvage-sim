@@ -326,107 +326,7 @@ def test_run_claude_off_reasoning_uses_explicit_minimum_tokens(monkeypatch):
     assert captured["kw"]["env"]["MAX_THINKING_TOKENS"] == "2000"
 
 
-# ── _resolve_cli_bin / login shell path ──
-
-def test_resolve_cli_bin_found_on_current_path(monkeypatch):
-    monkeypatch.setattr(
-        cb.shutil, "which",
-        lambda name, path=None: "/usr/local/bin/codex" if path is None else None,
-    )
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: (_ for _ in ()).throw(AssertionError("no")))
-    assert cb._resolve_cli_bin("codex", "codex") == "/usr/local/bin/codex"
-
-
-def test_resolve_cli_bin_found_via_extra_dirs_when_gui_path_bare(monkeypatch):
-    monkeypatch.setattr(cb, "_EXTRA_BIN_DIRS", ["/fake/extra/bin"])
-    monkeypatch.setattr(cb.os.path, "isdir", lambda p: True)
-    home_bin = "/fake/extra/bin/codex"
-
-    def fake_which(name, path=None):
-        if path is None:
-            return None
-        assert "/fake/extra/bin" in path
-        return home_bin
-
-    login_calls = {"n": 0}
-
-    def spy_login():
-        login_calls["n"] += 1
-        return None
-
-    monkeypatch.setattr(cb.shutil, "which", fake_which)
-    monkeypatch.setattr(cb, "_login_shell_path", spy_login)
-    assert cb._resolve_cli_bin("codex", "codex") == home_bin
-    assert login_calls["n"] == 0
-
-
-def test_resolve_cli_bin_login_shell_path_last_resort(monkeypatch):
-    cb._BIN_CACHE.clear()
-
-    def fake_which(name, path=None):
-        if path and "/opt/odd/bin" in path:
-            return "/opt/odd/bin/codex"
-        return None
-
-    monkeypatch.setattr(cb.shutil, "which", fake_which)
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: "/opt/odd/bin")
-    assert cb._resolve_cli_bin("codex", "codex") == "/opt/odd/bin/codex"
-
-
-def test_resolve_cli_bin_falls_back_and_miss_not_cached(monkeypatch):
-    cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
-    monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
-    assert cb._resolve_cli_bin("codex", "codex") == "codex"
-    assert "codex" not in cb._BIN_CACHE
-    monkeypatch.setattr(
-        cb.shutil, "which",
-        lambda name, path=None: "/Users/x/.local/bin/codex" if path is None else None,
-    )
-    assert cb._resolve_cli_bin("codex", "codex") == "/Users/x/.local/bin/codex"
-
-
-def test_resolve_cli_bin_caches(monkeypatch):
-    cb._BIN_CACHE.clear()
-    calls = {"n": 0}
-
-    def fake_which(name, path=None):
-        calls["n"] += 1
-        return "/abs/codex"
-
-    monkeypatch.setattr(cb.shutil, "which", fake_which)
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
-    assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
-    assert cb._resolve_cli_bin("codex", "codex") == "/abs/codex"
-    assert calls["n"] == 1
-
-
-def test_login_shell_path_extracts_from_sentinels_despite_noise(monkeypatch):
-    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
-
-    class _R:
-        stdout = (
-            "Warning: /usr/local/bin not writable: skipping\n"
-            "<<<CMRPATH>>>/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin<<<ENDPATH>>>\n"
-        )
-        stderr = ""
-        returncode = 0
-
-    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: _R())
-    assert cb._login_shell_path() == "/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin"
-
-
-def test_login_shell_path_single_dir_not_dropped(monkeypatch):
-    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
-
-    class _R:
-        stdout = "<<<CMRPATH>>>/usr/bin<<<ENDPATH>>>\n"
-        stderr = ""
-        returncode = 0
-
-    monkeypatch.setattr(cb, "_RAW_RUN", lambda *a, **k: _R())
-    assert cb._login_shell_path() == "/usr/bin"
-
+# ── path discovery → runner subprocess boundary / login shell argv ──
 
 def test_login_shell_path_uses_printenv_not_dollar_path(monkeypatch):
     monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
@@ -446,17 +346,6 @@ def test_login_shell_path_uses_printenv_not_dollar_path(monkeypatch):
     assert {"-l", "-i", "-c"} <= set(captured["cmd"])
 
 
-def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
-    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
-    monkeypatch.setattr(
-        cb.shutil, "which",
-        lambda name, path=None: "./bin/codex" if path is None else None,
-    )
-    result = cb._resolve_cli_bin("codex", "./bin/codex")
-    assert cb.os.path.isabs(result)
-    assert result == cb.os.path.abspath("./bin/codex")
-
-
 @pytest.mark.parametrize(
     "runner,resolved",
     [
@@ -466,13 +355,52 @@ def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
     ],
 )
 def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
+    """真实 resolver → 子进程 argv[0]；不 stub resolver、不锁缓存次数。"""
     cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: resolved)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    monkeypatch.setattr(
+        cb.shutil, "which",
+        lambda name, path=None: resolved if path is None else None,
+    )
     monkeypatch.setattr(cb, "_warm_keychain", lambda: None)
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
     captured = _capture_run(monkeypatch, _P(stdout="STDOUT_BODY"))
     getattr(cb, runner)("p")
     assert captured["cmd"][0] == resolved
+
+
+def test_run_codex_resolves_via_login_shell_path(monkeypatch):
+    """which 全 miss 时 login shell PATH 贯通到子进程 argv[0]。"""
+    cb._BIN_CACHE.clear()
+
+    def fake_which(name, path=None):
+        if path and "/opt/odd/bin" in path:
+            return "/opt/odd/bin/codex"
+        return None
+
+    monkeypatch.setattr(cb.shutil, "which", fake_which)
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: "/opt/odd/bin")
+    monkeypatch.setattr(cb, "_warm_keychain", lambda: None)
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    captured = _capture_run(monkeypatch, _P(stdout="STDOUT_BODY"))
+    cb._run_codex("p")
+    assert captured["cmd"][0] == "/opt/odd/bin/codex"
+
+
+def test_run_codex_absolutizes_relative_resolved_bin(monkeypatch):
+    """相对 which 结果须以绝对路径进子进程 argv[0]。"""
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb, "_login_shell_path", lambda: None)
+    monkeypatch.setattr(
+        cb.shutil, "which",
+        lambda name, path=None: "./bin/codex" if path is None else None,
+    )
+    monkeypatch.setattr(cb, "_warm_keychain", lambda: None)
+    monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
+    captured = _capture_run(monkeypatch, _P(stdout="STDOUT_BODY"))
+    cb._run_codex("p")
+    assert cb.os.path.isabs(captured["cmd"][0])
+    assert captured["cmd"][0] == cb.os.path.abspath("./bin/codex")
 
 
 

@@ -196,24 +196,6 @@ def _person_effect_has_work(raw: object) -> bool:
     return False
 
 
-def _character_effect_has_work(raw: object) -> bool:
-    if not isinstance(raw, list):
-        return False
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        if not _nonempty_text(item.get("name")):
-            continue
-        loyalty = item.get("loyalty")
-        if (
-            not isinstance(loyalty, bool)
-            and isinstance(loyalty, int)
-            and loyalty != 0
-        ):
-            return True
-    return False
-
-
 def _power_renames_effect_has_work(raw: object) -> bool:
     if not isinstance(raw, list):
         return False
@@ -255,19 +237,16 @@ def effect_dict_has_work(raw: object) -> bool:
     checks = (
         _metric_effect_has_work(effect.get("metrics")),
         _economy_effect_has_work(effect.get("economy")),
-        _economy_effect_has_work(effect.get("economy_moves")),
         _faction_effect_has_work(effect.get("factions")),
-        _faction_effect_has_work(effect.get("faction_delta")),
-        _class_effect_has_work(effect.get("classes")),
         _class_effect_has_work(effect.get("class_delta")),
         _entity_delta_has_work(
-            effect.get("region_delta") or effect.get("regions"),
+            effect.get("region_delta"),
             aliases=REGION_FIELD_ALIASES,
             numeric_fields=REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + FISCAL_SCORE_FIELDS + ("cannon",),
             text_fields=REGION_TEXT_FIELDS,
         ),
         _entity_delta_has_work(
-            effect.get("army_delta") or effect.get("armies"),
+            effect.get("army_delta"),
             aliases=ARMY_FIELD_ALIASES,
             numeric_fields=ARMY_SCORE_FIELDS + ARMY_QUANTITY_FIELDS,
             text_fields=ARMY_TEXT_FIELDS,
@@ -280,8 +259,6 @@ def effect_dict_has_work(raw: object) -> bool:
         _building_effect_has_work(effect.get("buildings")),
         _new_armies_effect_has_work(effect.get("new_armies")),
         _person_effect_has_work(effect.get("人物变更")),
-        _person_effect_has_work(effect.get("person_changes")),
-        _character_effect_has_work(effect.get("character")),
         _power_renames_effect_has_work(effect.get("power_renames")),
         _legacy_effect_has_work(effect.get("legacy")),
     )

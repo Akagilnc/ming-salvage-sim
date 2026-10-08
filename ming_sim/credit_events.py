@@ -299,7 +299,7 @@ def _is_exposed_transformed(dossier: Dict[str, object]) -> bool:
 
 def _person_change_items(extracted: Dict[str, object]) -> List[Dict[str, object]]:
     """消费调用方已滤 rejected 的落格项；本轴不再二次闸（单一保护点在 settle_delta）。"""
-    raw = extracted.get("人物变更") or extracted.get("person_changes") or []
+    raw = extracted.get("人物变更") or []
     if not isinstance(raw, list):
         return []
     return [it for it in raw if isinstance(it, dict)]

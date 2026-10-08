@@ -1751,29 +1751,16 @@ def apply_monthly_covert_actual_progress(
         units = monthly_actual_units(
             fidelity=fidelity, originated_quantity=originated,
         )
-        if "note" in sel:
-            raw_note = sel.get("note")
-        elif "备注" in sel:
-            raw_note = sel.get("备注")
-        else:
-            originated = originated_quantity_this_turn(db, did, turn, contract)
-            units = monthly_actual_units(
-                fidelity=fidelity, originated_quantity=originated,
-            )
         note_raw = sel.get("note")
         if note_raw is None or not str(note_raw).strip():
             note_raw = sel.get("备注")
         if note_raw is None or not str(note_raw).strip():
-            note = ""
-        else:
-            note = str(note_raw)
-        if not note.strip():
             note = (
                 f"月度实进度：执行态{fidelity}（{units:g}）"
                 f"；origin_effects={originated}"
             )
         else:
-            note = str(raw_note)
+            note = str(note_raw)
         row = db.record_dossier_actual_progress(
             did,
             turn,
