@@ -8,7 +8,6 @@ import pytest
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
 from ming_sim.execution_pressure import (
-    TARGET_KINDS as EP_TARGET_KINDS,
     normalize_locality_scope,
     resolve_dossier_region_ids,
 )
@@ -261,15 +260,6 @@ def test_normalize_payload_locality_and_target_kind(env):
         })
 
 
-def test_cli_backend_invalid_target_kind_fail_loud():
-    """r3-B.2：废除静默改 policy。"""
-    from ming_sim import cli_backend as cb
-    # 直接测归一辅助：若存在公开 helper 用它；否则测 extract 后机械段逻辑
-    # 生产路径：capture 合并处对非法 target_kind 抛错
-    with pytest.raises(ValueError):
-        cb._coerce_draft_target_kind("not_a_real_kind")
-
-
 # ── #654 断根 tracer（外部行为）────────────────────────────────────
 
 
@@ -432,10 +422,9 @@ def test_locality_fail_create_decree_dossiers_zero_rows(env):
     assert after == before
 
 
-def test_cli_target_kinds_single_source_with_invalid_fail_loud():
-    """producer 与 durable 共闭集单源；法外 fail-loud（不锁常量成员表、不 pin 私有 coerce 正向）。"""
+def test_cli_target_kinds_invalid_fail_loud():
+    """法外 target_kind fail-loud（cli capture 合并口；不锁常量对象 identity）。"""
     from ming_sim import cli_backend as cb
-    assert TARGET_KINDS is EP_TARGET_KINDS
     with pytest.raises(ValueError):
         cb._coerce_draft_target_kind("not_a_real_kind")
 

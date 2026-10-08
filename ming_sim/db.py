@@ -10081,7 +10081,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise ValueError("密令不存在")
-        reports = json.loads(row["dossier_progress_json"] or "[]")
+        reports = self._loads_stored_json_list(
+            row["dossier_progress_json"],
+            surface="secret_orders.dossier_progress_json",
+        )
         existing = next((item for item in reports if not item.get("is_terminal")
                          and int(item.get("turn", 0)) == int(turn)), None)
         if existing is None or is_terminal:
@@ -10188,13 +10191,12 @@ class GameDB:
                 int(dossier_id), int(secret_order_id), int(turn), band, text,
                 is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
             )
-        payload = {}
-        try:
-            loaded = json.loads(str(dossier.get("payload_json") or "{}"))
-            if isinstance(loaded, dict):
-                payload = loaded
-        except (TypeError, ValueError):
-            payload = {}
+        payload = dossier.get("payload")
+        if not isinstance(payload, dict):
+            payload = self.parse_engine_payload_json(
+                dossier.get("payload_json"),
+                surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+            )
         if not self._dossier_has_execution_surface(dossier.get("action_type"), payload):
             raise ValueError("非执行面案卷不可挂奏报")
         return self._record_general_dossier_progress(
@@ -10310,16 +10312,12 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for row in rows:
-            dossier_id = int(row["id"])
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            decoded = self._dossier_row(row)
+            dossier_id = int(decoded["id"])
+            payload = decoded["payload"]
             item: Dict[str, object] = {
                 "dossier_id": dossier_id,
-                "secret_order_id": int(row["secret_order_id"]),
+                "secret_order_id": int(decoded["secret_order_id"] or 0),
                 "title": payload.get("title", ""),
                 "progress": self.list_dossier_progress(dossier_id),
             }
@@ -10406,10 +10404,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             return False
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            return False
+        payload = self.parse_engine_payload_json(
+            row["payload_json"],
+            surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+        )
         return payload_declares_escort(payload)
 
     # #1900 J18：已撤销的专用暗护双载体 / 实况账本 / 聚合读口 / 专用资格校验已退役。
@@ -10454,12 +10452,8 @@ class GameDB:
         from ming_sim.materials import dossier_paid_amount
         targets: List[Dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(str(row["payload_json"] or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            decoded = self._dossier_row(row)
+            payload = decoded["payload"]
             policy = dossier_action_policy("grant_allocation", payload)
             if policy.get("execution_surface") != "in_transit":
                 continue
@@ -10473,7 +10467,7 @@ class GameDB:
                 ordered = 0
             if ordered <= 0:
                 continue
-            dossier_id = int(row["id"])
+            dossier_id = int(decoded["id"])
             basis = ordered
             if (
                 str(row["status"] or "") == "closed"
@@ -10929,14 +10923,13 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            den_id = int(row["id"])
+            payload = self.parse_engine_payload_json(
+                row["payload_json"],
+                surface=f"faction_denunciations#{den_id}.payload_json",
+            )
             out.append({
-                "id": int(row["id"]),
+                "id": den_id,
                 "turn": int(row["turn"]),
                 "accuser_name": str(row["accuser_name"] or ""),
                 "accuser_faction": str(row["accuser_faction"] or ""),
@@ -11289,12 +11282,12 @@ class GameDB:
                 (accuser, dossier_id, origin),
             ).fetchone()
             if prior_row is not None:
-                try:
-                    prev_payload = json.loads(prior_row["payload_json"] or "{}")
-                except (TypeError, ValueError):
-                    prev_payload = {}
-                if not isinstance(prev_payload, dict):
-                    prev_payload = {}
+                prev_payload = self.parse_engine_payload_json(
+                    prior_row["payload_json"],
+                    surface=(
+                        f"faction_denunciations#{int(prior_row['id'])}.payload_json"
+                    ),
+                )
                 if not denunciation_case_upgraded(prev_payload, fork_state):
                     continue
 
@@ -12492,15 +12485,8 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        out = self._dossier_row(row)
-        # 读缝附 payload 对象，避免调用方只认 payload 键时踩空
-        try:
-            out["payload"] = json.loads(str(out.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            out["payload"] = {}
-        if not isinstance(out["payload"], dict):
-            out["payload"] = {}
-        return out
+        # _dossier_row already exposes the single decoded payload object.
+        return self._dossier_row(row)
 
     def append_decree_dossier_participants(
         self, dossier_id: int, participants: Iterable[object], *,
@@ -12525,14 +12511,12 @@ class GameDB:
             row["participant_roster"],
             surface="decree_dossiers.participant_roster",
         )
-        # Durable existing before input: no soft-drop of empty objects; refs/relations
-        # loud. Legacy bare-name strings remain legal historical form (F39).
+        # Durable existing before input: canonical structured entries only.
+        # No bare-name/alias/default-tier healing of historical shapes (#1834).
         if isinstance(existing_raw, list):
             for idx, value in enumerate(existing_raw):
                 if isinstance(value, Mapping):
-                    cid = str(
-                        value.get("character_id") or value.get("name") or ""
-                    ).strip()
+                    cid = str(value.get("character_id") or "").strip()
                     if not cid:
                         raise ValueError(
                             f"既有参与人[{idx}]缺人物身份"
@@ -12541,7 +12525,9 @@ class GameDB:
                     isinstance(value, str) and not str(value).strip()
                 ):
                     raise ValueError(f"既有参与人[{idx}]缺人物身份")
-        existing = self._normalize_participant_roster(existing_raw)
+        existing = self._normalize_participant_roster(
+            existing_raw, strict_structured=True,
+        )
         self._validate_participant_roster_references(existing)
         self._validate_dossier_delegations(existing)
         try:
@@ -13178,18 +13164,19 @@ class GameDB:
         ).fetchall()
         visible = []
         for row in rows:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            policy = dossier_action_policy(row["action_type"], payload)
+            decoded = self._dossier_row(row)
+            payload = decoded["payload"]
+            policy = dossier_action_policy(decoded["action_type"], payload)
             # Admission-owned effects never run through the simulator again.
             # An in-transit dossier remains visible as execution context until
             # its execution verdict closes it, however.
-            if str(row["action_type"]) == "secret_order":
+            if str(decoded["action_type"]) == "secret_order":
                 continue
             if (
                 policy["effect_owner"] != "immediate"
-                or str(row["status"]) == "executing"
+                or str(decoded["status"]) == "executing"
             ):
-                visible.append(self._dossier_row(row))
+                visible.append(decoded)
         return visible
 
     def transition_decree_dossier(
@@ -13208,7 +13195,10 @@ class GameDB:
         if new_status not in self._DOSSIER_TRANSITIONS[old_status]:
             raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
         if old_status == "promulgated" and new_status == "closed":
-            payload = json.loads(str(row["payload_json"] or "{}"))
+            payload = self.parse_engine_payload_json(
+                row["payload_json"],
+                surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+            )
             if self._dossier_has_execution_surface(row["action_type"], payload):
                 raise ValueError("带执行判定面的案卷不得从 promulgated 直接 closed")
             if not str(row["execution_outcome"] or ""):
@@ -13324,7 +13314,12 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         if row["status"] == "proposed":
             raise ValueError("待判案卷不能绕过颁布格直接结案")
-        payload = json.loads(str(row.get("payload_json") or "{}"))
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else (
+            self.parse_engine_payload_json(
+                row.get("payload_json"),
+                surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+            )
+        )
         immediate = not self._dossier_has_execution_surface(row["action_type"], payload)
         if row["status"] == "promulgated" and not immediate:
             raise ValueError("带执行判定面的案卷必须先进入 executing 并填写执行格")
@@ -13373,12 +13368,15 @@ class GameDB:
             raise ValueError(f"执行 outcome 非法：{outcome}")
         if outcome == "executing" and close:
             raise ValueError("executing 是非终态，必须以 close=False 记录")
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else (
+            self.parse_engine_payload_json(
+                row.get("payload_json"),
+                surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+            )
+        )
         immediate = (
             row["status"] == "promulgated"
-            and not self._dossier_has_execution_surface(
-                row["action_type"],
-                json.loads(str(row.get("payload_json") or "{}")),
-            )
+            and not self._dossier_has_execution_surface(row["action_type"], payload)
         )
         if row["status"] != "executing" and not immediate:
             raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
@@ -13502,9 +13500,12 @@ class GameDB:
                 self._append_midzhi_stigma(
                     dossier_id, decision="promulgated", turn=state.turn, commit=False,
                 )
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            if not isinstance(payload, dict):
-                raise ValueError("案卷 payload 非对象")
+            payload = row.get("payload") if isinstance(row.get("payload"), dict) else (
+                self.parse_engine_payload_json(
+                    row.get("payload_json"),
+                    surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+                )
+            )
             policy = dossier_action_policy(row["action_type"], payload)
             signal = row.get("execution_signal") or {}
             if (
@@ -15226,12 +15227,10 @@ class GameDB:
             raise KeyError(f"暂存动作不存在：{aid}")
         if str(row["status"] or "") != "pending":
             raise ValueError(f"暂存动作状态不可挂背书：{row['status']}")
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = self.parse_engine_payload_json(
+            row["payload_json"],
+            surface=f"pending_actions#{aid}.payload_json",
+        )
         form = str(entry.get("form") or "").strip()
         endorser_id = str(entry.get("endorser_id") or "").strip()
         imperial = bool(entry.get("imperial", False))
@@ -15417,8 +15416,7 @@ class GameDB:
         未持源夜时与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清
         night_approved，使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。声明路径传入
         源夜则盖源夜。返回该行 id（不存在/非 pending 则 0）。
-        **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
-        静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
+        **合并保留下划线控制键**（_directive_status 等）——正文改草不得静默抹掉夜内态闸。
         #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。
         声明路径传入源夜则盖源夜，不把既有候选迁到落账当下的开放夜。"""
         stamp = self._night_id_for_staged_write(night_id, what="改草")
@@ -15600,17 +15598,17 @@ class GameDB:
         existing_json: object, new_payload: Dict[str, object],
     ) -> Dict[str, object]:
         """把新 payload 与旧 payload 里的下划线控制键（`_` 前缀）合并：新 payload 为主，
-        旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态/待澄清闸（#502 L5）。"""
-        try:
-            old = json.loads(existing_json or "{}") if not isinstance(
-                existing_json, (dict, list)) else existing_json
-        except (ValueError, TypeError):
-            old = {}
+        旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态闸。"""
+        if isinstance(existing_json, dict):
+            old = existing_json
+        else:
+            old = GameDB.parse_engine_payload_json(
+                existing_json, surface="pending_actions.payload_json",
+            )
         merged: Dict[str, object] = dict(new_payload or {})
-        if isinstance(old, dict):
-            for k, v in old.items():
-                if str(k).startswith("_") and k not in merged:
-                    merged[k] = v
+        for k, v in old.items():
+            if str(k).startswith("_") and k not in merged:
+                merged[k] = v
         return merged
 
     def _merge_directive_payload(
@@ -15714,26 +15712,32 @@ class GameDB:
 
     def _prepare_pending_directive(
         self, state: GameState, pa: Dict[str, object], *, content=None,
-        allow_clarification: bool = False,
     ) -> Dict[str, object]:
-        """Classify and, only when valid, project one staged directive."""
+        """Classify and, only when valid, project one staged directive.
+
+        Persistence decode is outside product-rejection catch (loud). Model/
+        business field faults stay per-item invalid with a real refusal reason.
+        """
         if (
             pa.get("status") != "pending"
             or pa.get("kind") != "directive"
             or pa.get("action") != "拟旨"
         ):
             return {"classification": "invalid"}
+        payload = self.parse_engine_payload_json(
+            pa.get("payload_json"),
+            surface=f"pending_actions#{pa.get('id')}.payload_json",
+        )
         try:
-            payload = json.loads(str(pa.get("payload_json") or "{}"))
-            if not isinstance(payload, dict):
-                return {"classification": "invalid"}
-            if payload.get("_needs_clarification") and not allow_clarification:
-                return {"classification": "needs_clarification"}
             payload = self._normalize_directive_dossier_payload(
                 payload, content=content, current_turn=int(state.turn),
             )
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return {"classification": "invalid"}
+        except ValueError as exc:
+            return {
+                "classification": "invalid",
+                "refusal_reason": str(exc),
+                "refusal_category": "invalid_directive_payload",
+            }
         text = str(payload.get("text") or "")
         if not text.strip():
             return {"classification": "invalid"}
@@ -15810,18 +15814,30 @@ class GameDB:
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
                 prepared = self._prepare_pending_directive(
                     state, pa, content=content,
-                    allow_clarification=action_ids is not None,
                 )
                 classification = prepared["classification"]
-                if classification == "needs_clarification":
-                    continue
                 if classification == "invalid":
                     cm = atomic(self) if owns_transaction else contextlib.nullcontext()
                     with cm:
+                        reason = str(prepared.get("refusal_reason") or "").strip()
+                        if reason:
+                            self._record_typed_business_refusal(
+                                pa,
+                                PendingActionRefusal(
+                                    reason,
+                                    category=str(
+                                        prepared.get("refusal_category")
+                                        or "invalid_directive_payload"
+                                    ),
+                                ),
+                                rejection_collector,
+                            )
                         self.conn.execute(
                             "UPDATE pending_actions SET status='failed' WHERE id=?",
                             (int(pa["id"]),),
                         )
+                        if rejection_collector is not None:
+                            rejection_collector.flush_to_db(self)
                     continue
                 payload = dict(prepared["payload"])
                 payload["_canonical_pending_directive"] = True
@@ -15832,12 +15848,10 @@ class GameDB:
                 if committed is not None:
                     applied.append(committed)
                 continue
-            try:
-                payload = json.loads(pa["payload_json"] or "{}")
-                if not isinstance(payload, dict):
-                    payload = {}
-            except (ValueError, TypeError):
-                payload = {}
+            payload = self.parse_engine_payload_json(
+                pa.get("payload_json"),
+                surface=f"pending_actions#{pa.get('id')}.payload_json",
+            )
             office_memory_key = None
             office_memory_before = None
             office_memory_had_key = False
@@ -16333,12 +16347,13 @@ class GameDB:
         for row in dossiers:
             if str(row.get("action_type") or "") != "appointment":
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            if isinstance(row.get("payload"), dict):
+                payload = row["payload"]
+            else:
+                payload = self.parse_engine_payload_json(
+                    row.get("payload_json"),
+                    surface=f"decree_dossiers#{row.get('id')}.payload_json",
+                )
             if payload.get("recommendation") is None:
                 continue
             minister = str(payload.get("_minister_name") or "")
@@ -16861,10 +16876,9 @@ class GameDB:
             actors.add(executor_id)
         roster = dossier.get("participant_roster") or []
         if isinstance(roster, str):
-            try:
-                roster = json.loads(roster)
-            except (TypeError, ValueError):
-                roster = []
+            roster = self._loads_stored_json_list(
+                roster, surface="decree_dossiers.participant_roster",
+            )
         if isinstance(roster, list):
             for entry in roster:
                 if not isinstance(entry, dict):
@@ -18691,11 +18705,13 @@ class GameDB:
 
         与 ``_merge_directive_payload`` 名册分支同一条规则；不按 character_id
         静默丢后项。持久化案卷追加冲突（同人异档）仍走
-        ``append_decree_dossier_participants``。通用宽松规范化仍由
-        ``_normalize_participant_roster`` 服务其他业务读缝，本合并口不再保留
-        无消费者的宽松 incoming 开关。
+        ``append_decree_dossier_participants``。两侧均走 canonical 严格路径；
+        通用字符串规范化仍由 ``_normalize_participant_roster`` 服务 create_issue
+        等合法接缝，本合并口不猜补历史裸名。
         """
-        base = GameDB._normalize_participant_roster(list(existing or []))
+        base = GameDB._normalize_participant_roster(
+            list(existing or []), strict_structured=True,
+        )
         add = GameDB._normalize_participant_roster(
             list(incoming or []), strict_structured=True,
         )

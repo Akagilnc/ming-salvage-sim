@@ -3154,28 +3154,6 @@ def _apply_issue_entities(
             if not isinstance(it, dict):
                 raise ValueError(f"{label} 人物变更 非法（全局严格，不静默）：第 {idx} 项非 dict")
     person_changes = normalize_person_changes({"人物变更": raw_person_changes or []})
-    csc = effect.get("character_status_changes")
-    if not person_changes and isinstance(csc, list) and csc:
-        for it in csc:
-            if not isinstance(it, dict):
-                # 全局严格（不静默）：非 dict 项直接抛错，不无声丢（CMR F7）。
-                raise ValueError(f"{label} character_status_changes 含非法非 dict 项：{it!r}")
-        status_person_changes = normalize_person_changes({"character_status_changes": csc})
-        results = _apply_person_changes(
-            db,
-            state,
-            status_person_changes,
-            content=effective_content(),
-            llm_config=llm_config,
-            source="system_simulation",
-            derived_from=label,
-            external_transaction=not commit,
-            origin_ref=origin_ref,
-            require_origin=True,
-        )
-        _raise_on_rejected(results, "character_status_changes")
-        if applied_person_changes is not None:
-            applied_person_changes.extend(results)
     if person_changes:
         results = _apply_person_changes(
             db,

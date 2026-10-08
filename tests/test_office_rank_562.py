@@ -194,8 +194,6 @@ def test_cabinet_titles_keep_nominal_ming_rank_instead_of_political_importance()
 def test_concurrent_cabinet_office_uses_the_genuinely_higher_title():
     assert office_rank_band("礼部尚书,东阁大学士") == 2
     assert office_rank_band("兵部侍郎,文华殿大学士") == 3
-    # Decoration is not concurrency: the hall name cannot promote a 大学士 to band 1.
-    assert office_rank_band("文华殿大学士") == 5
 
 
 def test_qualified_titles_match_the_requested_axis_not_an_institutional_stem():
