@@ -2246,11 +2246,10 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         # #622/#1260 单源：仅有旨外 durable 的变形才构成 deformation_exposure。
         if not db.dossier_has_beyond_intent(did):
             continue
-        try:
-            roster = json.loads(str(row["participant_roster"] or "[]"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(roster, list) or not roster:
+        roster = loads_persistent_json_list(
+            row["participant_roster"], surface="decree_dossiers.participant_roster",
+        )
+        if not roster:
             continue
         participant_ids = [
             str(item.get("character_id") or "").strip()

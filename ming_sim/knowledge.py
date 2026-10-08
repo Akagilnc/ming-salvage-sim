@@ -11,8 +11,8 @@ from __future__ import annotations
 import json
 
 from ming_sim.models import (
-    loads_persistent_json_list,
     loads_persistent_json_object,
+    loads_persistent_name_list,
     require_persistent_string_list,
 )
 from typing import Any, Dict
@@ -103,9 +103,7 @@ def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
         raw_names = row["excluded_names"]
     except (KeyError, IndexError, TypeError):
         raw_names = None
-    excluded_names = {
-        str(name) for name in loads_persistent_json_list(raw_names, surface="excluded_names")
-    }
+    excluded_names = set(loads_persistent_name_list(raw_names, surface="excluded_names"))
     try:
         raw_targets = row["excluded_targets"]
     except (KeyError, IndexError, TypeError):
@@ -340,7 +338,7 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
         if source_id.startswith("turn_report:") and not source_id.endswith(":public"):
             continue
         participants = participant_roster_names(row["participant_roster"])
-        excluded = loads_persistent_json_list(
+        excluded = loads_persistent_name_list(
             row["excluded_names"], surface="character_knowledge_sources.excluded_names",
         )
         # A participant-rostered source is private to its participants unless
@@ -750,13 +748,9 @@ def build_character_knowledge(
         if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
         else:
-            target_roster = [
-                str(target).strip()
-                for target in loads_persistent_json_list(
-                    issue["target_roster"], surface="issues.target_roster",
-                )
-                if str(target).strip()
-            ]
+            target_roster = loads_persistent_name_list(
+                issue["target_roster"], surface="issues.target_roster",
+            )
         visible_issues.append({
             "id": int(issue["id"]), "kind": issue["kind"],
             "origin_kind": issue["origin_kind"], "origin_ref": issue["origin_ref"],

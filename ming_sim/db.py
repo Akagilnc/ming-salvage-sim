@@ -39,6 +39,7 @@ from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, loads_persistent_json_list, loads_persistent_json_object,
     require_persistent_string_list,
+    loads_persistent_name_list,
     monthly_amount, period_label, reign_period_label,
 )
 from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
@@ -2627,7 +2628,9 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise ValueError(f"region {region_id!r} 不存在，无法 settle_tick")
-        fiscal = json.loads(str(row["fiscal"] or "{}"))
+        fiscal = loads_persistent_json_object(
+            row["fiscal"], surface=f"regions[{region_id}].fiscal",
+        )
         return self._settle_province_tick_from_fiscal(region_id, fiscal, actions or [])
 
     def _current_settle_turn(self) -> int:
@@ -3426,11 +3429,10 @@ class GameDB:
             ).fetchone()
             if region is None or str(region["controlled_by"] or "") != "ming":
                 return False
-            try:
-                fiscal = json.loads(str(region["fiscal"] or "{}"))
-            except (TypeError, ValueError):
-                return False
-            settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            fiscal = loads_persistent_json_object(
+                region["fiscal"], surface=f"regions[{region_id}].fiscal",
+            )
+            settle = fiscal.get("settle")
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
                 return False
         return True
@@ -4052,8 +4054,10 @@ class GameDB:
             "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming' ORDER BY id"
         ).fetchall()
         for row in rows:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-            settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+            fiscal = loads_persistent_json_object(
+                row["fiscal"], surface=f"regions[{row['id']}].fiscal",
+            )
+            settle = fiscal.get("settle")
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                     or not isinstance(settle.get("p"), dict):
                 continue
@@ -4073,11 +4077,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             return
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError):
-            return
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        fiscal = loads_persistent_json_object(
+            row["fiscal"], surface=f"regions[{region_id}].fiscal",
+        )
+        settle = fiscal.get("settle")
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
             return
@@ -6068,7 +6071,9 @@ class GameDB:
             if raw_field == "fiscal":
                 if not isinstance(value, dict):
                     continue
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
+                fiscal = loads_persistent_json_object(
+                    row["fiscal"], surface=f"regions[{region_id}].fiscal",
+                )
                 for sub_field, sub_val in value.items():
                     if sub_field not in FISCAL_SCORE_FIELDS:
                         continue
@@ -9039,16 +9044,18 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for r in rows:
-            try:
-                options = json.loads(r["options_json"] or "[]")
-            except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-                options = []
+            options = loads_persistent_json_list(
+                r["options_json"], surface="pending_decisions.options_json",
+            )
             choice_raw = (r["choice_json"] or "").strip()
-            try:
-                choice = json.loads(choice_raw) if choice_raw else None
-            except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                tlog(f"[db] choice_json 损坏，回 None（idx={r['idx']}）：{exc}")  # #14 surface
+            if choice_raw:
+                try:
+                    choice = json.loads(choice_raw)
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise ValueError(
+                        f"pending_decisions.choice_json 腐坏 JSON：{choice_raw!r}"
+                    ) from exc
+            else:
                 choice = None
             source_turn = int(r["turn"])
             idx = int(r["idx"])
@@ -9063,7 +9070,7 @@ class GameDB:
                 "context": r["context"],
                 "rejection_reason": r["rejection_reason"],
                 "opposition": r["opposition"],
-                "options": options if isinstance(options, list) else [],
+                "options": options,
                 "choice": choice,
                 "status": r["status"],
                 "kind": kind,
@@ -9092,18 +9099,18 @@ class GameDB:
         kind = str(r["kind"] or "decision")
         source_turn = int(r["turn"])
         idx = int(r["idx"])
-        try:
-            options = json.loads(r["options_json"] or "[]")
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            tlog(f"[db] options_json 损坏，回空：{exc}")  # #14 surface
-            options = []
-        if not isinstance(options, list):
-            options = []
+        options = loads_persistent_json_list(
+            r["options_json"], surface="pending_decisions.options_json",
+        )
         choice_raw = (r["choice_json"] or "").strip()
-        try:
-            choice = json.loads(choice_raw) if choice_raw else None
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            tlog(f"[db] choice_json 损坏，回 None（desk {kind}:{source_turn}:{idx}）：{exc}")
+        if choice_raw:
+            try:
+                choice = json.loads(choice_raw)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"pending_decisions.choice_json 腐坏 JSON：{choice_raw!r}"
+                ) from exc
+        else:
             choice = None
         return {
             "decision_key": f"{kind}:{source_turn}:{idx}",
@@ -10704,13 +10711,7 @@ class GameDB:
         raw = self.kv_get(self.MEMORIAL_READS_KV_KEY)
         if not raw:
             return set()
-        try:
-            data = json.loads(raw)
-        except (TypeError, ValueError):
-            return set()
-        if not isinstance(data, list):
-            return set()
-        return {str(item) for item in data if str(item or "").strip()}
+        return set(loads_persistent_name_list(raw, surface="kv_store.memorial_reads"))
 
     def mark_memorials_read(self, keys: Iterable[str]) -> None:
         """标记奏报已读；键=progress:{id}|denunciation:{id}，随存档（kv_store）持久化。"""
@@ -17793,11 +17794,9 @@ class GameDB:
         for lg in self.conn.execute(
             "SELECT modifiers FROM legacies WHERE status='active' ORDER BY id"
         ).fetchall():
-            try:
-                eff = json.loads(str(lg["modifiers"] or "{}"))
-            except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                tlog(f"[db] legacy modifiers JSON 损坏，跳过该 legacy：{exc}")  # #14 surface
-                continue
+            eff = loads_persistent_json_object(
+                lg["modifiers"], surface="legacies.modifiers",
+            )
             for acc in ("国库", "内库", "民心", "皇威"):
                 v = eff.get(acc)
                 if isinstance(v, (int, float)):
@@ -18375,7 +18374,7 @@ class GameDB:
     @staticmethod
     def _load_persistent_name_list(raw: object, *, field: str) -> List[str]:
         """Parse a durable JSON name list via the shared leaf reader."""
-        return [str(name) for name in loads_persistent_json_list(raw, surface=field)]
+        return loads_persistent_name_list(raw, surface=field)
 
     @staticmethod
     def _load_persistent_exclusion_targets(raw: object, *, field: str) -> Dict[str, List[str]]:

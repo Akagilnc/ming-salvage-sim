@@ -75,9 +75,9 @@ def loads_persistent_json_list(
 def require_persistent_string_list(
     raw: object, *, surface: str, field: str,
 ) -> list:
-    """Durable object member that must be a list of names when present.
+    """Durable object/list member of names.
 
-    Missing/None → []; string or other non-list → loud failure (no char-iteration).
+    Missing/None → []. Non-list, null member, empty or non-scalar → loud failure.
     """
     if raw is None:
         return []
@@ -88,15 +88,22 @@ def require_persistent_string_list(
     out: list = []
     for index, item in enumerate(raw):
         if item is None:
-            continue
+            raise ValueError(f"{surface}.{field}[{index}] 不得为 null")
         if not isinstance(item, (str, int, float)) or isinstance(item, bool):
             raise ValueError(
                 f"{surface}.{field}[{index}] 须为标量名，得 {type(item).__name__}"
             )
         text = str(item)
-        if text:
-            out.append(text)
+        if not text:
+            raise ValueError(f"{surface}.{field}[{index}] 不得为空")
+        out.append(text)
     return out
+
+
+def loads_persistent_name_list(raw: object, *, surface: str = "name_list") -> list:
+    """Durable JSON name list: missing/empty → []; corrupt/null member raises."""
+    data = loads_persistent_json_list(raw, surface=surface)
+    return require_persistent_string_list(data, surface=surface, field="items")
 
 
 def loads_effect_dict(raw: object) -> Dict[str, object]:

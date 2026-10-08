@@ -51,18 +51,24 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
             raise ValueError(
                 f"issues.stages_json[{idx}] 须为对象，得 {type(item).__name__}"
             )
+        if "due_turn" not in item:
+            raise ValueError(f"issues.stages_json[{idx}] 缺 due_turn")
         try:
-            due_turn = int(item.get("due_turn") or 0)
+            due_turn = int(item.get("due_turn"))
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 f"issues.stages_json[{idx}].due_turn 非法：{item.get('due_turn')!r}"
             ) from exc
         if due_turn <= 0:
-            continue
+            raise ValueError(
+                f"issues.stages_json[{idx}].due_turn 须为正整数，得 {due_turn!r}"
+            )
         try:
             stage_idx = int(item.get("stage_idx", idx))
-        except (TypeError, ValueError):
-            stage_idx = idx
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"issues.stages_json[{idx}].stage_idx 非法：{item.get('stage_idx')!r}"
+            ) from exc
         criterion = str(
             item.get("criterion_text") or item.get("criterion") or ""
         )
@@ -71,8 +77,8 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
         )
         if not criterion and origin_context:
             criterion = origin_context
-        if not criterion:
-            continue
+        if not criterion.strip():
+            raise ValueError(f"issues.stages_json[{idx}] 缺 criterion_text")
         out.append({
             "stage_idx": stage_idx,
             "due_turn": due_turn,
@@ -213,8 +219,6 @@ def list_due_grant_report_dossiers_for_scan(
     commitment_ref=0；stage_idx=dossier_id 作 UNIQUE 去重键；
     payload 携带 dossier_id/origin_ref 供 due_review 桥接。
     """
-    import json as _json
-
     rows = db.conn.execute(
         """
         SELECT id, decree_text, payload_json, due_turn, execution_outcome, status

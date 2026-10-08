@@ -1,6 +1,3 @@
-import pytest
-
-from ming_sim.models import effect_dict_has_work
 import ming_sim.issues as I
 
 def _promulgated_commitment_origin(db, state) -> str:

@@ -7,7 +7,6 @@ directive capture (#1279 / QA A-2) and night-archive involved_people projection
 
 from __future__ import annotations
 
-import json
 from typing import Dict, List, Mapping
 
 from ming_sim.models import loads_persistent_json_list
