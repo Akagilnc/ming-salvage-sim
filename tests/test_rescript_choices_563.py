@@ -226,7 +226,8 @@ def test_financial_decision_uses_stored_option_not_client_payload(amount):
     decisions = parse_decision_blocks(raw)
     if type(amount) is not int:
         # Parse/save boundary rejects the whole malformed typed decision.
-        assert [decision["title"] for decision in decisions] == ["巡河"]
+        assert len(decisions) == 1
+        assert len(decisions[0].get("options") or []) == 2
         return
     desk = [{
         "decision_key": f"decision:3:{idx}", "kind": "decision", "turn": 3,
@@ -346,13 +347,19 @@ def test_decision_parser_rejects_unknown_typed_action_and_keeps_sibling():
 
     decisions = parse_decision_blocks(raw)
 
-    assert [decision["title"] for decision in decisions] == ["犒军", "巡河"]
+    assert len(decisions) == 2
     assert decisions[0]["options"][0]["action_type"] == "grant_allocation"
     assert decisions[0]["options"][0]["amount"] == 30
 
 
-@pytest.mark.parametrize("labels", [["", "乙"], ["甲", " 甲 "]])
-def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
+@pytest.mark.parametrize(
+    "labels, expect_empty",
+    [
+        (["", "乙"], True),  # 空白 label 拒收整块
+        (["甲", " 甲 "], False),  # #1897：label 原样为键，空白变体非歧义重复
+    ],
+)
+def test_decision_parser_rejects_empty_or_ambiguous_labels(labels, expect_empty):
     from ming_sim.settlement_payload import parse_decision_blocks
 
     block = {
@@ -361,7 +368,11 @@ def test_decision_parser_rejects_empty_or_ambiguous_labels(labels):
     }
     raw = f"<<DECISION>>{json.dumps(block, ensure_ascii=False)}<<END>>"
     decisions = parse_decision_blocks(raw)
-    assert decisions == []
+    if expect_empty:
+        assert decisions == []
+    else:
+        # 空白变体非歧义重复 → 整块保留；不锁 label 字面/选项计数换形
+        assert len(decisions) == 1
 
 
 def test_657_capability_revalidate_on_follow(game):

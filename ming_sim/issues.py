@@ -13,6 +13,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
+from ming_sim.action_materialize import DecreeMaterializationValidationError
 from ming_sim.applier import atomic, connection_owns_transaction
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
@@ -43,7 +44,6 @@ from ming_sim.db import (
 from ming_sim.decree_vocabulary import (
     dossier_action_policy,
     format_public_progress_disclosure,
-    terminal_report_facade,
 )
 from ming_sim.exceptions import OfficeAppointmentRejection, SettlementAbort
 from ming_sim.displaced_population import (
@@ -78,18 +78,14 @@ _content: Optional[GameContent] = None
 COMMITMENT_KIND_UNTIL_STOP = "until_stop"
 _FISCAL_LEVY_TARGET_ABS_TOL = 1e-9
 
-# SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
-_SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2 ** 63), 2 ** 63 - 1
-
-
 def _parse_sqlite_id(raw: object) -> int:
-    """解析将绑进 SQLite 的整型主键 id（secret_order / issue 等通用）：非整数/bool/float/超
-    SQLite 64-bit 范围 → 抛 ValueError（调用方拒为 invalid_enum）。避免绑定超界 int 抛
-    OverflowError 崩整月结算（#63.5 一坏项带走整批；cmr secret-order r2 / close-issues r1 codex）。"""
-    val = _strict_int(raw)  # bool/float/非数 → ValueError
-    if not (_SQLITE_INT_MIN <= val <= _SQLITE_INT_MAX):
-        raise ValueError("id 超出 SQLite 64-bit 范围")
-    return val
+    """解析将绑进 SQLite 的整型主键 id：委托 ``strict_sqlite_id`` 单一范围权威。
+
+    非整数/bool/float/超 64-bit → ValueError（调用方拒为 invalid_enum）。避免绑定
+    超界 int 抛 OverflowError 崩整月结算（#63.5 / #1897 C1）。
+    """
+    from ming_sim.strict_types import strict_sqlite_id
+    return strict_sqlite_id(raw)
 
 
 _AUTHORITY_GRANT_OPS = frozenset({"授予", "grant"})
@@ -231,7 +227,13 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     if row is None or not db.dossier_authorizes_effects(dossier_id):
         return None
     try:
-        payload = row.get("payload") or json.loads(str(row.get("payload_json") or "{}"))
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            from ming_sim.db import GameDB
+            payload = GameDB.parse_engine_payload_json(
+                row.get("payload_json"),
+                surface=f"issues.dossier#{dossier_id}.payload_json",
+            )
     except (TypeError, ValueError):
         return None
     if not isinstance(payload, dict):
@@ -348,13 +350,14 @@ def _payload_owned_person_duplicate(
 
 
 def _issue_condition_text(raw: object) -> str:
+    """普通叙事原文落库；判空只在调用方局部副本上 strip（#1897 E2）。"""
     if raw is None:
         return ""
     if isinstance(raw, str):
-        return raw.strip()
+        return raw
     if isinstance(raw, (dict, list)):
         return json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
-    return str(raw).strip()
+    return str(raw)
 
 
 def _normalize_commitment_kind(raw: object) -> str:
@@ -2087,10 +2090,11 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         # #622/#1260 单源：仅有旨外 durable 的变形才构成 deformation_exposure。
         if not db.dossier_has_beyond_intent(did):
             continue
-        try:
-            roster = json.loads(str(row["participant_roster"] or "[]"))
-        except (TypeError, ValueError):
+        # 复用 get_decree_dossier 响亮读名册；腐坏不上扫跳过（#1897 E1/K2）。
+        dossier = db.get_decree_dossier(did)
+        if dossier is None:
             continue
+        roster = dossier.get("participant_roster") or []
         if not isinstance(roster, list) or not roster:
             continue
         participant_ids = [
@@ -2098,7 +2102,7 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
             for item in roster if isinstance(item, dict) and str(item.get("character_id") or "").strip()
         ]
         if len(participant_ids) != len(roster) or not participant_ids:
-            continue
+            raise ValueError(f"案卷#{did} participant_roster 含无效成员")
         liability = project_execution_liability_parties(roster)
         responsible_ids = [
             str(item.get("character_id") or "").strip() for item in liability
@@ -2161,6 +2165,8 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
             ).fetchone():
                 continue
             candidate_id = f"impeachment_surge:{origin_ref}:{faction}"
+            decree_text = str(row["decree_text"] or "")
+            execution_note = str(row["execution_note"] or "")
             candidates.append({
                 "id": candidate_id,
                 "origin_kind": "impeachment_surge",
@@ -2177,8 +2183,9 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
                 "responsible_person_ids": responsible_ids,
                 "responsible_faction_ids": responsible_factions,
                 "dossier_id": did,
-                "decree_text": str(row["decree_text"] or "").strip(),
-                "execution_note": str(row["execution_note"] or ""),
+                # #1897：案卷自由正文原样供料；仅空白也不得因 strip 改成空串。
+                "decree_text": decree_text,
+                "execution_note": execution_note,
                 "execution_outcome": str(row["execution_outcome"] or "").strip(),
                 "beyond_intent": True,
                 "reported_bands": list(fork_state.get("reported_bands") or []),
@@ -4303,8 +4310,8 @@ def apply_issue_tracker_output(
                 "item": adv,
             })
             continue
-        stage_text = str(adv.get("stage_text") or "")[:120]
-        narrative = str(adv.get("narrative") or "")[:400]
+        stage_text = str(adv.get("stage_text") or "")
+        narrative = str(adv.get("narrative") or "")
         # 先验 issue 存在且 active（与 db.advance_issue 的 None 条件 row is None / status!=active 一致）：
         # 未找到/已非 active → missing_ref 逐项拒收留痕（陈旧/幻觉引用，同 close_issues None 归类，#63），
         # 不裸 continue 静默丢。**必须先验、再应用 metric**：原序先 _apply_metric_dict（就地 mutate
@@ -4670,7 +4677,7 @@ def apply_issue_tracker_output(
         except (TypeError, ValueError, OverflowError):
             end_turn_marker_shape = False
         resolve_text_for_shape = _issue_condition_text(ni.get("resolve_condition"))
-        if not resolve_text_for_shape and isinstance(stop_condition_raw, str):
+        if not resolve_text_for_shape.strip() and isinstance(stop_condition_raw, str):
             resolve_text_for_shape = stop_condition
         forbidden_resolve_commitment_shape = bool(
             _FORBIDDEN_COMMITMENT_RESOLVE_SHAPE.fullmatch(str(resolve_text_for_shape or "").strip())
@@ -4684,7 +4691,7 @@ def apply_issue_tracker_output(
                 or (isinstance(stop_condition_raw, (dict, list)) and bool(stop_condition))
                 or (
                     isinstance(stop_condition_raw, str)
-                    and bool(stop_condition)
+                    and bool(str(stop_condition).strip())
                     and bool(origin_ref)
                     and not resolve_eff
                     and not fail_eff
@@ -4819,7 +4826,7 @@ def apply_issue_tracker_output(
             })
             continue
         resolve_condition = _issue_condition_text(ni.get("resolve_condition"))
-        if not resolve_condition and isinstance(ni.get("stop_condition"), str):
+        if not resolve_condition.strip() and isinstance(ni.get("stop_condition"), str):
             resolve_condition = stop_condition
         # A structured roster is an item-level contract.  In particular a
         # mapping is not an iterable roster: iterating it would persist its
@@ -4910,14 +4917,14 @@ def apply_issue_tracker_output(
         # issue+affair 成对写由 GameDB 拥有（ADR 0150-D3）；本段不自包事务生命周期。
         _issue_fields = dict(
             kind=kind,
-            title=title[:60] or "无名事项",
+            title=title or "无名事项",
             origin_kind="decree",
             origin_ref=origin_ref,
             bar_value=bar_value,
             bar_good_meaning=str(ni.get("bar_good_meaning") or "已成"),
             bar_bad_meaning=str(ni.get("bar_bad_meaning") or "废止"),
             inertia=inertia,
-            stage_text=str(ni.get("stage_text") or "")[:120],
+            stage_text=str(ni.get("stage_text") or ""),
             severity=severity,
             region_hint=str(ni.get("region_hint") or ""),
             faction_hint=str(ni.get("faction_hint") or ""),
@@ -4931,8 +4938,8 @@ def apply_issue_tracker_output(
             cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
-            resolve_condition=resolve_condition[:300],
-            fail_condition=str(ni.get("fail_condition") or "")[:300],
+            resolve_condition=resolve_condition,
+            fail_condition=str(ni.get("fail_condition") or ""),
             end_turn=end_turn,
             stop_condition=stop_condition,
             commitment_kind=commitment_kind,
@@ -4991,7 +4998,7 @@ def apply_issue_tracker_output(
                 "item": cl,
             })
             continue
-        narrative = str(cl.get("narrative") or "")[:400]
+        narrative = str(cl.get("narrative") or "")
         chk = db.conn.execute(
             "SELECT * FROM issues WHERE id=?", (issue_id,)
         ).fetchone()
@@ -5144,7 +5151,7 @@ def apply_issue_tracker_output(
                 trigger_kind="decree",
                 delta_bar=0,
                 stage_text=row["stage_text"],
-                narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。")[:400],
+                narrative=str(cn.get("narrative") or "陛下欲罢，然此事非诏可消。"),
                 metric_delta={"皇威": -2},
                 commit=not external_transaction,
             )
@@ -5189,7 +5196,7 @@ def apply_issue_tracker_output(
                 db, state,
                 commitment_ref=issue_id,
                 breach_kind=BREACH_KIND_POLICY_REVERSAL,
-                reason=str(cn.get("narrative") or "撤回成命")[:400],
+                reason=str(cn.get("narrative") or "撤回成命"),
                 target_dossier_id=int(parse_dossier_id(origin_ref_c) or 0),
             )
             applied_cancels.append({
@@ -5220,7 +5227,7 @@ def apply_issue_tracker_output(
         if deterministic_breach:
             db.breach_decree_dossier(
                 state, int(linked_dossier["id"]),
-                reason=str(cn.get("narrative") or "撤回成命")[:400], commit=False,
+                reason=str(cn.get("narrative") or "撤回成命"), commit=False,
             )
         cost = {} if deterministic_breach else (cn.get("applied_cost") or {})
         if isinstance(cost, dict):
@@ -5233,7 +5240,7 @@ def apply_issue_tracker_output(
             entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         db.cancel_issue(
             state, issue_id,
-            narrative=str(cn.get("narrative") or "")[:400],
+            narrative=str(cn.get("narrative") or ""),
             applied_cost=cost if isinstance(cost, dict) else {},
             commit=not external_transaction,
         )
@@ -5604,9 +5611,10 @@ def _office_appointment_failure(
     kind: str = "",
     reason_suffix: str = "",
 ) -> Dict[str, object]:
-    """Map known appointment write failures to typed rejection categories.
+    """Map typed appointment domain failures to rejection categories.
 
     Category comes only from typed exception attributes — never from message text.
+    Callers must only pass already-classified domain faults (#1897 E1).
     """
     result: Dict[str, object] = {
         "name": name,
@@ -6287,6 +6295,8 @@ def _apply_person_changes(
                     ch.transit_distance_remaining = row["transit_distance_remaining"]
                     ch.transit_speed_factor = row["transit_speed_factor"]
                     ch.transit_start_turn = int(row["transit_start_turn"] or 0)
+                    # 对称 DB 侧回滚（上方 UPDATE 已还原全 7 字段）：内存也还原缘由/码，
+                    # 守三面同步（决定6），免前置步刷过内存缘由后此路回滚留脏值（PR#106 R2 gemini）。
                     ch.status_reason = str(row["status_reason"] or "")
                     ch.reason_code = str(row["reason_code"] or "")
 
@@ -6422,14 +6432,13 @@ def _apply_person_changes(
                         )
                         continue
                     if action_type == "pacification":
-                        try:
-                            payload = dossier.get("payload") or json.loads(
-                                str(dossier.get("payload_json") or "{}")
-                            )
-                        except (TypeError, ValueError):
-                            payload = {}
+                        payload = dossier.get("payload")
                         if not isinstance(payload, dict):
-                            payload = {}
+                            from ming_sim.db import GameDB
+                            payload = GameDB.parse_engine_payload_json(
+                                dossier.get("payload_json"),
+                                surface="issues.pacification.payload_json",
+                            )
                         bound_target = str(
                             payload.get("target_id") or dossier.get("target_id") or ""
                         ).strip()
@@ -6637,6 +6646,7 @@ def _apply_dossier_participant_items(
                 "rejected": True, "category": "invalid_shape", "item": item,
             })
             continue
+        # 本次声明字段错误 → 逐项拒收；已持久名册/读改写故障上抛（#1897 E1/K2）。
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             if dossier_id not in authority_set:
@@ -6650,19 +6660,39 @@ def _apply_dossier_participant_items(
                 raise ValueError("追加参与层级必须为主办/协办/知情")
             if not delegator_id:
                 raise ValueError("追加参与人必须注明委派人")
-            added = db.append_decree_dossier_participants(dossier_id, [{
+            # 职分自由文字：原值运输；strip 只作局部判空，不改持久值（#1897 E2）。
+            role_raw = item.get("role")
+            if role_raw is None:
+                role = ""
+            elif not isinstance(role_raw, str):
+                raise ValueError(
+                    f"追加参与人职分须为原文，得 {type(role_raw).__name__}"
+                )
+            else:
+                role = role_raw
+            addition = {
                 "character_id": character_id,
                 "tier": tier,
-                "role": str(item.get("role") or "").strip(),
+                "role": role,
                 "delegator_id": delegator_id,
-            }], state=state, commit=False)
+            }
+        except (TypeError, ValueError) as exc:
+            results.append({
+                "rejected": True, "category": "invalid_participant_roster",
+                "reason": str(exc), "item": item,
+            })
+            continue
+        try:
+            added = db.append_decree_dossier_participants(
+                dossier_id, [addition], state=state, commit=False,
+            )
             if not added:
                 # Exact durable duplicate is the only no-write success case.
                 existing = db.get_decree_dossier(dossier_id) or {}
                 if not any(
                     row.get("character_id") == character_id
                     and row.get("tier") == tier
-                    and row.get("role") == str(item.get("role") or "").strip()
+                    and row.get("role") == role
                     and row.get("delegator_id") == delegator_id
                     for row in existing.get("participant_roster", [])
                 ):
@@ -6672,9 +6702,11 @@ def _apply_dossier_participant_items(
             }
             results.append({
                 "dossier_id": dossier_id,
-                "character_id": persisted["character_id"], "tier": persisted["tier"],
+                "character_id": persisted["character_id"],
+                "tier": persisted["tier"],
             })
-        except (TypeError, ValueError, KeyError) as exc:
+        except DecreeMaterializationValidationError as exc:
+            # 追加项领域拒收（名册无此人等）；已持久腐坏仍上抛 ValueError。
             results.append({
                 "rejected": True, "category": "invalid_participant_roster",
                 "reason": str(exc), "item": item,
@@ -7510,19 +7542,7 @@ def _apply_score_extraction_body(
             )
             # #567 / #1900：核账事实留在 list_dossier_reconciliations 结构化账，
             # 不向 execution_note 模板增补或覆盖原文。
-            # #619/#622：表报终值旁路——仅 degraded/transformed 挂奏报行；
-            # 变形案载承办人假象（不得回填判官真值）；progress_band 定性中文。
-            if outcome in {"degraded", "transformed"}:
-                prior = list(db.list_dossier_progress(int(dossier_id)))
-                band, memorial = terminal_report_facade(
-                    outcome, prior_reports=prior,
-                )
-                db.record_dossier_progress(
-                    dossier_id, state.turn, band, memorial,
-                    is_terminal=True,
-                    origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-                    commit=False,
-                )
+            # #1897：不造模板终值奏报；奏报只认真实表报/密奏入口。
             # 连坐挂载点＝本适配器落终值笔；禁对 execution_outcome 列事后扫描。
             # 触发过滤由 apply 内 _JOINT_LIABILITY_TRIGGERS 单一真源承担。
             db.apply_execution_joint_liability(
@@ -8477,7 +8497,7 @@ def _apply_score_extraction_body(
                 )
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
-            note=str(create.get("reason") or "")[:120],
+            note=str(create.get("reason") or ""),
             origin_ref=origin_ref,
             turn=state.turn,
             beyond_intent=create.get("beyond_intent"),
@@ -8657,12 +8677,21 @@ def _apply_score_extraction_body(
     ):
         db.conn.commit()
 
-    # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
+    # ADR0009 legacy aliases are canonicalized above and written only through
+    # the canonical person-change applier.  Keep response keys for compatibility,
+    # but do not retain a second set of direct writers here.
+    applied_appointments: List[Dict[str, object]] = []
+    applied_status_changes: List[Dict[str, object]] = []
+    applied_power_changes: List[Dict[str, object]] = []
+    applied_office_changes: List[Dict[str, object]] = []
+
+    # 11) secret_order_updates：推演写 active 密令本月实况到实况轨。结案不走这里。
     applied_secret_orders: List[Dict[str, object]] = []
     for item in extracted.get("secret_order_updates") or []:
         if not isinstance(item, dict):
             continue
         raw_id = item.get("order_id")
+        # P6 / #1897 零删改：sim_note 是 LLM 自由文本，判空在副本上做，存的仍是原文。
         sim_note = str(item.get("sim_note") or item.get("result") or "")
         disclosed = item.get("disclosed") is True
         if raw_id is None or not sim_note.strip():
@@ -8676,7 +8705,7 @@ def _apply_score_extraction_body(
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum", "reason": "order_id 非整数或超界"})
             continue
-        # 未知/非 active 密令的副作用写不进（_append_secret_order_line 静默返 False）→ 须显式拒收，
+        # 未知/非 active 密令的副作用写不进（update 对非 active 直接返回）→ 须显式拒收，
         # 否则未知 id 被无脑 append 成功 = 静默报「已应用」（cmr secret-order r1 codex，#14）。
         order = db.get_secret_order(real_id)
         if order is None:
@@ -8688,24 +8717,22 @@ def _apply_score_extraction_body(
                                           "category": "invalid_enum",
                                           "reason": f"密令当前 {order['status']}，非 active，不写推演副作用"})
             continue
-        try:
-            db.update_secret_order_sim_note(
-                real_id,
-                sim_note,
-                year=state.year,
-                period=state.period,
-                commit=commit_now,
+        # 领域拒收已在上方完成；执行区故障（含缺案卷）响亮上抛，不伪装拒收（#1897 F2）。
+        db.update_secret_order_sim_note(
+            real_id,
+            sim_note,
+            year=state.year,
+            period=state.period,
+            commit=commit_now,
+        )
+        if disclosed and not defer_disclosure:
+            record_secret_order_disclosure(
+                db, state, real_id, sim_note, commit=commit_now,
             )
-            if disclosed and not defer_disclosure:
-                record_secret_order_disclosure(
-                    db, state, real_id, sim_note, commit=commit_now,
-                )
-            print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
-            applied_secret_orders.append({
-                "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
-            })
-        except Exception as exc:
-            applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
+        print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
+        applied_secret_orders.append({
+            "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
+        })
 
     # report_section 保留 sanitize 原 section，供 _collect_inline_rejections 一次归属
     # （0015-D6；禁止落入 validate_shape_rejections 假 section，#1745）。

@@ -201,6 +201,14 @@ def parse_report_origin(origin: object) -> Tuple[str, Tuple[str, ...]]:
     return base, marks
 
 
+def report_origin_base(origin: object) -> str:
+    """业务身份：标记不算另一条奏报。空 origin 即月度轨。"""
+    from ming_sim.db import GameDB
+
+    base, _marks = parse_report_origin(origin)
+    return base or GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
+
+
 def origin_has_mark(origin: object, mark: str) -> bool:
     _base, marks = parse_report_origin(origin)
     return str(mark) in marks

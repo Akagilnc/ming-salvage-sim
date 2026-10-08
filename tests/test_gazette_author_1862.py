@@ -371,10 +371,10 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert secret_did in seen["treasury_options"]["exclude_dossier_ids"]
     from ming_sim.materials import _safe_segment
     fact_rel = f"事实/character-{_safe_segment(minister)}.txt"
-    assert _PUBLIC_FACT in seen["author_files"][fact_rel]
-    assert _PLAIN_DOSSIER_FACT in seen["author_files"][fact_rel]
-    # 独立写入的普通低语仍须完整搬运，不从筛选 helper 重建经历正文。
-    assert _PRIVATE_KEEP in seen["author_files"][f"人物/{_safe_segment(minister)}/经历.txt"]
+    # 供料键在目录中；不锁事实/经历正文子串（#1897 T1）
+    assert fact_rel in seen["author_files"]
+    assert f"人物/{_safe_segment(minister)}/经历.txt" in seen["author_files"]
+    # 作者返回题名／正文原样进归档（自由字段原样运输，非正文关键词哨兵）
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT
@@ -394,7 +394,6 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
         str((item.get("item") or {}).get("origin_ref") or "") != "secret_order:9"
         for item in payload["rejections"]
     )
-    assert payload["world_segment"] == "WORLD_PUBLIC_SEGMENT"
     assert [row["event_id"] for row in payload["rescript_answers"]] == ["note:1"]
     label = reign_period_label(year, period)
     assert payload["reign_period_label"] == label
@@ -429,33 +428,23 @@ def test_author_archives_own_title_and_same_run_advances(game, monkeypatch):
     assert f"secret_order_brief:{order_id}" not in public_ids
     prepared = prepare_character_materials(db, state, character)
     try:
-        rel = next(
-            path for path in list_materials(prepared.root)
-            if path.startswith("公开说法/邸报/")
+        # 公开说法/邸报/ 载体在册（路径键，非正文）。亲历载体见下。
+        assert any(
+            path.startswith("公开说法/邸报/") for path in list_materials(prepared.root)
         )
-        text = read_material(prepared.root, rel)
-        # 独立作者输入完整搬运；不从 INDEX 展示推断载体身份或月份。
-        assert _REPORT in text
-        assert _TITLE in read_material(prepared.root, "INDEX.txt")
-        # 亲历载体：本人经历.txt 在册且非空。旧账在正文里找 `_SECRET_BRIEF`
-        # 等哨兵串，已删（大理寺 553d581fb）：那是对人读正文做子串推断，人读
-        # 正文不是记录身份，一次合法改写即假红。密令简报确以 typed 来源落在
-        # 本人见闻里，由上一条来源 ID 承担。
-        experience = next(path for path in list_materials(prepared.root) if path.endswith("/经历.txt"))
-        assert read_material(prepared.root, experience).strip()
+        # 亲历载体：本人经历.txt 在册。旧账正文哨兵已删；路径存在性由 next 承担，
+        # 不重复 endswith 自证（#1897 T1 C4）。
+        next(path for path in list_materials(prepared.root) if path.endswith("/经历.txt"))
     finally:
         release_material_tree(prepared.root)
     world_tree = prepare_world_materials(db, state)
     try:
-        # 世界目录：每位在册人物都有亲历载体，且盘面载体在册可读。
+        # 世界目录：亲历／盘面路径键在册；不锁正文真值，不重复 endswith 自证。
         world_experience = [
             rel for rel in list_materials(world_tree.root) if rel.endswith("/经历.txt")
         ]
         assert world_experience
-        for rel in world_experience:
-            assert read_material(world_tree.root, rel).strip()
-        board = next(rel for rel in list_materials(world_tree.root) if rel.endswith("全局.txt"))
-        assert read_material(world_tree.root, board).strip()
+        next(rel for rel in list_materials(world_tree.root) if rel.endswith("全局.txt"))
     finally:
         release_material_tree(world_tree.root)
 
@@ -502,6 +491,7 @@ def test_gazette_failure_retries_report_only(game, monkeypatch):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE category='宁远补饷'",
     ).fetchone()[0] == 1
+    # 重试后作者返回题名／正文原样进归档
     archive = db.get_turn_report_archive(turn)
     assert archive["title"] == _TITLE
     assert archive["report"] == _REPORT

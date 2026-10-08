@@ -469,11 +469,13 @@ def validate_all(
             )
 
             event_id = str(row.get("event_id") or "")
-            label = str(req.get("label") or "").strip()
-            note = str(req.get("note") or "").strip()
+            # #1897 S1：选项身份与 bind_decision_options 同规——原样 label 命中；
+            # strip 只作判空局部副本，不改写请求身份、不另立兼容通道。
+            label = str(req.get("label") or "")
+            note = str(req.get("note") or "")
             if (
-                not label
-                and note
+                not label.strip()
+                and note.strip()
                 and (
                     event_id.startswith(_DECREE_QUESTION_PREFIX)
                     or event_id.startswith(_WORLD_QUESTION_PREFIX)
@@ -1237,7 +1239,11 @@ def apply_imperial_deliberation_push(
         raise ValueError(f"御笔强推只接 proposed 案卷：{did}")
     payload = row.get("payload")
     if not isinstance(payload, dict):
-        payload = json.loads(str(row.get("payload_json") or "{}"))
+        from ming_sim.db import GameDB
+        payload = GameDB.parse_engine_payload_json(
+            row.get("payload_json"),
+            surface=f"rescript.dossier#{did}.payload_json",
+        )
     if not isinstance(payload, dict):
         raise ValueError("廷议案卷 payload 非对象")
     if str(payload.get("deliberation_state") or "") != "stalled":

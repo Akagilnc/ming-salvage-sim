@@ -59,39 +59,6 @@ def close_night_dossier(db, state, content, pending_id):
 
 
 
-def stage_yuan_appointment_summon(
-    game, monkeypatch=None, *, summon_after="是", appt_name="袁崇焕",
-    office="辽东巡抚", region_id="", player_message=None,
-    ban_appointment_extract=False,
-):
-    del monkeypatch, ban_appointment_extract, player_message
-    db, state, content = game
-    minister = active_minister_name(db, content)
-    audience_night.open_night(db, state, empty_scaffold=True)
-    seat = str(region_id or "").strip() or {
-        "巡抚登莱": "shandong",
-        "辽东巡抚": "liaodong",
-        "陕西三边总督": "shaanxi",
-    }.get(str(office or "").strip(), "")
-    payload = {
-        "appoint_action": "任命",
-        "name": appt_name,
-        "office": office,
-        "summon_after": summon_after,
-    }
-    if seat:
-        payload["region_id"] = seat
-    pending_id = db.stage_pending_action(
-        int(state.turn), kind="office", action="任命",
-        minister_name=minister, target_id=None, payload=payload,
-    )
-    pending = next(
-        row for row in db.list_pending_actions(state.turn)
-        if int(row["id"]) == int(pending_id)
-    )
-    return pending, f"office:{pending['id']}"
-
-
 def close_office_to_dossier(db, state, content, pending_id):
     """Mark night-approved and close; office pending becomes appointment dossier."""
     night = audience_night.get_open_night(db)

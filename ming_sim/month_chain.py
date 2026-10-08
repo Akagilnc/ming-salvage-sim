@@ -164,14 +164,27 @@ def _month_fact_materials(
     ).fetchall()
     for row in rows:
         decree_ref = str(row["decree_ref"] or "")
+        # 已结算声明是内部机械事实；与 parse_engine_payload_json 同权威，
+        # 空串/腐坏响亮，不得洗成空声明供料（#1897 E1/K2）。
+        from ming_sim.db import GameDB
         try:
-            declaration = json.loads(row["declaration_json"] or "{}")
-        except json.JSONDecodeError:
-            declaration = {}
+            declaration = GameDB.parse_engine_payload_json(
+                row["declaration_json"],
+                surface=f"settled.declaration_json:{decree_ref}",
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"settled declaration_json 无效：{decree_ref}"
+            ) from exc
         try:
-            visible = json.loads(row["visible_refs_json"] or "{}")
-        except json.JSONDecodeError:
-            visible = {}
+            visible = GameDB.parse_engine_payload_json(
+                row["visible_refs_json"],
+                surface=f"settled.visible_refs_json:{decree_ref}",
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"settled visible_refs_json 无效：{decree_ref}"
+            ) from exc
         if not include_secret_sources and (
             _decree_ref_is_secret(db, decree_ref)
             or _secret_sourced(declaration)
@@ -213,10 +226,10 @@ def _month_fact_materials(
         ):
             if not include_secret_sources and str(row["source"] or "") == "secret_order":
                 continue
-            try:
-                item = json.loads(row["item_json"] or "{}")
-            except json.JSONDecodeError:
-                item = {}
+            from ming_sim.db import GameDB
+            item = GameDB.parse_engine_payload_json(
+                row["item_json"], surface="rejection_reports.item_json",
+            )
             if not include_secret_sources and (
                 _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
             ):
@@ -1037,7 +1050,11 @@ def _apply_deferred_disclosures(
 def _enrich_eligible_dossiers_for_supply(
     db: Any, candidates: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """合资格案卷供料：复用 get_decree_dossier／typed contract 读口补齐正文与执行契约。"""
+    """合资格案卷供料：复用 get_decree_dossier／typed contract 读口补齐正文与执行契约。
+
+    密令关联案卷的现行要旨与期限只读 secret_orders（#1897 S2）；案卷 decree_text
+    是发令历史原诏，不作现行正文真源。
+    """
     from ming_sim.covert_progress import read_covert_task_contract
 
     out: List[Dict[str, Any]] = []
@@ -1046,7 +1063,20 @@ def _enrich_eligible_dossiers_for_supply(
         dossier_id = int(item.get("dossier_id") or 0)
         dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
         if dossier is not None:
-            row["decree_text"] = str(dossier.get("decree_text") or "")
+            secret_order_id = int(
+                dossier.get("secret_order_id") or item.get("secret_order_id") or 0
+            )
+            order = (
+                db.get_secret_order(secret_order_id)
+                if secret_order_id and hasattr(db, "get_secret_order")
+                else None
+            )
+            if order is not None:
+                row["decree_text"] = str(order.get("content") or "")
+                row["title"] = str(order.get("title") or row.get("title") or "")
+                row["due_turn"] = int(order.get("due_turn") or 0)
+            else:
+                row["decree_text"] = str(dossier.get("decree_text") or "")
             payload = dossier.get("payload")
             row["payload"] = payload if isinstance(payload, dict) else {}
             row["status"] = str(dossier.get("status") or "")
@@ -1186,15 +1216,27 @@ def build_secret_orders_supply_feed(
     不拼装「已生效效果」清单，也不另造逐段实际结果账本；专用逐路实况账本已退役（#1900 J18）。
     """
     from ming_sim.covert_progress import _is_issuance_turn
-    from ming_sim.materials import _world_board_text
+    from ming_sim.materials import _world_board_text, actual_progress_notes
 
     turn = int(state.turn)
     candidates = db.list_monthly_dossier_progress_nudges(turn)
     eligible = _enrich_eligible_dossiers_for_supply(db, candidates)
+    for row in eligible:
+        dossier_id = int(row.get("dossier_id") or 0)
+        row["actual_notes"] = actual_progress_notes(db, dossier_id) if dossier_id else []
     active_orders = _attach_investigation_facts(db, state, [
         dict(o) for o in db.list_secret_orders(status="active")
         if not _is_issuance_turn(o, turn)
     ])
+    # #1897：密令供料附实况轨原文（与案卷 eligible 同形）。
+    for item in active_orders:
+        dossier = (
+            db.get_dossier_for_secret_order(int(item["id"]))
+            if hasattr(db, "get_dossier_for_secret_order") else None
+        )
+        item["actual_notes"] = (
+            actual_progress_notes(db, int(dossier["id"])) if dossier is not None else []
+        )
     materials = _month_fact_materials(db, state, chain, include_secret_sources=True)
     return {
         "instruction": (
@@ -1628,21 +1670,24 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
     for opt in options:
         if not isinstance(opt, dict):
             continue
-        label = str(opt.get("label") or "").strip()
-        if not label:
+        # #1897：选项 label/hint 原样；判空用局部副本。
+        label = str(opt.get("label") or "")
+        if not label.strip():
             continue
         cleaned.append({
             "label": label,
-            "hint": str(opt.get("hint") or "").strip(),
+            "hint": str(opt.get("hint") or ""),
             **{
                 key: opt[key] for key in opt
                 if key not in {"label", "hint"} and opt[key] is not None
             },
         })
+    # #1897：请旨 title/context 自由正文原样；仅真正空 title 才回落「请旨」。
+    title = str(question.get("title") or "")
     return {
         "event_id": event_id,
-        "title": str(question.get("title") or "").strip() or "请旨",
-        "context": str(question.get("context") or "").strip(),
+        "title": title or "请旨",
+        "context": str(question.get("context") or ""),
         "options": cleaned,
     }
 
@@ -1702,11 +1747,12 @@ def _consume_rescript_answers(
 
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        # #1897：批红答案自由字段原样续推，禁 strip。
         return {
-            "label": str(choice.get("label") or "").strip(),
-            "hint": str(choice.get("hint") or "").strip(),
-            "note": str(choice.get("note") or "").strip(),
-            "context": str(row.get("context") or "").strip(),
+            "label": str(choice.get("label") or ""),
+            "hint": str(choice.get("hint") or ""),
+            "note": str(choice.get("note") or ""),
+            "context": str(row.get("context") or ""),
             "event_id": str(row.get("event_id") or ""),
             "title": str(row.get("title") or ""),
         }

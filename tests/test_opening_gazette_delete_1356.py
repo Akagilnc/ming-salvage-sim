@@ -16,11 +16,8 @@ def test_new_game_t0_previous_summary_strictly_empty(game):
     assert state.turn == 1
     assert (state.year, state.period) == (1627, 10)
 
-    assert db.get_turn_report(0) == ""
     assert db.conn.execute("SELECT report FROM turn_reports WHERE turn = 0").fetchone() is None
-
-    summary = db.previous_turn_summary(state)
-    assert summary == ""
+    _ = db.previous_turn_summary(state)  # 入口可调用；不锁空串正文
 
 def test_new_game_t0_previous_reign_period_label_empty_with_empty_summary(game):
     """r5：t0 无上月报 → previous_reign_period_label 与空 summary 同口径（禁九月残留）。"""

@@ -18,6 +18,7 @@ import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.constants import ECONOMY_ACCOUNTS, REGION_FIELD_ALIASES
+from ming_sim.centrifuge_ledger import CENTRIFUGE_AXES
 from ming_sim.materials import secret_order_origin
 from ming_sim.person_archive_contract import PERSON_ACTIONS
 from ming_sim.value_matrix import (
@@ -168,6 +169,7 @@ def seed_guilt_counts_as_debt(seed_guilt: object) -> bool:
         guilt = parsed
     severity = str(guilt.get("severity") or "").strip()
     return severity in _DEBT_SEVERITIES
+
 
 
 def covert_task_from_payload(payload: object) -> Optional[Dict[str, object]]:
@@ -485,46 +487,154 @@ def build_covert_task_contract(
     }
 
 
+# 转译 prompt 里给模型的契约样例：每份都必须能被 build_covert_task_contract
+# 收下，否则说明本身就在教模型交一份会被拒的载荷。
+# 钱粮两种定向各给一份：符号语义（+1 收入 / -1 支出）正是手写说明曾写反之处，
+# 光给人犯样例盖不住。
+_CONTRACT_EXAMPLES: tuple[Dict[str, object], ...] = (
+    {
+        "kind": "查案",
+        "axes": ["实务事功"],
+        "direction": 1,
+        "delivery": {
+            "unit": "人犯",
+            "target_units": 3,
+            "person_action": "处置",
+            "effect_sign": 1,
+        },
+    },
+    {
+        "kind": "查赃",
+        "axes": ["礼法名节"],
+        "direction": -1,
+        "delivery": {
+            "unit": "万两",
+            "target_units": 5,
+            "effect_sign": -1,
+            "purpose": "其它",
+            "category": "追赃",
+            "account": "内库",
+        },
+    },
+    {
+        "kind": "查军饷",
+        "axes": ["实务事功"],
+        "direction": 1,
+        "delivery": {
+            "unit": "万两",
+            "target_units": 8,
+            "effect_sign": 1,
+            "category": "军费",
+            "account": "国库",
+        },
+    },
+)
+
+
+def describe_covert_task_contract() -> str:
+    """本冻结契约的可消费定义（转译 prompt 的单一真源投影）。
+
+    #1897：转译形状里只写 ``"covert_task": {}`` 等于没告诉模型要交什么，
+    真实模型交不出 ``build_covert_task_contract`` 收的字段。这里从本模块的
+    闭集常量与 identity 规则直接投影出必填字段，闭集不另抄一份。
+
+    钱粮那段的「收款 / 支出」措辞与必需字段**由** ``_identity_keys_for_unit``
+    投影（``effect_sign>0`` 即收入，只要 category/account；``<=0`` 即支出，
+    另须 purpose，补饷再须 target_kind/target_id）——不再手写第二份规则：
+    手写那份曾把符号写反，教模型交一份必被拒的载荷。
+
+    样例取自 ``_CONTRACT_EXAMPLES``——每份样例本身必须能被
+    ``build_covert_task_contract`` 收下，免得说明与实现分叉。
+    """
+    axes = "、".join(sorted(CENTRIFUGE_AXES))
+    units = "、".join(CANONICAL_UNITS)
+    actions = "、".join(PERSON_ACTIONS)
+    accounts = "、".join(ECONOMY_ACCOUNTS)
+    fields = "、".join(sorted(REGION_FIELD_ALIASES))
+    income_keys = "、".join(
+        _identity_keys_for_unit("万两", effect_sign=1),
+    )
+    spend_keys = "、".join(
+        _identity_keys_for_unit("万两", effect_sign=-1, purpose="其它"),
+    )
+    subsidy_keys = "、".join(
+        _identity_keys_for_unit("万两", effect_sign=-1, purpose="补饷"),
+    )
+    samples = "\n".join(
+        f"    {json.dumps(sample, ensure_ascii=False)}"
+        for sample in _CONTRACT_EXAMPLES
+    )
+    return (
+        f"{samples}\n"
+        f"    必填：kind（差务类型）、axes（六轴之一：{axes}）、direction（1 顺轴 / -1 逆轴）、"
+        f"delivery.unit（{units}）、delivery.target_units（正数）、delivery.effect_sign（+1 / -1）。\n"
+        f"    按 unit 另须给足交付身份：人犯 → person_action（{actions}）；"
+        f"万亩 → region / field（{fields}）/ target。\n"
+        f"    万两的 effect_sign 定向钱：+1 是收入（臣上交），只要 {income_keys}"
+        f"（account 取 {accounts}）；"
+        f"-1 是支出（皇帝拨出），须另给 {spend_keys}；"
+        f"purpose=补饷 时还须 {subsidy_keys}（target_id 取军额 id）。"
+        f"收入不得写 purpose=补饷。\n"
+        "    查 investigative_target 的暗查则给 investigation_target（可数目标）+ target_units + effect_sign。\n"
+        "    上述字段缺一即拒收该条密令；不得凭空编造闭集外的值。"
+    )
+
+
 def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
-    """Validate a frozen contract without rebuilding or supplying read-time defaults."""
-    if not isinstance(raw, Mapping) or raw.get("version") != CONTRACT_VERSION:
+    """Validate a frozen contract without rebuilding or supplying read-time defaults.
+
+    None = 真正缺席 → None。present 坏结构/坏类型响亮 ValueError（#1897 E1），
+    不得把坏合同洗成可选缺席。
+    """
+    if raw is None:
         return None
+
+    def _reject(message: str) -> None:
+        # CovertContractError ⊂ ValueError：持久 present 坏合同响亮，不洗成缺席（#1897 E1）。
+        raise CovertContractError(f"持久 covert_task_contract：{message}")
+
+    if not isinstance(raw, Mapping):
+        _reject(f"须为对象，得 {type(raw).__name__}")
+    if raw.get("version") != CONTRACT_VERSION:
+        _reject(f"version 非法：{raw.get('version')!r}")
     delivery = raw.get("delivery")
     if not isinstance(delivery, Mapping):
-        return None
+        _reject("缺少 delivery 对象")
     if not str(raw.get("kind") or "").strip() or not normalize_axes(raw.get("axes")):
-        return None
+        _reject("kind/axes 无效")
     if raw.get("direction") not in (-1, 1):
-        return None
+        _reject("direction 非法")
     inv_target = str(
         raw.get("investigation_target") or delivery.get("investigation_target") or ""
     ).strip()
     if inv_target:
         try:
             qty = float(delivery.get("target_units"))
-        except (TypeError, ValueError):
-            return None
+        except (TypeError, ValueError) as exc:
+            raise CovertContractError(
+                "持久 covert_task_contract：target_units 非法",
+            ) from exc
         if qty <= 0.0:
-            return None
+            _reject("target_units 须为正")
         if delivery.get("effect_sign") not in (-1, 1):
-            return None
+            _reject("effect_sign 非法")
         if list(delivery.get("canonical_fields") or []):
-            return None
+            _reject("investigation 不得带 canonical_fields")
         if str(delivery.get("investigation_target") or "").strip() != inv_target:
-            return None
+            _reject("investigation_target 不一致")
         return copy.deepcopy(dict(raw))
     try:
         unit, target = canonicalize_delivery_unit(
             delivery.get("unit"), delivery.get("target_units"),
         )
-    except CovertContractError:
-        return None
+    except CovertContractError as exc:
+        raise CovertContractError(f"持久 covert_task_contract：{exc}") from exc
     if delivery.get("effect_sign") not in (-1, 1):
-        return None
+        _reject("effect_sign 非法")
     if list(delivery.get("canonical_fields") or []) != canonical_fields_for_delivery(unit=unit):
-        return None
+        _reject("canonical_fields 与 unit 不符")
     if float(delivery.get("target_units")) != target:
-        return None
+        _reject("target_units 与规范化不符")
     if any(
         not delivery.get(key)
         for key in _identity_keys_for_unit(
@@ -533,7 +643,7 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
             purpose=delivery.get("purpose"),
         )
     ):
-        return None
+        _reject("delivery 缺 identity 键")
     return copy.deepcopy(dict(raw))
 
 
@@ -543,15 +653,19 @@ def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[
     payload = dossier.get("payload")
     if not isinstance(payload, Mapping):
         raw_json = dossier.get("payload_json")
-        if isinstance(raw_json, str) and raw_json.strip():
-            try:
-                loaded = json.loads(raw_json)
-            except (TypeError, ValueError):
-                loaded = None
-            payload = loaded if isinstance(loaded, Mapping) else None
-        else:
+        if raw_json is None:
             payload = None
+        else:
+            # 与 parse_engine 同权威：空串/腐坏响亮，不 catch-to-缺席（#1897 E1）。
+            from ming_sim.db import GameDB
+            loaded = GameDB.parse_engine_payload_json(
+                raw_json, surface="covert_task.dossier.payload_json",
+            )
+            payload = loaded
     if not isinstance(payload, Mapping):
+        return None
+    # CONTRACT_KEY 缺席 → None；present 坏值由 coerce 响亮。
+    if CONTRACT_KEY not in payload:
         return None
     return coerce_covert_task_contract(payload.get(CONTRACT_KEY))
 
@@ -580,7 +694,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     actual = float(review_input.get("actual_units") or 0.0)
     target = float(review_input.get("target_units") or 0.0)
     has_reports = bool(review_input.get("has_reports"))
-    origin = str(review_input.get("origin_context") or "").strip()
+    origin = str(review_input.get("origin_context") or "")
 
     delivered = target > 0.0 and actual + 1e-9 >= target
     if delivered:
@@ -598,7 +712,7 @@ def decide_secret_order_settlement(review_input: Mapping[str, object]) -> Dict[s
     return {
         "status": status,
         "outcome": outcome,
-        "note": note[:200],
+        "note": note,
         "close": True,
         "is_terminal": True,
         "actual_units": actual,
@@ -611,15 +725,15 @@ def player_facing_secret_order_close_text(
     order: Mapping[str, object],
     reports: Sequence[Mapping[str, object]],
 ) -> str:
-    """结案给玩家的字就是账上的字。空白只用来判断有没有正文。"""
+    """结案给玩家的字就是账上的字。#1897：仅空白也是原文，不得因 strip 判空而改走兜底。"""
     existing = str(order.get("result") or "")
-    if existing.strip():
+    if existing:
         return existing
     for item in reversed(list(reports or [])):
         if not isinstance(item, Mapping):
             continue
         text = str(item.get("memorial_text") or "")
-        if text.strip():
+        if text:  # verbatim: whitespace-only memorial also counts
             return text
     return ""
 
@@ -679,16 +793,11 @@ def _delivery_matches_region(row: Mapping[str, object], delivery: Mapping[str, o
 
 
 def _dossier_payload_map(db: Any, dossier_id: int) -> Dict[str, object]:
-    row = db.conn.execute(
-        "SELECT payload_json FROM decree_dossiers WHERE id=?",
-        (int(dossier_id),),
-    ).fetchone()
-    if row is None:
+    """案卷 payload 读口：复用 get_decree_dossier，腐坏响亮（#1897 E1/K2）。"""
+    dossier = db.get_decree_dossier(int(dossier_id))
+    if dossier is None:
         return {}
-    try:
-        payload = json.loads(str(row["payload_json"] or "{}"))
-    except (TypeError, ValueError):
-        return {}
+    payload = dossier.get("payload")
     return dict(payload) if isinstance(payload, Mapping) else {}
 
 
@@ -745,59 +854,108 @@ def _lanes_from_payload(payload: Mapping[str, object]) -> List[Dict[str, object]
 
     #1896 后不再有 used／reason_code 字段——满阈自动写依律的旧清算轨已退役
     （ADR 0098 后出修订），掌握证据本身不等于依法清算；去重读口按 mastered 判。
+    已持久机械字段：缺省→0；显式坏值响亮，不得回填洗成 0 写回（#1897 E1/K2）。
     """
     raw = payload.get(FACT_LANES_KEY)
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"fact_lanes 须为数组，得 {type(raw).__name__}")
     lanes: List[Dict[str, object]] = []
     seen: set[str] = set()
-    if isinstance(raw, list):
-        for item in raw:
-            if not isinstance(item, Mapping):
-                continue
-            key = str(item.get("fact_key") or "").strip()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            try:
-                effort = float(item.get("effort") or 0.0)
-            except (TypeError, ValueError):
-                effort = 0.0
-            try:
-                difficulty = float(item.get("difficulty") or 0.0)
-            except (TypeError, ValueError):
-                difficulty = 0.0
-            try:
-                months = int(item.get("months") or 0)
-            except (TypeError, ValueError):
-                months = 0
-            lanes.append({
-                "fact_key": key,
-                "effort": max(0.0, effort),
-                "difficulty": max(0.0, difficulty),
-                "months": max(0, months),
-                "mastered": bool(item.get("mastered")),
-            })
+    for idx, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"fact_lanes[{idx}] 须为对象")
+        key = str(item.get("fact_key") or "").strip()
+        if not key:
+            raise ValueError(f"fact_lanes[{idx}] 缺 fact_key")
+        if key in seen:
+            continue
+        seen.add(key)
+        effort = _lane_number(
+            item.get("effort", 0.0), f"fact_lanes[{idx}].effort", allow_inf=False,
+        )
+        # difficulty 允许 +inf：gone／零能力等合法机械终值（见 investigation_fact_difficulty）。
+        difficulty = _lane_number(
+            item.get("difficulty", 0.0), f"fact_lanes[{idx}].difficulty", allow_inf=True,
+        )
+        months = _lane_nonneg_int(item.get("months", 0), f"fact_lanes[{idx}].months")
+        mastered = _lane_bool(item.get("mastered", False), f"fact_lanes[{idx}].mastered")
+        lanes.append({
+            "fact_key": key,
+            "effort": max(0.0, effort),
+            "difficulty": max(0.0, difficulty),
+            "months": months,
+            "mastered": mastered,
+        })
     return lanes
+
+
+def _lane_number(raw: object, label: str, *, allow_inf: bool) -> float:
+    """缺省/空 → 0；显式非数字或 NaN 响亮；+inf 仅 difficulty 合法。"""
+    if raw is None or raw == "":
+        return 0.0
+    if isinstance(raw, bool):
+        raise ValueError(f"{label} 须为数字")
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} 须为数字") from exc
+    if math.isnan(value):
+        raise ValueError(f"{label} 须为数字")
+    if not allow_inf and not math.isfinite(value):
+        raise ValueError(f"{label} 须为有限数字")
+    if allow_inf and value < 0 and not math.isfinite(value):
+        raise ValueError(f"{label} 不得为 -inf")
+    return value
+
+
+def _lane_nonneg_int(raw: object, label: str) -> int:
+    """缺省/空 → 0；整数复用 strict_int（拒 bool/float 截断）。"""
+    if raw is None or raw == "":
+        return 0
+    from ming_sim.strict_types import strict_int
+
+    try:
+        value = strict_int(raw, accept_numeric_strings=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} 须为整数") from exc
+    if value < 0:
+        raise ValueError(f"{label} 须为非负整数")
+    return value
+
+
+def _lane_bool(raw: object, label: str) -> bool:
+    """缺省/空 → False；收真 bool 或 JSON 数字 0/1；拒字符串等强制转换。"""
+    if raw is None or raw == "":
+        return False
+    if isinstance(raw, bool):
+        return raw
+    # SQLite json_set 等可能落 0/1 整型；bool 是 int 子类，上面已先收。
+    if type(raw) is int and raw in (0, 1):
+        return bool(raw)
+    raise ValueError(f"{label} 须为布尔")
 
 
 def globally_used_fact_keys(db: Any, *, except_dossier_id: int = 0) -> set[str]:
     """已被别的案查获过的事实键（#1896 同一事实不重复查获）。
 
     键取"已掌握（mastered）"：掌握证据不再置 used，故去重也只看掌握。
+    复用 get_decree_dossier，腐坏 payload 不上扫跳过（#1897 E1/K2）。
     """
     used: set[str] = set()
-    rows = db.conn.execute(
-        "SELECT id, payload_json FROM decree_dossiers",
-    ).fetchall()
+    rows = db.conn.execute("SELECT id FROM decree_dossiers").fetchall()
     skip = int(except_dossier_id or 0)
     for row in rows:
-        if skip and int(row["id"] or 0) == skip:
+        did = int(row["id"] or 0)
+        if skip and did == skip:
             continue
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
+        dossier = db.get_decree_dossier(did)
+        if dossier is None:
             continue
+        payload = dossier.get("payload")
         if not isinstance(payload, Mapping):
-            continue
+            raise ValueError(f"案卷#{did} payload_json 非对象")
         for lane in _lanes_from_payload(payload):
             if lane.get("mastered"):
                 used.add(str(lane["fact_key"]))
@@ -1208,6 +1366,7 @@ def _consume_monthly_clues(
     payload[INVESTIGATION_CLUES_KEY] = clues
     db.update_decree_dossier_payload(int(dossier_id), payload)
     return credited
+
 
 
 def apply_investigation_monthly_effort(
@@ -1733,10 +1892,8 @@ def apply_monthly_covert_actual_progress(
             continue
         dossier = db.get_dossier_for_secret_order(oid)
         if dossier is None:
-            applied.append({
-                "order_id": oid, "rejected": True, "reason": "密令缺少案卷",
-            })
-            continue
+            # #1897 / ADR0005：active 密令缺案卷是内部故障，不得洗成逐项拒收后继续。
+            raise ValueError("密令进展缺少对应案卷")
         if str(dossier.get("status") or "") == "closed":
             continue
         did = int(dossier["id"])
@@ -1773,13 +1930,13 @@ def apply_monthly_covert_actual_progress(
             raw_note = sel.get("备注")
         else:
             raw_note = None
-        if raw_note is None or isinstance(raw_note, (Mapping, list)) or str(raw_note) == "":
-            note = (
-                f"月度实进度：执行态{fidelity}（{units:g}）"
-                f"；origin_effects={originated}"
-            )
+        if raw_note is None:
+            # #1897：没有推演者给出的正文字段 → note=None，数值写口保留已存正文。
+            note: Optional[str] = None
         else:
-            note = str(raw_note)
+            # 已提供 note 禁 str() 洗白；坏类型沿写口响亮（#1897 J820-E1）。
+            from ming_sim.db import _require_durable_prose
+            note = _require_durable_prose(raw_note, field="note", required=False)
         row = db.record_dossier_actual_progress(
             did,
             turn,
@@ -1928,14 +2085,22 @@ def _apply_investigation_selection(
         raw_note = sel_map.get("备注")
     else:
         raw_note = None
-    if raw_note is None or isinstance(raw_note, (Mapping, list)) or str(raw_note) == "":
-        note = f"查案实况：本月投入 {result.get('effort_applied', 0.0):g}，已掌握 {units:g} 条"
-    else:
-        note = str(raw_note)
+    # 查案 note = 密奏正文（可谎）：入奏报轨，不入实况轨（DELTA_SCHEMA / #1897 R1）。
+    # 复用 update_secret_order_progress 既有奏报写口（自带进展档），不另造 band 前置。
+    # 写口前禁 str() 洗白；坏类型沿既有写口响亮（#1897 J820-E1）。
+    memorial_note: Optional[str] = None
+    if raw_note is not None:
+        from ming_sim.db import _require_durable_prose
+        memorial_note = _require_durable_prose(
+            raw_note, field="note", required=False,
+        )
     row = db.record_dossier_actual_progress(
         did, turn, units=units, fidelity_state="", floor_state="",
-        note=note, commit=False,
+        note=None, commit=False,
     )
+    if memorial_note is not None:
+        # 既有写口自带进展档；空/空白正文按其合同不落条，仍须标在办。
+        db.update_secret_order_progress(oid, memorial_note, commit=False)
     db.mark_secret_order_in_progress(oid, commit=False)
     applied: Dict[str, object] = {
         "order_id": oid,
@@ -1979,10 +2144,8 @@ def settle_due_secret_orders(
         oid = int(order["id"])
         dossier = db.get_dossier_for_secret_order(oid)
         if dossier is None:
-            results.append({
-                "order_id": oid, "rejected": True, "reason": "密令缺少案卷",
-            })
-            continue
+            # #1897 / ADR0005：到期结案缺案卷响亮传播；不得拒收跳过并标阶段完成。
+            raise ValueError("密令进展缺少对应案卷")
         if str(order.get("status") or "") in {"done", "failed"}:
             continue
         did = int(dossier["id"])
@@ -2005,11 +2168,14 @@ def settle_due_secret_orders(
             "origin_context": secret_order_origin(oid),
         })
         player_text = player_facing_secret_order_close_text(order, reports)
+        # 结案正文／执行注禁 str()/or 洗白；由 close 写口校验（#1897 J820-E1）。
+        close_note = verdict.get("note", "")
         db.close_secret_order(
             oid,
             str(verdict["status"]),
             player_text,
             int(state.turn),
+            execution_note=close_note if close_note is not None else "",
             commit=False,
         )
         results.append({

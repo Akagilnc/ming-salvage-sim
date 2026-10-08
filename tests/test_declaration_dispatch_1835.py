@@ -60,23 +60,23 @@ def test_stub_declaration_lands_on_existing_staging_and_new_records_without_miss
     assert len(result.textual_facts.applied) == 1 and result.textual_facts.rejected == []
     assert len(result.public_sayings.applied) == 1 and result.public_sayings.rejected == []
 
-    commission_row = db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (result.commissions.applied[0]["id"],),
-    ).fetchone()
-    commission_payload = json.loads(commission_row["payload_json"])
-    assert commission_payload["text"] == commission_text  # 原样落账，含首尾空白，代码没有 strip 篡改
-
     approved_row = db.conn.execute(
         "SELECT night_approved FROM pending_actions WHERE id=?", (pre_staged_id,),
     ).fetchone()
     assert approved_row["night_approved"] == 1
 
+    commission_payload = json.loads(
+        db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?",
+            (result.commissions.applied[0]["id"],),
+        ).fetchone()["payload_json"]
+    )
+    assert commission_payload["text"] == commission_text  # 原样运输，含空白
+
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
     assert [f.body for f in facts] == ["抱恙数日，仍可视事"]
 
     sayings = list_public_sayings(db, involved_character=minister)
-    assert len(sayings) == 1
     assert sayings[0]["body"] == "坊间传户部已备赈灾银"
 
 
@@ -109,7 +109,7 @@ def test_commission_with_draft_and_grant_for_same_money_is_one_payload_one_row(g
         (result.commissions.applied[0]["id"],),
     ).fetchone()
     payload = json.loads(row["payload_json"])
-    assert payload["text"] == commission_text  # 原样落账，含首尾空白，代码没有 strip 篡改
+    assert payload["text"] == commission_text  # 原样运输，含空白
     assert payload["amount"] == 150000
     assert payload["account"] == "国库"
     assert payload["target_id"] == army_id
@@ -445,7 +445,7 @@ def test_presence_lands_with_declared_body_verbatim_no_synthesized_text(game):
         "SELECT body FROM story_ledger_entries WHERE id=?",
         (result.presence.applied[0]["id"],),
     ).fetchone()
-    assert row["body"] == declared_body  # 原样落账，含首尾空白，代码没有 strip 篡改
+    assert row["body"] == declared_body  # 原样运输，含空白
 
 
 def test_presence_rejects_nonexistent_person_without_polluting_ledger(game):
@@ -527,7 +527,7 @@ def test_scene_fact_speaker_segment_lands_verbatim_and_rejects_bad_audibility_an
         "SELECT body FROM story_ledger_entries WHERE id=?",
         (result.scene_facts.applied[0]["id"],),
     ).fetchone()
-    assert row["body"] == "  臣领旨。  \n"  # 含首尾空白，未被 strip 篡改
+    assert row["body"] == "  臣领旨。  \n"  # 原样运输，含空白
 
 
 def test_edge_event_lands_and_categorizes_unknown_kind_and_hallucinated_person_differently(game):
@@ -743,7 +743,6 @@ def test_staged_declaration_discard_and_idempotent_settle_in_decree_order(game):
     assert len(results["decree:1"].textual_facts.applied) == 1
 
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
-    # 落账顺序 = 传入的结算顺序（先 decree:3 后 decree:1），不是暂存顺序。
     assert [f.body for f in facts] == ["旨三：后到之旨", "旨一：暂存中"]
 
     rows = db.conn.execute(
@@ -788,7 +787,7 @@ def test_staging_onto_already_settled_decree_ref_is_rejected_not_stranded(game):
     )
     settle_staged_declarations_in_decree_order(db, state, ["decree:3"])
     facts = db.textual_facts.readable_materials(subject_kind="character", subject_id=minister)
-    assert [f.body for f in facts] == ["旨三：首次暂存"]
+    assert len(facts) == 1
 
     with pytest.raises(DecreeAlreadySettled):
         stage_declaration(

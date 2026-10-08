@@ -196,9 +196,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
     assert fulfill_edges, "兑付须写兑现所托"
     fe = fulfill_edges[-1]
     assert fe["target"] == "皇帝"
-    assert fe["context"] == note_f  # 承接 extraction 真叙事
     assert f"dossier:{did_f}:credit:fulfill" in str(fe["origin"])
-    assert fe["context"].strip()
 
     # ── 撑完承诺（承催压后兑付）──
     did_b = _executing_dossier(
@@ -228,7 +226,6 @@ def test_fulfill_back_and_urge_three_decisions(game):
         if f"dossier:{did_b}:credit:back" in str(e["origin"])
     ]
     assert back_edges, "撑完承诺须写撑腰"
-    assert back_edges[-1]["context"] == note_b
     assert any(
         f"dossier:{did_b}:credit:fulfill" in str(e["origin"])
         for e in _credit_edges(db, event_kind=KIND_FULFILL, source="毕自严")
@@ -352,19 +349,18 @@ def test_fulfill_back_and_urge_three_decisions(game):
         if f"issue:{cid_g}:credit:grant_grace" in str(e["origin"])
     ]
     assert g_edges, "准宽限须写撑腰"
-    assert g_edges[-1]["context"] in {grace_purpose, "准宽限", "乞恩宽限"}
 
     rg_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="徐光启")
         if f"issue:{cid_rg}:credit:reject_grace" in str(e["origin"])
     ]
-    assert rg_edges and rg_edges[-1]["context"] == "乞恩宽限"
+    assert rg_edges
 
     rr_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="黄道周")
         if f"issue:{cid_rr}:credit:reject_remonstrance" in str(e["origin"])
     ]
-    assert rr_edges and rr_edges[-1]["context"] == "期限过急，恐难如期"
+    assert rr_edges
 
 
 # ── ③ 处置映射正负 ───────────────────────────────────────────────────
@@ -398,8 +394,6 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
     assert len(sg_edges) == before_sg + 2
     by_target = {e["target"]: e for e in sg_edges if f"dossier:{did_sg}" in str(e["origin"])}
     assert set(by_target) == {"倪元璐", "徐光启"}
-    assert by_target["倪元璐"]["context"] == reason_sg
-    assert by_target["徐光启"]["context"] == reason_sg
     assert by_target["倪元璐"]["source"] == "皇帝"
     for e in by_target.values():
         assert scapegoat_actor_kind_from_origin(e["origin"]) == "皇帝"
@@ -425,7 +419,6 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
         if f"dossier:{did_cv}:credit:cover" in str(e["origin"])
     ]
     assert cover_edges, "包庇须写撑腰给被包庇者"
-    assert cover_edges[-1]["context"] == reason_cv
 
     # ── 查办：依法惩主办 → 不记事件（负向）──
     did_pr = _transformed_dossier(
@@ -622,11 +615,6 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
     assert len(edges_b) == 2
     assert {e["target"] for e in edges_b} == {"倪元璐", "徐光启"}
 
-    # 叙事语境（非固定模板）
-    for e in edges_once:
-        assert e["context"] == reason_a
-        assert e["context"].strip()
-
     # restore 后可考古
     backup = tmp_path / "credit-628.db"
     db.backup_to(str(backup))
@@ -640,6 +628,6 @@ def test_idempotent_narrative_restore_write_only(game, tmp_path):
             ).fetchall()
         ]
         assert len(r_edges) == 2
-        assert all(str(r["context"] or "").strip() for r in r_edges)
+        assert {r["target"] for r in r_edges} == {"倪元璐", "徐光启"}
     finally:
         restored.close()

@@ -95,14 +95,12 @@ def decode_plea_meta(origin_context: object) -> Dict[str, object]:
     text = str(origin_context or "").strip()
     if not text.startswith(_META_PREFIX):
         return {}
-    raw = text[len(_META_PREFIX):]
-    try:
-        data = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return data
+    # 有前缀的机读元数据：腐坏 JSON/非对象响亮，不 catch-to-{}（#1897 E1）。
+    from ming_sim.db import _load_durable_json_object
+    return _load_durable_json_object(
+        text[len(_META_PREFIX):],
+        surface="breach_plea.origin_context.meta",
+    )
 
 
 def commitment_natural_due_turn(row: Any) -> int:
@@ -157,22 +155,21 @@ def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
 
 def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
     names: List[str] = []
-    try:
-        roster = json.loads(row["participant_roster"] or "[]")
-    except (TypeError, ValueError):
-        roster = []
-    if isinstance(roster, list):
-        for item in roster:
-            if isinstance(item, dict) and item.get("tier") == "主办":
-                cid = str(item.get("character_id") or "").strip()
-                if cid:
-                    names.append(cid)
+    # 承诺名册走共同权威；腐坏响亮，不 catch-to-[]（#1897 E1）。
+    from ming_sim.participant_roster import decode_durable_participant_roster
+    roster = decode_durable_participant_roster(row["participant_roster"])
+    for item in roster:
+        if item.get("tier") == "主办":
+            cid = str(item.get("character_id") or "").strip()
+            if cid:
+                names.append(cid)
     try:
         origin_ref = row["origin_ref"] if "origin_ref" in row.keys() else ""
     except Exception:
         origin_ref = ""
     did = parse_dossier_id(origin_ref)
     if did is not None:
+        # get_decree_dossier 已响亮解码名册；再消费其结构化列表。
         dossier = db.get_decree_dossier(int(did))
         if dossier is not None:
             for item in dossier.get("participant_roster") or []:
@@ -206,16 +203,14 @@ def _dedicated_accounts(row: Any) -> List[str]:
     except Exception:
         keys = []
 
-    tags_raw = row["tags"] if "tags" in keys else "[]"
-    try:
-        tags = json.loads(tags_raw or "[]")
-    except (TypeError, ValueError):
-        tags = []
-    if isinstance(tags, list):
-        for tag in tags:
-            t = str(tag or "").strip()
-            if t.startswith("专款:"):
-                _add(t.split(":", 1)[1].strip())
+    tags_raw = row["tags"] if "tags" in keys else None
+    # issues.tags 持久字符串数组：腐坏响亮（#1897 E1）。
+    from ming_sim.db import _load_durable_str_list
+    tags = _load_durable_str_list(tags_raw, surface="issues.tags")
+    for tag in tags:
+        t = str(tag or "").strip()
+        if t.startswith("专款:"):
+            _add(t.split(":", 1)[1].strip())
 
     ongoing_raw = row["ongoing_effects"] if "ongoing_effects" in keys else "{}"
     ongoing = loads_effect_dict(ongoing_raw or "{}")
@@ -310,14 +305,12 @@ def _merge_plea_kind_into_todo(
             todo.get("commitment_ref"), todo.get("id"), primary, kind,
         )
     meta["absorbed_breach_kinds"] = absorbed_list
-    # 保留首类 primary；补充理由/案卷
-    if reason and not str(meta.get("reason") or "").strip():
-        meta["reason"] = str(reason)[:400]
-    elif reason:
+    # 保留首类 primary；补充理由/案卷（#1897：不按正文身份去重，只追加；
+    # 仅空白的既有 reason 也是原文，不得因 strip 判空而覆盖）。
+    if reason:
         prev = str(meta.get("reason") or "")
-        add = str(reason)[:200]
-        if add and add not in prev:
-            meta["reason"] = f"{prev}；{add}"[:400]
+        add = str(reason)
+        meta["reason"] = f"{prev}；{add}" if prev else add
     if int(target_dossier_id or 0) > 0 and int(meta.get("target_dossier_id") or 0) <= 0:
         meta["target_dossier_id"] = int(target_dossier_id)
     if extra:
@@ -378,16 +371,16 @@ def write_breach_plea_todo(
         return _merge_plea_kind_into_todo(
             db, existing,
             breach_kind=kind,
-            reason=str(reason or label)[:400],
+            reason=str(reason or label),
             target_dossier_id=int(target_dossier_id or 0),
             extra=extra,
         )
 
     meta: Dict[str, object] = {
         "breach_kind": kind,
-        "reason": str(reason or label)[:400],
+        "reason": str(reason or label),
         "target_dossier_id": int(target_dossier_id or 0),
-        "commitment_title": title[:120],
+        "commitment_title": title,
         "absorbed_breach_kinds": [],
     }
     if extra:
@@ -412,7 +405,7 @@ def write_breach_plea_todo(
             return _merge_plea_kind_into_todo(
                 db, existing,
                 breach_kind=kind,
-                reason=str(reason or label)[:400],
+                reason=str(reason or label),
                 target_dossier_id=int(target_dossier_id or 0),
                 extra=extra,
             )
@@ -733,7 +726,7 @@ def finalize_persist(
     #   实写同人去重（tail.guofu_from_0056；origin 前缀 dossier:{id}:breach）。
     #   跨承诺/跨案卷同人边各落各账，UNIQUE 键含 origin 本就允许。
     kinds = plea_kind_set(meta)
-    reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")[:400]
+    reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")
     commitment_ref = int(todo["commitment_ref"])
     row = _issue_row(db, commitment_ref)
     origin_ref = str(row["origin_ref"] if row is not None else "")
@@ -1075,24 +1068,19 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
     if co is not None:
         current_office = str(co["office_title"] or current_office).strip() or current_office
 
-    # 承诺 roster 上记录的 role/office 快照
+    # 承诺 roster 上记录的 role/office 快照；腐坏响亮（#1897 E1）。
     expected = ""
-    try:
-        roster = json.loads(commitment_row["participant_roster"] or "[]")
-    except (TypeError, ValueError):
-        roster = []
-    if isinstance(roster, list):
-        for item in roster:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("character_id") or "").strip() != name:
-                continue
-            if item.get("tier") != "主办":
-                continue
-            expected = str(
-                item.get("office") or item.get("role") or item.get("office_title") or ""
-            ).strip()
-            break
+    from ming_sim.participant_roster import decode_durable_participant_roster
+    roster = decode_durable_participant_roster(commitment_row["participant_roster"])
+    for item in roster:
+        if str(item.get("character_id") or "").strip() != name:
+            continue
+        if item.get("tier") != "主办":
+            continue
+        expected = str(
+            item.get("office") or item.get("role") or item.get("office_title") or ""
+        ).strip()
+        break
 
     # 案卷 executor office 快照
     if not expected:
@@ -1100,21 +1088,14 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
             commitment_row["origin_ref"] if "origin_ref" in commitment_row.keys() else ""
         )
         if did is not None:
-            drow = db.conn.execute(
-                "SELECT executor_id, payload_json FROM decree_dossiers WHERE id=?",
-                (int(did),),
-            ).fetchone()
-            if drow is not None and str(drow["executor_id"] or "") == name:
-                try:
-                    payload = json.loads(drow["payload_json"] or "{}")
-                except (TypeError, ValueError):
-                    payload = {}
-                if isinstance(payload, dict):
-                    expected = str(
-                        payload.get("executor_office")
-                        or payload.get("office")
-                        or ""
-                    ).strip()
+            drow = db.get_decree_dossier(int(did))
+            if drow is not None and str(drow.get("executor_id") or "") == name:
+                payload = drow.get("payload") if isinstance(drow.get("payload"), dict) else {}
+                expected = str(
+                    payload.get("executor_office")
+                    or payload.get("office")
+                    or ""
+                ).strip()
 
     # office_change_records：有调任记录且当前 office 与最早/承诺侧不一致
     oc = db.conn.execute(

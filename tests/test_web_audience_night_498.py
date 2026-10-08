@@ -598,7 +598,7 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
                 assert int(game._pending_writes_count) >= 1
                 # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
                 # 不触发确认抽取 LLM。
-                game.db.upsert_pending_directive(
+                game.db.stage_directive_candidate(
                     game.state.turn, minister, payload={
                         "text": "着户部核边饷", "actor": minister,
                         "dossier_action_type": "policy",
@@ -757,7 +757,7 @@ def test_asgi_hanging_chat_issue_waits_for_worker_terminal(web_game, monkeypatch
                 ).fetchone()["status"] == "generating"
                 # 预置 draft（与 AC10 成功案同缝）：工人终态后须能真实续跑到 done，
                 # 不得靠「任意 error」冒充非伪造 in-flight。
-                game.db.upsert_pending_directive(
+                game.db.stage_directive_candidate(
                     game.state.turn, minister, payload={
                         "text": "着户部核边饷", "actor": minister,
                         "dossier_action_type": "policy",

@@ -602,6 +602,7 @@ export type DossierProgressReport = {
   progress_band: string;
   memorial_text: string;
   is_terminal: boolean;
+  origin?: string;
 };
 
 export type SecretOrder = {
@@ -617,7 +618,6 @@ export type SecretOrder = {
   importance: number;
   status: "active" | "closed" | "cancelled";
   result: string;
-  sim_note: string;
   dossier_progress?: DossierProgressReport[];
   turn_closed: number | null;
 };

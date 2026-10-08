@@ -19,7 +19,6 @@ from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
     project_breach_plea_scene,
 )
-from ming_sim.decree_vocabulary import terminal_report_facade
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -166,7 +165,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     # 案卷 due 直挂：title/criterion 已在 todo；无 issue 段表 → 末段
     if commitment_ref <= 0 and not meta.get("title"):
         meta = dict(meta)
-        meta["title"] = str(todo.get("criterion_text") or "")[:40]
+        meta["title"] = str(todo.get("criterion_text") or "")  # #1897: no truncate
     stages = meta["stages"]
     origin_ref = _todo_origin_ref(todo, str(meta.get("origin_ref") or ""))
     branch = resolve_due_review_branch(db, origin_ref)
@@ -246,7 +245,7 @@ def project_due_review_scene(
 ) -> Dict[str, object]:
     """复命场面投影（ID-13 用词，P4 定性、无数字面板）。"""
     inp = review_input if review_input is not None else build_due_review_input(db, todo)
-    origin = str(inp.get("origin_context") or todo.get("origin_context") or "").strip()
+    origin = str(inp.get("origin_context") or todo.get("origin_context") or "")  # #1897: verbatim
     mid = bool(inp.get("mid_stage"))
     entry_kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
     scene_kind = "covert_levy_exposure" if audience_todo_lane(entry_kind) == _AUDIENCE_LANE_COVERT_LEVY else "due_review"
@@ -389,8 +388,9 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     mid = bool(review_input.get("mid_stage"))
     effects = list(review_input.get("durable_effects") or [])
     reports = list(review_input.get("progress_reports") or [])
-    criterion = str(review_input.get("criterion_text") or "").strip() or "所约之事"
-    origin = str(review_input.get("origin_context") or "").strip()
+    # #1897：criterion/origin 自由正文原样嵌入判词，禁 strip（空白原文不得换成缺省）。
+    criterion = str(review_input.get("criterion_text") or "") or "所约之事"
+    origin = str(review_input.get("origin_context") or "")
 
     if mid:
         note = f"中段复核：{criterion}仍在办理"
@@ -398,7 +398,7 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
             note = f"中段复核（{origin}）：{criterion}仍在办理"
         return {
             "outcome": "executing",
-            "note": note[:200],
+            "note": note,
             "close": False,
             "is_terminal": False,
             "mid_stage": True,
@@ -422,7 +422,7 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
         note = f"{note}（原诺：{origin}）"
     return {
         "outcome": outcome,
-        "note": note[:200],
+        "note": note,
         "close": True,
         "is_terminal": True,
         "mid_stage": False,
@@ -467,23 +467,6 @@ def _apply_dossier_verdict(
         int(dossier_id), outcome, note, int(state.turn),
         close=close, commit=False,
     )
-    if is_terminal and outcome in {"degraded", "transformed"}:
-        # #622：奏报轨载承办人假象；progress_band 定性中文；判官真值只在执行格。
-        # 进度写失败不得静默：执行格可能已落，分叉态须响亮（P1 / ADR 0005）
-        prior = list(db.list_dossier_progress(int(dossier_id)))
-        band, memorial = terminal_report_facade(outcome, prior_reports=prior)
-        db.record_dossier_progress(
-            int(dossier_id), int(state.turn), band, memorial,
-            is_terminal=True,
-            origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-            commit=False,
-        )
-    elif not is_terminal:
-        # 中段过程奏报：非终值
-        db.record_dossier_progress(
-            int(dossier_id), int(state.turn), "在办", note,
-            is_terminal=False, commit=False,
-        )
     if is_terminal and outcome in GameDB._JOINT_LIABILITY_TRIGGERS:
         db.apply_execution_joint_liability(
             state, int(dossier_id), outcome, reason=note, commit=False,
@@ -503,6 +486,7 @@ def _apply_dossier_verdict(
         "noop": False,
         "credit_events": credit_rows,
     }
+
 
 
 def apply_due_review_for_todo(

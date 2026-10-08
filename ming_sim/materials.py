@@ -610,9 +610,9 @@ def _visible_affair_lines(knowledge: dict) -> list[dict[str, object]]:
             "id": issue_id,
             "affair_id": int(issue.get("affair_id") or 0),
             "title": title,
-            "situation": stage if stage.strip() else "见目录。",
-            "resolve_condition": resolve if resolve.strip() else "",
-            "fail_condition": fail if fail.strip() else "",
+            "situation": stage if stage else "见目录。",
+            "resolve_condition": resolve,
+            "fail_condition": fail,
             "source_id": str(issue.get("source_id") or f"issue:{issue_id}"),
             "audience_names": tuple(issue.get("audience_names") or ()),
             "participant_roster": issue.get("participant_roster") or "[]",
@@ -729,23 +729,56 @@ def minimal_opening_context(
     return "\n".join(parts)
 
 
-def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> str | None:
+def _secret_order_memorials(order: Any) -> list[str]:
+    """承办人自己的月度奏报。月份与进展取记录字段，正文原样。
+
+    催办/核议不是月报，实况单位不进这份材料。不从正文日期或排列序号推定月份。
+    """
+    from ming_sim.db import GameDB
+    from ming_sim.supervision import report_origin_base
+
+    monthly = GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
+    texts: list[str] = []
+    for item in order.get("dossier_progress") or []:
+        if not isinstance(item, Mapping) or item.get("is_terminal"):
+            continue
+        if report_origin_base(item.get("origin")) != monthly:
+            continue
+        text = str(item.get("memorial_text") or "")
+        if not text.strip():
+            continue
+        turn = int(item.get("turn") or 0)
+        band = str(item.get("progress_band") or "")
+        texts.append(f"回合：{turn}\n进展：{band}\n{text}")
+    return texts
+
+
+
+def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any, *, rel: str | None = None) -> str | None:
     """Directory copy of the minister's active secret-order reminder.
 
     Logic lives here after #1833 retired the registry brief builder. Full task
     text is kept for on-demand read — no replacement length cap (#1833 AC).
     DB/read failures raise; they are not washed into an empty-business result.
     """
+    from ming_sim.db import GameDB
+    from ming_sim.supervision import report_origin_base
+
     name = str(getattr(character, "name", "") or "")
     orders = db.get_active_secret_orders_for_minister(name) if name else []
     if orders:
+        monthly = GameDB.DOSSIER_REPORT_ORIGIN_MONTHLY
         lines = [
             "【你身上还在办的密令】",
             "在册密令：",
         ]
         for o in orders:
-            advanced = db._has_secret_order_period_line(
-                int(o["id"]), "result", state.year, state.period,
+            turn = int(state.turn)
+            advanced = any(
+                not item.get("is_terminal")
+                and int(item.get("turn") or 0) == turn
+                and report_origin_base(item.get("origin")) == monthly
+                for item in (o.get("dossier_progress") or [])
             )
             tag = "✅ 本月已推进" if advanced else "⚠️ 本月尚未推进"
             due_turn = int(o.get("due_turn") or 0)
@@ -756,10 +789,11 @@ def _write_secret_order_file(tmp: Path, db: Any, state: Any, character: Any) -> 
             content = str(o.get("content") or "")
             if content:
                 lines.append(content)
+            lines.extend(_secret_order_memorials(o))
         brief = "\n".join(lines)
     else:
         brief = ""
-    rel = f"{_SECRET_DIR}/进行中.txt"
+    rel = rel or f"{_SECRET_DIR}/进行中.txt"
     _write_text(tmp / rel, brief or "（无进行中密令）")
     return rel
 
@@ -959,6 +993,7 @@ def _write_tree(
     secret_rel = _write_secret_order_file(tmp, db, state, character)
     if secret_rel:
         index.append(secret_rel)
+    index.extend(_inquiry_monthly_report_rels(tmp, db, character, knowledge))
     recommend_rel = _write_recommendation_file(tmp, db, state, character)
     if recommend_rel:
         index.append(recommend_rel)
@@ -1114,7 +1149,7 @@ def prepare_character_materials(
     affairs = _handled_affair_lines(db, state, name, issue_materials)
     for row in _carryover_drafts(db, state):
         title = f"尚未入档旨稿#{int(row['id'])}"
-        body = str(row.get("text") or "")
+        body = str(row["text"] if hasattr(row, "keys") and "text" in row.keys() else (row.get("text") if hasattr(row, "get") else ""))
         affairs.append({
             "id": f"draft-{int(row['id'])}", "title": title,
             "situation": f"{body}（尚未入档）" if body.strip() else "尚未入档",
@@ -1627,6 +1662,8 @@ def _write_world_tree(
     include_fact: Any = None,
     include_event: Any = None,
     secret_turn_ids: set[int] | None = None,
+    *,
+    exclude_secret_order_dossiers: bool = False,
 ) -> list[str]:
     index: list[str] = []
     textual_facts = db.textual_facts
@@ -1689,6 +1726,9 @@ def _write_world_tree(
         _write_text(tmp / rel, body)
         index.append(rel)
 
+    # 公共邸报供料已排除密令案卷时，实况旁路不得再无条件写入（#1897 F1）。
+    if not exclude_secret_order_dossiers:
+        index.extend(_write_secret_actual_note_files(tmp, db))
     index.extend(_write_candidate_event_files(tmp, db, state))
     index.extend(_write_fiscal_levy_petition_files(tmp, db, state))
     index.extend(_write_world_textual_fact_files(tmp, db, include_fact=include_fact))
@@ -1874,13 +1914,9 @@ def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
 
 
 def _json_list_field(raw: object) -> list[str]:
-    try:
-        value = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        return []
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value if str(item).strip()]
+    """DB 人物 aliases/personal_skills：腐坏响亮，不 catch-to-[]（#1897 E1）。"""
+    from ming_sim.db import _load_durable_str_list
+    return _load_durable_str_list(raw, surface="characters.json_list_field")
 
 
 def _character_projection_from_db_row(row: Any) -> Any:
@@ -2128,6 +2164,15 @@ def _write_one_present_person(
     )
     index.append(office_rel)
 
+    secret_rel = _write_secret_order_file(
+        tmp, db, state, character, rel=f"{base}/{_SECRET_DIR}/进行中.txt",
+    )
+    if secret_rel:
+        index.append(secret_rel)
+    index.extend(_inquiry_monthly_report_rels(
+        tmp, db, character, knowledge, prefix=f"{base}/",
+    ))
+
     for dir_key, title, directory_text, _opening_text, _is_handling in matter_lines:
         matter_seg = _safe_segment(dir_key)
         if title and "\n" in directory_text:
@@ -2224,6 +2269,43 @@ def prepare_scene_materials(
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
 
 
+
+def actual_progress_notes(db: Any, dossier_id: int) -> list[dict[str, object]]:
+    """实况轨原文读投影。未提供正文的空串不算一行；显式正文（含空白）原样。"""
+    if not hasattr(db, "list_dossier_actual_progress"):
+        return []
+    notes: list[dict[str, object]] = []
+    for row in db.list_dossier_actual_progress(int(dossier_id)):
+        note = str(row.get("note") or "")
+        # 仅缺省空串视为无正文；不以 strip 丢弃显式空白（P6 / #1897 N2）。
+        if note == "":
+            continue
+        notes.append({"turn": int(row.get("turn") or 0), "note": note})
+    return notes
+
+
+
+
+def _write_secret_actual_note_files(tmp: Path, db: Any) -> list[str]:
+    """推演目录里的实况原文。人物目录与滤掉密令案卷的邸报目录不写。"""
+    if not hasattr(db, "list_secret_orders") or not hasattr(db, "get_dossier_for_secret_order"):
+        return []
+    written: list[str] = []
+    for order in db.list_secret_orders():
+        dossier = db.get_dossier_for_secret_order(int(order["id"]))
+        if dossier is None:
+            continue
+        notes = actual_progress_notes(db, int(dossier["id"]))
+        if not notes:
+            continue
+        body = "\n".join(f"回合：{item['turn']}\n{item['note']}" for item in notes)
+        rel = f"{_SECRET_DIR}/实况/{int(order['id'])}.txt"
+        _write_text(tmp / rel, body)
+        written.append(rel)
+    return written
+
+
+
 def prepare_world_materials(
     db: Any,
     state: Any,
@@ -2277,6 +2359,7 @@ def prepare_world_materials(
             tmp, db, state, public_events, affair_lines, board_text,
             denunciation_facts, candidates, include_fact, include_event,
             _secret_order_chat_turn_ids(db) if exclude_secret_order_audience else None,
+            exclude_secret_order_dossiers=exclude_secret_order_dossiers,
         ),
     )
 
@@ -2286,3 +2369,79 @@ def prepare_world_materials(
         surges=len(candidates["impeachment_surge"]),
     )
     return PreparedMaterials(root=dest, opening=opening, index_lines=tuple(index))
+
+def _inquiry_monthly_report_rels(
+    tmp: Path,
+    db: Any,
+    character: Any,
+    knowledge: dict,
+    *,
+    prefix: str = "",
+) -> list[str]:
+    """查访声明点名的密令，只拉该令当前月度非终值奏报。
+
+    见闻里没有 order 标记的委派不打开任何密令。承办人自己的在办令已在进行中.txt。
+    排除看密令当前字段，不看委派当时的快照。没有月报正文就不写文件。
+    """
+    from ming_sim.knowledge import knowledge_row_visible_to
+
+    name = str(getattr(character, "name", "") or "")
+    if not name or not hasattr(db, "list_secret_orders"):
+        return []
+    own_active: set[int] = set()
+    if hasattr(db, "get_active_secret_orders_for_minister"):
+        own_active = {
+            int(order["id"])
+            for order in db.get_active_secret_orders_for_minister(name)
+        }
+    by_id = {int(order["id"]): order for order in db.list_secret_orders()}
+    written: list[str] = []
+    seen: set[int] = set()
+    for event in knowledge.get("events") or []:
+        if str(event.get("kind") or "") != "inquiry_assignment":
+            continue
+        order_id = inquiry_source_order_id(event.get("source_id"))
+        if order_id is None or order_id in seen or order_id in own_active:
+            continue
+        seen.add(order_id)
+        order = by_id.get(order_id)
+        if order is None:
+            continue
+        visible_row = {
+            "source_id": event.get("source_id"),
+            "kind": event.get("kind"),
+            "excluded_names": json.dumps(
+                list(order.get("excluded_names") or []), ensure_ascii=False,
+            ),
+            "excluded_targets": json.dumps(
+                order.get("excluded_targets") or {}, ensure_ascii=False,
+            ),
+        }
+        if not knowledge_row_visible_to(db, visible_row, name):
+            continue
+        texts = _secret_order_memorials(order)
+        if not texts:
+            continue
+        rel = f"{prefix}{_SECRET_DIR}/查访月报/{order_id}.txt"
+        _write_text(tmp / rel, "\n".join(texts))
+        written.append(rel)
+    return written
+
+
+
+def inquiry_source_order_id(source_id: object) -> Optional[int]:
+    """从见闻 source_id 取出已声明的密令 id。无标记或非十进制则不是查访读轨。"""
+    text = str(source_id or "")
+    if not text.startswith("inquiry:"):
+        return None
+    _, separator, tail = text.partition(":order:")
+    token = tail.partition(":")[0]
+    if not separator or not token.isascii() or not token.isdecimal():
+        return None
+    return int(token)
+
+
+
+def inquiry_order_source_suffix(order_id: int) -> str:
+    """查访见闻指向一条密令的结构化后缀。不用 secret_order: 前缀。"""
+    return f":order:{int(order_id)}"

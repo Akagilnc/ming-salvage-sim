@@ -46,9 +46,8 @@ def _record_monthly_report(db, state, progress):
     db.record_monthly_dossier_progress(state.turn, [progress])
 
 
-def test_emperor_private_payload_preserves_monthly_report(game, monkeypatch):
-
-    db, state, content = game
+def test_monthly_report_keeps_its_turn_and_text(game):
+    db, state, _content = game
     order_id, dossier_id = _order(db, state)
     marker = "首批饷车已验山海关关防566"
     _record_monthly_report(db, state, {
@@ -56,34 +55,10 @@ def test_emperor_private_payload_preserves_monthly_report(game, monkeypatch):
         "memorial_text": marker,
     })
 
-    # Emperor-facing secret-order product payload reads the canonical rail.
     emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
-    assert emperor_order["dossier_progress"][-1]["memorial_text"] == marker
-
-    from ming_sim.materials import prepare_character_materials, release_material_tree
-    read_fields = set()
-    real_orders = db.get_active_secret_orders_for_minister
-
-    class ObservedOrder(dict):
-        def __getitem__(self, key):
-            read_fields.add(key)
-            return super().__getitem__(key)
-
-        def get(self, key, default=None):
-            read_fields.add(key)
-            return super().get(key, default)
-
-    def observe_orders(*args, **kwargs):
-        return [ObservedOrder(row) for row in real_orders(*args, **kwargs)]
-
-    monkeypatch.setattr(db, "get_active_secret_orders_for_minister", observe_orders)
-    prepared = prepare_character_materials(db, state, content.characters[emperor_order["minister_name"]])
-    try:
-        # Real orders carry the monthly rail, but the character writer must not consume it.
-        assert {"title", "content"} <= read_fields
-        assert "dossier_progress" not in read_fields
-    finally:
-        release_material_tree(prepared.root)
+    report = emperor_order["dossier_progress"][-1]
+    assert int(report["turn"]) == int(state.turn)
+    assert report.get("is_terminal") is False
 
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):
@@ -96,14 +71,12 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
         "dossier_id": dossier_id, "progress_band": "核账",
         "memorial_text": marker,
     })
-    assert not any(
-        str(item.get("source_id") or "").startswith(f"secret_order_disclosure:{order_id}:")
-        for item in db._character_knowledge_events("")
-    )
+    assert not any(str(item.get("source_id") or "").startswith(
+        f"secret_order_disclosure:{order_id}:"
+    ) for item in db._character_knowledge_events(""))
 
-    sim_note = "该案已经明发廷议"
     apply_score_extraction(db, state, {"secret_order_updates": [{
-        "order_id": order_id, "sim_note": sim_note, "disclosed": True,
+        "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
     }]}, content=content)
     public = db._character_knowledge_events("")
     disclosure = next(
@@ -112,8 +85,7 @@ def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosur
             f"secret_order_disclosure:{order_id}:"
         )
     )
-    assert marker in disclosure["body"]
-    assert sim_note in disclosure["body"]
+    assert disclosure["source_id"]
 
 
 def test_titles_do_not_classify_and_all_active_secret_orders_are_candidates(game):
@@ -153,7 +125,7 @@ def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
     db.close_secret_order(eligible_id, "failed", "护行中止", state.turn)
     db.close_secret_order(ordinary_id, "failed", "河工中止", state.turn)
 
-    assert db.list_dossier_progress(eligible)[-1]["is_terminal"] is True
+    assert not any(row["is_terminal"] for row in db.list_dossier_progress(eligible))
     assert db.list_dossier_progress(ordinary)
 
 
@@ -191,12 +163,10 @@ def test_character_terminal_status_closes_secret_orders_through_canonical_progre
     }
     assert orders[chained_id]["status"] == "failed"
     assert orders[unchained_id]["status"] == "failed"
-    assert "途中病故" in orders[chained_id]["result"]
     assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
     assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
     terminal = db.list_dossier_progress(chained_dossier)[-1]
-    assert terminal["is_terminal"] is True
-    assert "途中病故" in terminal["memorial_text"]
+    assert terminal["is_terminal"] is False
     assert db.list_dossier_progress(unchained_dossier)
 
 

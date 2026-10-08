@@ -25,7 +25,7 @@
 - CA3【验证待办·非缺陷】Slice 4 给 `content/prompts/minister_agent.md` 加的「in-character 领命并补充信息和要点」是 prompt 改、行为=LLM 输出，**无法确定性单测**；需在跑着的 server 上真召对一轮，确认大臣不出戏、不弹系统式「确认?」问句。
 
 ## 🟠 family/379-base integrated-cmr Deferred（ship-pre Gate1 完整性闸 2026-06-26 收敛时记录）
-- **#389 残留：simulator「漏 event_id + 改写抉择名」双重偏离时事件选择不绑定（P3）**。`bind_decisions_to_candidate_events`（[settlement_payload.py](ming_sim/settlement_payload.py)）已把绑定从「信 simulator 回显 id」改成「以权威候选快照为准」：回显 id 在快照内→采信；缺 id/回显 off-snapshot→以快照**唯一标题**(重)绑；无键可绑→解绑（选择留 `pending_decisions.choice_json`，settle 末 `clear_pending_decisions` 删，不进 `event_triggers` 终态账）。残留：simulator 既漏掉 prompt 强制的 `event_id`（`season_simulator.md:143`）**又**把抉择标题改写得与候选 title 不等时，该候选事件决策与「正当的非事件亲裁决策」无任何共享键可区分 → 无法安全确定性绑定（按候选数消去法会把非事件决策误绑到本回合未浮现的候选，证伪不安全）。彻底闭合需让候选事件决策块由系统生成、携带确定性 candidate index/id（= 改 #345 触发=推送的决策生成路径，#389 边界明示 out-of-scope「不重做 #345」）。判据：3/4 整合 cmr 腿 exercise 后判 DONE；与 #340-H 裁决「绑定残留靠日志/观测兜底、不扩 scope」同类、同处置。要彻底修时回头改决策块生成路径或开新 ADR。
+- **#389 残留：simulator「漏 event_id + 改写抉择名」双重偏离时事件选择不绑定（P3）**。`bind_decisions_to_candidate_events`（[settlement_payload.py](ming_sim/settlement_payload.py)）以权威候选快照的**显式 event_id**为真源：回显 id 在快照内→采信；缺 id／回显 off-snapshot→**解绑**（选择留 `pending_decisions.choice_json`，settle 末 `clear_pending_decisions` 删，不进 `event_triggers` 终态账）。~~旧「唯一标题补／重绑」兼容路径已于 #1897 K2／ADR0142 清退（2026-10-05）；呈现标题不得再补造或重绑结构化身份。~~ 残留：simulator 既漏掉 prompt 强制的 `event_id`（`season_simulator.md:143`）**又**无法靠显式 id 对齐时，该候选事件决策与「正当的非事件亲裁决策」无任何共享键可区分 → 无法安全确定性绑定（按候选数消去法会把非事件决策误绑到本回合未浮现的候选，证伪不安全）。彻底闭合需让候选事件决策块由系统生成、携带确定性 candidate index/id（= 改 #345 触发=推送的决策生成路径，#389 边界明示 out-of-scope「不重做 #345」）。判据：3/4 整合 cmr 腿 exercise 后判 DONE；与 #340-H 裁决「绑定残留靠日志/观测兜底、不扩 scope」同类、同处置。要彻底修时回头改决策块生成路径或开新 ADR。**本轮门槛不是恢复全部事件功能。**
 
 ## 🟠 family/379-base integrated-cmr Gate2 Deferred（ship-pre Gate2 正确性闸 2026-06-26 收敛时记录）
 - **#396（P2）生命周期端点关连接 vs 后台召对 worker** → 退回菜单/关闭/新游戏 `session.close()` 时若 #383 后台 worker 仍持 `_write_gate` 写同一连接 → worker 崩「closed database」。属 #382 连接级并发模型（#393 明示 deferred）+ 与 #383「exit≠cancel」产品语义纠缠；in-game save/load/reset 已加 409 兜底（Gate2 r5），菜单 exit/shutdown 的取消语义留 #382 统一裁。
@@ -126,7 +126,7 @@
 > **最终方案（简单可靠，绕了几道弯才想明白）**：玩家用拟旨/密令按钮 = 消息带「拟旨如下：/密令如下：」前缀 = 已表态要下旨，那大臣**这一句回话原文整段入档**即可——不解析圣旨边界、不用 JSON、不用正则。大臣本就把相关衙门/人等写进回话（原 prompt 行为），所以回话原文就是补全版圣旨。多轮聊出多道 → 颁诏时玩家去重。
 > **后出修订（#1503，2026-08-28）**：上句仍适用于非载荷拟旨；拨饷/协饷等载荷式拟旨会并发调用一次既有动作分类器，产出结构化 payload 后沿拨款单轨成案。密令前缀零其它分类器、后置串行 extractor 仍禁跑；权威口径见 ADR 0028。
 > - `cli_backend.resolve_minister_actions(minister_reply, player_message, default_assignee)`：前缀命中则把回话原文当 directive。
-> - **密令的结构化字段**（title/content/承办人/期限/标签）原版靠 function-call 让大臣顺手填，agy 无 function-call 丢了。补法 = `_extract_secret_order`：下密令时**多一次聚焦提取 agy 调用**（纯抽取、不扮演，与月末 extractor 同款可靠，~12s）把命令+回话抽成四字段。实测能正确抓到「皇帝点名的承办人」「三月内回奏=期限3」「干净标题」。当时普通圣旨不需要此步；#1503 后，拨饷/协饷等载荷式拟旨例外地需要一次并发 typed 分类，非载荷拟旨仍以回话原文成 generic 草案。
+> - **密令的结构化字段**（title/content/承办人/期限/标签）现役沿召对声明链（`declaration_dispatch`）结构化成案；旧 CLI `_extract_secret_order`／拼装／散文解析／落地恢复链已清退（#1897 R1）。#1503 后，拨饷/协饷等载荷式拟旨例外地需要一次并发 typed 分类，非载荷拟旨仍以回话原文成 generic 草案。
 > - `session.chat`（CLI）+ `web_app` 流式 handler（web）各调一次。core 改动小、CLI 后端 gated。`invoke` 只出文本（不再 JSON/正则）。
 > - 实测：web 流式拟旨 directive（含户部/巡抚/洪承畴）+ 密令 secret_order 均落库；普通对话不误触发；月末结算无回归。
 > - **弯路记录**（别重蹈）：先后试过 ① agno 合成 tool_call（流式 run_output 不 surface）② 散文正则捞「…钦此」（agy 时而不写正式圣旨）③ 强制大臣输出 JSON（被角色扮演 prompt 压制，agy 不遵守）。都不如「前缀已表态 → 抓回话原文」简单可靠。教训：别和 agy 的非确定性输出较劲，用玩家已有的明确信号。

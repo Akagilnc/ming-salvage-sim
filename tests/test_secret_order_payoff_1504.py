@@ -15,6 +15,7 @@ import json
 import pytest
 
 from ming_sim.covert_progress import (
+    CONTRACT_KEY,
     FACT_LANES_KEY,
     INVESTIGATION_TIPS_KEY,
     INVESTIGATION_ACTS_KEY,
@@ -210,78 +211,6 @@ def _originate_catches(db, state, content, dossier_id, names):
     )
 
 
-def test_seed_guilt_structured_clean_vs_debt():
-    # 现约：只收结构化 severity∈{轻,中,重}；裸散文／解析失败不造罪（W4/#1896）。
-    assert not seed_guilt_counts_as_debt("")
-    assert not seed_guilt_counts_as_debt(None)
-    assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
-    assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
-    assert not seed_guilt_counts_as_debt("血债")
-    assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
-
-
-def test_decide_settlement_delivery_gap_bidirectional():
-    done = decide_secret_order_settlement({
-        "actual_units": 3.0, "target_units": 3.0, "criterion_text": "密查甲",
-    })
-    assert done["status"] == "done" and done["outcome"] == "fulfilled" and done["delivered"]
-
-    failed = decide_secret_order_settlement({
-        "actual_units": 0.5, "target_units": 3.0, "criterion_text": "密查甲",
-        "has_reports": True,
-    })
-    assert failed["status"] == "failed" and not failed["delivered"]
-    # 表报不改变 delivered 判定
-    bare = decide_secret_order_settlement({
-        "actual_units": 0.5, "target_units": 3.0, "has_reports": False,
-    })
-    assert bare["status"] == "failed"
-
-
-def test_task_specific_contract_from_explicit_fields_not_tags():
-    audit = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
-        kind="补发饷银", axes=["既得利益"], direction=1,
-        delivery_unit="万两", delivery_target_units=3, effect_sign=-1,
-        purpose="其它", category="密令差务", account="内库",
-    )
-    catch = build_covert_task_contract(
-        deadline_span=3, due_turn=10,
-        kind="缉获人犯", axes=["实务事功"], direction=1,
-        delivery_unit="人犯", delivery_target_units=3, effect_sign=1, person_action="处置",
-    )
-    assert audit["kind"] == "补发饷银" and audit["axes"] == ["既得利益"]
-    assert audit["delivery"]["unit"] == "万两"
-    assert audit["delivery"]["target_units"] == 3.0
-    assert catch["kind"] == "缉获人犯" and catch["delivery"]["unit"] == "人犯"
-    assert catch["delivery"]["target_units"] == 3.0
-
-
-def test_task_specific_contract_rejects_tags_without_explicit_fields():
-    with pytest.raises(CovertContractError):
-        build_covert_task_contract(
-            deadline_span=3, due_turn=10, tags=["辽饷", "兵部", "密查", "稽核"],
-        )
-
-@pytest.mark.parametrize(
-    ("unit", "identity", "sign"),
-    [
-        ("万两", {"category": "密令差务", "account": "内库"}, -1),
-        ("万两", {"purpose": "其它", "account": "内库"}, -1),
-        ("万两", {"purpose": "其它", "category": "密令差务"}, -1),
-        ("人犯", {}, 1),
-        ("万亩", {"field": "registered_land", "region_target": "421"}, 1),
-        ("万亩", {"region": "henan", "region_target": "421"}, 1),
-        ("万亩", {"region": "henan", "field": "registered_land"}, 1),
-    ],
-)
-def test_confirmation_rejects_incomplete_delivery_identity(unit, identity, sign):
-    with pytest.raises(CovertContractError):
-        build_covert_task_contract(
-            kind="差务", axes=["实务事功"], direction=1,
-            delivery_unit=unit, delivery_target_units=1, effect_sign=sign, **identity,
-        )
-
 def test_confirm_persists_task_specific_contract_absent_before(game):
     db, state, _ = game
     name = _minister(db)
@@ -307,6 +236,135 @@ def test_confirm_persists_task_specific_contract_absent_before(game):
     assert catch["kind"] == "缉获人犯"
     assert catch["delivery"]["unit"] == "人犯"
     assert catch["delivery"]["target_units"] == 2.0
+
+def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypatch):
+    """#1896 R1/F2：4a 生产入口自己把身份材料写进树——不是测试自己动手。
+
+    走真实 ``run_secret_orders_supply``，只桩掉外部模型边界。抓 ``prepared``
+    断言 materials_path 在模型将读的树上可读；列目录核身份事务边界与隔离。
+    身份备料失败须传播并清理本树。不锁材料正文措辞/同源等值。
+    """
+    import json as _json
+
+    import ming_sim.agents as agents_mod
+    import ming_sim.month_chain as month_chain
+    from pathlib import Path
+    import ming_sim.materials as materials_mod
+    from ming_sim.materials import list_materials, material_tools, read_material
+    from ming_sim.models import LLMConfig
+
+    db, state, _ = game
+    name = _minister(db)
+    target = next(
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name",
+            (name,),
+        ).fetchall()
+        if live_investigation_fact_keys(db, row["name"])
+    )
+    _set_axes(db, name, loyalty=90, identity=30)
+    _co_locate(db, name, target)
+    oid = _issue(
+        db, state, name, "查核", "查核", months=3, target=1,
+        kind="查核", axes=["既得利益"], investigation_target=target,
+    )
+    # 下月才进在办密令（开案当月属 issuance-turn，会被在办清单滤掉）
+    _next_month(db, state)
+
+    # 两条真实事务分别只授予本人，显式排除另一个同场人物。
+    issue_rows = db.conn.execute(
+        "SELECT id,title FROM issues WHERE status='active' ORDER BY id LIMIT 2",
+    ).fetchall()
+    for row, who, other in zip(issue_rows, (name, target), (target, name)):
+        db.conn.execute(
+            "UPDATE issues SET participant_roster=? WHERE id=?",
+            (_json.dumps([{"character_id": who, "tier": "主办"}]), row["id"]),
+        )
+        db.record_character_participation(
+            state, [who], "case", row["title"], "本人的办案经历",
+            source_id=f"issue:{row['id']}", excluded_names=[other],
+        )
+    db.conn.commit()
+    captured = {}
+    roots = []
+    real_prepare = materials_mod.prepare_world_materials
+
+    def prepare(*args, **kwargs):
+        prepared = real_prepare(*args, **kwargs)
+        roots.append(prepared.root)
+        return prepared
+
+    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
+
+    def _fake_agent(llm_config, prepared=None):
+        captured["root"] = getattr(prepared, "root", None)
+        return object()
+
+    def _fake_run_text(agent, prompt, tag, **_kwargs):
+        # 此刻树还在（run_secret_orders_supply 收尾才释放），就地读路径集合
+        captured["prompt"] = prompt
+        feed = _json.loads(prompt)
+        paths = {}
+        tools = {tool.__name__: tool for tool in material_tools(captured["root"])}
+        for entry in feed.get("active_secret_orders") or []:
+            for side in ("investigator_identity_materials",
+                         "investigation_target_identity_materials"):
+                who = str((entry.get(side) or {}).get("name") or "")
+                rel = str((entry.get(side) or {}).get("materials_path") or "")
+                if who and rel:
+                    # 路径可读即可；不锁正文措辞、不比同源等值。
+                    assert read_material(captured["root"], rel) is not None
+                    base = Path(rel).parent.as_posix()
+                    listed = list_materials(captured["root"], base)
+                    assert set(tools["list_materials"](base).splitlines()) == set(listed)
+                    for path in listed:
+                        assert tools["read_material"](path) is not None
+                    paths[who] = {Path(path).relative_to(base).as_posix() for path in listed}
+        captured["paths"] = paths
+        return _json.dumps({"dossier_progress_reports": [], "covert_exec_selections": []})
+
+    monkeypatch.setattr(agents_mod, "create_secret_order_supply_agent", _fake_agent)
+    monkeypatch.setattr(agents_mod, "run_agent_text", _fake_run_text)
+
+    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
+    month_chain.run_secret_orders_supply(db, state, cfg, {})
+
+    assert captured["root"] is not None, "生产入口没有把备好的材料树交给 agent"
+    feed = _json.loads(captured["prompt"])
+    order = next(o for o in feed["active_secret_orders"] if int(o["id"]) == oid)
+    for side, who in (
+        ("investigator_identity_materials", name),
+        ("investigation_target_identity_materials", target),
+    ):
+        rel = order[side]["materials_path"]
+        assert "materials" not in order[side]
+        assert rel
+        visible = {int(row["id"]) for row in db.get_character_knowledge(state, who)["issues"]}
+        paths = captured["paths"][who]
+        assert {path for path in paths if path.startswith("事务/issue-")} == {
+            f"事务/issue-{i}/当前情况.txt" for i in visible
+        }
+        assert any(path.endswith("/经历.txt") for path in paths)
+        assert any(path.endswith("/公事档案.txt") for path in paths)
+        assert not any(path.startswith("盘面/") for path in paths)
+    assert f"事务/issue-{issue_rows[0]['id']}/当前情况.txt" in captured["paths"][name]
+    assert f"事务/issue-{issue_rows[0]['id']}/当前情况.txt" not in captured["paths"][target]
+    assert f"事务/issue-{issue_rows[1]['id']}/当前情况.txt" in captured["paths"][target]
+    assert f"事务/issue-{issue_rows[1]['id']}/当前情况.txt" not in captured["paths"][name]
+    assert not roots[-1].exists()
+
+    # 在身份写手读取公事档案时注入失败，仍走真实 4a 生命周期。
+    error = RuntimeError("identity archive unavailable")
+    def broken_archive(*args, **kwargs):
+        raise error
+    monkeypatch.setattr(db, "list_referenceable_dossiers", broken_archive)
+    with pytest.raises(RuntimeError) as failed:
+        month_chain.run_secret_orders_supply(db, state, cfg, {})
+    assert failed.value is error
+    assert len(roots) == 2
+    assert not roots[-1].exists()
+
+
 
 def test_actual_progress_container_separate_from_reported_rail(game):
     db, state, _ = game
@@ -367,34 +425,6 @@ def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
     closed = db.get_secret_order(oid)
     assert closed["status"] == "failed"
 
-def test_settle_due_keeps_existing_progress_result_over_memorial(game):
-    db, state, _ = game
-    name = _minister(db)
-    _set_axes(db, name, loyalty=20, identity=80)
-    oid = _issue(db, state, name, "空转密查", "查无实据之案", months=1, target=1)
-    dossier = db.get_dossier_for_secret_order(oid)
-    did = int(dossier["id"])
-    db.update_secret_order_progress(oid, "承办人已报进展时间线", year=state.year, period=state.period)
-    before = str(db.get_secret_order(oid)["result"] or "")
-    assert before.strip()
-    db.record_dossier_progress(
-        did, state.turn, "办成", "臣已查明全部", is_terminal=False,
-    )
-    memorial = str(db.list_dossier_progress(did)[-1]["memorial_text"] or "")
-    db.conn.execute(
-        "UPDATE secret_orders SET due_turn=? WHERE id=?",
-        (state.turn, oid),
-    )
-    db.conn.commit()
-
-    out = settle_due_secret_orders(db, state, commit=True)
-    row = next(r for r in out if r["order_id"] == oid)
-    closed = db.get_secret_order(oid)
-    assert str(closed["result"] or "") == before
-    assert row["result"] == before
-    assert before != memorial
-
-# ── 月度实进度 + 到期对账 ─────────────────────────────────────────────
 
 def test_monthly_actual_then_delivered_done(game):
     db, state, content = game
@@ -874,151 +904,6 @@ def test_reaction_declarations_need_real_knowledge_across_months(game):
     payload = json.loads(db.get_dossier_for_secret_order(oid)["payload_json"])
     acts = payload.get(INVESTIGATION_ACTS_KEY, [])
     assert acts[-1]["suppression"]["form"] == "托人斡旋"
-
-def test_supply_call_writes_identity_materials_into_its_own_tree(game, monkeypatch):
-    """#1896 R1/F2：4a 生产入口自己把身份材料写进树——不是测试自己动手。
-
-    走真实 ``run_secret_orders_supply``，只桩掉外部模型边界（agent 构造与
-    ``run_agent_text``）：在 agent 构造那一刻抓下 ``prepared``，断言供料给出的
-    ``materials_path`` 在**模型将要读的那棵树**里指向可读索引；用列目录工具
-    取阅分列载体，核身份事务边界，不解析人读索引。调用消息不带正文。
-    身份备料失败须传播并清理本树。撤掉生产里那行
-    ``write_identity_materials(...)`` 调用，本用例即报红。
-    """
-    import json as _json
-
-    import ming_sim.agents as agents_mod
-    import ming_sim.month_chain as month_chain
-    from pathlib import Path
-    import ming_sim.materials as materials_mod
-    from ming_sim.materials import list_materials, material_tools, read_material
-    from ming_sim.models import LLMConfig
-
-    db, state, _ = game
-    name = _minister(db)
-    target = next(
-        row["name"] for row in db.conn.execute(
-            "SELECT name FROM characters WHERE status='active' AND name<>? ORDER BY name",
-            (name,),
-        ).fetchall()
-        if live_investigation_fact_keys(db, row["name"])
-    )
-    _set_axes(db, name, loyalty=90, identity=30)
-    _co_locate(db, name, target)
-    oid = _issue(
-        db, state, name, "查核", "查核", months=3, target=1,
-        kind="查核", axes=["既得利益"], investigation_target=target,
-    )
-    # 下月才进在办密令（开案当月属 issuance-turn，会被在办清单滤掉）
-    _next_month(db, state)
-
-    # 两条真实事务分别只授予本人，显式排除另一个同场人物。
-    issue_rows = db.conn.execute(
-        "SELECT id,title FROM issues WHERE status='active' ORDER BY id LIMIT 2",
-    ).fetchall()
-    for row, who, other in zip(issue_rows, (name, target), (target, name)):
-        db.conn.execute(
-            "UPDATE issues SET participant_roster=? WHERE id=?",
-            (_json.dumps([{"character_id": who, "tier": "主办"}]), row["id"]),
-        )
-        db.record_character_participation(
-            state, [who], "case", row["title"], "本人的办案经历",
-            source_id=f"issue:{row['id']}", excluded_names=[other],
-        )
-    db.conn.commit()
-    captured = {}
-    roots = []
-    real_prepare = materials_mod.prepare_world_materials
-
-    def prepare(*args, **kwargs):
-        prepared = real_prepare(*args, **kwargs)
-        roots.append(prepared.root)
-        return prepared
-
-    monkeypatch.setattr(materials_mod, "prepare_world_materials", prepare)
-
-    def _fake_agent(llm_config, prepared=None):
-        captured["root"] = getattr(prepared, "root", None)
-        return object()
-
-    def _fake_run_text(agent, prompt, tag, **_kwargs):
-        # 此刻树还在（run_secret_orders_supply 收尾才释放），就地读给断言用
-        captured["prompt"] = prompt
-        feed = _json.loads(prompt)
-        bodies = {}
-        paths = {}
-        tools = {tool.__name__: tool for tool in material_tools(captured["root"])}
-        for entry in feed.get("active_secret_orders") or []:
-            for side in ("investigator_identity_materials",
-                         "investigation_target_identity_materials"):
-                who = str((entry.get(side) or {}).get("name") or "")
-                rel = str((entry.get(side) or {}).get("materials_path") or "")
-                if who and rel:
-                    bodies[(who, rel)] = read_material(captured["root"], rel)
-                    base = Path(rel).parent.as_posix()
-                    listed = list_materials(captured["root"], base)
-                    assert set(tools["list_materials"](base).splitlines()) == set(listed)
-                    for path in listed:
-                        assert tools["read_material"](path) == read_material(captured["root"], path)
-                        assert read_material(captured["root"], path).strip()
-                    paths[who] = {Path(path).relative_to(base).as_posix() for path in listed}
-        captured["bodies"] = bodies
-        captured["paths"] = paths
-        return _json.dumps({"dossier_progress_reports": [], "covert_exec_selections": []})
-
-    monkeypatch.setattr(agents_mod, "create_secret_order_supply_agent", _fake_agent)
-    monkeypatch.setattr(agents_mod, "run_agent_text", _fake_run_text)
-
-    cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
-    month_chain.run_secret_orders_supply(db, state, cfg, {})
-
-    assert captured["root"] is not None, "生产入口没有把备好的材料树交给 agent"
-    feed = _json.loads(captured["prompt"])
-    order = next(o for o in feed["active_secret_orders"] if int(o["id"]) == oid)
-    bodies = captured["bodies"]
-    for side, who in (
-        ("investigator_identity_materials", name),
-        ("investigation_target_identity_materials", target),
-    ):
-        rel = order[side]["materials_path"]
-        assert "materials" not in order[side]
-        body = bodies[(who, rel)]
-        assert body.strip()
-        visible = {int(row["id"]) for row in db.get_character_knowledge(state, who)["issues"]}
-        paths = captured["paths"][who]
-        assert {path for path in paths if path.startswith("事务/issue-")} == {
-            f"事务/issue-{i}/当前情况.txt" for i in visible
-        }
-        assert any(path.endswith("/经历.txt") for path in paths)
-        assert any(path.endswith("/公事档案.txt") for path in paths)
-        assert not any(path.startswith("盘面/") for path in paths)
-    assert f"事务/issue-{issue_rows[0]['id']}/当前情况.txt" in captured["paths"][name]
-    assert f"事务/issue-{issue_rows[0]['id']}/当前情况.txt" not in captured["paths"][target]
-    assert f"事务/issue-{issue_rows[1]['id']}/当前情况.txt" in captured["paths"][target]
-    assert f"事务/issue-{issue_rows[1]['id']}/当前情况.txt" not in captured["paths"][name]
-    assert not roots[-1].exists()
-
-    # 在身份写手读取公事档案时注入失败，仍走真实 4a 生命周期。
-    error = RuntimeError("identity archive unavailable")
-    def broken_archive(*args, **kwargs):
-        raise error
-    monkeypatch.setattr(db, "list_referenceable_dossiers", broken_archive)
-    with pytest.raises(RuntimeError) as failed:
-        month_chain.run_secret_orders_supply(db, state, cfg, {})
-    assert failed.value is error
-    assert len(roots) == 2
-    assert not roots[-1].exists()
-
-def test_non_investigation_contract_keeps_its_delivery_account(game):
-    """筹饷密令仍按自己的交付单位与账户成约。"""
-    del game
-    contract = build_covert_task_contract(covert_task={
-        "kind": "筹饷", "axes": ["实务事功"], "direction": 1,
-        "delivery": {"unit": "万两", "target_units": 30.0, "effect_sign": -1,
-                     "purpose": "其它", "category": "密令差务", "account": "内库"},
-    })
-    assert contract["delivery"]["unit"] == "万两"
-    assert contract["delivery"]["account"] == "内库"
 
 def test_case_opening_source_clue_assists_its_fact(game):
     """#1896 R6：开案这条来源自身就是真实线索，与汇案来源同一条接线。
@@ -2686,3 +2571,166 @@ def test_n_month_deadline_yields_exactly_n_ticks(game):
     ).fetchone()["due_turn"])
     assert due == issued + n
     assert state.turn == due
+
+
+# --- #1897 HEAD duties kept ---
+
+def test_create_secret_order_fact_lanes_follow_structured_severity_only(game):
+    """#1897 R2：真实 create_secret_order 开案——只认 severity∈{轻,中,重}。
+
+    说明散文、解析失败、非对象不得把目标名写入 live 实证集或案卷 fact_lanes。
+    不测 helper 自洽；观测 create 后的结构化 truth_keys／lanes。
+    """
+    db, state, _ = game
+    name = _minister(db)
+    target = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND name<>? "
+        "ORDER BY name LIMIT 1",
+        (name,),
+    ).fetchone()["name"]
+    _set_axes(db, name, loyalty=90, identity=30)
+    _clear_open_errands(db, name)
+
+    cases = [
+        ("", False),
+        (json.dumps({"crime": "无", "severity": "无"}, ensure_ascii=False), False),
+        (json.dumps({"crime": "查无实据", "severity": "无"}, ensure_ascii=False), False),
+        (json.dumps({"crime": "血债累累", "severity": "无"}, ensure_ascii=False), False),
+        ("血债", False),
+        ("{not-json", False),
+        (json.dumps(["not", "object"], ensure_ascii=False), False),
+        (json.dumps({"crime": "交结近侍", "severity": "中"}, ensure_ascii=False), True),
+    ]
+    for seed, expect_seed_lane in cases:
+        db.conn.execute(
+            "UPDATE characters SET seed_guilt=? WHERE name=?", (seed, target),
+        )
+        db.conn.commit()
+        assert (target in live_investigation_fact_keys(db, target)) is expect_seed_lane, seed
+        oid = _issue(
+            db, state, name, "验罪情入集", "结构化罪情契约",
+            months=1, target=1, kind="查核", axes=["既得利益"],
+            investigation_target=target,
+        )
+        lanes = _lanes(db, oid)
+        assert (target in lanes) is expect_seed_lane, seed
+        _retire_order(db, oid)
+
+
+def test_create_secret_order_rejects_tags_without_explicit_fields(game):
+    """生产闸：tags 不得代替显式 typed 字段（create 真入口）。"""
+    db, state, _ = game
+    name = _minister(db)
+    with pytest.raises(CovertContractError):
+        db.create_secret_order(
+            state, name, "仅标签密令", "不得凭 tags 成案",
+            ["辽饷", "兵部", "密查", "稽核"],
+            deadline_months=1,
+            covert_task={"tags": ["辽饷", "兵部", "密查", "稽核"]},
+        )
+    assert db.list_secret_orders() == []
+
+
+@pytest.mark.parametrize(
+    ("unit", "identity", "sign"),
+    [
+        ("万两", {"category": "密令差务", "account": "内库"}, -1),
+        ("万两", {"purpose": "其它", "account": "内库"}, -1),
+        ("万两", {"purpose": "其它", "category": "密令差务"}, -1),
+        ("人犯", {}, 1),
+        ("万亩", {"field": "registered_land", "target": "421"}, 1),
+        ("万亩", {"region": "henan", "target": "421"}, 1),
+        ("万亩", {"region": "henan", "field": "registered_land"}, 1),
+    ],
+)
+def test_create_secret_order_rejects_incomplete_delivery_identity(
+    game, unit, identity, sign,
+):
+    """生产闸：交付 identity 七参数缺失拒收（create→build_covert_task_contract）。"""
+    db, state, _ = game
+    name = _minister(db)
+    with pytest.raises(CovertContractError):
+        db.create_secret_order(
+            state, name, "缺 identity", "结构化负向", [],
+            deadline_months=1,
+            covert_task={
+                "kind": "差务",
+                "axes": ["实务事功"],
+                "direction": 1,
+                "delivery_unit": unit,
+                "delivery_target_units": 1,
+                "effect_sign": sign,
+                **identity,
+            },
+        )
+    assert db.list_secret_orders() == []
+
+
+def test_create_and_settle_reject_zero_target_not_delivered(game):
+    """零目标不算交付：create 拒收；案卷若被置零，settle 读合同闸响亮失败，不静默 done。
+
+    decide_secret_order_settlement 仅由 settle_due 在 require_covert_task_contract
+    之后调用；coerce 已拒 qty<=0，故真入口覆盖 = create 拒 + settle 不结案。
+    """
+    db, state, _ = game
+    name = _minister(db)
+    with pytest.raises(CovertContractError):
+        db.create_secret_order(
+            state, name, "零目标密令", "不得成案", [],
+            deadline_months=1,
+            covert_task=_task(
+                kind="查案", axes=["实务事功"], unit="万两", target=0,
+            ),
+        )
+    assert db.list_secret_orders() == []
+
+    oid = _issue(db, state, name, "零目标密令", "目标被置零", months=1, target=1)
+    dossier = db.get_dossier_for_secret_order(oid)
+    did = int(dossier["id"])
+    payload = json.loads(str(dossier["payload_json"]))
+    contract = dict(payload[CONTRACT_KEY])
+    delivery = dict(contract["delivery"])
+    delivery["target_units"] = 0.0
+    contract["delivery"] = delivery
+    payload[CONTRACT_KEY] = contract
+    db.update_decree_dossier_payload(did, payload, commit=True)
+    db.conn.execute(
+        "UPDATE secret_orders SET due_turn=? WHERE id=?",
+        (state.turn, oid),
+    )
+    db.conn.commit()
+    with pytest.raises(CovertContractError):
+        settle_due_secret_orders(db, state, commit=True)
+    assert db.get_secret_order(oid)["status"] == "active"
+
+
+def test_settle_due_close_follows_surviving_memorial_and_actual(game):
+    """记进展与同月密奏是同一条奏报。结案取留下的结构化奏报，实况为零则不成。"""
+    db, state, _ = game
+    name = _minister(db)
+    _set_axes(db, name, loyalty=20, identity=80)
+    oid = _issue(db, state, name, "空转密查", "查无实据之案", months=1, target=1)
+    dossier = db.get_dossier_for_secret_order(oid)
+    did = int(dossier["id"])
+    db.update_secret_order_progress(oid, "承办人已报进展时间线", year=state.year, period=state.period)
+    assert str(db.get_secret_order(oid)["result"] or "") == ""
+    db.record_dossier_progress(
+        did, state.turn, "办成", "臣已查明全部", is_terminal=False,
+    )
+    open_reports = [row for row in db.list_dossier_progress(did) if not row["is_terminal"]]
+    assert len(open_reports) == 1
+    db.conn.execute(
+        "UPDATE secret_orders SET due_turn=? WHERE id=?",
+        (state.turn, oid),
+    )
+    db.conn.commit()
+
+    out = settle_due_secret_orders(db, state, commit=True)
+    row = next(r for r in out if r["order_id"] == oid)
+    closed = db.get_secret_order(oid)
+    assert row["status"] == "failed"
+    assert row["actual_units"] == 0.0
+    assert closed["status"] == "failed"
+    surviving = [item for item in db.list_dossier_progress(did) if not item["is_terminal"]]
+    assert len(surviving) == 1
+

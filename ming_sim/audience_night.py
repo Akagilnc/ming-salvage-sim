@@ -239,17 +239,9 @@ def _now_iso() -> str:
 
 
 def _json_list(value: Any) -> List[Any]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value or "[]")
-        except (TypeError, ValueError):
-            return []
-        return parsed if isinstance(parsed, list) else []
-    return []
+    """故事账 tags/person_names 持久字符串列表：腐坏/非 str 成员响亮，禁 str() 洗（#1897 E1）。"""
+    from ming_sim.db import _load_durable_str_list
+    return _load_durable_str_list(value, surface="story_ledger_entries.json_list")
 
 
 def _row_dict(row: Any) -> Dict[str, Any]:
@@ -343,11 +335,17 @@ def assert_night_accepts_player_input(
     night_id: Optional[int] = None,
     *,
     what: str = "写入",
+    source_chat_turn_id: int = 0,
 ) -> Optional[Dict[str, Any]]:
     """Freeze new dialogue / story / stage / approve while status=CLOSING.
 
     Close-owned short writes and close-owned story drain are not player input;
     they do not call this seam. Failure reopens OPEN so retries may proceed.
+
+    ``source_chat_turn_id``：ADR 0038 后出注记的迟到转译源轮。收夜持闸窗口里仍在
+    补译的同月原回话不是新玩家输入，由 :func:`is_pending_source_round` 这一个
+    判据放行——与 append_ledger_entry / mark_pending_night_approved 同源，不在
+    各消费者各自复写「迟到」规则，也不放宽封夜本身。
     """
     if night_id is not None and int(night_id) > 0:
         night = get_night(db, int(night_id))
@@ -356,6 +354,10 @@ def assert_night_accepts_player_input(
     if night is None:
         return None
     if str(night.get("status") or "") == NIGHT_STATUS_CLOSING:
+        if int(source_chat_turn_id or 0) > 0 and is_pending_source_round(
+            db, int(night["id"]), int(source_chat_turn_id), int(night["turn"]),
+        ):
+            return night
         # #1301：玩家面文案去裸 night_id（结构化 detail 已有）；diegetic 可读。
         raise AudienceNightError(
             f"本夜收夜中，暂不能{what}。",
@@ -417,10 +419,10 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
             "night_id": int(raw["night_id"]),
             "seq": int(raw["seq"]),
             "order_key": None if ok is None else float(ok),
-            "person_names": [str(n) for n in _json_list(raw.get("person_names"))],
+            "person_names": list(_json_list(raw.get("person_names"))),
             "audibility": str(raw.get("audibility") or AUDIBILITY_PUBLIC),
             "body": str(raw.get("body") or ""),
-            "tags": [str(t) for t in _json_list(raw.get("tags"))],
+            "tags": list(_json_list(raw.get("tags"))),
             "source_chat_turn_id": int(raw.get("source_chat_turn_id") or 0),
             "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
             "origin_ref": str(raw.get("origin_ref") or ""),
@@ -1390,7 +1392,7 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
     ).fetchall()
     projected: List[Dict[str, Any]] = []
     for row in rows:
-        tags = json.loads(row["tags"] or "[]")
+        tags = _json_list(row["tags"])
         if TAG_SUMMON_UNSETTLED not in tags or TAG_SUMMON_SETTLED in tags:
             continue
         origin = next(
@@ -1398,7 +1400,7 @@ def list_unsettled_summons(db: Any) -> List[Dict[str, Any]]:
              if str(tag).startswith(_SUMMON_ORIGIN_PREFIX)),
             "",
         )
-        names = json.loads(row["person_names"] or "[]")
+        names = _json_list(row["person_names"])
         if not origin or not names:
             continue
         person_name = str(names[0])
@@ -1499,7 +1501,7 @@ def _mark_summon_entries_in_transit(db: Any, items: Sequence[Dict[str, Any]]) ->
         ).fetchone()
         if row is None:
             continue
-        tags = json.loads(row["tags"] or "[]")
+        tags = list(_json_list(row["tags"]))
         if TAG_IN_TRANSIT in tags:
             continue
         tags.append(TAG_IN_TRANSIT)
@@ -1531,8 +1533,9 @@ def settle_summon_origin(
         row = db.conn.execute(
             "SELECT tags FROM story_ledger_entries WHERE id=?", (item["entry_id"],)
         ).fetchone()
-        tags = json.loads(row["tags"] or "[]")
-        tags = [tag for tag in tags if tag != TAG_SUMMON_UNSETTLED]
+        tags = [
+            tag for tag in _json_list(row["tags"]) if tag != TAG_SUMMON_UNSETTLED
+        ]
         tags.append(TAG_SUMMON_SETTLED)
         db.conn.execute(
             "UPDATE story_ledger_entries SET tags=? WHERE id=?",
@@ -1660,8 +1663,10 @@ def update_summon_travel_tone(
     ).fetchone()
     if row is None:
         raise KeyError(f"传召账不存在：{entry_id}")
-    tags = [str(t) for t in json.loads(row["tags"] or "[]")]
-    tags = [t for t in tags if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)]
+    tags = [
+        t for t in _json_list(row["tags"])
+        if not t.startswith(_SUMMON_TRAVEL_TONE_PREFIX)
+    ]
     tags.append(_travel_tone_tag(tone))
     db.conn.execute(
         "UPDATE story_ledger_entries SET tags=? WHERE id=?",
@@ -1670,69 +1675,6 @@ def update_summon_travel_tone(
     if owns:
         db.conn.commit()
     return entry_id
-
-
-def ensure_inactive_office_summon(
-    db: Any, pending_id: int, person_name: str, *, night_id: int,
-    origin_chat_turn_id: int = 0,
-) -> int:
-    """Ensure the pre-close, inactive half of an appointment-plus-summon intent.
-
-    Binds origin_chat_turn_id so #506 undo of the staging turn erases this row;
-    still-inactive origins are also discarded on pending reject/withdraw.
-    """
-    origin = f"office:{int(pending_id)}"
-    existing = _ledger_by_origin_ref(db, origin)
-    if existing is not None:
-        return int(existing["id"])
-    if int(night_id) <= 0:
-        raise AudienceNightError("任命后传召须在召对夜内落账", code="night_not_found")
-    return append_ledger_entry(
-        db, int(night_id), person_names=[str(person_name).strip()],
-        tags=[METHOD_CHUANZHAO, _summon_origin_tag(origin)], origin_ref=origin,
-        origin_chat_turn_id=int(origin_chat_turn_id or 0),
-    )
-
-
-def discard_inactive_office_summon(db: Any, pending_id: int) -> bool:
-    """Delete still-inactive office:<pending_id> origin; refuse activated history.
-
-    Matches withdraw/drop owns_transaction: do not commit over a caller-owned
-    BEGIN/atomic, so outer rollback can restore pending + origin together.
-    """
-    conn = db.conn
-    owns_transaction = connection_owns_transaction(conn)
-    origin = f"office:{int(pending_id)}"
-    entry = _ledger_by_origin_ref(db, origin)
-    if entry is None:
-        return False
-    tags = list(entry.get("tags") or [])
-    # Activated / in-transit / settled rows are post-promulgation history — keep.
-    if TAG_SUMMON_UNSETTLED in tags or TAG_IN_TRANSIT in tags or TAG_SUMMON_SETTLED in tags:
-        return False
-    conn.execute(
-        "DELETE FROM story_ledger_entries WHERE id=?",
-        (int(entry["id"]),),
-    )
-    if owns_transaction:
-        conn.commit()
-    return True
-
-
-def activate_office_summon(db: Any, pending_id: int) -> Optional[Dict[str, Any]]:
-    """Activate the original inactive row; never append to a closed night."""
-    origin = f"office:{int(pending_id)}"
-    entry = _ledger_by_origin_ref(db, origin)
-    if entry is None:
-        return None
-    tags = list(entry["tags"])
-    if TAG_SUMMON_UNSETTLED not in tags:
-        tags.append(TAG_SUMMON_UNSETTLED)
-        db.conn.execute(
-            "UPDATE story_ledger_entries SET tags=? WHERE id=?",
-            (json.dumps(tags, ensure_ascii=False), int(entry["id"])),
-        )
-    return {**entry, "tags": tags}
 
 
 def commit_fresh_summons_for_night(
@@ -2130,8 +2072,9 @@ def audience_scene_recap(
         nid = int(open_n["id"])
     bodies: List[str] = []
     for entry in audible_entries_for(db, int(nid), name):
-        body = str(entry.get("body") or "").strip()
-        if body:
+        # #1897：场面正文原样入回顾；判空用局部副本。
+        body = str(entry.get("body") or "")
+        if body.strip():
             bodies.append(body)
     if not bodies:
         return ""
@@ -2227,17 +2170,8 @@ def rescript_summon_origin_consumed(
     """
     if entry is None:
         return False
-    tags_raw = entry.get("tags")
-    if isinstance(tags_raw, str):
-        try:
-            tags_list = json.loads(tags_raw or "[]")
-        except Exception:
-            tags_list = []
-    elif isinstance(tags_raw, (list, tuple)):
-        tags_list = list(tags_raw)
-    else:
-        tags_list = []
-    tags = [str(t) for t in tags_list]
+    # 持久 tags 走故事账列表权威；腐坏响亮，不洗空（#1897 E1）。
+    tags = list(_json_list(entry.get("tags")))
     return TAG_ENTER in tags
 
 
@@ -2258,8 +2192,8 @@ def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
         "body": str(raw.get("body") or ""),
         "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
         "origin_ref": str(raw.get("origin_ref") or ""),
-        "tags": [str(t) for t in _json_list(raw.get("tags"))],
-        "person_names": [str(n) for n in _json_list(raw.get("person_names"))],
+        "tags": list(_json_list(raw.get("tags"))),
+        "person_names": list(_json_list(raw.get("person_names"))),
     }
 
 
@@ -2338,12 +2272,26 @@ def prepare_rescript_summon_scaffold(
 
 def mark_actions_night_approved(
     db: Any, action_ids: Sequence[int], *, night_id: Optional[int] = None,
+    source_chat_turn_id: int = 0,
 ) -> int:
-    """对话应允时：把暂存标为本夜已应允，收夜再提交（密令除外，调用方分流）。"""
+    """对话应允时：把暂存标为本夜已应允，收夜再提交（密令除外，调用方分流）。
+
+    ``source_chat_turn_id``：与 :func:`assert_night_accepts_player_input` 同义，
+    透传给 ``mark_pending_night_approved``。自动应允的消费者（禁摊派等）此前
+    只传 night_id，迟到转译在封夜后拿不到源轮、按 night_closed 拒绝，补译
+    应允接不回源夜（ADR 0038 后出注记）。
+    """
+    if not hasattr(db, "mark_pending_night_approved"):
+        return 0
+    ctid = int(source_chat_turn_id or 0)
     nid = night_id
     if nid is None:
         open_n = assert_night_accepts_player_input(db, what="应允暂存")
         nid = int(open_n["id"]) if open_n else None
     else:
-        assert_night_accepts_player_input(db, int(nid), what="应允暂存")
-    return int(db.mark_pending_night_approved(action_ids, night_id=nid) or 0)
+        assert_night_accepts_player_input(
+            db, int(nid), what="应允暂存", source_chat_turn_id=ctid,
+        )
+    return int(db.mark_pending_night_approved(
+        action_ids, night_id=nid, source_chat_turn_id=ctid,
+    ) or 0)

@@ -89,27 +89,30 @@ def _reader_in_issue_audience(db: Any, issue: Any, character_name: str) -> bool:
 
 
 def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
-    """Parse excluded_names and excluded_targets.people/offices from one row."""
+    """Parse excluded_names and excluded_targets.people/offices from one row.
+
+    Reuses durable exclusion authority in ming_sim.db (#1897 E1/C2).
+    """
+    from ming_sim.db import _load_durable_str_list, _load_exclusion_targets
+
     try:
-        excluded_names = {
-            str(name) for name in json.loads(row["excluded_names"] or "[]")
-        }
-    except (TypeError, ValueError, KeyError, IndexError):
-        excluded_names = set()
-    targets: object = {}
+        raw_names = row["excluded_names"]
+    except (KeyError, IndexError, TypeError):
+        raw_names = "[]"
+    names_list = _load_durable_str_list(
+        raw_names, surface="knowledge excluded_names",
+    )
+    excluded_names = {str(name) for name in names_list}
     try:
         raw_targets = row["excluded_targets"]
     except (KeyError, IndexError, TypeError):
-        raw_targets = None
-    if raw_targets:
-        try:
-            targets = json.loads(raw_targets or "{}")
-        except (TypeError, ValueError):
-            targets = {}
-    if not isinstance(targets, dict):
-        targets = {}
-    people = {str(name) for name in (targets.get("people") or [])}
-    offices = {str(name) for name in (targets.get("offices") or [])}
+        raw_targets = "{}"
+    # 空串/腐坏不得洗成合法空对象——与 db._load_exclusion_targets 同权威（#1897 E1）。
+    targets = _load_exclusion_targets(
+        raw_targets, surface="knowledge excluded_targets",
+    )
+    people = {str(name) for name in targets.get("people", [])}
+    offices = {str(name) for name in targets.get("offices", [])}
     return excluded_names, people, offices
 
 
@@ -333,12 +336,10 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
         if source_id.startswith("turn_report:") and not source_id.endswith(":public"):
             continue
         participants = participant_roster_names(row["participant_roster"])
-        try:
-            excluded = json.loads(row["excluded_names"] or "[]")
-        except (TypeError, ValueError):
-            excluded = []
-        if not isinstance(excluded, list):
-            excluded = []
+        from ming_sim.db import _load_durable_str_list
+        excluded = _load_durable_str_list(
+            row["excluded_names"], surface="knowledge excluded_names",
+        )
         # A participant-rostered source is private to its participants unless
         # an explicit exclusion says otherwise.  Empty rosters are not added
         # here: public events already have their own projection path.
@@ -743,13 +744,23 @@ def build_character_knowledge(
             character_name,
         ):
             continue
-        try:
-            target_roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (KeyError, TypeError, ValueError):
+        if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
-        if issue["origin_kind"] != "impeachment_surge" or not isinstance(target_roster, list):
-            target_roster = []
-        target_roster = [str(target).strip() for target in target_roster if str(target).strip()]
+        else:
+            try:
+                target_roster = json.loads(str(issue["target_roster"] or "[]"))
+            except (TypeError, ValueError) as exc:
+                # 已持久 target_roster 腐坏响亮，不洗成空名单改准入（#1897 E1）。
+                raise ValueError(
+                    f"弹劾潮#{int(issue['id'])} target_roster 腐坏"
+                ) from exc
+            if not isinstance(target_roster, list):
+                raise ValueError(
+                    f"弹劾潮#{int(issue['id'])} target_roster 须为列表"
+                )
+            target_roster = [
+                str(target).strip() for target in target_roster if str(target).strip()
+            ]
         visible_issues.append({
             "id": int(issue["id"]), "kind": issue["kind"],
             "origin_kind": issue["origin_kind"], "origin_ref": issue["origin_ref"],

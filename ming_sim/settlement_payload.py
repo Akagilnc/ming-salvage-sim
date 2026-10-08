@@ -27,15 +27,16 @@ MAX_DECISIONS_PER_TURN = 5
 
 
 def bind_decision_options(options: object) -> Dict[str, Dict[str, object]]:
-    """Bind normalized labels to stored options, rejecting ambiguous decisions."""
+    """Bind raw option labels to stored options; empty/duplicate labels rejected."""
     bound: Dict[str, Dict[str, object]] = {}
     if not isinstance(options, list):
         raise ValueError("decision options 须为 list")
     for option in options:
         if not isinstance(option, dict):
             continue
-        label = str(option.get("label") or "").strip()
-        if not label or label in bound:
+        # #1897：label 原样作键；判空用局部副本。
+        label = str(option.get("label") or "")
+        if not label.strip() or label in bound:
             raise ValueError(f"decision option label 为空或重复：{label!r}")
         bound[label] = option
     return bound
@@ -57,16 +58,17 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         if not isinstance(obj, dict):
             continue
-        title = str(obj.get("title") or "").strip()
+        # #1897：请旨自由字段原样；判空用局部副本，不把 strip 写回。
+        title = str(obj.get("title") or "")
         raw_opts = obj.get("options")
-        if not title or not isinstance(raw_opts, list):
+        if not title.strip() or not isinstance(raw_opts, list):
             continue
         options: List[Dict[str, object]] = []
         for o in raw_opts:
             if not isinstance(o, dict):
                 continue
-            label = str(o.get("label") or "").strip()
-            if not label:
+            label = str(o.get("label") or "")
+            if not label.strip():
                 continue
             try:
                 action_type = validate_season_option(o)
@@ -75,7 +77,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
                 break
             option: Dict[str, object] = {
                 "label": label,
-                "hint": str(o.get("hint") or "").strip(),
+                "hint": str(o.get("hint") or ""),
             }
             # Deterministic financial options carry their executable payload;
             # label/hint remain presentation only.
@@ -91,7 +93,7 @@ def parse_decision_blocks(text: str) -> List[Dict[str, object]]:
             continue
         decision = {
             "title": title,
-            "context": str(obj.get("context") or "").strip(),
+            "context": str(obj.get("context") or ""),
             "options": options[:3],
         }
         explicit_event_id = str(obj.get("event_id") or "").strip()
@@ -157,13 +159,13 @@ def bind_decisions_to_candidate_events(
     decisions: List[Dict[str, object]],
     simulator_payload: object,
 ) -> List[Dict[str, object]]:
-    """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389 / ADR 0115).
+    """Bind decision event_id to the AUTHORITATIVE candidate snapshot (#389 / #1897 / ADR 0115).
 
     Binding is by structured identity only（绑定由构造保证，非由文本捞回）:
     - A simulator-echoed event_id is trusted ONLY if it belongs to this turn's
       candidate snapshot.
     - A missing id stays unbound; an off-snapshot id is stripped. Titles are
-      presentation and never used to invent or rescue an event_id (#1900 J20).
+      presentation and never used to invent or rescue an event_id (#1897 K2 / #1900 J20 / ADR0142).
     - Non-event HITL decisions keep no event_id. dossier: prefixes with full
       rescript capability fields are retained (#1490/#1492 A).
     """
@@ -231,7 +233,7 @@ def list_due_commitments(db: GameDB, state: GameState) -> List[Dict[str, object]
             "entry_kind": "due_commitment",
             "issue_id": int(row["id"]),
             "title": str(row["title"] or ""),
-            "content": str(row["stage_text"] or row["title"] or "")[:120],
+            "content": str(row["stage_text"] or row["title"] or ""),
             "origin_ref": str(row["origin_ref"] or ""),
             "turn_issued": int(row["origin_turn"] or 0),
             "due_turn": int(row["end_turn"] or 0),

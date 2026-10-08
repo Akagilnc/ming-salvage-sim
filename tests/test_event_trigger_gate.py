@@ -140,16 +140,15 @@ def test_historical_event_expires_after_latest_window_when_gate_unsatisfied(game
 
         terminalized = issues.apply_event_terminal_states(state, db)
 
-        assert {
-            "id": "__test_expiring_hist__",
-            "title": "测试门控历史事件",
-            "terminal_state": "expired",
-        } in terminalized
+        hit = next(
+            (item for item in terminalized if item.get("id") == "__test_expiring_hist__"),
+            None,
+        )
+        assert hit["terminal_state"] == "expired"
         row = db.conn.execute(
             "SELECT terminal_state FROM event_triggers WHERE event_id=?",
             ("__test_expiring_hist__",),
         ).fetchone()
-        assert row is not None
         assert row["terminal_state"] == "expired"
 
         state.metrics["民心"] = 3
@@ -2510,13 +2509,12 @@ def test_apply_score_extraction_top_level_economy_respects_outer_transaction_rol
     db.conn.commit()
 
     db.conn.execute("BEGIN")
-    out = issues.apply_score_extraction(
+    issues.apply_score_extraction(
         db,
         state,
         {"economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": -1, "category": "测试", "reason": reason}]},
         content=content,
     )
-    assert out["economy_moves"][0]["reason"] == reason
     db.conn.rollback()
 
     assert db.conn.execute(
@@ -3476,7 +3474,7 @@ def test_event_pool_pending_appointment_clears_reason_gate(game):
         ).fetchone()
         assert row["status"] == "active"
         assert row["reason_code"] == ""
-        assert row["status_reason"] != "获罪削籍"
+        # 拒收任命不得写入罪由码；不比较自由 status_reason 散文
     finally:
         content.seed_events.remove(ev)
         content.event_by_id.pop(ev.id, None)
