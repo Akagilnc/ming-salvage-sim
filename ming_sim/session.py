@@ -1047,10 +1047,12 @@ class GameSession:
 
             # 屏障只等前序票工人终态/空放行（K10a：无 elapsed 熔断）。
             # #1727：预领票复用 barrier，禁再领第二张 barrier。
-            q.barrier(_do_close, ticket=barrier_ticket)
-            barrier_ticket = None  # barrier 已 complete
+            # 交接后 barrier finally 唯一归还；本腿不再 complete 同一票。
+            handed = barrier_ticket
+            barrier_ticket = None
+            q.barrier(_do_close, ticket=handed)
         finally:
-            # 早退/异常：预领票仍须归还，避免 has_open_barrier 永真（complete 幂等）。
+            # 仅未交到 barrier 的早退路径归还预领票（未交接自还）。
             if barrier_ticket is not None:
                 q.complete(barrier_ticket)
 
@@ -1074,6 +1076,8 @@ class GameSession:
         gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
 
         def _run() -> None:
+            # 票一次性交给 close_night_after_chat_if_needed（早退自还或 barrier 归还）；
+            # 调度侧不维护第二份归还。
             try:
                 self.close_night_after_chat_if_needed(
                     court_action,
@@ -1085,11 +1089,6 @@ class GameSession:
                     "background close_night_after_chat failed court_action=%s",
                     court_action,
                 )
-            finally:
-                # 幂等：真路径已在 close_night_after_chat_if_needed 归还；
-                # stub/早退漏还时仍须清 has_open_barrier。
-                if barrier_ticket is not None:
-                    q.complete(barrier_ticket)
 
         thread = threading.Thread(
             target=_run,
