@@ -1930,12 +1930,13 @@ def apply_monthly_covert_actual_progress(
             raw_note = sel.get("备注")
         else:
             raw_note = None
-        if raw_note is None or isinstance(raw_note, (Mapping, list)):
+        if raw_note is None:
             # #1897：没有推演者给出的正文字段 → note=None，数值写口保留已存正文。
             note: Optional[str] = None
         else:
-            # 字段已提供（含空白）原样写入，不以 strip 改成 "" 或丢弃。
-            note = str(raw_note)
+            # 已提供 note 禁 str() 洗白；坏类型沿写口响亮（#1897 J820-E1）。
+            from ming_sim.db import _require_durable_prose
+            note = _require_durable_prose(raw_note, field="note", required=False)
         row = db.record_dossier_actual_progress(
             did,
             turn,
@@ -2167,12 +2168,14 @@ def settle_due_secret_orders(
             "origin_context": secret_order_origin(oid),
         })
         player_text = player_facing_secret_order_close_text(order, reports)
+        # 结案正文／执行注禁 str()/or 洗白；由 close 写口校验（#1897 J820-E1）。
+        close_note = verdict.get("note", "")
         db.close_secret_order(
             oid,
             str(verdict["status"]),
             player_text,
             int(state.turn),
-            execution_note=str(verdict.get("note") or ""),
+            execution_note=close_note if close_note is not None else "",
             commit=False,
         )
         results.append({

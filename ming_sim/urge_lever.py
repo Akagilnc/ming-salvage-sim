@@ -337,7 +337,11 @@ def rush_staged_commitment_stage(
         (stages_blob, int(commitment_ref)),
     )
 
-    why = reason if str(reason or "").strip() else "奉旨加急"
+    # 真正空串才回落缺省；合法空白原文原样运输，禁 strip 改字（#1897）。
+    # 类型合同复用 _require_durable_prose，不另建校验器。
+    from ming_sim.db import _require_durable_prose
+    raw_reason = _require_durable_prose(reason, field="reason", required=False)
+    why = raw_reason if raw_reason else "奉旨加急"
     if record_history:
         _record_commitment_urge(
             db, state,

@@ -13707,6 +13707,8 @@ class GameDB:
         )
         if row["status"] != "executing" and not immediate:
             raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
+        # 执行注正文：禁 str()/or 洗白（#1897 J820-E1）。
+        note_text = _require_durable_prose(note, field="execution_note", required=False)
         self.conn.execute(
             """
             UPDATE decree_dossiers
@@ -13715,7 +13717,7 @@ class GameDB:
             WHERE id=?
             """,
             (
-                outcome, str(note or ""),
+                outcome, note_text,
                 0 if outcome == "executing" else int(turn),
                 int(dossier_id),
             ),
@@ -13723,7 +13725,7 @@ class GameDB:
         if close:
             self.close_decree_dossier(
                 dossier_id,
-                str(note or "") if outcome == "failed" else "",
+                note_text if outcome == "failed" else "",
                 commit=False,
             )
         # #625：走样/变形/烂尾终值 → 空子暴露（与对账路统一：本 turn 稽核在场门）
@@ -16620,21 +16622,16 @@ class GameDB:
                 commit=False,
                 record_history=False,  # 本 pending 行标 committed 即史源，禁双插
             )
-            # 史源字段写回本行 payload（commit_pending_actions 随后标 committed）
-            # result.reason 是写口回读的已校验正文，不再 str()/or 洗（#1897 J820-E1）。
+            # 史源字段写回本行 payload（commit_pending_actions 随后标 committed）。
+            # reason 回写已校验的 staged 原文，不吃写口缺省替换（#1897 空白原文）。
             merged = dict(payload)
-            result_reason = result.get("reason", "")
-            if not isinstance(result_reason, str):
-                raise ValueError(
-                    f"持久字段 reason 须为字符串，得 {type(result_reason).__name__}"
-                )
             merged.update({
                 "stage_idx": int(stage_idx),
                 "old_due": int(result["old_due"]),
                 "new_due": int(result["due_turn"]),
                 "deadline_months": int(result["deadline_months"]),
                 "tightness": max(0, int(result["old_due"]) - int(result["due_turn"])),
-                "reason": result_reason,
+                "reason": commitment_reason,
             })
             self.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -18932,12 +18929,16 @@ class GameDB:
         同一 (dossier, turn) 的 note 与推演实况正文共用。冲突更新改单位与执行态。
         note is None＝本次数值写未提供正文字段，保留已存正文；note 为 str（含空白）
         ＝显式承接，原文原样写入，不以空白形状仲裁旧／新（P6 / #1897 N2）。
+        已提供 note 禁 str() 洗白；坏类型响亮（#1897 J820-E1）。
         """
         owns = self.owns_transaction() if commit else False
         did = int(dossier_id)
         origin = f"dossier:{did}"
         note_provided = note is not None
-        note_value = str(note) if note_provided else ""
+        note_value = (
+            _require_durable_prose(note, field="note", required=False)
+            if note_provided else ""
+        )
         if note_provided:
             self.conn.execute(
                 """
@@ -20360,7 +20361,17 @@ class GameDB:
             if dossier is None:
                 # #1897 / ADR0005：在办密令缺必需案卷是内部故障，不得半截结案。
                 raise ValueError("密令进展缺少对应案卷")
-            close_text = str(result or "")
+            # 结案正文：禁 str()/or 洗白；空串合法（#1897 J820-E1）。
+            close_text = _require_durable_prose(
+                result, field="result", required=False,
+            )
+            # execution_note=None＝缺省空串合同；已提供则须为字符串。
+            if execution_note is None:
+                exec_note_text = ""
+            else:
+                exec_note_text = _require_durable_prose(
+                    execution_note, field="execution_note", required=False,
+                )
             self.conn.execute(
                 """
                 UPDATE secret_orders
@@ -20378,7 +20389,7 @@ class GameDB:
                 self.record_dossier_execution(
                     int(dossier["id"]),
                     "fulfilled" if str(status) == "done" else "failed",
-                    "" if execution_note is None else str(execution_note),
+                    exec_note_text,
                     int(turn_closed), close=True, commit=False,
                 )
 
