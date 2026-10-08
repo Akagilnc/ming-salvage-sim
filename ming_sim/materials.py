@@ -383,10 +383,8 @@ def _spoken_this_scene(db: Any, character: Any) -> str:
 
 def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
     """ADR 0154：issue 若已指向某 affair，返回该 affair id；未挂靠返 0。"""
-    try:
-        return int(db.affairs.affair_id_for_issue(int(issue_id)))
-    except (KeyError, TypeError, ValueError):
-        return 0
+    # 未关联由 AffairStore 原生返 0；缺能力/类型/缺行失败保持响亮，不吞成未关联。
+    return int(db.affairs.affair_id_for_issue(int(issue_id)))
 
 
 def _own_affair_lines(

@@ -212,11 +212,6 @@ def project_cluster_fields(kind: str, obj: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def cluster_effect(kind: str) -> str:
-    c = cluster_by_kind(kind)
-    return c.effect if c else EFFECT_NOOP
-
-
 class ActionCandidateShapeError(DeclarationDataError):
     pass
 

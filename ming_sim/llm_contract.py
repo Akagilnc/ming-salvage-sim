@@ -38,9 +38,3 @@ def require_int_range(value: object, stage: str, field: str, low: int, high: int
     return parsed
 
 
-def require_bool(value: object, stage: str, field: str, raw: Optional[str] = None) -> bool:
-    if not isinstance(value, bool):
-        abort_llm_contract(stage, f"{field} 必须是 boolean", raw)
-    return value
-
-
