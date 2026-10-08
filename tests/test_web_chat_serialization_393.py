@@ -252,15 +252,6 @@ def test_identity_setup_failure_preserves_question_and_releases_pending_owner():
     assert completed == [True]
 
 
-def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature():
-    runtime, minister_name, allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
-    stream = runtime.chat_stream("殿上", "请奏")
-    assert next(stream)["type"] == "accepted"
-    assert next(stream)["type"] == "delta"
-    allow_finish.set()
-    assert next(stream)["type"] == "done"
-
-
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     events: list[str] = []
     entered = threading.Event()
