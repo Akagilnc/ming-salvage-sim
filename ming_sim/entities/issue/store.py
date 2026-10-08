@@ -214,8 +214,6 @@ class IssueStore:
     def read_event_terminal_records(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT event_id, terminal_state, terminal_reason FROM event_triggers', params).fetchall()
 
-    def read_event_pending_choice_records(self, params: Any = ()) -> Any:
-        return self._conn.execute("\n        SELECT event_id, terminal_state, terminal_reason, source\n        FROM event_triggers\n        WHERE COALESCE(terminal_state, '') = ''\n          AND COALESCE(terminal_reason, '') != ''\n        ", params).fetchall()
 
     def write_ensure_event_parent(self, params: Any = ()) -> Any:
         return self._conn.execute('\n            INSERT OR IGNORE INTO events\n            (id, title, kind, summary, urgency, severity, credibility, interests, audiences)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ', params)

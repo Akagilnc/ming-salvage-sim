@@ -1289,7 +1289,7 @@ def _step_4a_secret_order_supply(
         validation_failed = False
         try:
             with atomic(db):
-                db.record_monthly_supervision_presence(turn, commit=False)
+                db.dossiers.record_monthly_supervision_presence(turn, commit=False)
                 try:
                     db.record_monthly_dossier_progress(turn, reports)
                 except ValueError:
@@ -1398,9 +1398,9 @@ def _run_month_drift(
 
     collector = RejectionCollector()
     with atomic(db):
-        db.record_monthly_supervision_presence(turn, commit=False)
+        db.dossiers.record_monthly_supervision_presence(turn, commit=False)
         db.record_monthly_grant_reconciliations(turn)
-        db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
+        db.dossiers.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         retire_unsettled_summons_for_inactive(db)
         # #651：漂移只承接不依赖本段 applied 的持久态（已决「禁摊派」欠饷是否再开口）。
         # 默许/查办必须在逐段落账接缝带该段 report 结算，见 declaration_dispatch。

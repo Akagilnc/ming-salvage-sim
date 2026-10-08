@@ -8,6 +8,7 @@ r3：reason 非空逐字必填，缺失则任命与双边同事务 fail-loud 回
 
 import pytest
 
+from ming_sim.recommendations import list_recommendation_events
 from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
@@ -54,7 +55,7 @@ def test_approved_recommendation_writes_both_edges_atomically(game):
 
     _commit_and_promulgate(db, state, content, action_id)
 
-    events = db.list_recommendation_events(state, recommender.name)
+    events = list_recommendation_events(db, state, recommender.name)
     assert len(events) == 1
     event = events[0]
     assert event["candidate"] == row["name"]
@@ -104,7 +105,7 @@ def test_unapproved_appointment_writes_zero_edges(game):
     with pytest.raises(ValueError):
         _commit_and_promulgate(db, state, content, action_id)
 
-    assert db.list_recommendation_events(state, recommender.name) == []
+    assert list_recommendation_events(db, state, recommender.name) == []
     assert _recommendation_origins(db) == []
 
 
@@ -118,7 +119,7 @@ def test_empty_reason_fails_loud_and_rolls_back_everything(game):
     with pytest.raises(ValueError):
         _commit_and_promulgate(db, state, content, action_id)
 
-    assert db.list_recommendation_events(state, recommender.name) == []
+    assert list_recommendation_events(db, state, recommender.name) == []
     assert _recommendation_origins(db) == []
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
@@ -144,7 +145,7 @@ def test_second_leg_failure_rolls_back_everything(game, monkeypatch):
         _commit_and_promulgate(db, state, content, action_id)
 
     # 全回滚零残留：不落任命、不落荐人事件、零边。
-    assert db.list_recommendation_events(state, recommender.name) == []
+    assert list_recommendation_events(db, state, recommender.name) == []
     assert db.person_logs.get_relation_edge_events() == []
     char_row = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (row["name"],)).fetchone()
@@ -162,7 +163,7 @@ def test_real_entry_persists_raw_reason_verbatim(game):
 
     _commit_and_promulgate(db, state, content, action_id)
 
-    event = db.list_recommendation_events(state, recommender.name)[0]
+    event = list_recommendation_events(db, state, recommender.name)[0]
     assert event["reason"] == reason
     legs = [e for e in db.person_logs.get_relation_edge_events()
             if str(e["origin"]).startswith(f"recommendation:{event['id']}:")]
@@ -173,7 +174,7 @@ def test_real_entry_persists_raw_reason_verbatim(game):
 def test_replay_same_event_with_changed_reason_stays_two_rows(game):
     """r1 F2：幂等身份只锚稳定 origin（recommendation:{id}:{腿别}+|round 口径），
     不含可变 context——同 event_id 换荐词重放，恒 2 行且原文不被改写。"""
-    from ming_sim.recommendations import record_recommendation_edges
+    from ming_sim.recommendations import list_recommendation_events, record_recommendation_edges
 
     db, state, content = game
     recommender = _pick_recommender(content)

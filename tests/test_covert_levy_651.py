@@ -125,7 +125,7 @@ def test_covert_consumer_requires_real_beyond_intent_effect_without_narrowing_ge
     db, state, _ = game
     did, _, _, _ = _bound_case(db, state)
     db.dossiers.record_dossier_progress(did, state.turn, "有成", "饷事已有眉目", commit=False)
-    db.record_dossier_execution(did, "transformed", "暗中摊派", state.turn, close=False, commit=False)
+    db.dossiers.record_execution(did, "transformed", "暗中摊派", state.turn, close=False, commit=False)
     assert db.read_dossier_fork_state(did)["fork"] is True  # shared #622/#627 contract
     db.conn.execute(
         "INSERT INTO decree_dossier_links(source_dossier_id,target_dossier_id,relation_type,note) "
@@ -139,7 +139,7 @@ def _exposed_todo(db, state, monkeypatch, did):
         "UPDATE decree_dossiers SET promulgation_decision='promulgated' WHERE id=?", (did,)
     )
     db.dossiers.record_dossier_progress(did, state.turn, "有成", "军饷已有着落", commit=False)
-    db.record_dossier_execution(did, "transformed", "暗中摊派", state.turn, close=True, commit=False)
+    db.dossiers.record_execution(did, "transformed", "暗中摊派", state.turn, close=True, commit=False)
     monkeypatch.setattr(db, "read_dossier_fork_state", lambda dossier_id: {
         "dossier_id": dossier_id, "fork": True, "reported_bands": ["有成"],
         "execution_outcome": "transformed", "actual_effect_count": 1, "beyond_intent": True,

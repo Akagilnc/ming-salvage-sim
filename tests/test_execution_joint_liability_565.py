@@ -418,7 +418,7 @@ def test_direct_record_dossier_execution_does_not_trigger_joint_liability(game):
     """挂载点=适配器；record_dossier_execution 本身不扫/不扣连坐。"""
     db, state, _content = game
     dossier_id = _executing_dossier(db, state)
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         dossier_id, "failed", "直写终值", state.turn, close=True,
     )
     assert _cost_events(db, dossier_id) == []

@@ -53,7 +53,6 @@ from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
 from ming_sim.entities.dossier import (
-    DOSSIER_EXECUTION_OUTCOMES,
     DOSSIER_REPORT_ORIGIN_MONTHLY,
     DOSSIER_REPORT_ORIGIN_NS,
     DOSSIER_REPORT_ORIGIN_REVIEW,
@@ -75,7 +74,6 @@ from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label, reign_period_label,
 )
-from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
 from ming_sim.participant_roster import (
     PARTICIPANT_TIERS,
     load_participant_roster,
@@ -5280,24 +5278,6 @@ class GameDB:
             })
         return out
 
-    def _pending_action_owned_by_turn_in_tx(
-        self, action_id: object, chat_turn_id: int,
-    ) -> bool:
-        """#1890：这道交办是不是「本源轮、且仍 pending」——作废的唯一判据。"""
-        try:
-            aid = int(action_id)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return False
-        ctid = int(chat_turn_id or 0)
-        if aid <= 0 or ctid <= 0:
-            return False
-        row = self.dossiers.pending_source_status(aid)
-        if row is None:
-            return False
-        return (
-            int(row["source_chat_turn_id"] or 0) == ctid
-            and str(row["status"] or "") == "pending"
-        )
 
     def void_pending_actions_for_chat_turn(self, chat_turn_id: int) -> List[int]:
         """#1890：按来源轮整轮作废该轮的交办暂存，返回被作废的 id。
@@ -5775,20 +5755,6 @@ class GameDB:
 
     # ----- #634 召对判官水位（ADR 0082：逐轮标记即水位，无平行水位表）-----
 
-    def delete_relation_edge_events_for_chat_turn(self, chat_turn_id: int) -> int:
-        """撤回联动（ADR 0038 白名单③ / #1839 第四类）：删该轮源绑定的边事件行。
-
-        事务归属调用方：undo_chat_turn 在其原子块内调（禁提前 commit）；origin 的
-        chat_turn 段是唯一的源轮绑定真源——relations.summon_edge_origin
-        与转译声明路径（declaration_dispatch 拼装
-        ``转译声明|chat_turn:{id}``）共用同一段形态。
-        """
-        cid = int(chat_turn_id)
-        total = 0
-        for prefix in (SUMMON_EDGE_ORIGIN_PREFIX, "转译声明"):
-            cur = PersonLogStore(self.conn).write_delete_relation_edge_events_for_chat_turn((f"{prefix}|chat_turn:{cid}|%",))
-            total += int(cur.rowcount)
-        return total
 
     # ----- #501 召对转译待补状态（沿用 extract_status）-----
 
@@ -5925,7 +5891,7 @@ class GameDB:
             if strategy == "delete_inserted_row":
                 if table == "pending_actions":
                     # #1890：撤回上下文里本轮新落交办改由 void 墓碑，不在此删行。
-                    if retract_context and self._pending_action_owned_by_turn_in_tx(
+                    if retract_context and self.dossiers.is_pending_owned_by_turn(
                         target_id, int(item["chat_turn_id"] or 0),
                     ):
                         continue
@@ -6032,7 +5998,7 @@ class GameDB:
             self.character_knowledge.delete_sources_matching(f"%:chat_turn:{int(chat_turn_id)}", commit=False)
             # #634 撤回联动（ADR 0038 白名单③）：删该轮源绑定的召对边事件；undone 轮
             # 天然出判官窗口（status != active），水位随逐轮标记失效自动回退。
-            self.delete_relation_edge_events_for_chat_turn(chat_turn_id)
+            PersonLogStore(self.conn).delete_relation_edge_events_for_chat_turn(chat_turn_id)
             # #506：删该轮所产故事账——抽取账走 source_chat_turn_id、该轮 attach 创建的
             # 入殿等口令账走 origin_chat_turn_id。晚落的补跑抽取账也按 source 删（不受
             # 前像快照时刻限制）；开夜/员额/收夜等框架账 origin==0、不随本轮撤。撤回后
@@ -7057,75 +7023,6 @@ class GameDB:
         return reports
 
     # ── #625 / ADR 0077 supervision fact bottom ─────────────────────────
-
-    def record_monthly_supervision_presence(
-        self, turn: int, *, commit: bool = False,
-    ) -> Dict[str, object]:
-        """月度在场扫描：稽核链 → presence 行；同 turn UNIQUE 幂等不双计。
-
-        settle 节拍：须先于月报 origin 标记调用（commit=False）。
-        """
-        from ming_sim.supervision import (
-            SUPERVISION_RELATION,
-            resolve_dossier_owner_name,
-        )
-
-        turn_i = int(turn)
-        presence_written = 0
-        # 入链：source=稽核方案卷，target=被稽案卷
-        link_rows = self.dossiers.audit_link_rows(SUPERVISION_RELATION)
-        for link in link_rows:
-            source_status = str(link["source_status"] or "")
-            target_status = str(link["target_status"] or "")
-            # 双方仍在执行面（promulgated/executing）才记在场
-            if source_status not in {"promulgated", "executing"}:
-                continue
-            if target_status not in {"promulgated", "executing"}:
-                continue
-            audit_dossier = self.dossiers.get(int(link["source_dossier_id"]))
-            if audit_dossier is None:
-                continue
-            auditor = resolve_dossier_owner_name(audit_dossier)
-            if not auditor:
-                continue
-            self.dossiers.upsert_presence(
-                int(link["target_dossier_id"]), turn_i, auditor_name=auditor,
-                audit_dossier_id=int(link["source_dossier_id"]),
-                relation_type=SUPERVISION_RELATION,
-            )
-            presence_written += 1
-
-        if commit:
-            self.conn.commit()
-        return {"presence_written": presence_written, "turn": turn_i}
-
-    def record_monthly_loophole_exposures_from_reconciliations(
-        self, turn: int, *, commit: bool = False,
-    ) -> Dict[str, object]:
-        """对账后暴露派生：本回合 loss>0 且该案卷当月稽核在场 → 暴露行。
-
-        settle 节拍：须在 record_monthly_grant_reconciliations 之后调用。
-        在场门与终值路共用 store.has_supervision_presence（统一口径）。
-        """
-        turn_i = int(turn)
-        exposure_written = 0
-        recon_rows = self.dossiers.reconciliation_loss_rows(turn_i)
-        for row in recon_rows:
-            did = int(row["dossier_id"])
-            if not self.dossiers.has_supervision_presence(did, turn_i):
-                continue
-            action_type = (
-                str(row["action_type"] or "grant_allocation").strip()
-                or "grant_allocation"
-            )
-            if self.dossiers.record_loophole_exposure(
-                did, turn_i, action_type, "degraded", commit=False,
-            ):
-                exposure_written += 1
-
-        if commit:
-            self.conn.commit()
-        return {"exposure_written": exposure_written, "turn": turn_i}
 
     def build_supervision_judge_surface(
         self, dossier_id: int, *, as_of_turn: Optional[int] = None,
@@ -8722,47 +8619,6 @@ class GameDB:
                 )
         return supplied
 
-    def record_dossier_execution(
-        self, dossier_id: int, outcome: str, note: str, turn: int, *,
-        close: bool = True, commit: bool = True,
-    ) -> None:
-        owns = self.owns_transaction()
-        row = self.dossiers.get(dossier_id)
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        outcome = str(outcome or "").strip()
-        if outcome not in DOSSIER_EXECUTION_OUTCOMES:
-            raise ValueError(f"执行 outcome 非法：{outcome}")
-        if outcome == "executing" and close:
-            raise ValueError("executing 是非终态，必须以 close=False 记录")
-        immediate = (
-            row["status"] == "promulgated"
-            and not has_execution_surface(row["action_type"], row["payload"])
-        )
-        if row["status"] != "executing" and not immediate:
-            raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
-        self.dossiers.set_execution(
-            int(dossier_id), outcome=outcome, note=str(note or ""), turn=int(turn),
-        )
-        if close:
-            self.dossiers.close(
-                dossier_id,
-                str(note or "") if outcome == "failed" else "",
-                commit=False,
-            )
-        # #625：走样/变形/烂尾终值 → 空子暴露（与对账路统一：本 turn 稽核在场门）
-        if outcome in {"degraded", "transformed", "failed"}:
-            action_type = str(row.get("action_type") or "").strip()
-            if (
-                action_type in DOSSIER_ACTION_TYPES
-                and self.dossiers.has_supervision_presence(int(dossier_id), int(turn))
-            ):
-                self.dossiers.record_loophole_exposure(
-                    int(dossier_id), int(turn), action_type, outcome,
-                    commit=False,
-                )
-        self._commit_dossier_write(commit, owns)
-
     def apply_dossier_promulgation(
         self, state: GameState, dossier_id: int, decision: str, *,
         blocked_layer: str = "", reason: str = "", legal_reason_code: str = "",
@@ -8873,13 +8729,13 @@ class GameDB:
                             for item in fiscal
                         )
                         if not landed:
-                            self.record_dossier_execution(
+                            self.dossiers.record_execution(
                                 dossier_id, "failed",
                                 "拨帑常项未建项",
                                 state.turn, close=True, commit=False,
                             )
                         else:
-                            self.record_dossier_execution(
+                            self.dossiers.record_execution(
                                 dossier_id, "fulfilled", "成案时建月度科目",
                                 state.turn, close=True, commit=False,
                             )
@@ -8891,7 +8747,7 @@ class GameDB:
                                 self.dossiers.transition(
                                     dossier_id, "executing", commit=False,
                                 )
-                            self.record_dossier_execution(
+                            self.dossiers.record_execution(
                                 dossier_id, "failed",
                                 f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
                                 state.turn, close=True, commit=False,
@@ -8901,12 +8757,12 @@ class GameDB:
                                 dossier_id, "executing", commit=False,
                             )
                         else:
-                            self.record_dossier_execution(
+                            self.dossiers.record_execution(
                                 dossier_id, "fulfilled", "成案时足额拨付",
                                 state.turn, close=True, commit=False,
                             )
                 else:
-                    self.record_dossier_execution(
+                    self.dossiers.record_execution(
                         dossier_id, "fulfilled", "成案时即生效",
                         state.turn, close=True, commit=False,
                     )
@@ -8993,7 +8849,7 @@ class GameDB:
                                 float(army["arrears"] or 0) if army is not None else 0.0
                             )
                             if still_owed > 0:
-                                self.record_dossier_execution(
+                                self.dossiers.record_execution(
                                     dossier_id, "failed",
                                     f"拨饷不足额：应拨{amount}两，实拨{spent}两",
                                     state.turn, close=True, commit=False,
@@ -9019,7 +8875,7 @@ class GameDB:
                                 self.dossiers.transition(
                                     dossier_id, "executing", commit=False,
                                 )
-                            self.record_dossier_execution(
+                            self.dossiers.record_execution(
                                 dossier_id, "failed",
                                 f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
                                 state.turn, close=True, commit=False,
@@ -9151,7 +9007,7 @@ class GameDB:
                     )
                     return
             if policy["execution_surface"] in {"terminal", "immediate"}:
-                self.record_dossier_execution(
+                self.dossiers.record_execution(
                     dossier_id, "fulfilled", "颁布即终局", state.turn,
                     close=True, commit=False,
                 )
@@ -9649,7 +9505,7 @@ class GameDB:
                 self.dossiers.transition(
                     dossier_id, "executing", commit=False,
                 )
-                self.record_dossier_execution(
+                self.dossiers.record_execution(
                     dossier_id, "failed", reason, state.turn,
                     close=True, commit=False,
                 )
@@ -9807,7 +9663,7 @@ class GameDB:
         bodies = parse_responsible_bodies(payload.get("responsible_bodies"))
         if not bodies:
             self.dossiers.transition(dossier_id, "executing", commit=False)
-            self.record_dossier_execution(
+            self.dossiers.record_execution(
                 dossier_id, "failed", "下议缺少 responsible_bodies",
                 state.turn, close=True, commit=False,
             )
@@ -9826,7 +9682,7 @@ class GameDB:
             )
         except ValueError as exc:
             self.dossiers.transition(dossier_id, "executing", commit=False)
-            self.record_dossier_execution(
+            self.dossiers.record_execution(
                 dossier_id, "failed", str(exc) or "responsible_bodies 禁个人名",
                 state.turn, close=True, commit=False,
             )
@@ -9836,7 +9692,7 @@ class GameDB:
         if not title:
             # 保留案卷与正文；缺结构化锚走既有 execution failed（可见可恢复）。
             self.dossiers.transition(dossier_id, "executing", commit=False)
-            self.record_dossier_execution(
+            self.dossiers.record_execution(
                 dossier_id, "failed", "下议缺少结构化题名（title 或 target_id）",
                 state.turn, close=True, commit=False,
             )
@@ -9848,7 +9704,7 @@ class GameDB:
             end_turn = 0
         if end_turn <= 0:
             self.dossiers.transition(dossier_id, "executing", commit=False)
-            self.record_dossier_execution(
+            self.dossiers.record_execution(
                 dossier_id, "failed", "下议缺少 end_turn",
                 state.turn, close=True, commit=False,
             )
@@ -9876,7 +9732,7 @@ class GameDB:
         if item.get("rejected"):
             reason = str(item.get("reason") or "下议 initiative 被拒")
             self.dossiers.transition(dossier_id, "executing", commit=False)
-            self.record_dossier_execution(
+            self.dossiers.record_execution(
                 dossier_id, "failed", reason, state.turn, close=True, commit=False,
             )
             return False
@@ -9906,7 +9762,7 @@ class GameDB:
         if not title:
             # 保留案卷与正文；缺结构化锚走既有 execution failed（可见可恢复）。
             self.dossiers.transition(dossier_id, "executing", commit=False)
-            self.record_dossier_execution(
+            self.dossiers.record_execution(
                 dossier_id, "failed", "交办缺少结构化题名（title 或 target_id）",
                 state.turn, close=True, commit=False,
             )
@@ -9971,7 +9827,7 @@ class GameDB:
             reason = str(item.get("reason") or "交办 initiative 被拒")
             # 校验失败逐项软拒，不掀整批。
             self.dossiers.transition(dossier_id, "executing", commit=False)
-            self.record_dossier_execution(
+            self.dossiers.record_execution(
                 dossier_id, "failed", reason, state.turn, close=True, commit=False,
             )
             return False
@@ -10334,7 +10190,7 @@ class GameDB:
                         int(order_id), "failed", result, int(state.turn), commit=False,
                     )
                     continue
-            self.record_dossier_execution(
+            self.dossiers.record_execution(
                 dossier_id, "failed", reason, state.turn,
                 close=True, commit=False,
             )
@@ -10416,37 +10272,6 @@ class GameDB:
         return updated
 
 
-    def upsert_pending_directive(
-        self, turn: int, minister_name: str, payload: Dict[str, object],
-    ) -> int:
-        """暂存或原地更新(last-write-wins)一条 kind=directive 拟旨意图(ADR 0006)。
-        同一回合同一大臣至多一条 pending directive——新意图覆盖旧(补充=原地更新,非新增态)。
-        返回行 id。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="暂存")
-        row = self.dossiers.find_pending_directive_id(int(turn), str(minister_name))
-        if row is not None:
-            # #498：同回合可跨两夜（一月多夜）。旧夜遗留的 pending directive 被本夜复用更新时，
-            # 必须把归属原子迁到当前开着的夜并清 night_approved，否则本夜应允的
-            # WHERE night_id=当前夜 更新零行、收夜漏交、随后被默认同意旁路批交。
-            # #502 L5（同缝）：合并保留下划线控制键，正文改草不抹待澄清/夜内态。
-            existing_payload = self.dossiers.pending_action_payload_row(int(row["id"]))
-            merged = self._merge_directive_payload(
-                existing_payload["payload_json"] if existing_payload else "{}", payload or {})
-            self._discard_pending_decree_forecast(int(row["id"]))
-            self.dossiers.rehome_pending_payload(
-                int(row["id"]),
-                json.dumps(merged, ensure_ascii=False),
-                self.reign._current_open_night_id(),
-                bump_version=True,
-            )
-            self.conn.commit()
-            return int(row["id"])
-        return self.stage_pending_action(
-            turn, kind="directive", action="拟旨",
-            minister_name=minister_name, target_id=None, payload=payload,
-        )
-
     def stage_directive_candidate(
         self, turn: int, minister_name: str, payload: Dict[str, object],
         source_chat_turn_id: int = 0,
@@ -10454,8 +10279,7 @@ class GameDB:
         night_id: Optional[int] = None,
     ) -> int:
         """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
-        与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
-        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。
+        新拟一道独立圣旨候选——总是 INSERT 新行。返回新行 id。
 
         ``source_chat_turn_id``（#1890）：本道交办的来源轮，随新行落库。"""
         return self.stage_pending_action(
@@ -10497,8 +10321,7 @@ class GameDB:
         night_id: Optional[int] = None,
     ) -> int:
         """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
-        与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清 night_approved，
-        使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。声明路径传入源夜则盖源夜。
+        把归属迁到当前开着的夜并清 night_approved，使本夜应允命中、收夜不漏交。声明路径传入源夜则盖源夜。
         返回该行 id（不存在/非 pending 则 0）。
         **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
         静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
@@ -12968,12 +12791,6 @@ class GameDB:
             self.conn.commit()
         return event_id
 
-    def list_recommendation_events(
-        self, state: GameState, recommender: Optional[str] = None,
-    ) -> List[Dict[str, object]]:
-        from ming_sim.recommendations import list_recommendation_events
-        return list_recommendation_events(self, state, recommender)
-
     def create_secret_order(
         self,
         state: GameState,
@@ -13139,32 +12956,6 @@ class GameDB:
         tlog(f"[secret_order] create id={order_id} minister={minister_name} title={title[:20]}")
         return order_id
 
-    def upsert_secret_order(
-        self,
-        state: GameState,
-        minister_name: str,
-        title: str,
-        content: str,
-        tags: List[str],
-        importance: int = 4,
-        deadline_months: int = 0,
-        covert_task: Optional[Mapping[str, object]] = None,
-    ) -> Tuple[int, bool]:
-        """同一承办大臣已有 active 密令 → 更新其要旨(title/content/tags/限期)并记一条
-        「奉旨更新」进展；否则新建。返回 (order_id, was_update)。
-        补 CLI 后端无 function-calling 的缺口：原靠大臣 function-call 改密令，现失效；
-        再次下密令给同一承办人即更新已有条，而非建重复（限期=0 表示不动原限期）。"""
-        existing = CharacterKnowledgeStore(self.conn).read_upsert_secret_order((minister_name,))
-        if existing is None:
-            oid = self.create_secret_order(
-                state, minister_name, title, content, tags, importance, deadline_months,
-                covert_task=covert_task,
-            )
-            return oid, False
-        oid = int(existing["id"])
-        self.update_secret_order_by_id(state, oid, title, content, tags, deadline_months)
-        return oid, True
-
     def update_secret_order_by_id(
         self,
         state: GameState,
@@ -13181,8 +12972,7 @@ class GameDB:
         """按**精确 id** 更新 active 密令要旨（title/content/tags/限期），记一条「奉旨更新」进展。
         返回是否更新（id 存在且状态为 active）。
 
-        与 upsert_secret_order 的区别：upsert 按「该大臣最新 active」改，会话动作「更新」已解析出
-        确切 target id 时必须走本方法，否则大臣有多条 active 密令会改错条（CMR F1）。
+        会话动作「更新」已解析出确切 target id 时走本方法（CMR F1：禁按大臣猜最新 active）。
         tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。
 
         Oral-decree pins (stage ``origin_chat_message_id`` / speaker) feed the same
@@ -13283,7 +13073,7 @@ class GameDB:
                         int(dossier["id"]), int(turn_closed), "结案",
                         close_text, is_terminal=True, commit=False,
                     )
-                self.record_dossier_execution(
+                self.dossiers.record_execution(
                     int(dossier["id"]),
                     "fulfilled" if str(status) == "done" else "failed",
                     close_text, int(turn_closed),

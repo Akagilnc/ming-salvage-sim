@@ -1451,6 +1451,126 @@ class DossierStore:
              int(dossier_id)),
         )
 
+    def record_execution(
+        self, dossier_id: int, outcome: str, note: str, turn: int, *,
+        close: bool = True, commit: bool = True,
+    ) -> None:
+        """完整执行格持久：校验 → 写 outcome → 可选结案 → 空子暴露。
+
+        纯案卷记录；人事/财政效果物化不在此。
+        """
+        owns = self._owns()
+        row = self.get(dossier_id)
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        outcome = str(outcome or "").strip()
+        if outcome not in DOSSIER_EXECUTION_OUTCOMES:
+            raise ValueError(f"执行 outcome 非法：{outcome}")
+        if outcome == "executing" and close:
+            raise ValueError("executing 是非终态，必须以 close=False 记录")
+        immediate = (
+            row["status"] == "promulgated"
+            and not has_execution_surface(row["action_type"], row["payload"])
+        )
+        if row["status"] != "executing" and not immediate:
+            raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
+        self.set_execution(
+            int(dossier_id), outcome=outcome, note=str(note or ""), turn=int(turn),
+        )
+        if close:
+            self.close(
+                dossier_id,
+                str(note or "") if outcome == "failed" else "",
+                commit=False,
+            )
+        # #625：走样/变形/烂尾终值 → 空子暴露（与对账路统一：本 turn 稽核在场门）
+        if outcome in {"degraded", "transformed", "failed"}:
+            action_type = str(row.get("action_type") or "").strip()
+            if (
+                action_type in DOSSIER_ACTION_TYPES
+                and self.has_supervision_presence(int(dossier_id), int(turn))
+            ):
+                self.record_loophole_exposure(
+                    int(dossier_id), int(turn), action_type, outcome,
+                    commit=False,
+                )
+        self._commit(commit, owns)
+
+    def record_monthly_supervision_presence(
+        self, turn: int, *, commit: bool = False,
+    ) -> dict[str, object]:
+        """月度在场扫描：稽核链 → presence 行；同 turn UNIQUE 幂等不双计。"""
+        from ming_sim.supervision import (
+            SUPERVISION_RELATION,
+            resolve_dossier_owner_name,
+        )
+
+        owns = self._owns()
+        turn_i = int(turn)
+        presence_written = 0
+        link_rows = self.audit_link_rows(SUPERVISION_RELATION)
+        for link in link_rows:
+            source_status = str(link["source_status"] or "")
+            target_status = str(link["target_status"] or "")
+            if source_status not in {"promulgated", "executing"}:
+                continue
+            if target_status not in {"promulgated", "executing"}:
+                continue
+            audit_dossier = self.get(int(link["source_dossier_id"]))
+            if audit_dossier is None:
+                continue
+            auditor = resolve_dossier_owner_name(audit_dossier)
+            if not auditor:
+                continue
+            self.upsert_presence(
+                int(link["target_dossier_id"]), turn_i, auditor_name=auditor,
+                audit_dossier_id=int(link["source_dossier_id"]),
+                relation_type=SUPERVISION_RELATION,
+            )
+            presence_written += 1
+        self._commit(commit, owns)
+        return {"presence_written": presence_written, "turn": turn_i}
+
+    def record_monthly_loophole_exposures_from_reconciliations(
+        self, turn: int, *, commit: bool = False,
+    ) -> dict[str, object]:
+        """对账后暴露派生：本回合 loss>0 且该案卷当月稽核在场 → 暴露行。"""
+        owns = self._owns()
+        turn_i = int(turn)
+        exposure_written = 0
+        recon_rows = self.reconciliation_loss_rows(turn_i)
+        for row in recon_rows:
+            did = int(row["dossier_id"])
+            if not self.has_supervision_presence(did, turn_i):
+                continue
+            action_type = (
+                str(row["action_type"] or "grant_allocation").strip()
+                or "grant_allocation"
+            )
+            if self.record_loophole_exposure(
+                did, turn_i, action_type, "degraded", commit=False,
+            ):
+                exposure_written += 1
+        self._commit(commit, owns)
+        return {"exposure_written": exposure_written, "turn": turn_i}
+
+    def is_pending_owned_by_turn(self, action_id: object, chat_turn_id: int) -> bool:
+        """#1890：这道交办是不是「本源轮、且仍 pending」。"""
+        try:
+            aid = int(action_id)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+        ctid = int(chat_turn_id or 0)
+        if aid <= 0 or ctid <= 0:
+            return False
+        row = self.pending_source_status(aid)
+        if row is None:
+            return False
+        return (
+            int(row["source_chat_turn_id"] or 0) == ctid
+            and str(row["status"] or "") == "pending"
+        )
+
     def set_interruption_reason_if_empty(self, dossier_id: int, reason: str) -> None:
         self._conn.execute(
             "UPDATE decree_dossiers SET interruption_reason="
@@ -2548,13 +2668,6 @@ class DossierStore:
             "SELECT id,payload_json,status,version FROM pending_actions "
             "WHERE id=? AND kind='directive'",
             (int(candidate_id),),
-        ).fetchone()
-
-    def find_pending_directive_id(self, turn: int, minister_name: str) -> Any:
-        return self._conn.execute(
-            "SELECT id FROM pending_actions "
-            "WHERE turn=? AND minister_name=? AND kind='directive' AND status='pending'",
-            (int(turn), str(minister_name)),
         ).fetchone()
 
     def pending_id_for_committed_directive(self, directive_id: int) -> Any:

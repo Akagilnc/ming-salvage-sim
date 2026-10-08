@@ -1757,7 +1757,7 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
             "covert_exec_selections": [{"order_id": order_id, "fidelity": "忠实"}],
         }
 
-    real_presence = db.record_monthly_supervision_presence
+    real_presence = db.dossiers.record_monthly_supervision_presence
     fail_once = True
 
     def flaky_presence(turn_, **kwargs):
@@ -1771,7 +1771,7 @@ def test_step_4a_non_validation_failure_keeps_product_on_retry(game, monkeypatch
     monkeypatch.setattr(month_chain, "run_world_segment_text", lambda *a, **k: "边事暂宁。")
     monkeypatch.setattr(month_translate, "translate_month_segment", lambda *a, **k: {"effects": {}})
     monkeypatch.setattr(month_chain, "run_secret_orders_supply", supply_run)
-    monkeypatch.setattr(db, "record_monthly_supervision_presence", flaky_presence)
+    monkeypatch.setattr(db.dossiers, "record_monthly_supervision_presence", flaky_presence)
 
     session = make_light_session(db, state, content)
 

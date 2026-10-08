@@ -151,6 +151,22 @@ class PersonLogStore:
     def write_delete_relation_edge_events_for_chat_turn(self, params: Any = ()) -> Any:
         return self._conn.execute('DELETE FROM relation_edge_events WHERE origin LIKE ?', params)
 
+    def delete_relation_edge_events_for_chat_turn(self, chat_turn_id: int) -> int:
+        """撤回联动：删该轮源绑定的边事件行（召对判官 + 转译声明 origin 前缀）。
+
+        事务归属调用方；origin 的 chat_turn 段是唯一源轮绑定真源。
+        """
+        from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
+
+        cid = int(chat_turn_id)
+        total = 0
+        for prefix in (SUMMON_EDGE_ORIGIN_PREFIX, "转译声明"):
+            cur = self.write_delete_relation_edge_events_for_chat_turn(
+                (f"{prefix}|chat_turn:{cid}|%",),
+            )
+            total += int(cur.rowcount)
+        return total
+
     def read_record_relation_edge_event(self, params: Any = ()) -> Any:
         return self._conn.execute('\n            SELECT id FROM relation_edge_events\n            WHERE source = ? AND target = ? AND event_kind = ? AND context = ? AND origin = ?\n            ', params).fetchone()
 

@@ -201,7 +201,7 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
         target_id, state.turn, "已竣", "清丈全完、加派如额",
         is_terminal=False, commit=True,
     )
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         target_id, "transformed", "奏报与旨外实况相左", state.turn,
         close=False, commit=True,
     )

@@ -445,7 +445,7 @@ def test_s2_pure_fiscal_without_beyond_intent_fulfilled_no_backlash(game, conten
     cid = _insert_commitment(
         db, state, title="无分叉变形诺", origin_ref=origin2, bar_value=45,
     )
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         did2, "transformed", "名实已乖（无旨外账）", int(state.turn),
         close=True, commit=True,
     )

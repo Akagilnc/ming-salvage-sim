@@ -868,9 +868,6 @@ class CharacterKnowledgeStore:
     def read_restore_secret_order_brief_projection_in_tx(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT turn_issued,year_issued,period_issued,minister_name,title,content FROM secret_orders WHERE id=?', params).fetchone()
 
-    def read_upsert_secret_order(self, params: Any = ()) -> Any:
-        return self._conn.execute("SELECT id FROM secret_orders WHERE minister_name=? AND status='active' ORDER BY id DESC LIMIT 1", params).fetchone()
-
     def read_update_secret_order_by_id(self, params: Any = ()) -> Any:
         return self._conn.execute('SELECT status, tags, minister_name, excluded_names, excluded_targets FROM secret_orders WHERE id=?', params).fetchone()
 

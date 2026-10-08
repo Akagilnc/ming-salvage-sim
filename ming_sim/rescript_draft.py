@@ -18,7 +18,6 @@ issue 盘面事实，不新建 issue。event_id 以喂给 LLM 的 issue 盘面�
 """
 
 from __future__ import annotations
-from ming_sim.entities.character.store import CharacterStore
 
 import json
 import re
@@ -1056,34 +1055,10 @@ def normalize_rescript_layer_a_option(
     return out
 
 
-def select_triage_actor(db: GameDB) -> Optional[Dict[str, str]]:
-    """F3.1 唯一分拣人选择规则：首辅优先、司礼监掌印顶补、重复命中取第一、双双缺位回 None。
-
-    r2 裁决 B1（票面 F3.1「司礼监掌印」明文＋P3 角色保真）：兜底不得用宽模式
-    `%掌印%`——御马监掌印太监与票拟/批红职权无关，不得成为分拣 actor。
-    """
-    for office_pattern in ("%首辅%", "%司礼监掌印%"):
-        row = CharacterStore(db.conn).read_select_triage_actor((office_pattern,))
-        if row is not None:
-            return {
-                "name": str(row["name"]),
-                "office": str(row["office"]),
-                "faction": str(row["faction"] or ""),
-            }
-    return None
-
 
 _TOP_ALLOWED_KEYS = frozenset({"items"})
 _ITEM_ALLOWED_KEYS = frozenset({"title", "context", "options", "issue_id"})
 
-
-def _assert_utf8(s: str, field: str) -> None:
-    try:
-        s.encode("utf-8")
-    except UnicodeEncodeError as exc:  # noqa: BLE001
-        raise ValueError(
-            f"票拟字段含 SQLite 不可编码字符（整批 shape 错，F2.5）：{field} {exc}"
-        ) from exc
 
 
 def _parse_rescript_json_strict(raw: str) -> Dict[str, Any]:

@@ -214,7 +214,7 @@ def test_ac1_failed_terminal_triggers_commitment_backlash(game):
     assert assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
 
     # 直接落 #621 式烂尾终值；总纲：源类读执行格，不读 note 子串
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         did, "failed", "期限已过，诸事不济", int(state.turn),
         close=True, commit=True,
     )
@@ -277,7 +277,7 @@ def test_ac1_deformation_exposure_triggers_commitment_backlash(game):
     # _seed_halfway 先落投入行；#622 分叉读端看 beyond_intent 实况行（非首行）
     assert moves and any(bool(m.get("beyond_intent")) for m in moves)
 
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         did, "transformed", "名实已乖，旨外受益", int(state.turn),
         close=True, commit=True,
     )
@@ -309,7 +309,7 @@ def test_ac1_transformed_without_beyond_intent_does_not_trigger(game):
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
     # 仅落 transformed 终值，不种 beyond_intent 实况行
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         did, "transformed", "名实已乖（无旨外账）", int(state.turn),
         close=True, commit=True,
     )
@@ -682,7 +682,7 @@ def test_ac4_backlash_survives_restore_both_states(game, tmp_path, content):
         bar_value=bar,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         did, "failed", "期限已过，诸事不济", int(state.turn),
         close=True, commit=True,
     )
@@ -749,7 +749,7 @@ def test_ac5_hook_idempotent_no_gate_table_expansion(game):
         bar_value=bar,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
     )
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         did, "failed", "期限已过，诸事不济", int(state.turn),
         close=True, commit=True,
     )

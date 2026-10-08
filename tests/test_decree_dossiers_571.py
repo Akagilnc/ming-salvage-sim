@@ -849,10 +849,10 @@ def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
     db.dossiers.transition(dossier_id, "executing")
 
     with pytest.raises(ValueError):
-        db.record_dossier_execution(
+        db.dossiers.record_execution(
             dossier_id, "executing", "仍在办理", state.turn, close=True,
         )
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         dossier_id, "executing", "仍在办理", state.turn, close=False,
     )
     dossier = db.dossiers.get(dossier_id)
@@ -938,7 +938,7 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
         row["dossier_id"]
         for row in db.characters.list_office_effects_for_dossier(dossier["id"])
     ] == [dossier["id"]]
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         dossier["id"], "fulfilled", "任事已毕", state.turn,
     )
     assert db.dossiers.get(dossier["id"])["status"] == "closed"
@@ -1306,7 +1306,7 @@ def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypat
     def fail_execution(*_args, **_kwargs):
         raise RuntimeError("dossier close failed")
 
-    monkeypatch.setattr(db, "record_dossier_execution", fail_execution)
+    monkeypatch.setattr(db.dossiers, "record_execution", fail_execution)
     with atomic(db):
         with pytest.raises(RuntimeError):
             db.close_secret_order(
@@ -1915,14 +1915,14 @@ def test_immediate_terminal_payload_cannot_bypass_execution_surface(game):
     db.dossiers.record_dossier_decision(dossier_id, "promulgated")
 
     with pytest.raises(ValueError):
-        db.record_dossier_execution(
+        db.dossiers.record_execution(
             dossier_id, "fulfilled", "伪造直结", state.turn,
         )
     with pytest.raises(ValueError):
         db.dossiers.transition(dossier_id, "closed")
 
     db.dossiers.transition(dossier_id, "executing")
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         dossier_id, "fulfilled", "真实执行完毕", state.turn,
     )
     assert db.dossiers.get(dossier_id)["status"] == "closed"
@@ -1964,7 +1964,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
         assert dossier_id in {
             row["id"] for row in db.dossiers.list_for_simulation(state.turn)
         }
-        db.record_dossier_execution(
+        db.dossiers.record_execution(
             dossier_id, "fulfilled", "赈银押解到达", state.turn,
         )
         assert db.dossiers.get(dossier_id)["status"] == "closed"
@@ -2048,7 +2048,7 @@ def test_in_transit_allocation_requires_execution_verdict(game):
     assert db.dossiers.get(dossier_id)["status"] == "executing"
     with pytest.raises(ValueError):
         db.dossiers.close(dossier_id)
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         dossier_id, "fulfilled", "押解到陕", state.turn,
     )
     dossier = db.dossiers.get(dossier_id)

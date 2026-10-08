@@ -390,7 +390,7 @@ def _persist_specialized_extraction(
     if not defer_monthly_secret_supply:
         reports = extraction.get("dossier_progress_reports") or []
         if isinstance(reports, list) and reports:
-            db.record_monthly_supervision_presence(int(turn), commit=False)
+            db.dossiers.record_monthly_supervision_presence(int(turn), commit=False)
             db.record_monthly_dossier_progress(int(turn), reports)
     denunciations = extraction.get("faction_denunciations") or []
     if isinstance(denunciations, list) and denunciations:

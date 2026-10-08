@@ -57,7 +57,7 @@ def _executing_dossier(db, state, *, token: str, roster=None):
 def _transformed_dossier(db, state, *, token: str, roster=None):
     """真实暴露的变形案卷（非空 fixture）——先落执行格 transformed。"""
     did = _executing_dossier(db, state, token=token, roster=roster)
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         did, "transformed", f"名实已乖·{token}", int(state.turn),
         close=True, commit=True,
     )
@@ -243,7 +243,7 @@ def test_fulfill_back_and_urge_three_decisions(game):
         db, state, token="rej-ful-628",
         roster=[{"character_id": "刘鸿训", "tier": "主办", "role": "承办"}],
     )
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         did_rej_f, "fulfilled", "预置终值语境", int(state.turn),
         close=False, commit=True,
     )

@@ -149,8 +149,8 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
     turn = int(state.turn)
     # 与生产月链同形：presence →（本测无 recon 段）→ exposure；幂等不双计
     def _write_supervision(turn_i: int) -> None:
-        db.record_monthly_supervision_presence(turn_i, commit=False)
-        db.record_monthly_loophole_exposures_from_reconciliations(turn_i, commit=False)
+        db.dossiers.record_monthly_supervision_presence(turn_i, commit=False)
+        db.dossiers.record_monthly_loophole_exposures_from_reconciliations(turn_i, commit=False)
         db.conn.commit()
 
     _write_supervision(turn)
@@ -196,8 +196,8 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
         assert restored.list_supervision_history(subject_id) == expected_hist
         assert restored.dossiers.exposure_rows(subject_id) == expected_exp
         # restore 后同 turn 重跑不双计
-        restored.record_monthly_supervision_presence(turn, commit=False)
-        restored.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
+        restored.dossiers.record_monthly_supervision_presence(turn, commit=False)
+        restored.dossiers.record_monthly_loophole_exposures_from_reconciliations(turn, commit=False)
         restored.conn.commit()
         assert len(restored.dossiers.presence_rows(subject_id)) == 1
     finally:
@@ -257,8 +257,8 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
 
     base_turn = int(state.turn)
     for offset in range(12):  # 原硬门月数门（#1895 退役）只为铺满在场事实
-        db.record_monthly_supervision_presence(base_turn + offset, commit=False)
-        db.record_monthly_loophole_exposures_from_reconciliations(
+        db.dossiers.record_monthly_supervision_presence(base_turn + offset, commit=False)
+        db.dossiers.record_monthly_loophole_exposures_from_reconciliations(
             base_turn + offset, commit=False,
         )
         db.conn.commit()
@@ -334,7 +334,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
         "UPDATE decree_dossiers SET status='executing' WHERE id=?", (bare_id,),
     )
     db.conn.commit()
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         bare_id, "transformed", "无人盯走样", turn, close=True, commit=True,
     )
     assert db.dossiers.exposure_rows(bare_id) == []
@@ -344,7 +344,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
     _audit_dossier(
         db, state, auditor=str(auditor_row["name"]), subject_id=watched_id, token="watch",
     )
-    db.record_monthly_supervision_presence(turn, commit=True)
+    db.dossiers.record_monthly_supervision_presence(turn, commit=True)
     assert db.dossiers.has_supervision_presence(watched_id, turn)
     before = db.build_supervision_judge_surface(watched_id)
     assert before["transformation_tendency_facts"]["exposure_count"] == 0
@@ -353,7 +353,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
         "UPDATE decree_dossiers SET status='executing' WHERE id=?", (watched_id,),
     )
     db.conn.commit()
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         watched_id, "transformed", "被盯紧走样", turn, close=True, commit=True,
     )
     after = db.build_supervision_judge_surface(watched_id)
@@ -372,7 +372,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
         (recon_bare, turn),
     )
     db.conn.commit()
-    out_bare = db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=True)
+    out_bare = db.dossiers.record_monthly_loophole_exposures_from_reconciliations(turn, commit=True)
     assert int(out_bare["exposure_written"]) == 0
     assert db.dossiers.exposure_rows(recon_bare) == []
 
@@ -381,7 +381,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
         db, state, auditor=str(auditor_row["name"]),
         subject_id=recon_watched, token="rw",
     )
-    db.record_monthly_supervision_presence(turn, commit=True)
+    db.dossiers.record_monthly_supervision_presence(turn, commit=True)
     db.conn.execute(
         """
         INSERT INTO decree_dossier_reconciliations
@@ -391,7 +391,7 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
         (recon_watched, turn),
     )
     db.conn.commit()
-    out_w = db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=True)
+    out_w = db.dossiers.record_monthly_loophole_exposures_from_reconciliations(turn, commit=True)
     assert int(out_w["exposure_written"]) >= 1
     exps = db.dossiers.exposure_rows(recon_watched)
     assert any(r["execution_form"] == "degraded" for r in exps)
@@ -405,8 +405,8 @@ def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
     _audit_dossier(
         db, state, auditor=str(auditor_row["name"]), subject_id=subject_id, token="dr",
     )
-    db.record_monthly_supervision_presence(state.turn, commit=False)
-    db.record_monthly_loophole_exposures_from_reconciliations(state.turn, commit=False)
+    db.dossiers.record_monthly_supervision_presence(state.turn, commit=False)
+    db.dossiers.record_monthly_loophole_exposures_from_reconciliations(state.turn, commit=False)
     db.conn.commit()
     db.dossiers.record_dossier_progress(
         subject_id, state.turn, "在办", "表报已陈，实绩未充",

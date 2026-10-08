@@ -111,9 +111,16 @@ def test_material_tree_contains_only_structurally_related_world_details(game, tm
 
     prepared = prepare_character_materials(db, state, character, dest_root=tmp_path / "materials")
     names = list_materials(prepared.root)
-    region_paths = [path for path in names if path.startswith("地区/")]
-    army_paths = [path for path in names if path.startswith("军队/")]
-    assert len(region_paths) == 1 and len(army_paths) == 1
+    region_name = db.conn.execute(
+        "SELECT name FROM regions WHERE id=?", ("shaanxi",),
+    ).fetchone()["name"]
+    # 契约落在外部结构化载体路径：授权地区/军队各有唯一详情文件，且路径含对象身份。
+    assert [p for p in names if p.startswith("地区/")] == [
+        f"地区/{_safe_segment(region_name)}/详情.txt",
+    ]
+    assert [p for p in names if p.startswith("军队/")] == [
+        f"军队/{_safe_segment(army['name'] or army['id'])}/详情.txt",
+    ]
 
 
 def test_opening_handled_matters_are_filtered_within_authorized_knowledge(

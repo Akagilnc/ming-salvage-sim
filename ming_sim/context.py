@@ -130,44 +130,6 @@ def match_army_id_from_text(text: str) -> Optional[str]:
     return _match_army(text, _ctx().armies)
 
 
-def state_context(state: GameState) -> str:
-    parts = []
-    for key, value in state.metrics.items():
-        if key in ECONOMY_ACCOUNTS:
-            parts.append(f"{key}{format_money(value)}")
-        else:
-            parts.append(f"{key}{value}")
-    return "，".join(parts)
-
-
-def parse_json_dict(raw: str) -> Dict[str, int]:
-    from ming_sim.applier import StoredDocumentError, load_stored_object
-
-    try:
-        data = load_stored_object(raw, label="数值变化 JSON")
-    except StoredDocumentError as error:
-        raise LLMContractError(f"数据库中的数值变化 JSON 已损坏：{raw[:200]}") from error
-    parsed: Dict[str, int] = {}
-    for key, value in data.items():
-        try:
-            parsed[str(key)] = int(value)
-        except (TypeError, ValueError) as error:
-            raise LLMContractError(f"数据库中的数值变化字段不是整数：{key}={value}") from error
-    return parsed
-
-
-def format_metric_delta(delta: Dict[str, int]) -> str:
-    if not delta:
-        return "核心数值无明显变化"
-    parts = []
-    for key, value in delta.items():
-        if key in ECONOMY_ACCOUNTS:
-            parts.append(f"{key}{format_money_delta(value)}")
-        else:
-            sign = "+" if value > 0 else ""
-            parts.append(f"{key}{sign}{value}")
-    return "数值变化：" + "；".join(parts)
-
 
 def _identity_bucket(value: object) -> str:
     return ("low", "middle", "high")[identity_bucket(value)]

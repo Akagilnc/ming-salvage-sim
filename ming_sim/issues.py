@@ -1017,17 +1017,6 @@ def _event_terminal_records(db: GameDB) -> Dict[str, Dict[str, str]]:
     return records
 
 
-def _event_pending_choice_records(db: GameDB) -> Dict[str, Dict[str, str]]:
-    records: Dict[str, Dict[str, str]] = {}
-    for r in IssueStore(db.conn).read_event_pending_choice_records():
-        if r["event_id"]:
-            records[str(r["event_id"])] = {
-                "terminal_state": "",
-                "terminal_reason": str(r["terminal_reason"] or ""),
-                "source": str(r["source"] or ""),
-            }
-    return records
-
 
 FISCAL_LEVY_EVENT_CATEGORY = "fiscal_levy"
 _LIAO_LEVY_RISE_EVENT_ID = "liao_levy_rise_1631"
@@ -4210,22 +4199,6 @@ def _initiative_resolve_pairing_warnings(
             )
     return warns
 
-
-def _emit_pairing_warnings(new_row, effect: object, sink: Optional[List[str]] = None) -> None:
-    """在 initiative 结案处调配对守门：tlog 响亮告警；sink 给定时再收进。仅 kind=initiative。"""
-    if str(new_row["kind"] or "") != "initiative":
-        return
-    # tags/ongoing_effects 在 DB 是 JSON 串；调用方也可能已传解析好的 list/dict。
-    raw_tags = new_row["tags"]
-    if isinstance(raw_tags, (list, tuple)):
-        tags = list(raw_tags)
-    else:
-        tags = load_stored_list(raw_tags if raw_tags is not None else "[]", label="tags")
-    ongoing = loads_effect_dict(new_row["ongoing_effects"] if new_row["ongoing_effects"] is not None else "{}")
-    for w in _initiative_resolve_pairing_warnings(str(new_row["title"] or ""), tags, ongoing, effect):
-        tlog(f"[pairing] {w}")
-        if sink is not None:
-            sink.append(w)
 
 
 def apply_issue_tracker_output(
@@ -7428,7 +7401,7 @@ def _apply_score_extraction_body(
                 and outcome in GameDB._JOINT_LIABILITY_TRIGGERS
             ):
                 db.validate_joint_liability_affected_parties(raw_parties, outcome)
-            db.record_dossier_execution(
+            db.dossiers.record_execution(
                 dossier_id, outcome, note, state.turn, close=True, commit=False,
             )
             # #567 / #1900：核账事实留在 list_dossier_reconciliations 结构化账，

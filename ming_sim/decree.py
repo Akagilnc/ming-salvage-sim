@@ -170,52 +170,6 @@ def _is_stalled_deliberation(dossier: Mapping[str, object] | Dict[str, object]) 
     return str(_dossier_payload_dict(dossier).get("deliberation_state") or "") == "stalled"
 
 
-def _promulgable_proposed_dossiers(
-    proposed_dossiers: Sequence[Dict[str, object]],
-) -> List[Dict[str, object]]:
-    """本轮可颁布 proposed = 非 stalled 廷议的 proposed 案卷。"""
-    return [row for row in proposed_dossiers if not _is_stalled_deliberation(row)]
-
-
-def resolve_executor_appointment_tenure(
-    db: GameDB, dossier: Mapping[str, object] | Dict[str, object],
-) -> str:
-    """#613：承办人现职任别——归属人单源后查 character_offices；缺档按真除。
-
-    身份选定与档案取值分离：resolve_dossier_owner_name（#613/#625 共调）
-    只定唯一承办人后查该人任别；缺行不得试下一候选换人（禁静默继承他人任别）。
-    与 court_roster COALESCE(...,'真除') 及 DELTA_SCHEMA 缺省真除同构。
-    """
-    name = resolve_dossier_owner_name(dossier)
-    if not name:
-        return DEFAULT_APPOINTMENT_TENURE
-    row = CharacterStore(db.conn).read_resolve_executor_appointment_tenure((name,))
-    if row is None:
-        return DEFAULT_APPOINTMENT_TENURE
-    return normalize_appointment_tenure(row["appointment_tenure"])
-
-
-def execution_side_read_fields(
-    db: GameDB,
-    state: GameState,
-    dossier: Mapping[str, object] | Dict[str, object],
-) -> Dict[str, object]:
-    """#613 执行格/推演共用读端字段：任别 + #611 唯一授权投影 + 号令力权重。
-
-    authorization_ids 只来自 project_applicable_authorities，禁止 payload 旁路。
-    """
-    tenure = resolve_executor_appointment_tenure(db, dossier)
-    held_authorities = db.project_applicable_authorities(state.turn, dossier)
-    authorization_ids = [str(item["id"]) for item in held_authorities]
-    return {
-        "appointment_tenure": tenure,
-        "held_authorities": held_authorities,
-        "authorization_ids": authorization_ids,
-        "command_power_rank": command_power_rank(tenure),
-        "distortion_weight": execution_distortion_weight(tenure, held_authorities),
-    }
-
-
 def build_promulgation_judge_context(
     db: GameDB,
     state: GameState,
@@ -624,38 +578,6 @@ def _rescript_decisions(
             ],
         })
     return decisions
-
-
-def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
-    if not isinstance(simulator_payload, dict):
-        return set()
-    raw = simulator_payload.get("decree_dossiers")
-    if not isinstance(raw, list):
-        return set()
-    return {
-        int(item["id"])
-        for item in raw
-        if isinstance(item, dict) and str(item.get("id") or "").isdigit()
-    }
-
-
-def _open_affair_ids_from_payload(payload: object) -> set[int]:
-    from ming_sim.entities.affair import parse_positive_affair_id
-
-    if not isinstance(payload, dict):
-        return set()
-    raw = payload.get("open_affairs")
-    if not isinstance(raw, list):
-        return set()
-    ids: set[int] = set()
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        try:
-            ids.add(parse_positive_affair_id(item.get("id")))
-        except (TypeError, ValueError):
-            continue
-    return ids
 
 
 def write_decree_with_agno(

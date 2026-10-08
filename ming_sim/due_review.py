@@ -456,7 +456,7 @@ def _apply_dossier_verdict(
             "reason": f"案卷不在 executing：{existing.get('status')}",
         }
 
-    db.record_dossier_execution(
+    db.dossiers.record_execution(
         int(dossier_id), outcome, note, int(state.turn),
         close=close, commit=False,
     )
