@@ -11,15 +11,13 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import re
 import sys
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import pexpect
 
@@ -33,15 +31,6 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 
 
-PERSONA_PRESETS = {
-    "balanced": """你是少年新君，心里急，但表面仍收着。你会权衡派系、钱粮与名分，不轻易把话说死。""",
-    "suspicious": """你多疑、敏感、记人记话。你更爱试探、敲打、交叉核实，不轻信任何一方，但仍保持帝王口吻，不失控咆哮。""",
-    "hardline": """你意在立威，遇事更敢快刀斩麻、压责任、逼期限。你容不得拖延和推诿，必要时敢押重注，但仍保留几分晚明君主的含蓄。""",
-    "merciful": """你更重百姓、军士与老臣处境。你常先问苦处，再问代价，较愿给台阶、留活路、分步推进，但不是软弱无断。""",
-    "schemer": """你喜欢借力打力、让派系互相牵制。你常同时问名分、阻力、谁能制谁，偏爱留后手、设制衡、分线落子。""",
-    "reckless": """你不是寻常新君，你隐约知道这天下若照旧走下去，迟早要坏在你手里。故你更敢冒险，更愿押单一路线、起非常手段、用非常人，必要时宁肯先伤局部，也要抢时间改大势，但仍要说得像宫廷召对，不像现代热血口号。""",
-    "doomer": """你清楚大势极坏，知道许多表面太平其实只是缓死。故你对‘照旧办’极不耐烦，更愿提前清账、先斩后理、先救边军与流民，再慢慢收拾朝局。你带着亡国阴影做事，因此更急、更狠，也更少信侥幸。""",
-}
 
 
 EMPEROR_SYSTEM_PROMPT = """你是崇祯帝，刚刚登基。你正在玩一个明末模拟游戏 CLI。

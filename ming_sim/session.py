@@ -7,7 +7,6 @@ CLI 和 Web 各自只做 I/O 包装。
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import threading

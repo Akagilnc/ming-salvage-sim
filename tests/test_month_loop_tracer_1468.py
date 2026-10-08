@@ -44,13 +44,6 @@ class _BoomExtractor:
 
 
 
-class _CannedMinisterAgent:
-    """非流式 session.chat 读 agent.run().content（非 generator）。"""
-
-    def run(self, *_a, **_k):
-        return SimpleNamespace(content="臣已知悉，边饷当速清。", tools=[])
-
-
 
 
 def _stub_outer_llm_seams(monkeypatch) -> None:

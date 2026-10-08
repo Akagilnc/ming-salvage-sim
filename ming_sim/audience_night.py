@@ -13,7 +13,6 @@ import contextlib
 import json
 import logging
 import re
-import sqlite3
 import time
 import traceback
 from datetime import datetime, timezone

@@ -6,7 +6,6 @@ ADR 0036/0006 机制零动。
 from __future__ import annotations
 
 import asyncio
-import threading
 from types import SimpleNamespace
 
 import pytest

@@ -36,7 +36,6 @@ from ming_sim.db import (
     _approx_wanliang,
     compute_loyalty_soft_adjust,
     fold_loyalty_alias_delta,
-    infer_office_type_from_office,
     latched_army_field_effect_permitted,
     normalize_office,
     resolve_office_type_preserving_title,

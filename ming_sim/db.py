@@ -250,16 +250,6 @@ def _snapshot_secret_order_people(
             names.append(character.name)
     return list(dict.fromkeys(names))
 
-_SECRET_OFFICE_TYPES = (
-    "吏部", "户部", "礼部", "兵部", "刑部", "工部", "都察院", "大理寺", "通政司",
-    "司礼监", "内阁", "东厂", "锦衣卫", "翰林院", "詹事府",
-)
-_SECRET_OFFICE_TITLE_SUFFIX_RE = re.compile(
-    r"[\u4e00-\u9fff]{0,12}(?:首辅|次辅|大学士|阁臣|辅臣|尚书|侍郎|郎中|员外郎|主事|"
-    r"巡抚|总督|总兵|督师|经略|提督|都御史|御史|侍读学士|侍讲学士|侍读|侍讲|"
-    r"编修|检讨|修撰|庶吉士|庶常|少詹事|詹事|中允|赞善)$"
-)
-
 def _canonical_secret_exclusion_target(
     target: str, office_types: set[str], office_titles: set[str],
 ) -> tuple[str, str]:
@@ -5123,13 +5113,6 @@ class GameDB:
             n += 1
         return f"{prefix}{n}"
 
-    def set_portrait_id(self, name: str, portrait_id: str) -> None:
-        """改某人物的头像标识（如皇帝上传自定义立绘后落库）。"""
-        self.conn.execute(
-            "UPDATE characters SET portrait_id=? WHERE name=?",
-            (portrait_id, name),
-        )
-        self.conn.commit()
 
     def add_character(
         self,

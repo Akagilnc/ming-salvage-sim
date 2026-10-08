@@ -19,7 +19,6 @@ import json
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
-from ming_sim.applier import Provenance
 
 TranslateFn = Callable[[str, Any], Mapping[str, object]]
 

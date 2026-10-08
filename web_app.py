@@ -36,16 +36,15 @@ try:
 except Exception:  # noqa: BLE001 — 缓冲设置失败不该阻断 web 启动
     pass
 
-from fastapi import Body, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ming_sim.applier import atomic
 from ming_sim.constants import GATE_METRIC_KEYS, ROOT_DIR
-from ming_sim.paths import bundled_path, user_data_path, user_data_dir
+from ming_sim.paths import user_data_path, user_data_dir
 from ming_sim.exceptions import DependencyMismatch, ExitGame, LLMUnavailable, SettlementAbort
 from ming_sim.llm_config import (
     CLI_DEFAULT_TIMEOUT_SECONDS,
@@ -111,10 +110,6 @@ from ming_sim.models import (
 )
 logger = logging.getLogger(__name__)
 
-WEB_DIST = bundled_path("web", "dist")
-# 用户上传的自定义立绘存档级目录（不随 build 清空，git 可忽略）。
-ALLOWED_PORTRAIT_TYPES = {"image/png", "image/jpeg", "image/webp"}
-MAX_PORTRAIT_BYTES = 8 * 1024 * 1024  # 8MB 上限
 _DEFAULT_FAVORITES = frozenset({"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"})
 
 # Formal character-condition value labels (used inside _humanize_condition_value only).
