@@ -12200,10 +12200,11 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        existing_raw = loads_persistent_json_list(
-            row["participant_roster"], surface="decree_dossiers.participant_roster",
+        # 既存持久名册走权威成员投影（坏成员响亮）；新增输入仍严格规范化。
+        existing = participant_roster_entries(
+            row["participant_roster"],
+            surface="decree_dossiers.participant_roster",
         )
-        existing = self._normalize_participant_roster(existing_raw)
         additions = self._normalize_participant_roster(participants, strict_structured=True)
         self._validate_participant_roster_references(additions)
         by_character = {str(item["character_id"]): item for item in existing}
@@ -18169,15 +18170,16 @@ class GameDB:
         existing: Iterable[object] | None,
         incoming: Iterable[object] | None,
     ) -> List[Dict[str, object]]:
-        """载荷侧名单合并：incoming 严格规范化，再按完整条目 equality 追加。
+        """载荷侧名单合并：既存持久成员经权威投影校验，incoming 严格规范化后追加。
 
         与 ``_merge_directive_payload`` 名册分支同一条规则；不按 character_id
         静默丢后项。持久化案卷追加冲突（同人异档）仍走
-        ``append_decree_dossier_participants``。通用宽松规范化仍由
-        ``_normalize_participant_roster`` 服务其他业务读缝，本合并口不再保留
-        无消费者的宽松 incoming 开关。
+        ``append_decree_dossier_participants``。原始输入规范化与持久读端分开：
+        宽松 ``_normalize_participant_roster`` 不用于读改写既存持久名册。
         """
-        base = GameDB._normalize_participant_roster(list(existing or []))
+        base = participant_roster_entries(
+            list(existing or []), surface="participant_roster",
+        )
         add = GameDB._normalize_participant_roster(
             list(incoming or []), strict_structured=True,
         )

@@ -434,8 +434,10 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
     )
     thread.start()
 
-    # sealed → claim 拒新票；屏障票在等 gate 期间可占 1。
-    wait_until(lambda: runtime._mark_pending_write() is None)
+    # drain 先 seal 再领 barrier 并抢 gate；等 barrier 在册即 seal 已完成，
+    # 再单次 claim 验拒新票。禁把 claim 放进 wait 谓词（成功票会泄漏成 prior）。
+    wait_until(lambda: runtime._runtime_write_queue().has_open_barrier())
+    assert runtime._mark_pending_write() is None
     assert runtime._runtime_write_queue().inflight_count() <= 1
 
     runtime._write_gate.release()

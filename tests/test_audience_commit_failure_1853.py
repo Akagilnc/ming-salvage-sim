@@ -46,21 +46,6 @@ def _active_minister(content) -> str:
     raise AssertionError("找不到在朝大臣")
 
 
-def _list_dossier_link_rejections(db, source_dossier_id=None, *, pending_action_id=None):
-    """存储读面：已删 list_dossier_link_rejections 的现役替身（同表同过滤）。"""
-    if (source_dossier_id is None) == (pending_action_id is None):
-        raise ValueError("须且只能按来源案卷或待确认动作查询拒收记录")
-    if pending_action_id is not None:
-        column, value = "pending_action_id", pending_action_id
-    else:
-        column, value = "source_dossier_id", source_dossier_id
-    rows = db.conn.execute(
-        f"SELECT * FROM decree_dossier_link_rejections WHERE {column}=? ORDER BY id",
-        (int(value),),
-    ).fetchall()
-    return [dict(row) for row in rows]
-
-
 # ── 业务拒收分流 ──────────────────────────────────────────────────────────
 
 def test_dossier_link_rejection_stays_business_refusal_not_loud(game, monkeypatch):
@@ -100,7 +85,13 @@ def test_dossier_link_rejection_stays_business_refusal_not_loud(game, monkeypatc
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (action_id,),
     ).fetchone()["status"] == "failed"
-    audit = _list_dossier_link_rejections(db, pending_action_id=action_id)
+    audit = [
+        dict(row) for row in db.conn.execute(
+            "SELECT pending_action_id, target_dossier_id, relation_type "
+            "FROM decree_dossier_link_rejections WHERE pending_action_id=? ORDER BY id",
+            (int(action_id),),
+        ).fetchall()
+    ]
     assert audit
     assert int(audit[-1]["pending_action_id"]) == int(action_id)
     assert int(audit[-1]["target_dossier_id"]) == 999999
