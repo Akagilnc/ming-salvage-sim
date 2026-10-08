@@ -1818,7 +1818,7 @@ def apply_monthly_covert_actual_progress(
             note=note,
             commit=False,
         )
-        db.mark_secret_order_in_progress(oid, commit=False)
+        db.dossiers.mark_secret_order_in_progress(oid, commit=False)
         applied.append({
             "order_id": oid,
             "dossier_id": did,
@@ -1961,7 +1961,7 @@ def _apply_investigation_selection(
         did, turn, units=units, fidelity_state="", floor_state="",
         note=note, commit=False,
     )
-    db.mark_secret_order_in_progress(oid, commit=False)
+    db.dossiers.mark_secret_order_in_progress(oid, commit=False)
     applied: Dict[str, object] = {
         "order_id": oid,
         "dossier_id": did,

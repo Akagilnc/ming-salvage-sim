@@ -568,6 +568,22 @@ class DossierStore:
         )
         self._commit(commit, owns)
 
+    def mark_secret_order_in_progress(
+        self, order_id: int, *, commit: bool = True,
+    ) -> None:
+        """任何首次实际办理入口共用：密令轴在办时，案卷轴幂等进入 executing。"""
+        owns = self._owns()
+        dossier = self.get_for_secret_order(order_id)
+        if dossier is None:
+            raise ValueError("密令进展缺少对应案卷")
+        if dossier["status"] == "promulgated":
+            self.transition(
+                int(dossier["id"]), "executing", commit=False,
+            )
+        elif dossier["status"] != "executing":
+            raise ValueError("在办密令的案卷不处于可执行状态")
+        self._commit(commit, owns)
+
     def close(
         self, dossier_id: int, reason: str = "", *, commit: bool = True,
     ) -> None:
@@ -1177,6 +1193,41 @@ class DossierStore:
         ).fetchone()
         self._commit(commit, owns)
         return int(row["id"])
+
+    def inherit_payload_endorsements(
+        self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = False,
+    ) -> list[int]:
+        """#1842：成案时把载荷 endorsements 继承到案卷（来源仍为声明轮）。"""
+        if not isinstance(payload, Mapping):
+            return []
+        owns = self._owns()
+        raw_items = load_stored_object_list(
+            payload.get("endorsements"), label="endorsements",
+        )
+        if not raw_items:
+            return []
+        new_ids: list[int] = []
+        for raw in raw_items:
+            form = str(raw.get("form") or "").strip()
+            endorser_id = str(raw.get("endorser_id") or "").strip()
+            imperial = bool(raw.get("imperial", False))
+            source_cid = int(raw.get("source_chat_turn_id") or 0)
+            if form == "御笔手敕":
+                imperial, endorser_id = True, ""
+            if form not in {"会签", "当面站台", "御笔手敕"} or source_cid <= 0:
+                continue
+            eid = self.add_endorsement(
+                int(dossier_id),
+                form=form,
+                endorser_id=endorser_id,
+                imperial=imperial,
+                source_chat_turn_id=source_cid,
+                commit=False,
+            )
+            new_ids.append(int(eid))
+        if new_ids:
+            self._commit(commit, owns)
+        return new_ids
 
     def _validate_endorsement(
         self, dossier_id: object, *, form: object,

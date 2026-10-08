@@ -10552,40 +10552,6 @@ class GameDB:
             self.conn.commit()
         return updated
 
-    def inherit_payload_endorsements(
-        self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = False,
-    ) -> List[int]:
-        """#1842：成案时把载荷 endorsements 继承到案卷（来源仍为声明轮）。"""
-        if not isinstance(payload, Mapping):
-            return []
-        owns = self.owns_transaction() if commit else False
-        raw_items = load_stored_object_list(
-            payload.get("endorsements"), label="endorsements",
-        )
-        if not raw_items:
-            return []
-        new_ids: List[int] = []
-        for raw in raw_items:
-            form = str(raw.get("form") or "").strip()
-            endorser_id = str(raw.get("endorser_id") or "").strip()
-            imperial = bool(raw.get("imperial", False))
-            source_cid = int(raw.get("source_chat_turn_id") or 0)
-            if form == "御笔手敕":
-                imperial, endorser_id = True, ""
-            if form not in {"会签", "当面站台", "御笔手敕"} or source_cid <= 0:
-                continue
-            eid = self.dossiers.add_endorsement(
-                int(dossier_id),
-                form=form,
-                endorser_id=endorser_id,
-                imperial=imperial,
-                source_chat_turn_id=source_cid,
-                commit=False,
-            )
-            new_ids.append(int(eid))
-        if owns and new_ids:
-            self.conn.commit()
-        return new_ids
 
     def upsert_pending_directive(
         self, turn: int, minister_name: str, payload: Dict[str, object],
@@ -11276,7 +11242,7 @@ class GameDB:
                 self.dossiers.bind_pending_action(int(did), int(pa["id"]))
                 # #1842：载荷背书随成案继承到案卷（来源仍为声明轮）。
                 for dossier_id in dossier_ids or []:
-                    self.inherit_payload_endorsements(
+                    self.dossiers.inherit_payload_endorsements(
                         int(dossier_id), payload, commit=False,
                     )
                 # ADR 0028 / #1837：组合载荷（拨帑±任免）同一份 pending 同时产任免案卷；
@@ -11412,7 +11378,7 @@ class GameDB:
         )
         if dossier_id:
             # #1842：office 成案同样继承载荷背书。
-            self.inherit_payload_endorsements(
+            self.dossiers.inherit_payload_endorsements(
                 int(dossier_id), staged_payload, commit=False,
             )
         return dossier_id != 0
@@ -13576,7 +13542,7 @@ class GameDB:
                     int(order_id), claim_text, band="核议",
                     origin=DOSSIER_REPORT_ORIGIN_REVIEW,
                 )
-            self.mark_secret_order_in_progress(int(order_id), commit=False)
+            self.dossiers.mark_secret_order_in_progress(int(order_id), commit=False)
         tlog(f"[secret_order] submit_for_review id={order_id} due_now claim={claim_text[:60]!r}")
         return True
 
@@ -13602,7 +13568,7 @@ class GameDB:
                 origin=DOSSIER_REPORT_ORIGIN_MONTHLY,
             )
             if ok:
-                self.mark_secret_order_in_progress(order_id, commit=False)
+                self.dossiers.mark_secret_order_in_progress(order_id, commit=False)
             return ok
 
         if commit:
@@ -13651,23 +13617,8 @@ class GameDB:
         # 既有正文原样保留（含内部空行）；新注只追加，不按月戳拆改。
         body = f"{prev}\n{raw}" if prev else raw
         self.character_knowledge.set_secret_order_sim_note(int(order_id), body)
-        self.mark_secret_order_in_progress(order_id, commit=False)
+        self.dossiers.mark_secret_order_in_progress(order_id, commit=False)
 
-    def mark_secret_order_in_progress(
-        self, order_id: int, *, commit: bool = True,
-    ) -> None:
-        """任何首次实际办理入口共用：密令轴在办时，案卷轴幂等进入 executing。"""
-        owns = self.owns_transaction()
-        dossier = self.dossiers.get_for_secret_order(order_id)
-        if dossier is None:
-            raise ValueError("密令进展缺少对应案卷")
-        if dossier["status"] == "promulgated":
-            self.dossiers.transition(
-                int(dossier["id"]), "executing", commit=False,
-            )
-        elif dossier["status"] != "executing":
-            raise ValueError("在办密令的案卷不处于可执行状态")
-        self._commit_dossier_write(commit, owns)
 
     def rush_secret_order(
         self,
@@ -13712,7 +13663,7 @@ class GameDB:
                 int(order_id), why, band="催办",
                 origin=DOSSIER_REPORT_ORIGIN_RUSH,
             )
-            self.mark_secret_order_in_progress(int(order_id), commit=False)
+            self.dossiers.mark_secret_order_in_progress(int(order_id), commit=False)
         tlog(f"[secret_order] rush id={order_id} old_due={old_due} due={due_turn} status={status}")
         return {"id": int(order_id), "title": row["title"], "status": status, "due_turn": due_turn}
 
@@ -13724,7 +13675,7 @@ class GameDB:
         with atomic(self):
             for row in rows:
                 oid = int(row["id"])
-                self.mark_secret_order_in_progress(oid, commit=False)
+                self.dossiers.mark_secret_order_in_progress(oid, commit=False)
                 submitted.append({
                     "id": oid,
                     "title": row["title"],
