@@ -9590,13 +9590,28 @@ class GameDB:
 
     def _parse_origin_chat_message_id(
         self, payload: Optional[Mapping[str, object]],
+        *, durable: bool = False,
     ) -> Optional[int]:
-        """Coerce pending/API ``origin_chat_message_id`` to a positive int pin."""
+        """Parse pending/API ``origin_chat_message_id`` pin.
+
+        durable=False：API/声明侧宽松——坏值视作未钉（兼容旧调用）。
+        durable=True：已持久载荷 present 坏类型/非正整响亮，不得洗成无源（#1897 E1）。
+        """
         if not payload:
+            return None
+        if "origin_chat_message_id" not in payload:
             return None
         raw = payload.get("origin_chat_message_id")
         if raw is None:
             return None
+        if durable:
+            if isinstance(raw, bool) or not isinstance(raw, int):
+                raise ValueError(
+                    f"origin_chat_message_id 须为正整，得 {type(raw).__name__}"
+                )
+            if raw <= 0:
+                raise ValueError("origin_chat_message_id 须为正整")
+            return raw
         try:
             mid = int(raw)
         except (TypeError, ValueError):
@@ -10252,17 +10267,34 @@ class GameDB:
     def _coerce_dossier_progress_row(
         cls, item: Mapping[str, object], *, dossier_id: int,
     ) -> Dict[str, object]:
+        """单一报告行合同权威：读写共吃；禁 str() 洗 memorial_text 类型（#1897 E1）。"""
         is_terminal = bool(item.get("is_terminal"))
         # Empty origin defaults live only in _normalize_dossier_report_origin.
         origin = cls._normalize_dossier_report_origin(
             item.get("origin"), is_terminal=is_terminal,
         )
+        try:
+            report_id = int(item["id"])
+            turn = int(item["turn"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("密令奏报 id/turn 须为整数") from exc
+        band = _require_durable_prose(
+            item.get("progress_band"), field="progress_band",
+        )
+        text = _require_durable_prose(
+            item.get("memorial_text"), field="memorial_text",
+        )
+        dossier_raw = item.get("dossier_id", dossier_id)
+        try:
+            dossier_val = int(dossier_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("密令奏报 dossier_id 须为整数") from exc
         return {
-            "id": int(item["id"]),
-            "dossier_id": int(item.get("dossier_id") or dossier_id),
-            "turn": int(item["turn"]),
-            "progress_band": str(item["progress_band"]),
-            "memorial_text": str(item["memorial_text"]),
+            "id": report_id,
+            "dossier_id": dossier_val,
+            "turn": turn,
+            "progress_band": band,
+            "memorial_text": text,
             "is_terminal": is_terminal,
             "origin": origin,
         }
@@ -10286,14 +10318,21 @@ class GameDB:
         if row is None:
             raise ValueError("密令不存在")
         surface = f"secret_orders#{int(order_id)} dossier_progress_json"
-        reports = _load_durable_json_list(
+        raw_reports = _load_durable_json_list(
             row["dossier_progress_json"], surface=surface,
         )
-        for index, item in enumerate(reports):
+        # 读写共吃 _coerce_dossier_progress_row，坏 memorial_text 不得 str() 洗（#1897 E1）。
+        reports: List[Dict[str, object]] = []
+        for index, item in enumerate(raw_reports):
             if not isinstance(item, Mapping):
                 raise ValueError(
                     f"{surface}[{index}] 须为对象，得 {type(item).__name__}"
                 )
+            reports.append(
+                self._coerce_dossier_progress_row(
+                    item, dossier_id=int(dossier_id),
+                )
+            )
         # 同月、同一业务身份只留一条。标记（同派/私货）不是另一月。
         # 催办/核议与月度奏报 base 不同，同月并存。
         from ming_sim.supervision import report_origin_base
@@ -16444,7 +16483,10 @@ class GameDB:
                 # pa["minister_name"] = audience speaker who captured the oral
                 # decree; may differ from final assignee (跨人承办).
                 # Stage-time pin: do not re-guess max(held) after confirm utterance.
-                origin_mid = self._parse_origin_chat_message_id(payload)
+                # 已持久暂存载荷：源钉 durable 解码（#1897 E1）。
+                origin_mid = self._parse_origin_chat_message_id(
+                    payload, durable=True,
+                )
                 from ming_sim.covert_progress import (
                     CovertContractError,
                     build_covert_task_contract,
@@ -16497,7 +16539,10 @@ class GameDB:
             # latest held (pure public must not become secret-origin withheld).
             # No pin → skip classify (do not invent bloodline; pure public stays
             # held until settle release, never withheld).
-            origin_mid = self._parse_origin_chat_message_id(payload)
+            # 已持久暂存载荷：源钉 durable 解码（#1897 E1）。
+            origin_mid = self._parse_origin_chat_message_id(
+                payload, durable=True,
+            )
             origin_speaker = str(pa.get("minister_name") or "") or None
             if action == "更新":
                 deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
@@ -19617,7 +19662,8 @@ class GameDB:
             payload = self.parse_engine_payload_json(
                 row["payload_json"], surface="pending_actions.payload_json",
             )
-            mid = self._parse_origin_chat_message_id(payload)
+            # 已持久 pending 源钉与 brief 同严；坏身份不得视作无源致 release 泄密。
+            mid = self._parse_origin_chat_message_id(payload, durable=True)
             if mid is not None:
                 out.setdefault(mid, False)
         if out:

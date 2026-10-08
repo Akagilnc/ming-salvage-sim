@@ -87,15 +87,33 @@ def decode_durable_participant_roster(
             raise ValueError("participant_roster 腐坏 JSON") from exc
     if not isinstance(roster, list):
         raise ValueError("participant_roster 须为列表")
+    out: list = []
     for item in roster:
         if not isinstance(item, dict):
             raise ValueError("participant_roster 每项须为对象")
-        if "tier" not in item or item.get("tier") is None:
+        entry = dict(item)
+        # 人物主键：案卷/连坐必非空 str；knowledge 取名可回落 name 键。
+        cid_raw = entry.get("character_id")
+        if cid_raw is None and not require_tier:
+            cid_raw = entry.get("name")
+        if require_tier or cid_raw is not None:
+            if not isinstance(cid_raw, str):
+                raise ValueError(
+                    f"参与人 character_id 须为字符串，得 "
+                    f"{type(cid_raw).__name__}"
+                )
+            cid = cid_raw.strip()
+            if require_tier and not cid:
+                raise ValueError("参与人 character_id 不能为空")
+            if cid:
+                entry["character_id"] = cid
+        if "tier" not in entry or entry.get("tier") is None:
             if require_tier:
                 raise ValueError("participant_roster 缺 tier")
+            out.append(entry)
             continue
-        # present 档：类型与闭集一律响亮；禁 falsy 洗空（#1897 E1）。
-        tier_raw = item.get("tier")
+        # present 档：类型与闭集响亮；输出规范化枚举，投影与校验同值（#1897 E1）。
+        tier_raw = entry.get("tier")
         if not isinstance(tier_raw, str):
             raise ValueError(
                 f"参与人机械档非法：{type(tier_raw).__name__}"
@@ -103,7 +121,9 @@ def decode_durable_participant_roster(
         tier = tier_raw.strip()
         if tier not in PARTICIPANT_TIERS:
             raise ValueError(f"参与人机械档非法：{tier_raw!r}")
-    return roster
+        entry["tier"] = tier
+        out.append(entry)
+    return out
 
 
 def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
@@ -160,8 +180,9 @@ def project_execution_liability_parties(
     for item in entries:
         if item.get("tier") != "主办":
             continue
-        lead = str(item.get("character_id") or "").strip()
-        if lead and lead not in seen_primary:
+        # character_id 已在 decode 验为非空 str；不再 str(id or '') 过滤（#1897 E1）。
+        lead = str(item["character_id"])
+        if lead not in seen_primary:
             seen_primary.add(lead)
             primary_ids.append(lead)
 
@@ -170,7 +191,15 @@ def project_execution_liability_parties(
     for item in entries:
         if item.get("tier") not in {"主办", "协办"}:
             continue
-        delegator = str(item.get("delegator_id") or "").strip()
+        delegator_raw = item.get("delegator_id")
+        if delegator_raw is None:
+            continue
+        if not isinstance(delegator_raw, str):
+            raise ValueError(
+                f"参与人 delegator_id 须为字符串，得 "
+                f"{type(delegator_raw).__name__}"
+            )
+        delegator = delegator_raw.strip()
         if (
             delegator
             and delegator not in seen_primary
