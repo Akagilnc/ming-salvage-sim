@@ -402,11 +402,12 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
 
     assert seen["config"] is cfg
 
-def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
+def test_verify_llm_available_cli_channel_code_fault_reraises(monkeypatch):
+    """#1902：CLI 烟测未知代码故障原样上浮，不得套成 llm_error。"""
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     def boom(prompt, llm_config=None, tag="", *, policy=None):
-        raise RuntimeError("codex missing")
+        raise TypeError("codex missing")
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
     cfg = LLMConfig(
@@ -419,24 +420,31 @@ def test_verify_llm_available_cli_channel_failure_raises(monkeypatch):
         cli_timeout_seconds=240,
     )
 
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(TypeError, match="codex missing"):
         verify_llm_available(cfg)
 
 
-# #1902：MING_SIM_LLM_BACKEND 选宿主的旧路已退役，下列 env 用例随之删除；
-# 选宿主只认运行配置（channel + cli_runner）。
-
-def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
-    """legacy env-only smoke 失败同样抛 LLMUnavailable（fail-fast，不静默放行）。"""
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+def test_verify_llm_available_cli_channel_typed_unavailable_raises(monkeypatch):
+    """CLI 烟测：已 typed 的宿主/模型失败仍抛 LLMUnavailable。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     def boom(prompt, llm_config=None, tag="", *, policy=None):
-        raise RuntimeError("agy missing")
+        raise LLMUnavailable("codex missing", code="llm_cli_codex", provider_message="codex missing")
 
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", boom)
-    cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
-    with pytest.raises(LLMUnavailable):
+    cfg = LLMConfig(
+        api_key="cli-backend",
+        base_url="",
+        model="api-fallback",
+        channel="cli",
+        cli_runner="codex",
+        cli_model="gpt-5.5",
+        cli_timeout_seconds=240,
+    )
+
+    with pytest.raises(LLMUnavailable) as ei:
         verify_llm_available(cfg)
+    assert ei.value.code == "llm_cli_codex"
 
 def _api_cfg(**overrides) -> LLMConfig:
     base = dict(

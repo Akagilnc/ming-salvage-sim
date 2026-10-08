@@ -1326,18 +1326,12 @@ class CliChat(OpenAIChat):
         attempts = 0
         try:
             text, attempts = self._call_cli(prompt)
-        except Exception as exc:
-            # #1299/#1310：runner 自身失败翻成 typed LLMUnavailable，
-            # 错误串不得进 content 当叙事（agno 吞 Exception 会把 str(e) 塞 content）。
-            from ming_sim.exceptions import LLMUnavailable
-            from ming_sim.llm_model import cli_runner_unavailable
-            from ming_sim.llm_transport import TransportIdleTimeout
+        except BaseException as exc:
+            # 已确证宿主 I/O／退出失败在 runner 接缝已翻 typed LLMUnavailable；
+            # 未知代码异常原样上浮——不得套成 llm_cli_* 当「模型不可用」
+            # （#1902 CLI-UNKNOWN-CODE-FAULTS；失败诚实宪法）。trace 仍记原文。
             error = str(exc)
-            # 已 typed 的可重试瞬断（空转/空输出/连接）原样上浮：套成
-            # llm_cli_* 会让 transport 把瞬断误判成确定性失败，一次即终。
-            if isinstance(exc, (LLMUnavailable, TransportIdleTimeout)):
-                raise
-            raise cli_runner_unavailable(exc, backend=self.backend) from exc
+            raise
         finally:
             dt = round(time.monotonic() - t0, 1)
             assistant_message.metrics.stop_timer()
@@ -1393,29 +1387,21 @@ class CliChat(OpenAIChat):
             return
         materials = str(getattr(self, "materials_dir", "") or "").strip() or None
         prompt = _messages_to_prompt(messages, response_format, materials_dir=materials)
-        try:
-            # #1465 切片③：空转判死归子进程增量读（新字节即活动，不设总墙钟），
-            # 本处只搬 `_iter_cli_runner_text` 已判活的文本 —— 机器横幅不进 delta。
-            # codex 走结构化 --json 事件流边到边出；纯文本 runner 判活后一次交全。
-            stream = _iter_cli_runner_text(
-                self.backend,
-                prompt,
-                model=str(getattr(self, "id", "") or ""),
-                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
-                json_events=(self.backend == "codex"),
-                materials_dir=materials,
-            )
-            for delta in stream:
-                yield ModelResponse(role="assistant", content=str(delta))
-        except Exception as exc:
-            # #1299/#1310：流式 runner 失败同翻 typed，禁机器横幅进 delta/content。
-            # #1465：已 typed 的可重试瞬断原样上浮（同 invoke）。
-            from ming_sim.exceptions import LLMUnavailable
-            from ming_sim.llm_model import cli_runner_unavailable
-            from ming_sim.llm_transport import TransportIdleTimeout
-            if isinstance(exc, (LLMUnavailable, TransportIdleTimeout)):
-                raise
-            raise cli_runner_unavailable(exc, backend=self.backend) from exc
+        # #1465 切片③：空转判死归子进程增量读（新字节即活动，不设总墙钟），
+        # 本处只搬 `_iter_cli_runner_text` 已判活的文本 —— 机器横幅不进 delta。
+        # codex 走结构化 --json 事件流边到边出；纯文本 runner 判活后一次交全。
+        # 无 Exception→cli_runner_unavailable 宽包装：已 typed 的宿主/瞬断由
+        # runner 接缝上浮；未知代码异常保真（同 invoke / #1902）。
+        stream = _iter_cli_runner_text(
+            self.backend,
+            prompt,
+            model=str(getattr(self, "id", "") or ""),
+            reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
+            json_events=(self.backend == "codex"),
+            materials_dir=materials,
+        )
+        for delta in stream:
+            yield ModelResponse(role="assistant", content=str(delta))
 
     async def ainvoke_stream(self, *args, **kwargs):  # type: ignore[override]
         for response in self.invoke_stream(*args, **kwargs):

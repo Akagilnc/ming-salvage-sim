@@ -685,13 +685,14 @@ def _office_type_from_table(text: str) -> str:
 
 def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
     """表查不中（生造/罕见官名）时，CLI 后端在场则交 LLM 判 office_type（取 allowed_types）。
-    否则返回 ''。结果按官名缓存，避免重复调用。"""
-    try:
-        from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
-    except Exception as exc:
-        # 确证安全旁路：无 CLI 后端时官名类型退空串；须留真因（#1902 T3 / ADR 0005）。
-        logger.warning("office_type LLM 后端导入失败，退空串：%s", exc)
-        return ""
+    否则返回 ''。结果按官名缓存，避免重复调用。
+
+    只对 typed LLMUnavailable 降级空串；import/schema/TypeError 等代码故障原样上抛，
+    且失败不得写入缓存当「已分类」（#1902 AUXILIARY-LLM-CODE-FAULTS）。
+    """
+    from ming_sim.cli_backend import cli_backend_active, _run_backend_for_config
+    from ming_sim.exceptions import LLMUnavailable
+
     if not cli_backend_active(llm_config):
         return ""
     if text in _OFFICE_TYPE_LLM_CACHE:
@@ -703,14 +704,14 @@ def _office_type_via_llm(text: str, llm_config: Any = None) -> str:
         "只输出一个类型词（不要任何别的字），必须严格取自：" + "、".join(allowed) + "。\n"
         "官名：" + text + "\n类型："
     )
-    out = ""
     try:
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="office_infer")
         cand = (raw or "").strip().splitlines()[0].strip() if raw else ""
         out = cand if cand in allowed_set else ""
-    except Exception as exc:
-        logger.warning("office_type LLM 推断失败，退空串 text=%r：%s", text, exc)
-        out = ""
+    except LLMUnavailable as exc:
+        # 明确模型/宿主不可用 → 空串，上游落「待铨」；不缓存，免瞬时故障锁死分类。
+        logger.warning("office_type LLM 不可用，退空串 text=%r：%s", text, exc)
+        return ""
     _OFFICE_TYPE_LLM_CACHE[text] = out
     return out
 

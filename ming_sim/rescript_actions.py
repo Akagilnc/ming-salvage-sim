@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -244,15 +243,8 @@ def _option_by_capability(row: Mapping[str, object]) -> Dict[str, Dict[str, obje
             continue
         cap = str(opt.get("draft_capability") or "").strip()
         if not cap:
-            # 允许服务端即时派生
-            try:
-                cap = derive_draft_capability(opt)
-            except Exception as exc:
-                # 单条 option 派生失败跳过该项；旁路留真因（#1902 T3 / ADR 0005）。
-                logging.getLogger(__name__).warning(
-                    "derive_draft_capability failed, skip option: %s", exc,
-                )
-                continue
+            # 纯代码 hash 派生：无业务异常可吞；代码故障原样上抛（#1902）。
+            cap = derive_draft_capability(opt)
         out[cap] = opt
     return out
 

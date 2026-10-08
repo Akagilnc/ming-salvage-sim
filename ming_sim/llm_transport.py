@@ -52,6 +52,13 @@ _typed_provider_failure: ContextVar[Optional["ClassifiedFailure"]] = ContextVar(
     "ming_sim_transport_typed_failure", default=None,
 )
 
+# 非 transport typed 的代码异常。SDK 把异常吞成 RunErrorEvent / status=ERROR 后，
+# 只剩 content 散文；本槽在 model 调用边界原样记住，供 extract / map 还原为代码
+# 故障（错误包路径），不得摊平成 llm_run_error / llm_stream_error（#1902）。
+_code_fault: ContextVar[Optional[BaseException]] = ContextVar(
+    "ming_sim_transport_code_fault", default=None,
+)
+
 
 @dataclass(frozen=True)
 class TransportPolicy:
@@ -183,7 +190,8 @@ def _remember_typed_failure(
     OpenAIChat.invoke 会把 openai typed 异常包装为 ModelProviderError 并显式
     ``raise ... from provider_error``；外层本身不是 openai typed，须沿 __cause__
     链取回既有 typed 事实（与 _remember_typed_status 同口径，不走 __context__）。
-    未 typed 的异常不记，仍走 run_error_event_failure 的「无 status 不洗成瞬断」。
+    未 typed 的异常改记 _code_fault，仍走代码故障还原（#1902），不走
+    run_error_event_failure 摊平。
 
     remember_connection：同步 verify/invoke 为 True（#1465 网络断重试）；流式
     invoke_stream 为 False——无提供方 HTTP typed status 的连接断不得洗成
@@ -198,11 +206,24 @@ def _remember_typed_failure(
             (TransportIdleTimeout, LLMUnavailable, APITimeoutError, APIStatusError),
         ):
             _typed_provider_failure.set(classify_transport_failure(cause))
+            _code_fault.set(None)
             return
         if remember_connection and isinstance(cause, APIConnectionError):
             _typed_provider_failure.set(classify_transport_failure(cause))
+            _code_fault.set(None)
             return
         cause = cause.__cause__
+    # 未 typed：记代码故障原件，供 SDK 吞成 ERROR 后还原（不得摊成 llm_*）。
+    _code_fault.set(error)
+
+
+def take_remembered_code_fault() -> Optional[BaseException]:
+    """取出并清空 model 调用边界记下的代码故障。无则 None。"""
+    fault = _code_fault.get()
+    if fault is None:
+        return None
+    _code_fault.set(None)
+    return fault
 
 
 def _capture_status_wrapper(method: Callable) -> Callable:
@@ -414,17 +435,22 @@ def take_remembered_typed_failure() -> Optional[ClassifiedFailure]:
 
 
 def map_run_error_event(event: Any) -> Optional[BaseException]:
-    """RunErrorEvent → LLMUnavailable 单真源（agents/web 三处同权威；#12/#14）。
+    """RunErrorEvent → 失败单真源（agents/web 三处同权威；#12/#14）。
 
-    非 RunErrorEvent 返回 None。分类语义 = run_error_event_failure；
-    系统层出口 = transport_failure_unavailable。typed status 只认事件字段或
-    提供方层捕获的 status_code，不解析 content 散文。
+    非 RunErrorEvent 返回 None。代码故障优先还原（#1902）；否则分类语义 =
+    run_error_event_failure，系统层出口 = transport_failure_unavailable。
+    typed status 只认事件字段或提供方层捕获的 status_code，不解析 content 散文。
 
     提供方层已 typed 的失败（CLI 空转/空输出/瞬断等）由 _remember_typed_failure
     在 model 调用边界记下：SDK 吞成散文事件后按记忆还原分类，禁在此重新猜语义。
     """
     if type(event).__name__ != "RunErrorEvent":
         return None
+    code_fault = take_remembered_code_fault()
+    if code_fault is not None:
+        # 代码故障优先；清掉可能残留的 typed 记忆，避免下一 attempt 串洗。
+        take_remembered_typed_failure()
+        return code_fault
     remembered = take_remembered_typed_failure()
     if remembered is not None:
         return transport_failure_unavailable(
@@ -531,6 +557,7 @@ def bind_transport_sdk_budget(model: object, policy: TransportPolicy) -> Iterato
         # 绑定退出即弃本次捕获，禁跨接缝残留（#1780）
         _typed_provider_status.set(None)
         _typed_provider_failure.set(None)
+        _code_fault.set(None)
 
 
 def _sleep_retry_interval(seconds: float) -> None:
@@ -620,9 +647,10 @@ def run_transport_stream(
     tick = clock or time.monotonic
 
     def _one_attempt() -> R:
-        # 每次 attempt 完整空转预算；清空上一 attempt 的 typed 记忆，禁串洗。
+        # 每次 attempt 完整空转预算；清空上一 attempt 的 typed/代码故障记忆，禁串洗。
         _typed_provider_status.set(None)
         _typed_provider_failure.set(None)
+        _code_fault.set(None)
         last_activity_at = tick()
         stream = start_stream()
         try:

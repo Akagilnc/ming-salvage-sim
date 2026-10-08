@@ -92,11 +92,8 @@ def run_highlight_judge(
             future.cancel()
             return []
         except (LLMContractError, LLMUnavailable) as exc:
+            # 只认契约/模型不可用降级空清单；未知代码故障原样上抛（#1902）。
             logger.warning("highlight judge degraded (contract/unavailable): %s", exc)
-            return []
-        except Exception as exc:
-            # 判官调用失败（模型/provider）→ 产品面空清单；必须留痕，不得与合法空清单不可区分
-            logger.warning("highlight judge degraded: %s", exc, exc_info=True)
             return []
     finally:
         pool.shutdown(wait=False, cancel_futures=True)

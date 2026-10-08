@@ -305,10 +305,17 @@ def extract_agent_text(run_output: object) -> str:
     if _run_output_status_is_error(run_output):
         from ming_sim.llm_transport import (
             ClassifiedFailure,
+            take_remembered_code_fault,
             take_remembered_typed_failure,
             transport_failure_unavailable,
         )
 
+        # 代码故障优先还原：SDK 把 TypeError 等吞成 status=ERROR 后不得摊成
+        # llm_run_error（#1902 CLI-UNKNOWN-CODE-FAULTS；错误包路径须保真）。
+        code_fault = take_remembered_code_fault()
+        if code_fault is not None:
+            take_remembered_typed_failure()
+            raise code_fault
         remembered = take_remembered_typed_failure()
         if remembered is not None:
             raise transport_failure_unavailable(
@@ -359,10 +366,7 @@ def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") ->
         except LLMUnavailable as error:
             _stamp_verify_stage(error, stage)
             raise
-        except Exception as error:
-            wrapped = llm_unavailable_from_error(error)
-            _stamp_verify_stage(wrapped, stage)
-            raise wrapped from error
+        # 未知代码异常原样上浮，不得套成 llm_error（#1902）。
         return
     agent = Agent(
         name="LLM连通性检查",
@@ -397,7 +401,4 @@ def verify_llm_available(llm_config: LLMConfig, *, stage: str = "smoke-main") ->
     except LLMUnavailable as error:
         _stamp_verify_stage(error, stage)
         raise
-    except Exception as error:
-        wrapped = llm_unavailable_from_error(error)
-        _stamp_verify_stage(wrapped, stage)
-        raise wrapped from error
+    # 代码故障由 run_with_transport / extract 保真上浮，不套 llm_error（#1902）。

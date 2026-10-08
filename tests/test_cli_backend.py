@@ -453,11 +453,32 @@ def test_clichat_invoke_passes_fixture_content_and_completion(monkeypatch):
     assert out.content == runner_text
 
 
-def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
-    """#1299/#1310：runner 失败翻 typed LLMUnavailable；trace 仍记机器原文。"""
-    from ming_sim.exceptions import LLMUnavailable
+def test_clichat_invoke_code_fault_traced_and_reraised(monkeypatch):
+    """#1902：未知代码故障原样上浮，trace 仍记机器原文；不得套成 llm_cli_*。"""
     cc = cb.CliChat(id="cli-test", backend="agy")
-    monkeypatch.setattr(cc, "_call_cli", lambda p: (_ for _ in ()).throw(RuntimeError("cli down")))
+    monkeypatch.setattr(cc, "_call_cli", lambda p: (_ for _ in ()).throw(TypeError("cli down")))
+    traced = {}
+    monkeypatch.setattr(cb, "_trace", lambda rec: traced.update(rec))
+    prose = "你扮演被皇帝召见的大臣。请整理旧账并拟诏书。"
+    with pytest.raises(TypeError, match="cli down"):
+        cc.invoke(
+            [SimpleNamespace(role="system", content=prose)],
+            Message(role="assistant"),
+            run_response=SimpleNamespace(agent_name="诏书润色官"),
+        )
+    assert traced.get("error") == "cli down"
+    assert traced.get("tag") == "诏书润色官"
+
+
+def test_clichat_invoke_typed_unavailable_traced_and_reraised(monkeypatch):
+    """#1299/#1310：已 typed 的宿主/模型失败原样上浮；trace 记 provider 原文。"""
+    from ming_sim.exceptions import LLMUnavailable
+    from ming_sim.llm_model import cli_runner_unavailable
+
+    host = RuntimeError("cli down")
+    typed = cli_runner_unavailable(host, backend="agy")
+    cc = cb.CliChat(id="cli-test", backend="agy")
+    monkeypatch.setattr(cc, "_call_cli", lambda p: (_ for _ in ()).throw(typed))
     traced = {}
     monkeypatch.setattr(cb, "_trace", lambda rec: traced.update(rec))
     prose = "你扮演被皇帝召见的大臣。请整理旧账并拟诏书。"
@@ -467,7 +488,8 @@ def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
             Message(role="assistant"),
             run_response=SimpleNamespace(agent_name="诏书润色官"),
         )
-    assert traced.get("error") == "cli down"
+    assert ei.value is typed
+    assert traced.get("error") == str(typed)
     assert traced.get("tag") == "诏书润色官"
     assert "cli down" in (ei.value.provider_message or "")
     assert "cli down" not in ei.value.message

@@ -634,7 +634,8 @@ def write_decree_with_agno(
         text = extract_agent_text(run_output)
     except LLMUnavailable:
         raise
-    except Exception as error:
+    except (APITimeoutError, APIConnectionError, APIStatusError) as error:
+        # 只把提供方 typed 网络/HTTP 翻成 LLMUnavailable；代码故障原样上浮（#1902）。
         raise llm_unavailable_from_error(error, "拟诏") from error
     if not text.strip():
         raise LLMContractError("拟诏输出为空。")
