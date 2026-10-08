@@ -33,7 +33,12 @@ from ming_sim.decree_vocabulary import (
     DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
 )
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
-from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection, PendingActionRefusal
+from ming_sim.exceptions import (
+    LLMContractError,
+    OfficeAppointmentRejection,
+    PendingActionRefusal,
+    RosterInputError,
+)
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
@@ -12195,27 +12200,37 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        # 既存持久名册走权威成员投影（坏成员响亮）；新增输入仍严格规范化。
+        # 既存持久名册：schema／引用／委派均响亮；与新增输入错误分属。
         existing = participant_roster_entries(
             row["participant_roster"],
             surface="decree_dossiers.participant_roster",
         )
-        additions = self._normalize_participant_roster(participants, strict_structured=True)
-        self._validate_participant_roster_references(additions)
-        by_character = {str(item["character_id"]): item for item in existing}
-        added: List[Dict[str, object]] = []
-        for item in additions:
-            character_id = str(item["character_id"])
-            prior = by_character.get(character_id)
-            if prior is not None:
-                if prior != item:
-                    raise ValueError(f"参与人物已在案且机械档不同：{character_id}")
-                continue
-            by_character[character_id] = item
-            added.append(item)
-        merged = existing + added
-        self._validate_dossier_delegations(merged)
-        self._validate_participant_roster_references(merged)
+        self._validate_participant_roster_references(existing)
+        self._validate_dossier_delegations(existing)
+        try:
+            additions = self._normalize_participant_roster(
+                participants, strict_structured=True,
+            )
+            self._validate_participant_roster_references(additions)
+            by_character = {str(item["character_id"]): item for item in existing}
+            added: List[Dict[str, object]] = []
+            for item in additions:
+                character_id = str(item["character_id"])
+                prior = by_character.get(character_id)
+                if prior is not None:
+                    if prior != item:
+                        raise ValueError(
+                            f"参与人物已在案且机械档不同：{character_id}"
+                        )
+                    continue
+                by_character[character_id] = item
+                added.append(item)
+            merged = existing + added
+            # 既存已通过；此处失败只可能由新增项引起。
+            self._validate_dossier_delegations(merged)
+            self._validate_participant_roster_references(merged)
+        except (TypeError, ValueError, KeyError) as exc:
+            raise RosterInputError(str(exc)) from exc
         if added:
             archive_keys: set[str] = set()
             raw_keys_row = self.conn.execute(
@@ -12225,7 +12240,12 @@ class GameDB:
             raw_keys = (
                 raw_keys_row["office_archive_keys"] if raw_keys_row is not None else None
             ) or "[]"
-            parsed_keys = json.loads(raw_keys)
+            try:
+                parsed_keys = json.loads(raw_keys)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"office_archive_keys JSON 解析失败：dossier {int(dossier_id)}"
+                ) from exc
             if not isinstance(parsed_keys, list):
                 raise ValueError(
                     f"office_archive_keys 须为 JSON 数组：dossier {int(dossier_id)}"

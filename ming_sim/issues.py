@@ -41,7 +41,11 @@ from ming_sim.decree_vocabulary import (
     dossier_action_policy,
     format_public_progress_disclosure,
 )
-from ming_sim.exceptions import OfficeAppointmentRejection, SettlementAbort
+from ming_sim.exceptions import (
+    OfficeAppointmentRejection,
+    RosterInputError,
+    SettlementAbort,
+)
 from ming_sim.displaced_population import (
     SETTLE_META_JIAPIAI_KEY,
     surcharge_population_pool_members,
@@ -6471,7 +6475,7 @@ def _apply_dossier_participant_items(
                 "rejected": True, "category": "invalid_shape", "item": item,
             })
             continue
-        # 输入字段闸 → 持久名册预检（坏根/坏成员上抛）→ 写核输入错误逐项拒收。
+        # 字段闸拒收；写核内 RosterInputError＝输入拒收，其它异常＝持久/系统上抛。
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             if dossier_id not in authority_set:
@@ -6497,35 +6501,21 @@ def _apply_dossier_participant_items(
                 "reason": str(exc), "item": item,
             })
             continue
-        from ming_sim.participant_roster import participant_roster_entries
-
-        dossier = db.get_decree_dossier(dossier_id)
-        if dossier is None:
-            results.append({
-                "rejected": True, "category": "invalid_participant_roster",
-                "reason": f"案卷不存在：{dossier_id}", "item": item,
-            })
-            continue
-        # 既存成员 schema 故障在此响亮；不进入下面的输入拒收捕。
-        participant_roster_entries(
-            dossier.get("participant_roster") or [],
-            surface="decree_dossiers.participant_roster",
-        )
         try:
             added = db.append_decree_dossier_participants(
                 dossier_id, [addition], state=state, commit=False,
             )
             if not added:
                 # Exact durable duplicate is the only no-write success case.
-                refreshed = db.get_decree_dossier(dossier_id) or {}
+                existing = db.get_decree_dossier(dossier_id) or {}
                 if not any(
                     row.get("character_id") == character_id
                     and row.get("tier") == tier
                     and row.get("role") == str(item.get("role") or "")
                     and row.get("delegator_id") == delegator_id
-                    for row in refreshed.get("participant_roster", [])
+                    for row in existing.get("participant_roster", [])
                 ):
-                    raise ValueError("参与人未实际加入案卷")
+                    raise RosterInputError("参与人未实际加入案卷")
             persisted = added[0] if added else {
                 "character_id": character_id, "tier": tier,
             }
@@ -6533,11 +6523,20 @@ def _apply_dossier_participant_items(
                 "dossier_id": dossier_id,
                 "character_id": persisted["character_id"], "tier": persisted["tier"],
             })
-        except (TypeError, ValueError, KeyError) as exc:
-            # 持久已预检；此处为引用/委派/同人异档等输入契约拒收。
+        except RosterInputError as exc:
+            results.append({
+                "rejected": True,
+                "category": str(getattr(exc, "category", None) or "invalid_participant_roster"),
+                "reason": str(exc), "item": item,
+            })
+        except KeyError as exc:
+            # 权威集内 id 已无对应行：按输入缺引用拒收，不包其它 KeyError。
+            missing = exc.args[0] if exc.args else ""
+            if not str(missing).startswith("案卷不存在"):
+                raise
             results.append({
                 "rejected": True, "category": "invalid_participant_roster",
-                "reason": str(exc), "item": item,
+                "reason": str(missing), "item": item,
             })
     return results
 
