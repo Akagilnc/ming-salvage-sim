@@ -7529,16 +7529,17 @@ class GameDB:
 
     @staticmethod
     def _parse_highlights_json(raw: Any) -> List[str]:
-        try:
-            data = json.loads(raw or "[]")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
-            return []
+        data = loads_persistent_json_list(raw, surface="chat_messages.highlights_json")
         out: List[str] = []
-        for item in data:
-            if isinstance(item, str) and item.strip():
-                out.append(item)
+        for index, item in enumerate(data):
+            if item is None or item == "":
+                continue
+            if not isinstance(item, str):
+                raise ValueError(
+                    f"chat_messages.highlights_json[{index}] must be a string, got {type(item).__name__}"
+                )
+            if item.strip():
+                out.append(item.strip())
         return out
 
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
@@ -15503,11 +15504,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             return 0
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (ValueError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict) or "_needs_clarification" not in payload:
+        payload = self.parse_engine_payload_json(
+            row["payload_json"], surface="pending_actions.payload_json",
+        )
+        if "_needs_clarification" not in payload:
             return int(candidate_id)
         payload.pop("_needs_clarification", None)
         self.conn.execute(
@@ -15531,12 +15531,9 @@ class GameDB:
         ).fetchone()
         if row is None:
             return 0
-        try:
-            payload = json.loads(row["payload_json"] or "{}")
-        except (ValueError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = self.parse_engine_payload_json(
+            row["payload_json"], surface="pending_actions.payload_json",
+        )
         payload["_needs_clarification"] = True
         self.conn.execute(
             "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -15591,16 +15588,16 @@ class GameDB:
             or pa.get("action") != "拟旨"
         ):
             return {"classification": "invalid"}
+        payload = self.parse_engine_payload_json(
+            pa.get("payload_json"), surface="pending_actions.payload_json",
+        )
+        if payload.get("_needs_clarification") and not allow_clarification:
+            return {"classification": "needs_clarification"}
         try:
-            payload = json.loads(str(pa.get("payload_json") or "{}"))
-            if not isinstance(payload, dict):
-                return {"classification": "invalid"}
-            if payload.get("_needs_clarification") and not allow_clarification:
-                return {"classification": "needs_clarification"}
             payload = self._normalize_directive_dossier_payload(
                 payload, content=content, current_turn=int(state.turn),
             )
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except (TypeError, ValueError):
             return {"classification": "invalid"}
         text = str(payload.get("text") or "")
         if not text.strip():
@@ -15700,12 +15697,9 @@ class GameDB:
                 if committed is not None:
                     applied.append(committed)
                 continue
-            try:
-                payload = json.loads(pa["payload_json"] or "{}")
-                if not isinstance(payload, dict):
-                    payload = {}
-            except (ValueError, TypeError):
-                payload = {}
+            payload = self.parse_engine_payload_json(
+                pa["payload_json"], surface="pending_actions.payload_json",
+            )
             office_memory_key = None
             office_memory_before = None
             office_memory_had_key = False

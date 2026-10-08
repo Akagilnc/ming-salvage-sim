@@ -665,17 +665,17 @@ def resolve_directives(
 
 
 def _provenance_from_stored(value: object) -> Provenance:
-    """从 ctx 持久值还原 Provenance：实例或枚举 value 字符串；非法/缺失回落 system_simulation。
+    """从 ctx 持久值还原 Provenance：实例或枚举 value 字符串。
 
-    现役写端只落 .value（如 'player_decree'）。不恢复历史 str(枚举) 脏串。
+    真正缺省／空 → system_simulation；非空非法值响亮失败，不改标为 system_simulation。
+    现役写端只落 .value（如 'player_decree'）。
     """
     if isinstance(value, Provenance):
         return value
-    text = str(value or "system_simulation")
-    try:
-        return Provenance(text)
-    except ValueError:
+    if value is None or value == "":
         return Provenance.system_simulation
+    text = str(value)
+    return Provenance(text)
 
 
 # 同源恢复刷新的标量字段（与 db.load_state 读盘列对齐）。metrics 单独深刷。

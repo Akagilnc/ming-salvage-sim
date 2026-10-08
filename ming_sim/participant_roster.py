@@ -91,18 +91,27 @@ def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
 def participant_roster_names(raw: object) -> set[str]:
     """Project persisted dict roster entries to their character names.
 
-    Corrupt durable roster JSON must not become an empty allow-all roster.
+    Empty roster → empty set. Non-empty durable roster must be a list of dict
+    entries with character_id/name; corrupt schema must not filter to empty.
     """
     from ming_sim.models import loads_persistent_json_list
     if isinstance(raw, list):
         roster = raw
     else:
         roster = loads_persistent_json_list(raw, surface="participant_roster")
-    return {
-        str(item.get("character_id") or item.get("name"))
-        for item in roster
-        if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
-    }
+    names: set[str] = set()
+    for index, item in enumerate(roster):
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"participant_roster[{index}] must be an object, got {type(item).__name__}"
+            )
+        name = str(item.get("character_id") or item.get("name") or "").strip()
+        if not name:
+            raise ValueError(
+                f"participant_roster[{index}] missing character_id/name"
+            )
+        names.add(name)
+    return names
 
 
 def project_execution_liability_parties(

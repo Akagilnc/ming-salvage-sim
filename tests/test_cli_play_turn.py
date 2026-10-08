@@ -502,16 +502,6 @@ def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypat
     assert session.calls == ["begin", "resolve", "advance"]
 
 
-def test_cli_write_gate_canonical_session_attr():
-    """#1353 fold-in r8：CLI 唯一 write gate 挂 session._write_gate（禁第二锁名分叉）。"""
-    from ming_sim.session_write_queue import ClassifiedWriteGate
-
-    session = SimpleNamespace()
-    gate = term._cli_write_gate(session)
-    assert isinstance(gate, ClassifiedWriteGate)
-    assert getattr(session, "_write_gate", None) is gate
-    # 二次调用同锁
-    assert term._cli_write_gate(session) is gate
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     """#1716 CLI：minister_chat「重试回话」成功收夜后返回 court_break，关夜且无 presence。
