@@ -113,13 +113,13 @@ def _pin_transport_policy(
     )
 
 
-def _cli_web_game(game, monkeypatch, *, backend: str = "claude"):
+def _cli_web_game(tmp_path, monkeypatch, *, backend: str = "claude"):
     """真实召对装配 + 真 CliChat model（channel=cli）。"""
     from agno.agent import Agent
 
     model = cb.CliChat(id="cli-model-test", backend=backend)
     agent = Agent(model=model, markdown=False)
-    web_game, minister = _transport_web_game(game, agent, monkeypatch)
+    web_game, minister = _transport_web_game(tmp_path, agent, monkeypatch)
     web_game.session.llm_config = SimpleNamespace(
         channel="cli", cli_runner=backend, cli_model="cli-model-test",
         cli_timeout_seconds=None, reasoning_strength="",
@@ -140,7 +140,7 @@ def test_cli_chat_stream_two_transient_then_success_three_attempts(
         {"stdout": (), "returncode": 0},
         {"stdout": (_OK_REPLY,), "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    web_game, minister = _cli_web_game(tmp_path, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -170,7 +170,7 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     script = install_fake_cli_runner(monkeypatch, [
         {"stdout": (), "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    web_game, minister = _cli_web_game(tmp_path, monkeypatch)
     db = web_game.db
     night_closed = {"n": 0}
     web_game.session.close_night_after_chat_if_needed = (
@@ -207,13 +207,13 @@ def test_cli_chat_stream_three_transient_exhausted_system_fail_night_open_then_r
     assert an.get_open_night(db) is not None
 
 
-def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, tmp_path, game):
+def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, tmp_path):
     """③确定性失败一次不重试：未知非零退出（无 typed status）不洗成瞬断。"""
     _pin_transport_policy(monkeypatch, tmp_path)
     script = install_fake_cli_runner(monkeypatch, [
         {"stdout": (), "stderr": ("error: unknown model\n",), "returncode": 1},
     ])
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    web_game, minister = _cli_web_game(tmp_path, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -244,7 +244,7 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
         "stdout": stdout, "returncode": 0,
         "stdin_error": BrokenPipeError("stdin 已关闭"),
     }])
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    web_game, minister = _cli_web_game(tmp_path, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -257,7 +257,7 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
     assert "stdin" in str(detail.get("provider_message") or ""), detail
 
 
-def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, game):
+def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path):
     """④持续出字跨旧 300s 硬墙不被杀（受控推进时钟，不跑真墙钟）。
 
     时钟间隔必须落在读循环 Empty→check_idle 可观测静默窗，不得藏在泵钩子里。
@@ -279,7 +279,7 @@ def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, g
         "stdout": tuple(chunks),
         "returncode": 0,
     }])
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    web_game, minister = _cli_web_game(tmp_path, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text
@@ -330,7 +330,7 @@ def test_cli_process_idle_over_budget_dies_then_retry_succeeds(
         {"stdout": (SilentUntilKilled(on_tick=_advance_while_silent),), "returncode": 0},
         {"stdout": no_nl_chunks, "returncode": 0},
     ])
-    web_game, minister = _cli_web_game(game, monkeypatch)
+    web_game, minister = _cli_web_game(tmp_path, monkeypatch)
 
     response = _post_chat_stream(monkeypatch, web_game, minister)
     assert response.status_code == 200, response.text

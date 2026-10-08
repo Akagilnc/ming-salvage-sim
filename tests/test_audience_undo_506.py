@@ -79,12 +79,6 @@ def _minister_declaration(minister: str, presence_body: str) -> dict[str, object
     }
 
 
-def _reopen(db: GameDB, content) -> GameDB:
-    """kill+重开：关旧句柄、按同 path 重开（撤销日志持久化真源，AC6/AC7）。"""
-    path = db.path
-    db.close()
-    return GameDB(path, content)
-
 
 # ── AC1 / AC2：撤回后按夜取数与「该轮未发生」等价；该轮抽取账/入殿账消失 ──────────
 

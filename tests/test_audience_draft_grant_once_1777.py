@@ -51,12 +51,10 @@ def test_http_audience_one_matter_grant_with_deadline_1783(
 
     class _HubuAgent:
         def run(self, *_a, **kwargs):
-            from tests.test_audience_background import RunContent, RunOutput
-
             if kwargs.get("stream"):
                 def chunks():
-                    yield RunContent(_EDICT)
-                    yield RunOutput([])
+                    yield SimpleNamespace(event="RunContent", content=_EDICT)
+                    yield SimpleNamespace(content=_EDICT, tools=[], status="COMPLETED")
                 return chunks()
             return SimpleNamespace(content=_EDICT, tools=[])
 

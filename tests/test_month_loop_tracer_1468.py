@@ -32,20 +32,6 @@ from tests.conftest import stub_audience_translate, stub_scene_agent
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
 
-
-class _CannedExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"facts":[]}')
-
-
-class _BoomExtractor:
-    def run(self, _material):
-        raise RuntimeError("抽取持续失败·#1468 负向钉")
-
-
-
-
-
 def _stub_outer_llm_seams(monkeypatch) -> None:
     """只换最外层 LLM 工厂/调用；结算核、收夜、HTTP 路由全真跑。"""
     from tests.month_chain_helpers import empty_rescript_response

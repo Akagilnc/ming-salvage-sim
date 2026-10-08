@@ -453,6 +453,8 @@ def stub_scene_agent(monkeypatch, agent):
         def __init__(self, inner):
             self._inner = inner
             self.name = getattr(inner, "name", "scene")
+            # transport bind_transport_sdk_budget 读 agent.model；须透传真 model。
+            self.model = getattr(inner, "model", None)
 
         def run(self, *a, **k):
             out = self._inner.run(*a, **k) if hasattr(self._inner, "run") else self._inner

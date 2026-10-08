@@ -1,0 +1,35 @@
+{
+  "issue": 540,
+  "capture": "Production build served through Vite preview; archive captured by continuing the saved game and opening the real App command-slot → AudienceArchiveModal/起居注 path. CDP Fetch interception at /api/menu/status, /api/game/state, /api/history/turns, and /api/audience/scroll supplies the production roster and one deterministic archived scene with scene/user/minister/attendant roles. PNG bytes are unmodified Page.captureScreenshot output from current HEAD.",
+  "payloadRoles": [
+    "scene",
+    "user",
+    "minister",
+    "attendant"
+  ],
+  "visibleChecks": [
+    "scene: frameless full-width line",
+    "user/朕: short right-aligned bubble",
+    "leading action: separate muted italic line",
+    "minister/张瑞图: long left presentation",
+    "attendant/王承恩: indented dashed bubble, circular portrait, italic body"
+  ],
+  "files": {
+    "live-north-star.png": {
+      "sha256": "890654b73620f8bd5c74f25f781e52f791f3f0c95e3aef7e07275c3584b3529d",
+      "bytes": 497180,
+      "dimensions": [
+        1440,
+        1113
+      ]
+    },
+    "archive-north-star.png": {
+      "sha256": "d41d3e20faa03751d0fb94af97c7aa4ac4741d792c22feaafde6cf67d4ee51a6",
+      "bytes": 480119,
+      "dimensions": [
+        1440,
+        1026
+      ]
+    }
+  }
+}

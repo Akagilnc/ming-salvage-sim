@@ -44,34 +44,6 @@ def _pseudo_event(title: str = "调防") -> Event:
     )
 
 
-def _executing_dossier(db, state, region_id: str) -> int:
-    did = db.create_decree_dossier(
-        state,
-        action_type="assignment",
-        decree_text=f"属地差务@{region_id}",
-        target_kind="issue",
-        target_id=f"errand-{region_id}",
-        payload={
-            "target_kind": "issue",
-            "target_id": f"errand-{region_id}",
-            "locality_scope": "none",
-            "assignee_id": "毕自严",
-            "transaction_category": "清丈",
-            "participant_roster": [
-                {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-            ],
-        },
-        participants=[
-            {"character_id": "毕自严", "tier": "主办", "role": "", "delegator_id": None},
-        ],
-    )
-    db.conn.execute(
-        "UPDATE decree_dossiers SET status='executing', region_id=? WHERE id=?",
-        (region_id, int(did)),
-    )
-    db.conn.commit()
-    return int(did)
-
 
 def test_redeploy_moves_fact_region_keeps_pay_source(game):
     """真实调防写核：下一投影 region 跟随 station_region；pay_source_region 不变。"""

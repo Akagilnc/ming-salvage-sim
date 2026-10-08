@@ -35,20 +35,6 @@ _GATE_BUSY_DETAIL = "月末结算或上一步写入进行中，请稍候再操�
 
 # ── 轻量 canned 边界（与 #498 web tracer 同形，仅中和 LLM）────────────────
 
-
-class _CannedExtractor:
-    def run(self, _material):
-        class _R:
-            content = '{"facts":[]}'
-        return _R()
-
-
-class _BoomExtractor:
-    def run(self, _material):
-        raise RuntimeError("抽取持续失败·真失败注入")
-
-
-
 @pytest.fixture
 def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """真实 WebGame；LLM 边界 canned。与 #498 fixture 同形。"""

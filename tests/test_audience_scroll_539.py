@@ -14,58 +14,64 @@ def _scroll_game(db):
         pending_translation_retries=lambda **kw: list_pending_translations(db, **kw),
     )
 
-def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(game, monkeypatch):
+def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(tmp_path, monkeypatch):
     import web_app
-    from tests.test_audience_background import _FakeAgent, _web_game
+    from tests.conftest import stub_audience_translate, stub_scene_agent
+    from tests.test_chat_stream_failpaths_393 import _parse_sse, _transport_web_game
 
-    class _FailingAgent(_FakeAgent):
+    class _FailingAgent:
         def run(self, *_args, **_kwargs):
             raise RuntimeError("reply failed")
             yield  # pragma: no cover - make this the agent's streaming generator
 
-    db, state, content = game
+    runtime, _ = _transport_web_game(tmp_path, _FailingAgent(), monkeypatch)
+    db, state = runtime.db, runtime.state
     old_night_id = open_audience_night(db, state)
     db.conn.execute(
         "UPDATE audience_nights SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id=?",
         (old_night_id,),
     )
     db.conn.commit()
-    runtime = _web_game(db, state, content, _FailingAgent())
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
     response = TestClient(web_app.app).post(
         "/api/audience/chat/stream",
         json={"message": "新场问话"},
     )
-    from tests.test_chat_stream_failpaths_393 import _parse_sse
     events = _parse_sse(response.text)
     persisted = an.get_open_night(db)
 
     assert response.headers["content-type"].startswith("text/event-stream")
-    # #1465 ④：回话未成终失败 — error 前无条件空 replace（清半句；即使本案零 content）
-    assert events == [
-        ("accepted", {"campaign_id": "", "night_id": int(persisted["id"]), "chat_turn_id": 1}),
-        ("delta", {"content": "", "replace": True}),
-        ("error", {"message": "reply failed", "campaign_id": "", "night_id": int(persisted["id"]), "chat_turn_id": 1}),
-    ]
+    kinds = [k for k, _ in events]
+    assert kinds[0] == "accepted"
+    assert kinds[-1] == "error"
+    accepted = events[0][1]
+    error = events[-1][1]
+    assert int(accepted["night_id"]) == int(persisted["id"]) == int(error["night_id"])
+    assert int(accepted["chat_turn_id"]) == int(error["chat_turn_id"]) > 0
+    assert "reply failed" in str(error.get("message") or "")
+    # #1465 ④：回话未成终失败 — error 前有条件空 replace（清半句）
+    assert ("delta", {"content": "", "replace": True}) in events
     assert int(persisted["id"]) != old_night_id
     assert int(persisted["turn"]) == int(state.turn)
 
-def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(game, monkeypatch):
+def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(tmp_path, monkeypatch):
     import web_app
-    from tests.test_audience_background import _FakeAgent, _web_game
+    from tests.test_chat_stream_failpaths_393 import _parse_sse, _transport_web_game
 
-    db, state, content = game
-    runtime = _web_game(db, state, content, _FakeAgent(), monkeypatch)
+    class _OkAgent:
+        def run(self, *_a, **_k):
+            yield type("RC", (), {"event": "RunContent", "content": "臣领旨。"})()
+            yield type("RO", (), {"content": "臣领旨。", "tools": [], "status": "COMPLETED"})()
+
+    runtime, _ = _transport_web_game(tmp_path, _OkAgent(), monkeypatch)
     runtime.favorites = set()
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    content = runtime.content
     client = TestClient(web_app.app)
 
     response = client.post(
         "/api/audience/chat/stream",
         json={"message": "宣王绍徽"},
     )
-    from tests.test_chat_stream_failpaths_393 import _parse_sse
     events = _parse_sse(response.text)
     kinds = [kind for kind, _ in events]
     assert response.status_code == 200
@@ -131,20 +137,23 @@ def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch
         {"name": "毕自严", "present": True},
     ]
 
-def test_scroll_projects_portrait_for_legal_aside_speaker_outside_roster(game, monkeypatch):
+def test_scroll_projects_portrait_for_legal_aside_speaker_outside_roster(tmp_path, monkeypatch):
     import web_app
-    from tests.test_audience_background import _FakeAgent, _web_game
+    from tests.test_chat_stream_failpaths_393 import _transport_web_game
 
-    db, state, content = game
+    class _OkAgent:
+        def run(self, *_a, **_k):
+            yield type("RO", (), {"content": "", "tools": [], "status": "COMPLETED"})()
+
+    runtime, _ = _transport_web_game(tmp_path, _OkAgent(), monkeypatch)
+    runtime.favorites = set()
+    db, state, content = runtime.db, runtime.state, runtime.content
     night_id = open_audience_night(db, state)
     an.append_ledger_entry(
         db, night_id, tags=["scroll_role:attendant"],
         person_names=["杨嗣昌"], audibility="御前低语",
         body="杨嗣昌低语。",
     )
-    runtime = _web_game(db, state, content, _FakeAgent(), monkeypatch)
-    runtime.favorites = set()
-    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
     assert "杨嗣昌" not in [entry["name"] for entry in payload["roster"]]

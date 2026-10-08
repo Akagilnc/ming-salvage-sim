@@ -1,0 +1,2436 @@
+{
+  "gate": "issue-562-break-rank-live-production-judge-comparison",
+  "method": {
+    "design": "paired independent samples; persisted different office histories are the only rank-condition intervention; opaque target IDs and presentation order are counterbalanced",
+    "test": "exact two-sided paired sign test (exact McNemar on discordant pairs)",
+    "alpha": 0.05,
+    "samples": 12,
+    "config": {
+      "channel": "cli",
+      "runner": "codex",
+      "model": "gpt-5.6-sol",
+      "reasoning_strength": "high",
+      "max_tokens": 6000
+    }
+  },
+  "summary": {
+    "break_rank_rejections": 12,
+    "ordinary_rejections": 0,
+    "break_only_discordant": 12,
+    "ordinary_only_discordant": 0,
+    "p_value_two_sided": 0.00048828125,
+    "break_rank_rejected_more_often": true,
+    "statistically_distinct_at_0_05": true
+  },
+  "limitations": [
+    "One configured model/provider and one matched appointment scenario; this is acceptance evidence, not population-wide calibration.",
+    "Repeated live-model calls may drift across provider/model revisions; the embedded raw trace makes this run auditable.",
+    "Pairs share the same production Judge instruction and game snapshot; inference is conditional on that controlled snapshot."
+  ],
+  "samples": [
+    {
+      "sample": 1,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本1)",
+            "target_kind": "character",
+            "target_id": "gate-562-0-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本1)",
+            "target_kind": "character",
+            "target_id": "gate-562-0-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 1,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "真除巡抚由七品骤升三品，档房已钉死为越制破格；皇威偏弱，兵科给事中许誉卿敢任其事且操守清正，将据清议名分封驳。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            }
+          ]
+        },
+        {
+          "dossier_id": 2,
+          "decision": "promulgated"
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    },
+    {
+      "sample": 2,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本2)",
+            "target_kind": "character",
+            "target_id": "gate-562-1-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本2)",
+            "target_kind": "character",
+            "target_id": "gate-562-1-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 2,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "真除任命由七品骤升三品，档房已钉死为越制破格；皇威偏弱，兵科给事中许誉卿敢任其事且操守清正，形成封驳关口。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            },
+            {
+              "kind": "class",
+              "key": "官僚",
+              "severity": "不满"
+            }
+          ]
+        },
+        {
+          "dossier_id": 1,
+          "decision": "promulgated"
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    },
+    {
+      "sample": 3,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本3)",
+            "target_kind": "character",
+            "target_id": "gate-562-2-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本3)",
+            "target_kind": "character",
+            "target_id": "gate-562-2-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 2,
+          "decision": "promulgated"
+        },
+        {
+          "dossier_id": 1,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "该任免由七品骤升三品，档房已钉死为越制破格；皇威偏弱，六科把关官许誉卿敢任其事且操守清正，必据名分与制度封驳。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            },
+            {
+              "kind": "class",
+              "key": "官僚",
+              "severity": "不满"
+            }
+          ]
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    },
+    {
+      "sample": 4,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本4)",
+            "target_kind": "character",
+            "target_id": "gate-562-3-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本4)",
+            "target_kind": "character",
+            "target_id": "gate-562-3-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 1,
+          "decision": "promulgated"
+        },
+        {
+          "dossier_id": 2,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "由七品骤擢三品真除巡抚，档房已钉死为越制破格；皇威偏弱，六科清正敢言官员必据名分封驳。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            },
+            {
+              "kind": "class",
+              "key": "官僚",
+              "severity": "不满"
+            }
+          ]
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    },
+    {
+      "sample": 5,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本5)",
+            "target_kind": "character",
+            "target_id": "gate-562-4-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本5)",
+            "target_kind": "character",
+            "target_id": "gate-562-4-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 1,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "真除任命由七品骤升三品，档房已钉死为越制破格；皇威偏弱，且无授权与背书，六科把关官操守清正、敢任其事，必据名分封驳。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            },
+            {
+              "kind": "class",
+              "key": "官僚",
+              "severity": "不满"
+            }
+          ]
+        },
+        {
+          "dossier_id": 2,
+          "decision": "promulgated"
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    },
+    {
+      "sample": 6,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本6)",
+            "target_kind": "character",
+            "target_id": "gate-562-5-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本6)",
+            "target_kind": "character",
+            "target_id": "gate-562-5-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 2,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "真除由七品骤升三品，档房已钉死为越制破格；皇威偏弱且无授权、背书，兵科给事中许誉卿操守清正、敢任其事，必据名分制度封驳。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            }
+          ]
+        },
+        {
+          "dossier_id": 1,
+          "decision": "promulgated"
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    },
+    {
+      "sample": 7,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本7)",
+            "target_kind": "character",
+            "target_id": "gate-562-6-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本7)",
+            "target_kind": "character",
+            "target_id": "gate-562-6-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 2,
+          "decision": "promulgated"
+        },
+        {
+          "dossier_id": 1,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "由七品骤升三品巡抚，档房已钉死为越制破格；皇威偏弱且无授权、背书，兵科把关官敢任其事、操守清正，必据名分封驳。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            },
+            {
+              "kind": "class",
+              "key": "官僚",
+              "severity": "不满"
+            }
+          ]
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    },
+    {
+      "sample": 8,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本8)",
+            "target_kind": "character",
+            "target_id": "gate-562-7-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本8)",
+            "target_kind": "character",
+            "target_id": "gate-562-7-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 1,
+          "decision": "promulgated"
+        },
+        {
+          "dossier_id": 2,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "七品候补官员真除三品陕西巡抚，档房已钉死为越制破格；皇威偏弱，兵科给事中许誉卿属东林、敢任其事且操守清正，将据名分与制度封驳。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            },
+            {
+              "kind": "class",
+              "key": "官僚",
+              "severity": "不满"
+            }
+          ]
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    },
+    {
+      "sample": 9,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本9)",
+            "target_kind": "character",
+            "target_id": "gate-562-8-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本9)",
+            "target_kind": "character",
+            "target_id": "gate-562-8-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 1,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "真除任命由七品骤升三品，已属越制破格；皇威偏弱且无授权、背书，兵科给事中许誉卿敢任其事、操守清正，必行封驳。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            },
+            {
+              "kind": "faction",
+              "key": "中立",
+              "severity": "不满"
+            },
+            {
+              "kind": "class",
+              "key": "官僚",
+              "severity": "不满"
+            }
+          ]
+        },
+        {
+          "dossier_id": 2,
+          "decision": "promulgated"
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    },
+    {
+      "sample": 10,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本10)",
+            "target_kind": "character",
+            "target_id": "gate-562-9-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本10)",
+            "target_kind": "character",
+            "target_id": "gate-562-9-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 2,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "真除巡抚由七品骤升三品，档房已钉死为越制破格；皇威偏弱，且无授权或背书，兵科给事中许誉卿敢任其事、操守清正，形成封驳关口。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            },
+            {
+              "kind": "class",
+              "key": "官僚",
+              "severity": "不满"
+            }
+          ]
+        },
+        {
+          "dossier_id": 1,
+          "decision": "promulgated"
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    },
+    {
+      "sample": 11,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本11)",
+            "target_kind": "character",
+            "target_id": "gate-562-10-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本11)",
+            "target_kind": "character",
+            "target_id": "gate-562-10-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 2,
+          "decision": "promulgated"
+        },
+        {
+          "dossier_id": 1,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "该任免已被档房钉死为由七品越升三品的越制破格；皇威偏弱且无授权、背书，兵科给事中许誉卿操守清正、敢任其事，必据名分与制度封驳。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            },
+            {
+              "kind": "class",
+              "key": "官僚",
+              "severity": "不满"
+            }
+          ]
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    },
+    {
+      "sample": 12,
+      "input": {
+        "turn": {
+          "turn": 1,
+          "year": 1627,
+          "period": 10
+        },
+        "dossiers": [
+          {
+            "id": 1,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本12)",
+            "target_kind": "character",
+            "target_id": "gate-562-11-a",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": false,
+              "basis": "current_office",
+              "current_rank_band": 3,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          },
+          {
+            "id": 2,
+            "action_type": "appointment",
+            "decree_text": "任命候补官员为陕西巡抚(比较样本12)",
+            "target_kind": "character",
+            "target_id": "gate-562-11-b",
+            "mode": "ordinary",
+            "appointment_tenure": "真除",
+            "break_rank": {
+              "is_break_rank": true,
+              "basis": "current_office",
+              "current_rank_band": 7,
+              "new_rank_band": 3
+            },
+            "criteria_snapshot_source": {
+              "imperial_authority_band": "偏弱",
+              "appointment_tenure": "真除",
+              "authorization_ids": [],
+              "endorsement_entry_ids": []
+            }
+          }
+        ],
+        "factions": [
+          {
+            "name": "东林",
+            "leverage": 28,
+            "agenda": "清议名分、裁抑阉党、以制度约束权力"
+          },
+          {
+            "name": "中立",
+            "leverage": 48,
+            "agenda": "部院实务、避党争、按章办事"
+          },
+          {
+            "name": "军队",
+            "leverage": 38,
+            "agenda": "补饷、守边、少受外朝掣肘"
+          },
+          {
+            "name": "宗室",
+            "leverage": 40,
+            "agenda": "保宗禄、护藩国田产、拒削藩与清核"
+          },
+          {
+            "name": "皇党",
+            "leverage": 38,
+            "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
+          },
+          {
+            "name": "西学",
+            "leverage": 20,
+            "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
+          },
+          {
+            "name": "阉党",
+            "leverage": 78,
+            "agenda": "保住厂卫旧线、内廷人脉和清算余地"
+          }
+        ],
+        "imperial_authority_band": "偏弱",
+        "classes": [
+          "军户",
+          "农民",
+          "匠户",
+          "商人",
+          "士绅",
+          "宗藩",
+          "官僚"
+        ],
+        "gatekeepers": [
+          {
+            "name": "许誉卿",
+            "office": "兵科给事中",
+            "office_type": "六科",
+            "faction": "东林",
+            "courage": "敢任其事",
+            "integrity": "操守清正"
+          },
+          {
+            "name": "黄立极",
+            "office": "内阁首辅",
+            "office_type": "内阁",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          },
+          {
+            "name": "王体乾",
+            "office": "司礼监掌印太监",
+            "office_type": "司礼监",
+            "faction": "阉党",
+            "courage": "进退审慎",
+            "integrity": "操守未稳"
+          }
+        ],
+        "promulgation_history": [],
+        "current_events": [
+          {
+            "id": 2,
+            "title": "辽东索饷",
+            "status": "active"
+          },
+          {
+            "id": 1,
+            "title": "户部亏空",
+            "status": "active"
+          },
+          {
+            "id": 3,
+            "title": "陕西流寇起",
+            "status": "active"
+          }
+        ]
+      },
+      "typed_verdicts": [
+        {
+          "dossier_id": 1,
+          "decision": "promulgated"
+        },
+        {
+          "dossier_id": 2,
+          "decision": "rejected",
+          "blocked_layer": "six_offices",
+          "reason": "候补官员由七品越四级真除三品陕西巡抚，档房已钉死为越制破格；皇威偏弱，兵科给事中许誉卿敢任其事且操守清正，将据名分制度封驳。",
+          "primary_opponents": [
+            {
+              "kind": "faction",
+              "key": "东林"
+            }
+          ],
+          "gatekeeper_id": "许誉卿",
+          "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "appointment_tenure": "真除",
+            "authorization_ids": [],
+            "endorsement_entry_ids": []
+          },
+          "affected_parties": [
+            {
+              "kind": "faction",
+              "key": "东林",
+              "severity": "大怒"
+            }
+          ]
+        }
+      ],
+      "classification": {
+        "break_rank_rejected": true,
+        "ordinary_rejected": false
+      }
+    }
+  ],
+  "raw_cli_trace": [
+    {
+      "ts": "2026-08-13 11:05:23",
+      "seq": 4,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 26.9,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3251,
+      "resp_chars": 506,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本3)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-2-b\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本3)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-2-a\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":2,\"decision\":\"promulgated\"},{\"dossier_id\":1,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"该任免由七品骤升三品，档房已钉死为越制破格；皇威偏弱，六科把关官许誉卿敢任其事且操守清正，必据名分与制度封驳。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"},{\"kind\":\"class\",\"key\":\"官僚\",\"severity\":\"不满\"}]}]}"
+    },
+    {
+      "ts": "2026-08-13 11:05:23",
+      "seq": 2,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 27.7,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3251,
+      "resp_chars": 462,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本1)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-0-a\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本1)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-0-b\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":1,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"真除巡抚由七品骤升三品，档房已钉死为越制破格；皇威偏弱，兵科给事中许誉卿敢任其事且操守清正，将据清议名分封驳。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"}]},{\"dossier_id\":2,\"decision\":\"promulgated\"}]}"
+    },
+    {
+      "ts": "2026-08-13 11:05:25",
+      "seq": 3,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 29.1,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3251,
+      "resp_chars": 504,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本2)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-1-b\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本2)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-1-a\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":2,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"真除任命由七品骤升三品，档房已钉死为越制破格；皇威偏弱，兵科给事中许誉卿敢任其事且操守清正，形成封驳关口。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"},{\"kind\":\"class\",\"key\":\"官僚\",\"severity\":\"不满\"}]},{\"dossier_id\":1,\"decision\":\"promulgated\"}]}"
+    },
+    {
+      "ts": "2026-08-13 11:05:28",
+      "seq": 1,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 31.9,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3251,
+      "resp_chars": 494,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本4)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-3-a\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本4)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-3-b\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":1,\"decision\":\"promulgated\"},{\"dossier_id\":2,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"由七品骤擢三品真除巡抚，档房已钉死为越制破格；皇威偏弱，六科清正敢言官员必据名分封驳。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"},{\"kind\":\"class\",\"key\":\"官僚\",\"severity\":\"不满\"}]}]}"
+    },
+    {
+      "ts": "2026-08-13 11:05:49",
+      "seq": 5,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 24.9,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3251,
+      "resp_chars": 509,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本5)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-4-a\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本5)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-4-b\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":1,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"真除任命由七品骤升三品，档房已钉死为越制破格；皇威偏弱，且无授权与背书，六科把关官操守清正、敢任其事，必据名分封驳。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"},{\"kind\":\"class\",\"key\":\"官僚\",\"severity\":\"不满\"}]},{\"dossier_id\":2,\"decision\":\"promulgated\"}]}"
+    },
+    {
+      "ts": "2026-08-13 11:05:49",
+      "seq": 6,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 24.6,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3251,
+      "resp_chars": 467,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本6)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-5-b\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本6)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-5-a\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":2,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"真除由七品骤升三品，档房已钉死为越制破格；皇威偏弱且无授权、背书，兵科给事中许誉卿操守清正、敢任其事，必据名分制度封驳。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"}]},{\"dossier_id\":1,\"decision\":\"promulgated\"}]}"
+    },
+    {
+      "ts": "2026-08-13 11:05:50",
+      "seq": 7,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 24.0,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3251,
+      "resp_chars": 506,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本7)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-6-b\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本7)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-6-a\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":2,\"decision\":\"promulgated\"},{\"dossier_id\":1,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"由七品骤升三品巡抚，档房已钉死为越制破格；皇威偏弱且无授权、背书，兵科把关官敢任其事、操守清正，必据名分封驳。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"},{\"kind\":\"class\",\"key\":\"官僚\",\"severity\":\"不满\"}]}]}"
+    },
+    {
+      "ts": "2026-08-13 11:05:52",
+      "seq": 8,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 22.5,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3251,
+      "resp_chars": 514,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本8)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-7-a\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本8)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-7-b\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":1,\"decision\":\"promulgated\"},{\"dossier_id\":2,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"七品候补官员真除三品陕西巡抚，档房已钉死为越制破格；皇威偏弱，兵科给事中许誉卿属东林、敢任其事且操守清正，将据名分与制度封驳。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"},{\"kind\":\"class\",\"key\":\"官僚\",\"severity\":\"不满\"}]}]}"
+    },
+    {
+      "ts": "2026-08-13 11:06:13",
+      "seq": 12,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 20.1,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3255,
+      "resp_chars": 469,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本12)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-11-a\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本12)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-11-b\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":1,\"decision\":\"promulgated\"},{\"dossier_id\":2,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"候补官员由七品越四级真除三品陕西巡抚，档房已钉死为越制破格；皇威偏弱，兵科给事中许誉卿敢任其事且操守清正，将据名分制度封驳。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"}]}]}"
+    },
+    {
+      "ts": "2026-08-13 11:06:16",
+      "seq": 10,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 25.3,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3253,
+      "resp_chars": 512,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本10)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-9-b\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本10)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-9-a\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":2,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"真除巡抚由七品骤升三品，档房已钉死为越制破格；皇威偏弱，且无授权或背书，兵科给事中许誉卿敢任其事、操守清正，形成封驳关口。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"},{\"kind\":\"class\",\"key\":\"官僚\",\"severity\":\"不满\"}]},{\"dossier_id\":1,\"decision\":\"promulgated\"}]}"
+    },
+    {
+      "ts": "2026-08-13 11:06:17",
+      "seq": 11,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 25.3,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3255,
+      "resp_chars": 514,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本11)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-10-b\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本11)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-10-a\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":2,\"decision\":\"promulgated\"},{\"dossier_id\":1,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"该任免已被档房钉死为由七品越升三品的越制破格；皇威偏弱且无授权、背书，兵科给事中许誉卿操守清正、敢任其事，必据名分与制度封驳。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"},{\"kind\":\"class\",\"key\":\"官僚\",\"severity\":\"不满\"}]}]}"
+    },
+    {
+      "ts": "2026-08-13 11:06:28",
+      "seq": 9,
+      "tag": "other",
+      "backend": "codex",
+      "model_id": "gpt-5.6-sol",
+      "dur_s": 37.6,
+      "attempts": 1,
+      "wants_json": false,
+      "prompt_chars": 3251,
+      "resp_chars": 551,
+      "error": null,
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本9)\", \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-562-8-a\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 3, \"is_break_rank\": false, \"new_rank_band\": 3}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"偏弱\"}, \"decree_text\": \"任命候补官员为陕西巡抚(比较样本9)\", \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-562-8-b\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": 28, \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": 48, \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": 38, \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": 40, \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": 38, \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": 20, \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": 78, \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"偏弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "{\"verdicts\":[{\"dossier_id\":1,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"真除任命由七品骤升三品，已属越制破格；皇威偏弱且无授权、背书，兵科给事中许誉卿敢任其事、操守清正，必行封驳。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"偏弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"severity\":\"大怒\"},{\"kind\":\"faction\",\"key\":\"中立\",\"severity\":\"不满\"},{\"kind\":\"class\",\"key\":\"官僚\",\"severity\":\"不满\"}]},{\"dossier_id\":2,\"decision\":\"promulgated\"}]}"
+    }
+  ]
+}

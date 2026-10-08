@@ -104,7 +104,6 @@ def _audit_dossier(db, state, *, auditor: str, subject_id: int, token: str = "au
 
 
 
-from tests.test_faction_denunciation_627 import _table_cols
 
 # ── AC1 事实底 ────────────────────────────────────────────────────
 

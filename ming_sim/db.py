@@ -13532,7 +13532,7 @@ class GameDB:
                         }
                     },
                     "reason": str(
-                        payload.get("text") or row.get("decree_text") or "受抚归明"
+                        payload.get("text") or "受抚归明"
                     ),
                 }
                 from ming_sim.issues import _apply_person_changes
@@ -14270,7 +14270,7 @@ class GameDB:
         )
 
         reason = str(
-            payload.get("text") or row.get("decree_text") or "撤回成命"
+            payload.get("text") or "撤回成命"
         )
 
         # #1894：撤旨照常过外廷。外廷（0055 颁布判决）准行即当月落实，
@@ -14315,7 +14315,7 @@ class GameDB:
             or ""
         ).strip()
         reason = str(
-            payload.get("text") or row.get("decree_text") or "军令调遣"
+            payload.get("text") or "军令调遣"
         )
         from ming_sim.participant_roster import resolve_dossier_owner_name
         actor = resolve_dossier_owner_name(row)
@@ -14347,14 +14347,15 @@ class GameDB:
 
         题名只认结构化 title|target_id，不从 decree_text/正文/皇帝散文截取，
         不生成「交办差事/下议事项」默认题名冒充来源身份。
-        正文唯一真源 payload.text；旧案卷无 text 时 decree_text 仅作正文承接，
+        正文唯一真源 payload.text；不回落旧档 decree_text。
         不得回填题名，不得以题名/target_id 冒充正文。
         真缺锚时 title 为空串——caller 复用既有 execution failed 接缝，保留案卷与正文。
         """
+        del row  # 读侧不再回落旧档 decree_text
         title = str(payload.get("title") or "")
         if not title:
             title = str(payload.get("target_id") or "").strip()
-        body = str(payload.get("text") or row.get("decree_text") or "")
+        body = str(payload.get("text") or "")
         return title, body
 
     def _apply_referral_verdict_effect(
@@ -14598,7 +14599,7 @@ class GameDB:
             raise ValueError("惩处案卷缺少 canonical target")
         origin_ref = f"dossier:{int(dossier_id)}"
         reason = str(
-            payload.get("text") or row.get("decree_text") or punish_action
+            payload.get("text") or punish_action
         )
         # #658：typed backing 单权威（与 stage 首写共吃）
         backing_id = int(require_backing_dossier_id(self, payload.get("backing_dossier_id")) or 0)
@@ -16735,12 +16736,7 @@ class GameDB:
         owns_transaction = self.owns_transaction() if commit else False
         structured = dict(payload or {})
         if not structured:
-            structured = {
-                "dossier_action_type": "special_decree",
-                "target_kind": "policy",
-                "target_id": f"legacy-directive:{directive_id}",
-                "locality_scope": "none",
-            }
+            raise ValueError("旨意缺少结构化载荷，拒绝成案")
         if classify_directive_structured_kind(structured) == "push":
             raise ValueError("御笔强推须从批红以原案 decision_key 提交，不经手拟或召对成案")
         structured = self._normalize_directive_dossier_payload(

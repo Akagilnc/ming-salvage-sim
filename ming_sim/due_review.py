@@ -393,12 +393,10 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
     origin = str(review_input.get("origin_context") or "")
 
     if mid:
-        note = f"中段复核：{criterion}仍在办理"
-        if origin:
-            note = f"中段复核（{origin}）：{criterion}仍在办理"
+        # 中段只保机械执行态；不代写人物奏报/复核陈词（缺原奏不造）。
         return {
             "outcome": "executing",
-            "note": note,
+            "note": "",
             "close": False,
             "is_terminal": False,
             "mid_stage": True,
@@ -468,22 +466,19 @@ def _apply_dossier_verdict(
         close=close, commit=False,
     )
     if is_terminal and outcome in {"degraded", "transformed"}:
-        # #622：奏报轨载承办人假象；progress_band 定性中文；判官真值只在执行格。
-        # 进度写失败不得静默：执行格可能已落，分叉态须响亮（P1 / ADR 0005）
+        # #622：奏报轨只搬已有模型原奏；progress_band 定性中文；判官真值只在执行格。
+        # 缺原奏不造。进度写失败不得静默：执行格可能已落，分叉态须响亮（P1 / ADR 0005）
         prior = list(db.list_dossier_progress(int(dossier_id)))
-        band, memorial = terminal_report_facade(outcome, prior_reports=prior)
-        db.record_dossier_progress(
-            int(dossier_id), int(state.turn), band, memorial,
-            is_terminal=True,
-            origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
-            commit=False,
-        )
-    elif not is_terminal:
-        # 中段过程奏报：非终值
-        db.record_dossier_progress(
-            int(dossier_id), int(state.turn), "在办", note,
-            is_terminal=False, commit=False,
-        )
+        facade = terminal_report_facade(outcome, prior_reports=prior)
+        if facade is not None:
+            band, memorial = facade
+            db.record_dossier_progress(
+                int(dossier_id), int(state.turn), band, memorial,
+                is_terminal=True,
+                origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
+                commit=False,
+            )
+    # 中段：不代写人物奏报；缺原奏不造 process progress 行。
     if is_terminal and outcome in GameDB._JOINT_LIABILITY_TRIGGERS:
         db.apply_execution_joint_liability(
             state, int(dossier_id), outcome, reason=note, commit=False,
