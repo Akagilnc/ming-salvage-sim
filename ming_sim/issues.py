@@ -1095,23 +1095,13 @@ def _fiscal_levy_base_transport(
     return max(0.0, seed_transport - liao_seed)
 
 
-def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> Optional[dict]:
+def _load_region_fiscal_for_fiscal_levy(region_id: str, raw_fiscal: object) -> dict:
+    """Durable region fiscal for levy channel: corrupt must not wash into no-effect."""
     if isinstance(raw_fiscal, dict):
-        return raw_fiscal
-    if raw_fiscal is None or raw_fiscal == "":
-        raw_fiscal = "{}"
-    elif not isinstance(raw_fiscal, (str, bytes, bytearray)):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    try:
-        fiscal = json.loads(raw_fiscal)
-    except (TypeError, ValueError) as exc:
-        tlog(f"[fiscal-levy] {region_id} fiscal 解析失败，本{TURN_UNIT}饷率通道出列：{type(exc).__name__}: {exc}")
-        return None
-    if not isinstance(fiscal, dict):
-        tlog(f"[fiscal-levy] {region_id} fiscal 非字典，本{TURN_UNIT}饷率通道出列")
-        return None
-    return fiscal
+        return dict(raw_fiscal)
+    return loads_persistent_json_object(
+        raw_fiscal, surface=f"regions[{region_id}].fiscal",
+    )
 
 
 def _fiscal_levy_event_by_id(event_id: str) -> Optional[Event]:
@@ -2251,11 +2241,10 @@ def gather_impeachment_surge_candidates(state: GameState, db: GameDB) -> List[Di
         )
         if not roster:
             continue
-        participant_ids = [
-            str(item.get("character_id") or "").strip()
-            for item in roster if isinstance(item, dict) and str(item.get("character_id") or "").strip()
-        ]
-        if len(participant_ids) != len(roster) or not participant_ids:
+        # Reuse strict roster name projection; corrupt members raise (no empty wash).
+        from ming_sim.participant_roster import participant_roster_names
+        participant_ids = sorted(participant_roster_names(roster))
+        if not participant_ids:
             continue
         liability = project_execution_liability_parties(roster)
         responsible_ids = [

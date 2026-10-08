@@ -72,9 +72,10 @@ def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
             roster, surface="decree_dossiers.participant_roster",
         )
     if isinstance(roster, list):
+        # Validate member shape via shared projection (null/non-object raise).
+        if roster:
+            participant_roster_names(roster)
         for entry in roster:
-            if not isinstance(entry, dict):
-                continue
             if str(entry.get("tier") or "").strip() != "主办":
                 continue
             name = str(entry.get("character_id") or "").strip()

@@ -16,6 +16,7 @@ import json
 from typing import Any, Dict, List
 
 from ming_sim.models import loads_persistent_json_list, loads_persistent_json_object
+from ming_sim.strict_types import strict_int
 
 ENTRY_KIND_STAGED = "staged_commitment"
 # #624 / ADR 0078：反催谏 / 求宽限（0075 同款 next_audience_todos 通道；不进 due-review 白名单）
@@ -54,8 +55,8 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
         if "due_turn" not in item:
             raise ValueError(f"issues.stages_json[{idx}] 缺 due_turn")
         try:
-            due_turn = int(item.get("due_turn"))
-        except (TypeError, ValueError) as exc:
+            due_turn = strict_int(item.get("due_turn"), accept_numeric_strings=False)
+        except ValueError as exc:
             raise ValueError(
                 f"issues.stages_json[{idx}].due_turn 非法：{item.get('due_turn')!r}"
             ) from exc
@@ -63,12 +64,15 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
             raise ValueError(
                 f"issues.stages_json[{idx}].due_turn 须为正整数，得 {due_turn!r}"
             )
-        try:
-            stage_idx = int(item.get("stage_idx", idx))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"issues.stages_json[{idx}].stage_idx 非法：{item.get('stage_idx')!r}"
-            ) from exc
+        if "stage_idx" in item:
+            try:
+                stage_idx = strict_int(item.get("stage_idx"), accept_numeric_strings=False)
+            except ValueError as exc:
+                raise ValueError(
+                    f"issues.stages_json[{idx}].stage_idx 非法：{item.get('stage_idx')!r}"
+                ) from exc
+        else:
+            stage_idx = idx
         criterion = str(
             item.get("criterion_text") or item.get("criterion") or ""
         )

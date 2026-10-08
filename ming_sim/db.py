@@ -438,16 +438,24 @@ def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
 
 
 def _has_stop_condition(stop_condition: object) -> bool:
-    if isinstance(stop_condition, (dict, list)):
+    """True when durable stop_condition has work. Corrupt structure raises.
+
+    Legal empty (None/''/{}) → False. Non-JSON free-text DSL → True.
+    JSON-looking text must be a dict object (list root rejected).
+    """
+    if isinstance(stop_condition, dict):
         return bool(stop_condition)
+    if isinstance(stop_condition, list):
+        raise ValueError("issues.stop_condition 须为对象，得 list")
     raw = str(stop_condition or "").strip()
     if not raw:
         return False
-    try:
-        parsed = json.loads(raw)
-    except (TypeError, ValueError):
-        return False
-    return isinstance(parsed, (dict, list)) and bool(parsed)
+    if raw[0] in "{[":
+        if raw[0] == "[":
+            raise ValueError("issues.stop_condition 须为对象，得 list")
+        data = loads_persistent_json_object(raw, surface="issues.stop_condition")
+        return bool(data)
+    return True
 
 def _optional_positive_dossier_id(raw: object, *, field: str) -> Optional[int]:
     """#658：typed dossier id 单权威——真正缺省→None；一旦出现只接正整数。
@@ -8802,11 +8810,9 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        try:
-            timeline = json.loads(row["timeline"] or "[]")
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            tlog(f"[db] timeline JSON 损坏，回空：{exc}")  # #14 surface
-            timeline = []
+        timeline = loads_persistent_json_list(
+            row["timeline"], surface="ending_summary.timeline",
+        )
         return {
             "turn": int(row["turn"]),
             "year": int(row["year"]),
@@ -9034,7 +9040,7 @@ class GameDB:
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
         """读本回合决策点（按 idx）——HITL envelope 唯一读取缝。
 
-        谓词收窄到 kind='decision'。options 反序列化；choice 为已选则带出。
+        谓词收窄到 kind='decision'；行投影复用 _project_rescript_desk_row。
         """
         rows = self.conn.execute(
             "SELECT idx, event_id, title, context, rejection_reason, "
@@ -9042,40 +9048,7 @@ class GameDB:
             "FROM pending_decisions WHERE turn = ? AND kind = 'decision' ORDER BY idx",
             (int(turn),),
         ).fetchall()
-        out: List[Dict[str, object]] = []
-        for r in rows:
-            options = loads_persistent_json_list(
-                r["options_json"], surface="pending_decisions.options_json",
-            )
-            choice_raw = (r["choice_json"] or "").strip()
-            if choice_raw:
-                try:
-                    choice = json.loads(choice_raw)
-                except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                    raise ValueError(
-                        f"pending_decisions.choice_json 腐坏 JSON：{choice_raw!r}"
-                    ) from exc
-            else:
-                choice = None
-            source_turn = int(r["turn"])
-            idx = int(r["idx"])
-            kind = str(r["kind"] or "decision")
-            out.append({
-                "idx": idx,
-                "decision_key": f"{kind}:{source_turn}:{idx}",
-                "source_turn": source_turn,
-                "turn": source_turn,
-                "event_id": r["event_id"],
-                "title": r["title"],
-                "context": r["context"],
-                "rejection_reason": r["rejection_reason"],
-                "opposition": r["opposition"],
-                "options": options,
-                "choice": choice,
-                "status": r["status"],
-                "kind": kind,
-            })
-        return out
+        return [self._project_rescript_desk_row(r) for r in rows]
 
 
     def list_rescript_desk(self, turn: int) -> List[Dict[str, object]]:
