@@ -114,34 +114,7 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     )
 
 
-@pytest.fixture
-def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    """真实 WebGame（新档、temp DB）；构造即不连 LLM，仅 runtime 与动作级 LLM 边界中和。
-
-    允许 canned seam（定义真源 / runtime lookup，本 fixture 唯一 fake 面）：
-
-    - #1842：收夜不再起 endorsement-only 批
-
-    - web_app.run_highlight_judge → 回话 done 后高亮判官（#544；禁 sk-test 真网）
-    - _fake_settlement_llm：decree 判官/推演/抽取/拟诏
-    - load_runtime_llm 配置中和
-    - registry.get → 大臣回话流（_FakeAgent，按测例挂起）
-    不 patch auto-close / 结算核。
-    """
-    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-
-    # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和，禁 sk-test 打真 OpenAI。
-    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
-    game = web_app.WebGame(fresh=False)
-    monkeypatch.setattr(web_app, "web_game", game)
-    yield game
-    try:
-        game.session.close()
-    except Exception:
-        pass
+# web_game 夹具权威在 tests/conftest.py（#1847 消费者闭包复用，禁平行装配）。
 
 
 from tests.test_court_break_player_lock_1727 import _active_minister

@@ -14,9 +14,8 @@ def _scroll_game(db):
         pending_translation_retries=lambda **kw: list_pending_translations(db, **kw),
     )
 
-def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(tmp_path, monkeypatch):
+def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(web_game, monkeypatch):
     import web_app
-    from tests.conftest import stub_audience_translate, stub_scene_agent
     from tests.test_chat_stream_failpaths_393 import _parse_sse, _transport_web_game
 
     class _FailingAgent:
@@ -24,7 +23,7 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(tmp
             raise RuntimeError("reply failed")
             yield  # pragma: no cover - make this the agent's streaming generator
 
-    runtime, _ = _transport_web_game(tmp_path, _FailingAgent(), monkeypatch)
+    runtime, _ = _transport_web_game(web_game, _FailingAgent(), monkeypatch)
     db, state = runtime.db, runtime.state
     old_night_id = open_audience_night(db, state)
     db.conn.execute(
@@ -54,7 +53,7 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(tmp
     assert int(persisted["id"]) != old_night_id
     assert int(persisted["turn"]) == int(state.turn)
 
-def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(tmp_path, monkeypatch):
+def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(web_game, monkeypatch):
     import web_app
     from tests.test_chat_stream_failpaths_393 import _parse_sse, _transport_web_game
 
@@ -63,7 +62,7 @@ def test_real_player_summon_sse_precedes_reply_and_scroll_shows_protagonist(tmp_
             yield type("RC", (), {"event": "RunContent", "content": "臣领旨。"})()
             yield type("RO", (), {"content": "臣领旨。", "tools": [], "status": "COMPLETED"})()
 
-    runtime, _ = _transport_web_game(tmp_path, _OkAgent(), monkeypatch)
+    runtime, _ = _transport_web_game(web_game, _OkAgent(), monkeypatch)
     runtime.favorites = set()
     content = runtime.content
     client = TestClient(web_app.app)
@@ -137,7 +136,7 @@ def test_scroll_exposes_declared_protagonist_and_ledger_roster(game, monkeypatch
         {"name": "毕自严", "present": True},
     ]
 
-def test_scroll_projects_portrait_for_legal_aside_speaker_outside_roster(tmp_path, monkeypatch):
+def test_scroll_projects_portrait_for_legal_aside_speaker_outside_roster(web_game, monkeypatch):
     import web_app
     from tests.test_chat_stream_failpaths_393 import _transport_web_game
 
@@ -145,7 +144,7 @@ def test_scroll_projects_portrait_for_legal_aside_speaker_outside_roster(tmp_pat
         def run(self, *_a, **_k):
             yield type("RO", (), {"content": "", "tools": [], "status": "COMPLETED"})()
 
-    runtime, _ = _transport_web_game(tmp_path, _OkAgent(), monkeypatch)
+    runtime, _ = _transport_web_game(web_game, _OkAgent(), monkeypatch)
     runtime.favorites = set()
     db, state, content = runtime.db, runtime.state, runtime.content
     night_id = open_audience_night(db, state)

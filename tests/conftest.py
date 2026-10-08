@@ -520,6 +520,32 @@ def _offline_scene_beat_generator():
     mp.undo()
 
 
+
+@pytest.fixture
+def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
+    """真实 WebGame（新档、temp DB）；构造即不连 LLM，仅 runtime 与动作级 LLM 边界中和。
+
+    单权威开局/生命周期夹具（#1847 消费者闭包复用）。测试只经本夹具取 runtime，
+    不得平行复制 env/API key/WebGame 构造与 session.close teardown。
+    """
+    import web_app
+
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    # #544 / #1353 r6：高亮判官同属回话后 LLM 边界——离线中和，禁 sk-test 打真 OpenAI。
+    monkeypatch.setattr(web_app, "run_highlight_judge", lambda **_k: [])
+    game = web_app.WebGame(fresh=False)
+    monkeypatch.setattr(web_app, "web_game", game)
+    yield game
+    try:
+        game.session.close()
+    except Exception:
+        pass
+
+
+
 @pytest.fixture
 def _atomic_connless_test_shell_compat():
     """#542：无 conn 轻壳测试显式 opt-in 的 atomic 兼容（非 autouse）。

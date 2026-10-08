@@ -15,8 +15,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -27,8 +25,6 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
 from tests.test_session_write_queue_1353 import wait_pending_writes as _wait_pending_writes
-from tests.conftest import stub_audience_translate, stub_scene_agent
-
 
 # ── outermost LLM seams only ─────────────────────────────────────────────
 
