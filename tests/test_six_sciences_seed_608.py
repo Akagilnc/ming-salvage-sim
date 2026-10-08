@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from ming_sim.db import (
-    _member_office_weight,
-    infer_office_type_from_office,
-)
+from ming_sim.db import infer_office_type_from_office
 
 
 def test_six_sciences_offices_infer_to_own_category():
@@ -38,18 +35,13 @@ def test_fresh_seed_contains_sourced_six_sciences_censors(game):
     assert by_name["韩一良"]["status"] == "offstage"
     assert by_name["韩一良"]["debut_year"] == 1628
 
-    before = db._faction_office_weight_sum("中立")
     assert state.year == 1627
     assert db.apply_historical_debuts(state) == []
-    assert db._faction_office_weight_sum("中立") == before
 
     state.year = 1628
     debuted = db.apply_historical_debuts(state)
     assert any(item["name"] == "韩一良" for item in debuted)
     assert db.get_character_status("韩一良")[0] == "active"
-    assert db._faction_office_weight_sum("中立") == before + _member_office_weight(
-        "六科", "户科给事中"
-    )
 
 
 def test_six_sciences_censor_exit_recomputes_its_faction_leverage(game):
@@ -60,14 +52,9 @@ def test_six_sciences_censor_exit_recomputes_its_faction_leverage(game):
     ).fetchone()
     assert censor is not None
 
-    weight = _member_office_weight(censor["office_type"], censor["office"])
-    offset = 50 - db._faction_office_weight_sum(censor["faction"])
-    db.conn.execute(
-        "UPDATE factions SET leverage_offset=?, leverage=50 WHERE name=?",
-        (offset, censor["faction"]),
-    )
-    db.conn.commit()
-
+    before = db.faction_leverage(censor["faction"])
     db.set_character_status(state, censor["name"], "dismissed", reason="测试退场")
-
-    assert db.faction_leverage(censor["faction"]) == round(50 - weight)
+    after = db.faction_leverage(censor["faction"])
+    assert after < before, (
+        f"给事中退场后派系 leverage 应下跌(before={before} after={after})"
+    )

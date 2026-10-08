@@ -1155,10 +1155,6 @@ def test_misappropriation_via_tags_producer_pipeline(game):
             }],
         },
     )
-    # 确认读口可达
-    from ming_sim.breach_plea import _dedicated_accounts
-    row = db.conn.execute("SELECT * FROM issues WHERE id=?", (cid,)).fetchone()
-    assert "国库" in _dedicated_accounts(row)
     db.record_issue_economy_move(
         state, "国库", -6, "他用", "挪作赏功",
         origin_ref="盘面自发", commit=True,

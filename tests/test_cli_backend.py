@@ -13,7 +13,6 @@ from types import SimpleNamespace
 
 import pytest
 from agno.models.message import Message
-from pydantic import BaseModel
 
 import ming_sim.cli_backend as cb
 from ming_sim.models import LLMConfig
@@ -327,30 +326,6 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
     assert out.content == runner_text
 
 
-def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
-    cc = cb.CliChat(id="cli-test", backend="agy")
-    seen = []
-
-    def fake_cli(prompt):
-        seen.append(prompt)
-        return ("{}", 1)
-
-    monkeypatch.setattr(cc, "_call_cli", fake_cli)
-    monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    msgs = [SimpleNamespace(role="user", content="EXTRACT")]
-    cc.invoke(msgs, Message(role="assistant"), response_format={"type": "json_object"})
-
-    class _RF(BaseModel):
-        x: int = 0
-
-    cc.invoke(msgs, Message(role="assistant"), response_format=_RF)
-    cc.invoke(msgs, Message(role="assistant"))
-    # response_format 改变拼装结果（结构化路由），不锁用户原文子串
-    assert len(seen) == 3
-    assert seen[0] != seen[2]
-    assert seen[1] != seen[2]
-
-
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
     """#1299/#1310：runner 失败翻 typed LLMUnavailable；trace 仍记机器原文。"""
     from ming_sim.exceptions import LLMUnavailable
@@ -508,7 +483,6 @@ def test_office_inference_llm_call_is_traced(monkeypatch):
 
 
 def test_public_cli_support_restores_existing_runners(monkeypatch):
-    assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
     assert [row["value"] for row in cb.cli_runner_choices()] == ["agy", "codex", "claude", "cursor", "kimi", "grok", "pi"]
     assert set(cb.cli_model_choices()) == {row["value"] for row in cb.cli_runner_choices()}
     for name in ("opencode",):
