@@ -210,17 +210,22 @@ def _remember_typed_failure(
             return
         if isinstance(cause, APIConnectionError):
             # 已知提供方连接故障始终记 typed，不得落入 _code_fault（#1902
-            # KNOWN-PROVIDER-FAILURES）。流式 remember_connection=False 时强制
-            # retryable=False——维持 #1780「无 HTTP status 的连接断不重试」，
-            # 但不把连接断误当成代码 bug。
-            failure = classify_transport_failure(cause)
-            if not remember_connection and failure.retryable:
+            # KNOWN-PROVIDER-FAILURES）。流式 remember_connection=False：用既有
+            # terminal 码 llm_stream_error（非 llm_connection_error）——后者经
+            # transport_failure_unavailable→LLMUnavailable 再 classify 会被
+            # 重判 retryable=True 而重试三次；llm_stream_error 往返仍 terminal
+            # （#1780 / 上轮 KNOWN-PROVIDER 处方：流式无 HTTP status 不重试）。
+            # 同步路径仍走可重试 llm_connection_error，不连带禁重试。
+            if remember_connection:
+                failure = classify_transport_failure(cause)
+            else:
+                base = classify_transport_failure(cause)
                 failure = ClassifiedFailure(
                     retryable=False,
-                    code=failure.code,
-                    status_code=failure.status_code,
-                    provider_message=failure.provider_message,
-                    message=failure.message,
+                    code="llm_stream_error",
+                    status_code=None,
+                    provider_message=base.provider_message,
+                    message=base.message,
                 )
             _typed_provider_failure.set(failure)
             _code_fault.set(None)
