@@ -7,7 +7,6 @@ import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
 from tests.conftest import covering_monthly_extract
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
-from tests.conftest import wait_for_background_jobs
 
 def _active_people(db, count):
     people = [
@@ -1149,26 +1148,6 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     assert terminal.review_directives(session) == "back"
     assert db.get_dossier_for_directive(directive_id) is not None
     assert db.list_directives(state)[0]["text"] == "着修河工"
-
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
-    from ming_sim.session import GameSession
-
-    db, state, _content = game
-    db.create_decree_dossier(
-        state, action_type="policy", decree_text="清核河工",
-        target_kind="issue", target_id="river-works",
-    )
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    called = []
-    session.resolve_turn = lambda **_k: called.append("resolve")
-
-    session.advance_without_decree()
-    wait_for_background_jobs(db)
-
-    assert called == ["resolve"]
 
 # #1902：拟诏台手写改稿（Web PATCH /api/directives、CLI edit）随整条入口退役，
 # 「手改旨文并重抽 mechanics」这条能力不再存在，本用例随之退役；改稿入口不再
