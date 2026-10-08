@@ -181,18 +181,6 @@ def _get_state(client: TestClient) -> dict:
     return resp.json()
 
 
-def _pending_payload(client: TestClient) -> dict:
-
-    """#1842/#1853：待补投影唯一真源 = list_pending_translations → scroll.translation_retries。"""
-    resp = client.get("/api/audience/scroll")
-    _assert_not_bare_500(resp, step="GET /api/audience/scroll")
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    retries = list(body.get("translation_retries") or [])
-    return {"pending": retries, "count": len(retries)}
-
-
-
 from tests.test_chat_stream_failpaths_393 import _parse_sse
 
 

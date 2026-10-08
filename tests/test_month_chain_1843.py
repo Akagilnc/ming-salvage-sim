@@ -46,13 +46,6 @@ def _stage_edict(db, state, minister, text, category, delta, affair_id):
     )
     return pending_id, ref
 
-def _categories(db):
-    return [
-        str(row["category"]) for row in db.conn.execute(
-            "SELECT category, delta FROM economy_ledger ORDER BY id",
-        ) if str(row["category"]) in {"宁远补饷", "陕西赈灾", "大凌河"}
-    ]
-
 def _prepare_player_month(db, state, content, monkeypatch, *, world=None, translate=None, secret_orders_supply=None):
     """换掉世界段与转译的模型缝，返回尚未过月的 session。不含在飞屏障。"""
     _forbid_extractor(monkeypatch)
