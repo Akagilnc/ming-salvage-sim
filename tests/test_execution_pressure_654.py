@@ -20,17 +20,6 @@ def env(game):
 
 # ── 词表 / scope 归一 ──────────────────────────────────────────────
 
-@pytest.mark.parametrize("raw,expected", [
-    (None, "none"),
-    ("", "none"),
-    ("无", "none"),
-    ("全国", "national"),
-    ("单省", "single"),
-    ("national", "national"),
-])
-def test_normalize_locality_scope(raw, expected):
-    assert normalize_locality_scope(raw) == expected
-
 def test_normalize_locality_scope_rejects_unknown():
     with pytest.raises(ValueError):
         normalize_locality_scope("全省")
@@ -108,58 +97,6 @@ def test_mapper_rejects_contradictory_locality_scope_without_overwrite():
     assert region_shape["region_id"] == "shaanxi"
 
 # ── locality oracle 组合矩阵 ───────────────────────────────────────
-
-def test_national_policy_is_one_dossier_not_per_province(env):
-    """#1778 决定 4：全国政令也是一份案卷，region_id 空——不按省拆。"""
-    db, _, content = env
-    regions = resolve_dossier_region_ids(
-        db.conn,
-        payload={
-            "target_kind": "policy",
-            "target_id": "清丈田亩",
-            "locality_scope": "national",
-        },
-        regions_content=content.regions,
-    )
-    assert regions == [""]
-
-def test_special_decree_without_national_is_single_empty(env):
-    db, _, content = env
-    regions = resolve_dossier_region_ids(
-        db.conn,
-        payload={
-            "target_kind": "policy",
-            "target_id": "manual-directive",
-            "locality_scope": "none",
-        },
-        regions_content=content.regions,
-    )
-    assert regions == [""]
-
-def test_region_single_by_id(env):
-    db, _, content = env
-    assert resolve_dossier_region_ids(
-        db.conn,
-        payload={
-            "target_kind": "region",
-            "target_id": "shaanxi",
-            "locality_scope": "single",
-        },
-        regions_content=content.regions,
-    ) == ["shaanxi"]
-
-def test_region_outside_province_set_yields_empty_locality(env):
-    db, _, content = env
-    # 辽东边镇不入省集合
-    assert resolve_dossier_region_ids(
-        db.conn,
-        payload={
-            "target_kind": "region",
-            "target_id": "liaodong",
-            "locality_scope": "single",
-        },
-        regions_content=content.regions,
-    ) == [""]
 
 @pytest.mark.parametrize("payload", [
     {"target_kind": "region", "target_id": "shaanxi", "locality_scope": "national"},

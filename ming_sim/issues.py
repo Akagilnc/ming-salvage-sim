@@ -5,13 +5,13 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import RejectedItem, Provenance
+from ming_sim.applier import Provenance
 
 import json
 import math
 import re
 import sqlite3
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from ming_sim.applier import (
     RejectionCollector,
@@ -24,7 +24,7 @@ from ming_sim.constants import (
     _SETTLE_META_JIAPIAI_KEY, TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, BUILDING_SCORE_FIELDS,
     BUILDING_QUANTITY_FIELDS, POWER_SCORE_FIELDS, POWER_TEXT_FIELDS,
-    CHARACTER_TEXT_FIELDS, GATE_TABLES, LEVY_DISPLACEMENT_RATE,
+    CHARACTER_TEXT_FIELDS, GATE_TABLES,
 )
 from ming_sim.content import GameContent
 from ming_sim.db import (
@@ -35,10 +35,6 @@ from ming_sim.decree_vocabulary import (
     format_public_progress_disclosure,
 )
 from ming_sim.exceptions import SettlementAbort
-from ming_sim.entities.metric.apply import (
-    ISSUE_METRIC_KEYS,
-)
-from ming_sim.flows import ISSUE_METRIC_LOCK_CAPS
 from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.models import Event, GameState, effect_dict_has_work, loads_effect_dict
 from ming_sim.participant_roster import project_execution_liability_parties

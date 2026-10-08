@@ -23,7 +23,6 @@ from ming_sim.staged_commitment import (
     normalize_commitment_stages,
     stages_to_json,
 )
-from ming_sim.token_stats import tlog
 
 # pending_actions 史源 kind（committed 行；DELETE 仅清 pending）
 URGE_PENDING_KIND_COMMITMENT = "commitment"

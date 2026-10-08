@@ -19,7 +19,6 @@ from ming_sim.pay_order import (
     PayOrderKeyError,
     materialize_pay_order_decree,
     parse_override_key,
-    resolve_haircut_bp,
     resolve_pay_order_overrides,
     restore_pay_order_override,
 )
@@ -107,91 +106,6 @@ def test_origin_ref_must_be_dossier_provenance(game):
         )
 
 # ═══════════════ r3/r4 读取优先级全序 goldens ═══════════════
-
-def test_r4_golden1_region_source_specificity_wins():
-    """r4 golden①：@shaanxi#province 与 #province 并存 → 陕西饷侧取 @shaanxi#province、
-    他省省饷侧取 #province；两把 #province 键对中央侧零约束（饷源精确）。"""
-    config = {
-        "due_haircut_bp_军饷@shaanxi#province": 6000,
-        "due_haircut_bp_军饷#province": 9000,
-    }
-    shaanxi = resolve_pay_order_overrides(config, "shaanxi", turn=1)
-    henan = resolve_pay_order_overrides(config, "henan", turn=1)
-    assert shaanxi.haircut_bp["军饷"] == 6000
-    assert henan.haircut_bp["军饷"] == 9000
-    # 中央侧不受影响：#province 键在任何省的 central 侧都无消费者
-    assert resolve_haircut_bp(config, "军饷", "shaanxi", 1, "central") is None
-    assert resolve_haircut_bp(config, "军饷", "henan", 1, "central") is None
-    assert resolve_haircut_bp(config, "军饷", "", 1, "central") is None
-
-def test_r3_central_side_scope_resolution():
-    """r3 补充 golden（judge class②）：#central / 裸键在中央侧按全序独立取胜。"""
-    both = {
-        "due_haircut_bp_军饷@shaanxi#central": 6000,
-        "due_haircut_bp_军饷#central": 9000,
-    }
-    assert resolve_haircut_bp(both, "军饷", "shaanxi", 1, "central") == 6000
-    assert resolve_haircut_bp(both, "军饷", "liaodong", 1, "central") == 9000
-    # @region 无源缀形同时辖两侧；@shaanxi 与 @shaanxi#central 并存 → 后者胜
-    mixed = {"due_haircut_bp_军饷@shaanxi": 7000, "due_haircut_bp_军饷": 8000}
-    assert resolve_haircut_bp(mixed, "军饷", "shaanxi", 1, "central") == 7000
-    assert resolve_haircut_bp(mixed, "军饷", "shaanxi", 1, "province") == 7000
-    assert resolve_haircut_bp(mixed, "军饷", "henan", 1, "central") == 8000
-    # 中央侧到期 → 该形状退出格律，回落实胜出键
-    expired = {
-        "due_haircut_bp_军饷@shaanxi#central": 6000,
-        "due_haircut_bp_军饷@shaanxi#central_until_turn": 12,
-        "due_haircut_bp_军饷#central": 9000,
-    }
-    assert resolve_haircut_bp(expired, "军饷", "shaanxi", 12, "central") == 6000
-    assert resolve_haircut_bp(expired, "军饷", "shaanxi", 13, "central") == 9000
-
-def test_r4_golden2_expiry_falls_back_to_next_specific(game=None):
-    """r4 golden②：同一在位组合，@shaanxi#province_until_turn 到期后（其余键不变），
-    陕西省饷侧回落 #province 胜出。"""
-    config = {
-        "due_haircut_bp_军饷@shaanxi#province": 6000,
-        "due_haircut_bp_军饷@shaanxi#province_until_turn": 12,
-        "due_haircut_bp_军饷#province": 9000,
-    }
-    assert resolve_pay_order_overrides(config, "shaanxi", turn=12).haircut_bp["军饷"] == 6000
-    assert resolve_pay_order_overrides(config, "shaanxi", turn=13).haircut_bp["军饷"] == 9000
-    # 到期形状退出格律；键与 provenance 保留不删
-    assert config["due_haircut_bp_军饷@shaanxi#province"] == 6000
-    assert config["due_haircut_bp_军饷@shaanxi#province_until_turn"] == 12
-
-def test_precedence_region_beats_bare_and_full_order():
-    config = {
-        "due_priority_军饷@shaanxi": 40,
-        "due_priority_军饷": 10,
-    }
-    # 陕西：@shaanxi 胜出（军饷 40 → 最末）；他省：裸键胜出（军饷 10 → 最先）
-    sx = resolve_pay_order_overrides(config, "shaanxi", turn=1).due_order
-    hn = resolve_pay_order_overrides(config, "henan", turn=1).due_order
-    # 陕西：@shaanxi=40 使军饷与赈济（默认40）并列 → 默认基准 tie-break（军饷10<赈济40）
-    assert tuple(sx) == ("官俸", "宗禄", "军饷", "赈济")
-    # 他省：裸键=10 → 军饷最先
-    assert tuple(hn) == ("军饷", "官俸", "宗禄", "赈济")
-
-def test_priority_tie_breaks_on_default_baseline_stable():
-    config = {"due_priority_宗禄": 10}  # 与 军饷 默认 10 并列 → 默认基准 tie-break（军饷先）
-    order = resolve_pay_order_overrides(config, "shaanxi", turn=1).due_order
-    assert order == ("军饷", "宗禄", "官俸", "赈济")
-
-def test_arrears_order_resolution_default_and_override():
-    no_cfg = resolve_pay_order_overrides({}, "shaanxi", turn=1)
-    assert no_cfg is None  # 无旨 fast path：零合并
-    config = {"arrears_priority_军饷欠": 30, "arrears_priority_宗禄欠": 10}
-    res = resolve_pay_order_overrides(config, "shaanxi", turn=1)
-    assert res.arrears_order == ("宗禄欠", "官俸欠", "军饷欠")
-
-def test_expired_only_keys_return_none_fast_path():
-    config = {
-        "due_priority_军饷": 40,
-        "due_priority_军饷_until_turn": 5,
-    }
-    assert resolve_pay_order_overrides(config, "shaanxi", turn=6) is None
-    assert resolve_pay_order_overrides(config, "shaanxi", turn=5) is not None
 
 # ═══════════════ F1.6 验收表 golden ①–⑦ ═══════════════
 

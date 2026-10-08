@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from ming_sim.applier import Provenance
-
 import copy
 import json
 import math
@@ -17,7 +15,6 @@ from ming_sim.army_pay import (
     settle_hub_army_loyalty_tick,
     settle_hub_central_army_pay,
 )
-from ming_sim.assets import format_wanliang_amount
 from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.error_pack import settlement_abort_message, write_error_pack

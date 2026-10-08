@@ -28,7 +28,7 @@ from ming_sim.applier import (
     mirror_rejections_after_commit,
 )
 from ming_sim.constants import TURN_UNIT
-from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT, victory_status
+from ming_sim.context import ENDING_LABELS, ENDING_ONGOING, ENDING_TIMEOUT
 from ming_sim.db import GameDB
 from ming_sim.error_pack import (
     _next_attempt,

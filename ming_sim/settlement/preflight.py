@@ -10,54 +10,22 @@ from ming_sim.applier import RejectedItem, Provenance
 import copy
 import json
 import re
-import sqlite3
-from contextlib import contextmanager
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from ming_sim.applier import atomic
 from ming_sim.appointment_tenure import appointment_tenure_from
-from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
-    TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
+    REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
-    BUILDING_SCORE_FIELDS, BUILDING_QUANTITY_FIELDS, BUILDING_TEXT_FIELDS,
-    POWER_SCORE_FIELDS, POWER_TEXT_FIELDS, CHARACTER_TEXT_FIELDS,
-    REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES, GATE_TABLES,
-    LEVY_DISPLACEMENT_RATE,
-    BANDIT_ABSORPTION_FIELDS,
-    BANDIT_ABSORPTION_PERSONS_PER_STRENGTH,
-    RECOVERY_PERSONS_PER_WAN,
-    RECOVERY_GRANT_ACTIONS,
-    RECOVERY_OUTCOME_FACTORS,
+    REGION_FIELD_ALIASES, ARMY_FIELD_ALIASES,
 )
 from ming_sim.content import GameContent
-from ming_sim.context import victory_status
 from ming_sim.db import (
     GameDB,
-    POPULATION_UNIT_PERSONS,
-    _LEVERAGE_FACTIONS,
-    _approx_wanliang,
     normalize_office,
     resolve_office_type_preserving_title,
 )
-from ming_sim.relations import EMPEROR_NODE
-from ming_sim.decree_vocabulary import (
-    dossier_action_policy,
-    format_public_progress_disclosure,
-)
-from ming_sim.exceptions import DeclarationDataError, OfficeAppointmentRejection, SettlementAbort
-from ming_sim.entities.metric.apply import (
-    ISSUE_METRIC_KEYS,
-    apply_metric_dict as _apply_metric_dict,
-)
-from ming_sim.flows import (
-    ISSUE_METRIC_LOCK_CAPS,
-)
-from ming_sim.models import Event, GameState, effect_dict_has_work, loads_effect_dict
-from ming_sim.participant_roster import project_execution_liability_parties
-from ming_sim.entities.character.normalize import normalize_person_changes
+from ming_sim.models import Event, GameState
 from ming_sim.entities.character import names as character_names
-from ming_sim.token_stats import tlog
 
 
 # 人物行程规则真源在 entities.character.transit；战略信封编排从此取用，不持有实现。

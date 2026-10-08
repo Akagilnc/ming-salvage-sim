@@ -10,7 +10,6 @@ kind 分派矩阵（法）：
 
 from __future__ import annotations
 
-from ming_sim.applier import Provenance
 
 import json
 import logging
