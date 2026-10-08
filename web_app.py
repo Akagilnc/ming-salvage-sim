@@ -5409,94 +5409,52 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
 def api_advance_without_edict(
     body: AdvanceWithoutEdictRequest = AdvanceWithoutEdictRequest(),
 ) -> Dict[str, Any]:
-    # #498 AC10 / #1353：内部屏障票据同步等在飞尾随终态
-    # （消费工人终态，不按 elapsed 伪造 409）。用同步 def 交给 FastAPI threadpool，
-    # 绝不在 async event loop 上跑同步 sleep（会冻结全服务）。
+    # #498 AC10 / #1353：内部屏障票据同步等在飞尾随终态。
     game = get_game()
-    turn_before = int(getattr(game.state, "turn", 0) or 0)
-    failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
-    # #1749：entry 释放 write_gate 后 drain 可关旧库；完整错误快照须在持闸窗物化进
-    # failure_snapshot（None=未知；list=已物化）。门后只读 holder，禁再查库。
-    failure_snapshot: Optional[List[Dict[str, Any]]] = None
     try:
-        # #1241 S1：受理样板收 helper；advance 锁语义 = 非阻塞抢锁 409（禁改用阻塞 gate）。
         with _settlement_period_entry(game, write_cm=_serialized_web_write):
-            try:
-                # #1351 A1：获锁后、推进副作用前比对令牌；不匹配 → 409（样板 finally 清展示态）。
-                _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
-                # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
-                # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
-                # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
-                settlement_result = game.session.advance_without_decree(
-                    write_gate_already_held=True,
-                )
-                awaiting = bool(
-                    settlement_result is not None and settlement_result.awaiting
-                )
-                advanced = bool(
-                    settlement_result is not None
-                    and not awaiting
-                    and settlement_result.advanced
-                )
-                if advanced:
-                    game.session.end_turn()
-                    game.refresh_turn()
-                # §2.2：end_turn/refresh 后、return 前直查并立即赋 holder（失败进原异常链）。
-                failure_snapshot = _new_secret_order_failure_payloads_for_turn(
-                    game, turn_before, failed_before)
-                payload = {
-                    "state": game.state_payload(),
-                    "awaiting_decision": awaiting,
-                    "advanced": advanced,
-                    "decisions": (
-                        settlement_result.decisions
-                        if settlement_result is not None and settlement_result.awaiting
-                        else []
-                    ),
-                    "pending_action_failures": failure_snapshot,
-                }
-                return payload
-            except HTTPException:
-                raise
-            except Exception as body_exc:
-                # 仍持 write_cm：唯一次生窗；无条件赋 retain helper 返回值。
-                failure_snapshot = _capture_settlement_failure_snapshot(
-                    failure_snapshot, game, turn_before, failed_before,
-                    primary=body_exc,
-                )
-                raise
+            _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
+            settlement_result = game.session.advance_without_decree(
+                write_gate_already_held=True,
+            )
+            awaiting = bool(
+                settlement_result is not None and settlement_result.awaiting
+            )
+            advanced = bool(
+                settlement_result is not None
+                and not awaiting
+                and settlement_result.advanced
+            )
+            if advanced:
+                game.session.end_turn()
+                game.refresh_turn()
+            return {
+                "state": game.state_payload(),
+                "awaiting_decision": awaiting,
+                "advanced": advanced,
+                "decisions": (
+                    settlement_result.decisions
+                    if settlement_result is not None and settlement_result.awaiting
+                    else []
+                ),
+            }
     except HTTPException:
-        # 令牌/相位/锁门 409 等既有 HTTP 面原样上抛，禁被下方 Exception 改包。
         raise
     except ValueError as e:
-        detail: Any = (
-            {"message": str(e), "pending_action_failures": failure_snapshot}
-            if failure_snapshot else str(e)
-        )
-        raise HTTPException(status_code=400, detail=detail) from None
+        raise HTTPException(status_code=400, detail=str(e)) from None
     except SettlementAbort as e:
         raise HTTPException(
             status_code=409,
-            detail=_settlement_abort_http_detail(e, failure_snapshot),
+            detail=_settlement_abort_http_detail(e),
         ) from None
     except (AudienceNightError, ExceptionGroup) as e:
-        # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
         raise _retryable_audience_close_http(e) from None
     except Exception as e:  # noqa: BLE001
-        # #1433：同流式颁诏 4616-4623——LLMUnavailable→可读 _llm_error_detail；其余 Exception→str。
-        # HTTP 面 LLM 死走 412（菜单/连通先例）；禁裸 500 无 detail。
         if isinstance(e, LLMUnavailable):
-            detail = _llm_error_detail(e)
-            if failure_snapshot:
-                detail = {**detail, "pending_action_failures": failure_snapshot}
-            raise HTTPException(status_code=412, detail=detail) from None
+            raise HTTPException(status_code=412, detail=_llm_error_detail(e)) from None
         message = str(e) or "退朝结算失败，请重试。"
-        detail = (
-            {"message": message, "pending_action_failures": failure_snapshot}
-            if failure_snapshot else {"message": message}
-        )
-        raise HTTPException(status_code=500, detail=detail) from None
+        raise HTTPException(status_code=500, detail={"message": message}) from None
 
 
 # #1341/#1338：PATCH /api/decree 已删（web/src 零真实调用方；裸设总诏绕过 directives
@@ -5535,96 +5493,54 @@ def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label
 async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest()) -> StreamingResponse:
     """流式颁诏：终态（done / decisions / error）经 SSE 推给前端。
 
-    #1852：核账等待面不呈现推演阶段进度；worker 只投终态。
-    resolve_turn 是阻塞的同步调用，用 worker 线程跑；async generator 从 Queue 拉终态转 SSE。
+    #1852：worker 只投终态。#1853 J5：不附 failed 密令专属载荷。
     """
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def worker() -> None:
-        game = None
-        turn_before = 0
-        failed_before: set[int] = set()
-        # #1749：完整错误快照 holder；entry 退出后只读 holder，禁再查库。
-        failure_snapshot: Optional[List[Dict[str, Any]]] = None
         try:
             game = get_game()
-            turn_before = int(game.state.turn)
-            failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
-            # #1241 S1：受理样板收 helper；stream 锁语义 = 阻塞 _game_write_gate（与 issue 同）。
-            # 终态 __done__/__decisions__ 须在 entry（含 clear）成功后才入队——
-            # 与 settled_ok 同核：clear 抛错走 __error__，禁先推成功终态。
             terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(game, write_cm=_game_write_gate):
-                try:
-                    # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
-                    _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
-                    result = game.session.resolve_turn(
-                        cheat_directive=body.cheat,
-                        write_gate_already_held=True,
-                    )
-                    decree = game.session.last_decree
-                    # §2.2：第一次 query 成功处立刻赋 holder；与 terminal 同一份 list。
-                    failure_snapshot = _new_secret_order_failure_payloads_for_turn(
-                        game, turn_before, failed_before)
-                    if result.awaiting:
-                        # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新。
-                        terminal = ("__decisions__", _settlement_player_payload(
-                            decree=decree,
-                            decisions=result.decisions,
-                            pending_action_failures=failure_snapshot,
-                        ))
-                    else:
-                        report = result.report
-                        advanced = bool(getattr(result, "advanced", True))
-                        if advanced:
-                            game.session.end_turn()
-                            game.refresh_turn()
-                        terminal = ("__done__", _settlement_player_payload(
-                            decree=decree,
-                            report=report,
-                            pending_action_failures=failure_snapshot,
-                            advanced=advanced,
-                        ))
-                except HTTPException:
-                    raise
-                except Exception as body_exc:
-                    failure_snapshot = _capture_settlement_failure_snapshot(
-                        failure_snapshot, game, turn_before, failed_before,
-                        primary=body_exc,
-                    )
-                    raise
+                _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
+                result = game.session.resolve_turn(
+                    cheat_directive=body.cheat,
+                    write_gate_already_held=True,
+                )
+                decree = game.session.last_decree
+                if result.awaiting:
+                    terminal = ("__decisions__", _settlement_player_payload(
+                        decree=decree,
+                        decisions=result.decisions,
+                    ))
+                else:
+                    report = result.report
+                    advanced = bool(getattr(result, "advanced", True))
+                    if advanced:
+                        game.session.end_turn()
+                        game.refresh_turn()
+                    terminal = ("__done__", _settlement_player_payload(
+                        decree=decree,
+                        report=report,
+                        advanced=advanced,
+                    ))
             if terminal is not None:
                 ev_queue.put(terminal)
         except ValueError as e:
-            # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
-            ev_queue.put((
-                "__error__",
-                {"message": str(e), "pending_action_failures": failure_snapshot}
-                if failure_snapshot else str(e),
-            ))
+            ev_queue.put(("__error__", str(e)))
         except HTTPException as e:
-            # #1277：令牌 409 等须保留 detail.turn / status_code，供 FE 复用 advance 的
-            # 「serverTurn>expected → reload 不报错」；禁 str(HTTPException) 丢结构。
-            # §5.3：既有 HTTP→SSE；dict setdefault / 非 dict 包装后再附非空 holder。
             detail = e.detail
             if isinstance(detail, dict):
                 payload = dict(detail)
                 payload.setdefault("status_code", e.status_code)
-                if failure_snapshot and "pending_action_failures" not in payload:
-                    payload["pending_action_failures"] = failure_snapshot
                 ev_queue.put(("__error__", payload))
             else:
-                payload = {"message": str(detail), "status_code": e.status_code}
-                if failure_snapshot:
-                    payload["pending_action_failures"] = failure_snapshot
-                ev_queue.put(("__error__", payload))
+                ev_queue.put((
+                    "__error__",
+                    {"message": str(detail), "status_code": e.status_code},
+                ))
         except Exception as e:  # noqa: BLE001
-            # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
-            # #1465 ②：message 标量 + typed 键外层；与 resolve_decisions/stream 同真源。
-            ev_queue.put((
-                "__error__",
-                _settlement_sse_error_data(e, failure_snapshot),
-            ))
+            ev_queue.put(("__error__", _settlement_sse_error_data(e)))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
@@ -5641,7 +5557,6 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             if kind == "__error__":
                 yield sse_event("error", data if isinstance(data, dict) else {"message": data})
                 break
-            # #1852：中间 stage/thinking/text 已退役；非终态事件不转发。
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -5656,82 +5571,41 @@ class ResolveDecisionsRequest(BaseModel):
 
 @app.post("/api/decree/resolve_decisions/stream")
 async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> StreamingResponse:
-    """皇帝亲裁完决策点，流式跑 phase2 结算。
-    与 issue/stream 同结构：worker 跑 session.submit_hitl_choices（唯一 HITL 编排入口，
-    keyed 权威由 validate_all 整批拒），SSE 只推终态 done/error。"""
+    """皇帝亲裁完决策点，流式跑 phase2 结算。#1853 J5：不附 failed 密令专属载荷。"""
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def worker() -> None:
-        game = None
-        turn_before = 0
-        failed_before: set[int] = set()
-        # #1749：分段 hold_write_for_body=False——完整错误快照只在短持 gate 时物化；
-        # entry 退出后 / gate-free 窗禁再读退休连接。无静默 except→[]。
-        failure_snapshot: Optional[List[Dict[str, Any]]] = None
         try:
             game = get_game()
             turn_before = int(game.state.turn)
-            failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
-            # #1322：相位快速预检前移到受理/抢锁前（假 200/锁排队拖成数十秒）；
-            # 锁内 submit_decisions 仍做权威复查——与既有 TOCTOU 双查同款。
             if game.session.current_phase() != TurnPhase.AWAITING_DECISION:
                 raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
-            # #657 / ADR 0149：展示态走 _settlement_period_entry；hold_write_for_body=False
-            # 使 PREWRITE/② join 在 write_gate 外，①/③ 由 submit_hitl_choices 短持同一 gate。
-            # 终态 __done__ 须在 entry（含 clear）成功后才入队——与 settled_ok 同核。
-            # 唯一 HITL 编排：session.submit_hitl_choices；禁 submit_decisions 生产旁路。
             terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(
                 game, write_cm=_game_write_gate, hold_write_for_body=False,
             ):
-                try:
-                    report = game.session.submit_hitl_choices(
-                        body.choices,
-                        write_gate=_game_write_gate(game),
-                        cheat_directive=body.cheat,
-                    )
-                    decree = game.session.last_decree
-                    # #1702 A2：尾写短持既有 write_gate，与热替换/其它持闸写者单写；
-                    # 不整段 body 持锁（join 仍在 gate 外）；成功 clear 仍走样板 False 支短持。
-                    # §2.2：与 end_turn 同一短持段内直查写 holder；terminal 用同一份。
-                    with _game_write_gate(game):
-                        failure_snapshot = _new_secret_order_failure_payloads_for_turn(
-                            game, turn_before, failed_before,
-                        )
-                        advanced = int(game.state.turn) != turn_before
-                        if advanced:
-                            game.session.end_turn()
-                            game.refresh_turn()
-                    terminal = ("__done__", _settlement_player_payload(
-                        decree=decree,
-                        report=report,
-                        pending_action_failures=failure_snapshot,
-                        advanced=advanced,
-                    ))
-                except Exception as body_exc:
-                    # §3.1：唯一次生窗；hold_gate=True 短持；删静默 = []。
-                    failure_snapshot = _capture_settlement_failure_snapshot(
-                        failure_snapshot, game, turn_before, failed_before,
-                        primary=body_exc, hold_gate=True,
-                    )
-                    raise
+                report = game.session.submit_hitl_choices(
+                    body.choices,
+                    write_gate=_game_write_gate(game),
+                    cheat_directive=body.cheat,
+                )
+                decree = game.session.last_decree
+                with _game_write_gate(game):
+                    advanced = int(game.state.turn) != turn_before
+                    if advanced:
+                        game.session.end_turn()
+                        game.refresh_turn()
+                terminal = ("__done__", _settlement_player_payload(
+                    decree=decree,
+                    report=report,
+                    advanced=advanced,
+                ))
             if terminal is not None:
                 ev_queue.put(terminal)
         except ValueError as e:
-            # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
-            # 相位预检在 entry 前抛时 failure_snapshot 仍为 None → 不附键（无结算副作用可读）。
-            ev_queue.put((
-                "__error__",
-                {"message": str(e), "pending_action_failures": failure_snapshot}
-                if failure_snapshot else str(e),
-            ))
+            ev_queue.put(("__error__", str(e)))
         except Exception as e:  # noqa: BLE001
-            # §5.4：无独立 HTTP/AudienceNight 分表；与 issue/stream 同真源。
-            # #1465 ②：SettlementAbort.__cause__ LLMUnavailable 亦外层保真 typed 键。
-            ev_queue.put((
-                "__error__",
-                _settlement_sse_error_data(e, failure_snapshot),
-            ))
+            ev_queue.put(("__error__", _settlement_sse_error_data(e)))
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
@@ -5745,7 +5619,6 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             if kind == "__error__":
                 yield sse_event("error", data if isinstance(data, dict) else {"message": data})
                 break
-            # #1852：中间 stage/thinking/text 已退役；非终态事件不转发。
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

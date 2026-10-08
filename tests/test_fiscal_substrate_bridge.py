@@ -3090,19 +3090,12 @@ def test_zhongyuan_jingshi_primary_source_refinement(region_id, expected, fresh_
 
     if region_id == "shandong":
         assert {"官民田", "正赋应征", "起运定额"} <= provisional
-        # typed 缺卷：notes schema 键 + 无 structured land-tax source；域字段名由 provisional 锁定
-        assert "山东卷六缺口" in meta["notes"]
+        # typed 缺卷：无 structured land-tax source；域字段名由 provisional 锁定
         assert not isinstance(meta.get("source"), dict)
         assert not isinstance(meta.get("source_grain"), dict)
     else:
-        # 该外部义务在当前生产形态下无 typed 载体（beizhili/henan meta 无 source/
-        # source_grain/primary_source；田赋来源仅 notes 自由文本；不得拿
-        # royal_stipends_source 冒充），按清单不改生产原则保留原断言。
-        source_notes = meta["notes"]["一手核"]
-        assert "《万历会计录》" in source_notes
-        assert "本色" in source_notes
-        assert "扫描图核验" in meta["notes"]
-        assert "识典扫描图" in meta["notes"]["扫描图核验"]
+        # 无 typed 田赋来源载体时不锁 notes 自由文本（锚定宪法）。
+        pass
 
     if region_id in {"beizhili", "shandong", "henan"}:
         assert p["三饷应征"] == pytest.approx(

@@ -130,18 +130,6 @@ def match_army_id_from_text(text: str) -> Optional[str]:
     return _match_army(text, _ctx().armies)
 
 
-def state_context(state: GameState) -> str:
-    parts = []
-    for key, value in state.metrics.items():
-        if key in ECONOMY_ACCOUNTS:
-            parts.append(f"{key}{format_money(value)}")
-        else:
-            parts.append(f"{key}{value}")
-    return "，".join(parts)
-
-
-
-
 
 def _identity_bucket(value: object) -> str:
     return ("low", "middle", "high")[identity_bucket(value)]

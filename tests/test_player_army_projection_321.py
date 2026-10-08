@@ -194,3 +194,25 @@ def test_structured_situation_on_payload_and_map_nodes(game):
     _assert_structured_situation(map_army, sit, "map_nodes.armies")
     map_army2 = _find_army_in_map_nodes(runtime.map_nodes())
     _assert_structured_situation(map_army2, sit, "WebGame.map_nodes")
+
+@pytest.mark.parametrize(
+    "field",
+    ("is_mutinied", "mutiny_count", "mutiny_probation", "full_pay_streak", "redemption_count"),
+)
+def test_apply_army_deltas_rejects_five_persistent_mutiny_columns(game, field):
+    """AC10：五持久列对 extractor 唯一 allowlist 拒收，不新守门。"""
+    db, state, _ = game
+    before = db.conn.execute(
+        f"SELECT {field} FROM armies WHERE id=?", (ARMY,)
+    ).fetchone()[field]
+    event = SimpleNamespace(id="test-321", title="非法写哗变列")
+    changes = db.apply_army_deltas(
+        state, event, None, "测试", {ARMY: {field: 1, "reason": "probe"}}
+    )
+    rejected = [c for c in changes if c.get("rejected")]
+    assert rejected, f"{field} 应被拒收"
+    assert all(c.get("category") == "invalid_enum" for c in rejected)
+    after = db.conn.execute(
+        f"SELECT {field} FROM armies WHERE id=?", (ARMY,)
+    ).fetchone()[field]
+    assert after == before

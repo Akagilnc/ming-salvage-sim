@@ -434,5 +434,39 @@ def test_authoritative_event_pool_rejects_same_batch_obsolete_event(game):
     assert db.find_any_issue_by_origin("event_pool", downstream.id) is None
 
 
-# --- tags 字段严格化（cmr ni r8）---
-# 缺省/null/空串→[]；present 须 list/tuple 且元素全 str。拒标量串拆字与非串元素静默落库。
+# --- tags 字段严格化（cmr ni r8 codex medium）---
+# tags = list(ni.get("tags") or []) 对标量串静默拆字（list("募营")=['募','营']）、对非串元素
+# 不拒（list([5])=[5]）会污染 DB tags。与 R6 int 字段 _strict_int 同一字段校验 class——
+# 缺省/null/空串→[]，present 须 list/tuple 且元素全 str。
+
+
+@pytest.mark.parametrize("bad_tags", ["募营", "单串标量"])
+def test_new_issue_scalar_string_tags_rejected(read_game, bad_tags):
+    db, state, _ = read_game
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·标量tags", "tags": bad_tags}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+
+
+def test_new_issue_non_string_tag_element_rejected(read_game):
+    db, state, _ = read_game
+    ni = {"origin_kind": "decree", "kind": "situation", "title": "测试·脏tag元素", "tags": [5, "正常"]}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    rej = _rejected(out)
+    assert len(rej) == 1, out
+    assert rej[0]["category"] == "invalid_enum"
+
+
+def test_new_issue_valid_list_tags_preserved(game):
+    db, state, _ = game
+    # 正常 list[str] tags 整词保全（不拆字），pairing 短语完整 → 正常立项落库。
+    ni = {"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "kind": "situation", "title": "测试·正常tags", "tags": ["募营", "边事"]}
+    out = I.apply_issue_tracker_output(db, state, {"new_issues": [ni]})
+    created = [n for n in _new(out) if not n.get("rejected") and n.get("issue_id")]
+    assert len(created) == 1, out
+    iid = int(created[0]["issue_id"])
+    row = db.conn.execute("SELECT tags FROM issues WHERE id=?", (iid,)).fetchone()
+    assert json.loads(row["tags"]) == ["募营", "边事"], "整词须保全、不得拆字"
+
