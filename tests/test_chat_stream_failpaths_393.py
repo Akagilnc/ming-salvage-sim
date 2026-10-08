@@ -105,6 +105,10 @@ class _FailingPrologueDB:
     def set_chat_turn_error_pack(self, *a, **k):
         return None
 
+    def list_in_flight_chat_turns(self, **_k):
+        # #1902：共核在飞资格；prologue 崩前无在飞轮。
+        return []
+
 
 def _base_runtime(db):
     character = minister_double("测试大臣")
@@ -162,9 +166,9 @@ def _base_runtime(db):
     runtime.session = sess
     runtime.chat_history = {character.name: []}
     runtime._persistent_chat_minister = lambda name: True
-    runtime._audience_turn_in_flight = lambda name: False
     # #1902：不再替身 _start_chat_turn —— 建轮与问话落库已下沉会话层共核，替掉它
     # 就等于把被测的 prologue 拿掉（DB 崩溃点也一并消失）。
+    # 在飞／相位／收夜资格同在共核；不在入口替身。
     return runtime, character.name
 
 
@@ -280,6 +284,10 @@ class _WorkerPathDB:
 
     def set_chat_turn_error_pack(self, *a, **k):
         return None
+
+    def list_in_flight_chat_turns(self, **_k):
+        # #1902：共核在飞资格；本壳无在飞轮。
+        return []
 
 
 def test_worker_cleanup_failure_still_emits_error_and_releases_gate():

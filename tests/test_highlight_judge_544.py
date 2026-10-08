@@ -47,6 +47,10 @@ def test_run_highlight_judge_timeout_empty_actual_faults_raise():
         def run(self, *_a, **_k):
             raise TypeError("model down")
 
+    class _WorkerTimeout:
+        def run(self, *_a, **_k):
+            raise TimeoutError("agent timed out")
+
     try:
         assert run_highlight_judge(
             minister_reply="臣陈辽饷。",
@@ -73,6 +77,30 @@ def test_run_highlight_judge_timeout_empty_actual_faults_raise():
             agent=_CodeFault(),
             timeout_s=1.0,
         )
+
+    # worker 实际抛 TimeoutError 不得被 future.result 等待封顶分支洗成 []。
+    with pytest.raises(TimeoutError, match="agent timed out"):
+        run_highlight_judge(
+            minister_reply="臣陈辽饷。",
+            llm_config=object(),
+            agent=_WorkerTimeout(),
+            timeout_s=1.0,
+        )
+
+
+def test_parse_highlight_internal_type_error_propagates(monkeypatch):
+    """解析接缝内部 TypeError 是代码故障，不得收成成功空清单（#1902）。"""
+    from ming_sim import highlight_judge as hj
+    from ming_sim.agents import parse_agent_json as real_parse
+
+    def _boom(text, stage):
+        if stage == "高亮判官":
+            raise TypeError("internal parse fault")
+        return real_parse(text, stage)
+
+    monkeypatch.setattr("ming_sim.agents.parse_agent_json", _boom)
+    with pytest.raises(TypeError, match="internal parse fault"):
+        hj.parse_highlight_judge_output('{"highlights": ["辽饷"]}')
 
 
 @pytest.mark.parametrize(("output", "expected"), [

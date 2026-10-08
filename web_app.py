@@ -1817,18 +1817,6 @@ class WebGame:
         """#1902 J3：资格在会话共核；Web 只转发。"""
         return bool(self.session.can_undo_last_audience_chat(minister_name))
 
-    def _audience_turn_in_flight(self, minister_name: str) -> bool:
-        """同夜场景共用一个 agent session：前轮回话未落定时不准开下一轮。
-
-        后台转译不在此等待。在飞的定义由 DB 写口按本夜维护。
-        """
-        del minister_name
-        from ming_sim.audience_night import get_open_night
-        night = get_open_night(self.db)
-        if night is None:
-            return False
-        return bool(self.db.list_in_flight_chat_turns(night_id=int(night["id"])))
-
     def _start_chat_turn(
         self, minister_name: str, *, attach_to_hall: bool = True,
         message: str = "",
@@ -1853,7 +1841,7 @@ class WebGame:
         """召对中断/失败的统一善后：终态化本轮 + 重载召对历史缓存。
 
         所有「已建 chat_turn 但本轮未能正常完成」的路径都必须调用——否则留下 status=active 且
-        minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把本夜永久判为「上一轮
+        minister_message_id 为空的孤儿轮，共核在飞资格会把本夜永久判为「上一轮
         仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。
 
         #1902：回滚与失败终态已下沉会话层（``GameSession.fail_audience_chat_turn``，
@@ -1974,14 +1962,6 @@ class WebGame:
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
 
-    def _reject_if_settlement_phase(self) -> None:
-        """#498/#505：结算/亲裁相位不得召对（含续问与重试召对）——否则开/续的夜会随
-        submit_decisions 跨月推进而不收（夜不跨月）。raise 版召对入口共用此单缝，
-        新入口（如 #505 重试）不再另抄一份 if（stream 入口走 yield-error 控制流，自持一份）。"""
-        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
-            raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
-
-
     def reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#1902 L1：中断 + 尾随失败取数在会话共核；入口只转发。
 
@@ -2038,8 +2018,6 @@ class WebGame:
         chat_turn_id = int(target["chat_turn_id"])
         question = str(target["question"])
         accepted_turn = int(target["turn"])
-        # #505 finding4：结算/亲裁相位不得重试召对（与 chat 同相位门，夜不跨月）。锁前快速失败。
-        self._reject_if_settlement_phase()
         # 与非流式 chat 同形：整轮票据覆盖 LLM 无锁窗 + epilogue，防 barrier/drain 当空闲关连接。
         pending_ticket = self._mark_pending_write()
         if pending_ticket is None:
@@ -2048,7 +2026,7 @@ class WebGame:
                 detail="当前会话正在关闭，请回菜单重新进入。",
             )
         # #1353 r10：屏障已受理则拒重试召对；否则整轮 DB 缝经 ticketed gate。
-        # 失败清理在票可能已 complete 后走裸 runtime gate。
+        # 失败清理在票可能已 complete 后走裸 runtime gate。宿主屏障资源留入口。
         if self._runtime_write_queue().has_open_barrier():
             self._complete_pending_write(pending_ticket)
             raise HTTPException(
@@ -2060,30 +2038,27 @@ class WebGame:
         cleanup_gate = self._runtime_write_gate()
         # #1902 T4：reopen→快照→生成→落回话／失败收口走会话共核；此处只做票据、写闸、投影。
         # 收夜须在放行 pending write 之后，故 schedule_close_night=False，成功后再调共核调度。
+        # #1902：相位／收夜／在飞业务资格在 execute_interrupted_reply_retry 共核，入口不持副本。
+        from ming_sim.session import AudienceChatAdmissionError
         turn = None
         result = None
         translation_scheduled = False
         try:
-            with gate:
-                self._reject_if_settlement_phase()
-                # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
-                from ming_sim.audience_night import assert_night_accepts_player_input
-                assert_night_accepts_player_input(self.db, what="召对")
-                if self._audience_turn_in_flight(minister_name):
-                    raise HTTPException(
-                        status_code=409, detail="本夜上一轮回奏仍在进行，请稍候再问。")
-            retry_outcome = self.session.execute_interrupted_reply_retry(
-                chat_turn_id=chat_turn_id,
-                question=question,
-                message_speaker=minister_name,
-                accepted_turn=accepted_turn,
-                user_message_id=int(target.get("user_message_id") or 0),
-                scene_minister_name=minister_name,
-                stream_emit=lambda _delta, **_kwargs: None,
-                schedule_translation=False,
-                schedule_close_night=False,
-                write_gate=gate,
-            )
+            try:
+                retry_outcome = self.session.execute_interrupted_reply_retry(
+                    chat_turn_id=chat_turn_id,
+                    question=question,
+                    message_speaker=minister_name,
+                    accepted_turn=accepted_turn,
+                    user_message_id=int(target.get("user_message_id") or 0),
+                    scene_minister_name=minister_name,
+                    stream_emit=lambda _delta, **_kwargs: None,
+                    schedule_translation=False,
+                    schedule_close_night=False,
+                    write_gate=gate,
+                )
+            except AudienceChatAdmissionError as exc:
+                raise HTTPException(status_code=409, detail=exc.detail) from None
             if retry_outcome is None:
                 raise HTTPException(
                     status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。",
@@ -2376,18 +2351,13 @@ class WebGame:
         if not text:
             yield {"type": "error", "message": "问话不能为空。"}
             return
-        # #498：结算/亲裁相位不得召对（夜不跨月）。锁前查仅快速失败；权威判定在持 gate 后复查
-        # （见下），防 TOCTOU——SUMMONING 通过后等 gate 时被结算改相位仍会开夜。
-        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
-            yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
-            return
         # 整轮（含转译与高亮尾随）共用一次队列票据——关闭/fixture 必须等其完成。
         pending_ticket = self._mark_pending_write()
         if pending_ticket is None:
             yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
             return
         # #1353 r10：屏障已受理则拒后序流式聊天（与 seal 合流）；否则 prologue/epilogue
-        # 经 ticketed gate（写段序）。LLM 仍在无锁窗（AC10）。
+        # 经 ticketed gate（写段序）。LLM 仍在无锁窗（AC10）。宿主屏障资源留入口。
         if self._runtime_write_queue().has_open_barrier():
             self._complete_pending_write(pending_ticket)
             yield {
@@ -2411,42 +2381,30 @@ class WebGame:
             self._complete_pending_write(pending_ticket)
             yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
             return
+        from ming_sim.session import AudienceChatAdmissionError
         try:
-            # 权威相位复查（持 gate 内，建 chat turn/开夜/写库之前）：等锁期间若被结算改相位则拒。
-            if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
-                self._complete_pending_write(pending_ticket)
-                yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
-                return
-            # #612：CLOSING 冻结新对话——唯一玩家输入准入真源，无平行 status 判断。
-            from ming_sim.audience_night import (
-                AudienceNightError,
-                assert_night_accepts_player_input,
-            )
-            try:
-                assert_night_accepts_player_input(self.db, what="召对")
-            except AudienceNightError as err:
-                if getattr(err, "code", "") == "night_closing":
-                    self._complete_pending_write(pending_ticket)
-                    yield {
-                        "type": "error",
-                        "message": str(err) or "本夜收夜中，暂不能召对。",
-                        "code": "night_closing",
-                    }
-                    return
-                raise
-            if self._audience_turn_in_flight(minister_name):
-                self._complete_pending_write(pending_ticket)
-                yield {"type": "error", "message": "本夜上一轮回奏仍在进行，请稍候再问。"}
-                return
             accepted_turn = int(self.state.turn)
-            # #1902：建轮与问话落库同走会话层共核（begin_audience_chat_turn 内已落
-            # user 行并挂上 chat_turn）；入口只更自己的呈现缓存，不再重复 append。
+            # #1902：建轮（含相位／收夜／在飞业务资格）与问话落库同走会话层共核；
+            # 入口只更呈现缓存，不持业务权威副本。
             chat_turn_id, before_snapshot = self._start_chat_turn(
                 minister_name,
                 message=text,
                 attach_to_hall=True,
             )
             self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+        except AudienceChatAdmissionError as err:
+            if gate_held:
+                try:
+                    write_gate.release()
+                except RuntimeError:
+                    pass
+                gate_held = False
+            self._complete_pending_write(pending_ticket)
+            out: Dict[str, Any] = {"type": "error", "message": err.detail}
+            if err.code == "night_closing":
+                out["code"] = "night_closing"
+            yield out
+            return
         except Exception as error:
             # Release gate before scene drain — prologue may have already started futures.
             if gate_held:

@@ -153,6 +153,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
     question = str(target["question"])
     # 回话挂回原问话的那位大臣（CLI 召对语义），不是建轮的殿上。
     message_speaker = str(target.get("message_speaker") or "") or minister_name
+    from ming_sim.session import AudienceChatAdmissionError
     try:
         retry_outcome = session.execute_interrupted_reply_retry(
             chat_turn_id=chat_turn_id,
@@ -166,6 +167,9 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> Op
             write_gate=_cli_write_gate(session),
             close_night_write_gate=_cli_write_gate(session),
         )
+    except AudienceChatAdmissionError as exc:
+        print(f"{exc.detail}\n")
+        return None
     except Exception as exc:
         print(f"重试回话失败：{exc}\n")
         return None
@@ -233,12 +237,18 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         # #1902：建轮/快照/问话落库/回滚终态全走会话层同一生命周期（与 Web 共核），
         # 入口只留输入采集与呈现。薄替身分支已删：真 GameDB 恒有这套生命周期，
         # 为只替 LLM 缝的壳另留一条无轮路径，等于给测试维护第二套生产生命周期。
-        chat_turn = GameSession.begin_audience_chat_turn(
-            session, question,
-            # 建轮归「殿上」（与 Web 同、殿上历史读得到）；问话/回话挂大臣名
-            # （与修前 CLI 语义同）。模型会话身份／前像水位由会话核按真实夜提供。
-            message_speaker=character.name,
-        )
+        # #1902：相位／收夜／在飞业务资格在 begin 共核；入口只映射呈现。
+        from ming_sim.session import AudienceChatAdmissionError
+        try:
+            chat_turn = GameSession.begin_audience_chat_turn(
+                session, question,
+                # 建轮归「殿上」（与 Web 同、殿上历史读得到）；问话/回话挂大臣名
+                # （与修前 CLI 语义同）。模型会话身份／前像水位由会话核按真实夜提供。
+                message_speaker=character.name,
+            )
+        except AudienceChatAdmissionError as exc:
+            print(f"{exc.detail}\n")
+            continue
         result = None
         translation_dispatched = False
         try:

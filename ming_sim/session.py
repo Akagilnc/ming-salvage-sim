@@ -182,6 +182,16 @@ class TranslationRetryError(Exception):
         self.code = code
 
 
+class AudienceChatAdmissionError(Exception):
+    """召对开轮/重试业务资格失败：结构化码供入口映射。"""
+
+    def __init__(self, detail: str, *, code: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        # code: settling | night_closing | in_flight（已有拒绝理由，不新立）
+        self.code = code
+
+
 @dataclass(frozen=True)
 class AudienceChatUndoResult:
     """撤回业务结果；呈现字段（history/directives 投影）由入口补。"""
@@ -1149,10 +1159,43 @@ class GameSession:
         session_id = f"scene-night-{int(night_id)}"
         return session_id, int(self.db.agno_runs_length(session_id))
 
+    def assert_audience_chat_admission(self, *, what: str = "召对") -> None:
+        """召对开轮/重试已有业务资格：月末相位、收夜冻结、本夜在飞未落。
+
+        #1902：资格真源在会话共核；Web/CLI 入口只映射呈现，不各持业务副本。
+        不添加新状态、新拒绝理由或资源机制——承接既有规则原文。
+        """
+        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+            raise AudienceChatAdmissionError(
+                "月末结算/亲裁进行中，暂不能召对。",
+                code="settling",
+            )
+        from ming_sim.audience_night import (
+            AudienceNightError,
+            assert_night_accepts_player_input,
+            get_open_night,
+        )
+        try:
+            assert_night_accepts_player_input(self.db, what=what)
+        except AudienceNightError as err:
+            code = str(getattr(err, "code", "") or "night_closing")
+            raise AudienceChatAdmissionError(
+                str(err) or f"本夜收夜中，暂不能{what}。",
+                code=code,
+            ) from err
+        night = get_open_night(self.db)
+        if night is None:
+            return
+        if self.db.list_in_flight_chat_turns(night_id=int(night["id"])):
+            raise AudienceChatAdmissionError(
+                "本夜上一轮回奏仍在进行，请稍候再问。",
+                code="in_flight",
+            )
+
     def begin_audience_chat_turn(
         self, message: str, *, message_speaker: str = "",
     ) -> AudienceChatTurn:
-        """建一轮召对：确保开夜 → 建 chat_turn → 落问话。返回句柄供收口/回滚。
+        """建一轮召对：业务资格 → 确保开夜 → 建 chat_turn → 落问话。返回句柄供收口/回滚。
 
         **两个身份不是一回事，禁再压成一个参数**（#1902 T1）：
         - 建轮归属恒为 ``SCENE_CHAT_SPEAKER``「殿上」——Web 与 CLI 都写「殿上」。
@@ -1177,6 +1220,8 @@ class GameSession:
         )
         from ming_sim.decree_forecast import schedule_held_decree_forecasts
 
+        # #1902：相位／收夜／在飞资格在共核；入口不得再持业务权威副本。
+        GameSession.assert_audience_chat_admission(self, what="召对")
         owner = SCENE_CHAT_SPEAKER
         speaker = str(message_speaker or "").strip() or owner
         accepted_turn = int(self.state.turn)
@@ -1682,6 +1727,8 @@ class GameSession:
         result: Optional[ChatTurnResult] = None
         translation_dispatched = False
         with gate_cm:
+            # #1902：与建轮同核资格（相位／收夜／在飞）；CAS 前拒绝，不留 generating。
+            GameSession.assert_audience_chat_admission(self, what="召对")
             if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
                 return None
             # reopen 已赢即建 turn 句柄，保证后续任意失败（含快照）能走 fail 收口。

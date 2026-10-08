@@ -337,8 +337,9 @@ def _retry_runtime(db, state, minister, *, session=None):
     rt.directive_rows = lambda: []
     rt.directive_payload = lambda row: row
     rt.can_undo_last_chat = lambda name: False
-    rt._audience_turn_in_flight = lambda name: False
-    # 整轮 pending 由 retry 本体持有；转译与高亮尾随在本单元测试外——不起后台线程。
+    # #1902：在飞／相位／收夜资格在会话共核；不在 Web 入口替身。
+    # 整轮 pending 由 retry 本体持有；转译与高亮尾随在本单元测试外——
+    # 非流式成功路径会直调 trail（非 spawn）；壳无 llm_config，禁真 LLM。
     from ming_sim.session_write_queue import SessionWriteQueue
     rt._write_queue = SessionWriteQueue()
     rt._write_gate = rt._write_queue.write_gate
@@ -346,6 +347,7 @@ def _retry_runtime(db, state, minister, *, session=None):
     rt._mark_pending_write = lambda key=None: rt._write_queue.claim(key=key or ("pending",))  # type: ignore
     rt._complete_pending_write = lambda ticket=None: rt._write_queue.complete(ticket)  # type: ignore
     rt._spawn_pending_write_thread = lambda *a, **k: False
+    rt._trail_highlight_judge_after_reply = lambda *a, **k: []  # type: ignore
     return rt
 
 

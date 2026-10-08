@@ -19,7 +19,7 @@ DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S = 8.0
 
 
 def parse_highlight_judge_output(raw: str) -> List[str]:
-    """硬格式 JSON → 短语清单；不合规/契约失败 → 空清单（票面授权的坏输出降级）。"""
+    """硬格式 JSON → 短语清单；坏输出（契约/JSON）→ 空清单；内部代码故障原样上抛。"""
     text = str(raw or "").strip()
     if not text:
         return []
@@ -27,7 +27,8 @@ def parse_highlight_judge_output(raw: str) -> List[str]:
 
     try:
         data = parse_agent_json(text, "高亮判官")
-    except (LLMContractError, json.JSONDecodeError, TypeError, ValueError):
+    except (LLMContractError, json.JSONDecodeError):
+        # 票面授权：模型坏输出降级为空清单。TypeError/ValueError 是代码故障，不洗成成功。
         return []
     # 顶层 object 由 parse_agent_json 保证；此处只验业务字段 highlights。
     items = data.get("highlights")
@@ -90,8 +91,10 @@ def run_highlight_judge(
         try:
             return list(future.result(timeout=timeout))
         except FuturesTimeout:
-            # 不 wait 卡住调用方——超时封顶空清单；worker 随进程回收。
-            # 实际模型/契约/代码故障不在此转空，由 future.result 原样上抛。
+            # Future.result：调用已抛的异常会原样再抛；等待封顶也是 TimeoutError。
+            # 二者同型——done 区分：worker 已结束的实际 TimeoutError 上抛；未完成才是等待封顶 → []。
+            if future.done():
+                raise
             future.cancel()
             return []
     finally:
