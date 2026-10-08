@@ -143,19 +143,28 @@ class ChatMessageStore:
     def latest_held_user_id(
         self, minister_name: str, turn: Optional[int] = None,
     ) -> Optional[int]:
+        """Latest still-held user chat row for oral-decree pin (#976).
+
+        * ``turn`` set: only that turn.
+        * ``turn`` omitted: any still-held user for this minister.
+        Empty name → None.
+        """
+        name = str(minister_name or "").strip()
+        if not name:
+            return None
         if turn is not None:
             row = self._conn.execute(
                 "SELECT id FROM chat_messages "
                 "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
                 "AND turn=? ORDER BY id DESC LIMIT 1",
-                (minister_name, int(turn)),
+                (name, int(turn)),
             ).fetchone()
         else:
             row = self._conn.execute(
                 "SELECT id FROM chat_messages "
                 "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
                 "ORDER BY id DESC LIMIT 1",
-                (minister_name,),
+                (name,),
             ).fetchone()
         return int(row["id"]) if row is not None else None
 

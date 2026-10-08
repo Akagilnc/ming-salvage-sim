@@ -698,6 +698,46 @@ class CharacterKnowledgeStore:
             "offices": payload.get("offices", []),
         }
 
+    def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
+        """Durable secrecy boundary for a source id (events / secret order / saying)."""
+        if source_is_blank(source_id):
+            return []
+        source = str(source_id or "")
+        if self.has_event_for_source(source):
+            return self.exclusions_for_source(source)
+        order_id = self.secret_order_id_in(source)
+        if order_id is not None:
+            order = self.read_knowledge_exclusions_for_source((order_id,))
+            if order is not None:
+                return _load_list(order["excluded_names"])
+        saying_id = self.public_saying_id_in(source)
+        if saying_id is not None:
+            saying = self.read_knowledge_exclusions_for_source_excluded_names((saying_id,))
+            if saying is not None:
+                return _load_list(saying["excluded_names"])
+            return []
+        return self.exclusions_for_source(source)
+
+    def knowledge_exclusion_targets_for_source(
+        self, source_id: str,
+    ) -> Dict[str, List[str]]:
+        """People/offices exclusion targets across events / secret order / saying."""
+        if source_is_blank(source_id):
+            return {"people": [], "offices": []}
+        source = str(source_id or "")
+        order_id = self.secret_order_id_in(source)
+        if order_id is not None:
+            row = self.read_knowledge_exclusion_targets_for_source((order_id,))
+            payload = _load_targets(row["excluded_targets"] if row else None)
+            return {"people": payload.get("people", []), "offices": payload.get("offices", [])}
+        saying_id = self.public_saying_id_in(source)
+        if saying_id is not None:
+            row = self.read_knowledge_exclusion_targets_for_source_excluded_targets((saying_id,))
+            payload = _load_targets(row["excluded_targets"] if row else None)
+            return {"people": payload.get("people", []), "offices": payload.get("offices", [])}
+        payload = self.exclusion_targets_for_source(source)
+        return {"people": payload.get("people", []), "offices": payload.get("offices", [])}
+
     @staticmethod
     def roster_names(raw: object) -> set[str]:
         """Character names on a persisted roster column."""

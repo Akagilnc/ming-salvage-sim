@@ -756,7 +756,7 @@ def test_knowledge_exclusion_reads_current_office_without_nameerror(
     monkeypatch.setattr(db, "_character_knowledge_events", events)
     monkeypatch.setattr(db.issues, "list_issued_directives", lambda: [])
     monkeypatch.setattr(db.turn_reports, "list_archives", lambda: [])
-    monkeypatch.setattr(db, "knowledge_exclusion_targets_for_source", lambda _: targets)
+    monkeypatch.setattr(db.character_knowledge, "knowledge_exclusion_targets_for_source", lambda _: targets)
 
     knowledge = build_character_knowledge(db, state, name)
 

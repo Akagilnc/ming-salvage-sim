@@ -13,7 +13,6 @@
 from __future__ import annotations
 from ming_sim.entities.character.store import CharacterStore
 from ming_sim.entities.region.store import RegionStore
-from ming_sim.entities.reign_state.store import ReignStateStore
 
 import copy
 import json
@@ -648,13 +647,6 @@ def minister_eligible_for_monthly_covert(db: Any, minister_name: str) -> bool:
     return row is not None
 
 
-def _current_game_turn(db: Any, turn: object = None) -> int:
-    if turn is not None:
-        return int(turn)
-    row = ReignStateStore(db.conn).read_current_settle_turn()
-    if row is not None:
-        return int(row["turn"])
-    return 0
 
 
 

@@ -196,7 +196,3 @@ def record_recommendation_edges(db: Any, state: Any, recommender: str,
             turn=turn, year=year, period=period,
         )
     return grace, zhiyu
-
-
-def list_recommendation_events(db: Any, state: Any, recommender: str | None = None) -> List[Dict[str, object]]:
-    return [dict(row) for row in CharacterStore(db.conn).recommendation_events(int(state.turn), recommender)]

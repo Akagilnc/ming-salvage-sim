@@ -65,7 +65,7 @@ from ming_sim.entities.dossier import (
     hydrate_dossier_row,
     normalize_dossier_mode,
 )
-from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
+from ming_sim.matching import match_region_id_from_text
 from ming_sim.office_rank import canonical_office_title
 from ming_sim.schema import ensure_core_schema
 from ming_sim.exceptions import LLMContractError, OfficeAppointmentRejection, PendingActionRefusal
@@ -98,8 +98,7 @@ from ming_sim.qualitative import (
 )
 from ming_sim.relations import (
     bind_origin_round,
-    credit_events_as_edges,
-    normalize_evidence,
+        normalize_evidence,
     validate_edge_kind,
 )
 from ming_sim.strict_types import (
@@ -816,7 +815,6 @@ def resolve_office_type_preserving_title(
 _GRANT_ARRIVAL_SCALE = 30
 _GRANT_ARRIVAL_BARE = (15, 18)
 _GRANT_ARRIVAL_ESCORT = (22, 25)
-_GRANT_ESCORT_RELATIONS = frozenset({"护卫", "稽核"})
 
 def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, int]:
     """返回 (arrived_lo, arrived_hi)，含端点；ordered<=0 时 (0, 0)。"""
@@ -6333,22 +6331,6 @@ class GameDB:
         return sorted(combined, key=lambda item: (int(item["turn"]), 0 if item["kind"] == "month" else int(item["night_id"])))
 
     # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────
-    def _latest_held_user_chat_message_id(
-        self, minister_name: str, turn: Optional[int] = None,
-    ) -> Optional[int]:
-        """Latest still-held user chat row for oral-decree pin (#976).
-
-        * ``turn`` set (stage path): only that turn — stage-time pin of the
-          utterance just spoken, so later confirmation user lines cannot steal.
-        * ``turn`` omitted (classification auto-capture): any still-held user
-          for this minister (covers F4 / zero-overlap cross-turn: hold at T,
-          create at T+N without settle).
-        """
-        name = str(minister_name or "").strip()
-        if not name:
-            return None
-        return self.chat_messages.latest_held_user_id(name, None if turn is None else int(turn))
-
     def _parse_origin_chat_message_id(
         self, payload: Optional[Mapping[str, object]],
     ) -> Optional[int]:
@@ -6400,9 +6382,9 @@ class GameDB:
                     str(assignee_name or "").strip(),
                 ) if n
             ):
-                mid = self._latest_held_user_chat_message_id(name, int(state.turn))
+                mid = self.chat_messages.latest_held_user_id(name, int(state.turn))
                 if mid is None:
-                    mid = self._latest_held_user_chat_message_id(name)
+                    mid = self.chat_messages.latest_held_user_id(name)
                 if mid is not None and mid not in pinned_ids:
                     pinned_ids.append(mid)
         return pinned_ids
@@ -6946,16 +6928,6 @@ class GameDB:
             reports.append(self.dossiers.list_dossier_progress(dossier_id)[-1])
         return reports
 
-    def _grant_escort_presence(
-        self, dossier_id: int,
-    ) -> Tuple[bool, Optional[int], str]:
-        """被护案卷侧查入链：护卫/稽核在场与否（0054 逐路独立）。"""
-        for link in self.dossiers.links(int(dossier_id), direction="incoming"):
-            relation = str(link.get("relation_type") or "").strip()
-            if relation in _GRANT_ESCORT_RELATIONS:
-                return True, int(link["source_dossier_id"]), relation
-        return False, None, ""
-
     def list_monthly_grant_reconciliation_targets(self) -> List[Dict[str, object]]:
         """扫描面：executing 且仍在途的拨帑案卷（排除成案不足额已 failed+close）。"""
         rows = self.dossiers.in_transit_grants()
@@ -6975,7 +6947,7 @@ class GameDB:
             if ordered <= 0:
                 continue
             dossier_id = int(row["id"])
-            escorted, source_id, relation = self._grant_escort_presence(dossier_id)
+            escorted, source_id, relation = self.dossiers.grant_escort_presence(dossier_id)
             targets.append({
                 "dossier_id": dossier_id,
                 "ordered_amount": ordered,
@@ -9186,15 +9158,6 @@ class GameDB:
                 )
         return True
 
-    def list_execution_liability_parties(
-        self, dossier_id: int,
-    ) -> List[Dict[str, object]]:
-        """连坐归属读端：与写路共用 project_execution_liability_parties；永不返回知情档。"""
-        dossier = self.dossiers.get(dossier_id)
-        if dossier is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        return project_execution_liability_parties(dossier.get("participant_roster"))
-
     def validate_joint_liability_affected_parties(
         self, affected_parties: object, outcome: str,
     ) -> None:
@@ -11304,21 +11267,6 @@ class GameDB:
         self.conn.commit()
         return created
 
-    def find_active_authority(
-        self, turn: int, *, holder_id: str, privilege: str, scope: str,
-    ) -> Optional[Dict[str, object]]:
-        """Return the in-hand row for the exact grant identity, if any."""
-        holder_id = str(holder_id or "").strip()
-        privilege = str(privilege or "").strip()
-        scope = str(scope or "").strip()
-        for row in self.characters.list_active_authorities(turn, holder_id=holder_id):
-            if (
-                str(row.get("privilege") or "") == privilege
-                and str(row.get("scope") or "") == scope
-            ):
-                return row
-        return None
-
     def project_applicable_authorities(
         self, turn: int, dossier: Mapping[str, object],
     ) -> List[Dict[str, object]]:
@@ -12341,7 +12289,7 @@ class GameDB:
                     "period": int(row["period"]), "kind": "secret_order_brief",
                     "title": row["title"], "body": row["body"], "source_id": source_id,
                     **({"excluded_names": json.dumps(
-                        self.knowledge_exclusions_for_source(source_id), ensure_ascii=False,
+                        self.character_knowledge.knowledge_exclusions_for_source(source_id), ensure_ascii=False,
                     )} if include_exclusions else {}),
                 })
                 known_sources.add(source_id)
@@ -12375,54 +12323,6 @@ class GameDB:
             })
             known_sources.add(source_id)
         return result
-
-    def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:
-        """Return the durable secrecy boundary attached to a source record."""
-        from ming_sim.entities.character_knowledge.store import source_is_blank
-
-        if source_is_blank(source_id):
-            return []
-        source = str(source_id or "")
-        if self.character_knowledge.has_event_for_source(source):
-            return self.character_knowledge.exclusions_for_source(source)
-        order_id = self.character_knowledge.secret_order_id_in(source)
-        if order_id is not None:
-            order = CharacterKnowledgeStore(self.conn).read_knowledge_exclusions_for_source((order_id,))
-            if order is not None:
-                from ming_sim.entities.character_knowledge.store import _load_list
-
-                return _load_list(order["excluded_names"])
-        # #1829 reopen：公开说法排除名单与正文同表，按 public_saying:<id> 回查。
-        saying_id = self.character_knowledge.public_saying_id_in(source)
-        if saying_id is not None:
-            saying = CharacterKnowledgeStore(self.conn).read_knowledge_exclusions_for_source_excluded_names((saying_id,))
-            if saying is not None:
-                from ming_sim.entities.character_knowledge.store import _load_list
-
-                return _load_list(saying["excluded_names"])
-            return []
-        return self.character_knowledge.exclusions_for_source(source)
-
-    def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
-        from ming_sim.entities.character_knowledge.store import _load_targets, source_is_blank
-
-        if source_is_blank(source_id):
-            return {"people": [], "offices": []}
-        source = str(source_id or "")
-        # Private briefs inherit canonical exclusions persisted on secret_orders.
-        order_id = self.character_knowledge.secret_order_id_in(source)
-        if order_id is not None:
-            row = CharacterKnowledgeStore(self.conn).read_knowledge_exclusion_targets_for_source((order_id,))
-            payload = _load_targets(row["excluded_targets"] if row else None)
-            return {"people": payload.get("people", []), "offices": payload.get("offices", [])}
-        # #1829 reopen：公开说法排除目标与正文同表。
-        saying_id = self.character_knowledge.public_saying_id_in(source)
-        if saying_id is not None:
-            row = CharacterKnowledgeStore(self.conn).read_knowledge_exclusion_targets_for_source_excluded_targets((saying_id,))
-            payload = _load_targets(row["excluded_targets"] if row else None)
-            return {"people": payload.get("people", []), "offices": payload.get("offices", [])}
-        payload = self.character_knowledge.exclusion_targets_for_source(source)
-        return {"people": payload.get("people", []), "offices": payload.get("offices", [])}
 
     def record_participation_record(
         self, state: GameState, record: Mapping[str, object], *, kind: str,
@@ -12762,7 +12662,7 @@ class GameDB:
         # Resolve identity before exclusion inheritance so a blank id cannot
         # pick up another record's secrecy boundary via the empty-string key.
         source_id = source_identity(source_id)
-        inherited = self.knowledge_exclusions_for_source(source_id)
+        inherited = self.character_knowledge.knowledge_exclusions_for_source(source_id)
         merged_exclusions = list(dict.fromkeys(
             [*inherited, *(str(name).strip() for name in (excluded_names or []) if str(name).strip())]
         ))

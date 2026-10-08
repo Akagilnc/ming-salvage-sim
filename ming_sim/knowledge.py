@@ -165,10 +165,10 @@ def knowledge_row_visible_to(
     # 合成读模型行未必自带 excluded_names；source 上的持久黑名单仍是同一真源。
     excluded_names |= {
         str(name)
-        for name in (db.knowledge_exclusions_for_source(source_id) or [])
+        for name in (db.character_knowledge.knowledge_exclusions_for_source(source_id) or [])
     }
     if not people and not offices:
-        fallback = db.knowledge_exclusion_targets_for_source(source_id)
+        fallback = db.character_knowledge.knowledge_exclusion_targets_for_source(source_id)
         if isinstance(fallback, dict):
             people = {str(name) for name in (fallback.get("people") or [])}
             offices = {str(name) for name in (fallback.get("offices") or [])}

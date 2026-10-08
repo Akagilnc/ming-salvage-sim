@@ -7,7 +7,7 @@ turn 恰好推进 1；批外真实陈旧快照仍拒。
 
 from __future__ import annotations
 
-from ming_sim.recommendations import list_recommendation_events
+from ming_sim.entities.character.store import CharacterStore
 
 import pytest
 
@@ -111,7 +111,7 @@ def test_same_batch_consecutive_appointments_keep_prebatch_recommendation_snapsh
     assert char["status"] == "active"
     assert char["office"] == second_office
 
-    events = list_recommendation_events(db, state, recommender.name)
+    events = CharacterStore(db.conn).recommendation_events(int(state.turn), recommender.name)
     by_office = {event["target_office"]: event for event in events}
     assert first_office in by_office
     assert second_office in by_office
@@ -154,7 +154,7 @@ def test_stale_recommendation_snapshot_still_rejected_outside_mutating_batch(gam
         session.resolve_turn(allow_empty_decree=True)
     assert db.dossiers.get(did)["status"] == "proposed"
 
-    assert list_recommendation_events(db, state, recommender.name) == []
+    assert CharacterStore(db.conn).recommendation_events(int(state.turn), recommender.name) == []
     char = db.conn.execute(
         "SELECT office, status FROM characters WHERE name=?", (row["name"],),
     ).fetchone()

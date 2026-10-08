@@ -267,7 +267,7 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     ]
     dossier_id = _executing_dossier(db, state, roster=roster)
 
-    parties = db.list_execution_liability_parties(dossier_id)
+    parties = db.dossiers.list_execution_liability_parties(dossier_id)
     by_id = {p["character_id"]: p["responsibility"] for p in parties}
     assert by_id == {"倪元璐": "primary", "徐光启": "secondary"}
     assert "黄道周" not in by_id
@@ -310,7 +310,7 @@ def test_dual_role_lead_and_delegator_primary_wins(game):
     dossier_id = _executing_dossier(db, state, roster=roster)
 
     # 读端：一人一档，徐光启只返回 primary
-    parties = db.list_execution_liability_parties(dossier_id)
+    parties = db.dossiers.list_execution_liability_parties(dossier_id)
     by_id = {p["character_id"]: p["responsibility"] for p in parties}
     assert by_id == {"倪元璐": "primary", "徐光启": "primary"}
     assert sum(1 for p in parties if p["character_id"] == "徐光启") == 1
@@ -359,7 +359,7 @@ def test_liability_query_excludes_knowers_but_keeps_delegator_fk(game):
     )
     db.conn.commit()
 
-    parties = db.list_execution_liability_parties(dossier_id)
+    parties = db.dossiers.list_execution_liability_parties(dossier_id)
     ids = [p["character_id"] for p in parties]
     roles = {p["character_id"]: p["responsibility"] for p in parties}
     assert "倪元璐" in ids

@@ -85,16 +85,6 @@ def normalize_direction(raw: object, *, default: int = 1) -> int:
     return -1
 
 
-def faction_axis_stance(faction: object, axis: object) -> int:
-    """读矩阵格；未知派/轴 → 0（中性，不发明）。"""
-    fac = str(faction or "").strip()
-    ax = normalize_axis(axis)
-    if not fac or ax is None:
-        return 0
-    row = _loaded()[1].get(fac)
-    if row is None:
-        return 0
-    return int(row.get(ax, 0))
 
 
 

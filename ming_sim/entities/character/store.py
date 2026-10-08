@@ -469,6 +469,22 @@ class CharacterStore:
         rows = self.read_list_active_authorities_owned(params, holder_sql).fetchall()
         return [{**dict(row), "revoked": False} for row in rows]
 
+    def find_active_authority(
+        self, turn: int, *, holder_id: str, privilege: str, scope: str,
+    ) -> dict[str, object] | None:
+        """Exact in-hand grant identity, if any."""
+        holder_id = str(holder_id or "").strip()
+        privilege = str(privilege or "").strip()
+        scope = str(scope or "").strip()
+        for row in self.list_active_authorities(turn, holder_id=holder_id):
+            if (
+                str(row.get("privilege") or "") == privilege
+                and str(row.get("scope") or "") == scope
+            ):
+                return row
+        return None
+
+
     def find_authority_by_origin(
         self, dossier_id: int, *, holder_id: str, privilege: str, scope: str,
     ) -> Optional[Dict[str, object]]:
@@ -512,13 +528,17 @@ class CharacterStore:
     def write_record_recommendation(self, params: Any = ()) -> Any:
         return self._conn.execute("INSERT INTO recommendation_events\n           (turn,year,period,recommender,candidate,candidate_kind,target_office,basis,reason,status)\n           VALUES (?,?,?,?,?,?,?,?,?,'adopted')", params)
 
-    def recommendation_events(self, turn: int, recommender: str | None = None) -> Any:
+    def recommendation_events(
+        self, turn: int, recommender: str | None = None,
+    ) -> list[dict[str, object]]:
+        """荐人事件完整读口：turn 上界 + 可选荐主过滤，行转 dict。"""
         sql = 'SELECT * FROM recommendation_events WHERE turn <= ?'
-        params = [turn]
+        params: list[object] = [int(turn)]
         if recommender:
             sql += ' AND recommender=?'
             params.append(recommender)
-        return self._conn.execute(sql + ' ORDER BY turn, id', params).fetchall()
+        rows = self._conn.execute(sql + ' ORDER BY turn, id', params).fetchall()
+        return [dict(row) for row in rows]
 
     def read_list_recommendation_candidates(self, params: Any = ()) -> Any:
         return self._conn.execute("SELECT name, office, office_type, faction, status, reason_code, status_reason FROM characters WHERE name != ? AND power_id='ming' AND faction != '流寇' AND office_type NOT IN ('后宫','宗藩','未仕') AND status IN ('active','offstage','retired','dismissed') AND NOT (debut_year > 0 AND (debut_year > ? OR (debut_year = ? AND debut_month > ?))) ORDER BY name", params).fetchall()

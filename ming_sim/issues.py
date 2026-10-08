@@ -168,7 +168,7 @@ def _apply_authority_change_item(
         )
         if expires_turn is not None and expires_turn < effective_turn:
             raise ValueError("授权失效回合不得早于生效回合")
-        existing = db.find_active_authority(
+        existing = db.characters.find_active_authority(
             state.turn, holder_id=holder_id, privilege=privilege, scope=scope,
         )
         if existing is not None:
@@ -4131,73 +4131,6 @@ def _restore_person_content_from_snapshot(
     except (IndexError, TypeError):
         return
     _restore_content_character_rows(content, content_rows)
-
-
-def _has_economy_entry(d: object) -> bool:
-    """是否含「flows 会真正立账」的月度 economy 项：account∈(国库,内库) + delta 经 int() 强转非零
-    ——与 flows._apply_economy_list 同口径（它只对 国库/内库 立账、`int(delta or 0)` 强转、跳过
-    零额/非数/它账）。空壳/它账/零额/非数不算配对，数字串 delta 同 flows 认账（CMR codex+claude）。
-    economy 非 list（畸形 JSON：int/str/bool）→ 安全返 False，不 TypeError 崩结算（PR#107 gemini）。"""
-    if not isinstance(d, dict):
-        return False
-    eco = d.get("economy")
-    if not isinstance(eco, list):
-        return False
-    for item in eco:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("account") or "") not in ("国库", "内库"):
-            continue
-        try:
-            delta = int(item.get("delta") or 0)
-        except (TypeError, ValueError):
-            continue
-        if delta != 0:
-            return True
-    return False
-
-
-def _initiative_resolve_pairing_warnings(
-    title: str, tags: object, ongoing_effects: object, effect: object,
-) -> List[str]:
-    """国策结案实体后果强制配对守门（#45/#46）——仅在 initiative 结案处调用。
-    返回缺配对的告警串列表（空=无缺漏）。warn-only，调用方 surface、不阻断。"""
-    tag_list = tags if isinstance(tags, (list, tuple)) else []
-    blob = str(title or "") + " " + " ".join(str(t) for t in tag_list)
-    effect = effect if isinstance(effect, dict) else {}
-    warns: List[str] = []
-
-    # 练军/募营 须落 new_armies；调将 须落人物变更——分别判，不混为一谈（练军只挂调任仍缺军籍、
-    # 调将只挂建军仍缺主将调任，混判会互相消音，CMR codex）。office_changes 是 ADR 0009 死键、
-    # _apply_issue_entities 不读，不纳入 has_office（纳入会消音本该响的告警，CMR gemini）。
-    needs_army = any(p in blob for p in _MILITARY_RAISE_PHRASES)
-    needs_office = any(p in blob for p in _MILITARY_MOVE_PHRASES)
-    if needs_army or needs_office:
-        # 形对：_apply_issue_entities 只落 list 的 new_armies/人物变更/character_status_changes、
-        # dict 的 army_delta；畸形容器（字符串/错类型）不算真配对，不该消音告警（PR#107 codex）。
-        has_army = _nonempty_list(effect.get("new_armies")) or _nonempty_dict(effect.get("army_delta"))
-        has_office = (
-            _nonempty_list(effect.get("人物变更"))
-            or _nonempty_list(effect.get("character_status_changes"))
-        )
-        if needs_army and not has_army:
-            warns.append(
-                f"军事国策「{str(title)[:16]}」结案无 new_armies 配对（练军/募营疑未建军籍，#46）"
-            )
-        if needs_office and not has_office:
-            warns.append(
-                f"军事国策「{str(title)[:16]}」结案无人物变更配对（调将疑未落主将调任，#46）"
-            )
-
-    if any(p in blob for p in _FISCAL_RECURRING_PHRASES):
-        # 只查国策自身 effect/ongoing 的月度 economy；顶层 fiscal_creates 不在本纯函数视野内，
-        # 故告警文案不声称查了它——若另经 fiscal_creates 立账可忽略本提示（CMR claude）。
-        if not _has_economy_entry(effect) and not _has_economy_entry(ongoing_effects):
-            warns.append(
-                f"经制国策「{str(title)[:16]}」结案无月度 economy 配对"
-                "（疑月经费/俸饷未立常设月支；若已另经 fiscal_creates 立账可忽略，#45）"
-            )
-    return warns
 
 
 

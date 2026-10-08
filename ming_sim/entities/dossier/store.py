@@ -1571,6 +1571,29 @@ class DossierStore:
             and str(row["status"] or "") == "pending"
         )
 
+
+    def list_execution_liability_parties(
+        self, dossier_id: int,
+    ) -> list[dict[str, object]]:
+        """连坐归属读端：与写路共用 project_execution_liability_parties；永不返回知情档。"""
+        from ming_sim.participant_roster import project_execution_liability_parties
+
+        dossier = self.get(dossier_id)
+        if dossier is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        return project_execution_liability_parties(dossier.get("participant_roster"))
+
+    def grant_escort_presence(
+        self, dossier_id: int,
+    ) -> tuple[bool, int | None, str]:
+        """被护案卷侧查入链：护卫/稽核在场与否（0054 逐路独立）。"""
+        escort_relations = frozenset({"护卫", "稽核"})
+        for link in self.links(int(dossier_id), direction="incoming"):
+            relation = str(link.get("relation_type") or "").strip()
+            if relation in escort_relations:
+                return True, int(link["source_dossier_id"]), relation
+        return False, None, ""
+
     def set_interruption_reason_if_empty(self, dossier_id: int, reason: str) -> None:
         self._conn.execute(
             "UPDATE decree_dossiers SET interruption_reason="

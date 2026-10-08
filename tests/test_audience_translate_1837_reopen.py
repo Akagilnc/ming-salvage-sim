@@ -7,7 +7,7 @@ Seams:
 
 from __future__ import annotations
 
-from ming_sim.recommendations import list_recommendation_events
+from ming_sim.entities.character.store import CharacterStore
 
 import json
 from types import SimpleNamespace
@@ -287,7 +287,7 @@ def test_recommendation_commission_stages_office_with_reason(game, monkeypatch):
         "SELECT office FROM characters WHERE name=?", (same_faction.name,),
     ).fetchone()
     assert appointed["office"] == "巡盐御史"
-    events = list_recommendation_events(db, state, recommender.name)
+    events = CharacterStore(db.conn).recommendation_events(int(state.turn), recommender.name)
     assert any(e["candidate"] == same_faction.name and e["reason"] == reason for e in events)
 
 
