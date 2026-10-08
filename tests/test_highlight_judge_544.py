@@ -27,7 +27,10 @@ from ming_sim.highlight_judge import (
 # ── 解析 / 单次调用降级 ──────────────────────────────────────────────────
 
 
-def test_run_highlight_judge_timeout_and_exception_degrade_silently():
+def test_run_highlight_judge_timeout_and_typed_unavailable_degrade():
+    """超时与 typed 模型不可用仍静默降级 []；未知代码异常不降级（#1902）。"""
+    from ming_sim.exceptions import LLMUnavailable
+
     release = threading.Event()
 
     class _Slow:
@@ -35,9 +38,13 @@ def test_run_highlight_judge_timeout_and_exception_degrade_silently():
             release.wait()
             return SimpleNamespace(content='{"highlights": ["迟到"]}')
 
-    class _Boom:
+    class _TypedDown:
         def run(self, *_a, **_k):
-            raise RuntimeError("model down")
+            raise LLMUnavailable("model down", code="llm_error")
+
+    class _CodeFault:
+        def run(self, *_a, **_k):
+            raise TypeError("model down")
 
     try:
         assert run_highlight_judge(
@@ -53,9 +60,17 @@ def test_run_highlight_judge_timeout_and_exception_degrade_silently():
     assert run_highlight_judge(
         minister_reply="臣陈辽饷。",
         llm_config=object(),
-        agent=_Boom(),
+        agent=_TypedDown(),
         timeout_s=1.0,
     ) == []
+
+    with pytest.raises(TypeError, match="model down"):
+        run_highlight_judge(
+            minister_reply="臣陈辽饷。",
+            llm_config=object(),
+            agent=_CodeFault(),
+            timeout_s=1.0,
+        )
 
 
 @pytest.mark.parametrize(("output", "expected"), [

@@ -629,9 +629,14 @@ def write_decree_with_agno(
     }
     try:
         agent = create_decree_writer_agent(llm_config, agno_db)
-        run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-        _dump_llm_messages(run_output, "拟诏", agent=agent)
-        text = extract_agent_text(run_output)
+        # 经 bind 记 typed/代码故障原件，供 extract 在 SDK 吞成 ERROR 后还原（#1902）。
+        from ming_sim.llm_transport import bind_transport_sdk_budget, resolve_transport_policy
+        with bind_transport_sdk_budget(
+            getattr(agent, "model", None), resolve_transport_policy(),
+        ):
+            run_output = agent.run(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+            _dump_llm_messages(run_output, "拟诏", agent=agent)
+            text = extract_agent_text(run_output)
     except LLMUnavailable:
         raise
     except (APITimeoutError, APIConnectionError, APIStatusError) as error:

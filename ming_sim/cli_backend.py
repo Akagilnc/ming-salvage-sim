@@ -1056,11 +1056,19 @@ def _run_api_for_config(
         instructions=list(instructions),
         markdown=False,
     )
-    if policy is None:
-        return extract_agent_text(agent.run(prompt)), 1
-    from ming_sim.llm_transport import bind_transport_sdk_budget, run_with_transport
+    # 无论有无显式 policy，model 调用都经 bind 捕获 typed/代码故障原件
+    # （#1902：policy=None 裸 run 会让 SDK 把 TypeError 摊成 llm_run_error）。
+    from ming_sim.llm_transport import (
+        bind_transport_sdk_budget,
+        default_transport_policy,
+        run_with_transport,
+    )
 
-    with bind_transport_sdk_budget(agent.model, policy):
+    model = getattr(agent, "model", None)
+    if policy is None:
+        with bind_transport_sdk_budget(model, default_transport_policy()):
+            return extract_agent_text(agent.run(prompt)), 1
+    with bind_transport_sdk_budget(model, policy):
         text, attempts = run_with_transport(
             lambda: extract_agent_text(agent.run(prompt)), policy=policy,
         )

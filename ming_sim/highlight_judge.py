@@ -76,11 +76,16 @@ def run_highlight_judge(
             "短语须尽量取原文片段；不要解释。\n\n"
             f"【大臣奏对】\n{reply}"
         )
-        output = local_agent.run(prompt)
-        raw = extract_agent_text(output) if output is not None else ""
-        if not raw and hasattr(output, "content"):
-            raw = str(getattr(output, "content") or "")
-        return parse_highlight_judge_output(raw)
+        # 经 bind 记 typed/代码故障原件，供 extract 在 SDK 吞成 ERROR 后还原（#1902）。
+        from ming_sim.llm_transport import bind_transport_sdk_budget, default_transport_policy
+        with bind_transport_sdk_budget(
+            getattr(local_agent, "model", None), default_transport_policy(),
+        ):
+            output = local_agent.run(prompt)
+            raw = extract_agent_text(output) if output is not None else ""
+            if not raw and hasattr(output, "content"):
+                raw = str(getattr(output, "content") or "")
+            return parse_highlight_judge_output(raw)
 
     pool = ThreadPoolExecutor(max_workers=1)
     try:
