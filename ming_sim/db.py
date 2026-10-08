@@ -19632,35 +19632,6 @@ class GameDB:
         tlog(f"[secret_order] create id={order_id} minister={minister_name} title={title[:20]}")
         return order_id
 
-    def upsert_secret_order(
-        self,
-        state: GameState,
-        minister_name: str,
-        title: str,
-        content: str,
-        tags: List[str],
-        importance: int = 4,
-        deadline_months: int = 0,
-        covert_task: Optional[Mapping[str, object]] = None,
-    ) -> Tuple[int, bool]:
-        """同一承办大臣已有 active 密令 → 更新其要旨(title/content/tags/限期)并记一条
-        「奉旨更新」进展；否则新建。返回 (order_id, was_update)。
-        补 CLI 后端无 function-calling 的缺口：原靠大臣 function-call 改密令，现失效；
-        再次下密令给同一承办人即更新已有条，而非建重复（限期=0 表示不动原限期）。"""
-        existing = self.conn.execute(
-            "SELECT id FROM secret_orders WHERE minister_name=? AND status='active' ORDER BY id DESC LIMIT 1",
-            (minister_name,),
-        ).fetchone()
-        if existing is None:
-            oid = self.create_secret_order(
-                state, minister_name, title, content, tags, importance, deadline_months,
-                covert_task=covert_task,
-            )
-            return oid, False
-        oid = int(existing["id"])
-        self.update_secret_order_by_id(state, oid, title, content, tags, deadline_months)
-        return oid, True
-
     def update_secret_order_by_id(
         self,
         state: GameState,
@@ -19677,8 +19648,7 @@ class GameDB:
         """按**精确 id** 更新 active 密令要旨（title/content/tags/限期），记一条「奉旨更新」进展。
         返回是否更新（id 存在且状态为 active）。
 
-        与 upsert_secret_order 的区别：upsert 按「该大臣最新 active」改，会话动作「更新」已解析出
-        确切 target id 时必须走本方法，否则大臣有多条 active 密令会改错条（CMR F1）。
+        会话动作「更新」须已解析出确切 target id；大臣有多条 active 密令时不得猜最新条（CMR F1）。
         tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。
 
         Oral-decree pins (stage ``origin_chat_message_id`` / speaker) feed the same

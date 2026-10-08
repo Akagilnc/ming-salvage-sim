@@ -74,6 +74,20 @@ from ming_sim.person_archive_contract import (
 from ming_sim.person_delta_adapter import PERSON_EFFECT_KEYS, normalize_person_changes
 from ming_sim.token_stats import tlog
 
+
+def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
+    """易主身名分：显式 title 白名单，否则 ming/主动归附→归附，其余→降臣。
+
+    影子资格预览与实际落账共用这一份；不得平行维护第二份。
+    """
+    title = str(item.get("new_title") or item.get("title") or "").strip()
+    if title:
+        return title if title in PERSON_IDENTITY_TITLES else ""
+    way = str(item.get("方式") or item.get("way") or "").strip()
+    if new_power == "ming" or way == "主动归附":
+        return "归附"
+    return "降臣"
+
 _content: Optional[GameContent] = None
 
 COMMITMENT_KIND_UNTIL_STOP = "until_stop"
@@ -2713,15 +2727,6 @@ def _pending_person_changes_block_event_gate(
         if agg is None:
             agg = "min"
         return int(_GATE_AGG_FUNCS[agg](values))
-
-    def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
-        title = str(item.get("new_title") or item.get("title") or "").strip()
-        if title:
-            return title if title in PERSON_IDENTITY_TITLES else ""
-        way = str(item.get("方式") or item.get("way") or "").strip()
-        if new_power == "ming" or way == "主动归附":
-            return "归附"
-        return "降臣"
 
     for item in pending_person_changes:
         name = str(item.get("name") or "").strip()
@@ -5854,15 +5859,6 @@ def _apply_person_changes(
             commit=commit_person_change if commit is None else commit,
             origin_ref=origin_ref,
         )
-
-    def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
-        title = str(item.get("new_title") or item.get("title") or "").strip()
-        if title:
-            return title if title in PERSON_IDENTITY_TITLES else ""
-        way = str(item.get("方式") or item.get("way") or "").strip()
-        if new_power == "ming" or way == "主动归附":
-            return "归附"
-        return "降臣"
 
     def displaced_talent_pool_results(displaced_parts: object) -> List[Dict[str, object]]:
         if not isinstance(displaced_parts, list):

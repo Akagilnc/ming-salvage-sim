@@ -389,8 +389,9 @@ def build_audience_translate_prompt(
     """
     said_block = "\n".join(str(s) for s in night_said if str(s).strip()) or "（无）"
     pending_block = "；".join(str(s) for s in pending_summaries if str(s).strip()) or "（无）"
-    grounding = str(target_grounding or "").strip()
-    grounding_block = f"{grounding}\n" if grounding else ""
+    # 目录原文零删改；判空只用局部归一，不把 strip 写回供料。
+    grounding = str(target_grounding or "")
+    grounding_block = f"{grounding}\n" if grounding.strip() else ""
     return (
         "你是召对转译器。读本轮皇帝原话、回话、本场已说的话与本夜暂存清单，"
         "一次声明本轮全部记录。只输出一个 JSON 对象，无代码围栏、无多余字。\n"

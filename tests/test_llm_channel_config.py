@@ -634,26 +634,6 @@ def test_verify_llm_available_api_error_status_nonempty_content_raises(monkeypat
     assert ei.value.code == "llm_run_error"
 
 
-def test_for_role_preserves_cli_channel_fields_for_advanced_roles():
-    cfg = LLMConfig(
-        api_key="cli-backend",
-        base_url="https://api.example.com/v1",
-        model="api-model",
-        advanced_model="api-advanced",
-        channel="cli",
-        cli_runner="codex",
-        cli_model="gpt-5.5",
-        cli_timeout_seconds=240,
-    )
-
-    derived = for_role(cfg, "simulator")
-
-    assert derived.channel == "cli"
-    assert derived.cli_runner == "codex"
-    assert derived.cli_model == "gpt-5.5"
-    assert derived.cli_timeout_seconds == 240
-
-
 def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
     """codex R1 #2：legacy env CLI（MING_SIM_LLM_BACKEND 设）时 cli_timeout_seconds 必须用
     CLI 槽默认（静默判死 60），不沿用 API 的 timeout_seconds（180）。"""

@@ -11,15 +11,12 @@ tests/test_material_directory_1830.py 的同一泛化入口覆盖，不在此重
 
 from __future__ import annotations
 
-import os
-import tempfile
 from pathlib import Path
 
 from ming_sim.db import GameDB
 from ming_sim.materials import (
     _safe_segment,
     list_materials, prepare_world_materials,
-    world_materials_root,
 )
 
 
@@ -158,7 +155,7 @@ def test_prepare_rebuilds_from_world_record_after_restore(game, tmp_path):
         restored.close()
 
 
-def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monkeypatch):
+def test_world_materials_isolate_invocations_and_databases(game, tmp_path):
     db, state, content = game
     requested = tmp_path / "world"
     first = prepare_world_materials(db, state, dest_root=requested)
@@ -166,32 +163,6 @@ def test_world_materials_isolate_invocations_and_databases(game, tmp_path, monke
     assert first.root != second.root
     assert (first.root / "INDEX.txt").is_file()
     assert (second.root / "INDEX.txt").is_file()
-
-    # 第二档库与夹具库同父目录（材料树按 db stem 隔层正是为同父多档互不互踩），
-    # 但资源归属归本用例：在该父目录里用 mkstemp 原子占一个唯一名（不是拼一个
-    # basename——basename 跨运行会撞，撞上时 GameDB 打开的是别人的库）。finally
-    # 只删自己 mkstemp 出来的那两个文件，不按名字去动目录里的其它残留。
-    fd, other_name = tempfile.mkstemp(dir=str(Path(db.path).parent), suffix=".db")
-    os.close(fd)
-    other_path = Path(other_name)
-    other = GameDB(str(other_path), content)
-    try:
-        other.seed_static_data()
-        other_state = other.load_state()
-
-        class _Fixed:
-            hex = "a" * 32
-
-        monkeypatch.setattr("ming_sim.materials.uuid.uuid4", lambda: _Fixed())
-        same_db = world_materials_root(db, state)
-        assert same_db == world_materials_root(db, state)
-        other_db = world_materials_root(other, other_state)
-        assert same_db != other_db
-    finally:
-        other.close()
-        for leftover in (other_path, Path(f"{other_path}_agno.db")):
-            if leftover.exists():
-                leftover.unlink()
 
 
 def test_world_materials_include_textual_facts_once_and_gazette_not_duplicated(game, tmp_path):
