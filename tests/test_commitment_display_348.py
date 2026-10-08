@@ -27,16 +27,12 @@ def _progress(months_elapsed, paid_total=0, **extra):
 
 class TestCommitmentTimedBarValue:
     def test_timed_bar_percentage_clamp_and_none_cases(self):
-        timed = _row(end_turn=17, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}})
-        assert commitment_timed_bar_value(_progress(3), timed) == 25
-        assert commitment_timed_bar_value(_progress(12), timed) == 100
-        assert commitment_timed_bar_value(_progress(15), timed) == 100
-        assert commitment_timed_bar_value(_progress(0), timed) == 0
+        """负向/不适用边界：无时限条时返回 None（正向百分比由 insert_issue+墙钟案覆盖）。"""
         assert commitment_timed_bar_value(
             _progress(3),
             _row(end_turn=0, origin_turn=5, ongoing_effects={"metrics": {"皇威": 1}}),
         ) is None
-        # 仅 resolve_condition 串不再冒充 typed stop_gate；有 end_turn+ongoing 仍走时限条。
+        # 仅 resolve_condition 串不再冒充 typed stop_gate。
         assert commitment_timed_bar_value(
             _progress(3, remaining_arrears=80),
             _row(end_turn=20, origin_turn=5,

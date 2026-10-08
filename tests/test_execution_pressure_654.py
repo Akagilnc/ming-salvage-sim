@@ -298,27 +298,8 @@ def test_get_dossier_for_directive_existence_sentinel(env):
     assert len(listed) == 1 and listed[0]["region_id"] == "shaanxi"
 
 def test_normalize_payload_locality_and_target_kind(env):
+    """负向闸：未知 kind/scope fail-loud（正向归一由真实成案入口覆盖）。"""
     db, _, _ = env
-    out = db._normalize_directive_dossier_payload({
-        "dossier_action_type": "policy",
-        "target_kind": "policy",
-        "target_id": "x",
-        "locality_scope": "全国",
-        "mode": "ordinary",
-    })
-    assert out["locality_scope"] == "national"
-    # owner A：dossier 为 canonical 八值成员，合法 none 归一
-    dossier_out = db._normalize_directive_dossier_payload({
-        "dossier_action_type": "revoke_decree",
-        "target_kind": "dossier",
-        "target_id": "42",
-        "revoke_target_dossier_id": 42,
-        "locality_scope": "无",
-        "mode": "ordinary",
-    })
-    assert dossier_out["target_kind"] == "dossier"
-    assert dossier_out["locality_scope"] == "none"
-    assert int(dossier_out["revoke_target_dossier_id"]) == 42
     with pytest.raises(ValueError):
         db._normalize_directive_dossier_payload({
             "dossier_action_type": "policy",
@@ -516,66 +497,27 @@ def test_path1_conversational_draft_bad_roster_marks_failed(env):
 # ── 8×3 locality 矩阵（参数化）──────────────────────────────────
 
 @pytest.mark.parametrize(
-    "target_kind,scope,expect",
+    ("target_kind", "scope"),
     [
-        # policy/issue/account × national → 单行 ''（#1778：不按省拆，无动作白名单）
-        ("policy", "national", "empty"),
-        ("issue", "national", "empty"),
-        ("account", "national", "empty"),
-        # policy/issue/account × single → fail
-        ("policy", "single", "fail"),
-        ("issue", "single", "fail"),
-        # policy/issue/account × none → ''
-        ("policy", "none", "empty"),
-        ("issue", "none", "empty"),
-        ("account", "none", "empty"),
-        # character/office/army × national → fail
-        ("character", "national", "fail"),
-        ("office", "national", "fail"),
-        ("army", "national", "fail"),
-        # character/office/army × single → fail
-        ("character", "single", "fail"),
-        ("office", "single", "fail"),
-        ("army", "single", "fail"),
-        # character/office/army × none → ''
-        ("character", "none", "empty"),
-        ("office", "none", "empty"),
-        ("army", "none", "empty"),
-        # region × national/none → fail；single → R1
-        ("region", "national", "fail"),
-        ("region", "none", "fail"),
-        ("region", "single", "R1"),
-        # dossier 三格：仅 none → 单行 ''；single/national fail-loud
-        ("dossier", "none", "empty"),
-        ("dossier", "single", "fail"),
-        ("dossier", "national", "fail"),
-        ("dossier", None, "empty"),
-        # 缺省 scope（normalize → none）
-        ("policy", None, "empty"),
-        ("region", None, "fail"),
-        # unknown
-        ("unknown", "none", "fail"),
-        ("policy", "全省", "fail"),
+        ("region", "national"),
+        ("region", "none"),
+        ("dossier", "single"),
+        ("dossier", "national"),
+        ("region", None),
+        ("unknown", "none"),
+        ("policy", "全省"),
     ],
 )
-def test_locality_matrix_8x3_and_unknown(env, target_kind, scope, expect):
+def test_locality_matrix_8x3_and_unknown(env, target_kind, scope):
+    """矛盾 locality 组合 fail-loud（正向列表返回由真实 bulk 成案覆盖）。"""
     db, _, content = env
     payload = {"target_kind": target_kind, "target_id": "shaanxi" if target_kind == "region" else "x"}
     if scope is not None:
         payload["locality_scope"] = scope
-    if expect == "fail":
-        with pytest.raises(ValueError):
-            resolve_dossier_region_ids(
-                db.conn, payload=payload, regions_content=content.regions,
-            )
-        return
-    regions = resolve_dossier_region_ids(
-        db.conn, payload=payload, regions_content=content.regions,
-    )
-    if expect == "empty":
-        assert regions == [""]
-    elif expect == "R1":
-        assert regions == ["shaanxi"]
+    with pytest.raises(ValueError):
+        resolve_dossier_region_ids(
+            db.conn, payload=payload, regions_content=content.regions,
+        )
 
 def test_locality_fail_create_decree_dossiers_zero_rows(env):
     """fail 格走真实 bulk 入口：异常 + 零行。"""

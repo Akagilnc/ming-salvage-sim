@@ -74,8 +74,6 @@ from ming_sim.applier import (
     RejectedItem,
     RejectionCollector,
     SectionResult,
-    atomic,
-    connection_owns_transaction,
     item_savepoint_scope,
     mirror_rejections_after_commit,
 )
@@ -912,8 +910,8 @@ def _commission_grant_payload(
         GRANT_ACTIONS,
         require_grant_allocation_shape,
         resolve_grant_account,
-        write_locality_scope_for_target_kind,
     )
+    from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 
     grant_action = str(grant.get("grant_action") or "").strip()
     if grant_action not in (GRANT_ACTIONS - {"无"}):

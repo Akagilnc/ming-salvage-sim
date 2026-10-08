@@ -1872,7 +1872,7 @@ def _pause(
 
 def _split_at_question(text: str) -> tuple[str, List[dict]]:
     """前缀 = 首个合法 DECISION 之前；questions = 该段全部合法请旨块。"""
-    from ming_sim.decree import _DECISION_RE, parse_decision_blocks
+    from ming_sim.settlement_payload import _DECISION_RE, parse_decision_blocks
 
     questions: List[dict] = []
     first_start: Optional[int] = None

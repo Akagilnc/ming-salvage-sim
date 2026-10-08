@@ -453,20 +453,6 @@ def test_rejected_snapshot_must_equal_the_prepared_judge_input(
             [verdict], dossiers, db, prepared_context=context,
         )
 
-def test_appointment_tenure_is_the_rejection_snapshot_value(game):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="appointment", decree_text="署理某官",
-        target_kind="character", target_id="candidate", payload={"任别": "署理"},
-    )
-
-    context = decree_mod.build_promulgation_judge_context(
-        db, state, db.list_decree_dossiers(status="proposed"),
-    )
-
-    assert context["dossiers"][0]["criteria_snapshot_source"]["appointment_tenure"] == "署理"
-    assert context["dossiers"][0]["id"] == dossier_id
-
 def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)

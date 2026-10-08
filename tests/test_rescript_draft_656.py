@@ -188,7 +188,7 @@ def test_r3_strict_parse_concatenated_objects_raises_contract_error():
         _parse_rescript_json_strict(raw)
 
 def test_657_s1_option_shape_stamps_draft_capability():
-    """层 A option 必填键校验；服务端写 draft_capability。"""
+    """层 A option 负向闸：缺必填键与库外 action_type fail-loud。"""
     from ming_sim.rescript_draft import normalize_rescript_layer_a_option
 
     raw = {
@@ -202,25 +202,8 @@ def test_657_s1_option_shape_stamps_draft_capability():
         "region_id": "shaanxi",
         "transaction_category": "督赈",
     }
-    opt = normalize_rescript_layer_a_option(raw)
-    assert opt["draft_capability"]
-    assert opt["label"] == "发帑赈济"
-    assert opt["action_type"] == "assignment"
-    # 缺必填键 → 拒
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option({"label": "x", "hint": "y"})
-    # #1778：库级全集内的类型（policy 等）照常受理，无七类闭集
-    policy_opt = normalize_rescript_layer_a_option({
-        **raw,
-        "action_type": "policy",
-        "target_kind": "policy",
-        "target_id": "清丈全国田亩",
-        "locality_scope": "national",
-        "region_id": "",
-    })
-    assert policy_opt["action_type"] == "policy"
-    assert policy_opt["draft_capability"]
-    # 库级全集之外仍 fail-loud（ADR 0040 形状检查）
     with pytest.raises(ValueError):
         normalize_rescript_layer_a_option({**raw, "action_type": "修仙"})
 

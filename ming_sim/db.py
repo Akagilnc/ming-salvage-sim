@@ -10293,8 +10293,8 @@ class GameDB:
         """
         from ming_sim.supervision import (
             SUPERVISION_RELATION,
-            resolve_dossier_owner_name,
         )
+        from ming_sim.participant_roster import resolve_dossier_owner_name
 
         turn_i = int(turn)
         presence_written = 0
@@ -10506,8 +10506,8 @@ class GameDB:
             derive_consecutive_months,
             faction_relation,
             integrity_band,
-            resolve_dossier_owner_name,
         )
+        from ming_sim.participant_roster import resolve_dossier_owner_name
 
         presence = self.list_supervision_presence(
             int(dossier_id), as_of_turn=as_of_turn,

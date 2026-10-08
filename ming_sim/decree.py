@@ -24,7 +24,7 @@ from ming_sim.agents import (
     run_agent_text,
 )
 from ming_sim.applier import (
-    Provenance, RejectedItem, RejectionCollector, atomic,
+    Provenance, RejectionCollector, atomic,
     mirror_rejections_after_commit,
 )
 from ming_sim.constants import TURN_UNIT
@@ -60,14 +60,6 @@ from ming_sim.token_stats import tlog
 # 20 年自动结算：开局 1627.10（turn=1），每回合 +1 月。到 1647.10 = (1647-1627)*12 + 1 = 241 回合。
 # 满 240 回合（即第 240 个回合结算完，1647.09）仍未分胜负则强制 timeout 收尾。
 TIMEOUT_TURN = 240
-
-# 逐旨／世界段请旨解析工具位于 ming_sim.settlement_payload，不从邸报抽取。
-# 此处 re-import 保 `from ming_sim.decree import X` 公开表面 + decree 内部调用点不变。
-from ming_sim.settlement_payload import (  # noqa: E402
-    _DECISION_RE,
-    bind_decision_options,
-    parse_decision_blocks,
-)
 
 
 @dataclass

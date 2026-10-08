@@ -13,7 +13,6 @@ import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from ming_sim.decree_vocabulary import TARGET_KINDS
-from ming_sim.execution_pressure import write_locality_scope_for_target_kind
 from ming_sim.executor_routing import duty_route_categories
 
 from ming_sim.action_clusters import (
