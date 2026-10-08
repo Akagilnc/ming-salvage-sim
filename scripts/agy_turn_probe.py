@@ -52,7 +52,9 @@ def main() -> int:
     print("[resolve] 颁诏推演中（agy 调用，耐心等）...")
     result = session.resolve_turn(decree=ns.decree)
 
-    # HITL：探针本地取首 option 续跑；生产 CLI 已退役自动首选（#1812/#1889）。
+    # HITL：探针经 project_preferred_hitl_choice 唯一真源续跑；生产 CLI 不自动亲裁。
+    from ming_sim.rescript_actions import project_preferred_hitl_choice
+
     rounds = 0
     while getattr(result, "awaiting", False):
         rounds += 1
@@ -60,14 +62,7 @@ def main() -> int:
         print(f"[hitl] 第{rounds}轮决策点 {len(decisions)} 个，自动选第一项：")
         choices = []
         for d in sorted(decisions, key=lambda x: int(x.get("idx") or 0)):
-            opts = d.get("options") or []
-            first = opts[0] if opts else {}
-            item = dict(first) if isinstance(first, dict) else {"label": str(first or "")}
-            dk = str(d.get("decision_key") or "").strip()
-            if dk:
-                item.setdefault("decision_key", dk)
-            if str(d.get("kind") or "").strip() == "rescript_draft":
-                item["action"] = "follow_draft"
+            item = project_preferred_hitl_choice(d)
             label = str(item.get("label") or "")
             print(f"   - #{d.get('idx')} {str(d.get('title'))[:40]} → 选「{label[:40]}」")
             choices.append(item)
