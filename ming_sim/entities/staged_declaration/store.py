@@ -177,7 +177,10 @@ class StagedDeclarationStore:
         return row is not None
 
     def questions_for(self, decree_ref: str) -> list:
-        """该旨未作废行上的请旨；已结算行仍保留，供过月重试判断是否还在等答复。"""
+        """该旨未作废行上的请旨；已结算行仍保留，供过月重试判断是否还在等答复。
+
+        SQL NULL = 真正缺省（跳过）；空串/非列表/腐坏 JSON 响亮（#1897 E1）。
+        """
         ref = str(decree_ref or "").strip()
         if not ref:
             return []
@@ -189,15 +192,20 @@ class StagedDeclarationStore:
         questions: list = []
         for row in rows:
             raw = row["questions_json"]
-            if not raw:
+            if raw is None:
                 continue
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                questions.extend(parsed)
+            from ming_sim.db import _load_durable_json_list
+            parsed = _load_durable_json_list(
+                raw, surface=f"staged_declarations.questions_json:{ref}",
+            )
+            questions.extend(parsed)
         return questions
 
     def forecast_text_for(self, decree_ref: str) -> str:
-        """问前段文。已结算行仍保留，续推只读，不重推、不重落。"""
+        """问前段文。已结算行仍保留，续推只读，不重推、不重落。
+
+        原文过手：strip 只判空副本，运输值不加工（#1897 E2 / P6）。
+        """
         ref = str(decree_ref or "").strip()
         if not ref:
             return ""
@@ -207,11 +215,15 @@ class StagedDeclarationStore:
             "AND forecast_text IS NOT NULL ORDER BY id",
             (ref,),
         ).fetchall()
-        parts = [
-            str(row["forecast_text"]).strip()
-            for row in rows
-            if str(row["forecast_text"] or "").strip()
-        ]
+        parts: list[str] = []
+        for row in rows:
+            text = row["forecast_text"]
+            if text is None:
+                continue
+            original = text if isinstance(text, str) else str(text)
+            if not original.strip():
+                continue
+            parts.append(original)
         return "\n".join(parts)
 
     def clear_questions(self, decree_ref: str) -> int:
@@ -243,9 +255,17 @@ class StagedDeclarationStore:
 
 
 def _load_optional_json(row: Any, column: str) -> object:
+    """可选持久 JSON 列：SQL NULL → None；空串/腐坏响亮（#1897 E1）。"""
     if column not in row.keys() or row[column] is None:
         return None
-    return json.loads(row[column])
+    raw = row[column]
+    # 空串不得洗成合法缺省（与 parse_engine / durable 权威同缝）。
+    if isinstance(raw, str) and not raw.strip():
+        raise ValueError(f"staged_declarations.{column} 空串腐坏")
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"staged_declarations.{column} 腐坏 JSON") from exc
 
 
 def _row_to_staged(row: Any) -> StagedDeclaration:
@@ -255,6 +275,15 @@ def _row_to_staged(row: Any) -> StagedDeclaration:
     from ming_sim.db import GameDB
     # 持久声明 JSON 与引擎 payload 同权威；空串/腐坏响亮（#1897 E1）。
     decree_ref = str(row["decree_ref"])
+    # present 非对象/非列表不得洗成缺席（#1897 E1）。
+    if verdict is not None and not isinstance(verdict, dict):
+        raise ValueError(
+            f"staged_declarations.verdict_json 须为对象，得 {type(verdict).__name__}"
+        )
+    if questions is not None and not isinstance(questions, list):
+        raise ValueError(
+            f"staged_declarations.questions_json 须为列表，得 {type(questions).__name__}"
+        )
     return StagedDeclaration(
         id=int(row["id"]), decree_ref=decree_ref,
         declaration=GameDB.parse_engine_payload_json(
@@ -266,7 +295,9 @@ def _row_to_staged(row: Any) -> StagedDeclaration:
             row["visible_refs_json"],
             surface=f"staged_declarations.visible_refs_json:{decree_ref}",
         ),
-        verdict=verdict if isinstance(verdict, dict) else None,
-        questions=questions if isinstance(questions, list) else None,
-        forecast_text=None if forecast_text is None else str(forecast_text),
+        verdict=verdict,
+        questions=questions,
+        forecast_text=None if forecast_text is None else (
+            forecast_text if isinstance(forecast_text, str) else str(forecast_text)
+        ),
     )

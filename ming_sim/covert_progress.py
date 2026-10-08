@@ -581,45 +581,60 @@ def describe_covert_task_contract() -> str:
 
 
 def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
-    """Validate a frozen contract without rebuilding or supplying read-time defaults."""
-    if not isinstance(raw, Mapping) or raw.get("version") != CONTRACT_VERSION:
+    """Validate a frozen contract without rebuilding or supplying read-time defaults.
+
+    None = 真正缺席 → None。present 坏结构/坏类型响亮 ValueError（#1897 E1），
+    不得把坏合同洗成可选缺席。
+    """
+    if raw is None:
         return None
+
+    def _reject(message: str) -> None:
+        # CovertContractError ⊂ ValueError：持久 present 坏合同响亮，不洗成缺席（#1897 E1）。
+        raise CovertContractError(f"持久 covert_task_contract：{message}")
+
+    if not isinstance(raw, Mapping):
+        _reject(f"须为对象，得 {type(raw).__name__}")
+    if raw.get("version") != CONTRACT_VERSION:
+        _reject(f"version 非法：{raw.get('version')!r}")
     delivery = raw.get("delivery")
     if not isinstance(delivery, Mapping):
-        return None
+        _reject("缺少 delivery 对象")
     if not str(raw.get("kind") or "").strip() or not normalize_axes(raw.get("axes")):
-        return None
+        _reject("kind/axes 无效")
     if raw.get("direction") not in (-1, 1):
-        return None
+        _reject("direction 非法")
     inv_target = str(
         raw.get("investigation_target") or delivery.get("investigation_target") or ""
     ).strip()
     if inv_target:
         try:
             qty = float(delivery.get("target_units"))
-        except (TypeError, ValueError):
-            return None
+        except (TypeError, ValueError) as exc:
+            raise CovertContractError(
+                "持久 covert_task_contract：target_units 非法",
+            ) from exc
         if qty <= 0.0:
-            return None
+            _reject("target_units 须为正")
         if delivery.get("effect_sign") not in (-1, 1):
-            return None
+            _reject("effect_sign 非法")
         if list(delivery.get("canonical_fields") or []):
-            return None
+            _reject("investigation 不得带 canonical_fields")
         if str(delivery.get("investigation_target") or "").strip() != inv_target:
-            return None
+            _reject("investigation_target 不一致")
         return copy.deepcopy(dict(raw))
     try:
         unit, target = canonicalize_delivery_unit(
             delivery.get("unit"), delivery.get("target_units"),
         )
-    except CovertContractError:
-        return None
+    except CovertContractError as exc:
+        raise CovertContractError(f"持久 covert_task_contract：{exc}") from exc
     if delivery.get("effect_sign") not in (-1, 1):
-        return None
+        _reject("effect_sign 非法")
     if list(delivery.get("canonical_fields") or []) != canonical_fields_for_delivery(unit=unit):
-        return None
+        _reject("canonical_fields 与 unit 不符")
     if float(delivery.get("target_units")) != target:
-        return None
+        _reject("target_units 与规范化不符")
     if any(
         not delivery.get(key)
         for key in _identity_keys_for_unit(
@@ -628,7 +643,7 @@ def coerce_covert_task_contract(raw: object) -> Optional[Dict[str, object]]:
             purpose=delivery.get("purpose"),
         )
     ):
-        return None
+        _reject("delivery 缺 identity 键")
     return copy.deepcopy(dict(raw))
 
 
@@ -638,15 +653,19 @@ def read_covert_task_contract(dossier: Mapping[str, object] | None) -> Optional[
     payload = dossier.get("payload")
     if not isinstance(payload, Mapping):
         raw_json = dossier.get("payload_json")
-        if isinstance(raw_json, str) and raw_json.strip():
-            try:
-                loaded = json.loads(raw_json)
-            except (TypeError, ValueError):
-                loaded = None
-            payload = loaded if isinstance(loaded, Mapping) else None
-        else:
+        if raw_json is None:
             payload = None
+        else:
+            # 与 parse_engine 同权威：空串/腐坏响亮，不 catch-to-缺席（#1897 E1）。
+            from ming_sim.db import GameDB
+            loaded = GameDB.parse_engine_payload_json(
+                raw_json, surface="covert_task.dossier.payload_json",
+            )
+            payload = loaded
     if not isinstance(payload, Mapping):
+        return None
+    # CONTRACT_KEY 缺席 → None；present 坏值由 coerce 响亮。
+    if CONTRACT_KEY not in payload:
         return None
     return coerce_covert_task_contract(payload.get(CONTRACT_KEY))
 

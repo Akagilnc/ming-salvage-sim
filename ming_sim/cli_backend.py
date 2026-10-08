@@ -2536,15 +2536,16 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
                 continue
             # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
             # 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
-            title = str(
+            # 题/正文为 LLM 供料：原话过手，strip 只判空（#1897 E2 / P6）。
+            title_raw = (
                 payload.get("title")
                 or payload.get("target_id")
                 or issue["title"]
                 or ""
-            ).strip()
-            body = str(
-                payload.get("text") or row.get("decree_text") or ""
-            ).strip()
+            )
+            title = title_raw if isinstance(title_raw, str) else str(title_raw or "")
+            body_raw = payload.get("text") or row.get("decree_text") or ""
+            body = body_raw if isinstance(body_raw, str) else str(body_raw or "")
             # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
@@ -2834,11 +2835,15 @@ def extract_draft_intent(
     )
     # 补充模式（has_pending_draft + existing_draft_text）：注入现有草案，要求 LLM 输出合并草案。
     # 直接用大臣回话（可能是「好的，加上…」等确认语）会覆盖原草案——须由 LLM 合并。
-    _existing_draft_text = (
-        "" if existing_draft_text is None else str(existing_draft_text)
-    ).strip()
+    # 既有草案原文过手：strip 只判空，不改运输值（#1897 E2 / P6）。
+    if existing_draft_text is None:
+        _existing_draft_text = ""
+    elif isinstance(existing_draft_text, str):
+        _existing_draft_text = existing_draft_text
+    else:
+        _existing_draft_text = str(existing_draft_text)
     _supplement_mode = (has_pending_draft or bool(_candidates)) and (
-        bool(_existing_draft_text) or bool(_candidates))
+        bool(_existing_draft_text.strip()) or bool(_candidates))
     intent_schema_line = (
         '  "拟旨意图": "无|拟旨",\n'
         '  "动作类型": "policy|approve_reject|assignment|'
@@ -2882,7 +2887,7 @@ def extract_draft_intent(
     )
     draft_context = (
         f"【现有草案】{_existing_draft_text}\n"
-        if _existing_draft_text else ""
+        if _existing_draft_text.strip() else ""
     )
     candidates_context = (
         "【现有候选】\n" + "\n".join(
