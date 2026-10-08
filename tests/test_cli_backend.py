@@ -231,29 +231,40 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     assert seen["runner"] == "codex" and seen["json_events"] is True
 
 
-def test_clichat_codex_stream_keeps_agent_message_drops_reasoning(monkeypatch):
-    """正式 JSON 事件经真实消费链到 invoke_stream：agent_message 入文，reasoning 丢弃。"""
-    events = "\n".join(
-        [
-            json.dumps(
-                {"type": "item.completed", "item": {"type": "reasoning", "text": "DRAFT"}},
-                ensure_ascii=False,
-            ),
-            json.dumps(
+@pytest.mark.parametrize(
+    "events,expected_text",
+    [
+        # 有效终包在前、reasoning 在后：若错误接纳 reasoning，最后终包会被 DRAFT 覆盖。
+        (
+            [
                 {"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}},
-                ensure_ascii=False,
-            ),
-            json.dumps({"type": "agent_message", "message": "TOP"}, ensure_ascii=False),
-        ]
-    ) + "\n"
+                {"type": "item.completed", "item": {"type": "reasoning", "text": "DRAFT"}},
+            ],
+            "BODY",
+        ),
+        (
+            [
+                {"type": "agent_message", "message": "TOP"},
+                {"type": "item.completed", "item": {"type": "reasoning", "text": "DRAFT"}},
+            ],
+            "TOP",
+        ),
+    ],
+)
+def test_clichat_codex_stream_keeps_agent_message_drops_reasoning(
+    monkeypatch, events, expected_text,
+):
+    """正式 JSON 事件经 Popen→response_stream：完整原文保真，reasoning 不得改写终包。"""
+    # 装载前独立捕获输入期望（事件里的原文），不从解码输出回读。
+    expected = str(expected_text)
+    payload = "\n".join(json.dumps(obj, ensure_ascii=False) for obj in events) + "\n"
     monkeypatch.delenv("MING_SIM_CODEX_REASONING", raising=False)
-    _capture_run(monkeypatch, _P(stdout=events))
+    _capture_run(monkeypatch, _P(stdout=payload))
     chat = cb.CliChat(id="gpt-test", backend="codex")
     chunks = list(chat.response_stream([Message(role="user", content="PROMPT")]))
     texts = [str(c.content) for c in chunks if getattr(c, "content", None)]
-    joined = "".join(texts)
-    assert "BODY" in joined or "TOP" in joined
-    assert "DRAFT" not in joined
+    # 现役消费者保留最后有效终包；整段 content 须等于输入原文，不得子串/OR 兜底。
+    assert texts == [expected]
 
 
 @pytest.mark.parametrize(
