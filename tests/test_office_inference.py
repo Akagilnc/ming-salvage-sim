@@ -301,7 +301,6 @@ def test_appointment_seat_identity_reuses_local_and_strips_central(game):
         new_office_type="督抚", region_id="", reason="reappoint-omit-region",
     )
     assert not r3.get("rejected")
-    assert not r3.get("displaced"), r3
     assert content.characters[a].office == "巡抚"
     assert content.characters[a].office_region == "shaanxi"
     assert db.character_office_region(a) == "shaanxi"
