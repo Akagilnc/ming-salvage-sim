@@ -599,7 +599,7 @@ def test_issue_path_tolerated_rejections_reach_reports(game):
         state, kind="initiative", title="测试容忍留痕", origin_kind="decree",
         origin_ref="", bar_value=50, bar_good_meaning="成", bar_bad_meaning="败",
         inertia=0, stage_text="", severity=50, region_hint="", faction_hint="",
-        tags=[], ongoing_effects={}, cancellable="decree", cancel_cost={},
+        tags=[], ongoing_effects={}, cancellable="decree",
         effect_on_resolve={
             "army_delta": {aid: {"morale": 1, "士气大振": 9, "loyalty": True, "mobility": 3.7, "equipment": None}, "查无此军xyz": {"morale": 2}},
             "new_armies": [
@@ -643,7 +643,7 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
         state, kind="initiative", title="测试惯性结案留痕", origin_kind="decree",
         origin_ref="", bar_value=99, bar_good_meaning="成", bar_bad_meaning="败",
         inertia=5, stage_text="", severity=50, region_hint="", faction_hint="",
-        tags=[], ongoing_effects={}, cancellable="decree", cancel_cost={},
+        tags=[], ongoing_effects={}, cancellable="decree",
         effect_on_resolve={"army_delta": {aid: {"morale": 1, "士气大振": 9}}},
         effect_on_fail={}, resolve_condition="", fail_condition="",
     )

@@ -230,7 +230,7 @@ def test_issue_effect_faction_rejection_reaches_reports(game):
         tags=[], ongoing_effects={},
         effect_on_resolve={"factions": {"查无此派系": {"satisfaction": 9}}},
         effect_on_fail={}, resolve_condition="", fail_condition="",
-        cancellable="decree", cancel_cost={},
+        cancellable="decree",
     )
     db.conn.commit()
 

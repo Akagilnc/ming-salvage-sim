@@ -98,7 +98,7 @@ def test_issue_effect_bad_account_economy_reaches_reports(game):
         tags=[], ongoing_effects={},
         effect_on_resolve={"economy": [{"account": "金库", "delta": -9, "reason": "非法账户"}]},
         effect_on_fail={}, resolve_condition="", fail_condition="",
-        cancellable="decree", cancel_cost={},
+        cancellable="decree",
     )
     db.conn.commit()
 
@@ -154,7 +154,7 @@ def test_issue_effect_cancel_economy_reaches_reports(game):
         origin_ref="", bar_value=50, bar_good_meaning="成", bar_bad_meaning="败",
         inertia=0, stage_text="", severity=50, region_hint="", faction_hint="",
         tags=[], ongoing_effects={}, effect_on_resolve={}, effect_on_fail={},
-        resolve_condition="", fail_condition="", cancellable="decree", cancel_cost={},
+        resolve_condition="", fail_condition="", cancellable="decree",
     )
     db.conn.commit()
 

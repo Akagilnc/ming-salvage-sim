@@ -1921,7 +1921,6 @@ class GameDB:
                 target_roster TEXT NOT NULL DEFAULT '[]',
                 ongoing_effects TEXT NOT NULL DEFAULT '{}',
                 cancellable TEXT NOT NULL DEFAULT 'never',
-                cancel_cost TEXT NOT NULL DEFAULT '{}',
                 effect_on_resolve TEXT NOT NULL DEFAULT '{}',
                 effect_on_fail TEXT NOT NULL DEFAULT '{}',
                 resolve_condition TEXT NOT NULL DEFAULT '',
@@ -17350,7 +17349,6 @@ class GameDB:
         target_roster: Iterable[str] | None = None,
         ongoing_effects: Dict[str, object] | None = None,
         cancellable: str = "never",
-        cancel_cost: Dict[str, object] | None = None,
         effect_on_resolve: Dict[str, object] | None = None,
         effect_on_fail: Dict[str, object] | None = None,
         resolve_condition: str = "",
@@ -17387,10 +17385,10 @@ class GameDB:
                 kind, title, origin_kind, origin_ref, origin_turn,
                 bar_value, bar_good_meaning, bar_bad_meaning, inertia,
                 phase, stage_text, status, severity, region_hint, faction_hint,
-                tags, participants, participant_roster, target_roster, ongoing_effects, cancellable, cancel_cost,
+                tags, participants, participant_roster, target_roster, ongoing_effects, cancellable,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
                 end_turn, stop_condition, commitment_kind, stages_json, last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 kind, title,
@@ -17404,7 +17402,6 @@ class GameDB:
                 safe_json_dumps(normalized_targets, ensure_ascii=False),
                 safe_json_dumps(ongoing_effects or {}, ensure_ascii=False),
                 cancellable,
-                safe_json_dumps(cancel_cost or {}, ensure_ascii=False),
                 safe_json_dumps(effect_on_resolve or {}, ensure_ascii=False),
                 safe_json_dumps(effect_on_fail or {}, ensure_ascii=False),
                 resolve_condition, fail_condition,

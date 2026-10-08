@@ -380,7 +380,6 @@ def apply_issue_tracker_output(
         ongoing_has_work = issues._monthly_ongoing_effects_has_work(ongoing_eff)
         unsupported_ongoing_fields = issues._unsupported_monthly_ongoing_fields(ongoing_eff)
         # 坏子项留痕，不牵连可构造的局势主体。
-        cancel_cost = _eff_dict(ni.get("cancel_cost"), "cancel_cost")
         origin_ref = str(ni.get("origin_ref") or "").strip()
         stop_condition_raw = ni.get("stop_condition")
         stop_condition = issues._issue_condition_text(stop_condition_raw)
@@ -476,7 +475,7 @@ def apply_issue_tracker_output(
         # 国策效果由上游语义转译/声明供给；落账核不再调用旧 initiative 效果设计补全。
         # 字段强转脏数据 → 拒整项（ADR 0008 决定 1：new_issue 即「项」，坏字段令该项无法洁净构造
         # → 拒留痕，非默认掩盖）。这些强转会因脏 LLM 数据抛：bar_value/severity 的 int()、
-        # cancel_cost 的 dict("脏")、tags 的 list(5)、_compute_inertia 的 legacy `int(inertia)`
+        # tags 的 list(5)、_compute_inertia 的 legacy `int(inertia)`
         # 回退（其 expected_months 路自带兜底，但旧 inertia 字段在 try 外，cmr ni r2 codex）。
         # _normalize_cancellable / 各 str() 自带兜底不抛。原 except Exception WARN-skip 整项保留为
         # 「拒收留痕」，insert 的代码/DB 异常分出去上抛。
@@ -490,8 +489,6 @@ def apply_issue_tracker_output(
             severity = _strict_int(50 if _sv is None else _sv)
             _et = ni.get("end_turn", 0)
             end_turn = _strict_int(0 if _et in (None, "") else _et)
-            # cancel_cost 已在 try 外随 effect 字段走 _eff_dict 容忍归 {}（cmr ni r9）——不在此强转、
-            # 不进 except 拒收路。
             # tags 严格化：缺省/null/空串 → []；present 必须是 list/tuple 且元素全为 str。
             # 拒标量串拆字与非串元素静默落库。
             _tags_raw = ni.get("tags")
@@ -607,7 +604,6 @@ def apply_issue_tracker_output(
             participants=roster_input or [],
             ongoing_effects=ongoing_eff,
             cancellable="decree" if is_commitment else issues._normalize_cancellable(ni.get("cancellable")),
-            cancel_cost=cancel_cost,
             effect_on_resolve=resolve_eff,
             effect_on_fail=fail_eff,
             resolve_condition=resolve_stored,
@@ -810,8 +806,8 @@ def apply_issue_tracker_output(
                 finalize_persist(db, state, plea_todo, commit=False)
                 applied_cancels.append({"issue_id": issue_id, "title": row["title"], "breach_plea_decision": "persist"})
                 continue
-        # 可撤成命：若事项来自已颁案卷，ADR 0056 的确定性毁约轨取代
-        # extractor/default by_progress cancel_cost，防同一次撤旨双罚。
+        # 可撤成命：若事项来自已颁案卷，ADR 0056 的确定性毁约轨拥有撤旨后果，
+        # 防同一次撤旨双罚。
         linked_dossier = None
         origin_ref = str(row["origin_ref"] or "").strip()
         if re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref) and db.effect_origin_rejection(origin_ref) is None:

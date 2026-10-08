@@ -527,7 +527,7 @@ def test_month_drift_settles_due_secret_and_records_inertia_rejection(game, monk
         state, kind="initiative", title="惯性留痕", origin_kind="decree",
         origin_ref="", bar_value=99, bar_good_meaning="成", bar_bad_meaning="败",
         inertia=5, stage_text="", severity=50, region_hint="", faction_hint="",
-        tags=[], ongoing_effects={}, cancellable="decree", cancel_cost={},
+        tags=[], ongoing_effects={}, cancellable="decree",
         effect_on_resolve={"army_delta": {army_id: {"origin_ref": "盘面自发", "士气大振": 9}}},
         effect_on_fail={}, resolve_condition="", fail_condition="",
     )

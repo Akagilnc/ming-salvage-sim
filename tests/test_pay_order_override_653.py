@@ -16,15 +16,12 @@ from ming_sim.fiscal_tick import settle_tick
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import section
 from ming_sim.pay_order import (
-    DEFAULT_ARREARS_PRIORITY,
-    DEFAULT_DUE_PRIORITY,
     PayOrderKeyError,
     materialize_pay_order_decree,
     parse_override_key,
     resolve_haircut_bp,
     resolve_pay_order_overrides,
     restore_pay_order_override,
-    revoke_pay_order_decree,
 )
 
 def _override_dossier(db, state, entries, *, text="偿还序/折发旨") -> int:
@@ -288,8 +285,8 @@ def test_golden4_last_write_wins_with_two_provenance_rows(game):
     assert (rows[0]["old_value"], rows[0]["new_value"]) == (10, 40)
     assert (rows[1]["old_value"], rows[1]["new_value"]) == (40, 10)
 
-def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
-    """⑤期限届满月／撤销旨：全序与系数恢复默认，与无旨基线逐字节一致。"""
+def test_golden5_expiry_restore_byte_identical_default(game):
+    """⑤期限届满月：全序与系数恢复默认，与无旨基线逐字节一致。真实撤令见 test_real_revoke_decree_*。"""
     db, state, _content = game
     turn = db._current_settle_turn()
     d21 = _override_dossier(db, state, [
@@ -312,25 +309,6 @@ def test_golden5_expiry_and_revoke_restore_byte_identical_default(game):
     assert expired.breakdown == expected_default.breakdown
     # 键与 provenance 保留不删
     assert "due_priority_军饷@shaanxi_until_turn" in db.get_fiscal_config()
-
-    # 撤销旨路径：在位永久旨撤销＝写回默认值的新旨（r2：old/new provenance 链即审计账）
-    db.conn.execute("UPDATE game_state SET turn = ? WHERE id = 1", (turn,))
-    d22 = _override_dossier(
-        db, state, [{"key": "due_priority_官俸@shaanxi", "value": 10}],
-        text="官俸优先旨",
-    )
-    db.apply_dossier_promulgation(state, d22, "promulgated")
-    assert resolve_pay_order_overrides(db.get_fiscal_config(), "shaanxi", db._current_settle_turn()) is not None
-    d23 = _override_dossier(
-        db, state, [{"key": "due_priority_官俸@shaanxi", "value": DEFAULT_DUE_PRIORITY["官俸"]}],
-        text="撤回前旨",
-    )
-    db.apply_dossier_promulgation(state, d23, "promulgated")   # 撤销旨本身先过颁布门
-    revoke_pay_order_decree(
-        db, turn=db._current_settle_turn(),
-        keys=["due_priority_官俸@shaanxi"], origin_ref=f"dossier:{d23}", commit=True,
-    )
-    assert db.get_fiscal_config()["due_priority_官俸@shaanxi"] == DEFAULT_DUE_PRIORITY["官俸"]
 
 def test_real_revoke_decree_restores_override_and_clears_expiry(game):
     """撤销使目标形状退出格律（删键），期限伴随键一并清除；读取回落祖制默认。"""
