@@ -41,42 +41,6 @@ _CONFIRM_WORDS = {"", "可", "准", "准奏", "yes", "y", "确认", "入档"}
 _REJECT_WORDS = {"驳", "不准", "驳回", "no", "n"}
 
 
-def _failed_secret_order_ids(session: GameSession, turn: int) -> set[int]:
-    db = session.db
-    return {
-        int(action.get("id") or 0)
-        for action in db.dossiers.list_pending_actions(int(turn), status="failed")
-        if action.get("kind") == "secret_order"
-    }
-
-
-def _new_secret_order_failure_payloads(
-    session: GameSession, turn: int, before_ids: set[int],
-) -> List[dict]:
-    db = session.db
-    failures: List[dict] = []
-    for action in db.dossiers.list_pending_actions(int(turn), status="failed"):
-        if action.get("kind") != "secret_order":
-            continue
-        action_id = int(action.get("id") or 0)
-        if action_id in before_ids:
-            continue
-        failures.append(_pending_action_failure_payload(action))
-    return failures
-
-
-def _print_pending_action_failures(failures: List[dict]) -> None:
-    for failure in failures:
-        message = str(failure.get("message") or "密令落库失败。")
-        raw_failure_id = failure.get("id")
-        try:
-            failure_id = int(raw_failure_id) if raw_failure_id is not None else None
-        except (TypeError, ValueError):
-            failure_id = None
-        suffix = f" #{failure_id}" if failure_id is not None else ""
-        print(f"【密令落库失败{suffix}】{wrap(message)}\n")
-
-
 def _print_header(session: GameSession) -> None:
     from ming_sim.report import print_header
     print_header(session.state, session.db)
@@ -563,27 +527,6 @@ def review_directives(session: GameSession) -> str:
         print("未识别操作。")
 
 
-def _submit_first_cli_decisions(session: GameSession, result) -> str:
-    """CLI 暂无亲裁 UI：所有结算入口共用同一首选项续跑策略。
-
-    #657：经 session.submit_hitl_choices 唯一编排；注入既有 `_cli_write_gate`。
-    首选项投影走 ``project_preferred_hitl_choice`` 唯一真源（急务=follow_draft+capability）。
-    """
-    if result is None or not result.awaiting:
-        return "" if result is None else result.report
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
-
-    print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
-    # result.decisions 已是合并 desk；若空则回读 session.pending_decisions
-    decisions = list(result.decisions or []) or list(session.pending_decisions())
-    choices = []
-    for decision in decisions:
-        item = project_preferred_hitl_choice(decision)
-        print(f"  · {decision.get('title')} → {item.get('label', '（无）')}")
-        choices.append(item)
-    return session.submit_hitl_choices(choices, write_gate=_cli_write_gate(session))
-
-
 def play_turn(session: GameSession) -> None:
     """一回合 CLI 驱动：召见 → 审阅 → 颁诏推演。"""
     snap = session.begin_turn()
@@ -624,7 +567,6 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.advance_without_decree()
-                report = _submit_first_cli_decisions(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 # #1353 fold-in r8：统一重试耗尽的 LLMUnavailable 不退出 CLI。
@@ -633,7 +575,8 @@ def play_turn(session: GameSession) -> None:
                 print(f"\n{error}")
                 continue
             if result is not None:
-                print(report)
+                # #1812：awaiting 时不得替玩家自动提交 HITL 首选项；CLI 交互缺口归 #1873。
+                print(result.report)
                 if getattr(session.state, "ended", False):
                     return
                 if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:
@@ -648,7 +591,6 @@ def play_turn(session: GameSession) -> None:
                 # #1353 fold-in r8：颁诏/退朝前挂唯一 write_gate，使 resolve 收夜 drain 同流。
                 _cli_write_gate(session)
                 result = session.resolve_turn()
-                report = _submit_first_cli_decisions(session, result)
             except (ValueError, SettlementAbort, LLMUnavailable, LLMContractError) as error:
                 # 恢复态守门 / 结算中止 / 欠账耗尽（#1353 r8）/ 契约失败（#1700）：打印指引后留在
                 # 本回合交互循环——玩家重按 issue/skip 即重试整段，CLI 不退出。
@@ -656,7 +598,8 @@ def play_turn(session: GameSession) -> None:
                 print(f"\n{error}")
                 continue
             if result is not None:
-                print(report)
+                # #1812：awaiting 时不得替玩家自动提交 HITL 首选项；CLI 交互缺口归 #1873。
+                print(result.report)
                 if getattr(session.state, "ended", False):
                     return
                 if getattr(result, "advanced", False) or int(session.state.turn) > turn_before:

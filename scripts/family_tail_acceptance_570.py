@@ -202,23 +202,27 @@ def _surface_capture(label: str, text: str) -> dict:
 
 
 def _auto_complete_hitl(session: GameSession) -> Optional[str]:
-    """真实结算若出 HITL，一次 awaiting 自动选第一项；返回完整 report。
+    """验收探针：真实结算若出 HITL，本地取首 option 续跑；返回完整 report。
 
-    #657：session.submit_hitl_choices 唯一编排 + 既有 session._write_gate。
-    首选项投影走 project_preferred_hitl_choice 唯一真源。
+    生产 CLI 已退役自动首选（#1812/#1889）；本函数仅属验收脚本。
     """
-    from ming_sim.rescript_actions import project_preferred_hitl_choice
-
     result = session.advance_without_decree()
     if result is None:
         return None
     if not result.awaiting:
         return result.report
     decisions = list(result.decisions) or session.pending_decisions()
-    choices = [
-        project_preferred_hitl_choice(d)
-        for d in sorted(decisions, key=lambda x: int(x.get("idx") or 0))
-    ]
+    choices = []
+    for d in sorted(decisions, key=lambda x: int(x.get("idx") or 0)):
+        opts = d.get("options") or []
+        first = opts[0] if opts else {}
+        item = dict(first) if isinstance(first, dict) else {"label": str(first or "")}
+        dk = str(d.get("decision_key") or "").strip()
+        if dk:
+            item.setdefault("decision_key", dk)
+        if str(d.get("kind") or "").strip() == "rescript_draft":
+            item["action"] = "follow_draft"
+        choices.append(item)
     return session.submit_hitl_choices(choices, write_gate=session._write_gate)
 
 

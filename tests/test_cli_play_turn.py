@@ -97,7 +97,7 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
             self.step += 1
             if advanced:
                 self.state.turn += 1
-            return SimpleNamespace(advanced=advanced)
+            return SimpleNamespace(advanced=advanced, report="", awaiting=False)
 
         def advance_without_decree(self):
             self.calls.append("advance")
@@ -105,14 +105,13 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
             self.step += 1
             if advanced:
                 self.state.turn += 1
-            return SimpleNamespace(advanced=advanced)
+            return SimpleNamespace(advanced=advanced, report="", awaiting=False)
 
     sess = Session()
     actions = iter([action, action])
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
 
     term.play_turn(sess)
 
@@ -416,80 +415,6 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
 
 
 
-def test_terminal_failure_printer_preserves_zero_id(capsys):
-    """失败 id 为 0 时也按显式 id 打印，不用 truthiness 掉成无 id 形态。"""
-    term._print_pending_action_failures([{
-        "id": 0,
-        "kind": "secret_order",
-        "action": "新建",
-        "message": "密令落库失败。",
-    }])
-
-    out = capsys.readouterr().out
-    assert "#0" in out
-
-
-@pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, capsys, action):
-    """#415: 退朝默认提交密令失败时，CLI 也必须给出失败 id。"""
-
-    class Session:
-        previous_summary = ""
-
-        def __init__(self):
-            self.actions = []
-            self.db = SimpleNamespace(
-                dossiers=SimpleNamespace(
-                    list_pending_actions=lambda turn, status=None: (
-                        list(self.actions) if status == "failed" else []
-                    ),
-                ),
-            )
-            self.state = SimpleNamespace(turn=7)
-            self.calls = []
-
-        def begin_turn(self):
-            self.calls.append("begin")
-            return _Snap()
-
-        def current_phase(self):
-            return TurnPhase.REVIEWING
-
-        def advance_without_decree(self):
-            self.calls.append("advance")
-            self.actions.append({
-                "id": 42,
-                "kind": "secret_order",
-                "action": "新建",
-            })
-
-        def resolve_turn(self):
-            self.calls.append("resolve")
-            self.actions.append({
-                "id": 42,
-                "kind": "secret_order",
-                "action": "新建",
-            })
-            return SimpleNamespace(awaiting=False, advanced=True, report="月报")
-
-        def end_turn(self):
-            self.calls.append("end")
-
-    monkeypatch.setattr(term, "review_directives", lambda s: action)
-    monkeypatch.setattr(term, "_print_header", lambda s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
-    session = Session()
-
-    term.play_turn(session)
-
-    out = capsys.readouterr().out
-    assert "#42" in out
-    if action == "skip":
-        assert session.calls == ["begin", "advance"]
-    else:
-        assert session.calls == ["begin", "resolve", "end"]
-
-
 def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypatch, capsys):
     session = _Sess(RuntimeError("unused"))
     session.current_phase = lambda: TurnPhase.REVIEWING
@@ -545,58 +470,6 @@ def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsy
 
     assert str(exc) in capsys.readouterr().out
     assert session.calls == ["begin", "advance", "advance"]
-
-
-def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch, capsys):
-    """pre_settle 已标 failed 后若后续结算中止，CLI 仍须显示失败 id。"""
-
-    class Session:
-        previous_summary = ""
-
-        def __init__(self):
-            self.actions = []
-            self.db = SimpleNamespace(
-                dossiers=SimpleNamespace(
-                    list_pending_actions=lambda turn, status=None: (
-                        list(self.actions) if status == "failed" else []
-                    ),
-                ),
-            )
-            self.state = SimpleNamespace(turn=7)
-            self.calls = []
-
-        def begin_turn(self):
-            self.calls.append("begin")
-            return _Snap()
-
-        def current_phase(self):
-            return TurnPhase.REVIEWING
-
-        def resolve_turn(self):
-            self.calls.append("resolve")
-            self.actions.append({
-                "id": 42,
-                "kind": "secret_order",
-                "action": "新建",
-            })
-            raise SettlementAbort("结算中止，可重试。", turn=7, stage="extract")
-
-        def advance_without_decree(self):
-            self.calls.append("advance")
-
-    actions = iter(["issue", "skip"])
-    monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
-    monkeypatch.setattr(term, "_print_header", lambda s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
-    session = Session()
-
-    term.play_turn(session)
-
-    out = capsys.readouterr().out
-    assert "结算中止" in out
-    assert "#42" in out
-    assert session.calls == ["begin", "resolve", "advance"]
-
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
@@ -690,41 +563,4 @@ def test_cli_write_gate_canonical_session_attr():
     assert term._cli_write_gate(session) is gate
 
 
-@pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
-    """#1843/PR #1876: HITL 续跑实际推进月份后，play_turn 必须调用 end_turn 并结束本回合。"""
-    from tests.month_chain_helpers import make_light_session
 
-    db, state, content = game
-    turn_before = int(state.turn)
-    db.issues.save_pending_decisions(turn_before, [{
-        "title": "急务亲裁",
-        "context": "辽东饷银案卷",
-        "options": [{"label": "发饷", "hint": "拨银五万两"}],
-    }])
-    state.turn_phase = TurnPhase.AWAITING_DECISION.value
-    db.reign.save_game_state(state)
-    db.save_resolve_context(
-        turn_before, "测试诏书",
-        {"candidate_events": [], "transit_semantics": []},
-    )
-    db.save_turn_report(state, "邸报已成")
-
-    session = make_light_session(db, state, content)
-
-    # 中和外部 LLM 边界，推演主链与亲裁续跑全走真实逻辑
-    monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *a, **k: "")
-    monkeypatch.setattr("ming_sim.month_translate.translate_month_segment", lambda *a, **k: {"effects": {}})
-
-    # 单次操作迭代器：未正确 end_turn + return 时若重入交互循环，next 会抛 StopIteration
-    actions = iter([action])
-    monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
-    monkeypatch.setattr(term, "_print_header", lambda _s: None)
-    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-
-    term.play_turn(session)
-
-    # 验证月份已真实推进，且 end_turn 已被调用将 turn_phase 重置为 summoning
-    assert int(session.state.turn) == turn_before + 1
-    assert session.current_phase() == TurnPhase.SUMMONING
-    assert db.load_state().turn_phase == TurnPhase.SUMMONING.value
