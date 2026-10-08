@@ -40,18 +40,6 @@ def _night_reply(db, state, minister, reply="臣愿会签此旨。"):
     return night_id, chat_turn_id, int(row["night_seq"] or 0)
 
 
-
-
-class _Agent:
-    def __init__(self, payload):
-        self.payload = payload
-        self.calls = []
-
-    def run(self, materials):
-        self.calls.append(materials if isinstance(materials, str) else str(materials))
-        return json.dumps(self.payload, ensure_ascii=False)
-
-
 def test_endorsement_forms_persist_restore_and_judge_without_roster_join(game):
     """Durable form CRUD + judge restore; 担名≠办事（当面站台不入参与人）。"""
     db, state, content = game

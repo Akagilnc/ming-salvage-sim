@@ -731,7 +731,7 @@ def test_settling_context_retry_does_not_recompute_substrate_hub_pre_settle(fres
     before_containers = _hub_container_snapshot(db)
     before_balance = state.metrics["国库"]
 
-    db.save_resolve_context(
+    db.resolve_contexts.save(
         turn,
         "测试诏",
         {},

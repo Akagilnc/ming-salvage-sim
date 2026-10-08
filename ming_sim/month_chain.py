@@ -1924,7 +1924,7 @@ def _save_chain(
     payload[_CHAIN_KEY] = chain
     stored_source = ctx.get("source") or source
     source_value = stored_source.value if isinstance(stored_source, Provenance) else str(stored_source)
-    db.save_resolve_context(
+    db.resolve_contexts.save(
         turn,
         decree_text or str(ctx.get("decree_text") or ""),
         payload,

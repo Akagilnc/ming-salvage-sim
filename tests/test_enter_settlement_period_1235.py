@@ -22,58 +22,16 @@ import httpx
 import pytest
 
 import web_app
-import ming_sim.agents as agents_mod
-import ming_sim.decree as decree_mod
-import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
 from ming_sim.month_open_snapshot import MONTH_OPEN_KEYS
-from tests.conftest import stub_audience_translate, stub_scene_agent
+from tests.conftest import stub_audience_translate
 
 _IN_FLIGHT_DETAIL = "收夜中止：本夜仍有未完成回话（在飞/挂起），chat_turn_ids=[9]。夜保持开启，可原地重试。"
 _GATE_BUSY_DETAIL = "月末结算或上一步写入进行中，请稍候再操作。"
 
 
 # ── 轻量 canned 边界（与 #498 web tracer 同形，仅中和 LLM）────────────────
-
-
-class _CannedExtractor:
-    def run(self, _material):
-        class _R:
-            content = '{"facts":[]}'
-        return _R()
-
-
-class _BoomExtractor:
-    def run(self, _material):
-        raise RuntimeError("抽取持续失败·真失败注入")
-
-
-def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
-    monkeypatch.setattr(
-        decree_mod, "llm_promulgation_verdicts",
-        lambda dossiers, _state, **_kwargs: [
-            {"dossier_id": row["id"], "decision": "promulgated"}
-            for row in dossiers
-        ],
-    )
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
-    monkeypatch.setattr(
-        "ming_sim.month_chain.run_world_segment_text",
-        lambda *a, **k: "",
-    )
-    real_run_agent_text = agents_mod.run_agent_text
-
-    def _run_month_chain_text(agent, prompt, tag, **kwargs):
-        if tag == "decree-forecast":
-            return ""
-        if tag == "gazette":
-            return '{"title":"邸报","report":"本月边饷已清。"}'
-        return real_run_agent_text(agent, prompt, tag, **kwargs)
-
-    monkeypatch.setattr(
-        agents_mod, "run_agent_text", _run_month_chain_text,
-    )
 
 
 @pytest.fixture
@@ -113,15 +71,6 @@ def _client() -> httpx.AsyncClient:
 
 def _click_before(state) -> dict[str, int]:
     return {k: int(state.metrics[k]) for k in MONTH_OPEN_KEYS}
-
-
-def _terminal_sse(response: httpx.Response) -> tuple[str, dict]:
-    blocks = [block for block in response.text.split("\n\n") if block.strip()]
-    assert blocks
-    lines = blocks[-1].splitlines()
-    event = next(line[7:] for line in lines if line.startswith("event: "))
-    data = next(line[6:] for line in lines if line.startswith("data: "))
-    return event, json.loads(data)
 
 
 def _open_night_with_unextracted_reply(game, minister, reply="臣愿肩起此事。"):
@@ -164,12 +113,6 @@ def _runtime_payload(db, state):
 
 
 # ── 1. 未了续跑：未落账回话退朝不 409，自动接续至月完 ────────────────────
-
-
-
-
-
-
 
 
 # ── 2. 点即入：capture 先于 await/close（失败前已入核账，失败后出展示态）──

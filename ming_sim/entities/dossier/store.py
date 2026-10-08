@@ -345,13 +345,6 @@ CREATE TABLE IF NOT EXISTS decree_cost_events (
 );
 CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
     ON decree_cost_events(dossier_id, id);
-CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
-    turn INTEGER NOT NULL,
-    dossier_id INTEGER NOT NULL,
-    verdict_json TEXT NOT NULL,
-    PRIMARY KEY(turn, dossier_id),
-    FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-);
 """
 
 
@@ -975,8 +968,7 @@ class DossierStore:
     def list_for_simulation(self, turn: int) -> list[dict[str, Any]]:
         """本月新生/重判案卷及所有未结案执行中案卷。
 
-        #658：旧案本回合刚获 pending 颁布 verdict（如 stalled→backed 后顺颁）
-        亦入同一清单，不另建第二可见集。
+        判决真源为 staged_declarations / decree_dossier_decisions；不另建第二批次表。
         """
         rows = self._conn.execute(
             """
@@ -998,13 +990,6 @@ class DossierStore:
                        AND d.held_turn > 0
                        AND ? > d.held_turn
                     )
-                    OR (
-                           d.promulgation_decision=''
-                       AND EXISTS (
-                               SELECT 1 FROM pending_promulgation_verdicts pv
-                               WHERE pv.turn=? AND pv.dossier_id=d.id
-                           )
-                    )
                 )
             ) OR (
                     d.status='executing'
@@ -1024,7 +1009,7 @@ class DossierStore:
             """,
             (
                 int(turn), int(turn), int(turn),
-                int(turn), int(turn), int(turn),
+                int(turn), int(turn),
                 int(turn), int(turn), int(turn),
             ),
         ).fetchall()
@@ -2369,63 +2354,6 @@ class DossierStore:
             "DELETE FROM decree_dossier_endorsements WHERE source_chat_turn_id = ?",
             (int(source_chat_turn_id),),
         )
-
-    def save_pending_promulgation_verdicts(
-        self, turn: int, verdicts: Iterable[Mapping[str, object]],
-        *, commit: bool = True,
-    ) -> None:
-        """Replace one turn's whole batch (serialize + delete-then-insert)."""
-        from types import SimpleNamespace
-
-        from ming_sim.applier import atomic
-
-        rows = list(verdicts)
-
-        def _write() -> None:
-            self.clear_pending_promulgation_verdicts(turn)
-            for verdict in rows:
-                dossier_id = strict_int(verdict.get("dossier_id"))
-                self._conn.execute(
-                    "INSERT INTO pending_promulgation_verdicts"
-                    "(turn,dossier_id,verdict_json) VALUES (?,?,?)",
-                    (
-                        int(turn), int(dossier_id),
-                        safe_json_dumps(verdict, ensure_ascii=False),
-                    ),
-                )
-
-        if commit and self._owns():
-            with atomic(SimpleNamespace(conn=self._conn)):
-                _write()
-        else:
-            _write()
-
-    def clear_pending_promulgation_verdicts(self, turn: int) -> None:
-        self._conn.execute(
-            "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(turn),)
-        )
-
-    def pending_promulgation_verdicts(self, turn: int) -> list[str]:
-        """Raw JSON strings for one turn. Prefer get_pending_promulgation_verdicts."""
-        return [
-            str(r["verdict_json"])
-            for r in self._conn.execute(
-                "SELECT verdict_json FROM pending_promulgation_verdicts "
-                "WHERE turn=? ORDER BY dossier_id",
-                (int(turn),),
-            ).fetchall()
-        ]
-
-    def get_pending_promulgation_verdicts(
-        self, turn: int,
-    ) -> list[dict[str, object]]:
-        """Decode one turn's pending promulgation batch; durable faults raise."""
-        result: list[dict[str, object]] = []
-        for raw_value in self.pending_promulgation_verdicts(int(turn)):
-            result.append(
-                load_stored_object(raw_value, label="待应用颁布判决")
-            )
-        return result
 
     def record_actual_progress(
         self, dossier_id: int, turn: int, *, units: float, fidelity_state: str,

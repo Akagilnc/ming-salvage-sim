@@ -15,9 +15,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from ming_sim.applier import load_stored_json, load_stored_list, load_stored_object
 from ming_sim.entities.column_write import checked_columns
 
-# Population unit marker (shared with GameDB seed path; single string constants).
+# Population unit constant (shared with GameDB read path; no durable marker).
 POPULATION_UNIT_PERSONS = "人"
-_POPULATION_UNIT_KEY = "population_unit"
 
 _METRIC_UPSERT_SQL = (
     "INSERT INTO metrics (key, value) VALUES (?, ?) "
@@ -357,13 +356,6 @@ class ReignStateStore:
         return self._conn.execute("SELECT 1 FROM chat_turns t JOIN game_state g ON g.id=1 WHERE t.id=? AND t.night_id=? AND t.status='active' AND t.minister_message_id>0 AND t.extract_status='pending' AND g.turn=?", params)
 
     # --- chat/audience/kv persistence moved from GameDB (#1889 J1) ---
-    def _mark_population_unit_persons(self) -> None:
-        """新档 classes 首次 seed 时落持久人口单位标「人」（commit 由 seed_static_data 末尾统一提交）。"""
-        self._conn.execute(
-            "INSERT OR REPLACE INTO save_meta (key, value) VALUES (?, ?)",
-            (_POPULATION_UNIT_KEY, POPULATION_UNIT_PERSONS),
-        )
-
     def list_hall_chat_turns(self, night_id: int) -> List[Dict[str, Any]]:
         """本夜殿上轮（#1849 reopen：只按「殿上」取，不再拼升级前按朝臣存储）。"""
         rows = self._conn.execute(

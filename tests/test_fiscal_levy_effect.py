@@ -62,14 +62,6 @@ def _emperor_decides(db, state, *event_labels):
         issues.apply_petition_event_outcome(state, db, event_id, label)
 
 
-def _settled_land_by_region(db):
-    land_by_region = {}
-    for region_id in _settled_region_ids(db):
-        settle = _settle_payload(db, region_id)
-        land_by_region[region_id] = max(0.0, float(settle["st"].get("官民田") or 0.0))
-    return land_by_region
-
-
 def _expected_land_share_levy(settle, national_monthly, total_land):
     land = max(0.0, float(settle["st"].get("官民田") or 0.0))
     if total_land <= 0:
@@ -266,13 +258,6 @@ def test_fiscal_levy_capstone_golden_all_seeded_provinces(
         assert settle["p"]["起运定额"] >= 0
 
 
-
-
-
-
-
-
-
 def test_fiscal_levy_rewrites_nonnumeric_current_targets_from_meta(game):
     db, state, content = game
     issues.bind_content(content)
@@ -302,10 +287,6 @@ def test_fiscal_levy_rewrites_nonnumeric_current_targets_from_meta(game):
         rel_tol=1e-9,
         abs_tol=1e-9,
     )
-
-
-
-
 
 
 def test_fiscal_levy_is_not_auto_approved_without_emperor_decision(game):
@@ -536,8 +517,6 @@ def test_fiscal_levy_outcome_label_outside_closed_set_aborts(game):
     ).fetchone() is None
 
 
-
-
 def test_fiscal_levy_pending_stop_choice_keeps_jiao_in_force_same_tick(game):
     db, state, content = game
     issues.bind_content(content)
@@ -609,10 +588,6 @@ def test_fiscal_levy_pending_choice_waits_for_event_window(game):
         ("lian_levy_start_1639",),
     ).fetchone()
     assert dict(row) == {"terminal_state": "triggered", "terminal_reason": "已准"}
-
-
-
-
 
 
 def test_liao_levy_targets_all_seeded_settles_without_compounding_or_clobbering_p(game):

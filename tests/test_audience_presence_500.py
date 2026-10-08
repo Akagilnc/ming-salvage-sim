@@ -175,40 +175,6 @@ def test_court_break_writes_no_exit_ledger(game, monkeypatch):
 #          与 CLI tool 路共 GameSession.chat 产源，令退落告退账、名单即时去人 ──
 
 
-def _session_double(db, state, content, registry):
-    from types import SimpleNamespace
-    from ming_sim.session import GameSession
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = registry
-    sess.llm_config = SimpleNamespace(channel="api")
-    sess.temporary_characters = set()
-    sess._audience_prompt_for_message = lambda message, *_a, **_kw: message
-    return sess
-
-
-def _tool_registry(tools):
-    from types import SimpleNamespace
-
-    class Agent:
-        def run(self, _message):
-            return SimpleNamespace(content="臣领旨。", tools=list(tools))
-
-    class Registry:
-        def get(self, _character, **_kw):
-            return Agent()
-
-
-    return Registry()
-
-
-
-
-
-
 # ── L2：告退后再宣入须重新落入殿账（present_names_at 单一在场真源）──────────
 
 

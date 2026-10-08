@@ -403,7 +403,7 @@ def test_placeholder_save_crash_rolls_back_settling(game, monkeypatch):
 
     def _boom(self, *a, **k):
         raise RuntimeError("placeholder save crash")
-    monkeypatch.setattr(type(db), "save_resolve_context", _boom)
+    monkeypatch.setattr(db.resolve_contexts, "save", _boom)
 
     with pytest.raises(RuntimeError):
         decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",

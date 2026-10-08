@@ -4,9 +4,6 @@ import pytest
 
 from tests.section_rejection_helpers import game
 
-def _reports(db):
-    return [dict(r) for r in db.conn.execute("SELECT turn, section, item_json, reason, category, source, attempt FROM rejection_reports ORDER BY id")]
-
 
 def test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate(game):
     from ming_sim.applier import Provenance, RejectedItem, RejectionCollector

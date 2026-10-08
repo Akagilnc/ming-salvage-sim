@@ -25,7 +25,7 @@ def test_candidate_binding_at_player_prewrite(game, echo, title, candidates, exp
     if echo is not None:
         row["event_id"] = echo
     db.issues.save_pending_decisions(state.turn, [row])
-    db.save_resolve_context(state.turn, "诏", {"candidate_events": candidates})
+    db.resolve_contexts.save(state.turn, "诏", {"candidate_events": candidates})
     state.turn_phase = TurnPhase.AWAITING_DECISION.value
     db.reign.save_game_state(state)
     key = db.issues.list_rescript_desk(state.turn)[0]["decision_key"]

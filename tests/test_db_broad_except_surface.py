@@ -39,7 +39,7 @@ def test_pending_decisions_corrupt_choice_json_fails_loud(game, monkeypatch):
 
 def test_resolve_context_corrupt_payload_fails_loud(game, monkeypatch):
     db, _state, _content = game
-    db.save_resolve_context(
+    db.resolve_contexts.save(
         500, decree_text="旨", simulator_payload={"a": 1},
     )
     db.conn.execute(

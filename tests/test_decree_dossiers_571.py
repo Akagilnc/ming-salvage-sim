@@ -1972,30 +1972,6 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
         )
         assert db.dossiers.get(dossier_id)["status"] == "closed"
 
-def _complete_session(game):
-    """GameSession construction contract on the fixture's real DB/state."""
-    from ming_sim.session import GameSession, _bind_all_content
-
-    db, state, content = game
-    session = GameSession.__new__(GameSession)
-    session.content = content
-    _bind_all_content(content)
-    session.llm_config = None
-    session.db = db
-    session.agno_db = None
-    session.state = state
-    session.deaths_this_turn = []
-    session.debuts_this_turn = []
-    session.power_renames_this_turn = []
-    session.previous_summary = ""
-    session.registry = None
-    session.temporary_characters = {}
-    session.last_decree = ""
-    session.last_report = ""
-    session._decree_draft_fingerprint = ()
-    session._begun = False
-    return session
-
 def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):
     db, state, content = game
     character = next(

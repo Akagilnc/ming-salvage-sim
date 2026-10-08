@@ -1063,11 +1063,6 @@ CORE_SCHEMA_SQL = """
         summary TEXT NOT NULL DEFAULT '',
         timeline TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS save_meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
     );"""
 
 

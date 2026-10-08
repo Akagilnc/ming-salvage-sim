@@ -1282,11 +1282,6 @@ def test_household_secret_ledger_hides_case_by_excluded_office(game):
         successor.office, successor.office_type = prior_office, prior_type
 
 
-def _office_archive_path_from_materials(db, state, character, root):
-    prepared = prepare_character_materials(db, state, character, dest_root=root)
-    paths = list_materials(prepared.root)
-    return next(p for p in paths if p.endswith("/公事档案.txt"))
-
 def _referenceable_dossier_ids(db, character_name, turn) -> set[int]:
     return {
         int(item["id"])

@@ -113,7 +113,7 @@ from ming_sim.token_stats import tlog
 logger = logging.getLogger(__name__)
 
 # ADR 0088 / #648 / #1889：人口存储一律「人」（与 armies.manpower 同刻度）。
-# 单位常量真源 = ReignStateStore（save_meta 写入侧）；此处只引用。
+# 单位常量真源 = ReignStateStore.POPULATION_UNIT_PERSONS；无 save_meta 读写。
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
 # create_armies_from_extraction 的内循环每项重算同一常量集合，cmr PR2 R1 gemini perf）。
@@ -10319,9 +10319,6 @@ class GameDB:
                             self, state, int(night_id),
                             content=content,
                         )
-                # Consumption belongs to the same atomic unit as effect application;
-                # an outer settlement rollback restores both effects and this batch.
-                self.dossiers.clear_pending_promulgation_verdicts(int(state.turn))
         finally:
             self.conn._recommendation_snapshots_prevalidated = previous_reco_prevalidated
             if previous_summon_nights is None:
@@ -11479,29 +11476,6 @@ class GameDB:
         if owns_transaction:
             self.conn.commit()
         return deleted
-
-    def save_resolve_context(
-        self, turn: int, decree_text: str,
-        simulator_payload: Dict[str, object],
-        source: str = "system_simulation",
-        attendant_message: str = "",
-    ) -> None:
-        """暂存本月过月上下文（诏书/payload/来源），供批红、月链相位与机械尾读回。
-
-        #1846：不再持久化 ready=1 extractor delta；恢复真源是暂存声明与落账相位。
-        """
-        self.resolve_contexts.upsert(
-            turn=int(turn),
-            decree_text=sanitize_sqlite_text(decree_text),
-            simulator_payload_json=safe_json_dumps(simulator_payload or {}, ensure_ascii=False),
-            # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
-            # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
-            # Provenance(...) 不匹配 → 静默退回 system_simulation 丢源（Sourcery #175 bug_risk）。
-            # getattr(.,"value",.) 让枚举取 .value、普通字符串原样、None/空回落 system_simulation。
-            source=str(getattr(source, "value", source) or "system_simulation"),
-            attendant_message=sanitize_sqlite_text(str(attendant_message or "")),
-        )
-        self.conn.commit()
 
     def capture_month_open_snapshot(self, state: GameState) -> bool:
         """点击受理：独立提交点击前四键 + 所属回合。已有本回合行则不覆盖（幂等）。

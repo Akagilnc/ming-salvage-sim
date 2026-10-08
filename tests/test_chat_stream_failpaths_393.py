@@ -34,8 +34,6 @@ def _query_conn_no_user_message():
     )
 
 
-
-
 def _assert_write_path_free(runtime) -> None:
     """After failpath cleanup, a subsequent gated write and drain must not block.
 
@@ -537,8 +535,6 @@ def _assert_structured_llm_http(response) -> dict:
     return detail
 
 
-
-
 def test_nonstream_api_issue_decree_llm_unavailable_is_structured_not_500(
     game, monkeypatch,
 ):
@@ -630,48 +626,6 @@ class _CountingFailAgent:
         yield RunCompletedEvent()
 
 
-class _FailLeavingAgnoRunAgent:
-    """#1465 fo2Og：失败 attempt 留下确定性 Agno run 残迹，并记录每 attempt 读回的 run_id 序列。
-
-    残迹写入与 truncate 同一 GameDB Agno 域（非私有缓存旁路）；成功 attempt 不另写 run。
-    """
-
-    def __init__(self, db, session_id: str, *, fail_times: int, error_factory):
-        self.db = db
-        self.session_id = str(session_id)
-        self.fail_times = int(fail_times)
-        self.error_factory = error_factory
-        self.calls = 0
-        self.history_at_attempt_start: list[list[str]] = []
-
-    def run(self, *_a, **_k):
-        self.calls += 1
-        n = self.calls
-        # 本 attempt 启动时持久读回（_start_stream 已先 truncate）
-        rows = self.db.conn.execute(
-            "SELECT run_id FROM agno_runs WHERE session_id=? "
-            "ORDER BY run_index ASC, created_at ASC, run_id ASC",
-            (self.session_id,),
-        ).fetchall()
-        self.history_at_attempt_start.append(
-            [str(r["run_id"]) for r in rows]
-        )
-        if n <= self.fail_times:
-            from tests.test_audience_restore_505 import _insert_agno_table_run
-
-            rid = f"fail-attempt-{n}"
-            _insert_agno_table_run(
-                self.db,
-                self.session_id,
-                rid,
-                run_index=self.db.reign.agno_runs_length(self.session_id),
-            )
-            raise self.error_factory(n)
-        yield RunContent("臣")
-        yield RunContent("已核辽饷。")
-        yield RunCompletedEvent()
-
-
 def _transport_web_game(game, agent, monkeypatch):
     """复用 audience_background 真实召对装配（真 DB / atomic / interpret）。"""
     from tests.test_audience_background import _web_game
@@ -752,8 +706,6 @@ def test_chat_stream_run_error_event_sse_system_layer_no_retry(monkeypatch, game
     attempts = detail.get("transport_attempts") or []
     assert len(attempts) == 1
     assert attempts[0].get("outcome") == "terminal_fail"
-
-
 
 
 def test_chat_stream_three_transient_exhausted_system_fail_then_resend(monkeypatch, game):

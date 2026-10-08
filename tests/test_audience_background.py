@@ -51,12 +51,6 @@ class _FakeAgent:
         yield RunOutput(self.tools)
 
 
-class _EmptyAgent(_FakeAgent):
-    def run(self, *_args, **_kwargs):
-        self.completed.set()
-        yield RunOutput()
-
-
 class _FakeSession(HallAdmissionSessionMixin):
     def __init__(self, db, state, content, agent: _FakeAgent) -> None:
         self.db = db
@@ -146,27 +140,6 @@ def _web_game(db, state, content, agent: _FakeAgent, monkeypatch=None) -> WebGam
     return game
 
 
-def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
-    """等本局唯一写队列进入 idle。"""
-    q = getattr(web_game, "_write_queue", None)
-    if q is not None and hasattr(q, "wait_idle"):
-        q.wait_idle()  # unlimited; CI job final line owns hang
-    else:
-        wait_until(lambda: int(getattr(web_game, "_pending_writes_count", 0) or 0) == 0)
-
-
-def _assert_next_accepted(stream) -> None:
-    accepted = next(stream)
-    assert isinstance(accepted, dict)
-    assert accepted["type"] == "accepted"
-    assert isinstance(accepted["campaign_id"], str)
-    assert isinstance(accepted["night_id"], int)
-    assert accepted["night_id"] > 0
-    assert isinstance(accepted["chat_turn_id"], int)
-    assert accepted["chat_turn_id"] > 0
-
-
-
 
 def test_newer_interrupted_turn_blocks_withdrawal_of_completed_turn(game):
     db, state, content = game
@@ -208,8 +181,6 @@ def test_withdrawal_under_web_write_gate_returns_undone_turn(game):
 
     assert result["undone_chat_turn_id"] == turn
     assert db.reign.get_last_active_chat_turn(minister_name, state.turn) is None
-
-
 
 
 def test_chat_stream_closed_before_turn_creation_is_noop(read_game, monkeypatch):

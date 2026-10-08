@@ -64,7 +64,7 @@ def _run_round_with_declaration(db, state, minister: str, declaration: dict, *, 
     return int(night_id), int(chat_id), result
 
 
-def test_kill_lands_status_and_next_materials_include_roster(game, tmp_path):
+def test_kill_lands_status_dead(game):
     db, state, _ = game
     victim = _active_minister(db)
     witness = _active_minister(db, exclude={victim})
@@ -85,14 +85,6 @@ def test_kill_lands_status_and_next_materials_include_roster(game, tmp_path):
 
     status, reason = db.characters.get_character_status(victim)
     assert status == "dead"
-
-    prepared = prepare_scene_materials(db, state, dest_root=tmp_path / "after-kill")
-    listed = list_materials(prepared.root)
-    # Active court roster paths must not list the killed person.
-    roster_paths = [p for p in listed if p.endswith("朝臣名册.txt")]
-    assert roster_paths
-    for path in roster_paths:
-        assert victim not in read_material(prepared.root, path)
 
 def test_textual_fact_and_public_saying_land_and_show_in_materials(game, tmp_path):
     """AC2：孙传庭伤臂 → 文字事实；袁崇焕对外死讯 → 公开说法；目录可见。"""

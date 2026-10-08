@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
 
+from ming_sim.applier import safe_json_dumps, sanitize_sqlite_text
+
 
 class ChatMessageStore:
     def __init__(self, conn: Any) -> None:
@@ -261,6 +263,33 @@ class TurnReportStore:
 class ResolveContextStore:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
+
+    def save(
+        self,
+        turn: int,
+        decree_text: str,
+        simulator_payload: Dict[str, object],
+        source: str = "system_simulation",
+        attendant_message: str = "",
+    ) -> None:
+        """暂存本月过月上下文（诏书/payload/来源），供批红、月链相位与机械尾读回。
+
+        #1846：不再持久化 ready=1 extractor delta；恢复真源是暂存声明与落账相位。
+        编码与提交属本 Store 纯持久职责；跨月 payload 组装仍在调用方。
+        """
+        self.upsert(
+            turn=int(turn),
+            decree_text=sanitize_sqlite_text(decree_text),
+            simulator_payload_json=safe_json_dumps(
+                simulator_payload or {}, ensure_ascii=False,
+            ),
+            # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member)
+            # 在多数 Python 版本落 'Provenance.player_decree' 而非 'player_decree'——
+            # 重抽时 Provenance(...) 不匹配 → 静默退回 system_simulation 丢源。
+            source=str(getattr(source, "value", source) or "system_simulation"),
+            attendant_message=sanitize_sqlite_text(str(attendant_message or "")),
+        )
+        self._conn.commit()
 
     def upsert(
         self,

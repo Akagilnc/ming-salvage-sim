@@ -13,11 +13,6 @@ import ming_sim.decree as decree_mod
 import ming_sim.issues as I
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
 
-def _ledger_count(db, turn: int) -> int:
-    return db.conn.execute(
-        "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)
-    ).fetchone()[0]
-
 
 # ---------------------------------------------------------------------------
 # B. 恢复入口消费：由玩家月链接续已保存的结算进度
@@ -138,7 +133,7 @@ def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypa
     turn = state.turn
     original = {"label": "斩", "note": "原裁断"}
     # phase1 HITL 暂停上下文——与真实 awaiting 存档同形
-    db.save_resolve_context(
+    db.resolve_contexts.save(
         turn, "HITL诏", {"candidate_events": []},
     )
     ctx = db.resolve_contexts.get(turn)

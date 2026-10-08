@@ -800,7 +800,7 @@ def _provenance_from_stored(value: object) -> Provenance:
     """从 ctx 持久值还原 Provenance（#146 恢复路）。
 
     接受 Provenance 实例与已存的枚举值字符串；非法/缺失回落 system_simulation。
-    写库侧见 db.save_resolve_context：一律落枚举值字符串，不落 str(member)。
+    写库侧见 resolve_contexts.save：一律落枚举值字符串，不落 str(member)。
     """
     if isinstance(value, Provenance):
         return value
@@ -972,7 +972,7 @@ def prepare_resolve_front_half(
     ），不二次 tick/财政。返回本回合 `transit_arrivals`
     （无抵达 = `[]`）。
     """
-    # 已有-context 重入：只读既有真源。save_resolve_context 是整行 upsert，placeholder
+    # 已有-context 重入：只读既有真源。resolve_contexts.save 是整行 upsert，placeholder
     # 默认空字段会冲掉已有原诏/source。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         existing = db.resolve_contexts.get(int(state.turn))
@@ -1010,7 +1010,7 @@ def prepare_resolve_front_half(
                 if isinstance(prior_placeholder, dict)
                 else ""
             )
-            db.save_resolve_context(
+            db.resolve_contexts.save(
                 state.turn, decree_text, placeholder_payload,
                 source=Provenance(source).value,  # #146 A：归一 enum/合法值串
                 attendant_message=preserved_attendant,

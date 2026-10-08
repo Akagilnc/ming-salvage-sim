@@ -409,10 +409,8 @@ def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatc
             {"dossier_id": int(row["id"]), "decision": "promulgated"}
             for row in dossiers
         ]
-        db.dossiers.save_pending_promulgation_verdicts(state.turn, verdicts)
         db.apply_dossier_verdicts(state, verdicts, content=content)
-        # Settlement consumes pending and advances turn — the bug surface.
-        assert db.dossiers.get_pending_promulgation_verdicts(state.turn) == []
+        # Applied decisions are the durable source; turn advances after apply.
         state.turn += 1
         db.reign.save_game_state(state)
         return decree_mod.ResolveResult(awaiting=False, report="settled")

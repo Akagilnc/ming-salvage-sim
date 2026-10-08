@@ -375,10 +375,7 @@ def _appointment_intent_is_current_office_noop(
     if not clean_name or not desired:
         return False
     canonical = _canonical_minister_key(content, clean_name, db)
-    try:
-        row = CharacterStore(conn).read_sponsor_transferred((canonical,))
-    except sqlite3.Error:
-        return False
+    row = CharacterStore(db.conn).read_sponsor_transferred((canonical,))
     if row is None or str(row["status"] or "") != "active":
         return False
     current = normalize_office(str(row["office"] or ""))

@@ -25,12 +25,6 @@ from ming_sim import audience_night as an
 from tests.conftest import stub_audience_translate, stub_scene_agent
 
 
-class _CannedExtractor:
-    def run(self, _material):
-        return SimpleNamespace(content='{"facts":[]}')
-
-
-
 class _StreamFarewellAgent:
     def run(self, *_a, **_k):
         yield SimpleNamespace(event="RunContent", content="臣告退。")

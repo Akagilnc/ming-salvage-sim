@@ -301,15 +301,29 @@ def _resolve_arm_verdicts(
     db: GameDB, *, resolve_turn: int, awaiting: bool, ids: dict[str, int],
 ) -> list[dict]:
     """Awaiting or settled: read applied/batch judgments at the pre-resolve turn."""
-    if awaiting:
-        return db.dossiers.get_pending_promulgation_verdicts(resolve_turn)
+    # staged_declarations / decree_dossier_decisions are the durable sources;
+    # no second pending-verdict batch table.
     verdicts = []
     for dossier_id in sorted(ids.values()):
         history = [
             row for row in db.dossiers.decisions(dossier_id)
             if int(row["turn"]) == resolve_turn and not row.get("rescript_action")
         ]
-        verdicts.append(_select_second_verdict(False, dossier_id, [], history))
+        if history:
+            verdicts.append(_select_second_verdict(False, dossier_id, [], history))
+            continue
+        if awaiting:
+            dossier = db.dossiers.get(int(dossier_id))
+            if dossier is None:
+                continue
+            from ming_sim.decree_forecast import decree_ref_for_dossier
+            staged = db.staged_declarations.staged_for(
+                decree_ref_for_dossier(db, dossier),
+            )
+            if staged and getattr(staged[0], "verdict", None):
+                verdict = dict(staged[0].verdict)
+                verdict.setdefault("dossier_id", int(dossier_id))
+                verdicts.append(verdict)
     return verdicts
 
 
@@ -438,7 +452,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         if not first_result.awaiting:
             raise RuntimeError("real gate expected rejected dossiers to reach rescript")
         first_turn = state.turn
-        first_verdicts = db.dossiers.get_pending_promulgation_verdicts(first_turn)
+        first_verdicts = _resolve_arm_verdicts(db, resolve_turn=first_turn, awaiting=True, ids=ids)
         choices = _choose_rescripts(
             db, first_turn, ids["hostile"], ids["vital_midzhi"], ids["appointment"],
         )
@@ -454,7 +468,7 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
         second_result = resolve_directives(
             state, db, agno, cfg, [], "留中案下月重判", content=content,
         )
-        second_pending = db.dossiers.get_pending_promulgation_verdicts(second_turn)
+        second_pending = _resolve_arm_verdicts(db, resolve_turn=second_turn, awaiting=second_result.awaiting, ids={"hostile": ids["hostile"]})
         second_history = [
             row for row in db.dossiers.decisions(ids["hostile"])
             if int(row["turn"]) == second_turn and not row.get("rescript_action")

@@ -14,8 +14,6 @@ from ming_sim.flows import apply_fixed_period_flows
 ARMY = "guanning"
 
 
-def _configure(db):
-    value = 1  # active substrate_hub cutover
     # hub-only: cutover markers retired (#1889)
 
 
