@@ -2276,14 +2276,9 @@ class WebGame:
         if ticket is None:
             return None
 
-        # 实际异常不得在保留线程里消亡后被 join 方当成成功；stash 供 join 后原样上抛。
-        spawn_errors: List[BaseException] = []
-
         def _runner() -> None:
             try:
                 target(*args, pending_ticket=ticket)
-            except BaseException as exc:
-                spawn_errors.append(exc)
             finally:
                 self._complete_pending_write(ticket)
 
@@ -2292,8 +2287,6 @@ class WebGame:
             daemon=True,
             name=name,
         )
-        # join 方读此盒；startup 等 fire-and-forget 不 join，异常仍留日志侧由调用契约决定。
-        thread._spawn_errors = spawn_errors  # type: ignore[attr-defined]
         try:
             thread.start()
         except Exception:
@@ -2543,6 +2536,8 @@ class WebGame:
                     turn_key = ("turn", int(chat_turn_id)) if chat_turn_id else None
                     highlight_thread: Optional[threading.Thread] = None
                     highlight_box: List[str] = []
+                    # 仅高亮 join 路收故障；共享 spawner 不吞，startup 等无 join 仍走线程未捕获出口。
+                    highlight_errors: List[BaseException] = []
                     # #1727：court_break 预领屏障票——须在尾随领票之后、done 之前。
 
                     if chat_turn_id and answer:
@@ -2554,14 +2549,17 @@ class WebGame:
                                 *,
                                 pending_ticket: Optional[WriteTicket] = None,
                             ) -> None:
-                                highlight_box.extend(
-                                    self._trail_highlight_judge_after_reply(
-                                        reply,
-                                        message_id=mid,
-                                        chat_turn_id=ctid,
-                                        pending_ticket=pending_ticket,
-                                    ) or []
-                                )
+                                try:
+                                    highlight_box.extend(
+                                        self._trail_highlight_judge_after_reply(
+                                            reply,
+                                            message_id=mid,
+                                            chat_turn_id=ctid,
+                                            pending_ticket=pending_ticket,
+                                        ) or []
+                                    )
+                                except BaseException as exc:
+                                    highlight_errors.append(exc)
 
                             highlight_thread = self._spawn_pending_write_thread(
                                 _highlight_worker,
@@ -2586,12 +2584,11 @@ class WebGame:
                     reply_done_emitted = True
 
                     # #544：流式不挡流——done 后补挂高亮（超时封顶）；有清单才发事件。
-                    # 保留线程实际异常交还本 worker 统一失败出口（error→end），不洗成成功。
+                    # 高亮实际异常交还本 worker 统一失败出口（error→end），不洗成成功。
                     if highlight_thread is not None:
                         highlight_thread.join()
-                        spawn_errors = getattr(highlight_thread, "_spawn_errors", None) or []
-                        if spawn_errors:
-                            raise spawn_errors[0]
+                        if highlight_errors:
+                            raise highlight_errors[0]
                     if highlight_box:
                         ev_queue.put({
                             "type": "highlights",

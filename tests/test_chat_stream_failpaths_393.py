@@ -345,67 +345,11 @@ def test_worker_cleanup_double_failure_emits_original_error_end():
     _assert_write_path_free(runtime)
 
 
-def test_worker_postprocess_exception_emits_error_end():
-    """#1353 r12：payload 成功后后处理（_spawn_pending_write_thread 高亮）抛错 → 单一出口 error→end。
+def test_worker_postprocess_exception_emits_error_end(monkeypatch):
+    """#1353 r12 / #1902：payload 成功后高亮后处理故障 → 单一出口 error→end。
 
-    事件握手：有界消费必见 end；禁只走 finally 致消费者永阻。
-    #1842：殿上走 _scene_chat_stream_payload；后处理尾随仍为 spawn 缝。
-    """
-    db = _WorkerPathDB()
-    runtime, minister = _base_runtime(db)
-    runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
-    runtime.session._character = lambda name: minister_double(minister)
-    runtime.session.close_night_after_chat_if_needed = None
-
-    runtime._scene_chat_stream_payload = (  # type: ignore[method-assign]
-        lambda *a, **k: {
-            "answer": "臣已知晓。",
-            "minister_message_id": 1,
-            "court_action": "",
-        }
-    )
-
-    def _boom_spawn(*_a, **_k):
-        raise RuntimeError("highlight trail boom")
-
-    runtime._spawn_pending_write_thread = _boom_spawn  # type: ignore[method-assign]
-
-    events: list[dict] = []
-    done = threading.Event()
-    box: dict = {}
-
-    def consume() -> None:
-        try:
-            for item in runtime.chat_stream("殿上", "边饷如何？"):
-                events.append(item)
-                if item.get("type") == "end":
-                    break
-            box["ok"] = True
-        except Exception as exc:  # noqa: BLE001
-            box["exc"] = exc
-        finally:
-            done.set()
-
-    th = threading.Thread(target=consume, daemon=True)
-    th.start()
-    done.wait()
-    th.join()
-    assert box.get("ok") is True, box
-    types = [e.get("type") for e in events]
-    assert "done" in types, events  # 回话已可见
-    assert "error" in types, events
-    assert types[-1] == "end", events
-    err_idx = types.index("error")
-    assert types[err_idx + 1] == "end", types
-    err = next(e for e in events if e.get("type") == "error")
-    assert "highlight trail boom" in str(err.get("message") or ""), err
-    _assert_write_path_free(runtime)
-
-
-def test_worker_highlight_thread_fault_emits_error_end(monkeypatch):
-    """#1902：保留高亮线程内实际故障 join 后交还统一出口 error→end，不洗成成功。
-
-    真 spawn 缝（非同步 raise 替身）：trail 抛 LLMUnavailable / TypeError 均须可见 error。
+    真 spawn/trail 缝：判官边界注入实际故障；done 已交付后再 error→end；
+    禁洗成成功，禁只走 finally 致消费者永阻。
     """
     import types
 
@@ -415,16 +359,15 @@ def test_worker_highlight_thread_fault_emits_error_end(monkeypatch):
     runtime, minister = _base_runtime(db)
     runtime.session.registry = SimpleNamespace(get=lambda _c, **_kw: None)
     runtime.session._character = lambda name: minister_double(minister)
-    runtime.session.close_night_after_chat_if_needed = (
-        lambda *a, **k: None
-    )
-    # 生产 spawn / trail 缝（夹具默认可能 stub）。
+    runtime.session.close_night_after_chat_if_needed = lambda *a, **k: None
+    # 生产 spawn / trail 缝（不得 mock 掉被测编排）。
     runtime._spawn_pending_write_thread = types.MethodType(
         WebGame._spawn_pending_write_thread, runtime,
     )
     runtime._trail_highlight_judge_after_reply = types.MethodType(
         WebGame._trail_highlight_judge_after_reply, runtime,
     )
+
     runtime._scene_chat_stream_payload = (  # type: ignore[method-assign]
         lambda *a, **k: {
             "answer": "臣已知晓。",
@@ -434,7 +377,7 @@ def test_worker_highlight_thread_fault_emits_error_end(monkeypatch):
     )
 
     def _boom_judge(**_k):
-        raise LLMUnavailable("highlight model down", code="llm_error")
+        raise LLMUnavailable("highlight trail boom", code="llm_error")
 
     monkeypatch.setattr("web_app.run_highlight_judge", _boom_judge)
 
@@ -460,16 +403,17 @@ def test_worker_highlight_thread_fault_emits_error_end(monkeypatch):
     th.join(timeout=5)
     assert box.get("ok") is True, box
     types = [e.get("type") for e in events]
-    assert "done" in types, events
+    assert "done" in types, events  # 回话已可见
     assert "error" in types, events
     assert "highlights" not in types, events
     assert types[-1] == "end", events
+    err_idx = types.index("error")
+    assert types[err_idx + 1] == "end", types
     err = next(e for e in events if e.get("type") == "error")
-    # typed 走 detail dict.message；代码故障走 message——合并原声核验。
     detail = err.get("detail")
     detail_msg = detail.get("message") if isinstance(detail, dict) else detail
     blob = f"{err.get('message') or ''}{detail_msg or ''}"
-    assert "highlight model down" in blob, err
+    assert "highlight trail boom" in blob, err
     _assert_write_path_free(runtime)
 
 
