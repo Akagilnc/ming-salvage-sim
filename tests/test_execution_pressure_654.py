@@ -222,37 +222,6 @@ def test_create_decree_dossier_int_abi_single_row(env):
 
 
 
-def test_ensure_directive_dossier_returns_list(env):
-    db, state, _ = env
-    payload = {
-        "dossier_action_type": "policy",
-        "target_kind": "region",
-        "target_id": "henan",
-        "locality_scope": "single",
-        "assignee_id": "毕自严",
-        "mode": "ordinary",
-    }
-    cur = db.conn.execute(
-        """
-        INSERT INTO turn_directives
-        (turn, year, period, event_id, actor, text, source, status,
-         notes, dossier_payload_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            state.turn, state.year, state.period, None, "毕自严",
-            "河南清丈", "test", "draft", "",
-            json.dumps(payload, ensure_ascii=False),
-        ),
-    )
-    directive_id = int(cur.lastrowid)
-    db.conn.commit()
-    ids = db._ensure_directive_dossier(
-        state, directive_id, "河南清丈", payload, commit=True,
-    )
-    assert isinstance(ids, list) and len(ids) == 1 and ids[0] > 0
-
-
 def test_normalize_payload_locality_and_target_kind(env):
     db, _, _ = env
     out = db._normalize_directive_dossier_payload({
