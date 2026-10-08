@@ -268,13 +268,15 @@ def test_seal_claim_rejects_current_trail_legs_without_write(web_game, monkeypat
 def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
     """startup catch-up 须经票据写缝：非阻塞 acquire 拒收（裸 Lock 会放行）。
 
-    #1902 T4：生产经 session.run_startup_translation_catch_up → audience_translation；
-    本案在现役共核接缝观察 write_gate，不 patch 已退役的 web_app 顶层符号。
+    #1902 T4：生产经 spawner → session.run_startup_translation_catch_up →
+    audience_translation；本案从现役 startup spawner 入口进，在共核接缝观察
+    write_gate，不直调 callee、不 patch 已退役的 web_app 顶层符号。
     """
     import ming_sim.audience_translation as audience_translation
 
     game = web_game
     seen = {}
+    spawned: list = []
 
     def fake_catch_up(*, write_gate=None, **_k):
         # 外部契约：票据缝拒非阻塞 acquire；threading.Lock 会返回 True。
@@ -285,6 +287,13 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
         except RuntimeError:
             seen["ticketed_contract"] = True
 
+    real_spawn = game._spawn_pending_write_thread
+
+    def _spawn_and_track(*a, **k):
+        t = real_spawn(*a, **k)
+        spawned.append(t)
+        return t
+
     monkeypatch.setattr(
         audience_translation, "catch_up_pending_translations", fake_catch_up,
     )
@@ -292,12 +301,15 @@ def test_startup_catchup_uses_ticketed_gate_not_bare(web_game, monkeypatch):
     monkeypatch.setattr(
         game.session, "list_startup_translation_catch_up", lambda: [{"id": 1}],
     )
-    ticket = game._mark_pending_write(key=("startup",))
-    assert ticket is not None
-    game._run_startup_extraction_catch_up(pending_ticket=ticket)
+    monkeypatch.setattr(game, "_spawn_pending_write_thread", _spawn_and_track)
+    game._spawn_startup_extraction_catch_up()
+    assert spawned and spawned[0] is not None, "spawner must start a worker"
+    spawned[0].join(timeout=5.0)
+    assert not spawned[0].is_alive(), "startup catch-up worker did not finish"
     assert seen.get("ticketed_contract") is True
     assert seen.get("bare_lock") is not True
-    assert ticket._done is True
+    # spawner finally 归还后队列应空（lifecycle 单真源在 spawner）
+    assert game._runtime_write_queue().inflight_count() == 0
 
 def test_ticketed_write_gate_rejects_none(web_game):
     """无票不得回落裸 runtime write_gate。"""

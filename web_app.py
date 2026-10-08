@@ -2273,30 +2273,24 @@ class WebGame:
         self,
         *,
         pending_ticket: Optional[WriteTicket] = None,
-        owns_pending: bool = False,
     ) -> None:
         """Web 宿主适配：持票据闸调用会话共核启动补跑（#1902 T4）。
 
         生命周期真源 ``GameSession.run_startup_translation_catch_up``；本方法只办
-        票据写闸与 complete 收口。spawn 路票据由 spawner finally 归还；直接调用
-        钉仍依赖此处 complete（幂等）。
+        票据写闸。spawn 路票据由 ``_spawn_pending_write_thread`` finally 归还，
+        callee 不重复收口。
         """
-        del owns_pending
+        if pending_ticket is None:
+            return
+        if pending_ticket.cancelled or pending_ticket._done:
+            return
         try:
-            if pending_ticket is None:
-                return
-            if pending_ticket.cancelled or pending_ticket._done:
-                return
-            try:
-                self.session.run_startup_translation_catch_up(
-                    write_gate=self._ticketed_write_gate(pending_ticket),
-                    write_queue=self._runtime_write_queue(),
-                )
-            except TicketCancelled:
-                return
-        finally:
-            if pending_ticket is not None:
-                self._complete_pending_write(pending_ticket)
+            self.session.run_startup_translation_catch_up(
+                write_gate=self._ticketed_write_gate(pending_ticket),
+                write_queue=self._runtime_write_queue(),
+            )
+        except TicketCancelled:
+            return
 
     def _spawn_startup_extraction_catch_up(self) -> None:
         """Web 宿主适配：后台线程发起启动补跑（不阻塞存档加载）。
