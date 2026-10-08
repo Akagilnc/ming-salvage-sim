@@ -10263,19 +10263,42 @@ class GameDB:
             raise ValueError("奏报 origin 须带 dossier-report 命名空间前缀")
         return raw
 
+    @staticmethod
+    def _require_progress_flag(raw: object, *, field: str) -> bool:
+        """报告结案位：JSON bool 或 SQL 0/1；禁 bool('false')/真值洗（#1897 E1）。"""
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, int) and raw in (0, 1):
+            return raw == 1
+        raise ValueError(
+            f"密令奏报 {field} 须为布尔或 0/1，得 {type(raw).__name__}"
+        )
+
     @classmethod
     def _coerce_dossier_progress_row(
         cls, item: Mapping[str, object], *, dossier_id: int,
     ) -> Dict[str, object]:
-        """单一报告行合同权威：读写共吃；禁 str() 洗 memorial_text 类型（#1897 E1）。"""
-        is_terminal = bool(item.get("is_terminal"))
+        """单一报告行合同权威：读写共吃。
+
+        正文 durable prose；id/turn/dossier_id 走 strict_int（拒 bool/float 截断）；
+        is_terminal 仅 JSON bool 或 SQL 0/1——禁有损 int()/bool() 洗白（#1897 E1）。
+        """
+        from ming_sim.strict_types import strict_int
+
+        is_terminal = cls._require_progress_flag(
+            item.get("is_terminal", False), field="is_terminal",
+        )
         # Empty origin defaults live only in _normalize_dossier_report_origin.
         origin = cls._normalize_dossier_report_origin(
             item.get("origin"), is_terminal=is_terminal,
         )
         try:
-            report_id = int(item["id"])
-            turn = int(item["turn"])
+            report_id = strict_int(
+                item["id"], accept_numeric_strings=False,
+            )
+            turn = strict_int(
+                item["turn"], accept_numeric_strings=False,
+            )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("密令奏报 id/turn 须为整数") from exc
         band = _require_durable_prose(
@@ -10286,7 +10309,9 @@ class GameDB:
         )
         dossier_raw = item.get("dossier_id", dossier_id)
         try:
-            dossier_val = int(dossier_raw)
+            dossier_val = strict_int(
+                dossier_raw, accept_numeric_strings=False,
+            )
         except (TypeError, ValueError) as exc:
             raise ValueError("密令奏报 dossier_id 须为整数") from exc
         return {
