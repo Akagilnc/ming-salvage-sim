@@ -272,7 +272,7 @@ def _uncased_grant_catalog_token(
         pending_id = int(candidate.get("pending_action_id"))
     except (TypeError, ValueError):
         return None
-    if pending_id <= 0 or not hasattr(db, "conn"):
+    if pending_id <= 0:
         return None
     existing = db.conn.execute(
         "SELECT id FROM decree_dossiers "

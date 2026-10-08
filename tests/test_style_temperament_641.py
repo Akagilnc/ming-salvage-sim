@@ -20,8 +20,7 @@ from ming_sim.person_archive_contract import format_person_actions
 from ming_sim.relation_read import project_relation_ledger
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
-from ming_sim.settlement.views import rejected_view
-
+from ming_sim.settlement.views import section
 
 PERSON = "毛文龙"
 NEW_STYLE = "旧恨未消，却更沉得住气，临事少作张扬。"
@@ -150,7 +149,7 @@ def test_temperament_style_preserves_raw_bytes_through_write_kernel(game):
     blank_out = settle_delta(state, db, {'人物变更': [_temperament_item(style='   \n\t  ')]}, SettlementContext(content=content))
     assert _style_row(db) == blank_before
     assert content.characters[PERSON].style == PADDED_STYLE
-    assert rejected_view(blank_out, "applied_person_changes")[0].category == "invalid_enum"
+    assert section(blank_out, "applied_person_changes").rejected[0].category == "invalid_enum"
 
 def test_temperament_outer_tx_rollback_restores_db_and_runtime(game):
     db, state, content = game
@@ -198,11 +197,10 @@ def test_apply_score_extraction_rejects_invalid_temperament(game, item, category
         assert content.characters[PERSON].style == before_rt
     assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
     assert view(applied, "applied_person_changes") == []
-    refused = rejected_view(applied, "applied_person_changes")
+    refused = section(applied, "applied_person_changes").rejected
     assert len(refused) == 1
     assert refused[0].category == category
     assert refused[0].item == item
-
 
 def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
     db, state, content = game
@@ -238,7 +236,6 @@ def test_character_context_with_db_reads_own_style_and_viewer_ledger(game):
     assert person.name in rendered and other.name in rendered
     own_dto = expected_own[0]
     assert own_dto["recent_context"] in rendered
-
 
 def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
     """读面装配：style/summary/recent_context 存在性用 strip，正文传原串。"""
@@ -291,7 +288,6 @@ def test_context_passes_raw_style_and_ledger_prose_without_rewrite(game):
     assert PADDED_STYLE.strip() != PADDED_STYLE
     assert dto["summary"] != dto["summary"].strip()
 
-
 def test_relation_edge_events_do_not_mutate_style(game):
     db, state, content = game
     source, target = "毕自严", "王绍徽"
@@ -310,7 +306,7 @@ def test_relation_edge_events_do_not_mutate_style(game):
 
     out = settle_delta(state, db, {'relation_edge_events': [{'施动者': source, '受动者': target, '类目': '使绊', '语境': '毕自严在户部用度上挡了王绍徽的路。', '来源引用': '盘面自发'}]}, SettlementContext(content=content))
     res = view(out, "relation_edge_event_resolutions")
-    assert rejected_view(out, "relation_edge_event_resolutions") == []
+    assert section(out, "relation_edge_event_resolutions").rejected == []
     rows = db.get_relation_edge_events(source=source, target=target)
     assert len(rows) == 1
     assert _style_row(db, source) == before_db[source]

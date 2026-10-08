@@ -53,7 +53,7 @@ def raise_fixed_period_flow_abort_if_needed(
     """Record fixed-fiscal failures after rollback, preserving their original cause."""
     if not in_fixed_fiscal and not isinstance(exc, _FixedFiscalAbort):
         return
-    if getattr(db.conn, "_commit_suspended", False):
+    if not db.owns_transaction():
         if in_fixed_fiscal and not isinstance(exc, _FixedFiscalAbort):
             raise _FixedFiscalAbort(str(exc)) from exc
         return
@@ -570,7 +570,7 @@ def _central_dues_with_haircut(
 
 def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, object]]:
     """月度财政 tick：固定收支（compute_budget_lines 定额）+ 军饷逐军 + 建筑逐项落账，LLM 推演前完成。"""
-    if not getattr(db.conn, "_commit_suspended", False):
+    if db.owns_transaction():
         from ming_sim.applier import atomic
         metrics_before = dict(state.metrics)
         try:

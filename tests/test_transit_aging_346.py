@@ -18,16 +18,14 @@ from ming_sim.models import Event, TurnPhase
 from pathlib import Path
 from tests.conftest import active_ming_character
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import rejected_view
+from ming_sim.settlement.views import section
 
 DEST = "liaodong"
 MATRIX = DistanceMatrix.from_file(Path(__file__).resolve().parents[1] / "content/distance_matrix.json")
 
-
 def _set_departure_origin(db, content, name: str) -> None:
     db.conn.execute("UPDATE characters SET location='beizhili' WHERE name=?", (name,))
     content.characters[name].location = "beizhili"
-
 
 def _set_full_transit(db, content, name: str, *, dest: str, start_turn: int, speed: float = 1.0):
     origin = "beizhili"
@@ -43,9 +41,7 @@ def _set_full_transit(db, content, name: str, *, dest: str, start_turn: int, spe
     )
     return r0
 
-
 # ── 行止 apply 写启程账 ──────────────────────────────────────────────────────
-
 
 def test_行止_sets_transit_start_turn(game):
     """apply_score_extraction 处理 行止 时，写入 transit_to 同时记录 transit_start_turn=当前回合。"""
@@ -66,7 +62,6 @@ def test_行止_sets_transit_start_turn(game):
     assert row["transit_distance_remaining"] == MATRIX.travel_time("beizhili", DEST)
     assert row["transit_speed_factor"] == 1.0
 
-
 def test_行止_payload_cannot_write_arrival(game):
     """抵达是引擎倒数 tick 独占的事实，人物变更不得平行落位。"""
     db, state, content = game
@@ -80,8 +75,7 @@ def test_行止_payload_cannot_write_arrival(game):
     ).fetchone()
     assert row["transit_to"] == DEST
     assert row["transit_start_turn"] == 99
-    assert rejected_view(result, "applied_person_changes")[0].category == "invalid_transition"
-
+    assert section(result, "applied_person_changes").rejected[0].category == "invalid_transition"
 
 def test_行止_reemit_same_dest_preserves_start_turn(game):
     """同一 transit_to 被逐月 re-emit 时，transit_start_turn / remaining 不应被刷新。"""
@@ -107,7 +101,6 @@ def test_行止_reemit_same_dest_preserves_start_turn(game):
     assert row["transit_distance_remaining"] == before["transit_distance_remaining"]
     assert row["transit_speed_factor"] == before["transit_speed_factor"]
 
-
 def test_行止_change_dest_is_rejected(game):
     """在途人物不可改道，原 transit ledger 保持不变。"""
     db, state, content = game
@@ -124,11 +117,9 @@ def test_行止_change_dest_is_rejected(game):
     ).fetchone()
     assert row["transit_to"] == DEST
     assert row["transit_start_turn"] == 3
-    assert rejected_view(results, "applied_person_changes")[0].category == "invalid_transition"
-
+    assert section(results, "applied_person_changes").rejected[0].category == "invalid_transition"
 
 # ── tick 先于事件终态 ───────────────────────────────────────────────────────
-
 
 def test_pre_settle_ticks_arrival_before_terminal_states(game):
     """tick_transit_arrivals 必须在 apply_event_terminal_states 之前跑。"""
@@ -185,7 +176,6 @@ def test_pre_settle_ticks_arrival_before_terminal_states(game):
         )
     finally:
         content.events.remove(ev)
-
 
 def test_tick_does_not_arrive_when_remaining_still_positive(game):
     db, state, content = game

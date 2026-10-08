@@ -6,13 +6,7 @@ from tests.test_due_review_621 import _settle_empty_month as _player_month
 from ming_sim.entities.issue.commitment_display import commitment_progress_payload
 from ming_sim.situation_drift import apply_situation_monthly_drift
 
-
-
-
-
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import issue_rows
-
 
 def _promulgated_commitment_origin(db, state, token: str) -> str:
     dossier_id = db.create_decree_dossier(
@@ -22,12 +16,10 @@ def _promulgated_commitment_origin(db, state, token: str) -> str:
     db.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
-
 def _army_arrears(db, army_id: str) -> int:
     row = db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()
     assert row is not None
     return int(row["arrears"])
-
 
 def _seed_central_army_arrears(db, arrears_by_army_id: dict[str, float]) -> None:
     for army_id, arrears in arrears_by_army_id.items():
@@ -40,18 +32,15 @@ def _seed_central_army_arrears(db, arrears_by_army_id: dict[str, float]) -> None
             (arrears, arrears, army_id),
         )
 
-
 def _character_loyalty(db, name: str) -> int:
     row = db.conn.execute("SELECT loyalty FROM characters WHERE name=?", (name,)).fetchone()
     assert row is not None
     return int(row["loyalty"])
 
-
 def _faction_satisfaction(db, name: str) -> int:
     row = db.conn.execute("SELECT satisfaction FROM factions WHERE name=?", (name,)).fetchone()
     assert row is not None
     return int(row["satisfaction"])
-
 
 def _class_satisfaction(db, name: str, region_id: str = "") -> int:
     row = db.conn.execute(
@@ -61,26 +50,21 @@ def _class_satisfaction(db, name: str, region_id: str = "") -> int:
     assert row is not None
     return int(row["satisfaction"])
 
-
 def _region_cannon(db, region_id: str) -> int:
     row = db.conn.execute("SELECT cannon FROM regions WHERE id=?", (region_id,)).fetchone()
     assert row is not None
     return int(row["cannon"])
-
 
 def _issue_row(db, issue_id: int):
     row = db.conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
     assert row is not None
     return row
 
-
 def _advance_player_month(db, state, content):
     with pytest.MonkeyPatch.context() as patch:
         _player_month(db, state, content, patch)
 
-
 _settle_empty_month = _advance_player_month
-
 
 def test_created_future_limited_duration_commitment_applies_first_month(game, monkeypatch):
     db, state, content = game
@@ -93,7 +77,7 @@ def test_created_future_limited_duration_commitment_applies_first_month(game, mo
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'future-monthly-authority'), 'kind': 'initiative', 'title': '连续两月宣示皇威', 'stage_text': '连续两月遣使宣示皇威。', 'ongoing_effects': {'metrics': {'皇威': -1}}, 'end_turn': expected_end_turn, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    created = issue_rows(out, "new_issues")[0]
+    created = out.issue.new_issues[0]
     issue_id = created["issue_id"]
 
     _advance_player_month(db, state, content)
@@ -107,7 +91,6 @@ def test_created_future_limited_duration_commitment_applies_first_month(game, mo
         (issue_id,),
     ).fetchall()
     assert [row["trigger_kind"] for row in advances] == ["ongoing"]
-
 
 def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progress(game):
     db, state, content = game
@@ -155,7 +138,6 @@ def test_character_loyalty_commitment_ongoing_applies_monthly_and_records_progre
     assert payload["commitment_progress"]["months_elapsed"] == 1
     assert payload["commitment_progress"]["remaining_to_goal"] == 19
 
-
 def test_faction_class_commitment_ongoing_applies_monthly_when_counted(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -192,7 +174,6 @@ def test_faction_class_commitment_ongoing_applies_monthly_when_counted(game):
     assert [row["trigger_kind"] for row in advances] == ["ongoing"]
     payload = json.loads(advances[0]["metric_delta"])
     assert payload["commitment_progress"]["months_elapsed"] == 1
-
 
 def test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crashing(game):
     db, state, content = game
@@ -233,7 +214,6 @@ def test_commitment_ongoing_malformed_entity_payloads_are_rejected_without_crash
     }
     assert {item["id"] for item in items} == {"beizhili", "guanning", "houjin"}
 
-
 def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -264,7 +244,6 @@ def test_commitment_stop_gate_resolve_respects_outer_transaction_rollback(game):
         (issue_id,),
     ).fetchone()[0] == 0
 
-
 def test_commitment_expiry_respects_outer_transaction_rollback(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -294,7 +273,6 @@ def test_commitment_expiry_respects_outer_transaction_rollback(game):
         (issue_id,),
     ).fetchone()[0] == 0
 
-
 def test_commitment_monthly_ongoing_respects_outer_transaction_rollback(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -321,7 +299,6 @@ def test_commitment_monthly_ongoing_respects_outer_transaction_rollback(game):
         (issue_id,),
     ).fetchone()[0] == 0
 
-
 def test_commitment_progress_skips_non_numeric_gate_values(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -342,7 +319,6 @@ def test_commitment_progress_skips_non_numeric_gate_values(game):
     progress = commitment_progress_payload(db, state, _issue_row(db, issue_id))
 
     assert progress == {"months_elapsed": 0, "paid_total": 0}
-
 
 def test_region_cannon_commitment_ongoing_applies_monthly_when_counted(game):
     db, state, content = game
@@ -382,7 +358,6 @@ def test_region_cannon_commitment_ongoing_applies_monthly_when_counted(game):
     assert [row["trigger_kind"] for row in advances] == ["ongoing"]
     payload = json.loads(advances[0]["metric_delta"])
     assert payload["commitment_progress"]["months_elapsed"] == 1
-
 
 def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(game):
     db, state, content = game
@@ -468,7 +443,6 @@ def test_until_stop_arrears_commitment_settlement_oracle_resolves_with_restore(g
     assert paid == sorted(paid) and paid[-1] > paid[1]
     assert payloads[-1]["commitment_progress"]["remaining_arrears"] == 0
 
-
 def test_commitment_progress_contexts_are_structured(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -501,9 +475,6 @@ def test_commitment_progress_contexts_are_structured(game):
     assert progress is not None
     assert int(progress["months_elapsed"]) == 1
     assert "remaining_arrears" in progress
-
-
-
 
 def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
     """strict < gates use real-valued comparison once arrears can be fractional."""
@@ -566,7 +537,6 @@ def test_commitment_progress_fractional_strict_gate_can_be_satisfied(game):
 
     assert greater_progress["remaining_arrears"] == 0
 
-
 def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -599,7 +569,6 @@ def test_commitment_ongoing_economy_not_scaled_by_bar_discount(game):
         "SELECT COALESCE(SUM(delta),0) FROM economy_ledger WHERE purpose='补饷' AND target_kind='army'"
     ).fetchone()[0]
     assert paid == -50
-
 
 def test_arrears_commitment_preserves_explicit_monthly_payment_target(game):
     db, state, content = game
@@ -641,7 +610,6 @@ def test_arrears_commitment_preserves_explicit_monthly_payment_target(game):
         "WHERE purpose='补饷' AND target_kind='army' ORDER BY id"
     )] == [("xuan_da", -30)]
 
-
 def test_high_bar_metric_only_commitment_applies_and_records_monthly_progress(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -675,7 +643,6 @@ def test_high_bar_metric_only_commitment_applies_and_records_monthly_progress(ga
     payload = json.loads(advances[0]["metric_delta"])
     assert payload["metrics"] == {"皇威": 1}
     assert payload["commitment_progress"]["months_elapsed"] == 1
-
 
 def test_metric_commitment_records_progress_when_monthly_cap_blocks_effect(game):
     db, state, content = game
@@ -720,7 +687,6 @@ def test_metric_commitment_records_progress_when_monthly_cap_blocks_effect(game)
     assert payload["metrics"] == {}
     assert payload["commitment_progress"]["months_elapsed"] == 1
 
-
 def test_commitment_end_turn_expires_without_resolve_effects(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -762,7 +728,6 @@ def test_commitment_end_turn_expires_without_resolve_effects(game):
         (issue_id,),
     ).fetchall()
     assert [row["trigger_kind"] for row in advances] == ["expire"]
-
 
 def test_limited_duration_commitment_ticks_until_end_turn_then_expires(game):
     db, state, content = game
@@ -819,7 +784,6 @@ def test_limited_duration_commitment_ticks_until_end_turn_then_expires(game):
     ).fetchall()
     assert [row["trigger_kind"] for row in advances] == ["ongoing", "ongoing", "expire"]
 
-
 def test_until_stop_condition_beats_later_end_turn_for_stacked_commitment(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -858,7 +822,6 @@ def test_until_stop_condition_beats_later_end_turn_for_stacked_commitment(game):
         (issue_id,),
     ).fetchall()
     assert [row["trigger_kind"] for row in advances] == ["ongoing", "commitment_resolve"]
-
 
 def test_cancelled_commitment_is_distinct_from_expired_commitment(game):
     db, state, content = game
@@ -908,7 +871,6 @@ def test_cancelled_commitment_is_distinct_from_expired_commitment(game):
         (expired_id, "expire"),
     ]
 
-
 def test_commitment_missing_purpose_still_routes_arrears_budget(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -919,7 +881,7 @@ def test_commitment_missing_purpose_still_routes_arrears_budget(game):
     db.save_state(state)
 
     result = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'missing-purpose'), 'kind': 'initiative', 'title': '每月补关宁欠饷直到补齐', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补关宁欠饷'}]}, 'stop_condition': {'army.guanning.arrears': '<=0'}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
-    created = issue_rows(result, "new_issues")[0]
+    created = result.issue.new_issues[0]
 
     _advance_player_month(db, state, content)
 
@@ -927,7 +889,6 @@ def test_commitment_missing_purpose_still_routes_arrears_budget(game):
         "SELECT COALESCE(SUM(delta),0) FROM economy_ledger "
         "WHERE purpose='补饷' AND target_kind='army'"
     ).fetchone()[0] == -50
-
 
 def test_commitment_targeted_pay_uses_explicit_arrears_target(game):
     db, state, content = game
@@ -968,7 +929,6 @@ def test_commitment_targeted_pay_uses_explicit_arrears_target(game):
         "SELECT target_id, delta FROM economy_ledger "
         "WHERE purpose='补饷' AND target_kind='army' ORDER BY id"
     )] == [("xuan_da", -50)]
-
 
 def test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool(game):
     db, state, content = game
@@ -1017,7 +977,6 @@ def test_commitment_malformed_pay_target_does_not_fall_back_to_priority_pool(gam
         "SELECT COALESCE(SUM(delta), 0) FROM economy_ledger WHERE purpose='补饷'"
     ).fetchone()[0] == 0
 
-
 def test_non_arrears_commitment_missing_pay_target_does_not_open_priority_pool(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -1065,7 +1024,6 @@ def test_non_arrears_commitment_missing_pay_target_does_not_open_priority_pool(g
         "SELECT COALESCE(SUM(delta), 0) FROM economy_ledger WHERE purpose='补饷'"
     ).fetchone()[0] == 0
 
-
 def test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -1111,7 +1069,6 @@ def test_commitment_pay_pool_is_scoped_to_arrears_stop_gate_armies(game):
         "WHERE purpose='补饷' AND target_kind='army'"
     ).fetchone()[0] == -50
 
-
 def test_commitment_progress_keeps_strict_stop_gate_semantics(game):
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
@@ -1137,14 +1094,13 @@ def test_commitment_progress_keeps_strict_stop_gate_semantics(game):
     assert progress is not None
     assert progress["remaining_arrears"] == 1
 
-
 def test_end_turn_without_ongoing_is_not_expired_by_settlement_tick(game):
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
     db.conn.commit()
     result = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'future-review'), 'kind': 'initiative', 'title': '三月后复试', 'ongoing_effects': {}, 'stop_condition': '', 'end_turn': state.turn, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
-    created = issue_rows(result, "new_issues")[0]
+    created = result.issue.new_issues[0]
     issue_id = int(created["issue_id"])
 
     _advance_player_month(db, state, content)
@@ -1156,7 +1112,6 @@ def test_end_turn_without_ongoing_is_not_expired_by_settlement_tick(game):
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='expire'",
         (issue_id,),
     ).fetchone()[0] == 0
-
 
 def test_one_shot_end_turn_commitment_stays_active_after_month(game):
     db, state, content = game
@@ -1188,7 +1143,6 @@ def test_one_shot_end_turn_commitment_stays_active_after_month(game):
         "SELECT COUNT(*) FROM issue_advances WHERE issue_id=? AND trigger_kind='expire'",
         (issue_id,),
     ).fetchone()[0] == 0
-
 
 def test_semantically_empty_one_shot_commitment_acks_once(game):
     db, state, content = game
@@ -1222,12 +1176,11 @@ def test_semantically_empty_one_shot_commitment_acks_once(game):
     ).fetchone()[0] == 0
 
     out = settle_delta(state, db, {'close_issues': [{'issue_id': issue_id, 'reason': 'acknowledged', 'narrative': '皇帝已复试，此承诺已由圣裁收尾。'}]}, SettlementContext(content=content))
-    assert issue_rows(out, "closes")[0]["issue_id"] == issue_id
+    assert out.issue.closes[0]["issue_id"] == issue_id
     assert _issue_row(db, issue_id)["status"] == "dropped"
 
     _settle_empty_month(db, state, content)
     assert _issue_row(db, issue_id)["status"] == "dropped"
-
 
 def test_metadata_only_one_shot_commitment_acks_once(game):
     db, state, content = game
@@ -1265,9 +1218,8 @@ def test_metadata_only_one_shot_commitment_acks_once(game):
     ).fetchone()[0] == 0
 
     out = settle_delta(state, db, {'close_issues': [{'issue_id': issue_id, 'reason': 'acknowledged', 'narrative': '皇帝已复试，此占位承诺已由圣裁收尾。'}]}, SettlementContext(content=content))
-    assert issue_rows(out, "closes")[0]["issue_id"] == issue_id
+    assert out.issue.closes[0]["issue_id"] == issue_id
     assert _issue_row(db, issue_id)["status"] == "dropped"
-
 
 def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     db, state, content = game
@@ -1299,7 +1251,7 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
     popular_support_at_ack = int(state.metrics["民心"])
     out = settle_delta(state, db, {'close_issues': [{'issue_id': issue_id, 'reason': 'acknowledged', 'narrative': '皇帝已复试孙承宗，此承诺已由圣裁处理。'}]}, SettlementContext(content=content))
 
-    close = issue_rows(out, "closes")[0]
+    close = out.issue.closes[0]
     assert close["issue_id"] == issue_id
     row = _issue_row(db, issue_id)
     assert row["status"] == "dropped"

@@ -209,7 +209,6 @@ def _originate_catches(db, state, content, dossier_id, names):
         SettlementContext(content=content),
     )
 
-
 def test_seed_guilt_structured_clean_vs_debt():
     # 现约：只收结构化 severity∈{轻,中,重}；裸散文／解析失败不造罪（W4/#1896）。
     assert not seed_guilt_counts_as_debt("")
@@ -218,7 +217,6 @@ def test_seed_guilt_structured_clean_vs_debt():
     assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
     assert not seed_guilt_counts_as_debt("血债")
     assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
-
 
 def test_decide_settlement_delivery_gap_bidirectional():
     done = decide_secret_order_settlement({
@@ -237,7 +235,6 @@ def test_decide_settlement_delivery_gap_bidirectional():
     })
     assert bare["status"] == "failed"
 
-
 def test_task_specific_contract_from_explicit_fields_not_tags():
     audit = build_covert_task_contract(
         kind="补发饷银", axes=["既得利益"], direction=1,
@@ -251,7 +248,6 @@ def test_task_specific_contract_from_explicit_fields_not_tags():
     assert audit["delivery"]["target_units"] == 3.0
     assert catch["kind"] == "缉获人犯" and catch["delivery"]["unit"] == "人犯"
     assert catch["delivery"]["target_units"] == 3.0
-
 
 def test_task_specific_contract_rejects_empty_without_typed_fields():
     with pytest.raises(CovertContractError):
@@ -445,7 +441,6 @@ def test_gap_after_months_failed(game):
     assert row["actual_units"] < row["target_units"]
     assert db.get_secret_order(oid)["status"] == "failed"
 
-
 def test_n_month_deadline_yields_exactly_n_ticks(game):
     """N 月期限恰 N 次实进度 tick（发令月排除）。"""
     db, state, content = game
@@ -485,7 +480,6 @@ def test_n_month_deadline_yields_exactly_n_ticks(game):
     ).fetchone()["due_turn"])
     assert due == issued + n
     assert state.turn == due
-
 
 @pytest.mark.parametrize(
     "off_status",
@@ -2675,5 +2669,4 @@ def test_topic_investigation_backlash_fails_without_world_package(game):
     close = next(r for r in settled if r["order_id"] == oid)
     assert close["status"] == "failed"
     assert close["actual_units"] == 0.0
-
 

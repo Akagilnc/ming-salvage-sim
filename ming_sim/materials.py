@@ -383,10 +383,10 @@ def _spoken_this_scene(db: Any, character: Any) -> str:
 
 def _issue_linked_affair_id(db: Any, issue_id: object) -> int:
     """ADR 0154：issue 若已指向某 affair，返回该 affair id；未挂靠返 0。"""
-    store = getattr(db, "affairs", None)
-    if store is None or not hasattr(store, "affair_id_for_issue"):
+    try:
+        return int(db.affairs.affair_id_for_issue(int(issue_id)))
+    except (KeyError, TypeError, ValueError):
         return 0
-    return int(store.affair_id_for_issue(int(issue_id)))
 
 
 def _own_affair_lines(
@@ -462,7 +462,7 @@ def _own_affair_lines(
         )
 
     handling_ids: set[int] = set()
-    for issue in (db.list_active_issues() if hasattr(db, "list_active_issues") else []):
+    for issue in db.list_active_issues():
         issue_id = int(issue["id"])
         linked_affair_id = _issue_linked_affair_id(db, issue_id)
         if not linked_affair_id:

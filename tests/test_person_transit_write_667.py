@@ -9,18 +9,15 @@ import pytest
 from ming_sim.distance import DistanceMatrix
 
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import rejected_view, view
-
+from ming_sim.settlement.views import section, view
 
 def _land(db, state, extracted, *, content=None):
     return settle_delta(state, db, extracted, SettlementContext(content=content))
 from ming_sim.decree import reload_state_from_db
 from ming_sim.session import apply_appointment
 
-
 def _active(db):
     return db.conn.execute("SELECT name FROM characters WHERE status='active' LIMIT 1").fetchone()["name"]
-
 
 @pytest.mark.parametrize("invalid_distance", [float("nan"), float("inf"), float("-inf")])
 def test_departure_rejects_nonfinite_distance_before_ledger_write(game, monkeypatch, invalid_distance):
@@ -59,7 +56,6 @@ def test_departure_rejects_nonfinite_distance_before_ledger_write(game, monkeypa
     assert after_db == before_db
     assert tuple(getattr(character, field, 0) for field in fields) == before_memory
 
-
 def test_departure_reads_matrix_from_frozen_bundle_outside_cwd(game, monkeypatch, tmp_path):
     db, state, content = game
     name = _active(db)
@@ -82,7 +78,6 @@ def test_departure_reads_matrix_from_frozen_bundle_outside_cwd(game, monkeypatch
         "SELECT transit_to FROM characters WHERE name=?", (name,)
     ).fetchone()["transit_to"] == "liaodong"
 
-
 @pytest.mark.parametrize("payload", [
     {"location": "liaodong"},
     {"location": "beizhili", "transit_to": "liaodong"},
@@ -104,8 +99,7 @@ def test_departure_rejects_location_shapes_without_mutation(game, payload):
         "FROM characters WHERE name=?", (name,),
     ).fetchone())
     assert after == before
-    assert rejected_view(result, "applied_person_changes")[0].category == "invalid_transition"
-
+    assert section(result, "applied_person_changes").rejected[0].category == "invalid_transition"
 
 def test_departure_persists_matrix_distance_and_urgent_factor(game):
     db, state, content = game
@@ -128,7 +122,6 @@ def test_departure_persists_matrix_distance_and_urgent_factor(game):
     reload_state_from_db(db, state, content=content)
     assert content.characters[name].transit_distance_remaining == 2.1
     assert content.characters[name].transit_speed_factor == 1.5
-
 
 @pytest.mark.parametrize("origin", ["", "not-a-region"])
 def test_noncanonical_origin_is_narrative_only_noop(game, origin):
@@ -154,8 +147,7 @@ def test_noncanonical_origin_is_narrative_only_noop(game, origin):
         getattr(character, "transit_start_turn", 0),
     ) == ("", None, None, 0)
     assert view(result, "applied_person_changes") == []
-    assert rejected_view(result, "applied_person_changes") == []
-
+    assert section(result, "applied_person_changes").rejected == []
 
 @pytest.mark.parametrize("exit_path", ["appointment_replacement", "pending_dismissal"])
 def test_status_exit_clears_complete_transit_ledger(game, exit_path):
@@ -198,7 +190,6 @@ def test_status_exit_clears_complete_transit_ledger(game, exit_path):
         character.transit_start_turn,
     ) == ("dismissed", "", None, None, 0)
 
-
 @pytest.mark.parametrize(
     ("starting_status", "appointment_reason", "expected_reason"),
     [
@@ -233,7 +224,6 @@ def test_office_appointment_keeps_status_reason_mirrored(
         "active", expected_reason, "",
     )
 
-
 @pytest.mark.parametrize("invalid_tone", ["", 0, False, "飞驰"])
 def test_invalid_tone_is_rejected_before_same_destination_idempotence(game, invalid_tone):
     db, state, content = game
@@ -247,8 +237,7 @@ def test_invalid_tone_is_rejected_before_same_destination_idempotence(game, inva
         "transit_to": "liaodong", "行程语气": invalid_tone,
     }]}, content=content)
 
-    assert rejected_view(result, "applied_person_changes")[0].category == "invalid_enum"
-
+    assert section(result, "applied_person_changes").rejected[0].category == "invalid_enum"
 
 def test_same_destination_is_idempotent(game):
     db, state, content = game

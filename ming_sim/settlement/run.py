@@ -300,7 +300,7 @@ def _preflight(
         ordered_deltas=ordered_deltas,
         ordered_effect_event_ids=dict(ordered_effect_event_ids or {}),
         effect_sequence=effect_sequence,
-        commit_now=not bool(db.conn.in_transaction),
+        commit_now=db.owns_transaction(),
         shape_rejections=validate_rejections,
         runtime_content=ctx.content if ctx.content is not None else content_context(),
         candidate_event_ids_at_input=candidate_ids,
@@ -658,7 +658,7 @@ def land_person_changes_isolated(
 
     rows: List[Dict[str, object]] = []
     rejections: List[RejectedItem] = []
-    runtime_content = content if content is not None else getattr(db, "content", None)
+    runtime_content = content if content is not None else db.content
     for person_change in changes:
         item = dict(person_change)
         refused: List[RejectedItem] = []
@@ -716,8 +716,8 @@ def apply_person_changes_only(
     from ming_sim.entities.character import names as character_names
     from ming_sim.entities.character.normalize import normalize_person_changes
 
-    runtime_content = content if content is not None else getattr(db, "content", None)
-    caller_transaction = db.conn.in_transaction
+    runtime_content = content if content is not None else db.content
+    caller_transaction = not db.owns_transaction()
     changes = character_names._canonicalize_person_change_names(
         normalize_person_changes({"人物变更": list(person_changes or [])}),
         runtime_content,

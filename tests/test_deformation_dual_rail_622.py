@@ -21,11 +21,9 @@ from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import issue_rows, rejected_view, view
-
+from ming_sim.settlement.views import section, view
 
 # ── shared helpers ────────────────────────────────────────────────────
-
 
 def _executing_policy(db, state, *, token: str):
     dossier_id = db.create_decree_dossier(
@@ -43,13 +41,11 @@ def _executing_policy(db, state, *, token: str):
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     return dossier_id
 
-
 def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     origin = f"dossier:{int(dossier_id)}"
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '所约之事依限办结。', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': [{'stage_idx': 0, 'due_turn': state.turn, 'criterion_text': '清丈见成数', 'origin_context': '清丈畿辅田亩'}]}]}, SettlementContext(content=content))
-    created = issue_rows(out, "new_issues")[0]
+    created = out.issue.new_issues[0]
     return int(created["issue_id"])
-
 
 def _prime_and_apply_due_review(
     db, state, content, *, dossier_id: int, title: str,
@@ -74,12 +70,11 @@ def _prime_and_apply_due_review(
         }]},
         SettlementContext(content=content),
     )
-    assert not rejected_view(written, "dossier_executions"), written
+    assert not section(written, "dossier_executions").rejected, written
     results = apply_pending_due_reviews(db, state, commit=True)
     assert results and results[0].get("branch") == "dossier"
     assert results[0].get("consumed") is True
     return results[0]
-
 
 def _cost_liability(db, dossier_id):
     return [
@@ -92,11 +87,7 @@ def _cost_liability(db, dossier_id):
         ).fetchall()
     ]
 
-
-
-
 # ── ① AC1+AC2(+AC4) tracer ───────────────────────────────────────────
-
 
 def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, content):
     """同场景仅旨外标记不同 → transformed vs degraded；双口径三面；假进度零入 apply；restore 溯源。"""
@@ -191,9 +182,7 @@ def test_ac1_ac2_transformed_vs_degraded_dual_rail_tracer(game, tmp_path, conten
     )
     assert _world_fingerprint(db) == fp_before_fake
 
-
 # ── ② AC5 稽核信号正负成对 ───────────────────────────────────────────
-
 
 def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     """有稽核链 → 月报输入面确定性携带分叉信号；无链 → 键不出现。"""
@@ -247,9 +236,7 @@ def test_ac5_audit_fork_signal_present_only_with_audit_link(game):
     escort_nudge = next(n for n in nudges2 if int(n["dossier_id"]) == escort_dossier)
     assert "audit_fork_signals" not in escort_nudge
 
-
 # ── ⑤ coerce 闭世界肯定识别器（#622 r2 畸形归 0）────────────────────
-
 
 def test_coerce_beyond_intent_flag_closed_affirmative_world():
     """coerce_beyond_intent_flag 是闭世界肯定识别器。
@@ -272,9 +259,7 @@ def test_coerce_beyond_intent_flag_closed_affirmative_world():
     for value in ([], {}, [False], {"a": 1}, "null", "None", "0.0", "", "  ", "maybe", "garbage"):
         assert coerce(value) == 0, value
 
-
 # ── ⑥ 补饷路由 seam：beyond_intent 不得因 purpose 分叉丢键（#622 r3）──
-
 
 def _seed_army_arrears(db, army_id: str, arrears: int) -> None:
     db.conn.execute(
@@ -286,7 +271,6 @@ def _seed_army_arrears(db, army_id: str, arrears: int) -> None:
         (arrears, arrears, army_id),
     )
     db.conn.commit()
-
 
 def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
     """定向补饷：beyond_intent 经 coerce 落 ledger 且 applied 回执回响；无标记仍为 0。"""
@@ -378,7 +362,6 @@ def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
     assert bad_row is not None
     assert int(bad_row["beyond_intent"]) == 0
 
-
 def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
     """池化补饷：承诺月拨带 beyond_intent，拆分落库每行均继承（走 issues 结算 choke）。"""
     db, state, _content = game
@@ -430,9 +413,7 @@ def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
     assert {r["target_id"] for r in rows} <= {"guanning", "xuan_da"}
     assert sum(int(r["delta"]) for r in rows) == -50
 
-
 # ── ⑦ #651 continue：四出口 receipt × outer-first origin 对账矩阵 ─────────
-
 
 def test_apply_economy_list_four_exit_effective_origin_receipt_matrix(game):
     """四出口 canonical receipt 与 durable ledger 共用 outer-first effective origin。

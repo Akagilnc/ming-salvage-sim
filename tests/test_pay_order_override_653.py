@@ -14,7 +14,7 @@ import pytest
 
 from ming_sim.fiscal_tick import settle_tick
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import rejected_view, class_deltas
+from ming_sim.settlement.views import section
 from ming_sim.pay_order import (
     DEFAULT_ARREARS_PRIORITY,
     DEFAULT_DUE_PRIORITY,
@@ -656,8 +656,8 @@ def test_apply_score_extraction_accepts_llm_direction_with_fiscal_loss(game):
     )
     db.conn.commit()
     applied = settle_delta(state, db, {"class_delta": {"军户": {"satisfaction": 9}}}, SettlementContext())
-    assert class_deltas(applied)["军户"]["satisfaction"] == 9
-    assert rejected_view(applied, "class_delta") == []
+    assert {k: v for k, v in applied.social_class.applied}["军户"]["satisfaction"] == 9
+    assert section(applied, "class_delta").rejected == []
 
 # ═══════════════ F1 颁布生命周期 E2E（ADR 0055 判后物化缝）═══════════════
 

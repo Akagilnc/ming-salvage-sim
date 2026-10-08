@@ -534,17 +534,6 @@ def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
         raise TypeError("deadline_months must be a finite numeric type") from exc
     return max(0, min(deadline, 36))
 
-def _new_army_historically_applied(it: dict) -> bool:
-    """建军必填字段（#173 PR2 后仅剩 manpower——维护费退役、不再必填）：manpower int() 成功
-    = 历史可活（cmr S2 r4 整项谓词；模块级——避免每个 new_armies 项重定义，PR2 R1 gemini perf）。"""
-    try:
-        int(it["manpower"])
-        return True
-    except (KeyError, TypeError, ValueError, OverflowError):
-        # OverflowError：int(float("inf"/"-inf")) 不在 (TypeError,ValueError) 内（线上 R2
-        # CodeRabbit major）→ inf manpower 历史即崩（致命），判定历史不可活=严格。
-        return False
-
 def _coerce_new_salary_rate(raw, default: float = SALARY_RATE_ANCHOR) -> float:
     """#44 新军名义月饷率健壮解析：缺省/None/bool/0/负/非数 一律落边军史实锚点 1.5。
     salary_rate<=0 = 有兵无饷率 = 免费军 = 正是 #44 要堵的白嫖（游戏无自给/屯田军概念）；

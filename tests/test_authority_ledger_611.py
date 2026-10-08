@@ -7,15 +7,13 @@ import ming_sim.decree as decree_mod
 from ming_sim.relations import EMPEROR_NODE
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
-from ming_sim.settlement.views import rejected_view
-
+from ming_sim.settlement.views import section
 
 def _minister(db):
     return str(db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
         "ORDER BY name LIMIT 1"
     ).fetchone()["name"])
-
 
 def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):
     """Real effect-eligible dossier used as authority_changes source."""
@@ -36,23 +34,16 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清�
     assert db.dossier_authorizes_effects(dossier_id)
     return db.get_decree_dossier(dossier_id)
 
-
 def _grant(db, state, content, holder, privilege, scope, dossier, **turns):
     out = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': privilege, 'scope': scope, 'dossier_id': dossier['id'], **turns}]}, SettlementContext(content=content))
-    assert rejected_view(out, "authority_changes") == []
+    assert section(out, "authority_changes").rejected == []
     result = view(out, "authority_changes")[0]
     return int(result["authority_id"])
 
-
 def _revoke(db, state, content, authority_id, dossier):
     out = settle_delta(state, db, {'authority_changes': [{'动作': '收回', 'authority_id': authority_id, 'dossier_id': dossier['id']}]}, SettlementContext(content=content))
-    assert rejected_view(out, "authority_changes") == []
+    assert section(out, "authority_changes").rejected == []
     return view(out, "authority_changes")[0]
-
-
-
-
-
 
 def test_production_path_grant_restore_revoke_without_auto_grudge(game):
     """Grant → restore → revoke keeps authority facts; no auto holder→emperor 结怨 (#1895)."""
@@ -143,7 +134,6 @@ def test_production_path_grant_restore_revoke_without_auto_grudge(game):
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     ) == []
 
-
 def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
     db, state, content = game
     holder = _minister(db)
@@ -158,7 +148,7 @@ def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
 
     result = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '尚方剑密授', 'scope': 'issue:打回', 'dossier_id': rejected_id}, {'动作': '授予', 'holder_id': holder, 'privilege': '专差督办', 'scope': 'issue:无来源'}, {'动作': '授予', 'holder_id': holder, 'privilege': '新机构专办', 'scope': 'issue:合法授予', 'dossier_id': good['id']}]}, SettlementContext(content=content))
 
-    refused = rejected_view(result, "authority_changes")
+    refused = section(result, "authority_changes").rejected
     assert refused[0].reason == "dossier_not_effect_eligible"
     assert refused[1].reason == "missing_dossier_source"
     rows = view(result, "authority_changes")
@@ -168,7 +158,6 @@ def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
-
 
 def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
     db, state, content = game
@@ -232,7 +221,6 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
         context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
     )
 
-
 def test_same_dossier_grant_replay_is_idempotent(game):
     """同源案卷重放按 dossier origin 幂等，不插第二行。"""
     db, state, content = game
@@ -255,7 +243,6 @@ def test_same_dossier_grant_replay_is_idempotent(game):
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
-
 
 @pytest.mark.parametrize("terminal_state", ["revoked", "expired"])
 def test_same_dossier_grant_replay_returns_terminal_origin_without_regrant(
@@ -303,11 +290,10 @@ def test_duplicate_active_authority_is_rejected_across_dossiers(game):
     assert view(first, "authority_changes")
 
     second = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': 'issue:dup', 'dossier_id': second_dossier['id']}]}, SettlementContext(content=content))
-    assert rejected_view(second, "authority_changes")[0].reason == "duplicate_active_authority"
+    assert section(second, "authority_changes").rejected[0].reason == "duplicate_active_authority"
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
-
 
 def test_duplicate_check_uses_current_turn_not_future_effective_turn(game):
     db, state, content = game
@@ -321,11 +307,10 @@ def test_duplicate_check_uses_current_turn_not_future_effective_turn(game):
 
     result = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': 'issue:turn-boundary', 'effective_turn': state.turn + 1, 'dossier_id': second_dossier['id']}]}, SettlementContext(content=content))
 
-    assert rejected_view(result, "authority_changes")[0].reason == "duplicate_active_authority"
+    assert section(result, "authority_changes").rejected[0].reason == "duplicate_active_authority"
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
-
 
 def test_duplicate_check_ignores_authority_only_active_in_future(game):
     db, state, content = game
@@ -344,17 +329,15 @@ def test_duplicate_check_ignores_authority_only_active_in_future(game):
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 2
 
-
 def test_production_rejects_bare_domain_scope(game):
     db, state, content = game
     holder = _minister(db)
     dossier = _eligible_dossier(db, state, holder, target_id="bare")
     result = settle_delta(state, db, {'authority_changes': [{'动作': '授予', 'holder_id': holder, 'privilege': '便宜行事', 'scope': '边饷', 'dossier_id': dossier['id']}]}, SettlementContext(content=content))
-    assert rejected_view(result, "authority_changes")[0].reason == "invalid_authority_scope"
+    assert section(result, "authority_changes").rejected[0].reason == "invalid_authority_scope"
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 0
-
 
 def test_promulgation_payload_does_not_write_authority_records(game):
     """授权案卷不得平行直写 authority_records；#528 仅经 authority_changes 授予。

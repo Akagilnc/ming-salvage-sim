@@ -23,11 +23,10 @@ import json
 
 from ming_sim.declaration_dispatch import dispatch_declaration
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import issue_rows, rejected_view
+from ming_sim.settlement.views import section
 from ming_sim.staged_commitment import normalize_commitment_stages
 from tests.conftest import active_ming_character, open_hall_turn
 from tests.dossier_test_helpers import TYPED_COVERT_TASK
-
 
 def _pacification_target(db) -> str:
     """取一个生产准入自己认的合格内乱首领名。
@@ -45,14 +44,12 @@ def _pacification_target(db) -> str:
             return name
     raise AssertionError("开局内容里没有可招抚的内乱首领")
 
-
 def _payload(db, action_id: int) -> dict:
     row = db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?", (int(action_id),),
     ).fetchone()
     assert row is not None
     return json.loads(row["payload_json"] or "{}")
-
 
 def _finish_turn(db, state, minister: str, ctid: int, question: str) -> None:
     """把 helper 开的 generating 轮走完成 active（回话落库 = 轮完成）。
@@ -69,16 +66,13 @@ def _finish_turn(db, state, minister: str, ctid: int, question: str) -> None:
         "SELECT status FROM chat_turns WHERE id=?", (int(ctid),),
     ).fetchone()["status"] == "active"
 
-
 def _dispatch(db, state, declaration, *, minister, night_id, ctid):
     return dispatch_declaration(
         db, state, declaration,
         minister_name=minister, night_id=night_id, chat_turn_id=ctid,
     )
 
-
 # ── 身份：来源轮随交办落库 ────────────────────────────────────────────
-
 
 def test_dispatch_stamps_source_turn_on_each_staged_assignment(game):
     db, state, content = game
@@ -100,7 +94,6 @@ def test_dispatch_stamps_source_turn_on_each_staged_assignment(game):
             "SELECT source_chat_turn_id FROM pending_actions WHERE id=?",
             (int(item["id"]),),
         ).fetchone()["source_chat_turn_id"] == ctid
-
 
 def test_pacification_commission_keeps_its_own_mode_and_gets_source_turn(game):
     """招抚交办支线：mode 取自 pacification 载荷（不是别处的键），且带来源轮。
@@ -134,7 +127,6 @@ def test_pacification_commission_keeps_its_own_mode_and_gets_source_turn(game):
         (action_id,),
     ).fetchone()["source_chat_turn_id"] == ctid
 
-
 def test_month_chain_staging_has_no_source_turn(game):
     """过月世界段没有对话轮：来源轮落 0，不伪挂到任何召对轮上。"""
     db, state, content = game
@@ -151,9 +143,7 @@ def test_month_chain_staging_has_no_source_turn(game):
     ).fetchone()
     assert int(row["source_chat_turn_id"] or 0) == 0
 
-
 # ── 整轮撤回：本轮交办作废、前轮保持，且不靠回滚日志兜底 ───────────────
-
 
 def test_undo_voids_this_turns_assignments_without_rollback_log(game):
     """真实 ``undo_chat_turn``：本轮交办作废、前轮保持。
@@ -210,7 +200,6 @@ def test_undo_voids_this_turns_assignments_without_rollback_log(game):
         (earlier_ctid,),
     ).fetchone()["c"] == 1
 
-
 def test_voided_assignment_cannot_be_approved_after_retraction(game):
     """已撤回的交办不得再被应允（墓碑挡住迟到写入）。"""
     db, state, content = game
@@ -231,7 +220,6 @@ def test_voided_assignment_cannot_be_approved_after_retraction(game):
         "SELECT status FROM pending_actions WHERE id=?", (action_id,),
     ).fetchone()["status"] == "voided"
     assert action_id not in [r["id"] for r in db.list_night_approved_pending(night_id)]
-
 
 def test_revision_keeps_original_source_turn_and_undo_restores_it(game):
     """改稿不换身份，且改稿真的改了、撤回真的还原了。
@@ -292,7 +280,6 @@ def test_revision_keeps_original_source_turn_and_undo_restores_it(game):
     assert row["status"] == "pending"
     assert int(row["source_chat_turn_id"]) == first_ctid
 
-
 def test_void_discards_that_directive_night_forecast(game):
     """该道拟旨的夜里预推产物随交办一起作废，不会在过月时复活。
 
@@ -330,9 +317,7 @@ def test_void_discards_that_directive_night_forecast(game):
     # 预推不在了：否则过月时已撤回的交办会借预推复活。
     assert db.staged_declarations.staged_for(ref) == ()
 
-
 # ── 密令：声明新建走真实分派入口，撤回后全结构化记录消失 ──────────────
-
 
 def test_declared_new_secret_order_lands_and_undo_removes_all_records(game):
     """声明新建密令 → 应允成案 → 撤回：密令本体、结构化字段与 briefs 全消失。
@@ -399,9 +384,7 @@ def test_declared_new_secret_order_lands_and_undo_removes_all_records(game):
         "SELECT status FROM pending_actions WHERE id=?", (action_id,),
     ).fetchone()["status"] == "voided"
 
-
 # ── 失败善后：共享回滚核在非撤回上下文仍删暂存（轮可再试）──────────────
-
 
 def test_failed_turn_cleanup_removes_this_turn_staged_assignment(game):
     """失败轮的暂存被删掉（不是作废），轮才可重试。
@@ -433,7 +416,6 @@ def test_failed_turn_cleanup_removes_this_turn_staged_assignment(game):
     assert db.conn.execute(
         "SELECT status FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()["status"] == "failed"
-
 
 def test_retry_restore_removes_this_turn_staged_assignment(game):
     """重试再失败的善后同样删暂存，并把轮放回可再试的 interrupted。"""
@@ -467,13 +449,11 @@ def test_retry_restore_removes_this_turn_staged_assignment(game):
         "SELECT status FROM chat_turns WHERE id=?", (ctid,),
     ).fetchone()["status"] == "interrupted"
 
-
 # ── 撤回收口：只删本轮自产的 committed draft，同回合别人的留着 ────────────
 #
 # 撤回的原子性（void 写入后崩溃整体回滚）与 kill+重开仍可撤这两面，已由
 # tests/test_audience_undo_506.py 在同一 ``undo_chat_turn`` 接缝上证明
 # （AC9 中途崩溃全有或全无、AC6 重开后完整逆转），本组不另建平行证明。
-
 
 def test_undo_deletes_only_this_turns_committed_draft_directive(game):
     """本轮 commit 出来的拟旨 draft 行随撤回消失，同回合别人的 draft 留着。
@@ -523,7 +503,6 @@ def test_undo_deletes_only_this_turns_committed_draft_directive(game):
         "SELECT status FROM turn_directives WHERE id=?", (other_draft,),
     ).fetchone()["status"] == "draft"
 
-
 def _promulgated_policy_origin(db, state, *, token: str) -> str:
     """已颁布案卷的 origin_ref（``new_issues`` 承诺项须有合法 decree 来源）。
 
@@ -541,14 +520,12 @@ def _promulgated_policy_origin(db, state, *, token: str) -> str:
     db.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
-
 # ── ADR 0142：交办机械事实不从自由散文反推 ────────────────────────────
 #
 # 判据一律取**最终持久化的结构化结果**（``issues`` 表那行），不停在暂存 payload：
 # 分段承诺是到期判账的机械事实，只有走完 交办 → 应允 → 收夜 → 顺颁 落进
 # ``issues.stages_json`` 才算数。暂存里有没有 ``stages`` 键证明不了任何东西——
 # 反推若真存在，它是在顺颁物化那一刻才把段表写进承诺行的。
-
 
 def _promulgate_assignment(game, label: str, *, text: str, **assignment_fields):
     """走完整交办链：交办 → 应允 → 收夜 → 顺颁，返回 (案卷 id, 承诺行 or None)。
@@ -601,7 +578,6 @@ def _promulgate_assignment(game, label: str, *, text: str, **assignment_fields):
     ).fetchone()
     return int(dossier["id"]), issue, staged
 
-
 def test_assignment_prose_year_promise_lands_no_staged_commitment(game):
     """正文「三年竣事，五年复验」经完整交办链落库时不得生出段表。
 
@@ -624,7 +600,6 @@ def test_assignment_prose_year_promise_lands_no_staged_commitment(game):
         "SELECT COUNT(*) c FROM next_audience_todos WHERE commitment_ref=?",
         (int(issue["id"]),),
     ).fetchone()["c"] == 0
-
 
 def test_assignment_stages_prose_string_never_reaches_promulgation(game):
     """``assignment.stages`` 给非 JSON 散文串：分派即 durable 坏形拒收。
@@ -660,7 +635,6 @@ def test_assignment_stages_prose_string_never_reaches_promulgation(game):
         "SELECT COUNT(*) c FROM decree_dossiers",
     ).fetchone()["c"] == 0
 
-
 def test_assignment_structured_stages_land_through_full_chain(game):
     """显式结构化 stages 走完整交办链，最终 ``issues.stages_json`` 落两段。
 
@@ -679,7 +653,6 @@ def test_assignment_structured_stages_land_through_full_chain(game):
     assert issue is not None, "交办顺颁没落 initiative"
     assert str(issue["commitment_kind"] or "") == "until_stop"
     assert [s["due_turn"] for s in normalize_commitment_stages(issue["stages_json"])] == [46, 70]
-
 
 def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
     """邸报 / ``new_issues`` 接缝同样不从散文反推年诺（ADR 0142 全仓口径）。
@@ -704,15 +677,14 @@ def test_new_issues_prose_year_promise_does_not_become_commitment_stages(game):
         SettlementContext(content=content),
     )
 
-    assert issue_rows(out, "new_issues") == []
-    rejected = rejected_view(out, "issue_summary")
+    assert out.issue.new_issues == []
+    rejected = section(out, "issue_summary").rejected
     assert rejected, rejected
     assert rejected[0].category == "invalid_enum"
     # 库层没有因此长出承诺行（更没有带 due_turn 的段表）。
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM issues WHERE origin_ref=?", (origin_ref,),
     ).fetchone()["c"] == 0
-
 
 def test_new_issues_structured_stages_still_land(game):
     """同一入口下显式结构化 ``stages`` 照常落段——删的是散文入口，不是能力。"""
@@ -737,7 +709,7 @@ def test_new_issues_structured_stages_still_land(game):
         SettlementContext(content=content),
     )
 
-    created = issue_rows(out, "new_issues")[0]
+    created = out.issue.new_issues[0]
     stages = normalize_commitment_stages(db.conn.execute(
         "SELECT stages_json FROM issues WHERE id=?", (int(created["issue_id"]),),
     ).fetchone()["stages_json"])

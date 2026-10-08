@@ -17,7 +17,7 @@ from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.issues import bind_content
 
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import rejected_view
+from ming_sim.settlement.views import section
 
 # ── F3/r2 冻结 seed oracle（独立真源=票面冻结表，非实现推导）──────────────────
 AGENDA_FROZEN = "就食求赈，流徙谋生"
@@ -41,9 +41,6 @@ def _displaced_rows(db: GameDB):
         "SELECT name, region_id, population, satisfaction, leverage, agenda "
         "FROM classes WHERE name='流民' ORDER BY region_id"
     ).fetchall()
-
-
-
 
 # ── 新档 classes seed（F3/r2 冻结表 + ×10⁴）─────────────────────────────────
 
@@ -126,7 +123,7 @@ def test_class_delta_displaced_accepts_sat_lev_population_face_removed(game):
     # population 字段混进合法 key 的 item：#649 §1.4 升格——整项逐项拒收（原静默忽略），
     # 人口不被触碰，同 item 的 sat 也不落（拒收面＝整个 item）。
     applied = settle_delta(state, db, {'class_delta': {'流民@shaanxi': {'satisfaction': 1, 'population': 123456}}}, SettlementContext(content=content))
-    rejections = rejected_view(applied, "class_delta")
+    rejections = section(applied, "class_delta").rejected
     assert len(rejections) == 1
     assert rejections[0].category == "invalid_enum"
     assert rejections[0].category == "invalid_enum"  # 指向合法入口
@@ -167,7 +164,6 @@ def test_web_region_payload_has_no_population_wan_projection(game):
 
 JIANZHOU_OPENING_POP_PERSONS = 1200000  # 新档开局建州人口（人）
 JIANZHOU_RESTORE_POP_PERSONS = 900000   # content on_restore 90（万）→ 迁「人」
-
 
 def _settle_region_delta(db, state, content, delta):
     """自发信封形态从现役声明入口触发收复。"""

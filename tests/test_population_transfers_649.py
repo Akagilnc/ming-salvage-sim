@@ -15,7 +15,7 @@ import pytest
 
 from ming_sim.db import GameDB, POPULATION_UNIT_PERSONS
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import rejected_view, class_deltas, metric_deltas, shape_rejections, view
+from ming_sim.settlement.views import section, view
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
@@ -41,7 +41,7 @@ def test_transfer_two_legs_same_transaction_conservation(game):
     db, state, content = game
     total_before = _global_population(db)
     applied = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=3000, reason='加派')]}, SettlementContext(content=content))
-    assert not rejected_view(applied, "population_transfers")
+    assert not section(applied, "population_transfers").rejected
     rec = view(applied, "population_transfers")[0]
     assert rec["source"] == "农民@shaanxi"
     assert rec["target"] == "流民@shaanxi"
@@ -69,7 +69,7 @@ def test_all_inflow_reasons_positive_cases_land(game):
     keys = {tuple(item[key].split("@")) for item in items for key in ("source", "target")}
     before = {(n, r): _pop(db, n, r) for n, r in keys}
     applied = settle_delta(state, db, {'population_transfers': items}, SettlementContext(content=content))
-    assert not rejected_view(applied, "population_transfers")
+    assert not section(applied, "population_transfers").rejected
     assert len(view(applied, "population_transfers")) == len(items)
     expected = dict(before)
     for item in items:
@@ -97,7 +97,7 @@ def test_direction_matrix_violations_rejected_per_item(game):
     farmer_before = _pop(db, "农民", "shaanxi")
     displaced_before = _pop(db, "流民", "shaanxi")
     applied = settle_delta(state, db, {'population_transfers': [good, *bad_items]}, SettlementContext(content=content))
-    rejections = rejected_view(applied, "population_transfers")
+    rejections = section(applied, "population_transfers").rejected
     assert len(rejections) == len(bad_items)
     assert all(r.category == "invalid_enum" for r in rejections)
     assert view(applied, "population_transfers") and view(applied, "population_transfers")[0]["reason"] == "灾害"
@@ -116,7 +116,7 @@ def test_amount_and_balance_validation_per_item(game):
         _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=True, reason="加派"),
     ]
     applied = settle_delta(state, db, {'population_transfers': bad_items}, SettlementContext(content=content))
-    rejections = rejected_view(applied, "population_transfers")
+    rejections = section(applied, "population_transfers").rejected
     assert len(rejections) == len(bad_items)
     assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
@@ -132,7 +132,7 @@ def test_reference_validation_national_row_cross_region_unknown(game):
         _transfer(source="流民@gansu", target="农民@gansu", amount=10, reason="回流"),        # 查无此省行
     ]
     applied = settle_delta(state, db, {'population_transfers': bad_items}, SettlementContext(content=content))
-    assert len(rejected_view(applied, "population_transfers")) == len(bad_items)
+    assert len(section(applied, "population_transfers").rejected) == len(bad_items)
     assert view(applied, "population_transfers") == []
 
 def test_origin_ref_required_and_validated(game):
@@ -145,8 +145,8 @@ def test_origin_ref_required_and_validated(game):
         _transfer(source="农民@shaanxi", target="流民@shaanxi", amount=10, reason="加派", origin_ref="诏书"),
     ]
     applied = settle_delta(state, db, {'population_transfers': bad_items}, SettlementContext(content=content))
-    cats = {r.category for r in rejected_view(applied, "population_transfers")}
-    assert len(rejected_view(applied, "population_transfers")) == len(bad_items)
+    cats = {r.category for r in section(applied, "population_transfers").rejected}
+    assert len(section(applied, "population_transfers").rejected) == len(bad_items)
     assert "missing_origin_ref" in cats
     assert "invalid_origin_ref" in cats
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
@@ -156,10 +156,10 @@ def test_whitelist_extra_field_and_non_dict_item_rejected(game):
     {'raw_value':…} 包装留痕（r3 分层终态）。"""
     db, state, content = game
     applied = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=10, reason='加派', population=999999), 42]}, SettlementContext(content=content))
-    rejections = rejected_view(applied, "population_transfers")
+    rejections = section(applied, "population_transfers").rejected
     assert len(rejections) == 1
     assert rejections[0].category == "invalid_enum"
-    shape = [r for r in shape_rejections(applied)
+    shape = [r for r in applied.shape_rejections
              if r.item == {"raw_value": 42}]
     assert shape
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
@@ -171,9 +171,9 @@ def test_section_non_list_rejects_section_rest_lands(game):
         "SELECT satisfaction FROM classes WHERE name='农民' AND region_id=''"
     ).fetchone()[0]
     applied = settle_delta(state, db, {'population_transfers': '凭空一段', 'class_delta': {'农民': {'satisfaction': -2}}}, SettlementContext(content=content))
-    shape_rej = shape_rejections(applied)
+    shape_rej = applied.shape_rejections
     assert shape_rej and shape_rej[0].item == {"raw_value": "凭空一段"}
-    assert class_deltas(applied)["农民"]["satisfaction"] == -2
+    assert {k: v for k, v in applied.social_class.applied}["农民"]["satisfaction"] == -2
     sat_after = db.conn.execute(
         "SELECT satisfaction FROM classes WHERE name='农民' AND region_id='' "
     ).fetchone()[0]
@@ -184,7 +184,7 @@ def test_class_delta_population_key_upgraded_to_per_item_rejection(game):
     其余 sat/lev 合法项不受累；人口不变。"""
     db, state, content = game
     applied = settle_delta(state, db, {'class_delta': {'流民@shaanxi': {'satisfaction': 1, 'population': 123456}, '农民': {'satisfaction': -3}}}, SettlementContext(content=content))
-    rejections = rejected_view(applied, "class_delta")
+    rejections = section(applied, "class_delta").rejected
     assert len(rejections) == 1
     assert rejections[0].category == "invalid_enum"
     assert rejections[0].category == "invalid_enum"
@@ -204,7 +204,7 @@ def test_class_delta_chinese_population_key_upgraded_to_per_item_rejection(game)
     统一整项拒收（invalid_enum），满意度与人口均不变；同批合法项照落。"""
     db, state, content = game
     applied = settle_delta(state, db, {'class_delta': {'农民@shaanxi': {'满意': 1, '人口': 3000}, '农民': {'满意': -2}}}, SettlementContext(content=content))
-    rejections = rejected_view(applied, "class_delta")
+    rejections = section(applied, "class_delta").rejected
     assert len(rejections) == 1
     assert rejections[0].category == "invalid_enum"
     assert rejections[0].category == "invalid_enum"
@@ -222,11 +222,10 @@ def test_unknown_top_level_key_now_per_section_rejection_not_abort(game):
     """r4 分层终态：未知顶层 key=可拆 section → 按段拒收留痕不整份退（ADR0015 待施工纠正面）。"""
     db, state, content = game
     applied = settle_delta(state, db, {'region_delta_typo': {'shaanxi': {'unrest': 5}}, 'metric_delta': {'民心': 1}}, SettlementContext(content=content))
-    shape_rej = shape_rejections(applied)
+    shape_rej = applied.shape_rejections
     assert shape_rej, "未知顶层 key 必须按段拒收留痕"
     assert shape_rej[0].category == "invalid_shape"
-    assert metric_deltas(applied).get("民心") == 1  # 其余 section 照落，不整份退
-
+    assert dict(applied.metric.applied).get("民心") == 1  # 其余 section 照落，不整份退
 
 def test_new_save_unit_is_persons(game):
     db, state, content = game

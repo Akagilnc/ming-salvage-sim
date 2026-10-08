@@ -7,7 +7,7 @@ import pytest
 from tests.dossier_test_helpers import TYPED_COVERT_TASK, create_test_secret_order as _create_secret_order, rejected_verdict as _rejected_verdict
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
-from ming_sim.settlement.views import rejected_view
+from ming_sim.settlement.views import section
 
 def _active_people(db, count):
     people = [
@@ -206,7 +206,7 @@ def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch
     bad["dossier_id"] = dossier_id
     result = settle_delta(state, db, {'dossier_participants': [bad, {'dossier_id': dossier_id, 'character_id': good, 'tier': '协办', 'delegator_id': lead}]}, SettlementContext(dossier_ids_at_input={dossier_id}))
 
-    assert rejected_view(result, "dossier_participants")
+    assert section(result, "dossier_participants").rejected
     assert view(result, "dossier_participants")[0]["character_id"] == good
     roster = db.get_decree_dossier(dossier_id)["participant_roster"]
     assert [item["character_id"] for item in roster] == [lead, good]
@@ -226,7 +226,7 @@ def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
     # 输入权威集故意不含本 dossier：不得从 live DB 反推补权
     result = settle_delta(state, db, {'dossier_participants': [{'dossier_id': dossier_id, 'character_id': worker, 'tier': '协办', 'delegator_id': lead}]}, SettlementContext(dossier_ids_at_input=set()))
 
-    assert rejected_view(result, "dossier_participants")
+    assert section(result, "dossier_participants").rejected
     assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
 
 def test_committing_each_directive_creates_independent_restoreable_dossier(game):
@@ -624,7 +624,7 @@ def test_dossier_execution_rejects_non_sqlite_integer_ids(game, invalid_id):
 
     result = settle_delta(state, db, {'dossier_executions': [{'dossier_id': invalid_id, 'outcome': 'fulfilled', 'note': '办理完毕'}]}, SettlementContext(content=content))
 
-    assert rejected_view(result, "dossier_executions")
+    assert section(result, "dossier_executions").rejected
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
 
 def test_dossier_execution_accepts_sqlite_integer_id(game):
@@ -1729,7 +1729,7 @@ def test_malformed_dossier_origin_is_rejected_fail_closed(game, origin_ref):
 
     assert state.metrics["国库"] == before
     assert view(result, "economy_moves") == []
-    refused = rejected_view(result, "economy_moves")
+    refused = section(result, "economy_moves").rejected
     assert len(refused) == 1
     assert refused[0].category == "invalid_origin_ref"
 

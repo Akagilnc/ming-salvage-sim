@@ -18,9 +18,6 @@ from ming_sim.declaration_dispatch import dispatch_declaration
 import ming_sim.entities.issue.effects as I
 from tests.conftest import active_ming_character
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import metric_deltas, shape_rejections
-
-
 
 def _decree_origin(db, state) -> str:
     dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text="测试国策来源", target_kind="issue", target_id="test")
@@ -30,14 +27,12 @@ def _decree_origin(db, state) -> str:
 def _army_count(db) -> int:
     return db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
 
-
 def _pay_source() -> dict[str, object]:
     return {
         "pay_source_region": "shaanxi",
         "province_pay_share": 1.0,
         "central_pay_share": 0.0,
     }
-
 
 def test_resolve_creates_army(game):
     db, state, _ = game
@@ -52,7 +47,6 @@ def test_resolve_creates_army(game):
     row = db.conn.execute("SELECT manpower, commander FROM armies WHERE id='tianxiongjun_test'").fetchone()
     assert row["manpower"] == 18000
     assert row["commander"] == "卢象升"
-
 
 def test_resolve_changes_character_status(game):
     db, state, content = game
@@ -75,7 +69,6 @@ def test_resolve_changes_character_status(game):
         "source": "system_simulation",
     }
 
-
 def test_issue_status_change_uses_person_transition_matrix(game):
     db, state, content = game
     name = active_ming_character(db, content)
@@ -93,7 +86,6 @@ def test_issue_status_change_uses_person_transition_matrix(game):
 
     assert db.get_character_status(name)[0] == "dead"
     assert content.characters[name].status == "dead"
-
 
 def test_issue_status_change_does_not_use_month_end_active_gate(game):
     db, state, content = game
@@ -127,7 +119,6 @@ def test_issue_status_change_does_not_use_month_end_active_gate(game):
         ch.status = old_status
         ch.office = old_office
         ch.transit_to = old_transit_to
-
 
 def test_resolve_character_status_syncs_content_travel_state(game):
     db, state, content = game
@@ -165,7 +156,6 @@ def test_resolve_character_status_syncs_content_travel_state(game):
         content.characters[name].office = old_office
         content.characters[name].transit_to = old_transit_to
 
-
 def test_resolve_applies_unified_person_change_effect(game):
     db, state, content = game
     name = active_ming_character(db, content)
@@ -195,7 +185,6 @@ def test_resolve_applies_unified_person_change_effect(game):
         content.characters[name].location = old_location
         content.characters[name].transit_to = old_transit_to
 
-
 def test_resolve_rejects_bad_unified_person_change_effect(game):
     db, state, content = game
 
@@ -207,7 +196,6 @@ def test_resolve_rejects_bad_unified_person_change_effect(game):
     assert reports
     assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
     assert all(row["source"] == "system_simulation" for row in reports)
-
 
 @pytest.mark.parametrize("bad_effect", [{"人物变更": "bad"}, {"人物变更": ["bad"]}])
 def test_issue_person_change_effect_rejects_malformed_shape(game, bad_effect):
@@ -222,7 +210,6 @@ def test_issue_person_change_effect_rejects_malformed_shape(game, bad_effect):
     assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
     assert all(row["source"] == "system_simulation" for row in reports)
 
-
 def test_malformed_army_rejected_durably(game):
     """缺 manpower 的建军耐久拒收，不阻止合法结案。"""
     db, state, _ = game
@@ -235,7 +222,6 @@ def test_malformed_army_rejected_durably(game):
     assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
     assert all(row["source"] == "system_simulation" for row in reports)
 
-
 def test_army_bad_owner_power_rejected_durably(game):
     db, state, _ = game
     issue_id = db.insert_issue(state, title="嵌套效果拒收", kind="situation")
@@ -247,7 +233,6 @@ def test_army_bad_owner_power_rejected_durably(game):
     assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
     assert all(row["source"] == "system_simulation" for row in reports)
 
-
 def test_unknown_character_rejected_durably(game):
     db, state, _ = game
     issue_id = db.insert_issue(state, title="嵌套效果拒收", kind="situation")
@@ -258,7 +243,6 @@ def test_unknown_character_rejected_durably(game):
     assert reports
     assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
     assert all(row["source"] == "system_simulation" for row in reports)
-
 
 def test_bad_status_rejected_durably(game):
     db, state, content = game
@@ -272,14 +256,12 @@ def test_bad_status_rejected_durably(game):
     assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
     assert all(row["source"] == "system_simulation" for row in reports)
 
-
 def test_empty_effect_noop(read_game):
     """无实体段的 effect 不应报错、不改军队数。"""
     db, state, _ = read_game
     before = _army_count(db)
     I._apply_issue_entities(db, state, {"metrics": {"民心": 5}}, "局势#测试")
     assert _army_count(db) == before
-
 
 def test_apply_score_extraction_splits_bad_nested_entity(game):
     """ADR0015：嵌套实体坏值逐实体拒收，不带走同批好字段。"""
@@ -288,22 +270,19 @@ def test_apply_score_extraction_splits_bad_nested_entity(game):
         "region_delta": {"shanxi": "not-a-dict", "henan": {"unrest": 1}},
     }
     applied = settle_delta(state, db, bad, SettlementContext())
-    assert shape_rejections(applied)[0].item == {"entity_id": "shanxi", "raw_value": "not-a-dict"}
-
+    assert applied.shape_rejections[0].item == {"entity_id": "shanxi", "raw_value": "not-a-dict"}
 
 def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(game):
     """ADR0015：power_updates 二级非 dict 逐 power 拒收。"""
     db, state, _ = game
     applied = settle_delta(state, db, {'power_updates': {'houjin': {'leverage': 1}, 'mongol': 'bad'}}, SettlementContext())
-    assert shape_rejections(applied)[0].item == {"entity_id": "mongol", "raw_value": "bad"}
-
+    assert applied.shape_rejections[0].item == {"entity_id": "mongol", "raw_value": "bad"}
 
 def test_apply_score_extraction_rejects_nondict_list_item_per_item(read_game):
     """ADR0015：list 字段含非 dict 项 → 逐项拒收。"""
     db, state, _ = read_game
     applied = settle_delta(state, db, {'fiscal_creates': [{'key': 'x'}, 'bad-scalar']}, SettlementContext())
-    assert shape_rejections(applied)[0].item == {"raw_value": "bad-scalar"}
-
+    assert applied.shape_rejections[0].item == {"raw_value": "bad-scalar"}
 
 def test_apply_score_extraction_tolerates_null_field(read_game):
     """Gemini R1:LLM 输出某字段为 null 时,validate 不得比 apply 更严——None 当缺省 no-op,
@@ -316,17 +295,15 @@ def test_apply_score_extraction_tolerates_null_field(read_game):
     assert [tuple(row) for row in db.conn.execute("SELECT * FROM regions ORDER BY id")] == before_regions
     assert [tuple(row) for row in db.conn.execute("SELECT * FROM armies ORDER BY id")] == before_armies
 
-
 def test_apply_score_extraction_rejects_unknown_top_level_key(game):
     """#57 起源、#649 r4 分层终态改钉：未知顶层 key（拼写错，canonicalize 后仍不在 schema）
     ＝可拆 section → 按段拒收留痕、其余 section 照落，不整份 ValueError（ADR 0015）。"""
     db, state, _ = game
     applied = settle_delta(state, db, {'region_delta_typo': {'shanxi': {'unrest': 5}}, 'metric_delta': {'民心': 1}}, SettlementContext())
-    shape = shape_rejections(applied)
+    shape = applied.shape_rejections
     assert shape and shape[0].category == "invalid_shape"
     assert shape[0].item == {"raw_value": {"shanxi": {"unrest": 5}}}
-    assert metric_deltas(applied).get("民心") == 1  # 其余 section 不受累
-
+    assert dict(applied.metric.applied).get("民心") == 1  # 其余 section 不受累
 
 def test_resolve_army_delta_reinforces_existing(game):
     """国策给既有军扩编：army_delta 累加到该军兵额（不新建）。"""
@@ -340,7 +317,6 @@ def test_resolve_army_delta_reinforces_existing(game):
     assert new == old + 500
     assert _army_count(db) == before          # 扩编不新建军队
 
-
 def test_army_delta_unknown_army_rejected_durably(game):
     """army_delta 引用未入库军队 → 抛错中断（全局严格，绝不静默）。"""
     db, state, _ = game
@@ -353,7 +329,6 @@ def test_army_delta_unknown_army_rejected_durably(game):
     assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
     assert all(row["source"] == "system_simulation" for row in reports)
 
-
 def test_non_dict_character_change_item_rejected_durably(game):
     """人物变更 含非 dict 项 → 抛错，不静默丢（docstring 称全局严格，CMR F7）。"""
     db, state, _ = game
@@ -365,7 +340,6 @@ def test_non_dict_character_change_item_rejected_durably(game):
     assert reports
     assert all(isinstance(json.loads(row["item_json"]), dict) for row in reports)
     assert all(row["source"] == "system_simulation" for row in reports)
-
 
 def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     """LLM 把 effect 字段给成非 dict(字符串/数组) → isinstance 守门归 {}，不让 dict() 抛错
@@ -385,7 +359,6 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     new = [e for e in out.new_issues if e.get("title") == "效果字段畸形国策"]
     assert new and new[0].get("issue_id")
     assert db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0] == before + 1
-
 
 def test_initiative_without_effects_lands_empty_not_invented(game, monkeypatch):
     """国策缺效果时落账核据实为空，不由代码/旧补全路径捏造。"""
@@ -408,7 +381,6 @@ def test_initiative_without_effects_lands_empty_not_invented(game, monkeypatch):
     assert row is not None
     assert _j.loads(row["effect_on_resolve"]) == {}
 
-
 def test_inertia_natural_resolve_applies_entities(game):
     """issue 靠 inertia 自然推到 100 结案 → effect_on_resolve 的实体后果(建军)也要落，
     不能只落 metrics/economy；须与 tracker advance/close 路径一致（codexB-P1）。"""
@@ -425,7 +397,6 @@ def test_inertia_natural_resolve_applies_entities(game):
     cnt = db.conn.execute(
         "SELECT COUNT(*) FROM armies WHERE id='inertia_army_test'").fetchone()[0]
     assert cnt == 1                               # 自然结案也建了奖励军
-
 
 def test_inertia_natural_resolve_applies_unified_person_change_with_bound_content(game):
     """自然结案的人物变更与 tracker close 同口径,不能因缺 content 误拒合法在册人物。"""
@@ -459,7 +430,6 @@ def test_inertia_natural_resolve_applies_unified_person_change_with_bound_conten
         assert content.characters[name].office == "陕西总督"
     finally:
         content.characters[name].office = old_office
-
 
 def test_inertia_natural_fail_applies_entities(game):
     """issue 靠 inertia 自然跌到 0 失败 → effect_on_fail 的实体后果(人物状态)也要落。"""

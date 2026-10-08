@@ -23,7 +23,7 @@ from ming_sim.exceptions import SettlementAbort
 from ming_sim.issues import apply_historical_fiscal_rates
 import ming_sim.issues as issues
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import rejected_view, view
+from ming_sim.settlement.views import section, view
 
 # ── 独立 oracle（content 冻结 seed 字面，非实现推导）──────────────────────────
 FARMER_SHAANXI = 6000000      # content/classes.json 农民@shaanxi（人）
@@ -84,7 +84,7 @@ def test_decree_lands_accumulated_ledger_same_turn(game):
     assert "_meta" not in before or before["_meta"].get("加派基线") is None
 
     applied = settle_delta(state, db, {'surcharge_decrees': [_decree(db, state, monthly_amount=10.0)]}, SettlementContext(content=content))
-    assert not rejected_view(applied, "surcharge_decrees")
+    assert not section(applied, "surcharge_decrees").rejected
     rec = view(applied, "surcharge_decrees")[0]
     assert rec["region_id"] == "shaanxi"
     assert rec["monthly_amount"] == 10.0
@@ -97,7 +97,7 @@ def test_no_decree_no_ledger_entry(game):
     """无旨不入账：空段结算后加派基线不动（开局档无此键仍无此键）。"""
     db, state, content = game
     applied = settle_delta(state, db, {'surcharge_decrees': []}, SettlementContext(content=content))
-    assert not rejected_view(applied, "surcharge_decrees")
+    assert not section(applied, "surcharge_decrees").rejected
     meta = _settle_payload(db, "shaanxi").get("_meta") or {}
     assert meta.get("加派基线") is None
 
@@ -119,7 +119,7 @@ def test_decree_bad_items_rejected_individually(game):
     db, state, content = game
     applied = settle_delta(state, db, {'surcharge_decrees': [_decree(db, state), _decree(db, state, region_id='mars', monthly_amount=1.0), {'region_id': 'shaanxi', 'monthly_amount': True, 'origin_ref': '盘面自发'}, {'region_id': 'shaanxi', 'monthly_amount': 1.0}, _decree(db, state, monthly_amount=1.0, extra='白名单外')]}, SettlementContext(content=content))
     assert len(view(applied, "surcharge_decrees")) == 1
-    assert len(rejected_view(applied, "surcharge_decrees")) == 4
+    assert len(section(applied, "surcharge_decrees").rejected) == 4
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(10.0)
 
 def test_surcharge_origin_requires_effect_eligible_materialized_dossier(game):
@@ -143,7 +143,7 @@ def test_surcharge_origin_requires_effect_eligible_materialized_dossier(game):
     ]
     applied = settle_delta(state, db, {'surcharge_decrees': items}, SettlementContext(content=content))
     assert len(view(applied, "surcharge_decrees")) == 1
-    assert len(rejected_view(applied, "surcharge_decrees")) == 5
+    assert len(section(applied, "surcharge_decrees").rejected) == 5
     assert _settle_payload(db, "shaanxi")["_meta"]["加派基线"] == pytest.approx(2.0)
 
 def test_batch_rejects_duplicate_surcharge_and_matching_explicit_transfer(game):
@@ -155,9 +155,9 @@ def test_batch_rejects_duplicate_surcharge_and_matching_explicit_transfer(game):
     }
     applied = settle_delta(state, db, {'surcharge_decrees': [decree, dict(decree)], 'population_transfers': [transfer]}, SettlementContext(content=content))
     assert len(view(applied, "surcharge_decrees")) == 1
-    assert len(rejected_view(applied, "surcharge_decrees")) == 1
+    assert len(section(applied, "surcharge_decrees").rejected) == 1
     assert not view(applied, "population_transfers")
-    assert len(rejected_view(applied, "population_transfers")) == 1
+    assert len(section(applied, "population_transfers").rejected) == 1
 
 def test_surcharge_filter_does_not_capture_other_transfer_origins(game):
     db, state, content = game
@@ -229,7 +229,7 @@ def test_province_without_population_pool_rejects_surcharge_and_old_ledger_exits
     db, state, content = game
     applied = settle_delta(state, db, {'surcharge_decrees': [_decree(db, state, region_id='liaodong', monthly_amount=10.0)]}, SettlementContext(content=content))
     assert not view(applied, "surcharge_decrees")
-    assert rejected_view(applied, "surcharge_decrees")[0].category == "missing_ref"
+    assert section(applied, "surcharge_decrees").rejected[0].category == "missing_ref"
 
     fiscal = json.loads(db.conn.execute(
         "SELECT fiscal FROM regions WHERE id='liaodong'"
@@ -331,7 +331,6 @@ def test_exact_levy_fact_stays_out_of_public_read_chain_and_free_report_enters_i
     assert _gazette_projection_body(db, state, "温体仁", second_turn) == free_body
 
 # ── legacy 万口径档：折算随存档单位换算，sub-万不可表达 ────────────────────────
-
 
 def test_e2e_surcharge_and_stop_share_month_open_snapshot(game, monkeypatch):
     db, state, content = game

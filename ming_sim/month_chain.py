@@ -155,26 +155,25 @@ def _month_fact_materials(
     secret_dossiers = secret_order_dossier_ids(db) if not include_secret_sources else set()
     nominal: List[Dict[str, Any]] = []
     forecasts: List[str] = []
-    if hasattr(db, "conn"):
-        rows = db.conn.execute(
-            "SELECT decree_ref, declaration_json, forecast_text, visible_refs_json "
-            "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
-            (turn,),
-        ).fetchall()
-        for row in rows:
-            decree_ref = str(row["decree_ref"] or "")
-            declaration = db.parse_engine_payload_json(row["declaration_json"], surface="staged declaration")
-            visible = db.parse_engine_payload_json(row["visible_refs_json"], surface="staged visible refs")
-            if not include_secret_sources and (
-                _decree_ref_is_secret(db, decree_ref)
-                or _secret_sourced(declaration)
-                or _secret_sourced(visible)
-            ):
-                continue
-            nominal.append({"decree_ref": decree_ref, "declaration": declaration})
-            forecast = row["forecast_text"]
-            if isinstance(forecast, str) and forecast.strip():
-                forecasts.append(forecast)
+    rows = db.conn.execute(
+        "SELECT decree_ref, declaration_json, forecast_text, visible_refs_json "
+        "FROM staged_declarations WHERE created_turn=? AND status='settled' ORDER BY id",
+        (turn,),
+    ).fetchall()
+    for row in rows:
+        decree_ref = str(row["decree_ref"] or "")
+        declaration = db.parse_engine_payload_json(row["declaration_json"], surface="staged declaration")
+        visible = db.parse_engine_payload_json(row["visible_refs_json"], surface="staged visible refs")
+        if not include_secret_sources and (
+            _decree_ref_is_secret(db, decree_ref)
+            or _secret_sourced(declaration)
+            or _secret_sourced(visible)
+        ):
+            continue
+        nominal.append({"decree_ref": decree_ref, "declaration": declaration})
+        forecast = row["forecast_text"]
+        if isinstance(forecast, str) and forecast.strip():
+            forecasts.append(forecast)
     landed: List[Dict[str, Any]] = []
     for row in db.conn.execute(
         "SELECT account, delta, category, reason, origin_ref FROM economy_ledger "
@@ -195,29 +194,28 @@ def _month_fact_materials(
             "origin_ref": origin,
         })
     rejections: List[Dict[str, Any]] = []
-    if hasattr(db, "conn"):
-        exists = db.conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
-        ).fetchone()
-        if exists is not None:
-            for row in db.conn.execute(
-                "SELECT section, item_json, reason, category, source FROM rejection_reports "
-                "WHERE turn=? ORDER BY id",
-                (turn,),
+    exists = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'",
+    ).fetchone()
+    if exists is not None:
+        for row in db.conn.execute(
+            "SELECT section, item_json, reason, category, source FROM rejection_reports "
+            "WHERE turn=? ORDER BY id",
+            (turn,),
+        ):
+            if not include_secret_sources and str(row["source"] or "") == "secret_order":
+                continue
+            item = db.parse_engine_payload_json(row["item_json"], surface="rejection item")
+            if not include_secret_sources and (
+                _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
             ):
-                if not include_secret_sources and str(row["source"] or "") == "secret_order":
-                    continue
-                item = db.parse_engine_payload_json(row["item_json"], surface="rejection item")
-                if not include_secret_sources and (
-                    _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
-                ):
-                    continue
-                rejections.append({
-                    "section": row["section"],
-                    "item": item,
-                    "reason": row["reason"],
-                    "category": row["category"],
-                })
+                continue
+            rejections.append({
+                "section": row["section"],
+                "item": item,
+                "reason": row["reason"],
+                "category": row["category"],
+            })
     answers: List[Dict[str, Any]] = []
     for row in db.list_pending_decisions(turn):
         if str(row.get("status") or "") != "decided":

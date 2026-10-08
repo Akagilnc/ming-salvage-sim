@@ -938,8 +938,3 @@ def sanitize_delta_shape(
     return cleaned, rejections
 
 
-def validate_delta_shape(extracted: dict) -> None:
-    """Validate unsplittable delta shape; split-capable bad items are ADR0015 rejections."""
-    sanitize_delta_shape(extracted)
-
-

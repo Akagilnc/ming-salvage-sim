@@ -22,7 +22,7 @@ from ming_sim.db import GameDB
 from tests.month_chain_helpers import canned_full_settlement, make_light_session
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
-from ming_sim.settlement.views import rejected_view
+from ming_sim.settlement.views import section
 
 FARMER_SHAANXI = 6000000
 DISPLACED_SHAANXI = 150000
@@ -126,7 +126,7 @@ def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
     pid = "bandit_li_zicheng"
     before = _strength(db, pid)
     applied = settle_delta(state, db, {'bandit_absorptions': [{'region_id': 'shaanxi', 'power_id': pid, 'requested_count': DISPLACED_SHAANXI + 50000, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
-    assert not rejected_view(applied, "bandit_absorptions")
+    assert not section(applied, "bandit_absorptions").rejected
     rec = view(applied, "bandit_absorptions")[0]
     assert rec["actual_count"] == DISPLACED_SHAANXI
     delta = DISPLACED_SHAANXI // BANDIT_ABSORPTION_PERSONS_PER_STRENGTH
@@ -138,7 +138,7 @@ def test_bandit_absorption_clamps_pool_strength_and_ceiling(game):
     empty_str = _strength(db, pid)
     empty = settle_delta(state, db, {'bandit_absorptions': [{'region_id': 'shaanxi', 'power_id': pid, 'requested_count': 1000, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
     assert view(empty, "bandit_absorptions") == []
-    assert rejected_view(empty, "bandit_absorptions")
+    assert section(empty, "bandit_absorptions").rejected
     assert _strength(db, pid) == empty_str
 
     # 0–100 上界：从 99 吸足量仍停在 100
@@ -159,7 +159,7 @@ def test_bandit_absorption_rejects_unknown_fields_keeps_clean_sibling(game):
     before_str = _strength(db, pid)
     clean_req = 10_000
     applied = settle_delta(state, db, {'bandit_absorptions': [{'region_id': 'shaanxi', 'power_id': pid, 'requested_count': 20000, 'origin_ref': '盘面自发', 'bogus_boost': 999}, {'region_id': 'shaanxi', 'power_id': pid, 'requested_count': clean_req, 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
-    rejections = rejected_view(applied, "bandit_absorptions")
+    rejections = section(applied, "bandit_absorptions").rejected
     assert len(rejections) == 1
     assert rejections[0].category == "invalid_enum"
     assert isinstance(rejections[0].item, dict) and rejections[0].item.get("bogus_boost") == 999
@@ -177,7 +177,7 @@ def test_free_positive_bandit_strength_rejected_negative_ok(game):
     applied = settle_delta(state, db, {'power_updates': {pid: {'military_strength': 5, 'origin_ref': '盘面自发'}, 'houjin': {'military_strength': 2, 'origin_ref': '盘面自发'}}}, SettlementContext(content=content))
     assert any(
         isinstance(r.item, dict) and r.item.get("power_id") == pid
-        for r in rejected_view(applied, "power_changes")
+        for r in section(applied, "power_changes").rejected
     )
     assert _strength(db, pid) == before
     assert _strength(db, "houjin") == min(100, houjin_before + 2)
@@ -192,7 +192,7 @@ def test_llm_free_回流_rejected(game):
     db, state, content = game
     free = settle_delta(state, db, {'population_transfers': [{'source': '流民@shaanxi', 'target': '农民@shaanxi', 'amount': 1000, 'reason': '回流', 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
     assert view(free, "population_transfers") == []
-    assert rejected_view(free, "population_transfers")
+    assert section(free, "population_transfers").rejected
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI
 
 def _advance_canned_month(db, state, content, monkeypatch):

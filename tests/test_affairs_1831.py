@@ -12,7 +12,6 @@ import pytest
 from ming_sim import issues as issues_mod
 
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import issue_rows
 
 
 
@@ -148,7 +147,7 @@ def test_typed_affair_new_issues_share_provenance(game):
         },
         SettlementContext(content=content, open_affair_ids_at_input={existing.id}),
     )
-    created = issue_rows(result, "new_issues")
+    created = result.issue.new_issues
     assert len(created) == 2
     assert db.affairs.affair_id_for_issue(created[0]["issue_id"]) == existing.id
     assert db.affairs.affair_id_for_issue(created[1]["issue_id"]) != existing.id

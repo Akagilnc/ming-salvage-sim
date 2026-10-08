@@ -6,8 +6,7 @@ import pytest
 
 from ming_sim.strict_types import validate_affected_parties
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import rejected_view, view
-
+from ming_sim.settlement.views import section, view
 
 def _roster():
     """主办倪元璐←委派徐光启（协办位，仅次责）；另有协办黄道周、知情王承恩。
@@ -25,7 +24,6 @@ def _roster():
         {"character_id": "王承恩", "tier": "知情", "role": "备悉"},
     ]
 
-
 def _executing_dossier(db, state, *, roster=None):
     dossier_id = db.create_decree_dossier(
         state, action_type="policy", decree_text="清丈畿辅",
@@ -36,13 +34,11 @@ def _executing_dossier(db, state, *, roster=None):
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     return dossier_id
 
-
 def _cost_events(db, dossier_id, *, identity="连坐"):
     return [dict(row) for row in db.conn.execute(
         "SELECT * FROM decree_cost_events WHERE dossier_id=? AND cost_identity=? ORDER BY id",
         (int(dossier_id), identity),
     ).fetchall()]
-
 
 def _sat_events(db, dossier_id):
     return [
@@ -50,18 +46,15 @@ def _sat_events(db, dossier_id):
         if row["cost_kind"] == "satisfaction"
     ]
 
-
 def _sat(db, faction):
     return db.conn.execute(
         "SELECT satisfaction FROM factions WHERE name=?", (faction,),
     ).fetchone()[0]
 
-
 def _close_via_adapter(db, state, content, dossier_id, outcome, note="办理走样", **extra):
     item = {"dossier_id": dossier_id, "outcome": outcome, "note": note}
     item.update(extra)
     return settle_delta(state, db, {'dossier_executions': [item]}, SettlementContext(content=content))
-
 
 def test_fulfilled_writes_zero_joint_liability_rows(game):
     db, state, content = game
@@ -79,7 +72,6 @@ def test_fulfilled_writes_zero_joint_liability_rows(game):
     assert _sat(db, "东林") == before_donglin
     assert _sat(db, "西学") == before_xixue
     assert db.get_relation_edge_events(event_kind="连坐") == []
-
 
 @pytest.mark.parametrize(
     ("outcome", "lead_delta", "delegator_delta"),
@@ -144,7 +136,6 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
     note = db.get_decree_dossier(dossier_id)["execution_note"]
     assert note == "门生办砸，走样"
 
-
 def test_adapter_replay_is_idempotent_on_joint_liability_rows(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
@@ -169,7 +160,6 @@ def test_adapter_replay_is_idempotent_on_joint_liability_rows(game):
     ]
     assert second_edges == first_edges
 
-
 def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     """顺颁物化引擎自判 failed（拨帑不足额）→ 零连坐行。"""
     db, state, _content = game
@@ -193,7 +183,6 @@ def test_engine_auto_failed_materialize_writes_zero_joint_liability(game):
     assert dossier["execution_outcome"] == "failed"
     assert _cost_events(db, dossier_id) == []
     assert db.get_relation_edge_events(event_kind="连坐") == []
-
 
 def test_dead_liable_party_skips_satisfaction_but_stays_on_liability_roster(game):
     db, state, content = game
@@ -226,7 +215,6 @@ def test_dead_liable_party_skips_satisfaction_but_stays_on_liability_roster(game
     note = db.get_decree_dossier(dossier_id)["execution_note"]
     assert note == "主事已故仍须叙明"
 
-
 def test_explicit_affected_parties_must_pass_full_key_validation(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
@@ -245,7 +233,7 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
             "kind": "faction", "key": "东林", "direction": "negative",
         }],
     )
-    assert rejected_view(result, "dossier_executions")
+    assert section(result, "dossier_executions").rejected
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
 
@@ -274,7 +262,6 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
     assert not any(row["target_id"] == outsider for row in _sat_events(db, dossier_id))
     # roster 映射仍落主办派系
     assert any(row["target_id"] == "东林" for row in _sat_events(db, dossier_id))
-
 
 def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     """ADR 0053 核心例：大臣遣学生为协办办砸→全权者次责；协办本人零机械。"""
@@ -318,7 +305,6 @@ def test_assistant_row_delegator_gets_secondary_assistant_zero_mechanical(game):
     assert edges == {"倪元璐", "徐光启"}
     assert "黄道周" not in edges
 
-
 def test_dual_role_lead_and_delegator_primary_wins(game):
     """合法「主办兼他人委派人」先定档后去重：primary 胜 secondary。"""
     db, state, content = game
@@ -356,7 +342,6 @@ def test_dual_role_lead_and_delegator_primary_wins(game):
     }
     assert edges == {"倪元璐", "徐光启"}
 
-
 def test_liability_query_excludes_knowers_but_keeps_delegator_fk(game):
     db, state, _content = game
     # 写界通常禁「委派人=知情」；cmr R3 读端仍按 delegator_id 外键上溯，
@@ -390,7 +375,6 @@ def test_liability_query_excludes_knowers_but_keeps_delegator_fk(game):
     assert "黄道周" not in ids
     assert all(p.get("tier") != "知情" for p in parties)
 
-
 def test_living_offstage_delegator_still_charged(game):
     db, state, content = game
     dossier_id = _executing_dossier(db, state)
@@ -405,7 +389,6 @@ def test_living_offstage_delegator_still_charged(game):
         if e["origin"].startswith(f"dossier:{dossier_id}:")
     }
     assert "徐光启" in targets
-
 
 def test_direct_record_dossier_execution_does_not_trigger_joint_liability(game):
     """挂载点=适配器；record_dossier_execution 本身不扫/不扣连坐。"""

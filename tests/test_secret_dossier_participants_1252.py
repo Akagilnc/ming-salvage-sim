@@ -11,7 +11,7 @@ from tests.dossier_test_helpers import TYPED_COVERT_TASK
 from tests.dossier_test_helpers import create_test_secret_order
 from ming_sim.settlement import SettlementContext, settle_delta
 from ming_sim.settlement.views import view
-from ming_sim.settlement.views import rejected_view
+from ming_sim.settlement.views import section
 
 def _actor(db):
     return str(db.conn.execute(
@@ -38,8 +38,6 @@ def _secret(db, state, *, title="密查漕弊", body="暗访仓胥", tags=None):
 
 # ── S1: 私读缝 ──────────────────────────────────────────────
 
-
-
 def test_s1_public_projection_filter_unchanged(game):
     """不动 #883 list_decree_dossiers_for_simulation 滤除。"""
     db, state, _content = game
@@ -49,9 +47,6 @@ def test_s1_public_projection_filter_unchanged(game):
     assert all(str(row.get("action_type") or "") != "secret_order" for row in visible)
 
 # ── S2: 私字段 + 冻结授权 + apply ───────────────────────────
-
-
-
 
 def test_s2_tracer_613_565_readers_see_appended_roster(game):
     """② 同一 tracer 尾断言 #611/#565 读端可见追加参与人。"""
@@ -94,7 +89,6 @@ def test_s2_tracer_613_565_readers_see_appended_roster(game):
     assert worker in held_holders
     assert str(auth_id) in {str(item["id"]) for item in held}
 
-
 def test_s2_public_dossier_participants_still_rejects_secret_id(game):
     """③ 公共 dossier_participants 对密令 id 仍拒（571:389 不得放松）。"""
     import ming_sim.issues as issue_engine
@@ -111,9 +105,8 @@ def test_s2_public_dossier_participants_still_rejects_secret_id(game):
         participants=[{"character_id": lead, "tier": "主办"}],
     )
     result = settle_delta(state, db, {'dossier_participants': [{'dossier_id': secret_id, 'character_id': worker, 'tier': '协办', 'delegator_id': lead}]}, SettlementContext(dossier_ids_at_input={public_id}))  # frozen public set — secret not in it
-    assert rejected_view(result, "dossier_participants")
+    assert section(result, "dossier_participants").rejected
     assert len(db.get_decree_dossier(secret_id)["participant_roster"]) == 0
-
 
 def test_s2_private_field_rejects_non_batch_and_public_ids(game):
     """④ 私字段对非本批密令 id 及公共案卷 id 拒。"""
@@ -139,12 +132,11 @@ def test_s2_private_field_rejects_non_batch_and_public_ids(game):
     batch_lead = str(db.get_decree_dossier(batch_id)["executor_id"])
     other_lead = str(db.get_decree_dossier(other_secret)["executor_id"])
     result = settle_delta(state, db, {'secret_dossier_participants': [{'dossier_id': other_secret, 'character_id': worker, 'tier': '协办', 'delegator_id': other_lead}, {'dossier_id': public_id, 'character_id': worker, 'tier': '协办', 'delegator_id': lead}, {'dossier_id': batch_id, 'character_id': worker, 'tier': '协办', 'delegator_id': batch_lead}]}, SettlementContext(secret_dossier_ids_at_input={batch_id}))
-    refused = rejected_view(result, "secret_dossier_participants")
+    refused = section(result, "secret_dossier_participants").rejected
     rows = view(result, "secret_dossier_participants")
     assert len(refused) == 2
     assert len(rows) == 1
     assert rows[0]["character_id"] == worker
-
 
 def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
     """#1862 reopen：月段翻译→dispatch 以案卷自身密令指向为唯一写权。"""
@@ -196,7 +188,7 @@ def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
     assert result.effects.applied, result.effects.rejected
     outcome = result.effects.applied[0]
     landed = view(outcome, "secret_dossier_participants")
-    refused = rejected_view(outcome, "secret_dossier_participants")
+    refused = section(outcome, "secret_dossier_participants").rejected
 
     def _item_dossier_id(item) -> int:
         if isinstance(item, dict) and item.get("dossier_id") is not None:
@@ -215,7 +207,6 @@ def test_month_segment_dispatch_uses_secret_order_dossier_ids_authority(game):
     plain_roster = db.get_decree_dossier(plain_id)["participant_roster"]
     assert all(row.get("character_id") != worker for row in plain_roster)
 
-
 @pytest.mark.parametrize("authority", [None, set()])
 def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority):
     """⑤ 私授权 None/空集不重建。"""
@@ -228,10 +219,7 @@ def test_s2_missing_secret_authority_never_rebuilds_from_live_db(game, authority
         "character_id": lead, "tier": "主办", "role": "密访",
     }], state=state)
     result = settle_delta(state, db, {'secret_dossier_participants': [{'dossier_id': dossier_id, 'character_id': worker, 'tier': '协办', 'delegator_id': lead}]}, SettlementContext(secret_dossier_ids_at_input=authority))
-    assert rejected_view(result, "secret_dossier_participants")
+    assert section(result, "secret_dossier_participants").rejected
     assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
-
-
-
 
 # ── S3: prompt 正向特征化 + DELTA_SCHEMA ─────────────────────

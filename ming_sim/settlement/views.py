@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from ming_sim.applier import RejectedItem, SectionResult
+from ming_sim.applier import SectionResult
 
 
 def section(outcome: Any, key: str) -> Optional[SectionResult]:
@@ -25,42 +25,3 @@ def view(outcome: Any, key: str) -> List[Any]:
     """取某标签的**已落项**列表。"""
     found = section(outcome, key)
     return list(found.applied) if found is not None else []
-
-
-def rejected_view(outcome: Any, key: str):
-    """取某标签的拒收项（canonical ``RejectedItem``）。"""
-    found = section(outcome, key)
-    return list(found.rejected) if found is not None else []
-
-
-def shape_rejections(outcome: Any) -> List[RejectedItem]:
-    """框架前置闸（sanitize / 误投 / 同批 identity 冲突）的拒收项。
-
-    这些不是段落格产物，故不经 :meth:`SettlementOutcome.sections`；旧报告里的
-    ``validate_shape_rejections`` 键即此。
-    """
-    return list(getattr(outcome, "shape_rejections", []) or [])
-
-
-def issue_rows(outcome: Any, subkey: str) -> List[Any]:
-    """局势段某一子表的行（旧 ``report["issue_summary"][subkey]``）。
-
-    ``subkey`` ∈ advances / new_issues / closes / cancels。
-    """
-    issue = getattr(outcome, "issue", None)
-    return list(getattr(issue, subkey, []) or []) if issue is not None else []
-
-
-def metric_deltas(outcome: Any) -> dict:
-    """国库指标净增减（旧 ``report["metric_delta"]``）。"""
-    return dict(getattr(getattr(outcome, "metric", None), "applied", []) or [])
-
-
-def faction_deltas(outcome: Any) -> dict:
-    """派系满意度净增减（旧 ``report["faction_delta"]``）。"""
-    return {k: v for k, v in (getattr(getattr(outcome, "faction", None), "applied", []) or [])}
-
-
-def class_deltas(outcome: Any) -> dict:
-    """阶级满意度净增减（旧 ``report["class_delta"]``）。"""
-    return {k: v for k, v in (getattr(getattr(outcome, "social_class", None), "applied", []) or [])}

@@ -26,10 +26,9 @@ from ming_sim.materials import (
     prepare_world_materials,
     read_material,
 )
-from ming_sim.settlement.views import issue_rows, rejected_view
+from ming_sim.settlement.views import section
 
 CANDIDATE_REL = _CANDIDATE_REL
-
 
 def _open_window_event(content, eid="__issue_1893_window_event__"):
     """造一个当前盘面进候选池的 situation 事件（复用 1834 族临时事件手法）。"""
@@ -55,20 +54,16 @@ def _open_window_event(content, eid="__issue_1893_window_event__"):
     content.event_by_id[eid] = ev
     return ev
 
-
 def _drop_event(content, ev):
     if ev in content.events:
         content.events.remove(ev)
     if content.event_by_id.get(ev.id) is ev:
         content.event_by_id.pop(ev.id, None)
 
-
 def _read_candidates(prepared):
     return json.loads(read_material(prepared.root, CANDIDATE_REL))
 
-
 # --- 供料侧：合格候选可达，资格门不合格 / 已有终态者不可达 ---
-
 
 def test_eligible_candidate_event_reaches_world_supply(game, tmp_path, content):
     db, state, _ = game
@@ -84,7 +79,6 @@ def test_eligible_candidate_event_reaches_world_supply(game, tmp_path, content):
         assert "effect_on_trigger" not in item
     finally:
         _drop_event(content, ev)
-
 
 def test_ineligible_and_terminal_events_stay_out_of_supply(game, tmp_path, content):
     """资格门不合格（窗口未开）与已有终态（已避过）者都不进候选目录。"""
@@ -109,7 +103,6 @@ def test_ineligible_and_terminal_events_stay_out_of_supply(game, tmp_path, conte
     finally:
         _drop_event(content, later)
         _drop_event(content, avoided)
-
 
 def _secret_surge_world(db, state, owner):
     """造一条真密令案卷的旨外变形暴露，产出与普通案卷同口径的弹劾潮候选。"""
@@ -141,7 +134,6 @@ def _secret_surge_world(db, state, owner):
     )
     db.conn.commit()
     return secret_did
-
 
 def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tmp_path):
     """F1：世界段目录里供到的候选，转译就能声明、写口就收——三处同一读侧口径。
@@ -192,9 +184,7 @@ def test_surge_candidate_offered_by_world_segment_is_declared_and_lands(game, tm
     assert row is not None, "供到的候选经声明后未落账（写口口径与供料不一致）"
     assert row["origin_ref"] == f"commitment:{secret_did}:deformation_exposure"
 
-
 # --- 断链类：候选事实必须随转译请求送到（目录此时已释放）---
-
 
 def test_translate_request_carries_current_candidate_facts(game, content):
     """经真实 dispatch_month_segment 入口：转译请求里带着当月合格候选事实。"""
@@ -218,7 +208,6 @@ def test_translate_request_carries_current_candidate_facts(game, content):
         assert "impeachment_surge" in request.candidates
     finally:
         _drop_event(content, ev)
-
 
 def test_translate_request_omits_ineligible_candidate(game, content):
     """资格门不合格者既不进供料目录，也不进转译请求（同一读侧硬门两处一致）。"""
@@ -249,9 +238,7 @@ def test_translate_request_omits_ineligible_candidate(game, content):
     finally:
         _drop_event(content, later)
 
-
 # --- 落账侧：模型选了就只落一次，不选 / 读档续跑不重发 ---
-
 
 def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
     from ming_sim.month_translate import dispatch_month_segment
@@ -266,8 +253,8 @@ def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
             db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
         )
         outcome = result.effects.applied[0]
-        assert issue_rows(outcome, "new_issues")
-        assert not rejected_view(outcome, "issue_summary")
+        assert outcome.issue.new_issues
+        assert not section(outcome, "issue_summary").rejected
         assert db.conn.execute(
             "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
@@ -278,16 +265,13 @@ def test_selected_event_lands_once_via_existing_new_issues_write(game, content):
             db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
         )
         again_outcome = again.effects.applied[0]
-        assert rejected_view(again_outcome, "issue_summary") or not issue_rows(
-            again_outcome, "new_issues"
-        )
+        assert section(again_outcome, "issue_summary").rejected or not again_outcome.issue.new_issues
         assert db.conn.execute(
             "SELECT COUNT(*) FROM issues WHERE origin_kind='event_pool' AND origin_ref=?",
             (ev.id,),
         ).fetchone()[0] == 1
     finally:
         _drop_event(content, ev)
-
 
 def test_not_selected_candidate_leaves_no_terminal_state(game, content):
     db, state, _ = game
@@ -302,7 +286,6 @@ def test_not_selected_candidate_leaves_no_terminal_state(game, content):
         assert ev.id in {item["id"] for item in candidate_supply(db, state)["events"]}
     finally:
         _drop_event(content, ev)
-
 
 def test_non_strategic_candidate_effects_land_without_event_id_binding(game, content):
     """F3：非 strategic_foreign 的人物候选不绑 event_id，其效果照样落账。
@@ -324,12 +307,11 @@ def test_non_strategic_candidate_effects_land_without_event_id_binding(game, con
             db, state, segment="探针段文", translate_fn=lambda rq, cfg: declaration,
         )
         outcome = result.effects.applied[0]
-        assert issue_rows(outcome, "new_issues")
-        assert not rejected_view(outcome, "issue_summary")
+        assert outcome.issue.new_issues
+        assert not section(outcome, "issue_summary").rejected
         assert int(state.metrics["民心"]) == before - 3
     finally:
         _drop_event(content, ev)
-
 
 def test_supplied_outcome_labels_match_writer_whitelist(game, content):
     """F3：候选事实里的结局标签就是写口那一份，不另立第二张标签表。
@@ -363,7 +345,6 @@ def test_supplied_outcome_labels_match_writer_whitelist(game, content):
     for eid, item in by_id.items():
         if not strategic_event_outcome_labels(eid):
             assert item["outcome_labels"] == [], f"{eid} 无白名单却供了标签"
-
 
 def test_impeachment_surge_lands_only_when_faction_actually_impeaches(game):
     """派系硬门合格时：发难才立项（只一次），不发难则不立。"""
@@ -400,8 +381,8 @@ def test_impeachment_surge_lands_only_when_faction_actually_impeaches(game):
         db, state, segment="派系发难", translate_fn=lambda rq, cfg: declaration,
     )
     outcome = result.effects.applied[0]
-    assert issue_rows(outcome, "new_issues")
-    assert not rejected_view(outcome, "issue_summary")
+    assert outcome.issue.new_issues
+    assert not section(outcome, "issue_summary").rejected
     row = db.conn.execute(
         "SELECT origin_ref,faction_hint,target_roster FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()
@@ -418,7 +399,6 @@ def test_impeachment_surge_lands_only_when_faction_actually_impeaches(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM issues WHERE origin_kind='impeachment_surge'"
     ).fetchone()[0] == 1
-
 
 def test_impeachment_surge_candidate_survives_restore(game, content):
     """读档续跑：候选资格与既有立账都从 DB 读，restore 后不重发。"""

@@ -6,10 +6,9 @@ import sqlite3
 
 import pytest
 
-from ming_sim.settlement.views import rejected_view, view
+from ming_sim.settlement.views import section, view
 from tests.conftest import active_ming_character
 from tests.test_declaration_dispatch_1835 import _minister as _character_name
-
 
 @pytest.mark.parametrize("source_cannon,target_cannon,treasury,actual_cannon,source_latched,target_latched", [
     (1, 0, 10, 1, 0, 0), (5, 11, 10, 1, 0, 0), (0, 0, 0, 0, 0, 0),
@@ -69,7 +68,6 @@ def test_world_segment_explicit_stock_transfers_share_actual_amount(
         [-actual_cannon, actual_cannon] if actual_cannon else []
     )
 
-
 def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -88,7 +86,7 @@ def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
 
     outcome = result.effects.applied[0]
     assert view(outcome, "economy_moves") == []
-    rejected = rejected_view(outcome, "economy_moves")
+    rejected = section(outcome, "economy_moves").rejected
     assert len(rejected) == 1
     assert rejected[0].category == "invalid_enum"
     assert rejected[0].item == move
@@ -99,18 +97,15 @@ def test_world_segment_rejects_transfer_with_pay_arrears_claim(game):
     assert db.conn.execute("SELECT arrears FROM armies WHERE id='jingying'").fetchone()[0] == 6
     assert db.conn.execute("SELECT COUNT(*) FROM economy_ledger WHERE category='调拨'").fetchone()[0] == 0
 
-
 def _army_id(db) -> str:
     row = db.conn.execute("SELECT id FROM armies ORDER BY id LIMIT 1").fetchone()
     assert row is not None
     return str(row["id"])
 
-
 def _region_id(db) -> str:
     row = db.conn.execute("SELECT id FROM regions ORDER BY id LIMIT 1").fetchone()
     assert row is not None
     return str(row["id"])
-
 
 def test_pre_push_segment_translation_stages_declaration_without_world_writes(game):
     from ming_sim.month_translate import stage_month_segment
@@ -167,7 +162,6 @@ def test_pre_push_segment_translation_stages_declaration_without_world_writes(ga
         subject_kind="character", subject_id=person,
     ) == facts_before
 
-
 def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_order(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -203,7 +197,6 @@ def test_world_segment_translates_once_and_persists_repeated_subject_facts_in_or
     )
     assert [fact.body for fact in person_facts] == ["人物先记一事", "人物再记一事"]
     assert [fact.body for fact in army_facts] == ["军队先记一事", "军队再记一事"]
-
 
 def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game):
     from ming_sim.month_translate import dispatch_month_segment
@@ -299,7 +292,7 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     army_rows = view(effect_report, "army_changes")
     assert army_rows
     assert army_rows[0]["new"] == army_before + 2
-    assert rejected_view(effect_report, "army_changes")[-1].reason
+    assert section(effect_report, "army_changes").rejected[-1].reason
     economy_deltas = [move["delta"] for move in view(effect_report, "economy_moves")]
     assert economy_deltas[0] == -treasury_before
     # A personal-wealth proposal has no source ledger; keep the existing
@@ -318,7 +311,7 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     assert manpower_change["old"] == manpower_before
     assert manpower_change["new"] == 0
     assert manpower_change["delta"] == -manpower_before
-    assert not rejected_view(effect_report, "population_transfers")
+    assert not section(effect_report, "population_transfers").rejected
     transfer, depleted_transfer = view(effect_report, "population_transfers")
     assert transfer["amount"] == farmer_before
     assert depleted_transfer["amount"] == 0
@@ -328,7 +321,6 @@ def test_world_segment_applies_domain_effects_and_reports_rejected_effects(game)
     assert db.conn.execute(
         "SELECT population FROM classes WHERE name='流民' AND region_id='shaanxi'"
     ).fetchone()[0] == displaced_before + farmer_before
-
 
 def test_staged_month_declarations_settle_in_given_order_and_effects_are_idempotent(game):
     from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
@@ -390,9 +382,7 @@ def test_staged_month_declarations_settle_in_given_order_and_effects_are_idempot
         ("army_changes", "missing_ref"),
     ]
     assert rejected[0]["reason"]
-    early_refused = rejected_view(
-        results["decree:early"].effects.applied[0], "army_changes",
-    )
+    early_refused = section(results["decree:early"].effects.applied[0], "army_changes",).rejected
     assert len(early_refused) == 1
     assert early_refused[0].category == "missing_ref"
     assert early_refused[0].reason
@@ -406,7 +396,6 @@ def test_staged_month_declarations_settle_in_given_order_and_effects_are_idempot
     assert db.conn.execute(
         "SELECT COUNT(*) c FROM rejection_reports WHERE turn=?", (turn,),
     ).fetchone()["c"] == 1
-
 
 def test_world_segment_failure_rolls_back_only_current_segment(game):
     from ming_sim.month_translate import dispatch_month_segment
@@ -448,7 +437,6 @@ def test_world_segment_failure_rolls_back_only_current_segment(game):
     )
     assert [fact.body for fact in facts] == ["前一段已落"]
 
-
 def test_world_segment_effects_use_frozen_visible_affairs(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -479,7 +467,6 @@ def test_world_segment_effects_use_frozen_visible_affairs(game):
         "SELECT COUNT(*) FROM rejection_reports WHERE category='invalid_enum'"
     ).fetchone()[0] >= 1
 
-
 def test_unparseable_month_segment_does_not_stage_or_commit(game, monkeypatch):
     from ming_sim.audience_translate import AudienceTranslateError
     from ming_sim.month_translate import dispatch_month_segment, stage_month_segment
@@ -498,7 +485,6 @@ def test_unparseable_month_segment_does_not_stage_or_commit(game, monkeypatch):
     with pytest.raises(AudienceTranslateError):
         dispatch_month_segment(db, state, segment="世界段",
                                translate_fn=lambda request, config: None)
-
 
 def test_staged_month_effects_keep_input_reference_authority(game):
     from ming_sim.declaration_dispatch import settle_staged_declarations_in_decree_order
@@ -524,10 +510,9 @@ def test_staged_month_effects_keep_input_reference_authority(game):
     assert hidden.id == future_affair_id
     result = settle_staged_declarations_in_decree_order(db, state, ["frozen-refs"])["frozen-refs"]
     assert state.metrics["国库"] == before - 1
-    rejections = rejected_view(result.effects.applied[0], "economy_moves")
+    rejections = section(result.effects.applied[0], "economy_moves").rejected
     assert len(rejections) == 1
     assert rejections[0].item["origin_ref"] == f"affair:{hidden.id}"
-
 
 def test_world_segment_repeated_entity_effects_apply_in_order(game):
     from ming_sim.month_translate import dispatch_month_segment
@@ -567,7 +552,6 @@ def test_world_segment_repeated_entity_effects_apply_in_order(game):
     assert refs[0][0] == refs[1][0]
     # #652：世界段不回流；仅邸报后月份推进会扣池。
     assert _pop(db, "流民", "shaanxi") == refugees_before
-
 
 @pytest.mark.parametrize(
     ("initial_pressure", "first_pressure", "second_pressure", "second_morale", "second_reason", "second_army_event", "triggered", "pressure", "morale", "first_reason"),
@@ -698,7 +682,6 @@ def test_world_segment_repeated_strategic_results_apply_in_order(
         assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure_before
         assert db.conn.execute("SELECT military_pressure FROM regions WHERE id='beizhili'").fetchone()[0] == pressure
 
-
 def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -735,7 +718,6 @@ def test_hidden_affair_strategic_result_does_not_trigger_or_land(game):
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
 
-
 def _closed_affair(db, state):
     hidden = db.affairs.open(
         name="已了结事务", origin="未供料", year=state.year,
@@ -749,7 +731,6 @@ def _closed_affair(db, state):
     db.conn.commit()
     return hidden
 
-
 def _json_has_army_id(value, army_id: str) -> bool:
     if isinstance(value, dict):
         if value.get("id") == army_id:
@@ -758,7 +739,6 @@ def _json_has_army_id(value, army_id: str) -> bool:
     if isinstance(value, list):
         return any(_json_has_army_id(child, army_id) for child in value)
     return False
-
 
 def _army_rejection_categories(db, army_id: str) -> set[str]:
     import json
@@ -770,7 +750,6 @@ def _army_rejection_categories(db, army_id: str) -> set[str]:
         )
         if _json_has_army_id(json.loads(item_json), army_id)
     }
-
 
 @pytest.mark.parametrize("station_region,category", [
     (None, "unauthorized_affair_origin"),
@@ -818,7 +797,6 @@ def test_hidden_affair_new_army_does_not_block_sibling_result(game, station_regi
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
     assert _army_rejection_categories(db, "jisi_hidden_affair_1840") == {category}
 
-
 @pytest.mark.parametrize("station_region", [None, "no-such-region"])
 def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region):
     from ming_sim.month_translate import dispatch_month_segment
@@ -855,7 +833,6 @@ def test_hidden_affair_new_army_alone_does_not_trigger(game, station_region):
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
     assert _army_rejection_categories(db, "jisi_hidden_only_1840") == {"event_rejected"}
 
-
 def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
     from ming_sim.month_translate import dispatch_month_segment
 
@@ -886,7 +863,6 @@ def test_unknown_station_region_new_army_does_not_trigger_or_land(game):
     assert state.metrics["民心"] == metric_before
     assert state.metrics["国库"] == treasury_before
     assert db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0] == armies_before
-
 
 def test_final_strategic_rejection_leaves_no_owned_effects(game):
     """Owned fields and the event ledger stay one envelope.

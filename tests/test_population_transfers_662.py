@@ -23,8 +23,7 @@ from test_population_transfers_649 import (
 import pytest
 
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import rejected_view, view
-
+from ming_sim.settlement.views import section, view
 
 @pytest.fixture
 def disaster_shaanxi(game):
@@ -35,7 +34,6 @@ def disaster_shaanxi(game):
     )
     db.conn.commit()
     return db, state, content
-
 
 @pytest.fixture
 def war_shaanxi(game):
@@ -48,7 +46,6 @@ def war_shaanxi(game):
     db.conn.commit()
     return db, state, content
 
-
 # ── 灾害入池：有灾入（正测）──────────────────────────────────────────────
 
 def test_disaster_and_war_amounts_above_old_caps_land_and_conserve(war_shaanxi):
@@ -59,14 +56,13 @@ def test_disaster_and_war_amounts_above_old_caps_land_and_conserve(war_shaanxi):
     war_amount = garrison_before * 11 // 100
     total_before = _global_population(db)
     applied = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=disaster_amount, reason='灾害'), _transfer(source='军户@shaanxi', target='流民@shaanxi', amount=war_amount, reason='兵灾')]}, SettlementContext(content=content))
-    assert not rejected_view(applied, "population_transfers")
+    assert not section(applied, "population_transfers").rejected
     assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - disaster_amount
     assert _pop(db, "军户", "shaanxi") == garrison_before - war_amount
     assert _pop(db, "流民", "shaanxi") == (
         DISPLACED_SHAANXI + disaster_amount + war_amount
     )
     assert _global_population(db) == total_before
-
 
 # ── 守恒与 mutation：沿 S2 断言族扩展（复用 #649 oracle，不另立机制）─────────
 
@@ -78,7 +74,7 @@ def test_disaster_and_war_sequential_batches_conserve(war_shaanxi):
     def _apply_and_verify(reason, src_cls, amount):
         before = _snap(db)
         applied = settle_delta(state, db, {'population_transfers': [_transfer(source=f'{src_cls}@shaanxi', target='流民@shaanxi', amount=amount, reason=reason)]}, SettlementContext(content=content))
-        assert not rejected_view(applied, "population_transfers")
+        assert not section(applied, "population_transfers").rejected
         rec = view(applied, "population_transfers")[0]
         after = _snap(db)
         _conservation_oracle(before, after, [rec])
@@ -88,13 +84,7 @@ def test_disaster_and_war_sequential_batches_conserve(war_shaanxi):
     _apply_and_verify("兵灾", "军户", 20000)
     assert garrison_before - _pop(db, "军户", "shaanxi") == 20000
 
-
-
-
-
 # ── AC5 拆一：restore 只读 DB 无损接续（灾害/兵灾落账后重开存档）─────────────
-
-
 
 # ── AC5 拆二：与加派/摊派入口合流同一本账（下游只认账不认来源）────────────────
 
@@ -104,7 +94,7 @@ def test_same_batch_multi_origin_merges_into_single_pool_account(disaster_shaanx
     db, state, content = disaster_shaanxi
     total_before = _global_population(db)
     applied = settle_delta(state, db, {'population_transfers': [_transfer(source='农民@shaanxi', target='流民@shaanxi', amount=1000, reason='加派'), _transfer(source='农民@shaanxi', target='流民@shaanxi', amount=2000, reason='摊派'), _transfer(source='农民@shaanxi', target='流民@shaanxi', amount=4000, reason='灾害')]}, SettlementContext(content=content))
-    assert not rejected_view(applied, "population_transfers")
+    assert not section(applied, "population_transfers").rejected
     assert len(view(applied, "population_transfers")) == 3
     assert _pop(db, "流民", "shaanxi") == DISPLACED_SHAANXI + 7000  # 单行合流
     assert _pop(db, "农民", "shaanxi") == FARMER_SHAANXI - 7000

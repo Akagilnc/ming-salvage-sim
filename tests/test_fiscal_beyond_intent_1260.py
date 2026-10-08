@@ -13,11 +13,9 @@ from ming_sim.due_review import apply_pending_due_reviews
 from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import issue_rows, view
-
+from ming_sim.settlement.views import view
 
 # ── helpers ──────────────────────────────────────────────────────────
-
 
 def _executing_policy(db, state, *, token: str):
     dossier_id = db.create_decree_dossier(
@@ -35,14 +33,12 @@ def _executing_policy(db, state, *, token: str):
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     return dossier_id
 
-
 def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     origin = f"dossier:{int(dossier_id)}"
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '所约之事依限办结。', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': [{'stage_idx': 0, 'due_turn': state.turn, 'criterion_text': '所约财政见成数', 'origin_context': '借旨加派/新立税目'}]}]}, SettlementContext(content=content))
-    created = issue_rows(out, "new_issues")[0]
+    created = out.issue.new_issues[0]
     assert "rejected" not in created, created
     return int(created["issue_id"])
-
 
 def _prime_and_apply_due_review(
     db, state, content, *, dossier_id: int, title: str, stage_writer=_insert_final_stage,
@@ -60,7 +56,6 @@ def _prime_and_apply_due_review(
     assert results and results[0].get("branch") == "dossier"
     return results[0]
 
-
 def _insert_commitment(db, state, *, title: str, origin_ref: str, bar_value: int = 45):
     issue_id = db.insert_issue(
         state,
@@ -77,9 +72,7 @@ def _insert_commitment(db, state, *, title: str, origin_ref: str, bar_value: int
     )
     return int(issue_id)
 
-
 # ── S1：三族写端 tracer + 负向 ──────────────────────────────────────
-
 
 def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
     """fiscal_creates 写端：肯定→两行 creations 同旗 True；缺省/畸形/否定→False。"""
@@ -120,7 +113,6 @@ def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
     assert len(neg_rows) == len(cases), neg_rows
     assert all(r["beyond_intent"] is False for r in neg_rows), neg_rows
 
-
 def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
     """fiscal_changes 写端：肯定→changes 行 True；缺省/畸形/否定→False。"""
     db, state, _ = game
@@ -159,7 +151,6 @@ def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
     flags = [r["beyond_intent"] for r in all_changes]
     assert flags[0] is True
     assert flags[1:] == [False, False, False], flags
-
 
 def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
     """fiscal_removes 写端：肯定→tombstones 显式常量 True；缺省/畸形/否定→False。"""
@@ -200,9 +191,6 @@ def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
     ).fetchall()
     assert raw and all("beyond_intent" in dict(r) for r in raw)
 
-
-
-
 def test_s1_engine_grant_fiscal_create_stays_beyond_intent_zero(game):
     """db.py 引擎确定性拨帑建项显式留 0（旨内，禁捏造旗值）。"""
     db, state, _ = game
@@ -221,9 +209,7 @@ def test_s1_engine_grant_fiscal_create_stays_beyond_intent_zero(game):
     assert create_rows
     assert all(r["beyond_intent"] is False for r in create_rows), create_rows
 
-
 # ── S2：纯 fiscal 旨外案卷 → 终裁/fork/反噬 ─────────────────────────
-
 
 def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     """纯 fiscal 旨外（零 economy 流水）→ 终裁 transformed + fork=True + 反噬入选。"""
@@ -262,9 +248,6 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     dossier = db.get_decree_dossier(did)
     assert dossier["execution_outcome"] == "transformed"
 
-
-
-
 def test_s2_pure_fiscal_without_beyond_intent_fulfilled(game, content):
     """无旨外 fiscal 效果 → 终裁 fulfilled。"""
     db, state, _ = game
@@ -280,11 +263,7 @@ def test_s2_pure_fiscal_without_beyond_intent_fulfilled(game, content):
     )
     assert result["verdict"]["outcome"] == "fulfilled", result
 
-
-
-
 # ── S3：嵌套通道别名 ────────────────────────────────────────────────
-
 
 def test_s3_nested_ongoing_economy_alias_旨外恶果_lands_ledger(game):
     """嵌套通道 ongoing_effects.economy 用「旨外恶果」别名 → ledger beyond_intent=1。"""

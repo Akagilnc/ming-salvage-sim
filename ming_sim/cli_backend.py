@@ -19,7 +19,6 @@ from __future__ import annotations
 from ming_sim.exceptions import DeclarationDataError
 
 from concurrent.futures import ThreadPoolExecutor
-from ming_sim.constants import DOSSIER_LINK_TYPES
 
 import codecs
 import json
@@ -238,6 +237,7 @@ def _login_shell_path() -> Optional[str]:
         if m:
             discovered = m.group(1).strip()
     except Exception:
+        logger.exception("login shell PATH discovery failed")
         discovered = ""
     _DISCOVERED_LOGIN_PATH = discovered
     return discovered or None
@@ -337,8 +337,8 @@ def _trace(record: Dict[str, Any]) -> None:
             _trace_announced = True
         if announce:
             print(f"[cli_backend] LLM trace → {_TRACE_PATH}", flush=True)
-    except Exception as exc:  # trace 永不应中断游戏
-        _log(f"trace 写盘失败：{exc}")
+    except Exception:  # trace 永不应中断游戏，但必须留真因（ADR 0005）
+        logger.exception("LLM trace write failed path=%s", _TRACE_PATH)
 
 
 def _warm_keychain() -> None:
@@ -349,7 +349,7 @@ def _warm_keychain() -> None:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
         )
     except Exception:
-        pass
+        logger.exception("keychain warm failed")
 
 
 # CLI 子进程读循环轮询步长（秒）：只决定「多快发现静默/退出」，不是任何超时预算。
@@ -383,16 +383,9 @@ def _cli_idle_seconds() -> float:
 
 
 def _terminate_cli_process(proc: Any) -> None:
-    """收尾子进程：已退时 terminate 是 no-op；否则 terminate→kill 兜底，防泄漏。"""
-    try:
-        proc.terminate()
-        proc.wait(timeout=5)
-    except Exception:
-        try:
-            proc.kill()
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+    """收尾子进程：已退时 terminate 是 no-op；否则 SIGTERM 后等待退出，失败原样上抛。"""
+    proc.terminate()
+    proc.wait()
 
 
 def _iter_cli_process_lines(
@@ -1872,71 +1865,7 @@ def compose_unknown_participant_inworld_report(
     )
 
 
-def compose_decree_validation_recovery(
-    failed_fields: Optional[List[str]] = None,
-    *,
-    speaker_name: str = "",
-    speaker_role: str = "",
-    emperor_words: str = "",
-    prior_output: str = "",
-    llm_config: Any = None,
-) -> str:
-    """Turn typed decree rejection facts into a player-facing retry cue via the LLM.
-
-    #1765：接皇帝原话与原产出；零形式约束（禁句数/句式硬限，ADR 0033）。
-    speaker_role：接 minister_speaker_role 客观档料；不在此复制人物/党派材料。
-    """
-    field_groups = {
-        "银两数目": {"amount"},
-        "款项来源": {"account"},
-        "用途": {"purpose"},
-        "旨意正文": {"text", "body", "decree_text"},
-        "所指对象": {"target_kind", "target_id"},
-        "所指地域": {"region_id", "locality_scope"},
-        "承办人": {"assignee", "assignee_id", "assignee_name"},
-        "拨付节奏": {"cadence"},
-        "办理方式": {"action_type", "dossier_action_type", "transaction_category"},
-    }
-    failed = {str(item).strip() for item in (failed_fields or []) if str(item).strip()}
-    features = [label for label, keys in field_groups.items() if failed & keys]
-    feature = "、".join(features) if features else "旨意所指对象或必需内容"
-    role = str(speaker_role or "").strip()
-    if not role:
-        name = str(speaker_name or "").strip()
-        role = name or "大臣"
-    prompt = (
-        f"你是{role}。一份拟旨在记录前校验未通过，"
-        f"需要皇帝重新说明：{feature}。以本职口吻回禀，明确此旨尚未记录，并请皇帝"
-        "补充或改说所需信息后重拟。"
-    )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
-        prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
-        prompt += f"\n【原产出】{prior}"
-    return _compose_inworld_fact_report(
-        prompt, llm_config=llm_config, tag="decree_validation_recovery",
-    )
-
-
 # #1765：密令落库缺口的 typed 标签（机面事实；不进玩家分类文案）。
-_SECRET_LANDING_GAP_LABELS = {
-    "title": "结构化标题",
-    "content": "密令正文",
-    "covert_task": "差务合同",
-    "extract": "抽取结果",
-}
-
-
-def _secret_landing_gap_feature(landing_gaps: Optional[List[str]] = None) -> str:
-    """Shared gaps → human feature labels for feedback and recovery prompts."""
-    gaps = [str(g).strip() for g in (landing_gaps or []) if str(g).strip()]
-    labels = [
-        _SECRET_LANDING_GAP_LABELS.get(g, g) for g in gaps
-    ] or ["密令结构化要件"]
-    return "、".join(labels)
-
 
 def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
     """Typed gaps that block a new secret order from landing. Empty ⇒ can land."""
@@ -1957,41 +1886,6 @@ def secret_order_landing_gaps(secret: Optional[Dict[str, Any]]) -> List[str]:
 def secret_order_can_land(secret: Optional[Dict[str, Any]]) -> bool:
     """True when extract result has title + content + frozen contract and no extract_failed."""
     return not secret_order_landing_gaps(secret)
-
-
-def compose_secret_order_landing_recovery(
-    landing_gaps: Optional[List[str]] = None,
-    *,
-    speaker_name: str = "",
-    speaker_role: str = "",
-    emperor_words: str = "",
-    prior_output: str = "",
-    contract_error: str = "",
-    llm_config: Any = None,
-) -> str:
-    """#1765：落不了库时大臣以本职揣摩/追问；角色特征化、零形式约束（0033）。"""
-    feature = _secret_landing_gap_feature(landing_gaps)
-    err = str(contract_error or "").strip()
-    err_clause = f"（诊断：{err}）" if err else ""
-    role = str(speaker_role or "").strip()
-    if not role:
-        name = str(speaker_name or "").strip()
-        role = f"大臣{name}" if name else "大臣"
-    prompt = (
-        f"你是{role}。皇帝刚下的密令意图已受理，"
-        f"但还落不了库，缺：{feature}{err_clause}。"
-        f"以本职揣摩圣意：能从皇帝原话与既有交代补全的，陈述你理解的密令要点请皇帝确认；"
-        f"揣摩不出的，以本职口吻当场请示皇帝所需。"
-    )
-    emperor = str(emperor_words or "").strip()
-    if emperor:
-        prompt += f"\n【皇帝原话】{emperor}"
-    prior = str(prior_output or "").strip()
-    if prior:
-        prompt += f"\n【原抽取产出】{prior}"
-    return _compose_inworld_fact_report(
-        prompt, llm_config=llm_config, tag="secret_order_landing_recovery",
-    )
 
 
 def _canon_person_id_key(raw: Any, *, db: Any, content: Any) -> Optional[str]:
@@ -2348,11 +2242,7 @@ def _draft_intent_open_affair_facts(db: Any) -> str:
     """Structured open-affair list so existing.affair_id is chosen from input, not guessed."""
     if db is None:
         return ""
-    store = getattr(db, "affairs", None)
-    list_open = getattr(store, "list_open", None)
-    if not callable(list_open):
-        return ""
-    rows = list_open()
+    rows = db.affairs.list_open()
     if not rows:
         return ""
     lines = [
@@ -3397,7 +3287,7 @@ def project_draft_extract_to_directive_payload(
     pre_kind = classify_directive_structured_kind(payload)
     if pre_kind not in {"push", "empty"} and payload.get("target_kind") not in (None, ""):
         regions_content = getattr(content, "regions", None) if content is not None else None
-        conn = getattr(db, "conn", None) if db is not None else None
+        conn = db.conn if db is not None else None
         assembled = assemble_structured_decree(
             payload,
             conn=conn,
@@ -3502,80 +3392,6 @@ def _loads_lenient(raw: str) -> Optional[Dict[str, Any]]:
         return parse_agent_json(raw, "cli_json")
     except LLMContractError:
         return None
-
-
-def _normalize_dossier_link_proposals(
-    dossier_candidates: Optional[List[Dict[str, Any]]],
-    suggested_links: Any,
-) -> Dict[Tuple[int, str], Dict[str, Any]]:
-    """Return the one canonical, visible set of dossier-link proposals."""
-    candidate_ids = {
-        row["id"] for row in (dossier_candidates or [])
-        if isinstance(row, dict) and type(row.get("id")) is int
-    }
-    proposals: Dict[Tuple[int, str], Dict[str, Any]] = {}
-    for link in suggested_links if isinstance(suggested_links, list) else []:
-        if not isinstance(link, dict) or type(link.get("target_dossier_id")) is not int:
-            continue
-        target = link["target_dossier_id"]
-        relation = str(link.get("relation_type") or "").strip()
-        note = str(link.get("note") or "")
-        if target in candidate_ids and relation in DOSSIER_LINK_TYPES and note:
-            proposals[(target, relation)] = {
-                "target_dossier_id": target, "relation_type": relation, "note": note}
-    return proposals
-
-
-def confirm_dossier_links(
-    minister_reply: str,
-    dossier_candidates: Optional[List[Dict[str, Any]]],
-    suggested_links: Any,
-    llm_config: Any = None,
-) -> List[Dict[str, Any]]:
-    """Use one structured semantic verdict to narrow model-suggested links.
-
-    Internal IDs are capabilities only: the verdict may select an ID only from
-    both the reader-visible candidates and the producer's structured proposal.
-    A failed/ambiguous verdict authorises nothing.
-    """
-    candidates = {
-        int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "")
-        for row in (dossier_candidates or [])
-        if isinstance(row, dict) and type(row.get("id")) is int
-    }
-    proposals = _normalize_dossier_link_proposals(dossier_candidates, suggested_links)
-    if not proposals:
-        return []
-    prompt = (
-        "你是案卷关联确认判词，不是对话角色。只依据【大臣最终可见回话】的完整语义判断；"
-        "否定、仅引用旧案、模糊复述、长短标题包含歧义、未明确承诺关联，均不得确认。"
-        "内部ID只用于输出，不是确认依据。只输出合法JSON："
-        "{\"confirmed_links\":[{\"target_dossier_id\":整数,\"relation_type\":\"护卫/稽核/接应\"}]}。\n"
-        "【可选提议】\n" + "\n".join(
-            f"- #{target} {candidates[target]}；{relation}；{item['note']}"
-            for (target, relation), item in proposals.items()
-        ) + "\n【大臣最终可见回话】\n" + (minister_reply or "（空）")
-    )
-    try:
-        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="dossier_link_confirmation")
-        verdict = _loads_lenient(raw) or {}
-    except Exception as exc:
-        _log(f"案卷关联确认失败：{exc}")
-        return []
-    if not isinstance(verdict, dict):
-        return []
-    links = verdict.get("confirmed_links")
-    if not isinstance(links, list):
-        return []
-    confirmed = set()
-    for link in links:
-        if not isinstance(link, dict) or type(link.get("target_dossier_id")) is not int:
-            return []
-        relation = link.get("relation_type")
-        if relation not in DOSSIER_LINK_TYPES:
-            return []
-        confirmed.add((link["target_dossier_id"], relation))
-    return [item for identity, item in proposals.items() if identity in confirmed]
 
 
 def _fake_completion(

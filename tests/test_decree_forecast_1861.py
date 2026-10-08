@@ -18,7 +18,7 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
 from ming_sim.session_write_queue import get_session_write_queue
-from ming_sim.settlement.views import rejected_view
+from ming_sim.settlement.views import section
 from tests.conftest import (
     note_queue_until_game_teardown,
     offline_empty_audience_translate,
@@ -27,7 +27,6 @@ from tests.conftest import (
     stub_scene_agent,
 )
 from tests.test_session_write_queue_1353 import wait_pending_writes
-
 
 # 两个时限各管一件事，量纲不同，不可合并：
 #
@@ -40,7 +39,6 @@ from tests.test_session_write_queue_1353 import wait_pending_writes
 #    （实测 3/3 次误报）。宁可用例在真挂死时多等一会儿，也不接受把机器忙
 #    写成回归。代价只在本已失败的用例上支付，且此时会合观测已一并打印。
 _DRAIN_TIMEOUT_S = 60
-
 
 class ModelCallRendezvous:
     """模型替身入口的会合：证明两条腿的**模型调用段**真的同时在飞。
@@ -112,7 +110,6 @@ class ModelCallRendezvous:
                 "腿内异常见 executor 的 'decree forecast: future failed' 日志。"
             )
 
-
 def _drain_legs(sess, in_flight: "ModelCallRendezvous") -> None:
     """排空并发用例的两条腿；排空不成功时把会合的原始观测一并带进消息。
 
@@ -125,7 +122,6 @@ def _drain_legs(sess, in_flight: "ModelCallRendezvous") -> None:
         f"pending writes did not drain in {_DRAIN_TIMEOUT_S}s; "
         f"count={queue.inflight_count()}；会合观测：{in_flight.report()}"
     )
-
 
 def _sess(db, state, content, monkeypatch, translate_fn):
     sess = GameSession.__new__(GameSession)
@@ -146,7 +142,6 @@ def _sess(db, state, content, monkeypatch, translate_fn):
         run=lambda _message: SimpleNamespace(content="臣领旨。", tools=[]),
     ))
     return sess
-
 
 def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, monkeypatch):
     db, state, content = game
@@ -271,7 +266,7 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
         db, state, [pending_action_decree_ref(second, 1)],
     )[pending_action_decree_ref(second, 1)]
     assert int(state.metrics["国库"]) == treasury_before - 1
-    rejections = rejected_view(settled.effects.applied[0], "economy_moves")
+    rejections = section(settled.effects.applied[0], "economy_moves").rejected
     assert len(rejections) == 1
     assert rejections[0].item["origin_ref"] == f"affair:{hidden.id}"
     # Background translation legitimately adds a conversation entry; forecast must not
@@ -292,7 +287,6 @@ def test_scene_chat_approval_forecasts_each_decree_without_visible_effect(game, 
     }
     assert sources_after == sources_before
     assert int(night["id"]) > 0
-
 
 def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
     game, monkeypatch,
@@ -355,13 +349,11 @@ def test_scene_chat_rejection_is_staged_for_later_rescript_not_shown_at_night(
         "SELECT 1 FROM decree_dossiers WHERE pending_action_id=?", (pending_id,),
     ).fetchone() is None
 
-
 def _policy_payload(actor: str, *, text: str, mode: str = "ordinary") -> dict:
     return {
         "dossier_action_type": "policy", "target_kind": "issue",
         "target_id": "test-policy", "actor": actor, "text": text, "mode": mode,
     }
-
 
 def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypatch):
     db, state, content = game
@@ -407,7 +399,6 @@ def test_repeat_scene_approval_does_not_rerun_exhausted_forecast(game, monkeypat
     assert all(str(row["post_reply_recovery"] or "") == "" for row in phases)
     assert all(str(row["post_reply_error_pack_path"] or "") == "" for row in phases)
 
-
 def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
     db, state, content = game
     night = open_night(db, state)
@@ -452,7 +443,6 @@ def test_restored_directive_forecast_uses_its_approved_night(game, monkeypatch):
     assert int(db.conn.execute(
         "SELECT night_id FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["night_id"]) == int(night["id"])
-
 
 def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeypatch):
     db, state, content = game
@@ -551,7 +541,6 @@ def test_held_rejudgments_overlap_instead_of_waiting_in_one_worker(game, monkeyp
         target_id="test-policy", payload={"text": "预推后"},
     )
     assert late not in fresh[0].visible_refs["dossiers"]
-
 
 def test_same_local_ids_on_two_saves_both_stage(game, _game_template_path, monkeypatch, tmp_path):
     from ming_sim.db import GameDB

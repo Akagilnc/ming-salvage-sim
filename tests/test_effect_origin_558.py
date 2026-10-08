@@ -1,10 +1,8 @@
 from ming_sim import issues as issue_engine
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import rejected_view, issue_rows, view
-
+from ming_sim.settlement.views import section, view
 
 SPONTANEOUS = "盘面自发"
-
 
 def _promulgated_policy(db, state):
     dossier_id = db.create_decree_dossier(
@@ -15,7 +13,6 @@ def _promulgated_policy(db, state):
     db.transition_decree_dossier(dossier_id, "executing")
     return dossier_id
 
-
 def test_decree_driven_effect_without_any_origin_is_rejected(game):
     db, state, content = game
     _promulgated_policy(db, state)
@@ -24,8 +21,7 @@ def test_decree_driven_effect_without_any_origin_is_rejected(game):
     result = settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': -7, 'category': '无源支出'}]}, SettlementContext(content=content))
 
     assert state.metrics["国库"] == before
-    assert rejected_view(result, "economy_moves")[0].category == "missing_origin_ref"
-
+    assert section(result, "economy_moves").rejected[0].category == "missing_origin_ref"
 
 def test_effect_origins_round_trip_and_missing_origin_is_rejected(game):
     db, state, content = game
@@ -35,13 +31,12 @@ def test_effect_origins_round_trip_and_missing_origin_is_rejected(game):
     result = settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': -3, 'category': '奉旨修渠', 'origin_ref': f'dossier:{dossier_id}'}, {'account': '国库', 'delta': 2, 'category': '市易自旺', 'origin_ref': SPONTANEOUS}, {'account': '国库', 'delta': -7, 'category': '无源支出'}], 'fiscal_creates': [{'key': '河工月费', 'account': '国库', 'direction': 'expense', 'init_value': 4, 'origin_ref': f'dossier:{dossier_id}'}]}, SettlementContext(content=content))
 
     assert state.metrics["国库"] == before - 1
-    assert rejected_view(result, "economy_moves")[0].category == "missing_origin_ref"
+    assert section(result, "economy_moves").rejected[0].category == "missing_origin_ref"
     assert db.list_economy_moves_for_dossier(dossier_id)[0]["origin_ref"] == f"dossier:{dossier_id}"
     fiscal = db.list_fiscal_effects_for_dossier(dossier_id)
     assert {row["key"] for row in fiscal} == {"河工月费_base", "河工月费_rate"}
     assert {row["origin_ref"] for row in fiscal} == {f"dossier:{dossier_id}"}
     assert all(row["dossier_id"] is None for row in db.list_economy_moves_for_dossier(dossier_id))
-
 
 def test_issue_close_effects_inherit_parent_canonical_origin(game):
     db, state, content = game
@@ -66,7 +61,7 @@ def test_issue_close_effects_inherit_parent_canonical_origin(game):
 
     result = settle_delta(state, db, {'close_issues': [{'issue_id': issue_id, 'reason': 'resolved'}]}, SettlementContext(content=content))
 
-    close = issue_rows(result, "closes")[0]
+    close = result.issue.closes[0]
     assert close["building_ops"][0]["name"] == "父案卷工坊"
     assert db.conn.execute(
         "SELECT origin_ref FROM economy_ledger WHERE category='父案卷支出'"
@@ -79,7 +74,6 @@ def test_issue_close_effects_inherit_parent_canonical_origin(game):
         "SELECT origin_ref FROM region_logs WHERE region_id=? ORDER BY id DESC LIMIT 1",
         (region_id,),
     ).fetchone()["origin_ref"] == origin
-
 
 def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game):
     db, state, content = game
@@ -113,7 +107,6 @@ def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game):
         (region_id,),
     ).fetchone()["origin_ref"] == origin
 
-
 def test_fiscal_remove_keeps_durable_origin_tombstone(game):
     db, state, content = game
     dossier_id = _promulgated_policy(db, state)
@@ -134,7 +127,6 @@ def test_fiscal_remove_keeps_durable_origin_tombstone(game):
         ("待裁月费_rate", origin, "奉旨裁撤"),
     ]
 
-
 def test_fabricated_origin_is_rejected_even_without_a_dossier(game):
     db, state, content = game
     before = state.metrics["国库"]
@@ -142,10 +134,9 @@ def test_fabricated_origin_is_rejected_even_without_a_dossier(game):
     result = settle_delta(state, db, {'economy_moves': [{'account': '国库', 'delta': -2, 'category': '伪来源', 'origin_ref': 'fabricated:9'}], 'fiscal_creates': [{'key': '伪科目', 'account': '国库', 'direction': 'expense', 'init_value': 2, 'origin_ref': 'fabricated:9'}]}, SettlementContext(content=content))
 
     assert state.metrics["国库"] == before
-    assert rejected_view(result, "economy_moves")[0].category == "invalid_origin_ref"
-    assert rejected_view(result, "fiscal_creates")[0].category == "invalid_origin_ref"
+    assert section(result, "economy_moves").rejected[0].category == "invalid_origin_ref"
+    assert section(result, "fiscal_creates").rejected[0].category == "invalid_origin_ref"
     assert db.conn.execute("SELECT 1 FROM fiscal_config WHERE key LIKE '伪科目%'").fetchone() is None
-
 
 def test_ordinary_entity_log_families_persist_origin_at_write_seam(game):
     db, state, content = game
@@ -159,7 +150,6 @@ def test_ordinary_entity_log_families_persist_origin_at_write_seam(game):
     for table in ("region_logs", "army_logs", "power_logs", "person_logs"):
         row = db.conn.execute(f"SELECT origin_ref FROM {table} ORDER BY id DESC LIMIT 1").fetchone()
         assert row is not None and row["origin_ref"] == SPONTANEOUS
-
 
 def test_power_backlash_from_allegiance_change_inherits_canonical_origin(game):
     db, state, content = game
@@ -182,7 +172,6 @@ def test_power_backlash_from_allegiance_change_inherits_canonical_origin(game):
     assert power_log is not None
     assert power_log["origin_ref"] == origin_ref
 
-
 def test_missing_origins_are_rejected_at_entity_write_seams_without_logs(game):
     db, state, content = game
     region = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
@@ -196,13 +185,12 @@ def test_missing_origins_are_rejected_at_entity_write_seams_without_logs(game):
 
     result = settle_delta(state, db, {'region_delta': {region: {'public_support': 1}}, 'army_delta': {army: {'morale': 1}}, 'power_updates': {power: {'leverage': 1}}, '人物变更': [{'name': person, '动作': '评定', 'loyalty': 1}]}, SettlementContext(content=content))
 
-    assert rejected_view(result, "region_changes")[0].category == "missing_origin_ref"
-    assert rejected_view(result, "army_changes")[0].category == "missing_origin_ref"
-    assert rejected_view(result, "power_changes")[0].category == "missing_origin_ref"
-    assert rejected_view(result, "applied_person_changes")[0].category == "missing_origin_ref"
+    assert section(result, "region_changes").rejected[0].category == "missing_origin_ref"
+    assert section(result, "army_changes").rejected[0].category == "missing_origin_ref"
+    assert section(result, "power_changes").rejected[0].category == "missing_origin_ref"
+    assert section(result, "applied_person_changes").rejected[0].category == "missing_origin_ref"
     for table, count in before.items():
         assert db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == count
-
 
 def test_entity_origin_gate_does_not_replace_reference_shape_or_noop_classification(game):
     db, state, content = game
@@ -211,10 +199,9 @@ def test_entity_origin_gate_does_not_replace_reference_shape_or_noop_classificat
 
     result = settle_delta(state, db, {'region_delta': {'not-a-region': {'unrest': 2}, region_id: {'unrest': 0}}, 'new_armies': [{'id': 'bad-origin-preflight', 'name': '坏军', 'owner_power': 'ming', 'manpower': 100, 'morale': '高'}]}, SettlementContext(content=content))
 
-    assert rejected_view(result, "region_changes")[0].category == "missing_ref"
-    assert rejected_view(result, "army_changes")[0].category == "invalid_enum"
+    assert section(result, "region_changes").rejected[0].category == "missing_ref"
+    assert section(result, "army_changes").rejected[0].category == "invalid_enum"
     assert db.conn.execute("SELECT COUNT(*) FROM region_logs").fetchone()[0] == before_logs
-
 
 def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
     db, state, content = game
@@ -237,7 +224,7 @@ def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
 
     db.conn.execute("UPDATE armies SET owner_power='ming' WHERE id=?", (army_id,))
     writeoff = settle_delta(state, db, {'army_delta': {army_id: {'manpower': 0}}}, SettlementContext(content=content))
-    assert rejected_view(writeoff, "army_changes")[0].category == "missing_origin_ref"
+    assert section(writeoff, "army_changes").rejected[0].category == "missing_origin_ref"
     assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 5
 
     valid_writeoff = settle_delta(state, db, {'army_delta': {army_id: {'manpower': 0, 'origin_ref': SPONTANEOUS}}}, SettlementContext(content=content))
@@ -254,7 +241,6 @@ def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
     ).fetchone()
     assert tuple(log) == ("5.0", "0.0", SPONTANEOUS)
 
-
 def test_army_pay_source_classifies_before_origin_gate_and_never_writes_without_origin(game):
     db, state, content = game
     row = db.conn.execute(
@@ -265,11 +251,11 @@ def test_army_pay_source_classifies_before_origin_gate_and_never_writes_without_
     before_logs = db.conn.execute("SELECT COUNT(*) FROM army_logs").fetchone()[0]
 
     invalid = settle_delta(state, db, {'army_delta': {row['id']: {'pay_source_region': 'not-a-region'}}}, SettlementContext(content=content))
-    assert rejected_view(invalid, "army_changes")[0].category == "invalid_enum"
+    assert section(invalid, "army_changes").rejected[0].category == "invalid_enum"
 
     proposed_province = 0.6 if float(row["province_pay_share"]) != 0.6 else 0.7
     missing = settle_delta(state, db, {'army_delta': {row['id']: {'province_pay_share': proposed_province, 'central_pay_share': 1 - proposed_province}}}, SettlementContext(content=content))
-    assert rejected_view(missing, "army_changes")[0].category == "missing_origin_ref"
+    assert section(missing, "army_changes").rejected[0].category == "missing_origin_ref"
     after = db.conn.execute("SELECT * FROM armies WHERE id=?", (row["id"],)).fetchone()
     for field in ("pay_source_region", "province_pay_share", "central_pay_share"):
         assert after[field] == before[field]

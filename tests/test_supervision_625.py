@@ -33,11 +33,8 @@ from ming_sim.supervision import (
     SUPERVISION_RELATION,
 )
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import issue_rows
-
 
 # ── fixtures helpers ──────────────────────────────────────────────
-
 
 def _chars_by_faction(db):
     rows = db.conn.execute(
@@ -50,14 +47,12 @@ def _chars_by_faction(db):
         by_f.setdefault(str(row["faction"]), []).append(row)
     return by_f
 
-
 def _pair_same_faction(db):
     by_f = _chars_by_faction(db)
     for fac, rows in by_f.items():
         if len(rows) >= 2:
             return rows[0], rows[1]
     raise RuntimeError("no same-faction pair")
-
 
 def _upright_and_mediocre(db):
     rows = db.conn.execute(
@@ -67,7 +62,6 @@ def _upright_and_mediocre(db):
     upright = next(r for r in rows if int(r["integrity"]) >= 60)
     mediocre = next(r for r in rows if int(r["integrity"]) < 50)
     return upright, mediocre
-
 
 def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
     did = db.create_decree_dossier(
@@ -82,7 +76,6 @@ def _subject_dossier(db, state, *, owner: str, token: str = "subj"):
     )
     db.apply_dossier_promulgation(state, did, "promulgated")
     return did
-
 
 def _audit_dossier(db, state, *, auditor: str, subject_id: int, token: str = "audit"):
     """稽核方案卷（新 id）→ 稽核 → 被稽案卷（旧 id）。须后建以保证 id 更大。"""
@@ -104,7 +97,6 @@ def _audit_dossier(db, state, *, auditor: str, subject_id: int, token: str = "au
     }])
     return aid
 
-
 def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
     import ming_sim.issues as issue_engine
 
@@ -115,16 +107,10 @@ def _insert_staged(db, state, content, *, dossier_id: int, due_turn: int):
         "origin_context": "限期清丈",
     }]
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': f'dossier:{int(dossier_id)}', 'kind': 'initiative', 'title': f'清丈分段-{dossier_id}', 'stage_text': '限期清丈', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': stages}]}, SettlementContext(content=content))
-    created = issue_rows(out, "new_issues")[0]
+    created = out.issue.new_issues[0]
     return int(created["issue_id"])
 
-
-
-
 # ── AC1 事实底 ────────────────────────────────────────────────────
-
-
-
 
 def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, content):
     db, state, _content = game
@@ -185,7 +171,6 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
     finally:
         restored.close()
 
-
 def test_ac1_settle_segment_writes_presence(game, monkeypatch):
     """事实行随真实过月 grant recon 同段写入。"""
     db, state, content = game
@@ -203,9 +188,7 @@ def test_ac1_settle_segment_writes_presence(game, monkeypatch):
     # settle 推进 turn；在场行键控 before_turn
     assert any(int(r["turn"]) == before_turn for r in after)
 
-
 # ── AC2 成对锚观察槽 + 反制硬门 ───────────────────────────────────
-
 
 def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
     """judge-in-loop 确定性前置：观察槽=执行格判词面+变形倾向事实；孤直满 12 月反制必立。"""
@@ -279,9 +262,7 @@ def test_ac2_paired_observation_slots_and_countermeasure_hard_gate(game):
         f"auditor:{upright['name']}:dossier:{sub_u}",
     ) is None
 
-
 # ── AC4 空子转移读入面差分 ────────────────────────────────────────
-
 
 def test_ac4_exposure_history_delta_on_tendency_surface(game):
     db, state, _content = game
@@ -300,7 +281,6 @@ def test_ac4_exposure_history_delta_on_tendency_surface(game):
     assert len(after["loophole_exposures"]) == 1
     # 差分可断言
     assert after["loophole_exposures"] != before["loophole_exposures"]
-
 
 def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
     """⑤统一在场门：终值路/对账路均须本 turn 稽核在场才写暴露；AC4 差分仍立。"""
@@ -375,7 +355,6 @@ def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
     assert int(out_w["exposure_written"]) >= 1
     exps = db.list_loophole_exposures(recon_watched)
     assert any(r["execution_form"] == "degraded" for r in exps)
-
 
 def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
     """有在场事实时监督史非空；到期消费后执行格只跟实况账。"""

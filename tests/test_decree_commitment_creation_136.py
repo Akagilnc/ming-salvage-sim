@@ -10,11 +10,9 @@ from pathlib import Path
 
 from ming_sim.db import _has_stop_condition
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import issue_rows, rejected_view, view
-
+from ming_sim.settlement.views import section, view
 
 ROOT = Path(__file__).resolve().parents[1]
-
 
 def _promulgated_commitment_origin(db, state, token: str) -> str:
     dossier_id = db.create_decree_dossier(
@@ -28,10 +26,8 @@ def _promulgated_commitment_origin(db, state, token: str) -> str:
     db.record_dossier_decision(dossier_id, "promulgated")
     return f"dossier:{dossier_id}"
 
-
 def _issue_by_title(db, title: str):
     return db.conn.execute("SELECT * FROM issues WHERE title=?", (title,)).fetchone()
-
 
 def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkeypatch):
     db, state, content = game
@@ -40,7 +36,7 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'pay-guanning-arrears'), 'kind': 'initiative', 'title': '每月补关宁军饷直到补齐', 'bar_value': 20, 'stage_text': '户部按月拨银补关宁旧欠', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '补饷承诺', 'reason': '每月补关宁欠饷', 'purpose': '补饷', 'target_kind': 'army', 'target_id': 'guanning'}]}, 'stop_condition': stop_condition, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    created = issue_rows(out, "new_issues")[0]
+    created = out.issue.new_issues[0]
     row = _issue_by_title(db, "每月补关宁军饷直到补齐")
     assert row is not None
     assert row["origin_kind"] == "decree"
@@ -54,7 +50,6 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     assert json.loads(row["stop_condition"]) == stop_condition
     assert json.loads(row["effect_on_resolve"]) == {}
 
-
 def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, monkeypatch):
     """同账户、同名但 direction=income 的新科目与月度【支出】承诺载体无关，照常落账。"""
     db, state, content = game
@@ -62,13 +57,12 @@ def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, m
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'xixue-monthly'), 'kind': 'initiative', 'title': '每月拨西学经费', 'stage_text': '太仓每月拨银五十万两办西学。', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '西学经费', 'reason': '每月拨西学经费'}]}, 'commitment_kind': 'until_stop'}], 'fiscal_creates': [{'key': '西学经费_base', 'account': '国库', 'direction': 'income', 'init_value': 50, 'display': '西学经费', 'reason': '新设西学专项捐输（收入）', 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
 
-    assert rejected_view(out, "fiscal_creates") == []
+    assert section(out, "fiscal_creates").rejected == []
     fiscal_result = view(out, "fiscal_creates")[0]
     assert fiscal_result["key"]
     assert db.conn.execute(
         "SELECT COUNT(*) FROM fiscal_config WHERE key IN ('西学经费_base', '西学经费_rate')"
     ).fetchone()[0] >= 1
-
 
 def test_decree_commitment_same_account_alias_miss_still_lands_fiscal_create(game, monkeypatch):
     """同批、同账户、有 decree 承诺却**异名**未匹配上的 fiscal_create 照常落账（不被拒）。"""
@@ -78,13 +72,12 @@ def test_decree_commitment_same_account_alias_miss_still_lands_fiscal_create(gam
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'xixue-monthly'), 'kind': 'initiative', 'title': '每月拨西学经费', 'stage_text': '太仓每月拨银五十万两办西学。', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '西学经费', 'reason': '每月拨西学经费'}]}, 'commitment_kind': 'until_stop'}], 'fiscal_creates': [{'key': 'xuguangqi_gongfei_base', 'account': '国库', 'direction': 'expense', 'init_value': 50, 'display': '徐光启三务公费', 'reason': '月支', 'origin_ref': '盘面自发'}]}, SettlementContext(content=content))
 
     # 异名 → 未去重，fiscal_create 照常落账（不被拒）。日志措辞非契约，不锁。
-    assert rejected_view(out, "fiscal_creates") == []
+    assert section(out, "fiscal_creates").rejected == []
     assert view(out, "fiscal_creates")
     assert db.conn.execute(
         "SELECT COUNT(*) FROM fiscal_config WHERE key IN "
         "('xuguangqi_gongfei_base', 'xuguangqi_gongfei_rate')"
     ).fetchone()[0] >= 1
-
 
 def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
     db, state, content = read_game
@@ -92,10 +85,9 @@ def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, 
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:pay-two-fronts-arrears', 'kind': 'initiative', 'title': '每月补宣大蓟镇直到补齐', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -80, 'category': '补饷承诺', 'reason': '每月补宣大蓟镇欠饷', 'purpose': '补饷'}]}, 'stop_condition': {'army.xuan_da|jizhen.arrears.sum': '<=0'}}]}, SettlementContext(content=content))
 
-    created = rejected_view(out, "issue_summary")[0]
+    created = section(out, "issue_summary").rejected[0]
     assert created.category == "invalid_enum"
     assert _issue_by_title(db, "每月补宣大蓟镇直到补齐") is None
-
 
 def test_limited_duration_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
     db, state, content = read_game
@@ -103,10 +95,9 @@ def test_limited_duration_commitment_shape_rejects_without_explicit_marker(read_
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:two-month-pay', 'kind': 'initiative', 'title': '连续两月补饷但缺承诺标记', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -40, 'category': '补饷承诺', 'reason': '连续两月补饷', 'purpose': '补饷'}]}, 'end_turn': state.turn + 2}]}, SettlementContext(content=content))
 
-    created = rejected_view(out, "issue_summary")[0]
+    created = section(out, "issue_summary").rejected[0]
     assert created.category == "invalid_enum"
     assert _issue_by_title(db, "连续两月补饷但缺承诺标记") is None
-
 
 def test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn(read_game, monkeypatch):
     db, state, content = read_game
@@ -114,10 +105,9 @@ def test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn(read_
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:current-turn-expired-pay', 'kind': 'initiative', 'title': '本回合即到期的每月补饷承诺', 'stage_text': '户部按月拨银补饷，但 end_turn 错落在当前回合。', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '补饷承诺', 'reason': '每月补饷', 'purpose': '补饷'}]}, 'end_turn': state.turn, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    rejected = rejected_view(out, "issue_summary")[0]
+    rejected = section(out, "issue_summary").rejected[0]
     assert rejected.category == "invalid_enum"
     assert _issue_by_title(db, "本回合即到期的每月补饷承诺") is None
-
 
 def test_limited_duration_ongoing_commitment_rejects_past_end_turn(game, monkeypatch):
     db, state, content = game
@@ -127,10 +117,9 @@ def test_limited_duration_ongoing_commitment_rejects_past_end_turn(game, monkeyp
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-4:past-expired-pay', 'kind': 'initiative', 'title': '过去回合已到期的每月补饷承诺', 'stage_text': '户部按月拨银补饷，但 end_turn 错落在过去回合。', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'category': '补饷承诺', 'reason': '每月补饷', 'purpose': '补饷'}]}, 'end_turn': state.turn - 1, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    rejected = rejected_view(out, "issue_summary")[0]
+    rejected = section(out, "issue_summary").rejected[0]
     assert rejected.category == "invalid_enum"
     assert _issue_by_title(db, "过去回合已到期的每月补饷承诺") is None
-
 
 def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, monkeypatch):
     db, state, content = game
@@ -138,7 +127,7 @@ def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, mo
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'sunchengzong-review'), 'kind': 'initiative', 'title': '三月后复试孙承宗', 'stage_text': '孙承宗暂听候政，三月后复试军国大计。', 'end_turn': state.turn + 3, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    created = issue_rows(out, "new_issues")[0]
+    created = out.issue.new_issues[0]
     row = _issue_by_title(db, "三月后复试孙承宗")
     assert row is not None
     assert row["commitment_kind"] == "until_stop"
@@ -148,14 +137,13 @@ def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, mo
     assert row["inertia"] == 0
     assert row["cancellable"] == "decree"
 
-
 def test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker(game, monkeypatch):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': _promulgated_commitment_origin(db, state, 'open-ended-appeasement'), 'kind': 'initiative', 'title': '长期安抚毛文龙', 'stage_text': '遣臣常驻皮岛安抚，未设硬时限。', 'ongoing_effects': {'metrics': {'皇威': -1}}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    created = issue_rows(out, "new_issues")[0]
+    created = out.issue.new_issues[0]
     row = _issue_by_title(db, "长期安抚毛文龙")
     assert row is not None
     assert row["commitment_kind"] == "until_stop"
@@ -164,17 +152,15 @@ def test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker(gam
     assert json.loads(row["ongoing_effects"]) == {"metrics": {"皇威": -1}}
     assert row["cancellable"] == "decree"
 
-
 def test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
     db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:open-ended-without-marker', 'kind': 'initiative', 'title': '长期安抚毛文龙但缺承诺标记', 'stage_text': '遣臣常驻皮岛安抚，未设硬时限。', 'ongoing_effects': {'metrics': {'皇威': -1}}}]}, SettlementContext(content=content))
 
-    created = rejected_view(out, "issue_summary")[0]
+    created = section(out, "issue_summary").rejected[0]
     assert created.category == "invalid_enum"
     assert _issue_by_title(db, "长期安抚毛文龙但缺承诺标记") is None
-
 
 def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
     db, state, content = read_game
@@ -182,10 +168,9 @@ def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(read_g
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:sunchengzong-review-without-marker', 'kind': 'initiative', 'title': '三月后复核孙承宗但缺承诺标记', 'stage_text': '孙承宗暂听候政，三月后复核。', 'end_turn': state.turn + 3}]}, SettlementContext(content=content))
 
-    created = rejected_view(out, "issue_summary")[0]
+    created = section(out, "issue_summary").rejected[0]
     assert created.category == "invalid_enum"
     assert _issue_by_title(db, "三月后复核孙承宗但缺承诺标记") is None
-
 
 def test_stop_condition_only_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
     db, state, content = read_game
@@ -193,10 +178,9 @@ def test_stop_condition_only_commitment_shape_rejects_without_explicit_marker(re
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:stop-only-mao', 'kind': 'initiative', 'title': '只写停止条件的安抚毛文龙', 'stage_text': '只写达到忠诚阈值，没有月度安抚动作。', 'stop_condition': {'character.毛文龙.loyalty': '>=65'}}]}, SettlementContext(content=content))
 
-    created = rejected_view(out, "issue_summary")[0]
+    created = section(out, "issue_summary").rejected[0]
     assert created.category == "invalid_enum"
     assert _issue_by_title(db, "只写停止条件的安抚毛文龙") is None
-
 
 def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_marker(read_game, monkeypatch):
     db, state, content = read_game
@@ -204,10 +188,9 @@ def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_mar
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:stop-only-string', 'kind': 'initiative', 'title': '字符串停止条件但无月度动作', 'stage_text': '有诏书来源和停止条件，但没有每月动作。', 'stop_condition': 'character.毛文龙.loyalty >= 65'}]}, SettlementContext(content=content))
 
-    created = rejected_view(out, "issue_summary")[0]
+    created = section(out, "issue_summary").rejected[0]
     assert created.category == "invalid_enum"
     assert _issue_by_title(db, "字符串停止条件但无月度动作") is None
-
 
 def test_resolve_condition_loyalty_expression_is_ordinary_initiative(game, monkeypatch):
     """resolve_condition 忠诚表达式不再被旧表示识别为承诺形态（#1835 J17）。
@@ -221,11 +204,10 @@ def test_resolve_condition_loyalty_expression_is_ordinary_initiative(game, monke
     # 仅 resolve_condition 忠诚表达式：不得再被旧表示认成承诺形态而索 commitment_kind
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': '安抚毛文龙', 'stage_text': '普通 initiative 可带 resolve_condition 文本。', 'resolve_condition': 'character.毛文龙.loyalty >= 65'}]}, SettlementContext(content=content))
 
-    assert not rejected_view(out, "issue_summary"), out
+    assert not section(out, "issue_summary").rejected, out
     row = _issue_by_title(db, "安抚毛文龙")
     assert row is not None
     assert not row["commitment_kind"]
-
 
 def test_until_stop_commitment_requires_initiative_kind(read_game, monkeypatch):
     db, state, content = read_game
@@ -233,10 +215,9 @@ def test_until_stop_commitment_requires_initiative_kind(read_game, monkeypatch):
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:bad-kind', 'kind': 'situation', 'title': '每月补辽饷但类型写成局势', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补饷'}]}, 'stop_condition': {'army.guanning.arrears': '<=0'}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    rejected = rejected_view(out, "issue_summary")[0]
+    rejected = section(out, "issue_summary").rejected[0]
     assert rejected.category == "invalid_enum"
     assert _issue_by_title(db, "每月补辽饷但类型写成局势") is None
-
 
 def test_until_stop_commitment_supports_character_loyalty_condition(game, monkeypatch):
     db, state, content = game
@@ -248,17 +229,15 @@ def test_until_stop_commitment_supports_character_loyalty_condition(game, monkey
     assert row["commitment_kind"] == "until_stop"
     assert json.loads(row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
 
-
 def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(read_game, monkeypatch):
     db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:string-loyalty-appease', 'kind': 'initiative', 'title': '字符串忠诚安抚承诺', 'stage_text': '每月安抚毛文龙，但 loyalty 错写成字符串。', 'ongoing_effects': {'人物变更': [{'name': '毛文龙', '动作': '评定', 'loyalty': '2', 'reason': '奉旨持续安抚'}]}, 'end_turn': state.turn + 2, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    rejected = rejected_view(out, "issue_summary")[0]
+    rejected = section(out, "issue_summary").rejected[0]
     assert rejected.category == "invalid_enum"
     assert _issue_by_title(db, "字符串忠诚安抚承诺") is None
-
 
 def test_until_stop_commitment_rejects_non_dict_stop_condition(read_game, monkeypatch):
     db, state, content = read_game
@@ -266,10 +245,9 @@ def test_until_stop_commitment_rejects_non_dict_stop_condition(read_game, monkey
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:bad-stop-string', 'kind': 'initiative', 'title': '每月补辽饷但停止条件是坏串', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补饷'}]}, 'stop_condition': 'army.guanning.arrears <= 0', 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    rejected = rejected_view(out, "issue_summary")[0]
+    rejected = section(out, "issue_summary").rejected[0]
     assert rejected.category == "invalid_enum"
     assert _issue_by_title(db, "每月补辽饷但停止条件是坏串") is None
-
 
 def test_until_stop_commitment_rejects_stop_condition_without_table_prefix(read_game, monkeypatch):
     db, state, content = read_game
@@ -277,10 +255,9 @@ def test_until_stop_commitment_rejects_stop_condition_without_table_prefix(read_
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:bad-stop-key', 'kind': 'initiative', 'title': '每月补辽饷但停止条件无表前缀', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补饷'}]}, 'stop_condition': {'arrears': '<=0'}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    rejected = rejected_view(out, "issue_summary")[0]
+    rejected = section(out, "issue_summary").rejected[0]
     assert rejected.category == "invalid_enum"
     assert _issue_by_title(db, "每月补辽饷但停止条件无表前缀") is None
-
 
 def test_until_stop_commitment_requires_origin_ref(read_game, monkeypatch):
     db, state, content = read_game
@@ -288,10 +265,9 @@ def test_until_stop_commitment_requires_origin_ref(read_game, monkeypatch):
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'kind': 'initiative', 'title': '每月补辽饷但无诏书引用', 'ongoing_effects': {'economy': [{'account': '国库', 'delta': -50, 'reason': '每月补饷'}]}, 'stop_condition': {'army.guanning.arrears': '<=0'}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    rejected = rejected_view(out, "issue_summary")[0]
+    rejected = section(out, "issue_summary").rejected[0]
     assert rejected.category == "invalid_enum"
     assert _issue_by_title(db, "每月补辽饷但无诏书引用") is None
-
 
 def test_until_stop_commitment_requires_ongoing_effects(read_game, monkeypatch):
     db, state, content = read_game
@@ -299,10 +275,9 @@ def test_until_stop_commitment_requires_ongoing_effects(read_game, monkeypatch):
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:empty-monthly-action', 'kind': 'initiative', 'title': '每月补辽饷但没有月度动作', 'stop_condition': {'army.guanning.arrears': '<=0'}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    rejected = rejected_view(out, "issue_summary")[0]
+    rejected = section(out, "issue_summary").rejected[0]
     assert rejected.category == "invalid_enum"
     assert _issue_by_title(db, "每月补辽饷但没有月度动作") is None
-
 
 def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(read_game, monkeypatch):
     db, state, content = read_game
@@ -310,10 +285,9 @@ def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(read_g
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:empty-shell-monthly-action', 'kind': 'initiative', 'title': '每月补辽饷但月度动作只是空壳', 'ongoing_effects': {'economy': [], 'metrics': {}}, 'stop_condition': {'army.guanning.arrears': '<=0'}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    rejected = rejected_view(out, "issue_summary")[0]
+    rejected = section(out, "issue_summary").rejected[0]
     assert rejected.category == "invalid_enum"
     assert _issue_by_title(db, "每月补辽饷但月度动作只是空壳") is None
-
 
 def test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work(read_game, monkeypatch):
     db, state, content = read_game
@@ -321,10 +295,9 @@ def test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work(
 
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': 'decree:turn-1:bad-monthly-army-create', 'kind': 'initiative', 'title': '每月重复建军的错误承诺', 'ongoing_effects': {'new_armies': [{'id': 'bad_monthly_army', 'name': '月度重复新军', 'manpower': 1000}]}, 'stop_condition': {'army.guanning.arrears': '<=0'}, 'commitment_kind': 'until_stop'}]}, SettlementContext(content=content))
 
-    rejected = rejected_view(out, "issue_summary")[0]
+    rejected = section(out, "issue_summary").rejected[0]
     assert rejected.category == "invalid_enum"
     assert _issue_by_title(db, "每月重复建军的错误承诺") is None
-
 
 def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
     db, state, content = game
@@ -344,7 +317,6 @@ def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
     assert close.category == "invalid_enum"
     after = db.conn.execute("SELECT status FROM issues WHERE id=?", (row["id"],)).fetchone()
     assert after["status"] == "active"
-
 
 def test_until_stop_commitment_rejects_direct_failed_close_without_effects(game, monkeypatch):
     db, state, content = game
@@ -371,7 +343,6 @@ def test_until_stop_commitment_rejects_direct_failed_close_without_effects(game,
         (row["id"],),
     ).fetchone()[0] == 0
 
-
 def test_until_stop_commitment_advance_to_full_stays_active(game, monkeypatch):
     db, state, content = game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -390,7 +361,6 @@ def test_until_stop_commitment_advance_to_full_stays_active(game, monkeypatch):
     assert advanced["bar_value"] == 100
     assert advanced["status"] == "active"
     assert advanced["closed_turn"] is None
-
 
 def test_stop_condition_without_commitment_kind_advance_to_full_stays_active(game):
     """insert_issue 可直接持久化 stop_condition；即便 commitment_kind 为空，
@@ -418,7 +388,6 @@ def test_stop_condition_without_commitment_kind_advance_to_full_stays_active(gam
     assert advanced["status"] == "active"
     assert advanced["closed_turn"] is None
 
-
 def test_has_stop_condition_handles_preparsed_and_json_whitespace():
     assert _has_stop_condition({"army.guanning.arrears": "<=0"}) is True
     assert _has_stop_condition(["legacy"]) is True
@@ -427,7 +396,6 @@ def test_has_stop_condition_handles_preparsed_and_json_whitespace():
     assert _has_stop_condition("\n[]\n") is False
     # legacy fallback 条件串属于 resolve_condition，不是结构化 commitment stop gate。
     assert _has_stop_condition("character.毛文龙.loyalty >= 65") is False
-
 
 def test_empty_json_stop_condition_allows_advance_to_resolved(game):
     """stop_condition 里若只是带空白的空 JSON 对象，不应被误判为承诺停止条件。"""
@@ -454,7 +422,6 @@ def test_empty_json_stop_condition_allows_advance_to_resolved(game):
     assert advanced["status"] == "resolved"
     assert advanced["closed_turn"] == state.turn
 
-
 def test_commitment_lands_without_invented_resolve_effect(game, monkeypatch):
     db, state, content = game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
@@ -463,7 +430,6 @@ def test_commitment_lands_without_invented_resolve_effect(game, monkeypatch):
 
     row = _issue_by_title(db, "每月补辽饷直到补齐")
     assert json.loads(row["effect_on_resolve"]) == {}
-
 
 def test_one_shot_appeasement_economy_move_does_not_create_commitment_issue(game, monkeypatch):
     db, state, content = game
