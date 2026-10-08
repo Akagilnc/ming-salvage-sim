@@ -241,22 +241,42 @@ def test_cli_chat_stream_deterministic_failure_runs_once(monkeypatch, tmp_path, 
 
 
 @pytest.mark.parametrize(
-    "stdout",
-    [(), (_OK_REPLY,)],
-    ids=["empty_stdout", "nonempty_stdout"],
+    ("stdout", "stdin_fault"),
+    [
+        ((), BrokenPipeError("stdin 已关闭")),
+        ((_OK_REPLY,), BrokenPipeError("stdin 已关闭")),
+        # 输出管道保持打开：不得等 EOF／先判 idle 再洗成真因（#1902）。
+        ((SilentUntilKilled(),), BrokenPipeError("stdin 已关闭")),
+        ((SilentUntilKilled(),), TypeError("controlled stdin fault")),
+    ],
+    ids=["empty_stdout", "nonempty_stdout", "open_stdout_oserror", "open_stdout_typeerror"],
 )
 def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
-    monkeypatch, tmp_path, game, stdout,
+    monkeypatch, tmp_path, game, stdout, stdin_fault,
 ):
-    """prompt 没写进 stdin = IO 错，须响亮确定性失败一次，不洗成空输出瞬断重试。
+    """prompt 没写进 stdin = 线程已记故障，须在 idle 前响亮确定性失败一次。
 
     ADR 0005：代码/IO 侧的错必须响亮；宽吞会让「子进程压根没被问」冒充
-    llm_empty_output，白烧三次子进程还给玩家一个假瞬断。有 stdout 字同样终止。
+    llm_empty_output／llm_idle_timeout，白烧三次子进程还给玩家假瞬断。
+    OSError → typed 宿主终失败；其余代码异常原件上浮。输出保持打开同样终止。
     """
-    _pin_transport_policy(monkeypatch, tmp_path)
+    idle = 30.0
+    _pin_transport_policy(monkeypatch, tmp_path, idle_timeout_seconds=idle)
+    # 若回归成 idle 覆盖，受控时钟推进使重试路径秒级暴露（calls==3），不靠真墙钟。
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(cb, "_cli_process_clock", lambda: clock["t"])
+
+    def _advance_while_silent() -> None:
+        clock["t"] += idle + 0.1
+
+    scripted_stdout = tuple(
+        SilentUntilKilled(on_tick=_advance_while_silent)
+        if isinstance(item, SilentUntilKilled) else item
+        for item in stdout
+    )
     script = install_fake_cli_runner(monkeypatch, [{
-        "stdout": stdout, "returncode": 0,
-        "stdin_error": BrokenPipeError("stdin 已关闭"),
+        "stdout": scripted_stdout, "returncode": 0,
+        "stdin_error": stdin_fault,
     }])
     web_game, minister = _cli_web_game(game, monkeypatch)
 
@@ -266,9 +286,17 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
     assert events[-1][0] == "error", events
     detail = events[-1][1]
     attempts = detail.get("transport_attempts") or []
-    assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
-    assert script.calls == 1
-    assert "stdin" in str(detail.get("provider_message") or ""), detail
+    assert script.calls == 1, (script.calls, detail)
+    if isinstance(stdin_fault, OSError):
+        assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
+        assert detail.get("code") == "llm_cli_claude", detail
+        assert "stdin" in str(detail.get("provider_message") or ""), detail
+    else:
+        # 未知代码异常：不洗成 idle／typed 宿主码，原件语义落在错误详情。
+        assert detail.get("code") != "llm_idle_timeout", detail
+        assert "controlled stdin fault" in str(
+            detail.get("provider_message") or detail.get("message") or detail
+        ), detail
 
 
 def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, game):

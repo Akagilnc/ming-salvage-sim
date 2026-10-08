@@ -400,6 +400,7 @@ def _iter_cli_process_lines(
     cwd: Optional[str] = None,
     clock: Optional[Callable[[], float]] = None,
     outcome: Optional[_CliProcessOutcome] = None,
+    backend: str = "cli",
 ) -> Iterator[str]:
     """CLI 子进程增量读单真源：一次子进程 = 一次 attempt，按到达顺序 yield stdout 行。
 
@@ -497,27 +498,42 @@ def _iter_cli_process_lines(
     }
     pending_out = ""
 
-    def _raise_stream_error() -> None:
+    host = str(backend or "cli").strip() or "cli"
+
+    def _raise_recorded_thread_fault() -> None:
+        """工作线程已记录的故障立刻升格：不等另一管道 EOF，也不让 idle 改写真因。
+
+        stream_error / stdin_error 同一交接：OSError 族 → typed 宿主 I/O 终失败；
+        其余代码/控制异常原样上浮。不得因槽非空改写成可重试空转。
+        """
         err = result.stream_error
-        if err is None:
-            return
-        # 线程传错保留原异常：仅 OSError 族为已确证宿主管道 I/O → typed；
-        # AttributeError/RecursionError/SystemExit 等代码与控制异常原样上浮，
-        # 不得因 stream_error 槽非空改写成宿主不可用。
-        if isinstance(err, OSError):
-            from ming_sim.llm_model import cli_runner_unavailable
-            host_exc = RuntimeError(f"CLI 管道读取失败：{err}")
-            raise cli_runner_unavailable(host_exc, backend="cli") from err
-        raise err
+        if err is not None:
+            if isinstance(err, OSError):
+                from ming_sim.llm_model import cli_runner_unavailable
+                host_exc = RuntimeError(f"CLI 管道读取失败：{err}")
+                raise cli_runner_unavailable(host_exc, backend=host) from err
+            raise err
+        err = result.stdin_error
+        if err is not None:
+            if isinstance(err, OSError):
+                from ming_sim.llm_model import cli_runner_unavailable
+                host_exc = RuntimeError(
+                    f"{host} 调用失败（prompt 未能写入子进程 stdin）：{err}"
+                )
+                raise cli_runner_unavailable(host_exc, backend=host) from err
+            raise err
+
+    def _has_recorded_thread_fault() -> bool:
+        return result.stream_error is not None or result.stdin_error is not None
 
     try:
         while open_streams > 0:
-            # 已知读故障立刻升格：不等另一管道 EOF，也不让后续 idle 改写成可重试分类。
-            _raise_stream_error()
+            # 已知线程故障立刻升格：不等另一管道 EOF，也不让后续 idle 改写成可重试分类。
+            _raise_recorded_thread_fault()
             try:
                 kind, chunk = chunks.get(timeout=_CLI_POLL_SECONDS)
             except queue.Empty:
-                _raise_stream_error()
+                _raise_recorded_thread_fault()
                 check_idle_budget(
                     last_activity_at=last_activity, policy=policy, clock=tick,
                 )
@@ -531,10 +547,10 @@ def _iter_cli_process_lines(
                 else:
                     leftover = pending_out + tail
                     pending_out = ""
-                    # 已有读故障则不把半截正文当成功产出。
-                    if leftover and result.stream_error is None:
+                    # 已有线程故障则不把半截正文当成功产出。
+                    if leftover and not _has_recorded_thread_fault():
                         yield leftover
-                _raise_stream_error()
+                _raise_recorded_thread_fault()
                 continue
             # 任意新字节即活动（票面「CLI stdout 新字节」）；不要求凑成一行。
             last_activity = tick()
@@ -548,13 +564,13 @@ def _iter_cli_process_lines(
                 if nl < 0:
                     break
                 line, pending_out = pending_out[: nl + 1], pending_out[nl + 1 :]
-                if result.stream_error is None:
+                if not _has_recorded_thread_fault():
                     yield line
-            _raise_stream_error()
-        _raise_stream_error()
+            _raise_recorded_thread_fault()
+        _raise_recorded_thread_fault()
         # 管道已 EOF 但进程未退：静默同样计入 idle 预算，仍无总墙钟。
         while proc.poll() is None:
-            _raise_stream_error()
+            _raise_recorded_thread_fault()
             check_idle_budget(
                 last_activity_at=last_activity, policy=policy, clock=tick,
             )
@@ -565,6 +581,8 @@ def _iter_cli_process_lines(
             worker.join(timeout=5)
         result.stderr = "".join(stderr_parts)
         result.returncode = proc.poll()
+    # join 后若 feeder 才落盘 stdin_error，仍不得当成功收尾。
+    _raise_recorded_thread_fault()
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
     if reasoning_strength is None:
@@ -780,8 +798,9 @@ def _iter_cli_runner_text(
     私有 for-attempt 循环。失败按 typed 分类抛，交上层统一重试或终结：
     - 静默超阈值 → TransportIdleTimeout（可重试；_iter_cli_process_lines 抛）
     - 空输出 → llm_empty_output（可重试）
-    - stdin 未送达 / 未知非零退出 → cli_runner_unavailable（typed 确定性失败，一次不重试；
-      禁从 stderr 散文抠状态；仅此已确证宿主 I/O／退出接缝翻 typed）
+    - stdin 未送达（线程已记故障，父环 idle 前升格）/ 未知非零退出 →
+      cli_runner_unavailable（typed 确定性失败，一次不重试；禁从 stderr 散文抠状态；
+      仅此已确证宿主 I/O／退出接缝翻 typed）
     - 宿主未暴露结构化鉴权状态时如实按正文／退出码处理，不另造词表（宿主缺口）
 
     静默预算只认 transport 策略 idle（= 设置页那一格的静默判死阈值，CLI 与 API 同权威）。
@@ -810,7 +829,7 @@ def _iter_cli_runner_text(
         for line in _iter_cli_process_lines(
                 cmd, stdin_text=stdin_text, env=env,
                 cwd=(str(Path(materials_dir).resolve()) if materials_dir else None),
-                clock=clock, outcome=outcome,
+                clock=clock, outcome=outcome, backend=runner,
             ):
             if json_events:
                 stripped = line.strip()
@@ -836,21 +855,8 @@ def _iter_cli_runner_text(
         returncode = int(outcome.returncode or 0)
         stderr = outcome.stderr or ""
         stdout_text = "".join(pieces)
-        # prompt 没写进 stdin = 这次 attempt 根本没问出去：响亮报确定性失败，
-        # 有无 stdout 字都不得当产出（ADR 0005 / r1 类3：一次不重试）。
-        if outcome.stdin_error is not None:
-            # 写线程经 stdin_error 交父：OSError=已确证宿主 I/O → typed；
-            # 其余代码/控制异常原样上浮（与 stream_error 同契约）。
-            err = outcome.stdin_error
-            if isinstance(err, OSError):
-                from ming_sim.llm_model import cli_runner_unavailable
-                host_exc = RuntimeError(
-                    f"{runner} 调用失败（prompt 未能写入子进程 stdin）：{err}"
-                )
-                raise cli_runner_unavailable(host_exc, backend=runner) from err
-            raise err
-        # 管道读失败已在 _iter_cli_process_lines 即时升格；本生成器完整消费该泵，
-        # 不另加上层同因兜底（#1902 REDUNDANT-CLI-STREAM-ERROR-FALLBACK）。
+        # stream_error / stdin_error 均已在 _iter_cli_process_lines 于 idle 前即时升格；
+        # 本生成器完整消费该泵，不另加延后同因兜底（#1902 CLI-RECORDED-THREAD-FAULTS）。
         # #1902 T2 / 锚定宪法：交付保留宿主原正文，不以 strip 改写呈现；
         # 空产出只以「去空白后是否为空」作判定，不把裁剪结果当交付物。
         primary = stdout_text if stdout_text.strip() else final_text
