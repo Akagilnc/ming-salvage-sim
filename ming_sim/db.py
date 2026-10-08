@@ -12772,12 +12772,34 @@ class GameDB:
                 )
         return cid, dkey, kind, person, is_imperial
 
+    def _require_endorsement_shared_refs(
+        self, *, source_cid: int, kind: str, person: str,
+    ) -> None:
+        """背书共同引用唯一权威：来源轮 / 具名人物存在性（#1897 禁平行）。"""
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        if source_cid > 0:
+            if self.conn.execute(
+                "SELECT 1 FROM chat_turns WHERE id=?", (source_cid,),
+            ).fetchone() is None:
+                raise DecreeMaterializationValidationError(
+                    "背书来源对话轮不存在",
+                    failed_fields=("source_chat_turn_id",), category="missing_ref",
+                )
+        if kind != "御笔手敕":
+            if self.conn.execute(
+                "SELECT 1 FROM characters WHERE name=?", (person,),
+            ).fetchone() is None:
+                raise DecreeMaterializationValidationError(
+                    "背书人物不存在",
+                    failed_fields=("endorser_id",), category="hallucinated_id",
+                )
+
     def _validate_dossier_endorsement(
         self, dossier_id: object, *, form: object,
         source_chat_turn_id: object = 0, decision_key: object = "",
         endorser_id: object = "", imperial: object = False,
     ) -> tuple[int, int, str, str, str, bool]:
-        """成案背书：字段权威 + 案卷/人物/来源轮引用。"""
+        """成案背书：字段权威 + 共同引用 + 案卷身份（成案独有）。"""
         from ming_sim.action_materialize import DecreeMaterializationValidationError
         if isinstance(dossier_id, bool) or not isinstance(dossier_id, int):
             raise DecreeMaterializationValidationError(
@@ -12792,40 +12814,23 @@ class GameDB:
             raise DecreeMaterializationValidationError(
                 "背书所指案卷不存在", failed_fields=("dossier_id",), category="missing_ref",
             )
-        if cid > 0:
-            if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
-                raise DecreeMaterializationValidationError(
-                    "背书来源对话轮不存在",
-                    failed_fields=("source_chat_turn_id",), category="missing_ref",
-                )
-        if kind != "御笔手敕":
-            if self.conn.execute("SELECT 1 FROM characters WHERE name=?", (person,)).fetchone() is None:
-                raise DecreeMaterializationValidationError(
-                    "背书人物不存在", failed_fields=("endorser_id",), category="hallucinated_id",
-                )
+        self._require_endorsement_shared_refs(
+            source_cid=cid, kind=kind, person=person,
+        )
         return did, cid, dkey, kind, person, is_imperial
 
     def _validate_pending_endorsement_entry(
         self, *, form: object, endorser_id: object = "",
         imperial: object = False, source_chat_turn_id: object = 0,
     ) -> tuple[int, str, str, bool]:
-        """暂存背书（尚无 dossier）：字段权威 + 人物/来源轮引用。"""
-        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        """暂存背书（尚无 dossier）：字段权威 + 共同引用。"""
         cid, _dkey, kind, person, is_imperial = self._normalize_endorsement_fields(
             form=form, endorser_id=endorser_id, imperial=imperial,
             source_chat_turn_id=source_chat_turn_id, decision_key="",
         )
-        if cid > 0:
-            if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
-                raise DecreeMaterializationValidationError(
-                    "背书来源对话轮不存在",
-                    failed_fields=("source_chat_turn_id",), category="missing_ref",
-                )
-        if kind != "御笔手敕":
-            if self.conn.execute("SELECT 1 FROM characters WHERE name=?", (person,)).fetchone() is None:
-                raise DecreeMaterializationValidationError(
-                    "背书人物不存在", failed_fields=("endorser_id",), category="hallucinated_id",
-                )
+        self._require_endorsement_shared_refs(
+            source_cid=cid, kind=kind, person=person,
+        )
         return cid, kind, person, is_imperial
 
     def add_dossier_endorsement(
