@@ -438,24 +438,20 @@ def _player_army_situation(row, monthly_pay: object) -> Dict[str, str]:
 
 
 def _has_stop_condition(stop_condition: object) -> bool:
-    """True when durable stop_condition has work. Corrupt structure raises.
+    """True when durable stop_condition object has work.
 
-    Legal empty (None/''/{}) → False. Non-JSON free-text DSL → True.
-    JSON-looking text must be a dict object (list root rejected).
+    Legal empty (None/''/{}) → False. Any non-object root raises.
+    Condition DSL lives inside the object values; root is never free text.
     """
     if isinstance(stop_condition, dict):
         return bool(stop_condition)
-    if isinstance(stop_condition, list):
-        raise ValueError("issues.stop_condition 须为对象，得 list")
-    raw = str(stop_condition or "").strip()
-    if not raw:
+    if stop_condition is None:
         return False
-    if raw[0] in "{[":
-        if raw[0] == "[":
-            raise ValueError("issues.stop_condition 须为对象，得 list")
-        data = loads_persistent_json_object(raw, surface="issues.stop_condition")
-        return bool(data)
-    return True
+    raw = str(stop_condition).strip()
+    if not raw or raw == "{}":
+        return False
+    data = loads_persistent_json_object(raw, surface="issues.stop_condition")
+    return bool(data)
 
 def _optional_positive_dossier_id(raw: object, *, field: str) -> Optional[int]:
     """#658：typed dossier id 单权威——真正缺省→None；一旦出现只接正整数。
@@ -18012,6 +18008,14 @@ class GameDB:
             "origin_ref": origin,
         }
 
+
+    def list_dossier_actual_progress(self, dossier_id: int) -> List[Dict[str, object]]:
+        """Read the #1504 actual-progress rail for one dossier (pair of record/sum)."""
+        rows = self.conn.execute(
+            "SELECT * FROM dossier_actual_progress WHERE dossier_id=? ORDER BY turn, id",
+            (int(dossier_id),),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def sum_dossier_actual_progress_units(self, dossier_id: int) -> float:
         row = self.conn.execute(

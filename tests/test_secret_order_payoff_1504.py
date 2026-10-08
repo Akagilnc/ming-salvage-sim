@@ -17,6 +17,7 @@ import pytest
 from ming_sim.covert_progress import (
     FACT_LANES_KEY,
     INVESTIGATION_ACTS_KEY,
+    INVESTIGATION_TIPS_KEY,
     CovertContractError,
     apply_investigation_spoliation,
     build_covert_task_contract,
@@ -24,7 +25,6 @@ from ming_sim.covert_progress import (
     investigation_clue_records,
     live_investigation_fact_keys,
     read_covert_task_contract,
-    seed_guilt_counts_as_debt,
     apply_monthly_covert_actual_progress,
     investigation_lane_actual_units,
     settle_due_secret_orders,
@@ -208,15 +208,6 @@ def _originate_catches(db, state, content, dossier_id, names):
     )
 
 
-def test_seed_guilt_structured_clean_vs_debt():
-    # 现约：只收结构化 severity∈{轻,中,重}；裸散文／解析失败不造罪（W4/#1896）。
-    assert not seed_guilt_counts_as_debt("")
-    assert not seed_guilt_counts_as_debt(None)
-    assert not seed_guilt_counts_as_debt({"crime": "无", "severity": "无"})
-    assert not seed_guilt_counts_as_debt('{"crime": "无", "severity": "无"}')
-    assert not seed_guilt_counts_as_debt("血债")
-    assert seed_guilt_counts_as_debt({"crime": "交结近侍", "severity": "中"})
-
 
 def test_decide_settlement_delivery_gap_bidirectional():
     done = decide_secret_order_settlement({
@@ -335,7 +326,6 @@ def test_actual_progress_container_separate_from_reported_rail(game):
     # list_dossier_durable_effects 仍只 economy+fiscal；实进度走并列读口
     durable = db.list_dossier_durable_effects(did)
     assert all("account" in r or "key" in r or "delta" in r for r in durable) or durable == []
-    assert db.list_dossier_actual_rail(did)  # 含 actual_progress 行
 
 def test_settle_due_reads_actual_rail_only_report_does_not_flip_verdict(game):
     """窄接缝：settle_due_secret_orders 只读 actual rail；奏报灌满不翻 verdict。

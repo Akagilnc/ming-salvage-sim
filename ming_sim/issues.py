@@ -1387,9 +1387,6 @@ def _apply_fiscal_levy_targets(
     for row in db.conn.execute("SELECT id, fiscal FROM regions ORDER BY id").fetchall():
         region_id = str(row["id"])
         fiscal = _load_region_fiscal_for_fiscal_levy(region_id, row["fiscal"])
-        if fiscal is None:
-            denominator_complete = False
-            continue
         try:
             if "settle" not in fiscal:
                 continue
