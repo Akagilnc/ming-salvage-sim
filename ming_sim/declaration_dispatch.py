@@ -1143,27 +1143,38 @@ def _attach_commission_staging_fields(
         payload["participant_roster"] = [{
             "character_id": lead, "tier": "主办", "role": "", "delegator_id": None,
         }]
-    due_src = item if item.get("due_turn") not in (None, "", 0) else grant
-    end_src = item if item.get("end_turn") not in (None, "", 0) else grant
-    months_src = (
-        item if item.get("deadline_months") not in (None, "", 0) else grant
-    )
-    # 与 stage_assignment / stage_grant 同缝：相对月数或绝对回合 → 绝对 due_turn。
-    # 禁 ``or 0`` 把 False/脏类型洗成合法缺省（#1897 C1）。
-    raw_due = (due_src or item).get("due_turn")
-    raw_end = (end_src or item).get("end_turn")
-    if raw_due not in (None, ""):
-        end_turn_in = raw_due
-    elif raw_end not in (None, ""):
-        end_turn_in = raw_end
+    # 期限来源：顶层优先，否则 grant。仅 None/""/「精确 int 0」视为缺省。
+    # 禁 ``v not in (None, "", 0)``——False==0 会把 bool 脏值当缺省丢掉（#1897 C1）。
+    def _present_or_fallback(primary: Mapping[str, object], key: str, fallback: object) -> object:
+        if key not in primary:
+            return fallback
+        val = primary.get(key)
+        if val is None or val == "":
+            return fallback
+        if type(val) is int and val == 0:
+            return fallback
+        return val  # 含 False/True/非 0 数/字符串，原样交校验
+
+    due_val = _present_or_fallback(item, "due_turn", None)
+    if due_val is None:
+        due_val = _present_or_fallback(grant, "due_turn", None)
+    end_val = _present_or_fallback(item, "end_turn", None)
+    if end_val is None:
+        end_val = _present_or_fallback(grant, "end_turn", None)
+    months_in = _present_or_fallback(item, "deadline_months", None)
+    if months_in is None:
+        months_in = _present_or_fallback(grant, "deadline_months", 0)
+    # due_turn 优先于 end_turn（与旧 due or end 同序）。
+    if due_val is not None:
+        end_turn_in = due_val
+    elif end_val is not None:
+        end_turn_in = end_val
     else:
         end_turn_in = 0
-    raw_months = (months_src or item).get("deadline_months")
-    months_in = 0 if raw_months is None or raw_months == "" else raw_months
     absolute_due = _assignment_absolute_end_turn(
         int(turn),
         end_turn=end_turn_in,
-        deadline_months=months_in,
+        deadline_months=months_in if months_in is not None else 0,
     )
     if absolute_due > int(turn):
         payload["due_turn"] = absolute_due

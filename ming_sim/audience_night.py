@@ -239,9 +239,9 @@ def _now_iso() -> str:
 
 
 def _json_list(value: Any) -> List[Any]:
-    """故事账 tags/person_names 持久列表：腐坏响亮，不 catch-to-[]（#1897 E1）。"""
-    from ming_sim.db import _load_durable_json_list
-    return _load_durable_json_list(value, surface="story_ledger_entries.json_list")
+    """故事账 tags/person_names 持久字符串列表：腐坏/非 str 成员响亮，禁 str() 洗（#1897 E1）。"""
+    from ming_sim.db import _load_durable_str_list
+    return _load_durable_str_list(value, surface="story_ledger_entries.json_list")
 
 
 def _row_dict(row: Any) -> Dict[str, Any]:
@@ -419,10 +419,10 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
             "night_id": int(raw["night_id"]),
             "seq": int(raw["seq"]),
             "order_key": None if ok is None else float(ok),
-            "person_names": [str(n) for n in _json_list(raw.get("person_names"))],
+            "person_names": list(_json_list(raw.get("person_names"))),
             "audibility": str(raw.get("audibility") or AUDIBILITY_PUBLIC),
             "body": str(raw.get("body") or ""),
-            "tags": [str(t) for t in _json_list(raw.get("tags"))],
+            "tags": list(_json_list(raw.get("tags"))),
             "source_chat_turn_id": int(raw.get("source_chat_turn_id") or 0),
             "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
             "origin_ref": str(raw.get("origin_ref") or ""),
@@ -1664,8 +1664,8 @@ def update_summon_travel_tone(
     if row is None:
         raise KeyError(f"传召账不存在：{entry_id}")
     tags = [
-        str(t) for t in _json_list(row["tags"])
-        if not str(t).startswith(_SUMMON_TRAVEL_TONE_PREFIX)
+        t for t in _json_list(row["tags"])
+        if not t.startswith(_SUMMON_TRAVEL_TONE_PREFIX)
     ]
     tags.append(_travel_tone_tag(tone))
     db.conn.execute(
@@ -2171,7 +2171,7 @@ def rescript_summon_origin_consumed(
     if entry is None:
         return False
     # 持久 tags 走故事账列表权威；腐坏响亮，不洗空（#1897 E1）。
-    tags = [str(t) for t in _json_list(entry.get("tags"))]
+    tags = list(_json_list(entry.get("tags")))
     return TAG_ENTER in tags
 
 
@@ -2192,8 +2192,8 @@ def _ledger_by_origin_ref(db: Any, origin: str) -> Optional[Dict[str, Any]]:
         "body": str(raw.get("body") or ""),
         "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
         "origin_ref": str(raw.get("origin_ref") or ""),
-        "tags": [str(t) for t in _json_list(raw.get("tags"))],
-        "person_names": [str(n) for n in _json_list(raw.get("person_names"))],
+        "tags": list(_json_list(raw.get("tags"))),
+        "person_names": list(_json_list(raw.get("person_names"))),
     }
 
 
