@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Any, List
 
 from ming_sim.exceptions import LLMContractError
@@ -85,26 +85,15 @@ def run_highlight_judge(
                 raw = str(getattr(output, "content") or "")
             return parse_highlight_judge_output(raw)
 
-    # worker 结果装箱：Future.result 的 TimeoutError 只表示等待封顶。
-    # 若让 worker 异常经 future 原样抛出，会与等待 TimeoutError 同型；
-    # done() 又有「等超时后 worker 才完成」的竞态窗口——标准做法是返回值携带异常。
-    def _guarded() -> tuple[str, Any]:
-        try:
-            return ("ok", _call())
-        except BaseException as exc:
-            return ("err", exc)
-
+    # 标准库 wait 与 result 分立：wait 只等完成集合；完成后再 result() 无 timeout，
+    # 实际异常原件上抛。等待未入完成集 → 封顶 []。不自造结果标签／装箱协议。
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        future = pool.submit(_guarded)
-        try:
-            kind, payload = future.result(timeout=timeout)
-        except FuturesTimeout:
-            # 仅等待封顶；不读 done()（释放锁后 worker 仍可能完成，会误判）。
+        future = pool.submit(_call)
+        done, _not_done = wait((future,), timeout=timeout)
+        if future not in done:
             future.cancel()
             return []
-        if kind == "err":
-            raise payload
-        return list(payload)
+        return list(future.result())
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
