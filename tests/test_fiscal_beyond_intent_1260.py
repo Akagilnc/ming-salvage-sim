@@ -1,7 +1,7 @@
 """#1260 fiscal 三表 beyond_intent 全链 + 读端单源化 + 嵌套别名。
 
 S1 写端 tracer（三族 + 负向）
-S2 纯 fiscal 旨外 → 终裁/fork
+S2 纯 fiscal 旨外 → 留痕/fork；模型写终值后复核消费
 S3 嵌套通道「旨外恶果」别名 → ledger=1
 """
 
@@ -13,7 +13,8 @@ from ming_sim.due_review import apply_pending_due_reviews
 from ming_sim.situation_drift import apply_situation_monthly_drift
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from ming_sim.settlement import SettlementContext, settle_delta
-from ming_sim.settlement.views import view
+from ming_sim.settlement.views import section, view
+
 
 # ── helpers ──────────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ def _executing_policy(db, state, *, token: str):
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     return dossier_id
 
+
 def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     origin = f"dossier:{int(dossier_id)}"
     out = settle_delta(state, db, {'new_issues': [{'origin_kind': 'decree', 'origin_ref': origin, 'kind': 'initiative', 'title': title, 'stage_text': '所约之事依限办结。', 'commitment_kind': 'until_stop', 'ongoing_effects': {}, 'stages': [{'stage_idx': 0, 'due_turn': state.turn, 'criterion_text': '所约财政见成数', 'origin_context': '借旨加派/新立税目'}]}]}, SettlementContext(content=content))
@@ -40,9 +42,12 @@ def _insert_final_stage(db, state, content, *, dossier_id: int, title: str):
     assert "rejected" not in created, created
     return int(created["issue_id"])
 
+
 def _prime_and_apply_due_review(
-    db, state, content, *, dossier_id: int, title: str, stage_writer=_insert_final_stage,
+    db, state, content, *, dossier_id: int, title: str,
+    outcome: str, note: str, stage_writer=_insert_final_stage,
 ):
+    """模型经 dossier_executions 写终值后，正式复核只消费 todo（#1835 J18）。"""
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
     stage_writer(db, state, content, dossier_id=dossier_id, title=title)
@@ -52,9 +57,21 @@ def _prime_and_apply_due_review(
         (state.turn - 1,),
     )
     db.conn.commit()
+    written = settle_delta(
+        state, db,
+        {"dossier_executions": [{
+            "dossier_id": int(dossier_id),
+            "outcome": outcome,
+            "note": note,
+        }]},
+        SettlementContext(content=content),
+    )
+    assert not section(written, "dossier_executions").rejected, written
     results = apply_pending_due_reviews(db, state, commit=True)
     assert results and results[0].get("branch") == "dossier"
+    assert results[0].get("consumed") is True
     return results[0]
+
 
 def _insert_commitment(db, state, *, title: str, origin_ref: str, bar_value: int = 45):
     issue_id = db.insert_issue(
@@ -71,6 +88,7 @@ def _insert_commitment(db, state, *, title: str, origin_ref: str, bar_value: int
         cancellable="decree",
     )
     return int(issue_id)
+
 
 # ── S1：三族写端 tracer + 负向 ──────────────────────────────────────
 
@@ -113,6 +131,7 @@ def test_s1_fiscal_creates_beyond_intent_tracer_and_negatives(game, content):
     assert len(neg_rows) == len(cases), neg_rows
     assert all(r["beyond_intent"] is False for r in neg_rows), neg_rows
 
+
 def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
     """fiscal_changes 写端：肯定→changes 行 True；缺省/畸形/否定→False。"""
     db, state, _ = game
@@ -151,6 +170,7 @@ def test_s1_fiscal_changes_beyond_intent_tracer_and_negatives(game, content):
     flags = [r["beyond_intent"] for r in all_changes]
     assert flags[0] is True
     assert flags[1:] == [False, False, False], flags
+
 
 def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
     """fiscal_removes 写端：肯定→tombstones 显式常量 True；缺省/畸形/否定→False。"""
@@ -191,6 +211,7 @@ def test_s1_fiscal_removes_beyond_intent_tracer_and_negatives(game, content):
     ).fetchall()
     assert raw and all("beyond_intent" in dict(r) for r in raw)
 
+
 def test_s1_engine_grant_fiscal_create_stays_beyond_intent_zero(game):
     """db.py 引擎确定性拨帑建项显式留 0（旨内，禁捏造旗值）。"""
     db, state, _ = game
@@ -209,10 +230,11 @@ def test_s1_engine_grant_fiscal_create_stays_beyond_intent_zero(game):
     assert create_rows
     assert all(r["beyond_intent"] is False for r in create_rows), create_rows
 
-# ── S2：纯 fiscal 旨外案卷 → 终裁/fork/反噬 ─────────────────────────
+
+# ── S2：纯 fiscal 旨外案卷 → 留痕/fork；模型写终值后复核消费 ───────
 
 def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
-    """纯 fiscal 旨外（零 economy 流水）→ 终裁 transformed + fork=True + 反噬入选。"""
+    """纯 fiscal 旨外（零 economy 流水）→ 留痕/fork；模型写 transformed 后复核消费。"""
     db, state, _ = game
     did = _executing_policy(db, state, token="s2-xf")
     origin = f"dossier:{did}"
@@ -240,16 +262,19 @@ def test_s2_pure_fiscal_beyond_intent_transformed_fork_backlash(game, content):
     assert fork_state["beyond_intent"] is True
     assert fork_state["fork"] is True
 
-    # Due-review terminal → transformed
+    # 终值由模型声明写格；到期复核只消费，不机械替判
     result = _prime_and_apply_due_review(
         db, state, content, dossier_id=did, title="借旨新税之诺",
+        outcome="transformed", note="名实已乖，借旨新立浮收",
     )
-    assert result["verdict"]["outcome"] == "transformed", result
+    assert (result.get("execution") or {}).get("outcome") == "transformed", result
     dossier = db.get_decree_dossier(did)
     assert dossier["execution_outcome"] == "transformed"
+    assert dossier["status"] == "closed"
+
 
 def test_s2_pure_fiscal_without_beyond_intent_fulfilled(game, content):
-    """无旨外 fiscal 效果 → 终裁 fulfilled。"""
+    """无旨外 fiscal 效果；模型写 fulfilled 后复核消费。"""
     db, state, _ = game
     did = _executing_policy(db, state, token="s2-neg")
     origin = f"dossier:{did}"
@@ -260,8 +285,13 @@ def test_s2_pure_fiscal_without_beyond_intent_fulfilled(game, content):
 
     result = _prime_and_apply_due_review(
         db, state, content, dossier_id=did, title="正额新税之诺",
+        outcome="fulfilled", note="正额新税如期见成",
     )
-    assert result["verdict"]["outcome"] == "fulfilled", result
+    assert (result.get("execution") or {}).get("outcome") == "fulfilled", result
+    dossier = db.get_decree_dossier(did)
+    assert dossier["execution_outcome"] == "fulfilled"
+    assert dossier["status"] == "closed"
+
 
 # ── S3：嵌套通道别名 ────────────────────────────────────────────────
 
