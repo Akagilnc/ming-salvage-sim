@@ -506,6 +506,12 @@ def test_path1_conversational_draft_bad_roster_marks_failed(env):
         ("region", None),
         ("unknown", "none"),
         ("policy", "全省"),
+        # 下列五组负向无其它等价拒收案覆盖，须保留（policy/character+national 等同文件已有）
+        ("office", "national"),
+        ("army", "national"),
+        ("character", "single"),
+        ("office", "single"),
+        ("army", "single"),
     ],
 )
 def test_locality_matrix_8x3_and_unknown(env, target_kind, scope):
