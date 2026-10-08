@@ -12200,19 +12200,27 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        # 既存持久名册：schema／引用／委派均响亮；与新增输入错误分属。
+        # 既存持久名册：schema／引用／委派／合并主键均响亮；与新增输入错误分属。
         existing = participant_roster_entries(
             row["participant_roster"],
             surface="decree_dossiers.participant_roster",
         )
         self._validate_participant_roster_references(existing)
         self._validate_dossier_delegations(existing)
+        by_character: Dict[str, Dict[str, object]] = {}
+        for item in existing:
+            cid = str(item.get("character_id") or "").strip()
+            if not cid:
+                raise ValueError(
+                    "decree_dossiers.participant_roster durable entry "
+                    "missing character_id"
+                )
+            by_character[cid] = item
         try:
             additions = self._normalize_participant_roster(
                 participants, strict_structured=True,
             )
             self._validate_participant_roster_references(additions)
-            by_character = {str(item["character_id"]): item for item in existing}
             added: List[Dict[str, object]] = []
             for item in additions:
                 character_id = str(item["character_id"])
@@ -12229,7 +12237,10 @@ class GameDB:
             # 既存已通过；此处失败只可能由新增项引起。
             self._validate_dossier_delegations(merged)
             self._validate_participant_roster_references(merged)
-        except (TypeError, ValueError, KeyError) as exc:
+        except RosterInputError:
+            raise
+        except (TypeError, ValueError) as exc:
+            # 不捕 KeyError：既存结构／代码故障不得冒充输入拒收。
             raise RosterInputError(str(exc)) from exc
         if added:
             archive_keys: set[str] = set()

@@ -6529,15 +6529,6 @@ def _apply_dossier_participant_items(
                 "category": str(getattr(exc, "category", None) or "invalid_participant_roster"),
                 "reason": str(exc), "item": item,
             })
-        except KeyError as exc:
-            # 权威集内 id 已无对应行：按输入缺引用拒收，不包其它 KeyError。
-            missing = exc.args[0] if exc.args else ""
-            if not str(missing).startswith("案卷不存在"):
-                raise
-            results.append({
-                "rejected": True, "category": "invalid_participant_roster",
-                "reason": str(missing), "item": item,
-            })
     return results
 
 
