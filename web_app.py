@@ -2341,8 +2341,9 @@ class WebGame:
         if minister_name != SCENE_CHAT_SPEAKER:
             yield {"type": "error", "message": "召对只从殿上入口进行。"}
             return
-        text = message.strip()
-        if not text:
+        # Free emperor prose: empty-check without mutating carried body (P6).
+        text = str(message or "")
+        if not text.strip():
             yield {"type": "error", "message": "问话不能为空。"}
             return
         # 整轮（含转译与高亮尾随）共用一次队列票据——关闭/fixture 必须等其完成。

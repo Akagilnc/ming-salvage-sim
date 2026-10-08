@@ -54,8 +54,10 @@ def run_world_segment_text(
 
     prepared = prepare_world_materials(db, state)
     message = "推演本月世界段。"
-    if str(cheat_directive or "").strip():
-        message = str(cheat_directive).strip() + "\n" + message
+    # Free cheat body: empty-check without mutating carried prose (P6).
+    cheat = str(cheat_directive or "")
+    if cheat.strip():
+        message = cheat + "\n" + message
     try:
         agent = create_world_segment_agent(llm_config, prepared)
         return run_agent_text(
@@ -521,8 +523,9 @@ def run_player_month_chain(
         )
 
     try:
-        if str(cheat_directive or "").strip() and not chain.get("cheat_directive"):
-            chain["cheat_directive"] = str(cheat_directive).strip()
+        cheat = str(cheat_directive or "")
+        if cheat.strip() and not chain.get("cheat_directive"):
+            chain["cheat_directive"] = cheat
             _save_chain(db, turn, chain, decree_text=decree_text, source=source)
         _consume_call_failure_for_retry(db, chain, turn, decree_text, source)
     except Exception as exc:
@@ -1625,21 +1628,24 @@ def _question_as_decision(question: Dict[str, object], *, event_id: str) -> Dict
     for opt in options:
         if not isinstance(opt, dict):
             continue
-        label = str(opt.get("label") or "").strip()
-        if not label:
+        # Free presentation phrases: empty-check without mutating (P6).
+        label = str(opt.get("label") or "")
+        if not label.strip():
             continue
         cleaned.append({
             "label": label,
-            "hint": str(opt.get("hint") or "").strip(),
+            "hint": str(opt.get("hint") or ""),
             **{
                 key: opt[key] for key in opt
                 if key not in {"label", "hint"} and opt[key] is not None
             },
         })
+    # Free presentation phrases: empty-check without mutating (P6).
+    q_title = str(question.get("title") or "")
     return {
         "event_id": event_id,
-        "title": str(question.get("title") or "").strip() or "请旨",
-        "context": str(question.get("context") or "").strip(),
+        "title": q_title if q_title.strip() else "请旨",
+        "context": str(question.get("context") or ""),
         "options": cleaned,
     }
 
@@ -1699,11 +1705,12 @@ def _consume_rescript_answers(
 
     def _answer_from_row(row: Dict[str, object]) -> Dict[str, object]:
         choice = row.get("choice") if isinstance(row.get("choice"), dict) else {}
+        # Free presentation phrases: carry as-is (P6).
         return {
-            "label": str(choice.get("label") or "").strip(),
-            "hint": str(choice.get("hint") or "").strip(),
-            "note": str(choice.get("note") or "").strip(),
-            "context": str(row.get("context") or "").strip(),
+            "label": str(choice.get("label") or ""),
+            "hint": str(choice.get("hint") or ""),
+            "note": str(choice.get("note") or ""),
+            "context": str(row.get("context") or ""),
             "event_id": str(row.get("event_id") or ""),
             "title": str(row.get("title") or ""),
         }

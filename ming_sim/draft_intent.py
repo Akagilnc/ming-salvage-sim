@@ -922,16 +922,17 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
                 continue
             # #1565/0142：题名只认结构化 title|target_id|既有 issue.title；
             # 正文唯一真源 payload.text，旧档 decree_text 仅作正文承接。
+            # Free title/body for LLM feed: carry as-is (P6); no strip-assign.
             title = str(
                 payload.get("title")
                 or payload.get("target_id")
                 or issue["title"]
                 or ""
-            ).strip()
+            )
             body = str(
                 payload.get("text") or row.get("decree_text") or ""
-            ).strip()
-            # #658：完整 title/body 供唯一辨认；禁 40 字截断导致同前缀误绑定
+            )
+            # #658：完整 title/body 供唯一辨认；禁截断导致同前缀误绑定
             lines.append(
                 f"  案卷ID={did} issue#{int(issue['id'])} 题={title} 正文={body}"
             )
@@ -1087,7 +1088,8 @@ def extract_draft_intent(
         assert push_dossier_id is not None
         push_out: Dict[str, Any] = {
             "draft_action": "拟旨",
-            "draft_text": (minister_reply or player_message or "").strip(),
+            # Free draft body: carry minister/player prose as-is (P6).
+            "draft_text": (minister_reply or player_message or ""),
             "target_candidate": "",
             "target_dossier_id": push_dossier_id,
         }
@@ -1157,7 +1159,8 @@ def extract_draft_intent(
         not isinstance(mechanical.get("entries"), list) or not mechanical.get("entries")
     ):
         raise ValueError("pay_order_override 须有非空 entries")
-    draft_text = (minister_reply or "").strip()
+    # Free draft body: carry minister prose as-is (P6).
+    draft_text = minister_reply or ""
     single_declaration = _affair_declaration_from_draft_obj(obj)
     if single_declaration:
         single_declaration = {
@@ -1208,13 +1211,14 @@ def build_draft_admission_resubmit_feedback(
     """
     payload_json = json.dumps(dict(bad_payload or {}), ensure_ascii=False, sort_keys=True)
     reason = str(failure_reason or "").strip() or "（未给出具体拒因）"
-    text = str(decree_text or "").strip()
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
+    text = str(decree_text or "")
     parts = [
         "【成案校验失败，请按失败事实与原产物整份重交结构化字段（勿改旨文正文）】\n",
         f"失败事实：{reason}\n",
         f"原产物：{payload_json}\n",
     ]
-    if text:
+    if text.strip():
         parts.append(f"原旨正文（不得改写）：{text}\n")
     return "".join(parts)
 
@@ -1321,8 +1325,9 @@ def resubmit_draft_admission_payload(
     （原抽 + 重写 2 = 总计 3）。与 extract 内 heal_retries（组合/名册）独立——
     内部 heal 不冒充成案补交次数。不在引擎侧改写 LLM 输出（0142）。
     """
-    text = str(decree_text or "").strip()
-    if not text:
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
+    text = str(decree_text or "")
+    if not text.strip():
         raise ValueError("补交缺旨文正文")
     feedback = build_draft_admission_resubmit_feedback(
         failure_reason=failure_reason,

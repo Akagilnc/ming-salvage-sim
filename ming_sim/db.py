@@ -4579,7 +4579,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
                     bar_good_meaning=ev.bar_good_meaning or "已平",
                     bar_bad_meaning=ev.bar_bad_meaning or "失控",
                     inertia=inertia,
-                    stage_text=ev.stage_text or ev.summary[:80],
+                    # Free seed prose: full summary when stage_text absent (P6).
+                    stage_text=ev.stage_text or ev.summary or "",
                     severity=int(ev.severity),
                     region_hint=ev.region_hint,
                     faction_hint=",".join(ev.interests[:2]),
@@ -11104,9 +11105,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 continue
             if not fork_state["fork"]:
                 continue
-            case_summary = str(row["decree_text"] or "").strip()
-            if len(case_summary) > 48:
-                case_summary = case_summary[:48]
+            # Free decree body for material feed: carry full original (P6 / ADR 0142).
+            # No strip-assign, no fixed-length clip — next model reads the real 旨文.
+            case_summary = str(row["decree_text"] or "")
             # 物理事实：奏报面 / 执行格 / 旨外——直接复用 fork 读端（类型已保证）
             forked_dossiers.append({
                 "dossier_id": dossier_id,
@@ -14542,7 +14543,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
         title = str(payload.get("title") or "").strip()
         if not title:
             title = str(payload.get("target_id") or "").strip()
-        body = str(payload.get("text") or row.get("decree_text") or "").strip()
+        # Free decree body: carry payload/decree text as-is (P6); no strip-assign.
+        body = str(payload.get("text") or row.get("decree_text") or "")
         return title, body
 
     def _apply_referral_verdict_effect(
@@ -14914,7 +14916,9 @@ CREATE TABLE IF NOT EXISTS authority_records (
                 break
         if not hit:
             return
-        context = str(reason or "").strip() or "处置站台者"
+        # Free reason prose: empty-check without mutating carried body (P6).
+        reason_raw = str(reason or "")
+        context = reason_raw if reason_raw.strip() else "处置站台者"
         from ming_sim.credit_events import KIND_BETRAY, write_credit_event
         write_credit_event(
             self, state,
@@ -14941,7 +14945,8 @@ CREATE TABLE IF NOT EXISTS authority_records (
             turn=int(state.turn),
             entries=entries,
             origin_ref=f"dossier:{int(dossier_id)}",
-            reason=str(row["decree_text"] or "")[:240],
+            # Free decree body: full 旨文 as reason carrier (P6); no fixed-length clip.
+            reason=str(row["decree_text"] or ""),
             commit=False,
         )
         # 终局由 dispatcher 尾部通用 terminal 分支统一写（fulfilled 颁布即终局），
@@ -18208,7 +18213,7 @@ CREATE TABLE IF NOT EXISTS authority_records (
             (
                 str(name)[:60], source_issue_id,
                 json.dumps(modifiers, ensure_ascii=False),
-                str(narrative_hint)[:200],
+                str(narrative_hint),
                 start_month, int(duration_months),
                 json.dumps(clear_gate or {}, ensure_ascii=False),
                 str(legacy_key)[:60],

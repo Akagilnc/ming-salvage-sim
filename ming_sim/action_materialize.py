@@ -238,8 +238,9 @@ def stage_pacification_candidate(
     target = str(target_id or "").strip()
     if not target:
         return 0
-    body = str(text or "").strip()
-    if not body:
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
+    body = str(text or "")
+    if not body.strip():
         return 0
 
     pending_rows = list(pend_for_minister or [])
@@ -397,8 +398,9 @@ def stage_punishment_candidate(
         action not in punish_actions_effective() and disposition != "压下"
     ):
         return 0
-    body = str(text or "").strip()
-    if not body:
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
+    body = str(text or "")
+    if not body.strip():
         return 0
 
     pending_rows = list(pend_for_minister or [])
@@ -808,7 +810,8 @@ def stage_grant_allocation_candidate(
     action = str(grant_action or "").strip()
     target = str(target_id or "").strip()
     kind = str(target_kind or "").strip()
-    body = str(text or "").strip()
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
+    body = str(text or "")
     if action not in (GRANT_ACTIONS - {"无"}):
         return 0
     # #1503：协饷完整写入前置由同一权威缝收集；此处不补值。
@@ -833,7 +836,7 @@ def stage_grant_allocation_candidate(
     else:
         if not target or not kind:
             return 0
-        if not body:
+        if not body.strip():
             return 0
         # #1620：非协饷写 pending 前消费 shape 唯一权威；删宽松 int(amount or 0)
         # #1730：物化缝把 shape 族裸 ValueError 转为 typed 拒收（权威函数语义不动）。
@@ -1512,8 +1515,9 @@ def stage_assignment_candidate(
     """
     from ming_sim.draft_intent import resolve_directive_mode
 
-    body = str(text or "").strip()
-    if not body:
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
+    body = str(text or "")
+    if not body.strip():
         raise DecreeMaterializationValidationError(
             "交办旨意缺少正文", failed_fields=("text",),
         )
@@ -1645,8 +1649,9 @@ def stage_authorization_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
+    body = str(text or "")
+    if not body.strip():
         return 0
     holder = str(minister_name or "").strip()
     if not holder:
@@ -1734,8 +1739,9 @@ def stage_referral_candidate(
     """
     from ming_sim.draft_intent import resolve_directive_mode
 
-    body = str(text or "").strip()
-    if not body:
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
+    body = str(text or "")
+    if not body.strip():
         raise DecreeMaterializationValidationError(
             "下议旨意缺少正文", failed_fields=("text",),
         )
@@ -1843,8 +1849,9 @@ def stage_revoke_authority_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
+    body = str(text or "")
+    if not body.strip():
         return 0
     rec = _resolve_unique_active_authority(
         db, int(turn),
@@ -1925,8 +1932,9 @@ def stage_revoke_decree_candidate(
 
     if str(target_candidate or "").strip() == "含糊":
         return 0
-    body = str(text or "").strip()
-    if not body:
+    # Free decree body: empty-check without mutating carried 旨文 (P6).
+    body = str(text or "")
+    if not body.strip():
         return 0
     resolved = _parse_revoke_decree_target(
         db,

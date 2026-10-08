@@ -75,11 +75,12 @@ def build_pending_summaries(db: Any, turn: int, *, night_id: int = 0) -> List[st
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
-        text = str(payload.get("text") or row["action"] or "").strip()
-        brief = text[:60] if text else str(row["kind"] or "")
+        # Free body: empty-check without mutating or truncating carried prose (P6).
+        text = str(payload.get("text") or row["action"] or "")
+        body = text if text.strip() else str(row["kind"] or "")
         approved = "已应允" if int(row["night_approved"] or 0) else "待应允"
         out.append(
-            f"#{int(row['id'])} [{row['kind']}/{row['action']}] {approved} {brief}"
+            f"#{int(row['id'])} [{row['kind']}/{row['action']}] {approved} {body}"
         )
     return out
 

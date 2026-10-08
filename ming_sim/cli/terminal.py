@@ -564,8 +564,9 @@ def _option_label(option: object) -> str:
     if not isinstance(option, dict):
         return str(option or "")
     label = str(option.get("label") or "")
-    hint = str(option.get("hint") or "").strip()
-    return f"{label}（{hint}）" if hint else label
+    # Free presentation: empty-check without mutating carried hint (P6).
+    hint = str(option.get("hint") or "")
+    return f"{label}（{hint}）" if hint.strip() else label
 
 
 def _adjudicate_cli_decisions(session: GameSession, result) -> str:
@@ -584,10 +585,12 @@ def _adjudicate_cli_decisions(session: GameSession, result) -> str:
     decisions = list(result.decisions or []) or list(session.pending_decisions())
     choices = []
     for decision in decisions:
-        title = str(decision.get("title") or "").strip() or "（无题）"
-        context = str(decision.get("context") or "").strip()
+        # Free presentation: empty-check without mutating carried prose (P6).
+        title_raw = str(decision.get("title") or "")
+        title = title_raw if title_raw.strip() else "（无题）"
+        context = str(decision.get("context") or "")
         print(f"\n· {wrap(title)}")
-        if context:
+        if context.strip():
             print(f"  {wrap(context)}")
         raw_options = decision.get("options")
         options = list(raw_options) if isinstance(raw_options, (list, tuple)) else []

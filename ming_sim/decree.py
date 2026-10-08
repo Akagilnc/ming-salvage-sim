@@ -642,9 +642,10 @@ def write_decree_with_agno(
     except (APITimeoutError, APIConnectionError, APIStatusError) as error:
         # 只把提供方 typed 网络/HTTP 翻成 LLMUnavailable；代码故障原样上浮（#1902）。
         raise llm_unavailable_from_error(error, "拟诏") from error
+    # Free decree body: empty-check without mutating carried prose (P6).
     if not text.strip():
         raise LLMContractError("拟诏输出为空。")
-    return text.strip()
+    return text
 
 
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:

@@ -1807,8 +1807,9 @@ class GameSession:
         )
         from ming_sim.llm_model import extract_agent_text
 
-        message_text = str(message or "").strip()
-        if not message_text:
+        # Free emperor prose: empty-check without mutating carried body (P6).
+        message_text = str(message or "")
+        if not message_text.strip():
             raise ValueError("问话不能为空。")
         from ming_sim.decree_forecast import bind_forecast_owner
         bind_forecast_owner(self)
@@ -2457,8 +2458,9 @@ class GameSession:
             ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None:
                 recovered_source = _provenance_from_stored(ctx.get("source"))
-                stored = str(ctx.get("decree_text") or "").strip()
-                if stored:
+                # Free decree body on settle recovery: carry stored 旨文 as-is (P6).
+                stored = str(ctx.get("decree_text") or "")
+                if stored.strip():
                     self.last_decree = stored
                     decree = stored
         # #1234/#1235：点击受理即独立提交月初快照（不进 pre_settle 事务）。
@@ -2775,10 +2777,11 @@ class GameSession:
             obj = _parse_rescript_json_strict(str(raw or ""))
             if not isinstance(obj, dict):
                 raise ValueError("deliberate LLM 意愿须为 object")
-            title = str(obj.get("title") or "").strip()
-            body = str(obj.get("body") or "").strip()
+            # Free deliberate prose: empty-check without mutating carried body (P6).
+            title = str(obj.get("title") or "")
+            body = str(obj.get("body") or "")
             stance = str(obj.get("stance") or "").strip()
-            if not (title and body and stance):
+            if not (title.strip() and body.strip() and stance):
                 raise ValueError("deliberate LLM 意愿缺 title/body/stance")
             # shape 初检；身份合法性在 apply 事务内再核（整批零写）
             supporters = obj.get("supporter_ids", [])
