@@ -113,10 +113,6 @@ logger = logging.getLogger(__name__)
 
 WEB_DIST = bundled_path("web", "dist")
 # 用户上传的自定义立绘存档级目录（不随 build 清空，git 可忽略）。
-# frozen 模式落 ~/.ming_sim/uploads/portraits/，源码模式落 <repo>/data/uploads/portraits/。
-UPLOAD_PORTRAIT_DIR = user_data_path("uploads", "portraits")
-# 自定义立绘 portrait_id 前缀；前端据此解析到 /portraits/custom/<name>.png。
-CUSTOM_PORTRAIT_PREFIX = "custom:"
 ALLOWED_PORTRAIT_TYPES = {"image/png", "image/jpeg", "image/webp"}
 MAX_PORTRAIT_BYTES = 8 * 1024 * 1024  # 8MB 上限
 _DEFAULT_FAVORITES = frozenset({"王承恩", "曹化淳", "李若琏", "魏忠贤", "田尔耕"})
@@ -881,12 +877,6 @@ class WebGame:
         self.db.backup_to(target)
         return {"name": safe, "path": target}
 
-    def delete_save(self, name: str) -> None:
-        safe = self._safe_save_name(name)
-        target = os.path.join(self.saves_dir(), f"{safe}.db")
-        if not os.path.isfile(target):
-            raise HTTPException(status_code=404, detail="存档不存在。")
-        os.remove(target)
 
     def _dispose_rebuild_residual(self) -> bool:
         """#1749 B：处置上一失败 rebuild 候选。成功关闭返回 True；仍活则 False 且保留引用。"""
@@ -1061,166 +1051,6 @@ class WebGame:
         self.chat_history = chat_history
         self.favorites = favorites
 
-    def build_llm_config(
-        self,
-        base_url: str,
-        model: str,
-        api_key: str,
-        timeout_seconds: float = 0,
-        thinking_level: Optional[str] = None,
-        reasoning_strength: Optional[str] = None,
-        advanced_model: Optional[str] = None,
-        advanced_base_url: Optional[str] = None,
-        advanced_api_key: Optional[str] = None,
-        advanced_thinking_level: Optional[str] = None,
-        channel: Optional[str] = None,
-        cli_runner: Optional[str] = None,
-        cli_model: Optional[str] = None,
-        cli_timeout_seconds: float = 0,
-        default_headers: Optional[Dict[str, str]] = None,
-    ) -> LLMConfig:
-        """从 in-game 输入派生新 LLMConfig（纯函数,不 verify/不落盘/不改 session）。
-        通道感知（#51）：显式 channel 优先;否则填了真实 API key=切 api;都没有=保留当前通道
-        （CLI 局开 in-game 设置不再被强制降级到 api + 空 key 误报）。"""
-        cur = self.session.llm_config
-        # 通道解析（#51）
-        explicit = (channel or "").strip().lower() if channel is not None else ""
-        if explicit in VALID_CHANNELS:
-            new_channel = explicit
-        elif real_api_key_or_empty(api_key):
-            new_channel = "api"   # 用户填了真实 API key = 显式切到 API
-        else:
-            new_channel = (cur.channel or "api")   # 没填 = 保留当前通道,不强制降级
-        # CLI 槽位：未传则保留当前
-        new_cli_runner = (cli_runner if cli_runner is not None else cur.cli_runner)
-        new_cli_model = (cli_model if cli_model is not None else cur.cli_model)
-        new_cli_timeout = (
-            cli_timeout_seconds if cli_timeout_seconds and cli_timeout_seconds > 0
-            else cur.cli_timeout_seconds
-        )
-        base = normalize_openai_base_url(base_url.strip() or cur.base_url)
-        new_model = model.strip() or cur.model
-        # CLI 通道不要 API key（占位符在 create_chat_model 构造 CliChat 时注入）；
-        # API 通道：请求 key 与已存 key 回落都过占位符过滤。
-        if new_channel == "cli":
-            new_key = ""
-        else:
-            new_key = real_api_key_or_empty(api_key) or real_api_key_or_empty(cur.api_key)
-            if not new_key:
-                # 从 cli 切回 api：cur.api_key 在 cli 模式已归一为空,但真实 key 仍存在
-                # runtime_llm.json 的 api 槽——回收它,免得切回 api 还要重输 key(Gemini R1)。
-                saved = load_runtime_llm()
-                saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
-                new_key = real_api_key_or_empty(saved_api.get("api_key"))
-        new_timeout = timeout_seconds if timeout_seconds > 0 else cur.timeout_seconds
-        if thinking_level is None:
-            new_thinking_level = cur.thinking_level
-        else:
-            new_thinking_level = normalize_thinking_level(thinking_level)
-        if reasoning_strength is None:
-            new_reasoning_strength = cur.reasoning_strength
-        else:
-            new_reasoning_strength = normalize_reasoning_strength(reasoning_strength)
-        # advanced_* = None 表示不动；传空串表示显式清空。
-        if advanced_model is None:
-            new_advanced = cur.advanced_model
-        else:
-            new_advanced = advanced_model.strip()
-        if advanced_base_url is None:
-            new_adv_base = cur.advanced_base_url
-        else:
-            adv_base_in = advanced_base_url.strip()
-            new_adv_base = normalize_openai_base_url(adv_base_in) if adv_base_in else ""
-        if advanced_api_key is None:
-            new_adv_key = cur.advanced_api_key
-        else:
-            new_adv_key = advanced_api_key.strip()
-        new_adv_thinking_level = ""
-        # #1794：显式传入（含空表）覆写；省略则保留当前头。
-        if default_headers is None:
-            new_default_headers = dict(cur.default_headers or {})
-        else:
-            new_default_headers = _slot_header_table(default_headers)
-        return LLMConfig(
-            api_key=new_key,
-            base_url=base,
-            model=new_model,
-            timeout_seconds=new_timeout,
-            thinking_level=new_thinking_level,
-            advanced_model=new_advanced,
-            advanced_base_url=new_adv_base,
-            advanced_api_key=new_adv_key,
-            advanced_thinking_level=new_adv_thinking_level,
-            reasoning_strength=new_reasoning_strength,
-            channel=new_channel,
-            cli_runner=new_cli_runner,
-            cli_model=new_cli_model,
-            cli_timeout_seconds=new_cli_timeout,
-            default_headers=new_default_headers,
-        )
-
-    def commit_llm_config(self, new_config: LLMConfig) -> LLMConfig:
-        """落盘 + 切 session + 重建 registry（快;verify 由调用方先做,可 offload）。"""
-        if new_config.channel == "cli":
-            # CLI 通道:保住 api 槽的真实配置,切回 api 才找得回(CMR R1/R2 codex)。
-            #  1) 已存 api 槽有真实 key → 传空 api 输入触发 save_runtime_llm 的 preserve_api,原样留。
-            #  2) 槽无真实 key,但当前(切换前)session 是带真实 key 的 api 配置(可能来自 OPENAI_API_KEY
-            #     env,尚未落 runtime_llm.json 槽)→ 把它显式写进 api 槽,否则 env-only key 在
-            #     api→cli→api 往返中丢失。
-            #  3) 哪都没有真实 key → 传空(无可丢)。
-            saved = load_runtime_llm()
-            saved_api = saved.get("api") if isinstance(saved.get("api"), dict) else {}
-            prev = self.session.llm_config
-            if real_api_key_or_empty(saved_api.get("api_key")) or not real_api_key_or_empty(prev.api_key):
-                save_runtime_llm(
-                    "", "", "",
-                    channel="cli",
-                    cli_runner=new_config.cli_runner,
-                    cli_model=new_config.cli_model,
-                    cli_timeout_seconds=new_config.cli_timeout_seconds,
-                    reasoning_strength=new_config.reasoning_strength,
-                )
-            else:
-                save_runtime_llm(
-                    prev.base_url,
-                    prev.model,
-                    real_api_key_or_empty(prev.api_key),
-                    prev.timeout_seconds,
-                    prev.thinking_level,
-                    prev.advanced_model,
-                    prev.advanced_base_url,
-                    prev.advanced_api_key,
-                    "",
-                    channel="cli",
-                    cli_runner=new_config.cli_runner,
-                    cli_model=new_config.cli_model,
-                    cli_timeout_seconds=new_config.cli_timeout_seconds,
-                    reasoning_strength=new_config.reasoning_strength,
-                    api_reasoning_strength=prev.reasoning_strength,
-                )
-        else:
-            save_runtime_llm(
-                new_config.base_url,
-                new_config.model,
-                new_config.api_key,
-                new_config.timeout_seconds,
-                new_config.thinking_level,
-                new_config.advanced_model,
-                new_config.advanced_base_url,
-                new_config.advanced_api_key,
-                "",
-                channel="api",
-                cli_runner=new_config.cli_runner,
-                cli_model=new_config.cli_model,
-                cli_timeout_seconds=new_config.cli_timeout_seconds,
-                reasoning_strength=new_config.reasoning_strength,
-                default_headers=dict(new_config.default_headers or {}),
-            )
-        self.session.llm_config = new_config
-        # 重建 registry 让大臣 Agent 用新配置
-        self.session.begin_turn()
-        return new_config
-
     # ── 便捷属性 ──────────────────────────────────────────────────────────
     @property
     def db(self):
@@ -1288,17 +1118,6 @@ class WebGame:
         self.session.begin_turn()
         # #1343 孤儿快照清一处：受理样板成功支（_settlement_period_entry 持 write_cm）。
         # 生产四调用点皆在 entry 体内（inflight>0），此处再清恒不触发；禁第二清理点。
-
-    # ── 自定义立绘 ────────────────────────────────────────────────────────
-    def find_character(self, name: str) -> Optional[Character]:
-        return self.content.characters.get(name)
-
-    def set_custom_portrait(self, name: str, portrait_id: str) -> None:
-        """落库并回写内存：把某人物 portrait_id 指向自定义立绘。"""
-        self.db.set_portrait_id(name, portrait_id)
-        character = self.content.characters.get(name)
-        if character is not None:
-            character.portrait_id = portrait_id
 
     # ── 序列化 ────────────────────────────────────────────────────────────
     def public_character(self, character: Character) -> Dict[str, Any]:
@@ -3244,28 +3063,6 @@ def _spawn_startup_catch_up_nonfatal(game) -> None:
         logger.exception("startup extraction catch-up scheduling failed")
 
 
-def _run_hot_replace(game, replace: Callable[[], None], *, failure_label: str) -> None:
-    """局内忙态先回 409；真正排空与独占由 ``_replace_database`` 单点负责。"""
-    try:
-        _refuse_settling_or_busy_write_phase(game)
-        gate_probe = _try_acquire_serialized_web_write_gate(game)
-        gate_probe.release()
-        entry_lock = _settlement_entry_lock(game)
-        with entry_lock:
-            entry_busy = int(getattr(game, "_settlement_entry_inflight", 0) or 0) > 0
-        if entry_busy or get_session_write_queue(game).inflight_count() > 0:
-            raise HTTPException(
-                status_code=409,
-                detail="月末结算或上一步写入进行中，请稍候再操作。",
-            )
-        replace()
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("%s", failure_label)
-        raise HTTPException(status_code=500, detail=f"{failure_label}：{exc}") from exc
-    _spawn_startup_catch_up_nonfatal(game)
-
 
 @contextlib.contextmanager
 def _serialized_web_write(game):
@@ -4693,7 +4490,7 @@ async def api_menu_load_save(name: str) -> Dict[str, Any]:
 @app.delete("/api/menu/saves/{name}")
 async def api_menu_delete_save(name: str) -> Dict[str, Any]:
     """菜单页删存档：不依赖 WebGame 实例，直接删文件系统里的 <name>.db。
-    与 WebGame.delete_save 同名校验，返回刷新后的 campaigns。"""
+    返回刷新后的 campaigns。"""
     cleaned = "".join(c for c in name.strip() if c.isalnum() or c in "._-")
     if not cleaned or cleaned.startswith("."):
         raise HTTPException(status_code=400, detail="存档名非法。仅允许字母/数字/._- ")
@@ -5614,33 +5411,6 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                 break
 
     return StreamingResponse(generate(), media_type="text/event-stream")
-
-
-class SaveCreateRequest(BaseModel):
-    name: str
-
-
-class LLMConfigRequest(BaseModel):
-    base_url: str = ""
-    model: str = ""
-    api_key: str = ""
-    timeout_seconds: float = 0
-    thinking_level: str = "__keep__"
-    reasoning_strength: str = "__keep__"
-    # None=不动，""=显式清空，其他=覆写。pydantic v1 默认 None 走不进来；用 sentinel "__keep__"
-    advanced_model: str = "__keep__"
-    advanced_base_url: str = "__keep__"
-    advanced_api_key: str = "__keep__"
-    advanced_thinking_level: str = "__keep__"
-    # 通道感知（#51）：channel/cli_runner/cli_model 用 "__keep__" sentinel 表示「保留当前」;
-    # cli_timeout_seconds（静默判死阈值,秒）是数值,沿用数值 sentinel 0（=不改,build 回落当前值），
-    # 不走 "__keep__"。
-    channel: str = "__keep__"
-    cli_runner: str = "__keep__"
-    cli_model: str = "__keep__"
-    cli_timeout_seconds: float = 0
-    # #1794：附加请求头表；None=保留当前，{}=清空。
-    default_headers: Optional[Dict[str, str]] = None
 
 
 @app.get("/api/saves")

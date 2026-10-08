@@ -1105,20 +1105,10 @@ class GameSession:
         result = ChatTurnResult(answer="")
         if audience_command_verdict == CMD_CLOSE_NIGHT:
             ctid = int(chat_turn_id or 0)
-            if audience_command_verdict == CMD_CLOSE_NIGHT:
-                # 生产：退朝只标 court_break，由 epilogue 收夜（join 转译）。
-                # ctid==0 的当场收夜分支随同步转译一并删除。
-                if ctid > 0:
-                    self._mark_control_turn_translation_done(ctid)
-                    result.court_action = "court_break"
-                    return result
-                close_night(
-                    self.db, self.state,
-                    content=getattr(self, "content", None),
-                    llm_config=getattr(self, "llm_config", None),
-                    write_gate=getattr(self, "_write_gate", None),
-                    write_queue=self._write_queue,
-                )
+            # 生产：ctid>0 只标 court_break，由 epilogue 收夜（join 转译）；
+            # ctid==0 当场 close_night。
+            if ctid > 0:
+                self._mark_control_turn_translation_done(ctid)
                 result.court_action = "court_break"
                 return result
             close_night(

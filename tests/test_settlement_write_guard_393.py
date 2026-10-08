@@ -103,12 +103,6 @@ class _FakeGame:
     def directive_payload(self, row):
         return row
 
-    def find_character(self, name):
-        return self.content.characters.get(name)
-
-    def set_custom_portrait(self, name, pid):
-        self.db.writes.append("set_custom_portrait")
-
     def public_character(self, c):
         return {"name": c.name}
 

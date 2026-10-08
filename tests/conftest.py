@@ -334,23 +334,19 @@ def _isolated_user_data_dir(tmp_path):
     （实证 18 包 75MB + 假行混真 jsonl + attempt 序号灌高）。各用例自己 setenv 指
     自己的 tmp_path 仍可覆盖本兜底（后设者胜）。
 
-    同步把 import 时钉死的 user_data 常量（``UPLOAD_PORTRAIT_DIR`` /
-    ``RUNTIME_LLM_PATH``）拨到本用例 tmp——否则 env 改了
+    同步把 import 时钉死的 user_data 常量（``RUNTIME_LLM_PATH``）拨到本用例 tmp——否则 env 改了
     常量仍指仓内 ``data/``，xdist 多 worker 会抢同一固定路径（#1233 刀2 gate）。
 
     用独立 MonkeyPatch 实例而非共享的 monkeypatch fixture：后者与测试同一实例，
     测试里 monkeypatch.undo() 会把本兜底一并撤掉（实证 test_noready_recovery
     undo 后 settle 把空目录建回真实 data/）。"""
     import ming_sim.llm_config as _llm_config
-    import web_app as _web_app
 
     user_root = tmp_path / "user_data"
-    portrait_dir = user_root / "uploads" / "portraits"
-    portrait_dir.mkdir(parents=True, exist_ok=True)
+    user_root.mkdir(parents=True, exist_ok=True)
 
     mp = pytest.MonkeyPatch()
     mp.setenv("MING_SIM_USER_DATA_DIR", str(user_root))
-    mp.setattr(_web_app, "UPLOAD_PORTRAIT_DIR", str(portrait_dir))
     mp.setattr(_llm_config, "RUNTIME_LLM_PATH", str(user_root / "runtime_llm.json"))
     yield
     mp.undo()
