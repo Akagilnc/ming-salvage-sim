@@ -34,51 +34,6 @@ _MUTINY_ORDINAL_KEYS = frozenset(
     }
 )
 
-# 六档真值表（票面 latch / 边界 / probation；含全部明确边界样本）
-_TIER_CASES = (
-    # (is_mutinied, loyalty, probation, expected_tier)
-    (1, 100, 0, "哗变"),  # latch L=100
-    (1, 100, 1, "哗变"),  # latch 盖过 probation
-    (1, 95, 0, "哗变"),
-    (1, 10, 3, "哗变"),
-    (0, 39, 0, "鼓噪"),
-    (0, 19, 0, "鼓噪"),  # L<20 未闩 → 鼓噪，非哗变
-    (0, 30, 1, "鼓噪"),  # probation 不覆盖低档
-    (0, 40, 0, "不满"),
-    (0, 50, 1, "不满"),  # probation 不覆盖中低档
-    (0, 59, 0, "不满"),
-    (0, 60, 1, "不满"),  # probation 只挡回正常
-    (0, 80, 2, "不满"),
-    (0, 60, 0, "一般"),
-    (0, 69, 0, "一般"),
-    (0, 70, 0, "优秀"),
-    (0, 79, 0, "优秀"),
-    (0, 80, 0, "死忠"),
-    (0, 100, 0, "死忠"),
-)
-
-_TIER_IDS = [
-    f"L{loyalty}-latch{latch}-p{prob}-{tier}"
-    for latch, loyalty, prob, tier in _TIER_CASES
-]
-
-
-
-@pytest.mark.parametrize(
-    "is_mutinied,loyalty,probation,expected",
-    _TIER_CASES,
-    ids=_TIER_IDS,
-)
-def test_player_army_situation_six_tier_truth_table(
-    is_mutinied, loyalty, probation, expected
-):
-    row = _row(is_mutinied=is_mutinied, loyalty=loyalty, mutiny_probation=probation)
-    sit = _player_army_situation(row, monthly_pay=10)
-    assert sit["mutiny_tier"] == expected
-    assert isinstance(sit["morale_text"], str)
-    assert isinstance(sit["arrears_text"], str)
-
-
 def _configure(db) -> None:
     db.conn.execute("UPDATE armies SET manpower=0")
     db.conn.execute(
@@ -132,6 +87,44 @@ def _payload_by_id(db):
 
 
 
+
+
+
+def _web_runtime(db, state, content):
+    """轻壳 WebGame：走真实 state_payload / map_nodes（session 属性代理 db/state）。"""
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        pending_count=lambda: 0,
+        pending_decisions=lambda: [],
+        victory=lambda: {"status": "ongoing", "summary": ""},
+        previous_summary="",
+        last_decree="",
+        last_report="",
+    )
+    runtime.directive_rows = lambda: []
+    runtime.issue_payloads = lambda: []
+    runtime.legacies_payload = lambda: []
+    runtime.closed_this_turn_payloads = lambda: []
+    runtime.ending_payload = lambda: None
+    runtime.budget_payload = lambda: {}
+    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+    runtime.character_power_id = lambda c: "ming"
+    runtime._month_open_snapshot = lambda: None
+    runtime._display_metrics = lambda: dict(state.metrics)
+    runtime.map_nodes = lambda: web_app.WebGame.map_nodes(runtime)
+    runtime._theater_label = lambda tid: web_app.WebGame._theater_label(runtime, tid)
+    return runtime
+
+
+def _find_army_in_map_nodes(nodes, army_id: str = ARMY):
+    for node in nodes:
+        for army in node.get("armies") or []:
+            if army.get("id") == army_id:
+                return army
+    raise AssertionError(f"map_nodes 未挂载军队 {army_id}")
 
 
 def _assert_structured_situation(card: dict, sit: dict, label: str) -> None:

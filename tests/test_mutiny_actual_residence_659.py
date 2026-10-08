@@ -21,6 +21,21 @@ LIUMIN_LIAODONG = 0
 LIUMIN_DONGJIANG = 0
 
 
+def _pop(db: GameDB, name: str, region_id: str) -> int:
+    row = db.conn.execute(
+        "SELECT population FROM classes WHERE name=? AND region_id=?",
+        (name, region_id),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _pin_split_arrears(db: GameDB, army_id: str, *, province: float, central: float) -> None:
+    db.conn.execute(
+        "UPDATE armies SET province_pay_arrears=?, central_pay_arrears=?, arrears=? WHERE id=?",
+        (province, central, province + central, army_id),
+    )
+    db.conn.commit()
+
 
 def _pseudo_event(title: str = "调防") -> Event:
     return Event(

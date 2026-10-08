@@ -24,25 +24,7 @@ from ming_sim.highlight_judge import (
 )
 
 
-# ── 解析 / 单次调用降级 ──────────────────────────────────────────────────
-
-
-def test_parse_highlight_judge_bad_output_is_empty():
-    assert parse_highlight_judge_output("") == []
-    assert parse_highlight_judge_output("not json") == []
-    assert parse_highlight_judge_output('{"highlights": "辽饷"}') == []
-    assert parse_highlight_judge_output('{"phrases": ["甲"]}') == []
-    assert parse_highlight_judge_output('{"highlights": [1, null, ""]}') == []
-
-
-def test_parse_highlight_judge_valid_phrases():
-    # Strict JSON object only; fenced/prose wrappers are bad output → empty.
-    assert parse_highlight_judge_output(
-        '{"highlights": ["**辽饷**", "户部亏空", "  "]}'
-    ) == ["**辽饷**", "户部亏空"]
-    assert parse_highlight_judge_output(
-        '```json\n{"highlights": ["**辽饷**", "户部亏空"]}\n```'
-    ) == []
+# ── 单次调用降级（parser 由 run_highlight_judge 真入口覆盖，不另立孤立 parser 钉）──
 
 
 def test_run_highlight_judge_timeout_and_exception_degrade_silently():

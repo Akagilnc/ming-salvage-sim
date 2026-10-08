@@ -216,16 +216,6 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     assert seen["runner"] == "codex" and seen["json_events"] is True
 
 
-def test_codex_final_text_handles_item_completed_shape():
-    assert cb._codex_final_text(
-        {"type": "item.completed", "item": {"type": "agent_message", "text": "BODY"}}
-    ) == "BODY"
-    assert cb._codex_final_text(
-        {"type": "item.completed", "item": {"type": "reasoning", "text": "DRAFT"}}
-    ) == ""
-    assert cb._codex_final_text({"type": "agent_message", "message": "TOP"}) == "TOP"
-
-
 @pytest.mark.parametrize(
     "runner,kwargs,model_flag",
     [

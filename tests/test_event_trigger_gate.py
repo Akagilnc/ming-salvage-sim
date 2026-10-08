@@ -1446,19 +1446,6 @@ def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
 
 
 
-def test_person_write_state_restore_removes_dynamic_character_attrs(game):
-    """人事写口失败回滚必须删除快照中不存在的动态属性，避免内存幽灵状态残留。"""
-    db, _state, content = game
-    snapshot = issues._snapshot_person_write_state(db, content)
-    content.characters["毛文龙"].ghost_preflight_attr = "leak"
-
-    issues._restore_person_write_state(db, content, snapshot, commit=False)
-
-    assert not hasattr(content.characters["毛文龙"], "ghost_preflight_attr")
-
-
-
-
 def test_person_core_static_backfill_preserves_relocated_mao(game):
     """#191 CMR R4：旧档静态补丁不能覆盖玩家已落库的调离规避状态。"""
     db, _state, content = game

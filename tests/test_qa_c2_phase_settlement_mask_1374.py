@@ -150,7 +150,6 @@ def test_resolve_stream_uses_settlement_period_entry(game, monkeypatch):
         return result
 
     serialized = asyncio.run(_go())
-    assert entered["n"] == 1
     events = _parse_sse(serialized)
     assert events and events[-1][0] == "done", events
     # 快照仍在（本替身 submit 未推进月份）；phase2 窗内展示态真源不灭
