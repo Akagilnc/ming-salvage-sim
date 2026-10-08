@@ -9583,36 +9583,6 @@ class GameDB:
         return out
 
     # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────
-    def _latest_held_user_chat_message_id(
-        self, minister_name: str, turn: Optional[int] = None,
-    ) -> Optional[int]:
-        """Latest still-held user chat row for oral-decree pin (#976).
-
-        * ``turn`` set (stage path): only that turn — stage-time pin of the
-          utterance just spoken, so later confirmation user lines cannot steal.
-        * ``turn`` omitted (classification auto-capture): any still-held user
-          for this minister (covers F4 / zero-overlap cross-turn: hold at T,
-          create at T+N without settle).
-        """
-        name = str(minister_name or "").strip()
-        if not name:
-            return None
-        if turn is not None:
-            row = self.conn.execute(
-                "SELECT id FROM chat_messages "
-                "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
-                "AND turn=? ORDER BY id DESC LIMIT 1",
-                (name, int(turn)),
-            ).fetchone()
-        else:
-            row = self.conn.execute(
-                "SELECT id FROM chat_messages "
-                "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
-                "ORDER BY id DESC LIMIT 1",
-                (name,),
-            ).fetchone()
-        return int(row["id"]) if row is not None else None
-
     def _parse_origin_chat_message_id(
         self, payload: Optional[Mapping[str, object]],
         *, durable: bool = False,
@@ -9643,70 +9613,24 @@ class GameDB:
             return None
         return mid if mid > 0 else None
 
-    def attach_secret_oral_pin(
-        self,
-        minister_name: str,
-        turn: int,
-        payload: Optional[Mapping[str, object]] = None,
-    ) -> Dict[str, object]:
-        """Pin latest held user for production non-create **更新** (#976).
-
-        ``stage_pending_action`` only auto-pins 新建.  Non-create pure-public
-        must not invent bloodline (催办/记进展/提交核议 leave pin unset).
-        Callers that rewrite order body (extract「更新」) attach pin so the oral
-        decree withholds and never settle-releases into shared
-        character_knowledge_sources.
-        """
-        out: Dict[str, object] = dict(payload or {})
-        if self._parse_origin_chat_message_id(out) is not None:
-            return out
-        mid = self._latest_held_user_chat_message_id(minister_name, int(turn))
-        if mid is not None:
-            out["origin_chat_message_id"] = int(mid)
-        return out
-
     def _resolve_secret_oral_pins(
         self,
-        state: GameState,
         *,
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
-        origin_minister_name: Optional[str] = None,
-        assignee_name: Optional[str] = None,
     ) -> List[int]:
         """Resolve oral-decree chat pins for secret-order classification (#976).
 
-        Prefer explicit stage/API pins.  Auto-capture latest held user only when
-        the caller provided **no** pin intent (both args None) — direct create
-        without pending still withholds the oral line.  Explicit empty
-        ``origin_chat_message_ids=[]`` means pin-mode with no new oral (do not
-        invent pure-public bloodline).
+        Explicit stage/API pins and already-durable brief pins only.
+        Explicit empty ``origin_chat_message_ids=[]`` means pin-mode with no new
+        oral.  No last-held auto-capture (#1897 J820-E2).
         """
-        has_explicit_pin_intent = (
-            origin_chat_message_ids is not None or origin_chat_message_id is not None
-        )
         explicit: List[object] = []
         if origin_chat_message_ids is not None:
             explicit.extend(origin_chat_message_ids)
         if origin_chat_message_id is not None:
             explicit.append(origin_chat_message_id)
-        pinned_ids = self._coerce_positive_message_ids(explicit)
-        if not pinned_ids and not has_explicit_pin_intent:
-            # Auto-capture: any still-held user bloodline (cross-turn F4 included).
-            # Prefer same-turn first so pure-public earlier-turn held is not
-            # stolen when a fresh same-turn oral exists.
-            for name in dict.fromkeys(
-                n for n in (
-                    str(origin_minister_name or "").strip(),
-                    str(assignee_name or "").strip(),
-                ) if n
-            ):
-                mid = self._latest_held_user_chat_message_id(name, int(state.turn))
-                if mid is None:
-                    mid = self._latest_held_user_chat_message_id(name)
-                if mid is not None and mid not in pinned_ids:
-                    pinned_ids.append(mid)
-        return pinned_ids
+        return self._coerce_positive_message_ids(explicit)
 
     def _brief_origin_chat_message_ids(self, order_id: int) -> List[int]:
         """Durable oral pins already registered on this order's brief (may be empty).
@@ -9739,11 +9663,8 @@ class GameDB:
     ) -> None:
         """Brief upsert + pin-mode oral withhold/release (create and non-create isomorphic)."""
         pins = self._resolve_secret_oral_pins(
-            state,
             origin_chat_message_id=origin_chat_message_id,
             origin_chat_message_ids=origin_chat_message_ids,
-            origin_minister_name=origin_minister_name,
-            assignee_name=minister_name,
         )
         self.upsert_secret_order_brief(
             state, int(order_id), minister_name, title, body,
@@ -10474,12 +10395,16 @@ class GameDB:
         Reported rows never enter apply (ADR 0073).
         """
         dossier = self.get_decree_dossier(int(dossier_id))
-        raw_band = str(progress_band or "")
-        band_present = raw_band.strip()
-        text = str(memorial_text or "")
+        # 写口正文：禁 str()/or 洗白；空陈词与坏类型按既有合同区分（#1897 J820-E1）。
+        raw_band = _require_durable_prose(
+            progress_band, field="progress_band", required=False,
+        )
+        text = _require_durable_prose(
+            memorial_text, field="memorial_text", required=False,
+        )
         if dossier is None:
             raise ValueError("案卷不存在")
-        if not band_present or not text.strip():
+        if not raw_band.strip() or not text.strip():
             raise ValueError("进展档和密奏均不能为空")
         origin_norm = self._normalize_dossier_report_origin(
             origin, is_terminal=bool(is_terminal),
@@ -10664,11 +10589,16 @@ class GameDB:
                     raise ValueError("not positive")
             except (TypeError, ValueError) as exc:
                 raise ValueError("长差月报案卷编号无效") from exc
-            band = str(item.get("progress_band") or "").strip()
-            text = str(item.get("memorial_text") or "")
-            if dossier_id not in candidates or dossier_id in supplied or not band or not text.strip():
+            # 月报正文进入写口前禁 str()/or 洗白（#1897 J820-E1）。
+            band = _require_durable_prose(
+                item.get("progress_band"), field="progress_band",
+            )
+            text = _require_durable_prose(
+                item.get("memorial_text"), field="memorial_text",
+            )
+            if dossier_id not in candidates or dossier_id in supplied:
                 raise ValueError("长差月报存在未知、重复或空白条目")
-            supplied[dossier_id] = item
+            supplied[dossier_id] = {**item, "progress_band": band, "memorial_text": text}
         if set(supplied) != set(candidates):
             raise ValueError("合资格长差案卷月报未完整覆盖")
         return supplied
@@ -10691,9 +10621,9 @@ class GameDB:
         for dossier_id, item in supplied.items():
             # 派系同／敌只留在监督史。origin 只承接本条密奏里声明的行动。
             origin = self._monthly_report_origin(item)
+            # supply 已校验正文；写口再吃 _require_durable_prose，禁二次 str 洗（#1897 J820-E1）。
             self.record_dossier_progress(
-                dossier_id, int(turn), str(item.get("progress_band") or ""),
-                str(item.get("memorial_text") or ""),
+                dossier_id, int(turn), item["progress_band"], item["memorial_text"],
                 origin=origin,
                 commit=False,
             )
@@ -16605,8 +16535,12 @@ class GameDB:
                 deadline = _coerce_deadline_months(
                     payload.get("deadline_months", 1), default=1, durable=True,
                 )
+                # 已持久催办理由：空陈词合法；坏类型响亮（#1897 J820-E1）。
+                rush_reason = _require_durable_prose(
+                    payload.get("reason", ""), field="reason", required=False,
+                )
                 self.rush_secret_order(
-                    int(oid), state, deadline_months=deadline, reason=str(payload.get("reason") or ""))
+                    int(oid), state, deadline_months=deadline, reason=rush_reason)
                 if origin_mid is not None:
                     order = self.get_secret_order(int(oid))
                     if order is not None:
@@ -16618,8 +16552,12 @@ class GameDB:
                         )
                 return True
             if action == "提交核议":
+                # 已持久核议陈词：空串只缩期限；坏类型 schema 故障（#1897 J820-E1）。
+                claim = _require_durable_prose(
+                    payload.get("claim", ""), field="claim", required=False,
+                )
                 ok = self.submit_secret_order_for_review(
-                    int(oid), str(payload.get("claim") or ""), state.year, state.period)
+                    int(oid), claim, state.year, state.period)
                 if ok and origin_mid is not None:
                     order = self.get_secret_order(int(oid))
                     if order is not None:
@@ -16631,8 +16569,12 @@ class GameDB:
                         )
                 return ok
             if action == "记进展":
+                # 已持久进展正文：空串按写口合同不落条；坏类型响亮（#1897 J820-E1）。
+                note = _require_durable_prose(
+                    payload.get("note", ""), field="note", required=False,
+                )
                 ok = self.update_secret_order_progress(
-                    int(oid), str(payload.get("note") or ""), state.year, state.period)
+                    int(oid), note, state.year, state.period)
                 if ok and origin_mid is not None:
                     order = self.get_secret_order(int(oid))
                     if order is not None:
@@ -16664,25 +16606,35 @@ class GameDB:
             deadline = _coerce_deadline_months(
                 payload.get("deadline_months", 1), default=1, durable=True,
             )
+            # 已持久催办理由：空陈词合法；坏类型响亮（#1897 J820-E1）。
+            commitment_reason = _require_durable_prose(
+                payload.get("reason", ""), field="reason", required=False,
+            )
             from ming_sim.urge_lever import rush_staged_commitment_stage
             result = rush_staged_commitment_stage(
                 self, state,
                 commitment_ref=int(target_id),
                 stage_idx=stage_idx,
                 deadline_months=deadline,
-                reason=str(payload.get("reason") or ""),
+                reason=commitment_reason,
                 commit=False,
                 record_history=False,  # 本 pending 行标 committed 即史源，禁双插
             )
             # 史源字段写回本行 payload（commit_pending_actions 随后标 committed）
+            # result.reason 是写口回读的已校验正文，不再 str()/or 洗（#1897 J820-E1）。
             merged = dict(payload)
+            result_reason = result.get("reason", "")
+            if not isinstance(result_reason, str):
+                raise ValueError(
+                    f"持久字段 reason 须为字符串，得 {type(result_reason).__name__}"
+                )
             merged.update({
                 "stage_idx": int(stage_idx),
                 "old_due": int(result["old_due"]),
                 "new_due": int(result["due_turn"]),
                 "deadline_months": int(result["deadline_months"]),
                 "tightness": max(0, int(result["old_due"]) - int(result["due_turn"])),
-                "reason": str(result.get("reason") or ""),
+                "reason": result_reason,
             })
             self.conn.execute(
                 "UPDATE pending_actions SET payload_json=? WHERE id=?",
@@ -20466,7 +20418,8 @@ class GameDB:
 
         正文原样入库。判空只用副本。调用方持有事务。
         """
-        raw = str(text or "")
+        # 已持久/调用方正文：禁 str()/or 洗白；空陈词不落条（#1897 J820-E1）。
+        raw = _require_durable_prose(text, field="text", required=False)
         if not raw.strip():
             return False
         row = self.conn.execute(
@@ -20488,8 +20441,9 @@ class GameDB:
     def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
         """#1504：大臣自认办结 → 缩 due_turn 至当月，月末按实况对账。
 
-        claim 是 LLM 自由文本，原样进入奏报轨的核议 origin，不改实况、不改御限以外的世界。
+        claim 是自由文本，原样进入奏报轨的核议 origin，不改实况、不改御限以外的世界。
         空陈词只缩短到期回合。年月参数不参与条目身份。
+        坏类型 schema 故障，不洗成空陈词（#1897 J820-E1）。
         """
         _ = (year, period)
         row = self.conn.execute(
@@ -20498,7 +20452,7 @@ class GameDB:
         if not row or row["status"] != "active":
             return False
         current_turn = self._current_game_turn(int(row["turn_issued"] or 0))
-        claim_text = str(claim or "")
+        claim_text = _require_durable_prose(claim, field="claim", required=False)
         with atomic(self):
             self.conn.execute(
                 """
@@ -20529,9 +20483,10 @@ class GameDB:
         """承办人推进一步：写入当月奏报轨，不改 status、不改实况。
 
         同月再报替换同一条月度奏报。正文里的日期不另立月份。
+        坏类型 schema 故障，不洗成空串领域拒收（#1897 J820-E1）。
         """
         _ = (year, period)
-        note = str(progress_note or "")
+        note = _require_durable_prose(progress_note, field="note", required=False)
         if commit:
             with atomic(self):
                 ok = self._note_secret_order_report(
@@ -20580,8 +20535,9 @@ class GameDB:
         只写 note，不改 units。显式传入的正文（含空白）原样写入，不以
         strip/TRIM 仲裁旧／新（P6 / #1897 N2）。数值写口见
         record_dossier_actual_progress：note is None 才保留已存正文。
+        坏类型 schema 故障，禁 str()/or 洗白（#1897 J820-E1）。
         """
-        raw = str(sim_note or "")
+        raw = _require_durable_prose(sim_note, field="sim_note", required=False)
         row = self.conn.execute(
             "SELECT id FROM secret_orders WHERE id=? AND status='active'",
             (int(order_id),),
@@ -20660,9 +20616,9 @@ class GameDB:
             months = 1
         target_turn = int(state.turn) + months
         old_due = int(row["due_turn"] or 0)
-        raw_reason = str(reason or "")
-        # #1897：催办理由自由正文原样；仅真正空串才回落缺省，禁 strip 判空。
-        why = raw_reason or "奉旨加急"
+        # #1897 J820-E1：催办理由已是/须是字符串；坏类型响亮；仅真正空串回落缺省。
+        raw_reason = _require_durable_prose(reason, field="reason", required=False)
+        why = raw_reason if raw_reason else "奉旨加急"
         with atomic(self):
             if months <= 0:
                 self.conn.execute(

@@ -2086,9 +2086,13 @@ def _apply_investigation_selection(
         raw_note = None
     # 查案 note = 密奏正文（可谎）：入奏报轨，不入实况轨（DELTA_SCHEMA / #1897 R1）。
     # 复用 update_secret_order_progress 既有奏报写口（自带进展档），不另造 band 前置。
+    # 写口前禁 str() 洗白；坏类型沿既有写口响亮（#1897 J820-E1）。
     memorial_note: Optional[str] = None
-    if raw_note is not None and not isinstance(raw_note, (Mapping, list)):
-        memorial_note = str(raw_note)
+    if raw_note is not None:
+        from ming_sim.db import _require_durable_prose
+        memorial_note = _require_durable_prose(
+            raw_note, field="note", required=False,
+        )
     row = db.record_dossier_actual_progress(
         did, turn, units=units, fidelity_state="", floor_state="",
         note=None, commit=False,
