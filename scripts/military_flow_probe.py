@@ -146,14 +146,21 @@ def main() -> int:
                 probe_id="military-flow", sequence=sequence,
             )
             print(f"[probe] resolving {label} at {sess.state.year}.{sess.state.period} turn={sess.state.turn}", flush=True)
-            report = sess.resolve_turn(decree=decree)
+            result = sess.resolve_turn(decree=decree)
+            report = getattr(result, "report", None) or ""
             results.append({
                 "label": label,
                 "decree": decree,
                 "report_head": report[:1600],
+                "awaiting": bool(getattr(result, "awaiting", False)),
                 "snapshot": _query_snapshot(sess),
             })
-            sess.end_turn()
+            # #1812：待裁保留案头，不代选、不 end_turn 抹相位。
+            if getattr(result, "awaiting", False):
+                print(f"[hitl] {label} 待裁，停止后续回合", flush=True)
+                break
+            if getattr(result, "advanced", False):
+                sess.end_turn()
         final = _query_snapshot(sess)
     finally:
         sess.close()

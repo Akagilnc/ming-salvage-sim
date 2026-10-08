@@ -128,13 +128,18 @@ def main() -> int:
     session.enter_review()
 
     print("[resolve] 开始结算 ...")
-    report = session.resolve_turn(decree=args.decree, cheat_directive=args.cheat)
+    result = session.resolve_turn(decree=args.decree, cheat_directive=args.cheat)
+    report = getattr(result, "report", None) or ""
     print(f"[resolve] 完成。Report 字符数={len(report)}")
     print("---- REPORT 头 300 ----")
     print(report[:300])
     print("----")
 
-    session.end_turn()
+    # #1812：待裁不得 end_turn 抹相位；不自动代选。
+    if getattr(result, "awaiting", False):
+        print(f"[hitl] 待裁 {len(session.pending_decisions())} 个，保留 awaiting")
+    elif getattr(result, "advanced", False):
+        session.end_turn()
     print(f"[done] DB={db_path}")
     return 0
 

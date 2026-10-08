@@ -3640,15 +3640,12 @@ class GameDB:
 
             province_arrears = old_values["province_pay_arrears"]
             central_arrears = old_values["central_pay_arrears"]
-            total_arrears = old_values["arrears"]
-            total_arrears = max(total_arrears, province_arrears + central_arrears)
 
             exempt = owner_power != "ming" or is_tusi_val or self_funded_val
             if exempt:
                 pay_source_region_val = ""
                 province_share = central_share = 0.0
                 province_arrears = central_arrears = 0.0
-                total_arrears = 0.0
             self._validate_pay_source_values(
                 army_id, owner_power, pay_source_region_val, province_share, central_share,
                 is_tusi_val, self_funded_val, province_arrears, central_arrears,
@@ -3680,11 +3677,15 @@ class GameDB:
         if exempt:
             new_values["arrears"] = 0.0
 
-        # ① 核销欠饷（先于清 latch / 改 owner）
+        # ① 核销欠饷（先于清 latch / 改 owner）；额度只认双源权威账。
+        old_dual_arrears = (
+            float(old_values["province_pay_arrears"] or 0)
+            + float(old_values["central_pay_arrears"] or 0)
+        )
         wrote_writeoff = (
             old_owner == "ming"
             and owner_power != "ming"
-            and float(old_values["arrears"] or 0) > 1e-9
+            and old_dual_arrears > 1e-9
         )
         if wrote_writeoff:
             self.conn.execute(
@@ -3695,7 +3696,7 @@ class GameDB:
                 """,
                 (
                     state.turn, state.year, state.period, army_id,
-                    str(old_values["arrears"]), -float(old_values["arrears"]),
+                    str(old_dual_arrears), -float(old_dual_arrears),
                     f"owner易主核销：{reason}",
                     event_id, edict_id, actor, origin_ref,
                 ),

@@ -156,12 +156,11 @@ def _apply_economy_list(
                 continue
             payable_arrears = _payable_army_arrears_cap(row)
             if payable_arrears <= 0:
+                # 可付额与事实文案均只认双源权威账；派生 arrears 列不得回读改判。
                 current_arrears = (
                     float(row["province_pay_arrears"] or 0)
                     + float(row["central_pay_arrears"] or 0)
                 )
-                if current_arrears <= 1e-9:
-                    current_arrears = float(row["arrears"] or 0)
                 if current_arrears > 0:
                     reason_text = (
                         f"{row['name']}欠饷不足1万两，"

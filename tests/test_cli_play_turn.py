@@ -136,7 +136,6 @@ def test_cli_does_not_end_unadvanced_turn(monkeypatch, action):
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
     monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
-    monkeypatch.setattr(term, "_submit_first_cli_decisions", lambda *_a: "")
 
     term.play_turn(sess)
 
@@ -450,8 +449,8 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
 
 
 @pytest.mark.parametrize("action", ["skip", "issue"])
-def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
-    """#1843/PR #1876: HITL 续跑实际推进月份后，play_turn 必须调用 end_turn 并结束本回合。"""
+def test_play_turn_awaiting_keeps_pending_without_auto_choice(game, monkeypatch, action):
+    """#1812：CLI 不得自动代选批红；awaiting 原样保留，不 end_turn、不推进月份。"""
     from tests.month_chain_helpers import make_light_session
 
     db, state, content = game
@@ -471,11 +470,19 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
 
     session = make_light_session(db, state, content)
 
-    # 中和外部 LLM 边界，推演主链与亲裁续跑全走真实逻辑
+    # 中和外部 LLM 边界；本案只观察 CLI 在 awaiting 时是否仍代选提交
     monkeypatch.setattr("ming_sim.month_chain.run_world_segment_text", lambda *a, **k: "")
     monkeypatch.setattr("ming_sim.month_translate.translate_month_segment", lambda *a, **k: {"effects": {}})
 
-    # 单次操作迭代器：未正确 end_turn + return 时若重入交互循环，next 会抛 StopIteration
+    submitted = []
+    real_submit = session.submit_hitl_choices
+
+    def _capture_submit(choices, **kwargs):
+        submitted.append(list(choices))
+        return real_submit(choices, **kwargs)
+
+    session.submit_hitl_choices = _capture_submit  # type: ignore[method-assign]
+
     actions = iter([action])
     monkeypatch.setattr(term, "review_directives", lambda _s: next(actions))
     monkeypatch.setattr(term, "_print_header", lambda _s: None)
@@ -483,7 +490,8 @@ def test_play_turn_hitl_advancement_ends_turn(game, monkeypatch, action):
 
     term.play_turn(session)
 
-    # 验证月份已真实推进，且 end_turn 已被调用将 turn_phase 重置为 summoning
-    assert int(session.state.turn) == turn_before + 1
-    assert session.current_phase() == TurnPhase.SUMMONING
-    assert db.load_state().turn_phase == TurnPhase.SUMMONING.value
+    assert submitted == []
+    assert int(session.state.turn) == turn_before
+    assert session.current_phase() == TurnPhase.AWAITING_DECISION
+    assert db.load_state().turn_phase == TurnPhase.AWAITING_DECISION.value
+    assert session.pending_decisions()
