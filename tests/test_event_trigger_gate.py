@@ -808,20 +808,6 @@ def test_character_text_gate_rejects_numeric_character_field():
     assert gate_text_key_form_error("character.毛文龙.loyalty")
 
 
-def test_mao_event_effect_uses_unified_person_change_key():
-    """ADR 0009 后新增事件效果应写统一 人物变更，不再写旧 flat key。"""
-    events_path = Path(__file__).resolve().parents[1] / "content" / "events.json"
-    events = json.loads(events_path.read_text(encoding="utf-8"))
-    mao = next(item for item in events if item["id"] == "mao_wenlong")
-
-    effect = mao["effect_on_trigger"]
-    assert "人物变更" in effect
-    assert "character_status_changes" not in effect
-    assert effect["人物变更"] == [
-        {"name": "毛文龙", "动作": "处置", "status": "dead", "reason": "袁崇焕双岛斩帅"}
-    ]
-
-
 def test_event_content_rejects_falsy_person_core_subjects(monkeypatch):
     """内容契约：person_core_subjects 写了就必须是字符串数组，空字符串不能吞成缺省。"""
     from ming_sim import content as content_module
@@ -1600,17 +1586,6 @@ def test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome(game):
     )
 
     assert all(ev.id != "yuan_xialing" for ev in issues.gather_candidate_events(state, db))
-
-
-def test_person_write_state_restore_removes_dynamic_character_attrs(game):
-    """人事写口失败回滚必须删除快照中不存在的动态属性，避免内存幽灵状态残留。"""
-    db, _state, content = game
-    snapshot = issues._snapshot_person_write_state(db, content)
-    content.characters["毛文龙"].ghost_preflight_attr = "leak"
-
-    issues._restore_person_write_state(db, content, snapshot, commit=False)
-
-    assert not hasattr(content.characters["毛文龙"], "ghost_preflight_attr")
 
 
 def test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead(game):

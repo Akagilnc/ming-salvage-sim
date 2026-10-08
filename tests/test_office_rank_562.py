@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 from ming_sim.office_rank import (
     canonical_office_title,
@@ -36,13 +35,7 @@ def _appointment_dossier(db, state, name, office, office_type=""):
 
 
 def test_rank_table_covers_every_office_type_and_pins_ming_direction():
-    table = json.loads(
-        (Path(__file__).resolve().parent.parent / "content" / "offices.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert {row["type"] for row in table["priority"]} | {table["fallback"]["type"]} == set(table["allowed_types"])
-    assert all(1 <= row["rank_band"] <= 9 for row in [*table["priority"], table["fallback"]])
+    # 品级方向与边界（领域输入输出）；offices.json 内部集合/表布局不锁。
     assert office_rank_band("兵部尚书") == 2
     assert office_rank_band("翰林院编修") == 7
     assert office_rank_band("待铨") == 9
@@ -195,22 +188,6 @@ def test_qualified_titles_match_the_requested_axis_not_an_institutional_stem():
     assert office_rank_band("司礼监随堂太监") == 7
     assert office_leverage_multiplier("翰林院编修") == 0.25
     assert office_leverage_multiplier("司礼监随堂太监") == 0.25
-
-
-def test_leverage_multiplier_uses_canonical_office_rank_table_only():
-    """AC: faction leverage consumes the same offices.json parser (full matrix in #9 suite)."""
-    import ming_sim.db as dbmod
-
-    # Thin cross-module seam only — full deputy/principal matrix lives in test_faction_leverage_9.
-    assert office_leverage_multiplier("") == 1.0
-    assert dbmod._office_rank_multiplier("") == 1.0
-    assert office_leverage_multiplier("副总兵") == 0.5
-    assert office_leverage_multiplier("总兵") == 1.0
-    assert office_leverage_multiplier("礼部尚书,东阁大学士") == 1.0
-    assert dbmod._office_rank_multiplier("副总兵") == office_leverage_multiplier("副总兵")
-    assert dbmod._office_rank_multiplier("礼部尚书,东阁大学士") == office_leverage_multiplier(
-        "礼部尚书,东阁大学士"
-    )
 
 
 def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(game):

@@ -339,11 +339,6 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                             session.db, int(night["id"]), character.name,
                             origin_chat_turn_id=chat_turn_id, commit=False,
                         )
-                        if question == f"宣{character.name}":
-                            ensure_summon_enter(
-                                session.db, int(night["id"]), character.name,
-                                origin_chat_turn_id=chat_turn_id, commit=False,
-                            )
                 user_message_id = session.db.chat_messages.insert(
                     minister_name=character.name, turn=accepted_turn, role="user", content=question,
                 )
@@ -362,12 +357,7 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
                 session.db.persist_minister_reply(
                     character.name, accepted_turn, result.answer, chat_turn_id,
                 )
-                minister_message_id = 0
                 if chat_turn_id:
-                    if minister_message_id:
-                        session.db.reign.update_chat_turn_messages(
-                            chat_turn_id, minister_message_id=minister_message_id,
-                        )
                     session.db.record_chat_turn_rollback_diffs(
                         chat_turn_id, rollback_snapshot or {},
                         session.db.capture_chat_rollback_snapshot(),

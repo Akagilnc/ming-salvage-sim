@@ -6648,14 +6648,6 @@ def _apply_dossier_participant_items(
 SURCHARGE_DECREE_FIELDS = frozenset({"region_id", "monthly_amount", "reason", "origin_ref"})
 
 
-def _surcharge_population_pool_members(db: GameDB, region_id: str) -> set[str]:
-    """Return the materialized provincial rows that make up a surcharge pool."""
-    return {
-        str(row["name"])
-        for row in ClassStore(db.conn).read_surcharge_population_pool_members((region_id,))
-    }
-
-
 def _apply_surcharge_decrees(
     db: GameDB,
     items: object,
