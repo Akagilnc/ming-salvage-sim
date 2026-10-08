@@ -38,6 +38,7 @@ from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, loads_persistent_json_list, loads_persistent_json_object,
+    require_persistent_string_list,
     monthly_amount, period_label, reign_period_label,
 )
 from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
@@ -2657,10 +2658,12 @@ class GameDB:
         ).fetchall()
         for row in rows:
             region_id = str(row["id"])
+            fiscal = loads_persistent_json_object(
+                row["fiscal"], surface=f"regions[{region_id}].fiscal",
+            )
+            if "settle" not in fiscal:
+                continue
             try:
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
-                if isinstance(fiscal, dict) and "settle" not in fiscal:
-                    continue
                 result = self._settle_province_tick_from_fiscal(
                     region_id,
                     fiscal,
@@ -2688,26 +2691,7 @@ class GameDB:
         if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict) \
                 or not isinstance(settle.get("p"), dict):
             raise ValueError(f"region {region_id!r} 无 settle 财政基座（缺 st/p）")
-        pay_rows: List[Dict[str, float | str]] = []
-        standalone_pay_component: Optional[Dict[str, float]] = None
         pay_rows = self._derive_region_army_pay_due(region_id, settle)
-        if pay_rows:
-            primary_source_due = self._primary_source_army_pay_due(settle)
-            if self._has_standalone_army_pay_funnel(settle, primary_source_due):
-                row_due_total = sum(float(row["due"]) for row in pay_rows)
-                row_arrears_total = sum(float(row["province_pay_arrears"]) for row in pay_rows)
-                standalone_pay_component = {
-                    "due": self._standalone_army_pay_due_component(
-                        settle,
-                        row_due_total,
-                        primary_source_due,
-                    ),
-                    "province_pay_arrears": self._standalone_army_pay_arrears_component(
-                        settle,
-                        row_arrears_total,
-                        primary_source_due,
-                    ),
-                }
         tick_p = settle["p"]
         if p_overrides:
             tick_p = dict(tick_p)
@@ -2728,7 +2712,6 @@ class GameDB:
         if pay_rows:
             self._apply_region_army_pay_tick(pay_rows, result)
         settle["st"] = result.new_st
-        self._refresh_standalone_army_pay_arrears_component(region_id, settle)
         if pay_rows:
             self._reconcile_region_army_pay_container(region_id, settle)
         self.conn.execute(
@@ -3424,168 +3407,6 @@ class GameDB:
             if not isinstance(settle, dict) or not isinstance(settle.get("st"), dict):
                 raise ValueError(f"region {row['id']} settle.st 非法，无法校验军饷容器守恒")
             total += float(settle["st"].get("军饷欠", 0) or 0.0)
-        return total
-
-    def _is_seeded_military_pay_funnel(self, settle: Dict[str, Any]) -> bool:
-        meta = settle.get("_meta")
-        if not isinstance(meta, dict):
-            return False
-        postures = meta.get("postures")
-        return isinstance(postures, list) and "纯军饷漏斗" in postures
-
-    def _primary_source_army_pay_due(self, settle: Dict[str, Any]) -> Optional[float]:
-        meta = settle.get("_meta")
-        if not isinstance(meta, dict):
-            return None
-        primary_source = meta.get("primary_source")
-        if not isinstance(primary_source, dict):
-            return None
-        refined = primary_source.get("fields_refined")
-        if not isinstance(refined, list) or "军饷" not in refined:
-            return None
-        if "现额银两_年" not in primary_source:
-            return None
-        raw_annual = primary_source.get("现额银两_年")
-        if isinstance(raw_annual, bool) or not isinstance(raw_annual, (int, float)):
-            raise ValueError("primary_source 现额银两_年 非法，无法派生 Due.军饷")
-        value = float(raw_annual) / 10000 / 12
-        if not math.isfinite(value) or value < 0:
-            raise ValueError("primary_source 现额银两_年 非法，无法派生 Due.军饷")
-        return value
-
-
-    def _has_standalone_army_pay_funnel(
-        self,
-        settle: Dict[str, Any],
-        primary_source_due: Optional[float] = None,
-    ) -> bool:
-        return primary_source_due is not None or self._is_seeded_military_pay_funnel(settle)
-
-    def _standalone_army_pay_due_component(
-        self,
-        settle: Dict[str, Any],
-        row_due_total: float,
-        primary_source_due: Optional[float],
-    ) -> float:
-        if primary_source_due is not None:
-            return primary_source_due
-        if not self._is_seeded_military_pay_funnel(settle):
-            return 0.0
-        meta = settle.setdefault("_meta", {})
-        if not isinstance(meta, dict):
-            raise ValueError("_meta 非字典")
-        existing = meta.get("standalone_military_pay_due")
-        if isinstance(existing, bool):
-            raise ValueError("standalone_military_pay_due 非法")
-        if isinstance(existing, (int, float)):
-            value = float(existing)
-        else:
-            p_obj = settle.get("p")
-            if not isinstance(p_obj, dict):
-                raise ValueError("settle.p 非法")
-            due_obj = p_obj.get("Due")
-            if not isinstance(due_obj, dict):
-                raise ValueError("settle.p.Due 非法")
-            raw_due = float(due_obj.get("军饷", 0) or 0)
-            value = raw_due if self._is_seeded_military_pay_funnel(settle) else raw_due - row_due_total
-        if not math.isfinite(value) or value < -1e-9:
-            raise ValueError("standalone_military_pay_due 非法")
-        value = max(0.0, value)
-        meta["standalone_military_pay_due"] = value
-        return value
-
-    def _standalone_army_pay_arrears_component(
-        self,
-        settle: Dict[str, Any],
-        row_arrears_total: float,
-        primary_source_due: Optional[float],
-    ) -> float:
-        if not self._has_standalone_army_pay_funnel(settle, primary_source_due):
-            return 0.0
-        meta = settle.setdefault("_meta", {})
-        if not isinstance(meta, dict):
-            raise ValueError("_meta 非字典")
-        existing = meta.get("standalone_military_pay_arrears")
-        if isinstance(existing, bool):
-            raise ValueError("standalone_military_pay_arrears 非法")
-        if isinstance(existing, (int, float)):
-            value = float(existing)
-        else:
-            st = settle.get("st")
-            if not isinstance(st, dict):
-                raise ValueError("settle.st 非法")
-            value = float(st.get("军饷欠", 0) or 0) - row_arrears_total
-        if not math.isfinite(value) or value < -1e-9:
-            raise ValueError("standalone_military_pay_arrears 非法")
-        value = max(0.0, value)
-        meta["standalone_military_pay_arrears"] = value
-        return value
-
-    def _refresh_standalone_army_pay_arrears_component(
-        self,
-        region_id: str,
-        settle: Dict[str, Any],
-    ) -> None:
-        primary_source_due = self._primary_source_army_pay_due(settle)
-        if not self._has_standalone_army_pay_funnel(settle, primary_source_due):
-            return
-        row_arrears_total = sum(
-            float(row["province_pay_arrears"])
-            for row in self._army_pay_source_rows_for_region(region_id)
-        )
-        st = settle.get("st")
-        if not isinstance(st, dict):
-            raise ValueError("settle.st 非法")
-        current_total = float(st.get("军饷欠", 0) or 0)
-        standalone_arrears = max(0.0, current_total - row_arrears_total)
-        meta = settle.setdefault("_meta", {})
-        if not isinstance(meta, dict):
-            raise ValueError("_meta 非字典")
-        meta["standalone_military_pay_arrears"] = standalone_arrears
-
-    def _standalone_army_pay_container_total(self) -> float:
-        total = 0.0
-        arrears_rows = self.conn.execute(
-            """
-            SELECT pay_source_region, COALESCE(SUM(province_pay_arrears), 0) AS total
-            FROM armies
-            WHERE owner_power = 'ming' AND is_tusi = 0 AND self_funded_pay = 0
-              AND province_pay_share > 0
-              AND pay_source_region != ''
-            GROUP BY pay_source_region
-            """
-        ).fetchall()
-        arrears_by_region = {
-            str(row["pay_source_region"]): float(row["total"] or 0.0)
-            for row in arrears_rows
-        }
-        rows = self.conn.execute(
-            "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
-        ).fetchall()
-        for row in rows:
-            region_id = str(row["id"])
-            try:
-                fiscal = json.loads(str(row["fiscal"] or "{}"))
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"region {region_id} fiscal JSON 非法，无法校验军饷容器守恒") from exc
-            if not isinstance(fiscal, dict):
-                raise ValueError(f"region {region_id} fiscal 非字典，无法校验军饷容器守恒")
-            settle = fiscal.get("settle")
-            if settle is None:
-                continue
-            if not isinstance(settle, dict):
-                raise ValueError(f"region {region_id} settle 非法，无法校验军饷容器守恒")
-            if not isinstance(settle.get("st"), dict):
-                raise ValueError(f"region {region_id} settle.st 非法，无法校验军饷容器守恒")
-            primary_source_due = self._primary_source_army_pay_due(settle)
-            if not self._has_standalone_army_pay_funnel(settle, primary_source_due):
-                continue
-            row_arrears_total = arrears_by_region.get(region_id, 0.0)
-            total += self._standalone_army_pay_arrears_component(
-                settle,
-                row_arrears_total,
-                primary_source_due,
-            )
         return total
 
     def _has_complete_province_pay_containers(self) -> bool:
@@ -4419,16 +4240,11 @@ class GameDB:
             (region_id,),
         ).fetchone()["total"]
         row_arrears_total = float(total or 0)
-        primary_source_due = self._primary_source_army_pay_due(settle)
-        standalone_arrears = self._standalone_army_pay_arrears_component(
-            settle,
-            row_arrears_total,
-            primary_source_due,
-        )
         st = settle.get("st")
         if not isinstance(st, dict):
             raise ValueError("settle.st 非法")
-        st["军饷欠"] = standalone_arrears + row_arrears_total
+        # 军饷欠唯一来源 = 军籍省侧累加器；不另加独立漏斗。
+        st["军饷欠"] = row_arrears_total
 
     def has_state(self) -> bool:
         row = self.conn.execute("SELECT 1 FROM game_state WHERE id = 1").fetchone()
@@ -7529,6 +7345,7 @@ class GameDB:
 
     @staticmethod
     def _parse_highlights_json(raw: Any) -> List[str]:
+        """Strict structure read for stored highlights; empty-check only, no text mutation."""
         data = loads_persistent_json_list(raw, surface="chat_messages.highlights_json")
         out: List[str] = []
         for index, item in enumerate(data):
@@ -7538,8 +7355,9 @@ class GameDB:
                 raise ValueError(
                     f"chat_messages.highlights_json[{index}] must be a string, got {type(item).__name__}"
                 )
+            # Empty-check via strip; append original bytes/text unchanged (P6 / ADR0142).
             if item.strip():
-                out.append(item.strip())
+                out.append(item)
         return out
 
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
@@ -10131,13 +9949,9 @@ class GameDB:
                 int(dossier_id), int(secret_order_id), int(turn), band, text,
                 is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
             )
-        payload = {}
-        try:
-            loaded = json.loads(str(dossier.get("payload_json") or "{}"))
-            if isinstance(loaded, dict):
-                payload = loaded
-        except (TypeError, ValueError):
-            payload = {}
+        payload = loads_persistent_json_object(
+            dossier.get("payload_json"), surface="decree_dossiers.payload_json",
+        )
         if not self._dossier_has_execution_surface(dossier.get("action_type"), payload):
             raise ValueError("非执行面案卷不可挂奏报")
         return self._record_general_dossier_progress(
@@ -10343,10 +10157,9 @@ class GameDB:
         ).fetchone()
         if row is None:
             return False
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            return False
+        payload = loads_persistent_json_object(
+            row["payload_json"], surface="decree_dossiers.payload_json",
+        )
         return payload_declares_escort(payload)
 
     # #1900 J18：已撤销的专用暗护双载体 / 实况账本 / 聚合读口 / 专用资格校验已退役。
@@ -10863,12 +10676,9 @@ class GameDB:
         ).fetchall()
         out: List[Dict[str, object]] = []
         for row in rows:
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = loads_persistent_json_object(
+                row["payload_json"], surface="faction_denunciations.payload_json",
+            )
             out.append({
                 "id": int(row["id"]),
                 "turn": int(row["turn"]),
@@ -11226,12 +11036,9 @@ class GameDB:
                 (accuser, dossier_id, origin),
             ).fetchone()
             if prior_row is not None:
-                try:
-                    prev_payload = json.loads(prior_row["payload_json"] or "{}")
-                except (TypeError, ValueError):
-                    prev_payload = {}
-                if not isinstance(prev_payload, dict):
-                    prev_payload = {}
+                prev_payload = loads_persistent_json_object(
+                    prior_row["payload_json"], surface="faction_denunciations.payload_json",
+                )
                 if not denunciation_case_upgraded(prev_payload, fork_state):
                     continue
 
@@ -15414,11 +15221,12 @@ class GameDB:
     ) -> Dict[str, object]:
         """把新 payload 与旧 payload 里的下划线控制键（`_` 前缀）合并：新 payload 为主，
         旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态/待澄清闸（#502 L5）。"""
-        try:
-            old = json.loads(existing_json or "{}") if not isinstance(
-                existing_json, (dict, list)) else existing_json
-        except (ValueError, TypeError):
-            old = {}
+        if isinstance(existing_json, (dict, list)):
+            old = existing_json
+        else:
+            old = loads_persistent_json_object(
+                existing_json, surface="office_candidate.payload_json",
+            )
         merged: Dict[str, object] = dict(new_payload or {})
         if isinstance(old, dict):
             for k, v in old.items():
@@ -16195,12 +16003,9 @@ class GameDB:
         for row in dossiers:
             if str(row.get("action_type") or "") != "appointment":
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
+            payload = loads_persistent_json_object(
+                row.get("payload_json"), surface="pending_actions.payload_json",
+            )
             if payload.get("recommendation") is None:
                 continue
             minister = str(payload.get("_minister_name") or "")
@@ -16554,16 +16359,13 @@ class GameDB:
         ).fetchone()
         if row is None:
             return None
-        def _load(text: str, default, label: str):
-            try:
-                return json.loads(text) if text else default
-            except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                tlog(f"[db] resolve_context {label} JSON 损坏，回退默认、恢复将丢该段（turn={turn}）：{exc}")  # #14 surface
-                return default
         attendant_message = str(row["attendant_message"] or "")
         return {
             "decree_text": row["decree_text"],
-            "simulator_payload": _load(row["simulator_payload_json"], {}, "simulator_payload"),
+            "simulator_payload": loads_persistent_json_object(
+                row["simulator_payload_json"],
+                surface="pending_resolve_context.simulator_payload_json",
+            ),
             "source": row["source"] or "system_simulation",
             "attendant_message": attendant_message,  # #671 王承恩独立递话
         }
@@ -18580,8 +18382,12 @@ class GameDB:
         """Parse durable excluded_targets via the shared leaf reader."""
         payload = loads_persistent_json_object(raw, surface=field)
         return {
-            "people": [str(x) for x in payload.get("people", [])],
-            "offices": [str(x) for x in payload.get("offices", [])],
+            "people": require_persistent_string_list(
+                payload.get("people"), surface=field, field="people",
+            ),
+            "offices": require_persistent_string_list(
+                payload.get("offices"), surface=field, field="offices",
+            ),
         }
 
     def knowledge_exclusions_for_source(self, source_id: str) -> List[str]:

@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from ming_sim.models import loads_persistent_json_list, loads_persistent_json_object
+
 import json
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -248,12 +250,9 @@ def stage_pacification_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
+        payload = loads_persistent_json_object(
+            row.get("payload_json"), surface="pending_actions.payload_json",
+        )
         if str(payload.get("dossier_action_type") or "").strip() != "pacification":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -356,11 +355,10 @@ def stage_punishment_candidate(
             return 0
         if disposition not in issue_dispositions_allowed():
             return 0
-        try:
-            roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (TypeError, ValueError):
-            return 0
-        if not isinstance(roster, list) or not roster:
+        roster = loads_persistent_json_list(
+            issue["target_roster"], surface="issues.target_roster",
+        )
+        if not roster:
             return 0
         if disposition == "办人":
             if target not in roster:
@@ -389,12 +387,9 @@ def stage_punishment_candidate(
     for row in pending_rows:
         if row.get("kind") != "directive":
             continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
+        payload = loads_persistent_json_object(
+            row.get("payload_json"), surface="pending_actions.payload_json",
+        )
         if str(payload.get("dossier_action_type") or "").strip() != "punishment":
             continue
         if str(payload.get("target_id") or "").strip() != target:
@@ -861,11 +856,9 @@ def _list_pending_office_rows(
 
 
 def _office_payload(row: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    return loads_persistent_json_object(
+        row.get("payload_json"), surface="pending_actions.payload_json",
+    )
 
 
 def _match_office_row_by_name_office(
@@ -1200,12 +1193,9 @@ def stage_assignment_candidate(
                 continue
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = loads_persistent_json_object(
+                row.get("payload_json"), surface="pending_actions.payload_json",
+            )
             if str(payload.get("dossier_action_type") or "").strip() != "assignment":
                 break
             existing_id = want_id
@@ -1326,12 +1316,9 @@ def stage_revoke_decree_candidate(
         for row in pending_rows:
             if int(row["id"]) != want_id:
                 continue
-            try:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            except (TypeError, ValueError):
-                break
-            if not isinstance(payload, dict):
-                break
+            payload = loads_persistent_json_object(
+                row.get("payload_json"), surface="pending_actions.payload_json",
+            )
             if str(payload.get("dossier_action_type") or "").strip() != "revoke_decree":
                 break
             existing_id = want_id

@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import json
 
-from ming_sim.models import loads_persistent_json_list, loads_persistent_json_object
+from ming_sim.models import (
+    loads_persistent_json_list,
+    loads_persistent_json_object,
+    require_persistent_string_list,
+)
 from typing import Any, Dict
 
 from ming_sim.participant_roster import participant_roster_names
@@ -107,8 +111,12 @@ def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
     except (KeyError, IndexError, TypeError):
         raw_targets = None
     targets = loads_persistent_json_object(raw_targets, surface="excluded_targets")
-    people = {str(name) for name in (targets.get("people") or [])}
-    offices = {str(name) for name in (targets.get("offices") or [])}
+    people = set(require_persistent_string_list(
+        targets.get("people"), surface="excluded_targets", field="people",
+    ))
+    offices = set(require_persistent_string_list(
+        targets.get("offices"), surface="excluded_targets", field="offices",
+    ))
     return excluded_names, people, offices
 
 
@@ -739,13 +747,16 @@ def build_character_knowledge(
             character_name,
         ):
             continue
-        try:
-            target_roster = json.loads(str(issue["target_roster"] or "[]"))
-        except (KeyError, TypeError, ValueError):
+        if issue["origin_kind"] != "impeachment_surge":
             target_roster = []
-        if issue["origin_kind"] != "impeachment_surge" or not isinstance(target_roster, list):
-            target_roster = []
-        target_roster = [str(target).strip() for target in target_roster if str(target).strip()]
+        else:
+            target_roster = [
+                str(target).strip()
+                for target in loads_persistent_json_list(
+                    issue["target_roster"], surface="issues.target_roster",
+                )
+                if str(target).strip()
+            ]
         visible_issues.append({
             "id": int(issue["id"]), "kind": issue["kind"],
             "origin_kind": issue["origin_kind"], "origin_ref": issue["origin_ref"],

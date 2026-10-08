@@ -422,6 +422,11 @@ def load_runtime_llm() -> Dict[str, object]:
         logger.exception("load_runtime_llm failed path=%s", RUNTIME_LLM_PATH)
         return {}
     if not isinstance(data, dict):
+        # Documented safe empty-config fallback; preserve root-type cause.
+        logger.error(
+            "load_runtime_llm non-object root path=%s type=%s",
+            RUNTIME_LLM_PATH, type(data).__name__,
+        )
         return {}
     return _normalize_runtime_llm(data)
 

@@ -296,21 +296,8 @@ def _province_container_total(db):
             total += float(settle["st"].get("军饷欠", 0) or 0)
     return total
 
-def _standalone_region_pay_arrears(db, region_id):
-    settle = _read_settle(db, region_id)
-    if not isinstance(settle, dict):
-        return 0.0
-    if (
-        db._primary_source_army_pay_due(settle) is None
-        and not db._is_seeded_military_pay_funnel(settle)
-    ):
-        return 0.0
-    if db._army_pay_source_rows_for_region(region_id):
-        return 0.0
-    return float(settle["st"].get("军饷欠", 0) or 0.0)
-
 def _region_pay_arrears_container_basis(db, region_id):
-    return _province_pay_arrears(db, region_id) + _standalone_region_pay_arrears(db, region_id)
+    return _province_pay_arrears(db, region_id)
 
 def _region_with_settle(settle):
     return {
@@ -696,7 +683,7 @@ def test_fixed_flows_substrate_hub_retires_global_central_pay_route(fresh_game):
     _province_total, central_total, army_total = _non_self_funded_pay_arrears(db)
     assert db.get_central_army_pay_arrears_container() == pytest.approx(central_total)
     assert _province_container_total(db) + db.get_central_army_pay_arrears_container() == pytest.approx(
-        army_total + db._standalone_army_pay_container_total()
+        army_total
     )
 
 def test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory(fresh_game):
@@ -1709,69 +1696,6 @@ def test_region_army_pay_tick_treats_missing_breakdown_as_no_delta(fresh_db):
     assert after["province_pay_arrears"] == pytest.approx(before["province_pay_arrears"])
     assert after["arrears"] == pytest.approx(before["arrears"])
     assert after["morale"] == before["morale"]
-
-def test_region_army_morale_haircut_denominator_includes_standalone_funnel(fresh_game):
-    import ming_sim.flows as flows_mod
-
-    db, state = fresh_game
-    state.metrics["国库"] = 2
-    db.save_state(state)
-    _set_all_settle_grants(db, 0)
-    _write_settle(
-        db, "liaodong", {
-            "_meta": {
-                "postures": ["纯军饷漏斗"],
-                "standalone_military_pay_due": 10,
-            },
-            "st": {
-                "省库库银": 0, "C_地方截留": 0, "C_中饱": 0,
-                "C_漂没": 0, "C_eff损耗": 0, "民欠旧赋": 0,
-                "军饷欠": 0, "官俸欠": 0, "宗禄欠": 0,
-                "官民田": 0, "隐田": 0,
-            },
-            "p": {
-                "正赋应征": 0, "三饷应征": 0, "火耗率": 0,
-                "逋赋率": 0, "起运定额": 0, "拨付gross": 0,
-                "中饱率": 0, "漂没率": 0,
-                "Due": {"军饷": 14, "官俸": 0, "宗禄": 0, "赈济": 0},
-            },
-        },
-    )
-    db.conn.execute("UPDATE buildings SET output_amount=0, maintenance=0")
-    _zero_non_meta_fiscal_config(db)
-    _set_fiscal_config_value(db, "due_haircut_bp_军饷@liaodong#province", 5000)
-    _set_fiscal_config_value(db, "due_haircut_bp_军饷@liaodong#central", 5000)
-    db.conn.execute(
-        "UPDATE regions SET tax_per_turn=0, fiscal=json_set(fiscal, "
-        "'$.huang_tian',0,'$.liao_xiang',0,'$.salt_tax',0,'$.commerce_tax',0)"
-    )
-    db.conn.execute(
-        "UPDATE armies SET self_funded_pay=1, is_tusi=1, province_pay_share=0, "
-        "central_pay_share=0, pay_source_region='', province_pay_arrears=0, "
-        "central_pay_arrears=0, arrears=0, morale=80"
-    )
-    db.conn.execute(
-        "UPDATE armies SET self_funded_pay=0, is_tusi=0, owner_power='ming', "
-        "pay_source_region='liaodong', province_pay_share=.4, central_pay_share=.6, "
-        "province_pay_arrears=0, central_pay_arrears=0, arrears=0, morale=80, "
-        "manpower=10000, salary_rate=10 WHERE id='guanning'"
-    )
-    db.conn.commit()
-
-    flow_rows = flows_mod.apply_fixed_period_flows(db, state)
-
-    central = next(row for row in flow_rows if row.get("category") == "中央军饷")
-    army = db.conn.execute(
-        "SELECT morale, province_pay_arrears, central_pay_arrears "
-        "FROM armies WHERE id='guanning'"
-    ).fetchone()
-    settle = _read_settle(db, "liaodong")
-    assert settle["st"]["军饷欠"] == pytest.approx(7)
-    assert army["province_pay_arrears"] == pytest.approx(2)
-    assert central["needed"] == pytest.approx(3)
-    assert central["shortfall"] == pytest.approx(1)
-    assert army["central_pay_arrears"] == pytest.approx(1)
-    assert army["morale"] == 75
 
 def test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes(fresh_game, monkeypatch):
     import ming_sim.flows as flows_mod
@@ -3344,156 +3268,21 @@ def test_border_slice_raw_content_keeps_primary_source_anchors():
     assert shanxi["_meta"]["primary_source"]["起运米石"] == pytest.approx(640350)
 
     liaodong = _content_settle("liaodong")
-    assert liaodong["p"]["Due"]["军饷"] == pytest.approx(711391 / 10000 / 12)
-    assert liaodong["p"]["拨付gross"] == pytest.approx(409984 / 10000 / 12)
+    # 军饷应付/欠账仅由军籍 pay-source 派生；史料现额/京运年例只作备注，不另立独立省欠或边镇京运漏斗。
+    assert liaodong["p"]["Due"]["军饷"] == pytest.approx(0)
+    assert liaodong["st"]["军饷欠"] == pytest.approx(0)
+    assert liaodong["p"]["拨付gross"] == pytest.approx(0)
     assert liaodong["_meta"]["primary_source"]["粮料原额石"] == pytest.approx(279212)
-    assert "军饷" not in liaodong["_meta"]["provisional"]
-    assert "拨付gross" not in liaodong["_meta"]["provisional"]
+    assert liaodong["_meta"]["primary_source"]["现额银两_年"] == pytest.approx(711391)
+    assert liaodong["_meta"]["primary_source"]["京运年例银两_年"] == pytest.approx(409984)
 
     dongjiang = _content_settle("dongjiang_area")
     assert dongjiang["_meta"]["source_status"] == "no_wanli_accounting_record"
     coverage = dongjiang["_meta"]["notes"]["史料覆盖"]
     assert isinstance(coverage, str) and coverage.strip()
     assert set(dongjiang["_meta"]["provisional"]) >= {"军饷", "拨付gross", "军饷欠", "起运定额"}
-
-def test_liaodong_and_dongjiang_are_pure_military_pay_funnels(fresh_db):
-    expected = {
-        "liaodong": {"grant": 409984 / 10000 / 12, "due": 711391 / 10000 / 12, "opening_arrears": 80},
-        "dongjiang_area": {"grant": 5, "due": 14, "opening_arrears": 25},
-    }
-    for region_id, e in expected.items():
-        settle = _read_settle(fresh_db, region_id)
-        p = settle["p"]
-        st = settle["st"]
-        assert p["正赋应征"] == 0
-        assert p["三饷应征"] == 0
-        assert p["起运定额"] == 0
-        assert p["拨付gross"] == pytest.approx(e["grant"])
-        assert p["Due"]["军饷"] == pytest.approx(e["due"])
-        assert {k: p["Due"][k] for k in ("官俸", "宗禄", "赈济")} == {"官俸": 0, "宗禄": 0, "赈济": 0}
-        assert st["军饷欠"] == pytest.approx(e["opening_arrears"])
-
-        res = settle_tick(st, p, [])
-        assert res.breakdown["实征"] == 0
-        assert res.breakdown["起运到京"] == 0
-        assert res.new_st["军饷欠"] == pytest.approx(max(0, st["军饷欠"] + p["Due"]["军饷"] - e["grant"]))
-
-def test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile(fresh_db):
-    settle = _read_settle(fresh_db, "liaodong")
-    opening_arrears = settle["st"]["军饷欠"]
-    expected_due = 711391 / 10000 / 12
-    expected_grant = 409984 / 10000 / 12
-
-    assert settle["p"]["Due"]["军饷"] == pytest.approx(expected_due)
-
-    fresh_db.settle_province_tick("liaodong", [])
-    fresh_db.conn.commit()
-
-    after = _read_settle(fresh_db, "liaodong")
-    assert after["p"]["Due"]["军饷"] == pytest.approx(expected_due)
-    assert after["st"]["军饷欠"] == pytest.approx(
-        max(0, opening_arrears + expected_due - expected_grant),
-        abs=1e-6,
-    )
-
-def test_liaodong_pay_source_rows_add_to_standalone_military_funnel(fresh_db):
-    state = fresh_db.load_state()
-    settle = _read_settle(fresh_db, "liaodong")
-    opening_arrears = settle["st"]["军饷欠"]
-    standalone_due = settle["p"]["Due"]["军饷"]
-
-    created = fresh_db.create_armies_from_extraction(state, [{
-        "id": "liaodong_new_army",
-        "name": "辽东新增营",
-        "manpower": 1000,
-        "owner_power": "ming",
-        "pay_source_region": "liaodong",
-        "province_pay_share": 1.0,
-        "central_pay_share": 0.0,
-    }], commit=False)
-
-    assert created and created[0].get("created") is True
-    after = _read_settle(fresh_db, "liaodong")
-    assert after["st"]["军饷欠"] == pytest.approx(
-        opening_arrears + _province_pay_arrears(fresh_db, "liaodong"),
-        abs=1e-6,
-    )
-    assert after["p"]["Due"]["军饷"] == pytest.approx(
-        standalone_due + _province_pay_due(fresh_db, "liaodong"),
-        abs=1e-6,
-    )
-
-def test_liaodong_settle_tick_keeps_standalone_funnel_deficit_out_of_pay_rows(fresh_db):
-    state = fresh_db.load_state()
-    created = fresh_db.create_armies_from_extraction(state, [{
-        "id": "liaodong_new_army",
-        "name": "辽东新增营",
-        "manpower": 1000,
-        "owner_power": "ming",
-        "pay_source_region": "liaodong",
-        "province_pay_share": 1.0,
-        "central_pay_share": 0.0,
-    }], commit=False)
-    assert created and created[0].get("created") is True
-
-    before = _read_settle(fresh_db, "liaodong")
-    row_due = _province_pay_due(fresh_db, "liaodong")
-    row_opening_arrears = _province_pay_arrears(fresh_db, "liaodong")
-    standalone_due = before["p"]["Due"]["军饷"] - row_due
-
-    result = fresh_db.settle_province_tick("liaodong", [])
-    fresh_db.conn.commit()
-
-    new_debt = result.breakdown["NewDebt"]["军饷欠"]
-    expected_row_arrears = row_opening_arrears + new_debt * row_due / (standalone_due + row_due)
-    row_after = _province_pay_arrears(fresh_db, "liaodong")
-    after = _read_settle(fresh_db, "liaodong")
-
-    assert row_after == pytest.approx(expected_row_arrears, abs=1e-6)
-    assert row_after < row_opening_arrears + new_debt - 1e-6
-    assert after["_meta"]["standalone_military_pay_arrears"] == pytest.approx(
-        after["st"]["军饷欠"] - row_after,
-        abs=1e-6,
-    )
-    assert after["_meta"]["standalone_military_pay_arrears"] > 0
-
-def test_dongjiang_content_pay_funnel_survives_fresh_db_pay_source_reconcile(fresh_db):
-    settle = _read_settle(fresh_db, "dongjiang_area")
-
-    assert settle["p"]["Due"]["军饷"] == pytest.approx(14)
-    assert settle["st"]["军饷欠"] == pytest.approx(25)
-
-def test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows(fresh_db):
-    settle = _read_settle(fresh_db, "dongjiang_area")
-    old_due = settle["p"]["Due"]["军饷"]
-    settle["_meta"].pop("standalone_military_pay_due", None)
-    _write_settle(fresh_db, "dongjiang_area", settle)
-
-    state = fresh_db.load_state()
-    created = fresh_db.create_armies_from_extraction(state, [{
-        "id": "dongjiang_new_army",
-        "name": "东江新增营",
-        "manpower": 1000,
-        "owner_power": "ming",
-        "pay_source_region": "dongjiang_area",
-        "province_pay_share": 1.0,
-        "central_pay_share": 0.0,
-    }], commit=False)
-
-    assert created and created[0].get("created") is True
-    row_due = _province_pay_due(fresh_db, "dongjiang_area")
-    after = _read_settle(fresh_db, "dongjiang_area")
-
-    assert after["_meta"]["standalone_military_pay_due"] == pytest.approx(old_due)
-    assert after["p"]["Due"]["军饷"] == pytest.approx(old_due + row_due)
-
-@pytest.mark.parametrize("bad_annual", [True, "711391", float("nan"), float("inf"), -1])
-def test_primary_source_army_pay_due_rejects_dirty_annual_amount(fresh_db, bad_annual):
-    settle = _read_settle(fresh_db, "liaodong")
-    settle["_meta"]["primary_source"]["现额银两_年"] = bad_annual
-
-    with pytest.raises(ValueError):
-        fresh_db._derive_region_army_pay_due("liaodong", settle)
+    assert dongjiang["p"]["Due"]["军饷"] == pytest.approx(0)
+    assert dongjiang["st"]["军饷欠"] == pytest.approx(0)
 
 @pytest.mark.parametrize(
     ("region_id", "mutate"),
@@ -3512,26 +3301,6 @@ def test_standalone_army_pay_funnel_rejects_malformed_settle_shapes(
 
     with pytest.raises(ValueError):
         fresh_db._derive_region_army_pay_due(region_id, settle)
-
-@pytest.mark.parametrize(
-    ("mutate",),
-    [
-        (lambda fiscal: fiscal.__setitem__("settle", []),),
-        (lambda fiscal: fiscal["settle"].__setitem__("st", []),),
-    ],
-)
-def test_standalone_army_pay_container_total_rejects_malformed_region_shapes(
-    fresh_db, mutate
-):
-    fiscal = _read_fiscal(fresh_db, "dongjiang_area")
-    mutate(fiscal)
-    fresh_db.conn.execute(
-        "UPDATE regions SET fiscal = ? WHERE id = ?",
-        (json.dumps(fiscal, ensure_ascii=False), "dongjiang_area"),
-    )
-
-    with pytest.raises(ValueError):
-        fresh_db._standalone_army_pay_container_total()
 
 JIANGNAN_CORE_EXPECTED = {
     "nanzhili": {
@@ -3663,12 +3432,10 @@ def test_settle_province_tick_persists_border_remainder_golden(fresh_db):
         "liaodong": {
             "C_地方截留": 0,
             "民欠旧赋": 0,
-            "军饷欠": 80 + 711391 / 10000 / 12 - 409984 / 10000 / 12,
         },
         "dongjiang_area": {
             "C_地方截留": 0,
             "民欠旧赋": 0,
-            "军饷欠": 34,
         },
     }
     for region_id, want in expected.items():
@@ -3677,13 +3444,11 @@ def test_settle_province_tick_persists_border_remainder_golden(fresh_db):
         for k, v in want.items():
             assert after[k] == pytest.approx(v, abs=1e-3), \
                 f"{region_id} {k}：落库 {after[k]} ≠ #267 {v}"
-        if "军饷欠" in want:
-            assert after["军饷欠"] == pytest.approx(want["军饷欠"], abs=1e-6)
-        else:
-            assert after["军饷欠"] == pytest.approx(
-                _region_pay_arrears_container_basis(fresh_db, region_id),
-                abs=1e-6,
-            )
+        # 军饷欠唯一来源 = 军籍省侧累加器，无独立漏斗加数。
+        assert after["军饷欠"] == pytest.approx(
+            _region_pay_arrears_container_basis(fresh_db, region_id),
+            abs=1e-6,
+        )
         for k, v in res.new_st.items():
             if k == "军饷欠":
                 continue

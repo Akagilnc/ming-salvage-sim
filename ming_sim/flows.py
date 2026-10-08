@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ming_sim.models import loads_persistent_json_object
+
 import copy
 import json
 import math
@@ -403,11 +405,10 @@ def _substrate_hub_jingyun_due_by_region(db: GameDB) -> Dict[str, float]:
         "SELECT id, fiscal FROM regions WHERE controlled_by = 'ming'"
     ).fetchall()
     for row in rows:
-        try:
-            fiscal = json.loads(str(row["fiscal"] or "{}"))
-        except (TypeError, ValueError):
-            continue
-        settle = fiscal.get("settle") if isinstance(fiscal, dict) else None
+        fiscal = loads_persistent_json_object(
+            row["fiscal"], surface=f"regions[{row['id']}].fiscal",
+        )
+        settle = fiscal.get("settle")
         p = settle.get("p") if isinstance(settle, dict) else None
         if not isinstance(p, dict):
             continue

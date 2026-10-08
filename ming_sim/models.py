@@ -72,6 +72,33 @@ def loads_persistent_json_list(
     return list(data)
 
 
+def require_persistent_string_list(
+    raw: object, *, surface: str, field: str,
+) -> list:
+    """Durable object member that must be a list of names when present.
+
+    Missing/None → []; string or other non-list → loud failure (no char-iteration).
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"{surface}.{field} 须为数组，得 {type(raw).__name__}"
+        )
+    out: list = []
+    for index, item in enumerate(raw):
+        if item is None:
+            continue
+        if not isinstance(item, (str, int, float)) or isinstance(item, bool):
+            raise ValueError(
+                f"{surface}.{field}[{index}] 须为标量名，得 {type(item).__name__}"
+            )
+        text = str(item)
+        if text:
+            out.append(text)
+    return out
+
+
 def loads_effect_dict(raw: object) -> Dict[str, object]:
     """读 effect_on_resolve / effect_on_fail / ongoing_effects 等存库 effect-JSON 的单一入口（#117）。
 
@@ -233,28 +260,6 @@ def _person_effect_has_work(raw: object) -> bool:
     return False
 
 
-def _character_effect_has_work(raw: object) -> bool:
-    if not isinstance(raw, list):
-        return False
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        if not _nonempty_text(item.get("name")):
-            continue
-        loyalty = item.get("loyalty")
-        if (
-            not isinstance(loyalty, bool)
-            and isinstance(loyalty, int)
-            and loyalty != 0
-        ):
-            return True
-    return False
-
-
-
-
-
-
 def _power_renames_effect_has_work(raw: object) -> bool:
     if not isinstance(raw, list):
         return False
@@ -321,8 +326,6 @@ def effect_dict_has_work(raw: object) -> bool:
         _building_effect_has_work(effect.get("buildings")),
         _new_armies_effect_has_work(effect.get("new_armies")),
         _person_effect_has_work(effect.get("人物变更")),
-        _person_effect_has_work(effect.get("person_changes")),
-        _character_effect_has_work(effect.get("character")),
         _power_renames_effect_has_work(effect.get("power_renames")),
         _legacy_effect_has_work(effect.get("legacy")),
     )

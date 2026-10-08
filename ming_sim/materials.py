@@ -9,6 +9,8 @@ live agent session.
 
 from __future__ import annotations
 
+from ming_sim.models import loads_persistent_json_list
+
 import hashlib
 import json
 import re
@@ -1740,12 +1742,7 @@ def _scene_present_rows(db: Any, state: Any) -> list[tuple[str, str]]:
 
 
 def _json_list_field(raw: object) -> list[str]:
-    try:
-        value = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        return []
-    if not isinstance(value, list):
-        return []
+    value = loads_persistent_json_list(raw, surface="materials.json_list")
     return [str(item) for item in value if str(item).strip()]
 
 

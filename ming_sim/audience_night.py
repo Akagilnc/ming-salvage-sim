@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from ming_sim.models import loads_persistent_json_list
+
 import contextlib
 import json
 import logging
@@ -206,11 +208,7 @@ def _json_list(value: Any) -> List[Any]:
     if isinstance(value, list):
         return value
     if isinstance(value, str):
-        try:
-            parsed = json.loads(value or "[]")
-        except (TypeError, ValueError):
-            return []
-        return parsed if isinstance(parsed, list) else []
+        return loads_persistent_json_list(value, surface="audience_night.json_list")
     return []
 
 

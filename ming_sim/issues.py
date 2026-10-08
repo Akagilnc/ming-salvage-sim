@@ -55,7 +55,16 @@ from ming_sim.flows import (
     _apply_population_transfers,
     _strict_int,
 )
-from ming_sim.models import Event, GameState, effect_dict_has_work, is_vassal_prince, loads_effect_dict
+from ming_sim.models import (
+    Event,
+    GameState,
+    effect_dict_has_work,
+    is_vassal_prince,
+    loads_effect_dict,
+    loads_persistent_json_list,
+    loads_persistent_json_object,
+)
+
 from ming_sim.participant_roster import project_execution_liability_parties
 from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
@@ -225,12 +234,14 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     row = db.get_decree_dossier(dossier_id)
     if row is None or not db.dossier_authorizes_effects(dossier_id):
         return None
-    try:
-        payload = row.get("payload") or json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(payload, dict):
-        return None
+    if row.get("payload") is not None:
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            return None
+    else:
+        payload = loads_persistent_json_object(
+            row.get("payload_json"), surface="decree_dossiers.payload_json",
+        )
     if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
         return None
     return {**row, "payload": payload}
@@ -721,64 +732,32 @@ def _monthly_economy_items(effect: Dict[str, object]) -> List[Dict[str, object]]
 
 
 def _monthly_person_rating_changes(effect: Dict[str, object]) -> List[Dict[str, object]]:
-    raw_changes: List[Dict[str, object]] = []
-    for key in ("人物变更", "person_changes"):
-        raw = effect.get(key)
-        if isinstance(raw, list):
-            raw_changes.extend(item for item in raw if isinstance(item, dict))
-    changes = [
+    """Only the canonical 人物变更 stream; retired person_changes/character aliases stay closed."""
+    return [
         item
-        for item in normalize_person_changes({"人物变更": raw_changes})
+        for item in normalize_person_changes(effect)
         if isinstance(item, dict)
         and str(item.get("动作") or "").strip() == "评定"
         and not isinstance(item.get("loyalty"), bool)
         and isinstance(item.get("loyalty"), int)
         and int(item.get("loyalty") or 0) != 0
     ]
-    raw_character = effect.get("character")
-    if isinstance(raw_character, list):
-        for item in raw_character:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or item.get("人物") or "").strip()
-            loyalty = item.get("loyalty")
-            if not name or isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
-                continue
-            changes.append({
-                "name": name,
-                "动作": "评定",
-                "loyalty": loyalty,
-                "reason": str(item.get("reason") or item.get("原因") or ""),
-            })
-    return changes
 
 
 def _invalid_monthly_person_rating_reason(effect: Dict[str, object]) -> str:
-    for key in ("人物变更", "person_changes"):
-        raw = effect.get(key)
-        if not isinstance(raw, list):
+    raw = effect.get("人物变更")
+    if not isinstance(raw, list):
+        return ""
+    for item in raw:
+        if not isinstance(item, dict):
             continue
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or item.get("人物") or "").strip()
-            action = str(item.get("动作") or item.get("action") or "").strip()
-            if not name or action != "评定":
-                continue
-            loyalty = item.get("loyalty")
-            if isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
-                return f"{key}.评定 loyalty 须为非零整数增量"
-    raw_character = effect.get("character")
-    if isinstance(raw_character, list):
-        for item in raw_character:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or item.get("人物") or "").strip()
-            if not name or "loyalty" not in item:
-                continue
-            loyalty = item.get("loyalty")
-            if isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
-                return "character.loyalty 须为非零整数增量"
+        name = str(item.get("name") or item.get("人物") or "").strip()
+        action = str(item.get("动作") or item.get("action") or "").strip()
+        if not name or action != "评定":
+            continue
+        loyalty = item.get("loyalty")
+        if isinstance(loyalty, bool) or not isinstance(loyalty, int) or loyalty == 0:
+            return "人物变更.评定 loyalty 须为非零整数增量"
     return ""
 
 
@@ -805,9 +784,8 @@ def _unsupported_monthly_ongoing_fields(effect: Dict[str, object]) -> List[str]:
     ):
         if effect_dict_has_work({key: effect.get(key)}):
             unsupported.append(key)
-    for key in ("人物变更", "person_changes"):
-        if _person_change_has_unsupported_monthly_work(effect.get(key)):
-            unsupported.append(f"{key}(月度仅支持评定)")
+    if _person_change_has_unsupported_monthly_work(effect.get("人物变更")):
+        unsupported.append("人物变更(月度仅支持评定)")
     return unsupported
 
 
@@ -6287,14 +6265,15 @@ def _apply_person_changes(
                         )
                         continue
                     if action_type == "pacification":
-                        try:
-                            payload = dossier.get("payload") or json.loads(
-                                str(dossier.get("payload_json") or "{}")
+                        if dossier.get("payload") is not None:
+                            payload = dossier.get("payload")
+                            if not isinstance(payload, dict):
+                                raise ValueError("pacification dossier payload 须为对象")
+                        else:
+                            payload = loads_persistent_json_object(
+                                dossier.get("payload_json"),
+                                surface="decree_dossiers.payload_json",
                             )
-                        except (TypeError, ValueError):
-                            payload = {}
-                        if not isinstance(payload, dict):
-                            payload = {}
                         bound_target = str(
                             payload.get("target_id") or dossier.get("target_id") or ""
                         ).strip()
@@ -8132,19 +8111,10 @@ def _apply_score_extraction_body(
             if event_owned and not apply_event_owned:
                 continue
             if event_owned and apply_event_owned:
-                # 已预检接纳的事件战果：与 deferred 成功分支同形直写，不套自由正实力剥除。
-                if not isinstance(raw_changes, dict):
-                    continue
+                # 事件战果复用同一写核与现役过滤，不另开身份豁免直写路。
                 landed_event_stock_ids.update(_effect_event_ids(
                     "power_updates", index, strategic_event_referenced_ids, event_ids_map,
                 ))
-                origin_ref = str(raw_changes.get("origin_ref") or "").strip()
-                payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-                power_changes.extend(db.apply_power_deltas(
-                    state, {power_id: payload}, commit=commit_now,
-                    origin_ref=origin_ref, require_origin=True,
-                ))
-                continue
             if power_id in conflict_powers:
                 power_changes.append({
                     "power_id": power_id,
@@ -8673,10 +8643,9 @@ def clear_gated_legacies(db: GameDB, state: GameState) -> List[str]:
     ).fetchall()
     cleared: List[str] = []
     for row in rows:
-        try:
-            gate = json.loads(str(row["clear_gate"] or "{}"))
-        except (ValueError, TypeError):
-            gate = {}
+        gate = loads_persistent_json_object(
+            row["clear_gate"], surface="legacies.clear_gate",
+        )
         if not gate:
             continue
         if _gate_passed(gate, state.metrics, db):

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from ming_sim.models import loads_persistent_json_list, loads_persistent_json_object
+
 import json
 from typing import Any, Iterable, Mapping
 
@@ -119,29 +121,21 @@ def public_layer_events(db: Any, *, for_public_feed: bool = False) -> list[dict[
 
 
 def _json_name_list(raw: object) -> list[str]:
-    try:
-        values = json.loads(raw or "[]")
-    except (TypeError, ValueError):
-        values = []
-    if not isinstance(values, list):
-        values = []
+    values = loads_persistent_json_list(raw, surface="public_sayings.names")
     return [str(name) for name in values if str(name).strip()]
 
 
 def _json_target_map(raw: object) -> dict[str, list[str]]:
-    try:
-        payload = json.loads(raw or "{}")
-    except (TypeError, ValueError):
-        payload = {}
-    if not isinstance(payload, dict):
-        return {}
+    payload = loads_persistent_json_object(raw, surface="public_sayings.targets")
     result: dict[str, list[str]] = {}
     for key, values in payload.items():
-        names = (
-            [str(name) for name in values if str(name).strip()]
-            if isinstance(values, list)
-            else []
-        )
+        if values is None:
+            continue
+        if not isinstance(values, list):
+            raise ValueError(
+                f"public_sayings.targets[{key!r}] 须为数组，得 {type(values).__name__}"
+            )
+        names = [str(name) for name in values if str(name).strip()]
         if names:
             result[str(key)] = names
     return result

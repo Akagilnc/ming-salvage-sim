@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from typing import Dict, List, Mapping
 
+from ming_sim.models import loads_persistent_json_list
+
 # ADR 0053 机械三档闭集（唯一真源）：归一缝、票拟层 A shape 与 prompt 契约共引，
 # 禁第二份字面量。主办可多人（北极星实证：倪元璐＋黄道周合力清丈畿辅）。
 PARTICIPANT_TIERS = ("主办", "协办", "知情")
@@ -67,11 +69,9 @@ def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
     """
     roster = dossier.get("participant_roster") or []
     if isinstance(roster, str):
-        try:
-            roster = json.loads(roster)
-        except (TypeError, ValueError):
-            # json.JSONDecodeError ⊂ ValueError
-            roster = []
+        roster = loads_persistent_json_list(
+            roster, surface="decree_dossiers.participant_roster",
+        )
     if isinstance(roster, list):
         for entry in roster:
             if not isinstance(entry, dict):

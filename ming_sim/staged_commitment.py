@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
+from ming_sim.models import loads_persistent_json_list, loads_persistent_json_object
+
 ENTRY_KIND_STAGED = "staged_commitment"
 # #624 / ADR 0078：反催谏 / 求宽限（0075 同款 next_audience_todos 通道；不进 due-review 白名单）
 ENTRY_KIND_RUSH_REMONSTRANCE = "rush_remonstrance"
@@ -26,8 +28,9 @@ TODO_STATUS_CONSUMED = "consumed"
 def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     """Normalize structured stages payload → durable list.
 
-    Accepts list/tuple of dicts, or a JSON array string. Non-JSON free text
-    returns [] here (读侧宽容面)；写侧由 ``stages_to_json`` 响亮拒绝。
+    Accepts list/tuple of dicts, or a JSON array string. Missing/empty → [].
+    Corrupt durable JSON or non-list root raises (ADR 0005); member null/non-object
+    also raises — stages are mechanical due facts, not free prose.
 
     分段承诺是机械事实（到期判账），只认显式结构化字段。引擎不得从 LLM 自由
     散文正则反推语义（ADR 0142 / 锚定宪法「机器只咬契约，不咬呈现」；owner
@@ -36,25 +39,24 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
     """
     if raw in (None, "", [], ()):
         return []
-    data = raw
-    if isinstance(raw, str):
-        text = raw.strip()
-        if not text or text in ("[]", "{}"):
-            return []
-        try:
-            data = json.loads(text)
-        except (TypeError, ValueError):
-            return []
-    if not isinstance(data, (list, tuple)):
-        return []
+    if isinstance(raw, (list, tuple)):
+        data = list(raw)
+    else:
+        data = loads_persistent_json_list(raw, surface="issues.stages_json")
     out: List[Dict[str, object]] = []
     for idx, item in enumerate(data):
+        if item is None:
+            raise ValueError(f"issues.stages_json[{idx}] 不得为 null")
         if not isinstance(item, dict):
-            continue
+            raise ValueError(
+                f"issues.stages_json[{idx}] 须为对象，得 {type(item).__name__}"
+            )
         try:
             due_turn = int(item.get("due_turn") or 0)
-        except (TypeError, ValueError):
-            continue
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"issues.stages_json[{idx}].due_turn 非法：{item.get('due_turn')!r}"
+            ) from exc
         if due_turn <= 0:
             continue
         try:
@@ -229,12 +231,9 @@ def list_due_grant_report_dossiers_for_scan(
     for row in rows:
         if str(row["execution_outcome"] or "").strip():
             continue
-        try:
-            payload = _json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        payload = loads_persistent_json_object(
+            row["payload_json"], surface="pending_actions.payload_json",
+        )
         # due_turn 单源：有未来 due 且仍 executing 即到期候选（不另滤 cadence/grant_action）
         did = int(row["id"])
         due_turn = int(row["due_turn"] or 0)
