@@ -6471,7 +6471,7 @@ def _apply_dossier_participant_items(
                 "rejected": True, "category": "invalid_shape", "item": item,
             })
             continue
-        # 模型新输入脏项在此拒收；既存持久名册 schema 故障由 append 上抛，不洗成拒收。
+        # 输入字段闸 → 持久名册预检（坏根/坏成员上抛）→ 写核输入错误逐项拒收。
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             if dossier_id not in authority_set:
@@ -6497,27 +6497,48 @@ def _apply_dossier_participant_items(
                 "reason": str(exc), "item": item,
             })
             continue
-        added = db.append_decree_dossier_participants(
-            dossier_id, [addition], state=state, commit=False,
+        from ming_sim.participant_roster import participant_roster_entries
+
+        dossier = db.get_decree_dossier(dossier_id)
+        if dossier is None:
+            results.append({
+                "rejected": True, "category": "invalid_participant_roster",
+                "reason": f"案卷不存在：{dossier_id}", "item": item,
+            })
+            continue
+        # 既存成员 schema 故障在此响亮；不进入下面的输入拒收捕。
+        participant_roster_entries(
+            dossier.get("participant_roster") or [],
+            surface="decree_dossiers.participant_roster",
         )
-        if not added:
-            # Exact durable duplicate is the only no-write success case.
-            existing = db.get_decree_dossier(dossier_id) or {}
-            if not any(
-                row.get("character_id") == character_id
-                and row.get("tier") == tier
-                and row.get("role") == str(item.get("role") or "")
-                and row.get("delegator_id") == delegator_id
-                for row in existing.get("participant_roster", [])
-            ):
-                raise ValueError("参与人未实际加入案卷")
-        persisted = added[0] if added else {
-            "character_id": character_id, "tier": tier,
-        }
-        results.append({
-            "dossier_id": dossier_id,
-            "character_id": persisted["character_id"], "tier": persisted["tier"],
-        })
+        try:
+            added = db.append_decree_dossier_participants(
+                dossier_id, [addition], state=state, commit=False,
+            )
+            if not added:
+                # Exact durable duplicate is the only no-write success case.
+                refreshed = db.get_decree_dossier(dossier_id) or {}
+                if not any(
+                    row.get("character_id") == character_id
+                    and row.get("tier") == tier
+                    and row.get("role") == str(item.get("role") or "")
+                    and row.get("delegator_id") == delegator_id
+                    for row in refreshed.get("participant_roster", [])
+                ):
+                    raise ValueError("参与人未实际加入案卷")
+            persisted = added[0] if added else {
+                "character_id": character_id, "tier": tier,
+            }
+            results.append({
+                "dossier_id": dossier_id,
+                "character_id": persisted["character_id"], "tier": persisted["tier"],
+            })
+        except (TypeError, ValueError, KeyError) as exc:
+            # 持久已预检；此处为引用/委派/同人异档等输入契约拒收。
+            results.append({
+                "rejected": True, "category": "invalid_participant_roster",
+                "reason": str(exc), "item": item,
+            })
     return results
 
 
@@ -7370,20 +7391,15 @@ def _apply_score_extraction_body(
             "dossier_id": dossier_id, "outcome": outcome,
         })
 
-    _authority_item_reject_reasons = frozenset({
+    authority_change_results: List[Dict[str, object]] = []
+    _authority_code_categories = frozenset({
         "missing_dossier_source",
         "dossier_not_effect_eligible",
         "duplicate_active_authority",
         "invalid_authority_scope",
         "unknown_authority_id",
         "already_revoked",
-        "授权变更动作只收授予/收回",
-        "授予项必须含 holder_id/privilege/scope",
-        "授权权项不在首批枚举",
-        "授权对象不在人物档",
-        "授权失效回合不得早于生效回合",
     })
-    authority_change_results: List[Dict[str, object]] = []
     for item in extracted.get("authority_changes") or []:
         if not isinstance(item, dict):
             authority_change_results.append({
@@ -7391,25 +7407,37 @@ def _apply_score_extraction_body(
                 "reason": "授权变更项必须为对象",
             })
             continue
+        # 先解 dossier_id；再预检既存案卷 schema（坏 payload 上抛）；其余 ValueError 为输入拒收。
+        try:
+            if "dossier_id" not in item or item.get("dossier_id") in (None, ""):
+                raise ValueError("missing_dossier_source")
+            dossier_id = _parse_sqlite_id(item.get("dossier_id"))
+            if dossier_id <= 0:
+                raise ValueError("missing_dossier_source")
+        except (TypeError, ValueError) as exc:
+            reason = str(exc)
+            if reason != "missing_dossier_source":
+                reason = "missing_dossier_source"
+            authority_change_results.append({
+                "rejected": True, "category": "missing_dossier_source",
+                "reason": reason, "item": item,
+            })
+            continue
+        dossier = db.get_decree_dossier(dossier_id)
+        if dossier is None:
+            authority_change_results.append({
+                "rejected": True, "category": "missing_dossier_source",
+                "reason": "missing_dossier_source", "item": item,
+            })
+            continue
         try:
             authority_change_results.append(
                 _apply_authority_change_item(db, state, item)
             )
         except ValueError as exc:
-            # 仅契约拒收理由进逐项拒收；既存 schema 等其它 ValueError 上抛。
             reason = str(exc)
-            if reason not in _authority_item_reject_reasons:
-                raise
             category = (
-                reason
-                if reason in {
-                    "missing_dossier_source",
-                    "dossier_not_effect_eligible",
-                    "duplicate_active_authority",
-                    "invalid_authority_scope",
-                    "unknown_authority_id",
-                    "already_revoked",
-                }
+                reason if reason in _authority_code_categories
                 else "invalid_authority_change"
             )
             authority_change_results.append({
