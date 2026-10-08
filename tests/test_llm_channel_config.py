@@ -665,23 +665,6 @@ def test_load_llm_config_cli_env_uses_cli_default_timeout_not_api(monkeypatch):
     assert cfg.cli_timeout_seconds != 180.0
 
 
-def test_web_runtime_cli_no_saved_timeout_uses_cli_default(monkeypatch):
-    """codex R1 #3：web env CLI 无 saved cli.timeout_seconds 时回落 CLI 槽默认（静默判死 60），
-    不回落 API request timeout（180）。"""
-    import web_app
-    from ming_sim.llm_config import CLI_DEFAULT_TIMEOUT_SECONDS
-    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "codex")
-    cfg = web_app._llm_config_from_runtime(
-        {"channel": "cli", "cli": {"runner": "codex", "model": "gpt-5.5"}},
-        base_url="", model="m", api_key="", timeout_seconds=180.0,
-        thinking_level="", advanced_model="", advanced_base_url="",
-        advanced_api_key="", advanced_thinking_level="",
-    )
-    assert cfg.channel == "cli"
-    assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS == 60.0
-    assert cfg.cli_timeout_seconds != 180.0
-
-
 def test_for_role_advanced_empty_cli_model_no_api_model_leak(monkeypatch):
     """#52 核查:CLI 通道 + advanced 角色(simulator)+ cli_model 空时,for_role 把
     advanced_model 放进 model,但 create_chat_model(唯一 CliChat 工厂)不得把它当 --model

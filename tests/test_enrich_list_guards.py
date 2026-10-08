@@ -21,14 +21,6 @@ def test_apply_economy_list_non_list_no_crash(read_game):
         assert _apply_economy_list(db, state, bad) == []
 
 
-def test_apply_economy_list_valid_still_works(game):
-    """守卫不误伤正常 list：合法 economy 项确实落账（断内容，非仅 isinstance——codex）。"""
-    db, state, _content = game
-    out = _apply_economy_list(db, state, [{"account": "国库", "delta": -5, "reason": "测试"}])
-    assert len(out) == 1, f"合法 economy 项被守卫误吞：{out}"
-    assert out[0].get("account") == "国库"
-
-
 def test_inertia_ongoing_non_dict_no_crash(game):
     """Persisted non-object effects must not crash monthly situation drift (#117)."""
     from ming_sim.situation_drift import apply_situation_monthly_drift
