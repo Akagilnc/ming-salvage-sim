@@ -1887,10 +1887,9 @@ def _eval_gate_key(key: str, metrics: Dict[str, int], db: GameDB) -> Optional[fl
         try:
             values.append(float(raw_val))
         except ValueError as exc:
-            # 非数值字符串 = 数值 cond 配了文本字段（如 region.x.controlled_by >=1）→ 数值转换不动。
-            raise ValueError(
-                f"trigger_gate key「{key}」字段非数值（数值比较不可比文本字段）：{raw_val!r}"
-            ) from exc
+            # 字段已过 _gate_sql_field 数值资格；库内非数值是持久账本故障，
+            # 不是模型选错字段（选错由 gate 以 ValueError 拒）。
+            raise RuntimeError(f"gate key 持久读失败：{key}") from exc
         except TypeError:
             return None
     if not values:

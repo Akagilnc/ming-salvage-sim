@@ -19736,10 +19736,8 @@ class GameDB:
             )
             dossier = self.get_dossier_for_secret_order(int(order_id))
             if dossier is not None:
-                payload = self.parse_engine_payload_json(
-                    dossier.get("payload_json"),
-                    surface="decree_dossiers.payload_json",
-                )
+                # _dossier_row 已规范 payload；直接消费，禁止旁路再解码 payload_json。
+                payload = dict(dossier["payload"])
                 payload["title"] = persisted_title
                 payload["content"] = content
                 payload["tags"] = self._loads_stored_json_list(

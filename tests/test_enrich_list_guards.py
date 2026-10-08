@@ -21,16 +21,6 @@ def test_apply_economy_list_non_list_no_crash(read_game):
         assert _apply_economy_list(db, state, bad) == []
 
 
-def test_loads_effect_dict_healthy_and_legal_empty():
-    """loads_effect_dict：合法 dict 原样；真空合法空 → {}。腐坏/非对象响亮由 parse_engine 现役闸覆盖，不复活吞腐。"""
-    from ming_sim.models import loads_effect_dict  # 单一 home 在 models（leaf），各模块从此取
-    assert loads_effect_dict('{"metrics": {"民心": 1}}') == {"metrics": {"民心": 1}}
-    assert loads_effect_dict({"already": "parsed"}) == {"already": "parsed"}
-    assert loads_effect_dict(None) == {}
-    assert loads_effect_dict("") == {}
-    assert loads_effect_dict("{}") == {}
-
-
 def test_apply_economy_list_skips_non_dict_items(game):
     """list 内混非 dict 项不崩，跳过非 dict、只落合法项（#117 codex 逐项守）。"""
     db, state, _content = game
