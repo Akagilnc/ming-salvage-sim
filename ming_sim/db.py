@@ -13042,8 +13042,13 @@ class GameDB:
                 dossier_id = int(supplied.split(":", 1)[1])
             except (TypeError, ValueError):
                 raise KeyError("commitment origin_ref 案卷 id 非法")
-            # 缺行=模型坏引用→KeyError 逐项拒；_dossier_row 解码故障 RuntimeError 穿透
-            if self.get_decree_dossier(dossier_id) is None:
+            # 缺行/越界 id=模型坏引用→KeyError 逐项拒（同 effect_origin_rejection
+            # 捕 OverflowError）；_dossier_row 解码故障 RuntimeError 穿透
+            try:
+                dossier = self.get_decree_dossier(dossier_id)
+            except OverflowError as exc:
+                raise KeyError("commitment origin_ref 案卷 id 非法") from exc
+            if dossier is None:
                 raise KeyError("commitment origin_ref 指向不存在案卷")
             return supplied
         from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX, is_secret_order_origin
@@ -13053,7 +13058,10 @@ class GameDB:
                 secret_order_id = int(supplied[len(SECRET_ORDER_ORIGIN_PREFIX):])
             except (TypeError, ValueError):
                 raise KeyError("commitment origin_ref 密令 id 非法")
-            dossier = self.get_dossier_for_secret_order(secret_order_id)
+            try:
+                dossier = self.get_dossier_for_secret_order(secret_order_id)
+            except OverflowError as exc:
+                raise KeyError("commitment origin_ref 密令 id 非法") from exc
             if dossier is None:
                 raise KeyError("commitment origin_ref 指向无案卷密令")
             return f"dossier:{int(dossier['id'])}"
