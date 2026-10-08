@@ -1,6 +1,5 @@
 """#612 endorsement contracts — one real entry tracer per independent external seam."""
 
-import json
 from types import SimpleNamespace
 
 import pytest

@@ -23,8 +23,6 @@ import ming_sim.session as session_mod
 import web_app
 from ming_sim.models import TurnPhase
 from tests.dossier_test_helpers import rejected_verdict
-from tests.rescript_test_helpers import sql_rescript_draft
-from ming_sim.session_write_queue import get_session_write_queue
 
 @pytest.fixture
 def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
