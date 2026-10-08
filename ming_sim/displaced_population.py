@@ -172,15 +172,17 @@ def apply_recovery_driven_transfers(
         if (dossier_id, turn) in seen_keys:
             continue
         # payload_json 是引擎自己写的持久列，解析失败＝账本腐值，必须响亮失败
-        # 交外层事务回滚；静默 continue 会让这案赈济回流无声消失。
+        # 交外层事务回滚；静默 continue 会让这案赈济回流无声消失（#1897 E1）。
+        from ming_sim.db import GameDB
         try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError) as exc:
+            payload = GameDB.parse_engine_payload_json(
+                row["payload_json"],
+                surface=f"displaced.dossier#{dossier_id}.payload_json",
+            )
+        except ValueError as exc:
             raise ValueError(
                 f"dossier {dossier_id}.payload_json 持久 JSON 损坏，无法结算回流"
             ) from exc
-        if not isinstance(payload, dict):
-            continue
         grant_action = str(payload.get("grant_action") or "").strip()
         if grant_action not in RECOVERY_GRANT_ACTIONS:
             continue

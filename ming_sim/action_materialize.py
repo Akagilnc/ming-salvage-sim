@@ -1891,12 +1891,16 @@ def stage_revoke_decree_candidate(
     target_candidate: object = None,
     affair_declaration: Optional[Mapping[str, object]] = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+    source_chat_turn_id: object = 0,
+    night_id: Optional[int] = None,
 ) -> int:
     """Shared revoke_decree candidate write (#523 / ADR 0041).
 
     有代价的新命令入闸；目标仅承诺/旨意。非 undo、不删旧账。
     ``affair_declaration`` 是既有事务关联接缝（#1894 / ADR 0154）：原旨与撤令
     沿同一事务，缺席即无关联，代码不据正文推断。
+    ``night_id`` / ``source_chat_turn_id``：与其它 stage_*_candidate 同缝，贯穿源夜源轮
+    （#1897 E1 / ADR 0038 迟到转译），不得退回当前开夜或 0 轮。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
@@ -1937,9 +1941,18 @@ def stage_revoke_decree_candidate(
     }
     if affair_declaration:
         staged["affair_declaration"] = dict(affair_declaration)
+    origin_cid = int(source_chat_turn_id or 0)
     if existing_id:
-        return db.update_directive_candidate(existing_id, staged)
-    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+        return db.update_directive_candidate(
+            existing_id, staged,
+            night_id=night_id,
+            source_chat_turn_id=origin_cid,
+        )
+    return db.stage_directive_candidate(
+        int(turn), minister_name, payload=staged,
+        night_id=night_id,
+        source_chat_turn_id=origin_cid,
+    )
 
 def _build_catalog() -> Tuple[ActionCluster, ...]:
     """单一登记定义：label/kind/effect/fields 同表（FieldSpec 枚举真源）。"""

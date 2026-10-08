@@ -164,27 +164,27 @@ def _month_fact_materials(
     ).fetchall()
     for row in rows:
         decree_ref = str(row["decree_ref"] or "")
-        # 已结算声明是内部机械事实；腐坏响亮，不得当空声明供料（#1897 E1/K2）。
+        # 已结算声明是内部机械事实；与 parse_engine_payload_json 同权威，
+        # 空串/腐坏响亮，不得洗成空声明供料（#1897 E1/K2）。
+        from ming_sim.db import GameDB
         try:
-            declaration = json.loads(row["declaration_json"] or "{}")
-        except json.JSONDecodeError as exc:
+            declaration = GameDB.parse_engine_payload_json(
+                row["declaration_json"],
+                surface=f"settled.declaration_json:{decree_ref}",
+            )
+        except ValueError as exc:
             raise ValueError(
                 f"settled declaration_json 无效：{decree_ref}"
             ) from exc
-        if not isinstance(declaration, dict):
-            raise ValueError(
-                f"settled declaration_json 非对象：{decree_ref}"
-            )
         try:
-            visible = json.loads(row["visible_refs_json"] or "{}")
-        except json.JSONDecodeError as exc:
+            visible = GameDB.parse_engine_payload_json(
+                row["visible_refs_json"],
+                surface=f"settled.visible_refs_json:{decree_ref}",
+            )
+        except ValueError as exc:
             raise ValueError(
                 f"settled visible_refs_json 无效：{decree_ref}"
             ) from exc
-        if not isinstance(visible, dict):
-            raise ValueError(
-                f"settled visible_refs_json 非对象：{decree_ref}"
-            )
         if not include_secret_sources and (
             _decree_ref_is_secret(db, decree_ref)
             or _secret_sourced(declaration)
@@ -226,10 +226,10 @@ def _month_fact_materials(
         ):
             if not include_secret_sources and str(row["source"] or "") == "secret_order":
                 continue
-            try:
-                item = json.loads(row["item_json"] or "{}")
-            except json.JSONDecodeError:
-                item = {}
+            from ming_sim.db import GameDB
+            item = GameDB.parse_engine_payload_json(
+                row["item_json"], surface="rejection_reports.item_json",
+            )
             if not include_secret_sources and (
                 _secret_sourced(item) or _item_is_secret_dossier(item, secret_dossiers)
             ):

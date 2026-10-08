@@ -1239,7 +1239,11 @@ def apply_imperial_deliberation_push(
         raise ValueError(f"御笔强推只接 proposed 案卷：{did}")
     payload = row.get("payload")
     if not isinstance(payload, dict):
-        payload = json.loads(str(row.get("payload_json") or "{}"))
+        from ming_sim.db import GameDB
+        payload = GameDB.parse_engine_payload_json(
+            row.get("payload_json"),
+            surface=f"rescript.dossier#{did}.payload_json",
+        )
     if not isinstance(payload, dict):
         raise ValueError("廷议案卷 payload 非对象")
     if str(payload.get("deliberation_state") or "") != "stalled":

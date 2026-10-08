@@ -227,7 +227,13 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     if row is None or not db.dossier_authorizes_effects(dossier_id):
         return None
     try:
-        payload = row.get("payload") or json.loads(str(row.get("payload_json") or "{}"))
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            from ming_sim.db import GameDB
+            payload = GameDB.parse_engine_payload_json(
+                row.get("payload_json"),
+                surface=f"issues.dossier#{dossier_id}.payload_json",
+            )
     except (TypeError, ValueError):
         return None
     if not isinstance(payload, dict):
@@ -6426,14 +6432,13 @@ def _apply_person_changes(
                         )
                         continue
                     if action_type == "pacification":
-                        try:
-                            payload = dossier.get("payload") or json.loads(
-                                str(dossier.get("payload_json") or "{}")
-                            )
-                        except (TypeError, ValueError):
-                            payload = {}
+                        payload = dossier.get("payload")
                         if not isinstance(payload, dict):
-                            payload = {}
+                            from ming_sim.db import GameDB
+                            payload = GameDB.parse_engine_payload_json(
+                                dossier.get("payload_json"),
+                                surface="issues.pacification.payload_json",
+                            )
                         bound_target = str(
                             payload.get("target_id") or dossier.get("target_id") or ""
                         ).strip()

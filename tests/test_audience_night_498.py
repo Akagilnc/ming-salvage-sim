@@ -275,7 +275,7 @@ def test_write_decree_leaves_unacted_pending_unchanged(tmp_path, content, monkey
         old_office = db.conn.execute(
             "SELECT office FROM characters WHERE name=?", (minister,),
         ).fetchone()["office"]
-        pid = db.upsert_pending_directive(
+        pid = db.stage_directive_candidate(
             state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister})
         # 无 draft：拟诏响亮拒绝、不为 preview 造持久态
         with pytest.raises(ValueError):
@@ -295,14 +295,19 @@ def test_cross_night_directive_reassigned_to_second_night(game):
     minister = _active_minister(db, content)
 
     n1 = an.open_night(db, state, location="乾清宫")
-    d_id = db.upsert_pending_directive(state.turn, minister, payload={**_POLICY_FIELDS, "text": "初稿：缓征辽饷", "actor": minister})
+    d_id = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={**_POLICY_FIELDS, "text": "初稿：缓征辽饷", "actor": minister},
+    )
     # 第一夜不应允 → 留 pending；收夜不提交
     an.close_night(db, state, night_id=n1["id"], content=content)
     assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "pending"
 
     n2 = an.open_night(db, state, location="文华殿")
-    # 同臣同回合复用更新（last-write-wins）→ 归属须迁到第二夜、清 approval
-    same_id = db.upsert_pending_directive(state.turn, minister, payload={**_POLICY_FIELDS, "text": "定稿：改折色", "actor": minister})
+    # 现役改草写口：update_directive_candidate 未持源夜时归属迁到当前开夜并清 approval
+    same_id = db.update_directive_candidate(
+        d_id, {**_POLICY_FIELDS, "text": "定稿：改折色", "actor": minister},
+    )
     assert same_id == d_id
     row = db.conn.execute("SELECT night_id, night_approved FROM pending_actions WHERE id=?", (d_id,)).fetchone()
     assert int(row["night_id"]) == n2["id"]
@@ -342,7 +347,7 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content, tmp_path):
         },
     )
     db.mark_pending_night_approved([pa_id], night_id=night["id"])
-    dir_id = db.upsert_pending_directive(
+    dir_id = db.stage_directive_candidate(
         state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部清查边饷", "actor": minister},
     )
     db.mark_pending_night_approved([dir_id], night_id=night["id"])

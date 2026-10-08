@@ -542,15 +542,21 @@ def directive_payload_admits_structured_write(payload: Mapping[str, object]) -> 
     """旨意可落库：普通 triad，或 #658 御笔强推 typed target（互斥）。"""
     return classify_directive_structured_kind(payload) != "empty"
 
-def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
+def _coerce_deadline_months(
+    raw: object, *, default: int = 0, durable: bool = False,
+) -> int:
     """解析密令/催办期限；显式 0 是合法值，不能被缺省兜底吞掉。
 
-    可辨识的 LLM 脏类型走既有 DecreeMaterializationValidationError 领域拒收
-    （#1897 C1 / ADR 0015 per-item），不升格为真故障带走同批合法同行。
+    durable=False（声明/准入）：可辨识脏类型走 DecreeMaterializationValidationError
+    领域拒收（#1897 C1 / ADR 0015 per-item），不带走同批合法同行。
+    durable=True（已持久载荷）：类型/解码腐坏裸 ValueError，事务回滚、pending 保待重试
+    （#1897 E1 错误来源分流），不得伪装业务 failed。
     """
     from ming_sim.action_materialize import DecreeMaterializationValidationError
 
     def _reject(message: str) -> None:
+        if durable:
+            raise ValueError(f"持久字段 deadline_months：{message}")
         raise DecreeMaterializationValidationError(
             message,
             failed_fields=("deadline_months",),
@@ -568,6 +574,10 @@ def _coerce_deadline_months(raw: object, *, default: int = 0) -> int:
     try:
         deadline = int(raw)
     except (ValueError, OverflowError) as exc:
+        if durable:
+            raise ValueError(
+                "持久字段 deadline_months：deadline_months must be a finite numeric type",
+            ) from exc
         raise DecreeMaterializationValidationError(
             "deadline_months must be a finite numeric type",
             failed_fields=("deadline_months",),
@@ -9727,14 +9737,6 @@ class GameDB:
             commit=commit,
         )
 
-    def _current_open_night_id(self) -> int:
-        """当前开着（open/closing）的召对夜 id；无开放夜返回 0（#498）。"""
-        row = self.conn.execute(
-            "SELECT id FROM audience_nights "
-            "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        return int(row["id"]) if row is not None else 0
-
     # ── #571 旨意案卷公共接口 ──────────────────────────────────────
 
     _DOSSIER_STATUSES = frozenset({"proposed", "promulgated", "executing", "closed"})
@@ -10690,6 +10692,7 @@ class GameDB:
         关联——这是 owner 2026-09-30 裁定的常态口径。案卷载荷里的 ``escort`` 是
         参与人名单 ``participant_roster`` 的押解投影（ADR 0053 单一真源），此处只
         判「有没有押解安排」，不重解名单。
+        已持久 payload 解码走单一权威；腐坏响亮，不 catch-to-False（#1897 E1）。
         """
         row = self.conn.execute(
             "SELECT payload_json FROM decree_dossiers WHERE id=?",
@@ -10697,10 +10700,10 @@ class GameDB:
         ).fetchone()
         if row is None:
             return False
-        try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-        except (TypeError, ValueError):
-            return False
+        payload = self.parse_engine_payload_json(
+            row["payload_json"],
+            surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+        )
         return payload_declares_escort(payload)
 
     # #1900 J18：已撤销的专用暗护双载体 / 实况账本 / 聚合读口 / 专用资格校验已退役。
@@ -13484,7 +13487,10 @@ class GameDB:
         ).fetchall()
         visible = []
         for row in rows:
-            payload = json.loads(str(row["payload_json"] or "{}"))
+            payload = self.parse_engine_payload_json(
+                row["payload_json"],
+                surface=f"decree_dossiers#{int(row['id'])}.payload_json",
+            )
             policy = dossier_action_policy(row["action_type"], payload)
             # Admission-owned effects never run through the simulator again.
             # An in-transit dossier remains visible as execution context until
@@ -13514,7 +13520,10 @@ class GameDB:
         if new_status not in self._DOSSIER_TRANSITIONS[old_status]:
             raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
         if old_status == "promulgated" and new_status == "closed":
-            payload = json.loads(str(row["payload_json"] or "{}"))
+            payload = self.parse_engine_payload_json(
+                row["payload_json"],
+                surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+            )
             if self._dossier_has_execution_surface(row["action_type"], payload):
                 raise ValueError("带执行判定面的案卷不得从 promulgated 直接 closed")
             if not str(row["execution_outcome"] or ""):
@@ -13630,7 +13639,10 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         if row["status"] == "proposed":
             raise ValueError("待判案卷不能绕过颁布格直接结案")
-        payload = json.loads(str(row.get("payload_json") or "{}"))
+        payload = self.parse_engine_payload_json(
+            row.get("payload_json"),
+            surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+        )
         immediate = not self._dossier_has_execution_surface(row["action_type"], payload)
         if row["status"] == "promulgated" and not immediate:
             raise ValueError("带执行判定面的案卷必须先进入 executing 并填写执行格")
@@ -13683,7 +13695,10 @@ class GameDB:
             row["status"] == "promulgated"
             and not self._dossier_has_execution_surface(
                 row["action_type"],
-                json.loads(str(row.get("payload_json") or "{}")),
+                self.parse_engine_payload_json(
+                    row.get("payload_json"),
+                    surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+                ),
             )
         )
         if row["status"] != "executing" and not immediate:
@@ -13808,9 +13823,10 @@ class GameDB:
                 self._append_midzhi_stigma(
                     dossier_id, decision="promulgated", turn=state.turn, commit=False,
                 )
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            if not isinstance(payload, dict):
-                raise ValueError("案卷 payload 非对象")
+            payload = self.parse_engine_payload_json(
+                row["payload_json"],
+                surface=f"decree_dossiers#{int(dossier_id)}.payload_json",
+            )
             policy = dossier_action_policy(row["action_type"], payload)
             signal = row.get("execution_signal") or {}
             if (
@@ -15682,51 +15698,6 @@ class GameDB:
             for r in rows
         ]
 
-    def upsert_pending_directive(
-        self, turn: int, minister_name: str, payload: Dict[str, object],
-        source_chat_turn_id: int = 0,
-    ) -> int:
-        """暂存或原地更新(last-write-wins)一条 kind=directive 拟旨意图(ADR 0006)。
-        同一回合同一大臣至多一条 pending directive——新意图覆盖旧(补充=原地更新,非新增态)。
-        返回行 id。
-
-        ``source_chat_turn_id``（#1890）只在新起一行时钉身份；命中既有行的
-        改稿分支刻意不换身份（见该分支注记）。"""
-        from ming_sim.audience_night import assert_night_accepts_player_input
-        assert_night_accepts_player_input(self, what="暂存")
-        row = self.conn.execute(
-            "SELECT id FROM pending_actions "
-            "WHERE turn=? AND minister_name=? AND kind='directive' AND status='pending'",
-            (int(turn), str(minister_name)),
-        ).fetchone()
-        if row is not None:
-            # #498：同回合可跨两夜（一月多夜）。旧夜遗留的 pending directive 被本夜复用更新时，
-            # 必须把归属原子迁到当前开着的夜并清 night_approved，否则本夜应允的
-            # WHERE night_id=当前夜 更新零行、收夜漏交、随后被默认同意旁路批交。
-            # #502 L5（同缝）：合并保留下划线控制键，正文改草不抹待澄清/夜内态。
-            existing_payload = self.conn.execute(
-                "SELECT payload_json FROM pending_actions WHERE id=?", (int(row["id"]),),
-            ).fetchone()
-            merged = self._merge_directive_payload(
-                existing_payload["payload_json"] if existing_payload else "{}", payload or {})
-            self._discard_pending_decree_forecast(int(row["id"]))
-            self.conn.execute(
-                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0, "
-                "version=version+1 WHERE id=?",
-                (json.dumps(merged, ensure_ascii=False),
-                 self._current_open_night_id(), int(row["id"])),
-            )
-            self.conn.commit()
-            return int(row["id"])
-        # #1890：只有 INSERT 分支钉来源轮。改草分支（上方 UPDATE）刻意不动
-        # source_chat_turn_id —— 一道交办的身份是它首次被说出口的那一轮，
-        # 补充/改稿不换身份，否则撤回前一轮会连带作废后来轮的修订。
-        return self.stage_pending_action(
-            turn, kind="directive", action="拟旨",
-            minister_name=minister_name, target_id=None, payload=payload,
-            source_chat_turn_id=source_chat_turn_id,
-        )
-
     def stage_directive_candidate(
         self, turn: int, minister_name: str, payload: Dict[str, object],
         *,
@@ -15734,8 +15705,7 @@ class GameDB:
         source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
-        与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
-        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。
+        改草走 :meth:`update_directive_candidate`。同臣同月 last-write-wins upsert 已退役（#1897 D2）。
 
         ``night_id``：与 :meth:`stage_pending_action` 同义——显式承接的源夜，供
         间接暂存入口（``action_materialize.stage_*_candidate``）把 ADR 0038
@@ -15793,9 +15763,8 @@ class GameDB:
         source_chat_turn_id: int = 0,
     ) -> int:
         """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
-        未持源夜时与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清
-        night_approved。声明路径传入源夜则盖源夜。返回该行 id。
-        ``source_chat_turn_id``：迟到转译源轮，放行收夜持闸窗口。
+        未持源夜时把归属迁到当前开着的夜并清 night_approved；声明路径传入源夜则盖源夜。
+        返回该行 id。``source_chat_turn_id``：迟到转译源轮，放行收夜持闸窗口。
         """
         stamp = self._night_id_for_staged_write(
             night_id, what="改草",
@@ -16498,7 +16467,10 @@ class GameDB:
                 tags = _optional_payload_str_list(
                     payload, "tags", surface="密令 tags",
                 )
-                deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
+                # 已持久期限：类型腐坏响亮，不伪装领域拒收（#1897 E1）。
+                deadline = _coerce_deadline_months(
+                    payload.get("deadline_months"), default=0, durable=True,
+                )
                 excluded = _optional_payload_str_list(
                     payload, "excluded_names", surface="密令 excluded_names",
                 )
@@ -16517,22 +16489,15 @@ class GameDB:
                     build_covert_task_contract,
                     covert_task_from_payload,
                 )
-                from ming_sim.action_materialize import DecreeMaterializationValidationError
                 raw_task = covert_task_from_payload(payload) or payload.get("covert_task")
+                # 准入已要求 covert_task；已持久缺/坏 = schema 腐坏，裸 ValueError（#1897 E1）。
                 if not raw_task:
-                    raise PendingActionRefusal(
-                        "密令确认缺少差务类型",
-                        category="missing_task_type",
-                        item={"pending_action_id": int(pa["id"])},
-                    )
-                # 输入校验拒收仅包声明契约；create_secret_order 内部执行异常交已有真出口（#1853 J9）。
+                    raise ValueError("持久密令缺 covert_task")
                 try:
                     frozen_task = build_covert_task_contract(covert_task=raw_task)
                 except CovertContractError as exc:
-                    raise PendingActionRefusal(
-                        str(exc),
-                        category="covert_contract",
-                        item={"pending_action_id": int(pa["id"])},
+                    raise ValueError(
+                        f"持久 covert_task 契约腐坏：{exc}",
                     ) from exc
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
@@ -16546,11 +16511,7 @@ class GameDB:
                 if order_id is not None and payload.get("dossier_links") is not None:
                     links = payload.get("dossier_links")
                     if not isinstance(links, list):
-                        raise PendingActionRefusal(
-                            "密令案卷关联必须为列表",
-                            category="dossier_links_shape",
-                            item={"pending_action_id": int(pa["id"])},
-                        )
+                        raise ValueError("持久密令 dossier_links 须为列表")
                     dossier = self.get_dossier_for_secret_order(int(order_id))
                     if dossier is None:
                         raise ValueError("密令成案后未找到案卷")
@@ -16570,7 +16531,9 @@ class GameDB:
             )
             origin_speaker = str(pa.get("minister_name") or "") or None
             if action == "更新":
-                deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
+                deadline = _coerce_deadline_months(
+                    payload.get("deadline_months"), default=0, durable=True,
+                )
                 # 已持久更新正文禁 str() 洗类型（#1897 E1）。
                 new_title = _require_durable_prose(
                     payload.get("new_title"), field="new_title",
@@ -16588,7 +16551,9 @@ class GameDB:
                     origin_chat_message_id=origin_mid,
                 )
             if action == "催办":
-                deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
+                deadline = _coerce_deadline_months(
+                    payload.get("deadline_months", 1), default=1, durable=True,
+                )
                 self.rush_secret_order(
                     int(oid), state, deadline_months=deadline, reason=str(payload.get("reason") or ""))
                 if origin_mid is not None:
@@ -16647,7 +16612,9 @@ class GameDB:
                         failed_fields=("stage_idx",),
                         category="invalid_shape",
                     ) from exc
-            deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
+            deadline = _coerce_deadline_months(
+                payload.get("deadline_months", 1), default=1, durable=True,
+            )
             from ming_sim.urge_lever import rush_staged_commitment_stage
             result = rush_staged_commitment_stage(
                 self, state,
@@ -17614,13 +17581,13 @@ class GameDB:
         raw: object, *, directive_id: Optional[int] = None,
     ) -> Dict[str, object]:
         label = f"旨稿#{directive_id}" if directive_id is not None else "既有旨稿"
+        # 与 parse_engine_payload_json / _load_durable_json_object 同一权威（#1897 E1）。
         try:
-            payload = json.loads(raw or "{}")
-        except (TypeError, ValueError) as exc:
+            return GameDB.parse_engine_payload_json(
+                raw, surface=f"{label}.dossier_payload_json",
+            )
+        except ValueError as exc:
             raise ValueError(f"{label} 结构化载荷损坏") from exc
-        if not isinstance(payload, dict):
-            raise ValueError(f"{label} 结构化载荷必须为对象")
-        return payload
 
     def read_directive_dossier_payload(self, row: object) -> Dict[str, object]:
         """Strictly decode a durable turn_directives payload at the DB read seam."""
@@ -18220,30 +18187,19 @@ class GameDB:
     def parse_engine_payload_json(
         raw: object, *, surface: str = "payload_json",
     ) -> Dict[str, object]:
-        """#624 / ADR 0005：引擎侧 payload 读路单一助手。
+        """#624 / ADR 0005 / #1897 E1：引擎侧持久对象解码单一权威。
 
-        真空/缺省 → {}；腐坏 JSON 或非对象 → 响亮 tlog + ValueError（禁静默吞成空底）。
+        与 ``_load_durable_json_object`` 同契约：SQL NULL/缺省 → {}；
+        空串/空白/非对象/腐坏 JSON → 响亮 ValueError（禁 falsy 洗空）。
         """
         if isinstance(raw, dict):
             return dict(raw)
-        if raw is None:
-            return {}
-        text = str(raw).strip()
-        if not text or text == "{}":
-            return {}
         try:
-            data = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            tlog(f"[{surface}] 腐坏 JSON，拒绝静默等同空底：{text[:80]!r}")
-            raise ValueError(
-                f"{surface} 腐坏 JSON：{text[:80]!r}"
-            ) from exc
-        if not isinstance(data, dict):
-            tlog(f"[{surface}] 非对象，拒绝静默：{type(data).__name__}")
-            raise ValueError(
-                f"{surface} 须为对象，得 {type(data).__name__}"
-            )
-        return dict(data)
+            return _load_durable_json_object(raw, surface=surface)
+        except ValueError as exc:
+            preview = repr(raw)[:80] if not isinstance(raw, str) else repr(raw[:80])
+            tlog(f"[{surface}] 持久 JSON 解码失败：{preview}")
+            raise
 
     @classmethod
     def _parse_todo_payload_json(cls, raw: object) -> Dict[str, object]:

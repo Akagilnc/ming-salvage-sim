@@ -252,11 +252,20 @@ def _row_to_staged(row: Any) -> StagedDeclaration:
     verdict = _load_optional_json(row, "verdict_json")
     questions = _load_optional_json(row, "questions_json")
     forecast_text = row["forecast_text"] if "forecast_text" in row.keys() else None
+    from ming_sim.db import GameDB
+    # 持久声明 JSON 与引擎 payload 同权威；空串/腐坏响亮（#1897 E1）。
+    decree_ref = str(row["decree_ref"])
     return StagedDeclaration(
-        id=int(row["id"]), decree_ref=str(row["decree_ref"]),
-        declaration=json.loads(row["declaration_json"] or "{}"),
+        id=int(row["id"]), decree_ref=decree_ref,
+        declaration=GameDB.parse_engine_payload_json(
+            row["declaration_json"],
+            surface=f"staged_declarations.declaration_json:{decree_ref}",
+        ),
         status=str(row["status"]), created_turn=int(row["created_turn"]),
-        visible_refs=json.loads(row["visible_refs_json"] or "{}"),
+        visible_refs=GameDB.parse_engine_payload_json(
+            row["visible_refs_json"],
+            surface=f"staged_declarations.visible_refs_json:{decree_ref}",
+        ),
         verdict=verdict if isinstance(verdict, dict) else None,
         questions=questions if isinstance(questions, list) else None,
         forecast_text=None if forecast_text is None else str(forecast_text),

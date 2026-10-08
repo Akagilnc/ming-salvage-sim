@@ -107,8 +107,7 @@ def _exclusion_lists_from_row(row: Any) -> tuple[set[str], set[str], set[str]]:
         raw_targets = row["excluded_targets"]
     except (KeyError, IndexError, TypeError):
         raw_targets = "{}"
-    if raw_targets in (None, ""):
-        raw_targets = "{}"
+    # 空串/腐坏不得洗成合法空对象——与 db._load_exclusion_targets 同权威（#1897 E1）。
     targets = _load_exclusion_targets(
         raw_targets, surface="knowledge excluded_targets",
     )

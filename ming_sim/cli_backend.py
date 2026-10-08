@@ -2519,9 +2519,11 @@ def _stalled_deliberation_push_facts(db: Any) -> str:
         try:
             payload = row.get("payload") if isinstance(row.get("payload"), dict) else None
             if payload is None:
-                payload = json.loads(str(row.get("payload_json") or "{}"))
-            if not isinstance(payload, dict):
-                continue
+                from ming_sim.db import GameDB
+                payload = GameDB.parse_engine_payload_json(
+                    row.get("payload_json"),
+                    surface="cli_backend.stalled.payload_json",
+                )
             if str(payload.get("deliberation_state") or "") != "stalled":
                 continue
             did = int(row["id"])
@@ -2691,7 +2693,9 @@ def extract_draft_intent(
             if not isinstance(value, dict):
                 invalid_batch = True
                 break
-            text = str(value.get("正文") or "").strip()
+            # 旨文原话运输：判空在副本，draft_text 保留原文（#1897 E2 / P6）。
+            text_raw = value.get("正文")
+            text = text_raw if isinstance(text_raw, str) else str(text_raw or "")
             action = str(value.get("动作类型") or "").strip()
             if action == "grant_allocation":
                 projected = _normalize_grant_transport(value)
@@ -2725,7 +2729,7 @@ def extract_draft_intent(
             except ValueError:
                 invalid_batch = True
                 break
-            if not text or mode is None or text in seen_texts or structured_kind == "empty":
+            if not text.strip() or mode is None or text in seen_texts or structured_kind == "empty":
                 invalid_batch = True
                 break
             seen_texts.add(text)
@@ -2973,9 +2977,12 @@ def extract_draft_intent(
     if kind == "push":
         push_dossier_id = imperial_push_target_dossier_id(_probe)
         assert push_dossier_id is not None
+        # 旨文原话：禁 strip 改写运输值（#1897 E2 / P6）。
+        push_reply = minister_reply if isinstance(minister_reply, str) else str(minister_reply or "")
+        push_msg = player_message if isinstance(player_message, str) else str(player_message or "")
         push_out: Dict[str, Any] = {
             "draft_action": "拟旨",
-            "draft_text": (minister_reply or player_message or "").strip(),
+            "draft_text": push_reply if push_reply else push_msg,
             "target_candidate": "",
             "target_dossier_id": push_dossier_id,
         }
@@ -3051,7 +3058,10 @@ def extract_draft_intent(
             mechanical["locality_scope"] = explicit_scope
     if mode is not None:
         mechanical["mode"] = mode
-    merged = str(obj.get("合并草案") or "").strip()
+    # 合并草案/大臣回话均为 LLM 旨文：原话过手，strip 只用于判空副本（#1897 E2 / P6）。
+    merged_raw = obj.get("合并草案")
+    merged = merged_raw if isinstance(merged_raw, str) else str(merged_raw or "")
+    reply_raw = minister_reply if isinstance(minister_reply, str) else str(minister_reply or "")
     # #654 H 已在上方对 _action=="无" 短路；此处仅保留 #653 pay_order 验形。
     # #1849：entries 非法是脏产物，响亮拒收；不得洗成「无意图」让写入口
     # 以 special_decree 覆盖原草稿（失败诚实宪法）。
@@ -3066,9 +3076,9 @@ def extract_draft_intent(
     if not _candidates:
         # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
         if _supplement_mode:
-            draft_text = merged if merged else _existing_draft_text
+            draft_text = merged if merged.strip() else _existing_draft_text
         else:
-            draft_text = (minister_reply or "").strip()
+            draft_text = reply_raw
         # #1849：非法事务声明响亮拒收（禁静默弃声明后照样出成功草案）。
         single_declaration = _affair_declaration_from_draft_obj(obj)
         if single_declaration:
@@ -3106,11 +3116,14 @@ def extract_draft_intent(
         # 多道并存、改/补目标不明：不落草案，交 session 走结构化含糊追问（对齐 AC5）。
         return {"draft_action": _action, "draft_text": "", "target_candidate": "含糊"}
     if target == "新":
-        draft_text = merged if merged else (minister_reply or "").strip()
+        draft_text = merged if merged.strip() else reply_raw
     else:
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
-        draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
+        draft_text = (
+            merged if merged.strip()
+            else (existing if existing.strip() else reply_raw)
+        )
     # #1849：非法事务声明响亮拒收（禁洗成「无意图」）。
     cand_declaration = _affair_declaration_from_draft_obj(obj)
     if cand_declaration:
@@ -3189,10 +3202,11 @@ def capture_manual_directive_payload(
     #1849：抽取调用失败不再降级 special_decree 冒充成功拟旨，一律响亮上抛。
     special_decree 另有一合法来路：模型真答「无拟旨意图」（产物空，非失败）。
     """
-    directive_text = str(text or "").strip()
+    # 旨文原话过手：strip 只判空，运输/下一次 extract 用原文（#1897 E2 / P6）。
+    directive_text = text if isinstance(text, str) else str(text or "")
     fallback_mode = resolve_directive_mode(existing=existing_mode)
     # 空载短路：无正文可抽 → 直落草案结构，零 LLM 调用（P5：禁为省写把可短路 LLM 串回）。
-    if not directive_text:
+    if not directive_text.strip():
         return _manual_special_decree_payload(fallback_mode)
 
     prompt = (
@@ -3247,13 +3261,14 @@ def build_draft_admission_resubmit_feedback(
     """
     payload_json = json.dumps(dict(bad_payload or {}), ensure_ascii=False, sort_keys=True)
     reason = str(failure_reason or "").strip() or "（未给出具体拒因）"
-    text = str(decree_text or "").strip()
+    # 原旨正文原话过手，禁 strip 改写（#1897 E2 / P6）。
+    text = decree_text if isinstance(decree_text, str) else str(decree_text or "")
     parts = [
         "【成案校验失败，请按失败事实与原产物整份重交结构化字段（勿改旨文正文）】\n",
         f"失败事实：{reason}\n",
         f"原产物：{payload_json}\n",
     ]
-    if text:
+    if text.strip():
         parts.append(f"原旨正文（不得改写）：{text}\n")
     return "".join(parts)
 
@@ -3364,8 +3379,9 @@ def resubmit_draft_admission_payload(
     """
     from ming_sim.action_materialize import DecreeMaterializationValidationError
 
-    text = str(decree_text or "").strip()
-    if not text:
+    # 补交运输：strip 只判空，原文送下一 LLM（#1897 E2 / P6 / ADR0142）。
+    text = decree_text if isinstance(decree_text, str) else str(decree_text or "")
+    if not text.strip():
         raise DecreeMaterializationValidationError("补交缺旨文正文")
     feedback = build_draft_admission_resubmit_feedback(
         failure_reason=failure_reason,

@@ -628,4 +628,6 @@ def test_payload_json_corrupt_read_is_loud(game):
         )
     assert GameDB.parse_engine_payload_json(None) == {}
     assert GameDB.parse_engine_payload_json("{}") == {}
-    assert GameDB.parse_engine_payload_json("") == {}
+    # 空串是持久腐坏，不得洗成合法空对象（#1897 E1）。
+    with pytest.raises(ValueError):
+        GameDB.parse_engine_payload_json("")
