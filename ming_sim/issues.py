@@ -57,8 +57,6 @@ _content: Optional[GameContent] = None
 COMMITMENT_KIND_UNTIL_STOP = "until_stop"
 _FISCAL_LEVY_TARGET_ABS_TOL = 1e-9
 
-# SQLite 有符号 64-bit 整数边界：超界 int 绑进 SQLite 会抛 OverflowError。
-
 
 def _issue_condition_text(raw: object) -> str:
     if raw is None:

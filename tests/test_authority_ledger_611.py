@@ -55,7 +55,7 @@ def _revoke(db, state, content, authority_id, dossier):
 
 
 def test_production_path_grant_restore_revoke_without_auto_grudge(game):
-    """Grant → restore → revoke keeps authority facts; no auto holder→emperor 结怨 (#1895 J19)."""
+    """Grant → restore → revoke keeps authority facts; no auto holder→emperor 结怨 (#1895)."""
     db, state, content = game
     holder = _minister(db)
     domain = "issue:清丈田亩"

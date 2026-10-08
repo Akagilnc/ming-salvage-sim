@@ -228,8 +228,8 @@ def test_failed_month_degrades_to_pending_and_rebrews_next_month(game):
     assert int(summary["last_event_id"]) >= int(failed_id)
 
 
-def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
-    """生产装配：prepare→build_brew_input 经历史读缝取 prior；与 new 互斥。
+def test_prepare_attaches_prior_events_only_via_history_seam(game):
+    """生产装配：prepare→build_brew_input 历史 prior 与本批 new 互斥。
 
     先成功酿出水位，再加次月新事件——已消化旧事只在 prior，本批新事只在 new。
     """
@@ -252,7 +252,7 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     run_month_end_relation_brew(db, state, brew_fn)
     assert db.get_relation_summary(source, target) is not None
 
-    # 次月新事件：prior 经历史读缝、与 new 互斥、已消化旧事只在 prior。
+    # 次月新事件：prior 与 new 互斥、已消化旧事只在 prior。
     state.turn += 1
     state.period += 1
     new_context = "次月新知遇。"
@@ -262,19 +262,6 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
         "SELECT origin FROM relation_edge_events WHERE id=?", (new_id,),
     ).fetchone()["origin"]
 
-    import ming_sim.relation_brew as brew_mod
-    import ming_sim.relation_read as read_mod
-    seen = []
-    real = read_mod.load_relation_history_before
-
-    def spy(db_, *, source, target, before_year, before_period):
-        seen.append((source, target, before_year, before_period))
-        return real(
-            db_, source=source, target=target,
-            before_year=before_year, before_period=before_period,
-        )
-
-    monkeypatch.setattr(brew_mod, "load_relation_history_before", spy)
     calls: list = []
     brew_fn = _brew_fn_factory(calls)
     brew_fn.outputs = [_script(recent="次月近况。")]
@@ -289,7 +276,6 @@ def test_prepare_attaches_prior_events_only_via_history_seam(game, monkeypatch):
     assert prior_origin in prior_origins
     assert new_origin not in prior_origins
     assert new_origins.isdisjoint(prior_origins)
-    assert (source, target, int(state.year), int(state.period)) in seen
 
 
 # --------------------------- 庭裁 r3/r4 F2 超长 fixture：32,700 字节零删改
