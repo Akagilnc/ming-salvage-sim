@@ -369,64 +369,18 @@ def _minister(db):
     ).fetchone()["name"])
 
 
-def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):
-    """真实 effect-eligible 案卷（同 #611 测试口径）作授权变更来源。"""
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="authorization",
-        decree_text="授以便宜行事之权",
-        target_kind=target_kind,
-        target_id=target_id,
-        executor_kind="character",
-        executor_id=holder,
-        participants=[
-            {"character_id": holder, "tier": "主办", "role": "承办"},
-        ],
-        payload={"mode": "ordinary"},
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    assert db.dossier_authorizes_effects(dossier_id)
-    return db.get_decree_dossier(dossier_id)
-
-
-def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):
-    """(b) 本 finding 原始缺陷用例：复刻收权·罢差路径（经 issues.py 落一条
-    holder→EMPEROR 结怨边，context 不含参与方名字），断言该事件进入该 holder
-    党籍派的酿制输入且 target==EMPEROR_NODE——方向事实只能靠 source/target。"""
-    from ming_sim import issues as issue_engine
-
-    db, state, content = game
+def test_declared_holder_to_emperor_grudge_reaches_holder_faction_brew(game):
+    """Declared holder→EMPEROR 结怨 (no auto authority_revoke write) still feeds
+    that holder's faction brew; direction comes only from source/target (#1895)."""
+    db, state, _content = game
     holder = _minister(db)
     projection = project_character_factions(db)
     holder_faction = projection[holder]
-    domain = "issue:清丈田亩"
-    grant_dossier = _eligible_dossier(db, state, holder)
-    grant_result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
-            "scope": domain, "dossier_id": grant_dossier["id"],
-        }],
-    }, content=content)["authority_changes"][0]
-    assert grant_result.get("rejected") is not True
-    authority_id = int(grant_result["authority_id"])
-
-    revoke_dossier = _eligible_dossier(db, state, holder, target_id="收权清丈")
-    revoke_result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "收回", "authority_id": authority_id,
-            "dossier_id": revoke_dossier["id"],
-        }],
-    }, content=content)["authority_changes"][0]
-    assert revoke_result.get("rejected") is not True
-
-    # DB 里确实落了 holder→EMPEROR 的结怨边（context 只有权限名＋辖域）。
-    edges = db.get_relation_edge_events(
-        source=holder, target=EMPEROR_NODE, event_kind="结怨",
+    origin = f"declaration:结怨|{holder}"
+    _add_edge(
+        db, state, source=holder, target=EMPEROR_NODE, kind="结怨",
+        context="密令被收后心生不满", origin=origin,
     )
-    assert len(edges) == 1
-    assert edges[0]["source"] == holder
-    assert edges[0]["target"] == EMPEROR_NODE
-    assert edges[0]["event_kind"] == "结怨"
 
     targets = select_faction_brew_targets(
         db, year=int(state.year), period=int(state.period),
@@ -441,7 +395,7 @@ def test_authority_revoke_edge_reaches_holder_faction_with_emperor_target(game):
     assert len(payloads) == 1
     matching = [
         item for item in payloads[0]["new_events"]
-        if item["origin"].startswith(f"authority_revoke:{authority_id}")
+        if str(item["origin"]).startswith(origin)
     ]
     assert len(matching) == 1
     assert matching[0]["source"] == holder
