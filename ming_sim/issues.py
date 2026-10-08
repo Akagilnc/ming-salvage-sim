@@ -68,6 +68,7 @@ from ming_sim.person_archive_contract import (
     PERSON_ALLEGIANCE_CHANGE_WAYS,
     PERSON_IDENTITY_TITLES,
     PERSON_STATUSES,
+    current_title_kind,
     normalize_reason_code,
     resolve_person_transition,
 )
@@ -2723,17 +2724,6 @@ def _pending_person_changes_block_event_gate(
             agg = "min"
         return int(_GATE_AGG_FUNCS[agg](values))
 
-    def current_title_kind(row: Dict[str, str]) -> str:
-        current_office = row_value(row, "office").strip()
-        current_office_type = row_value(row, "office_type").strip()
-        if (
-            not current_office
-            or current_office_type == "身名分"
-            or current_office in PERSON_IDENTITY_TITLES
-        ):
-            return "身名分"
-        return "职名分"
-
     def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
         title = str(item.get("new_title") or item.get("title") or "").strip()
         if title:
@@ -2836,7 +2826,10 @@ def _pending_person_changes_block_event_gate(
                 cur_status,
                 action,
                 reason_code=str(row_value(row, "reason_code") or item.get("reason_code") or ""),
-                current_title_kind=current_title_kind(row),
+                current_title_kind=current_title_kind(
+                    row_value(row, "office"),
+                    row_value(row, "office_type"),
+                ),
             )
             if transition.startswith("reject:"):
                 continue
@@ -4734,7 +4727,7 @@ def apply_issue_tracker_output(
                         "item": ni, "title": title,
                     })
                     continue
-            # 来源案卷：契约/不存在 → KeyError 产物拒；持久解码 ValueError 上抛（F39）。
+            # 来源案卷：契约/不存在 → KeyError 产物拒；持久解码 RuntimeError 穿透（F39）。
             try:
                 origin_ref = db.resolve_commitment_origin_ref(
                     state, origin_ref, origin_kind=str(ni.get("origin_kind") or ""),
@@ -6121,18 +6114,13 @@ def _apply_person_changes(
                 continue
             current_office = str(row["office"] or "").strip()
             current_office_type = str(row["office_type"] or "").strip()
-            current_title_kind = (
-                "身名分"
-                if not current_office
-                or current_office_type == "身名分"
-                or current_office in PERSON_IDENTITY_TITLES
-                else "职名分"
-            )
             transition = resolve_person_transition(
                 str(row["status"] or "active"),
                 action,
                 reason_code=str(row["reason_code"] or item.get("reason_code") or ""),
-                current_title_kind=current_title_kind,
+                current_title_kind=current_title_kind(
+                    current_office, current_office_type,
+                ),
             )
             if transition.startswith("reject:"):
                 applied.append(

@@ -37,7 +37,8 @@ from ming_sim.structured_decree import StructuredDecreeCombinationError
 
 # #1746：单 option 契约失败（缺/错/组合/接地/形）→ RescriptOptionMissingFieldsError。
 # decision: heal-covers-illegal-values-too（不问错在哪；不按错误种类分闸）
-# 整 option 替换语义标记（非 object 等）；出现在 missing_fields 时合并器接受完整 option 体。_OPTION_REPLACE_FIELD = "option"
+# 整 option 替换语义标记（非 object 等）；出现在 missing_fields 时合并器接受完整 option 体。
+_OPTION_REPLACE_FIELD = "option"
 
 
 def _field_failure(

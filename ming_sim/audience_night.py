@@ -183,39 +183,6 @@ DEFAULT_IN_FLIGHT_POLL_S = 0.05
 _CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office"})
 _CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
 
-# ── 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3；#1839 第四类）────────
-# 撤回逆转干净的结构性前提：夜内对真实盘面的直写**只有**本表可枚举项，其余结构化
-# 后果一律走 ADR 0006 待确认暂存、收夜才提交。每项映射其直写落地的真实盘面表；新增任何
-# 夜内直写必须过设计审、显式扩本表，否则撤回逆转不净。
-#
-# ① 密令落地（应允即落地）。
-# ② 转译声明的当场实况（#1821 / ADR 0038 后出注记第四类；原「未在册人物入册」与
-#    「召对口关系边事件」并入此类）：人物生死/下狱/革职/在场、文字事实、公开说法、
-#    边事件、入册；均带源轮，撤回以前像日志逆转。交办（任免/拨帑/明发）不在此列。
-NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
-    "密令落地": frozenset({"secret_orders", "secret_order_briefs"}),
-    "转译声明的当场实况": frozenset({
-        "characters", "character_offices",  # 入册 + 生死/下狱/革职
-        # set_character_status 的 leverage 重算副作用（#9）；前像快照已含 factions，
-        # 撤回与人物状态同逆转——不把副作用另立直写类。
-        "factions",
-        "relation_edge_events",             # 边事件（含原召对口判官路径）
-        "textual_facts",                   # 文字事实（ADR 0156）
-        "public_sayings",                  # 公开说法（ADR 0153）
-        "story_ledger_entries",            # 在场进出 / 说话人分段
-    }),
-}
-
-# 夜内结构化写可能触及、且属真实盘面（非暂存/候选层）的表全集——审计据此判越权：落在此集
-# 却不在白名单授权的直写 = 越权夜内直写。暂存/候选层（pending_actions/turn_directives）是
-# 待确认层、收夜才提交，不算真实盘面直写，不在此集。
-_REAL_BOARD_TABLES = frozenset({
-    "characters", "character_offices", "dossier_reported_progress", "factions",
-    "secret_orders", "secret_order_briefs", "relation_edge_events",
-    "textual_facts", "public_sayings", "story_ledger_entries",
-})
-
-
 class AudienceNightError(Exception):
     """召对夜域响亮失败（死账 / 在飞 / 坏输入 / 提交失败）。"""
 

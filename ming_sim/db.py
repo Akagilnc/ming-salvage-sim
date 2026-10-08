@@ -13041,9 +13041,10 @@ class GameDB:
             try:
                 dossier_id = int(supplied.split(":", 1)[1])
             except (TypeError, ValueError):
-                raise ValueError("commitment origin_ref 案卷 id 非法")
+                raise KeyError("commitment origin_ref 案卷 id 非法")
+            # 缺行=模型坏引用→KeyError 逐项拒；_dossier_row 解码故障 RuntimeError 穿透
             if self.get_decree_dossier(dossier_id) is None:
-                raise ValueError("commitment origin_ref 指向不存在案卷")
+                raise KeyError("commitment origin_ref 指向不存在案卷")
             return supplied
         from ming_sim.materials import SECRET_ORDER_ORIGIN_PREFIX, is_secret_order_origin
 
@@ -13051,10 +13052,10 @@ class GameDB:
             try:
                 secret_order_id = int(supplied[len(SECRET_ORDER_ORIGIN_PREFIX):])
             except (TypeError, ValueError):
-                raise ValueError("commitment origin_ref 密令 id 非法")
+                raise KeyError("commitment origin_ref 密令 id 非法")
             dossier = self.get_dossier_for_secret_order(secret_order_id)
             if dossier is None:
-                raise ValueError("commitment origin_ref 指向无案卷密令")
+                raise KeyError("commitment origin_ref 指向无案卷密令")
             return f"dossier:{int(dossier['id'])}"
         if str(origin_kind or "") == "decree":
             row = self.conn.execute(
@@ -13062,7 +13063,7 @@ class GameDB:
                 (int(state.turn),),
             ).fetchone()
             if row is not None and int(row["n"] or 0) > 0:
-                raise ValueError(
+                raise KeyError(
                     "承诺 origin_ref 必须由产出它的明确案卷携带 dossier:<id>"
                 )
         return supplied

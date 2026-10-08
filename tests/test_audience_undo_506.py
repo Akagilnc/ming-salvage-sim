@@ -150,21 +150,6 @@ def test_undo_rejected_after_night_closed(game):
 # ── AC8：撤回终结异步残余——后台写入前校验目标轮存活，不写已撤/失败轮 ────────────
 
 
-# ── AC3：夜内真实盘面直写走可枚举白名单；越权直写被审计咬住 ──────────────────────
-
-
-def test_night_direct_write_whitelist_enumerates_authorized_items():
-    wl = an.NIGHT_DIRECT_WRITE_WHITELIST
-    # ADR 0038：①密令落地；②转译声明的当场实况（#1839 第四类，原入册/边事件并入）。
-    # 新增夜内直写仍须过设计审、显式扩表。
-    assert set(wl) == {"密令落地", "转译声明的当场实况"}
-    assert wl["密令落地"] == frozenset({"secret_orders", "secret_order_briefs"})
-    fourth = wl["转译声明的当场实况"]
-    assert {"characters", "character_offices", "relation_edge_events"} <= set(fourth)
-    assert {"textual_facts", "public_sayings", "story_ledger_entries"} <= set(fourth)
-
-
-
 # ── AC4：撤回删除该轮新入册人物——档案+入殿账一并消失，像没登场过 ────────────────
 
 
