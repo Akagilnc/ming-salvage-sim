@@ -1917,7 +1917,12 @@ def normalize_draft_person_roster(
     validate_delegations=False：调用方将与既有名单合并后再验委派链（#1897 E1）。
     """
     if not isinstance(roster, list):
-        raise ValueError("参与人须为对象列表")
+        from ming_sim.action_materialize import DecreeMaterializationValidationError
+        raise DecreeMaterializationValidationError(
+            "参与人须为对象列表",
+            failed_fields=("participant_roster",),
+            category="invalid_participant_roster",
+        )
 
     canonical_roster = db._normalize_participant_roster(
         roster, strict_structured=True,

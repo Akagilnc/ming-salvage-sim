@@ -1045,13 +1045,8 @@ def _attach_commission_escort(
     from ming_sim.cli_backend import normalize_draft_person_roster
 
     # 形状闸（ADR 0053 条目结构）→ 存在性闸（既有 KeyError 缝 → hallucinated_id）
-    # → canon/非人归一。三件事各走各的既有接缝，不靠嗅错误文案分类。
-    try:
-        shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
-    except ValueError as exc:
-        raise DecreeMaterializationValidationError(
-            f"押解参与人名单非法：{exc}", failed_fields=("escort",),
-        ) from exc
+    # → canon/非人归一。strict 面已抛 DMVE；不扩 ValueError 洗内部故障（#1897 E1）。
+    shaped = db._normalize_participant_roster(list(entries), strict_structured=True)
     if not shaped:
         raise DecreeMaterializationValidationError(
             "押解声明 escort.escortees 须含 ADR 0053 参与人条目",
@@ -1416,12 +1411,22 @@ def _dispatch_commissions(
                 continue
             # ADR 0153:5：承办人只据明确声明分派。场景标签（殿上整场轮）不是人，
             # 缺承办人且说话人不在名册 → durable 拒收，不拿场景当人物身份。
-            # ADR 0053：人物 id 是主键引用——**显式声明**的承办人同样要过名册，
-            # 否则模型写「殿上」或编一个人名即可把场景/虚构身份写成正式承办人
-            # （#1897 J4：上一轮只在缺省回退上查名册，管不到显式值）。
-            assignee = str(secret.get("assignee") or "").strip()
-            if not assignee:
+            # ADR 0053：人物 id 是主键引用——**显式声明**的承办人同样要过名册。
+            # present 坏类型不得 str()/falsy 洗成说话人（#1897 E1）。
+            if "assignee" not in secret or secret.get("assignee") is None:
                 assignee = actor
+            else:
+                raw_assignee = secret.get("assignee")
+                if not isinstance(raw_assignee, str):
+                    _reject(
+                        rejected, item,
+                        f"密令承办人须为字符串，得 {type(raw_assignee).__name__}",
+                        "invalid_shape", source,
+                    )
+                    continue
+                assignee = raw_assignee.strip()
+                if not assignee:
+                    assignee = actor
             if not _is_roster_character(db, assignee):
                 _reject(
                     rejected, item,
@@ -1502,9 +1507,12 @@ def _dispatch_commissions(
                     roster = normalize_draft_person_roster(
                         roster, db=db, content=db.content,
                     )
-                except (TypeError, ValueError, OverflowError) as exc:
-                    # 输入转换窄捕获：只盖名单归一，不盖后续物化／写入。
-                    _reject(rejected, item, str(exc), "invalid_shape", source)
+                except DecreeMaterializationValidationError as exc:
+                    # 只捕 typed 领域合同；禁扩 ValueError 洗内部故障（#1897 E1）。
+                    _reject(
+                        rejected, item, str(exc),
+                        getattr(exc, "category", None) or "invalid_shape", source,
+                    )
                     continue
             try:
                 row_id = stage_assignment_candidate(
@@ -1753,7 +1761,8 @@ def _dispatch_commissions(
             _attach_commission_staging_fields(
                 payload, item, turn=int(state.turn), db=db,
             )
-        except (DecreeMaterializationValidationError, ValueError) as exc:
+        except DecreeMaterializationValidationError as exc:
+            # 只捕既有 typed 领域合同；禁扩 ValueError 把内部故障洗成拒收（#1897 E1）。
             _reject(
                 rejected, item, str(exc),
                 getattr(exc, "category", None) or "invalid_shape", source,

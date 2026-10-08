@@ -9669,20 +9669,20 @@ class GameDB:
         return pinned_ids
 
     def _brief_origin_chat_message_ids(self, order_id: int) -> List[int]:
-        """Durable oral pins already registered on this order's brief (may be empty)."""
+        """Durable oral pins already registered on this order's brief (may be empty).
+
+        源身份 JSON 腐坏响亮，禁 or "[]"/except 静默跳过（#1897 E1 P1）。
+        """
         row = self.conn.execute(
             "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
             (int(order_id),),
         ).fetchone()
         if row is None:
             return []
-        try:
-            parsed = json.loads(row["origin_chat_message_ids"] or "[]")
-        except (TypeError, ValueError):
-            return []
-        if not isinstance(parsed, list):
-            return []
-        return self._coerce_positive_message_ids(parsed)
+        return self._load_durable_origin_message_ids(
+            row["origin_chat_message_ids"],
+            surface=f"secret_order_briefs#{int(order_id)} origin_chat_message_ids",
+        )
 
     def _classify_secret_order_audience(
         self,
@@ -10285,7 +10285,15 @@ class GameDB:
         ).fetchone()
         if row is None:
             raise ValueError("密令不存在")
-        reports = json.loads(row["dossier_progress_json"] or "[]")
+        surface = f"secret_orders#{int(order_id)} dossier_progress_json"
+        reports = _load_durable_json_list(
+            row["dossier_progress_json"], surface=surface,
+        )
+        for index, item in enumerate(reports):
+            if not isinstance(item, Mapping):
+                raise ValueError(
+                    f"{surface}[{index}] 须为对象，得 {type(item).__name__}"
+                )
         # 同月、同一业务身份只留一条。标记（同派/私货）不是另一月。
         # 催办/核议与月度奏报 base 不同，同月并存。
         from ming_sim.supervision import report_origin_base
@@ -10423,10 +10431,25 @@ class GameDB:
             ).fetchone()
             if row is None:
                 return []
-            return [
-                self._coerce_dossier_progress_row(item, dossier_id=int(dossier_id))
-                for item in json.loads(row["dossier_progress_json"] or "[]")
-            ]
+            surface = (
+                f"secret_orders#{int(dossier['secret_order_id'])} "
+                f"dossier_progress_json"
+            )
+            reports = _load_durable_json_list(
+                row["dossier_progress_json"], surface=surface,
+            )
+            out_rows: List[Dict[str, object]] = []
+            for index, item in enumerate(reports):
+                if not isinstance(item, Mapping):
+                    raise ValueError(
+                        f"{surface}[{index}] 须为对象，得 {type(item).__name__}"
+                    )
+                out_rows.append(
+                    self._coerce_dossier_progress_row(
+                        item, dossier_id=int(dossier_id),
+                    )
+                )
+            return out_rows
         rows = self.conn.execute(
             """
             SELECT id, dossier_id, turn, progress_band, memorial_text,
@@ -16371,16 +16394,27 @@ class GameDB:
         self, state: GameState, pa: Dict[str, object], payload: Dict[str, object],
         *, content=None, rejection_collector=None,
     ) -> bool:
-        """把单条暂存动作落到真实表。未知 kind/action 或目标非 active 不落、返 False(由
-        commit_pending_actions 标 failed,不静默丢——终态失败,不再重试)。
-        office(任免)落库需 content；缺则返 False(标 failed,不静默)。"""
+        """把单条暂存动作落到真实表。
+
+        明确业务目标失效返 False（commit 标 failed + 业务拒收轨）。
+        未知 kind/action 及坏持久 schema 裸 ValueError 上抛（#1897 E1），
+        不得标 failed/invalid_state 伪装业务拒收。
+        office(任免)落库需 content；缺则返 False(标 failed,不静默)。
+        """
         if pa["kind"] == "office":
             return self._materialize_office_appointment_dossier(
                 state, pa, payload, content=content,
             )
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
-            if pa["action"] == "新建":
+            action = pa["action"]
+            _SECRET_ORDER_ACTIONS = {
+                "新建", "更新", "催办", "提交核议", "记进展",
+            }
+            # 未知内部动作先于目标缺省检查；禁 oid is None 把 schema 故障洗成业务 False（#1897 E1）。
+            if action not in _SECRET_ORDER_ACTIONS:
+                raise ValueError(f"未知内部动作 secret_order/{action}")
+            if action == "新建":
                 # 自由文本零删改（CLAUDE.md P6）：判空在副本上做，存的仍是原文。
                 # 已持久散文：禁 str() 洗类型；空缺／非 str 响亮（#1897 E1）。
                 title = _require_durable_prose(payload.get("title"), field="title")
@@ -16465,7 +16499,7 @@ class GameDB:
             # held until settle release, never withheld).
             origin_mid = self._parse_origin_chat_message_id(payload)
             origin_speaker = str(pa.get("minister_name") or "") or None
-            if pa["action"] == "更新":
+            if action == "更新":
                 deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
                 # 已持久更新正文禁 str() 洗类型（#1897 E1）。
                 new_title = _require_durable_prose(
@@ -16483,7 +16517,7 @@ class GameDB:
                     origin_minister_name=origin_speaker,
                     origin_chat_message_id=origin_mid,
                 )
-            if pa["action"] == "催办":
+            if action == "催办":
                 deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
                 self.rush_secret_order(
                     int(oid), state, deadline_months=deadline, reason=str(payload.get("reason") or ""))
@@ -16497,7 +16531,7 @@ class GameDB:
                             origin_chat_message_id=origin_mid,
                         )
                 return True
-            if pa["action"] == "提交核议":
+            if action == "提交核议":
                 ok = self.submit_secret_order_for_review(
                     int(oid), str(payload.get("claim") or ""), state.year, state.period)
                 if ok and origin_mid is not None:
@@ -16510,7 +16544,7 @@ class GameDB:
                             origin_chat_message_id=origin_mid,
                         )
                 return ok
-            if pa["action"] == "记进展":
+            if action == "记进展":
                 ok = self.update_secret_order_progress(
                     int(oid), str(payload.get("note") or ""), state.year, state.period)
                 if ok and origin_mid is not None:
@@ -19511,7 +19545,11 @@ class GameDB:
     def _coerce_positive_message_ids(
         self, message_ids: Optional[Iterable[Any]] = None,
     ) -> List[int]:
-        """Normalize chat_message id pins to a stable unique positive list."""
+        """Normalize chat_message id pins to a stable unique positive list.
+
+        声明/调用侧宽松：坏成员跳过。已持久 brief 源身份用
+        ``_load_durable_origin_message_ids`` 响亮解码（#1897 E1）。
+        """
         out: List[int] = []
         seen: set = set()
         for raw in message_ids or ():
@@ -19522,6 +19560,26 @@ class GameDB:
             if mid > 0 and mid not in seen:
                 seen.add(mid)
                 out.append(mid)
+        return out
+
+    def _load_durable_origin_message_ids(
+        self, raw: object, *, surface: str,
+    ) -> List[int]:
+        """Durable brief/pin message-id array: corrupt / non-int members fail loud."""
+        values = _load_durable_json_list(raw, surface=surface)
+        out: List[int] = []
+        seen: set = set()
+        for index, item in enumerate(values):
+            if isinstance(item, bool) or not isinstance(item, int):
+                raise ValueError(
+                    f"{surface}[{index}] 须为正整 message id，"
+                    f"得 {type(item).__name__}"
+                )
+            if item <= 0:
+                raise ValueError(f"{surface}[{index}] 须为正整 message id")
+            if item not in seen:
+                seen.add(item)
+                out.append(item)
         return out
 
     def _secret_origin_message_protection(self) -> Dict[int, bool]:
@@ -19548,20 +19606,13 @@ class GameDB:
             "WHERE kind='secret_order' AND status IN ('pending','failed')"
         ).fetchall()
         for row in brief_rows:
-            raw = row["origin_chat_message_ids"] if row is not None else "[]"
-            try:
-                parsed = json.loads(raw or "[]")
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(parsed, list):
-                continue
-            for item in parsed:
-                try:
-                    mid = int(item)
-                except (TypeError, ValueError):
-                    continue
-                if mid > 0:
-                    out[mid] = True
+            # 源身份损坏不得静默跳过致 release 泄密（#1897 E1 P1）。
+            pins = self._load_durable_origin_message_ids(
+                row["origin_chat_message_ids"] if row is not None else None,
+                surface="secret_order_briefs.origin_chat_message_ids",
+            )
+            for mid in pins:
+                out[mid] = True
         for row in pending_rows:
             payload = self.parse_engine_payload_json(
                 row["payload_json"], surface="pending_actions.payload_json",

@@ -59,11 +59,16 @@ def is_non_person_participant_name(name: str) -> bool:
     return False
 
 
-def decode_durable_participant_roster(raw: object) -> list:
-    """Durable roster decode: list of objects with legal tiers; corrupt → loud (#1897 E1).
+def decode_durable_participant_roster(
+    raw: object, *, require_tier: bool = True,
+) -> list:
+    """Durable roster decode: list of objects; corrupt → loud (#1897 E1).
 
     Shared by authority projection, liability projection, and dossier row read.
     Empty list is a valid empty roster. Empty-string JSON is corrupt, not [].
+
+    require_tier=True（案卷/连坐）：每项必有合法机械档；''/False/0 不得洗空跳过。
+    require_tier=False（knowledge 取人名）：缺档可过；**一旦 present** 类型/闭集仍响亮。
     """
     if isinstance(raw, list):
         roster = raw
@@ -85,10 +90,19 @@ def decode_durable_participant_roster(raw: object) -> list:
     for item in roster:
         if not isinstance(item, dict):
             raise ValueError("participant_roster 每项须为对象")
-        if "tier" in item and item.get("tier") is not None:
-            tier = str(item.get("tier") or "").strip()
-            if tier and tier not in PARTICIPANT_TIERS:
-                raise ValueError(f"参与人机械档非法：{tier}")
+        if "tier" not in item or item.get("tier") is None:
+            if require_tier:
+                raise ValueError("participant_roster 缺 tier")
+            continue
+        # present 档：类型与闭集一律响亮；禁 falsy 洗空（#1897 E1）。
+        tier_raw = item.get("tier")
+        if not isinstance(tier_raw, str):
+            raise ValueError(
+                f"参与人机械档非法：{type(tier_raw).__name__}"
+            )
+        tier = tier_raw.strip()
+        if tier not in PARTICIPANT_TIERS:
+            raise ValueError(f"参与人机械档非法：{tier_raw!r}")
     return roster
 
 
@@ -118,10 +132,10 @@ def participant_roster_names(raw: object) -> set[str]:
     """Project persisted dict roster entries to their character names.
 
     Durable decode / top-level / member faults propagate loud (#1897 E1).
-    Empty list is a valid empty roster.
+    Empty list is a valid empty roster. Name-only knowledge rows may omit tier.
     """
     names: set[str] = set()
-    for item in decode_durable_participant_roster(raw):
+    for item in decode_durable_participant_roster(raw, require_tier=False):
         name = str(item.get("character_id") or item.get("name") or "").strip()
         if name:
             names.add(name)
