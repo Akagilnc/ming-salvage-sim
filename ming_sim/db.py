@@ -14458,9 +14458,10 @@ CREATE TABLE IF NOT EXISTS authority_records (
             payload, row,
         )
 
+        # Free decree body: full 旨文 as reason carrier (P6); no fixed-length clip.
         reason = str(
             payload.get("text") or row.get("decree_text") or "撤回成命"
-        )[:400]
+        )
 
         # #1894：撤旨照常过外廷。外廷（0055 颁布判决）准行即当月落实，
         # 不再把撤令延后到下一次召对等一场挽留——旧 ADR 0075「先顶哭谏、

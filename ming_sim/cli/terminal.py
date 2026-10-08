@@ -125,10 +125,11 @@ def _print_interrupted_reply_retry_hint(session: GameSession) -> None:
     if not retries:
         return
     last = retries[-1]
-    question = str(last.get("question") or "").strip()
+    # Free emperor prose: empty-check without mutating carried body (P6).
+    question = str(last.get("question") or "")
     print(
         "【回话中断】上回问话未得回话"
-        f"{f'（「{question}」）' if question else ''}。"
+        f"{f'（「{question}」）' if question.strip() else ''}。"
         "输入「重试回话」重新生成回话（系统层恢复，不重复记问话）。\n"
     )
 
@@ -212,9 +213,13 @@ def minister_chat(session: GameSession, character: Character, *, selected: bool 
         night is None or character.name not in present_names_at(session.db, int(night["id"]))
     )
     while True:
-        question = f"宣{character.name}" if pending_xuan else input("朕问：").strip()
+        # Free emperor prose: empty-check without mutating carried body (P6).
+        if pending_xuan:
+            question = f"宣{character.name}"
+        else:
+            question = input("朕问：")
         pending_xuan = False
-        if not question:
+        if not question.strip():
             print("可继续问话；quit 退朝审阅诏书。")
             continue
         # #505 系统层恢复命令（非皇帝内容选项）。禁抽取手动补写平行面（#1353）。
@@ -604,16 +609,18 @@ def _adjudicate_cli_decisions(session: GameSession, result) -> str:
         holdable = str(decision.get("kind") or "") == "rescript_draft"
         hint = "回车=不另批，此件留中" if holdable else "须择定本案一条，或朱笔批语"
         while True:
-            raw = input(f"  亲裁：输入编号择定该条，或径书朱笔批语（{hint}）：").strip()
-            if not raw:
+            # Free 朱笔批语: empty/digit match on temp copy; note carries original (P6).
+            raw = input(f"  亲裁：输入编号择定该条，或径书朱笔批语（{hint}）：")
+            match = raw.strip()
+            if not match:
                 if holdable:
                     choices.append({"decision_key": key} if key else {})
                     break
                 print("  此案须择定一条（不另批请择案上标注留中的那条）。")
                 continue
-            if raw.isdigit():
-                if 1 <= int(raw) <= len(options):
-                    choices.append(project_hitl_option(decision, int(raw) - 1))
+            if match.isdigit():
+                if 1 <= int(match) <= len(options):
+                    choices.append(project_hitl_option(decision, int(match) - 1))
                     break
                 print("  请输入本案列出的编号。")
                 continue
