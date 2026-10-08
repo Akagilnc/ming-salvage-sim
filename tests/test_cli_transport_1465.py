@@ -288,15 +288,15 @@ def test_cli_stdin_write_failure_fails_loudly_not_as_empty_output_retry(
     attempts = detail.get("transport_attempts") or []
     assert script.calls == 1, (script.calls, detail)
     if isinstance(stdin_fault, OSError):
+        # 已确证宿主 I/O：typed 终失败，一次不重试。
         assert [a.get("outcome") for a in attempts] == ["terminal_fail"], attempts
         assert detail.get("code") == "llm_cli_claude", detail
         assert "stdin" in str(detail.get("provider_message") or ""), detail
     else:
-        # 未知代码异常：不洗成 idle／typed 宿主码，原件语义落在错误详情。
-        assert detail.get("code") != "llm_idle_timeout", detail
-        assert "controlled stdin fault" in str(
-            detail.get("provider_message") or detail.get("message") or detail
-        ), detail
+        # 未知代码异常原件上浮：不得包装成 typed 宿主失败或 idle 重试。
+        # 现役外部 SSE：code=null、transport_attempts=[]（与 typed terminal_fail 分流）。
+        assert detail.get("code") is None, detail
+        assert attempts == [], attempts
 
 
 def test_cli_process_keeps_streaming_past_old_300s_wall(monkeypatch, tmp_path, game):
