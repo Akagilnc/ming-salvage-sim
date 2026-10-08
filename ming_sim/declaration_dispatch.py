@@ -1779,7 +1779,7 @@ def _dispatch_endorsements(
         status = str(row["status"] or "")
         if status == "pending":
             try:
-                db.attach_pending_action_endorsement(
+                db.dossiers.attach_pending_action_endorsement(
                     action_id, entry, commit=False,
                 )
             except (TypeError, ValueError, KeyError) as exc:

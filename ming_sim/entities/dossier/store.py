@@ -16,12 +16,13 @@ from ming_sim.applier import (
     durable_int,
     load_stored_list,
     load_stored_object,
+    load_stored_object_list,
     parse_engine_payload_json,
     safe_json_dumps,
     sanitize_sqlite_text,
 )
 from ming_sim.constants import DOSSIER_LINK_TYPES
-from ming_sim.decree_vocabulary import dossier_action_policy
+from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, dossier_action_policy
 from ming_sim.strict_types import strict_int
 from ming_sim.participant_roster import load_participant_roster
 from ming_sim.entities.character.store import CharacterStore
@@ -1104,6 +1105,36 @@ class DossierStore:
         )
         self._commit(commit, owns)
 
+    def append_midzhi_stigma(
+        self, dossier_id: int, *, decision: str, turn: int, commit: bool = True,
+    ) -> None:
+        """Append one marker per dossier semantic midzhi event, regardless of replay turn."""
+        owns = self._owns()
+        marker_fields = {
+            "rejected": ("predeclared", "rejected"),
+            "promulgated": ("predeclared", "promulgated"),
+            "force_promulgated": ("rescript", "force_promulgated"),
+        }
+        if decision not in marker_fields:
+            raise ValueError(f"中旨 stigma 判决非法：{decision}")
+        row = self.get(dossier_id)
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        reason, source_action = marker_fields[decision]
+        marker = {
+            "kind": "midzhi", "reason": reason, "turn": int(turn),
+            "source_action": source_action,
+        }
+        stigma = list(row["stigma"])
+        event_key = (marker["kind"], marker["reason"])
+        if not any(
+            (item.get("kind"), item.get("reason")) == event_key
+            for item in stigma if isinstance(item, dict)
+        ):
+            stigma.append(marker)
+            self.set_stigma(int(dossier_id), stigma, commit=False)
+        self._commit(commit, owns)
+
     def set_participants_and_archive(
         self, dossier_id: int, roster: object, archive_keys: list[str], *,
         commit: bool = True,
@@ -1188,6 +1219,65 @@ class DossierStore:
             if CharacterStore(self._conn).read_assert_characters_exist((person,)) is None:
                 raise ValueError("背书人物不存在")
         return did, cid, dkey, kind, person, is_imperial
+
+    def attach_pending_action_endorsement(
+        self, action_id: int, entry: Mapping[str, object], *, commit: bool = True,
+    ) -> None:
+        """#1842：把本轮背书挂进暂存载荷 endorsements 列表（不造待背书表）。"""
+        owns = self._owns()
+        aid = int(action_id)
+        row = self.pending_action_payload_status(aid)
+        if row is None:
+            raise KeyError(f"暂存动作不存在：{aid}")
+        if str(row["status"] or "") != "pending":
+            raise ValueError(f"暂存动作状态不可挂背书：{row['status']}")
+        payload = load_stored_object(row["payload_json"], label="payload_json")
+        form = str(entry.get("form") or "").strip()
+        endorser_id = str(entry.get("endorser_id") or "").strip()
+        imperial = bool(entry.get("imperial", False))
+        source_cid = int(entry.get("source_chat_turn_id") or 0)
+        # 暂存阶段尚无 dossier：只验形式/人物/来源轮（与成案背书同口径）。
+        if form == "御笔手敕":
+            imperial, endorser_id = True, ""
+        if form not in {"会签", "当面站台", "御笔手敕"}:
+            raise ValueError("背书形式非法")
+        if form == "御笔手敕":
+            if not imperial or endorser_id:
+                raise ValueError("御笔手敕必须使用御笔标记且不得具名大臣")
+        else:
+            if imperial or not endorser_id:
+                raise ValueError("会签/当面站台必须具名背书人")
+            if CharacterStore(self._conn).read_assert_characters_exist((endorser_id,)) is None:
+                raise ValueError("背书人物不存在")
+        if source_cid <= 0:
+            raise ValueError("背书来源对话轮 id 须为正整数")
+        if not self.source_chat_turn_exists(source_cid):
+            raise ValueError("背书来源对话轮不存在")
+        items = load_stored_object_list(
+            payload.get("endorsements"), label="endorsements",
+        )
+        # 同轮同形同人去重（INSERT OR IGNORE 同语义）。
+        key = (form, endorser_id, imperial, source_cid)
+        kept = []
+        for raw in items:
+            k = (
+                str(raw.get("form") or "").strip(),
+                str(raw.get("endorser_id") or "").strip(),
+                bool(raw.get("imperial", False)),
+                int(raw.get("source_chat_turn_id") or 0),
+            )
+            if k == key:
+                continue
+            kept.append(dict(raw))
+        kept.append({
+            "form": form, "endorser_id": endorser_id,
+            "imperial": imperial, "source_chat_turn_id": source_cid,
+        })
+        payload["endorsements"] = kept
+        self.set_pending_payload(
+            aid, json.dumps(payload, ensure_ascii=False),
+        )
+        self._commit(commit, owns)
 
     def set_promulgation(
         self, dossier_id: int, *, status: str, promulgation: str,
@@ -1767,9 +1857,29 @@ class DossierStore:
         )
 
     def record_loophole_exposure(
-        self, dossier_id: int, turn: int, action_type: str, execution_form: str,
+        self,
+        dossier_id: int,
+        turn: int,
+        action_type: str,
+        execution_form: str,
+        *,
+        commit: bool = True,
     ) -> bool:
-        """True when this call wrote the row (existence of the rail is the key)."""
+        """逐次暴露一行；同 (dossier,turn,action_type,execution_form) 幂等。
+
+        True when this call wrote the row (existence of the rail is the key).
+        """
+        owns = self._owns()
+        form = str(execution_form or "").strip()
+        if form not in DOSSIER_EXECUTION_OUTCOMES:
+            raise ValueError(f"空子暴露执行格形态非法：{form!r}")
+        atype = str(action_type or "").strip()
+        if not atype:
+            raise ValueError("空子暴露 action_type 不能为空")
+        if atype not in DOSSIER_ACTION_TYPES:
+            raise ValueError(f"空子暴露 action_type 非法：{atype!r}")
+        if self.get(int(dossier_id)) is None:
+            raise ValueError("案卷不存在")
         cur = self._conn.execute(
             """
             INSERT INTO dossier_loophole_exposures
@@ -1777,9 +1887,11 @@ class DossierStore:
             VALUES (?,?,?,?)
             ON CONFLICT(dossier_id, turn, action_type, execution_form) DO NOTHING
             """,
-            (int(dossier_id), int(turn), action_type, execution_form),
+            (int(dossier_id), int(turn), atype, form),
         )
-        return int(cur.rowcount or 0) > 0
+        wrote = int(cur.rowcount or 0) > 0
+        self._commit(commit, owns)
+        return wrote
 
     def upsert_reported_progress(
         self, dossier_id: int, turn: int, *, band: str, text: str, origin: str,

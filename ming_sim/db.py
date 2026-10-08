@@ -7252,7 +7252,7 @@ class GameDB:
                 str(row["action_type"] or "grant_allocation").strip()
                 or "grant_allocation"
             )
-            if self.record_loophole_exposure(
+            if self.dossiers.record_loophole_exposure(
                 did, turn_i, action_type, "degraded", commit=False,
             ):
                 exposure_written += 1
@@ -7260,34 +7260,6 @@ class GameDB:
         if commit:
             self.conn.commit()
         return {"exposure_written": exposure_written, "turn": turn_i}
-
-    def record_loophole_exposure(
-        self,
-        dossier_id: int,
-        turn: int,
-        action_type: str,
-        execution_form: str,
-        *,
-        commit: bool = True,
-    ) -> bool:
-        """逐次暴露一行；同 (dossier,turn,action_type,execution_form) 幂等。"""
-        form = str(execution_form or "").strip()
-        if form not in DOSSIER_EXECUTION_OUTCOMES:
-            raise ValueError(f"空子暴露执行格形态非法：{form!r}")
-        atype = str(action_type or "").strip()
-        if not atype:
-            raise ValueError("空子暴露 action_type 不能为空")
-        if atype not in DOSSIER_ACTION_TYPES:
-            # 允许既有枚举；未知响亮拒（禁自由文本类）
-            raise ValueError(f"空子暴露 action_type 非法：{atype!r}")
-        if self.dossiers.get(int(dossier_id)) is None:
-            raise ValueError("案卷不存在")
-        wrote = self.dossiers.record_loophole_exposure(
-            int(dossier_id), int(turn), atype, form,
-        )
-        if commit:
-            self.conn.commit()
-        return wrote
 
     def build_supervision_judge_surface(
         self, dossier_id: int, *, as_of_turn: Optional[int] = None,
@@ -8681,36 +8653,6 @@ class GameDB:
         self._commit_dossier_write(commit, owns)
         return added
 
-    def _append_midzhi_stigma(
-        self, dossier_id: int, *, decision: str, turn: int, commit: bool = True,
-    ) -> None:
-        """Append one marker per dossier semantic midzhi event, regardless of replay turn."""
-        owns = self.owns_transaction()
-        marker_fields = {
-            "rejected": ("predeclared", "rejected"),
-            "promulgated": ("predeclared", "promulgated"),
-            "force_promulgated": ("rescript", "force_promulgated"),
-        }
-        if decision not in marker_fields:
-            raise ValueError(f"中旨 stigma 判决非法：{decision}")
-        row = self.dossiers.get(dossier_id)
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        reason, source_action = marker_fields[decision]
-        marker = {
-            "kind": "midzhi", "reason": reason, "turn": int(turn),
-            "source_action": source_action,
-        }
-        stigma = list(row["stigma"])
-        event_key = (marker["kind"], marker["reason"])
-        if not any(
-            (item.get("kind"), item.get("reason")) == event_key
-            for item in stigma if isinstance(item, dict)
-        ):
-            stigma.append(marker)
-            self.dossiers.set_stigma(int(dossier_id), stigma, commit=False)
-        self._commit_dossier_write(commit, owns)
-
     # Central yamen archive identity: offices.json allowed_types minus non-yamen
     # kinds. Never union characters.office_type (外臣/内臣/宗藩/未仕 would leak).
     _NON_CENTRAL_ARCHIVE_OFFICE_TYPES = frozenset({
@@ -8949,7 +8891,7 @@ class GameDB:
                 action_type in DOSSIER_ACTION_TYPES
                 and self.dossiers.has_supervision_presence(int(dossier_id), int(turn))
             ):
-                self.record_loophole_exposure(
+                self.dossiers.record_loophole_exposure(
                     int(dossier_id), int(turn), action_type, outcome,
                     commit=False,
                 )
@@ -8978,7 +8920,7 @@ class GameDB:
                     criteria_snapshot=criteria_snapshot, commit=False,
                 )
                 if predeclared_midzhi and decision == "rejected":
-                    self._append_midzhi_stigma(
+                    self.dossiers.append_midzhi_stigma(
                         dossier_id, decision="rejected", turn=state.turn, commit=False,
                     )
                 return
@@ -9013,7 +8955,7 @@ class GameDB:
                 # 预声明 midzhi 打回只落 stigma；强颁只追加皇威。
                 # Ordinary force 仍走 stigma + authority + typed parties。
                 if not predeclared_midzhi:
-                    self._append_midzhi_stigma(
+                    self.dossiers.append_midzhi_stigma(
                         dossier_id, decision="force_promulgated", turn=state.turn,
                         commit=False,
                     )
@@ -9028,7 +8970,7 @@ class GameDB:
                     reason=reason, legal_reason_code=legal_reason_code, commit=False,
                 )
             if predeclared_midzhi and decision == "promulgated":
-                self._append_midzhi_stigma(
+                self.dossiers.append_midzhi_stigma(
                     dossier_id, decision="promulgated", turn=state.turn, commit=False,
                 )
             payload = load_stored_object(row["payload_json"], label='payload_json')
@@ -10609,66 +10551,6 @@ class GameDB:
         if owns and updated:
             self.conn.commit()
         return updated
-
-    def attach_pending_action_endorsement(
-        self, action_id: int, entry: Mapping[str, object], *, commit: bool = True,
-    ) -> None:
-        """#1842：把本轮背书挂进暂存载荷 endorsements 列表（不造待背书表）。"""
-        owns = self.owns_transaction() if commit else False
-        aid = int(action_id)
-        row = self.dossiers.pending_action_payload_status(aid)
-        if row is None:
-            raise KeyError(f"暂存动作不存在：{aid}")
-        if str(row["status"] or "") != "pending":
-            raise ValueError(f"暂存动作状态不可挂背书：{row['status']}")
-        payload = load_stored_object(row["payload_json"], label="payload_json")
-        form = str(entry.get("form") or "").strip()
-        endorser_id = str(entry.get("endorser_id") or "").strip()
-        imperial = bool(entry.get("imperial", False))
-        source_cid = int(entry.get("source_chat_turn_id") or 0)
-        # 暂存阶段尚无 dossier：只验形式/人物/来源轮（与 _validate 同口径）。
-        if form == "御笔手敕":
-            imperial, endorser_id = True, ""
-        if form not in {"会签", "当面站台", "御笔手敕"}:
-            raise ValueError("背书形式非法")
-        if form == "御笔手敕":
-            if not imperial or endorser_id:
-                raise ValueError("御笔手敕必须使用御笔标记且不得具名大臣")
-        else:
-            if imperial or not endorser_id:
-                raise ValueError("会签/当面站台必须具名背书人")
-            if CharacterStore(self.conn).read_assert_characters_exist((endorser_id,)) is None:
-                raise ValueError("背书人物不存在")
-        if source_cid <= 0:
-            raise ValueError("背书来源对话轮 id 须为正整数")
-        if not self.dossiers.source_chat_turn_exists(source_cid):
-            raise ValueError("背书来源对话轮不存在")
-        items = load_stored_object_list(
-            payload.get("endorsements"), label="endorsements",
-        )
-        # 同轮同形同人去重（INSERT OR IGNORE 同语义）。
-        key = (form, endorser_id, imperial, source_cid)
-        kept = []
-        for raw in items:
-            k = (
-                str(raw.get("form") or "").strip(),
-                str(raw.get("endorser_id") or "").strip(),
-                bool(raw.get("imperial", False)),
-                int(raw.get("source_chat_turn_id") or 0),
-            )
-            if k == key:
-                continue
-            kept.append(dict(raw))
-        kept.append({
-            "form": form, "endorser_id": endorser_id,
-            "imperial": imperial, "source_chat_turn_id": source_cid,
-        })
-        payload["endorsements"] = kept
-        self.dossiers.set_pending_payload(
-            aid, json.dumps(payload, ensure_ascii=False),
-        )
-        if owns:
-            self.conn.commit()
 
     def inherit_payload_endorsements(
         self, dossier_id: int, payload: Mapping[str, object], *, commit: bool = False,

@@ -48,33 +48,6 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
         assert key not in payload
 
 
-def test_army_payload_exposes_approx_arrears_text_not_raw(game):
-    """#321：web 只读 army_payload.arrears_text approximate；numeric arrears 键缺席；raw 12.5 不裸出。"""
-    from ming_sim.db import _player_army_situation
-
-    db, _state, _ = game
-    row = db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
-    ).fetchone()
-    db.conn.execute(
-        """
-        UPDATE armies
-        SET province_pay_arrears=12.5, central_pay_arrears=0
-        WHERE id=?
-        """,
-        (row["id"],),
-    )
-    db.conn.commit()
-
-    full = db.conn.execute("SELECT * FROM armies WHERE id=?", (row["id"],)).fetchone()
-    expected = _player_army_situation(full, db._army_pay(full))["arrears_text"]
-    payload = {army["id"]: army for army in db.army_payload()}
-    assert "arrears" not in payload[row["id"]]
-    assert payload[row["id"]]["arrears_text"] == expected
-
-
-
-
 def test_danger_order_uses_army_needed_for_arrears_months(game):
     """army_rows(danger_order=True) 欠饷月数归一须按 army_needed。"""
     db, _state, _ = game

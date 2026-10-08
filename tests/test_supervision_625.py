@@ -173,10 +173,10 @@ def test_ac1_monthly_write_idempotent_readable_and_restore(game, tmp_path, conte
     assert "auditor_integrity_band" in hist[0]
 
     # 空子暴露：机械写入 + 幂等
-    db.record_loophole_exposure(
+    db.dossiers.record_loophole_exposure(
         subject_id, turn, "policy", "transformed", commit=True,
     )
-    db.record_loophole_exposure(
+    db.dossiers.record_loophole_exposure(
         subject_id, turn, "policy", "transformed", commit=True,
     )
     exps = db.dossiers.exposure_rows(subject_id)
@@ -311,7 +311,7 @@ def test_ac4_exposure_history_delta_on_tendency_surface(game):
     assert before["transformation_tendency_facts"]["exposure_count"] == 0
     assert before["loophole_exposures"] == []
 
-    db.record_loophole_exposure(
+    db.dossiers.record_loophole_exposure(
         subject_id, state.turn, "policy", "transformed", commit=True,
     )
     after = db.build_supervision_judge_surface(subject_id)
