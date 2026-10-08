@@ -45,6 +45,7 @@ from ming_sim.models import (
 from ming_sim.relations import SUMMON_EDGE_ORIGIN_PREFIX
 from ming_sim.participant_roster import (
     PARTICIPANT_TIERS,
+    participant_roster_entries,
     participant_roster_names,
     project_execution_liability_parties,
 )
@@ -13557,11 +13558,12 @@ class GameDB:
             self._apply_authority_cost(
                 state, dossier_id, reason, cost_identity="breach",
             )
-            roster = dossier.get("participant_roster") or []
+            roster = participant_roster_entries(
+                dossier.get("participant_roster") or [],
+                surface="decree_dossiers.participant_roster",
+            )
             ministers = set()
             for item in roster:
-                if not isinstance(item, dict):
-                    continue
                 tier = item.get("tier")
                 if tier == "主办":
                     ministers.add(str(item.get("character_id") or ""))
@@ -16462,20 +16464,15 @@ class GameDB:
         executor_kind = str(dossier.get("executor_kind") or "").strip()
         if executor_id and executor_kind in {"", "character"}:
             actors.add(executor_id)
-        roster = dossier.get("participant_roster") or []
-        if isinstance(roster, str):
-            roster = loads_persistent_json_list(
-                roster, surface="decree_dossiers.participant_roster",
-            )
-        if isinstance(roster, list):
-            for entry in roster:
-                if not isinstance(entry, dict):
-                    continue
-                if str(entry.get("tier") or "").strip() not in {"主办", "协办"}:
-                    continue
-                character_id = str(entry.get("character_id") or "").strip()
-                if character_id:
-                    actors.add(character_id)
+        for entry in participant_roster_entries(
+            dossier.get("participant_roster") or [],
+            surface="decree_dossiers.participant_roster",
+        ):
+            if str(entry.get("tier") or "").strip() not in {"主办", "协办"}:
+                continue
+            character_id = str(entry.get("character_id") or "").strip()
+            if character_id:
+                actors.add(character_id)
         target_kind = str(dossier.get("target_kind") or "").strip()
         target_id = str(dossier.get("target_id") or "").strip()
         domains: set[str] = set()
@@ -18467,12 +18464,13 @@ class GameDB:
         """Adapt any durable record carrying participants into the knowledge ledger."""
         participants: List[str] = []
         roster = record.get("participant_roster")
-        if isinstance(roster, (list, tuple)):
-            for item in roster:
-                if isinstance(item, Mapping):
-                    name = item.get("character_id") or item.get("name")
-                    if name:
-                        participants.append(str(name))
+        if roster is not None and roster != "":
+            for item in participant_roster_entries(
+                roster, surface="participant_roster",
+            ):
+                name = item.get("character_id") or item.get("name")
+                if name:
+                    participants.append(str(name))
         for key in ("participants", "participant_names", "actors"):
             value = record.get(key)
             if isinstance(value, str):

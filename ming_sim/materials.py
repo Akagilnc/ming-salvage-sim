@@ -1610,14 +1610,18 @@ def revoke_target_facts(db: Any, payload: object, row: object = None) -> dict[st
     dossier = db.get_decree_dossier(int(target_dossier_id))
     if dossier is None:
         return {}
+    from ming_sim.participant_roster import participant_roster_entries
+
     roster = [
         {
             "character_id": str(item.get("character_id") or ""),
             "tier": str(item.get("tier") or ""),
             "role": str(item.get("role") or ""),
         }
-        for item in (dossier.get("participant_roster") or [])
-        if isinstance(item, dict)
+        for item in participant_roster_entries(
+            dossier.get("participant_roster") or [],
+            surface="decree_dossiers.participant_roster",
+        )
     ]
     progress = [
         {

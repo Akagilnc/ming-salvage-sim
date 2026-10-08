@@ -155,17 +155,17 @@ def collect_urge_history(
 
 def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional[int]) -> Dict[str, object]:
     """承办人：案卷主办优先，否则 issue participants 首名；缺省中性档。"""
+    from ming_sim.participant_roster import participant_roster_entries
+
     name = ""
     if dossier_id is not None:
         dossier = db.get_decree_dossier(int(dossier_id))
         if isinstance(dossier, dict):
-            roster = dossier.get("participant_roster") or []
-            if isinstance(roster, str):
-                roster = loads_persistent_json_list(
-                    roster, surface="participant_roster",
-                )
-            for item in roster or []:
-                if isinstance(item, dict) and str(item.get("tier") or "") == "主办":
+            for item in participant_roster_entries(
+                dossier.get("participant_roster") or [],
+                surface="decree_dossiers.participant_roster",
+            ):
+                if str(item.get("tier") or "") == "主办":
                     name = str(item.get("character_id") or "").strip()
                     if name:
                         break
@@ -175,15 +175,14 @@ def resolve_host_character(db: Any, *, commitment_ref: int, dossier_id: Optional
             (int(commitment_ref),),
         ).fetchone()
         if row is not None:
-            roster = loads_persistent_json_list(
+            roster = participant_roster_entries(
                 row["participant_roster"], surface="issues.participant_roster",
             )
-            for item in roster or []:
-                if isinstance(item, dict):
-                    cand = str(item.get("character_id") or "").strip()
-                    if cand:
-                        name = cand
-                        break
+            for item in roster:
+                cand = str(item.get("character_id") or "").strip()
+                if cand:
+                    name = cand
+                    break
             if not name:
                 parts = loads_persistent_json_list(
                     row["participants"], surface="issues.participants",

@@ -117,12 +117,11 @@ def resolve_lead_executors(
             "coverage": coverage, "route": "named",
             "leads": [assignee], "signal": None,
         }
-    roster = participant_roster if isinstance(participant_roster, list) else []
+    from ming_sim.participant_roster import participant_roster_entries
+
     named: List[str] = []
     seen: set = set()
-    for entry in roster:
-        if not isinstance(entry, dict):
-            continue
+    for entry in participant_roster_entries(participant_roster):
         if str(entry.get("tier") or "").strip() != "主办":
             continue
         name = str(entry.get("character_id") or "").strip()

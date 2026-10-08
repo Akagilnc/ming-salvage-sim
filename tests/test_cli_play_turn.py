@@ -11,11 +11,12 @@ from types import SimpleNamespace
 
 import pytest
 
+import ming_sim.audience_night as an
 import ming_sim.cli.terminal as term
 import ming_sim.issues as issues_mod
 from ming_sim.exceptions import LLMContractError, LLMUnavailable, SettlementAbort
 from ming_sim.llm_model import CLI_RUNNER_PLAYER_MESSAGE
-from ming_sim.session import TurnPhase
+from ming_sim.session import GameSession, TurnPhase
 
 
 def _cli_schedule_pending_noop(self, result):
@@ -576,8 +577,12 @@ def test_terminal_minister_chat_accepts_retry_reply_command(game, monkeypatch):
     assert night_row is not None
     assert str(night_row["status"]) == an.NIGHT_STATUS_CLOSED
     # 场外收夜：该人不得入殿 presence/entrance。
-    assert character.name not in an.persons_present_tonight(db, night_id)
-    assert character.name not in an.persons_entered_tonight(db, night_id)
+    assert character.name not in an.present_names_at(db, night_id)
+    assert not any(
+        an.TAG_ENTER in (e.get("tags") or [])
+        and character.name in (e.get("person_names") or [])
+        for e in an.list_ledger(db, night_id)
+    )
 
 
 @pytest.mark.parametrize("action", ["skip", "issue"])

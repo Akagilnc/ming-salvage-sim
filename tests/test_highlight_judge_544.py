@@ -221,7 +221,11 @@ def test_chat_stream_done_before_highlights_and_degrade(game, monkeypatch):
     assert done["payload"]["answer"] == "臣陈辽饷。"
     # 回话已落库且高亮为空
     mid = int(db.get_last_active_chat_turn("殿上", state.turn)["minister_message_id"])
-    assert db.get_message_highlights(mid) == []
+    assert db._parse_highlights_json(
+        db.conn.execute(
+            "SELECT highlights_json FROM chat_messages WHERE id=?", (mid,),
+        ).fetchone()["highlights_json"]
+    ) == []
     _drain(web_game)
 
 
@@ -265,7 +269,11 @@ def test_chat_stream_slow_success_attaches_after_done(game, monkeypatch):
     assert seen_reply == ["臣先陈军务。"]
     mid = int(hl.get("message_id") or 0)
     assert mid > 0
-    assert db.get_message_highlights(mid) == ["军务"]
+    assert db._parse_highlights_json(
+        db.conn.execute(
+            "SELECT highlights_json FROM chat_messages WHERE id=?", (mid,),
+        ).fetchone()["highlights_json"]
+    ) == ["军务"]
     # 投影读端
     proj = db.build_chat_projection("殿上")
     assert any(m.get("highlights") == ["军务"] for m in proj if m["role"] == "minister")  # night 下 殿上轮
@@ -304,7 +312,11 @@ def test_chat_nonstream_folds_judge_within_timeout(game, monkeypatch):
         row = db.get_last_active_chat_turn("殿上", state.turn)
         mid = int((row or {}).get("minister_message_id") or 0)
     assert mid > 0
-    assert db.get_message_highlights(mid) == ["辽饷"]
+    assert db._parse_highlights_json(
+        db.conn.execute(
+            "SELECT highlights_json FROM chat_messages WHERE id=?", (mid,),
+        ).fetchone()["highlights_json"]
+    ) == ["辽饷"]
 
 
 def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypatch):
@@ -351,7 +363,11 @@ def test_chat_nonstream_timeout_returns_reply_without_highlights(game, monkeypat
         row = db.get_last_active_chat_turn("殿上", state.turn)
         mid = int((row or {}).get("minister_message_id") or 0)
         if mid > 0:
-            assert db.get_message_highlights(mid) == []
+            assert db._parse_highlights_json(
+                db.conn.execute(
+                    "SELECT highlights_json FROM chat_messages WHERE id=?", (mid,),
+                ).fetchone()["highlights_json"]
+            ) == []
         # 生产 timeout_s 输入保留；旁侧 elapsed 墙钟证据删除（接缝无「N 秒内完成」契约）。
         assert DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S > 0
     finally:

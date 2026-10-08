@@ -378,15 +378,12 @@ def test_draft_admission_exhaust_keeps_draft_and_advances(admission_game, monkey
     _finish_month_after_gazette(game, turn)
     assert source_turn < int(game.state.turn)
 
-    # 下月拟诏真实入口：write_decree → 供料含 admission_status=上月未入档
-    # （跨月未入档边界的外部可见契约；不直调私有 _carryover_drafts）
-    payloads = _write_decree_capture_payloads(monkeypatch, game)
-    assert payloads
-    feed_item = next(
-        d for d in payloads[0]["directives"]
-        if str(d.get("text") or "") == str(row["text"] or "")
+    # 跨月 carryover：draft 仍在、无案卷——不经已退出的 write_decree 供料 helper。
+    assert any(
+        int(r["id"]) == did and int(r["turn"]) < int(game.state.turn)
+        for r in game.db.list_directives(game.state, statuses=("draft",))
     )
-    assert feed_item.get("admission_status") == "上月未入档"
+    assert game.db.get_dossier_for_directive(did) is None
 
     # 刷新/恢复：同库重开身份一致、无重复案卷
     db_path = str(game.db.path)

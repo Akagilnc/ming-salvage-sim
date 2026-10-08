@@ -338,7 +338,13 @@ def test_multi_origin_same_person_dedupes_consumer_projections_not_ledger(game, 
         assert an.list_unsettled_summons(db) == []
         assert an.list_waiting_audience_summons(db) == []
 
-    get_session_write_queue(session).run_exclusive(plant_waiting_dedupe)
+    q = get_session_write_queue(session)
+    ticket = q.claim(("test", "plant_waiting_dedupe"))
+    assert ticket is not None
+    try:
+        q.run(ticket, plant_waiting_dedupe)
+    finally:
+        q.complete(ticket)
 
 
 def test_fresh_summon_departs_via_canonical_applier_only_when_night_closes(game):
@@ -821,7 +827,13 @@ def test_continuation_arrival_settles_origin_without_waiting(game, monkeypatch):
         )
         db.conn.commit()
 
-    get_session_write_queue(session).run_exclusive(force_arrived_capital)
+    q = get_session_write_queue(session)
+    ticket = q.claim(("test", "force_arrived_capital"))
+    assert ticket is not None
+    try:
+        q.run(ticket, force_arrived_capital)
+    finally:
+        q.complete(ticket)
     assert an.list_unsettled_summons(db) == []
     assert an.list_waiting_audience_summons(db) == []
 

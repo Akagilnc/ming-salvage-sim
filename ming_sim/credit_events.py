@@ -20,7 +20,10 @@ import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ming_sim.breach_plea import _extract_ref_ids
-from ming_sim.participant_roster import project_execution_liability_parties
+from ming_sim.participant_roster import (
+    participant_roster_entries,
+    project_execution_liability_parties,
+)
 from ming_sim.relations import CREDIT_DIRECTION, CREDIT_EDGE_KINDS, EMPEROR_NODE
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
@@ -280,10 +283,10 @@ def record_fulfillment_credit(
 
 
 def _roster_entries(dossier: Dict[str, object]) -> List[Dict[str, object]]:
-    roster = dossier.get("participant_roster") or []
-    if not isinstance(roster, list):
-        return []
-    return [e for e in roster if isinstance(e, dict)]
+    return participant_roster_entries(
+        dossier.get("participant_roster") or [],
+        surface="decree_dossiers.participant_roster",
+    )
 
 
 def _pawn_car_pairs(roster: Sequence[Dict[str, object]]) -> List[Tuple[str, str]]:

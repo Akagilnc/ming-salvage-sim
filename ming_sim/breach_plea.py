@@ -160,12 +160,14 @@ def _commitment_origin_refs(row: Any, commitment_ref: int) -> Set[str]:
 
 
 def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
+    from ming_sim.participant_roster import participant_roster_entries
+
     names: List[str] = []
-    roster = loads_persistent_json_list(
+    roster = participant_roster_entries(
         row["participant_roster"], surface="issues.participant_roster",
     )
     for item in roster:
-        if isinstance(item, dict) and item.get("tier") == "主办":
+        if item.get("tier") == "主办":
             cid = str(item.get("character_id") or "").strip()
             if cid:
                 names.append(cid)
@@ -177,8 +179,11 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
     if did is not None:
         dossier = db.get_decree_dossier(int(did))
         if dossier is not None:
-            for item in dossier.get("participant_roster") or []:
-                if isinstance(item, dict) and item.get("tier") == "主办":
+            for item in participant_roster_entries(
+                dossier.get("participant_roster") or [],
+                surface="decree_dossiers.participant_roster",
+            ):
+                if item.get("tier") == "主办":
                     cid = str(item.get("character_id") or "").strip()
                     if cid and cid not in names:
                         names.append(cid)
@@ -1076,13 +1081,13 @@ def _sponsor_transferred(db: Any, name: str, commitment_row: Any) -> bool:
         current_office = str(co["office_title"] or current_office).strip() or current_office
 
     # 承诺 roster 上记录的 role/office 快照
+    from ming_sim.participant_roster import participant_roster_entries
+
     expected = ""
-    roster = loads_persistent_json_list(
+    roster = participant_roster_entries(
         commitment_row["participant_roster"], surface="issues.participant_roster",
     )
     for item in roster:
-            if not isinstance(item, dict):
-                continue
             if str(item.get("character_id") or "").strip() != name:
                 continue
             if item.get("tier") != "主办":

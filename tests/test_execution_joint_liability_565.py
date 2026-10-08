@@ -143,7 +143,7 @@ def test_terminal_outcomes_charge_lead_and_downgraded_delegator(
     # 连坐归属读结构化责任面，不写入 execution_note 原文
     liable_ids = {
         str(p["character_id"])
-        for p in db.list_execution_liability_parties(dossier_id)
+        for p in _liability_parties(db, dossier_id)
     }
     assert {"倪元璐", "徐光启"} <= liable_ids
     note = db.get_decree_dossier(dossier_id)["execution_note"]
@@ -225,7 +225,7 @@ def test_dead_liable_party_skips_satisfaction_but_stays_on_liability_roster(game
     # 已故主办仍在结构化责任面；execution_note 保持 LLM 原文
     liable_ids = {
         str(p["character_id"])
-        for p in db.list_execution_liability_parties(dossier_id)
+        for p in _liability_parties(db, dossier_id)
     }
     assert "倪元璐" in liable_ids
     note = db.get_decree_dossier(dossier_id)["execution_note"]

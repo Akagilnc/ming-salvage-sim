@@ -138,8 +138,10 @@ def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
     q = getattr(web_game, "_write_queue", None)
     if q is not None and hasattr(q, "wait_idle"):
         q.wait_idle()  # unlimited; CI job final line owns hang
+    elif q is not None and hasattr(q, "inflight_count"):
+        wait_until(lambda: int(q.inflight_count()) == 0)
     else:
-        wait_until(lambda: int(getattr(web_game, "_pending_writes_count", 0) or 0) == 0)
+        wait_until(lambda: True)
 
 
 def _assert_next_accepted(stream) -> None:

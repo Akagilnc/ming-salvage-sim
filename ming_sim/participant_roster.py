@@ -60,58 +60,73 @@ def is_non_person_participant_name(name: str) -> bool:
     return False
 
 
-def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
-    """案卷归属人：首名 canonical 主办，缺档时才读 legacy executor。
-
-    #613 任别读端与 #625 监督事实底共调此单源；roster 解析禁止第三份遍历。
-    缺档（无主办且无 executor）返回空串，由调用方按真除或缺席降级。
-    """
-    roster = dossier.get("participant_roster") or []
-    if isinstance(roster, str):
-        roster = loads_persistent_json_list(
-            roster, surface="decree_dossiers.participant_roster",
-        )
-    if isinstance(roster, list):
-        # Validate member shape via shared projection (null/non-object raise).
-        if roster:
-            participant_roster_names(roster)
-        for entry in roster:
-            if str(entry.get("tier") or "").strip() != "主办":
-                continue
-            name = str(entry.get("character_id") or "").strip()
-            if name:
-                return name
-    executor_id = str(dossier.get("executor_id") or "").strip()
-    executor_kind = str(dossier.get("executor_kind") or "").strip()
-    if executor_id and executor_kind in {"", "character"}:
-        return executor_id
-    return ""
-
-
 def participant_roster_names(raw: object) -> set[str]:
     """Project persisted dict roster entries to their character names.
 
     Empty roster → empty set. Non-empty durable roster must be a list of dict
     entries with character_id/name; corrupt schema must not filter to empty.
     """
-    from ming_sim.models import loads_persistent_json_list
+    names: set[str] = set()
+    for item in participant_roster_entries(raw):
+        name = str(item.get("character_id") or item.get("name") or "").strip()
+        names.add(name)
+    return names
+
+
+def participant_roster_entries(
+    raw: object, *, surface: str = "participant_roster",
+) -> List[Dict[str, object]]:
+    """Canonical durable roster entries. Empty → []. Bad member → raise.
+
+    Top-level list alone is not enough: null/non-object/nameless members must
+    not be skipped into an empty-or-partial projection.
+    """
+    if raw is None or raw == "":
+        return []
     if isinstance(raw, list):
         roster = raw
     else:
-        roster = loads_persistent_json_list(raw, surface="participant_roster")
-    names: set[str] = set()
+        roster = loads_persistent_json_list(raw, surface=surface)
+    if not isinstance(roster, list):
+        raise ValueError(
+            f"{surface} must be a list, got {type(roster).__name__}"
+        )
+    if not roster:
+        return []
+    out: List[Dict[str, object]] = []
     for index, item in enumerate(roster):
         if not isinstance(item, dict):
             raise ValueError(
-                f"participant_roster[{index}] must be an object, got {type(item).__name__}"
+                f"{surface}[{index}] must be an object, got {type(item).__name__}"
             )
         name = str(item.get("character_id") or item.get("name") or "").strip()
         if not name:
-            raise ValueError(
-                f"participant_roster[{index}] missing character_id/name"
-            )
-        names.add(name)
-    return names
+            raise ValueError(f"{surface}[{index}] missing character_id/name")
+        out.append(item)
+    return out
+
+
+def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
+    """案卷归属人：首名 canonical 主办，缺档时才读 legacy executor。
+
+    #613 任别读端与 #625 监督事实底共调此单源；roster 解析禁止第三份遍历。
+    缺档（无主办且无 executor）返回空串，由调用方按真除或缺席降级。
+    """
+    roster = participant_roster_entries(
+        dossier.get("participant_roster") or [],
+        surface="decree_dossiers.participant_roster",
+    )
+    for entry in roster:
+        if str(entry.get("tier") or "").strip() != "主办":
+            continue
+        name = str(entry.get("character_id") or "").strip()
+        if name:
+            return name
+    executor_id = str(dossier.get("executor_id") or "").strip()
+    executor_kind = str(dossier.get("executor_kind") or "").strip()
+    if executor_id and executor_kind in {"", "character"}:
+        return executor_id
+    return ""
 
 
 def project_execution_liability_parties(
@@ -124,13 +139,14 @@ def project_execution_liability_parties(
     先定档后去重：同一人 primary 胜 secondary；知情永不入。
     写路与读端共用本函数，禁止第二份 roster 遍历。
     """
-    if not isinstance(roster, list):
+    entries = participant_roster_entries(roster)
+    if not entries:
         return []
 
     primary_ids: List[str] = []
     seen_primary: set[str] = set()
-    for item in roster:
-        if not isinstance(item, dict) or item.get("tier") != "主办":
+    for item in entries:
+        if item.get("tier") != "主办":
             continue
         lead = str(item.get("character_id") or "").strip()
         if lead and lead not in seen_primary:
@@ -139,8 +155,8 @@ def project_execution_liability_parties(
 
     secondary_ids: List[str] = []
     seen_secondary: set[str] = set()
-    for item in roster:
-        if not isinstance(item, dict) or item.get("tier") not in {"主办", "协办"}:
+    for item in entries:
+        if item.get("tier") not in {"主办", "协办"}:
             continue
         delegator = str(item.get("delegator_id") or "").strip()
         if (
