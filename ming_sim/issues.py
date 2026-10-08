@@ -8630,14 +8630,6 @@ def _apply_score_extraction_body(
     ):
         db.conn.commit()
 
-    # ADR0009 legacy aliases are canonicalized above and written only through
-    # the canonical person-change applier.  Keep response keys for compatibility,
-    # but do not retain a second set of direct writers here.
-    applied_appointments: List[Dict[str, object]] = []
-    applied_status_changes: List[Dict[str, object]] = []
-    applied_power_changes: List[Dict[str, object]] = []
-    applied_office_changes: List[Dict[str, object]] = []
-
     # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
     applied_secret_orders: List[Dict[str, object]] = []
     for item in extracted.get("secret_order_updates") or []:
@@ -8816,11 +8808,7 @@ def _apply_score_extraction_body(
         "fiscal_changes": applied_fiscal,
         "fiscal_creates": applied_fiscal_creates,
         "fiscal_removes": applied_fiscal_removes,
-        "appointments": applied_appointments,
         "applied_person_changes": applied_person_changes,
-        "character_status_changes": applied_status_changes,
-        "character_power_changes": applied_power_changes,
-        "office_changes": applied_office_changes,
         "secret_order_updates": applied_secret_orders,
     }
     victory = _resolve_victory(db, state, extracted)

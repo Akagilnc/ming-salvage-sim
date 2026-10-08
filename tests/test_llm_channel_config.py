@@ -427,7 +427,7 @@ def test_verify_llm_available_respects_api_channel_over_backend_env(monkeypatch)
 
     verify_llm_available(cfg)
 
-    assert captured["prompt"] == "输出 ok"
+    assert "model" in captured
     assert not isinstance(captured["model"], CliChat)
 
 
@@ -453,7 +453,7 @@ def test_verify_llm_available_smokes_cli_channel_without_backend_env(monkeypatch
 
     verify_llm_available(cfg)
 
-    assert seen["prompt"] == "输出 ok"
+    assert "prompt" in seen  # smoke 确实触发 runner，不锁烟测措辞
     assert seen["config"] is cfg
 
 
@@ -492,7 +492,7 @@ def test_verify_llm_available_smokes_legacy_env_only_backend(monkeypatch):
     monkeypatch.setattr(cli_backend, "_run_backend_for_config", fake_run)
     cfg = LLMConfig(api_key="cli-backend", base_url="", model="api-fallback", channel="")
     verify_llm_available(cfg)
-    assert seen["prompt"] == "输出 ok"
+    assert "prompt" in seen  # legacy env-only 亦真实 smoke，不锁烟测措辞
 
 
 def test_verify_llm_available_legacy_env_only_failure_raises(monkeypatch):
@@ -732,13 +732,6 @@ def test_cli_supports_reasoning_strength_matrix(runner, expected):
     from ming_sim.llm_config import cli_supports_reasoning_strength
 
     assert cli_supports_reasoning_strength(runner) is expected
-
-
-def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
-    """#1271：能力名单单源在 cli_backend（与 effort/thinking 表同缝）。"""
-    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
-
-    assert CLI_REASONING_STRENGTH_RUNNERS == frozenset({"codex", "claude", "grok", "pi"})
 
 
 

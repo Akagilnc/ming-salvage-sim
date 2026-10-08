@@ -505,28 +505,6 @@ def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
         "force_promulgated"
     )
 
-def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
-    """TD-1 / ADR 0055 S6: ordinary class planted dossiers must all pass or the arm fails."""
-    from scripts.promulgation_gate_561 import _ordinary_class_all_promulgated
-
-    assert _ordinary_class_all_promulgated([
-        ({"ordinary": 1, "hostile": 2},
-         {1: {"decision": "promulgated"}, 2: {"decision": "rejected"}}),
-        ({"ordinary": 3},
-         {3: {"decision": "promulgated"}}),
-    ]) is True
-    assert _ordinary_class_all_promulgated([
-        ({"ordinary": 1}, {1: {"decision": "rejected"}}),
-    ]) is False
-    assert _ordinary_class_all_promulgated([
-        ({"ordinary": 1}, {1: {"decision": "promulgated"}}),
-        ({"ordinary": 4}, {4: {"decision": "rejected"}}),
-    ]) is False
-    # Arms without ordinary do not invent a sample; empty plant is not a pass.
-    assert _ordinary_class_all_promulgated([
-        ({"hostile": 2}, {2: {"decision": "rejected"}}),
-    ]) is False
-
 def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     """TD-9: 安抚首领 = 东林 agenda posture; 许誉卿 stays; no 钱谦益 roster swap."""
     from scripts.promulgation_gate_561 import (

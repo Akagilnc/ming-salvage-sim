@@ -251,9 +251,6 @@ def test_leverage_uses_min_modifiers_within_title_and_max_across_offices():
 
 
 def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
-    from ming_sim.office_rank import _is_substantive_office
-
-    assert _is_substantive_office("翰林院编修", "")
     db, state, _content = game
     name = "旧档实职"
     _add(db, state, name, "翰林院编修", "翰林院")

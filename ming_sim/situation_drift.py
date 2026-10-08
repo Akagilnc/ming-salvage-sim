@@ -448,7 +448,7 @@ def apply_situation_monthly_drift(
                     _expire_commitment_issue(db, state, row, commit=commit_local)
                     continue
 
-        # 2) ongoing_effects：bar 高时折扣。经 loads_effect_dict 统一守（非 dict→{}，#117）。
+        # 2) ongoing_effects：bar 高时折扣。经 loads_effect_dict 统一守（真空→{}；腐坏/非对象响亮）。
         if is_commitment and ongoing_has_work:
             ongoing = _commitment_ongoing_effects_for_settlement(row, ongoing)
         metric_part: Dict[str, int] = {}

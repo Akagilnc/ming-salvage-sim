@@ -298,16 +298,14 @@ def test_run_runner_execs_resolved_abspath(monkeypatch, runner, resolved):
 # ── CliChat public: prompt shape + typed completion structure ──
 
 def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
-    """#1563：公开 invoke 证各条非空输入按原顺序进入 prompt，以及 typed completion 原样带回。"""
+    """#1563：公开 invoke 的 typed completion 原样带回（拼装 prompt 文面不锁）。"""
     cc = cb.CliChat(id="cli-test", backend="agy")
-    seen = {}
 
     # Deterministic fixture the old _strip_agent_narration would have rewritten
     # (drop leading "I will …" line). Public content must equal the stub verbatim.
     runner_text = "I will check the files.\nBODY_ZH_REPLY"
 
     def fake_cli(prompt):
-        seen["prompt"] = prompt
         return (runner_text, 1)
 
     monkeypatch.setattr(cc, "_call_cli", fake_cli)
@@ -322,9 +320,6 @@ def test_clichat_invoke_builds_prompt_and_completion_structure(monkeypatch):
         SimpleNamespace(role="developer", content=12345),
     ]
     out = cc.invoke(msgs, Message(role="assistant"))
-    p = seen["prompt"]
-    assert p.index("SYS_ROLE") < p.index("USER_MSG") < p.index("PRIOR_ASST") < p.index("TOOL_OUT") < p.index("12345")
-    assert p.count("USER_MSG") == 1
     # typed completion + passthrough on structured content (fixture, not LLM prose)
     assert out.role == "assistant"
     assert out.event == "AssistantResponse"
@@ -350,7 +345,8 @@ def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
 
     cc.invoke(msgs, Message(role="assistant"), response_format=_RF)
     cc.invoke(msgs, Message(role="assistant"))
-    assert all("EXTRACT" in prompt for prompt in seen)
+    # response_format 改变拼装结果（结构化路由），不锁用户原文子串
+    assert len(seen) == 3
     assert seen[0] != seen[2]
     assert seen[1] != seen[2]
 

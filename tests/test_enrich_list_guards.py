@@ -21,26 +21,14 @@ def test_apply_economy_list_non_list_no_crash(read_game):
         assert _apply_economy_list(db, state, bad) == []
 
 
-def test_inertia_ongoing_non_dict_no_crash(game):
-    """Persisted non-object effects must not crash monthly situation drift (#117)."""
-    from ming_sim.situation_drift import apply_situation_monthly_drift
-
-    db, state, _content = game
-    iid = db.insert_issue(state, kind="situation", title="畸形ongoing测试", bar_value=50, inertia=1)
-    for bad in ('"oops"', "5", "true", "[1,2]"):
-        db.conn.execute("UPDATE issues SET ongoing_effects=? WHERE id=?", (bad, iid))
-        db.conn.commit()
-        apply_situation_monthly_drift(db, state)
-
-
-def test_loads_effect_dict_coerces_non_dict():
-    """loads_effect_dict：effect_on_resolve/fail/ongoing_effects 列读取单一守门——合法 dict 原样，
-    真值非 dict / 解析失败 / 空 → {}（#117 R3：集中所有 effect-列读取于此，止 coverage-drift）。"""
+def test_loads_effect_dict_healthy_and_legal_empty():
+    """loads_effect_dict：合法 dict 原样；真空合法空 → {}。腐坏/非对象响亮由 parse_engine 现役闸覆盖，不复活吞腐。"""
     from ming_sim.models import loads_effect_dict  # 单一 home 在 models（leaf），各模块从此取
     assert loads_effect_dict('{"metrics": {"民心": 1}}') == {"metrics": {"民心": 1}}
-    assert loads_effect_dict({"already": "parsed"}) == {"already": "parsed"}  # 已解析 dict 原样（codex R4）
-    for bad in ('"oops"', "5", "true", "[1,2]", "null", "", None, "不是合法json", 5, [1, 2], True):
-        assert loads_effect_dict(bad) == {}, f"{bad!r} 未归 {{}}"
+    assert loads_effect_dict({"already": "parsed"}) == {"already": "parsed"}
+    assert loads_effect_dict(None) == {}
+    assert loads_effect_dict("") == {}
+    assert loads_effect_dict("{}") == {}
 
 
 def test_apply_economy_list_skips_non_dict_items(game):

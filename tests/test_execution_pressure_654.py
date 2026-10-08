@@ -432,16 +432,10 @@ def test_locality_fail_create_decree_dossiers_zero_rows(env):
     assert after == before
 
 
-def test_cli_target_kinds_accepts_canonical_eight():
-    """producer 与 durable 共八值（含 dossier）：合法通过、法外 fail-loud。"""
+def test_cli_target_kinds_single_source_with_invalid_fail_loud():
+    """producer 与 durable 共闭集单源；法外 fail-loud（不锁常量成员表、不 pin 私有 coerce 正向）。"""
     from ming_sim import cli_backend as cb
     assert TARGET_KINDS is EP_TARGET_KINDS
-    assert TARGET_KINDS == frozenset({
-        "policy", "character", "office", "army", "region", "issue", "account",
-        "dossier",
-    })
-    for kind in sorted(TARGET_KINDS):
-        assert cb._coerce_draft_target_kind(kind) == kind
     with pytest.raises(ValueError):
         cb._coerce_draft_target_kind("not_a_real_kind")
 

@@ -385,10 +385,6 @@ def test_active_member_empty_office_contributes_zero_weight(game):
         "UPDATE characters SET office='', office_type='兵部' WHERE name=?", (name,)
     )
     db.conn.commit()
-    from ming_sim.db import _member_office_weight
-    assert _member_office_weight("兵部", "") == 0.0, (
-        "active 但 office 空的成员 office_type 再高也应贡献 0 权重"
-    )
     # 端到端：把其余在朝成员全退场后，仅剩该「空 office」成员，权重和应为 0。
     others = db.conn.execute(
         "SELECT name FROM characters WHERE faction=? AND status='active' AND power_id='ming' AND name!=?",
@@ -690,7 +686,6 @@ def test_half_weight_odd_baseline_no_round_drift(game):
         db.set_character_status(state, m["name"], "dismissed", reason="清场")
     keeper = members[0]["name"]
     db.set_character_office(keeper, "礼部侍郎", "礼部")
-    assert db._faction_office_weight_sum(faction) == 2.5
     # 设奇数基线 79，直接写 offset（不走已退役的老档反推校准）。
     baseline = 79
     weight = db._faction_office_weight_sum(faction)

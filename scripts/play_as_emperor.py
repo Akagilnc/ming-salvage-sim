@@ -222,20 +222,20 @@ def parse_emperor_output(raw: str) -> tuple[str, str]:
     if not obj_match:
         raise ValueError(f"崇祯 agent 输出无法解析为 JSON: {raw[:200]}")
     obj = json.loads(obj_match.group(0))
-    reasoning = str(obj.get("reasoning", "")).strip()
-    input_text = str(obj.get("input", "")).strip()
-    if "\n" in input_text:
-        input_text = input_text.splitlines()[0]
+    # 原件过手：reasoning/input 不 strip、不截首行（传话链保真）
+    reasoning = str(obj.get("reasoning", ""))
+    input_text = str(obj.get("input", ""))
     return reasoning, input_text
 
 
 def ask_emperor(agent: Agent, cli_chunk: str, prompt_hint: str, progress: str = "") -> tuple[str, str]:
     # progress：本月进度提示（已问几轮/已下旨几条/还差啥）。num_history_runs 只留近 8 轮，
     # agent 看不到完整本月动作易盲凑、重复召见，故每步显式喂进度，让它知道走到哪、该收尾还是继续。
+    # CLI 对端原文整段转交，不截尾。
     payload = (
         f"{progress}\n\n" if progress else ""
     ) + (
-        f"CLI 当前输出（最新一段）：\n```\n{cli_chunk[-3500:]}\n```\n\n"
+        f"CLI 当前输出（最新一段）：\n```\n{cli_chunk}\n```\n\n"
         f"当前等待输入的 prompt 是：{prompt_hint}\n\n"
         f"请输出下一条键盘输入（严格 JSON）。"
     )
@@ -469,12 +469,6 @@ def run(
                 log(f"[崇祯 agent 出错: {exc}]")
                 child.sendline("exit")
                 break
-
-            # 超长单行输入(尤其『指令内容：』界面 agent 整篇诏书)会卡死 CLI/pexpect → 截断。
-            # 诏书细节由 LLM 拟诏/结算补全，这里只需一句能立项的指令文本。
-            if len(action) > 200:
-                log(f"[输入截断 step {step}：{len(action)} 字 → 200 字，防 CLI 卡]")
-                action = action[:200]
 
             log(f"[崇祯] reasoning: {reasoning}")
             log(f"[崇祯] input: {action!r}")
